@@ -241,7 +241,13 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     @model_validator(mode="after")
     def _require_dispatch_thread_id_unless_wrap(self) -> Self:
         if self.contract != "wrap":
-            if not self.dispatch_thread_id or not self.dispatch_thread_id.strip():
+            has_explicit_prompt = any(
+                value is not None and str(value).strip()
+                for value in (self.packet_path, self.prompt, self.sidecar_ref)
+            )
+            if not has_explicit_prompt and (
+                not self.dispatch_thread_id or not self.dispatch_thread_id.strip()
+            ):
                 raise ValueError(
                     "dispatch_thread_id is required when contract is not wrap"
                 )

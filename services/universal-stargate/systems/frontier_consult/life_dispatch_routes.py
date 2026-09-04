@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Literal
+from typing import Any
 
 from claude_bundles.chat_model_match import compose_cdp_model_with_effort
 from fastapi import APIRouter, Response
-from pydantic import BaseModel, Field, model_validator
-from universal_logging import get_logger
+from pydantic import BaseModel, model_validator
 
 from .admission import FrontierEndpointError
 from .cdp_generate import dispatch_cdp_generate, is_cdp_model
@@ -17,7 +16,6 @@ from .dispatch_thread_context import resolve_generate_prompt_body
 from .route import TeamDispatchGenerateBody
 
 life_dispatch_router = APIRouter(prefix="/api/v1/life", tags=["life-dispatch"])
-logger = get_logger(__name__)
 
 _DEFAULT_MODEL = "cdp/opus-5"
 _LIFE_CALLER = "life"
@@ -97,11 +95,7 @@ async def life_dispatch(body: LifeDispatchBody, response: Response) -> dict[str,
     }
     if dispatch_thread_id:
         body_kwargs["dispatch_thread_id"] = dispatch_thread_id
-        generate_body = TeamDispatchGenerateBody(**body_kwargs)
-    else:
-        # Prompt-only: dispatch_cdp_generate mints the bus thread; skip the
-        # team_dispatch dispatch_thread_id validator (life surface has no thread id yet).
-        generate_body = TeamDispatchGenerateBody.model_construct(**body_kwargs)
+    generate_body = TeamDispatchGenerateBody(**body_kwargs)
     return await dispatch_cdp_generate(
         request_id=request_id,
         body=generate_body,

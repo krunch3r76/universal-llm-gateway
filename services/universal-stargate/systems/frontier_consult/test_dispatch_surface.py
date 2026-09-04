@@ -100,6 +100,28 @@ def test_generate_rejects_multiple_explicit_prompt_sources() -> None:
         )
 
 
+def test_generate_allows_prompt_without_dispatch_thread_id() -> None:
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        contract="light-bounded",
+        model="cdp/opus-5",
+        prompt="hello",
+        purpose="operator-proxy",
+        caller_agent="life",
+    )
+    assert body.dispatch_thread_id is None
+    assert body.prompt == "hello"
+
+
+def test_generate_still_requires_dispatch_thread_id_without_prompt() -> None:
+    with pytest.raises(ValidationError, match="dispatch_thread_id is required"):
+        TeamDispatchGenerateBody(
+            op="generate",
+            contract="light-bounded",
+            model="cdp/opus-5",
+        )
+
+
 @pytest.mark.parametrize("contract", ["implement", "wrap"])
 def test_generate_rejects_inline_prompt_on_non_prompt_contract(
     contract: str,
