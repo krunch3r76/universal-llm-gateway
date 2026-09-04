@@ -126,6 +126,24 @@ def test_probe_lane_down_when_unit_inactive() -> None:
 
 
 @pytest.mark.offline
+def test_probe_health_logs_and_continues_when_pins_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("ULG_REPO", str(_REPO))
+    standing_pins._prev_states.clear()
+    with (
+        patch.object(standing_pins, "_probe_display", side_effect=["live", "live"]),
+        patch.object(standing_pins, "_load_pins", side_effect=RuntimeError("ULG_REPO not set")),
+    ):
+        with caplog.at_level("WARNING"):
+            displays, standing = probe_health()
+    assert displays == {":2": "live", ":3": "live"}
+    assert standing == {}
+    assert any("standing_pins probe_health failed" in r.message for r in caplog.records)
+
+
+@pytest.mark.offline
 def test_probe_health_projects_standing_lanes_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

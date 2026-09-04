@@ -12,16 +12,34 @@ fi
 
 REPO="${ULG_REPO:?ULG_REPO required in cdp-ask.env}"
 PORT="${PORT:-8770}"
+PIDFILE="${HOME}/.gateway/cdp-ask.pid"
 
-if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+_listening_pid() {
+  ss -tlnp "sport = :${PORT}" 2>/dev/null \
+    | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' \
+    | head -1
+}
+
+_refresh_pidfile_if_healthy() {
+  if ! curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+    return 1
+  fi
+  live_pid="$(_listening_pid)"
+  if [ -n "$live_pid" ]; then
+    echo "$live_pid" > "$PIDFILE"
+  fi
+  return 0
+}
+
+if _refresh_pidfile_if_healthy; then
   exit 0
 fi
 
-PIDFILE="${HOME}/.gateway/cdp-ask.pid"
 if [ -f "$PIDFILE" ]; then
   old_pid="$(cat "$PIDFILE")"
   if kill -0 "$old_pid" 2>/dev/null \
     && curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+    _refresh_pidfile_if_healthy
     exit 0
   fi
 fi

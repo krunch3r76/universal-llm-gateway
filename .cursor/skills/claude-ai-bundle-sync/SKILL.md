@@ -57,7 +57,7 @@ Cursor / remote seat (io, SSH client)
   │  gen_claude_bundles.py  — edit resolver.py, render .claude/skills
   │  claude-ai-sync-jupiter — SSH wrapper (status / upload)
   ▼
-Jupiter (DISPLAY=:1, cosmic-comp Wayland)
+Jupiter (DISPLAY `:2` fleet / `:3` on-demand lanes — Xvfb-backed systemd units)
   │  Chrome CDP 127.0.0.1:9222  — logged-in claude.ai session
   │  upload_claude_bundles_ui.py — Playwright attaches over CDP
   ▼
@@ -311,28 +311,14 @@ default: `toys`, URL default: `https://<mcp-host>/mcp/life`) and
 The wrapper `ensure-chrome` step handles this automatically. Manual equivalent:
 
 ```bash
-ssh <user>@<satellite-host> 'bash -s' <<'EOF'
-pkill -f 'remote-debugging-port=9222' 2>/dev/null || true
-sleep 1
-DISPLAY=:1 nohup google-chrome \
-  --remote-debugging-port=9222 \
-  --remote-allow-origins=* \
-  --user-data-dir="$HOME/.gateway/claude-ai-chrome-profile" \
-  --no-first-run \
-  --no-default-browser-check \
-  > /tmp/chrome-cdp-claude-ai.log 2>&1 &
-for i in $(seq 1 15); do
-  sleep 1
-  curl -sf http://127.0.0.1:9222/json/version >/dev/null && break
-done
-curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; print(json.load(sys.stdin)['Browser'])"
-EOF
+ssh <user>@jupiter 'cdp-lane-ensure fleet'
+curl -sf http://127.0.0.1:9222/json/version | python3 -c "import sys,json; print(json.load(sys.stdin)['Browser'])"
 ```
 
 Then open **Customize → Skills** in that Chrome session if not already on that page.
 
-**Do not** use `/tmp/cdp-profile` for claude.ai sync — that profile is for generic
-`browse` fetches; claude.ai login lives in `claude-ai-chrome-profile`.
+**Do not** use `/tmp/cdp-profile` for claude.ai sync — fleet uses
+`~/.gateway/claude-ai-chrome-profile` per `pins.toml`.
 
 ## Change detection layers
 

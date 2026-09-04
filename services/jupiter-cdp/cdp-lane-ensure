@@ -3,7 +3,7 @@
 set -eu
 
 LANE="${1:?usage: cdp-lane-ensure <lane_name>}"
-REPO="${ULG_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
+REPO="${ULG_REPO:-$(cd "$(dirname "$(readlink -f "$0")")/../.." && pwd)}"
 PINS="$REPO/services/jupiter-cdp/pins.toml"
 
 if ! python3 - "$PINS" "$LANE" <<'PY'

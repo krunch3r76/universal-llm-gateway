@@ -30,7 +30,7 @@ for unit in jupiter-cdp-xvfb@.service cdp-lane@.service web-fetcher.service cdp-
 done
 
 ln -sf "$REPO/scripts/cdp-ask-start" "$LOCAL_BIN/cdp-ask-start"
-ln -sf "$SRC/wait-for-file" "$LOCAL_BIN/wait-for-file"
+cp "$SRC/wait-for-file" "$LOCAL_BIN/wait-for-file"
 chmod +x "$LOCAL_BIN/wait-for-file"
 
 cat >"$LOCAL_BIN/cdp-lane-launch" <<'WRAP'
@@ -39,7 +39,13 @@ exec "$HOME/.venvs/universal/bin/python" "$ULG_REPO/services/jupiter-cdp/cdp-lan
 WRAP
 chmod +x "$LOCAL_BIN/cdp-lane-launch"
 
-ln -sf "$SRC/cdp-lane-ensure" "$LOCAL_BIN/cdp-lane-ensure"
+cat >"$LOCAL_BIN/cdp-lane-ensure" <<WRAP
+#!/bin/sh
+ULG_REPO=$REPO
+export ULG_REPO
+exec "$REPO/services/jupiter-cdp/cdp-lane-ensure" "\$@"
+WRAP
+chmod +x "$LOCAL_BIN/cdp-lane-ensure"
 
 cat >"$LOCAL_BIN/jupiter-web-fetcher" <<'WRAP'
 #!/bin/sh

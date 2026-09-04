@@ -47,7 +47,7 @@ MCP server container
     ↓  HTTP POST /fetch
 web-fetcher service on Jupiter  (port 8765, FastAPI, libs/web_fetcher/)
     ↓  CDP  BROWSER_CDP_URL=http://127.0.0.1:9222
-Chrome on Jupiter  (DISPLAY=:1, cosmic-comp Wayland session)
+Chrome on Jupiter  (DISPLAY=:2 fleet, :3 messages/ess/gopuff/uber — Xvfb-backed)
 ```
 
 ```
@@ -97,78 +97,62 @@ Expected when healthy:
 
 ---
 
-## Bring Up Chrome
+## Bring Up Chrome (lane unit)
 
-**Always include `--remote-allow-origins=*`** — required for CDP WebSocket access
-from scripts (cookie extraction, `Browser.setDownloadBehavior`, etc.). Without it
-all WebSocket connections are rejected with 403.
+Prefer `cdp-lane-ensure` or systemd — do not hand-launch Chrome with `pkill`/`nohup`.
+
+**Fleet lane** (port 9222, DISPLAY `:2`, claude.ai profile):
 
 ```bash
-ssh <user>@<satellite-host> 'bash -s' << 'EOF'
-pkill -f 'remote-debugging-port=9222' 2>/dev/null || true
-sleep 1
-DISPLAY=:1 nohup google-chrome \
-  --remote-debugging-port=9222 \
-  --remote-allow-origins=* \
-  --user-data-dir=/tmp/cdp-profile \
-  --no-first-run \
-  --no-default-browser-check \
-  --disable-background-timer-throttling \
-  > /tmp/chrome-cdp.log 2>&1 &
-echo "Chrome PID: $!"
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  sleep 1
-  curl -sf http://localhost:9222/json/version >/dev/null 2>&1 \
-    && echo "CDP ready after ${i}s" && break
-  echo "Waiting... $i/10"
-done
-curl -s http://localhost:9222/json/version \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['Browser'])"
-EOF
+ssh <user>@jupiter 'cdp-lane-ensure fleet'
 ```
 
-Typical output: `Chrome PID: 1033103` → `CDP ready after 1s` → `Chrome/147.0.7727.101`
+**On-demand lanes** (messages, ess, gopuff, uber):
+
+```bash
+ssh <user>@jupiter 'cdp-lane-ensure gopuff'   # :3, port 9270
+ssh <user>@jupiter 'cdp-lane-ensure messages'  # :3, port 9250
+```
+
+Restart a stale lane without touching other pins:
+
+```bash
+ssh <user>@jupiter 'systemctl --user restart cdp-lane@fleet.service'
+```
+
+Verify CDP after ensure:
+
+```bash
+ssh <user>@jupiter 'curl -sf http://127.0.0.1:9222/json/version \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)[\"Browser\"])"'
+```
+
+Typical output: `Chrome/147.0.7727.101`
 
 **Notes**:
-- `DISPLAY=:1` is Jupiter's cosmic-comp Wayland compositor — needed for a
-  real (non-headless) Chrome session that can pass Cloudflare challenges
-- `--user-data-dir=/tmp/cdp-profile` isolates the CDP session from the user
-  profile; the directory is created automatically
-- `nohup` keeps Chrome alive after the SSH session disconnects
-- `/tmp/cdp-profile` does NOT survive Jupiter reboots — sessions (cookies)
-  must be re-established after a reboot
+- Standing lanes use per-pin profiles under `~/.gateway/` and `~/sms-bridge/profiles/`
+- Xvfb displays `:2` and `:3` are started by `jupiter-cdp.target` via `jupiter-cdp-xvfb@.service`
+- Lane units survive SSH disconnect (systemd user session)
 
 ---
 
 ## Bring Up web-fetcher
 
-web-fetcher must be started with `BROWSER_CDP_URL` pointing at Chrome. Without
-it, it launches its own headless Chromium and loses the residential-IP advantage.
+web-fetcher is a systemd user unit; it requires the fleet lane (9222) to be up first.
 
 ```bash
-ssh <user>@<satellite-host> 'bash -s' << 'EOF'
-pkill -f 'scripts/web-fetcher' 2>/dev/null || true
-fuser -k 8765/tcp 2>/dev/null || true
-sleep 1
-PYTHONPATH=/mnt/torus/projects/universal-llm-gateway/libs \
-  BROWSER_CDP_URL=http://127.0.0.1:9222 \
-  nohup ~/.venvs/universal/bin/python \
-  /mnt/torus/projects/universal-llm-gateway/scripts/web-fetcher \
-  --port 8765 \
-  > /tmp/web-fetcher.log 2>&1 &
-echo "web-fetcher PID: $!"
-for i in 1 2 3 4 5 6; do
-  sleep 1
-  curl -sf http://localhost:8765/health >/dev/null 2>&1 && echo "ready after ${i}s" && break
-done
-curl -s http://localhost:8765/health
-EOF
+ssh <user>@jupiter 'cdp-lane-ensure fleet && systemctl --user start web-fetcher.service'
+```
+
+Status / restart:
+
+```bash
+ssh <user>@jupiter 'systemctl --user status web-fetcher.service'
+ssh <user>@jupiter 'systemctl --user restart web-fetcher.service'
+curl -sf http://jupiter:8765/health
 ```
 
 Expected: `{"status":"ok","concurrent_limit":3,"headless":null,"cdp_url_configured":true}`
-
-> **Port conflict**: if port 8765 is already in use from a stale process, `fuser -k 8765/tcp`
-> clears it before relaunching.
 
 ---
 
@@ -198,79 +182,46 @@ MCP `project_ask` (sealed CDP consults with cortex harvest). Requires Chrome
 
 ### Bring up cdp-ask manually (if needed)
 
+cdp-ask is started via `jupiter-cdp.target` or explicitly:
+
 ```bash
-ssh <user>@<satellite-host> 'bash -s' << 'EOF'
-pkill -f 'scripts/cdp-ask' 2>/dev/null || true
-sleep 1
-CORTEX_FILES_ROOT=/mnt/torus/mcp-data/files \
-  nohup ~/.venvs/universal/bin/python \
-  /mnt/torus/projects/universal-llm-gateway/scripts/cdp-ask \
-  --port 8770 \
-  > /tmp/cdp-ask.log 2>&1 &
-echo "cdp-ask PID: $!"
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  sleep 1
-  curl -sf http://localhost:8770/health >/dev/null 2>&1 \
-    && echo "cdp-ask ready after ${i}s" && break
-done
-curl -s http://localhost:8770/health
-EOF
+ssh <user>@jupiter 'systemctl --user start cdp-ask.service'
+# or from hub manage MCP: manage(action="start", service="cdp_ask")
+```
+
+Verify:
+
+```bash
+ssh <user>@jupiter 'curl -sf http://127.0.0.1:8770/health'
 ```
 
 Expected: `{"status":"ok","harvest_root":"/mnt/torus/mcp-data/files","harvest_root_ok":true}`
 
-> **Keep-alive**: cdp-ask uses `nohup` like web-fetcher — survives SSH disconnect.
-> Re-run `--status` after disconnect to confirm `:8770/health` still responds.
+> **Keep-alive**: cdp-ask is a forking systemd unit — survives SSH disconnect.
+> Re-check `:8770/health` after disconnect to confirm.
 
 ---
 
 ## Full Bootstrap (when starting from scratch)
 
 ```bash
-ssh <user>@<satellite-host> 'bash -s' << 'EOF'
-set -e
+ssh <user>@jupiter 'systemctl --user start jupiter-cdp.target'
+# on-demand lane example:
+ssh <user>@jupiter 'cdp-lane-ensure gopuff'
+```
 
-# Kill stale processes
-pkill -f 'remote-debugging-port=9222' 2>/dev/null || true
-pkill -f 'scripts/web-fetcher' 2>/dev/null || true
-fuser -k 8765/tcp 2>/dev/null || true
-sleep 1
+Verify standing stack:
 
-# Launch Chrome — --remote-allow-origins=* required for CDP WebSocket from scripts
-DISPLAY=:1 nohup google-chrome \
-  --remote-debugging-port=9222 \
-  --remote-allow-origins=* \
-  --user-data-dir=/tmp/cdp-profile \
-  --no-first-run \
-  --no-default-browser-check \
-  --disable-background-timer-throttling \
-  > /tmp/chrome-cdp.log 2>&1 &
-echo "Chrome PID: $!"
-
-# Wait for CDP (usually ready in 1s)
-for i in 1 2 3 4 5 6 7 8 9 10; do
-  sleep 1
-  curl -sf http://localhost:9222/json/version >/dev/null 2>&1 \
-    && echo "CDP ready after ${i}s" && break
-  echo "Waiting for CDP... $i/10"
-done
-
-# Launch web-fetcher
-PYTHONPATH=/mnt/torus/projects/universal-llm-gateway/libs \
-  BROWSER_CDP_URL=http://127.0.0.1:9222 \
-  nohup ~/.venvs/universal/bin/python \
-  /mnt/torus/projects/universal-llm-gateway/scripts/web-fetcher \
-  --port 8765 \
-  > /tmp/web-fetcher.log 2>&1 &
-echo "web-fetcher PID: $!"
-
-# Verify both
-sleep 2
-echo "--- Chrome ---"
-curl -s http://localhost:9222/json/version \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['Browser'])"
+```bash
+ssh <user>@jupiter 'bash -s' << 'EOF'
+echo "--- fleet CDP ---"
+curl -sf http://127.0.0.1:9222/json/version \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['Browser'])" \
+  || echo "fleet NOT ready"
 echo "--- web-fetcher ---"
-curl -s http://localhost:8765/health
+curl -s http://127.0.0.1:8765/health || echo "web-fetcher NOT ready"
+echo "--- cdp-ask ---"
+curl -s http://127.0.0.1:8770/health || echo "cdp-ask NOT ready"
 EOF
 ```
 
@@ -307,14 +258,14 @@ If `"method": "browser"` appears — Chrome via CDP is working.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `dispatch(tool="browse")` → `WEB_FETCHER_URL not configured` | Env var missing in MCP container | Check `~/.gateway/mcp.yaml` has `WEB_FETCHER_URL: "http://jupiter:8765"` and rebuild MCP |
-| `dispatch(tool="browse")` → connection error to `jupiter:8765` | web-fetcher not running | Start web-fetcher (see above) |
-| `BrowserType.connect_over_cdp: connect ECONNREFUSED 127.0.0.1:9222` | Chrome not running | Launch Chrome (see above); restart web-fetcher after |
+| `dispatch(tool="browse")` → connection error to `jupiter:8765` | web-fetcher not running | `systemctl --user start web-fetcher.service` (after `cdp-lane-ensure fleet`) |
+| `BrowserType.connect_over_cdp: connect ECONNREFUSED 127.0.0.1:9222` | Fleet lane not running | `cdp-lane-ensure fleet`; then restart web-fetcher |
 | `cdp_url_configured: true` but browser fetches fail | web-fetcher env var set but Chrome is down | The health field is misleading — check CDP directly with `curl http://localhost:9222/json/version` |
-| Chrome crashes or becomes unresponsive | Memory pressure or JS crash | `pkill -f "remote-debugging-port=9222"` then re-launch |
-| SSH session drops mid-launch | Network blip | Chrome survives via nohup; verify with `pgrep -a google-chrome` |
-| Stale Chrome occupying port 9222 | Previous nohup Chrome still running | `pkill -f "remote-debugging-port=9222"` then re-launch |
-| Stale process on port 8765 | Old web-fetcher still bound | `fuser -k 8765/tcp` then re-launch web-fetcher |
-| CDP WebSocket → 403 Forbidden | Chrome launched without `--remote-allow-origins=*` | Restart Chrome with that flag (see launch commands) |
+| Chrome crashes or becomes unresponsive | Memory pressure or JS crash | `systemctl --user restart cdp-lane@fleet.service` (or the affected lane) |
+| SSH session drops mid-launch | Network blip | Units survive via systemd user session; verify with `systemctl --user status cdp-lane@fleet.service` |
+| Stale Chrome occupying port 9222 | Previous lane unit wedged | `systemctl --user restart cdp-lane@fleet.service` |
+| Stale process on port 8765 | Old web-fetcher still bound | `systemctl --user restart web-fetcher.service` |
+| CDP WebSocket → 403 Forbidden | Chrome launched without `--remote-allow-origins=*` | Lane launch script sets this; restart the lane unit |
 
 For download-specific and browse-usage failure modes (garbled text, `save_to`
 returning HTML, action timeouts, WAF challenges), read `jupiter-browser-via-mcp`

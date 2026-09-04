@@ -6,7 +6,7 @@ health request. Advisory only — not journal-backed authority.
 
 from __future__ import annotations
 
-import contextlib
+import logging
 import os
 import subprocess
 import tomllib
@@ -22,6 +22,8 @@ from cdp_ask.events.standing_lane import (
     emit_standing_lapsed,
     emit_standing_up,
 )
+
+logger = logging.getLogger(__name__)
 
 StandingState = str  # DOWN | UP | LAPSED
 
@@ -160,7 +162,7 @@ def probe_health() -> tuple[dict[str, str], dict[str, StandingPinHealth]]:
     """Return ``(displays, standing_pins)`` for /health."""
     displays = {":2": _probe_display(":2"), ":3": _probe_display(":3")}
     standing: dict[str, StandingPinHealth] = {}
-    with contextlib.suppress(Exception):
+    try:
         pins = _load_pins()
         for name, row in pins.items():
             if not row.get("standing"):
@@ -169,4 +171,6 @@ def probe_health() -> tuple[dict[str, str], dict[str, StandingPinHealth]]:
             health = _probe_lane(name, row, prev=prev)
             _prev_states[name] = health.state
             standing[name] = health
+    except Exception:
+        logger.warning("standing_pins probe_health failed", exc_info=True)
     return displays, standing
