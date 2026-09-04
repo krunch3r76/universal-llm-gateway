@@ -238,6 +238,18 @@ The `assert` API validates provenance at write time.
 - 30% reasoning completeness (`reasoning_summary`, `evidence`)
 - score < 0.7 → auto-route to staging regardless of other conditions
 
+**Predicate-normalize graduation (third outcome)** — distinct from staging and
+hard reject: when write-time ``normalize_predicate_domain`` fires Class 6,
+invention, or re-subjection guards, the assertion is **accepted** with
+``review_status='flagged'`` and distinguishable ``review_notes`` reason tokens
+(``class6_generic_state`` / ``invention`` / ``resubjection``). Sync explicit-
+``predicate_form`` writers receive ``flag_reasons``, ``normalization_decision``,
+``suppression_effect``, and ``_next`` in the ``predicate_form_normalize`` ACK
+envelope; async extract writeback carries the same fields on
+``mcp.cortex.predicate.review.required`` (session_id carrier). T0 mechanical
+re-normalize may clear flags without rewriting ``predicate_form`` when guards
+no longer fire after a ``normalizer_version`` bump.
+
 ### 5.1 Commitment tracking
 
 `resolution_status` (`pending` / `fulfilled` / `breached` / `unknown` / null)
@@ -471,6 +483,37 @@ Document-scale derivation provenance is specified in §12.4.
 ---
 
 ## 12. Derived views (v3.1)
+
+### 12.0 Card current-status pin (qualified projection)
+
+Card v0 exposes ``current_status`` as a **qualified projection** on the read
+path (not a silent scalar promote):
+
+```json
+{
+  "served": { "...": "best-supported unflagged status(%, current) row" },
+  "review_status": "committed",
+  "observed_at": "...",
+  "source": "<assertion_id>",
+  "withheld_newer": [
+    {"assertion_id": 29834, "state": "...", "reason": "class6_generic_state", "observed_at": "..."}
+  ],
+  "withheld_count": 1
+}
+```
+
+- **Source** — ``current_status.source`` names the assertion id (or derivation
+  label) backing ``served``.
+- **Freshness** — ``current_status.observed_at`` names when the served row was
+  observed.
+- **Recovery** — ``withheld_newer`` lists newer flagged status candidates (cap
+  3; ``withheld_count`` is the total beyond the cap). Sync writers see ``_next``
+  in the ``predicate_form_normalize`` ACK; async extract writers see the same on
+  ``mcp.cortex.predicate.review.required``.
+- **Blank pin** — entities with no status rows render ``served: null``,
+  ``withheld_newer: []``, ``withheld_count: 0`` (explicit absence).
+- **top_k disclosure** — flagged assertions remain in ``top_k_assertions`` with
+  inline ``epistemic_state: "flagged"`` (annotate, do not filter).
 
 A *view* is a registered `document:` entity that is a derived projection of graph
 state — deterministic **core** (linear verbalization: canonically serialized,

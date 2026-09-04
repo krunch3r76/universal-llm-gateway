@@ -64,6 +64,7 @@ from .entities import (
     CardDebug,
     CardEdgeTypeCount,
     CardSection,
+    CurrentStatus,
     EntityCard,
     EntityCreate,
     EntityDetail,
@@ -75,6 +76,7 @@ from .entities import (
     RetentionPolicy,
     SupersededBreadcrumb,
     SupersededCorrection,
+    WithheldStatusEntry,
 )
 from .extraction import (
     ExtractionCheckRequest,
@@ -205,6 +207,7 @@ __all__ = [
     "CardDebug",
     "CardEdgeTypeCount",
     "CardSection",
+    "CurrentStatus",
     "EntityCard",
     "EntityCreate",
     "EntityDetail",

@@ -106,8 +106,12 @@ def aggregate_predicate_summary(
     archives_to_children: list[str],
     *,
     entity_id: str | None = None,
-) -> str:
+    pin_withheld_count: int = 0,
+) -> tuple[str, int]:
     """Aggregate predicate_forms from top-K assertions into a predicate_summary string.
+
+    Returns ``(summary, withheld_count)`` where ``withheld_count`` reflects
+    the qualified-pin withheld total when supplied, else flagged rows skipped.
 
     ∀ r ∈ top_k_assertions: r has at minimum keys ``id``, ``claim``,
     ``predicate_form`` (may be None for unenriched assertions).
@@ -123,12 +127,13 @@ def aggregate_predicate_summary(
     """
     forms: list[str] = []
     tier1_used = False
+    skipped_flagged = 0
 
     for row in top_k_assertions:
-        # Flagged rows already failed normalize/review (friction 30203). The
-        # current-status pin excludes them; this join must too, or the card
-        # renders status(todo, done) beside workflow_state=open.
+        # Flagged rows stay in top_k (AC10 epistemic_state) but are excluded
+        # from the predicate_summary join — pin qualification handles authority.
         if row.get("review_status") == "flagged":
+            skipped_flagged += 1
             continue
         pf = row.get("predicate_form")
         if pf:
@@ -142,12 +147,17 @@ def aggregate_predicate_summary(
             tier1_used = True
             # ∀ remaining misses: contribute nothing to join (Tier 2 partial).
 
+    withheld_count = pin_withheld_count if pin_withheld_count else skipped_flagged
+
     if forms:
-        return "; ".join(forms)
+        return "; ".join(forms), withheld_count
 
     # Tier 2: zero predicate_forms available after Tier 0 + Tier 1.
     # Edge-only heuristic — no claim-text inspection (§6.7 scope-narrow).
-    return synthesize_predicate_summary(
-        et_type_counts=et_type_counts,
-        archives_to_children=archives_to_children,
+    return (
+        synthesize_predicate_summary(
+            et_type_counts=et_type_counts,
+            archives_to_children=archives_to_children,
+        ),
+        withheld_count,
     )

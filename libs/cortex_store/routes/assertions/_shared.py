@@ -199,6 +199,36 @@ _ASSERTION_COLS = (
 
 _VALID_REVIEW_STATUS = {"committed", "flagged", "staged", "rejected"}
 
+_PREDICATE_NORMALIZE_NOTE_PREFIX = "predicate normalize:"
+
+
+def _flag_reasons_from_result(normalize_result: dict) -> list[str]:
+    reasons: list[str] = []
+    if normalize_result.get("invention_flag"):
+        reasons.append("invention")
+    if normalize_result.get("resubjection_flag"):
+        reasons.append("resubjection")
+    if 6 in (normalize_result.get("classes_applied") or []):
+        reasons.append("class6_generic_state")
+    return reasons
+
+
+def _suppression_effect(flag_reasons: list[str]) -> str | None:
+    if not flag_reasons:
+        return None
+    return (
+        "headline_status_withheld; flagged row excluded from predicate_summary join"
+    )
+
+
+def _next_remedy(flag_reasons: list[str]) -> str | None:
+    if not flag_reasons:
+        return None
+    return (
+        "Inspect card current_status.withheld_newer; T0 re-normalize clears when "
+        "guards no longer fire"
+    )
+
 
 def _normalize_predicate_form_for_write(
     entity_id: str,
@@ -279,24 +309,28 @@ def _build_predicate_form_normalize(
     ``requires_human_review`` is True.
     """
     classes_applied = list(normalize_result.get("classes_applied") or [])
+    flag_reasons = _flag_reasons_from_result(normalize_result)
+    requires = bool(normalize_result.get("requires_human_review"))
     return PredicateFormNormalize(
         predicate_form_in=predicate_form_in,
         canonical_form=normalize_result["canonical_form"],
         classes_applied=classes_applied,
         normalized=bool(classes_applied),
-        requires_human_review=bool(normalize_result.get("requires_human_review")),
+        requires_human_review=requires,
+        flag_reasons=flag_reasons,
+        normalization_decision=normalize_result.get("normalization_decision"),
+        suppression_effect=_suppression_effect(flag_reasons) if requires else None,
+        next_remedy=_next_remedy(flag_reasons) if requires else None,
     )
 
 
 def _flag_predicate_normalize_review(
     conn: sqlite3.Connection, assertion_id: int, normalize_result: dict
 ) -> None:
-    """Append a 'predicate normalize: requires_human_review' note and flag the row.
-
-    Called inside WRITE_LOCK when normalize_result["requires_human_review"] is True.
-    Uses CASE WHEN to preserve any existing review_notes.
-    """
-    _note = "predicate normalize: requires_human_review"
+    """Flag row for predicate-normalize review with a distinguishable reason token."""
+    reasons = _flag_reasons_from_result(normalize_result)
+    token = reasons[0] if reasons else "predicate_normalize"
+    _note = f"{_PREDICATE_NORMALIZE_NOTE_PREFIX} {token}: requires_human_review"
     conn.execute(
         "UPDATE assertions SET review_status = 'flagged', "
         "review_notes = CASE WHEN review_notes IS NOT NULL "

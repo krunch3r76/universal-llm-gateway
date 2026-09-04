@@ -98,6 +98,7 @@ _OP_SPECS: dict[str, str] = {
     "session_handoff_upsert": "ops_session_close:_op_session_handoff_upsert",
     "assemble_transcript": "ops_transcript_assembly:_op_assemble_transcript",
     "review_queue": "ops_assertions:_op_review_queue",
+    "predicate_renormalize": "ops_predicate_renormalize:_op_predicate_renormalize",
     "edge_create": "ops_edges:_op_edge_create",
     "edges": "ops_edges:_op_edges",
     "edge_traverse": "ops_edges:_op_edge_traverse",

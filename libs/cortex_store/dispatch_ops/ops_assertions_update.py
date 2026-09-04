@@ -118,6 +118,7 @@ def _op_assertion_update(
     prospective_summary: str | None = None,
     events_json: str | None = None,
     force: bool = False,
+    session_id: str | None = None,
     **extra: object,
 ) -> dict[str, Any]:
     dropped_keys = sorted(extra.keys())
@@ -166,6 +167,7 @@ def _op_assertion_update(
         _emit_predicate_form_normalize_events(
             assertion_id=assertion_id,
             normalize_payload=result.get("predicate_form_normalize"),
+            session_id=session_id,
         )
     return _attach_dropped_key_warnings(result, dropped_keys)
 
@@ -243,6 +245,11 @@ def _op_supersede(
             "mcp.cortex.assertion.superseded",
             old_id=old_assertion_id,
             new_id=new_id,
+        )
+        _emit_predicate_form_normalize_events(
+            assertion_id=new_id,
+            normalize_payload=result.get("predicate_form_normalize"),
+            session_id=session_id,
         )
         if result.get("validation_warnings"):
             result["_next"] = (

@@ -32,6 +32,7 @@ from .registry import (
     CLASS_4_SHAPE_RULES,
     CLASS_6_GENERIC_STATES,
     CLASS_6_WORKFLOW_ENTITY_TYPES,
+    status_functor_state_token,
 )
 
 
@@ -172,15 +173,16 @@ def _is_numeric(s: str) -> bool:
 def class_6_check(entity_id: str, p: Predicate) -> bool:
     """Class 6 — generic-state guard.
 
-    Returns True if the predicate's last arg is a generic state token
-    AND the assertion's entity_id is NOT a workflow-state-tracked type.
-    Callers route True returns to `requires_human_review` rather than
-    auto-clustering. Read-only — does not rewrite the predicate.
+    Returns True when the predicate's **state slot** (not tense slot on
+    arity-3 status functors) is a generic state token AND the bearer
+    entity_id is NOT a workflow-state-tracked type. Callers route True
+    returns to ``requires_human_review`` rather than auto-clustering.
+    Read-only — does not rewrite the predicate.
     """
     if not p.args:
         return False
-    state_token = p.args[-1]
-    if state_token not in CLASS_6_GENERIC_STATES:
+    state_token = status_functor_state_token(p.args, p.name)
+    if state_token is None or state_token not in CLASS_6_GENERIC_STATES:
         return False
     entity_type = entity_id.split(":", 1)[0] if ":" in entity_id else entity_id
     return entity_type not in CLASS_6_WORKFLOW_ENTITY_TYPES

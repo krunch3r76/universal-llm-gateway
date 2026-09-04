@@ -184,17 +184,18 @@ def test_debug_surfaces_entrenchment_and_prospective_summary(
     assert card["debug"]["prospective_summaries"] is not None
 
 
-def test_ac4_flagged_current_status_excluded_from_fetch(
+def test_ac4_flagged_current_status_surfaces_in_withheld_newer(
     migrated_conn: sqlite3.Connection,
 ) -> None:
-    """AC4 — flagged status(%, current) row must not pin current-status slot."""
+    """AC4 — flagged status(%, current) must appear in withheld_newer, not pin served."""
     entity_id = "todo:flagged-status-exclusion"
     insert_entity(migrated_conn, entity_id=entity_id, entity_type="todo", name="Flagged")
     status_predicate = f"status({entity_id}, operational, current)"
     cur = migrated_conn.execute(
         "INSERT INTO assertions (entity_id, claim, confidence, predicate_form, "
         "review_status, review_notes, entrenchment_score, created_at, updated_at) "
-        "VALUES (?, ?, 'believed', ?, 'flagged', 'predicate normalize: requires_human_review', "
+        "VALUES (?, ?, 'believed', ?, 'flagged', "
+        "'predicate normalize: class6_generic_state: requires_human_review', "
         "0.9, datetime('now'), datetime('now'))",
         (
             entity_id,
@@ -205,12 +206,10 @@ def test_ac4_flagged_current_status_excluded_from_fetch(
     migrated_conn.commit()
     flagged_id = int(cur.lastrowid or 0)
 
-    e_row = _fetch_current_status_row(migrated_conn, entity_id=entity_id)
-    assert e_row is None, (
-        f"flagged row {flagged_id} must not surface via _fetch_current_status_row"
-    )
-
-    main = _fetch_main_top_k(migrated_conn, entity_id=entity_id, top_k=7)
-    merged = _merge_current_status_slot(main, e_row, top_k=7)
-    assert e_row is None and merged == main
+    card = get_entity_card(migrated_conn, entity_id=entity_id, top_k=7)
+    current_status = card["current_status"]
+    assert current_status["served"] is None
+    withheld_ids = {entry["assertion_id"] for entry in current_status["withheld_newer"]}
+    assert flagged_id in withheld_ids
+    assert current_status["withheld_count"] >= 1
 

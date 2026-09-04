@@ -300,6 +300,7 @@ class SupersedeResponse(BaseModel):
     # Advisory auditor-validatability warnings — see check_confirmed_validatability().
     # Non-null only when confidence='confirmed' and one or more checks fire.
     validation_warnings: list[dict[str, str]] | None = None
+    predicate_form_normalize: PredicateFormNormalize | None = None
 
 
 class NearDuplicateWarning(BaseModel):
@@ -333,9 +334,9 @@ class ActionHint(BaseModel):
 class PredicateFormNormalize(BaseModel):
     """Result of v1.3 predicate_form normalize-on-write.
 
-    Surfaced on assertion create/update responses when the caller seeded a
-    ``predicate_form`` and the route ran ``normalize_predicate_domain`` over it.
-    The MCP dispatcher layer reads this field and emits
+    Surfaced on assertion create/update/supersede responses when the caller
+    seeded a ``predicate_form`` and the route ran ``normalize_predicate_domain``
+    over it. The MCP dispatcher layer reads this field and emits
     ``mcp.cortex.predicate.normalized`` (always) and
     ``mcp.cortex.predicate.review.required`` (when ``requires_human_review`` is
     True). cortex-api itself stays HTTP-only — no ``mcp_events`` dep — so the
@@ -350,6 +351,12 @@ class PredicateFormNormalize(BaseModel):
     classes_applied: list[int] = Field(default_factory=list)
     normalized: bool
     requires_human_review: bool
+    flag_reasons: list[str] = Field(default_factory=list)
+    normalization_decision: str | None = None
+    suppression_effect: str | None = None
+    next_remedy: str | None = Field(default=None, serialization_alias="_next")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class AssertionCreateResponse(BaseModel):
