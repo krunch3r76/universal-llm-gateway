@@ -25,7 +25,7 @@ _SCOREBOARDS_DIR = "notes/system/scoreboards"
 _WRITER_ID = "implement_admission.conductor_score_journal"
 _RECORD_SEP = "\n---\n"
 # G-ladder ids (G1–G7) or per-finding row ids (R1, R2, …) minted from acceptance_criteria.
-_SCOREBOARD_ROW_ID = r"(?:G[1-6]|R\d+)"
+_SCOREBOARD_ROW_ID = r"(?:G[1-7]|R\d+)"
 _CLOSED_ROW_RE = re.compile(
     rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|\s*DONE\b",
     re.IGNORECASE | re.MULTILINE,

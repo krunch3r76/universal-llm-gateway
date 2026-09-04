@@ -43,7 +43,7 @@ _PING_STOPS: frozenset[str] = frozenset(
 _STOP_CELL_RE = re.compile(
     r"\b(" + "|".join(re.escape(t) for t in STOP_TOKENS) + r")\b"
 )
-_G_ROW_RE = re.compile(r"^\|\s*(G[1-6])\s*\|", re.MULTILINE)
+_G_ROW_RE = re.compile(r"^\|\s*(G[1-7])\s*\|", re.MULTILINE)
 _FENCE_OPEN_RE = re.compile(r"^[ \t]*(?P<marker>`{3,}|~{3,})")
 _DESIGNED_STOP_LINE_RE = re.compile(
     r"(?im)^[ \t]*(?:>\s+|[-*+]\s+)?"
@@ -59,7 +59,7 @@ _DESIGNED_STOP_DOC_RE = re.compile(
 )
 DESIGNED_STOP_MISSING = "designed_stop_missing"
 _RESUME_ROW_RE = re.compile(
-    r"(?im)^(?:resume_at|entry_gate|persisted_row):\s*(G[1-6])\b"
+    r"(?im)^(?:resume_at|entry_gate|persisted_row):\s*(G[1-7])\b"
 )
 _MODE_B_ADMIT_RE = re.compile(
     r"(?im)(execution_id:\s*\S+|poll_hint:\s*\S+|status:\s*blocked|honest\s+halt|"
@@ -73,6 +73,8 @@ _ARCHIVE_OR_HARVEST_RE = re.compile(
     r"(?im)(archive_uri:\s*\S+|from:\s*web-anthropic|from_agent:\s*web-anthropic)"
 )
 _NEXT_ADMIT_RE = re.compile(r"(?im)\bNEXT_ADMIT\b")
+_NEXT_ADMIT_NONE_RE = re.compile(r"(?im)^NEXT_ADMIT\s*:\s*none\b")
+_NEXT_ADMIT_HARVEST_RE = re.compile(r"(?im)^NEXT_ADMIT\s*:\s*(?!none\b)\S+")
 _SCORE_RATIFY_MARKERS = (
     "do-not-fight",
     "do not fight",
@@ -282,6 +284,14 @@ def is_consult_pending_wait(body: str) -> bool:
 def has_consult_handoff(body: str) -> bool:
     """True when a CONSULT_PENDING wrapper named the next admit (NEXT_ADMIT)."""
     return _NEXT_ADMIT_RE.search(body or "") is not None
+
+
+def next_admit_names_harvest(body: str) -> bool:
+    """True on NEXT_ADMIT naming a non-none harvest target; False on none or absent."""
+    text = body or ""
+    if _NEXT_ADMIT_NONE_RE.search(text):
+        return False
+    return _NEXT_ADMIT_HARVEST_RE.search(text) is not None
 
 
 def resume_row_from_closeout(body: str, *, default: str = "G1") -> str:

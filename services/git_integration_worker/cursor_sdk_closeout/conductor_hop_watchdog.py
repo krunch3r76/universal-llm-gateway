@@ -27,17 +27,21 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget im
     evaluate_hop_budget,
     park_conductor_hop_mission,
 )
+from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+    maybe_fire_conductor_park_harvest,
+    park_harvest_owed,
+)
 from services.git_integration_worker.cursor_sdk_hop_events import (
     emit_frontier_sdk_conductor_hop_admit_failed,
     emit_frontier_sdk_conductor_hop_admitted,
     emit_frontier_sdk_conductor_hop_watchdog_fired,
 )
 from services.git_integration_worker.cursor_sdk_ledger_hop import (
-    hop_fields_from_record_json,
     merge_hop_patch,
 )
 from services.git_integration_worker.cursor_sdk_park import (
     conductor_hop_watchdog_candidates,
+    conductor_park_harvest_watchdog_candidates,
 )
 
 logger = get_logger(__name__)
@@ -119,11 +123,13 @@ async def _stamp_admit_outcome(
 
 
 async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
-    """Retry one owed hop after reactor grace (bind §5)."""
+    """Retry one owed hop or park-harvest after reactor grace (bind §5)."""
     row = _load_row(dispatch_id)
     if row is None or not _is_conductor_row(row):
         return False
     closeout_tokens = _closeout_tokens_from_row(row)
+    if park_harvest_owed(row, closeout_tokens=closeout_tokens):
+        return await maybe_fire_conductor_park_harvest(dispatch_id=dispatch_id)
     verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
     if verdict.park and verdict.reason:
         await park_conductor_hop_mission(row, reason=verdict.reason)
@@ -150,7 +156,11 @@ async def sweep_conductor_hop_watchdog(
 ) -> int:
     """One watchdog pass inside ``reconcile_stale_leases``; return admit count."""
     ledger = ledger or CursorDispatchLedger.instance()
-    candidates = await asyncio.to_thread(conductor_hop_watchdog_candidates, ledger)
+    hop_candidates = await asyncio.to_thread(conductor_hop_watchdog_candidates, ledger)
+    park_candidates = await asyncio.to_thread(
+        conductor_park_harvest_watchdog_candidates, ledger
+    )
+    candidates = list(dict.fromkeys([*park_candidates, *hop_candidates]))
     fired = 0
     for dispatch_id in candidates:
         try:

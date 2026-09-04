@@ -131,6 +131,26 @@ def FrontierSdkConductorHopSkipped(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkConductorHopParkHarvest(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    summoning_thread_id: str,
+    hop_seq: int,
+) -> Event:
+    """Terminal park-harvest classification — harvest still owed after exit-persist."""
+    return Event(
+        signal="frontier.sdk.conductor.hop.park_harvest",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "summoning_thread_id": summoning_thread_id,
+            "hop_seq": hop_seq,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkConductorHopWatchdogFired(  # noqa: N802
     last_dispatch_id: str,
     thread_id: str,
@@ -248,6 +268,24 @@ def emit_frontier_sdk_conductor_hop_skipped(
             thread_id=thread_id,
             hop_seq=hop_seq,
             gate=gate,
+        )
+    )
+
+
+def emit_frontier_sdk_conductor_hop_park_harvest(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    summoning_thread_id: str,
+    hop_seq: int,
+) -> None:
+    """Publish park-harvest classification at terminal (not reply arrival)."""
+    emit_frontier_event(
+        FrontierSdkConductorHopParkHarvest(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            summoning_thread_id=summoning_thread_id,
+            hop_seq=hop_seq,
         )
     )
 

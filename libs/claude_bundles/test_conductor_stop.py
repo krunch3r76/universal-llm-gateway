@@ -19,6 +19,7 @@ from claude_bundles.conductor_stop import (
     is_consult_pending_wait,
     is_exit_persist_stop,
     is_g1_pin,
+    next_admit_names_harvest,
     parse_designed_stop_tokens,
     parse_stop_tokens,
     pings_for_stops,
@@ -409,3 +410,26 @@ def test_validate_conductor_closeout_requires_designed_footer_on_conductor() -> 
     verdict = validate_conductor_closeout(body, packet_text=_CONDUCTOR_PACKET)
     assert not verdict.ok
     assert verdict.reason == DESIGNED_STOP_MISSING
+
+
+def test_next_admit_none_is_not_harvest_owed() -> None:
+    body = (
+        "CONSULT_PENDING\nexecution_id: exec-abc\npoll_hint: wait\nNEXT_ADMIT: none"
+    )
+    assert has_consult_handoff(body)
+    assert not next_admit_names_harvest(body)
+
+
+def test_next_admit_harvest_g1_is_harvest_owed() -> None:
+    body = (
+        "CONSULT_PENDING\nexecution_id: exec-abc\npoll_hint: wait\n"
+        "NEXT_ADMIT: harvest G1"
+    )
+    assert has_consult_handoff(body)
+    assert next_admit_names_harvest(body)
+
+
+def test_next_admit_presence_without_value_not_harvest() -> None:
+    body = "CONSULT_PENDING\nexecution_id: exec-abc\npoll_hint: wait\nNEXT_ADMIT"
+    assert has_consult_handoff(body)
+    assert not next_admit_names_harvest(body)

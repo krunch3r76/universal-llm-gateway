@@ -29,10 +29,10 @@ from services.git_integration_worker.cursor_sdk_gate import (
     transfer_sdk_dispatch_slot,
     transfer_sdk_dispatch_slot_sync,
 )
-from services.git_integration_worker.cursor_sdk_restart_orphan import load_ledger_row
 from services.git_integration_worker.cursor_sdk_ledger_hop import (
     hop_fields_from_record_json,
 )
+from services.git_integration_worker.cursor_sdk_restart_orphan import load_ledger_row
 
 logger = get_logger(__name__)
 
@@ -320,6 +320,42 @@ def conductor_hop_watchdog_candidates(
                 candidates.append(dispatch_id)
                 continue
             if hop_owed(mapped, closeout_tokens=closeout_tokens):
+                candidates.append(dispatch_id)
+    return candidates
+
+
+def conductor_park_harvest_watchdog_candidates(
+    ledger: CursorDispatchLedger,
+    *,
+    grace_s: float | None = None,
+    now: float | None = None,
+) -> list[str]:
+    """Terminal conductor rows past grace with park_harvest still owed and unstamped."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _closeout_tokens_from_row,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        load_hop_budget_config,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        park_harvest_owed,
+    )
+
+    cfg = load_hop_budget_config()
+    grace = grace_s if grace_s is not None else cfg.reactor_grace_s
+    now_ts = now if now is not None else datetime.now(UTC).timestamp()
+    candidates: list[str] = []
+    with ledger._connect() as conn:
+        for row in _latest_terminal_conductor_rows(conn):
+            mapped = {k: row[k] for k in row.keys()}
+            dispatch_id = str(mapped.get("dispatch_id") or "")
+            if not dispatch_id:
+                continue
+            terminal_ts = _terminal_epoch(mapped)
+            if terminal_ts is None or (now_ts - terminal_ts) < grace:
+                continue
+            closeout_tokens = _closeout_tokens_from_row(mapped)
+            if park_harvest_owed(mapped, closeout_tokens=closeout_tokens):
                 candidates.append(dispatch_id)
     return candidates
 
