@@ -18,6 +18,7 @@ from claude_bundles.conductor_stop import (
     is_consult_pending_wait,
     is_exit_persist_stop,
     is_g1_pin,
+    parse_designed_stop_tokens,
     parse_stop_tokens,
     pings_for_stops,
     resume_row_from_closeout,
@@ -324,3 +325,34 @@ def test_json_execution_id_is_mode_b_proof() -> None:
     assert is_consult_pending_wait(body)
     verdict = validate_conductor_closeout(body, require_mode_b_proof=True)
     assert verdict.ok
+
+
+_GROW_DONE_ROW_HOP_CLOSEOUT = """\
+| G1 | Architecture / recon | DONE |
+| G2 | Frame | DONE |
+status: complete
+stop: ROW_HOP
+hop_seq: 1
+"""
+
+
+def test_parse_designed_stop_tokens_excludes_grow_done_prose() -> None:
+    parsed = parse_designed_stop_tokens(_GROW_DONE_ROW_HOP_CLOSEOUT)
+    assert parsed.tokens == frozenset({"ROW_HOP"})
+    assert parsed.designed_tokens == frozenset({"ROW_HOP"})
+    assert "DONE" not in parsed.tokens
+    full = parse_stop_tokens(_GROW_DONE_ROW_HOP_CLOSEOUT)
+    assert "DONE" in full.tokens
+
+
+def test_parse_designed_stop_tokens_footer_done_closes_mission() -> None:
+    body = "| G1 | Architecture / recon | DONE |\nstop: DONE"
+    parsed = parse_designed_stop_tokens(body)
+    assert parsed.tokens == frozenset({"DONE"})
+
+
+def test_parse_stop_tokens_scoreboard_row_pinned_unchanged() -> None:
+    body = "| G3 | Densify | OPEN | ROW_PINNED |"
+    parsed = parse_stop_tokens(body)
+    assert "ROW_PINNED" in parsed.tokens
+    assert parsed.rows.get("G3") == frozenset({"ROW_PINNED"})

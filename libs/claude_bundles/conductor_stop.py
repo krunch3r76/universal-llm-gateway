@@ -44,6 +44,11 @@ _STOP_CELL_RE = re.compile(
     r"\b(" + "|".join(re.escape(t) for t in STOP_TOKENS) + r")\b"
 )
 _G_ROW_RE = re.compile(r"^\|\s*(G[1-6])\s*\|", re.MULTILINE)
+_DESIGNED_STOP_LINE_RE = re.compile(
+    r"(?im)^(?:\*\*)?stop(?:\*\*)?:\s*("
+    + "|".join(re.escape(t) for t in STOP_TOKENS)
+    + r")\b"
+)
 _RESUME_ROW_RE = re.compile(
     r"(?im)^(?:resume_at|entry_gate|persisted_row):\s*(G[1-6])\b"
 )
@@ -83,6 +88,7 @@ class StopParseResult:
     tokens: frozenset[str]
     rows: dict[str, frozenset[str]]
     malformed: tuple[str, ...]
+    designed_tokens: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +142,32 @@ def parse_stop_tokens(text: str) -> StopParseResult:
         tokens=frozenset(tokens),
         rows={k: frozenset(v) for k, v in rows.items()},
         malformed=tuple(malformed),
+    )
+
+
+def parse_designed_stop_tokens(text: str) -> StopParseResult:
+    """Extract mission-close tokens only from explicit ``stop:`` footer lines.
+
+    G-row progress prose (e.g. ``| G1 | … | DONE |``) is excluded from
+    ``tokens`` / ``designed_tokens`` so ``ROW_HOP`` closeouts do not bleed
+    table-cell ``DONE`` into mission-close authority. Row-level stops still
+    come from the full table scan via ``rows``.
+    """
+    designed: set[str] = set()
+    malformed: list[str] = []
+    for match in _DESIGNED_STOP_LINE_RE.finditer(text or ""):
+        token = match.group(1).upper()
+        if token in STOP_TOKENS:
+            designed.add(token)
+        else:
+            malformed.append(token)
+    full = parse_stop_tokens(text)
+    designed_frozen = frozenset(designed)
+    return StopParseResult(
+        tokens=designed_frozen,
+        rows=full.rows,
+        malformed=tuple(malformed),
+        designed_tokens=designed_frozen,
     )
 
 

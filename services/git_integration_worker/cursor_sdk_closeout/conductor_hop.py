@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 from claude_bundles.conductor_stop import (
     EXIT_PERSIST_STOPS,
-    parse_stop_tokens,
+    parse_designed_stop_tokens,
 )
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
@@ -305,8 +305,8 @@ def merge_conductor_closeout_hop_authority(
     thread_id: str,
 ) -> None:
     """Merge ``hop_declared`` and closeout tokens before ``mark_terminal``."""
-    parsed = parse_stop_tokens(closeout_body)
-    tokens = parsed.tokens
+    parsed = parse_designed_stop_tokens(closeout_body)
+    tokens = parsed.designed_tokens or parsed.tokens
     row = _load_row(dispatch_id)
     if row is None or not _is_conductor_row(row):
         return
