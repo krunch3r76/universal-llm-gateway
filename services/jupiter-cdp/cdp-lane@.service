@@ -1,0 +1,14 @@
+[Unit]
+Description=Jupiter CDP Chrome lane %i
+After=network-online.target
+PartOf=jupiter-cdp.target
+
+[Service]
+Type=notify
+StartLimitIntervalSec=0
+ExecStart=%h/.local/bin/cdp-lane-launch %i
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=jupiter-cdp.target

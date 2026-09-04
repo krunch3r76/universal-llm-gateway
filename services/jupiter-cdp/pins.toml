@@ -1,0 +1,39 @@
+[lanes.fleet]
+port = 9222
+display = ":2"
+profile = "~/.gateway/claude-ai-chrome-profile"
+standing = true
+lapsed_url_prefixes = []
+extra_args = []
+
+[lanes.messages]
+port = 9250
+display = ":3"
+profile = "~/sms-bridge/profiles/messages-web"
+standing = true
+lapsed_url_prefixes = ["/web/welcome", "/web/authentication"]
+extra_args = []
+
+[lanes.ess]
+port = 9260
+display = ":3"
+profile = "~/sms-bridge/profiles/ess-walgreens"
+standing = true
+lapsed_url_prefixes = []
+extra_args = []
+
+[lanes.gopuff]
+port = 9270
+display = ":3"
+profile = "~/sms-bridge/profiles/gopuff"
+standing = false
+lapsed_url_prefixes = []
+extra_args = ["--ozone-platform=x11", "--disable-background-timer-throttling", "https://www.gopuff.com/"]
+
+[lanes.uber]
+port = 9280
+display = ":3"
+profile = "~/sms-bridge/profiles/uber-web"
+standing = false
+lapsed_url_prefixes = []
+extra_args = ["--ozone-platform=x11", "--disable-background-timer-throttling", "https://auth.uber.com/v2/"]

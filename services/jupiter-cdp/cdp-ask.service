@@ -1,0 +1,13 @@
+[Unit]
+Description=Jupiter cdp-ask satellite (manage env replay)
+
+[Service]
+Type=forking
+PIDFile=%h/.gateway/cdp-ask.pid
+EnvironmentFile=%h/.gateway/cdp-ask.env
+ExecStart=%h/.local/bin/cdp-ask-start
+Restart=no
+RefuseManualStop=yes
+
+[Install]
+WantedBy=jupiter-cdp.target

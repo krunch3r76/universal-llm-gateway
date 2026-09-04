@@ -61,7 +61,7 @@ REMOTE_REPO="/mnt/torus/projects/universal-llm-gateway"
 PY='~/.venvs/universal/bin/python'
 
 # CDP Chrome display: CDP_DISPLAY > DISPLAY > :2 (match cdp_lane.cdp_display).
-# Standing default is Jupiter Xvfb :2 (scripts.local/jupiter-cdp-xvfb).
+# Standing default is Xvfb :2 (jupiter-cdp-xvfb@2.service).
 _XVFB_ENV="${HOME}/.gateway/cdp-xvfb/env"
 _XVFB_AUTH="${HOME}/.gateway/cdp-xvfb/Xauthority"
 # shellcheck disable=SC1090

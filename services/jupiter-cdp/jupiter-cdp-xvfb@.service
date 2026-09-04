@@ -1,0 +1,17 @@
+[Unit]
+Description=Jupiter CDP Xvfb display %I
+After=network-online.target
+PartOf=jupiter-cdp.target
+
+[Service]
+Type=simple
+StartLimitIntervalSec=0
+ExecStartPre=/bin/sh -c 'mkdir -p %h/.gateway/cdp-xvfb/%I && touch %h/.gateway/cdp-xvfb/%I/Xauthority && chmod 600 %h/.gateway/cdp-xvfb/%I/Xauthority && xauth -f %h/.gateway/cdp-xvfb/%I/Xauthority add :%I . $(mcookie)'
+ExecStart=/usr/bin/Xvfb :%I -auth %h/.gateway/cdp-xvfb/%I/Xauthority -screen 0 1920x1080x24 -nolisten tcp -maxclients 64 +extension GLX -noreset
+ExecStartPost=/bin/sh -c 'until XAUTHORITY=%h/.gateway/cdp-xvfb/%I/Xauthority xdpyinfo -display :%I >/dev/null 2>&1; do sleep 0.2; done'
+Environment=XAUTHORITY=%h/.gateway/cdp-xvfb/%I/Xauthority
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=jupiter-cdp.target

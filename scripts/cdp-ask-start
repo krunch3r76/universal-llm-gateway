@@ -1,0 +1,25 @@
+#!/bin/sh
+# Start cdp-ask for systemd Type=forking (sources manage-written env file).
+set -eu
+
+ENV_FILE="${HOME}/.gateway/cdp-ask.env"
+if [ ! -f "$ENV_FILE" ]; then
+  echo "missing $ENV_FILE" >&2
+  exit 1
+fi
+# shellcheck disable=SC1090
+. "$ENV_FILE"
+
+REPO="${ULG_REPO:?ULG_REPO required in cdp-ask.env}"
+PORT="${PORT:-8770}"
+mkdir -p /tmp/logs/cdp-ask "${HOME}/.gateway"
+
+setsid env \
+  CORTEX_FILES_ROOT="${CORTEX_FILES_ROOT:?}" \
+  EVENTS_INGEST_TCP="${EVENTS_INGEST_TCP:?}" \
+  ULG_CODE_VERSION="${ULG_CODE_VERSION:-}" \
+  ULG_REPO="$REPO" \
+  "$HOME/.venvs/universal/bin/python" "$REPO/scripts/cdp-ask" --port "$PORT" \
+  </dev/null >/tmp/logs/cdp-ask/start.log 2>&1 &
+
+echo $! > "${HOME}/.gateway/cdp-ask.pid"
