@@ -69,12 +69,15 @@ Operator direction ≠ hop recipe. Anticipate harvested score / `NEXT_ADMIT: non
 spawn-stale materialize / in-flight orphan; choose the next useful move. Inform;
 do not wait for a rewritten recipe.
 
-**Attended in-flight (binding — operator 2026-09-01):** After admit, suggest cheap
-background polling when the wait is event-gated so the human can leave the chat.
-Arm unless costly, already armed, or named decline. Cheap = watcher on worker
-terminal / `SCORE_RESURFACE` / `poll_hint` + lean heartbeat (`loop` skill local
-event path). Costly = short-cadence full-agent `/loop`, or holding this turn.
-Complements a:31104. ¬ a:31024 always-on liaison.
+**Attended in-flight (binding — operator 2026-09-01; audience split 2026-09-04):**
+After admit, when the wait is event-gated, arm a cheap wake and exit — unless
+costly, already armed, or named decline. SoT: `runbook:bus-consult-watcher`.
+**This seat** wakes via IDE terminal / Shell + `notify_on_output` (`--no-page`).
+**Human** out-of-IDE SMS uses optional tmux pane in session `0` **with** page —
+¬ tmux for agent self-arming. Cheap = that watcher / `SCORE_RESURFACE` /
+`poll_hint` + lean heartbeat (`loop` skill local event path). Costly =
+short-cadence full-agent `/loop`, or holding this turn. Complements a:31104.
+¬ a:31024 always-on liaison.
 
 **Decide-before-admit:** Use the `reasoning-posture` skill — pin Question / OOS /
 detent. Question is whether the leftover score is still the remit. Resident
@@ -224,17 +227,22 @@ per-G-row one. Default posture once running:
   G-row starts — zero files touched, nothing nested — is the same violation
   as skipping straight to a merge ask (refuse-and-close, incident 7419;
   distinct from absorb, incident 7407, which hand-codes instead of nesting).
-- **After-ship `cdp/opus-5` session/work review is recommended, not a hold.**
-  On green land, fire `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")` in
-  the background (`consult-routing` § CDP transport). Latency is not a skip
-  on this seat. Defer only when the harvest would block the next *attended*
-  move — and name the deferral. Does not replace path-sim R-after (Grok).
-  **Scoreboard default:** Mission Composer comments this overlay on the
-  scoreboard at mint (Sidecars / WIP — **¬** a gated G-row; done-claim must
-  not wait on it). Template: `cortex://notes/system/templates/charter-scoreboard.md`.
-  **Reader (BINDING):** `fired(overlay) ⇒ reader = summoning-thread lead at harvest`.
-  `¬wait(latency) ≠ ¬read`. Harvest MUST quote overlay `read_sha256` ∨ name why unread.
-  A check with no reader is not an independent check (dogfood 9655 / assertion 30663).
+- **After-ship `cdp/opus-5` code review (a:32146) is a stronger-model gate, not
+  a background nicety.** On codework that claims land / cert / terminal `DONE`:
+  **review harvest ≺ land ≺ DONE** (dogfood 10013 / a:32221–32222; 9638 hop3 /
+  a:32226). Fire `team_dispatch(model=cdp/opus-5, purpose=review, …)` and
+  **harvest a real verdict body** before those claims. Latency while CDP is
+  healthy is not a skip — poll / hop+watcher / `PARKED_TRANSPORT` until harvest.
+  CDP down or stall (`Chrome on :9225 did not reach CDP`, empty body,
+  `stall_stage=mark_terminal`) ≡ **no harvest** ≡ **HARD STOP** — restore the
+  ask lane or explicit operator rebind; ¬ label DEFERRED/transport-debt and
+  continue; ¬ Composer/self substitute. Optional Sidecar overlays that the
+  scoreboard marks non-blocking remain commentary only — they do not replace
+  the gated after-ship picker. Does not replace path-sim R-after (Grok).
+  **Reader (BINDING):** `fired(gate) ⇒ reader = summoning-thread lead at harvest`.
+  `¬wait(latency) ≠ ¬read`. Harvest MUST quote overlay `read_sha256` ∨ name why
+  unread. A check with no reader is not an independent check (dogfood 9655 /
+  assertion 30663).
 
 ## When
 
@@ -326,10 +334,12 @@ Required in `<scope>` / `<invariants>`:
   specific hold-merge exception in this same list
 - **Bound conductor model + effort** (or "lead picks at admit from tier table")
 - **G-row contract honesty** — do not mark a G-row light-bounded-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
-- **Scoreboard overlay (good default)** — after the last landed code G-row,
-  comment `cdp/opus-5` `purpose=review` `reasoning_effort="high"` of the landed diff as recommended
-  background review. Record fire or named deferral in Sidecars / WIP.
-  **¬** mint it as a gated G-row (done-claim must not wait on it).
+- **Scoreboard G6/G7 (binding)** — **`review harvest ≺ land ≺ DONE`**. After G5
+  implement, **G6** = `cdp/opus-5` `purpose=review` `reasoning_effort="high"` on
+  the **lane branch diff** (sidecar **R1**). **G7** = merge/land (sidecar **L1**).
+  Witness fold must clear G6 before G7; terminal DONE requires both. **¬**
+  land-then-background-review; **¬** terminal DONE without R1 harvest
+  (`a:32146` · `a:32226`).
 
 Continuity sidecar during run: `cortex://notes/system/threads/{root}-conductor.md`
 (G-row table, nested `execution_id`s, `NEXT_ADMIT`, judgment calls) — same shape
@@ -392,7 +402,10 @@ is open → 409.
     `derived_from` → next row. Honest wrapper is `partial:consult` +
     `NEXT_ADMIT`, never `gate_d` / `work`.
   - **Exit-and-persist:** `ROW_PINNED` · `HOLD_MERGE` · `OPERATOR_GATE` ·
-    `PARKED_TRANSPORT` — persist, then exit. `ROW_PINNED` after honest
+    `PARKED_TRANSPORT` — persist, then exit. These stop **progression past the
+    unpaid gate** (no nest of later G-rows, no land, no terminal `DONE` while
+    the owed stronger-model harvest is missing). `PARKED_TRANSPORT` is not
+    “park the gate as debt and keep driving.” `ROW_PINNED` after honest
     `SCORE_RESURFACE` on the summoning thread is `partial:consult`, not work
     failure.
   - **Exit-and-continue:** `ROW_HOP` — persist (journal → CHECKPOINT), then
@@ -405,6 +418,23 @@ is open → 409.
   turn; chrome-only continues wait (bounded under remaining wall).
 - G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).
   Explicit see-score → `ROW_PINNED` + ping.
+- **Stronger-model gates (a:32146 · a:32226):** Conductor **MUST break** (halt /
+  refuse nest of the next gated G-row · refuse land · refuse terminal `DONE`)
+  without the owed stronger-model **harvest**. Two pickers, not one:
+  **G4 Skeptic** (pre-implement, on the G3 **spec**) = `cdp/fable` (high/max);
+  **after-ship code review** (post-implement, on the **lane branch**, before land) = `cdp/opus-5`
+  (xhigh/Extra). Skeptic ≠ code review. Composer cannot self-certify either.
+  Same-family effort bumps are **not** the gate.
+  **Transport failure ≡ missing harvest (BINDING):** `cdp-ask` down · Chrome
+  CDP listen timeout · empty/FAILED bus body · `stall_stage=mark_terminal` ·
+  unreaped CSE ⇒ treat as **no harvest**. Required act: `PARKED_TRANSPORT` or
+  `OPERATOR_GATE` (scoreboard gate row stays OPEN) and **stop progression past
+  that gate**. Forbidden: stamp DEFERRED / “cert unpaid — CDP” / “transport debt”
+  and still nest G5, land, or claim DONE; silent seat swap to Cursor/Composer;
+  land-then-background-review. Resume only after (1) CDP restored **and** the
+  owed picker harvests a quotable verdict URI, or (2) the operator **explicitly**
+  rebinds that gate’s seat (e.g. Cursor skeptic) — inform-then-proceed, never
+  silent. Liaison / IDE stand-in enforces the same stop (9638 hop3; 10013).
 - Attended IDE spawn: resurface the score in the summoning chat at G3→G5 unless
   the summon named confer-and-finish.
 - `cursor-auto` / no live summoning chat = confer-and-finish (Q2 unchanged).
@@ -642,7 +672,9 @@ Command `/conductor` (plugin): orient → ask establishing questions (incl. **mo
 tier**; checkout regime pre-filled **Lane B**, confirm or override to Lane A) →
 draft charter/scoreboard/packet → confirm → admit. Skill body does not re-ask
 when the operator already bound the answers in chat. Scoreboard mint includes
-the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
+stronger-model gates (a:32146 · a:32226): G4 Skeptic = `cdp/fable`; after-ship
+code review = `cdp/opus-5` — hard, ¬ optional, ¬ Composer self-cert; CDP
+transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed).
 
 ## Composes with
 
@@ -688,7 +720,10 @@ the after-ship `cdp/opus-5` review comment (good default; ¬ a G-row).
 | Independent `team_dispatch` (no `nest_under`) for mechanical G-row landing work | `nest_under=<conductor dispatch_id>` + Composer `contract=implement` — independent dispatch is judgment/spec-only |
 | Nest 422 then in-seat G5 absorb | `PARKED_TRANSPORT` + persist; fix wire and re-nest under live `dispatch_id` |
 | Close G5 because G4 said “remainder is mechanical” + empty-template green | Hang G5; read the overlay or seed a fixture — G4 withhold is not a G5 witness |
-| Fire after-ship `cdp/opus-5` review and never read it | Summoning-thread lead quotes the overlay sidecar at harvest, or names why unread |
+| Fire Opus after-ship / Fable Skeptic and never read it | Summoning-thread lead quotes the harvest; unread ⇒ ¬ DONE |
+| Terminal `DONE` / land / nest G5 after Composer work with cdp-ask down / CDP stall / empty FAILED body / no owed stronger-model harvest | **HARD STOP** — restore CDP + harvest, or operator-explicit seat rebind; ¬ DEFERRED-and-proceed; ¬ land-then-background-review; ¬ Cursor/Composer silent substitute (a:32146 · a:32226 · 9638 hop3 · 10013) |
+| Stamp G4 / after-ship `DEFERRED (transport)` and keep driving later G-rows | Same break — transport fail ≡ no harvest ≡ stop past that gate |
+| Treat G4 Skeptic as code review (or collapse both onto one picker) | Skeptic = Fable on spec; code review = Opus on the lane branch diff, before land (G6) |
 | Treat named hop / `packet_kind=conductor` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |
 | Land then stay silent on recycle (or write LAND-LIVE as only “not live”) | Prompt go-live for each serving process, or announce skip in the same turn; LAND-LIVE names the skipped recycle |
 | Land a named `todo:` and leave the card `open` | Stamp `todo-close` / LANDED on that entity in the same turn |

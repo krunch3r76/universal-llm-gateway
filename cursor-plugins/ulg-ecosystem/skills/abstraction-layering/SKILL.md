@@ -1,6 +1,6 @@
 ---
 name: abstraction-layering
-description: "Codework G1–G6 layer contract. Conductor owns execution after S4a spawn; /layer is gate-shape reference. Use on codebase changes."
+description: "Codework G1–G7 layer contract. Conductor owns execution after S4a spawn; /layer is gate-shape reference. Use on codebase changes."
 lifecycle: active
 trigger_match_terms:
   - abstraction-layering
@@ -30,7 +30,7 @@ related_skills:
 
 # Abstraction Layering
 
-**Codework idea→shipped.** G1–G6 **layer contract**
+**Codework idea→shipped.** G1–G7 **layer contract**
 (`decision:abstraction-layering`). Path-sim is the non-codework / fat-packet
 lane — not a peer chooser on a live `todo:`. This contract **layers** seats and
 inherits ratification downward.
@@ -38,7 +38,7 @@ inherits ratification downward.
 Lane brand = **layering**. The G3 stage token remains **`densify`**.
 `/layer` is a **gate-shape wrapper**, not the front door. First commissioned
 utterance: `work-item-seed-path` S4a → spawn `packet_kind=conductor`. The
-conductor drives G1–G6. Fable defaults:
+conductor drives G1–G7. Fable defaults:
 `work-item-seed-path` § When Fable defaults. Bind: `layer-conductor-unify` §3.1.
 
 **Conductor unify (2026-08):** IDE `/layer` on a live `todo:` is **superseded**.
@@ -48,16 +48,15 @@ Execution lives on conductor CHECKPOINTs, score journal, and nested Composer G5.
 
 `∀ layering:` high abstraction → low concreteness; inherit binds above; ¬ re-reason
 closed layers. `Fable CDP → Fable followup frame (or Opus if G1 was not Fable) →
-Grok densify → optional explicit Other Models check → Composer → verify`.
-No standing path-sim R-windows. G6 = mechanical verify. After-ship
-`cdp/opus-5` session/work review is **optional, recommended** (§ After-ship)
-— not a G-row and not silent Terra G4. Keep path-sim Q≠R.
+Grok densify → optional explicit Other Models check → Composer → pre-land review → ship`.
+No standing path-sim R-windows. **G6** = binding pre-land `cdp/opus-5` review (§ Pre-land
+CDP Opus review); **G7** = ship/land + mechanical verify. Keep path-sim Q≠R.
 
 ## When
 
 | Condition | Entry |
 |---|---|
-| Codebase change (DIRECTIVE, friction, charter) | Highest open G1–G6 **on the conductor** |
+| Codebase change (DIRECTIVE, friction, charter) | Highest open G1–G7 **on the conductor** |
 | No closable todo yet | `work-item-seed-path` **S4a** → spawn · ¬ `/layer` first |
 | **G1 skip (graph)** — active structural `derived_from` from the work item → a `document:` with `consult_kind=architecture` whose `source_uri` resolves | **G2** (mark G1 `[x]` with that URI) |
 | Architecture rival live (detent ≥ wide) ∧ ¬ G1 skip | G1 |
@@ -96,7 +95,7 @@ they are **not** the skip signal.
 On `judgment_required` or pillar-touching codework, compose dense specs and closeouts with
 the foundation MAP + a `VISION-ALIGN` footer. Grammar, corpus rule, note rule, and
 surface-glob table: **`cortex://notes/system/specs/vision-align-grammar.md`**. G3 emits
-the block into the dense spec; G6 checks presence + served-membership (§ Gates). Path-sim
+the block into the dense spec; G7 checks presence + served-membership (§ Gates). Path-sim
 owns R-admit machinery only — codework does not route through path-sim process body.
 
 ## Entry
@@ -105,11 +104,11 @@ owns R-admit machinery only — codework does not route through path-sim process
 |---|---|
 | Cursor IDE | S4a then spawn conductor · `/layer` = gate-shape reference |
 | Dispatch / charter / cursor-auto | `Use the abstraction-layering skill` |
-| Charter tick | G1–G6 CHECKPOINT (L3 `tick-enrollment-annex.md`) |
+| Charter tick | G1–G7 CHECKPOINT (L3 `tick-enrollment-annex.md`) |
 
 `layer todo:{slug}` · `layer friction {id}` · `layer=architecture|frame|densify|check|implement`
 
-## Arc (G1–G6)
+## Arc (G1–G7)
 
 Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps.
 
@@ -120,7 +119,8 @@ Tick recognizes `[GR]\d+` only — layer names never replace G-ordinals in Steps
 | 3 | Densify | `cursor/grok-4.6` @ `effort=xhigh` | `[judgment]` | `specs/{slug}.md` + Gate-2 |
 | 4 | Check | **Explicit Other Models pin only** (e.g. Terra). Default **skip** (G3→G5). `cursor/claude-fable-5{,-1}` blocked (cost). | `[judgment]` | check sidecar |
 | 5 | Implement | `cursor/composer-2.5` | `[implement]` | code + quality gate |
-| 6 | Verify | inline | `[inline]` | ACs, docstrings, close |
+| 6 | Pre-land review | `cdp/opus-5` `purpose=review` on lane branch diff | `[judgment]` | R1 sidecar |
+| 7 | Verify + ship | inline + land | `[inline]` | ACs, docstrings, close, L1 |
 
 ### G1 / G2 architecture skill floor (BINDING — pre-densify)
 
@@ -158,7 +158,7 @@ When G4 is pinned, it owes **family** diversity from G3 Densify
 family diversity is already G1 Fable vs G3 Grok. ``LAYER_G4_SEAT`` is the model
 **when** G4 is named, not a silent fire. Unpinned admission source: ``g4_unpinned``.
 Dropping silent Terra G4 loses a **third-family spec check** (OpenAI vs Grok G3),
-not session/code-change review — that slot is the after-ship overlay below.
+not session/code-change review — that slot is **G6 pre-land review** (§ Pre-land CDP Opus review).
 
 Web corpus: `cortex://` only.
 
@@ -237,7 +237,8 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
 4. **G4** — optional explicit Other Models check (Terra if named). Default **skip**.
    When run: fold amendments + refresh `spec_sha256`.
 5. **G5** — Composer `contract=implement`, `source_ref=todo:{slug}`.
-6. **G6** — mechanical: gates · `files_expected` · ACs · docstrings · `friction_close` · `implement-todo` §5.
+6. **G6** — pre-land: `cdp/opus-5` `purpose=review` on lane branch diff; R1 sidecar.
+7. **G7** — mechanical: gates · `files_expected` · ACs · docstrings · `friction_close` · `implement-todo` §5 · land (L1).
    **VISION-ALIGN check:** when trigger fires (`density_triage = judgment_required` ∨
    `files_expected ∩ surface-glob-table ≠ ∅`), verify `(block present in dense spec) ∧
    (pillar ∈ served pillars[].id ∪ {thesis, n/a-with-reason})`. Fail ⇒ no close, reopen G3.
@@ -250,7 +251,7 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
    — contract: `friction-review` § Pass zoom-out duty → same-class vs other-class.
    Fail ⇒ no close, reopen highest open gate.
 
-**Mechanical leg:** G5+G6 when no gate above open. **Escalate** (re-enter highest gate):
+**Mechanical leg:** G5+G6+G7 when no gate above open. **Escalate** (re-enter highest gate):
 architecture re-opens · ≥2 rivals · invariant/cross-agent · failure ≥2×.
 
 ## Auto-advance
@@ -263,30 +264,28 @@ architecture re-opens · ≥2 rivals · invariant/cross-agent · failure ≥2×.
 | G3→4 | Gate-2 close **and** operator/packet names G4 / Other Models |
 | G4→5 | check done · preflight admitted |
 | G5→6 | implement ∩ `files_expected` |
-| G6→✓ | gates green · AC ledger |
+| G6→7 | R1 review harvest on lane branch diff |
+| G7→✓ | gates green · AC ledger · L1 land |
 
 G1→2 is **advise-only** — judgment content, no validator (`decision:verifier-detent`;
-envelope advise-vs-reject). G3→4 / G5→6 keep their reject-mode checkers.
+envelope advise-vs-reject). G3→4 / G5→7 keep their reject-mode checkers.
 
-### After-ship CDP Opus review (optional, recommended)
+### Pre-land CDP Opus review (G6 — binding on conductor arcs)
 
-`cdp/opus-5` is the recommended **session / work review** of landed code
-(`purpose=review`). It is **not** G4 (pre-ship spec check) and **not** G6
-(mechanical verify — `¬ G6 review consult` still binds). Fire after G5∩G6
-when the change was judgment-bearing or cross-cutting.
+`cdp/opus-5` **`purpose=review`** on the **lane branch diff** is **G6**, not G4
+(pre-ship spec) and not optional commentary. Fire **after G5 implement, before G7
+land** — `review harvest ≺ land ≺ DONE`. Stage closeout + diff to `cortex://`;
+record harvest on sidecar **R1**.
 
 | Posture | Do |
 |---|---|
-| Background / conductor / unattended | **Recommend fire** — latency is not a skip. `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")` + staged diff/closeout |
-| Attended, next move would wait on the harvest | **Defer** (name it on the closeout). Slow is a sequencing reason, not a quality reason |
-| Checkout-native delivery scan still owed | Layering-owned overlay: **`cdp/opus-5` `purpose=review`** after G6 — ¬ a path-sim admit |
+| Conductor / unattended | **Fire G6** — latency is not a skip; poll/hop+watcher until R1 harvest |
+| CDP stall / empty FAILED | **HARD STOP** past G6 — ¬ land (G7) until harvest (`conductor` a:32226) |
 
-Recipe: `consult-routing` § CDP transport row **Session / work review**.
+Recipe: `consult-routing` § M3 pre-go-live · M4 S1.
 
-**Scoreboard default:** at mint, comment this overlay on the scoreboard
-(Sidecars / WIP — **¬** a gated G-row; done-claim must not wait on it).
-Template: `cortex://notes/system/templates/charter-scoreboard.md` · L3
-CHECKPOINT State line.
+**Scoreboard default:** G-ladder mints **G6 Pre-land review** + **G7 Ship/land**;
+R1 ≺ L1 ≺ entry gate DONE (`conductor_score_journal` substrate).
 
 ## Tick enrollment
 
@@ -294,15 +293,15 @@ Scoreboard → todo attrs → CHECKPOINT on `layer-{slug}` + `enroll_charter_run
 Attended default (leave `attendance` unset); `attendance=autonomous` allowed with
 `arc_lane=layer` (recommended) or unset (defaults layer). Stamp `arc_lane=path_sim`
 only for deepen / non-layer arcs. Annotate every G-row. Template + mechanics:
-L3 `tick-enrollment-annex.md`. Scoreboard / CHECKPOINT State carry the
-after-ship `cdp/opus-5` review comment as a **good default** (not a G-row).
+L3 `tick-enrollment-annex.md`. Scoreboard / CHECKPOINT State must reflect **G6
+Pre-land review** + **G7 Ship/land** on conductor arcs (R1 ≺ L1).
 
 ## Forbidden / anti-patterns
 
 ¬ Opus dense spec · ¬ G2+G3 merge · ¬ R-windows on codework · ¬ dispatch w/o todo ·
 ¬ non-G tokens · ¬ claim autonomous without layer when `arc_lane=path_sim` was intended
 (stamp explicit `path_sim` for deepen arcs) · ¬ G3
-implements · ¬ G6 review consult · frame >120L · bare tick w/o G-rows ·
+implements · ¬ land (G7) without G6 review harvest · frame >120L · bare tick w/o G-rows ·
 ¬ close a `bug_class_sweep_required` todo without a labeled Secondary findings block ·
 ¬ claim G1 closed from chat inform / sidecar path alone without `derived_from` →
 `consult_kind=architecture` document · ¬ mint a second Fable G1 when that edge already

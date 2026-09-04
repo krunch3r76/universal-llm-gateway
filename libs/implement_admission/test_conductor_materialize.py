@@ -187,6 +187,7 @@ def test_materialize_conductor_packet_shape(tmp_path: Path) -> None:
     assert not re.search(r"^todo:\s", frontmatter, re.MULTILINE)
     assert "| G1 |" in mp.text
     assert "| G6 |" in mp.text
+    assert "| G7 |" in mp.text
     uri = extract_scoreboard_uri(mp.text)
     assert uri == scoreboard_tip_uri("layer-conductor-unify")
     tip = read_tip("layer-conductor-unify", files_root=files_root)

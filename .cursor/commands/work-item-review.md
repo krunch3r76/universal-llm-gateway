@@ -37,7 +37,12 @@ it here.
 | xAI coding-lane transport | `consult-routing` skill § xAI coding-substrate; ¬ `xai/grok-*` artisan for checkout review |
 | Packet / cursor-sdk dispatch shape | `dispatch-shape` · path-sim Q-only shape as peer |
 
-Provenance: minted from the `expand-growth-loop` charter (agent-bus:5267). Durable home for the two R timeline positions: **`path-sim` skill § R positions**. This command is the **R-after** entry only.
+Provenance: minted from the `expand-growth-loop` charter (agent-bus:5267). Durable home for the two R timeline positions: **`path-sim` skill § R positions**. This command is the **path-sim R-after** entry only.
+
+**Conductor deferral (BINDING):** On a **conductor** arc, code review is **G6 pre-land**
+(`abstraction-layering` § Pre-land CDP Opus review) — `review harvest ≺ land ≺ DONE`.
+Do **not** invoke this command as a substitute for conductor G6, and do **not** treat
+a conductor land as having satisfied R. This command remains the **path-sim** after-ship R leg.
 
 ## The delta this command owns
 
@@ -61,11 +66,11 @@ Composer `pure-mechanical` limb for execution probes. Operator model
 token overrides when explicitly supplied. **¬** default to web-anthropic / CDP for
 R-admit (that seat is R-admit).
 
-**Optional overlay (recommended):** after R-after (or instead of a second CDP
+**Optional overlay (path-sim only):** after R-after on path-sim arcs (or instead of a second CDP
 pass on non-path-sim work), fire `team_dispatch(model=cdp/opus-5, purpose=review, reasoning_effort="high")`
 on the staged delivery + session arc. Background preferred; defer when attended
 blocking. SOT: `consult-routing` § CDP transport · `abstraction-layering`
-§ After-ship. This is session/work judgment review — not a G4 Terra restore
+§ Pre-land CDP Opus review for conductor arcs. This is session/work judgment review — not a G4 Terra restore
 and not a replacement for checkout-native R-after.
 
 ## Instructions

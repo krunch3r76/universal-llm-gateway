@@ -70,8 +70,9 @@ class _StubCortex:
 
 
 class _StubBus:
-    def __init__(self, *, resurface: bool = False) -> None:
+    def __init__(self, *, resurface: bool = False, nested_commits: bool = False) -> None:
         self._resurface = resurface
+        self._nested_commits = nested_commits
 
     def has_score_resurface_after(
         self,
@@ -84,7 +85,7 @@ class _StubBus:
 
     def nested_implement_has_commits(self, *, nest_under_dispatch_id: str) -> bool:
         _ = nest_under_dispatch_id
-        return False
+        return self._nested_commits
 
 
 class _StubGit:
@@ -151,7 +152,8 @@ def test_fold_live_fixture_entry_gate_and_claimed(live_fixture: tuple[Path, Path
     assert fold.row_status["G3"] == "DONE"
     assert fold.row_status["G4"] == "CLAIMED"
     assert fold.row_status["G5"] == "CLAIMED"
-    assert fold.row_status["G6"] == "DONE"
+    # Legacy 6-row tip had G6=land DONE without R1 review; 7-row fold reclassifies.
+    assert fold.row_status["G6"] == "CLAIMED"
     journal = load_journal(_SLUG, files_root=files_root)
     assert any(r.get("reason") == "witness_fold" for r in journal)
 
@@ -415,6 +417,31 @@ def test_g4_withhold_blocks_g5_even_with_resurface(tmp_path: Path) -> None:
     )
     assert witnesses["G4"] is None
     assert witnesses["G5"] is None
+
+
+def test_g7_land_without_g6_review_has_no_witness(tmp_path: Path) -> None:
+    """L1 on master without R1 must not witness G7 (review harvest ≺ land)."""
+    files_root = tmp_path / "cortex"
+    land_sha = "a" * 40
+    tip_body = f"| L1 | {land_sha} |\n"
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(resurface=True),
+        git=_StubGit(landed=True),
+        source_ref=_SOURCE_REF,
+        summon_mode="attended",
+        summoning_thread_id="9638",
+        repo=tmp_path / "repo",
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=files_root,
+    )
+    assert witnesses.get("G5") is not None
+    assert witnesses.get("G6") is None
+    assert witnesses.get("G7") is None
 
 
 def test_score_resurface_in_turns_respects_cutoff() -> None:

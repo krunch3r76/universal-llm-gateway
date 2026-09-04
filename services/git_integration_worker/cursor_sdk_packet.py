@@ -118,7 +118,8 @@ _CONDUCTOR_HOP_TEMPLATE = (
     "successor on this thread after your row goes terminal. ROW_HOP ends only this dispatch, "
     "never the mission: no ack, no reply, no page. A live nested child forbids the hop -- "
     "harvest it first (W3). Owed stops win over ROW_HOP: stop_after => ROW_PINNED; attended "
-    "G3->G5 => SCORE_RESURFACE + ROW_PINNED; named hold => HOLD_MERGE; G6 landed => DONE."
+    "G3->G5 => SCORE_RESURFACE + ROW_PINNED; named hold => HOLD_MERGE; "
+    "G6 review harvest unread => ROW_PINNED (never land); G7 landed => DONE."
 )
 
 _CONDUCTOR_ATTENDED_RESURFACE_TEMPLATE = (

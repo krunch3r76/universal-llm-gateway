@@ -54,9 +54,9 @@ TYPE: CHECKPOINT
 - Scoreboard: {SCOREBOARD_URI}
 
 ## State
-**Primary OPEN:** G{ENTRY}–G6 (abstraction layering).
+**Primary OPEN:** G{ENTRY}–G7 (abstraction layering).
 **WIP:** none.
-**Recommended overlay (not a G-row):** after-ship `cdp/opus-5` `purpose=review` `reasoning_effort="high"` of landed code — good default. Background after G6; deferral is sequencing. ¬ Next-pickup · ¬ done-claim.
+**G6 (binding):** pre-land `cdp/opus-5` `purpose=review` `reasoning_effort="high"` on lane branch diff — R1 sidecar; HARD STOP before G7 land if harvest missing. ¬ background overlay · ¬ defer-and-proceed.
 
 ## Steps
 1. [ ] G1 — architecture verdict + target shape · [consult:judgment_gap]
@@ -64,7 +64,8 @@ TYPE: CHECKPOINT
 3. [ ] G3 — densify dense spec + Gate-2 close · [judgment]
 4. [ ] G4 — merged check · [judgment]
 5. [ ] G5 — implement (Composer, source_ref) · [implement]
-6. [ ] G6 — verify + close (gates · ACs · docstrings) · [inline]
+6. [ ] G6 — pre-land review (`cdp/opus-5` purpose=review on lane branch) · [judgment]
+7. [ ] G7 — verify + close (gates · ACs · docstrings · land) · [inline]
 
 ## WIP / In-flight
 _None this window._
@@ -101,7 +102,7 @@ everything else stays `judgment`. Ambiguity fails closed to judgment.
 | Mechanic | Consequence for a layering charter |
 |---|---|
 | Accepted token set is exactly `[consult:r_admit]` · `[consult:judgment_gap]` · `[implement]` · `[inline]` · `[judgment]` | Use only these; the layer name never replaces the token |
-| The **first open annotated** Steps row decides `window_kind` | Order G1→G6 and mark closed gates `[x]`, or the tick picks the wrong gate |
+| The **first open annotated** Steps row decides `window_kind` | Order G1→G7 and mark closed gates `[x]`, or the tick picks the wrong gate |
 | **Some** rows annotated but the first open one unclassifiable ⇒ refuse `missing_lane_annotation` (tick skips admit) | Annotate consistently; a half-annotated Steps list is the failure shape |
 | **No** rows annotated at all ⇒ **no refuse** — falls back to `default_admission_mode` (`generate`) | Hazard: unannotated G1 would run as worker window. G-ordinal fallback is unimplemented `TODO` — annotate **every** G-row |
 | `[consult:*]` on the first open row ⇒ `window_kind=consult` and `admission_mode=consult`, **independent of attendance** | G1/G2 get a consult seat on the first tick — intended for CDP gates |
@@ -116,7 +117,7 @@ everything else stays `judgment`. Ambiguity fails closed to judgment.
 | cursor-auto BRIEFING names this slug for `implement`/`investigate`/`verify` | **wired** |
 | Attended charter windows (`generate` / `handoff`) name this skill in the packet floor | **wired** (`materializer._LAYER_FLOOR`) |
 | Todo attrs + `required_skills` carrying the lane | **wired** |
-| G1–G6 Steps rows, `[lane]` tokens, `executor_lane` parsing | **wired** (generic tick contract — see § Tick lane mechanics) |
+| G1–G7 Steps rows, `[lane]` tokens, `executor_lane` parsing | **wired** (generic tick contract — see § Tick lane mechanics) |
 | G1/G2 consult stops routing to a consult seat | **wired mechanism**, path-sim-flavored packet prose |
 | `attendance=autonomous` running *this* arc | **wired when `arc_lane=layer` or unset** — `materializer_layer.py`; explicit `arc_lane=path_sim` for deepen arcs (warn `charter.tick.arc_lane.unset` on missing attr) |
 | A layer-specific packet materializer | **wired** — `scripts/model_manager/ui/controller/charter_runner/window_exec/materializer_layer.py` selected via `arc_lane=layer` (not a separate `admission_mode`) |

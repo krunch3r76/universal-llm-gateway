@@ -62,7 +62,9 @@ def _missing_witness_message(row_id: str) -> str:
     if row_id == "G5":
         return "post SCORE_RESURFACE on summoning thread after G3 journal"
     if row_id == "G6":
-        return "land L-sha on master"
+        return "hang R1 pre-land review URI (`cdp/opus-5` purpose=review on lane branch before merge)"
+    if row_id == "G7":
+        return "land L-sha on master after G6 review harvest"
     if row_id.startswith("R"):
         return f"hang {row_id}-BIND URI or {row_id}-LAND sha on the tip"
     return f"witness missing for {row_id}"

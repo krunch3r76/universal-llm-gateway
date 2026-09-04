@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from services.git_integration_worker.cursor_sdk_packet import (
+    _CONDUCTOR_HOP_TEMPLATE,
     extract_summon_mode_from_packet,
     resolve_prompt_preamble,
 )
@@ -110,3 +111,9 @@ lane: B
     )
     assert "CONDUCTOR AWAY SCORE-RATIFY" in preamble
     assert "CONDUCTOR ATTENDED RESURFACE" not in preamble
+
+
+def test_conductor_hop_template_pre_land_g6_before_g7_done() -> None:
+    assert "G7 landed => DONE" in _CONDUCTOR_HOP_TEMPLATE
+    assert "G6 landed => DONE" not in _CONDUCTOR_HOP_TEMPLATE
+    assert "G6 review harvest unread" in _CONDUCTOR_HOP_TEMPLATE

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 _SCOREBOARDS_DIR = "notes/system/scoreboards"
 _WRITER_ID = "implement_admission.conductor_score_journal"
 _RECORD_SEP = "\n---\n"
-# G-ladder ids (G1–G6) or per-finding row ids (R1, R2, …) minted from acceptance_criteria.
+# G-ladder ids (G1–G7) or per-finding row ids (R1, R2, …) minted from acceptance_criteria.
 _SCOREBOARD_ROW_ID = r"(?:G[1-6]|R\d+)"
 _CLOSED_ROW_RE = re.compile(
     rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|\s*DONE\b",
@@ -37,25 +37,26 @@ _ROW_STATUS_RE = re.compile(
 STATUS_VOCABULARY: frozenset[str] = frozenset(
     {"OPEN", "DONE", "CLAIMED", "WIP", "RETRACTED"}
 )
-G_ROWS: tuple[str, ...] = ("G1", "G2", "G3", "G4", "G5", "G6")
+G_ROWS: tuple[str, ...] = ("G1", "G2", "G3", "G4", "G5", "G6", "G7")
 _G_LABELS: dict[str, str] = {
     "G1": "Architecture / recon",
     "G2": "Frame",
     "G3": "Densify",
     "G4": "Skeptic / gate-6",
     "G5": "Implement",
-    "G6": "Ship / land",
+    "G6": "Pre-land review",
+    "G7": "Ship / land",
 }
-_AFTER_SHIP_OVERLAY = (
-    "After-ship `cdp/opus-5` `purpose=review` of the landed diff — good default; "
-    "¬ a gated G-row (done-claim must not wait on it)."
+_G6_PRE_LAND_REVIEW = (
+    "G6 pre-land review witness — `cdp/opus-5` `purpose=review` on the lane "
+    "branch diff before merge; harvest ≺ land (a:32226 · a:32146)."
 )
 _WITNESS_KIND_BIND = "BIND"
 _WITNESS_KIND_LAND = "LAND"
 
 
 def is_g_ladder_rows(rows: tuple[str, ...]) -> bool:
-    """True when rows are the default six-row G-ladder."""
+    """True when rows are the default seven-row G-ladder."""
     return rows == G_ROWS
 
 
@@ -108,15 +109,15 @@ def _witness_sidecar_lines(
     """Seed sidecar placeholder rows keyed by witness kind."""
     if is_g_ladder_rows(rows):
         return [
-            f"| S1 | (overlay) | {_AFTER_SHIP_OVERLAY} |",
             "| F1 | (pending) | G2 frame witness slot |",
             "| S7 | (pending) | G2 frame witness slot |",
             "| S4b | (pending) | G3 spec witness slot |",
             "| S9 | (pending) | G3 spec witness slot |",
             "| G4 | (pending) | G4 skeptic verdict slot |",
-            "| L1 | (pending) | G6 land sha slot |",
+            f"| R1 | (pending) | {_G6_PRE_LAND_REVIEW} |",
+            "| L1 | (pending) | G7 land sha slot |",
         ]
-    lines = [f"| S1 | (overlay) | {_AFTER_SHIP_OVERLAY} |"]
+    lines: list[str] = []
     for row_id in rows:
         label = row_labels.get(row_id, row_id)
         lines.append(

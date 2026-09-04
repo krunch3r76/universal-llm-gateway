@@ -84,6 +84,14 @@ Seven headings, one line each: Stance · Why · Objective · Runbooks · Rules �
 
 Reader-job body lives on a sidecar or the house runbook; the card points. Specimens 9582 · 9638 · 9732.
 
+### G-token scope (9638)
+
+**G7 on the 9638 liaison house** denotes the historical *uncommissioned live-arm* gate
+and is **not** conductor ship/land. Conductor G-rows are scoped to a conductor scoreboard
+and its witness fold; a liaison-house `G7` recall never satisfies conductor G7, and
+conductor G7 never authorizes a live-arm. When either appears in recall, qualify it as
+`G7(liaison)` or `G7(conductor)`.
+
 ## Hub + runbook + edges
 
 One `document:` per root: `{matter-slug}` (matter notebook) or `{N}-continuity` (house / code / conjurer / liaison). Never both. `source_uri` = card · `content_hash` = card sha · description = Objective + In/Out + `agent-bus:{N}` · `tag_assign continuity-root`. Birth: same write as charter surfaces. Re-root ⇒ `succeeds` + source_uri update. `tick_charter` roots get a hub; scoreboard = `evidence_uris`, ¬ a second entity. Hub mutates only on Objective rebind + checkpoint myelinate.

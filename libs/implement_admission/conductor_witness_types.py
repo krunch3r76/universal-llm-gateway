@@ -46,7 +46,7 @@ class WitnessBus(Protocol):
 
 
 class WitnessGit(Protocol):
-    """Git read surface for G6 landed-sha witness."""
+    """Git read surface for G7 landed-sha witness."""
 
     def is_ancestor(self, commit: str, ref: str) -> bool: ...
 

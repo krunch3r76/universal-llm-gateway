@@ -107,7 +107,7 @@ Stamp kind on todo attrs/description until work_item registry lands.
 ```
 S0 Lookup → S1 Intake → S2 Recon? → S3 Architecture? → S4a identity → S6 spawn conductor
          ↳ hit existing todo → re-admit / halt · ¬ S4a · ¬ S6
-         ↳ (conductor) S3 Mode B / G1 → S4b rich-seed → S5 attach → G2…
+         ↳ (conductor) S3 Mode B / G1 → S4b rich-seed → S5 attach → G2…G7
 ```
 
 Skips are stage skips on **one** path. S3 consult + S4b + S5 are **conductor-owned**.

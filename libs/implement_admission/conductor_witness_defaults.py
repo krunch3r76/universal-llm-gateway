@@ -74,7 +74,7 @@ class DefaultWitnessCortex:
 
 
 class DefaultWitnessGit:
-    """Git reader using merge-base --is-ancestor for G6 landed witness."""
+    """Git reader using merge-base --is-ancestor for G7 landed witness."""
 
     def __init__(self, repo: Path) -> None:
         self._repo = repo.resolve()

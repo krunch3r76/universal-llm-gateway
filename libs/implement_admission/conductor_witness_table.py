@@ -37,6 +37,7 @@ _WITNESS_KIND_BIND = "BIND"
 _WITNESS_KIND_LAND = "LAND"
 _G2_ARTIFACT_IDS = ("F1", "S7")
 _G3_ARTIFACT_IDS = ("S4b", "S9")
+_G6_REVIEW_ARTIFACT_IDS = ("R1",)
 
 
 def _first_resolving_artifact(
@@ -70,7 +71,7 @@ def _bind_artifact_keys(row_id: str) -> tuple[str, ...]:
 
 
 def _land_artifact_key(row_id: str) -> str:
-    if row_id == "G6":
+    if row_id == "G7":
         return "L1"
     return f"{row_id}-{_WITNESS_KIND_LAND}"
 
@@ -311,8 +312,26 @@ def _row_witnesses_g_ladder(
                 detail=dispatch_id,
             )
 
-    land_sha = artifacts.get(_land_artifact_key("G6"))
-    if land_sha and deps.git is not None and deps.git.is_ancestor(land_sha, "master"):
-        witnesses["G6"] = Witness(row="G6", source=f"git:{land_sha}", detail=land_sha)
+    if witnesses.get("G5") is not None:
+        g6_id, g6_uri = _first_resolving_artifact(
+            artifacts, _G6_REVIEW_ARTIFACT_IDS, files_root=files_root, repo=repo
+        )
+        if (
+            g6_id
+            and g6_uri
+            and _g4_body_clears(g6_uri, files_root=files_root)
+        ):
+            witnesses["G6"] = Witness(
+                row="G6", source=f"artifact:{g6_id}", detail=g6_uri
+            )
+
+    land_sha = artifacts.get(_land_artifact_key("G7"))
+    if (
+        land_sha
+        and witnesses.get("G6") is not None
+        and deps.git is not None
+        and deps.git.is_ancestor(land_sha, "master")
+    ):
+        witnesses["G7"] = Witness(row="G7", source=f"git:{land_sha}", detail=land_sha)
 
     return witnesses
