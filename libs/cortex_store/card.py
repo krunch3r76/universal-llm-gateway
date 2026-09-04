@@ -378,7 +378,7 @@ def get_entity_card(
         e_row = _fetch_current_status_row(conn, entity_id=entity_id)
         surfaced_rows = _merge_current_status_slot(a_rows, e_row, top_k=top_k)
         top_k_for_card = [_card_assertion(r) for r in surfaced_rows]
-        predicate_summary, summary_withheld = aggregate_predicate_summary(
+        predicate_summary, _summary_withheld = aggregate_predicate_summary(
             top_k_assertions=a_rows,
             et_type_counts=[
                 {"type_id": str(r["type_id"]), "count": int(r["n"])} for r in et_rows
@@ -387,10 +387,6 @@ def get_entity_card(
             entity_id=entity_id,
             pin_withheld_count=current_status.withheld_count,
         )
-        if summary_withheld and current_status.withheld_count == 0:
-            current_status = current_status.model_copy(
-                update={"withheld_count": summary_withheld}
-            )
 
     debug_payload: CardDebug | None = None
     if debug:

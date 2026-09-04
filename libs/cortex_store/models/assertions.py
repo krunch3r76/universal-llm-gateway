@@ -356,7 +356,7 @@ class PredicateFormNormalize(BaseModel):
     suppression_effect: str | None = None
     next_remedy: str | None = Field(default=None, serialization_alias="_next")
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 
 
 class AssertionCreateResponse(BaseModel):
