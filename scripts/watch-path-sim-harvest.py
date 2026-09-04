@@ -32,7 +32,9 @@ EMAIL_BRIDGE_SOCK = os.environ.get(
 )
 WAIT_S = 55
 POLL_GAP_S = 2.0
+TRANSPORT_RETRY_SLEEP_S = 3.0
 _DEFAULT_COMPLETION = "proof_reply_from"
+_BUS_TRANSPORT_ERRORS = (httpx.TransportError, httpx.TimeoutException)
 
 
 def log(msg: str) -> None:
@@ -181,17 +183,28 @@ def main() -> int:
 
     log(f"HARVEST_WATCH start phase={phase} thread={thread} after_turn={after_turn} from={from_agent}")
 
-    client = httpx.Client(
-        transport=httpx.HTTPTransport(uds=SOCK),
-        timeout=WAIT_S + 15.0,
-        headers={"Authorization": f"Bearer {token()}"},
-    )
+    def _new_client() -> httpx.Client:
+        return httpx.Client(
+            transport=httpx.HTTPTransport(uds=SOCK),
+            timeout=WAIT_S + 15.0,
+            headers={"Authorization": f"Bearer {token()}"},
+        )
 
+    client = _new_client()
     try:
         while True:
-            data = wait_leg(
-                client, thread=thread, after_turn=after_turn, from_agent=from_agent
-            )
+            try:
+                data = wait_leg(
+                    client, thread=thread, after_turn=after_turn, from_agent=from_agent
+                )
+            except _BUS_TRANSPORT_ERRORS as exc:
+                log(
+                    f"bus transport error ({type(exc).__name__}: {exc}); reconnecting"
+                )
+                client.close()
+                time.sleep(TRANSPORT_RETRY_SLEEP_S)
+                client = _new_client()
+                continue
             complete = bool(data.get("complete"))
             qturn = data.get("qualifying_reply_turn")
             log(

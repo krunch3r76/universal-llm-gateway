@@ -29,7 +29,11 @@ _EMAIL_BRIDGE_SOCK = os.environ.get(
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
 _WAIT_SECONDS = 55.0
 _POLL_SLEEP_S = 2.0
+_TRANSPORT_RETRY_SLEEP_S = 3.0
 _DEFAULT_COMPLETION = "proof_reply_from"
+
+# Bus recycle / UDS drop mid-wait (incident: agent-bus recycle during G6 watch).
+_BUS_TRANSPORT_ERRORS = (httpx.TransportError, httpx.TimeoutException)
 
 
 def _token() -> str:
@@ -162,17 +166,41 @@ def main() -> int:
         flush=True,
     )
 
-    with _bus_client(token) as client:
+    client = _bus_client(token)
+    try:
         while True:
-            snap = _wait_reply(
-                client,
-                thread_id=thread_id,
-                after_turn=args.after_turn,
-                from_agent=from_agent,
-            )
+            try:
+                snap = _wait_reply(
+                    client,
+                    thread_id=thread_id,
+                    after_turn=args.after_turn,
+                    from_agent=from_agent,
+                )
+            except _BUS_TRANSPORT_ERRORS as exc:
+                print(
+                    f"… bus transport error ({type(exc).__name__}: {exc}); "
+                    "reconnecting",
+                    flush=True,
+                )
+                client.close()
+                time.sleep(_TRANSPORT_RETRY_SLEEP_S)
+                client = _bus_client(token)
+                continue
+
             if snap.get("complete"):
                 reply_turn = int(snap.get("qualifying_reply_turn") or 0)
-                subject = _fetch_turn_subject(client, thread_id, reply_turn)
+                try:
+                    subject = _fetch_turn_subject(client, thread_id, reply_turn)
+                except _BUS_TRANSPORT_ERRORS as exc:
+                    print(
+                        f"… subject fetch transport error ({type(exc).__name__}); "
+                        "reconnecting",
+                        flush=True,
+                    )
+                    client.close()
+                    time.sleep(_TRANSPORT_RETRY_SLEEP_S)
+                    client = _bus_client(token)
+                    continue
                 print(
                     f"consult complete turn={reply_turn} subject={subject!r} "
                     f"thread_status={snap.get('thread_status')}",
@@ -208,6 +236,8 @@ def main() -> int:
                     flush=True,
                 )
             time.sleep(_POLL_SLEEP_S)
+    finally:
+        client.close()
 
 
 if __name__ == "__main__":
