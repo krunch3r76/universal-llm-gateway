@@ -177,6 +177,7 @@ When CDP posts on-behalf and bus returns **409 `unread_turns_exist`**, remake af
 | Job | Command |
 |---|---|
 | **Product — team_dispatch (DEFAULT)** | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, contract=light-bounded, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → `agent_bus.wait` from `poll_hint` |
+| **Life MCP — life_dispatch** | `life_dispatch(prompt\|thread, model=cdp/…)` on `/mcp/life` — Life project UUID server-pinned; supersedes `scripts.local/claude-ai/life-project-dispatch.sh` |
 | **Escape — CLI project-ask** | `scripts/cortex/claude-ai-sync-jupiter project-ask` (`--converse --no-uuid --model opus-5\|fable-5.1`) when team_dispatch CDP unavailable. MCP `project_ask` is removed. |
 | **Operator-proxy mission** | `team_dispatch(model=cdp/opus-5, purpose=operator-proxy\|mission, …)` primary |
 | Path-sim R-admit (CLI fallback) | `… project-ask --register --purpose ask --converse --no-uuid --model opus-5 --prompt-file tmp/reviews/…` |

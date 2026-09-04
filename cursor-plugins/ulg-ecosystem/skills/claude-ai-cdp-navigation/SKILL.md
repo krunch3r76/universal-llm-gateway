@@ -298,13 +298,14 @@ orphan observability: L3 `reference-annex.md`.
 | Job | Path |
 |---|---|
 | **Product (DEFAULT)** — consult / binder / R-admit / judgment_gap / Fable outside-check | `team_dispatch(op=generate, model=cdp/opus-5\|cdp/fable, contract=light-bounded, prompt\|sidecar_ref=…, dispatch_thread_id=…)` → poll `poll_hint` (`agent_bus.wait`). Compose `lean-context-dispatch-first` · `consult-routing`. |
+| **Life MCP surface** — fresh Life Cowork project compose (not `/new`) | `life_dispatch(prompt=… \| thread=…, model=cdp/opus-5)` on `/mcp/life`. Server-pins Life project UUID; never in the tool schema. For `thread=`, latest turn must be `to=life\|dispatch` and not `from=life` (teaching 422 otherwise). Supersedes interim `scripts.local/claude-ai/life-project-dispatch.sh`. |
 | **Escape** — satellite-direct / IF6 | CLI `scripts/cortex/claude-ai-sync-jupiter project-ask` (`--converse --no-uuid --model opus-5\|fable-5.1`). Use when `team_dispatch` CDP path is unavailable. MCP `project_ask` is removed. |
 | **Warm follow-up (attached lane)** | `cse_session(op=followup, chat_url=… \| registration_id=… \| execution_id=… \| identity omitted ⇒ resolve-or-refuse, cdp_url=… explicit override, prompt_text=… \| prompt_uri=…, purpose=operator-proxy, timeout_s=60)` — wake/correction/advisory into retained operator-proxy CSE. Distinct from `cse_session(op=paste)` (hop-pair / grant). `cse_session(op=resolve_attended)` for read-only triple. CLI `cowork_chat_followup.py` = escape (defaults to resolver when flags omitted). |
 | **Operator-proxy mission** | Prefer `team_dispatch(model=cdp/opus-5, purpose=operator-proxy\|mission, contract=light-bounded, …)` — runner auto-ensures `/cdp-operator-proxy` + `/reasoning-posture` chips + **this-hop** status (settled/live/next/lane) **above** the seat-map briefing (`operator_proxy_mission.py`). Prompt body still carries mission ACs. SOT: `cdp-operator-proxy` inv 20 · `cortex://notes/system/specs/cursor-auto-tick-work-posting.md` |
 | Operator Chat on `/new` | `chat_compose=true` / `--chat` |
 | Register / list | `list-lanes` / `deregister-lane` |
 
-**Anti-pattern:** opening a new CDP consult via any leftover `project_ask` recipe. Product is `team_dispatch(model=cdp/…)`.
+**Anti-pattern:** opening a new CDP consult via any leftover `project_ask` recipe. Product is `team_dispatch(model=cdp/…)` on code; on life, `life_dispatch` (not the retired Life-project shell script).
 Admit / `status=running` is not delivery — § Dispatch delivery.
 
 ### Warm follow-up duty (BINDING — 2026-07-31)

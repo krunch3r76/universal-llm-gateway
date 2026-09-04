@@ -279,13 +279,17 @@ Auth-gate failures exhaust retry budget — unblock with `auth_gate_ack: <thread
 
 ## Mission boot & continuity hop (BINDING)
 
-**Life seat cannot `team_dispatch`.** Opening or refreshing a CDP operator-proxy window
-is always **commission cursor-auto**. Fresh lane mint stays `cursor_request` /
-`agent_bus.request` + `TYPE: DIRECTIVE`. Continuity hop on an **existing** private
-lane is **`agent_bus(tool="hop")`** — ¬ a contract token, ¬ hand-authored
-`TYPE: CONTINUITY_HANDOFF`. The verb authors that token (same `hop_handoff` body as
-cadence) and enqueues `continuity_hop=true`. Cursor-auto then fires
-`team_dispatch(model=cdp/opus-5, purpose=operator-proxy|mission, …)` on the code surface.
+**Life seat cannot `team_dispatch`.** Life-native CDP compose (Life Cowork project,
+not `/new`) is **`life_dispatch`** on `/mcp/life` — server-pinned project UUID;
+`prompt` or `thread` (`to=life|dispatch`, not `from=life`). Opening or refreshing
+an operator-proxy **request-lane** window is still **commission cursor-auto**.
+Fresh lane mint stays `cursor_request` / `agent_bus.request` + `TYPE: DIRECTIVE`.
+Continuity hop on an **existing** private lane is **`agent_bus(tool="hop")`** — ¬ a
+contract token, ¬ hand-authored `TYPE: CONTINUITY_HANDOFF`. The verb authors that
+token (same `hop_handoff` body as cadence) and enqueues `continuity_hop=true`.
+Cursor-auto then fires `team_dispatch(model=cdp/opus-5, purpose=operator-proxy|mission, …)`
+on the code surface. Interim `scripts.local/claude-ai/life-project-dispatch.sh` is
+**superseded** by `life_dispatch`.
 
 | Situation | You are | Move |
 |---|---|---|
