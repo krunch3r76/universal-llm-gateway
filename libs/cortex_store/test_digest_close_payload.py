@@ -23,6 +23,7 @@ _ENTITY_ID = "document:journal-entry-1"
 _JOURNAL_URI = "journal://entries/1"
 
 
+@pytest.mark.offline
 @pytest.mark.parametrize(
     ("entity_id", "expected"),
     [
@@ -56,6 +57,26 @@ def test_read_journal_uri_200_json_content(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.mark.offline
+def test_read_journal_uri_omits_authorization_when_token_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JOURNAL_BRIDGE_URL", "http://journal-bridge:8200")
+    monkeypatch.delenv("BRIDGE_TOKEN", raising=False)
+
+    def _urlopen(req: Any, timeout: int = 5) -> MagicMock:
+        assert req.get_header("Authorization") is None
+        body = json.dumps({"content": _JOURNAL_TEXT}).encode()
+        resp = MagicMock()
+        resp.read.return_value = body
+        resp.__enter__ = lambda self: resp
+        resp.__exit__ = lambda *args: None
+        return resp
+
+    with patch("urllib.request.urlopen", side_effect=_urlopen):
+        assert _read_journal_uri(_JOURNAL_URI) == _JOURNAL_TEXT
+
+
+@pytest.mark.offline
 def test_read_journal_uri_401_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JOURNAL_BRIDGE_URL", "http://journal-bridge:8200")
     monkeypatch.setenv("BRIDGE_TOKEN", "bridge-secret")
@@ -71,6 +92,28 @@ def test_read_journal_uri_401_returns_none(monkeypatch: pytest.MonkeyPatch) -> N
 
     with patch("urllib.request.urlopen", side_effect=_urlopen):
         assert _read_journal_uri(_JOURNAL_URI) is None
+
+
+@pytest.mark.offline
+def test_read_journal_uri_401_logs_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("JOURNAL_BRIDGE_URL", "http://journal-bridge:8200")
+    monkeypatch.setenv("BRIDGE_TOKEN", "bridge-secret")
+
+    def _urlopen(_req: Any, timeout: int = 5) -> MagicMock:
+        raise urllib.error.HTTPError(
+            "http://journal-bridge:8200/entries/1",
+            401,
+            "Unauthorized",
+            {},
+            None,
+        )
+
+    with patch("urllib.request.urlopen", side_effect=_urlopen):
+        assert _read_journal_uri(_JOURNAL_URI) is None
+    assert any("unauthorized" in record.message.lower() for record in caplog.records)
 
 
 @pytest.mark.offline
@@ -184,6 +227,7 @@ def test_dispatch_close_digests_hook_off_no_enqueue(
             "cortex.digest.close_payload",
             {
                 "session_id": "sess-1",
+                "entity_count": 1,
                 "derived_count": 0,
                 "enqueued_count": 0,
                 "skipped": 1,
@@ -236,6 +280,7 @@ def test_dispatch_close_digests_auto_sections(monkeypatch: pytest.MonkeyPatch) -
         "cortex.digest.close_payload",
         {
             "session_id": "sess-auto",
+            "entity_count": 1,
             "derived_count": 2,
             "enqueued_count": 2,
             "skipped": 0,
@@ -322,6 +367,57 @@ def test_explicit_digest_wins_same_anchor_no_double_enqueue(
 
 
 @pytest.mark.offline
+def test_dispatch_close_digests_bridge_unauthorized_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CORTEX_DIGEST_CLOSE_HOOK", "1")
+    monkeypatch.setenv("JOURNAL_BRIDGE_URL", "http://journal-bridge:8200")
+    monkeypatch.setenv("BRIDGE_TOKEN", "bridge-secret")
+    recorded: list[tuple[str, dict[str, Any]]] = []
+
+    def _capture_record(signal: str, **payload: Any) -> None:
+        recorded.append((signal, payload))
+
+    def _urlopen(_req: Any, timeout: int = 5) -> MagicMock:
+        raise urllib.error.HTTPError(
+            "http://journal-bridge:8200/entries/1",
+            401,
+            "Unauthorized",
+            {},
+            None,
+        )
+
+    with (
+        _patch_journal_entity(_ENTITY_ID, _JOURNAL_URI),
+        patch("urllib.request.urlopen", side_effect=_urlopen),
+        patch(
+            "cortex_store.digest_close_payload.dispatch_digest_background"
+        ) as dispatch_mock,
+        patch(
+            "cortex_store.dispatch_ops._shared.record",
+            side_effect=_capture_record,
+        ),
+    ):
+        dispatch_close_digests(
+            entity_ids=[_ENTITY_ID],
+            explicit_digest=None,
+            session_id="sess-401",
+        )
+    dispatch_mock.assert_not_called()
+    assert recorded[-1] == (
+        "cortex.digest.close_payload",
+        {
+            "session_id": "sess-401",
+            "entity_count": 1,
+            "derived_count": 0,
+            "enqueued_count": 0,
+            "skipped": 1,
+            "reason": "bridge_unauthorized",
+        },
+    )
+
+
+@pytest.mark.offline
 def test_dispatch_close_digests_fail_open_on_derive_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -350,9 +446,10 @@ def test_dispatch_close_digests_fail_open_on_derive_exception(
         "cortex.digest.close_payload",
         {
             "session_id": "sess-fail",
+            "entity_count": 1,
             "derived_count": 0,
             "enqueued_count": 0,
-            "skipped": 0,
+            "skipped": 1,
             "reason": "exception",
         },
     )

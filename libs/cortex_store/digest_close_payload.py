@@ -7,6 +7,7 @@ Fail-open — never blocks session close.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import re
 import urllib.error
@@ -28,6 +29,7 @@ _DATED_ENTRY_RE = re.compile(
     r"^document:journal-(?:entry-\d+|\d{4}-\d{2}-\d{2})$"
 )
 _REJECT_IDS = frozenset({"document:journal-bridge-spec"})
+_bridge_unauthorized = contextvars.ContextVar("_bridge_unauthorized", default=False)
 
 
 def is_valid_dated_journal_entity(entity_id: str) -> bool:
@@ -69,7 +71,9 @@ def _read_journal_uri(uri: str) -> str | None:
     rest = uri[len("journal://") :].lstrip("/")
     url = f"{base}/{rest}"
     token = os.environ.get("BRIDGE_TOKEN", "").strip()
-    headers = {"Authorization": f"Bearer {token}"}
+    headers: dict[str, str] = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -87,6 +91,8 @@ def _read_journal_uri(uri: str) -> str | None:
             return str(content)
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
+            logger.warning("journal bridge unauthorized for %s", uri)
+            _bridge_unauthorized.set(True)
             return None
         logger.warning("journal bridge read failed for %s", uri, exc_info=True)
         return None
@@ -172,21 +178,26 @@ def _close_hook_enabled() -> bool:
 def _emit_close_payload_telemetry(
     *,
     session_id: str | None,
+    entity_count: int,
     derived_count: int,
     enqueued_count: int,
     skipped: int,
     reason: str = "",
 ) -> None:
-    from .dispatch_ops._shared import record
+    try:
+        from .dispatch_ops._shared import record
 
-    record(
-        "cortex.digest.close_payload",
-        session_id=session_id or "",
-        derived_count=derived_count,
-        enqueued_count=enqueued_count,
-        skipped=skipped,
-        reason=reason,
-    )
+        record(
+            "cortex.digest.close_payload",
+            session_id=session_id or "",
+            entity_count=entity_count,
+            derived_count=derived_count,
+            enqueued_count=enqueued_count,
+            skipped=skipped,
+            reason=reason,
+        )
+    except Exception:
+        logger.warning("close_payload telemetry emit failed", exc_info=True)
 
 
 def dispatch_close_digests(
@@ -196,12 +207,14 @@ def dispatch_close_digests(
     session_id: str | None,
 ) -> None:
     """Merge auto-derived and explicit digest payloads; enqueue fail-open."""
+    entity_count = len(entity_ids)
     if not _close_hook_enabled():
         _emit_close_payload_telemetry(
             session_id=session_id,
+            entity_count=entity_count,
             derived_count=0,
             enqueued_count=0,
-            skipped=len(entity_ids),
+            skipped=entity_count,
             reason="hook_disabled",
         )
         return
@@ -210,6 +223,7 @@ def dispatch_close_digests(
     enqueued_count = 0
     skipped = 0
     reason = ""
+    _bridge_unauthorized.set(False)
     try:
         auto_payloads = derive_payloads_from_entity_ids(entity_ids)
         derived_count = len(auto_payloads)
@@ -239,8 +253,11 @@ def dispatch_close_digests(
         elif explicit_digest is not None and explicit_key is None:
             dispatch_digest_background(explicit_digest, session_id=session_id)
             enqueued_count += 1
+        if _bridge_unauthorized.get() and not reason:
+            reason = "bridge_unauthorized"
     except Exception:
         reason = "exception"
+        skipped = entity_count
         logger.warning(
             "dispatch_close_digests failed open for session %s",
             session_id,
@@ -249,6 +266,7 @@ def dispatch_close_digests(
     finally:
         _emit_close_payload_telemetry(
             session_id=session_id,
+            entity_count=entity_count,
             derived_count=derived_count,
             enqueued_count=enqueued_count,
             skipped=skipped,
