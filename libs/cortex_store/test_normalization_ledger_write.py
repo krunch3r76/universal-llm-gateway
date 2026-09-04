@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from predicate_form import normalize_predicate_domain
+from predicate_form import NORMALIZER_VERSION, normalize_predicate_domain
 from predicate_form.entity_resolve import DBEntityResolver
 
 
@@ -31,7 +31,7 @@ def test_normalize_returns_ledger_fields_on_single() -> None:
     assert "raw_predicate_form" in res
     assert res["normalization_decision"] in ("resolved_single", "no_match")
     assert "candidate_set_fingerprint" in res
-    assert res["normalizer_version"] == "v1.3.1"
+    assert res["normalizer_version"] == NORMALIZER_VERSION
 
 
 def test_normalize_ledger_no_eligible_args() -> None:
