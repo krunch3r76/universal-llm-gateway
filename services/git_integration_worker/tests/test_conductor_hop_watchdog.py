@@ -12,8 +12,12 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog 
     maybe_fire_conductor_hop_watchdog,
     sweep_conductor_hop_watchdog,
 )
-from services.git_integration_worker.cursor_sdk_ledger_hop import hop_fields_from_record_json
-from services.git_integration_worker.cursor_sdk_park import conductor_hop_watchdog_candidates
+from services.git_integration_worker.cursor_sdk_ledger_hop import (
+    hop_fields_from_record_json,
+)
+from services.git_integration_worker.cursor_sdk_park import (
+    conductor_hop_watchdog_candidates,
+)
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,

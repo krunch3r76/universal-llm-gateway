@@ -211,7 +211,10 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     hop_from: str | None = None
     hop_seq: int | None = Field(default=None, ge=0)
     hop_reason: (
-        Literal["spawn", "planned", "crash", "silent", "watchdog", "park_harvest"] | None
+        Literal[
+            "spawn", "planned", "crash", "silent", "watchdog", "park_harvest"
+        ]
+        | None
     ) = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
