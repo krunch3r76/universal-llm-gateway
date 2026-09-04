@@ -24,7 +24,7 @@ from urllib.parse import urlencode
 import httpx
 import yaml
 from bus_watch.poll import DEFAULT_MAX_HOURS, DEFAULT_WAIT_SLICE_S, sliced_wait_loop
-from bus_watch.stall_pop import emit_stall_pop
+from bus_watch.stall_pop import emit_stall_pop, should_emit_stall_pop
 from bus_watch.stall_predicate import stall_predicate
 from bus_watch.state import write_state
 
@@ -234,7 +234,7 @@ def main() -> int:
     client = _bus_client(token, timeout_s=slice_s)
     predicate_unmet_slices = 0
     last_turn_count: int | None = None
-    last_stall_key: tuple[str, int | None] | None = None
+    last_stall_reason: str | None = None
 
     def wait_once(wait_s: int) -> dict[str, Any]:
         return _wait_reply(
@@ -255,7 +255,7 @@ def main() -> int:
         client = _bus_client(token, timeout_s=slice_s)
 
     def on_incomplete(snap: dict[str, Any]) -> None:
-        nonlocal predicate_unmet_slices, last_turn_count, last_stall_key
+        nonlocal predicate_unmet_slices, last_turn_count, last_stall_reason
         status = snap.get("status")
         turn_count = snap.get("turn_count")
         thread_status = snap.get("thread_status")
@@ -296,10 +296,20 @@ def main() -> int:
             last_turn_count=last_turn_count,
         )
         if should_pop and reason:
-            stall_key = (reason, turn_count_i)
-            if stall_key != last_stall_key:
+            emit, next_reason = should_emit_stall_pop(
+                last_reason=last_stall_reason,
+                reason=reason,
+                stall_active=True,
+            )
+            if emit:
                 emit_stall_pop(reason)
-                last_stall_key = stall_key
+            last_stall_reason = next_reason if emit else last_stall_reason
+        else:
+            _, last_stall_reason = should_emit_stall_pop(
+                last_reason=last_stall_reason,
+                reason=reason or "",
+                stall_active=False,
+            )
 
     def on_complete(snap: dict[str, Any]) -> int:
         reply_turn = int(snap.get("qualifying_reply_turn") or 0)

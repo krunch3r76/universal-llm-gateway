@@ -20,6 +20,16 @@ _OPEN_MISSION_SCOREBOARD = """\
 | G3 | Implement | OPEN |
 """
 
+_CLAIMED_PASS_SCOREBOARD = """\
+| G1 | Architecture | DONE |
+| G2 | Frame | DONE |
+| G3 | Implement | DONE |
+| G4 | Skeptic | DONE |
+| G5 | Implement | DONE |
+| G6 | Review | PASS |
+| G7 | Land | CLAIMED |
+"""
+
 _PARKED_CLOSEOUT = """\
 status: complete
 stop: PARKED_TRANSPORT
@@ -66,6 +76,11 @@ def test_mission_open_false_when_all_done() -> None:
 
 def test_mission_open_true_when_row_open() -> None:
     assert mission_open(scoreboard_body=_OPEN_MISSION_SCOREBOARD)
+
+
+def test_mission_open_true_when_claimed_or_pass_not_only_open_literal() -> None:
+    """F1 / A-1 false-negative wall: CLAIMED/PASS rows must keep mission open."""
+    assert mission_open(scoreboard_body=_CLAIMED_PASS_SCOREBOARD)
 
 
 def test_stall_predicate_false_when_all_done() -> None:

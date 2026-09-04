@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 from claude_bundles.conductor_stop import (
     _ARCHIVE_OR_HARVEST_RE,
     _G_ROW_RE,
@@ -16,23 +14,14 @@ from claude_bundles.conductor_stop import (
 
 
 def mission_open(*, scoreboard_body: str) -> bool:
-    """True when scoreboard fold has any G-row without DONE."""
+    """True when scoreboard fold has any G-row whose Status cell is not DONE."""
+    from implement_admission.conductor_witness_types import row_status_in_tip
+
     text = scoreboard_body or ""
-    parsed = parse_stop_tokens(text)
-    for match in _G_ROW_RE.finditer(text):
-        gid = match.group(1)
-        row_start = match.start()
-        next_row = _G_ROW_RE.search(text, match.end())
-        row_end = next_row.start() if next_row else len(text)
-        row_text = text[row_start:row_end]
-        if re.search(r"\|\s*OPEN\s*\|", row_text, re.IGNORECASE):
-            return True
-        row_tokens = parsed.rows.get(gid, frozenset())
-        if row_tokens and "DONE" not in row_tokens:
-            return True
-    if not parsed.rows:
+    g_ids = [match.group(1) for match in _G_ROW_RE.finditer(text)]
+    if not g_ids:
         return True
-    return any("DONE" not in tokens for tokens in parsed.rows.values())
+    return any((row_status_in_tip(text, gid) or "OPEN").upper() != "DONE" for gid in g_ids)
 
 
 def parked_or_none_next_admit(*, body: str) -> bool:

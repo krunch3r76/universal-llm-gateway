@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -13,8 +14,12 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     maybe_fire_conductor_hop_reactor,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+    build_park_harvest_arm_recipe,
     maybe_fire_conductor_park_harvest,
     park_harvest_owed,
+)
+from services.git_integration_worker.cursor_sdk_park import (
+    conductor_park_harvest_watchdog_candidates,
 )
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -163,6 +168,39 @@ def test_park_harvest_owed_false_when_row_hop_would_fire(tmp_path) -> None:
     assert not park_harvest_owed(row, scoreboard_body=_OPEN_SCOREBOARD)
 
 
+def test_park_harvest_owed_false_when_hop_parked(tmp_path) -> None:
+    """B-7 / N1: budget-park row (hop_parked) must not owe park_harvest."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _admit_conductor(ledger, req, record_patch={"hop_parked": True})
+    row = _terminal_row(
+        ledger,
+        req,
+        closeout_body=_PARKED_HARVEST_CLOSEOUT,
+        closeout_tokens=["PARKED_TRANSPORT", "CONSULT_PENDING"],
+    )
+    assert not park_harvest_owed(row, scoreboard_body=_OPEN_SCOREBOARD)
+
+
+def test_build_park_harvest_arm_recipe_includes_supervise_start() -> None:
+    """B-6 / W3: nudge body includes watch-supervise.sh start arm recipe."""
+    row = {
+        "work_key": _WORK_KEY,
+        "record_json": json.dumps(
+            {"scoreboard_uri": "cortex://notes/system/scoreboards/x.md"}
+        ),
+    }
+    body = build_park_harvest_arm_recipe(
+        row=row,
+        summoning_thread_id="9638",
+        closeout_turn=12,
+    )
+    assert "scripts/watch-supervise.sh start" in body
+    assert "scripts/watch-bus-consult-and-page.py" in body
+    assert "--thread 9638" in body
+    assert "--after-turn 12" in body
+
+
 @pytest.mark.asyncio
 async def test_reactor_fires_park_harvest_not_team_dispatch(tmp_path, monkeypatch):
     ledger = CursorDispatchLedger.instance()
@@ -202,6 +240,7 @@ async def test_reactor_fires_park_harvest_not_team_dispatch(tmp_path, monkeypatc
     await maybe_fire_conductor_hop_reactor(dispatch_id=req.dispatch_id)
 
     assert posted
+    assert "scripts/watch-supervise.sh start" in posted[0][1]
     assert events == ["park_harvest"]
     hop_post.assert_not_called()
     with ledger._connect() as conn:
@@ -244,3 +283,76 @@ async def test_park_harvest_idempotent_second_call(tmp_path, monkeypatch):
     assert events == ["park_harvest"]
     assert not await maybe_fire_conductor_park_harvest(dispatch_id=req.dispatch_id)
     assert events == ["park_harvest"]
+
+
+@pytest.mark.asyncio
+async def test_park_harvest_watchdog_retries_unstamped_row(tmp_path, monkeypatch):
+    """B-4: watchdog sweep selects unstamped park_harvest rows past grace."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _admit_conductor(ledger, req)
+    _terminal_row(
+        ledger,
+        req,
+        closeout_body=_PARKED_HARVEST_CLOSEOUT,
+        closeout_tokens=["PARKED_TRANSPORT", "CONSULT_PENDING"],
+    )
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={"hop_last_terminal_at": time.time() - 300.0},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.mission_open",
+        lambda **_: True,
+    )
+    assert conductor_park_harvest_watchdog_candidates(ledger, grace_s=120.0) == [
+        req.dispatch_id
+    ]
+
+
+@pytest.mark.asyncio
+async def test_fire_park_harvest_failed_post_leaves_row_retryable(tmp_path, monkeypatch):
+    """F2: failed POST must not stamp hop_park_harvest_fired_at; watchdog retries."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _admit_conductor(ledger, req)
+    _terminal_row(
+        ledger,
+        req,
+        closeout_body=_PARKED_HARVEST_CLOSEOUT,
+        closeout_tokens=["PARKED_TRANSPORT", "CONSULT_PENDING"],
+    )
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={"hop_last_terminal_at": time.time() - 300.0},
+    )
+
+    def _raise_post(*_a, **_k):
+        raise RuntimeError("bus post failed")
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.default_park_harvest_poster",
+        _raise_post,
+    )
+    events: list[str] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.emit_frontier_sdk_conductor_hop_park_harvest",
+        lambda **_: events.append("park_harvest"),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest.mission_open",
+        lambda **_: True,
+    )
+
+    assert not await maybe_fire_conductor_park_harvest(dispatch_id=req.dispatch_id)
+    assert events == []
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    rec = json.loads(row["record_json"])
+    assert "hop_park_harvest_fired_at" not in rec
+    assert conductor_park_harvest_watchdog_candidates(ledger, grace_s=120.0) == [
+        req.dispatch_id
+    ]

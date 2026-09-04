@@ -182,8 +182,8 @@ async def fire_park_harvest(
     row: dict[str, Any],
     *,
     poster: Any | None = None,
-) -> None:
-    """Emit event + harvest nudge; stamp ledger idempotently."""
+) -> bool:
+    """Emit event + harvest nudge; stamp ledger idempotently on successful POST."""
     dispatch_id = str(row.get("dispatch_id") or "")
     thread_id = str(row.get("thread_id") or "")
     rec = _record_data(row)
@@ -208,6 +208,7 @@ async def fire_park_harvest(
             summoning_thread_id,
             exc_info=True,
         )
+        return False
 
     emit_frontier_sdk_conductor_hop_park_harvest(
         dispatch_id=dispatch_id,
@@ -221,6 +222,7 @@ async def fire_park_harvest(
         dispatch_id=dispatch_id,
         patch={_HOP_PARK_HARVEST_FIRED_KEY: time.time()},
     )
+    return True
 
 
 async def maybe_fire_conductor_park_harvest(*, dispatch_id: str) -> bool:
@@ -231,8 +233,7 @@ async def maybe_fire_conductor_park_harvest(*, dispatch_id: str) -> bool:
     closeout_tokens = _closeout_tokens_from_row(row)
     if not park_harvest_owed(row, closeout_tokens=closeout_tokens):
         return False
-    await fire_park_harvest(row)
-    return True
+    return await fire_park_harvest(row)
 
 
 __all__ = [
