@@ -122,6 +122,14 @@ _CONDUCTOR_HOP_TEMPLATE = (
     "G6 review harvest unread => ROW_PINNED (never land); G7 landed => DONE."
 )
 
+_CONDUCTOR_PARK_HARVEST_TEMPLATE = (
+    "CONDUCTOR PARK-HARVEST (mandatory): Predecessor {hop_from} parked on "
+    "PARKED_TRANSPORT; at least one web-anthropic reply has landed on thread "
+    "{thread_id} after its CLOSEOUT turn (subject cursor-sdk CLOSEOUT "
+    "{hop_from}). Harvest first — read the reply(ies), update CHECKPOINT on "
+    "thread {thread_id}, drive from the entry gate; never re-fire the same consult."
+)
+
 _CONDUCTOR_ATTENDED_RESURFACE_TEMPLATE = (
     "CONDUCTOR ATTENDED RESURFACE (mandatory): summon_mode is attended — the "
     "summoning IDE chat is live. At G3→G5: post SCORE_RESURFACE to "
@@ -337,10 +345,9 @@ def resolve_prompt_preamble(
     every G-row and landing on green without an interim plan/merge pause
     (friction 29694/29693).
 
-    ``thread_id`` / ``hop_seq`` / ``hop_from`` stamp the conductor hop preamble
-    when the admit is a Lane-B conductor packet (bind ``a:31807`` §2.4).
+    ``thread_id`` / ``hop_seq`` / ``hop_from`` / ``hop_reason`` stamp the conductor hop
+    preamble when the admit is a Lane-B conductor packet (bind ``a:31807`` §2.4).
     """
-    del hop_reason
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
         preamble = prompt_preamble.strip()
@@ -405,6 +412,13 @@ def resolve_prompt_preamble(
                     lineage=lineage,
                 )
             )
+            if hop_reason == "park_harvest" and hop_from:
+                parts.append(
+                    _CONDUCTOR_PARK_HARVEST_TEMPLATE.format(
+                        hop_from=hop_from,
+                        thread_id=thread_id,
+                    )
+                )
     if reasoning_posture_warrants_injection(
         contract
     ) and not _already_invokes_reasoning_posture(prompt_preamble, existing_text):

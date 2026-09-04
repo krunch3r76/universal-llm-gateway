@@ -31,6 +31,7 @@ from services.git_integration_worker.cursor_sdk_ledger_hop import (
 logger = get_logger(__name__)
 
 _HOP_PARK_HARVEST_FIRED_KEY = "hop_park_harvest_fired_at"
+_HOP_PARK_HARVEST_CONTINUED_KEY = "hop_park_harvest_continued_at"
 
 
 def _closeout_tokens_from_row(row: dict[str, Any]) -> frozenset[str]:
@@ -115,11 +116,16 @@ def park_harvest_owed(
         return False
     if rec.get(_HOP_PARK_HARVEST_FIRED_KEY):
         return False
-    body = _closeout_body_from_row(row)
+    rec_harvest = rec.get("closeout_harvest_owed")
+    if isinstance(rec_harvest, bool):
+        if not rec_harvest:
+            return False
+    else:
+        body = _closeout_body_from_row(row)
+        if not harvest_still_owed(body=body):
+            return False
     sb = scoreboard_body if scoreboard_body is not None else _scoreboard_body_for_row(row)
     if sb and not mission_open(scoreboard_body=sb):
-        return False
-    if not harvest_still_owed(body=body):
         return False
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
         hop_owed,
@@ -140,8 +146,14 @@ def build_park_harvest_arm_recipe(
     work_key = str(row.get("work_key") or "mission")
     label = f"{work_key}-harvest"
     thread_id = summoning_thread_id
-    after_turn = closeout_turn if closeout_turn is not None else 0
     rec = _record_data(row)
+    turn_from_rec = rec.get("closeout_turn")
+    turn_i = (
+        closeout_turn
+        if closeout_turn is not None
+        else (int(turn_from_rec) if isinstance(turn_from_rec, int) else None)
+    )
+    after_turn = turn_i if turn_i is not None else 0
     scoreboard_uri = str(rec.get("scoreboard_uri") or rec.get("scoreboard") or "")
     lines = [
         "park-harvest: arm watcher for CDP reply arrival (Phase A).",
@@ -236,9 +248,202 @@ async def maybe_fire_conductor_park_harvest(*, dispatch_id: str) -> bool:
     return await fire_park_harvest(row)
 
 
+def reply_arrived_on_thread(
+    *,
+    thread_id: str,
+    after_turn: int,
+    from_agent: str = "web-anthropic",
+    snapshot_fn: Any | None = None,
+) -> bool:
+    """Bus snapshot: ``first_reply_from`` after ``after_turn`` (fail-closed)."""
+    if snapshot_fn is not None:
+        return bool(snapshot_fn(thread_id, after_turn, from_agent))
+
+    params = {
+        "after_turn": after_turn,
+        "wait": 0,
+        "completion": "first_reply_from",
+        "from_agent": from_agent,
+    }
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=15.0) as client:
+            resp = client.get(
+                f"/threads/{thread_id}/wait",
+                params=params,
+                headers=headers,
+            )
+        if resp.status_code in (404, 422):
+            return False
+        if resp.status_code >= 400:
+            return False
+        payload = resp.json()
+        if not isinstance(payload, dict):
+            return False
+        return bool(payload.get("complete"))
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "park harvest continue reply snapshot failed thread=%s after_turn=%s",
+            thread_id,
+            after_turn,
+            exc_info=True,
+        )
+        return False
+
+
+def park_harvest_continue_owed(
+    row: dict[str, Any],
+    *,
+    closeout_tokens: frozenset[str] | None = None,
+    reply_fn: Any | None = None,
+) -> bool:
+    """R-B2 bind §6: PARKED_TRANSPORT terminal + Phase B fired + reply arrived."""
+    status = str(row.get("status") or "")
+    if status not in ("completed", "failed", "cancelled"):
+        return False
+    tokens = closeout_tokens or _closeout_tokens_from_row(row)
+    if "PARKED_TRANSPORT" not in tokens:
+        return False
+    rec = _record_data(row)
+    if not rec.get(_HOP_PARK_HARVEST_FIRED_KEY):
+        return False
+    if rec.get(_HOP_PARK_HARVEST_CONTINUED_KEY):
+        return False
+    if rec.get("hop_parked"):
+        return False
+    from services.git_integration_worker.cursor_sdk_park import _successor_admitted
+
+    dispatch_id = str(row.get("dispatch_id") or "")
+    record_json = str(row.get("record_json") or "")
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        if _successor_admitted(
+            conn, predecessor_id=dispatch_id, record_json=record_json
+        ):
+            return False
+    thread_id = str(row.get("thread_id") or "")
+    closeout_turn = rec.get("closeout_turn")
+    if not thread_id or not isinstance(closeout_turn, int):
+        return False
+    snapshot = reply_fn or (
+        lambda tid, turn, agent: reply_arrived_on_thread(
+            thread_id=tid, after_turn=turn, from_agent=agent
+        )
+    )
+    if not snapshot(thread_id, closeout_turn, "web-anthropic"):
+        return False
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        conductor_has_live_nested,
+        live_conductor_row_on_thread,
+        mission_open_for_row,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        evaluate_hop_budget,
+    )
+
+    if live_conductor_row_on_thread(
+        thread_id=thread_id, exclude_dispatch_id=dispatch_id
+    ):
+        return False
+    if conductor_has_live_nested(dispatch_id=dispatch_id):
+        return False
+    if not mission_open_for_row(row, closeout_tokens=tokens):
+        return False
+    verdict = evaluate_hop_budget(row, closeout_tokens=tokens)
+    if not verdict.ok or verdict.park:
+        return False
+    return True
+
+
+async def fire_park_harvest_continue(row: dict[str, Any]) -> bool:
+    """Admit park-harvest successor via hop path (bind §6 X-fresh)."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        build_hop_team_dispatch_body,
+        post_conductor_hop_team_dispatch,
+    )
+    from services.git_integration_worker.cursor_sdk_hop_events import (
+        emit_frontier_sdk_conductor_hop_admit_failed,
+        emit_frontier_sdk_conductor_hop_admitted,
+    )
+    from services.git_integration_worker.cursor_sdk_ledger_hop import merge_hop_patch
+
+    dispatch_id = str(row.get("dispatch_id") or "")
+    thread_id = str(row.get("thread_id") or "")
+    body = build_hop_team_dispatch_body(row, hop_reason_override="park_harvest")
+    if body is None:
+        return False
+    hop_seq = int(body.get("hop_seq") or 1)
+    ok, detail = await post_conductor_hop_team_dispatch(body)
+    record_json = str(row.get("record_json") or "")
+    if ok:
+        successor = (
+            str(detail.get("dispatch_id") or "")
+            or str(detail.get("execution_id") or "")
+        )
+        if not successor:
+            logger.warning(
+                "park harvest continue admit ok but no successor id "
+                "dispatch_id=%s detail=%s",
+                dispatch_id,
+                detail,
+            )
+            return False
+        merged = merge_hop_patch(record_json, {"hop_successor": successor})
+        try:
+            data = json.loads(merged) if merged else {}
+        except json.JSONDecodeError:
+            data = {}
+        if isinstance(data, dict):
+            data[_HOP_PARK_HARVEST_CONTINUED_KEY] = time.time()
+            merged = json.dumps(data, sort_keys=True, separators=(",", ":"))
+        ledger = CursorDispatchLedger.instance()
+        with ledger._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+                (merged, dispatch_id),
+            )
+        emit_frontier_sdk_conductor_hop_admitted(
+            predecessor_dispatch_id=dispatch_id,
+            successor_dispatch_id=successor,
+            thread_id=thread_id,
+            hop_seq=hop_seq,
+            hop_reason="park_harvest",
+        )
+        return True
+    error_text = json.dumps(detail, sort_keys=True)[:500]
+    merged = merge_hop_patch(
+        record_json,
+        {
+            "hop_admit_error": {
+                "error": error_text,
+                "status_code": detail.get("status_code"),
+            }
+        },
+    )
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+            (merged, dispatch_id),
+        )
+    emit_frontier_sdk_conductor_hop_admit_failed(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        hop_seq=hop_seq,
+        hop_reason="park_harvest",
+        error=error_text,
+        status_code=detail.get("status_code"),
+    )
+    return False
+
+
 __all__ = [
     "build_park_harvest_arm_recipe",
     "fire_park_harvest",
+    "fire_park_harvest_continue",
     "maybe_fire_conductor_park_harvest",
+    "park_harvest_continue_owed",
     "park_harvest_owed",
+    "reply_arrived_on_thread",
 ]

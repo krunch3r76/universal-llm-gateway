@@ -15,7 +15,7 @@ from services.git_integration_worker.cursor_sdk_events import emit_frontier_even
 
 logger = get_logger(__name__)
 
-_HOP_REASONS = frozenset({"spawn", "planned", "crash", "silent", "watchdog"})
+_HOP_REASONS = frozenset({"spawn", "planned", "crash", "silent", "watchdog", "park_harvest"})
 
 
 @event_factory

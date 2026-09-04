@@ -324,6 +324,49 @@ def conductor_hop_watchdog_candidates(
     return candidates
 
 
+def conductor_park_harvest_continue_candidates(
+    ledger: CursorDispatchLedger,
+) -> list[str]:
+    """Terminal rows with park_harvest fired, not continued — no grace (R-B2)."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _closeout_tokens_from_row,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        _HOP_PARK_HARVEST_CONTINUED_KEY,
+        _HOP_PARK_HARVEST_FIRED_KEY,
+    )
+
+    candidates: list[str] = []
+    with ledger._connect() as conn:
+        for row in _latest_terminal_conductor_rows(conn):
+            mapped = {k: row[k] for k in row.keys()}
+            dispatch_id = str(mapped.get("dispatch_id") or "")
+            if not dispatch_id:
+                continue
+            record_json = str(mapped.get("record_json") or "")
+            if _successor_admitted(
+                conn, predecessor_id=dispatch_id, record_json=record_json
+            ):
+                continue
+            closeout_tokens = _closeout_tokens_from_row(mapped)
+            if "PARKED_TRANSPORT" not in closeout_tokens:
+                continue
+            try:
+                rec = json.loads(record_json) if record_json else {}
+            except json.JSONDecodeError:
+                rec = {}
+            if not isinstance(rec, dict):
+                rec = {}
+            if not rec.get(_HOP_PARK_HARVEST_FIRED_KEY):
+                continue
+            if rec.get(_HOP_PARK_HARVEST_CONTINUED_KEY):
+                continue
+            if rec.get("hop_parked"):
+                continue
+            candidates.append(dispatch_id)
+    return candidates
+
+
 def conductor_park_harvest_watchdog_candidates(
     ledger: CursorDispatchLedger,
     *,

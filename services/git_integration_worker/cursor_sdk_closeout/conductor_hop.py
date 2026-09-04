@@ -303,8 +303,11 @@ def merge_conductor_closeout_hop_authority(
     dispatch_id: str,
     closeout_body: str,
     thread_id: str,
+    closeout_turn: int | None = None,
 ) -> None:
     """Merge ``hop_declared`` and closeout tokens before ``mark_terminal``."""
+    from bus_watch.park_harvest import harvest_still_owed
+
     parsed = parse_designed_stop_tokens(closeout_body)
     tokens = parsed.designed_tokens or parsed.tokens
     row = _load_row(dispatch_id)
@@ -318,6 +321,9 @@ def merge_conductor_closeout_hop_authority(
     if not isinstance(data, dict):
         data = {}
     data[_CLOSEOUT_TOKENS_KEY] = sorted(tokens)
+    if closeout_turn is not None:
+        data["closeout_turn"] = int(closeout_turn)
+    data["closeout_harvest_owed"] = harvest_still_owed(body=closeout_body)
     if "ROW_HOP" in tokens:
         data["hop_declared"] = True
         hop_seq = _parse_hop_seq_from_closeout(closeout_body)

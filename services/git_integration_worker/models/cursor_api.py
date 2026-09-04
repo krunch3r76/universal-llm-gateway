@@ -53,7 +53,7 @@ class CursorDispatchRequest(BaseModel):
     hop_from: str | None = None
     hop_seq: int | None = Field(default=None, ge=0)
     hop_reason: (
-        Literal["spawn", "planned", "crash", "silent", "watchdog"] | None
+        Literal["spawn", "planned", "crash", "silent", "watchdog", "park_harvest"] | None
     ) = None
 
     @model_validator(mode="after")

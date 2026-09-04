@@ -191,6 +191,59 @@ def test_merge_closeout_stamps_hop_declared_and_tokens() -> None:
     assert "ROW_HOP" in data.get("closeout_stop_tokens", [])
 
 
+_PARKED_HARVEST_CLOSEOUT = """\
+status: complete
+stop: PARKED_TRANSPORT
+CONSULT_PENDING
+execution_id: exec-abc
+poll_hint: wait
+NEXT_ADMIT: harvest G1
+"""
+
+_NONE_NEXT_ADMIT_CLOSEOUT = """\
+status: complete
+stop: PARKED_TRANSPORT
+NEXT_ADMIT: none
+"""
+
+
+def test_merge_closeout_stamps_closeout_turn_and_harvest_owed() -> None:
+    """L1-1: production path stamps closeout_turn + closeout_harvest_owed."""
+    ledger = CursorDispatchLedger.instance()
+    _admit_conductor(ledger, _req())
+    merge_conductor_closeout_hop_authority(
+        dispatch_id="pred-hop-1",
+        closeout_body=_PARKED_HARVEST_CLOSEOUT,
+        thread_id="9964",
+        closeout_turn=48,
+    )
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    data = json.loads(row["record_json"])
+    assert data.get("closeout_turn") == 48
+    assert data.get("closeout_harvest_owed") is True
+
+
+def test_merge_closeout_harvest_owed_false_when_next_admit_none() -> None:
+    """L1-2: NEXT_ADMIT:none ⇒ closeout_harvest_owed False."""
+    ledger = CursorDispatchLedger.instance()
+    _admit_conductor(ledger, _req())
+    merge_conductor_closeout_hop_authority(
+        dispatch_id="pred-hop-1",
+        closeout_body=_NONE_NEXT_ADMIT_CLOSEOUT,
+        thread_id="9964",
+        closeout_turn=48,
+    )
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    data = json.loads(row["record_json"])
+    assert data.get("closeout_harvest_owed") is False
+
+
 def test_build_hop_team_dispatch_body_clones_predecessor() -> None:
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])

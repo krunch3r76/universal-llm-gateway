@@ -12,8 +12,12 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog 
     maybe_fire_conductor_hop_watchdog,
     sweep_conductor_hop_watchdog,
 )
-from services.git_integration_worker.cursor_sdk_ledger_hop import hop_fields_from_record_json
-from services.git_integration_worker.cursor_sdk_park import conductor_hop_watchdog_candidates
+from services.git_integration_worker.cursor_sdk_ledger_hop import (
+    hop_fields_from_record_json,
+)
+from services.git_integration_worker.cursor_sdk_park import (
+    conductor_hop_watchdog_candidates,
+)
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -218,6 +222,41 @@ async def test_sweep_emits_watchdog_fired_event() -> None:
         fired = await sweep_conductor_hop_watchdog(ledger)
     assert fired == 1
     assert "watchdog_fired" in emitted
+
+
+@pytest.mark.asyncio
+async def test_watchdog_fires_park_harvest_continue_before_arm_recipe() -> None:
+    """R-6: continue branch fires before park_harvest arm-recipe."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="pred-continue-1")
+    _admit_conductor(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["PARKED_TRANSPORT", "CONSULT_PENDING"],
+            "closeout_turn": 48,
+            "closeout_harvest_owed": True,
+            "hop_park_harvest_fired_at": time.time(),
+        },
+    )
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+
+    continue_mock = AsyncMock(return_value=True)
+
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.park_harvest_continue_owed",
+        return_value=True,
+    ), patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.fire_park_harvest_continue",
+        continue_mock,
+    ), patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.park_harvest_owed",
+        return_value=True,
+    ) as arm_mock:
+        ok = await maybe_fire_conductor_hop_watchdog(dispatch_id=req.dispatch_id)
+    assert ok is True
+    continue_mock.assert_awaited_once()
+    arm_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
