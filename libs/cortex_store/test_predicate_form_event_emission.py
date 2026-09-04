@@ -72,7 +72,11 @@ def test_patch_surfaces_predicate_form_normalize_envelope(
 ) -> None:
     """PATCH result dict carries the normalize envelope alongside the item."""
     _patch_update(monkeypatch, conn)
-    aid = _insert_assertion(conn, entity_id="person:camelia-mahmoudi")
+    aid = _insert_assertion(
+        conn,
+        entity_id="person:camelia-mahmoudi",
+        claim="Camelia Mahmoudi is filer on matter 24PR197054.",
+    )
 
     legacy = "role(camelia_mahmoudi, filer, 24PR197054)"
     result = _update_assertion_impl(aid, {"predicate_form": legacy})
