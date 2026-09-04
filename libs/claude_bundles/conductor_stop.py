@@ -43,7 +43,7 @@ _PING_STOPS: frozenset[str] = frozenset(
 _STOP_CELL_RE = re.compile(
     r"\b(" + "|".join(re.escape(t) for t in STOP_TOKENS) + r")\b"
 )
-_G_ROW_RE = re.compile(r"^\|\s*(G[1-6])\s*\|", re.MULTILINE)
+_G_ROW_RE = re.compile(r"^\|\s*(G[1-7])\s*\|", re.MULTILINE)
 _FENCE_OPEN_RE = re.compile(r"^[ \t]*(?P<marker>`{3,}|~{3,})")
 _DESIGNED_STOP_LINE_RE = re.compile(
     r"(?im)^[ \t]*(?:>\s+|[-*+]\s+)?"
@@ -59,7 +59,7 @@ _DESIGNED_STOP_DOC_RE = re.compile(
 )
 DESIGNED_STOP_MISSING = "designed_stop_missing"
 _RESUME_ROW_RE = re.compile(
-    r"(?im)^(?:resume_at|entry_gate|persisted_row):\s*(G[1-6])\b"
+    r"(?im)^(?:resume_at|entry_gate|persisted_row):\s*(G[1-7])\b"
 )
 _MODE_B_ADMIT_RE = re.compile(
     r"(?im)(execution_id:\s*\S+|poll_hint:\s*\S+|status:\s*blocked|honest\s+halt|"

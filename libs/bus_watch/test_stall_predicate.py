@@ -30,6 +30,17 @@ _CLAIMED_PASS_SCOREBOARD = """\
 | G7 | Land | CLAIMED |
 """
 
+# F1 residual (G6 R2): only G7 non-DONE — regex must include G7 or mission_open false-closes at land gate.
+_ONLY_G7_OPEN_SCOREBOARD = """\
+| G1 | Architecture | DONE |
+| G2 | Frame | DONE |
+| G3 | Implement | DONE |
+| G4 | Skeptic | DONE |
+| G5 | Implement | DONE |
+| G6 | Review | DONE |
+| G7 | Land | OPEN |
+"""
+
 _PARKED_CLOSEOUT = """\
 status: complete
 stop: PARKED_TRANSPORT
@@ -81,6 +92,11 @@ def test_mission_open_true_when_row_open() -> None:
 def test_mission_open_true_when_claimed_or_pass_not_only_open_literal() -> None:
     """F1 / A-1 false-negative wall: CLAIMED/PASS rows must keep mission open."""
     assert mission_open(scoreboard_body=_CLAIMED_PASS_SCOREBOARD)
+
+
+def test_mission_open_true_when_only_g7_open() -> None:
+    """F1 residual (G6 R2): G7-only open must keep mission open at the land gate."""
+    assert mission_open(scoreboard_body=_ONLY_G7_OPEN_SCOREBOARD)
 
 
 def test_stall_predicate_false_when_all_done() -> None:
