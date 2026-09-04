@@ -85,6 +85,19 @@ def bound_prompt_sha256_prefix(text: str, *, prefix_len: int = 12) -> str:
     return f"{digest[:prefix_len]}:{line_head}"
 
 
+def _pointer_turn_remediation(role: str) -> str:
+    """Role-appropriate fix hint when the latest turn is a server pointer."""
+    if role == "life":
+        return (
+            "Post a fresh prompt turn addressed to life (or to='dispatch') "
+            "before dispatching again, or use prompt= instead of thread="
+        )
+    return (
+        "Post a fresh prompt turn on the thread before dispatching again, "
+        "or pass split_thread=true to keep dispatch turns off the prompt thread"
+    )
+
+
 def allowed_prompt_recipients(role: str) -> frozenset[str]:
     """Recipients that may address a thread-body generate prompt for *role*.
 
@@ -180,9 +193,7 @@ def _validated_turn_body(
             reason=(
                 f"{turn_label} on dispatch thread {dispatch_thread_id!r} is a "
                 "server-posted dispatch pointer/failure/admit envelope, not a "
-                "caller prompt. Post a fresh prompt turn on the thread before "
-                "dispatching again, or pass split_thread=true to keep dispatch "
-                "turns off the prompt thread"
+                f"caller prompt. {_pointer_turn_remediation(role)}"
             ),
             status_code=422,
             code="dispatch_thread_latest_is_pointer",

@@ -151,6 +151,26 @@ async def test_server_pointer_still_pointer_code() -> None:
             role="artisan",
         )
     assert excinfo.value.code == "dispatch_thread_latest_is_pointer"
+    assert "split_thread=true" in excinfo.value.reason
+
+
+@pytest.mark.asyncio
+async def test_life_pointer_refusal_omits_split_thread_advice() -> None:
+    with pytest.raises(FrontierEndpointError) as excinfo:
+        await _read_with_turn(
+            {
+                "from": "dispatch",
+                "to": "life",
+                "body": (
+                    "life light-bounded generate dispatch — prompt on "
+                    "dispatch thread `9980` (correlation `abc`).\n\nSummary: x"
+                ),
+            },
+            role="life",
+        )
+    assert excinfo.value.code == "dispatch_thread_latest_is_pointer"
+    assert "split_thread" not in excinfo.value.reason
+    assert "prompt=" in excinfo.value.reason
 
 
 @pytest.mark.asyncio
