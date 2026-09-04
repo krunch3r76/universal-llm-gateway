@@ -25,9 +25,10 @@ _refresh_pidfile_if_healthy() {
     return 1
   fi
   live_pid="$(_listening_pid)"
-  if [ -n "$live_pid" ]; then
-    echo "$live_pid" > "$PIDFILE"
+  if [ -z "$live_pid" ]; then
+    return 1
   fi
+  echo "$live_pid" > "$PIDFILE"
   return 0
 }
 
@@ -39,8 +40,9 @@ if [ -f "$PIDFILE" ]; then
   old_pid="$(cat "$PIDFILE")"
   if kill -0 "$old_pid" 2>/dev/null \
     && curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
-    _refresh_pidfile_if_healthy
-    exit 0
+    if _refresh_pidfile_if_healthy; then
+      exit 0
+    fi
   fi
 fi
 

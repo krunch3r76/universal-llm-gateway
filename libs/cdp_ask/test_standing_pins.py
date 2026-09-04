@@ -108,7 +108,7 @@ def test_probe_lane_messages_lapsed_on_matching_url() -> None:
         ),
         patch.object(standing_pins, "emit_standing_lapsed") as emit_lapsed,
     ):
-        health = _probe_lane("messages", row, prev="UP")
+        health, _ = _probe_lane("messages", row, prev="UP")
     assert health.state == "LAPSED"
     emit_lapsed.assert_called_once()
 
@@ -120,7 +120,7 @@ def test_probe_lane_down_when_unit_inactive() -> None:
         patch.object(standing_pins, "_unit_active", return_value=False),
         patch.object(standing_pins, "emit_standing_down") as emit_down,
     ):
-        health = _probe_lane("fleet", row, prev="UP")
+        health, _ = _probe_lane("fleet", row, prev="UP")
     assert health.state == "DOWN"
     emit_down.assert_called_once()
 
@@ -161,3 +161,24 @@ def test_probe_health_projects_standing_lanes_only(
     assert set(standing) == _STANDING_LANES
     assert all(isinstance(h, StandingPinHealth) for h in standing.values())
     assert all(h.state == "UP" for h in standing.values())
+
+
+@pytest.mark.offline
+def test_probe_health_keeps_prev_state_when_emit_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ULG_REPO", str(_REPO))
+    standing_pins._prev_states.clear()
+    standing_pins._prev_states["fleet"] = "DOWN"
+    row = {"port": 9222, "lapsed_url_prefixes": [], "standing": True}
+    with (
+        patch.object(standing_pins, "_probe_display", side_effect=["live", "live"]),
+        patch.object(standing_pins, "_load_pins", return_value={"fleet": row}),
+        patch.object(standing_pins, "_unit_active", return_value=True),
+        patch.object(standing_pins, "_cdp_json", return_value={"Browser": "Chrome"}),
+        patch.object(standing_pins, "_top_page_url", return_value="https://example.com/"),
+        patch.object(standing_pins, "_emit_transition", return_value=False),
+    ):
+        _, standing = probe_health()
+    assert standing["fleet"].state == "UP"
+    assert standing_pins._prev_states["fleet"] == "DOWN"

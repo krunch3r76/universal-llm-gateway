@@ -112,7 +112,7 @@ def _emit_transition(
     port: int,
     observed_at: str,
     url_prefix: str | None = None,
-) -> None:
+) -> bool:
     """Emit standing transition; never raise into /health projection."""
     try:
         if state == "DOWN":
@@ -130,11 +130,13 @@ def _emit_transition(
         logger.warning(
             "standing_pins emit failed lane=%s state=%s", name, state, exc_info=True
         )
+        return False
+    return True
 
 
 def _probe_lane(
     name: str, row: dict, *, prev: StandingState | None
-) -> StandingPinHealth:
+) -> tuple[StandingPinHealth, bool]:
     observed_at = _iso_now()
     port = int(row["port"])
     prefixes = list(row.get("lapsed_url_prefixes") or [])
@@ -144,9 +146,11 @@ def _probe_lane(
         health = StandingPinHealth(
             state=state, source="systemd+cdp", observed_at=observed_at
         )
-        if prev != state:
-            _emit_transition(state, name=name, port=port, observed_at=observed_at)
-        return health
+        if prev != state and not _emit_transition(
+            state, name=name, port=port, observed_at=observed_at
+        ):
+            return health, False
+        return health, True
 
     matched = _lapsed_match(_top_page_url(port), prefixes)
     if matched is not None:
@@ -154,23 +158,25 @@ def _probe_lane(
         health = StandingPinHealth(
             state=state, source="systemd+cdp", observed_at=observed_at
         )
-        if prev != state:
-            _emit_transition(
-                state,
-                name=name,
-                port=port,
-                observed_at=observed_at,
-                url_prefix=matched,
-            )
-        return health
+        if prev != state and not _emit_transition(
+            state,
+            name=name,
+            port=port,
+            observed_at=observed_at,
+            url_prefix=matched,
+        ):
+            return health, False
+        return health, True
 
     state = "UP"
     health = StandingPinHealth(
         state=state, source="systemd+cdp", observed_at=observed_at
     )
-    if prev != state:
-        _emit_transition(state, name=name, port=port, observed_at=observed_at)
-    return health
+    if prev != state and not _emit_transition(
+        state, name=name, port=port, observed_at=observed_at
+    ):
+        return health, False
+    return health, True
 
 
 def _probe_display(display: str) -> str:
@@ -205,8 +211,9 @@ def probe_health() -> tuple[dict[str, str], dict[str, StandingPinHealth]]:
             if not row.get("standing"):
                 continue
             prev = _prev_states.get(name)
-            health = _probe_lane(name, row, prev=prev)
-            _prev_states[name] = health.state
+            health, commit_prev = _probe_lane(name, row, prev=prev)
+            if commit_prev:
+                _prev_states[name] = health.state
             standing[name] = health
     except Exception:
         logger.warning("standing_pins probe_health failed", exc_info=True)
