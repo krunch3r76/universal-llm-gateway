@@ -466,7 +466,9 @@ def test_ac10_top_k_flagged_carries_epistemic_state(
         a for a in card["top_k_assertions"] if a.get("epistemic_state") != "flagged"
     ]
     assert non_flagged_rows
-    assert all(a.get("epistemic_state") is None for a in non_flagged_rows)
+    assert all(
+        "epistemic_state" in a and a["epistemic_state"] is None for a in non_flagged_rows
+    )
 
 
 def test_async_event_carries_reason_and_session(
