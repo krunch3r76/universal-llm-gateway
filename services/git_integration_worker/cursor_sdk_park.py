@@ -29,10 +29,10 @@ from services.git_integration_worker.cursor_sdk_gate import (
     transfer_sdk_dispatch_slot,
     transfer_sdk_dispatch_slot_sync,
 )
-from services.git_integration_worker.cursor_sdk_restart_orphan import load_ledger_row
 from services.git_integration_worker.cursor_sdk_ledger_hop import (
     hop_fields_from_record_json,
 )
+from services.git_integration_worker.cursor_sdk_restart_orphan import load_ledger_row
 
 logger = get_logger(__name__)
 
@@ -334,11 +334,11 @@ def conductor_park_harvest_watchdog_candidates(
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
         _closeout_tokens_from_row,
     )
-    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
-        park_harvest_owed,
-    )
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
         load_hop_budget_config,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        park_harvest_owed,
     )
 
     cfg = load_hop_budget_config()

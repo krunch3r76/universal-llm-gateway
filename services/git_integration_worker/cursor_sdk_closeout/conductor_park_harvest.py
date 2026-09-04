@@ -121,7 +121,9 @@ def park_harvest_owed(
         return False
     if not harvest_still_owed(body=body):
         return False
-    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import hop_owed
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        hop_owed,
+    )
 
     if hop_owed(row, closeout_tokens=tokens):
         return False

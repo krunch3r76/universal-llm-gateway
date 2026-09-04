@@ -4,8 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from bus_watch.park_harvest import mission_open, parked_or_none_next_admit, successor_owed
 from claude_bundles.conductor_stop import parse_stop_tokens
+
+from bus_watch.park_harvest import (
+    mission_open,
+    parked_or_none_next_admit,
+    successor_owed,
+)
 
 
 def live_sdk_on_thread(*, thread_snapshot: dict[str, Any], thread_id: str = "") -> bool:

@@ -27,18 +27,17 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget im
     evaluate_hop_budget,
     park_conductor_hop_mission,
 )
+from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+    maybe_fire_conductor_park_harvest,
+    park_harvest_owed,
+)
 from services.git_integration_worker.cursor_sdk_hop_events import (
     emit_frontier_sdk_conductor_hop_admit_failed,
     emit_frontier_sdk_conductor_hop_admitted,
     emit_frontier_sdk_conductor_hop_watchdog_fired,
 )
 from services.git_integration_worker.cursor_sdk_ledger_hop import (
-    hop_fields_from_record_json,
     merge_hop_patch,
-)
-from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
-    maybe_fire_conductor_park_harvest,
-    park_harvest_owed,
 )
 from services.git_integration_worker.cursor_sdk_park import (
     conductor_hop_watchdog_candidates,

@@ -17,15 +17,12 @@ import argparse
 import json
 import os
 import subprocess
-import sys
-import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
 import yaml
-
 from bus_watch.poll import DEFAULT_MAX_HOURS, DEFAULT_WAIT_SLICE_S, sliced_wait_loop
 from bus_watch.stall_pop import emit_stall_pop
 from bus_watch.stall_predicate import stall_predicate

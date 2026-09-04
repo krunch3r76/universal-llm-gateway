@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
-
 from bus_watch.park_harvest import harvest_still_owed
+
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     maybe_fire_conductor_hop_reactor,
@@ -219,7 +219,7 @@ async def test_park_harvest_idempotent_second_call(tmp_path, monkeypatch):
     ledger = CursorDispatchLedger.instance()
     req = _req()
     _admit_conductor(ledger, req)
-    row = _terminal_row(
+    _terminal_row(
         ledger,
         req,
         closeout_body=_PARKED_HARVEST_CLOSEOUT,

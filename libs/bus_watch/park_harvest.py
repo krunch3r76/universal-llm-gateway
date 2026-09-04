@@ -5,10 +5,10 @@ from __future__ import annotations
 import re
 
 from claude_bundles.conductor_stop import (
-    EXIT_PERSIST_STOPS,
     _ARCHIVE_OR_HARVEST_RE,
     _G_ROW_RE,
     _NEXT_ADMIT_NONE_RE,
+    EXIT_PERSIST_STOPS,
     is_consult_pending_wait,
     next_admit_names_harvest,
     parse_stop_tokens,
