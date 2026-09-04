@@ -72,7 +72,6 @@ from .invention_resubjection_guards import (
 )
 from .parser import Predicate, PredicateParseError, parse, unparse
 from .registry import (
-    CLASS_6_TENSE_MARKERS,
     STATUS_FUNCTOR_FAMILY,
     is_status_functor,
     status_current_predicate_sql_where,
@@ -256,7 +255,6 @@ def normalize_predicate_domain(
 __all__ = [
     "ACTION_VOCAB_V0",
     "ActionPredicate",
-    "CLASS_6_TENSE_MARKERS",
     "CollisionResult",
     "Contradiction",
     "CortexEntityResolver",

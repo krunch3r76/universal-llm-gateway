@@ -80,8 +80,6 @@ CLASS_6_WORKFLOW_ENTITY_TYPES: frozenset[str] = frozenset(
 # one constant consumed by classes.py + card.py — not a fifth grammar mirror.
 STATUS_FUNCTOR_FAMILY: frozenset[str] = frozenset({"status"})
 
-CLASS_6_TENSE_MARKERS: frozenset[str] = frozenset({"current", "former"})
-
 
 def is_status_functor(predicate_name: str) -> bool:
     """True for ``status`` and ``*_status`` functors (arity-3 state slot)."""

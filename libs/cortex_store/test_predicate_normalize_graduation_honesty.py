@@ -6,7 +6,6 @@ import sqlite3
 
 import pytest
 from predicate_form.classes import class_6_check
-from predicate_form.parser import parse
 from predicate_form.entity_resolve import StaticEntityResolver
 from predicate_form.invention_resubjection_guards import check_invention
 from predicate_form.parser import parse
@@ -212,6 +211,8 @@ def test_ac5_three_producers_distinct_review_notes(
     migrated_conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from cortex_store.routes.assertions._supersede import _supersede_assertion_impl
+
     _patch_create_and_supersede(monkeypatch, migrated_conn)
     entity_id = "service:review-notes-fixture"
     insert_entity(migrated_conn, entity_id=entity_id, entity_type="service", name="R")
@@ -249,10 +250,36 @@ def test_ac5_three_producers_distinct_review_notes(
     assert "invention" in str(update_notes)
     assert create_notes != update_notes
 
+    old_id = _insert_assertion(migrated_conn, entity_id=entity_id)
+    supersede_result = _supersede_assertion_impl(
+        {
+            "old_assertion_id": old_id,
+            "entity_id": entity_id,
+            "claim": "Supersede AC5 producer parity fixture.",
+            "confidence": "believed",
+            "evidence": "test",
+            "predicate_form": pf_class6,
+            "derivation_type": "direct_observation",
+            "observed_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    supersede_id = int(supersede_result["new"]["id"])
+    supersede_notes = migrated_conn.execute(
+        "SELECT review_notes FROM assertions WHERE id = ?", (supersede_id,)
+    ).fetchone()[0]
+    supersede_note_str = str(supersede_notes)
+    assert "predicate normalize:" in supersede_note_str
+    assert any(
+        token in supersede_note_str
+        for token in ("class6_generic_state", "invention", "resubjection")
+    )
+
 
 def _assert_ac6_envelope(envelope: dict | None) -> None:
-    if envelope is None or not envelope.get("requires_human_review"):
-        pytest.skip("Class 6 trigger unavailable for fixture entity")
+    assert envelope is not None, "predicate_form_normalize envelope missing"
+    assert envelope.get("requires_human_review"), (
+        "fixture predicate must trigger human review (invention/class6/resubjection)"
+    )
     assert envelope.get("flag_reasons")
     assert envelope.get("normalization_decision")
     assert envelope.get("suppression_effect")
@@ -339,8 +366,9 @@ def test_ac7_update_path_flags_and_event_envelope(
         aid, {"predicate_form": "status(unknown_subject_xyz, ready_to_file)"}
     )
     envelope = result.get("predicate_form_normalize")
-    if envelope is None or not envelope.get("requires_human_review"):
-        pytest.skip("Class 6 trigger unavailable for update parity fixture")
+    assert envelope is not None and envelope.get("requires_human_review"), (
+        "update-path fixture must trigger human review"
+    )
     _emit_predicate_form_normalize_events(
         assertion_id=aid,
         normalize_payload=envelope,
@@ -381,8 +409,7 @@ def test_ac7_supersede_flags_on_explicit_predicate_form(
     notes = migrated_conn.execute(
         "SELECT review_status, review_notes FROM assertions WHERE id = ?", (new_id,)
     ).fetchone()
-    if notes[0] != "flagged":
-        pytest.skip("Class 6 did not fire on supersede fixture")
+    assert notes[0] == "flagged", "supersede fixture must flag assertion for review"
     assert "predicate normalize:" in str(notes[1])
     assert result.get("predicate_form_normalize") is not None
 
@@ -421,11 +448,25 @@ def test_ac10_top_k_flagged_carries_epistemic_state(
         (entity_id, "Flagged operative claim.", pf),
     )
     migrated_conn.commit()
+    pf_unflagged = f"describes({entity_id}, unflagged_item)"
+    migrated_conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, predicate_form, "
+        "review_status, entrenchment_score, created_at, updated_at) "
+        "VALUES (?, ?, 'believed', ?, 'committed', 5.0, datetime('now'), datetime('now'))",
+        (entity_id, "Unflagged operative claim.", pf_unflagged),
+    )
+    migrated_conn.commit()
     card = get_entity_card(migrated_conn, entity_id=entity_id, top_k=7)
     flagged_rows = [
         a for a in card["top_k_assertions"] if a.get("epistemic_state") == "flagged"
     ]
     assert flagged_rows
+    # Amended AC10: unflagged top_k rows carry explicit epistemic_state: null (not omission).
+    non_flagged_rows = [
+        a for a in card["top_k_assertions"] if a.get("epistemic_state") != "flagged"
+    ]
+    assert non_flagged_rows
+    assert all(a.get("epistemic_state") is None for a in non_flagged_rows)
 
 
 def test_async_event_carries_reason_and_session(
@@ -456,8 +497,7 @@ def test_async_event_carries_reason_and_session(
         session_id="session-fixture",
     )
     review_events = [p for s, p in captured if s == "mcp.cortex.predicate.review.required"]
-    if not review_events:
-        pytest.skip("Fixture did not require review")
+    assert review_events, "normalize fixture must emit mcp.cortex.predicate.review.required"
     payload = review_events[0]
     assert payload.get("session_id") == "session-fixture"
     assert payload.get("reason")
