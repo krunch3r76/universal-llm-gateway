@@ -30,6 +30,13 @@ for unit in jupiter-cdp-xvfb@.service cdp-lane@.service web-fetcher.service cdp-
 done
 
 ln -sf "$REPO/scripts/cdp-ask-start" "$LOCAL_BIN/cdp-ask-start"
+
+rm -f \
+  "$LOCAL_BIN/wait-for-file" \
+  "$LOCAL_BIN/cdp-lane-launch" \
+  "$LOCAL_BIN/cdp-lane-ensure" \
+  "$LOCAL_BIN/jupiter-web-fetcher"
+
 cp "$SRC/wait-for-file" "$LOCAL_BIN/wait-for-file"
 chmod +x "$LOCAL_BIN/wait-for-file"
 
