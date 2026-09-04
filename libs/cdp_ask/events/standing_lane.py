@@ -67,6 +67,22 @@ def cdp_lane_standing_lapsed(
     )
 
 
+@event_factory
+def cdp_lane_standing_hung(
+    *,
+    lane: str,
+    port: int,
+    observed_at: str,
+) -> Event:
+    """Standing lane HTTP CDP answers but a real CDP round-trip is wedged."""
+    return Event(
+        signal="cdp.lane.standing.hung",
+        role="observation",
+        scope="node",
+        payload={"lane": lane, "port": port, "observed_at": observed_at},
+    )
+
+
 def _emit(event: Event) -> None:
     sock_path = os.environ.get(
         "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
@@ -114,3 +130,7 @@ def emit_standing_lapsed(
             url_prefix=url_prefix,
         )
     )
+
+
+def emit_standing_hung(*, lane: str, port: int, observed_at: str) -> None:
+    _emit(cdp_lane_standing_hung(lane=lane, port=port, observed_at=observed_at))

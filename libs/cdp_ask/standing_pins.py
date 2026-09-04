@@ -19,13 +19,14 @@ from urllib.parse import urlparse
 
 from cdp_ask.events.standing_lane import (
     emit_standing_down,
+    emit_standing_hung,
     emit_standing_lapsed,
     emit_standing_up,
 )
 
 logger = logging.getLogger(__name__)
 
-StandingState = str  # DOWN | UP | LAPSED
+StandingState = str  # DOWN | UP | LAPSED | HUNG
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,43 @@ def _lapsed_match(url: str | None, prefixes: list[str]) -> str | None:
     return None
 
 
+def _cdp_roundtrip_ok(port: int, version: dict) -> bool:
+    """True when a bounded CDP WebSocket command round-trips.
+
+    ``/json/version`` can succeed while real CDP work is wedged (pass-4
+    getCookies timeout shape). A short Browser.getVersion over the browser
+    debugger WebSocket is the lane analogue of display ``hung``.
+    """
+    import json
+
+    import websocket
+
+    ws_url = version.get("webSocketDebuggerUrl")
+    if not isinstance(ws_url, str) or not ws_url.strip():
+        return False
+    try:
+        conn = websocket.create_connection(
+            ws_url,
+            timeout=1.0,
+            header=[f"Origin: http://127.0.0.1:{port}"],
+        )
+    except Exception:
+        return False
+    try:
+        conn.send(json.dumps({"id": 1, "method": "Browser.getVersion"}))
+        while True:
+            message = json.loads(conn.recv())
+            if message.get("id") == 1:
+                return "error" not in message
+    except Exception:
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _emit_transition(
     state: StandingState,
     *,
@@ -124,8 +162,12 @@ def _emit_transition(
                 observed_at=observed_at,
                 url_prefix=url_prefix or "",
             )
-        else:
+        elif state == "HUNG":
+            emit_standing_hung(lane=name, port=port, observed_at=observed_at)
+        elif state == "UP":
             emit_standing_up(lane=name, port=port, observed_at=observed_at)
+        else:
+            raise ValueError(f"unknown standing state: {state}")
     except Exception:
         logger.warning(
             "standing_pins emit failed lane=%s state=%s", name, state, exc_info=True
@@ -141,7 +183,8 @@ def _probe_lane(
     port = int(row["port"])
     prefixes = list(row.get("lapsed_url_prefixes") or [])
 
-    if not _unit_active(name) or _cdp_json(port) is None:
+    version = _cdp_json(port) if _unit_active(name) else None
+    if version is None:
         state: StandingState = "DOWN"
         health = StandingPinHealth(
             state=state, source="systemd+cdp", observed_at=observed_at
@@ -164,6 +207,17 @@ def _probe_lane(
             port=port,
             observed_at=observed_at,
             url_prefix=matched,
+        ):
+            return health, False
+        return health, True
+
+    if not _cdp_roundtrip_ok(port, version):
+        state = "HUNG"
+        health = StandingPinHealth(
+            state=state, source="systemd+cdp", observed_at=observed_at
+        )
+        if prev != state and not _emit_transition(
+            state, name=name, port=port, observed_at=observed_at
         ):
             return health, False
         return health, True

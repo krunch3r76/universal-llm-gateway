@@ -154,6 +154,7 @@ def test_probe_health_projects_standing_lanes_only(
         patch.object(standing_pins, "_unit_active", return_value=True),
         patch.object(standing_pins, "_cdp_json", return_value={"Browser": "Chrome"}),
         patch.object(standing_pins, "_top_page_url", return_value="https://example.com/"),
+        patch.object(standing_pins, "_cdp_roundtrip_ok", return_value=True),
         patch.object(standing_pins, "emit_standing_up"),
     ):
         displays, standing = probe_health()
@@ -177,8 +178,32 @@ def test_probe_health_keeps_prev_state_when_emit_fails(
         patch.object(standing_pins, "_unit_active", return_value=True),
         patch.object(standing_pins, "_cdp_json", return_value={"Browser": "Chrome"}),
         patch.object(standing_pins, "_top_page_url", return_value="https://example.com/"),
+        patch.object(standing_pins, "_cdp_roundtrip_ok", return_value=True),
         patch.object(standing_pins, "_emit_transition", return_value=False),
     ):
         _, standing = probe_health()
     assert standing["fleet"].state == "UP"
     assert standing_pins._prev_states["fleet"] == "DOWN"
+
+
+@pytest.mark.offline
+def test_probe_lane_hung_when_roundtrip_fails() -> None:
+    row = {"port": 9222, "lapsed_url_prefixes": []}
+    with (
+        patch.object(standing_pins, "_unit_active", return_value=True),
+        patch.object(
+            standing_pins,
+            "_cdp_json",
+            return_value={
+                "Browser": "Chrome",
+                "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/browser/x",
+            },
+        ),
+        patch.object(standing_pins, "_top_page_url", return_value="https://example.com/"),
+        patch.object(standing_pins, "_cdp_roundtrip_ok", return_value=False),
+        patch.object(standing_pins, "emit_standing_hung") as emit_hung,
+    ):
+        health, _ = _probe_lane("fleet", row, prev="UP")
+    assert health.state == "HUNG"
+    emit_hung.assert_called_once()
+

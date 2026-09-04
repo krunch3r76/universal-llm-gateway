@@ -84,6 +84,7 @@
 "git.integrate.completed" = "Master advanced at ref level; optional worktree teardown follows. Emitted by `integrate_op` on success."
 "cdp.lane.standing.down" = "Standing CDP lane down (unit inactive or CDP refused). `lane`, `port`, `observed_at`."
 "cdp.lane.standing.lapsed" = "Standing CDP lane lapsed (vendor session dead while CDP answers). `lane`, `port`, `observed_at`, `url_prefix`."
+"cdp.lane.standing.hung" = "Standing CDP lane hung (HTTP /json/version answers; bounded CDP WebSocket round-trip timed out). `lane`, `port`, `observed_at`."
 "cdp.lane.standing.up" = "Standing CDP lane up and not lapsed. `lane`, `port`, `observed_at`."
 "cdp_ask.followup.paste_attempt" = "Warm CSE followup paste started on attached lane. `registration_id`, `resolution_path` ∈ {chat_url, registration_id, execution_id}."
 "cdp_ask.followup.paste_verified" = "Warm CSE followup paste verification outcome. `send_verified`, optional `streaming_at_paste`, `error_code` — no prompt bodies."
