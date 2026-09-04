@@ -60,15 +60,30 @@ INTENT_SUFFIX = {
 _CHROME_BIN = "google-chrome"
 _LAUNCH_WAIT_S = 20
 _POLL_MS = 250
-# Jupiter standing default is Xvfb :2 (scripts.local/jupiter-cdp-xvfb).
+# Jupiter standing default is Xvfb :2 (jupiter-cdp-xvfb@2.service).
 # Xwayland :1 remains for legacy/attended cosmic-comp glances; MaxClients is per-server.
 _DEFAULT_DISPLAY = ":2"
-_XVFB_STATE_DIR = Path.home() / ".gateway" / "cdp-xvfb"
-_XVFB_AUTH = _XVFB_STATE_DIR / "Xauthority"
 
 
-def cdp_display() -> str:
-    """X display for CDP Chrome launches (``CDP_DISPLAY`` > ``DISPLAY`` > ``:2``)."""
+def _display_digit(display: str) -> str:
+    """Strip leading colon from an X display name (``:2`` → ``2``)."""
+    d = display.strip()
+    if d.startswith(":"):
+        return d[1:]
+    return d
+
+
+def xauthority_for_display(display: str) -> Path:
+    """Per-display Xauthority path written by ``jupiter-cdp-xvfb@.service``."""
+    return Path.home() / ".gateway" / "cdp-xvfb" / _display_digit(display) / "Xauthority"
+
+
+def cdp_display(display: str | None = None) -> str:
+    """X display for CDP Chrome (explicit *display* > ``CDP_DISPLAY`` > ``DISPLAY`` > ``:2``)."""
+    if display is not None:
+        val = display.strip()
+        if val:
+            return val
     for key in ("CDP_DISPLAY", "DISPLAY"):
         val = os.environ.get(key, "").strip()
         if val:
@@ -76,15 +91,15 @@ def cdp_display() -> str:
     return _DEFAULT_DISPLAY
 
 
-def chrome_display_env() -> dict[str, str]:
-    """Env for a headed CDP Chrome: display + Xvfb Xauthority when managed auth exists."""
-    display = cdp_display()
+def chrome_display_env(display: str | None = None) -> dict[str, str]:
+    """Env for headed CDP Chrome: display + per-display Xauthority when present."""
+    display_val = cdp_display(display)
     env = dict(os.environ)
-    env["DISPLAY"] = display
-    env["CDP_DISPLAY"] = display
-    # Custom cookie from jupiter-cdp-xvfb — without it Chrome cannot open :2.
-    if display == _DEFAULT_DISPLAY and _XVFB_AUTH.is_file():
-        env["XAUTHORITY"] = str(_XVFB_AUTH)
+    env["DISPLAY"] = display_val
+    env["CDP_DISPLAY"] = display_val
+    auth = xauthority_for_display(display_val)
+    if auth.is_file():
+        env["XAUTHORITY"] = str(auth)
     return env
 
 

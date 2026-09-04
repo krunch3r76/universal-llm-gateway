@@ -75,22 +75,40 @@ def test_cdp_display_prefers_cdp_display(monkeypatch: pytest.MonkeyPatch) -> Non
     assert cdp_lane.cdp_display() == ":2"
 
 
-def test_chrome_display_env_binds_xvfb_auth(
+def test_chrome_display_env_binds_per_display_xvfb_auth(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.delenv("CDP_DISPLAY", raising=False)
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("XAUTHORITY", raising=False)
-    state = tmp_path / "cdp-xvfb"
-    state.mkdir()
-    auth = state / "Xauthority"
-    auth.write_bytes(b"\0")
-    monkeypatch.setattr(cdp_lane, "_XVFB_STATE_DIR", state)
-    monkeypatch.setattr(cdp_lane, "_XVFB_AUTH", auth)
+    gateway = tmp_path / ".gateway" / "cdp-xvfb"
+    auth2 = gateway / "2" / "Xauthority"
+    auth2.parent.mkdir(parents=True)
+    auth2.write_bytes(b"\0")
+    auth3 = gateway / "3" / "Xauthority"
+    auth3.parent.mkdir(parents=True)
+    auth3.write_bytes(b"\0")
+    monkeypatch.setattr(cdp_lane.Path, "home", staticmethod(lambda: tmp_path))
     env = cdp_lane.chrome_display_env()
     assert env["DISPLAY"] == ":2"
-    assert env["CDP_DISPLAY"] == ":2"
-    assert env["XAUTHORITY"] == str(auth)
+    assert env["XAUTHORITY"] == str(auth2)
+    env3 = cdp_lane.chrome_display_env(display=":3")
+    assert env3["DISPLAY"] == ":3"
+    assert env3["XAUTHORITY"] == str(auth3)
+
+
+def test_cdp_display_explicit_param_overrides_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CDP_DISPLAY", ":5")
+    assert cdp_lane.cdp_display(display=":3") == ":3"
+    assert cdp_lane.cdp_display() == ":5"
+
+
+def test_xauthority_for_display_path() -> None:
+    path = cdp_lane.xauthority_for_display(":2")
+    assert path.name == "Xauthority"
+    assert path.parent.name == "2"
 
 
 def test_parse_chrome_lane_flattened():

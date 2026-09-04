@@ -1,0 +1,8 @@
+[Unit]
+Description=Jupiter CDP boot stack
+Wants=jupiter-cdp-xvfb@2.service jupiter-cdp-xvfb@3.service cdp-lane@fleet.service cdp-lane@messages.service cdp-lane@ess.service web-fetcher.service cdp-ask.service
+Upholds=jupiter-cdp-xvfb@2.service jupiter-cdp-xvfb@3.service cdp-lane@fleet.service cdp-lane@messages.service cdp-lane@ess.service web-fetcher.service
+After=jupiter-cdp-xvfb@2.service jupiter-cdp-xvfb@3.service cdp-lane@fleet.service cdp-lane@messages.service cdp-lane@ess.service web-fetcher.service cdp-ask.service
+
+[Install]
+WantedBy=default.target

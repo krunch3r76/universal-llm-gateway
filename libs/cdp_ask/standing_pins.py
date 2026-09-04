@@ -1,0 +1,157 @@
+"""Standing CDP pin health projection for cdp-ask /health.
+
+Rebuilds display and standing-pin state from systemd + CDP probes on each
+health request. Advisory only — not journal-backed authority.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import os
+import subprocess
+import tomllib
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from urllib.parse import urlparse
+
+from cdp_ask.events.standing_lane import (
+    emit_standing_down,
+    emit_standing_lapsed,
+    emit_standing_up,
+)
+
+StandingState = str  # DOWN | UP | LAPSED
+
+
+@dataclass(frozen=True)
+class StandingPinHealth:
+    state: StandingState
+    source: str
+    observed_at: str
+
+
+def _pins_path() -> Path:
+    repo = os.environ.get("ULG_REPO", "").strip()
+    if not repo:
+        raise RuntimeError("ULG_REPO not set")
+    return Path(repo) / "services" / "jupiter-cdp" / "pins.toml"
+
+
+def _load_pins() -> dict[str, dict]:
+    return tomllib.loads(_pins_path().read_bytes()).get("lanes", {})
+
+
+def _iso_now() -> str:
+    return datetime.now(tz=UTC).isoformat()
+
+
+def _unit_active(lane: str) -> bool:
+    proc = subprocess.run(
+        ["systemctl", "--user", "is-active", f"cdp-lane@{lane}.service"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.stdout.strip() == "active"
+
+
+def _cdp_json(port: int) -> dict | None:
+    url = f"http://127.0.0.1:{port}/json/version"
+    try:
+        with urllib.request.urlopen(url, timeout=0.5) as resp:
+            if resp.status != 200:
+                return None
+            import json
+
+            return json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+
+
+def _top_page_url(port: int) -> str | None:
+    list_url = f"http://127.0.0.1:{port}/json/list"
+    try:
+        with urllib.request.urlopen(list_url, timeout=0.5) as resp:
+            import json
+
+            pages = json.loads(resp.read().decode())
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+    if not isinstance(pages, list):
+        return None
+    for page in pages:
+        if isinstance(page, dict) and page.get("type") == "page" and page.get("url"):
+            return str(page["url"])
+    return None
+
+
+def _lapsed_match(url: str | None, prefixes: list[str]) -> str | None:
+    if not url or not prefixes:
+        return None
+    path = urlparse(url).path
+    for prefix in prefixes:
+        if path.startswith(prefix):
+            return prefix
+    return None
+
+
+def _probe_lane(
+    name: str, row: dict, *, prev: StandingState | None
+) -> StandingPinHealth:
+    observed_at = _iso_now()
+    port = int(row["port"])
+    prefixes = list(row.get("lapsed_url_prefixes") or [])
+
+    if not _unit_active(name) or _cdp_json(port) is None:
+        state: StandingState = "DOWN"
+        if prev != state:
+            emit_standing_down(lane=name, port=port, observed_at=observed_at)
+        return StandingPinHealth(state=state, source="systemd+cdp", observed_at=observed_at)
+
+    matched = _lapsed_match(_top_page_url(port), prefixes)
+    if matched is not None:
+        state = "LAPSED"
+        if prev != state:
+            emit_standing_lapsed(
+                lane=name,
+                port=port,
+                observed_at=observed_at,
+                url_prefix=matched,
+            )
+        return StandingPinHealth(state=state, source="systemd+cdp", observed_at=observed_at)
+
+    state = "UP"
+    if prev != state:
+        emit_standing_up(lane=name, port=port, observed_at=observed_at)
+    return StandingPinHealth(state=state, source="systemd+cdp", observed_at=observed_at)
+
+
+def _probe_display(display: str) -> str:
+    proc = subprocess.run(
+        ["xdpyinfo", "-display", display],
+        capture_output=True,
+        check=False,
+    )
+    return "live" if proc.returncode == 0 else "dead"
+
+
+_prev_states: dict[str, StandingState] = {}
+
+
+def probe_health() -> tuple[dict[str, str], dict[str, StandingPinHealth]]:
+    """Return ``(displays, standing_pins)`` for /health."""
+    displays = {":2": _probe_display(":2"), ":3": _probe_display(":3")}
+    standing: dict[str, StandingPinHealth] = {}
+    with contextlib.suppress(Exception):
+        pins = _load_pins()
+        for name, row in pins.items():
+            if not row.get("standing"):
+                continue
+            prev = _prev_states.get(name)
+            health = _probe_lane(name, row, prev=prev)
+            _prev_states[name] = health.state
+            standing[name] = health
+    return displays, standing

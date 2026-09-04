@@ -141,28 +141,24 @@ def _port() -> int:
 async def start_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
     """Start cdp-ask on the remote CDP host from the shared NFS checkout.
 
-    Use ``;`` (not ``&&``) before the background ``&`` so only the daemon line is
-    backgrounded. ``A && nohup … & echo`` parses as ``(A && nohup …) & echo``, which
-    leaves SSH waiting on the daemon for the session lifetime and pins fleet_deploy.
-    ``setsid`` + closed stdin fully detaches from the SSH session.
+    Writes ``~/.gateway/cdp-ask.env`` (incl. ``ULG_REPO``) then invokes
+    ``scripts/cdp-ask-start`` so manage-SSH and the Jupiter unit share one path.
     """
     port = _port()
-    # Export hub TCP ingest so Jupiter followup events land in hub Event Service
-    # (local UDS on Jupiter does not exist; silent drop otherwise — MONITOR AC-2).
     ingest_tcp = resolve_hub_events_ingest_tcp()
-    # Seal ULG_CODE_VERSION from NFS checkout HEAD at start (repo is on the
-    # remote path; git is available there — same shared tree as scripts/cdp-ask).
     cmd = (
         "mkdir -p /tmp/logs/cdp-ask ~/.gateway; "
         f"REPO={_REMOTE_REPO}; "
-        'test -f "$REPO/scripts/cdp-ask" || exit 1; '
+        'test -f "$REPO/scripts/cdp-ask-start" || exit 1; '
         'ULG_CODE_VERSION=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true); '
-        f"setsid env CORTEX_FILES_ROOT={_REMOTE_FILES_ROOT} "
-        f"EVENTS_INGEST_TCP={ingest_tcp} "
-        'ULG_CODE_VERSION="$ULG_CODE_VERSION" '
-        '"$HOME/.venvs/universal/bin/python" "$REPO/scripts/cdp-ask" '
-        f"--port {port} </dev/null >/tmp/logs/cdp-ask/remote-start.log 2>&1 & "
-        "echo $! > ~/.gateway/cdp-ask.pid; "
+        f"cat > ~/.gateway/cdp-ask.env <<EOF\n"
+        f"EVENTS_INGEST_TCP={ingest_tcp}\n"
+        f"CORTEX_FILES_ROOT={_REMOTE_FILES_ROOT}\n"
+        "ULG_CODE_VERSION=$ULG_CODE_VERSION\n"
+        "ULG_REPO=$REPO\n"
+        f"PORT={port}\n"
+        "EOF\n"
+        '"$REPO/scripts/cdp-ask-start"; '
         "echo started"
     )
     code, text = await _run_ssh(cmd)
@@ -208,7 +204,7 @@ async def sync_restart_cdp_ask_remote(root: Path) -> str:
     _ssh_user_host, address = target
 
     nfs_code, nfs_text = await _run_ssh(
-        f"test -f {_REMOTE_REPO}/scripts/cdp-ask && echo nfs_ok"
+        f"test -f {_REMOTE_REPO}/scripts/cdp-ask-start && echo nfs_ok"
     )
     if nfs_code == 0 and "nfs_ok" in nfs_text:
         restart_msg = await restart_cdp_ask_remote(root)

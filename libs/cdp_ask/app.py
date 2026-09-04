@@ -77,6 +77,12 @@ def _chat_session_refuse_body(code: str, message: str) -> dict[str, object]:
     }
 
 
+class StandingPinHealthModel(BaseModel):
+    state: str
+    source: str
+    observed_at: str
+
+
 class HealthResponse(BaseModel):
     """Liveness plus the running code version and process identity.
 
@@ -92,6 +98,9 @@ class HealthResponse(BaseModel):
 
     ``tree_state`` is checkout porcelain (dirty|clean|unknown). It does not
     upgrade ``code_version`` into proof-of-live on a dirty tree.
+
+    ``displays`` and ``standing_pins`` are advisory projections rebuilt on
+    each probe — not journal-backed authority.
     """
 
     status: str
@@ -101,6 +110,8 @@ class HealthResponse(BaseModel):
     code_version: str
     pid: int
     tree_state: str
+    displays: dict[str, str] = {}
+    standing_pins: dict[str, StandingPinHealthModel] = {}
 
 
 def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
@@ -334,6 +345,9 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                 tree_state=resolve_tree_state(),
             )
         hygiene_status = "running" if registry_hygiene.running else "stopped"
+        from cdp_ask.standing_pins import probe_health
+
+        displays, standing_pins = probe_health()
         return HealthResponse(
             status="ok",
             harvest_root=str(root),
@@ -342,6 +356,15 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             code_version=resolve_code_version(),
             pid=os.getpid(),
             tree_state=resolve_tree_state(),
+            displays=displays,
+            standing_pins={
+                name: StandingPinHealthModel(
+                    state=h.state,
+                    source=h.source,
+                    observed_at=h.observed_at,
+                )
+                for name, h in standing_pins.items()
+            },
         )
 
     @app.post(

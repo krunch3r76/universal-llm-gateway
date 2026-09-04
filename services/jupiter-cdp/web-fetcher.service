@@ -1,0 +1,15 @@
+[Unit]
+Description=Jupiter web-fetcher (CDP attach to fleet)
+After=cdp-lane@fleet.service
+Requires=cdp-lane@fleet.service
+PartOf=jupiter-cdp.target
+
+[Service]
+Type=simple
+Environment=BROWSER_CDP_URL=http://127.0.0.1:9222
+ExecStart=%h/.local/bin/jupiter-web-fetcher
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=jupiter-cdp.target
