@@ -89,12 +89,42 @@ def test_chrome_display_env_binds_per_display_xvfb_auth(
     auth3.parent.mkdir(parents=True)
     auth3.write_bytes(b"\0")
     monkeypatch.setattr(cdp_lane.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(
+        "claude_bundles.cdp_display_auth.Path.home", staticmethod(lambda: tmp_path)
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_display_auth.discover_live_xvfb_auth",
+        lambda _d: None,
+    )
     env = cdp_lane.chrome_display_env()
     assert env["DISPLAY"] == ":2"
     assert env["XAUTHORITY"] == str(auth2)
+    assert env.get("LC_ALL") == "C"
     env3 = cdp_lane.chrome_display_env(display=":3")
     assert env3["DISPLAY"] == ":3"
     assert env3["XAUTHORITY"] == str(auth3)
+
+
+def test_chrome_display_env_uses_flat_when_per_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("CDP_DISPLAY", raising=False)
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.setenv("XAUTHORITY", "/inherited/wrong")
+    flat = tmp_path / ".gateway" / "cdp-xvfb" / "Xauthority"
+    flat.parent.mkdir(parents=True)
+    flat.write_bytes(b"flat")
+    monkeypatch.setattr(cdp_lane.Path, "home", staticmethod(lambda: tmp_path))
+    monkeypatch.setattr(
+        "claude_bundles.cdp_display_auth.Path.home", staticmethod(lambda: tmp_path)
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_display_auth.discover_live_xvfb_auth",
+        lambda _d: None,
+    )
+    env = cdp_lane.chrome_display_env()
+    assert env["XAUTHORITY"] == str(flat)
+    assert env["XAUTHORITY"] != "/inherited/wrong"
 
 
 def test_cdp_display_explicit_param_overrides_env(

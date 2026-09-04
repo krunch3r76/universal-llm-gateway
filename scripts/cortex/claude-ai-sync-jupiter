@@ -76,8 +76,22 @@ _cdp_display() {
   fi
 }
 _cdp_xauthority() {
-  if [[ -n "${XAUTHORITY:-}" ]]; then
-    echo "${XAUTHORITY}"
+  # Prefer shared resolver (per-display → flat → live Xvfb -auth); never inherit
+  # a parent XAUTHORITY that may not match the target display (a:32225 / Opus F3).
+  local disp auth
+  disp="$(_cdp_display)"
+  if auth="$(
+    cd "$REMOTE_REPO" && PYTHONPATH="$REMOTE_REPO/libs" $PY -c \
+      "from claude_bundles.cdp_display_auth import resolve_display_auth; \
+a=resolve_display_auth('${disp}'); print(a.path or '')" 2>/dev/null
+  )" && [[ -n "$auth" && -f "$auth" ]]; then
+    echo "$auth"
+    return 0
+  fi
+  local digit="${disp#:}"
+  digit="${digit%%.*}"
+  if [[ -f "${HOME}/.gateway/cdp-xvfb/${digit}/Xauthority" ]]; then
+    echo "${HOME}/.gateway/cdp-xvfb/${digit}/Xauthority"
   elif [[ -f "$_XVFB_AUTH" ]]; then
     echo "$_XVFB_AUTH"
   fi
@@ -157,10 +171,21 @@ ensure_chrome() {
 set -e
 PORT="${PORT:-9222}"
 CDP_DISPLAY="${CDP_DISPLAY:-:2}"
-if [[ -z "${XAUTHORITY:-}" && -f "${HOME}/.gateway/cdp-xvfb/Xauthority" ]]; then
-  XAUTHORITY="${HOME}/.gateway/cdp-xvfb/Xauthority"
+digit="${CDP_DISPLAY#:}"
+digit="${digit%%.*}"
+if [[ -z "${XAUTHORITY:-}" ]]; then
+  if [[ -f "${HOME}/.gateway/cdp-xvfb/${digit}/Xauthority" ]]; then
+    XAUTHORITY="${HOME}/.gateway/cdp-xvfb/${digit}/Xauthority"
+  elif [[ -f "${HOME}/.gateway/cdp-xvfb/Xauthority" ]]; then
+    XAUTHORITY="${HOME}/.gateway/cdp-xvfb/Xauthority"
+  else
+    echo "FATAL: no XAUTHORITY for CDP_DISPLAY=${CDP_DISPLAY}" >&2
+    exit 1
+  fi
 fi
 export XAUTHORITY
+export LC_ALL="${LC_ALL:-C}"
+export LANG="${LANG:-C}"
 PRIMARY="${HOME}/.gateway/claude-ai-chrome-profile"
 if [[ -n "${SUFFIX}" ]]; then
   PROFILE="${PRIMARY}-${SUFFIX}"

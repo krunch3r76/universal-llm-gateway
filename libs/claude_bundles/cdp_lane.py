@@ -74,8 +74,14 @@ def _display_digit(display: str) -> str:
 
 
 def xauthority_for_display(display: str) -> Path:
-    """Per-display Xauthority path written by ``jupiter-cdp-xvfb@.service``."""
-    return Path.home() / ".gateway" / "cdp-xvfb" / _display_digit(display) / "Xauthority"
+    """Per-display Xauthority path written by ``jupiter-cdp-xvfb@.service``.
+
+    Prefer ``resolve_display_auth`` / ``chrome_display_env`` for mint — this
+    helper only names the *convention* path (may be absent while flat auth works).
+    """
+    from claude_bundles.cdp_display_auth import per_display_auth_path
+
+    return per_display_auth_path(display)
 
 
 def cdp_display(display: str | None = None) -> str:
@@ -92,14 +98,19 @@ def cdp_display(display: str | None = None) -> str:
 
 
 def chrome_display_env(display: str | None = None) -> dict[str, str]:
-    """Env for headed CDP Chrome: display + per-display Xauthority when present."""
+    """Env for headed CDP Chrome: resolved XAUTHORITY, never parent fallthrough.
+
+    Clears inherited ``XAUTHORITY`` then sets the cookie from
+    ``resolve_display_auth`` (per-display → flat → live Xvfb ``-auth``). Pins
+    ``LC_ALL=C`` so listen-timeout log tokens stay English (Opus F6).
+    """
+    from claude_bundles.cdp_display_auth import apply_display_auth_env
+
     display_val = cdp_display(display)
     env = dict(os.environ)
-    env["DISPLAY"] = display_val
-    env["CDP_DISPLAY"] = display_val
-    auth = xauthority_for_display(display_val)
-    if auth.is_file():
-        env["XAUTHORITY"] = str(auth)
+    apply_display_auth_env(env, display_val)
+    env.setdefault("LC_ALL", "C")
+    env.setdefault("LANG", "C")
     return env
 
 
@@ -383,16 +394,21 @@ def _launch_chrome(port: int, profile: Path) -> int:
     from claude_bundles.x_display_capacity import (
         XDisplayCapacityError,
         chrome_cdp_log_path,
+        listen_timeout_display_dead_message,
         listen_timeout_x_message,
+        log_bytes_show_display_dead,
         log_bytes_show_x_exhaustion,
+        require_cdp_display_reachable,
         require_chrome_headroom,
     )
 
+    display_val = cdp_display()
+    env = chrome_display_env(display_val)
+    require_cdp_display_reachable(env=env)
     require_chrome_headroom()
     _seed_profile(profile)
     log = chrome_cdp_log_path(port)
     pre_size = Path(log).stat().st_size if Path(log).is_file() else 0
-    env = chrome_display_env()
     with open(log, "ab") as logf:
         proc = subprocess.Popen(
             chrome_launch_argv(port, profile),
@@ -413,6 +429,10 @@ def _launch_chrome(port: int, profile: Path) -> int:
     _kill_lane_chrome(proc.pid)
     if log_bytes_show_x_exhaustion(log, start_offset=pre_size):
         raise XDisplayCapacityError(listen_timeout_x_message(port, log))
+    if log_bytes_show_display_dead(log, start_offset=pre_size):
+        raise XDisplayCapacityError(
+            listen_timeout_display_dead_message(port, log, display_val)
+        )
     raise LaneError(f"Chrome on :{port} did not reach CDP in {_LAUNCH_WAIT_S}s")
 
 

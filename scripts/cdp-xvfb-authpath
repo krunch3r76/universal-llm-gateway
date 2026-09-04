@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Print resolved XAUTHORITY path for a CDP display (per-display → flat → live Xvfb).
+# SoT: libs/claude_bundles/cdp_display_auth.py (a:32225).
+set -euo pipefail
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+DISPLAY_ARG="${1:-${CDP_DISPLAY:-${DISPLAY:-:2}}}"
+export PYTHONPATH="$REPO/libs${PYTHONPATH:+:$PYTHONPATH}"
+exec "${HOME}/.venvs/universal/bin/python" -c "
+from claude_bundles.cdp_display_auth import resolve_display_auth
+import sys
+auth = resolve_display_auth(sys.argv[1])
+if auth.path is None:
+    sys.exit(1)
+print(auth.path)
+" "$DISPLAY_ARG"

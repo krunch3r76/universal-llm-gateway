@@ -30,6 +30,12 @@ from admission_common.qualified_scalar import (
 X_MAX_CLIENTS_DEFAULT = 64
 CHROME_X_CLIENT_BUDGET_DEFAULT = 8
 X_MAX_CLIENTS_TOKEN = "Maximum number of clients reached"
+# Chrome X-auth failures that previously surfaced only as a 20s CDP listen timeout (a:32225).
+# "The platform failed to initialize" is ozone/GPU-broad — only counts with an X token (Opus F6).
+X_DISPLAY_DEAD_TOKENS = (
+    "Missing X server or $DISPLAY",
+    "Authorization required, but no authorization protocol specified",
+)
 _PROC_NET_UNIX = Path("/proc/net/unix")
 _X_CLIENTS_SCOPE = (
     "Xvfb/X11 unix connections on CDP_DISPLAY (X11-unix/Xn lines in /proc/net/unix)"
@@ -63,11 +69,9 @@ def chrome_cdp_log_path(port: int) -> str:
 
 def display_x11_socket_name(display: str) -> str:
     """Map ``:2`` / ``:2.0`` / ``2`` to the ``X11-unix/X2`` basename token."""
-    raw = str(display or "").strip()
-    if raw.startswith(":"):
-        raw = raw[1:]
-    number = raw.split(".", 1)[0] or "2"
-    return f"X{number}"
+    from claude_bundles.cdp_display_auth import display_digit
+
+    return f"X{display_digit(display)}"
 
 
 def count_x11_unix_clients(
@@ -171,19 +175,38 @@ def exhausted_message(snap: Mapping[str, Any]) -> str:
     )
 
 
+def _log_chunk(log_path: str, *, start_offset: int = 0) -> bytes:
+    """Return append-only log bytes for *this* launch (after ``start_offset``)."""
+    path = Path(log_path)
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return b""
+    return data[max(0, start_offset) :]
+
+
 def log_bytes_show_x_exhaustion(log_path: str, *, start_offset: int = 0) -> bool:
     """True when *this launch's* appended log bytes contain the MaxClients token.
 
     The Chrome log is opened append-only, so a prior failed mint would otherwise
     poison every later timeout. Only bytes after ``start_offset`` count.
     """
-    path = Path(log_path)
-    try:
-        data = path.read_bytes()
-    except OSError:
+    return X_MAX_CLIENTS_TOKEN.encode("utf-8") in _log_chunk(
+        log_path, start_offset=start_offset
+    )
+
+
+def log_bytes_show_display_dead(log_path: str, *, start_offset: int = 0) -> bool:
+    """True when *this launch's* log shows X auth / missing-display failure (a:32225).
+
+    Ozone's ``The platform failed to initialize`` alone is not X-auth evidence —
+    it must co-occur with a genuine X token (Opus F6).
+    """
+    chunk = _log_chunk(log_path, start_offset=start_offset)
+    has_x = any(token.encode("utf-8") in chunk for token in X_DISPLAY_DEAD_TOKENS)
+    if not has_x:
         return False
-    chunk = data[max(0, start_offset) :]
-    return X_MAX_CLIENTS_TOKEN.encode("utf-8") in chunk
+    return True
 
 
 def listen_timeout_x_message(port: int, log_path: str) -> str:
@@ -193,6 +216,45 @@ def listen_timeout_x_message(port: int, log_path: str) -> str:
         f"{X_MAX_CLIENTS_TOKEN!r} in {log_path} "
         f"(not a browser hang)"
     )
+
+
+def listen_timeout_display_dead_message(port: int, log_path: str, display: str) -> str:
+    """Replace the generic listen timeout when Chrome could not open the X display."""
+    return (
+        f"Chrome on :{port} did not reach CDP because display {display} is "
+        f"unreachable or unauthorized (see {log_path}); "
+        f"expected XAUTHORITY at per-display path under ~/.gateway/cdp-xvfb/"
+    )
+
+
+def require_cdp_display_reachable(
+    display: str | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> str:
+    """Fail fast when the *launch* env cannot open CDP_DISPLAY (a:32225).
+
+    Prefer passing the exact ``env`` dict that will be handed to Chrome so the
+    gate and the mint cannot diverge (Opus F2). When *env* is omitted, builds
+    one via ``chrome_display_env`` (single resolver).
+    """
+    from claude_bundles.cdp_display_auth import (
+        DisplayAuthError,
+        require_auth_authenticates,
+    )
+    from claude_bundles.cdp_lane import cdp_display, chrome_display_env
+
+    display_val = (
+        str(env.get("DISPLAY") or env.get("CDP_DISPLAY") or "").strip()
+        if env is not None
+        else ""
+    ) or cdp_display(display)
+    try:
+        run_env = dict(env) if env is not None else chrome_display_env(display_val)
+        require_auth_authenticates(display_val, env=run_env)
+    except DisplayAuthError as exc:
+        raise XDisplayCapacityError(str(exc)) from exc
+    return display_val
 
 
 def require_chrome_headroom(

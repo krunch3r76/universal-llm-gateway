@@ -130,12 +130,22 @@ def _probe_lane(
 
 
 def _probe_display(display: str) -> str:
-    proc = subprocess.run(
-        ["xdpyinfo", "-display", display],
-        capture_output=True,
-        check=False,
+    """Return ``live`` | ``unauthorized`` | ``dead`` | ``hung`` for /health (a:32225)."""
+    from claude_bundles.cdp_display_auth import (
+        DisplayAuthError,
+        apply_display_auth_env,
+        resolve_display_auth,
+        xdpyinfo_status,
     )
-    return "live" if proc.returncode == 0 else "dead"
+
+    env = {**os.environ, "DISPLAY": display}
+    try:
+        auth = resolve_display_auth(display)
+        apply_display_auth_env(env, display, auth=auth)
+    except DisplayAuthError:
+        env.pop("XAUTHORITY", None)
+    status, _snippet = xdpyinfo_status(display, env=env)
+    return status
 
 
 _prev_states: dict[str, StandingState] = {}
