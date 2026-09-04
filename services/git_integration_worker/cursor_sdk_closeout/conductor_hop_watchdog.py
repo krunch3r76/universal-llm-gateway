@@ -28,7 +28,9 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget im
     park_conductor_hop_mission,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+    fire_park_harvest_continue,
     maybe_fire_conductor_park_harvest,
+    park_harvest_continue_owed,
     park_harvest_owed,
 )
 from services.git_integration_worker.cursor_sdk_hop_events import (
@@ -41,6 +43,7 @@ from services.git_integration_worker.cursor_sdk_ledger_hop import (
 )
 from services.git_integration_worker.cursor_sdk_park import (
     conductor_hop_watchdog_candidates,
+    conductor_park_harvest_continue_candidates,
     conductor_park_harvest_watchdog_candidates,
 )
 
@@ -128,6 +131,8 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
     if row is None or not _is_conductor_row(row):
         return False
     closeout_tokens = _closeout_tokens_from_row(row)
+    if park_harvest_continue_owed(row, closeout_tokens=closeout_tokens):
+        return await fire_park_harvest_continue(row)
     if park_harvest_owed(row, closeout_tokens=closeout_tokens):
         return await maybe_fire_conductor_park_harvest(dispatch_id=dispatch_id)
     verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
@@ -156,11 +161,16 @@ async def sweep_conductor_hop_watchdog(
 ) -> int:
     """One watchdog pass inside ``reconcile_stale_leases``; return admit count."""
     ledger = ledger or CursorDispatchLedger.instance()
+    continue_candidates = await asyncio.to_thread(
+        conductor_park_harvest_continue_candidates, ledger
+    )
     hop_candidates = await asyncio.to_thread(conductor_hop_watchdog_candidates, ledger)
     park_candidates = await asyncio.to_thread(
         conductor_park_harvest_watchdog_candidates, ledger
     )
-    candidates = list(dict.fromkeys([*park_candidates, *hop_candidates]))
+    candidates = list(
+        dict.fromkeys([*continue_candidates, *park_candidates, *hop_candidates])
+    )
     fired = 0
     for dispatch_id in candidates:
         try:

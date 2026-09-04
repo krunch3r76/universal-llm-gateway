@@ -30,6 +30,22 @@ def test_team_dispatch_generate_body_accepts_hop_triplet() -> None:
     assert body.hop_reason == "planned"
 
 
+def test_team_dispatch_generate_body_accepts_park_harvest_reason() -> None:
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        contract="light-bounded",
+        dispatch_thread_id="9964",
+        seat="cursor-sdk",
+        lane="B",
+        hop_from="pred-disp-1",
+        hop_seq=2,
+        hop_reason="park_harvest",
+    )
+    assert body.hop_reason == "park_harvest"
+
+
 def test_team_dispatch_generate_body_rejects_partial_hop_triplet() -> None:
     from systems.frontier_consult.route import TeamDispatchGenerateBody
 

@@ -15,10 +15,13 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
     build_park_harvest_arm_recipe,
+    fire_park_harvest_continue,
     maybe_fire_conductor_park_harvest,
+    park_harvest_continue_owed,
     park_harvest_owed,
 )
 from services.git_integration_worker.cursor_sdk_park import (
+    conductor_park_harvest_continue_candidates,
     conductor_park_harvest_watchdog_candidates,
 )
 from services.git_integration_worker.models.cursor_api import (
@@ -155,6 +158,30 @@ def test_park_harvest_owed_true_on_parked_consult_pending(tmp_path) -> None:
     assert park_harvest_owed(row, scoreboard_body=_OPEN_SCOREBOARD)
 
 
+def test_park_harvest_owed_true_on_production_shape_fixture(tmp_path) -> None:
+    """L1-3: production-shaped record_json without closeout_body key."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _admit_conductor(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["PARKED_TRANSPORT", "CONSULT_PENDING"],
+            "closeout_turn": 48,
+            "closeout_harvest_owed": True,
+            "summoning_thread_id": "9638",
+        },
+    )
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    mapped = {k: row[k] for k in row.keys()}
+    assert park_harvest_owed(mapped, scoreboard_body=_OPEN_SCOREBOARD)
+
+
 def test_park_harvest_owed_false_when_row_hop_would_fire(tmp_path) -> None:
     ledger = CursorDispatchLedger.instance()
     req = _req()
@@ -180,6 +207,19 @@ def test_park_harvest_owed_false_when_hop_parked(tmp_path) -> None:
         closeout_tokens=["PARKED_TRANSPORT", "CONSULT_PENDING"],
     )
     assert not park_harvest_owed(row, scoreboard_body=_OPEN_SCOREBOARD)
+
+
+def test_build_park_harvest_arm_recipe_uses_record_closeout_turn() -> None:
+    """L1-4: arm recipe renders --after-turn from record_json closeout_turn."""
+    row = {
+        "work_key": _WORK_KEY,
+        "record_json": json.dumps({"closeout_turn": 48}),
+    }
+    body = build_park_harvest_arm_recipe(
+        row=row,
+        summoning_thread_id="9638",
+    )
+    assert "--after-turn 48" in body
 
 
 def test_build_park_harvest_arm_recipe_includes_supervise_start() -> None:
@@ -308,6 +348,135 @@ async def test_park_harvest_watchdog_retries_unstamped_row(tmp_path, monkeypatch
     assert conductor_park_harvest_watchdog_candidates(ledger, grace_s=120.0) == [
         req.dispatch_id
     ]
+
+
+def _production_parked_row(
+    ledger: CursorDispatchLedger,
+    req: CursorDispatchRequest,
+    *,
+    closeout_turn: int = 48,
+    harvest_owed: bool = True,
+    fired: bool = True,
+) -> dict:
+    _admit_conductor(ledger, req)
+    patch: dict = {
+        "closeout_stop_tokens": ["PARKED_TRANSPORT", "CONSULT_PENDING"],
+        "closeout_turn": closeout_turn,
+        "closeout_harvest_owed": harvest_owed,
+        "summoning_thread_id": "9638",
+    }
+    if fired:
+        patch["hop_park_harvest_fired_at"] = time.time()
+    ledger.merge_record_json(dispatch_id=req.dispatch_id, patch=patch)
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    return {k: row[k] for k in row.keys()}
+
+
+def test_park_harvest_continue_owed_true_when_reply_arrived() -> None:
+    """R-1: full conjunction with snapshot mock complete."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    row = _production_parked_row(ledger, req)
+    assert park_harvest_continue_owed(
+        row,
+        reply_fn=lambda *_a, **_k: True,
+    )
+
+
+def test_park_harvest_continue_owed_false_when_row_pinned() -> None:
+    """R-2: operator stop tokens must not trigger continue."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    row = _production_parked_row(ledger, req)
+    row["record_json"] = json.dumps(
+        {
+            **json.loads(row["record_json"]),
+            "closeout_stop_tokens": ["ROW_PINNED"],
+            "hop_park_harvest_fired_at": time.time(),
+            "closeout_turn": 48,
+        }
+    )
+    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+
+
+def test_park_harvest_continue_owed_false_when_hop_parked() -> None:
+    """R-3: budget park rows excluded."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    row = _production_parked_row(ledger, req)
+    row["record_json"] = json.dumps(
+        {**json.loads(row["record_json"]), "hop_parked": True}
+    )
+    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: True)
+
+
+def test_park_harvest_continue_owed_false_when_snapshot_incomplete() -> None:
+    """R-4: incomplete snapshot ⇒ False."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    row = _production_parked_row(ledger, req)
+    assert not park_harvest_continue_owed(row, reply_fn=lambda *_a, **_k: False)
+
+
+@pytest.mark.asyncio
+async def test_fire_park_harvest_continue_posts_and_stamps(tmp_path, monkeypatch):
+    """R-5/R-6: POST with hop_reason park_harvest; idempotent second sweep."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _production_parked_row(ledger, req)
+
+    captured: dict = {}
+
+    async def _capture(body, **_kwargs):
+        captured["body"] = body
+        return True, {"dispatch_id": "succ-park-harvest-1"}
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        _capture,
+    )
+
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    mapped = {k: row[k] for k in row.keys()}
+
+    assert await fire_park_harvest_continue(mapped)
+    assert captured["body"]["hop_reason"] == "park_harvest"
+    assert captured["body"]["reuse_thread"] == req.thread_id
+    assert (
+        captured["body"]["generation_options"]["idempotency_key"]
+        == f"conductor-hop:{req.dispatch_id}"
+    )
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    rec = json.loads(row["record_json"])
+    assert rec.get("hop_successor") == "succ-park-harvest-1"
+    assert "hop_park_harvest_continued_at" in rec
+    assert "hop_parked" not in rec or rec.get("hop_parked") is not True
+
+    assert not park_harvest_continue_owed(
+        {**mapped, "record_json": row["record_json"]},
+        reply_fn=lambda *_a, **_k: True,
+    )
+
+
+def test_park_harvest_continue_candidates_no_grace() -> None:
+    """R-B2 candidates: no grace delay for continue class."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _production_parked_row(ledger, req)
+    assert conductor_park_harvest_continue_candidates(ledger) == [req.dispatch_id]
 
 
 @pytest.mark.asyncio

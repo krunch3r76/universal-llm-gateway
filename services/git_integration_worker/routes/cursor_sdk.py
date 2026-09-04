@@ -1636,6 +1636,7 @@ async def _deliver_sdk_closeout(
             dispatch_id=req.dispatch_id,
             closeout_body=outcome.body,
             thread_id=req.thread_id,
+            closeout_turn=turn_number,
         )
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
