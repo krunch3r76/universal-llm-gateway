@@ -6,6 +6,7 @@ import sqlite3
 
 import pytest
 from predicate_form.classes import class_6_check
+from predicate_form.parser import parse
 from predicate_form.entity_resolve import StaticEntityResolver
 from predicate_form.invention_resubjection_guards import check_invention
 from predicate_form.parser import parse
@@ -130,6 +131,53 @@ def test_ac2_space_join_invention(claim: str, predicate_form: str, expected: boo
     assert check_invention(claim, p) is expected
 
 
+def test_ac3a_chase_mortgage_served_withheld_and_t0_clear(
+    migrated_conn: sqlite3.Connection,
+) -> None:
+    """AC3a mechanical — account:chase-mortgage-8787 pin + guard re-fire + T0."""
+    entity_id = "account:chase-mortgage-8787"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="account", name="Chase")
+    older_pf = f"status({entity_id}, operational, current)"
+    newer_pf = f"status({entity_id}, quiet, current)"
+    migrated_conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, predicate_form, "
+        "review_status, created_at, updated_at) VALUES (?, ?, 'believed', ?, "
+        "'committed', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        (entity_id, "Older operational status (a:8402 analog).", older_pf),
+    )
+    cur = migrated_conn.execute(
+        "INSERT INTO assertions (entity_id, claim, confidence, predicate_form, "
+        "review_status, review_notes, normalizer_version, created_at, updated_at) "
+        "VALUES (?, ?, 'believed', ?, 'flagged', "
+        "'predicate normalize: class6_generic_state: requires_human_review', "
+        "'v1.3.1', '2026-06-01T00:00:00Z', '2026-06-01T00:00:00Z')",
+        (entity_id, "Brief mood quiet status (a:29834 analog).", newer_pf),
+    )
+    migrated_conn.commit()
+    newer_id = int(cur.lastrowid or 0)
+
+    card = get_entity_card(migrated_conn, entity_id=entity_id)
+    cs = card["current_status"]
+    assert cs["served"] is not None
+    assert cs["withheld_newer"]
+    withheld_ids = {entry["assertion_id"] for entry in cs["withheld_newer"]}
+    assert newer_id in withheld_ids
+    assert any(
+        entry.get("reason") == "class6_generic_state" for entry in cs["withheld_newer"]
+    )
+
+    p = parse(newer_pf)
+    assert class_6_check(entity_id, p) is False
+
+    result = t0_adjudicate_flagged(migrated_conn, dry_run=False)
+    assert newer_id in result["sample_cleared_ids"]
+    row = migrated_conn.execute(
+        "SELECT review_status, reviewer FROM assertions WHERE id = ?", (newer_id,)
+    ).fetchone()
+    assert row[0] == "committed"
+    assert str(row[1]).startswith("normalizer:")
+
+
 def test_ac4_stale_serve_shows_withheld_not_silent_promote(
     migrated_conn: sqlite3.Connection,
 ) -> None:
@@ -202,7 +250,16 @@ def test_ac5_three_producers_distinct_review_notes(
     assert create_notes != update_notes
 
 
-def test_ac6_sync_ack_carries_flag_fields(
+def _assert_ac6_envelope(envelope: dict | None) -> None:
+    if envelope is None or not envelope.get("requires_human_review"):
+        pytest.skip("Class 6 trigger unavailable for fixture entity")
+    assert envelope.get("flag_reasons")
+    assert envelope.get("normalization_decision")
+    assert envelope.get("suppression_effect")
+    assert envelope.get("_next")
+
+
+def test_ac6_sync_ack_carries_flag_fields_update(
     migrated_conn: sqlite3.Connection,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -213,13 +270,87 @@ def test_ac6_sync_ack_carries_flag_fields(
     result = _update_assertion_impl(
         aid, {"predicate_form": "status(unknown_subject_xyz, ready_to_file)"}
     )
+    _assert_ac6_envelope(result.get("predicate_form_normalize"))
+
+
+def test_ac6_sync_ack_carries_flag_fields_create(
+    migrated_conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_create_and_supersede(monkeypatch, migrated_conn)
+    entity_id = "person:ack-create-fixture"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="person", name="C")
+    result = _create_assertion_impl(
+        {
+            "entity_id": entity_id,
+            "claim": "Fixture claim without invented tokens.",
+            "confidence": "believed",
+            "evidence": "test",
+            "predicate_form": "status(unknown_subject_xyz, ready_to_file)",
+            "derivation_type": "direct_observation",
+            "observed_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    _assert_ac6_envelope(result.get("predicate_form_normalize"))
+
+
+def test_ac6_sync_ack_carries_flag_fields_supersede(
+    migrated_conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cortex_store.routes.assertions._supersede import _supersede_assertion_impl
+
+    _patch_create_and_supersede(monkeypatch, migrated_conn)
+    entity_id = "person:ack-supersede-fixture"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="person", name="S")
+    old_id = _insert_assertion(migrated_conn, entity_id=entity_id)
+    result = _supersede_assertion_impl(
+        {
+            "old_assertion_id": old_id,
+            "entity_id": entity_id,
+            "claim": "Supersede AC6 fixture claim.",
+            "confidence": "believed",
+            "evidence": "test",
+            "predicate_form": "status(unknown_subject_xyz, ready_to_file)",
+            "derivation_type": "direct_observation",
+            "observed_at": "2026-01-01T00:00:00Z",
+        }
+    )
+    _assert_ac6_envelope(result.get("predicate_form_normalize"))
+
+
+def test_ac7_update_path_flags_and_event_envelope(
+    migrated_conn: sqlite3.Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[tuple[str, dict]] = []
+
+    def _fake_record(signal: str, **payload: object) -> None:
+        captured.append((signal, dict(payload)))
+
+    _patch_update(monkeypatch, migrated_conn)
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._assertions_shared.record", _fake_record
+    )
+    entity_id = "person:update-parity"
+    insert_entity(migrated_conn, entity_id=entity_id, entity_type="person", name="U")
+    aid = _insert_assertion(migrated_conn, entity_id=entity_id)
+    result = _update_assertion_impl(
+        aid, {"predicate_form": "status(unknown_subject_xyz, ready_to_file)"}
+    )
     envelope = result.get("predicate_form_normalize")
     if envelope is None or not envelope.get("requires_human_review"):
-        pytest.skip("Class 6 trigger unavailable for fixture entity")
-    assert envelope.get("flag_reasons")
-    assert envelope.get("normalization_decision")
-    assert envelope.get("suppression_effect")
-    assert envelope.get("_next")
+        pytest.skip("Class 6 trigger unavailable for update parity fixture")
+    _emit_predicate_form_normalize_events(
+        assertion_id=aid,
+        normalize_payload=envelope,
+        session_id="ac7-update-session",
+    )
+    review_events = [p for s, p in captured if s == "mcp.cortex.predicate.review.required"]
+    assert review_events
+    payload = review_events[0]
+    assert payload.get("session_id") == "ac7-update-session"
+    assert payload.get("_next") or payload.get("next_remedy")
 
 
 def test_ac7_supersede_flags_on_explicit_predicate_form(

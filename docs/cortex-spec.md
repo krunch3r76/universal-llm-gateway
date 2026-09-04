@@ -507,7 +507,8 @@ path (not a silent scalar promote):
 - **Freshness** — ``current_status.observed_at`` names when the served row was
   observed.
 - **Recovery** — ``withheld_newer`` lists newer flagged status candidates (cap
-  3; ``withheld_count`` is the total beyond the cap). Sync writers see ``_next``
+  3 entries; ``withheld_count`` is the total count of withheld rows, including
+  those beyond the cap). Sync writers see ``_next``
   in the ``predicate_form_normalize`` ACK; async extract writers see the same on
   ``mcp.cortex.predicate.review.required``.
 - **Blank pin** — entities with no status rows render ``served: null``,
