@@ -5169,7 +5169,7 @@ tools:
   flat_call_shape:
     tool: life_dispatch
     substrate_qualified: user-vortex__life_dispatch
-  fol_descriptor: "Life CDP dispatch — relay POST /api/v1/life/dispatch; Life Cowork project compose (server-pinned UUID). Params: prompt or thread, optional model/skills. See agent_skill:cdp-operator-proxy.\n"
+  fol_descriptor: "Life CDP dispatch — relay POST /api/v1/life/dispatch; Life Cowork project compose (server-pinned UUID). Params: prompt or thread (thread latest turn must be to=life|dispatch and not from=life), optional model/skills. See agent_skill:cdp-operator-proxy.\n"
   json_schema:
     type: object
     properties:
@@ -5178,7 +5178,7 @@ tools:
         description: Inline prompt or cortex:// sidecar ref.
       thread:
         type: string
-        description: agent_bus thread id; latest turn is prompt.
+        description: agent_bus thread id; latest turn must be to=life|dispatch (not from=life).
       model:
         type: string
         default: cdp/opus-5

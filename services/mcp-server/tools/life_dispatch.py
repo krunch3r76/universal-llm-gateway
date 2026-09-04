@@ -42,8 +42,10 @@ def register_life_dispatch_tools(mcp: FastMCP) -> None:
         """Life CDP dispatch — opens the configured Life Cowork project compose.
 
         Supply ``prompt`` (inline text or ``cortex://`` sidecar ref) **or**
-        ``thread`` (agent_bus id; latest turn is the prompt). ``model`` defaults
-        to ``cdp/opus-5``. Project UUID is server-pinned — never in this schema.
+        ``thread`` (agent_bus id). For ``thread``, the latest turn must be
+        addressed ``to=life`` or ``to=dispatch`` and must not be ``from=life``
+        — otherwise admit returns a teaching 422. ``model`` defaults to
+        ``cdp/opus-5``. Project UUID is server-pinned — never in this schema.
         """
         body: dict[str, Any] = {"model": model}
         if prompt.strip():

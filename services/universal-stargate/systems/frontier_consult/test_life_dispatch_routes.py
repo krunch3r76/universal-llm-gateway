@@ -104,3 +104,126 @@ def test_life_dispatch_prompt_runs_cdp_generate_path(client: TestClient) -> None
     mock_create_thread.assert_awaited_once()
     assert mock_create_thread.await_args.kwargs["caller_agent"] == "life"
     assert pending
+
+
+def test_life_dispatch_non_cdp_model_returns_teaching_envelope(
+    client: TestClient,
+) -> None:
+    """Non-CDP model yields 422 with authored code/field — not a bare class name."""
+    resp = client.post(
+        "/api/v1/life/dispatch",
+        json={"prompt": "hi", "model": "openai/gpt-5"},
+    )
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert payload["error"]["code"] == "cdp_model_required"
+    assert payload["error"]["message"]
+    assert payload["field"] == "model"
+    assert payload["request_id"]
+
+
+def test_life_dispatch_thread_runs_cdp_generate_path(client: TestClient) -> None:
+    """Thread path resolves the bus body then executes through dispatch_cdp_generate."""
+    staged = MagicMock(
+        prompt_uri="cortex://notes/system/ephemeral/prompt.md",
+        staged=True,
+    )
+
+    class _FakeTask:
+        def add_done_callback(self, _cb: object) -> None:
+            return None
+
+        def cancelled(self) -> bool:
+            return False
+
+        def exception(self) -> None:
+            return None
+
+    pending: list[object] = []
+
+    def _capture_task(coro: object, **_kwargs: object) -> _FakeTask:
+        pending.append(coro)
+        return _FakeTask()
+
+    with (
+        patch(
+            "systems.frontier_consult.life_dispatch_routes.cdp_project_binding",
+            return_value="01a05c28-733b-72ee-bba6-c72e81ed6d41",
+        ),
+        patch(
+            "systems.frontier_consult.life_dispatch_routes.resolve_generate_prompt_body",
+            new=AsyncMock(return_value="thread brief"),
+        ) as mock_resolve,
+        patch(
+            "systems.frontier_consult.cdp_generate._stage_inputs",
+            return_value=staged,
+        ),
+        patch(
+            "systems.frontier_consult.cdp_generate.post_pointer_turn",
+            new=AsyncMock(return_value=7),
+        ),
+        patch(
+            "systems.frontier_consult.cdp_generate.upsert_inflight_leg",
+            return_value=None,
+        ),
+        patch(
+            "systems.frontier_consult.cdp_generate.emit_poll_hint_from_handoff",
+            return_value=None,
+        ),
+        patch(
+            "systems.frontier_consult.cdp_generate.observe_mission_binding",
+            return_value=None,
+        ),
+        patch(
+            "systems.frontier_consult.cdp_generate.run_cdp_worker",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "systems.frontier_consult.cdp_generate.asyncio.create_task",
+            side_effect=_capture_task,
+        ),
+    ):
+        resp = client.post(
+            "/api/v1/life/dispatch",
+            json={"thread": "9980"},
+        )
+
+    assert resp.status_code == 202
+    payload = resp.json()
+    assert payload["status"] == "running"
+    assert payload["thread"] == "9980"
+    assert payload["poll_hint"]["arguments"]["thread"] == "9980"
+    mock_resolve.assert_awaited_once()
+    assert mock_resolve.await_args.kwargs["role"] == "life"
+    assert mock_resolve.await_args.kwargs["dispatch_thread_id"] == "9980"
+    assert pending
+
+
+def test_life_dispatch_thread_recipient_refusal_keeps_teaching_envelope(
+    client: TestClient,
+) -> None:
+    """Recipient-gate refusal returns FrontierEndpointError.to_dict(), not class name."""
+    from systems.frontier_consult.admission import FrontierEndpointError
+
+    with patch(
+        "systems.frontier_consult.life_dispatch_routes.resolve_generate_prompt_body",
+        new=AsyncMock(
+            side_effect=FrontierEndpointError(
+                request_id="req-test",
+                field="dispatch_thread_id",
+                reason="latest turn not addressed to life",
+                status_code=422,
+                code="dispatch_thread_latest_not_prompt",
+            )
+        ),
+    ):
+        resp = client.post(
+            "/api/v1/life/dispatch",
+            json={"thread": "9980"},
+        )
+
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert payload["error"]["code"] == "dispatch_thread_latest_not_prompt"
+    assert "life" in payload["error"]["message"]
+    assert payload["field"] == "dispatch_thread_id"

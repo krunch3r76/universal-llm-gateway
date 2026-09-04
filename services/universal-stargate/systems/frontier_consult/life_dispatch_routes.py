@@ -7,6 +7,7 @@ from typing import Any
 
 from claude_bundles.chat_model_match import compose_cdp_model_with_effort
 from fastapi import APIRouter, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, model_validator
 
 from .admission import FrontierEndpointError
@@ -47,58 +48,66 @@ def _resolve_sidecar_or_prompt(raw: str) -> tuple[str | None, str | None]:
     return text, None
 
 
-@life_dispatch_router.post("/dispatch")
-async def life_dispatch(body: LifeDispatchBody, response: Response) -> dict[str, Any]:
+@life_dispatch_router.post("/dispatch", status_code=202, response_model=None)
+async def life_dispatch(
+    body: LifeDispatchBody, response: Response
+) -> dict[str, Any] | JSONResponse:
     """Admit a life-surface CDP dispatch bound to the configured Life project."""
     request_id = str(uuid.uuid4())
-    model = compose_cdp_model_with_effort(body.model, None)
-    if not is_cdp_model(model):
-        raise FrontierEndpointError(
-            request_id=request_id,
-            field="model",
-            reason="life_dispatch requires model=cdp/<picker>",
-            status_code=422,
-            code="cdp_model_required",
-        )
+    try:
+        model = compose_cdp_model_with_effort(body.model, None)
+        if not is_cdp_model(model):
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="model",
+                reason="life_dispatch requires model=cdp/<picker>",
+                status_code=422,
+                code="cdp_model_required",
+            )
 
-    prompt: str | None = None
-    sidecar_ref: str | None = None
-    dispatch_thread_id: str | None = None
-    if body.thread:
-        dispatch_thread_id = body.thread.strip()
-        prompt = await resolve_generate_prompt_body(
-            request_id=request_id,
-            role=_LIFE_CALLER,
-            dispatch_thread_id=dispatch_thread_id,
-            prompt=None,
-            sidecar_ref=None,
-            packet_path=None,
-        )
-    elif body.prompt:
-        prompt, sidecar_ref = _resolve_sidecar_or_prompt(body.prompt)
+        prompt: str | None = None
+        sidecar_ref: str | None = None
+        dispatch_thread_id: str | None = None
+        if body.thread:
+            dispatch_thread_id = body.thread.strip()
+            prompt = await resolve_generate_prompt_body(
+                request_id=request_id,
+                role=_LIFE_CALLER,
+                dispatch_thread_id=dispatch_thread_id,
+                prompt=None,
+                sidecar_ref=None,
+                packet_path=None,
+            )
+        elif body.prompt:
+            prompt, sidecar_ref = _resolve_sidecar_or_prompt(body.prompt)
 
-    project_uuid = cdp_project_binding("life", request_id=request_id)
-    body_kwargs: dict[str, Any] = {
-        "op": "generate",
-        "model": model,
-        "contract": "light-bounded",
-        "purpose": "operator-proxy",
-        "caller_agent": _LIFE_CALLER,
-        "prompt": prompt,
-        "sidecar_ref": sidecar_ref,
-        "skills": body.skills,
-        "generation_options": {
-            "expected_size": "auto",
-            "harvest_source": "auto",
-            "download_output": False,
-        },
-    }
-    if dispatch_thread_id:
-        body_kwargs["dispatch_thread_id"] = dispatch_thread_id
-    generate_body = TeamDispatchGenerateBody(**body_kwargs)
-    return await dispatch_cdp_generate(
-        request_id=request_id,
-        body=generate_body,
-        response=response,
-        project_uuid=project_uuid,
-    )
+        project_uuid = cdp_project_binding("life", request_id=request_id)
+        body_kwargs: dict[str, Any] = {
+            "op": "generate",
+            "model": model,
+            "contract": "light-bounded",
+            "purpose": "operator-proxy",
+            "caller_agent": _LIFE_CALLER,
+            "prompt": prompt,
+            "sidecar_ref": sidecar_ref,
+            "skills": body.skills,
+            "generation_options": {
+                "expected_size": "auto",
+                "harvest_source": "auto",
+                "download_output": False,
+            },
+        }
+        if dispatch_thread_id:
+            body_kwargs["dispatch_thread_id"] = dispatch_thread_id
+        generate_body = TeamDispatchGenerateBody(**body_kwargs)
+        result = await dispatch_cdp_generate(
+            request_id=request_id,
+            body=generate_body,
+            response=response,
+            project_uuid=project_uuid,
+        )
+    except FrontierEndpointError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+    if isinstance(result, dict):
+        response.status_code = 202
+    return result
