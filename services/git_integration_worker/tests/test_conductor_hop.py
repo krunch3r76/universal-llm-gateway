@@ -32,6 +32,14 @@ stop: ROW_HOP
 hop_seq: 1
 """
 
+_SPURIOUS_DONE_ROW_HOP_CLOSEOUT = """\
+| G1 | Architecture / recon | DONE |
+| G2 | Frame | DONE |
+status: complete
+stop: ROW_HOP
+hop_seq: 1
+"""
+
 
 @pytest.fixture(autouse=True)
 def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
@@ -121,6 +129,27 @@ def test_hop_owed_false_when_done_token() -> None:
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["DONE"])
     assert hop_owed(row, closeout_tokens=frozenset({"DONE"})) is False
+
+
+def test_hop_owed_true_when_spurious_table_done_excluded_from_designed() -> None:
+    """Designed-stop scoping: table-cell DONE must not block successor admit."""
+    ledger = CursorDispatchLedger.instance()
+    _admit_conductor(ledger, _req())
+    merge_conductor_closeout_hop_authority(
+        dispatch_id="pred-hop-1",
+        closeout_body=_SPURIOUS_DONE_ROW_HOP_CLOSEOUT,
+        thread_id="9964",
+    )
+    ledger.mark_terminal(dispatch_id="pred-hop-1", terminal_status="completed")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: row[k] for k in row.keys()}
+    data = json.loads(row["record_json"])
+    assert data.get("closeout_stop_tokens") == ["ROW_HOP"]
+    assert "DONE" not in data.get("closeout_stop_tokens", [])
+    assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is True
 
 
 def test_hop_owed_false_when_exit_persist_token() -> None:
