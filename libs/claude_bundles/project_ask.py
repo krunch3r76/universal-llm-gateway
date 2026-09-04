@@ -14,11 +14,13 @@ import re
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from durable_io.atomic import durable_write_text
 from implement_admission.closeout_helpers import cortex_files_root
-from playwright.async_api import Page
+
+if TYPE_CHECKING:
+    from playwright.async_api import Page
 
 from claude_bundles.chat_model_match import (
     normalize_picker_request,

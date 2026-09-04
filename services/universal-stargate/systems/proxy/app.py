@@ -22,20 +22,6 @@ from systems.federation.common.middleware import (
     HopCountMiddleware,
     RemoteModeEndpointGuard,
 )
-from systems.frontier_consult.densify_routes import (
-    densify_router as frontier_consult_densify_router,
-)
-from systems.frontier_consult.life_dispatch_routes import life_dispatch_router
-from systems.frontier_consult.life_intent_routes import life_intent_router
-from systems.frontier_consult.route import (
-    frontier_router as frontier_consult_frontier_router,
-)
-from systems.frontier_consult.route import (
-    implement_router as frontier_consult_implement_router,
-)
-from systems.frontier_consult.route import (
-    team_router as frontier_consult_team_router,
-)
 
 from .core.common import ErrorNormalizer
 from .core.streaming import StreamingErrorHandler
@@ -54,6 +40,38 @@ from .routers import (
 )
 
 logger = get_logger(__name__)
+
+# Federation config before mode-gated imports — EDGE/REMOTE must not pull CDP
+# (playwright) modules that only MASTER serves (EDGE_MODE_ALLOWED_PREFIXES).
+_federation_config = load_federation_config()
+logger.info(f"🔍 App: Federation mode = {_federation_config.mode.value}")
+
+_frontier_consult_team_router = None
+_frontier_consult_frontier_router = None
+_frontier_consult_implement_router = None
+_frontier_consult_densify_router = None
+_life_intent_router = None
+_life_dispatch_router = None
+
+if _federation_config.mode == StargateMode.MASTER:
+    from systems.frontier_consult.densify_routes import (
+        densify_router as _frontier_consult_densify_router,
+    )
+    from systems.frontier_consult.life_dispatch_routes import (
+        life_dispatch_router as _life_dispatch_router,
+    )
+    from systems.frontier_consult.life_intent_routes import (
+        life_intent_router as _life_intent_router,
+    )
+    from systems.frontier_consult.route import (
+        frontier_router as _frontier_consult_frontier_router,
+    )
+    from systems.frontier_consult.route import (
+        implement_router as _frontier_consult_implement_router,
+    )
+    from systems.frontier_consult.route import (
+        team_router as _frontier_consult_team_router,
+    )
 
 
 # ============================================================================
@@ -225,16 +243,17 @@ async def lifespan(app: FastAPI):
 
     try:
         await proxy.startup(app)
-        from systems.frontier_consult.review_child_spawn_hook import (
-            start_review_child_spawn_listener,
-        )
+        if _federation_config.mode == StargateMode.MASTER:
+            from systems.frontier_consult.review_child_spawn_hook import (
+                start_review_child_spawn_listener,
+            )
 
-        await start_review_child_spawn_listener()
-        from systems.frontier_consult.cdp_generate_reconcile import (
-            start_cdp_generate_reconcile,
-        )
+            await start_review_child_spawn_listener()
+            from systems.frontier_consult.cdp_generate_reconcile import (
+                start_cdp_generate_reconcile,
+            )
 
-        await start_cdp_generate_reconcile()
+            await start_cdp_generate_reconcile()
         logger.info(
             "🔍 Lifespan: Startup completed successfully, yielding to application..."
         )
@@ -289,9 +308,7 @@ async def lifespan(app: FastAPI):
         logger.info("🔍 Lifespan: Shutdown complete")
 
 
-# Load federation config BEFORE creating app (for middleware registration)
-_federation_config = load_federation_config()
-logger.info(f"🔍 App: Federation mode = {_federation_config.mode.value}")
+# Federation config already loaded above (mode-gates CDP imports).
 
 # Create FastAPI app
 app = FastAPI(
@@ -516,12 +533,13 @@ async def root():
 # Include all routers
 app.include_router(v1.router)  # /v1/* endpoints (OpenAI API compatible)
 app.include_router(api.router)  # /api/v1/* endpoints (administrative)
-app.include_router(frontier_consult_team_router)  # /api/v1/team/generate
-app.include_router(frontier_consult_frontier_router)  # /api/v1/frontier/generate
-app.include_router(frontier_consult_implement_router)  # /api/v1/implement/closeout
-app.include_router(frontier_consult_densify_router)  # /api/v1/team/densify/*
-app.include_router(life_intent_router)  # /api/v1/life/intent/*
-app.include_router(life_dispatch_router)  # /api/v1/life/dispatch
+if _frontier_consult_team_router is not None:
+    app.include_router(_frontier_consult_team_router)  # /api/v1/team/generate
+    app.include_router(_frontier_consult_frontier_router)  # /api/v1/frontier/generate
+    app.include_router(_frontier_consult_implement_router)  # /api/v1/implement/closeout
+    app.include_router(_frontier_consult_densify_router)  # /api/v1/team/densify/*
+    app.include_router(_life_intent_router)  # /api/v1/life/intent/*
+    app.include_router(_life_dispatch_router)  # /api/v1/life/dispatch
 app.include_router(
     cloud_passthrough.router
 )  # /api/models, /api/select, /api/refresh (cloud passthrough)

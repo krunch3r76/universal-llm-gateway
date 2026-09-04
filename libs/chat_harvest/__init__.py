@@ -1,4 +1,12 @@
-"""Site-neutral chat session harvest — classifier, archive writer, grok adapter."""
+"""Site-neutral chat session harvest — classifier, archive writer, grok adapter.
+
+CDP adapters (claude/grok) are lazy — edge GPU images lack playwright and still
+import ``chat_harvest.chrome`` via pipeline/CDP model helpers.
+"""
+
+from __future__ import annotations
+
+from typing import Any
 
 from chat_harvest.archive import (
     Alignment,
@@ -25,16 +33,6 @@ from chat_harvest.chrome import (
     strip_chrome,
     substantive_reply_body,
 )
-from chat_harvest.claude_chat_adapter import (
-    execute_claude_harvest,
-    execute_claude_paste,
-)
-from chat_harvest.grok_adapter import (
-    execute_grok_harvest,
-    execute_grok_paste,
-    harvest_full_transcript,
-    scroll_stabilize,
-)
 from chat_harvest.models import (
     DEFAULT_RELAY_STATE_FILE,
     ChatHarvestRequest,
@@ -49,6 +47,17 @@ from chat_harvest.models import (
     classify_chat_url,
     project_turns_view,
     relay_lock_fresh,
+)
+
+_LAZY_ADAPTERS = frozenset(
+    {
+        "execute_claude_harvest",
+        "execute_claude_paste",
+        "execute_grok_harvest",
+        "execute_grok_paste",
+        "harvest_full_transcript",
+        "scroll_stabilize",
+    }
 )
 
 __all__ = [
@@ -93,3 +102,29 @@ __all__ = [
     "scroll_stabilize",
     "turn_digest",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _LAZY_ADAPTERS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    if name in ("execute_claude_harvest", "execute_claude_paste"):
+        from chat_harvest.claude_chat_adapter import (
+            execute_claude_harvest,
+            execute_claude_paste,
+        )
+
+        globals()["execute_claude_harvest"] = execute_claude_harvest
+        globals()["execute_claude_paste"] = execute_claude_paste
+        return globals()[name]
+    from chat_harvest.grok_adapter import (
+        execute_grok_harvest,
+        execute_grok_paste,
+        harvest_full_transcript,
+        scroll_stabilize,
+    )
+
+    globals()["execute_grok_harvest"] = execute_grok_harvest
+    globals()["execute_grok_paste"] = execute_grok_paste
+    globals()["harvest_full_transcript"] = harvest_full_transcript
+    globals()["scroll_stabilize"] = scroll_stabilize
+    return globals()[name]

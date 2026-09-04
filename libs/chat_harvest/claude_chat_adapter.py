@@ -11,8 +11,12 @@ from typing import Any
 from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
 from claude_bundles.project_ask import find_composer, strip_thinking_prefix
 from claude_bundles.skills_ui_panel import connect_cdp
-from playwright.async_api import Error as PlaywrightError
 from universal_logging import get_logger
+
+try:
+    from playwright.async_api import Error as PlaywrightError
+except ImportError:  # edge GPU image has no playwright; CDP harvest is host-only
+    PlaywrightError = RuntimeError  # type: ignore[misc, assignment]
 
 from chat_harvest.archive import (
     ArchiveConflictError,
