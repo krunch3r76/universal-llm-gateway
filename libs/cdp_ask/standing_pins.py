@@ -105,6 +105,33 @@ def _lapsed_match(url: str | None, prefixes: list[str]) -> str | None:
     return None
 
 
+def _emit_transition(
+    state: StandingState,
+    *,
+    name: str,
+    port: int,
+    observed_at: str,
+    url_prefix: str | None = None,
+) -> None:
+    """Emit standing transition; never raise into /health projection."""
+    try:
+        if state == "DOWN":
+            emit_standing_down(lane=name, port=port, observed_at=observed_at)
+        elif state == "LAPSED":
+            emit_standing_lapsed(
+                lane=name,
+                port=port,
+                observed_at=observed_at,
+                url_prefix=url_prefix or "",
+            )
+        else:
+            emit_standing_up(lane=name, port=port, observed_at=observed_at)
+    except Exception:
+        logger.warning(
+            "standing_pins emit failed lane=%s state=%s", name, state, exc_info=True
+        )
+
+
 def _probe_lane(
     name: str, row: dict, *, prev: StandingState | None
 ) -> StandingPinHealth:
@@ -114,26 +141,36 @@ def _probe_lane(
 
     if not _unit_active(name) or _cdp_json(port) is None:
         state: StandingState = "DOWN"
+        health = StandingPinHealth(
+            state=state, source="systemd+cdp", observed_at=observed_at
+        )
         if prev != state:
-            emit_standing_down(lane=name, port=port, observed_at=observed_at)
-        return StandingPinHealth(state=state, source="systemd+cdp", observed_at=observed_at)
+            _emit_transition(state, name=name, port=port, observed_at=observed_at)
+        return health
 
     matched = _lapsed_match(_top_page_url(port), prefixes)
     if matched is not None:
         state = "LAPSED"
+        health = StandingPinHealth(
+            state=state, source="systemd+cdp", observed_at=observed_at
+        )
         if prev != state:
-            emit_standing_lapsed(
-                lane=name,
+            _emit_transition(
+                state,
+                name=name,
                 port=port,
                 observed_at=observed_at,
                 url_prefix=matched,
             )
-        return StandingPinHealth(state=state, source="systemd+cdp", observed_at=observed_at)
+        return health
 
     state = "UP"
+    health = StandingPinHealth(
+        state=state, source="systemd+cdp", observed_at=observed_at
+    )
     if prev != state:
-        emit_standing_up(lane=name, port=port, observed_at=observed_at)
-    return StandingPinHealth(state=state, source="systemd+cdp", observed_at=observed_at)
+        _emit_transition(state, name=name, port=port, observed_at=observed_at)
+    return health
 
 
 def _probe_display(display: str) -> str:

@@ -23,8 +23,8 @@ def cdp_lane_standing_down(
     """Standing lane is down (unit inactive or CDP refused)."""
     return Event(
         signal="cdp.lane.standing.down",
-        role="satellite",
-        scope="lane",
+        role="observation",
+        scope="node",
         payload={"lane": lane, "port": port, "observed_at": observed_at},
     )
 
@@ -39,8 +39,8 @@ def cdp_lane_standing_up(
     """Standing lane is up and not lapsed."""
     return Event(
         signal="cdp.lane.standing.up",
-        role="satellite",
-        scope="lane",
+        role="observation",
+        scope="node",
         payload={"lane": lane, "port": port, "observed_at": observed_at},
     )
 
@@ -56,8 +56,8 @@ def cdp_lane_standing_lapsed(
     """Standing lane CDP answers but vendor session is lapsed."""
     return Event(
         signal="cdp.lane.standing.lapsed",
-        role="satellite",
-        scope="lane",
+        role="observation",
+        scope="node",
         payload={
             "lane": lane,
             "port": port,
