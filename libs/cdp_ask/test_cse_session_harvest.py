@@ -328,6 +328,38 @@ async def test_attached_settled_empty_returns_no_reply_yet() -> None:
 
 
 @pytest.mark.asyncio
+async def test_attached_chrome_only_last_assistant_returns_streaming() -> None:
+    from chat_harvest.test_chrome import SPECIMEN_346_BODY
+
+    harvest_mock = AsyncMock(
+        return_value={
+            "turns": [
+                {
+                    "author": "assistant",
+                    "text": SPECIMEN_346_BODY,
+                    "ordinal": 2,
+                }
+            ],
+            "streaming": False,
+            "stop": False,
+            "tool_pause": False,
+            "title": "Session - Claude",
+            "loading": False,
+        }
+    )
+    page = MagicMock()
+    with patch("cdp_ask.cse_session_harvest_scrape.harvest_turns", harvest_mock):
+        result = await harvest_page(
+            page,
+            HarvestRequest(source="chat", limit=10),
+            provenance={"opened_on_demand": False},
+        )
+    assert result.outcome == "streaming"
+    assert result.tool_pause is True
+    assert result.streaming is True
+
+
+@pytest.mark.asyncio
 async def test_attached_loading_waits_then_incomplete_dom(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

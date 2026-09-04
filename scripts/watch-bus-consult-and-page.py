@@ -29,6 +29,7 @@ _EMAIL_BRIDGE_SOCK = os.environ.get(
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
 _WAIT_SECONDS = 55.0
 _POLL_SLEEP_S = 2.0
+_DEFAULT_COMPLETION = "proof_reply_from"
 
 
 def _token() -> str:
@@ -54,11 +55,12 @@ def _wait_reply(
     thread_id: str,
     after_turn: int,
     from_agent: str,
+    completion: str = _DEFAULT_COMPLETION,
 ) -> dict[str, Any]:
     params = {
         "after_turn": after_turn,
         "wait": int(_WAIT_SECONDS),
-        "completion": "first_reply_from",
+        "completion": completion,
         "from_agent": from_agent,
     }
     resp = client.get(f"http://localhost/threads/{thread_id}/wait?{urlencode(params)}")
@@ -191,12 +193,20 @@ def main() -> int:
                     )
                 return 0
 
+            status = snap.get("status")
             turn_count = snap.get("turn_count")
             thread_status = snap.get("thread_status")
-            print(
-                f"… waiting ({thread_status}, turns={turn_count})",
-                flush=True,
-            )
+            if status == "predicate_unmet":
+                print(
+                    f"… predicate_unmet ({thread_status}, turns={turn_count}) — "
+                    "chrome-only or envelope stub; keep polling",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"… waiting ({thread_status}, turns={turn_count})",
+                    flush=True,
+                )
             time.sleep(_POLL_SLEEP_S)
 
 

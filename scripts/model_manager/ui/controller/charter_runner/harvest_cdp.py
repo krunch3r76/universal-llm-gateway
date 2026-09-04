@@ -54,6 +54,8 @@ async def maybe_harvest_cdp_consult_provenance(
     )
     if parsed is None or parsed.escape_path:
         return None
+    if not substantive_reply_body(parsed.harvest_text):
+        return None
     substrate = str(admission_meta.get("consultant_substrate") or "").strip()
     record = provenance_from_cdp_harvest(
         parsed,

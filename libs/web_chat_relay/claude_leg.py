@@ -13,55 +13,18 @@ cached session handle.
 
 from __future__ import annotations
 
-import re
 import time
 from typing import Any
 
 from cdp_ask.client import CdpAskClient
+from chat_harvest.chrome import strip_chrome
 
 DEFAULT_PROJECT_ASK_URL = "http://127.0.0.1:8770"
 _ADVANCE_PHASES = frozenset({"content_proof", "archiving", "terminal"})
 
-# The harvested chat body carries scrape/UI chrome: a "Claude responded: <first
-# words>" label line, tool-badge lines ("Used toys integration, used N skills")
-# that render duplicated back-to-back, and a trailing relative timestamp. None
-# of it is model content -- observed live 2026-08-17, previously stripped by
-# hand before every manual relay.
-_RESPONDED_LABEL_RE = re.compile(r"^claude responded:.*$", re.I)
-_TRAILING_TIMESTAMP_RE = re.compile(
-    r"^(just now|\d+\s+(second|minute|hour|day)s?\s+ago)\.?$", re.I
-)
-_TOOL_BADGE_SEGMENT = (
-    r"(searched the web|used toys integration|used a skill|used \d+ skills?)"
-)
-_TOOL_BADGE_LINE_RE = re.compile(
-    rf"^{_TOOL_BADGE_SEGMENT}(,\s*{_TOOL_BADGE_SEGMENT})*\.?$", re.I
-)
-
 
 class ClaudeLegError(RuntimeError):
     """project-ask submit/poll failed."""
-
-
-def strip_chrome(text: str) -> str:
-    """Drop the Cowork scrape chrome, keep the model's actual reply.
-
-    The responded-label line is only recognized at position 0 (it is a
-    scrape-time header, never mid-reply). Tool-badge lines are dropped
-    wherever they land -- their vocabulary is narrow and exact enough that
-    matching anywhere in the text does not risk eating real prose, and their
-    position varies (sometimes leading, sometimes interleaved with a
-    "Claude responded:" line landing between two of them).
-    """
-    lines = text.split("\n")
-    if lines and _RESPONDED_LABEL_RE.match(lines[0].strip()):
-        lines = lines[1:]
-    lines = [line for line in lines if not _TOOL_BADGE_LINE_RE.match(line.strip())]
-    while lines and not lines[0].strip():
-        lines.pop(0)
-    while lines and _TRAILING_TIMESTAMP_RE.match(lines[-1].strip()):
-        lines.pop()
-    return "\n".join(lines).strip()
 
 
 def _client(base_url: str) -> CdpAskClient:

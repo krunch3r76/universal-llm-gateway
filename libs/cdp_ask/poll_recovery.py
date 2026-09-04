@@ -20,6 +20,7 @@ from claude_bundles.project_ask import (
     archive_harvest,
     read_archive_execution_id,
 )
+from chat_harvest.chrome import is_chrome_only, substantive_reply_body
 
 from cdp_ask.cse_session_harvest_identity import (
     chat_url_from_archives,
@@ -136,7 +137,7 @@ def snapshot_from_archive_path(
     except OSError:
         return None
     body = _archive_body_section(text).strip()
-    if not body:
+    if not body or is_chrome_only(body):
         return None
     url_match = _URL_LINE.search(text)
     url = url_match.group(1) if url_match else ""
@@ -182,8 +183,8 @@ def _mark_recovery_attempt(token: str) -> None:
 def _body_from_harvest(response: HarvestResponse) -> str:
     for turn in reversed(response.turns):
         text = (turn.text or "").strip()
-        if text:
-            return text
+        if text and substantive_reply_body(text):
+            return substantive_reply_body(text)
     return ""
 
 

@@ -457,6 +457,19 @@ def _cmd_delete_turn(args: argparse.Namespace, token: str) -> None:
     print(json.dumps(result, indent=2, default=str))
 
 
+def _cmd_wait(args: argparse.Namespace, token: str) -> None:
+    params = {
+        "after_turn": args.after_turn,
+        "wait": args.wait_seconds,
+        "completion": args.completion,
+    }
+    if args.from_agent:
+        params["from_agent"] = args.from_agent
+    qs = urlencode(params)
+    result = _request("GET", f"/threads/{args.thread}/wait?{qs}", token)
+    print(json.dumps(result, indent=2, default=str))
+
+
 def _cmd_checkpoint(args: argparse.Namespace, token: str) -> None:
     del token
     from agent_bus_store.checkpoint_projection import project_checkpoint_body
@@ -673,6 +686,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to authored residue markdown",
     )
 
+    w = sub.add_parser(
+        "wait",
+        help="Server-side wait for handoff completion (default proof_reply_from)",
+    )
+    w.add_argument("--thread", required=True, help="Thread id")
+    w.add_argument("--after-turn", type=int, default=1, dest="after_turn")
+    w.add_argument("--wait-seconds", type=float, default=0.0, dest="wait_seconds")
+    w.add_argument(
+        "--completion",
+        default="proof_reply_from",
+        choices=[
+            "first_reply_from",
+            "proof_reply_from",
+            "thread_closed",
+            "status:done",
+            "status:failed",
+            "status:needs-attended",
+            "status:superseded",
+        ],
+    )
+    w.add_argument("--from-agent", default="web-anthropic", dest="from_agent")
+
     return p
 
 
@@ -693,6 +728,7 @@ def main() -> None:
             "delete-thread": _cmd_delete_thread,
             "delete-turn": _cmd_delete_turn,
             "checkpoint": _cmd_checkpoint,
+            "wait": _cmd_wait,
         }[args.command](args, token)
     except FileNotFoundError:
         print(

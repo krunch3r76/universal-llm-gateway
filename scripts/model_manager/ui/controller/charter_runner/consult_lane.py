@@ -11,6 +11,7 @@ from typing import Any
 from durable_io.atomic import durable_write_text
 from universal_logging import get_logger
 
+from chat_harvest.chrome import substantive_reply_body
 from libs.charter_runner_store.db import charter_runner_data_dir, execute_with_retry
 
 from . import bus_client
@@ -193,7 +194,7 @@ def _ledger_row_consult_queued(
         consult_role=consult_role,
         consult_attempts=existing.consult_attempts,
         consult_next_retry=existing.consult_next_retry,
-        consult_poll_from=existing.consult_poll_from,
+        consult_poll_from="proof_reply_from",
         harvest_deadline=existing.harvest_deadline,
         last_window_id=existing.last_window_id,
         last_transition=Transition.QUEUE_CONSULT.value,
@@ -396,7 +397,9 @@ def _harvest_text_from_turns(
             if not body or body.startswith("{"):
                 continue
             if "cdp" in frm or "opus" in frm or "anthropic" in frm:
-                chunks.append(body)
+                prose = substantive_reply_body(body)
+                if prose:
+                    chunks.append(prose)
         if chunks:
             return chunks[-1]
     summary = closeout.get("summary")
@@ -405,8 +408,9 @@ def _harvest_text_from_turns(
     for turns in scan_sets:
         for turn in reversed(turns):
             body = str(turn.get("body") or "").strip()
-            if body and not body.startswith("{"):
-                return body
+            prose = substantive_reply_body(body)
+            if prose and not body.startswith("{"):
+                return prose
     return ""
 
 

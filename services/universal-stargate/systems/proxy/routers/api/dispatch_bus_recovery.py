@@ -114,8 +114,9 @@ async def await_bus_closeout_reply(
     headers: dict[str, str],
     after_turn: int = 1,
     from_agent: str = _CURSOR_SDK_REPLY_SEAT,
+    completion: str = "first_reply_from",
 ) -> str | None:
-    """Block on agent-bus wait until an SDK closeout turn appears."""
+    """Block on agent-bus wait until a qualifying closeout turn appears."""
     if wait_seconds <= 0:
         return None
     deadline = time.monotonic() + wait_seconds
@@ -130,7 +131,7 @@ async def await_bus_closeout_reply(
                 params={
                     "after_turn": after_turn,
                     "wait": wait_s,
-                    "completion": "first_reply_from",
+                    "completion": completion,
                     "from_agent": from_agent,
                 },
                 headers=headers,

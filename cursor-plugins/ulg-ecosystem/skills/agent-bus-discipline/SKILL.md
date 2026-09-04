@@ -27,7 +27,7 @@ Topic overlap ≠ thread continuity. Prior thread can be evidence context; new t
 
 ## Dispatch polling
 
-After `team_dispatch` / handoff with `poll_hint`, poll using `agent_bus(wait, thread=N, after_turn=T, completion="first_reply_from", from_agent=...)`.
+After `team_dispatch` / handoff with `poll_hint`, poll using `agent_bus(wait, thread=N, after_turn=T, completion=<from poll_hint>, from_agent=...)`. CDP handoffs ship `completion="proof_reply_from"` — do not downgrade to `first_reply_from`; chrome-only CDP envelope turns yield `predicate_unmet`, not `complete`.
 
 ```python
 agent_bus(tool="wait", arguments=poll_hint.arguments_json)

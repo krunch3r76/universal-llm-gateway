@@ -256,3 +256,75 @@ def test_wait_status_done_with_admit_turn_is_predicate_unmet(tmp_path) -> None:
         assert body["complete"] is False
         assert body["turn_count"] == 2
         assert body["qualifying_reply_turn"] is None
+
+
+def test_wait_proof_reply_from_specimen_346_predicate_unmet(tmp_path) -> None:
+    from chat_harvest.test_chrome import SPECIMEN_346_BODY
+
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-proof-chrome-stub",
+                "from": "claude-cursor",
+                "to": "web-anthropic",
+                "subject": "handoff",
+                "body": "brief",
+            },
+        )
+        thread_id = created.json()["thread"]["id"]
+        client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "web-anthropic",
+                "to": "cursor",
+                "subject": "cdp reply — a76a67d3",
+                "body": SPECIMEN_346_BODY,
+                "after_turn": 1,
+            },
+        )
+        resp = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=proof_reply_from&from_agent=web-anthropic"
+        )
+        body = resp.json()
+        assert body["status"] == "predicate_unmet"
+        assert body["complete"] is False
+        assert body["qualifying_reply_turn"] is None
+
+
+def test_wait_proof_reply_from_specimen_347_complete(tmp_path) -> None:
+    from chat_harvest.test_chrome import SPECIMEN_347_BODY
+
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-proof-substantive",
+                "from": "claude-cursor",
+                "to": "web-anthropic",
+                "subject": "handoff",
+                "body": "brief",
+            },
+        )
+        thread_id = created.json()["thread"]["id"]
+        client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "web-anthropic",
+                "to": "cursor",
+                "subject": "cdp reply — b87b78e4",
+                "body": SPECIMEN_347_BODY,
+                "after_turn": 1,
+            },
+        )
+        resp = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=proof_reply_from&from_agent=web-anthropic"
+        )
+        body = resp.json()
+        assert body["status"] == "complete"
+        assert body["complete"] is True
+        assert body["qualifying_reply_turn"] == 2
