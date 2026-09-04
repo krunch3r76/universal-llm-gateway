@@ -50,12 +50,16 @@ def _iso_now() -> str:
 
 
 def _unit_active(lane: str) -> bool:
-    proc = subprocess.run(
-        ["systemctl", "--user", "is-active", f"cdp-lane@{lane}.service"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["systemctl", "--user", "is-active", f"cdp-lane@{lane}.service"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=2,
+        )
+    except subprocess.TimeoutExpired:
+        return False
     return proc.stdout.strip() == "active"
 
 

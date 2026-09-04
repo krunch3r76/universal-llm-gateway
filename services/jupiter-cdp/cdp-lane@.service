@@ -6,6 +6,7 @@ PartOf=jupiter-cdp.target
 [Service]
 Type=notify
 StartLimitIntervalSec=0
+ExecStartPre=%h/.local/bin/wait-for-file ${ULG_REPO}/services/jupiter-cdp/pins.toml
 ExecStart=%h/.local/bin/cdp-lane-launch %i
 Restart=on-failure
 RestartSec=5

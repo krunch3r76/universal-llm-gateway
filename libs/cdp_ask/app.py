@@ -347,7 +347,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         hygiene_status = "running" if registry_hygiene.running else "stopped"
         from cdp_ask.standing_pins import probe_health
 
-        displays, standing_pins = probe_health()
+        displays, standing_pins = await asyncio.to_thread(probe_health)
         return HealthResponse(
             status="ok",
             harvest_root=str(root),

@@ -1,0 +1,17 @@
+#!/bin/sh
+# Wait until PATH exists (NFS mount gate). Usage: wait-for-file PATH [timeout_sec]
+set -eu
+
+path="${1:?usage: wait-for-file PATH [timeout_sec]}"
+timeout="${2:-120}"
+deadline=$(( $(date +%s) + timeout ))
+
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  if [ -f "$path" ]; then
+    exit 0
+  fi
+  sleep 0.5
+done
+
+echo "wait-for-file: timed out waiting for $path" >&2
+exit 1

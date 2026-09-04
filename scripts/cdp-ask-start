@@ -12,6 +12,20 @@ fi
 
 REPO="${ULG_REPO:?ULG_REPO required in cdp-ask.env}"
 PORT="${PORT:-8770}"
+
+if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+  exit 0
+fi
+
+PIDFILE="${HOME}/.gateway/cdp-ask.pid"
+if [ -f "$PIDFILE" ]; then
+  old_pid="$(cat "$PIDFILE")"
+  if kill -0 "$old_pid" 2>/dev/null \
+    && curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+    exit 0
+  fi
+fi
+
 mkdir -p /tmp/logs/cdp-ask "${HOME}/.gateway"
 
 setsid env \
@@ -22,4 +36,4 @@ setsid env \
   "$HOME/.venvs/universal/bin/python" "$REPO/scripts/cdp-ask" --port "$PORT" \
   </dev/null >/tmp/logs/cdp-ask/start.log 2>&1 &
 
-echo $! > "${HOME}/.gateway/cdp-ask.pid"
+echo $! > "$PIDFILE"

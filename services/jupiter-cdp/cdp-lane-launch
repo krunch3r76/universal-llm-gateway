@@ -28,7 +28,7 @@ _LISTEN_IDLE_S = 20.0
 
 
 def _expand(path: str) -> Path:
-    return Path(path.replace("~", str(Path.home())))
+    return Path(path).expanduser()
 
 
 def _load_pin(lane_name: str) -> dict:
@@ -91,7 +91,11 @@ def main() -> None:
     else:
         if proc.poll() is None:
             proc.send_signal(signal.SIGTERM)
-            proc.wait(timeout=5)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
         raise SystemExit(1)
 
     code = proc.wait()

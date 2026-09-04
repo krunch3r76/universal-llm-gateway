@@ -1,5 +1,5 @@
 ---
-trigger_match_terms: ["jupiter-browser-bringup", "bring up chrome", "start jupiter browser", "web-fetcher not running", "cdp-ask not running", "chrome cdp down", "start-jupiter-browser", "jupiter chrome down", "ECONNREFUSED 9222"]
+trigger_match_terms: ["jupiter-browser-bringup", "bring up chrome", "start jupiter browser", "web-fetcher not running", "cdp-ask not running", "chrome cdp down", "jupiter-cdp.target", "jupiter chrome down", "ECONNREFUSED 9222"]
 description: Bring up Chrome + web-fetcher + cdp-ask on Jupiter for browse/project_ask. Read when browse/save_to fails with a connection error — infra launch, status check, bootstrap; not usage.
 ---
 
@@ -12,17 +12,29 @@ actions, screenshots), read `jupiter-browser-via-mcp`.
 
 **Tested**: Chrome/147.0.7727.101 on Jupiter, April 2026.
 
-## Launching (the normal human path)
+## Launching (systemd on Jupiter)
+
+Standing stack (Xvfb, fleet/messages/ess lanes, web-fetcher, cdp-ask):
 
 ```bash
-scripts.local/start-jupiter-browser          # start if not running (idempotent)
-scripts.local/start-jupiter-browser --force  # kill and restart all three services
-scripts.local/start-jupiter-browser --status # check status without changing anything
+ssh <user>@jupiter 'systemctl --user start jupiter-cdp.target'
 ```
 
-Run from the repo root. The script SSHes to Jupiter, starts Chrome, web-fetcher,
-and cdp-ask if needed, and prints final status. Takes ~5 seconds on a fresh
-start, ~0.5 seconds if already running.
+Single lane (on-demand or non-standing pins such as gopuff/uber):
+
+```bash
+ssh <user>@jupiter 'cdp-lane-ensure fleet'    # or messages, ess, gopuff, uber
+```
+
+Status without starting:
+
+```bash
+ssh <user>@jupiter 'systemctl --user status jupiter-cdp.target'
+ssh <user>@jupiter 'curl -sf http://127.0.0.1:9222/json/version && curl -sf http://127.0.0.1:8765/health && curl -sf http://127.0.0.1:8770/health'
+```
+
+Install units once per Jupiter checkout: `services/jupiter-cdp/install.sh`.
+Fresh start ~5s; idempotent when units are already active.
 
 ---
 
@@ -162,14 +174,15 @@ Expected: `{"status":"ok","concurrent_limit":3,"headless":null,"cdp_url_configur
 
 ## cdp-ask activation (project_ask)
 
-cdp-ask is the third leg of `scripts.local/start-jupiter-browser`. It serves
+cdp-ask is started by `jupiter-cdp.target` (Wants-only; not upheld). It serves
 MCP `project_ask` (sealed CDP consults with cortex harvest). Requires Chrome
 :9222 **and** `CORTEX_FILES_ROOT=/mnt/torus/mcp-data/files` on Jupiter.
 
 ### Production activation runbook
 
 1. Jupiter: `git pull` in the ULG checkout (confirm `libs/cdp_ask/` present).
-2. Hub: `scripts.local/start-jupiter-browser` (or `--status` first).
+2. Jupiter: `services/jupiter-cdp/install.sh` if units changed; then
+   `systemctl --user start jupiter-cdp.target` (or `cdp-lane-ensure fleet` first).
 3. Verify: `curl -sf http://jupiter:8770/health` → `harvest_root_ok:true`.
 4. Hub: set `PROJECT_ASK_URL: http://jupiter:8770` in `~/.gateway/mcp.yaml`;
    remove/comment any `host.docker.internal` dev URL (fail-closed).
@@ -314,13 +327,14 @@ and `browse-waf-and-pagination-gotchas` instead — this table covers only
 
 | Path | Purpose |
 |---|---|
-| `scripts.local/start-jupiter-browser` | **Launch script** — start/stop/status Chrome + web-fetcher + cdp-ask |
+| `services/jupiter-cdp/jupiter-cdp.target` | **Systemd target** — standing Xvfb + lanes + web-fetcher + cdp-ask |
+| `services/jupiter-cdp/cdp-lane-ensure` | Ensure one lane unit is active and CDP listens |
 | `scripts/cdp-ask` | cdp-ask satellite entry point (port 8770) |
 | `libs/cdp_ask/` | cdp-ask FastAPI app + CDP project-ask runner |
 | `services/mcp-server/tools/project_ask.py` | MCP `project_ask` relay to PROJECT_ASK_URL |
 | `libs/web_fetcher/` | web-fetcher FastAPI app + Playwright browser module |
 | `libs/web_fetcher/app.py` | FastAPI surface — `FetchRequest` schema, routing logic |
-| `scripts/web-fetcher` | Low-level web-fetcher entry point (called by `start-jupiter-browser`) |
+| `scripts/web-fetcher` | Low-level web-fetcher entry point (via `jupiter-web-fetcher` unit wrapper) |
 | `docker/compose/mcp-server.yml` | Declares `WEB_FETCHER_URL` + `MCP_SHARED_IMAGE_DIR` env vars |
 | `~/.gateway/mcp.yaml` | Sets `WEB_FETCHER_URL: "http://jupiter:8765"` and `PROJECT_ASK_URL: "http://jupiter:8770"` |
 

@@ -6,14 +6,9 @@ REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 USER_SYSTEMD="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 LOCAL_BIN="$HOME/.local/bin"
 SRC="$REPO/services/jupiter-cdp"
+PINS_GATE="ExecStartPre=%h/.local/bin/wait-for-file \${ULG_REPO}/services/jupiter-cdp/pins.toml"
 
-mkdir -p "$USER_SYSTEMD" "$LOCAL_BIN" "$USER_SYSTEMD/jupiter-cdp.target.d"
-
-cat >"$USER_SYSTEMD/jupiter-cdp.target.d/repo.conf" <<EOF
-[Service]
-Environment=ULG_REPO=$REPO
-Environment=PYTHONPATH=$REPO/libs
-EOF
+mkdir -p "$USER_SYSTEMD" "$LOCAL_BIN"
 
 for drop_dir in cdp-lane@.service.d web-fetcher.service.d cdp-ask.service.d; do
   mkdir -p "$USER_SYSTEMD/$drop_dir"
@@ -24,11 +19,19 @@ Environment=PYTHONPATH=$REPO/libs
 EOF
 done
 
+mkdir -p "$USER_SYSTEMD/web-fetcher.service.d"
+cat >"$USER_SYSTEMD/web-fetcher.service.d/pins.conf" <<EOF
+[Service]
+$PINS_GATE
+EOF
+
 for unit in jupiter-cdp-xvfb@.service cdp-lane@.service web-fetcher.service cdp-ask.service jupiter-cdp.target; do
   ln -sf "$SRC/$unit" "$USER_SYSTEMD/$unit"
 done
 
 ln -sf "$REPO/scripts/cdp-ask-start" "$LOCAL_BIN/cdp-ask-start"
+ln -sf "$SRC/wait-for-file" "$LOCAL_BIN/wait-for-file"
+chmod +x "$LOCAL_BIN/wait-for-file"
 
 cat >"$LOCAL_BIN/cdp-lane-launch" <<'WRAP'
 #!/bin/sh
