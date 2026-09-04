@@ -451,6 +451,15 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     closeout_tokens = _closeout_tokens_from_row(row)
     _write_budget_authority(dispatch_id, row)
     row = _load_row(dispatch_id) or row
+    closeout_tokens = _closeout_tokens_from_row(row)
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+        maybe_fire_conductor_park_harvest,
+        park_harvest_owed,
+    )
+
+    if park_harvest_owed(row, closeout_tokens=closeout_tokens):
+        await maybe_fire_conductor_park_harvest(dispatch_id=dispatch_id)
+        return
     verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
     if verdict.park and verdict.reason:
         await park_conductor_hop_mission(
