@@ -210,7 +210,7 @@ def test_judgment_window_is_never_gate_checked() -> None:
     from scripts.model_manager.ui.controller.charter_runner import dispatch_client as dc
 
     result: dict = {"dispatch_id": "d1"}
-    dc._warn_on_ungated_implement("5609", {"contract": "light-bounded"}, result)
+    dc._warn_on_ungated_implement("5609", {"contract": "sketch"}, result)
     assert "implement_gate_bypassed" not in result
 
 

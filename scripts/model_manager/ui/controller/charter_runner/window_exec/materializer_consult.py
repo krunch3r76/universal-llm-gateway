@@ -74,7 +74,7 @@ agent-bus:{root_id} — scope-lock fields are pinned on the root CHECKPOINT.
 [layer-ask] the consult ask is layering-shaped: pin the architecture exit
 contract ({envelope}) — not question-table layer-search prose.
 [consult-independence] fire via team_dispatch(model={seat},
-contract=light-bounded) to web-anthropic — a DIFFERENT substrate/family than
+contract=none) to web-anthropic — a DIFFERENT substrate/family than
 this cursor-sdk seat. Never self-answer the judgment gap.
 [sealed-unattended] CDP prompt MUST include the sealed unattended clause (a:26156).
 [depth-1] harvest one consult reply; write shared provenance fields.
@@ -109,7 +109,7 @@ def _task_guidance_layer_judgment(
 {identity_block}
 ## Layer {gate_id} consult work (this seat owns submit→poll→provenance)
 - Ask shape: {ask}
-- Primary: team_dispatch(op=generate, model={seat}, contract=light-bounded, …)
+- Primary: team_dispatch(op=generate, model={seat}, contract=none, …)
 - Record shared provenance (consult_thread, verdict, consultant_model,
   consultant_effort, consultant_substrate) on the root CHECKPOINT.
 - G1 exit duty: stamp architecture ``document:`` + ``derived_from`` edge when
@@ -172,7 +172,7 @@ CHECKPOINT; do not re-open scope.
 · detent · layers (L0/L1/L2 as declared) · deliverable gate. Do not invent a
 tick-local ask grammar.
 [consult-independence] fire the consult via team_dispatch(model=cdp/opus-5,
-contract=light-bounded) to web-anthropic Opus — a DIFFERENT substrate/family than
+contract=none) to web-anthropic Opus — a DIFFERENT substrate/family than
 the cursor-sdk seat running this window. Never self-answer the judgment gap.
 IF6 / satellite-direct is CLI project-ask (MCP project_ask removed).
 [sealed-unattended] CDP prompt MUST include the sealed unattended clause
@@ -205,7 +205,7 @@ def _invariants_r_admit(root_id: str) -> str:
 <invariants>
 [consult-boundary] CONSULT_PENDING + consult_role: r_admit on agent-bus:{root_id} —
 pinned R prompt URI / dense spec corpus on the root CHECKPOINT; do not re-open scope.
-[R-independence] fire R-admit via team_dispatch(model=cdp/opus-5, contract=light-bounded)
+[R-independence] fire R-admit via team_dispatch(model=cdp/opus-5, contract=none)
 to web-anthropic Opus — a DIFFERENT substrate/family than the cursor-sdk seat running
 this window. Never self-assess R. IF6 / satellite-direct is CLI project-ask (MCP project_ask removed).
 [sealed-unattended] R prompt MUST include the sealed unattended clause (a:26156 /
@@ -265,7 +265,7 @@ def _task_guidance_judgment(
   ESCALATE allowed when self-resolution fails).
 - If resuming: agent_bus.wait from the pinned poll_hint / from=web-anthropic bus-turn until
   a qualifying cdp turn lands (reply or DELIVERY FAILED). Long running ≠ stalled.
-- If fresh: team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded,
+- If fresh: team_dispatch(op=generate, model=cdp/opus-5, contract=none,
   prompt=<scope-locked Question + OOS + detent + layers + corpus>,
   dispatch_thread_id=…) → poll via agent_bus.wait from poll_hint (from_agent=web-anthropic).
 - Record on the root CHECKPOINT / todo attrs the **shared** consult schema
@@ -321,7 +321,7 @@ def _task_guidance_r_admit(
   ESCALATE allowed when self-resolution fails).
 - If resuming: agent_bus.wait from the pinned poll_hint / from=web-anthropic bus-turn until
   a qualifying cdp turn lands (reply or DELIVERY FAILED). Long running ≠ stalled.
-- If fresh: team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded,
+- If fresh: team_dispatch(op=generate, model=cdp/opus-5, contract=none,
   prompt/sidecar_ref=<R prompt cortex URI>, dispatch_thread_id=…) → poll via
   agent_bus.wait from poll_hint (from_agent=web-anthropic).
 - Parse merits verdict with fail-closed gate (ADMIT/RATIFY advance; amendments fold first).

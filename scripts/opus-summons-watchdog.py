@@ -265,7 +265,7 @@ def summon(seq: int) -> str | None:
     body = {
         "op": "generate",
         "dispatch_thread_id": THREAD,
-        "contract": "light-bounded",
+        "contract": "none",
         "model": "cdp/opus-5",
         "purpose": "operator-proxy",
         "sidecar_ref": COMMISSION_URI,

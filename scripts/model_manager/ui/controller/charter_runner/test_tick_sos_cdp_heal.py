@@ -72,7 +72,7 @@ async def test_submit_cdp_heal_posts_team_dispatch_with_purpose() -> None:
     assert body["op"] == "generate"
     assert body["model"] == "cdp/opus-5"
     assert body["purpose"] == "operator-proxy"
-    assert body["contract"] == "light-bounded"
+    assert body["contract"] == "none"
     assert body["dispatch_thread_id"] == "6451"
     assert "purpose: operator-proxy" in body["prompt"]
 

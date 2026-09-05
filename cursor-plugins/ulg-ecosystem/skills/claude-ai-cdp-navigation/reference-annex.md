@@ -295,7 +295,7 @@ Mechanics: `libs/claude_bundles/cowork_skill_delivery.py` + `composer_session_sk
 
 | Packet class | Claude-slug engage | Inline (not Claude slugs) |
 |---|---|---|
-| Light-bounded architect / admit bind | `reasoning-posture` (+ `consult-posture` when consult-shaped) | none — **¬** `path-sim` unless this leg is a path-sim Q/A/R cascade (a:27142) |
+| none · sketch (architect / admit bind) | `reasoning-posture` (+ `consult-posture` when consult-shaped) | none — **¬** `path-sim` unless this leg is a path-sim Q/A/R cascade (a:27142) |
 | **`/layer` G1 · Fable/Opus architecture** | optional judgment chips | **`architecture-invariants` + `ulg-architecture`** (fail closed — judgment chips ¬ substitute; staging `purpose=ask` owns the floor) |
 | **ULG service home / placement / extract / hosting BIND** | `reasoning-posture` (+ `consult-posture` when consult-shaped) | **`architecture-invariants` + `ulg-architecture`** — and **inline** `[ulg:host-process]` when process manager / service home is load-bearing (cursor_only → local inject / excerpt) |
 | Modularize / overhaul deep split | optional chip helpers | `architecture-invariants` + `modularize-discipline` (+ `ulg-architecture`) — `/modularize` cascade SOT: `modularize-path` (CDP M-Arch fail-closed inline) |

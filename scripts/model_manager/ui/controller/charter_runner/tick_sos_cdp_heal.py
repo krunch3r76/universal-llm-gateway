@@ -92,7 +92,7 @@ async def submit_cdp_heal(
     body = {
         "op": "generate",
         "model": _CDP_MODEL,
-        "contract": "light-bounded",
+        "contract": "none",
         "prompt": prompt,
         "purpose": "operator-proxy",
         "dispatch_thread_id": str(root_id),

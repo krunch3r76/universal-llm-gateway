@@ -16,9 +16,9 @@ def test_forces_auto_review_child_false_by_default() -> None:
 def test_overrides_cannot_win_over_false() -> None:
     kwargs = live_probe_generate_kwargs(
         auto_review_child=True,
-        contract="light-bounded",
+        contract="none",
         seat="cursor-sdk",
     )
     assert kwargs["auto_review_child"] is False
-    assert kwargs["contract"] == "light-bounded"
+    assert kwargs["contract"] == "none"
     assert kwargs["seat"] == "cursor-sdk"

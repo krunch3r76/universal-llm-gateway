@@ -92,7 +92,8 @@ For `team_dispatch(op="handoff")` only: returns synchronously with
   `contract=implement`, auto Composer, no IDE pickup) — the `cursor-implement`
   handoff is the operator-attended fallback. Materialization reads todo attributes;
   the implement materialized packet MUST be dense (Composer executes mechanically);
-  a determinate, pre-authored task may instead run via `contract=light-bounded` or
+  a determinate, pre-authored task may instead run via `contract=none` or
+  `contract=sketch` (judgment / recon scaffold) or
   `contract=pure-mechanical` with context on `dispatch_thread_id` (no packet, still
   explicit + bounded — § General execution lane). Legacy: `packet_path` +
   `contract=implement`. See skill `consult-routing` § Implement lane — source_ref.
@@ -113,7 +114,7 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `op` | `"generate"\|"to_thread"\|"handoff"` | Output channel |
 | `role` | API (`generate`/`to_thread`): `reviewer`, `gatherer`, `synthesizer`, `artisan`, `skeptic`. Handoff only: `web-consult`, `web-implement`, `cursor-consult`, `cursor-implement` | Functional role roster only — **not** a substrate selector. SDK peer slug via `role=` → 422 `role_is_not_a_seat` (use `seat=`). Seat aliases like `claude-web` → 422 `handoff_role_invalid`. **`skeptic`**: default `xai/grok-4.6` (MCP-capable standard card) — pre-stage context on `dispatch_thread_id`; admission returns `capabilities.inline_only` / `capabilities.mcp_enabled`. |
 | `seat` | Auto-dispatch (`generate`/`to_thread`): `cursor-sdk`. Handoff: manual bus seats (`web-anthropic`, `cursor`, …) — not auto seats | Mutually exclusive with `role` on generate/to_thread. SDK implement peer: `seat=cursor-sdk`. `op=handoff` + auto seat → 422 `seat_not_manual`. |
-| `contract` | `"light-bounded"\|"pure-mechanical"\|"implement"\|"wrap"` | **Required** for `op="generate"`/`op="to_thread"`. Authority grant: `light-bounded` (bounded consult/execution), `pure-mechanical` (deterministic write loop), `implement` (bound mechanical implement — default via `source_ref=todo:{slug}` server materialization on `seat=cursor-sdk`; legacy `packet_path` escape-hatch), `wrap` (materialize-only, no Composer spawn; requires `source_ref`, forbids `packet_path`). `consult` is dropped — migrate to `light-bounded`. |
+| `contract` | `"implement"\|"none"\|"pure-mechanical"\|"sketch"\|"conductor"\|"wrap"` | **Required** for `op="generate"`/`op="to_thread"`. Authority grant: `none` (residual consult / CDP judgment — no server materialization), `sketch` (recon / ask scaffold — GIW auto-invokes reasoning-posture + hypothesize-simulate), `conductor` (orchestrator spawn — materializer or explicit packet), `pure-mechanical` (deterministic write loop), `implement` (bound mechanical implement — default via `source_ref=todo:{slug}` server materialization on `seat=cursor-sdk`; legacy `packet_path` escape-hatch), `wrap` (materialize-only, no Composer spawn; requires `source_ref`, forbids `packet_path`). Legacy `consult` is dropped — migrate to `none` or `sketch`. |
 | `dispatch_thread_id` | `str` | Compaction key for server-owned thread persistence (`thread:dispatch:{id}`). Stable per arc/session. When no explicit `packet_path`, `prompt`, or `sidecar_ref` is supplied, context falls back to this thread's latest role-addressed turn. Unused by `op="handoff"`. |
 | `thread` | `str\|None` | Required when `op="to_thread"` — agent-bus thread ID |
 | `subject` | `str\|None` | Bus reply subject (`to_thread`); required packet subject (`handoff`) |
@@ -123,16 +124,16 @@ entity, assembles birth + briefing + continuation, and rejects violations before
 | `caller_agent` | `str\|None` | Dispatch provenance |
 | `timeout_seconds` | `int\|None` | Pipeline wall-clock cap |
 | `mcp` | `bool\|None` | MCP-class tools only (client loop + remote connector). `None` = per-model default; `False` = inline-only (no MCP-class tools). Does not govern provider server-side built-ins — see `server_tools`. |
-| `skills` | `list[str]\|None` | Unified skills input path; capability-selected delivery. Supported on `op=generate` and `op=to_thread` only — not `handoff`. Roleless CDP (`model=cdp/…`): Claude slugs (`shared_sync`) prepended as leading `/<slug>\\n` manifest lines (not typed); satellite attaches each via composer **+ → Skills → pick**. Non-Claude skills inlined at top. Hybrid `Use the …` is escape-only. **CDP always merges** `reasoning-posture` into effective `skills=` (including light-bounded / omitted `skills` — `decision:reasoning-frontier-skill-pair`). **Cursor-sdk generate** (`seat=cursor-sdk`, any `team_dispatch` caller): GIW preamble auto-invokes `Use the reasoning-posture skill` on non-mechanical contracts (`light-bounded` / `consult`); skip `implement` / `pure-mechanical` and quick (`answer` / `execute` / `propagate`). Not a `skills=` mount. **Handoff** consult / light-bounded: enrich inserts the same Use-line into `<invariants>`; skip implement. |
+| `skills` | `list[str]\|None` | Unified skills input path; capability-selected delivery. Supported on `op=generate` and `op=to_thread` only — not `handoff`. Roleless CDP (`model=cdp/…`): Claude slugs (`shared_sync`) prepended as leading `/<slug>\\n` manifest lines (not typed); satellite attaches each via composer **+ → Skills → pick**. Non-Claude skills inlined at top. Hybrid `Use the …` is escape-only. **CDP always merges** `reasoning-posture` into effective `skills=` (including `none` / `sketch` / omitted `skills` — `decision:reasoning-frontier-skill-pair`). **Cursor-sdk generate** (`seat=cursor-sdk`, any `team_dispatch` caller): GIW preamble auto-invokes `Use the reasoning-posture skill` on non-mechanical contracts (`none`, `sketch`, `conductor`); skip `implement` / `pure-mechanical` and quick (`answer` / `execute` / `propagate`). Not a `skills=` mount. **Handoff** consult / judgment: enrich inserts the same Use-line into `<invariants>`; skip implement. |
 | `server_tools` | `bool\|None` | Provider server-side built-ins. Omit = ALL card-derived built-ins; `False` suppresses card-derived provider built-ins. Independent of `mcp`. |
 | `source_ref` | `str\|None` | Admission ref (`todo:{slug}`, `plan:{slug}`, `plan_phase:{slug}[/phase-N]`, `agent-bus:N#turn-N`, `packet:{path}`). On `op="generate"` with `seat=cursor-sdk`: drives `contract=implement` and `contract=wrap` — Stargate resolves `normalize → materialize → validate_packet` server-side from the source entity's **attributes** (`files_expected`, `acceptance_criteria`, `required_skills`, gate keys); the `source_uri` spec body is fingerprinted via `content_hash`, never content-read. On `op="handoff"`: same normalize/materialize path; **preferred for the implement lane** (`cursor-implement` / `web-implement`). `agent-bus:N` is gated unless an explicit `#turn-N` resolves it; `task:`/`project:` are grammar-excluded (containers, not dispatchable). Relay pass-through — the MCP client does NOT resolve it. |
-| `packet_path` | `str\|None` | Explicit file-backed prompt/instruction source for `op="generate"`; mutually exclusive with `prompt` and `sidecar_ref`. Honored for `contract=light-bounded`, `pure-mechanical`, and `implement` (legacy hand-authored escape-hatch; implement also runs implement-ready gate). Default implement path is `source_ref`. On `op="handoff"`, it is the hand-authored alternative to `source_ref`; both-present triggers the existing drift guard. |
+| `packet_path` | `str\|None` | Explicit file-backed prompt/instruction source for `op="generate"`; mutually exclusive with `prompt` and `sidecar_ref`. Honored for `contract=none`, `sketch`, `pure-mechanical`, and `implement` (legacy hand-authored escape-hatch; implement also runs implement-ready gate). Default implement path is `source_ref`. On `op="handoff"`, it is the hand-authored alternative to `source_ref`; both-present triggers the existing drift guard. |
 | `prompt` | `str\|None` | Atomic inline brief for `op="generate"`/`op="to_thread"` consult contracts. Preferred for short self-contained briefs because it cannot desynchronize from the dispatch call. Mutually exclusive with `packet_path`, `sidecar_ref`, and `source_ref`; rejected on `implement`, `wrap`, and `handoff`. |
 | `sidecar_ref` | `str\|None` | Atomic file-backed brief reference (`cortex://` or `workspaces://`) for `op="generate"`/`op="to_thread"` consult contracts. Preferred for long briefs. Same exclusivity/contract rules as `prompt`. |
 | `purpose` | `str\|None` | **CDP generate only** (`model=cdp/…`). Registry/mission tag forwarded to the satellite (default `ask` when omitted). Set `operator-proxy` or `mission` for operator-proxy skill-chip + seat-map inject (`operator_proxy_mission.py`). Ignored on non-CDP models. |
 | `pointer_body` | `str\|None` | `op="handoff"` only — override the pointer turn body (≤25 lines) |
 | `tags` | `list[str]\|None` | `op="handoff"` only — bus thread tags (default: `["agent:{to_agent}", "type:handoff", "contract:{handoff_contract}"]`). Caller-supplied tags are preserved; `contract:{value}` is appended if absent |
-| `seat=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; general-execution via `contract=light-bounded|pure-mechanical` with context on `dispatch_thread_id` or `packet_path` (packet wins when both present); implement via `source_ref=todo:{slug}` + `contract=implement` (server materialization + implement-ready gate; legacy `packet_path` escape-hatch); materialize-only via `contract=wrap` + `source_ref`; poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense attributes required** for implement (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
+| `seat=cursor-sdk` (op=generate) | — | **Default transport for bound mechanical implement.** SDK auto substrate; default delivery=thread; general-execution via `contract=none|sketch|pure-mechanical` with context on `dispatch_thread_id` or `packet_path` (packet wins when both present); implement via `source_ref=todo:{slug}` + `contract=implement` (server materialization + implement-ready gate; legacy `packet_path` escape-hatch); materialize-only via `contract=wrap` + `source_ref`; poll via `poll_hint` (agent-bus), not `pipeline(op=result)`. **Dense attributes required** for implement (Composer executes mechanically). `cursor-implement` handoff = operator-attended fallback |
 | `op=handoff, seat=cursor-sdk` | — | **Rejected** — 422 `seat_not_manual` (use `op=generate, seat=cursor-sdk`) |
 
 **`op="generate"` / `op="to_thread"` — admission guard for web/manual seats:**
@@ -258,7 +259,7 @@ team_dispatch(
     op="generate",
     role="gatherer",
     dispatch_thread_id="cursor-2026-06-02-design-review",
-    contract="light-bounded",
+    contract="none",
     reasoning_effort="high",
     max_tool_turns=25,
     caller_agent="cursor",
@@ -269,7 +270,7 @@ team_dispatch(
     op="to_thread",
     role="gatherer",
     dispatch_thread_id="cursor-2026-06-02-design-review",
-    contract="light-bounded",
+    contract="none",
     thread="123",
     subject="Design review",
     reasoning_effort="high",
@@ -325,12 +326,12 @@ on dispatch. Use `pipeline(op="run"|"async", pipeline_id="chat-dispatch", …)` 
 ```python
 # GPT review (default reviewer model) — pre-stage context on dispatch_thread_id
 team_dispatch(op="generate", role="reviewer", dispatch_thread_id="arc-123",
-              contract="light-bounded")
+              contract="none")
 
 # Grok consult
 team_dispatch(op="generate", role="artisan", model="xai/grok-4.6",
               dispatch_thread_id="arc-123",
-              contract="light-bounded")
+              contract="none")
 ```
 
 ## panel_dispatch

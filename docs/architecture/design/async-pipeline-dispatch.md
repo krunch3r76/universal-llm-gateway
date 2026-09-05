@@ -342,7 +342,7 @@ team_dispatch(
     op="generate",
     role="gatherer",
     dispatch_thread_id="arc-topic-slug",
-    contract="light-bounded",
+    contract="none",
     reasoning_effort="high",
     caller_agent="cursor",
 )

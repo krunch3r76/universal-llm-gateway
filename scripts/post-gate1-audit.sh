@@ -158,7 +158,7 @@ print(int(data.get("turn_number") or data.get("turn") or 0))
 
 echo "posted wake pointer turn=${WAKE_TURN}"
 
-TEAM_DISPATCH_CMD="team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded, dispatch_thread_id=${THREAD}, prompt=\"Gate 1 audit on thread ${THREAD} turn ${AUDIT_TURN}. Read bus turn and reply APPROVED or NEEDS_CHANGES.\")"
+TEAM_DISPATCH_CMD="team_dispatch(op=generate, model=cdp/opus-5, contract=none, dispatch_thread_id=${THREAD}, prompt=\"Gate 1 audit on thread ${THREAD} turn ${AUDIT_TURN}. Read bus turn and reply APPROVED or NEEDS_CHANGES.\")"
 
 echo ""
 echo "CDP wake (product path — run from code seat with MCP):"

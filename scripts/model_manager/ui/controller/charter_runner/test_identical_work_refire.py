@@ -463,20 +463,20 @@ def test_ac9_giw_consult_contract_conflict() -> None:
 
 
 @pytest.mark.offline
-def test_ac9_light_bounded_contract_conflict() -> None:
+def test_ac9_none_contract_conflict() -> None:
     ledger = CursorDispatchLedger.instance()
     work_key = compute_work_key(
         root_id=_ROOT,
         source_ref=_SOURCE_REF,
         pickup_gid="G1",
         consult_role="judgment_gap",
-        admission_mode="light-bounded",
+        admission_mode="none",
     )
     _admit(
         ledger,
         _req(dispatch_id="lb-a", thread_id="lb-t-a"),
         source_repo="/mnt/torus/projects/universal-llm-gateway",
-        contract="light-bounded",
+        contract="none",
         work_key=work_key,
     )
     with pytest.raises(SourceRefConflict):
@@ -484,7 +484,7 @@ def test_ac9_light_bounded_contract_conflict() -> None:
             ledger,
             _req(dispatch_id="lb-b", thread_id="lb-t-b"),
             source_repo="/mnt/torus/projects/universal-llm-gateway",
-            contract="light-bounded",
+            contract="none",
             work_key=work_key,
         )
 

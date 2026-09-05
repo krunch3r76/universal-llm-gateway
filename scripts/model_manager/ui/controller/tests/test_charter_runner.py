@@ -578,7 +578,7 @@ def test_default_judgment_body_is_grok_xhigh() -> None:
     assert body["model_knobs"]["fast"] == "false"
     assert "thinking" not in body["model_knobs"]
     assert "context" not in body["model_knobs"]
-    assert body["contract"] == "light-bounded"
+    assert body["contract"] == "sketch"
     assert body["dispatch_thread_id"] == "5361"
     assert body["caller_agent"] == "charter-runner"
     # generate schema: subject/tags are handoff-only (Stargate 400 otherwise)
