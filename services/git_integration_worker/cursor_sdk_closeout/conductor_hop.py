@@ -401,11 +401,11 @@ def build_hop_team_dispatch_body(
         "op": "generate",
         "seat": "cursor-sdk",
         "contract": "conductor",
+        "lane": rec.get("lane") or "B",
         "caller_agent": "conductor-hop",
         "dispatch_thread_id": dispatch_thread_id,
         "reuse_thread": thread_id,
         "source_ref": source_ref,
-        "contract": "conductor", "lane": rec.get("lane") or "B",
         "model": routing_model,
         "generation_options": generation_options,
     }
