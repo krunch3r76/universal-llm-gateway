@@ -17,7 +17,14 @@ from implement_admission.conductor_witness_defaults import (
     DefaultWitnessGit,
     closeout_witnesses_for_slug,
 )
-from implement_admission.conductor_witness_table import row_witnesses
+from implement_admission.conductor_witness_table import (
+    row_witnesses,
+    _G6_REVIEW_ARTIFACT_IDS,
+    _artifact_map,
+    _first_resolving_artifact,
+    _g6_review_failure_reason,
+    _uri_resolves,
+)
 from implement_admission.conductor_witness_types import (
     FoldDeps,
     FoldResult,
@@ -154,6 +161,28 @@ def fold_scoreboard(
             missing[row_id] = _missing_witness_message(row_id)
         else:
             row_status[row_id] = raw_status if raw_status != "DONE" else "OPEN"
+
+    if witnesses.get("G6") is None and "G6" in rows:
+        artifacts = _artifact_map(raw_body)
+        g6_id, g6_uri = _first_resolving_artifact(
+            artifacts,
+            _G6_REVIEW_ARTIFACT_IDS,
+            files_root=root,
+            repo=deps.repo,
+        )
+        if (
+            g6_id
+            and g6_uri
+            and _uri_resolves(g6_uri, files_root=root, repo=deps.repo)
+        ):
+            block = _g6_review_failure_reason(
+                g6_uri,
+                files_root=root,
+                tip_body=raw_body,
+                artifact_id=g6_id,
+            )
+            if block:
+                missing["G6"] = block
 
     folded_body = _render_folded_body(raw_body, row_status, rows)
     sources = {row_id: w.source for row_id, w in witnesses.items() if w is not None}
