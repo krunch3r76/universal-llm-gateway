@@ -1491,7 +1491,9 @@ async def _deliver_sdk_closeout(
     from services.git_integration_worker.cursor_sdk_closeout.conductor_closeout_pager import (
         page_conductor_silence,
     )
-    from services.git_integration_worker.cursor_sdk_packet import infer_contract_from_text
+    from services.git_integration_worker.cursor_sdk_packet import (
+        infer_contract_from_text,
+    )
 
     wire_contract = infer_contract_from_text(packet_text or "")
     await page_conductor_silence(
