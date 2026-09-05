@@ -102,6 +102,30 @@ def _insert_parent_row(
         )
 
 
+def test_reject_resume_thread_mismatch() -> None:
+    _insert_parent_row(dispatch_id="parent-disp", status="failed")
+    child = _req(
+        dispatch_id="child-disp",
+        resume_of="parent-disp",
+        thread_id="wrong-thread",
+    )
+    response = reject_resume_if_ineligible(child)
+    assert response is not None
+    body = json.loads(response.body.decode())
+    assert body["code"] == "CURSOR_RESUME_INELIGIBLE"
+    assert body["data"]["reason"] == "thread_mismatch"
+
+
+def test_reject_resume_same_thread_admits_eligibility() -> None:
+    _insert_parent_row(dispatch_id="parent-disp", status="failed")
+    child = _req(
+        dispatch_id="child-disp",
+        resume_of="parent-disp",
+        thread_id="thread-resume",
+    )
+    assert reject_resume_if_ineligible(child) is None
+
+
 def test_ledger_resume_of_column_on_child_insert() -> None:
     _insert_parent_row()
     ledger = CursorDispatchLedger.instance()

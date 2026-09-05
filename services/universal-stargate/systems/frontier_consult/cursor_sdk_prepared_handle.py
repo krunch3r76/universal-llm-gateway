@@ -52,6 +52,7 @@ class PreparedCursorSdkHandle:
     hop_from: str | None = None
     hop_seq: int | None = None
     hop_reason: str | None = None
+    resume_of: str | None = None
 
 
 def mint_cursor_sdk_ids(*, request_id: str) -> tuple[str, str]:
@@ -114,6 +115,7 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "hop_from": handle.hop_from,
         "hop_seq": handle.hop_seq,
         "hop_reason": handle.hop_reason,
+        "resume_of": handle.resume_of,
     }
 
 
@@ -161,4 +163,5 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         hop_from=data.get("hop_from"),
         hop_seq=data.get("hop_seq"),
         hop_reason=data.get("hop_reason"),
+        resume_of=data.get("resume_of"),
     )

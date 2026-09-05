@@ -902,6 +902,80 @@ def test_team_dispatch_nest_under_rejects_non_sdk_seat() -> None:
     assert result["error"]["code"] == "nest_under_sdk_only"
 
 
+def test_team_dispatch_resume_of_param_present() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    sig = inspect.signature(recorder.functions["team_dispatch"])
+    assert "resume_of" in sig.parameters
+
+
+def test_team_dispatch_resume_of_descriptor_contract() -> None:
+    from typing import get_args, get_type_hints
+
+    from pydantic.fields import FieldInfo
+
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    fn = recorder.functions["team_dispatch"]
+    hint = get_type_hints(fn, include_extras=True)["resume_of"]
+    field_infos = [a for a in get_args(hint) if isinstance(a, FieldInfo)]
+    assert field_infos, "resume_of must carry Annotated[..., Field(description=...)]"
+    desc = field_infos[0].description or ""
+    assert "reuse_thread" in desc, desc
+    assert "resume_of_sdk_only" in desc, desc
+
+
+def test_team_dispatch_generate_forwards_resume_of() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "exec-test", "dispatch_id": "child-1"}
+
+    def _fake_record(event: str, **kwargs: Any) -> None:
+        return None
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record", side_effect=_fake_record),
+    ):
+        asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                seat="cursor-sdk",
+                contract="light-bounded",
+                dispatch_thread_id="5777",
+                reuse_thread="5777",
+                resume_of="parent-dispatch-id",
+            )
+        )
+
+    assert len(relay_calls) == 1
+    assert relay_calls[0]["body"]["resume_of"] == "parent-dispatch-id"
+    assert relay_calls[0]["body"]["reuse_thread"] == "5777"
+
+
+def test_team_dispatch_resume_of_rejects_non_sdk_seat() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    result = asyncio.run(
+        team_dispatch_fn(
+            op="generate",
+            role="reviewer",
+            contract="light-bounded",
+            dispatch_thread_id="5777",
+            resume_of="parent-dispatch-id",
+        )
+    )
+    assert result["error"]["code"] == "resume_of_sdk_only"
+
+
 def test_team_dispatch_lane_param_present() -> None:
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)
@@ -923,9 +997,11 @@ def test_team_dispatch_lane_descriptor_requires_named_lane() -> None:
     desc = field_infos[0].description or ""
     assert "lane_required" in desc, desc
     assert "nest_under" in desc, desc
+    assert "resume_of" in desc, desc
     doc = fn.__doc__ or ""
     assert "lane_required" in doc
     assert "nest_under" in doc
+    assert "resume_of" in doc
 
 
 def test_team_dispatch_generate_forwards_lane() -> None:

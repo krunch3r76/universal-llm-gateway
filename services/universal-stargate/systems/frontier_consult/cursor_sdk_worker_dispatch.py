@@ -163,7 +163,8 @@ def _parse_worker_error(resp: httpx.Response, *, dispatch_id: str) -> dict[str, 
     message = body.get("message") or resp.text[:500]
     data = body.get("data") if isinstance(body.get("data"), dict) else {}
     blocking = data.get("blocking_dispatch_id")
-    return {
+    resume_reason = data.get("reason")
+    detail: dict[str, Any] = {
         "status_code": resp.status_code,
         "http_status": resp.status_code,
         "code": str(code),
@@ -174,6 +175,9 @@ def _parse_worker_error(resp: httpx.Response, *, dispatch_id: str) -> dict[str, 
         "dispatch_id": dispatch_id,
         "detail_summary": str(message),
     }
+    if resume_reason is not None:
+        detail["resume_reason"] = resume_reason
+    return detail
 
 
 def _parse_worker_success(resp: httpx.Response) -> dict[str, Any]:
@@ -215,6 +219,7 @@ async def dispatch_cursor_sdk_worker(
     hop_from: str | None = None,
     hop_seq: int | None = None,
     hop_reason: str | None = None,
+    resume_of: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
 
@@ -255,6 +260,8 @@ async def dispatch_cursor_sdk_worker(
         payload["hop_from"] = hop_from
         payload["hop_seq"] = hop_seq
         payload["hop_reason"] = hop_reason
+    if resume_of:
+        payload["resume_of"] = resume_of
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT
@@ -308,6 +315,7 @@ async def dispatch_cursor_sdk_worker_message(
     hop_from: str | None = None,
     hop_seq: int | None = None,
     hop_reason: str | None = None,
+    resume_of: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (prompt= path)."""
     effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -337,6 +345,8 @@ async def dispatch_cursor_sdk_worker_message(
         payload["hop_from"] = hop_from
         payload["hop_seq"] = hop_seq
         payload["hop_reason"] = hop_reason
+    if resume_of:
+        payload["resume_of"] = resume_of
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

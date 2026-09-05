@@ -44,6 +44,7 @@ ResumeIneligibleReason = Literal[
     "state_root_absent_on_disk",
     "dispatch_id_equals_parent",
     "nest_under_conflict",
+    "thread_mismatch",
 ]
 
 _LIVE_STATUSES = frozenset({"queued", "admitted", "running", "parked_waiting"})
@@ -193,6 +194,17 @@ def reject_resume_if_ineligible(
             req,
             reason="dispatch_id_equals_parent",
             detail="resume_of must not equal dispatch_id",
+        )
+    parent_row = load_parent_row(
+        CursorDispatchLedger.instance(), parent_id=req.resume_of
+    )
+    if parent_row is not None and req.thread_id != parent_row.thread_id:
+        return _resume_ineligible_response(
+            req,
+            reason="thread_mismatch",
+            detail=(
+                "resume_of requires reuse_thread matching the parent worker thread"
+            ),
         )
     reason = resume_eligibility_reason(
         CursorDispatchLedger.instance(), parent_id=req.resume_of

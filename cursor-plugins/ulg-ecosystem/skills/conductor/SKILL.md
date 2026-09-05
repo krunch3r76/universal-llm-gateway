@@ -478,8 +478,16 @@ the first responder.
 (`ROW_PINNED`, `HOLD_MERGE`, `OPERATOR_GATE`, `PARKED_TRANSPORT`) retain store +
 worktree (`resume_retain`).
 
-**Never** `team_dispatch(..., resume_of=...)`. `resume_of` is a GIW worker-POST
-field only (a:30793) — team_dispatch 422s it.
+**Verb split (resume vs hop):**
+
+| Conductor stop | Continuation | Mechanism | Who initiates |
+|---|---|---|---|
+| `ROW_PINNED`, `HOLD_MERGE`, `OPERATOR_GATE` (when gate clears) | **same agent** | `team_dispatch(… resume_of=<pinned dispatch_id>, reuse_thread=<worker thread>, packet_kind=conductor, source_ref=todo:<slug>, dispatch_thread_id=<coord>)`, lane omitted | liaison / IDE lead when the pin lifts |
+| `ROW_HOP` (planned), crash, silent, watchdog | **fresh agent** | GIW hop reactor → Stargate generate with `reuse_thread` + `hop_*`, **no `resume_of`** | substrate |
+
+`resume_of` **requires** `reuse_thread` (same mailbox + Lane-B isolation). XOR
+`nest_under`. GIW is sole eligibility authority; resume within
+`cursor_sdk_timeout_retain_s` after parent terminal.
 
 If the worker thread is **still live**: do not second-generate on it —
 `422 CURSOR_WORKER_THREAD_OCCUPIED`. Poll or `nest_under` the live holder.
@@ -490,26 +498,15 @@ persist scoreboard + journal, then exit. **¬** absorb the G-row in-seat as G5;
 **¬** ghost-admit under a dead parent. Retry only after fixing the wire (keep
 `nest_under=<conductor dispatch_id>`).
 
-If the worker is **terminal**, mint a **new** top-level conductor (new
-`dispatch_id`). Nest Composer under **that** id, not a ghost parent.
+If the worker is **terminal** on a **hop** path, the substrate fires the hop
+successor (fresh agent). On **`ROW_PINNED`**, the liaison fires **`resume_of`**
+when the pin lifts — do not mint a sibling worker while the pinned agent is
+reusable. New `dispatch_id` is required (dead execution ≠ dead thread). House
+folds (pager, nest-orphan, scoreboard) ride **on** that resume — they do not
+postpone it.
 
-**Unused legal resume is a feature gap (BINDING — operator 2026-08-27):**
-`ROW_PINNED` ∧ worker terminal ∧ `reuse_thread=<that worker>` is legal ∧
-summoning chat still live ⇒ the conjurer **fires that reuse this session**.
-Park-for-later sibling, “CI first then maybe resume”, or minting a new work
-thread while the pinned worker is reusable = the defect, not patience.
-New `dispatch_id` is required (dead execution ≠ dead thread). `resume_of=`
-stays illegal. House folds (pager, nest-orphan, scoreboard) ride **on** that
-resume — they do not postpone it.
-
-**Resume incompleteness (named gap — operator 2026-08-27):** `reuse_thread`
-is **not** SDK resume. It admits a **new** generate on the same bus thread.
-GIW `resume_of` continues the **same** Cursor agent (`resume_agent` + retained
-store/worktree). That field is worker-POST only; `team_dispatch` has no
-`resume_of` (schema `additionalProperties: false`; a:30793 422). `/conductor`
-has no resume step. Attended `ROW_PINNED` **exits** the generate (W3), so
-pin-then-continue is never the same stream. Do not flatten: unused legal
-`reuse_thread` (practice) ≠ missing conjurer `resume_of` (product).
+**G5 mechanical child:** `nest_under=<live resumed conductor dispatch_id>` (never
+the terminal parent).
 
 ```text
 team_dispatch(
@@ -519,12 +516,11 @@ team_dispatch(
   contract=light-bounded,
   packet_kind=conductor,
   source_ref=todo:{slug},
-  reuse_thread=<terminal work thread>,   # omit to mint a sibling worker
-  dispatch_thread_id=<parent root>,      # SCORE_RESURFACE + coord target
-  lane="B",
-  # confer-and-finish without prompt+source_ref 422:
-  #   generation_options={summon_mode: confer_and_finish}
-  #   or todo attr summon_mode=confer_and_finish
+  resume_of=<terminal parent dispatch_id>,  # ROW_PINNED lift — same agent
+  reuse_thread=<parent worker thread>,      # REQUIRED with resume_of
+  dispatch_thread_id=<coord root>,          # SCORE_RESURFACE + coord target
+  # lane omitted — inherit parent isolation
+  # hop path (substrate): reuse_thread + hop_* only, no resume_of
 )
 ```
 

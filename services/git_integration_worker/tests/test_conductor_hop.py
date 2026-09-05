@@ -264,6 +264,7 @@ def test_build_hop_team_dispatch_body_clones_predecessor() -> None:
     assert body["hop_seq"] == 2
     assert body["hop_reason"] == "planned"
     assert body["hop_from"] == "pred-hop-1"
+    assert "resume_of" not in body
 
 
 def test_build_hop_team_dispatch_body_routing_model_from_record_json() -> None:

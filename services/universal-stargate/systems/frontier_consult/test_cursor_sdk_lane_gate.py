@@ -30,11 +30,18 @@ def test_require_lane_raises_when_top_level_omits() -> None:
     assert exc.value.status_code == 422
 
 
-def test_require_lane_skips_nest_under_and_wrap() -> None:
+def test_require_lane_skips_nest_under_resume_of_and_wrap() -> None:
     require_cursor_sdk_checkout_lane(
         request_id="req-nest",
         lane=None,
         nest_under="parent-dispatch",
+        contract="implement",
+    )
+    require_cursor_sdk_checkout_lane(
+        request_id="req-resume",
+        lane=None,
+        nest_under=None,
+        resume_of="parent-dispatch",
         contract="implement",
     )
     require_cursor_sdk_checkout_lane(

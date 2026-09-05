@@ -189,8 +189,11 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     suppress_cost_warning: bool = False
     cost_intent_reason: str | None = None
     nest_under: str | None = None
-    # Required on top-level cursor-sdk generate. Omit only for nest_under inherit.
-    # Missing → 422 lane_required. wrap is exempt. Distinct from dispatch_lane.
+    # SDK agent-plane resume: terminal parent dispatch_id. Requires reuse_thread
+    # (same mailbox). XOR nest_under. GIW sole eligibility authority.
+    resume_of: str | None = None
+    # Required on top-level cursor-sdk generate. Omit only for nest_under or
+    # resume_of inherit. Missing → 422 lane_required. wrap is exempt.
     lane: Literal["A", "B"] | None = None
     packet_kind: Literal["conductor"] | None = None
     # Allowlisted satellite name; omit = hub ULG git identity.

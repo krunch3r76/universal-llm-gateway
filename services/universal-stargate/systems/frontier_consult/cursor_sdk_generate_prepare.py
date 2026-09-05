@@ -86,6 +86,7 @@ async def prepare_cursor_sdk_generate(
     hop_from: str | None = None,
     hop_seq: int | None = None,
     hop_reason: str | None = None,
+    resume_of: str | None = None,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
     from .light_bounded_ac_observer import (
@@ -515,4 +516,5 @@ async def prepare_cursor_sdk_generate(
         hop_from=hop_from,
         hop_seq=hop_seq,
         hop_reason=hop_reason,
+        resume_of=resume_of,
     )

@@ -318,6 +318,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        resume_of: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Terminal parent cursor-sdk dispatch_id for SDK agent-plane "
+                    "resume (same agent continues via resume_agent). Requires "
+                    "reuse_thread=<parent worker thread>. XOR nest_under. "
+                    "cursor-sdk-seat-only; other seats → 422 resume_of_sdk_only."
+                ),
+            ),
+        ] = None,
         lane: Annotated[
             Literal["A", "B"] | None,
             Field(
@@ -325,9 +336,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "Required GIW checkout-isolation lane ('A' | 'B') on "
                     "top-level seat='cursor-sdk' generate/to_thread. Distinct "
                     "from dispatch_lane (path-sim routing). Other seats → 422 "
-                    "lane_sdk_only. Omit only when nest_under inherits parent "
-                    "isolation; otherwise 422 lane_required. contract=wrap is "
-                    "exempt. See agent_skill:consult-routing."
+                    "lane_sdk_only. Omit only when nest_under or resume_of "
+                    "inherits parent isolation; otherwise 422 lane_required. "
+                    "contract=wrap is exempt. See agent_skill:consult-routing."
                 ),
             ),
         ] = None,
@@ -605,11 +616,16 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``nest_under_sdk_only``. LIFO park stack hard-caps at **depth 10**
         (11th nest → 422 ``CURSOR_NEST_DEPTH_EXCEEDED``, ``retryable=false``).
 
+        ``resume_of`` — terminal parent ``dispatch_id`` for SDK agent-plane
+        resume (same agent continues). **Requires** ``reuse_thread=<parent worker
+        thread>``. XOR ``nest_under``. **cursor-sdk-seat-only**; other seats →
+        422 ``resume_of_sdk_only``.
+
         ``lane`` — required checkout-isolation lane (``"A"`` | ``"B"``) for
         top-level ``seat="cursor-sdk"`` generate/to_thread. **Distinct from**
         ``dispatch_lane`` (path-sim / todo routing). **cursor-sdk-seat-only**;
-        other seats → 422 ``lane_sdk_only``. Omit only when ``nest_under``
-        inherits parent isolation; otherwise 422 ``lane_required``.
+        other seats → 422 ``lane_sdk_only``. Omit only when ``nest_under`` or
+        ``resume_of`` inherits parent isolation; otherwise 422 ``lane_required``.
         ``contract=wrap`` is exempt (no GIW checkout). ``lane="B"`` requires a
         materialized worktree (minted or inherited); otherwise GIW returns 422
         ``CURSOR_LANE_B_WORKTREE_MISSING`` — it does not relabel the admit as
@@ -766,6 +782,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 },
                 "field": "nest_under",
             }
+        if resume_of is not None and seat != "cursor-sdk":
+            return {
+                "error": {
+                    "code": "resume_of_sdk_only",
+                    "message": (
+                        "resume_of is only valid for seat='cursor-sdk' generate/"
+                        "to_thread dispatches (SDK agent-plane resume)"
+                    ),
+                },
+                "field": "resume_of",
+            }
         if lane is not None and seat != "cursor-sdk":
             return {
                 "error": {
@@ -795,6 +822,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             model=model,
             lane=lane,
             nest_under=nest_under,
+            resume_of=resume_of,
             contract=contract,
         )
         if lane_required_err is not None:
@@ -913,6 +941,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["reuse_thread"] = reuse_thread
             if nest_under is not None:
                 body["nest_under"] = nest_under
+            if resume_of is not None:
+                body["resume_of"] = resume_of
             if lane is not None:
                 body["lane"] = lane
             if workspace is not None:

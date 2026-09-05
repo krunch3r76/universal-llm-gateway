@@ -218,14 +218,24 @@ async def dispatch_cursor_sdk_generate_route(
 ) -> dict[str, Any] | JSONResponse:
     """Cursor-sdk generate branch: gate-then-materialize + SDK orchestrator."""
     from .admission import FrontierEndpointError
-    from .cursor_sdk_lane_gate import require_cursor_sdk_checkout_lane
+    from .cursor_sdk_lane_gate import (
+        reject_resume_of_conflicts,
+        require_cursor_sdk_checkout_lane,
+    )
 
     try:
         require_cursor_sdk_checkout_lane(
             request_id=request_id,
             lane=getattr(body, "lane", None),
             nest_under=getattr(body, "nest_under", None),
+            resume_of=getattr(body, "resume_of", None),
             contract=body.contract,
+        )
+        reject_resume_of_conflicts(
+            request_id=request_id,
+            resume_of=getattr(body, "resume_of", None),
+            nest_under=getattr(body, "nest_under", None),
+            reuse_thread=getattr(body, "reuse_thread", None),
         )
     except FrontierEndpointError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
@@ -464,6 +474,7 @@ async def dispatch_cursor_sdk_generate_route(
             hop_from=getattr(body, "hop_from", None),
             hop_seq=getattr(body, "hop_seq", None),
             hop_reason=getattr(body, "hop_reason", None),
+            resume_of=getattr(body, "resume_of", None),
         )
         if isinstance(result, dict):
             split_warning = consolidation_split_warning(
