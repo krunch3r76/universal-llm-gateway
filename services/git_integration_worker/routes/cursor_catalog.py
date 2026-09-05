@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from cursor_capabilities import (
@@ -43,12 +44,17 @@ def _build_catalog_entries(models: list[Any]) -> list[dict[str, Any]]:
     return entries
 
 
+def _list_live_sdk_models() -> list[Any]:
+    """List models via ephemeral bridge — bare ``Client()`` lacks an endpoint."""
+    from cursor_sdk import Cursor
+
+    return Cursor().models.list()
+
+
 @router.get("/catalog", summary="Live Cursor SDK model catalog projection.")
 async def cursor_catalog() -> dict[str, Any]:
-    """Project ``Client.list_models()`` for Stargate catalog polling."""
-    from cursor_sdk import Client
-
-    models = Client().list_models()
+    """Project live SDK catalog for Stargate catalog polling."""
+    models = await asyncio.to_thread(_list_live_sdk_models)
     entries = _build_catalog_entries(models)
     logger.debug("cursor catalog: %d models", len(entries))
     return {

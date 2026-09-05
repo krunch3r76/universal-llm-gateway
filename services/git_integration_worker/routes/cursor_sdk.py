@@ -16,7 +16,6 @@ from threading import Thread
 from typing import Any
 
 import httpx
-from cursor_capabilities import effective_knobs
 from fastapi import APIRouter, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from implement_admission.closeout_helpers import cortex_files_root
@@ -500,10 +499,26 @@ def _stamp_model_knobs_requested(
     model: str,
     overrides: Mapping[str, str] | None,
 ) -> dict[str, str] | None:
-    """Project omit-path defaults onto admit knobs for observability stamps."""
-    bare = resolve_cursor(model).model_id
-    stamped = effective_knobs(bare, overrides)
+    """Stamp ``model_knobs_requested`` from emitted ``ModelSelection.params``.
+
+    Uses the same ``build_model_selection`` path as the bridge — not
+    ``effective_knobs`` recomputation (a:24299 recurrence / Opus 869974272bca).
+    """
+    config = resolve_cursor(model)
+    selection = build_model_selection(config, overrides)
+    stamped = {param.id: param.value for param in selection.params}
     return stamped or None
+
+
+def _stamp_model_knobs_from_outcome(
+    outcome: SdkRunOutcome,
+    model: str,
+    overrides: Mapping[str, str] | None,
+) -> dict[str, str] | None:
+    """Prefer knobs captured at bridge emit time; fall back to rebuild."""
+    if outcome.model_knobs_emitted:
+        return dict(outcome.model_knobs_emitted)
+    return _stamp_model_knobs_requested(model, overrides)
 
 
 _DISPATCH_ROUTE = "/api/v1/cursor/dispatch"
@@ -822,6 +837,7 @@ def _run_sdk_sync(
     try:
         config = resolve_cursor(config_model_id)
         selection = build_model_selection(config, selection_overrides)
+        model_knobs_emitted = {p.id: p.value for p in selection.params} or None
         key_res = resolve_cursor_api_key(resolved_model, real_home=real_home)
         parity = validate_dispatch_context(
             ctx.hub, resolved_model=resolved_model, real_home=real_home
@@ -1042,6 +1058,7 @@ def _run_sdk_sync(
                 degraded_reasons=extra_reasons,
                 sdk_git=post_wait.sdk_git,
                 stream_only_deviations=stream_deviations,
+                model_knobs_emitted=model_knobs_emitted,
             )
         except BaseException as exc:
             sdk_request_id, request_id_source = request_id_from_sdk_error(exc)
@@ -1583,8 +1600,8 @@ async def _deliver_sdk_closeout(
                 "cursor check/review role bridge failed: dispatch_id=%s",
                 req.dispatch_id,
             )
-        # model_knobs_requested: effective/aligned knobs (omit-path defaults included),
-        # projected from req.model + admit-time overrides — not raw caller wire alone.
+        # model_knobs_requested: emitted ModelSelection.params (or rebuild at
+        # closeout); queued/dispatched stamps use the same build path at admit.
         # Missing SDK requestId is an observability gap (R F-1), not a crash.
         # Emit with request_id_source=absent + degrade token so fleet join stays
         # diagnosable without aborting an otherwise successful closeout.
@@ -1608,7 +1625,9 @@ async def _deliver_sdk_closeout(
                 run_outcome=run_outcome, delivery_ok=True
             ),
             resolved_model=req.model,
-            model_knobs_requested=_stamp_model_knobs_requested(req.model, req.model_knobs),
+            model_knobs_requested=_stamp_model_knobs_from_outcome(
+                outcome, req.model, req.model_knobs
+            ),
             usage=outcome.usage,
             usage_capture_status=outcome.usage_capture_status,
             request_id=envelope_request_id,
@@ -1688,7 +1707,9 @@ async def _deliver_sdk_closeout(
         result_bytes=delivery.full_result_bytes,
         outcome=resolve_completion_outcome(run_outcome=run_outcome, delivery_ok=False),
         resolved_model=req.model,
-        model_knobs_requested=_stamp_model_knobs_requested(req.model, req.model_knobs),
+        model_knobs_requested=_stamp_model_knobs_from_outcome(
+            outcome, req.model, req.model_knobs
+        ),
         usage=outcome.usage,
         usage_capture_status=outcome.usage_capture_status,
         request_id=envelope_request_id,
