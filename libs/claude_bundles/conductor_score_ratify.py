@@ -66,7 +66,7 @@ def validate_q2_away_score_ratify(
     packet_kind: str | None = None,
 ) -> str | None:
     """Return ``q2_score_ratify_missing`` when away G3→G5 lacks score-ratify posture."""
-    if not _is_conductor_packet(packet_text, packet_kind=packet_kind):
+    if not _is_conductor_packet(packet_text):
         return None
     if _extract_summon_mode(packet_text) == "attended":
         return None

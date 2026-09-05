@@ -589,7 +589,6 @@ def emit_sdk_worker_dispatched(
             story_id=story_id,
             topic=topic,
             nest_under=nest_under,
-            packet_kind=packet_kind,
             model_knobs_requested=model_knobs_requested,
         )
     )
@@ -1490,7 +1489,6 @@ def emit_sdk_worker_queued(
             queued_on=queued_on,
             topic=topic,
             nest_under=nest_under,
-            packet_kind=packet_kind,
             model_knobs_requested=model_knobs_requested,
         )
     )
@@ -1974,7 +1972,7 @@ def emit_sdk_closeout_reconciled(
     suppressed_reason: str,
     verifying_path: str,
 ) -> None:
-    """Emitted when filesystem ground truth suppresses a would-be light-bounded
+    """Emitted when filesystem ground truth suppresses a would-be none
     ``stated_intent_no_write`` / ``deliverable_write_choked`` degrade because the
     packet-declared deliverable is verified present on disk/cortex (the SDK stream
     missed the write, e.g. a cortex sidecar; cf. the 22454 ``zero_tool_calls`` gap).

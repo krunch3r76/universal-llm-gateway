@@ -46,7 +46,7 @@ _STATUS_CHECK = (
     "'queued','admitted','running','parked_waiting','completed','failed','cancelled'"
 )
 _TERMINAL_STATUS_CHECK = "'completed','failed','cancelled'"
-_WORK_IDENTITY_CONTRACTS = frozenset({"implement", "consult", "light-bounded"})
+_WORK_IDENTITY_CONTRACTS = frozenset({"implement", "consult", "none"})
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS cursor_sdk_dispatches (

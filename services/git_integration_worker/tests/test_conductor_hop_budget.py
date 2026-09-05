@@ -74,7 +74,7 @@ def _admit_and_terminal(
             thread_id=req.thread_id,
             model_id="composer-2.5",
         ),
-        contract="light-bounded",
+        contract="conductor",
         source_repo="/repo",
         lease_key="/repo",
         work_key=_WORK_KEY,
@@ -83,7 +83,7 @@ def _admit_and_terminal(
         hop_from=hop_from,
         hop_reason=hop_reason,
     )
-    patch_body = {"packet_kind": "conductor", "lane": "B"}
+    patch_body = {"contract": "conductor", "lane": "B"}
     if closeout_tokens is not None:
         patch_body["closeout_stop_tokens"] = closeout_tokens
     if record_patch:

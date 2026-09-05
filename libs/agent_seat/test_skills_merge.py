@@ -191,7 +191,6 @@ def test_enforce_mcp_predicated_rejects_all_caller_offenders() -> None:
     assert set(exc_info.value.skills) == {"cortex", "fs"}
 
 
-
 def test_enforce_mcp_predicated_skips_scope_defaults() -> None:
     effective = (
         EffectiveSkill(

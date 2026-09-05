@@ -33,8 +33,6 @@ _builder_spec.loader.exec_module(_builder_module)
 LlamaCppBuilder = _builder_module.LlamaCppBuilder
 
 
-
-
 def parse_args():
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(

@@ -1,7 +1,7 @@
 """Commissioner-side ``deliverables_expected`` provenance for cursor-sdk closeout.
 
 Who calls: ``routes/cursor_sdk`` when wiring closeout delivery, and tests that
-pin investigate/light-bounded packets naming durable outputs. Keeps the widen
+pin investigate/none packets naming durable outputs. Keeps the widen
 logic out of the already-red ``cursor_sdk_capture_status`` module.
 
 Invariant (todo:success-shaped-silence / operator bind 6929#534): the gate is
@@ -90,7 +90,7 @@ def compute_deliverables_expected(
     instruction_text: str,
     light_bounded_expected_paths: tuple[str, ...] = (),
 ) -> bool:
-    """Worker-set deliverables gate — implement, light-bounded paths, or packet obligation.
+    """Worker-set deliverables gate — implement, none paths, or packet obligation.
 
     Returns True when the commission requires intended-artifact evidence under G₁.
     Side effects: none (pure).

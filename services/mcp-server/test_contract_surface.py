@@ -58,7 +58,7 @@ def test_pure_mechanical_shares_implement_allow_list() -> None:
 
 def test_light_bounded_falls_back_to_code_primaries() -> None:
     code = derive_surface_primary_tools("code", CANONICAL_YAML)
-    assert derive_contract_primary_tools("light-bounded", CANONICAL_YAML) == code
+    assert derive_contract_primary_tools("none", CANONICAL_YAML) == code
     assert derive_contract_primary_tools(None, CANONICAL_YAML) == code
     assert derive_contract_primary_tools("", CANONICAL_YAML) == code
 

@@ -23,7 +23,7 @@ LaneSelectionReason = Literal[
     "auto_regime",
 ]
 
-_IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "light-bounded"})
+_IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "none"})
 
 
 class LaneScopeRefused(Exception):  # noqa: N818

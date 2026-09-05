@@ -187,7 +187,7 @@ async def submit_nested_dispatch(
     """POST ``/api/v1/cursor/dispatch`` for one nested SDK run.
 
     *read_only* must be passed explicitly for lease-exempt legs: the route infers
-    ``read_only=False`` for ``light-bounded``, so an advisory reader that never
+    ``read_only=False`` for ``none``, so an advisory reader that never
     writes would otherwise contend for the write lease like an implement run.
 
     *bind_job* is the executor identity write. Reflex / second-read legs pass

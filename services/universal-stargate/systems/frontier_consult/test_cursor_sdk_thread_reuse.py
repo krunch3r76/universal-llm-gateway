@@ -248,7 +248,6 @@ async def test_conductor_empty_non_pending_raises_coord_split(
         await resolve_cursor_sdk_thread_targets(
             reuse_thread=None,
             dispatch_thread_id="9676",
-            packet_kind="conductor",
             request_id="req-split",
         )
     err = excinfo.value
@@ -280,7 +279,6 @@ async def test_conductor_pending_empty_child_reuses(
     reuse, parent, is_auto = await resolve_cursor_sdk_thread_targets(
         reuse_thread=None,
         dispatch_thread_id="9001",
-        packet_kind="conductor",
         request_id="req-pending",
     )
     assert reuse == "9001"
@@ -316,7 +314,6 @@ async def test_conductor_root_with_turns_mints_child(
     reuse, parent, is_auto = await resolve_cursor_sdk_thread_targets(
         reuse_thread=None,
         dispatch_thread_id="9582",
-        packet_kind="conductor",
         request_id="req-root",
     )
     assert reuse is None
@@ -338,7 +335,6 @@ async def test_conductor_reuse_thread_work_thread_does_not_422(
     reuse, parent, is_auto = await resolve_cursor_sdk_thread_targets(
         reuse_thread="9677",
         dispatch_thread_id="9582",
-        packet_kind="conductor",
         request_id="req-readmit",
     )
     assert reuse == "9677"
@@ -360,7 +356,6 @@ async def test_non_conductor_active_empty_still_splits(
     reuse, parent, is_auto = await resolve_cursor_sdk_thread_targets(
         reuse_thread=None,
         dispatch_thread_id="2683",
-        packet_kind=None,
     )
     assert reuse is None
     assert parent == "2683"
@@ -389,7 +384,6 @@ async def test_conductor_pending_empty_root_refused(
         await resolve_cursor_sdk_thread_targets(
             reuse_thread=None,
             dispatch_thread_id="9100",
-            packet_kind="conductor",
             request_id="req-pending-root",
         )
     assert excinfo.value.code == CONDUCTOR_COORD_SPLIT_CODE

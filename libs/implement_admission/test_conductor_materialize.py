@@ -180,7 +180,7 @@ def test_materialize_conductor_packet_shape(tmp_path: Path) -> None:
     assert "Use-line" not in mp.text  # guard against typo — real marker below
     assert conductor_packet_contains_use_line(mp.text)
     assert conductor_packet_has_lane_b(mp.text)
-    assert "packet_kind: conductor" in mp.text
+    assert "contract: conductor" in mp.text
     assert "work_key: todo:layer-conductor-unify" in mp.text
     frontmatter = mp.text.split("---")[1]
     assert "source_ref:" not in frontmatter

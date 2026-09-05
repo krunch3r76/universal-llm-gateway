@@ -16,7 +16,7 @@ from systems.frontier_consult.handoff_response import build_handoff_result
 
 def test_should_bridge_light_bounded_luna() -> None:
     assert should_bridge_cursor_check_review(
-        contract="light-bounded",
+        contract="none",
         resolved_model="cursor/gpt-5.6-luna",
     )
     assert not should_bridge_cursor_check_review(
@@ -29,7 +29,7 @@ def test_poll_hint_stays_cursor_sdk_when_role_bridge_eligible() -> None:
     """Friction 24229: bridge may fail closed; wait identity = SDK closeout author."""
     model = "cursor/gpt-5.6-luna"
     assert should_bridge_cursor_check_review(
-        contract="light-bounded",
+        contract="none",
         resolved_model=model,
     )
     assert resolve_delivery_from_role(model) == "reviewer"

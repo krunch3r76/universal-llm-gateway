@@ -51,7 +51,7 @@ def _handle_dict(*, dispatch_id: str, thread_id: str, execution_id: str) -> dict
         "family": "cursor",
         "platform": "sdk",
         "to_agent": f"cursor-sdk:dispatch:{execution_id}",
-        "handoff_contract": "light-bounded",
+        "handoff_contract": "none",
         "packet_path": "packet.md",
         "message": None,
         "caller_agent": "web-anthropic",

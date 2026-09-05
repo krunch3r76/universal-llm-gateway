@@ -400,13 +400,12 @@ def build_hop_team_dispatch_body(
     body: dict[str, Any] = {
         "op": "generate",
         "seat": "cursor-sdk",
-        "contract": "light-bounded",
+        "contract": "conductor",
         "caller_agent": "conductor-hop",
         "dispatch_thread_id": dispatch_thread_id,
         "reuse_thread": thread_id,
         "source_ref": source_ref,
-        "packet_kind": "conductor",
-        "lane": rec.get("lane") or "B",
+        "contract": "conductor", "lane": rec.get("lane") or "B",
         "model": routing_model,
         "generation_options": generation_options,
     }

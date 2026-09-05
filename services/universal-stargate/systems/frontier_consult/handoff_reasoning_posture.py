@@ -1,6 +1,6 @@
 """Judgment-skill gate for MCP-seat handoff enrich.
 
-Same skip set as GIW ``resolve_prompt_preamble``: consult / light-bounded
+Same skip set as GIW ``resolve_prompt_preamble``: consult / none
 handoffs get a ``reasoning-posture`` Use-line; mechanical/quick skip.
 """
 
@@ -37,8 +37,8 @@ def handoff_wants_reasoning_posture(text: str, handoff_contract: str | None) -> 
 def handoff_wants_hypothesize_simulate(text: str, handoff_contract: str | None) -> bool:
     """Return True when this handoff leaves the option space open to the seat.
 
-    ``consult`` and ``light-bounded`` both qualify: a consult carries a pinned
-    Question, while ``light-bounded`` is the binding leg of a judgment split and
+    ``consult`` and ``none`` both qualify: a consult carries a pinned
+    Question, while ``none`` is the binding leg of a judgment split and
     must generate its own rivals.
     """
     raw = (handoff_contract or frontmatter_value(text, "contract") or "").strip()

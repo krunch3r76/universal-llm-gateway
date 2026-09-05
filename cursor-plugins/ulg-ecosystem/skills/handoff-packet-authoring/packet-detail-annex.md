@@ -9,7 +9,7 @@ Load on demand for templates, web priming checklists, and block-by-block primers
 3. `grant(fix_authority) ⇒ bind(scope ∧ no-bc ∧ live-verify ∧ no-repro ∧ provenance)`.
 4. `output_body > 8000_chars ⇒ sidecar_first`.
 5. **Corpus posture** — web/life: cortex pointers; code seats: pointer_first when MCP-on.
-6. Match ceremony to leg: full six blocks for implement/consult; trimmed light-bounded; 7-part kickoff via
+6. Match ceremony to leg: full six blocks for implement/consult; trimmed none; 7-part kickoff via
    `handoff-prompt-authoring`.
 7. `refer_to_skill ⇒ canonical_name`; web-anthropic exception: skill-inline gate (full bodies).
 
@@ -75,7 +75,7 @@ Legacy inline wrap: read todo + assertion → verify spec → write `tmp/reviews
 
 ## CONFORM / CONVERSE lanes
 
-**CONFORM:** loose intent → conforming todo → wrap. Envelope fields + `light-bounded` generate; Layer 1+2 verify.
+**CONFORM:** loose intent → conforming todo → wrap. Envelope fields + `none` generate; Layer 1+2 verify.
 Blocked until N≥5 runs.
 
 **CONVERSE:** latent forks → dialogue → envelope → CONFORM. 3-round budget; lead-run only. Blocked until N≥8 episodes.
@@ -83,7 +83,7 @@ Blocked until N≥5 runs.
 ## General execution without packet
 
 ```text
-team_dispatch(op=generate, seat=cursor-sdk, dispatch_thread_id=…, contract=light-bounded|pure-mechanical)
+team_dispatch(op=generate, seat=cursor-sdk, dispatch_thread_id=…, contract=none|pure-mechanical)
 ```
 
 Load `cursor-sdk-instruction-standard` (D1–D4). Model split: recon+investigate → **`seat=cursor-sdk` `contract=investigate`**; implement → Composer.
@@ -191,7 +191,7 @@ Skeptic packets: `<output_format>` MUST demand `FILE_EVIDENCE_PATHS:` in bus rep
 
 ```markdown
 ---
-contract: consult   # required on consult/light-bounded; implement uses implement
+contract: consult   # required on consult/none; implement uses implement
 ---
 <scope>
 Goal: <one-line>. Selection mode: <targeted|branch|path>.

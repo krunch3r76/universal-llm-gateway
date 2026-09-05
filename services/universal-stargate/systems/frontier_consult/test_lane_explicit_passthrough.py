@@ -229,9 +229,9 @@ async def test_worker_message_dispatch_omits_lane_when_unset(
         model="composer-2.5",
         message="hello",
         execution_id="exec-1",
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         dispatch_id="disp-default",
     )
     assert ok is True
     assert "lane" not in captured[0]
-    assert captured[0]["handoff_contract"] == "light-bounded"
+    assert captured[0]["handoff_contract"] == "none"

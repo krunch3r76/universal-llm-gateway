@@ -255,7 +255,7 @@ def test_ac_s2_3_regime_directions(git_repo: Path) -> None:
         regime_active=lane_b_regime_active(),
         source_repo=git_repo,
         files_expected=files,
-        contract="light-bounded",
+        contract="none",
     )
     assert lane == "B"
     assert reason == "contract_regime"
@@ -760,7 +760,7 @@ def test_auto_light_bounded_empty_scope_stays_a(git_repo: Path) -> None:
         regime_active=True,
         source_repo=git_repo,
         files_expected=[],
-        contract="light-bounded",
+        contract="none",
     )
     assert lane == "A"
     assert reason == "opt_out"

@@ -69,8 +69,7 @@ def prepare_conductor_packet(
         source_ref,
         cortex=cortex,
         workspaces_root=workspaces_root,
-        packet_kind="conductor",
-        contract="light-bounded",
+        contract="none",
         caller_agent=caller_agent,
         summon_text=summon_text,
         summon_mode=summon_mode,
@@ -313,11 +312,9 @@ async def dispatch_cursor_sdk_generate_route(
             return payload
 
         wrap = GenerateWrapResult(packet_path=getattr(body, "packet_path", None))
-        packet_kind = getattr(body, "packet_kind", None)
         source_ref = getattr(body, "source_ref", None)
         if (
-            body.contract == "light-bounded"
-            and (packet_kind or "").lower() == "conductor"
+            body.contract == "conductor"
             and source_ref
             and not getattr(body, "packet_path", None)
         ):
@@ -418,7 +415,7 @@ async def dispatch_cursor_sdk_generate_route(
         ) = await resolve_cursor_sdk_thread_targets(
             reuse_thread=getattr(body, "reuse_thread", None),
             dispatch_thread_id=body.dispatch_thread_id,
-            packet_kind=getattr(body, "packet_kind", None),
+            contract=body.contract,
             request_id=request_id,
         )
         result = await dispatch_cursor_sdk_generate(
@@ -470,7 +467,6 @@ async def dispatch_cursor_sdk_generate_route(
             workspace=getattr(body, "workspace", None),
             read_only=getattr(body, "read_only", False),
             refuse_if_lease_held=getattr(body, "refuse_if_lease_held", False),
-            packet_kind=getattr(body, "packet_kind", None),
             hop_from=getattr(body, "hop_from", None),
             hop_seq=getattr(body, "hop_seq", None),
             hop_reason=getattr(body, "hop_reason", None),

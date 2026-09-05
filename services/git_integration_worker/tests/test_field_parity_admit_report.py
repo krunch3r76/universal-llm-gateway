@@ -140,7 +140,7 @@ async def test_hop_admit_report_surfaces_field_parity_line() -> None:
         to_agent="cursor",
         desired_model="auto",
         desired_effort="xhigh",
-        contract="light-bounded",
+        contract="none",
         continuity_hop=True,
     )
     effort = resolve_desired_effort(job.desired_effort)
@@ -182,7 +182,7 @@ async def test_hop_parity_flags_effort_authored_as_prose() -> None:
         to_agent="cursor",
         desired_model="auto",
         desired_effort="medium",
-        contract="light-bounded",
+        contract="none",
         continuity_hop=True,
     )
     await _post_hop_admit_report(

@@ -51,7 +51,7 @@ def test_wire_map_auto_by_contract():
         == "cursor/composer-2.5"
     )
     assert (
-        resolve_desired_model("auto", contract="light-bounded")["resolved_model_id"]
+        resolve_desired_model("auto", contract="none")["resolved_model_id"]
         == "cursor/composer-2.5"
     )
     assert (
@@ -64,7 +64,7 @@ def test_wire_map_auto_by_contract():
         "dispatched-and-relayed"
     )
     assert resolve_handoff_contract("implement") == "pure-mechanical"
-    assert resolve_handoff_contract("investigate") == "light-bounded"
+    assert resolve_handoff_contract("investigate") == "none"
 
 
 def test_wire_map_accepts_cursor_prefixed_model():

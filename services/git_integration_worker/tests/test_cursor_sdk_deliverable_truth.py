@@ -1,4 +1,4 @@
-"""Unit tests for the light-bounded closeout-truth backstop (friction 21654 fix #3).
+"""Unit tests for the none closeout-truth backstop (friction 21654 fix #3).
 
 Covers both signal paths — the structured tool_calls-derived choke signal and
 the source-independent stated-intent-no-write tell — plus contract gating and
@@ -147,7 +147,7 @@ class TestContractGate:
         body = "I'll write the report to cortex://notes/system/x.md."
         assert (
             light_bounded_deliverable_reason(
-                body=body, tool_calls=calls, contract="light-bounded"
+                body=body, tool_calls=calls, contract="none"
             )
             == "deliverable_write_choked"
         )
@@ -156,7 +156,7 @@ class TestContractGate:
         body = "Saved to notes/system/threads/report.md."
         assert (
             light_bounded_deliverable_reason(
-                body=body, tool_calls=(), contract="light-bounded"
+                body=body, tool_calls=(), contract="none"
             )
             == "stated_intent_no_write"
         )
@@ -165,14 +165,14 @@ class TestContractGate:
         body = "I wrote the review to cortex://notes/system/x.md."
         assert (
             light_bounded_deliverable_reason(
-                body=body, tool_calls=(_landed_write(),), contract="light-bounded"
+                body=body, tool_calls=(_landed_write(),), contract="none"
             )
             is None
         )
 
 
 class TestDeliverablePresentSuppression:
-    """Existence ground truth suppresses the light-bounded degrade at birth
+    """Existence ground truth suppresses the none degrade at birth
     (todo:cursor-sdk-sidecar-write-detection-gap, assertion 22423)."""
 
     def test_present_deliverable_suppresses_stated_intent(self) -> None:
@@ -182,7 +182,7 @@ class TestDeliverablePresentSuppression:
             light_bounded_deliverable_reason(
                 body=body,
                 tool_calls=(),
-                contract="light-bounded",
+                contract="none",
                 deliverable_present=True,
             )
             is None
@@ -195,7 +195,7 @@ class TestDeliverablePresentSuppression:
             light_bounded_deliverable_reason(
                 body=body,
                 tool_calls=calls,
-                contract="light-bounded",
+                contract="none",
                 deliverable_present=True,
             )
             is None
@@ -208,7 +208,7 @@ class TestDeliverablePresentSuppression:
             light_bounded_deliverable_reason(
                 body=body,
                 tool_calls=(),
-                contract="light-bounded",
+                contract="none",
                 deliverable_present=False,
             )
             == "stated_intent_no_write"
@@ -219,7 +219,7 @@ class TestDeliverablePresentSuppression:
         body = "Saved to notes/system/threads/report.md."
         assert (
             light_bounded_deliverable_reason(
-                body=body, tool_calls=(), contract="light-bounded"
+                body=body, tool_calls=(), contract="none"
             )
             == "stated_intent_no_write"
         )

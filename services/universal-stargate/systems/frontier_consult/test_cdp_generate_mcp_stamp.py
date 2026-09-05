@@ -16,7 +16,7 @@ from systems.frontier_consult.handoff_web_mcp_default import (
 _THIN_PACKET = """\
 ---
 related_thread_ids: ["2235"]
-contract: light-bounded
+contract: none
 ---
 
 <scope>Review lane worktree reads.</scope>

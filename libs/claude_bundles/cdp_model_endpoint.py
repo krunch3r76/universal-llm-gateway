@@ -563,7 +563,7 @@ def run_cdp_generate(
     ``stage_cdp_prompt_with_skills`` — ``shared_sync`` as leading ``/<slug>\\n``
     manifest lines; satellite attaches via **+ → Skills → pick** (never typed).
     Staging always merges ``reasoning-posture`` even when ``skills`` is omitted
-    (light-bounded included).
+    (none included).
 
     ``on_submitted`` receives the satellite-minted execution id the moment the
     submit is accepted. The satellite id space is disjoint from the caller's

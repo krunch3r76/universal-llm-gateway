@@ -23,7 +23,7 @@ def _job(*, subject: str = "", body: str = "") -> AutoJob:
         to_agent="cursor-auto",
         desired_model="auto",
         desired_effort="medium",
-        contract="light-bounded",
+        contract="none",
     )
 
 

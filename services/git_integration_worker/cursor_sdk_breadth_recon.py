@@ -19,7 +19,7 @@ from services.git_integration_worker.cursor_sdk_subagent_capture import (
     SUBAGENTS_SURFACE,
 )
 
-_BREADTH_RECON_OWED_CONTRACTS = frozenset({"investigate", "light-bounded"})
+_BREADTH_RECON_OWED_CONTRACTS = frozenset({"investigate", "none"})
 _RECON_METHOD_RE = re.compile(
     r"(?im)^(?:\*\*)?recon[_ ]method(?:\*\*)?\s*[:|]\s*(?P<value>.+)$"
 )

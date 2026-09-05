@@ -2090,9 +2090,9 @@ def test_conductor_composer_admits(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
             model="cursor/composer-2.5",
-            handoff_contract="light-bounded",
+            handoff_contract="none",
             message=(
-                "---\npacket_kind: conductor\ncontract: light-bounded\n---\n"
+                "---\npacket_kind: conductor\ncontract: conductor\n---\n"
                 "Use the conductor skill.\n"
             ),
         ),
@@ -2115,9 +2115,9 @@ def test_conductor_explicit_grok_pin_admits(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
             model="cursor/grok-4.6",
-            handoff_contract="light-bounded",
+            handoff_contract="none",
             message=(
-                "---\npacket_kind: conductor\ncontract: light-bounded\n---\n"
+                "---\npacket_kind: conductor\ncontract: conductor\n---\n"
                 "Use the conductor skill.\n"
             ),
         ),
@@ -2172,14 +2172,14 @@ def test_second_implement_writer_202(_mock_task: MagicMock, client: TestClient) 
 )
 def test_second_writer_202(_mock_task: MagicMock, client: TestClient) -> None:
     """AC1: second non-read-only writer while lease held returns 202 queued."""
-    _seed_active_writer(dispatch_id="writer-active", contract="light-bounded")
+    _seed_active_writer(dispatch_id="writer-active", contract="none")
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
             dispatch_id="writer-second",
             execution_id="exec-writer-second",
-            handoff_contract="light-bounded",
-            message="---\ncontract: light-bounded\n---\nsecond writer",
+            handoff_contract="none",
+            message="---\ncontract: none\n---\nsecond writer",
         ),
     )
     assert resp.status_code == 202
@@ -2316,7 +2316,7 @@ async def test_gated_light_bounded_captures_wt_baseline(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """light-bounded (non-read-only) must capture wt_baseline after slot acquire."""
+    """none (non-read-only) must capture wt_baseline after slot acquire."""
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     ledger = CursorDispatchLedger.instance()
@@ -2325,8 +2325,8 @@ async def test_gated_light_bounded_captures_wt_baseline(
         model="cursor/composer-2.5",
         dispatch_id="gate-lb-disp",
         execution_id="exec-gate-lb",
-        handoff_contract="light-bounded",
-        message="---\ncontract: light-bounded\n---\np",
+        handoff_contract="none",
+        message="---\ncontract: none\n---\np",
     )
     fake_baseline = {
         "codes": {},
@@ -2364,7 +2364,7 @@ async def test_gated_light_bounded_captures_wt_baseline(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
             dispatch_workspace=tmp_path,
-            contract="light-bounded",
+            contract="none",
         ),
         bus=AsyncMock(),
         controller=_make_controller(),

@@ -75,7 +75,7 @@ engage `/no-silent-inference` + `/evidence-review-discipline`).
 team_dispatch(
   op="generate",
   model="cdp/sonnet-5",
-  contract="light-bounded",
+  contract="none",
   purpose="produce",
   packet_path="tmp/reviews/docstring-enhance-{slug}-cdp-packet.md",
   # or sidecar_ref / prompt_uri after staging the sealed packet to cortex

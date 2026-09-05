@@ -17,8 +17,12 @@ from implement_admission.preflight import (
     require_decision_asserted,
 )
 from implement_admission.skill_delivery_channels import SkillInlineBudgetExceeded
-from implement_admission.source_ref import SourceRefError, parse_source_ref
 from pydantic import BaseModel, Field, model_validator
+from team_dispatch_vocab import (
+    HANDOFF_OVERRIDE_CONTRACTS,
+    TO_THREAD_CONTRACTS,
+    TeamDispatchContract,
+)
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
@@ -170,7 +174,7 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # When set and packet_path is absent (contract=implement|wrap), the server
     # materializes the six-block packet via resolve_source_ref_to_packet
     # (first-class wrap). Grammar: todo:/plan:/plan_phase:/agent-bus:/packet:.
-    contract: Literal["light-bounded", "pure-mechanical", "implement", "wrap"]
+    contract: TeamDispatchContract
     reuse_thread: str | None = None
     split_thread: bool = False
     density_triage: DensityTriage | None = None
@@ -195,7 +199,6 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     # Required on top-level cursor-sdk generate. Omit only for nest_under or
     # resume_of inherit. Missing → 422 lane_required. wrap is exempt.
     lane: Literal["A", "B"] | None = None
-    packet_kind: Literal["conductor"] | None = None
     # Allowlisted satellite name; omit = hub ULG git identity.
     workspace: str | None = None
     read_only: bool = False
@@ -293,7 +296,7 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     model: str | None = None
     # Caller inline-intent knob (see ``TeamDispatchGenerateBody.mcp``).
     mcp: bool | None = None
-    contract: Literal["light-bounded", "pure-mechanical", "implement"]
+    contract: Literal["sketch", "pure-mechanical", "implement", "none"]
     prompt: str | None = None
     sidecar_ref: str | None = None
     auto_review_child: bool | None = None
@@ -670,7 +673,7 @@ class TeamHandoffBody(BaseModel):
     seat: str | None = None
     packet_path: str | None = None
     source_ref: str | None = None
-    contract: Literal["light-bounded", "pure-mechanical", "implement"] | None = None
+    contract: Literal["sketch", "pure-mechanical", "implement", "none"] | None = None
     executor_override: str | None = None
     executor_override_reason_code: str | None = None
     executor_override_reason: str | None = None

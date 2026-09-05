@@ -78,7 +78,7 @@ async def test_coord_admit_non_implement_omits_todo_line(
         worker_thread_id="1960",
         to_agent="claude-web",
         caller_agent="claude-web",
-        contract="light-bounded",
+        contract="none",
     )
     payload = post_turn.await_args.args[1]
     assert "bound todo" not in payload["body"]

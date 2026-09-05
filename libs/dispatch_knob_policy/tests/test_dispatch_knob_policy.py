@@ -6,7 +6,7 @@ from dispatch_knob_policy import recommend_knobs, validate_knobs
 
 
 def test_recommend_mechanical_light_bounded() -> None:
-    rec = recommend_knobs(contract="light-bounded")
+    rec = recommend_knobs(contract="none")
     assert rec.status == "recommended"
     assert rec.model == "composer-2.5"
     assert rec.thinking == "false"

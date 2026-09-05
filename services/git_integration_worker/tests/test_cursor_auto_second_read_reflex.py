@@ -680,7 +680,7 @@ def test_reflex_bind_does_not_clobber_executor_dispatch(
         submit_nested_dispatch(
             job,
             model_id="cursor/gpt-5.6-luna",
-            handoff_contract="light-bounded",
+            handoff_contract="none",
             message="read",
             read_only=True,
             bind_job=False,
@@ -769,7 +769,7 @@ def test_failed_reflex_submit_does_not_reset_executor_phase(
         submit_nested_dispatch(
             job,
             model_id="cursor/gpt-5.6-luna",
-            handoff_contract="light-bounded",
+            handoff_contract="none",
             message="read",
             read_only=True,
             bind_job=False,

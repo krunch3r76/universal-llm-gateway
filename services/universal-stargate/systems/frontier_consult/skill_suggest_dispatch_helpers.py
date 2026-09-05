@@ -60,7 +60,7 @@ def build_worker_message(
         "Report each: PASS / FAIL + one-line evidence."
     )
     return (
-        "Contract: light-bounded. Reason about skill relevance from the "
+        "Contract: none. Reason about skill relevance from the "
         "candidate set and conversation context; return a ranked native "
         "skill_suggest envelope.\n\n"
         f"REQUESTING SEAT: {json.dumps(agent)}\n"

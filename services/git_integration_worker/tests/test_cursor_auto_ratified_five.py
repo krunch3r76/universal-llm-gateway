@@ -34,7 +34,7 @@ def test_wire_map_confer_contract():
         == "cursor/composer-2.5"
     )
     assert resolve_contract_disposition("confer")["disposition_hint"] == "conferred"
-    assert resolve_handoff_contract("confer") == "light-bounded"
+    assert resolve_handoff_contract("confer") == "none"
 
 
 def test_prefer_dispatch_over_park_holderless_bounded():
@@ -274,7 +274,7 @@ def test_process_job_confer_nested(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert result["phase"] == "nested_confer"
     submit.assert_awaited_once()
-    assert submit.await_args.kwargs["handoff_contract"] == "light-bounded"
+    assert submit.await_args.kwargs["handoff_contract"] == "none"
     confer.assert_awaited_once()
 
 

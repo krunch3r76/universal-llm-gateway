@@ -79,7 +79,7 @@ def _admit_conductor(
             thread_id=req.thread_id,
             model_id="composer-2.5",
         ),
-        contract="light-bounded",
+        contract="conductor",
         source_repo="/repo",
         lease_key="/repo",
         work_key=_WORK_KEY,
@@ -90,7 +90,7 @@ def _admit_conductor(
     )
     ledger.merge_record_json(
         dispatch_id=req.dispatch_id,
-        patch={"packet_kind": "conductor", "lane": "B"},
+        patch={"contract": "conductor", "lane": "B"},
     )
     if record_patch:
         ledger.merge_record_json(dispatch_id=req.dispatch_id, patch=record_patch)

@@ -34,7 +34,7 @@ async def test_cdp_generate_bypasses_cursor_sdk_pool_fence(
         op="generate",
         model="cdp/opus-5",
         dispatch_thread_id="todo:arc",
-        contract="light-bounded",
+        contract="none",
         packet_path="tmp/reviews/packet.md",
     )
     result = await team_dispatch(body, Response())
@@ -77,7 +77,7 @@ async def test_cursor_sdk_omit_path_other_models_generate_rejected_at_route(
         seat="cursor-sdk",
         model=None,
         dispatch_thread_id="todo:arc",
-        contract="light-bounded",
+        contract="none",
         lane="B",
         packet_path="tmp/reviews/packet.md",
     )
@@ -124,7 +124,7 @@ async def test_cursor_sdk_explicit_other_models_generate_passes_fence_at_route(
         seat="cursor-sdk",
         model="cursor/claude-sonnet-5",
         dispatch_thread_id="todo:arc",
-        contract="light-bounded",
+        contract="none",
         lane="B",
         packet_path="tmp/reviews/packet.md",
     )

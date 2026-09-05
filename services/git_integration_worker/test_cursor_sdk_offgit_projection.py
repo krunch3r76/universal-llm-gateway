@@ -150,7 +150,7 @@ def test_ac2_missing_primary_preserved(tmp_path: Path) -> None:
     degraded = light_bounded_deliverable_reason(
         body=body,
         tool_calls=(),
-        contract="light-bounded",
+        contract="none",
         deliverable_present=False,
     )
     assert degraded == "stated_intent_no_write"
@@ -203,7 +203,7 @@ def test_ac2b_scratch_write_partial_with_suppressed_birth_reason(
     degraded = light_bounded_deliverable_reason(
         body=f"Saved output to cortex://{scratch}.",
         tool_calls=(),
-        contract="light-bounded",
+        contract="none",
         deliverable_present=fs_write_landed(
             manifest,
             source_repo=source_repo,

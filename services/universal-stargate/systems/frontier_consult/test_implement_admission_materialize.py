@@ -208,7 +208,6 @@ def test_conductor_resolve_passes_fold_deps(
         "todo:fold-probe-slug",
         cortex=_MaterializeStubCortex(),
         workspaces_root=tmp_path,
-        packet_kind="conductor",
         summoning_thread_id="9638",
     )
     assert result.gated is False

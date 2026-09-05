@@ -1,7 +1,7 @@
 """Admit classifies judgment-bearing implement off pure-mechanical.
 
 Detector is opt-in: unmarked implement and density:mechanical stay
-pure-mechanical. Line-start or AC-label ``RULING`` raises to light-bounded.
+pure-mechanical. Line-start or AC-label ``RULING`` raises to none.
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def test_skip_set_unchanged() -> None:
         ),
         (
             "TYPE: DIRECTIVE\ndensity: dense\nscope: libs/foo\n"
-            "handoff: light-bounded\n",
+            "handoff: none\n",
             True,
         ),
         (
@@ -134,11 +134,11 @@ def test_turn_343_specimen_is_bus_verbatim() -> None:
 
 @pytest.mark.offline
 def test_ruling_acs_raise_to_light_bounded() -> None:
-    assert resolve_handoff_contract("implement", body=_TURN_302) == "light-bounded"
+    assert resolve_handoff_contract("implement", body=_TURN_302) == "none"
 
 
 @pytest.mark.offline
 def test_non_implement_contracts_unchanged() -> None:
-    assert resolve_handoff_contract("investigate", body=_TURN_302) == "light-bounded"
-    assert resolve_handoff_contract("seed") == "light-bounded"
-    assert resolve_handoff_contract("confer") == "light-bounded"
+    assert resolve_handoff_contract("investigate", body=_TURN_302) == "none"
+    assert resolve_handoff_contract("seed") == "none"
+    assert resolve_handoff_contract("confer") == "none"

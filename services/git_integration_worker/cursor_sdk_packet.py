@@ -55,7 +55,7 @@ _BREADTH_RECON_PREAMBLE = (
     "BREADTH RECON — EXPLORE DEFAULT (mandatory when owed):\n"
     "When breadth recon is owed — loci unknown, question spans ≥3 files or an "
     "unfamiliar subsystem, you are about a 2nd speculative Grep/Glob round, or "
-    "the packet contract is investigate/light-bounded recon — your default read "
+    "the packet contract is investigate/none recon — your default read "
     'move is Task(subagent_type="explore", …). Explore is the Cursor subagent '
     "(¬ in-seat Grep spray, ¬ a separate tool).\n"
     "Anti-triggers (in-seat Grep/Read OK): loci known (path in hand ∨ one grep "
@@ -336,7 +336,7 @@ def resolve_prompt_preamble(
     declare a land disposition arrives with the work rather than after residue
     already exists.
 
-    Lane-B ``light-bounded`` conductor missions additionally carry seat identity:
+    Lane-B ``conductor`` conductor missions additionally carry seat identity:
     the conductor's own ``dispatch_id`` and both nesting paths (independent
     judgment dispatch vs ``nest_under`` for mechanical landing). Identified by
     ``packet_path`` or the mandatory ``Use the conductor skill`` packet line
@@ -364,13 +364,14 @@ def resolve_prompt_preamble(
                 branch=lane_branch or "your lane branch"
             )
         )
-    is_conductor_packet = has_packet_path or (
-        bool(existing_text)
+    is_conductor_packet = contract == "conductor" or (
+        has_packet_path
+        and bool(existing_text)
         and _CONDUCTOR_PACKET_MARKER_RE.search(existing_text) is not None
     )
     if (
         lane == "B"
-        and contract == "light-bounded"
+        and contract == "conductor"
         and is_conductor_packet
         and dispatch_id
     ):

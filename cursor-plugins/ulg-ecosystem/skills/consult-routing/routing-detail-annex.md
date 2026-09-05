@@ -9,8 +9,8 @@ Authoring-time map for `seat=cursor-sdk` `op=generate` — do not mix shapes:
 | `contract` | Allowed source | Forbidden |
 |---|---|---|
 | `implement` | `source_ref` **or** `packet_path` | — |
-| `light-bounded` | `packet_path` **or** bus-turn body | `source_ref` (except conductor spawn — next row) |
-| `light-bounded` + `packet_kind=conductor` | `source_ref=todo:{slug}` only | `packet_path`, `prompt`, `sidecar_ref` |
+| `conductor` | `packet_path` **or** bus-turn body | `source_ref` (except conductor spawn — next row) |
+| `none` + `` | `source_ref=todo:{slug}` only | `packet_path`, `prompt`, `sidecar_ref` |
 | `pure-mechanical` | `packet_path` **or** bus-turn body | `source_ref` |
 | `wrap` | `source_ref` only | `packet_path` |
 
@@ -18,7 +18,7 @@ Authoring-time map for `seat=cursor-sdk` `op=generate` — do not mix shapes:
 output — never `sidecar_ref` (or `prompt`) beside `source_ref` (`multiple_prompt_sources`).
 See `agent_skill:conductor` § First-utterance spawn.
 
-Foot-gun: `contract=light-bounded` + `source_ref` without `packet_kind=conductor` is invalid
+Foot-gun: `contract=none` + `source_ref` without `` is invalid
 (agent-bus:4866). Do not paper over conductor spawn with `sidecar_ref`.
 
 ## Writing consult substrate
@@ -42,7 +42,7 @@ After frontier architecture verdict: ¬ web-Opus full dense spec with inlined `s
 |---|---|---|---|
 | Architecture | Fable / wide CDP | Target shape, rivals, migration | File matrix, phase ACs |
 | Frame | Opus CDP (minimal `skills=`) | Grok instruction brief ≤~120L | Spec body, workspaces reads |
-| Densify | Grok `cursor-sdk` `light-bounded` | `cortex://…/specs/{slug}.md` | Re-litigate architecture |
+| Densify | Grok `cursor-sdk` `none` | `cortex://…/specs/{slug}.md` | Re-litigate architecture |
 | Check | GPT terra/Sol `cursor-sdk` | Merged consistency pass | — |
 | Implement | Composer `cursor-sdk` `implement` | Phase-scoped edits | Redesign kernel |
 
@@ -62,7 +62,7 @@ reference-annex packet-class row *ULG service home / placement / extract / hosti
 
 **Gate-6 substrate (a24082):** code-lane live-source / `workspaces://` citations ⇒
 `team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra|sol|luna,
-contract=light-bounded, …)`; poll `reply_from_agent` from admit. API `role=reviewer` + terra only when
+contract=none, …)`; poll `reply_from_agent` from admit. API `role=reviewer` + terra only when
 **all** reading pre-staged inline (`code-on-api`). Access-only REVISE ≠ Gate-6 close.
 
 **Steps 1–2 zoom-out (C2):** recon/investigate packets MUST carry touch-point inventory + class/sibling
@@ -108,7 +108,7 @@ explicitly chooses `cursor`.
 
 ```python
 team_dispatch(op="generate", seat="cursor-sdk", dispatch_thread_id="<thread>",
-              contract="light-bounded"|"pure-mechanical", packet_path?=...)
+              contract="none"|"pure-mechanical", packet_path?=...)
 ```
 
 Load `cursor-sdk-instruction-standard` (D1–D4). Repo-venv: cursor-sdk inherits repo venv. Inline lead edits =
@@ -128,7 +128,7 @@ Outer `CURSOR_SDK_TIMEOUT` ≠ terminal. RAG ingest batches: default `scripts/in
 
 ## CONFORM lane — provisional
 
-Loose intent → conforming todo. Recipe: `team_dispatch(generate, seat="cursor-sdk", contract="light-bounded",
+Loose intent → conforming todo. Recipe: `team_dispatch(generate, seat="cursor-sdk", contract="none",
 packet_path=<frozen-envelope>)`. Envelope: `objective`, `touch_points`, `acceptance_criteria_known`,
 `judgment_settled`, optional `required_skills_hint`. Verify Layer 1 wrap precondition + Layer 2 semantic diff.
 Promotion blocked until N≥5 real runs.

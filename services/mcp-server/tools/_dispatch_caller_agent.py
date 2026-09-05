@@ -10,12 +10,12 @@ from ._agent_bus_author import default_from_for_surface
 def infer_caller_agent_for_conductor(
     caller_agent: str | None,
     *,
-    packet_kind: str | None,
+    contract: str | None,
 ) -> str | None:
     """Stamp mount-default caller when conductor spawn omits explicit provenance."""
     if isinstance(caller_agent, str) and caller_agent.strip():
         return caller_agent.strip()
-    if (packet_kind or "").lower() != "conductor":
+    if (contract or "").lower() != "conductor":
         return None
     meta = current_request_metadata()
     surface = meta.get("surface")

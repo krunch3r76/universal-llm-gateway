@@ -37,7 +37,7 @@ def test_s1_generate_normalizes_to_inline() -> None:
         op="generate",
         role="gatherer",
         dispatch_thread_id="dispatch-thread-1",
-        contract="light-bounded",
+        contract="none",
     )
     kwargs = _normalize_op_body(body)
     assert kwargs["output_contract"] == "inline"
@@ -53,7 +53,7 @@ def test_s1_to_thread_normalizes_to_thread_contract() -> None:
         role="gatherer",
         dispatch_thread_id="dispatch-thread-1",
         thread="867",
-        contract="light-bounded",
+        contract="none",
     )
     kwargs = _normalize_op_body(body)
     assert kwargs["output_contract"] == "thread"
@@ -69,7 +69,7 @@ def test_to_thread_propagates_subject_as_reply_subject() -> None:
         dispatch_thread_id="dispatch-thread-1",
         thread="1051",
         subject="Re: plan-promotion review",
-        contract="light-bounded",
+        contract="none",
     )
     kwargs = _normalize_op_body(body)
     assert kwargs["reply_subject"] == "Re: plan-promotion review"
@@ -82,7 +82,7 @@ def test_to_thread_omits_reply_subject_when_unset() -> None:
         role="reviewer",
         dispatch_thread_id="dispatch-thread-1",
         thread="1051",
-        contract="light-bounded",
+        contract="none",
     )
     kwargs = _normalize_op_body(body)
     assert "reply_subject" not in kwargs
@@ -94,7 +94,7 @@ def test_generate_rejects_multiple_explicit_prompt_sources() -> None:
             op="generate",
             role="reviewer",
             dispatch_thread_id="dispatch-thread-1",
-            contract="light-bounded",
+            contract="none",
             packet_path="tmp/review.md",
             prompt="Review this.",
         )
@@ -103,7 +103,7 @@ def test_generate_rejects_multiple_explicit_prompt_sources() -> None:
 def test_generate_allows_prompt_without_dispatch_thread_id() -> None:
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="light-bounded",
+        contract="none",
         model="cdp/opus-5",
         prompt="hello",
         purpose="operator-proxy",
@@ -117,7 +117,7 @@ def test_generate_still_requires_dispatch_thread_id_without_prompt() -> None:
     with pytest.raises(ValidationError, match="dispatch_thread_id is required"):
         TeamDispatchGenerateBody(
             op="generate",
-            contract="light-bounded",
+            contract="none",
             model="cdp/opus-5",
         )
 
@@ -146,7 +146,7 @@ def test_to_thread_rejects_prompt_plus_sidecar_ref() -> None:
             role="reviewer",
             dispatch_thread_id="dispatch-thread-1",
             thread="1051",
-            contract="light-bounded",
+            contract="none",
             prompt="Review this.",
             sidecar_ref="cortex://notes/review.md",
         )
@@ -164,7 +164,7 @@ def test_s2_generate_body_rejects_thread_field() -> None:
             role="gatherer",
             dispatch_thread_id="dispatch-thread-1",
             thread="867",  # type: ignore[call-arg]  # forbidden extra field
-            contract="light-bounded",
+            contract="none",
         )
     errors = exc_info.value.errors()
     assert any(
@@ -183,7 +183,7 @@ def test_s3_generate_body_rejects_result_delivery() -> None:
             op="generate",
             role="gatherer",
             dispatch_thread_id="dispatch-thread-1",
-            contract="light-bounded",
+            contract="none",
             result_delivery={"bus_thread": "867"},  # type: ignore[call-arg]
         )
 
@@ -199,7 +199,7 @@ def test_s5_to_thread_body_requires_thread() -> None:
             op="to_thread",
             role="gatherer",
             dispatch_thread_id="dispatch-thread-1",
-            contract="light-bounded",
+            contract="none",
             # thread intentionally omitted
         )
     errors = exc_info.value.errors()
@@ -272,7 +272,7 @@ def test_team_generate_rejects_remote_mcp_extra() -> None:
             op="generate",
             role="reviewer",
             dispatch_thread_id="dispatch-thread-1",
-            contract="light-bounded",
+            contract="none",
             remote_mcp=True,  # type: ignore[call-arg]
         )
     errors = exc_info.value.errors()

@@ -20,7 +20,14 @@ _PRODUCTION_CODE_HINTS = ("services/", "libs/")
 _PATH_SIM_ADMIT_GATE = "path-sim-admit-gate"
 GENERATE_LANE_AC_OBSERVER_FOOTER = FOOTER_BY_SURFACE["source"]
 
-Contract = Literal["light-bounded", "pure-mechanical", "implement"]
+Contract = Literal[
+    "sketch",
+    "implement",
+    "wrap",
+    "conductor",
+    "pure-mechanical",
+    "none",
+]
 
 
 def _instruction_text(
@@ -72,13 +79,13 @@ def resolve_auto_review_child(
     Source order for the predicate: packet body → message → packet_path.
 
     ``None`` means the caller expressed no preference and is the only state the
-    light-bounded production-code default may fill. An explicit ``False`` is a
+    none production-code default may fill. An explicit ``False`` is a
     caller opt-out and wins over that default: a caller-supplied value that
     silently loses to a server default is indistinguishable from the flag not
     working at all, and leaves the opt-out lane unreachable.
     """
     requested = bool(auto_review_child)
-    if contract != "light-bounded":
+    if contract != "none":
         return requested, False
     if auto_review_child is False:
         return False, False
@@ -105,7 +112,7 @@ def prepare_lb_auto_review_for_generate(
 ) -> tuple[bool, bool, str | None]:
     """Resolve effective review flag and optional early packet body for generate."""
     early_packet_text: str | None = None
-    if contract == "light-bounded" and packet_path is not None:
+    if contract == "none" and packet_path is not None:
         early_packet_text = read_lb_packet_text(packet_path)
     effective, defaulted = resolve_auto_review_child(
         contract=contract,
@@ -179,7 +186,7 @@ def planning_review_spawn_suppressed(
     packet_text: str | None,
 ) -> bool:
     """Return True when generate-lane AC observer spawn should be suppressed."""
-    if contract != "light-bounded":
+    if contract != "none":
         return False
     if packet_has_production_files_expected(packet_text):
         return False
@@ -202,7 +209,7 @@ def stamp_lb_review_spawn_fields(
     request_id: str | None = None,
 ) -> tuple[str | None, str | None, bool]:
     """Persist review_surface, dispatch_lane, and suppress_review_spawn at prepare."""
-    if contract != "light-bounded":
+    if contract != "none":
         return None, None, False
 
     resolved_lane = resolve_dispatch_lane_for_generate(
@@ -258,7 +265,7 @@ def validate_generate_contract_packet_rules(
             field="packet_path",
             reason=(
                 "contract=pure-mechanical is packet-free; use contract=implement "
-                "or light-bounded for packet-based dispatches"
+                "or none for packet-based dispatches"
             ),
             status_code=422,
         )

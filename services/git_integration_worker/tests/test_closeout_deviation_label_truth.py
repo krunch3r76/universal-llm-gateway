@@ -336,7 +336,7 @@ def test_ac7_mirror_write_missing_still_emits(tmp_path: Path) -> None:
 def test_ac8_prose_citation_not_light_bounded_expected(tmp_path: Path) -> None:
     packet = (
         "TYPE: DIRECTIVE\n"
-        "contract: light-bounded\n"
+        "contract: none\n"
         "scope: inspect routes/cursor_sdk.py:2107-2110\n"
         "out-of-scope: routes/cursor_sdk.py\n"
         "files_expected: cortex://notes/system/reviews/challenge-r2.md\n"

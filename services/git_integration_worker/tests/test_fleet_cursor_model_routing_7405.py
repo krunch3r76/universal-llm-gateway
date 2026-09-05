@@ -91,7 +91,7 @@ def test_omit_effort_implement_mechanical_medium_judgment_xhigh() -> None:
     mechanical = resolve_desired_effort(None, contract="implement")
     assert mechanical["resolved_effort"] == "medium"
     judgment = resolve_desired_effort(
-        None, contract="implement", handoff_contract="light-bounded"
+        None, contract="implement", handoff_contract="none"
     )
     assert judgment["resolved_effort"] == "xhigh"
     pure = resolve_desired_effort(

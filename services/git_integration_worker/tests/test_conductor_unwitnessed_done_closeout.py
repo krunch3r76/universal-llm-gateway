@@ -15,9 +15,9 @@ from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import
 
 _CONDUCTOR_PACKET = """\
 ---
-packet_kind: conductor
+
 work_key: todo:entity-private-id-mutable-name
-contract: light-bounded
+contract: conductor
 lane: B
 ---
 <scope>Conductor session.</scope>
@@ -64,7 +64,6 @@ def test_unwitnessed_g1_done_degrades(monkeypatch) -> None:
     reason = conductor_unwitnessed_done_degraded_reason(
         body=_G1_DONE_NO_EDGE,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason == "unwitnessed_done_claim"
 
@@ -77,7 +76,6 @@ def test_witnessed_g1_done_not_degraded(monkeypatch) -> None:
     reason = conductor_unwitnessed_done_degraded_reason(
         body=_G1_DONE_WITH_EDGE_BODY,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason is None
 
@@ -90,7 +88,6 @@ def test_prepare_closeout_unwitnessed_done_partial(tmp_path: Path, monkeypatch) 
     degraded = conductor_unwitnessed_done_degraded_reason(
         body=_G1_DONE_NO_EDGE,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert degraded == "unwitnessed_done_claim"
     outcome = SdkRunOutcome(

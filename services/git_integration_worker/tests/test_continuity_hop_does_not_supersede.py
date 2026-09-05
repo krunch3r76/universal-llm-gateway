@@ -814,7 +814,7 @@ async def test_hop_forwards_explicit_effort_omits_schema_default(
         to_agent="cursor",
         desired_model="auto",
         desired_effort=desired_effort,
-        contract="light-bounded",
+        contract="none",
         continuity_hop=True,
         continuity_matched_token="TYPE:CONTINUITY_HANDOFF",
     )

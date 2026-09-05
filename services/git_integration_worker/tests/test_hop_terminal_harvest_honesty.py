@@ -38,7 +38,7 @@ def _hop_job(queue, *, body: str = "TYPE: CONTINUITY_HANDOFF\n"):
         to_agent="cursor",
         desired_model="auto",
         desired_effort="medium",
-        contract="light-bounded",
+        contract="none",
         continuity_hop=True,
         continuity_matched_token="TYPE:CONTINUITY_HANDOFF",
     )

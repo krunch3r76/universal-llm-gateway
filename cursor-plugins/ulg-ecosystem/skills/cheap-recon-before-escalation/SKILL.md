@@ -76,7 +76,7 @@ The default `role=skeptic` model (xai/grok-4.6) is **MCP-capable**, and `team_di
 | Self-contained inline packet (4728 shape) | MCP-OFF | `mcp=false` | Entire decision in the admit-time latest turn; forbid "read thread"/`agent_bus(get)` instructions there; pre-stage evidence paths for echo (no live discovery). |
 | Non-code personal/legal/financial lane | MCP-OFF | `mcp=false` **always** | `consensus-steelman-posture` §5; the personal corpus must not gain tools. |
 
-Default (MCP-ON): `team_dispatch(op=generate, role=skeptic, dispatch_thread_id=<thread>, mcp=true, max_tool_turns=15, contract=light-bounded)`.
+Default (MCP-ON): `team_dispatch(op=generate, role=skeptic, dispatch_thread_id=<thread>, mcp=true, max_tool_turns=15, contract=none)`.
 
 **Pointer-overwrite hygiene (F3, threads 4732/4733):** the admit-time prompt is the dispatch thread's latest turn (`read_latest_dispatch_thread_body` → `turns[-1].body`), and a generate pointer posts onto that same thread in single-thread Q/R mode. Do **not** re-generate against a thread whose latest turn is a pointer — under `mcp=false` the skeptic reads "read thread", cannot fetch, and defers (deferral theater). Keep the fat design as the latest turn, or use `split_thread=true` / a fresh single-turn thread for re-dispatch. Code-level fix (whether skeptic re-dispatch should mint a split result thread by default) is a tracked optional follow-up, not resolved here.
 

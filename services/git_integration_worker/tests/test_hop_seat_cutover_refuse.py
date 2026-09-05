@@ -190,7 +190,6 @@ def test_resolve_request_refusal_admits_holder_and_self_supersede():
         )
 
 
-
 def test_i4_predecessor_refused_15s_after_confirm_holder_readmits():
     """I4 verbatim AC: bound predecessor refused; holder re-issue admits empty wire."""
     row = {

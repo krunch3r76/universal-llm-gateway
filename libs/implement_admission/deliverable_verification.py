@@ -122,7 +122,7 @@ def is_conductor_self_gate_suspect(
     contract = (
         closeout.effects_manifest.contract if closeout.effects_manifest else None
     )
-    if contract != "light-bounded":
+    if contract != "none":
         return False
     if not g_rows_open:
         return False

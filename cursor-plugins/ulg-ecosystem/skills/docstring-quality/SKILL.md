@@ -34,7 +34,7 @@ outside `/path-sim` still owes the same ship gate:
 | Closer | Duty |
 |---|---|
 | `implement-todo` §5 / any `contract=implement` close | Scan `files_expected` (or touched `*.py`); criticals=0 before todo-close |
-| light-bounded / in-seat / Task that mutates public Python | Same scan before PASS/done; ¬ waive because "not path-sim" |
+| none / in-seat / Task that mutates public Python | Same scan before PASS/done; ¬ waive because "not path-sim" |
 | `/overhaul` | Own §5.5 / §5.6 / step-9 fail-closed (unchanged) |
 | Lead path-sim closeout / R-after | Same scan — path-sim § Docstring AC |
 

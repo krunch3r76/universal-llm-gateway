@@ -89,7 +89,7 @@ only (mechanical/quick skip). `skills=` on cursor-sdk generate is a no-op.
 |---|---|
 | `op=generate` `seat=cursor-sdk` | GIW `resolve_prompt_preamble` on judgment `handoff_contract`; skip mechanical/quick |
 | `cursor-auto` admit | Admit report appends `REASONING_POSTURE_PREAMBLE` when `handoff_contract` warrants |
-| `op=handoff` consult / light-bounded | Enrich Block 2 `Use the reasoning-posture skill`; skip implement / `cursor-implement` |
+| `op=handoff` consult / none | Enrich Block 2 `Use the reasoning-posture skill`; skip implement / `cursor-implement` |
 | CDP `model=cdp/…` generate | `skills=` merge (`ensure_cdp_judgment_skills`, purpose-keyed — § CDP transport) |
 
 Packet MAY still open with the invoke as belt-and-suspenders. SOT: skill `reasoning-posture` § Always-on injection.
@@ -100,7 +100,7 @@ SoT: `config/routing/route_policy.yaml`. Substrate-derived — ¬ role prolifera
 
 | Lane | Signal | Default | Work |
 |---|---|---|---|
-| **code** | `cursor-sdk` | `generate seat=cursor-sdk` | recon, implement, light-bounded |
+| **code** | `cursor-sdk` | `generate seat=cursor-sdk` | recon, implement, none |
 | **non-code** | API roles | `generate role=…` or handoff | adversarial, life-domain, analysis |
 
 Settled implement/recon/review → `cursor-sdk` (R2). **Model split:** `implement` → Composer;
@@ -116,7 +116,7 @@ Rule stub: `dispatch-kernel_ulg.mdc` § Hard walls.
 
 | Leg | Model / seat | Contract | Delivers |
 |---|---|---|---|
-| Bind | `cdp/opus-5`, `cdp/fable`, `cursor/claude-opus-5` (bind scope only) | `light-bounded` | Dense packet / spec: `files_expected`, `acceptance_criteria`, invariants — ¬ repo implement |
+| Bind | `cdp/opus-5`, `cdp/fable`, `cursor/claude-opus-5` (bind scope only) | `none` | Dense packet / spec: `files_expected`, `acceptance_criteria`, invariants — ¬ repo implement |
 | Compose | `seat=cursor-sdk` (Composer default) | `implement` \| `pure-mechanical` | Mechanical edits + verify |
 
 ```python
@@ -141,7 +141,7 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 
 | Bad | Good |
 |---|---|
-| `cursor/claude-opus-5` + `light-bounded` + implement acceptance in one packet | Opus bind sidecar → nested `cursor-sdk` `contract=implement` |
+| `cursor/claude-opus-5` + `none` + implement acceptance in one packet | Opus bind sidecar → nested `cursor-sdk` `contract=implement` |
 | `executor_override: cursor/claude-opus-5` on mechanical implement | Omit `model=` on `seat=cursor-sdk` implement (Composer default) |
 | Ignore `sdk_cost_risk` at admit | Split or downgrade to Composer before edits |
 | Premium model runs quality_gate/pytest loops on known files | Composer leg + lead verify sample |
@@ -273,7 +273,7 @@ team_dispatch(op="generate", seat="cursor-sdk", contract="implement", source_ref
 Materializer reads attrs only; spec prose = hash input. Preflight: `entity_get`; `workflow_state ∈ {open,in_progress}`.
 `wrap` = materialize-only. Contract↔source matrix: L3 annex.
 
-## Conductor spawn — light-bounded + source_ref
+## Conductor spawn — conductor + source_ref
 
 Standing first-utterance (`agent_skill:conductor`):
 
@@ -281,10 +281,9 @@ Standing first-utterance (`agent_skill:conductor`):
 team_dispatch(
     op="generate",
     seat="cursor-sdk",
-    contract="light-bounded",
+    contract="none",
     lane="B",
     source_ref="todo:{slug}",
-    packet_kind="conductor",
     dispatch_thread_id="{root}",
 )
 ```

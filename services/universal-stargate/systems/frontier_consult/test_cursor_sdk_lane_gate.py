@@ -54,7 +54,7 @@ def test_require_lane_skips_nest_under_resume_of_and_wrap() -> None:
         request_id="req-named",
         lane="A",
         nest_under=None,
-        contract="light-bounded",
+        contract="none",
     )
 
 

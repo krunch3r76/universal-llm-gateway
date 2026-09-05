@@ -86,7 +86,7 @@ async def test_cursor_sdk_implement_admits_without_messages(
 async def test_cursor_sdk_light_bounded_packet_skips_dispatch_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """light-bounded + packet_path admits via packet channel; thread never read."""
+    """none + packet_path admits via packet channel; thread never read."""
     sdk_mock, thread_read = _patch_sdk_and_thread_read(
         monkeypatch,
         sdk_return={"execution_id": "exec-light", "thread_id": "1730"},
@@ -101,7 +101,7 @@ async def test_cursor_sdk_light_bounded_packet_skips_dispatch_thread(
         op="generate",
         seat="cursor-sdk",
         dispatch_thread_id="todo:some-arc",
-        contract="light-bounded",
+        contract="none",
         lane="A",
         packet_path="tmp/reviews/light-packet.md",
     )
@@ -111,7 +111,7 @@ async def test_cursor_sdk_light_bounded_packet_skips_dispatch_thread(
     thread_read.assert_not_awaited()
     sdk_mock.assert_awaited_once()
     kwargs = sdk_mock.await_args.kwargs
-    assert kwargs["contract"] == "light-bounded"
+    assert kwargs["contract"] == "none"
     assert kwargs["packet_path"] == "tmp/reviews/light-packet.md"
     assert kwargs["message_text"] == ""
 
@@ -165,7 +165,7 @@ async def test_cursor_sdk_light_bounded_unresolved_packet_returns_422(
         op="generate",
         seat="cursor-sdk",
         dispatch_thread_id="todo:some-arc",
-        contract="light-bounded",
+        contract="none",
         lane="A",
         packet_path="tmp/missing.md",
     )
@@ -192,7 +192,7 @@ async def test_cursor_sdk_non_implement_reads_dispatch_thread(
         op="generate",
         seat="cursor-sdk",
         dispatch_thread_id="todo:some-arc",
-        contract="light-bounded",
+        contract="none",
         lane="A",
     )
     await team_dispatch(body, Response())

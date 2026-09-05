@@ -1,4 +1,4 @@
-"""Review-surface classification for light-bounded generate-lane packet AC observer."""
+"""Review-surface classification for none generate-lane packet AC observer."""
 
 from __future__ import annotations
 

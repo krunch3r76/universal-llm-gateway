@@ -74,7 +74,7 @@ async def test_new_thread_recipient_scoped_to_execution_id(
     result = await dispatch_cursor_sdk_generate(
         request_id="req-scope-new",
         role="cursor-sdk",
-        contract="light-bounded",
+        contract="none",
         model=None,
         subject="scoping test new",
         caller_agent="claude-web",
@@ -118,7 +118,7 @@ async def test_reuse_thread_recipient_scoped_to_execution_id(
     result = await dispatch_cursor_sdk_generate(
         request_id="req-scope-reuse",
         role="cursor-sdk",
-        contract="light-bounded",
+        contract="none",
         model=None,
         subject="scoping test reuse",
         caller_agent="claude-web",
@@ -167,7 +167,7 @@ async def test_two_dispatch_bus_isolation(monkeypatch: pytest.MonkeyPatch) -> No
     result_a = await dispatch_cursor_sdk_generate(
         request_id="req-iso-a",
         role="cursor-sdk",
-        contract="light-bounded",
+        contract="none",
         model=None,
         subject="dispatch-a",
         caller_agent="claude-web",
@@ -177,7 +177,7 @@ async def test_two_dispatch_bus_isolation(monkeypatch: pytest.MonkeyPatch) -> No
     result_b = await dispatch_cursor_sdk_generate(
         request_id="req-iso-b",
         role="cursor-sdk",
-        contract="light-bounded",
+        contract="none",
         model=None,
         subject="dispatch-b",
         caller_agent="claude-web",

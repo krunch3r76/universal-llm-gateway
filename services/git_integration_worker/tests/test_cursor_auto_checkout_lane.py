@@ -110,7 +110,7 @@ def test_auto_light_bounded_omit_stays_a(git_repo) -> None:
         regime_active=True,
         source_repo=git_repo,
         files_expected=[],
-        contract="light-bounded",
+        contract="none",
     )
     assert lane == "A"
     assert reason == "opt_out"
@@ -218,7 +218,7 @@ def test_reflex_read_only_does_not_stamp_b(monkeypatch: pytest.MonkeyPatch) -> N
         submit_nested_dispatch(
             job,
             model_id="cursor/gpt-5.6-luna",
-            handoff_contract="light-bounded",
+            handoff_contract="none",
             message="read",
             read_only=True,
             bind_job=False,

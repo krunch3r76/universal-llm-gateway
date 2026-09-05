@@ -252,7 +252,7 @@ manage(action="busy_status")  # serialize a second purpose=ask
 team_dispatch(
     op="generate",
     model="cdp/fable",
-    contract="light-bounded",
+    contract="none",
     purpose="ask",
     packet_path="tmp/reviews/{slug}-fable-g1.md",  # or sidecar_ref=cortex://…
     dispatch_thread_id="<work thread, not an unrelated charter root>",
@@ -299,10 +299,9 @@ First codework utterance after S4a mint:
 ```text
 team_dispatch(
   seat="cursor-sdk",
-  contract="light-bounded",
+  contract="none",
   lane="B",
   source_ref="todo:{slug}",
-  packet_kind="conductor",
   model_knobs={"fast":"true"},
   dispatch_thread_id="{root}",   # continuity root with turns — or pending-empty child of root
 )

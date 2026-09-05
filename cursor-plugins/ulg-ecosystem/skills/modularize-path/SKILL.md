@@ -63,7 +63,7 @@ M0 Intake → M-Arch? → M-Densify → audit+approve → M-Implement → M-Veri
 |---|---|---|
 | **M0 Intake** | Cursor | Target file, SLOC, intended `target_package_dir`, consumer grep, `git rev-parse HEAD` |
 | **M-Arch** | `cdp/opus-5` (default) · `cdp/fable` when outside check / Opus-unsure | Architecture verdict sidecar: package cuts, `__init__` public surface, consumer graph |
-| **M-Densify** | Composer enumerate → **`cdp/fable` bind** (`seat=cursor-sdk` + `contract=light-bounded`) | `tmp/modularize-plans/{name}.md` — MODULES + IMPLEMENTATION GUIDE + `files_expected` |
+| **M-Densify** | Composer enumerate → **`cdp/fable` bind** (`seat=cursor-sdk` + `contract=none`) | `tmp/modularize-plans/{name}.md` — MODULES + IMPLEMENTATION GUIDE + `files_expected` |
 | **M-Implement** | `seat=cursor-sdk` Composer (`contract=implement` \| `pure-mechanical`) | Package dir + modules + re-exports + consumer updates |
 | **M-Verify** | Cursor | `compileall` · `ruff` · `scripts/modularize scan` green on new package |
 
@@ -140,12 +140,12 @@ Cursor audits arch answer (package-shadow present? forbidden names? public surfa
 ## M-Densify — Composer enumerate + Fable bind
 
 ```python
-# 1. Composer enumerate (omit model=, contract=light-bounded)
-# 2. team_dispatch(model=cdp/fable, contract=light-bounded, …) bind
+# 1. Composer enumerate (omit model=, contract=none)
+# 2. team_dispatch(model=cdp/fable, contract=none, …) bind
 team_dispatch(
   op="generate",
   seat="cursor-sdk",
-  contract="light-bounded",
+  contract="none",
   packet_path="tmp/modularize-plans/{name}-packet.md",  # or prompt with plan task_guidance
   dispatch_thread_id=f"modularize-{name}-densify",
 )

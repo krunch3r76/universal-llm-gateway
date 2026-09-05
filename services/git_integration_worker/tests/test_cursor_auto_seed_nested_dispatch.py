@@ -24,7 +24,7 @@ def test_admit_contracts_seed_maps_to_light_bounded_handoff() -> None:
     from services.git_integration_worker.cursor_auto.wire_map import resolve_handoff_contract
 
     assert "seed" in _CONTRACTS
-    assert resolve_handoff_contract("seed") == "light-bounded"
+    assert resolve_handoff_contract("seed") == "none"
 
 
 def _seed_directive_body() -> str:
@@ -118,7 +118,7 @@ def test_process_job_seed_submits_nested_dispatch_with_dispatch_id(
     assert result["ok"] is True
     assert result["phase"] == "nested_dispatch"
     submit.assert_awaited_once()
-    assert submit.await_args.kwargs["handoff_contract"] == "light-bounded"
+    assert submit.await_args.kwargs["handoff_contract"] == "none"
     assert submit.return_value["dispatch_id"] == "auto-seed-nested-001"
     assert result.get("dispatch_id") == "auto-seed-nested-001"
 

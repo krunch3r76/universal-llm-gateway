@@ -53,7 +53,7 @@ Detent = the one-line declarable aperture setting. IO/CoT/single-fork are limite
 
 Close trigger (falsifier): `|material_sub_parts| ≤ 2 ⇒ step down to closed`.
 
-**Closed-detent quick recipe (summary — single light consult, ¬ the bundled arc):** scope-lock (4 fields) → hypothesize-simulate fill (closed detent) → bind with falsifier. Transport `team_dispatch(op=generate, model=cdp/fable, contract=light-bounded, effort=low)`; preflight `manage(busy_status)` before firing. Sufficient iff `|material_sub_parts| ≤ 2` ∧ loci pre-selected ∧ ¬ architecture-suitability in scope — escalate to the bundled arc the moment a rival bind touches an invariant or the fix is not self-verifiable. Full recipe + friction-conveyor detent triage: **annex A**.
+**Closed-detent quick recipe (summary — single light consult, ¬ the bundled arc):** scope-lock (4 fields) → hypothesize-simulate fill (closed detent) → bind with falsifier. Transport `team_dispatch(op=generate, model=cdp/fable, contract=none, effort=low)`; preflight `manage(busy_status)` before firing. Sufficient iff `|material_sub_parts| ≤ 2` ∧ loci pre-selected ∧ ¬ architecture-suitability in scope — escalate to the bundled arc the moment a rival bind touches an invariant or the fix is not self-verifiable. Full recipe + friction-conveyor detent triage: **annex A**.
 
 ## Cascade header grammar (copy, don't re-derive)
 
@@ -90,7 +90,7 @@ Primary delivery is an explicit slug line, not a paste. Caller composes:
 
 - **Quality ≠ transport.** “Opus 5 Max / High”, “Fable Max”, “Grok-4.5 High” name **effort**, not a dispatch path.
 - **Anthropic family** (`decision:anthropic-family-dispatch-substrate`): `model=anthropic/*` via Stargate API is **PROHIBITED**; wide consult / R-admit ⇒ **web-anthropic CDP**; `cursor/claude-opus-*` acceptable when live codebase navigation is needed. ¬ unlock API via routine `cost_intent`.
-- **xAI on the code lane** (friction 25081): bundled-arc **A** ⇒ Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks); closed-detent light consult ⇒ **`model=cdp/fable, contract=light-bounded`**; bundled-arc **Q** defaults to **CDP Fable**. `role=artisan, model=xai/grok-4.6` on a checkout-present coding consult is **PROHIBITED** (`xai/grok-4.6` stays OK for engineering axis-2 skeptic on specs/design; Grok is **PROHIBITED** for outbound prose).
+- **xAI on the code lane** (friction 25081): bundled-arc **A** ⇒ Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks); closed-detent light consult ⇒ **`model=cdp/fable, contract=none`**; bundled-arc **Q** defaults to **CDP Fable**. `role=artisan, model=xai/grok-4.6` on a checkout-present coding consult is **PROHIBITED** (`xai/grok-4.6` stays OK for engineering axis-2 skeptic on specs/design; Grok is **PROHIBITED** for outbound prose).
 - **Composer** = Stage-B implement only — never the A (L1+L2) leg. Detail: `consult-routing` § Anthropic-family substrate · § xAI coding-substrate · annex C.
 
 ## Dispatch cascade + R positions (essentials — mechanics in annex A)

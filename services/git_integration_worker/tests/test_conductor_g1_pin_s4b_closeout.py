@@ -15,9 +15,9 @@ from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import
 
 _CONDUCTOR_PACKET = """\
 ---
-packet_kind: conductor
+
 work_key: todo:fixture-slug
-contract: light-bounded
+contract: conductor
 lane: B
 ---
 <scope>Conductor session.</scope>
@@ -50,7 +50,6 @@ def test_conductor_g1_pin_missing_s4b_degrades() -> None:
     reason = conductor_g1_pin_s4b_degraded_reason(
         body=_G1_PIN_NO_S4B,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason == "s4b_g1_pin_missing"
 
@@ -59,7 +58,6 @@ def test_conductor_g1_pin_with_s4b_not_degraded() -> None:
     reason = conductor_g1_pin_s4b_degraded_reason(
         body=_G1_PIN_S4B_OK,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason is None
 
@@ -68,7 +66,6 @@ def test_conductor_g3_pin_without_s4b_not_degraded() -> None:
     reason = conductor_g1_pin_s4b_degraded_reason(
         body=_G3_PIN_NO_S4B,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason is None
 
@@ -87,7 +84,6 @@ def test_prepare_closeout_delivery_conductor_g1_pin_missing_s4b(tmp_path: Path) 
         degraded_reason=conductor_g1_pin_s4b_degraded_reason(
             body=_G1_PIN_NO_S4B,
             packet_text=_CONDUCTOR_PACKET,
-            packet_kind="conductor",
         ),
         thread_id="t-conductor-g1",
         work_item_ref="todo:fixture-slug",

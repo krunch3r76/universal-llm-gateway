@@ -58,7 +58,7 @@ def test_sdk_generate_result_capabilities_use_tool_access_not_connector_flag() -
         thread_id="t1",
         to_agent="cursor-sdk",
         resolved_model="cursor/claude-sonnet-5",
-        resolved_contract="light-bounded",
+        resolved_contract="none",
         warnings=[],
     )
     caps = result["capabilities"]

@@ -107,7 +107,6 @@ _PATH_LOCKS: dict[str, threading.Lock] = {}
 _PATH_LOCKS_MUTEX = threading.Lock()
 
 
-
 @contextmanager
 def path_write_lock(resolved: Path) -> Iterator[None]:
     """Serialize compare-and-write for one resolved sandbox path (in-process)."""

@@ -15,9 +15,9 @@ from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import
 
 _CONDUCTOR_PACKET = """\
 ---
-packet_kind: conductor
+
 work_key: todo:fixture-slug
-contract: light-bounded
+contract: conductor
 lane: B
 ---
 <scope>Conductor session.</scope>
@@ -47,7 +47,6 @@ def test_conductor_q2_missing_markers_degrades() -> None:
     reason = conductor_q2_score_ratify_degraded_reason(
         body=_G3_DONE_NO_MARKERS,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason == "q2_score_ratify_missing"
 
@@ -56,7 +55,6 @@ def test_conductor_q2_with_markers_not_degraded() -> None:
     reason = conductor_q2_score_ratify_degraded_reason(
         body=_G3_DONE_WITH_MARKERS,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason is None
 
@@ -65,7 +63,6 @@ def test_conductor_g3_row_pinned_not_degraded() -> None:
     reason = conductor_q2_score_ratify_degraded_reason(
         body=_G3_ROW_PINNED,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason is None
 
@@ -84,7 +81,6 @@ def test_prepare_closeout_delivery_q2_score_ratify_missing(tmp_path: Path) -> No
         degraded_reason=conductor_q2_score_ratify_degraded_reason(
             body=_G3_DONE_NO_MARKERS,
             packet_text=_CONDUCTOR_PACKET,
-            packet_kind="conductor",
         ),
         thread_id="t-conductor-q2",
         work_item_ref="todo:fixture-slug",

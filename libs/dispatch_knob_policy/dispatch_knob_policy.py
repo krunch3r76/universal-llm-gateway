@@ -24,7 +24,7 @@ __all__ = [
 ]
 
 MECHANICAL_CONTRACTS: Final[frozenset[str]] = frozenset(
-    {"pure-mechanical", "light-bounded"}
+    {"pure-mechanical", "none"}
 )
 
 # Low-cost ALTERNATIVE executor recommended for mechanical/determinate work.
@@ -61,7 +61,7 @@ def recommend_knobs(
 ) -> KnobRecommendation:
     """Return the semantic knob recommendation for a dispatch contract.
 
-    Mechanical/determinate contracts (pure-mechanical, light-bounded) recommend
+    Mechanical/determinate contracts (pure-mechanical, none) recommend
     the low-cost executor with thinking disabled and effort low. Other contracts
     return ``status="none"`` with null knobs (no opinion at this layer).
     ``task_nature`` is accepted for forward compatibility and currently unused.

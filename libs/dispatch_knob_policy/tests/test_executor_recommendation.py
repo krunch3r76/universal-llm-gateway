@@ -8,7 +8,7 @@ from dispatch_knob_policy import build_executor_recommendation
 
 def test_mechanical_recommended_on_opus_target() -> None:
     obj = build_executor_recommendation(
-        contract="light-bounded",
+        contract="none",
         target_surface="claude-cursor",
         target_model="claude-opus-4-8",
     )
@@ -56,7 +56,7 @@ def test_none_for_implement_contract() -> None:
 def test_partial_when_target_lacks_axes() -> None:
     # composer-2.5's descriptor supports only `fast`; effort/thinking unsupported.
     obj = build_executor_recommendation(
-        contract="light-bounded",
+        contract="none",
         target_surface="cursor-sdk",
         target_model="composer-2.5",
     )
@@ -72,7 +72,7 @@ def test_partial_when_target_lacks_axes() -> None:
 
 
 def test_container_always_present() -> None:
-    for contract in ("light-bounded", "pure-mechanical", "implement", "consult"):
+    for contract in ("none", "pure-mechanical", "implement", "consult"):
         obj = build_executor_recommendation(
             contract=contract,
             target_surface="claude-cursor",

@@ -27,7 +27,7 @@ pytestmark = pytest.mark.offline
 def test_prompt_and_sidecar_ref_mutually_exclusive() -> None:
     err = validate_inline_prompt_inputs(
         "generate",
-        "light-bounded",
+        "none",
         None,
         None,
         "brief",
@@ -41,7 +41,7 @@ def test_prompt_and_sidecar_ref_mutually_exclusive() -> None:
 def test_prompt_alone_is_clean() -> None:
     assert (
         validate_inline_prompt_inputs(
-            "generate", "light-bounded", None, None, "brief", None
+            "generate", "none", None, None, "brief", None
         )
         is None
     )
@@ -49,7 +49,7 @@ def test_prompt_alone_is_clean() -> None:
 
 def test_packet_path_and_prompt_are_mutually_exclusive() -> None:
     err = validate_inline_prompt_inputs(
-        "generate", "light-bounded", "tmp/p.md", None, "brief", None
+        "generate", "none", "tmp/p.md", None, "brief", None
     )
     assert err is not None
     assert err["field"] == "prompt"
@@ -79,7 +79,7 @@ def test_sidecar_ref_admitted_on_to_thread() -> None:
     assert (
         validate_inline_prompt_inputs(
             "to_thread",
-            "light-bounded",
+            "none",
             None,
             None,
             None,
@@ -188,7 +188,7 @@ def test_dispatch_thread_id_exempt_for_wrap_generate() -> None:
 def test_packet_path_ok_on_light_bounded_generate() -> None:
     assert (
         reject_unsupported_packet_inputs(
-            "generate", "light-bounded", "tmp/p.md", None
+            "generate", "none", "tmp/p.md", None
         )
         is None
     )
@@ -213,20 +213,19 @@ def test_source_ref_rejected_on_pure_mechanical_generate() -> None:
 
 def test_source_ref_rejected_on_light_bounded_generate() -> None:
     err = reject_unsupported_packet_inputs(
-        "generate", "light-bounded", None, "todo:x"
+        "generate", "none", None, "todo:x"
     )
     assert err is not None
     assert err["field"] == "source_ref"
 
 
-def test_source_ref_ok_on_light_bounded_conductor() -> None:
+def test_source_ref_ok_on_conductor() -> None:
     assert (
         reject_unsupported_packet_inputs(
             "generate",
-            "light-bounded",
+            "conductor",
             None,
             "todo:x",
-            packet_kind="conductor",
         )
         is None
     )
@@ -235,46 +234,44 @@ def test_source_ref_ok_on_light_bounded_conductor() -> None:
 def test_conductor_rejects_packet_path() -> None:
     err = reject_unsupported_packet_inputs(
         "generate",
-        "light-bounded",
+        "conductor",
         "tmp/p.md",
         "todo:x",
-        packet_kind="conductor",
     )
     assert err is not None
     assert err["field"] == "packet_path"
 
 
-def test_conductor_rejects_non_light_bounded() -> None:
+def test_conductor_requires_source_ref() -> None:
     err = reject_unsupported_packet_inputs(
         "generate",
-        "implement",
+        "conductor",
+        None,
+        None,
+    )
+    assert err is not None
+    assert err["field"] == "source_ref"
+
+
+def test_packet_kind_retired() -> None:
+    err = reject_unsupported_packet_inputs(
+        "generate",
+        "conductor",
         None,
         "todo:x",
         packet_kind="conductor",
     )
     assert err is not None
-    assert err["field"] == "contract"
+    assert err["field"] == "packet_kind"
+    assert err["error"]["code"] == "packet_kind_retired"
 
 
-def test_packet_kind_rejects_unknown() -> None:
+def test_implement_requires_source_ref_not_packet_path_alone() -> None:
     err = reject_unsupported_packet_inputs(
-        "generate",
-        "light-bounded",
-        None,
-        "todo:x",
-        packet_kind="solo",
+        "generate", "implement", "tmp/p.md", None
     )
     assert err is not None
-    assert err["field"] == "packet_kind"
-
-
-def test_packet_path_ok_on_implement_generate() -> None:
-    assert (
-        reject_unsupported_packet_inputs(
-            "generate", "implement", "tmp/p.md", None
-        )
-        is None
-    )
+    assert err["field"] == "source_ref"
 
 
 def test_source_ref_ok_on_wrap_generate() -> None:
@@ -288,7 +285,7 @@ def test_source_ref_ok_on_wrap_generate() -> None:
 
 def test_packet_inputs_rejected_on_to_thread() -> None:
     err = reject_unsupported_packet_inputs(
-        "to_thread", "light-bounded", "tmp/p.md", None
+        "to_thread", "none", "tmp/p.md", None
     )
     assert err is not None
     assert err["field"] == "packet_path"
@@ -297,7 +294,7 @@ def test_packet_inputs_rejected_on_to_thread() -> None:
 def test_no_packet_inputs_passthrough() -> None:
     assert (
         reject_unsupported_packet_inputs(
-            "generate", "light-bounded", None, None
+            "generate", "none", None, None
         )
         is None
     )
@@ -434,7 +431,7 @@ def test_cursor_sdk_checkout_lane_exempts_nest_wrap_and_named() -> None:
             model=None,
             lane="A",
             nest_under=None,
-            contract="light-bounded",
+            contract="none",
         )
         is None
     )
@@ -448,7 +445,7 @@ def test_cursor_sdk_checkout_lane_required_on_model_only() -> None:
         model="cursor/composer-2.5",
         lane=None,
         nest_under=None,
-        contract="light-bounded",
+        contract="none",
     )
     assert err is not None
     assert err["error"]["code"] == "lane_required"

@@ -169,9 +169,9 @@ A short summary renders in non-subagent `cortex_brief` operational context. Scop
 | Surface | How the body is invoked |
 |---|---|
 | **Attended IDE** + in-seat Task subagents | `reasoning-posture_ulg.mdc` `alwaysApply` + `required_gate` — read this skill body on substantive turns |
-| CDP generate (`model=cdp/…`, including `panel_dispatch` CDP legs) | Staging always merges `reasoning-posture` into `skills=` (`ensure_cdp_judgment_skills`, including light-bounded / omitted `skills`) |
+| CDP generate (`model=cdp/…`, including `panel_dispatch` CDP legs) | Staging always merges `reasoning-posture` into `skills=` (`ensure_cdp_judgment_skills`, including none / omitted `skills`) |
 | `team_dispatch` generate `seat=cursor-sdk` | GIW `resolve_prompt_preamble` prepends `REASONING_POSTURE_PREAMBLE` on judgment contracts; skip mechanical/quick. `skills=` mount is a no-op. alwaysApply rule pruned from dispatch HOME |
-| `team_dispatch` `op=handoff` consult / light-bounded | Stargate enrich inserts the same Use-line into `<invariants>`; skip implement / `cursor-implement` |
+| `team_dispatch` `op=handoff` consult / none | Stargate enrich inserts the same Use-line into `<invariants>`; skip implement / `cursor-implement` |
 | `cursor-auto` admit (first episode) | Admit report appends `REASONING_POSTURE_PREAMBLE` when `handoff_contract` warrants; nested cursor-sdk also gets GIW preamble |
 
 ## Related skills

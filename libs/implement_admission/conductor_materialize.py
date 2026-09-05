@@ -1,6 +1,6 @@
 """Render six-block conductor packet and birth scoreboard from a todo entity.
 
-Called by Stargate ``resolve_source_ref_to_packet`` when ``packet_kind=conductor``.
+Called by Stargate ``resolve_source_ref_to_packet`` when ````.
 Writes workspaces packet + cortex scoreboard tip/journal birth record.
 """
 
@@ -254,7 +254,7 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
     numbered = "\n".join(f"{i}. {c}" for i, c in enumerate(ac, start=1))
     return "\n".join(
         [
-            "contract: light-bounded conductor session",
+            "contract: conductor conductor session",
             numbered,
             "",
             render_sparse_scoreboard(
@@ -305,10 +305,9 @@ def _render_packet(ctx: ConductorMaterializeContext) -> str:
     frontmatter = "\n".join(
         [
             "---",
-            "packet_kind: conductor",
             f"work_key: {ctx.source_ref}",
             "role_name: conductor",
-            "contract: light-bounded",
+            "contract: conductor",
             "lane: B",
             "packet_sha256: PENDING",
             "generated_from: conductor_materialize_v1",

@@ -9,8 +9,8 @@ from services.git_integration_worker.cursor_sdk_packet import (
 )
 
 _ATTENDED_CONDUCTOR_PACKET = """---
-packet_kind: conductor
-contract: light-bounded
+
+contract: conductor
 lane: B
 ---
 <scope>
@@ -24,8 +24,8 @@ Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows.
 """
 
 _CONFER_CONDUCTOR_PACKET = """---
-packet_kind: conductor
-contract: light-bounded
+
+contract: conductor
 lane: B
 ---
 <scope>
@@ -55,7 +55,7 @@ def test_extract_summon_mode_absent() -> None:
 
 def test_attended_conductor_preamble_includes_resurface_block() -> None:
     preamble = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="conductor",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -76,7 +76,7 @@ def test_attended_conductor_preamble_includes_resurface_block() -> None:
 
 def test_confer_conductor_preamble_includes_away_score_ratify() -> None:
     preamble = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="conductor",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -92,15 +92,15 @@ def test_confer_conductor_preamble_includes_away_score_ratify() -> None:
 
 def test_absent_summon_mode_preamble_includes_away_score_ratify() -> None:
     absent_packet = """---
-packet_kind: conductor
-contract: light-bounded
+
+contract: conductor
 lane: B
 ---
 <scope>Conductor session — no summon_mode.</scope>
 <invariants>Use the conductor skill.</invariants>
 """
     preamble = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="conductor",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",

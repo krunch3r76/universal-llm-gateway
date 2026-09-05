@@ -248,7 +248,7 @@ def validate_conductor_packet(
     packet_kind: str | None = None,
 ) -> CloseoutStopVerdict:
     """Require conductor spawn packets to document at least one designed stop."""
-    if not _is_conductor_packet(packet_text, packet_kind=packet_kind):
+    if not _is_conductor_packet(packet_text):
         return CloseoutStopVerdict(ok=True)
     if _DESIGNED_STOP_DOC_RE.search(packet_text or ""):
         return CloseoutStopVerdict(ok=True)
@@ -380,7 +380,7 @@ def validate_conductor_closeout(
     packet_kind: str | None = None,
 ) -> CloseoutStopVerdict:
     """Validate closeout stop vocabulary + optional Mode B admit-proof."""
-    if _is_conductor_packet(packet_text, packet_kind=packet_kind):
+    if _is_conductor_packet(packet_text):
         designed = parse_designed_stop_tokens(body)
         if not designed.designed_tokens:
             return CloseoutStopVerdict(

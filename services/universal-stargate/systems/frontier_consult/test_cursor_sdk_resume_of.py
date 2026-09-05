@@ -25,7 +25,7 @@ from systems.frontier_consult.route import TeamDispatchGenerateBody, team_dispat
 def test_team_dispatch_generate_body_accepts_resume_of() -> None:
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="light-bounded",
+        contract="none",
         dispatch_thread_id="9964",
         seat="cursor-sdk",
         reuse_thread="9964",
@@ -151,7 +151,7 @@ async def test_worker_packet_dispatch_forwards_resume_of(
         model="composer-2.5",
         execution_id="exec-resume",
         packet_path="tmp/packet.md",
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         dispatch_id="child-disp",
         resume_of="parent-disp",
     )

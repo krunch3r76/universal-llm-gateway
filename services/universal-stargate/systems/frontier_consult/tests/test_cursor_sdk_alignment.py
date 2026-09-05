@@ -33,7 +33,7 @@ def captured_events(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
 def test_opus_effort_low_accepted(captured_events: dict[str, list[Any]]) -> None:
     result = align_cursor_knobs(
         resolved_model="cursor/claude-opus-4-8",
-        contract="light-bounded",
+        contract="none",
         model_knobs={"effort": "low"},
     )
     assert result.aligned_knobs == {"effort": "low"}
@@ -47,7 +47,7 @@ def test_opus_effort_low_accepted(captured_events: dict[str, list[Any]]) -> None
 def test_sonnet_fast_dropped_unsupported(captured_events: dict[str, list[Any]]) -> None:
     result = align_cursor_knobs(
         resolved_model="claude-sonnet-5",
-        contract="light-bounded",
+        contract="none",
         model_knobs={"fast": "true"},
     )
     assert result.aligned_knobs == {}
@@ -61,7 +61,7 @@ def test_sonnet_fast_dropped_unsupported(captured_events: dict[str, list[Any]]) 
 def test_opus_context_200k_invalid_value(captured_events: dict[str, list[Any]]) -> None:
     result = align_cursor_knobs(
         resolved_model="claude-opus-4-8",
-        contract="light-bounded",
+        contract="none",
         model_knobs={"context": "200k"},
     )
     resolution = result.knob_resolution_as_dicts()["context"]
@@ -89,7 +89,7 @@ def test_cost_risk_no_suggestion_when_explicit_effort(
 ) -> None:
     result = align_cursor_knobs(
         resolved_model="claude-opus-4-8",
-        contract="light-bounded",
+        contract="none",
         model_knobs={"effort": "high"},
     )
     warning = result.warnings[0].to_dict()
@@ -104,7 +104,7 @@ def test_cost_intent_suppresses_caller_warning(
 ) -> None:
     result = align_cursor_knobs(
         resolved_model="claude-opus-4-8",
-        contract="light-bounded",
+        contract="none",
         cost_intent="deliberate_high_cost",
         cost_intent_reason="operator approved",
     )
@@ -132,7 +132,7 @@ def test_align_cursor_knobs_rejects_reasoning_effort_kwarg() -> None:
     with pytest.raises(TypeError):
         align_cursor_knobs(  # type: ignore[call-arg]
             resolved_model="composer-2.5",
-            contract="light-bounded",
+            contract="none",
             reasoning_effort="high",
         )
 
@@ -151,7 +151,7 @@ def test_implement_contract_no_cost_warning(
 def test_wire_shapes_match_fork_c(captured_events: dict[str, list[Any]]) -> None:
     result = align_cursor_knobs(
         resolved_model="claude-opus-4-8",
-        contract="light-bounded",
+        contract="none",
         model_knobs={"effort": "low", "context": "200k"},
     )
     warnings = result.warnings_as_dicts()

@@ -73,7 +73,7 @@ def should_bridge_cursor_check_review(
     contract: str,
     resolved_model: str,
 ) -> bool:
-    return contract == "light-bounded" and is_cursor_check_review_model(resolved_model)
+    return contract == "none" and is_cursor_check_review_model(resolved_model)
 
 
 async def post_role_labeled_check_turn(

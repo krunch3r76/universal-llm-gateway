@@ -35,7 +35,7 @@ def test_derive_generate_review_child_suppresses() -> None:
 def test_recon_pending_density_is_valid() -> None:
     validate_generate_density_intake(
         request_id="r6",
-        contract="light-bounded",
+        contract="none",
         density_triage="recon_pending",
         review_opt_out_reason_code=None,
         auto_review_child=False,
@@ -56,7 +56,7 @@ def test_unknown_density_triage_422() -> None:
     with pytest.raises(FrontierEndpointError) as exc:
         validate_generate_density_intake(
             request_id="r1",
-            contract="light-bounded",
+            contract="none",
             density_triage="bogus",
             review_opt_out_reason_code=None,
             auto_review_child=False,
@@ -92,7 +92,7 @@ def test_opt_out_non_default_on_422() -> None:
     with pytest.raises(FrontierEndpointError) as exc:
         validate_generate_density_intake(
             request_id="r4",
-            contract="light-bounded",
+            contract="none",
             density_triage="trivial",
             review_opt_out_reason_code="routine_single_subsystem",
             auto_review_child=False,
@@ -104,7 +104,7 @@ def test_opt_out_child_lane_422() -> None:
     with pytest.raises(FrontierEndpointError) as exc:
         validate_generate_density_intake(
             request_id="r5",
-            contract="light-bounded",
+            contract="none",
             density_triage="judgment_required",
             review_opt_out_reason_code="routine_single_subsystem",
             auto_review_child=True,

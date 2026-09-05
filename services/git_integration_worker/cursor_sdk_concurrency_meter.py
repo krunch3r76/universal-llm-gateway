@@ -23,7 +23,7 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
 )
 
 HISTORICAL_INCLUSION_RULE = (
-    "corrected peaks: contract in {implement, light-bounded} only; "
+    "corrected peaks: contract in {implement, none} only; "
     "exclude contract_unknown (NULL contract); exclude lane_unknown "
     "(NULL lease_key and source_repo); exclude reaper-inflated terminals "
     "(terminal_at >> last_heartbeat_at); overlap pairs lane-scoped"
@@ -31,7 +31,7 @@ HISTORICAL_INCLUSION_RULE = (
 
 # Commit 10811941 — own-commit path attribution floor (fold-2 census).
 ATTRIBUTION_FLOOR_ISO = "2026-08-01T22:24:33+00:00"
-_IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "light-bounded"})
+_IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "none"})
 _orphan_aged_emitted: set[tuple[str, str]] = set()
 
 

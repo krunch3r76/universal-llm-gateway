@@ -22,7 +22,7 @@ def _effective_read_only(req: CursorDispatchRequest, contract: str) -> bool:
         return False
     if contract == "consult":
         return True
-    if contract == "light-bounded":
+    if contract == "none":
         return False
     return False
 

@@ -28,7 +28,7 @@ def _job(body: str = "TYPE: CONTINUITY_HANDOFF\ncarry the arc\n") -> AutoJob:
         to_agent="cursor",
         desired_model="auto",
         desired_effort="xhigh",
-        contract="light-bounded",
+        contract="none",
         continuity_hop=True,
     )
 

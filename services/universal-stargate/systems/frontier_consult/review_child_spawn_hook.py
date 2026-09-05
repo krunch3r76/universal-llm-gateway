@@ -289,7 +289,7 @@ async def _dispatch_review_child(
                 seat=_CURSOR_SDK_ROLE,
                 dispatch_thread_id=delivery_thread,
                 model=reviewer.model,
-                contract="light-bounded",
+                contract="none",
                 prompt=prompt,
                 # Child must not cascade another review-child spawn.
                 auto_review_child=False,
@@ -308,7 +308,7 @@ async def _dispatch_review_child(
             dispatch_thread_id=delivery_thread,
             thread=delivery_thread,
             subject=f"generate independent review — {request_id[:8]}",
-            contract="light-bounded",
+            contract="none",
             model=reviewer.model,
             auto_review_child=True,
             read_only=True,

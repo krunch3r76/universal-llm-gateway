@@ -28,9 +28,9 @@ from services.git_integration_worker.cursor_sdk_closeout.deliverable_probe impor
 
 _CONDUCTOR_PACKET = """\
 ---
-packet_kind: conductor
+
 work_key: todo:fixture-slug
-contract: light-bounded
+contract: conductor
 lane: B
 ---
 <scope>Conductor session.</scope>
@@ -65,7 +65,6 @@ def test_narrative_resumed_at_not_conductor_consult_pending() -> None:
     reason = conductor_consult_pending_degraded_reason(
         body=_NARRATIVE_RESUME_CONSULT,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason is None
 
@@ -74,7 +73,6 @@ def test_consult_pending_with_next_admit_is_consult_reason() -> None:
     reason = conductor_consult_pending_degraded_reason(
         body=_WAIT_WITH_HANDOFF,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason == CONDUCTOR_CONSULT_PENDING
 
@@ -83,7 +81,6 @@ def test_bare_consult_pending_is_handoff_missing() -> None:
     reason = conductor_consult_pending_degraded_reason(
         body=_BARE_CONSULT,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason == CONDUCTOR_CONSULT_HANDOFF_MISSING
 
@@ -92,7 +89,6 @@ def test_consult_pending_without_handoff_is_handoff_missing() -> None:
     reason = conductor_consult_pending_degraded_reason(
         body=_WAIT_NO_HANDOFF,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason == CONDUCTOR_CONSULT_HANDOFF_MISSING
 
@@ -139,7 +135,6 @@ def test_row_hop_is_consult_reason() -> None:
     reason = conductor_closeout_degraded_reason(
         body=_ROW_HOP,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason == CONDUCTOR_ROW_HOP
     incomplete = classify_status_incomplete_class(
@@ -157,7 +152,6 @@ def test_row_pinned_is_consult_reason() -> None:
     reason = conductor_closeout_degraded_reason(
         body=_ROW_PINNED,
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
     )
     assert reason == CONDUCTOR_ROW_PINNED
     incomplete = classify_status_incomplete_class(
@@ -175,7 +169,6 @@ def test_nested_live_outranks_empty_assistant() -> None:
     reason = conductor_closeout_degraded_reason(
         body="",
         packet_text=_CONDUCTOR_PACKET,
-        packet_kind="conductor",
         nested_live=True,
     )
     assert reason == CONDUCTOR_NEST_IN_FLIGHT

@@ -200,9 +200,9 @@ def test_process_job_ruling_acs_raise_handoff_off_mechanical(
 
     result = asyncio.run(process_job(job, bus=bus))
     submit.assert_awaited_once()
-    assert submit.await_args.kwargs["handoff_contract"] == "light-bounded"
+    assert submit.await_args.kwargs["handoff_contract"] == "none"
     admit_call = bus.reply.await_args_list[0]
     assert "contract=implement" in admit_call.kwargs["body"]
-    assert "handoff=light-bounded" in admit_call.kwargs["body"]
+    assert "handoff=none" in admit_call.kwargs["body"]
     assert result.get("ok") is True
     assert result.get("phase") == "nested_dispatch"

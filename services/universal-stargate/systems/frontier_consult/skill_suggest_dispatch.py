@@ -414,7 +414,7 @@ async def _fetch_extended_candidates(
     loaded: list[str],
     conversation_context: str | None,
 ) -> tuple[list[dict[str, Any]], list[str], list[str]]:
-    """Pre-fetch full seat-applicable candidate set for light-bounded worker."""
+    """Pre-fetch full seat-applicable candidate set for none worker."""
     payload: dict[str, Any] = {
         "agent": agent,
         "loaded": loaded,
@@ -582,7 +582,7 @@ async def dispatch_skill_suggest(
             model=None,
             subject=f"skill-suggest dispatch — {request_id[:8]}",
             caller_agent=canonical_agent,
-            contract="light-bounded",
+            contract="none",
             packet_path=None,
             message_text=message,
             read_only=True,

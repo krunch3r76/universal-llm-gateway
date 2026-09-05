@@ -117,9 +117,9 @@ async def _post_hop_admit_report(
                 "resolved_escalation": cdp_model,
             }
         handoff = resolve_handoff_contract(
-            job.contract or "light-bounded", body=job.body
+            job.contract or "none", body=job.body
         )
-        contract = job.contract or "light-bounded"
+        contract = job.contract or "none"
         propagate_admission = None
         if contract.strip().lower() == PROPAGATE_CONTRACT:
             propagate_admission = admit_propagate_body(job.body)

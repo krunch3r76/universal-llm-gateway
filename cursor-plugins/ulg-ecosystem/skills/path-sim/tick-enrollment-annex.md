@@ -190,7 +190,7 @@ model-endpoint (IF6 escape = CLI `claude-ai-sync-jupiter project-ask`. MCP `proj
 
 ```
 # Primary
-team_dispatch(op=generate, model=cdp/opus-5, contract=light-bounded,
+team_dispatch(op=generate, model=cdp/opus-5, contract=none,
               sidecar_ref=cortex://…, dispatch_thread_id=…)
 agent_bus.wait(… from_agent=web-anthropic)   # reply OR DELIVERY FAILED; long running ≠ stalled
 

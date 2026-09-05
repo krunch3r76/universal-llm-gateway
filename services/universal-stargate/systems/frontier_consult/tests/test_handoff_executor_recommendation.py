@@ -10,7 +10,7 @@ from systems.frontier_consult.handoff_response import (
 
 def test_field_is_additive_and_namespaced() -> None:
     field = build_executor_recommendation_field(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         target_surface="claude-cursor",
         target_model="claude-opus-4-8",
     )

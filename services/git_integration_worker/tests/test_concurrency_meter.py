@@ -236,7 +236,7 @@ def test_peak_concurrent_write_implement_three_overlaps() -> None:
         ),
         DispatchInterval(
             "b",
-            "light-bounded",
+            "none",
             False,
             "2026-08-01T10:10:00+00:00",
             "2026-08-01T10:25:00+00:00",
@@ -323,7 +323,7 @@ def test_census_fixture_numbers(
         (
             (
                 "census-a1",
-                "light-bounded",
+                "none",
                 "2026-08-01T13:09:00+00:00",
                 "2026-08-01T13:14:00+00:00",
             ),
@@ -337,7 +337,7 @@ def test_census_fixture_numbers(
         (
             (
                 "census-a2",
-                "light-bounded",
+                "none",
                 "2026-08-01T22:13:00+00:00",
                 "2026-08-01T22:16:00+00:00",
             ),
@@ -351,7 +351,7 @@ def test_census_fixture_numbers(
         (
             (
                 "census-a3",
-                "light-bounded",
+                "none",
                 "2026-08-01T22:27:00+00:00",
                 "2026-08-01T22:32:00+00:00",
             ),
@@ -488,7 +488,7 @@ def test_count_overlap_pairs_write_only() -> None:
         ),
         DispatchInterval(
             "w2",
-            "light-bounded",
+            "none",
             False,
             "2026-08-01T10:10:00+00:00",
             "2026-08-01T10:20:00+00:00",

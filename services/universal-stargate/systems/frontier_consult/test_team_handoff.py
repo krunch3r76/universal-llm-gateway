@@ -3097,7 +3097,7 @@ def test_t3c_cursor_sdk_generate_consult_uses_message(
             "op": "generate",
             "seat": "cursor-sdk",
             "dispatch_thread_id": "dt-consult",
-            "contract": "light-bounded",
+            "contract": "none",
             "lane": "A",
         },
     )
@@ -3372,7 +3372,7 @@ def test_handoff_other_models_still_admits_with_cost_risk_note() -> None:
 
     result = align_cursor_knobs(
         resolved_model="cursor/claude-opus-4-8",
-        contract="light-bounded",
+        contract="none",
     )
     warning = result.warnings[0].to_dict()
     assert warning["code"] == "sdk_cost_risk"

@@ -44,7 +44,7 @@ def test_packet_preamble_includes_breadth_recon_block() -> None:
 
 def test_packet_preamble_light_bounded_includes_reasoning_posture() -> None:
     preamble = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
     )
@@ -57,7 +57,7 @@ def test_packet_preamble_light_bounded_includes_reasoning_posture() -> None:
     ("contract", "expected"),
     [
         ("investigate", True),
-        ("light-bounded", True),
+        ("none", True),
         ("implement", False),
         ("pure-mechanical", False),
     ],

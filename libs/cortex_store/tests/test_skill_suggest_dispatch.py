@@ -95,7 +95,7 @@ def test_worker_message_includes_score_zero_candidate() -> None:
         limit=8,
         all_candidates=candidates,
     )
-    assert "light-bounded" in msg
+    assert "none" in msg
     assert '"stage_a_score": 0' in msg
 
 
@@ -167,7 +167,7 @@ async def test_dispatch_contract_is_light_bounded() -> None:
         patch("systems.frontier_consult.skill_suggest_dispatch._publish_event"),
     ):
         await dispatch_skill_suggest(request_id="req-ac14-a", body=body)
-    assert dispatch.await_args.kwargs["contract"] == "light-bounded"
+    assert dispatch.await_args.kwargs["contract"] == "none"
 
 
 @pytest.mark.offline

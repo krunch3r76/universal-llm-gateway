@@ -778,7 +778,7 @@ def resolve_cursor_sdk_generate_target(
 ) -> tuple[str, str, str, str]:
     """Backward-compat wrapper — use resolve_auto_seat_generate_target(seat=…)."""
     return resolve_auto_seat_generate_target(
-        role, model=model, request_id=request_id, packet_kind=packet_kind
+        role, model=model, request_id=request_id
     )
 
 

@@ -166,7 +166,7 @@ def _stage_inputs(
     """Stage prompt; ``skills`` → slash manifest for + → Skills attach at runtime.
 
     Judgment-pair skills are always ensured at staging (even when ``skills`` is
-    omitted on light-bounded CDP generate). Stamps Block 5 MCP defaults for
+    omitted on none CDP generate). Stamps Block 5 MCP defaults for
     life/web before sealing (parity handoff enrich; a:32088).
     """
     cortex_uri = None
@@ -254,7 +254,7 @@ async def dispatch_cdp_generate(
         raise FrontierEndpointError(
             request_id=request_id,
             field="contract",
-            reason="CDP model-endpoint admits light-bounded/pure-mechanical only",
+            reason="CDP model-endpoint admits none/pure-mechanical only",
             status_code=422,
             code="cdp_contract_unsupported",
         )
@@ -341,9 +341,9 @@ async def dispatch_cdp_generate(
             tags=[
                 "agent:web-anthropic",
                 "type:generate",
-                f"contract:{contract or 'light-bounded'}",
+                f"contract:{contract or 'none'}",
             ],
-            handoff_contract=contract or "light-bounded",
+            handoff_contract=contract or "none",
             bus_lifecycle=getattr(body, "bus_lifecycle", None),
         )
         after_turn = 1
@@ -469,7 +469,7 @@ async def dispatch_cdp_generate(
         "to_agent": CDP_REPLY_FROM,
         "reply_from_agent": CDP_REPLY_FROM,
         "resolved_model": model,
-        "resolved_contract": contract or "light-bounded",
+        "resolved_contract": contract or "none",
         "substrate": CDP_SUBSTRATE,
         "cost_source": "unavailable",
         "prompt_uri": staged.prompt_uri,

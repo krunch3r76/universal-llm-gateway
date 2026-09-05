@@ -168,7 +168,7 @@ When blocked on a fact this seat cannot settle from tools alone:
 |---|---|
 | 1 | Independent observation — `agent_bus` fetch / `busy_status` / latest turns |
 | 2 | Consult **cursor** via `agent_bus.request` (investigate / verify / **code-seat ops**) — only while Auto can claim |
-| 2b | **Judgment stuck (this CDP seat unsure)** — DIRECTIVE `cursor-auto` to nest `cursor-sdk` consult: default **`cursor/claude-opus-5`** (`contract=light-bounded`, live checkout). **`cursor/gpt-5.6-terra` only if operator/packet names Other Models** (cost, 2026-08-25). Fall through to **`cdp/fable`** if the named pin is refused — inform-then-proceed, inv 10. **`cursor/claude-sonnet-5` — last resort, explicit `model=` pin only:** fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe. `cursor/claude-fable-5{,-1}` **blocked** (cost) — use `cdp/fable`. |
+| 2b | **Judgment stuck (this CDP seat unsure)** — DIRECTIVE `cursor-auto` to nest `cursor-sdk` consult: default **`cursor/claude-opus-5`** (`contract=none`, live checkout). **`cursor/gpt-5.6-terra` only if operator/packet names Other Models** (cost, 2026-08-25). Fall through to **`cdp/fable`** if the named pin is refused — inform-then-proceed, inv 10. **`cursor/claude-sonnet-5` — last resort, explicit `model=` pin only:** fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe. `cursor/claude-fable-5{,-1}` **blocked** (cost) — use `cdp/fable`. |
 | 2c | **Auto queue is the blocker** (`serial_occupant=null` ∧ waiters, or queued_age not advancing) — `agent_bus.send(to=cursor)` attended IDE (never arms Auto). Then `COME TO IDE` only if no IDE session is live (inv 40). ¬ step 3. ¬ same-thread `request` (withdraws the queued predecessor). |
 | 3 | **Cowork Ask / push the human principal** — one question + recommended answer — **true operator-only gates only** (credentials, irreversible human acts, IDE Restart / Reload Window, Authorize-triggers click, genuine *what we want* ambiguity after 2b exhausted); ¬ routine routing because Cowork chat might be human; ¬ "I'm stuck" judgment forks; ¬ missing autonomous lifecycle (inv 39); ¬ Auto-wedge `manage` (inv 40) |
 
@@ -459,8 +459,8 @@ model, effort, why. Halt regardless when premium spend is paused. Fewer than fou
 | 1 | this seat | DIRECTIVE | Pin the Question **without your hypothesis** (inv 28a); name what a wrong bind would cost |
 | 2 | cursor-auto | — | Admit, hold the lease; every later hop is `nest_under` it (inv 19) |
 | 3 | **`seat=cursor-sdk`** | `investigate` | Recon. **Stop the chain here** if the tree answers it — hops 4–5 are not owed |
-| 4 | `cursor/claude-opus-5` `{xhigh\|max}` | `light-bounded` | Architecture bind: per-slice `files_expected` + acceptance criteria, ordered |
-| 5 | `cdp/fable` (default) or explicit `cursor/gpt-5.6-terra` | `light-bounded` | **Independent check** — falsify hop 4's load-bearing premises. Default is CDP Fable (not Other Models). Terra only if operator/packet names Other Models. `cursor/claude-fable-5{,-1}` **blocked** (cost). Do not leave hop 5 undischarged; update peer disclosure (inv 36). |
+| 4 | `cursor/claude-opus-5` `{xhigh\|max}` | `none` | Architecture bind: per-slice `files_expected` + acceptance criteria, ordered |
+| 5 | `cdp/fable` (default) or explicit `cursor/gpt-5.6-terra` | `none` | **Independent check** — falsify hop 4's load-bearing premises. Default is CDP Fable (not Other Models). Terra only if operator/packet names Other Models. `cursor/claude-fable-5{,-1}` **blocked** (cost). Do not leave hop 5 undischarged; update peer disclosure (inv 36). |
 | 6 | **`seat=cursor-sdk` Composer** | `pure-mechanical` | Densify into a Composer-ready orchestrator packet |
 | 7 | this seat | DISPOSITION | **Shape level, ≤15 lines** — ratify or one correction; ¬ absorb the packet body |
 | 8 | cursor-auto → composer-2.5 | `implement` | Run the wave |

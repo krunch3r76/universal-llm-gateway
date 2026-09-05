@@ -433,7 +433,7 @@ def _effective_read_only(req: CursorDispatchRequest, contract: str) -> bool:
         return False
     if contract == "consult":
         return True
-    if contract == "light-bounded":
+    if contract == "none":
         return False
     return False
 
@@ -464,8 +464,7 @@ def _emit_enriched_queued(
         purpose=association["purpose"],
         story_id=association["story_id"],
         topic=association["topic"],
-        nest_under=association["nest_under"],
-        packet_kind=association["packet_kind"],
+        nest_under=association["nest_under"]["packet_kind"],
         model_knobs_requested=_stamp_model_knobs_requested(cached.model_id, req.model_knobs),
         queued_on=f"write_lease:{lease_key}",
     )
@@ -490,8 +489,7 @@ def _maybe_emit_giw_dispatched(
         purpose=association["purpose"],
         story_id=association["story_id"],
         topic=association["topic"],
-        nest_under=association["nest_under"],
-        packet_kind=association["packet_kind"],
+        nest_under=association["nest_under"]["packet_kind"],
         model_knobs_requested=_stamp_model_knobs_requested(req.model, req.model_knobs),
     )
 
@@ -1491,14 +1489,15 @@ async def _deliver_sdk_closeout(
     from services.git_integration_worker.cursor_sdk_closeout.conductor_closeout_pager import (
         page_conductor_silence,
     )
+    from services.git_integration_worker.cursor_sdk_packet import infer_contract_from_text
 
-    packet_kind = extract_packet_kind_from_packet(packet_text or "")
+    wire_contract = infer_contract_from_text(packet_text or "")
     await page_conductor_silence(
         degraded_reason=degraded_reason,
         nest_under=req.nest_under,
         dispatch_id=req.dispatch_id,
         thread_id=req.thread_id,
-        is_conductor=(packet_kind == "conductor"),
+        is_conductor=(wire_contract == "conductor"),
     )
     baseline = await asyncio.to_thread(
         CursorDispatchLedger.instance().read_wt_baseline,
@@ -1646,7 +1645,6 @@ async def _deliver_sdk_closeout(
         )
         if closeout_qualifies_for_resume_retain(
             closeout_body=delivery.body,
-            packet_kind=packet_kind,
         ):
             await asyncio.to_thread(
                 persist_resume_retain, dispatch_id=req.dispatch_id
@@ -2131,8 +2129,8 @@ async def _finalize_success(
     degraded_reason = (
         degraded_implement_reason(outcome) if contract == "implement" else None
     )
-    # deliverables_expected gate (todo:cursor-sdk-deliverables-expected-light-bounded
-    # + todo:success-shaped-silence operator bind 6929#534): light-bounded path
+    # deliverables_expected gate (todo:cursor-sdk-deliverables-expected-none
+    # + todo:success-shaped-silence operator bind 6929#534): none path
     # extract, implement contract, OR commissioner-named files_expected /
     # evidence_required obligations — worker-set, not producer-declared.
     light_bounded_expected_paths = (
@@ -2171,7 +2169,7 @@ async def _finalize_success(
     # run whose captured body (after transcript reconstruction in resolve_run_body)
     # is empty must never report status:complete + 0B. Implement-specific reasons
     # (run_status / zero_tool_calls) take precedence when present.
-    # Closeout-truth backstop (friction 21654 fix #3): a light-bounded dispatch
+    # Closeout-truth backstop (friction 21654 fix #3): a none dispatch
     # must not claim complete when a named deliverable never landed. Holds
     # regardless of whether the #1/#2 write-path instrumentation saw the choke.
     if degraded_reason is None:
@@ -2193,7 +2191,6 @@ async def _finalize_success(
         _conductor_reason = conductor_closeout_degraded_reason(
             body=outcome.body,
             packet_text=packet_text or None,
-            packet_kind=_packet_kind,
             nested_live=_nested_live,
         )
         if _is_conductor:
@@ -2221,7 +2218,7 @@ async def _finalize_success(
                 )
             )
         # Observability: if filesystem ground truth suppressed a would-be
-        # light-bounded degrade, surface it (frontier.sdk.closeout.reconciled).
+        # none degrade, surface it (frontier.sdk.closeout.reconciled).
         if deliverable_present and degraded_reason is None:
             suppressed_reason = light_bounded_deliverable_reason(
                 body=outcome.body,
@@ -2377,8 +2374,7 @@ async def cursor_dispatch(
             detail_summary="read_only=true is incompatible with contract=implement",
             invalid_fields=["read_only"],
         )
-    candidate_source_ref = req.source_ref or extract_source_ref_from_packet(packet_text)
-    packet_kind = extract_packet_kind_from_packet(packet_text) if packet_text else None
+    candidate_source_ref = req.source_ref or extract_source_ref_from_packet(packet_text)(packet_text) if packet_text else None
     candidate_work_key = req.work_key or (
         extract_work_key_from_packet(packet_text) if packet_text else None
     )
@@ -2793,8 +2789,7 @@ async def cursor_dispatch(
 
     if packet_kind == "conductor":
         conductor_patch: dict[str, object] = {
-            "packet_kind": "conductor",
-            "work_key": candidate_work_key,
+            "contract": "conductor", "work_key": candidate_work_key,
         }
         identity_ref = candidate_work_key or candidate_source_ref or req.source_ref
         if identity_ref:

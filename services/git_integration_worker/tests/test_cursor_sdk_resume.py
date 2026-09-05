@@ -553,15 +553,12 @@ def test_resume_retain_blocks_prune_for_completed_conductor(
 def test_closeout_qualifies_for_resume_retain() -> None:
     assert closeout_qualifies_for_resume_retain(
         closeout_body="status: complete\nstop: ROW_PINNED",
-        packet_kind=None,
     )
     assert closeout_qualifies_for_resume_retain(
         closeout_body="status: complete",
-        packet_kind="conductor",
     )
     assert not closeout_qualifies_for_resume_retain(
         closeout_body="status: complete",
-        packet_kind=None,
     )
 
 

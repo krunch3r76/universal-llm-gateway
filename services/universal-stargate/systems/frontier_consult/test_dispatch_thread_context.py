@@ -31,7 +31,7 @@ def test_allowed_prompt_recipients_cursor_sdk_aliases() -> None:
 
 def test_is_server_dispatch_turn_body_pointer() -> None:
     body = (
-        "artisan light-bounded generate dispatch — prompt on dispatch thread "
+        "artisan none generate dispatch — prompt on dispatch thread "
         "`5129` (correlation `cde567c3999a`).\n\nRead full prompt: …"
     )
     assert is_server_dispatch_turn_body(body) is True
@@ -52,7 +52,7 @@ def test_frozen_turn_pointer_uses_integer_not_latest() -> None:
 
     body = build_generate_dispatch_pointer(
         lane="SDK",
-        contract="light-bounded",
+        contract="none",
         dispatch_thread_id="6655",
         correlation_id="exec-6655",
         prompt_turn_number=2198,
@@ -144,7 +144,7 @@ async def test_server_pointer_still_pointer_code() -> None:
                 "from": "dispatch",
                 "to": "artisan",
                 "body": (
-                    "artisan light-bounded generate dispatch — prompt on "
+                    "artisan none generate dispatch — prompt on "
                     "dispatch thread `5129` (correlation `abc`).\n\nSummary: x"
                 ),
             },
@@ -162,7 +162,7 @@ async def test_life_pointer_refusal_omits_split_thread_advice() -> None:
                 "from": "dispatch",
                 "to": "life",
                 "body": (
-                    "life light-bounded generate dispatch — prompt on "
+                    "life none generate dispatch — prompt on "
                     "dispatch thread `9980` (correlation `abc`).\n\nSummary: x"
                 ),
             },

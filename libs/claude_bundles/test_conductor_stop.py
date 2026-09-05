@@ -161,7 +161,7 @@ def test_g3_row_pinned_without_s4b_still_ok() -> None:
 
 
 def test_g1_pin_from_stop_after_in_packet() -> None:
-    packet = "stop_after pin: G1.\ncontract: light-bounded"
+    packet = "stop_after pin: G1.\ncontract: conductor"
     body = "status: complete\nROW_PINNED\nstop: ROW_PINNED"
     assert is_g1_pin(body, packet_text=packet)
     verdict = validate_conductor_closeout(body, packet_text=packet)
@@ -171,16 +171,16 @@ def test_g1_pin_from_stop_after_in_packet() -> None:
 
 _CONDUCTOR_PACKET = """\
 ---
-packet_kind: conductor
-contract: light-bounded
+
+contract: conductor
 ---
 <scope>Conductor session.</scope>
 """
 
 _ATTENDED_CONDUCTOR_PACKET = """\
 ---
-packet_kind: conductor
-contract: light-bounded
+
+contract: conductor
 ---
 <scope>summon_mode: attended</scope>
 """

@@ -7,7 +7,7 @@ connector. Customize → Skills only carries ``shared_sync`` ∪ ``life_local``.
 Roleless ``team_dispatch(model=cdp/…)`` skills= delivery (fleet rule;
 operator bind 2026-07-26 — multi-skill via composer **+ → Skills → pick**):
 - Staging always merges ``reasoning-posture`` (``decision:reasoning-frontier-skill-pair``),
-  including light-bounded / omitted ``skills=``
+  including none / omitted ``skills=``
 - ``shared_sync`` slugs → leading ``/<slug>\\n`` **manifest** lines (not typed);
   ``project_ask`` / ``send_prompt`` attaches each via + → Skills → list select
 - Non-Claude / ``cursor_only`` → **read-instructed** ``<skills_inline>`` XML

@@ -71,7 +71,7 @@ def _closeout() -> ImplementCloseout:
 
 def _conductor_shape_closeout(
     *,
-    contract: str = "light-bounded",
+    contract: str = "none",
     gate_d_failed: bool = True,
     propagation_residue: list[str] | None = None,
 ) -> ImplementCloseout:

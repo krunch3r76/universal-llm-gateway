@@ -26,9 +26,10 @@ def reasoning_posture_warrants_injection(contract: str | None) -> bool:
     return (contract or "").strip().lower() not in REASONING_POSTURE_SKIP_CONTRACTS
 
 
-# ``light-bounded`` leaves the option space to the seat, so it needs the rival
-# fill more than ``consult``, which arrives with a pinned Question and scope-lock.
-HYPOTHESIZE_SIMULATE_CONTRACTS = frozenset({"consult", "light-bounded"})
+# Judgment contracts that receive hypothesize-simulate rival-fill injection.
+HYPOTHESIZE_SIMULATE_CONTRACTS = frozenset(
+    {"consult", "sketch", "conductor", "none"}
+)
 
 __all__ = [
     "HYPOTHESIZE_SIMULATE_CONTRACTS",

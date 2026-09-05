@@ -171,9 +171,9 @@ the operator lane — **paste ≠ commission**. Operator-facing contract: `cdp-o
 **Judgment skill is MANDATORY on cursor-sdk break-in (BINDING).** Do **not** pass
 `skills=["reasoning-posture"]` on cursor-sdk generate — that mount is a no-op.
 Judgment rails arrive via GIW `resolve_prompt_preamble` auto-invoke on
-non-mechanical cursor-sdk contracts (`light-bounded` / `consult`); skip
+non-mechanical cursor-sdk contracts (`none` / `consult`); skip
 `implement` / `pure-mechanical` and quick (`answer` / `execute` / `propagate`).
-Handoff enrich inserts the same Use-line on consult / light-bounded packets.
+Handoff enrich inserts the same Use-line on consult / none packets.
 Packet body SHOULD still open with `Use the reasoning-posture skill` as
 belt-and-suspenders — prompt invoke is the enforcement surface, not `skills=`.
 

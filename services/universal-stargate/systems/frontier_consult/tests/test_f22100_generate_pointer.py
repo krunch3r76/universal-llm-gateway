@@ -30,7 +30,7 @@ assert len(LONG_PROMPT) > 5000
 def test_f22100_build_generate_dispatch_pointer_reference_envelope() -> None:
     body = build_generate_dispatch_pointer(
         lane="synthesizer",
-        contract="light-bounded",
+        contract="none",
         dispatch_thread_id="4116",
         correlation_id="req-abc123",
         summary="Investigate the dispatch pointer truncation defect.",
@@ -59,14 +59,14 @@ def test_f22100_pointer_summary_is_single_bounded_line() -> None:
 def test_f22100_both_lanes_structurally_equivalent() -> None:
     api = build_generate_dispatch_pointer(
         lane="reviewer",
-        contract="light-bounded",
+        contract="none",
         dispatch_thread_id="4116",
         correlation_id="req-1",
         summary="s",
     )
     sdk = build_generate_dispatch_pointer(
         lane="SDK",
-        contract="light-bounded",
+        contract="none",
         dispatch_thread_id="4116",
         correlation_id="exec-1",
         summary="s",
@@ -86,7 +86,7 @@ async def test_f22100_api_role_generate_pointer_is_reference_not_truncation() ->
         op="generate",
         role="synthesizer",
         dispatch_thread_id="4116",
-        contract="light-bounded",
+        contract="none",
         model="anthropic/claude-sonnet-4-6",
         caller_agent="claude-web",
     )
@@ -187,7 +187,7 @@ async def test_f22100_cursor_sdk_no_packet_pointer_matches_api_role_shape(
     result = await dispatch_cursor_sdk_generate(
         request_id="req-f22100-sdk",
         role="cursor-sdk",
-        contract="light-bounded",
+        contract="none",
         model=None,
         subject="f22100 sdk pointer",
         caller_agent="claude-web",

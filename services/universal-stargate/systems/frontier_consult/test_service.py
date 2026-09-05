@@ -1045,13 +1045,13 @@ async def test_build_dispatch_body_omits_resolved_contract_from_pipeline_options
         dispatch_thread_id=_DISPATCH_THREAD,
         output_contract="thread",
         op="to_thread",
-        resolved_contract="light-bounded",
+        resolved_contract="none",
         # target_thread omitted so verify_thread_writable is skipped
         # (guard is output_contract == "thread" and target_thread).
     )
     body = await build_dispatch_body(req)
 
-    assert body["resolved_contract"] == "light-bounded"
+    assert body["resolved_contract"] == "none"
     assert "resolved_contract" not in body["pipeline_options"]
     assert body["pipeline_options"]["output_contract"] == "thread"
 
@@ -1091,7 +1091,7 @@ async def test_build_dispatch_body_pipeline_options_within_handler_accepted_keys
         dispatch_thread_id=_DISPATCH_THREAD,
         output_contract="thread",
         op="to_thread",
-        resolved_contract="light-bounded",
+        resolved_contract="none",
     )
     body = await build_dispatch_body(req)
     po = dict(body["pipeline_options"])
@@ -1114,7 +1114,7 @@ async def test_build_dispatch_body_pipeline_options_within_handler_accepted_keys
         ("reviewer", "implement", None, True),
         ("reviewer", None, {"coding_session": True}, True),
         ("reviewer", None, None, False),
-        ("reviewer", "light-bounded", None, False),
+        ("reviewer", "none", None, False),
     ],
 )
 @pytest.mark.asyncio
@@ -1232,7 +1232,7 @@ async def test_build_dispatch_body_carries_skills_mount(
         dispatch_thread_id=_DISPATCH_THREAD,
         model="openai/gpt-5.5",
         skills=["agent-identity-signoff"],
-        resolved_contract="light-bounded",
+        resolved_contract="none",
     )
     events: list[Any] = []
 
@@ -1273,7 +1273,7 @@ async def test_skills_non_openai_admits_layer_a_fs_line(
         dispatch_thread_id=_DISPATCH_THREAD,
         model="anthropic/claude-opus-4-8",
         skills=["architecture-invariants"],
-        resolved_contract="light-bounded",
+        resolved_contract="none",
     )
     events: list[Any] = []
     body = await build_dispatch_body(req, event_publisher=events.append)
@@ -1315,7 +1315,7 @@ async def test_skills_unknown_id_rejects_before_pipeline(
         dispatch_thread_id=_DISPATCH_THREAD,
         model="openai/gpt-5.5",
         skills=["definitely-not-a-skill"],
-        resolved_contract="light-bounded",
+        resolved_contract="none",
     )
     with pytest.raises(FrontierEndpointError) as exc:
         await build_dispatch_body(req)
@@ -1356,7 +1356,7 @@ async def test_api_role_generate_forwards_skills_and_emits_dispatch_skills_mount
         op="generate",
         role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
-        contract="light-bounded",
+        contract="none",
         model="openai/gpt-5.5",
         skills=["agent-identity-signoff"],
         caller_agent="cursor",
@@ -1444,7 +1444,7 @@ async def test_api_role_generate_skills_non_openai_admits(
         op="generate",
         role="reviewer",
         dispatch_thread_id=_DISPATCH_THREAD,
-        contract="light-bounded",
+        contract="none",
         model="anthropic/claude-opus-4-8",
         skills=["architecture-invariants"],
         caller_agent="cursor",
@@ -1538,7 +1538,7 @@ async def test_skills_dispatch_correlates_endpoint_request_id_on_lifecycle_event
         dispatch_thread_id=_DISPATCH_THREAD,
         model="openai/gpt-5.5",
         skills=["agent-identity-signoff"],
-        resolved_contract="light-bounded",
+        resolved_contract="none",
     )
     endpoint_events: list[Any] = []
     body = await build_dispatch_body(req, event_publisher=endpoint_events.append)

@@ -178,7 +178,7 @@ async def commission_cdp_escalation(
         "model": model,
         "prompt": prompt,
         "dispatch_thread_id": job.thread_id,
-        "contract": "light-bounded",
+        "contract": "none",
         "caller_agent": "cursor-auto",
     }
     if purpose:

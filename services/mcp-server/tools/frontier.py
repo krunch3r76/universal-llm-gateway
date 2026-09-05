@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, get_args
 import httpx
 from mcp_events import record
 from pydantic import Field
+from team_dispatch_vocab import TeamDispatchContract
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
@@ -279,8 +280,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         subject: str | None = None,
         packet_path: str | None = None,
         source_ref: str | None = None,
-        contract: Literal["light-bounded", "pure-mechanical", "implement", "wrap"]
-        | None = None,
+        contract: TeamDispatchContract | None = None,
         density_triage: _DENSITY_TRIAGE_LITERAL | None = None,
         review_opt_out_reason_code: (
             Literal[
@@ -342,7 +342,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
-        packet_kind: Literal["conductor"] | None = None,
         workspace: Annotated[
             str | None,
             Field(
@@ -381,7 +380,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         ``contract:`` → role ``default_contract`` → default ``consult``.
         The derived value may be ``consult`` — a handoff-only contract that is
         NOT a passable ``contract`` argument (the param enum is
-        ``light-bounded | pure-mechanical | implement``) and is NOT a valid
+        ``none | pure-mechanical | implement``) and is NOT a valid
         generate/to_thread contract. A packet with acceptance criteria in
         ``<task_guidance>`` but no contract signal resolves to
         ``handoff_contract_ambiguous`` (422) — never silent consult admission.
@@ -440,7 +439,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         **Contract (REQUIRED — generate/to_thread):** ``contract`` is REQUIRED
         on ``op="generate"`` and ``op="to_thread"``; there is NO derivation on
         these paths.         ``op="generate"`` accepts
-        ``light-bounded | pure-mechanical | implement | wrap`` (``implement`` and
+        ``none | pure-mechanical | implement | wrap`` (``implement`` and
         ``wrap`` are generate-only — the ``cursor-sdk`` packet lane); ``contract=wrap`` is
         also generate-only on ``seat=cursor-sdk`` — server-side gate-then-
         materialize via ``prepare_implement_packet``, returns HTTP 200 with
@@ -448,9 +447,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         forbids ``packet_path``, exempts ``dispatch_thread_id``; rejects
         gating-misleading knobs (``density_triage``, ``review_opt_out_reason_code``,
         ``auto_review_child``). For ``seat=cursor-sdk`` generate,
-        ``packet_path`` is honored across ``light-bounded``, ``pure-mechanical``,
+        ``packet_path`` is honored across ``none``, ``pure-mechanical``,
         and ``implement``; ``source_ref`` is implement/wrap, or
-        ``packet_kind=conductor`` with ``contract=light-bounded`` (conductor
+        ```` with ``contract=conductor`` (conductor
         spawn — See agent_skill:conductor).
         When no ``packet_path`` is supplied, prompt context is read from the
         latest turn on ``dispatch_thread_id`` (bus-turn fallback). Prefer
@@ -458,12 +457,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         supply the brief on the admit call so it cannot desync from the latest
         bus turn (friction 24391). Exactly one of ``packet_path``, ``prompt``,
         or ``sidecar_ref`` may be explicit; otherwise the role-gated latest bus
-        turn is fallback. ``op="to_thread"`` accepts ``light-bounded |
+        turn is fallback. ``op="to_thread"`` accepts ``none |
         pure-mechanical``. An omitted ``contract`` is
         rejected with ``validation_error`` "contract is required for
         op='generate'/'to_thread'". The legacy ``consult`` contract is DROPPED
         (operator ruling 2026-06-12, ``decision:team-dispatch-messages-fold``) —
-        it is NOT aliased to ``light-bounded``; migrate explicitly.
+        it is NOT aliased to ``none``; migrate explicitly.
 
         Three ops:
         - ``op="generate"``: admits dispatch and returns ``{execution_id,
@@ -549,14 +548,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           **+ → Skills → pick**. Non-Claude skills are inlined at the top of
           the sealed prompt. Staging always merges ``reasoning-posture`` into
           effective skills (including when ``skills`` is omitted on
-          light-bounded — ``decision:reasoning-frontier-skill-pair``).
+          none — ``decision:reasoning-frontier-skill-pair``).
           Cursor-sdk generate (any ``team_dispatch`` caller, not Auto-only):
           GIW ``resolve_prompt_preamble`` auto-invokes
           ``Use the reasoning-posture skill`` on non-mechanical contracts
-          (``light-bounded`` / ``consult``); ``implement`` / ``pure-mechanical``
+          (``none`` / ``consult``); ``implement`` / ``pure-mechanical``
           and quick (``answer`` / ``execute`` / ``propagate``) skip.
           ``skills=`` is not mounted on cursor-sdk.
-          Handoff consult / light-bounded: enrich inserts the same Use-line
+          Handoff consult / none: enrich inserts the same Use-line
           into ``<invariants>``; implement skips.
           MCP-predicated skills on a non-MCP dispatch reject 422
           ``skills_mcp_predicated`` naming the offenders; scope-default
@@ -863,7 +862,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "code": "validation_error",
                     "message": (
                         "contract is required for op='generate'/'to_thread'; "
-                        "use light-bounded, pure-mechanical, implement, or wrap"
+                        "use sketch, implement, wrap, conductor, pure-mechanical, or none"
                     ),
                 },
                 "field": "contract",
@@ -882,7 +881,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         if wrap_err is not None:
             return wrap_err
         packet_input_err = reject_unsupported_packet_inputs(
-            op, contract, packet_path, source_ref, packet_kind=packet_kind
+            op, contract, packet_path, source_ref, prompt=prompt
         )
         if packet_input_err is not None:
             return packet_input_err
@@ -921,8 +920,6 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["packet_path"] = packet_path
             if source_ref is not None:
                 body["source_ref"] = source_ref
-            if packet_kind is not None:
-                body["packet_kind"] = packet_kind
             if prompt is not None:
                 body["prompt"] = prompt
             if sidecar_ref is not None:
@@ -985,7 +982,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         effort_for_relay = (reasoning_effort or "").strip() or None
         caller_agent = infer_caller_agent_for_conductor(
             caller_agent,
-            packet_kind=packet_kind,
+            contract=contract,
         )
         for key, val in (
             ("model", model),

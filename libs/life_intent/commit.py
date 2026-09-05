@@ -156,7 +156,7 @@ async def _prepare_recon_handle(
         model_knobs=dict(_RECON_MODEL_KNOBS),
         subject=subject,
         caller_agent="web-anthropic",
-        contract="light-bounded",
+        contract="none",
         packet_path=packet_path,
         message_text=None,
         reuse_thread=None,

@@ -155,7 +155,7 @@ BINDABLE_CDP_ESCALATIONS: tuple[str, ...] = (
     "cdp/fable",
     "cdp/sonnet-5",
 )
-_JUDGMENT_HANDOFF = "light-bounded"
+_JUDGMENT_HANDOFF = "none"
 
 
 def _effort_omitted(desired_effort: str | None) -> bool:
@@ -430,7 +430,7 @@ def resolve_desired_effort(
     ``auto``/omitted ⇒ per-contract default from ``route_policy.yaml contract_effort``
     (process-cached registry): investigate/confer/seed/verify/execute/propagate →
     ``xhigh``; implement/recon/ask/answer → ``medium``; ``implement`` whose handoff
-    contract is ``light-bounded`` (body declares judgment) → ``xhigh``.
+    contract is ``none`` (body declares judgment) → ``xhigh``.
     ``requested`` echoes ``auto`` so the admit turn surfaces the rule via
     ``admit_effort_override_rule_line``.
     """
@@ -507,7 +507,7 @@ def resolve_handoff_contract(
 
     Unmarked ``implement`` (no body, or body without judgment markers) stays
     ``pure-mechanical``. A body that declares judgment raises to
-    ``light-bounded`` — the existing non-mechanical token — without adding a
+    ``none`` — the existing non-mechanical token — without adding a
     member to ``REASONING_POSTURE_SKIP_CONTRACTS``.
     """
     raw = (contract or "answer").strip().lower() or "answer"
@@ -518,16 +518,16 @@ def resolve_handoff_contract(
             )
 
             if body_declares_judgment(body):
-                return "light-bounded"
+                return "none"
         return "pure-mechanical"
     if raw == "execute":
-        return "light-bounded"
+        return "none"
     if raw == "propagate":
-        return "light-bounded"
+        return "none"
     if raw == "ask":
         return "ask"
     if raw in {"investigate", "confer", "seed"}:
-        return "light-bounded"
+        return "none"
     if raw == "verify":
-        return "light-bounded"
-    return "light-bounded"
+        return "none"
+    return "none"

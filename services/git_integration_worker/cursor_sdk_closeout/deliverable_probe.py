@@ -1,6 +1,6 @@
 """Packet ``files_expected`` extraction and the Gate-D deliverable probe adapter.
 
-Turns packet/light-bounded expected paths into the list Gate-D consumes, then
+Turns packet/none expected paths into the list Gate-D consumes, then
 builds a probe ``ImplementCloseout`` and calls
 ``evaluate_deliverable_verification`` (logic stays in implement_admission).
 ``_baseline_dirty_in_expected`` lives in ``worktree_baseline``; this module

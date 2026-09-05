@@ -33,7 +33,7 @@ async def test_dispatch_api_role_generate_packet_path_admits_with_packet_body(
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        contract="light-bounded",
+        contract="none",
         packet_path="tmp/packet.md",
         caller_agent="cursor",
     )
@@ -95,7 +95,7 @@ async def test_dispatch_api_role_generate_packet_path_messages_equal_packet_body
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        contract="light-bounded",
+        contract="none",
         packet_path="tmp/packet.md",
         model="anthropic/claude-sonnet-4-6",
         caller_agent="cursor",
@@ -153,7 +153,7 @@ async def test_dispatch_api_role_generate_missing_packet_path_raises_422(
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        contract="light-bounded",
+        contract="none",
         packet_path="tmp/missing-packet.md",
         caller_agent="cursor",
     )
@@ -185,7 +185,7 @@ async def test_dispatch_api_role_generate_source_ref_still_raises_422() -> None:
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        contract="light-bounded",
+        contract="none",
         source_ref="todo:sample",
         caller_agent="cursor",
     )
@@ -211,7 +211,7 @@ async def test_dispatch_api_role_generate_provisions_thread_and_to_thread() -> N
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        contract="light-bounded",
+        contract="none",
         model="anthropic/claude-sonnet-4-6",
         caller_agent="cursor",
     )
@@ -278,7 +278,7 @@ async def test_dispatch_api_role_generate_empty_thread_raises_422() -> None:
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        contract="light-bounded",
+        contract="none",
         caller_agent="cursor",
     )
     response = Response()
@@ -338,7 +338,7 @@ async def test_dispatch_api_role_generate_json_response_posts_failure_turn() -> 
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        contract="light-bounded",
+        contract="none",
         caller_agent="cursor",
     )
     response = Response()
@@ -391,7 +391,7 @@ async def test_dispatch_api_role_generate_dict_error_posts_failure_turn() -> Non
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        contract="light-bounded",
+        contract="none",
         caller_agent="cursor",
     )
     response = Response()
@@ -437,7 +437,7 @@ async def test_dispatch_api_role_generate_capabilities_model_fallback() -> None:
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        contract="light-bounded",
+        contract="none",
         caller_agent="cursor",
     )
     response = Response()
@@ -486,7 +486,7 @@ async def test_api_generate_default_on_recommended_review() -> None:
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        contract="light-bounded",
+        contract="none",
         density_triage="judgment_required",
         caller_agent="cursor",
     )
@@ -533,7 +533,7 @@ async def test_api_generate_trivial_present_null_review() -> None:
         op="generate",
         role="synthesizer",
         dispatch_thread_id="thread:dispatch:test",
-        contract="light-bounded",
+        contract="none",
         density_triage="trivial",
         caller_agent="cursor",
     )
@@ -580,7 +580,7 @@ async def test_api_role_generate_reuses_dispatch_prompt_thread() -> None:
         op="generate",
         role="synthesizer",
         dispatch_thread_id="2683",
-        contract="light-bounded",
+        contract="none",
         model="anthropic/claude-sonnet-4-6",
         caller_agent="cursor",
     )
@@ -649,7 +649,7 @@ async def test_api_role_generate_split_thread_mints_despite_reusable_arc() -> No
         op="generate",
         role="synthesizer",
         dispatch_thread_id="2683",
-        contract="light-bounded",
+        contract="none",
         split_thread=True,
         caller_agent="cursor",
     )

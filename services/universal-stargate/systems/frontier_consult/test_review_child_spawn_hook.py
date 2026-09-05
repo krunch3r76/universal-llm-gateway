@@ -335,14 +335,14 @@ def test_ac10_spawn_body_read_only_light_bounded() -> None:
         role="reviewer",
         dispatch_thread_id="thread:parent",
         thread="thread:parent",
-        contract="light-bounded",
+        contract="none",
         model="openai/gpt-5.5",
         auto_review_child=True,
         read_only=True,
         spawn_review_provenance="generate_review_child",
     )
     assert body.read_only is True
-    assert body.contract == "light-bounded"
+    assert body.contract == "none"
 
 
 @pytest.mark.asyncio

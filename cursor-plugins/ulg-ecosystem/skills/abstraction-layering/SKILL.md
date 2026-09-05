@@ -37,7 +37,7 @@ inherits ratification downward.
 
 Lane brand = **layering**. The G3 stage token remains **`densify`**.
 `/layer` is a **gate-shape wrapper**, not the front door. First commissioned
-utterance: `work-item-seed-path` S4a → spawn `packet_kind=conductor`. The
+utterance: `work-item-seed-path` S4a → spawn ``. The
 conductor drives G1–G7. Fable defaults:
 `work-item-seed-path` § When Fable defaults. Bind: `layer-conductor-unify` §3.1.
 

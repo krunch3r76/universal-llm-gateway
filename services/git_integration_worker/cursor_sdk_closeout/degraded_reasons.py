@@ -144,7 +144,7 @@ def empty_assistant_turn_reason(outcome: SdkRunOutcome) -> str | None:
     Distinct from ``empty_output_degraded_reason`` (finished-gated, body-only, so
     it misses a non-``finished`` empty stop) and from ``degraded_implement_reason``'s
     ``zero_tool_calls`` (implement-only). This fires for every contract and every
-    status, closing the hole that let a light-bounded/consult hollow no-op reach
+    status, closing the hole that let a none/consult hollow no-op reach
     the pin path with ``degraded_reason=None``.
     """
     if not outcome.body.strip() and outcome.tool_call_count == 0:
@@ -173,7 +173,6 @@ def conductor_q2_score_ratify_degraded_reason(
     return validate_q2_away_score_ratify(
         body,
         packet_text=packet_text,
-        packet_kind=packet_kind,
     )
 
 
@@ -248,22 +247,22 @@ def conductor_closeout_degraded_reason(
         return CONDUCTOR_NEST_IN_FLIGHT
     return (
         conductor_consult_pending_degraded_reason(
-            body=body, packet_text=packet_text, packet_kind=packet_kind
+            body=body, packet_text=packet_text
         )
         or conductor_row_hop_degraded_reason(
-            body=body, packet_text=packet_text, packet_kind=packet_kind
+            body=body, packet_text=packet_text
         )
         or conductor_row_pinned_degraded_reason(
-            body=body, packet_text=packet_text, packet_kind=packet_kind
+            body=body, packet_text=packet_text
         )
         or conductor_g1_pin_s4b_degraded_reason(
-            body=body, packet_text=packet_text, packet_kind=packet_kind
+            body=body, packet_text=packet_text
         )
         or conductor_q2_score_ratify_degraded_reason(
-            body=body, packet_text=packet_text, packet_kind=packet_kind
+            body=body, packet_text=packet_text
         )
         or conductor_unwitnessed_done_degraded_reason(
-            body=body, packet_text=packet_text, packet_kind=packet_kind
+            body=body, packet_text=packet_text
         )
     )
 

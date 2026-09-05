@@ -33,12 +33,23 @@ class SourceRef:
 
 MATERIALIZE_KIND_IMPLEMENT = "implement"
 MATERIALIZE_KIND_CONDUCTOR = "conductor"
+MATERIALIZE_KIND_SKETCH = "sketch"
 
 
-def resolve_materialize_kind(*, packet_kind: str | None) -> str:
-    """Return implement vs conductor materializer key from wire ``packet_kind``."""
-    kind = (packet_kind or "").strip().lower()
-    if kind == MATERIALIZE_KIND_CONDUCTOR:
+def resolve_materialize_kind(
+    *,
+    contract: str | None = None,
+    packet_kind: str | None = None,
+) -> str:
+    """Return materializer key from wire ``contract`` (``packet_kind`` retired)."""
+    wire = (contract or "").strip().lower()
+    if wire == MATERIALIZE_KIND_SKETCH:
+        return MATERIALIZE_KIND_SKETCH
+    if wire == MATERIALIZE_KIND_CONDUCTOR:
+        return MATERIALIZE_KIND_CONDUCTOR
+    # Legacy packet_kind tolerated only during migration reads, not admit.
+    legacy = (packet_kind or "").strip().lower()
+    if legacy == MATERIALIZE_KIND_CONDUCTOR and not wire:
         return MATERIALIZE_KIND_CONDUCTOR
     return MATERIALIZE_KIND_IMPLEMENT
 

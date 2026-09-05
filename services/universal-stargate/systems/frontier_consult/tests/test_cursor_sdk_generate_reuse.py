@@ -61,7 +61,7 @@ async def test_reuse_thread_no_create(monkeypatch: pytest.MonkeyPatch) -> None:
     await dispatch_cursor_sdk_generate(
         request_id="req-reuse",
         role="cursor-sdk",
-        contract="light-bounded",
+        contract="none",
         model=None,
         subject="subject",
         caller_agent="claude-web",
@@ -149,7 +149,7 @@ async def test_create_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
     await dispatch_cursor_sdk_generate(
         request_id="req-create",
         role="cursor-sdk",
-        contract="light-bounded",
+        contract="none",
         model=None,
         subject=None,
         caller_agent=None,
@@ -198,7 +198,7 @@ async def test_generate_forwards_execution_id_to_worker(
     result = await dispatch_cursor_sdk_generate(
         request_id="req-forward",
         role="cursor-sdk",
-        contract="light-bounded",
+        contract="none",
         model=None,
         subject=None,
         caller_agent="claude-web",

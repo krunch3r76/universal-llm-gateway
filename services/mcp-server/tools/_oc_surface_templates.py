@@ -185,8 +185,8 @@ tool_search(query="pipeline")    # → enables pipeline(op="result", ...)
 ```
 
 **Dispatch & Consult — pick by CAPABILITY, not model family:**
-- API consult → `team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="light-bounded", prompt="<brief>"|sidecar_ref="cortex://…", model="provider/model"?)`; latest bus turn is fallback only
-- bounded determinate task → team_dispatch(op=generate, seat=cursor-sdk, dispatch_thread_id="<thread>", contract=light-bounded|pure-mechanical|implement, packet_path?=…)
+- API consult → `team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="none", prompt="<brief>"|sidecar_ref="cortex://…", model="provider/model"?)`; latest bus turn is fallback only
+- bounded determinate task → team_dispatch(op=generate, seat=cursor-sdk, dispatch_thread_id="<thread>", contract=none|pure-mechanical|implement, packet_path?=…)
 - auto seat on handoff → 422 `seat_not_manual` (use op=generate, seat=cursor-sdk)
 
 On the code surface (`/mcp/code`) `team_dispatch` is primary — call directly.
@@ -220,7 +220,7 @@ natural part of how you work, not an exceptional event. **Surface gate first**: 
 
 **Pick by capability** (same axis as the boot briefing — not "always team first"):
 - Consult via **API role** (`reviewer`, `artisan`, `skeptic`, `gatherer`, …) →
-  `team_dispatch(op=generate|to_thread, role=…, dispatch_thread_id=<thread>, contract=light-bounded|pure-mechanical, prompt=<brief>|sidecar_ref=cortex://…, …)`.
+  `team_dispatch(op=generate|to_thread, role=…, dispatch_thread_id=<thread>, contract=none|pure-mechanical, prompt=<brief>|sidecar_ref=cortex://…, …)`.
   The role-gated latest thread turn remains fallback for legacy callers.
 - Override model within role `allowed_models` → add `model="provider/model"`.
   **Not** seat slugs (`claude-web`) — web seats have no `default_model` on `generate`.
@@ -304,7 +304,7 @@ Code-MCP only — on `/mcp/life` these are shapes you ASK a code seat to run, no
 
 **Consult by API role** — `team_dispatch`:
 ```
-team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="light-bounded", model=..., generation_options=..., caller_agent=...)
+team_dispatch(op="generate", role=..., dispatch_thread_id="<thread>", contract="none", model=..., generation_options=..., caller_agent=...)
 ```
 then `pipeline(op="result", execution_id=..., wait_seconds=60)`. Role contract:
 `default_model` when model omitted, `allowed_models` when `model=` supplied,
@@ -313,7 +313,7 @@ with `field` and `request_id` BEFORE dispatch.
 
 **Durable bus artifacts** (`op="to_thread"`):
 ```
-team_dispatch(op="to_thread", role=..., dispatch_thread_id="<thread>", contract="light-bounded", thread="<id>", subject=...)
+team_dispatch(op="to_thread", role=..., dispatch_thread_id="<thread>", contract="none", thread="<id>", subject=...)
 ```
 then `agent_bus(tool="fetch", arguments='{"thread": "<id>"}')`. Stargate posts
 on the callee's behalf — no `agent_bus.reply` required from the dispatched model.

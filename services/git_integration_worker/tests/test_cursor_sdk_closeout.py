@@ -128,7 +128,7 @@ def test_resolve_prompt_preamble_implement_no_self_post() -> None:
 
 def test_resolve_prompt_preamble_non_implement_no_self_post() -> None:
     preamble = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
     )
@@ -482,7 +482,7 @@ def test_prepare_closeout_delivery_baseline_none_ignores_dirty_tree(
 def test_prepare_closeout_delivery_baseline_none_still_harvests_pytest(
     tmp_path: Path,
 ) -> None:
-    """Wiring: harvest is not gated on baseline (e93f light-bounded path)."""
+    """Wiring: harvest is not gated on baseline (e93f none path)."""
     from services.git_integration_worker.cursor_sdk_stream_capture import (
         ToolCallObservation,
     )
@@ -681,7 +681,7 @@ def test_prepare_closeout_delivery_implement_unavailable(tmp_path: Path) -> None
 def test_prepare_closeout_delivery_light_bounded_written_path_complete(
     tmp_path: Path,
 ) -> None:
-    """AC: light-bounded dispatch that wrote its named path is not false-degraded."""
+    """AC: none dispatch that wrote its named path is not false-degraded."""
     target = tmp_path / "tasks" / "journal" / "review.md"
     target.parent.mkdir(parents=True)
     target.write_text("review notes\n", encoding="utf-8")
@@ -711,7 +711,7 @@ def test_prepare_closeout_delivery_light_bounded_written_path_complete(
 def test_prepare_closeout_delivery_light_bounded_missing_path_partial(
     tmp_path: Path,
 ) -> None:
-    """AC: light-bounded dispatch that named a path but never wrote it is flagged."""
+    """AC: none dispatch that named a path but never wrote it is flagged."""
     outcome = SdkRunOutcome(
         body="I'll write the review to tasks/journal/review.md.",
         status="finished",
@@ -1974,7 +1974,7 @@ def test_finalize_closeout_body_preserves_effects_total() -> None:
 def test_prepare_closeout_delivery_light_bounded_gitignored_carries_effects(
     tmp_path: Path,
 ) -> None:
-    """AC10: light-bounded assembly inherits ``effects`` for untracked writes."""
+    """AC10: none assembly inherits ``effects`` for untracked writes."""
     from implement_admission.closeout_models import (
         EffectEntry,
         EffectsManifest,

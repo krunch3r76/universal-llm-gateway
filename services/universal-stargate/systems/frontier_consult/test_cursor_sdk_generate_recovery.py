@@ -95,7 +95,7 @@ async def test_prepared_handle_retry_reuses_identities(
         model=None,
         subject="s",
         caller_agent="dispatch",
-        contract="light-bounded",
+        contract="none",
         packet_path="tmp/packet.md",
         message_text=None,
     )
@@ -129,7 +129,7 @@ async def test_handle_roundtrip_preserves_fingerprint_fields() -> None:
         family="cursor",
         platform="sdk",
         to_agent="cursor-sdk:dispatch:e1",
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         packet_path="tmp/p.md",
         message=None,
         caller_agent="web-anthropic",
@@ -171,7 +171,7 @@ async def test_generate_composes_prepare_then_dispatch(
         model=None,
         subject="s",
         caller_agent="dispatch",
-        contract="light-bounded",
+        contract="none",
         packet_path="tmp/packet.md",
         message_text=None,
     )

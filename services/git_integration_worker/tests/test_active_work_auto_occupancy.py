@@ -165,7 +165,7 @@ def test_claim_job_refused_while_draining() -> None:
         to_agent="cursor",
         desired_model="auto",
         desired_effort="medium",
-        contract="light-bounded",
+        contract="none",
     )
     controller.begin_drain(
         reason="r", intent_id="i-hop", drain_epoch=controller.next_epoch()

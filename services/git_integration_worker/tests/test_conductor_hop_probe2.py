@@ -53,7 +53,7 @@ _CONDUCTOR_PACKET = (
     "---\n"
     "packet_kind: conductor\n"
     f"source_ref: {_WORK_KEY}\n"
-    "contract: light-bounded\n"
+    "contract: conductor\n"
     "lane: B\n"
     "summon_mode: confer-and-finish\n"
     "summoning_thread_id: 9638\n"
@@ -166,7 +166,7 @@ def _admit_predecessor(
         dispatch_id=dispatch_id,
         execution_id=execution_id,
         message=_CONDUCTOR_PACKET,
-        handoff_contract="light-bounded",
+        handoff_contract="conductor",
         source_ref=_WORK_KEY,
         lane="B",
         hop_seq=1,
@@ -185,7 +185,7 @@ def _admit_predecessor(
             thread_id=_THREAD_ID,
             model_id="composer-2.5",
         ),
-        contract="light-bounded",
+        contract="conductor",
         source_repo="/repo/lane-probe2",
         lease_key="/repo/lane-probe2",
         work_key=_WORK_KEY,
@@ -197,8 +197,7 @@ def _admit_predecessor(
     ledger.merge_record_json(
         dispatch_id=dispatch_id,
         patch={
-            "packet_kind": "conductor",
-            "lane": "B",
+            "contract": "conductor", "lane": "B",
             "lane_branch": _LANE_BRANCH,
             "source_ref": _WORK_KEY,
             "summon_mode": "confer_and_finish",
@@ -227,7 +226,7 @@ def _hop_dispatch_payload(body: dict[str, Any]) -> dict[str, Any]:
         "model": model,
         "dispatch_id": successor_id,
         "execution_id": exec_id,
-        "handoff_contract": body.get("contract") or "light-bounded",
+        "handoff_contract": body.get("contract") or "conductor",
         "caller_agent": body.get("caller_agent"),
         "source_ref": body["source_ref"],
         "lane": body.get("lane") or "B",
@@ -326,9 +325,9 @@ async def test_probe2_two_row_mechanical_conductor_mission(
     assert succ_rec.get("lane") == "B"
 
     preamble = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="conductor",
         prompt_preamble=None,
-        inferred_contract="light-bounded",
+        inferred_contract="conductor",
         lane="B",
         lane_branch=_LANE_BRANCH,
         dispatch_id=succ["dispatch_id"],

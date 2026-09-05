@@ -16,14 +16,14 @@ def test_build_sdk_closeout_subject_investigate_handoff_leg() -> None:
         model="cursor/composer-2.5",
         dispatch_id="auto-472",
         execution_id="exec-472",
-        message="TYPE: DIRECTIVE\ncontract: investigate\nhandoff=light-bounded\n",
-        handoff_contract="light-bounded",
+        message="TYPE: DIRECTIVE\ncontract: investigate\nhandoff=none\n",
+        handoff_contract="none",
         admitted_via="cursor-auto",
         caller_agent="cursor-auto",
     )
-    subject = build_sdk_closeout_subject(req, contract="light-bounded")
+    subject = build_sdk_closeout_subject(req, contract="none")
     assert subject == (
-        "cursor-sdk CLOSEOUT auto-472 contract=investigate handoff=light-bounded "
+        "cursor-sdk CLOSEOUT auto-472 contract=investigate handoff=none "
         "admitted_via=cursor-auto caller=cursor-auto"
     )
 

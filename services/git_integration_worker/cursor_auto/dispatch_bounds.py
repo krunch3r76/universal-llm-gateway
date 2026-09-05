@@ -47,7 +47,7 @@ from services.git_integration_worker.cursor_auto.wire_map import (
 
 # Judgment defaults: wire_map auto path reads ``workflows.*.contracts``.
 # ``resolve_handoff_contract`` maps unmarked ``implement`` here; judgment-bearing
-# implement bodies raise to ``light-bounded`` instead.
+# implement bodies raise to ``none`` instead.
 MECHANICAL_HANDOFF_CONTRACT = "pure-mechanical"
 
 

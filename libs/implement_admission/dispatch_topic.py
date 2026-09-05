@@ -1,7 +1,7 @@
 """Dispatch topic extraction for SDK nest-tree board paint (G5.1).
 
 Text fallback for GIW and non-conductor admits; structural conductor mission
-threading for Stargate prepare when ``packet_kind=conductor``.
+threading for Stargate prepare when ``contract=conductor``.
 """
 
 from __future__ import annotations
@@ -14,9 +14,27 @@ _TOPIC_MAX_CHARS = 160
 _PREFERRED_TOPIC_PREFIXES = ("so_what:", "ulg_gain:")
 _CORPUS_LINE_PREFIXES = ("intent:", "problem:")
 _CONDUCTOR_SCOPE_SKIP_RE = re.compile(r"^Conductor session for\b", re.IGNORECASE)
-_PACKET_KIND_FRONTMATTER_RE = re.compile(
-    r"^packet_kind:\s*(\S+)\s*$", re.MULTILINE | re.IGNORECASE
+_CONTRACT_FRONTMATTER_RE = re.compile(
+    r"^contract:\s*(\S+)\s*$", re.MULTILINE | re.IGNORECASE
 )
+
+
+def extract_contract_from_body(text: str | None) -> str | None:
+    """Return ``contract:`` frontmatter when present."""
+    if not text:
+        return None
+    match = _CONTRACT_FRONTMATTER_RE.search(text)
+    if not match:
+        return None
+    return match.group(1).strip().lower()
+
+
+def extract_packet_kind_from_body(text: str | None) -> str | None:
+    """Legacy alias — reads ``contract:`` frontmatter (``packet_kind`` retired)."""
+    contract = extract_contract_from_body(text)
+    if contract == "conductor":
+        return "conductor"
+    return None
 
 
 def _cap_topic(raw_topic: str) -> str:
@@ -99,21 +117,11 @@ def _extract_scope_prose(body: str) -> str | None:
     return None
 
 
-def extract_packet_kind_from_body(text: str | None) -> str | None:
-    """Return ``packet_kind:`` frontmatter when present."""
-    if not text:
-        return None
-    match = _PACKET_KIND_FRONTMATTER_RE.search(text)
-    if not match:
-        return None
-    return match.group(1).strip().lower()
-
-
 def extract_dispatch_topic(body: str | None) -> str | None:
     """One-line operator topic from packet/message prose, capped at 160 chars.
 
     Skips YAML frontmatter, XML tag lines, skill-invocation lines, and
-    ``packet_kind`` / ``work_key`` keys. Prefers ``so_what:`` / ``ulg_gain:``,
+    ``contract`` / ``work_key`` keys. Prefers ``so_what:`` / ``ulg_gain:``,
     then corpus ``Intent:`` / ``Problem:``, then first real ``<scope>`` prose
     that is not ``Conductor session for …``; otherwise omits.
     """
@@ -158,14 +166,15 @@ def derive_conductor_topic_from_packet(packet_text: str) -> str | None:
 
 def derive_handle_topic(
     *,
-    packet_kind: str | None,
-    packet_text: str | None,
+    contract: str | None = None,
+    packet_kind: str | None = None,
+    packet_text: str | None = None,
     message_text: str | None = None,
     todo_name: str | None = None,
 ) -> str | None:
     """Stargate admit-path topic derivation."""
-    kind = (packet_kind or "").strip().lower()
-    if kind == "conductor":
+    wire = (contract or packet_kind or extract_contract_from_body(packet_text) or "").strip().lower()
+    if wire == "conductor":
         if todo_name:
             return conductor_mission_topic(todo_name)
         if packet_text:

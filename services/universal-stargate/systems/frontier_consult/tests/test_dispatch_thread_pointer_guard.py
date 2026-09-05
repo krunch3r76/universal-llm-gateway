@@ -23,7 +23,7 @@ pytestmark = pytest.mark.offline
 def test_api_generate_pointer_body_detected() -> None:
     body = build_generate_dispatch_pointer(
         lane="skeptic",
-        contract="light-bounded",
+        contract="none",
         dispatch_thread_id="4741",
         correlation_id="ca68430154ba",
         summary="CHALLENGE — blind panel",
@@ -59,10 +59,10 @@ async def test_read_latest_rejects_pointer_turn(monkeypatch: pytest.MonkeyPatch)
 
     pointer = build_generate_dispatch_pointer(
         lane="reviewer",
-        contract="light-bounded",
+        contract="none",
         dispatch_thread_id="4741",
         correlation_id="94af4263019d",
-        summary="skeptic light-bounded generate dispatch",
+        summary="skeptic none generate dispatch",
     )
 
     class _Resp:

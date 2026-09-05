@@ -193,7 +193,7 @@ async def test_post_harvest_residual_re_issue_subject_when_incumbent_present():
         to_agent="cursor-auto",
         desired_model="cdp/opus-5",
         desired_effort="high",
-        contract="light-bounded",
+        contract="none",
         continuity_hop=True,
         continuity_matched_token="cadence:auto",
     )
@@ -242,7 +242,7 @@ def _hop_and_commission(q, *, thread_id: str, claim_commission: bool):
         to_agent="cursor-auto",
         desired_model="cdp/opus-5",
         desired_effort="high",
-        contract="light-bounded",
+        contract="none",
         continuity_hop=True,
         continuity_matched_token="cadence:auto",
     )
@@ -311,7 +311,7 @@ async def test_post_harvest_residual_none_phase_distinguishes_empty_lane():
         to_agent="cursor-auto",
         desired_model="cdp/opus-5",
         desired_effort="high",
-        contract="light-bounded",
+        contract="none",
         continuity_hop=True,
         continuity_matched_token="cadence:auto",
     )
@@ -442,7 +442,7 @@ def test_incumbent_for_thread_queued_then_claimed_prefers_claimed():
         to_agent="cursor-auto",
         desired_model="auto",
         desired_effort="high",
-        contract="light-bounded",
+        contract="none",
         continuity_hop=True,
     )
     found = q.incumbent_for_thread("T-pref", exclude_job_id=hop.job_id)

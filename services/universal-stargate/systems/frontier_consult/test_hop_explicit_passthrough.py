@@ -17,7 +17,7 @@ def test_team_dispatch_generate_body_accepts_hop_triplet() -> None:
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="light-bounded",
+        contract="none",
         dispatch_thread_id="9964",
         seat="cursor-sdk",
         lane="B",
@@ -35,7 +35,7 @@ def test_team_dispatch_generate_body_accepts_park_harvest_reason() -> None:
 
     body = TeamDispatchGenerateBody(
         op="generate",
-        contract="light-bounded",
+        contract="none",
         dispatch_thread_id="9964",
         seat="cursor-sdk",
         lane="B",
@@ -52,7 +52,7 @@ def test_team_dispatch_generate_body_rejects_partial_hop_triplet() -> None:
     with pytest.raises(ValidationError):
         TeamDispatchGenerateBody(
             op="generate",
-            contract="light-bounded",
+            contract="none",
             dispatch_thread_id="9964",
             seat="cursor-sdk",
             lane="B",
@@ -94,7 +94,7 @@ async def test_worker_packet_dispatch_forwards_hop_triplet(
         model="composer-2.5",
         execution_id="exec-hop",
         packet_path="tmp/packet.md",
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         dispatch_id="disp-hop",
         lane="B",
         hop_from="pred-disp-1",
@@ -141,7 +141,7 @@ async def test_worker_packet_dispatch_omits_hop_when_unset(
         model="composer-2.5",
         execution_id="exec-no-hop",
         packet_path="tmp/packet.md",
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         dispatch_id="disp-no-hop",
         lane="B",
     )

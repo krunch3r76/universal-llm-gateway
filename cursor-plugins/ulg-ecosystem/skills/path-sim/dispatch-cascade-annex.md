@@ -16,7 +16,7 @@ Copy this — do not re-derive routing each time:
 4. **Bind** — recommended patch locus + falsifier.
 
 **Transport (pinned — code lane):**
-`team_dispatch(op=generate, model=cdp/fable, contract=light-bounded, effort=low)`
+`team_dispatch(op=generate, model=cdp/fable, contract=none, effort=low)`
 — ¬ `xai/grok-*` (checkout present), ¬ `anthropic/*` API (§ substrate house rules).
 
 **Substrate preflight (before firing):** confirm the delivery chain is up
@@ -92,8 +92,8 @@ Both pins **default-on** for bundled `judgment_required` arcs — skip only the 
 | Phase | Executor | Model (post-Fable window) | Sidecar |
 |---|---|---|---|
 | 0 Recon | **Orchestrated by lead** — breadth default = **Explore subagent** (`Task(subagent_type="explore")`; ¬ Explore tool; UI "Exploring" ≠ Explore). Adjudicate anchors sidecar. Narrow known-locus Greps MAY stay in-seat. If Task unavailable → `team_dispatch(seat=cursor-sdk, contract=investigate)` per model split. `rag(op=recon)` optional. | **Explore subagent** for breadth/unknown locus. **Dispatched fallback:** investigate/judgment → Composer `contract=investigate` (facts + `OPEN FORK:` — never binds); pure mechanical inventory only → `cursor/composer-2.5`. **¬** Composer as default recon. | `cortex://notes/system/recon/{slug}/…` (Tier-1 anchors required when breadth/unknown locus) |
-| 1 Q (L0) | **Lead fires CDP Fable** — default bundled/full arc. Primary: `team_dispatch(model=cdp/fable, contract=light-bounded, …)` (Use the `claude-ai-cdp-navigation` skill · consult-routing Anthropic substrate). Escape: CLI `claude-ai-sync-jupiter project-ask` with `model=fable-5.1`. MCP `project_ask` is removed. Operator-framed only via **positive attestation** (`operator_framed` + `pinned_question` + resolvable `frame_uri`) ⇒ **bounded adopt-or-contradict Q** (`frame_verdict` + `frame_delta`) then A — **¬** `q_skipped`, **¬** frame-as-Q. Unframed/isolated ⇒ normal **Fable Q** → A — ¬ escalate to human (§ L0 / Q pairing). **¬** default Q to Opus CDP (R-admit owns Opus — keep Q≠R seats). | Fable Max (CDP) | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` |
-| 2 A (L1+L2) | **Stage-A three-leg:** Composer enumerate (`omit model=`, `{fast:true}`, `contract=light-bounded`) → **`team_dispatch(model=cdp/fable, contract=light-bounded, …)` bind** → Composer Gate-2 closeout — **halts at admit-gate, ¬ implement** | Fable Max (CDP bind) | `…/path-sim-{slug}-fable-a-l1l2.md` |
+| 1 Q (L0) | **Lead fires CDP Fable** — default bundled/full arc. Primary: `team_dispatch(model=cdp/fable, contract=none, …)` (Use the `claude-ai-cdp-navigation` skill · consult-routing Anthropic substrate). Escape: CLI `claude-ai-sync-jupiter project-ask` with `model=fable-5.1`. MCP `project_ask` is removed. Operator-framed only via **positive attestation** (`operator_framed` + `pinned_question` + resolvable `frame_uri`) ⇒ **bounded adopt-or-contradict Q** (`frame_verdict` + `frame_delta`) then A — **¬** `q_skipped`, **¬** frame-as-Q. Unframed/isolated ⇒ normal **Fable Q** → A — ¬ escalate to human (§ L0 / Q pairing). **¬** default Q to Opus CDP (R-admit owns Opus — keep Q≠R seats). | Fable Max (CDP) | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` |
+| 2 A (L1+L2) | **Stage-A three-leg:** Composer enumerate (`omit model=`, `{fast:true}`, `contract=none`) → **`team_dispatch(model=cdp/fable, contract=none, …)` bind** → Composer Gate-2 closeout — **halts at admit-gate, ¬ implement** | Fable Max (CDP bind) | `…/path-sim-{slug}-fable-a-l1l2.md` |
 | 3 R-admit | **LEAD fires `team_dispatch(model=cdp/opus-5)`** (Use the `claude-ai-cdp-navigation` skill; IF6 escape = CLI `claude-ai-sync-jupiter project-ask`; MCP `project_ask` is removed) | web-anthropic **Opus 5** | **default-on, lead-owned** — skip only closed set |
 | 4 Implement | **`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug})`** — **separate dispatch, after R-admit ADMIT** | cursor-sdk Composer 2.5 (role default) | code diff + closeout sidecar |
 | 5 R-after | **LEAD fires `/work-item-review todo:{slug}`** via **`cdp/opus-5` `purpose=review` `reasoning_effort="high"`** — after Stage-B ship | **Opus 5 (CDP review)** | **default-on, lead-owned** — same closed skip set; entry SOT = `.cursor/commands/work-item-review.md`. Delivery critique (≠ R-admit web seat). |
@@ -103,7 +103,7 @@ Both pins **default-on** for bundled `judgment_required` arcs — skip only the 
 
 SOT for the ladder: Use the `cheap-recon-before-escalation` skill. Path-sim does **not** invent a separate recon doctrine.
 
-**Lead ≠ recon executor (by default).** Lead **orchestrates** phase 0 — fire **Explore subagent** (`Task(subagent_type="explore")`) for breadth/unknown locus, adjudicate sidecar. Explore = Cursor **subagent**, ¬ a tool, ¬ UI "Exploring". Narrow one-shot greps MAY stay in-seat when loci known. Task unavailable ⇒ `team_dispatch(seat=cursor-sdk, contract=light-bounded)` with model split below. “Lead = Auto” names the **orchestrator seat across the arc**, not “Auto hand-runs Tier-1.”
+**Lead ≠ recon executor (by default).** Lead **orchestrates** phase 0 — fire **Explore subagent** (`Task(subagent_type="explore")`) for breadth/unknown locus, adjudicate sidecar. Explore = Cursor **subagent**, ¬ a tool, ¬ UI "Exploring". Narrow one-shot greps MAY stay in-seat when loci known. Task unavailable ⇒ `team_dispatch(seat=cursor-sdk, contract=none)` with model split below. “Lead = Auto” names the **orchestrator seat across the arc**, not “Auto hand-runs Tier-1.”
 
 ```
 path-sim phase 0 ≡ durable Tier-1 anchors sidecar when breadth / unknown locus
@@ -226,7 +226,7 @@ Six-block packet at `tmp/prompts/path-sim-{slug}-fable-q-packet.md` (or staging 
 
 ```
 team_dispatch(
-  op=generate, model=cdp/fable, contract=light-bounded,
+  op=generate, model=cdp/fable, contract=none,
   sidecar_ref=cortex://notes/system/threads/path-sim-{slug}-q-prompt.md,
   # or prompt=… when short
   dispatch_thread_id=<bus thread id>,
@@ -250,7 +250,7 @@ scripts/cortex/claude-ai-sync-jupiter project-ask \
 ```
 team_dispatch(
   op=generate, model=cdp/fable,
-  contract=light-bounded,
+  contract=none,
   dispatch_thread_id=<bus thread id>,
   packet_path=tmp/prompts/path-sim-{slug}-fable-q-packet.md,
   skills=[path-sim, reasoning-posture, cursor-sdk-instruction-standard]
@@ -305,12 +305,12 @@ Lead auto-advances legs without operator "go": **recon → lead CDP Fable Q** �
 
 ```
 # Stage-A three-leg (single worker packet orchestrates all three):
-# 1. Composer enumerate (omit model=, model_knobs={"fast":"true"}, contract=light-bounded)
-# 2. team_dispatch(model=cdp/fable, contract=light-bounded, …) bind — ¬ Composer ranks
+# 1. Composer enumerate (omit model=, model_knobs={"fast":"true"}, contract=none)
+# 2. team_dispatch(model=cdp/fable, contract=none, …) bind — ¬ Composer ranks
 # 3. Composer Gate-2 closeout → STOP
 team_dispatch(
   op=generate, seat=cursor-sdk,
-  contract=light-bounded,
+  contract=none,
   dispatch_thread_id=<bus thread id>,
   packet_path=tmp/prompts/path-sim-{slug}-dispatch-packet.md,
   skills=[path-sim, cheap-recon-before-escalation, cursor-sdk-instruction-standard]
@@ -353,7 +353,7 @@ notes are **not** Gate-2 closeout. `fs`-readable `source_uri` and dense-spec
 team_dispatch(
   op=generate,
   model=cdp/opus-5,
-  contract=light-bounded,
+  contract=none,
   sidecar_ref=cortex://notes/system/threads/path-sim-{slug}-r-prompt.md,
   # or prompt=… when short
   dispatch_thread_id=<pending-or-arc-thread>,

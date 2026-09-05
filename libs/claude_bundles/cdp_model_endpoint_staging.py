@@ -7,7 +7,7 @@ checkout-relative and workspaces:// refs under
 Unstageable inputs fail closed.
 
 The judgment skill (``reasoning-posture``) is always merged into ``skills=``
-before staging — including light-bounded dispatches that omit ``skills``
+before staging — including none dispatches that omit ``skills``
 (``decision:reasoning-frontier-skill-pair``). Always-inject is unconditional: a
 dispatch that does not already carry the rails gets them.
 
@@ -36,7 +36,7 @@ from implement_admission.closeout_helpers import cortex_files_root, workspaces_r
 
 _EPHEMERAL_PREFIX = "notes/system/ephemeral/cdp-endpoint"
 
-# Scope rails + epistemic quality — always on CDP skills= (light-bounded too).
+# Scope rails + epistemic quality — always on CDP skills= (none too).
 CDP_JUDGMENT_SKILL_SLUGS: tuple[str, ...] = ("ulg-for-llms", "reasoning-posture")
 
 # a:27430 — one-slug denylist at CDP skills= staging (not a general policy DSL).
@@ -174,7 +174,7 @@ def ensure_cdp_judgment_skills(
 ) -> list[str]:
     """Merge purpose-keyed skill floor into CDP ``skills=`` (idempotent).
 
-    Always — including light-bounded / omitted ``skills``. Caller order is
+    Always — including none / omitted ``skills``. Caller order is
     preserved; missing floor members are prepended. ``purpose=None`` keeps the
     judgment-only floor; ``ask`` adds the arch pair (B2).
     ``decision:reasoning-frontier-skill-pair``.
@@ -225,7 +225,7 @@ def stage_cdp_prompt_with_skills(
     """Stage CDP input; ``skills`` prepends slash/inline manifest.
 
     Judgment skills are always ensured before prepend — callers may omit
-    ``skills`` on light-bounded CDP generate and still get them attached.
+    ``skills`` on none CDP generate and still get them attached.
 
     A pre-staged ``cortex://`` ``prompt_uri`` whose sealed prefix already
     matches the effective set passes through unchanged (the merge produces

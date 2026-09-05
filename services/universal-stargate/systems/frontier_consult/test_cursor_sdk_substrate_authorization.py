@@ -33,7 +33,7 @@ async def test_team_dispatch_cloud_role_cursor_model_rejects_before_dispatch(
         role="reviewer",
         model="cursor/claude-sonnet-5",
         dispatch_thread_id="todo:arc",
-        contract="light-bounded",
+        contract="none",
     )
     result = await team_dispatch(body, Response())
 
@@ -66,7 +66,7 @@ async def test_cursor_sdk_role_with_cursor_model_still_admits(
         seat="cursor-sdk",
         model="cursor/claude-sonnet-5",
         dispatch_thread_id="todo:arc",
-        contract="light-bounded",
+        contract="none",
         lane="A",
         packet_path="tmp/reviews/packet.md",
     )

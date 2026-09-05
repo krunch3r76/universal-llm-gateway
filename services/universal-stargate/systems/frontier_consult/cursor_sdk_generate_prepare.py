@@ -54,7 +54,14 @@ async def prepare_cursor_sdk_generate(
     model: str | None,
     subject: str | None,
     caller_agent: str | None,
-    contract: Literal["light-bounded", "pure-mechanical", "implement"],
+    contract: Literal[
+    "sketch",
+    "implement",
+    "wrap",
+    "conductor",
+    "pure-mechanical",
+    "none",
+],
     packet_path: str | None,
     message_text: str | None,
     reuse_thread: str | None = None,
@@ -123,19 +130,18 @@ async def prepare_cursor_sdk_generate(
         review_opt_out_reason_code=review_opt_out_reason_code,
         auto_review_child=effective_auto_review_child,
     )
-    from implement_admission.dispatch_topic import extract_packet_kind_from_body
+    from implement_admission.dispatch_topic import extract_contract_from_body
 
     from .admission import enforce_check_review_substrate_admission
 
     enforce_check_review_substrate_admission(role, model, request_id=request_id)
-    effective_packet_kind = (packet_kind or "").strip().lower() or None
-    if early_packet_text and not effective_packet_kind:
-        effective_packet_kind = extract_packet_kind_from_body(early_packet_text)
+    effective_contract = (contract or "").strip().lower() or None
+    if early_packet_text and not effective_contract:
+        effective_contract = extract_contract_from_body(early_packet_text)
     to_agent, family, platform, resolved_model = resolve_cursor_sdk_generate_target(
         role,
         model=model,
         request_id=request_id,
-        packet_kind=effective_packet_kind,
     )
     from .cursor_sdk_pool_fence import reject_other_models_pool_generate
 
@@ -462,14 +468,14 @@ async def prepare_cursor_sdk_generate(
 
     from implement_admission.dispatch_topic import (
         derive_handle_topic,
-        extract_packet_kind_from_body,
+        extract_contract_from_body,
     )
 
-    resolved_packet_kind = (packet_kind or "").strip().lower() or None
-    if packet_text and not resolved_packet_kind:
-        resolved_packet_kind = extract_packet_kind_from_body(packet_text)
+    resolved_contract = (contract or "").strip().lower() or None
+    if packet_text and not resolved_contract:
+        resolved_contract = extract_contract_from_body(packet_text)
     handle_topic = derive_handle_topic(
-        packet_kind=resolved_packet_kind,
+        contract=resolved_contract,
         packet_text=packet_text,
         message_text=worker_message,
     )
@@ -506,7 +512,6 @@ async def prepare_cursor_sdk_generate(
         knob_resolution=tuple(alignment.knob_resolution_as_dicts()),
         nest_under=nest_under,
         topic=handle_topic,
-        packet_kind=resolved_packet_kind,
         lane=lane,
         workspace=workspace,
         refuse_if_lease_held=refuse_if_lease_held,

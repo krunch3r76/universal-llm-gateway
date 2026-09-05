@@ -406,7 +406,7 @@ def test_merge_wrapper_preserves_contract_on_no_code_change() -> None:
         thread_id="t-preserve",
         turns=[],
         capture_branch="B",
-        contract="light-bounded",
+        contract="none",
     )
     merged = merge_wrapper_manifest(
         dispatch_id="d-preserve",
@@ -415,7 +415,7 @@ def test_merge_wrapper_preserves_contract_on_no_code_change() -> None:
         cortex_artifact_paths=[],
         git_change_set=ChangeSet(created=(), modified=(), deleted=()),
     )
-    assert merged.contract == "light-bounded"
+    assert merged.contract == "none"
 
 
 def test_compact_manifest_for_body_includes_contract() -> None:

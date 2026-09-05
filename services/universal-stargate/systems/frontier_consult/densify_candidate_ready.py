@@ -195,7 +195,7 @@ async def spawn_densify_reviewer_child(
                 seat="cursor-sdk",
                 dispatch_thread_id=parent_dispatch_thread_id,
                 model=reviewer_model,
-                contract="light-bounded",
+                contract="none",
                 prompt=reviewer_prompt,
                 auto_review_child=False,
                 spawn_review_provenance="generate_review_child",
@@ -210,7 +210,7 @@ async def spawn_densify_reviewer_child(
             dispatch_thread_id=parent_dispatch_thread_id,
             thread=parent_dispatch_thread_id,
             subject=f"densify cross-family review — {request_id[:8]}",
-            contract="light-bounded",
+            contract="none",
             model=reviewer_model,
             auto_review_child=True,
         )

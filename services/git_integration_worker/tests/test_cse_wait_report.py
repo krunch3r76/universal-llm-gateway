@@ -135,7 +135,7 @@ def test_serial_queue_occupant_skips_hops():
         to_agent="cursor-auto",
         desired_model="auto",
         desired_effort="high",
-        contract="light-bounded",
+        contract="none",
         continuity_hop=True,
     )
     q.claim_job(hop.job_id)

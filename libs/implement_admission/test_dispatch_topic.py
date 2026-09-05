@@ -86,7 +86,7 @@ def test_conductor_mission_topic_caps_at_160() -> None:
 
 def test_derive_conductor_topic_from_packet_reads_corpus_intent() -> None:
     packet = """---
-packet_kind: conductor
+
 ---
 <corpus>
 Intent: Conductor unify — sdk-nest-tree-fast

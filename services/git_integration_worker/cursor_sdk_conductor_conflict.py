@@ -44,8 +44,7 @@ def find_open_conductor_holder_conn(
     ).fetchone()
     if row is None:
         return None
-    record_json = row["record_json"] if "record_json" in row.keys() else "{}"
-    packet_kind = _record_packet_kind(record_json or "")
+    record_json = row["record_json"] if "record_json" in row.keys() else "{}"(record_json or "")
     if packet_kind != "conductor":
         return None
     return OpenConductorHolder(

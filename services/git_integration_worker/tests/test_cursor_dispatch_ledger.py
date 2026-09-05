@@ -1322,12 +1322,12 @@ def test_open_conductor_holder_visible_in_ledger() -> None:
         ledger,
         req,
         source_repo=_REPO,
-        contract="light-bounded",
+        contract="none",
         work_key=_CONDUCTOR_WORK_KEY,
     )
     ledger.merge_record_json(
         dispatch_id="cond-open-1",
-        patch={"packet_kind": "conductor"},
+        patch={"contract": "conductor", },
     )
     with ledger._connect() as conn:
         holder = find_open_conductor_holder_conn(

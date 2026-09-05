@@ -128,8 +128,7 @@ async def dispatch_prepared_cursor_sdk(
             purpose_body=handle.message,
             packet_path=handle.packet_path,
             nest_under=handle.nest_under,
-            topic=handle.topic,
-            packet_kind=handle.packet_kind,
+            topic=handle.topic.packet_kind,
             model_knobs_requested=_stamp_model_knobs_requested(
                 handle.resolved_model, handle.aligned_knobs
             ),
@@ -147,8 +146,7 @@ async def dispatch_prepared_cursor_sdk(
         purpose_body=handle.message,
         packet_path=handle.packet_path,
         nest_under=handle.nest_under,
-        topic=handle.topic,
-        packet_kind=handle.packet_kind,
+        topic=handle.topic.packet_kind,
         model_knobs_requested=_stamp_model_knobs_requested(
             handle.resolved_model, handle.aligned_knobs
         ),
@@ -202,7 +200,14 @@ async def dispatch_cursor_sdk_generate(
     model: str | None,
     subject: str | None,
     caller_agent: str | None,
-    contract: Literal["light-bounded", "pure-mechanical", "implement"],
+    contract: Literal[
+    "sketch",
+    "implement",
+    "wrap",
+    "conductor",
+    "pure-mechanical",
+    "none",
+],
     packet_path: str | None,
     message_text: str | None,
     reuse_thread: str | None = None,
@@ -276,7 +281,6 @@ async def dispatch_cursor_sdk_generate(
         refuse_if_lease_held=refuse_if_lease_held,
         prompt_turn_number=prompt_turn_number,
         prompt_bind_mode=prompt_bind_mode,
-        packet_kind=packet_kind,
         hop_from=hop_from,
         hop_seq=hop_seq,
         hop_reason=hop_reason,

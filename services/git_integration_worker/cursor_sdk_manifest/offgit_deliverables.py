@@ -2,7 +2,7 @@
 
 Normalizes fs write-capture into ``cortex://`` / ``workspaces://`` URIs,
 filters sidecar/closeout-receipt exclusions, collects expected cortex
-deliverables from pinned/light-bounded/files_expected, and emits
+deliverables from pinned/none/files_expected, and emits
 ``capture:oob_cortex_write_unobserved`` deviations when a landed cortex file
 was not observed as an fs write. Invariant: repo-relative paths are never
 inferred as cortex URIs (OOB policy on ``normalize_expected_cortex_deliverable_uri``).
@@ -76,7 +76,7 @@ def collect_expected_cortex_deliverable_uris(
     files_expected: list[str] | None = None,
     cortex_artifact_paths: list[str] | None = None,
 ) -> list[str]:
-    """Deduped cortex:// deliverables from pinned, light-bounded, and files_expected."""
+    """Deduped cortex:// deliverables from pinned, none, and files_expected."""
     seen: set[str] = set()
     ordered: list[str] = []
     for raw in (

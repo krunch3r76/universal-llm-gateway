@@ -99,7 +99,7 @@ Use-line in `<invariants>`. On operator **go** / **admit**:
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  contract=light-bounded,
+  contract=conductor,
   packet_path=tmp/reviews/{slug}-conductor-packet.md,
   dispatch_thread_id={root},  # continuity root with turns, or pending-empty child of root
   model_knobs={"fast":"true"},

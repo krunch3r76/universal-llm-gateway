@@ -711,7 +711,7 @@ def test_g1_not_shipped_reachable_via_terminal_degrade_tokens(tmp_path: Path) ->
 
 
 def test_g2_ac4_bare_filename_fixture_8b2fdfd6ae7d(tmp_path: Path) -> None:
-    """G2 — auto-8b2fdfd6ae7d: bare filename light-bounded token, offgit present."""
+    """G2 — auto-8b2fdfd6ae7d: bare filename none token, offgit present."""
     from services.git_integration_worker.cursor_sdk_closeout import (
         SdkRunOutcome,
         build_implement_closeout_body,

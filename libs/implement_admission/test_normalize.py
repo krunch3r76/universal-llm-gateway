@@ -168,7 +168,7 @@ otherwise never matter since front matter is authoritative.
 def test_files_from_packet_frontmatter_empty_list_yields_empty_scope() -> None:
     """An explicit empty front-matter list is a deliberate bind-only scope, not a fallback trigger."""
     packet = """---
-contract: light-bounded
+contract: none
 files_expected:
 ---
 

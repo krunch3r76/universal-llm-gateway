@@ -75,7 +75,7 @@ def test_admit_stamps_hop_fields_from_request() -> None:
             thread_id=req.thread_id,
             model_id="composer-2.5",
         ),
-        contract="light-bounded",
+        contract="none",
         source_repo="/repo",
         lease_key="/repo",
         work_key="todo:conductor-hop-fixture",

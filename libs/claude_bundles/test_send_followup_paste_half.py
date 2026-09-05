@@ -53,7 +53,6 @@ def _paste_env(*, holds: bool = False, survives: bool = True, streaming: bool = 
         yield send_mock
 
 
-
 @pytest.mark.asyncio
 async def test_send_verified_true_when_marker_in_growing_transcript() -> None:
     page = AsyncMock()

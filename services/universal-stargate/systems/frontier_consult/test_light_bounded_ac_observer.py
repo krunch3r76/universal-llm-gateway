@@ -1,4 +1,4 @@
-"""Unit tests for light-bounded AC observer predicate and resolution."""
+"""Unit tests for none AC observer predicate and resolution."""
 
 from __future__ import annotations
 
@@ -71,16 +71,16 @@ def test_instruction_mentions_production_code(
     ),
     [
         # inbound=None ⇒ caller expressed no preference; the default may fill.
-        ("light-bounded", None, "services/foo.py", None, None, True, True),
-        ("light-bounded", None, None, "edit libs/bar", None, True, True),
-        ("light-bounded", None, None, None, "packets/services/x.md", True, True),
-        ("light-bounded", None, "docs only", None, None, False, False),
-        ("light-bounded", None, "", None, "packets/libs/x.md", True, True),
-        ("light-bounded", True, "services/foo.py", None, None, True, False),
+        ("none", None, "services/foo.py", None, None, True, True),
+        ("none", None, None, "edit libs/bar", None, True, True),
+        ("none", None, None, None, "packets/services/x.md", True, True),
+        ("none", None, "docs only", None, None, False, False),
+        ("none", None, "", None, "packets/libs/x.md", True, True),
+        ("none", True, "services/foo.py", None, None, True, False),
         # inbound=False is an explicit caller opt-out and outranks the default.
-        ("light-bounded", False, "services/foo.py", None, None, False, False),
-        ("light-bounded", False, None, None, "packets/services/x.md", False, False),
-        ("light-bounded", False, "docs only", None, None, False, False),
+        ("none", False, "services/foo.py", None, None, False, False),
+        ("none", False, None, None, "packets/services/x.md", False, False),
+        ("none", False, "docs only", None, None, False, False),
         ("implement", None, "services/foo.py", None, None, False, False),
         ("implement", False, "services/foo.py", None, None, False, False),
         ("pure-mechanical", None, "services/foo.py", None, None, False, False),
@@ -117,7 +117,7 @@ def test_prepare_lb_auto_review_honors_explicit_opt_out(
 ) -> None:
     """The generate entrypoint must not let the default outrank a caller False."""
     got_effective, got_defaulted, _ = prepare_lb_auto_review_for_generate(
-        contract="light-bounded",
+        contract="none",
         auto_review_child=inbound,
         packet_path=None,
         message_text="edit services/foo.py",
@@ -128,7 +128,7 @@ def test_prepare_lb_auto_review_honors_explicit_opt_out(
 
 def test_packet_body_precedes_message_for_predicate() -> None:
     effective, defaulted = resolve_auto_review_child(
-        contract="light-bounded",
+        contract="none",
         auto_review_child=None,
         packet_text="docs/readme",
         message_text="services/foo.py",
@@ -141,7 +141,7 @@ def test_packet_body_precedes_message_for_predicate() -> None:
 @pytest.mark.asyncio
 async def test_advisory_lifecycle_forced_flag_spawn_and_footer() -> None:
     effective, defaulted = resolve_auto_review_child(
-        contract="light-bounded",
+        contract="none",
         auto_review_child=None,
         packet_text="Files: services/foo/bar.py",
         message_text=None,
@@ -267,7 +267,7 @@ def test_normalize_dispatch_lane(lane: str | None, expected: str | None) -> None
 def test_planning_review_spawn_suppressed_sidecar_stage_a() -> None:
     assert (
         planning_review_spawn_suppressed(
-            contract="light-bounded",
+            contract="none",
             review_surface="sidecar",
             dispatch_lane=None,
             packet_text=_SIDECAR_PACKET,
@@ -279,7 +279,7 @@ def test_planning_review_spawn_suppressed_sidecar_stage_a() -> None:
 def test_planning_review_spawn_suppressed_source_surface() -> None:
     assert (
         planning_review_spawn_suppressed(
-            contract="light-bounded",
+            contract="none",
             review_surface="source",
             dispatch_lane=None,
             packet_text=_SOURCE_PACKET,
@@ -291,7 +291,7 @@ def test_planning_review_spawn_suppressed_source_surface() -> None:
 def test_planning_review_spawn_suppressed_falsifier_hybrid() -> None:
     assert (
         planning_review_spawn_suppressed(
-            contract="light-bounded",
+            contract="none",
             review_surface="sidecar",
             dispatch_lane=_PATH_SIM_ADMIT_GATE,
             packet_text=_HYBRID_PACKET,
@@ -312,7 +312,7 @@ fs(op="write", path="cortex://notes/system/specs/foo.md")
 """
     assert (
         planning_review_spawn_suppressed(
-            contract="light-bounded",
+            contract="none",
             review_surface="unknown",
             dispatch_lane=_PATH_SIM_ADMIT_GATE,
             packet_text=belt_packet,
@@ -334,7 +334,7 @@ def test_resolve_dispatch_lane_from_thread_slug() -> None:
 
 def test_stamp_lb_review_spawn_fields_persists_sidecar_suppress() -> None:
     review_surface, dispatch_lane, suppress = stamp_lb_review_spawn_fields(
-        contract="light-bounded",
+        contract="none",
         early_packet_text=_SIDECAR_PACKET,
         dispatch_lane=None,
         source_ref=None,

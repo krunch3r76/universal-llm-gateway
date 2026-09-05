@@ -88,7 +88,7 @@ def test_build_worker_message_includes_lane_parity_params() -> None:
     )
     assert '"claude-cursor"' in msg
     assert "limit=5" not in msg or "LIMIT: 5" in msg
-    assert "light-bounded" in msg
+    assert "none" in msg
     assert '"stage_a_score": 0' in msg
     assert "skill_suggest(" not in msg
 
@@ -289,7 +289,7 @@ async def test_dispatch_uses_light_bounded_contract() -> None:
         await dispatch_skill_suggest(request_id="req-contract", body=body)
 
     dispatch.assert_awaited_once()
-    assert dispatch.await_args.kwargs["contract"] == "light-bounded"
+    assert dispatch.await_args.kwargs["contract"] == "none"
 
 
 @pytest.mark.offline

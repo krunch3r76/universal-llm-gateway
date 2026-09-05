@@ -19,6 +19,8 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from team_dispatch_vocab import MATERIALIZER_CONTRACTS, RESIDUAL_CONTRACTS, TEAM_DISPATCH_CONTRACTS
+
 logger = get_logger(__name__)
 
 # F16655. The ``-mcp`` suffix is a cloud-proxy model-id variant for agentic
@@ -145,7 +147,26 @@ def validate_wrap_inputs(
     return None
 
 
-_CONDUCTOR_PACKET_KIND = "conductor"
+def require_contract(contract: str | None) -> dict[str, Any] | None:
+    """Predicate 1: ``contract`` is required on generate/to_thread."""
+    if contract is None or not str(contract).strip():
+        return _validation_error(
+            "contract is required — valid values: "
+            + ", ".join(sorted(TEAM_DISPATCH_CONTRACTS)),
+            field="contract",
+        )
+    return None
+
+
+def reject_retired_packet_kind(packet_kind: str | None) -> dict[str, Any] | None:
+    """Predicate 7: ``packet_kind`` is retired — use ``contract=conductor``."""
+    if packet_kind is None:
+        return None
+    return _validation_error(
+        "packet_kind is retired; use contract='conductor' for conductor spawn",
+        field="packet_kind",
+        code="packet_kind_retired",
+    )
 
 
 def reject_unsupported_packet_inputs(
@@ -154,64 +175,60 @@ def reject_unsupported_packet_inputs(
     packet_path: str | None,
     source_ref: str | None,
     packet_kind: str | None = None,
+    *,
+    stop_after: str | None = None,
+    prompt: str | None = None,
 ) -> dict[str, Any] | None:
-    """Reject packet_path/source_ref where downstream cannot honor them (F17378).
-
-    ``packet_kind=conductor`` is the attended/Auto spawn carve-out: Stargate
-    materializes from ``source_ref`` on ``contract=light-bounded``.
-    """
-    kind = (packet_kind or "").strip().lower() or None
-    if kind is not None and kind != _CONDUCTOR_PACKET_KIND:
-        return _validation_error(
-            "packet_kind only accepts 'conductor' (conductor spawn)",
-            field="packet_kind",
-            code="packet_kind_invalid",
-        )
-    if kind == _CONDUCTOR_PACKET_KIND:
-        if op != "generate":
-            return _validation_error(
-                "packet_kind=conductor is only valid on op='generate'",
-                field="packet_kind",
-                code="packet_kind_op_invalid",
-            )
-        if contract != "light-bounded":
-            return _validation_error(
-                "packet_kind=conductor requires contract='light-bounded'",
-                field="contract",
-                code="conductor_contract_invalid",
-            )
-        if source_ref is None:
-            return _validation_error(
-                "packet_kind=conductor requires source_ref=todo:{slug}",
-                field="source_ref",
-                code="conductor_requires_source_ref",
-            )
-        if packet_path is not None:
-            return _validation_error(
-                "packet_kind=conductor forbids packet_path; Stargate materializes",
-                field="packet_path",
-                code="conductor_with_packet_path",
-            )
-        return None
+    """Seven-predicate admit validation for materializer/residual contracts."""
+    retired = reject_retired_packet_kind(packet_kind)
+    if retired is not None:
+        return retired
     if op not in ("generate", "to_thread"):
         return None
-    if packet_path is None and source_ref is None:
-        return None
-    if op == "to_thread":
-        field = "packet_path" if packet_path is not None else "source_ref"
+    wire = (contract or "").strip().lower()
+    if wire and wire not in TEAM_DISPATCH_CONTRACTS:
         return _validation_error(
-            "packet_path/source_ref are not honored for op='to_thread' "
-            "(API-role delivery has no cursor-sdk worker packet channel).",
-            field=field,
+            f"contract must be one of: {', '.join(sorted(TEAM_DISPATCH_CONTRACTS))}",
+            field="contract",
         )
-    if source_ref is not None and contract not in ("implement", "wrap"):
+    if wire in MATERIALIZER_CONTRACTS and source_ref is None:
         return _validation_error(
-            "source_ref materialization is only supported for contract='implement' "
-            "(cursor-sdk implement lane) or packet_kind='conductor' with "
-            "contract='light-bounded'; remove source_ref, set contract='implement', "
-            "or pass packet_kind='conductor'.",
+            f"source_ref is required for contract={wire!r}",
             field="source_ref",
+            code=f"{wire}_requires_source_ref",
         )
+    if wire in {"sketch", "conductor"} and packet_path is not None:
+        return _validation_error(
+            f"packet_path is forbidden for contract={wire!r}; Stargate materializes",
+            field="packet_path",
+            code=f"{wire}_with_packet_path",
+        )
+    if wire in RESIDUAL_CONTRACTS and source_ref is not None:
+        return _validation_error(
+            f"source_ref is forbidden for contract={wire!r}; pick a materializer contract",
+            field="source_ref",
+            code=f"{wire}_with_source_ref",
+        )
+    if wire == "none" and stop_after:
+        return _validation_error(
+            "stop_after is forbidden with contract='none'",
+            field="stop_after",
+            code="none_with_stop_after",
+        )
+    if wire in MATERIALIZER_CONTRACTS and prompt is not None:
+        return _validation_error(
+            f"prompt is forbidden for contract={wire!r}; materializer owns the packet",
+            field="prompt",
+            code=f"{wire}_with_prompt",
+        )
+    if op == "to_thread":
+        if packet_path is not None or source_ref is not None:
+            field = "packet_path" if packet_path is not None else "source_ref"
+            return _validation_error(
+                "packet_path/source_ref are not honored for op='to_thread' "
+                "(API-role delivery has no cursor-sdk worker packet channel).",
+                field=field,
+            )
     return None
 
 
@@ -237,7 +254,7 @@ def validate_inline_prompt_inputs(
             field=field,
             code="inline_prompt_not_supported",
         )
-    if contract in ("implement", "wrap") and inline_fields:
+    if contract in ("implement", "wrap", "sketch", "conductor") and inline_fields:
         field = inline_fields[0]
         return _validation_error(
             f"{field} is not supported with contract={contract!r}; "

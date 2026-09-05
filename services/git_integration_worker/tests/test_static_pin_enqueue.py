@@ -138,7 +138,7 @@ def test_enqueue_continuity_hop_skips_static_pin_check(
                 "to_agent": "cursor",
                 "desired_model": "cdp/opus-5",
                 "desired_effort": "high",
-                "contract": "light-bounded",
+                "contract": "none",
                 "continuity_hop": True,
             },
         )

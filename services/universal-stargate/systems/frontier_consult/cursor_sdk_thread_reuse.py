@@ -153,7 +153,7 @@ def _conductor_coord_split_error(request_id: str):
 async def refuse_conductor_coord_split(
     *,
     request_id: str,
-    packet_kind: str | None,
+    contract: str | None,
     reuse_thread: str | None,
     dispatch_thread_id: str | None,
 ) -> None:
@@ -162,7 +162,7 @@ async def refuse_conductor_coord_split(
     Legal: explicit ``reuse_thread`` (re-admit); pending-empty *child*; continuity
     root with turns (mint child). Probe failure is fail-closed for conductor.
     """
-    if (packet_kind or "").strip().lower() != "conductor":
+    if (contract or "").strip().lower() != "conductor":
         return
     explicit = reuse_thread.strip() if reuse_thread and reuse_thread.strip() else None
     if explicit is not None:
@@ -196,7 +196,6 @@ async def resolve_cursor_sdk_thread_targets(
     """
     await refuse_conductor_coord_split(
         request_id=request_id,
-        packet_kind=packet_kind,
         reuse_thread=reuse_thread,
         dispatch_thread_id=dispatch_thread_id,
     )

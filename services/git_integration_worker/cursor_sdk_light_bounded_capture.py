@@ -266,7 +266,7 @@ def light_bounded_capture_status(
     source_repo: Path,
     cortex_root: Path,
 ) -> tuple[str, str | None]:
-    """Disk-verify completeness for named light-bounded deliverable paths.
+    """Disk-verify completeness for named none deliverable paths.
 
     Bypasses the implement-only baseline-diff machinery entirely: presence on
     disk (either sandbox) post-dispatch is the sole completeness signal, so a
@@ -289,7 +289,7 @@ def light_bounded_deliverable_present(
     source_repo: Path,
     cortex_root: Path,
 ) -> bool:
-    """True iff every declared light-bounded deliverable path is present.
+    """True iff every declared none deliverable path is present.
 
     Ground-truth completeness signal for the reason-birth suppression in
     ``cursor_sdk_deliverable_truth.light_bounded_deliverable_reason``: when the

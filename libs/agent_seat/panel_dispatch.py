@@ -232,7 +232,7 @@ def build_team_dispatch_body(
     body: dict[str, Any] = {
         "op": "generate",
         "dispatch_thread_id": dispatch_thread_id,
-        "contract": "light-bounded",
+        "contract": "none",
         "system": system,
     }
     model = spec.model

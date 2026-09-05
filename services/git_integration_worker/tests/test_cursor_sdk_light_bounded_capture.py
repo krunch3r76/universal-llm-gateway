@@ -1,4 +1,4 @@
-"""Unit tests for light-bounded disk/cortex-existence deliverable capture."""
+"""Unit tests for none disk/cortex-existence deliverable capture."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ class TestExtractInstructedPaths:
     def test_files_expected_inline_scheme_path(self) -> None:
         prose = (
             "files_expected: cortex://notes/system/threads/x.md\n"
-            "contract: light-bounded\n"
+            "contract: none\n"
         )
         assert extract_instructed_paths(prose) == ("notes/system/threads/x.md",)
 

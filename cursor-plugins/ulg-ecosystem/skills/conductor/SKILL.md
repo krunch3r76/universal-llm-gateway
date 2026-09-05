@@ -88,7 +88,7 @@ alwaysApply does **not** substitute for this cue.
 kill the conventional “replay that hop” frame. ¬ `/path-sim` cascade. ¬ remint
 a harvested conductor. ¬ leftover-execute.
 
-**Rematerialize trap:** `packet_kind=conductor` + `source_ref=todo:X` forbids
+**Rematerialize trap:** `` + `source_ref=todo:X` forbids
 `packet_path` and rematerializes the **old** conductor packet. Harvested score /
 `NEXT_ADMIT: none` ⇒ park remints. New remit ⇒ **new sibling todo** +
 `contract=implement` (Composer). Never replay the harvested conductor todo.
@@ -137,7 +137,7 @@ lead MUST put `conductor` on the dispatch as a required skill:
 `team_dispatch(skills=[…])` is **not** mounted on cursor-sdk (`skills=` skipped
 when `backend_type=cursor_sdk`). Do **not** rely on `skills=["conductor"]` alone —
 the packet Use-line is the engagement channel. Reasoning-posture may still be
-auto-prepended by GIW for `light-bounded`; that does **not** substitute for
+auto-prepended by GIW for `conductor`; that does **not** substitute for
 `conductor`.
 
 ## Invariant
@@ -276,7 +276,7 @@ Rates: `config/model_rates.yaml`.
 
 | Seat | Model / contract | Use when |
 |---|---|---|
-| **Composer (cursor_sdk)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | The only cursor_sdk seat. Judgment vs implement is carried by `contract` (`light-bounded` \| `investigate` vs `implement` \| `pure-mechanical`), never by model. Multi-G orchestrate, scoreboard drive, enumerate (returns `OPEN FORK:` lines, never binds). |
+| **Composer (cursor_sdk)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | The only cursor_sdk seat. Judgment vs implement is carried by `contract` (`conductor` \| `investigate` vs `implement` \| `pure-mechanical`), never by model. Multi-G orchestrate, scoreboard drive, enumerate (returns `OPEN FORK:` lines, never binds). |
 | **CDP width** | **`cdp/fable`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. |
 | **CDP bind / review** | **`cdp/opus-5`** (`purpose=review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. |
 | **Explicit pins (never standing)** | `cursor/claude-opus-5` premium live-checkout (inform-then-proceed) · `cursor/gpt-5.6-terra\|sol` only when operator/packet names Other Models · `cursor/claude-sonnet-5` last resort (CDP lane unavailable) | Named per leg only — never a default, never a tier row. |
@@ -307,7 +307,7 @@ Terra is **not** a standing conductor seat (Other Models + mid GPT rate). Cross-
 
 | Seat | Does |
 |---|---|
-| **Conductor** (tier from table, `light-bounded`) | Orient, rank, update scoreboard/CHECKPOINT, nest legs, adjudicate closeouts. Bind the token/locus; ¬ implement. `light-bounded` / `owner: cursor-sdk` ⇏ conductor writes files+tests |
+| **Conductor** (tier from table, `conductor`) | Orient, rank, update scoreboard/CHECKPOINT, nest legs, adjudicate closeouts. Bind the token/locus; ¬ implement. `conductor` / `owner: cursor-sdk` ⇏ conductor writes files+tests |
 | Nested **investigate** | Forensic / AC bind — pick tier by judgment density |
 | Nested **Composer** `contract=implement` | Mechanical G-row after densify; `nest_under` when lease held |
 | Independent binder | Ladder step-2 when conductor unsure (weight/family) — ¬ self-ratify |
@@ -333,7 +333,7 @@ Required in `<scope>` / `<invariants>`:
   plan-review or merge-ack round trip is needed unless *this* packet names a
   specific hold-merge exception in this same list
 - **Bound conductor model + effort** (or "lead picks at admit from tier table")
-- **G-row contract honesty** — do not mark a G-row light-bounded-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
+- **G-row contract honesty** — do not mark a G-row conductor-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
 - **Scoreboard G6/G7 (binding)** — **`review harvest ≺ land ≺ DONE`**. After G5
   implement, **G6** = `cdp/opus-5` `purpose=review` `reasoning_effort="high"` on
   the **lane branch diff** (sidecar **R1**). **G7** = merge/land (sidecar **L1**).
@@ -357,10 +357,9 @@ IDE mints todo identity (S4a); Stargate materializes the packet:
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  contract=light-bounded,
+  contract=conductor,
   lane="B",
   source_ref="todo:{slug}",
-  packet_kind="conductor",
   dispatch_thread_id="{root}",   # continuity root with turns, or pending-empty work child
 )
 ```
@@ -482,7 +481,7 @@ worktree (`resume_retain`).
 
 | Conductor stop | Continuation | Mechanism | Who initiates |
 |---|---|---|---|
-| `ROW_PINNED`, `HOLD_MERGE`, `OPERATOR_GATE` (when gate clears) | **same agent** | `team_dispatch(… resume_of=<pinned dispatch_id>, reuse_thread=<worker thread>, packet_kind=conductor, source_ref=todo:<slug>, dispatch_thread_id=<coord>)`, lane omitted | liaison / IDE lead when the pin lifts |
+| `ROW_PINNED`, `HOLD_MERGE`, `OPERATOR_GATE` (when gate clears) | **same agent** | `team_dispatch(… resume_of=<pinned dispatch_id>, reuse_thread=<worker thread>, source_ref=todo:<slug>, dispatch_thread_id=<coord>)`, lane omitted | liaison / IDE lead when the pin lifts |
 | `ROW_HOP` (planned), crash, silent, watchdog | **fresh agent** | GIW hop reactor → Stargate generate with `reuse_thread` + `hop_*`, **no `resume_of`** | substrate |
 
 `resume_of` **requires** `reuse_thread` (same mailbox + Lane-B isolation). XOR
@@ -513,8 +512,7 @@ team_dispatch(
   op=generate,
   seat=cursor-sdk,
   model_knobs={"fast":"true"},
-  contract=light-bounded,
-  packet_kind=conductor,
+  contract=conductor,
   source_ref=todo:{slug},
   resume_of=<terminal parent dispatch_id>,  # ROW_PINNED lift — same agent
   reuse_thread=<parent worker thread>,      # REQUIRED with resume_of
@@ -549,7 +547,7 @@ summoning thread + summoning lead relay).
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
-  contract=light-bounded,
+  contract=conductor,
   packet_path=tmp/reviews/{slug}-conductor-packet.md,
   dispatch_thread_id={root},      # continuity root with turns, or pending-empty child of root
   # generation_options={summon_mode: confer_and_finish},  # optional; or todo attr
@@ -623,7 +621,7 @@ branch or fall onto master.
 
 ### Self-nest routing — seat-identity preamble exposes your `dispatch_id`
 
-Lane-B `light-bounded` conductor missions receive a **seat-identity preamble** from
+Lane-B `conductor` conductor missions receive a **seat-identity preamble** from
 GIW `resolve_prompt_preamble` when the dispatch is a genuine conductor packet:
 either **`packet_path`** is set (IDE `team_dispatch`) **or** the body carries the
 mandatory literal line ``Use the conductor skill — …`` (message-body
@@ -720,6 +718,6 @@ transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed).
 | Terminal `DONE` / land / nest G5 after Composer work with cdp-ask down / CDP stall / empty FAILED body / no owed stronger-model harvest | **HARD STOP** — restore CDP + harvest, or operator-explicit seat rebind; ¬ DEFERRED-and-proceed; ¬ land-then-background-review; ¬ Cursor/Composer silent substitute (a:32146 · a:32226 · 9638 hop3 · 10013) |
 | Stamp G4 / after-ship `DEFERRED (transport)` and keep driving later G-rows | Same break — transport fail ≡ no harvest ≡ stop past that gate |
 | Treat G4 Skeptic as code review (or collapse both onto one picker) | Skeptic = Fable on spec; code review = Opus on the lane branch diff, before land (G6) |
-| Treat named hop / `packet_kind=conductor` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |
+| Treat named hop / `` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |
 | Land then stay silent on recycle (or write LAND-LIVE as only “not live”) | Prompt go-live for each serving process, or announce skip in the same turn; LAND-LIVE names the skipped recycle |
 | Land a named `todo:` and leave the card `open` | Stamp `todo-close` / LANDED on that entity in the same turn |

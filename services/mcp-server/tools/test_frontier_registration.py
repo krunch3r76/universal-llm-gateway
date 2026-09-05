@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from team_dispatch_vocab import TEAM_DISPATCH_CONTRACTS
 from typing import Any
 from unittest.mock import patch
 
@@ -116,14 +117,16 @@ def test_team_dispatch_source_ref_signature() -> None:
     assert sig.parameters["source_ref"].default is None
 
 
-def test_team_dispatch_packet_kind_signature() -> None:
+def test_team_dispatch_contract_signature_six_values() -> None:
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)
 
     sig = inspect.signature(recorder.functions["team_dispatch"])
-    assert "packet_kind" in sig.parameters
-    assert sig.parameters["packet_kind"].default is None
-    assert "conductor" in str(sig.parameters["packet_kind"].annotation)
+    assert sig.parameters["contract"].annotation is not None
+    assert TEAM_DISPATCH_CONTRACTS == frozenset(
+        {"sketch", "implement", "wrap", "conductor", "pure-mechanical", "none"}
+    )
+    assert "packet_kind" not in sig.parameters
 
 
 def test_team_dispatch_inline_prompt_params_present() -> None:
@@ -145,16 +148,9 @@ def test_team_dispatch_messages_removed_from_signature() -> None:
 
 
 def test_team_dispatch_contract_enum_excludes_consult() -> None:
-    """Public contract enum is light-bounded/pure-mechanical/implement."""
-    recorder = _ToolNameRecorder()
-    register_frontier_tools(recorder)
-
-    sig = inspect.signature(recorder.functions["team_dispatch"])
-    annotation = str(sig.parameters["contract"].annotation)
-    assert "light-bounded" in annotation
-    assert "pure-mechanical" in annotation
-    assert "implement" in annotation
-    assert "consult" not in annotation
+    """Public contract enum is the six team_dispatch values, not agent_bus consult."""
+    assert "consult" not in TEAM_DISPATCH_CONTRACTS
+    assert TEAM_DISPATCH_CONTRACTS >= {"none", "pure-mechanical", "implement", "sketch", "conductor", "wrap"}
 
 
 def test_team_dispatch_handoff_relays_to_handoff_endpoint() -> None:
@@ -248,7 +244,7 @@ def test_team_dispatch_generate_forwards_server_tools() -> None:
             team_dispatch_fn(
                 op="generate",
                 role="reviewer",
-                contract="light-bounded",
+                contract="none",
                 dispatch_thread_id="thread-dispatch-1",
                 server_tools=False,
             )
@@ -278,7 +274,7 @@ def test_team_dispatch_generate_forwards_inline_prompt() -> None:
             team_dispatch_fn(
                 op="generate",
                 role="reviewer",
-                contract="light-bounded",
+                contract="none",
                 dispatch_thread_id="thread-dispatch-1",
                 prompt="Review this exact brief.",
             )
@@ -355,7 +351,7 @@ def test_team_dispatch_generate_forwards_source_ref() -> None:
     assert "packet_path" not in body
 
 
-def test_team_dispatch_generate_forwards_conductor_packet_kind() -> None:
+def test_team_dispatch_generate_forwards_conductor_contract() -> None:
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)
     team_dispatch_fn = recorder.functions["team_dispatch"]
@@ -376,9 +372,8 @@ def test_team_dispatch_generate_forwards_conductor_packet_kind() -> None:
             team_dispatch_fn(
                 op="generate",
                 seat="cursor-sdk",
-                contract="light-bounded",
+                contract="conductor",
                 source_ref="todo:s4-attended-summon-probe",
-                packet_kind="conductor",
                 dispatch_thread_id="9638",
                 lane="B",
             )
@@ -386,9 +381,9 @@ def test_team_dispatch_generate_forwards_conductor_packet_kind() -> None:
 
     assert len(relay_calls) == 1
     body = relay_calls[0]["body"]
-    assert body["packet_kind"] == "conductor"
     assert body["source_ref"] == "todo:s4-attended-summon-probe"
-    assert body["contract"] == "light-bounded"
+    assert body["contract"] == "conductor"
+    assert "packet_kind" not in body
     assert "packet_path" not in body
 
 
@@ -669,7 +664,7 @@ def test_team_dispatch_generate_accepts_subject_with_warning() -> None:
             team_dispatch_fn(
                 op="generate",
                 role="reviewer",
-                contract="light-bounded",
+                contract="none",
                 dispatch_thread_id="arc-friction-19803",
                 subject="Review CF-1: subject guard",
             )
@@ -713,7 +708,7 @@ def test_team_dispatch_generate_rejects_thread() -> None:
             team_dispatch_fn(
                 op="generate",
                 role="reviewer",
-                contract="light-bounded",
+                contract="none",
                 dispatch_thread_id="arc-friction-19803",
                 thread="111",
             )
@@ -749,7 +744,7 @@ def test_team_dispatch_to_thread_forwards_subject() -> None:
             team_dispatch_fn(
                 op="to_thread",
                 role="reviewer",
-                contract="light-bounded",
+                contract="none",
                 dispatch_thread_id="arc-friction-19803",
                 thread="111",
                 subject="Reviewer reply — labelled",
@@ -792,7 +787,7 @@ def test_team_dispatch_forwards_cost_intent_on_generate_and_to_thread() -> None:
             team_dispatch_fn(
                 op="generate",
                 role="reviewer",
-                contract="light-bounded",
+                contract="none",
                 dispatch_thread_id="arc-override-gate",
                 model="anthropic/claude-opus-4-8",
                 cost_intent="deliberate_high_cost",
@@ -803,7 +798,7 @@ def test_team_dispatch_forwards_cost_intent_on_generate_and_to_thread() -> None:
             team_dispatch_fn(
                 op="to_thread",
                 role="reviewer",
-                contract="light-bounded",
+                contract="none",
                 dispatch_thread_id="arc-override-gate",
                 thread="111",
                 model="anthropic/claude-opus-4-8",
@@ -876,7 +871,7 @@ def test_team_dispatch_generate_forwards_nest_under() -> None:
             team_dispatch_fn(
                 op="generate",
                 seat="cursor-sdk",
-                contract="light-bounded",
+                contract="none",
                 dispatch_thread_id="5777",
                 nest_under="parent-dispatch-id",
             )
@@ -894,7 +889,7 @@ def test_team_dispatch_nest_under_rejects_non_sdk_seat() -> None:
         team_dispatch_fn(
             op="generate",
             role="reviewer",
-            contract="light-bounded",
+            contract="none",
             dispatch_thread_id="5777",
             nest_under="parent-dispatch-id",
         )
@@ -948,7 +943,7 @@ def test_team_dispatch_generate_forwards_resume_of() -> None:
             team_dispatch_fn(
                 op="generate",
                 seat="cursor-sdk",
-                contract="light-bounded",
+                contract="none",
                 dispatch_thread_id="5777",
                 reuse_thread="5777",
                 resume_of="parent-dispatch-id",
@@ -968,7 +963,7 @@ def test_team_dispatch_resume_of_rejects_non_sdk_seat() -> None:
         team_dispatch_fn(
             op="generate",
             role="reviewer",
-            contract="light-bounded",
+            contract="none",
             dispatch_thread_id="5777",
             resume_of="parent-dispatch-id",
         )
@@ -1028,6 +1023,7 @@ def test_team_dispatch_generate_forwards_lane() -> None:
                 op="generate",
                 seat="cursor-sdk",
                 contract="implement",
+                source_ref="todo:lane-forward-test",
                 dispatch_thread_id="5777",
                 lane="B",
             )
@@ -1067,7 +1063,7 @@ def test_team_dispatch_generate_model_only_requires_lane() -> None:
             team_dispatch_fn(
                 op="generate",
                 model="cursor/composer-2.5",
-                contract="light-bounded",
+                contract="none",
                 dispatch_thread_id="5777",
                 prompt="bind this",
             )
@@ -1085,7 +1081,7 @@ def test_team_dispatch_lane_rejects_non_sdk_seat() -> None:
         team_dispatch_fn(
             op="generate",
             role="reviewer",
-            contract="light-bounded",
+            contract="none",
             dispatch_thread_id="5777",
             lane="B",
         )
@@ -1101,7 +1097,7 @@ def test_workspace_sdk_only_on_non_sdk_seat() -> None:
         team_dispatch_fn(
             op="generate",
             seat="web-anthropic",
-            contract="light-bounded",
+            contract="none",
             dispatch_thread_id="5777",
             workspace="claudeburst",
         )

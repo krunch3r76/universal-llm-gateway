@@ -26,6 +26,7 @@ from implement_admission.preflight import (
 )
 from implement_admission.source_ref import (
     MATERIALIZE_KIND_CONDUCTOR,
+    MATERIALIZE_KIND_SKETCH,
     parse_source_ref,
     resolve_materialize_kind,
 )
@@ -309,7 +310,34 @@ def resolve_source_ref_to_packet(
 ) -> BridgeResult:
     """Normalize + materialize source_ref into a workspaces-relative packet path."""
     root = (workspaces_root or _workspaces_root()).resolve()
-    materialize_kind = resolve_materialize_kind(packet_kind=packet_kind)
+    materialize_kind = resolve_materialize_kind(contract=contract)
+    if materialize_kind == MATERIALIZE_KIND_SKETCH:
+        from implement_admission.sketch_materialize import materialize_sketch
+
+        out_dir = _materialized_out_dir(root)
+        mp = materialize_sketch(source_ref, cortex=cortex, out_dir=out_dir)
+        rel_path = _path_relative_to_workspaces(Path(mp.path), root)
+        probe_root = _executor_probe_root(root)
+        present = probe_packet_presence(
+            rel_path, workspaces_root=root, probe_root=probe_root
+        )
+        warnings: list[str] = []
+        if not present:
+            warnings.append(
+                "materialization.executor_absent: "
+                f"{rel_path} not visible at executor root {probe_root}; "
+                "use source_ref fallback"
+            )
+        return BridgeResult(
+            gated=False,
+            source_ref=source_ref,
+            packet_path=rel_path,
+            implement_spec_hash=None,
+            packet_sha256=mp.packet_sha256,
+            materialization_present=present,
+            warnings=warnings,
+            route_contract={"contract": "sketch", "lane": "B"},
+        )
     if materialize_kind == MATERIALIZE_KIND_CONDUCTOR:
         from implement_admission.conductor_witness_defaults import fold_deps_for_admit
 
@@ -352,7 +380,7 @@ def resolve_source_ref_to_packet(
             packet_sha256=mp.packet_sha256,
             materialization_present=present,
             warnings=warnings,
-            route_contract={"packet_kind": "conductor", "lane": "B"},
+            route_contract={"contract": "conductor", "lane": "B"},
         )
     dirty_tree_risk = _resolve_dirty_tree_risk(
         enable_dirty_tree_risk=enable_dirty_tree_risk,

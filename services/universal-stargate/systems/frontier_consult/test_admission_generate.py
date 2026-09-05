@@ -66,7 +66,6 @@ def test_conductor_omit_model_resolves_profile_default() -> None:
         "cursor-sdk",
         model=None,
         request_id="req-conductor-omit",
-        packet_kind="conductor",
     )
     assert resolved == "cursor/composer-2.5"
     assert resolved == load_auto_judgment_default_model(load_route_policy())
@@ -76,7 +75,7 @@ def test_conductor_body_kind_omit_model_resolves_composer() -> None:
     """AC1: conductor in packet body (no wire packet_kind) + omit model → composer."""
     from implement_admission.dispatch_topic import extract_packet_kind_from_body
 
-    body = "---\npacket_kind: conductor\ncontract: light-bounded\n---\nscope"
+    body = "---\npacket_kind: conductor\ncontract: conductor\n---\nscope"
     wire_kind = None
     effective_kind = (wire_kind or "").strip().lower() or None
     if body and not effective_kind:
@@ -87,7 +86,6 @@ def test_conductor_body_kind_omit_model_resolves_composer() -> None:
         "cursor-sdk",
         model=None,
         request_id="req-body-conductor",
-        packet_kind=effective_kind,
     )
     assert resolved == "cursor/composer-2.5"
 
@@ -97,7 +95,6 @@ def test_conductor_explicit_grok_pin_honored() -> None:
         "cursor-sdk",
         model="cursor/grok-4.6",
         request_id="req-conductor-grok-pin",
-        packet_kind="conductor",
     )
     assert resolved == "cursor/grok-4.6"
 
@@ -107,7 +104,6 @@ def test_omit_model_without_packet_kind_resolves_composer() -> None:
         "cursor-sdk",
         model=None,
         request_id="req-omit-none",
-        packet_kind=None,
     )
     assert resolved == "cursor/composer-2.5"
 
@@ -117,7 +113,6 @@ def test_explicit_composer_with_conductor_packet_kind() -> None:
         "cursor-sdk",
         model="cursor/composer-2.5",
         request_id="req-explicit-composer",
-        packet_kind="conductor",
     )
     assert resolved == "cursor/composer-2.5"
 

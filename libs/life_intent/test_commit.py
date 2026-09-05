@@ -39,7 +39,7 @@ class _FakeHandle:
     family: str = "cursor"
     platform: str = "sdk"
     to_agent: str = "cursor-sdk:dispatch:exec1"
-    handoff_contract: str = "light-bounded"
+    handoff_contract: str = "none"
     packet_path: str = "packet.md"
     message: str | None = None
     caller_agent: str = "web-anthropic"
@@ -357,7 +357,7 @@ def test_resume_does_not_refire_dispatch(
             "family": "cursor",
             "platform": "sdk",
             "to_agent": "t",
-            "handoff_contract": "light-bounded",
+            "handoff_contract": "none",
             "packet_path": "packet.md",
             "message": None,
             "caller_agent": "web-anthropic",

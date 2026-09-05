@@ -9,7 +9,7 @@ def test_resolve_prompt_preamble_always_includes_deliverable_routing() -> None:
     text = resolve_prompt_preamble(
         handoff_contract=None,
         prompt_preamble=None,
-        inferred_contract="light-bounded",
+        inferred_contract="none",
     )
     assert "DURABLE DELIVERABLE ROUTING" in text
     assert "/tmp/summaries/" in text
@@ -43,7 +43,7 @@ def test_resolve_prompt_preamble_preserves_custom_preamble() -> None:
 
 def test_resolve_prompt_preamble_injects_reasoning_posture_on_light_bounded() -> None:
     text = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
     )
@@ -63,7 +63,7 @@ def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
 
 
 def test_resolve_prompt_preamble_hypothesize_simulate_judgment_contracts() -> None:
-    """``light-bounded`` is the binding leg of a judgment split — it gets the fill."""
+    """``none`` is the binding leg of a judgment split — it gets the fill."""
     consult = resolve_prompt_preamble(
         handoff_contract="consult",
         prompt_preamble=None,
@@ -71,7 +71,7 @@ def test_resolve_prompt_preamble_hypothesize_simulate_judgment_contracts() -> No
     )
     assert "Use the `hypothesize-simulate` skill" in consult
     light_bounded = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
     )
@@ -103,7 +103,7 @@ def test_resolve_prompt_preamble_skips_reasoning_posture_on_mechanical_or_quick(
 def test_resolve_prompt_preamble_reasoning_posture_idempotent_existing_text() -> None:
     existing = "Use the `reasoning-posture` skill — already in packet.\nDo the work."
     text = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         existing_text=existing,
@@ -126,7 +126,7 @@ def test_resolve_prompt_preamble_reasoning_posture_idempotent_custom_preamble() 
 def test_conductor_seat_identity_block_only_under_three_condition_gate() -> None:
     dispatch_id = "conductor-dispatch-abc123"
     gated = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -141,7 +141,7 @@ def test_conductor_seat_identity_block_only_under_three_condition_gate() -> None
     assert "CURSOR_SOURCE_REF_IN_FLIGHT" in gated
 
     assert "CONDUCTOR SEAT IDENTITY" not in resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -150,7 +150,7 @@ def test_conductor_seat_identity_block_only_under_three_condition_gate() -> None
         existing_text="TYPE: DIRECTIVE\nscope: investigate only\n",
     )
     assert "CONDUCTOR SEAT IDENTITY" not in resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane=None,
@@ -170,7 +170,7 @@ def test_conductor_seat_identity_block_only_under_three_condition_gate() -> None
 def test_conductor_seat_identity_uses_req_dispatch_id() -> None:
     dispatch_id = "98836b38"
     text = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -190,7 +190,7 @@ _CONDUCTOR_USE_LINE = (
 def test_conductor_seat_identity_fires_on_message_body_with_conductor_marker() -> None:
     dispatch_id = "auto-abc123def456"
     text = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -207,7 +207,7 @@ def test_conductor_seat_identity_fires_on_message_body_with_conductor_marker() -
 def test_conductor_seat_identity_absent_on_message_body_without_conductor_marker() -> None:
     dispatch_id = "auto-abc123def456"
     text = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -221,7 +221,7 @@ def test_conductor_seat_identity_absent_on_message_body_without_conductor_marker
 def test_conductor_run_to_completion_present_under_three_condition_gate() -> None:
     dispatch_id = "conductor-dispatch-abc123"
     gated = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -233,7 +233,7 @@ def test_conductor_run_to_completion_present_under_three_condition_gate() -> Non
     assert "nest_under=" + dispatch_id in gated
 
     assert "CONDUCTOR RUN TO COMPLETION" not in resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -242,7 +242,7 @@ def test_conductor_run_to_completion_present_under_three_condition_gate() -> Non
         existing_text="TYPE: DIRECTIVE\nscope: investigate only\n",
     )
     assert "CONDUCTOR RUN TO COMPLETION" not in resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane=None,
@@ -262,7 +262,7 @@ def test_conductor_run_to_completion_present_under_three_condition_gate() -> Non
 def test_conductor_run_to_completion_fires_on_message_body_marker() -> None:
     dispatch_id = "auto-abc123def456"
     text = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -279,7 +279,7 @@ def test_conductor_hop_preamble_first_spawn() -> None:
     dispatch_id = "hop-dispatch-1"
     thread_id = "9968"
     text = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -301,7 +301,7 @@ def test_conductor_hop_preamble_successor_lineage() -> None:
     predecessor = "hop-dispatch-1"
     thread_id = "9968"
     text = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -320,7 +320,7 @@ def test_conductor_hop_preamble_successor_lineage() -> None:
 
 def test_conductor_hop_preamble_absent_without_thread_id() -> None:
     text = resolve_prompt_preamble(
-        handoff_contract="light-bounded",
+        handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",

@@ -208,7 +208,6 @@ def test_specimen_7065_115_passes_compose_and_validate() -> None:
     assert outcome["status"] == "sent"
 
 
-
 def test_compose_none_beyond_path() -> None:
     composed = compose_mission_debrief_from_closeout(
         subject="MISSION CLOSEOUT",

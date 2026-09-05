@@ -304,7 +304,7 @@ async def fire_hop_for_decision(
         desired_model="auto",
         desired_effort="high",
         escalation="cdp/opus-5",
-        contract="light-bounded",
+        contract="none",
         require_attended=False,
         request_id=f"hop-cadence:{decision.thread_id}:{int(time.time())}",
         cse_chat_url=str(row.get("chat_url") or "") or None,

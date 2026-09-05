@@ -20,7 +20,9 @@ _CONSULT_ROUTING_SKILL_SOT = (
     _ULG_ROOT / "cursor-plugins/ulg-ecosystem/skills/consult-routing/SKILL.md"
 )
 
-AUTO_OMIT_CONTRACTS: frozenset[str] = frozenset(CANONICAL_CONTRACTS) | {"light-bounded"}
+AUTO_OMIT_CONTRACTS: frozenset[str] = (
+    frozenset(CANONICAL_CONTRACTS) | {"sketch", "conductor", "none"}
+)
 MECHANICAL_WORKFLOW = "mechanical_implement"
 CHECK_REVIEW_WORKFLOW = "check_review"
 AUTO_JUDGMENT_WORKFLOW = "auto_judgment"

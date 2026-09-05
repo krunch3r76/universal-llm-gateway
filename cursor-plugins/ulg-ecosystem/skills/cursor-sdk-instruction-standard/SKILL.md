@@ -1,9 +1,9 @@
 ---
 name: cursor-sdk-instruction-standard
-description: "Before authoring cursor-sdk dispatch turns — light-bounded, pure-mechanical, or implement contracts; ensures Composer executors get verifiable instructions."
+description: "Before authoring cursor-sdk dispatch turns — none, pure-mechanical, or implement contracts; ensures Composer executors get verifiable instructions."
 skill_category: dispatch-delegation
-trigger_short: cursor-sdk ∨ light-bounded ∨ pure-mechanical ∨ self-check ∨ acceptance_criteria
-trigger_match_terms: ["cursor-sdk", "cursor_sdk", "light-bounded", "pure-mechanical", "acceptance_criteria", "self-check", "instruction standard", "team_dispatch", "contract=implement", "lane"]
+trigger_short: cursor-sdk ∨ none ∨ pure-mechanical ∨ self-check ∨ acceptance_criteria
+trigger_match_terms: ["cursor-sdk", "cursor_sdk", "none", "pure-mechanical", "acceptance_criteria", "self-check", "instruction standard", "team_dispatch", "contract=implement", "lane"]
 canonical: workspaces://universal-llm-gateway/.cursor/skills/cursor-sdk-instruction-standard/SKILL.md
 ---
 
@@ -43,7 +43,7 @@ Report each: PASS / FAIL + one-line evidence.
 Reporting "done" without a passing self-check is a contract violation.
 ```
 
-- `light-bounded ∨ pure-mechanical` ⇒ embed final inline block.
+- `none ∨ pure-mechanical` ⇒ embed final inline block.
 - `contract=implement` ⇒ embed in `acceptance_criteria` during Gate-2 distillation.
 - **Public Python surface touched** ⇒ self-check row: `docstring-quality check|scan` on touched files → **criticals=0** (or FAIL + path). Lead still re-gates at closeout (`docstring-quality` § Ship gate · `implement-todo` §5) — worker self-check does not replace lead scan citation.
 - **Named `todo:` land** ⇒ self-check row: `todo-close` or a LANDED assertion on that entity (`workflow_state=done` or an active LANDED claim citing the path SHA). A git commit of the locus without stamping the matter entity is incomplete. Lead `entity_get`s after harvest. Specimen: T14 `4a9246a` in tree, card left `open`.
@@ -60,7 +60,7 @@ Irreversible ops (cortex supersede, file overwrite, entity delete) require an in
 
 ## D-recon — Breadth recon Explore-default (cursor-sdk executor)
 
-When the packet owes **breadth recon** (loci unknown, ≥3 files / unfamiliar subsystem, investigate/light-bounded recon, or recon-default front-half), the default read move is **`Task(subagent_type="explore", …)`** — not in-seat Grep/Glob spray. The bridge injects this via `cursor_sdk_packet._BREADTH_RECON_PREAMBLE` on every dispatch; packet authors mirror triggers here.
+When the packet owes **breadth recon** (loci unknown, ≥3 files / unfamiliar subsystem, investigate/none recon, or recon-default front-half), the default read move is **`Task(subagent_type="explore", …)`** — not in-seat Grep/Glob spray. The bridge injects this via `cursor_sdk_packet._BREADTH_RECON_PREAMBLE` on every dispatch; packet authors mirror triggers here.
 
 | Owed | Default | Anti-trigger (document in closeout) |
 |---|---|---|
@@ -73,7 +73,7 @@ When the packet owes **breadth recon** (loci unknown, ≥3 files / unfamiliar su
 ## D-judgment — reasoning-posture auto-invoke (non-mechanical)
 
 GIW `resolve_prompt_preamble` prepends `Use the reasoning-posture skill` on every
-non-mechanical cursor-sdk **generate** (`light-bounded` / `consult`) — `team_dispatch`
+non-mechanical cursor-sdk **generate** (`none` / `consult`) — `team_dispatch`
 from IDE, charter-runner, or Auto nested. Skip `implement` / `pure-mechanical` and
 quick (`answer` / `execute` / `propagate`). Authors may omit the line; do not strip
 it. `skills=` is not mounted on cursor-sdk. Consult handoff enrich inserts the same
@@ -107,7 +107,7 @@ pass, not only service-up.
 - [ ] Destructive steps include `HARD STOP` + precondition.
 - [ ] Every fork is bound in the dispatch.
 - [ ] Propagation named for every touched surface that needs one (service restart, plugin install), or `propagation: none` stated.
-- [ ] cursor-sdk `op=generate`: before `team_dispatch`, verify `dispatch_thread_id` has `lifecycle_state=pending ∧ turn_count=0`; otherwise halt and fix. Response `consolidation_split_warning` is too late. **Conductor carve-out:** `packet_kind=conductor` may pass a continuity root with turns (mint child) or a pending-empty *child* of the root — still never a lifecycle-null empty thread.
+- [ ] cursor-sdk `op=generate`: before `team_dispatch`, verify `dispatch_thread_id` has `lifecycle_state=pending ∧ turn_count=0`; otherwise halt and fix. Response `consolidation_split_warning` is too late. **Conductor carve-out:** `` may pass a continuity root with turns (mint child) or a pending-empty *child* of the root — still never a lifecycle-null empty thread.
 - [ ] Top-level cursor-sdk generate: `lane=` set (`A` or `B`) unless `nest_under` / `resume_of`. After admit, quote the lane event / `active_by_lane`.
 
 ## Gate-2 implement-ready checklist
@@ -139,12 +139,12 @@ Re-versioned / previously done todo: stale `implement_ready_assertion_id` may be
 | Contract | Instruction density | Self-check placement |
 |---|---|---|
 | `pure-mechanical` | Exact symbol + location + value | Inline final block |
-| `light-bounded` | Step-by-step + acceptance criteria inline | Inline final block |
+| `none` | Step-by-step + acceptance criteria inline | Inline final block |
 | `implement` | Materialized from todo attrs/server packet | `acceptance_criteria` at Gate-2 |
 
 ## Failure anchor
 
-Friction 19196: a `light-bounded` dispatch wrote to `tmp/reviews/` instead of named cortex sidecar, while summary omitted bound assertion 19188. Root cause: no explicit delivery path, no self-check, output contract stated once. Treat worker self-report as advisory; lead verification remains required for canonical/destructive writes.
+Friction 19196: a `none` dispatch wrote to `tmp/reviews/` instead of named cortex sidecar, while summary omitted bound assertion 19188. Root cause: no explicit delivery path, no self-check, output contract stated once. Treat worker self-report as advisory; lead verification remains required for canonical/destructive writes.
 
 ## Charter-window terminal (thin — landed 5712)
 

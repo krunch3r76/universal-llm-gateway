@@ -150,8 +150,8 @@ def test_enrich_injects_reasoning_posture_on_consult() -> None:
 
 
 def test_enrich_injects_hypothesize_simulate_on_light_bounded() -> None:
-    """``light-bounded`` leaves the option space open, so the rival fill ships."""
-    packet = _THIN_WEB_PACKET.replace("contract: consult", "contract: light-bounded")
+    """``none`` leaves the option space open, so the rival fill ships."""
+    packet = _THIN_WEB_PACKET.replace("contract: consult", "contract: none")
     cortex = _StubCortex()
     result = enrich_handoff_packet(packet, cortex=cortex)
     assert "reasoning-posture" in result.skills_added
@@ -166,7 +166,7 @@ def test_enrich_injects_reasoning_posture_from_route_contract() -> None:
     assert "reasoning-posture" not in skipped.skills_added
     assert "ulg-for-llms" not in skipped.skills_added
     injected = enrich_handoff_packet(
-        packet, cortex=cortex, handoff_contract="light-bounded"
+        packet, cortex=cortex, handoff_contract="none"
     )
     assert "reasoning-posture" in injected.skills_added
     assert "ulg-for-llms" in injected.skills_added

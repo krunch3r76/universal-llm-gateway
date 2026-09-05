@@ -1,7 +1,7 @@
 ---
 name: hypothesize-simulate
-description: "Answering seat on ask, review, consult, light-bounded, or judgment_required — rival approaches, simulate, kill the incumbent frame. Execute before bind; fires without a consult token."
-trigger_match_terms: ["hypothesize-simulate", "hypothesize", "simulate", "rival", "architecture-suitability", "judgment_required", "light-bounded", "alternatives", "answering seat", "extraordinary aperture", "outside the box", "kill the conventional frame", "incumbent frame", "blank-world", "asymmetric search", "wide detent"]
+description: "Answering seat on ask, review, consult, none, or judgment_required — rival approaches, simulate, kill the incumbent frame. Execute before bind; fires without a consult token."
+trigger_match_terms: ["hypothesize-simulate", "hypothesize", "simulate", "rival", "architecture-suitability", "judgment_required", "none", "alternatives", "answering seat", "extraordinary aperture", "outside the box", "kill the conventional frame", "incumbent frame", "blank-world", "asymmetric search", "wide detent"]
 related_skills: ["consult-posture", "path-sim", "reasoning-posture"]
 ---
 
@@ -9,11 +9,11 @@ related_skills: ["consult-posture", "path-sim", "reasoning-posture"]
 
 Reader = answering model. Cognitive procedure only. ¬ cascade · ¬ header grammar · ¬ ranked tables · ¬ transport.
 
-## When — answering seat (ask / review / consult / light-bounded / judgment_required); fires without an operator consult token
+## When — answering seat (ask / review / consult / none / judgment_required); fires without an operator consult token
 
-`answering_seat ∧ (purpose ∈ {ask, review} ∨ contract ∈ {consult, light-bounded} ∨ density_triage=judgment_required ∨ operator_names(alternatives|simulate|hypothesize|extraordinary aperture|outside the box)) ⇒ apply`
+`answering_seat ∧ (purpose ∈ {ask, review} ∨ contract ∈ {consult, none} ∨ density_triage=judgment_required ∨ operator_names(alternatives|simulate|hypothesize|extraordinary aperture|outside the box)) ⇒ apply`
 
-`contract=light-bounded ⇒ apply` — that leg leaves the option space to the seat, so it needs the fill more than `consult`, which arrives with a pinned Question and scope-lock. GIW `resolve_prompt_preamble` and Stargate handoff enrich inject the Use-line on exactly this set (`libs/reasoning_posture_contracts.py::HYPOTHESIZE_SIMULATE_CONTRACTS`) — the body gate and the injection predicate are one set, not two.
+`contract=none ⇒ apply` — that leg leaves the option space to the seat, so it needs the fill more than `consult`, which arrives with a pinned Question and scope-lock. GIW `resolve_prompt_preamble` and Stargate handoff enrich inject the Use-line on exactly this set (`libs/reasoning_posture_contracts.py::HYPOTHESIZE_SIMULATE_CONTRACTS`) — the body gate and the injection predicate are one set, not two.
 
 `contract ∈ {implement, pure-mechanical} ⇒ skip`. `¬operator_consult_token ⇏ waive`. Dispatcher glue: `consult-posture`. Ranked L0/L1/L2 tables: `path-sim` (lead). Rails: `reasoning-posture`.
 

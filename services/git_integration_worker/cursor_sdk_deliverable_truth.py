@@ -1,7 +1,7 @@
-"""Closeout-truth backstop for light-bounded cursor-sdk dispatch (friction 21654).
+"""Closeout-truth backstop for none cursor-sdk dispatch (friction 21654).
 
 Fix #3. Independent of the #1 stream-capture and #2 large-write-path fixes: a
-light-bounded dispatch must not report ``status: complete`` when a named
+none dispatch must not report ``status: complete`` when a named
 deliverable never landed. Two source-independent signals feed one PARTIAL
 degrade decision:
 
@@ -26,7 +26,7 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,
 )
 
-LIGHT_BOUNDED_CONTRACT = "light-bounded"
+LIGHT_BOUNDED_CONTRACT = "none"
 
 # fs multiplexes read+write under one tool name, so name alone cannot say
 # whether a call was a write. It is only used (a) to key the failure signal —
@@ -149,11 +149,11 @@ def light_bounded_deliverable_reason(
     contract: str,
     deliverable_present: bool = False,
 ) -> str | None:
-    """Degrade reason (→ PARTIAL) when a light-bounded deliverable did not land.
+    """Degrade reason (→ PARTIAL) when a none deliverable did not land.
 
     Contract-gated: other contract types carry their own closeout semantics
     (implement has git-baseline capture + files_expected; consult expects no
-    durable artifact), so this backstop applies to ``light-bounded`` only.
+    durable artifact), so this backstop applies to ``none`` only.
 
     ``deliverable_present`` is the filesystem ground-truth override: when the
     packet-declared deliverable path(s) are verified present on disk/cortex

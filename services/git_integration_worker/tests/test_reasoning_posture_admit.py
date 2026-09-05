@@ -19,7 +19,7 @@ def _minimal_admit_kwargs(**overrides: object) -> dict:
         "effort": {"requested": "medium", "resolved_effort": "medium"},
         "escalation": {"requested": None, "resolved_escalation": None},
         "contract": "investigate",
-        "handoff_contract": "light-bounded",
+        "handoff_contract": "none",
     }
     base.update(overrides)
     return base

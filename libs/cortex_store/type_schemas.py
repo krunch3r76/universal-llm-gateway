@@ -169,7 +169,6 @@ def validate_surface_visibility(
         )
 
 
-
 _IMPLEMENT_LANE_KEYS = ("files_expected", "acceptance_criteria", "required_skills")
 
 _DEPRECATED_IMPLEMENT_ALIASES = {

@@ -43,7 +43,6 @@ def _watch_holder_registration(
     return reg or None
 
 
-
 def _resolve_bus_cse_registration(thread_id: str) -> str | None:
     """Last bus CSE association for *thread_id* (fail-soft)."""
     try:

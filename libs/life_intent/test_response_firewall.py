@@ -52,7 +52,7 @@ def test_forbidden_hits_rejects_colon_and_equals_dispatch_vocab() -> None:
     """Sol F1 — registry refuse_list colon forms must hit the scanner."""
     probes = {
         "role: reviewer": ["role:"],
-        "contract: light-bounded": ["contract:"],
+        "contract: none": ["contract:"],
         "model: cursor/gpt-5.6-sol": ["model:"],
         "op: generate": ["op:"],
         "role=reviewer": ["role="],
@@ -149,7 +149,7 @@ def test_response_firewall_over_propose_and_commit_fields(
             "family": "cursor",
             "platform": "sdk",
             "to_agent": "t",
-            "handoff_contract": "light-bounded",
+            "handoff_contract": "none",
             "packet_path": "packet.md",
             "message": None,
             "caller_agent": "web-anthropic",
