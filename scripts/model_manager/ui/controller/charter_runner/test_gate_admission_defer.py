@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -18,7 +17,6 @@ from scripts.model_manager.ui.controller.charter_runner.executor_defaults import
 )
 from scripts.model_manager.ui.controller.charter_runner.gate_admission_defer import (
     DEFER_MAX_AGE_S,
-    clear_gate_defer,
     preflight_write_lease,
     record_gate_defer,
 )

@@ -112,7 +112,7 @@ def test_two_distinct_todo_refs_are_not_resolvable() -> None:
 def test_implement_source_ref_from_next_pickup_not_steps() -> None:
     """Open G7/G8 todos in Steps must not block G4 implement on another todo."""
     body = (
-        f"# CHECKPOINT\n\n"
+        "# CHECKPOINT\n\n"
         "## Anchor\n- Todo: todo:cursor-auto-in-seat-nested-terminal\n\n"
         "## In-flight / WIP\nnone\n\n"
         "## Next pickup\n"
@@ -228,8 +228,10 @@ def test_admit_notification_names_the_model_that_actually_fired(
     from unittest.mock import AsyncMock
 
     from scripts.model_manager.ui.controller.charter_runner import admit
-    from scripts.model_manager.ui.controller.charter_runner.admission import CapStore
-    from scripts.model_manager.ui.controller.charter_runner.admission import Decision
+    from scripts.model_manager.ui.controller.charter_runner.admission import (
+        CapStore,
+        Decision,
+    )
 
     parsed = parse_checkpoint(_checkpoint("G4 — land it · executor_lane: implement"))
     decision = Decision(

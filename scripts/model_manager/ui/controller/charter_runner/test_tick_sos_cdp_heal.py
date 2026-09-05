@@ -45,7 +45,7 @@ async def test_submit_cdp_heal_posts_team_dispatch_with_purpose() -> None:
             return {"execution_id": "exec-cdp-1"}
 
     class _Client:
-        async def __aenter__(self) -> "_Client":
+        async def __aenter__(self) -> _Client:
             return self
 
         async def __aexit__(self, *_a: object) -> None:
@@ -88,7 +88,7 @@ async def test_submit_cdp_heal_http_error_returns_none() -> None:
             return {}
 
     class _Client:
-        async def __aenter__(self) -> "_Client":
+        async def __aenter__(self) -> _Client:
             return self
 
         async def __aexit__(self, *_a: object) -> None:

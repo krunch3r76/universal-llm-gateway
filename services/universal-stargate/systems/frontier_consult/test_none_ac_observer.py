@@ -168,7 +168,10 @@ async def test_advisory_lifecycle_forced_flag_spawn_and_footer() -> None:
         parent_dispatch_thread_id="thread:parent",
     )
     assert build is not None
-    assert "Self-check PASS is evidence to inspect, not completion authority" in build.prompt
+    assert (
+        "Self-check PASS is evidence to inspect, not completion authority"
+        in build.prompt
+    )
     assert "PASS or FAIL per packet AC" in build.prompt
 
 
