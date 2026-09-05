@@ -327,7 +327,7 @@ def test_ac8_wired_lane_no_spawn_path_warning() -> None:
     assert "auto_review_child_warning" not in env
 
 
-def test_ac10_spawn_body_read_only_light_bounded() -> None:
+def test_ac10_spawn_body_read_only_residual() -> None:
     from systems.frontier_consult.route import TeamDispatchToThreadBody
 
     body = TeamDispatchToThreadBody(
@@ -610,7 +610,7 @@ def test_densify_build_reviewer_prompt_default_byte_identical() -> None:
 def test_render_and_diff_sidecar_vs_source_prompts() -> None:
     draft = "draft"
     trace = "trace"
-    from systems.frontier_consult.light_bounded_ac_observer import (
+    from systems.frontier_consult.generate_lane_ac_observer import (
         build_generate_lane_reviewer_prompt,
     )
 

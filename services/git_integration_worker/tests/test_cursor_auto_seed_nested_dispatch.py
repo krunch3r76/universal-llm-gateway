@@ -20,7 +20,7 @@ def test_nested_contracts_includes_seed() -> None:
     assert "seed" in _NESTED_CONTRACTS
 
 
-def test_admit_contracts_seed_maps_to_light_bounded_handoff() -> None:
+def test_admit_contracts_seed_maps_to_residual_handoff() -> None:
     from services.git_integration_worker.cursor_auto.wire_map import resolve_handoff_contract
 
     assert "seed" in _CONTRACTS

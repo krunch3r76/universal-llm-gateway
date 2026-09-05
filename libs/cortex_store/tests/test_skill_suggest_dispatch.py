@@ -131,7 +131,7 @@ def test_extended_candidates_include_score_zero() -> None:
 
 @pytest.mark.offline
 @pytest.mark.asyncio
-async def test_dispatch_contract_is_light_bounded() -> None:
+async def test_dispatch_contract_is_residual() -> None:
     body = SkillSuggestDispatchRequest(agent="claude-cursor", loaded=[])
     with (
         patch(

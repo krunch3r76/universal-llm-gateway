@@ -1,4 +1,4 @@
-"""Light-bounded packet AC observer — default independent review resolution."""
+"""Generate-lane AC observer — default independent review resolution."""
 
 from __future__ import annotations
 

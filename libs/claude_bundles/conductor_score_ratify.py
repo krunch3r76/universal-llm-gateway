@@ -18,7 +18,7 @@ _GATE_ROW_RE = re.compile(
 _SUMMON_MODE_RE = re.compile(
     r"(?i)summon_mode:\s*(attended|confer[_-]and[_-]finish)\b"
 )
-_PACKET_KIND_RE = re.compile(r"(?im)^packet_kind:\s*(\S+)")
+_CONTRACT_FRONTMATTER_RE = re.compile(r"(?im)^contract:\s*(\S+)")
 
 
 def _extract_summon_mode(text: str | None) -> str | None:
@@ -31,19 +31,12 @@ def _extract_summon_mode(text: str | None) -> str | None:
     return match.group(1).lower().replace("-", "_")
 
 
-def _is_conductor_packet(
-    packet_text: str | None,
-    *,
-    packet_kind: str | None = None,
-) -> bool:
-    """True when packet is a conductor mission."""
-    if packet_kind == "conductor":
-        return True
-    if packet_text:
-        match = _PACKET_KIND_RE.search(packet_text)
-        if match and match.group(1).strip().lower() == "conductor":
-            return True
-    return False
+def _is_conductor_packet(packet_text: str | None) -> bool:
+    """True when packet frontmatter declares ``contract: conductor``."""
+    if not packet_text:
+        return False
+    match = _CONTRACT_FRONTMATTER_RE.search(packet_text)
+    return bool(match and match.group(1).strip().lower() == "conductor")
 
 
 def is_g3_g5_exit(body: str) -> bool:
@@ -63,7 +56,6 @@ def validate_q2_away_score_ratify(
     body: str,
     *,
     packet_text: str | None = None,
-    packet_kind: str | None = None,
 ) -> str | None:
     """Return ``q2_score_ratify_missing`` when away G3→G5 lacks score-ratify posture."""
     if not _is_conductor_packet(packet_text):

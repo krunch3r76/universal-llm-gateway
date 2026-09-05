@@ -72,7 +72,7 @@ def normalize_expected_cortex_deliverable_uri(raw: str) -> str | None:
 
 def collect_expected_cortex_deliverable_uris(
     *,
-    light_bounded_expected_paths: tuple[str, ...] = (),
+    residual_expected_paths: tuple[str, ...] = (),
     files_expected: list[str] | None = None,
     cortex_artifact_paths: list[str] | None = None,
 ) -> list[str]:
@@ -81,7 +81,7 @@ def collect_expected_cortex_deliverable_uris(
     ordered: list[str] = []
     for raw in (
         *(cortex_artifact_paths or []),
-        *light_bounded_expected_paths,
+        *residual_expected_paths,
         *(files_expected or []),
     ):
         uri = normalize_expected_cortex_deliverable_uri(raw)

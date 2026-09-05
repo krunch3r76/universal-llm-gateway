@@ -50,15 +50,15 @@ def _patch_prepare_deps(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         lambda *_a, **_k: None,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.light_bounded_ac_observer.prepare_lb_auto_review_for_generate",
+        "systems.frontier_consult.generate_lane_ac_observer.prepare_lb_auto_review_for_generate",
         lambda **_k: (False, False, ""),
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.light_bounded_ac_observer.stamp_lb_review_spawn_fields",
+        "systems.frontier_consult.generate_lane_ac_observer.stamp_lb_review_spawn_fields",
         lambda **_k: ("source", None, False),
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.light_bounded_ac_observer.validate_generate_contract_packet_rules",
+        "systems.frontier_consult.generate_lane_ac_observer.validate_generate_contract_packet_rules",
         lambda **_k: None,
     )
     monkeypatch.setattr(
@@ -196,7 +196,7 @@ async def test_b3_packet_path_standing_arc_admits(
     """Standing dispatch_thread_id + packet_path is explicit_external, not loop."""
     probes = _patch_prepare_deps(monkeypatch)
     monkeypatch.setattr(
-        "systems.frontier_consult.light_bounded_ac_observer.prepare_lb_auto_review_for_generate",
+        "systems.frontier_consult.generate_lane_ac_observer.prepare_lb_auto_review_for_generate",
         lambda **_k: (False, False, "# packet\n"),
     )
     handle = await prepare_mod.prepare_cursor_sdk_generate(

@@ -14,7 +14,7 @@ from systems.frontier_consult.cursor_sdk_role_delivery import (
 from systems.frontier_consult.handoff_response import build_handoff_result
 
 
-def test_should_bridge_light_bounded_luna() -> None:
+def test_should_bridge_residual_luna() -> None:
     assert should_bridge_cursor_check_review(
         contract="none",
         resolved_model="cursor/gpt-5.6-luna",

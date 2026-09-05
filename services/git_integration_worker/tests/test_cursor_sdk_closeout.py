@@ -678,7 +678,7 @@ def test_prepare_closeout_delivery_implement_unavailable(tmp_path: Path) -> None
     assert payload["files_modified"] == []
 
 
-def test_prepare_closeout_delivery_light_bounded_written_path_complete(
+def test_prepare_closeout_delivery_residual_written_path_complete(
     tmp_path: Path,
 ) -> None:
     """AC: none dispatch that wrote its named path is not false-degraded."""
@@ -700,7 +700,7 @@ def test_prepare_closeout_delivery_light_bounded_written_path_complete(
         work_item_ref=None,
         baseline=None,
         deliverables_expected=True,
-        light_bounded_expected_paths=("tasks/journal/review.md",),
+        residual_expected_paths=("tasks/journal/review.md",),
     )
     payload = json.loads(delivery.body)
     assert payload["capture_status"] == "complete"
@@ -708,7 +708,7 @@ def test_prepare_closeout_delivery_light_bounded_written_path_complete(
     assert payload["work_outcome"] == "unverified"
 
 
-def test_prepare_closeout_delivery_light_bounded_missing_path_partial(
+def test_prepare_closeout_delivery_residual_missing_path_partial(
     tmp_path: Path,
 ) -> None:
     """AC: none dispatch that named a path but never wrote it is flagged."""
@@ -727,18 +727,18 @@ def test_prepare_closeout_delivery_light_bounded_missing_path_partial(
         work_item_ref=None,
         baseline=None,
         deliverables_expected=True,
-        light_bounded_expected_paths=("tasks/journal/review.md",),
+        residual_expected_paths=("tasks/journal/review.md",),
     )
     payload = json.loads(delivery.body)
     assert payload["capture_status"] == "partial"
     assert payload["status"] == "partial"
     assert (
-        "divergence:light_bounded_path_absent:tasks/journal/review.md"
+        "divergence:residual_path_absent:tasks/journal/review.md"
         in payload["deviations"]
     )
 
 
-def test_prepare_closeout_delivery_light_bounded_wrote_elsewhere_partial(
+def test_prepare_closeout_delivery_residual_wrote_elsewhere_partial(
     tmp_path: Path,
 ) -> None:
     """AC: writing a different file than the one named must still be flagged."""
@@ -760,7 +760,7 @@ def test_prepare_closeout_delivery_light_bounded_wrote_elsewhere_partial(
         work_item_ref=None,
         baseline=None,
         deliverables_expected=True,
-        light_bounded_expected_paths=("tasks/journal/review.md",),
+        residual_expected_paths=("tasks/journal/review.md",),
     )
     payload = json.loads(delivery.body)
     assert payload["capture_status"] == "partial"
@@ -1971,7 +1971,7 @@ def test_finalize_closeout_body_preserves_effects_total() -> None:
     assert reduced["effects"] == ["a.py", "b.py", "c.py"]
 
 
-def test_prepare_closeout_delivery_light_bounded_gitignored_carries_effects(
+def test_prepare_closeout_delivery_residual_gitignored_carries_effects(
     tmp_path: Path,
 ) -> None:
     """AC10: none assembly inherits ``effects`` for untracked writes."""
@@ -2026,7 +2026,7 @@ def test_prepare_closeout_delivery_light_bounded_gitignored_carries_effects(
         work_item_ref=None,
         baseline={"codes": {}, "hashes": {}},
         deliverables_expected=True,
-        light_bounded_expected_paths=(rel,),
+        residual_expected_paths=(rel,),
     )
     payload = json.loads(delivery.body)
     assert rel in payload["effects"]

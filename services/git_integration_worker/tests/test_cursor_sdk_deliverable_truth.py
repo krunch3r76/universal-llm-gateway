@@ -11,11 +11,11 @@ from pathlib import Path
 
 from services.git_integration_worker.cursor_sdk_deliverable_truth import (
     deliverable_write_choke_reason,
-    light_bounded_deliverable_reason,
+    residual_deliverable_reason,
     stated_intent_no_write_reason,
 )
-from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
-    light_bounded_deliverable_present,
+from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
+    residual_deliverable_present,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,
@@ -131,40 +131,40 @@ class TestStatedIntentNoWrite:
 
 
 class TestContractGate:
-    def test_non_light_bounded_never_degrades(self) -> None:
+    def test_non_residual_never_degrades(self) -> None:
         calls = (_tc(tool_name="fs", status="error", arg_bytes=200_000),)
         body = "I'll write the report to cortex://notes/system/x.md."
         for contract in ("implement", "consult", "pure-mechanical"):
             assert (
-                light_bounded_deliverable_reason(
+                residual_deliverable_reason(
                     body=body, tool_calls=calls, contract=contract
                 )
                 is None
             )
 
-    def test_light_bounded_choke_precedes_intent(self) -> None:
+    def test_residual_choke_precedes_intent(self) -> None:
         calls = (_tc(tool_name="fs", status="error", arg_bytes=200_000),)
         body = "I'll write the report to cortex://notes/system/x.md."
         assert (
-            light_bounded_deliverable_reason(
+            residual_deliverable_reason(
                 body=body, tool_calls=calls, contract="none"
             )
             == "deliverable_write_choked"
         )
 
-    def test_light_bounded_stated_intent_when_no_structured_signal(self) -> None:
+    def test_residual_stated_intent_when_no_structured_signal(self) -> None:
         body = "Saved to notes/system/threads/report.md."
         assert (
-            light_bounded_deliverable_reason(
+            residual_deliverable_reason(
                 body=body, tool_calls=(), contract="none"
             )
             == "stated_intent_no_write"
         )
 
-    def test_light_bounded_clean_write_is_complete(self) -> None:
+    def test_residual_clean_write_is_complete(self) -> None:
         body = "I wrote the review to cortex://notes/system/x.md."
         assert (
-            light_bounded_deliverable_reason(
+            residual_deliverable_reason(
                 body=body, tool_calls=(_landed_write(),), contract="none"
             )
             is None
@@ -179,7 +179,7 @@ class TestDeliverablePresentSuppression:
         # Cortex sidecar landed but the stream never surfaced it (empty tool_calls).
         body = "Saved to notes/system/threads/report.md."
         assert (
-            light_bounded_deliverable_reason(
+            residual_deliverable_reason(
                 body=body,
                 tool_calls=(),
                 contract="none",
@@ -192,7 +192,7 @@ class TestDeliverablePresentSuppression:
         calls = (_tc(tool_name="fs", status="error", arg_bytes=200_000),)
         body = "I'll write the report to cortex://notes/system/x.md."
         assert (
-            light_bounded_deliverable_reason(
+            residual_deliverable_reason(
                 body=body,
                 tool_calls=calls,
                 contract="none",
@@ -205,7 +205,7 @@ class TestDeliverablePresentSuppression:
         # No false-positive suppression: a genuine no-write still degrades.
         body = "Saved to notes/system/threads/report.md."
         assert (
-            light_bounded_deliverable_reason(
+            residual_deliverable_reason(
                 body=body,
                 tool_calls=(),
                 contract="none",
@@ -218,7 +218,7 @@ class TestDeliverablePresentSuppression:
         # Back-compat: omitting deliverable_present preserves prior behavior.
         body = "Saved to notes/system/threads/report.md."
         assert (
-            light_bounded_deliverable_reason(
+            residual_deliverable_reason(
                 body=body, tool_calls=(), contract="none"
             )
             == "stated_intent_no_write"
@@ -235,7 +235,7 @@ class TestLightBoundedDeliverablePresent:
         target = cortex_root / "notes" / "system" / "threads" / "s.md"
         target.parent.mkdir(parents=True)
         target.write_text("x")
-        assert light_bounded_deliverable_present(
+        assert residual_deliverable_present(
             ("notes/system/threads/s.md",),
             source_repo=source_repo,
             cortex_root=cortex_root,
@@ -247,14 +247,14 @@ class TestLightBoundedDeliverablePresent:
         target = source_repo / "tasks" / "specs" / "spec.md"
         target.parent.mkdir(parents=True)
         target.write_text("x")
-        assert light_bounded_deliverable_present(
+        assert residual_deliverable_present(
             ("tasks/specs/spec.md",),
             source_repo=source_repo,
             cortex_root=cortex_root,
         )
 
     def test_absent_path_is_false(self, tmp_path: Path) -> None:
-        assert not light_bounded_deliverable_present(
+        assert not residual_deliverable_present(
             ("notes/system/threads/missing.md",),
             source_repo=tmp_path / "repo",
             cortex_root=tmp_path / "cortex",
@@ -265,14 +265,14 @@ class TestLightBoundedDeliverablePresent:
         present = cortex_root / "notes" / "system" / "a.md"
         present.parent.mkdir(parents=True)
         present.write_text("x")
-        assert not light_bounded_deliverable_present(
+        assert not residual_deliverable_present(
             ("notes/system/a.md", "notes/system/b.md"),
             source_repo=tmp_path / "repo",
             cortex_root=cortex_root,
         )
 
     def test_empty_expected_paths_is_false(self, tmp_path: Path) -> None:
-        assert not light_bounded_deliverable_present(
+        assert not residual_deliverable_present(
             (),
             source_repo=tmp_path / "repo",
             cortex_root=tmp_path / "cortex",

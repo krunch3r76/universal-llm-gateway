@@ -35,7 +35,7 @@ from services.git_integration_worker.cursor_sdk_closeout import (
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
-from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
+from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
     extract_instructed_paths,
 )
 from services.git_integration_worker.cursor_sdk_observed_reconcile import (
@@ -220,7 +220,7 @@ def test_ac6_positive_offgit_under_unavailable_keeps_shipped(tmp_path: Path) -> 
         verification=[],
         files_offgit_produced=offgit,
         artifact_paths=offgit,
-        light_bounded_expected_paths=(rel,),
+        residual_expected_paths=(rel,),
         files_expected=[f"cortex://{rel}"],
         manifest=None,
         source_repo=repo,
@@ -236,7 +236,7 @@ def test_ac6_positive_offgit_under_unavailable_keeps_shipped(tmp_path: Path) -> 
         positive_deliverable_evidence=positive_deliverable_evidence(
             files_offgit_produced=offgit,
             artifact_paths=offgit,
-            light_bounded_expected_paths=(rel,),
+            residual_expected_paths=(rel,),
             files_expected=[f"cortex://{rel}"],
             manifest=None,
             source_repo=repo,
@@ -333,7 +333,7 @@ def test_ac7_mirror_write_missing_still_emits(tmp_path: Path) -> None:
     assert reason == f"divergence:emitted_path_absent:{missing}"
 
 
-def test_ac8_prose_citation_not_light_bounded_expected(tmp_path: Path) -> None:
+def test_ac8_prose_citation_not_residual_expected(tmp_path: Path) -> None:
     packet = (
         "TYPE: DIRECTIVE\n"
         "contract: none\n"
@@ -363,11 +363,11 @@ def test_ac8_prose_citation_not_light_bounded_expected(tmp_path: Path) -> None:
         thread_id="6655",
         work_item_ref="todo:closeout-deviation-label-truth",
         deliverables_expected=True,
-        light_bounded_expected_paths=expected,
+        residual_expected_paths=expected,
     )
     payload = json.loads(delivery.body)
     assert not any(
-        "light_bounded_path_absent:routes/cursor_sdk.py" in deviation
+        "residual_path_absent:routes/cursor_sdk.py" in deviation
         for deviation in payload.get("deviations", [])
     )
 
@@ -392,11 +392,11 @@ def test_ac8_mirror_missing_declared_deliverable_still_flags(tmp_path: Path) -> 
         thread_id="6655",
         work_item_ref="todo:closeout-deviation-label-truth",
         deliverables_expected=True,
-        light_bounded_expected_paths=expected,
+        residual_expected_paths=expected,
     )
     payload = json.loads(delivery.body)
     assert any(
-        "light_bounded_path_absent:notes/system/specs/missing.md" in deviation
+        "residual_path_absent:notes/system/specs/missing.md" in deviation
         for deviation in payload.get("deviations", [])
     )
 
@@ -426,7 +426,7 @@ def test_ac1_closeout_shipped_with_unavailable_capture_and_offgit(tmp_path: Path
         offgit_deliverable_uris=offgit,
         source_repo=repo,
         cortex_root=cortex_root,
-        light_bounded_expected_paths=(rel,),
+        residual_expected_paths=(rel,),
         files_expected=[f"cortex://{rel}"],
         deliverables_expected=True,
     )

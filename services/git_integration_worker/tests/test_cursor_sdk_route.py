@@ -2312,7 +2312,7 @@ async def test_gated_pure_mechanical_captures_wt_baseline(
 
 
 @pytest.mark.asyncio
-async def test_gated_light_bounded_captures_wt_baseline(
+async def test_gated_residual_captures_wt_baseline(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:

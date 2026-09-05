@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
+from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
     extract_instructed_paths,
-    light_bounded_capture_status,
+    residual_capture_status,
 )
 
 
@@ -80,7 +80,7 @@ class TestLightBoundedCaptureStatus:
         target = source_repo / "tasks" / "journal" / "x.md"
         target.parent.mkdir(parents=True)
         target.write_text("done\n", encoding="utf-8")
-        status, reason = light_bounded_capture_status(
+        status, reason = residual_capture_status(
             ("tasks/journal/x.md",),
             source_repo=source_repo,
             cortex_root=cortex_root,
@@ -96,7 +96,7 @@ class TestLightBoundedCaptureStatus:
         target = cortex_root / "notes" / "system" / "x.md"
         target.parent.mkdir(parents=True)
         target.write_text("done\n", encoding="utf-8")
-        status, reason = light_bounded_capture_status(
+        status, reason = residual_capture_status(
             ("notes/system/x.md",),
             source_repo=source_repo,
             cortex_root=cortex_root,
@@ -109,7 +109,7 @@ class TestLightBoundedCaptureStatus:
         cortex_root = tmp_path / "cortex"
         source_repo.mkdir()
         cortex_root.mkdir()
-        status, reason = light_bounded_capture_status(
+        status, reason = residual_capture_status(
             ("tasks/journal/never-written.md",),
             source_repo=source_repo,
             cortex_root=cortex_root,
@@ -117,7 +117,7 @@ class TestLightBoundedCaptureStatus:
         assert status == "partial"
         assert (
             reason
-            == "divergence:light_bounded_path_absent:tasks/journal/never-written.md"
+            == "divergence:residual_path_absent:tasks/journal/never-written.md"
         )
 
     def test_wrote_elsewhere_still_flagged(self, tmp_path: Path) -> None:
@@ -128,12 +128,12 @@ class TestLightBoundedCaptureStatus:
         elsewhere = source_repo / "tasks" / "journal" / "other.md"
         elsewhere.parent.mkdir(parents=True)
         elsewhere.write_text("wrong file\n", encoding="utf-8")
-        status, reason = light_bounded_capture_status(
+        status, reason = residual_capture_status(
             ("tasks/journal/expected.md",),
             source_repo=source_repo,
             cortex_root=cortex_root,
         )
         assert status == "partial"
         assert (
-            reason == "divergence:light_bounded_path_absent:tasks/journal/expected.md"
+            reason == "divergence:residual_path_absent:tasks/journal/expected.md"
         )

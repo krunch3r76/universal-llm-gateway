@@ -28,7 +28,7 @@ from .generate_admission_context_store import (
     read_spawn_state,
     try_claim_spawn_pending,
 )
-from .light_bounded_ac_observer import build_generate_lane_reviewer_prompt
+from .generate_lane_ac_observer import build_generate_lane_reviewer_prompt
 from .skill_suggest_durable_state import DurableTerminalEvent, durable_catch_up_terminal
 
 logger = get_logger(__name__)

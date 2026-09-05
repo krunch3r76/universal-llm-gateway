@@ -76,7 +76,7 @@ refuse_list:
   - "contract:"
   - "model:"
   - contract=implement
-  - contract=light-bounded
+  - contract=sketch
   - contract=pure-mechanical
   - cursor-sdk
   - web-claude

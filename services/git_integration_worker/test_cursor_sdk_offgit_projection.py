@@ -23,12 +23,12 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     prepare_closeout_delivery,
 )
 from services.git_integration_worker.cursor_sdk_deliverable_truth import (
-    light_bounded_deliverable_reason,
+    residual_deliverable_reason,
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
-from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
+from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
     extract_instructed_paths,
     fs_write_landed,
 )
@@ -122,14 +122,14 @@ def test_ac1_anchor_class_fixture_complete_with_offgit_projection(
         thread_id="thread-1",
         work_item_ref="todo:anchor",
         deliverables_expected=True,
-        light_bounded_expected_paths=expected_paths,
+        residual_expected_paths=expected_paths,
     )
     payload = json.loads(delivery.body)
     assert payload["status"] == "complete"
     assert payload["capture_status"] == "complete"
     assert "stated_intent_no_write" not in (payload.get("summary") or "")
     assert not any(
-        "light_bounded_path_absent" in deviation
+        "residual_path_absent" in deviation
         for deviation in payload.get("deviations", [])
     )
     offgit_uri = f"cortex://{deliverable_rel}"
@@ -147,7 +147,7 @@ def test_ac2_missing_primary_preserved(tmp_path: Path) -> None:
     packet_text = f"Write the report to cortex://{missing}."
     expected_paths = extract_instructed_paths(packet_text)
     body = f"I will write the report to cortex://{missing} and save it for review."
-    degraded = light_bounded_deliverable_reason(
+    degraded = residual_deliverable_reason(
         body=body,
         tool_calls=(),
         contract="none",
@@ -172,12 +172,12 @@ def test_ac2_missing_primary_preserved(tmp_path: Path) -> None:
         thread_id="thread-1",
         work_item_ref="todo:missing",
         deliverables_expected=True,
-        light_bounded_expected_paths=expected_paths,
+        residual_expected_paths=expected_paths,
     )
     payload = json.loads(delivery.body)
     assert payload["capture_status"] == "partial"
     assert any(
-        f"divergence:light_bounded_path_absent:{missing}" in deviation
+        f"divergence:residual_path_absent:{missing}" in deviation
         for deviation in payload.get("deviations", [])
     )
     assert "stated_intent_no_write" in payload["summary"]
@@ -200,7 +200,7 @@ def test_ac2b_scratch_write_partial_with_suppressed_birth_reason(
         f"Write the primary deliverable to cortex://{primary}."
     )
     manifest = _fs_manifest(path=scratch)
-    degraded = light_bounded_deliverable_reason(
+    degraded = residual_deliverable_reason(
         body=f"Saved output to cortex://{scratch}.",
         tool_calls=(),
         contract="none",
@@ -226,12 +226,12 @@ def test_ac2b_scratch_write_partial_with_suppressed_birth_reason(
         thread_id="thread-1",
         work_item_ref="todo:scratch",
         deliverables_expected=True,
-        light_bounded_expected_paths=expected_paths,
+        residual_expected_paths=expected_paths,
     )
     payload = json.loads(delivery.body)
     assert payload["status"] == "partial"
     assert any(
-        f"divergence:light_bounded_path_absent:{primary}" in deviation
+        f"divergence:residual_path_absent:{primary}" in deviation
         for deviation in payload.get("deviations", [])
     )
     assert payload["files_offgit_produced"] == [f"cortex://{scratch}"]
@@ -372,7 +372,7 @@ def test_ac6_projection_hygiene_and_compaction_survival(tmp_path: Path) -> None:
     assert "off-git deliverables: 1" in reduced["summary"]
 
 
-def test_ac7_shell_parity_on_light_bounded_early_return(tmp_path: Path) -> None:
+def test_ac7_shell_parity_on_residual_early_return(tmp_path: Path) -> None:
     source_repo = tmp_path / "repo"
     cortex_root = tmp_path / "cortex"
     source_repo.mkdir()
@@ -392,7 +392,7 @@ def test_ac7_shell_parity_on_light_bounded_early_return(tmp_path: Path) -> None:
         source_repo=source_repo,
         cortex_root=cortex_root,
         manifest=manifest,
-        light_bounded_expected_paths=(rel,),
+        residual_expected_paths=(rel,),
     )
     assert "capture:shell_repo_writes_unverified" in deviations
 

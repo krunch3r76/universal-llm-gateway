@@ -6,7 +6,7 @@ import asyncio
 import time
 import uuid
 from functools import partial
-from typing import Annotated, Any, Literal, Self
+from typing import Annotated, Any, Literal, Self, get_args
 
 import httpx
 from agent_seat.profiles import get_profile
@@ -16,6 +16,7 @@ from implement_admission.preflight import (
     DecisionNotAssertedError,
     require_decision_asserted,
 )
+from implement_admission.source_ref import SourceRefError, parse_source_ref
 from implement_admission.skill_delivery_channels import SkillInlineBudgetExceeded
 from pydantic import BaseModel, Field, model_validator
 from team_dispatch_vocab import (
@@ -112,6 +113,21 @@ team_router = APIRouter(prefix="/api/v1/team", tags=["team"])
 frontier_router = APIRouter(prefix="/api/v1/frontier", tags=["frontier"])
 implement_router = APIRouter(prefix="/api/v1/implement", tags=["implement"])
 logger = get_logger(__name__)
+
+_TO_THREAD_CONTRACT = Literal[
+    "sketch",
+    "pure-mechanical",
+    "implement",
+    "none",
+]
+_HANDOFF_OVERRIDE_CONTRACT = Literal[
+    "sketch",
+    "pure-mechanical",
+    "implement",
+    "none",
+]
+assert frozenset(get_args(_TO_THREAD_CONTRACT)) == TO_THREAD_CONTRACTS
+assert frozenset(get_args(_HANDOFF_OVERRIDE_CONTRACT)) == HANDOFF_OVERRIDE_CONTRACTS
 
 _FORWARD_TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=15.0, pool=5.0)
 
@@ -296,7 +312,7 @@ class TeamDispatchToThreadBody(_DispatchCommon):
     model: str | None = None
     # Caller inline-intent knob (see ``TeamDispatchGenerateBody.mcp``).
     mcp: bool | None = None
-    contract: Literal["sketch", "pure-mechanical", "implement", "none"]
+    contract: _TO_THREAD_CONTRACT
     prompt: str | None = None
     sidecar_ref: str | None = None
     auto_review_child: bool | None = None
@@ -515,6 +531,21 @@ async def team_dispatch(
     is for Stargate-internal and pipeline-composition callers.
     """
     request_id = uuid.uuid4().hex[:12]
+    try:
+        from ._frontier_intake import reject_unsupported_packet_inputs
+
+        reject_unsupported_packet_inputs(
+            request_id=request_id,
+            op=body.op,
+            contract=getattr(body, "contract", None),
+            packet_path=getattr(body, "packet_path", None),
+            source_ref=getattr(body, "source_ref", None),
+            stop_after=(
+                (getattr(body, "generation_options", None) or {}).get("stop_after")
+            ),
+        )
+    except FrontierEndpointError as exc:
+        return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
     role = getattr(body, "role", None)
     seat = getattr(body, "seat", None)
     model = getattr(body, "model", None)
@@ -673,7 +704,7 @@ class TeamHandoffBody(BaseModel):
     seat: str | None = None
     packet_path: str | None = None
     source_ref: str | None = None
-    contract: Literal["sketch", "pure-mechanical", "implement", "none"] | None = None
+    contract: _HANDOFF_OVERRIDE_CONTRACT | None = None
     executor_override: str | None = None
     executor_override_reason_code: str | None = None
     executor_override_reason: str | None = None
@@ -766,6 +797,7 @@ async def team_handoff(
                         workspaces_root=workspaces_root,
                         request_id=request_id,
                         author_family=body.caller_agent,
+                        contract=body.contract,
                     ),
                 )
                 if bridge_result.gated:

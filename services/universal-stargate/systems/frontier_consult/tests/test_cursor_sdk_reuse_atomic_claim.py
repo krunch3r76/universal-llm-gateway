@@ -31,11 +31,11 @@ def _patch_generate_deps(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda *_a, **_k: None,
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.light_bounded_ac_observer.prepare_lb_auto_review_for_generate",
+        "systems.frontier_consult.generate_lane_ac_observer.prepare_lb_auto_review_for_generate",
         lambda **_k: (False, False, ""),
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.light_bounded_ac_observer.validate_generate_contract_packet_rules",
+        "systems.frontier_consult.generate_lane_ac_observer.validate_generate_contract_packet_rules",
         lambda **_k: None,
     )
     monkeypatch.setattr(

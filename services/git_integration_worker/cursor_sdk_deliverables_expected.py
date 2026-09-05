@@ -23,7 +23,7 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     is_allowlisted_control_plane_path,
     is_swamp_excluded_path,
 )
-from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
+from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
     extract_instructed_paths,
 )
 
@@ -88,7 +88,7 @@ def compute_deliverables_expected(
     *,
     contract: str,
     instruction_text: str,
-    light_bounded_expected_paths: tuple[str, ...] = (),
+    residual_expected_paths: tuple[str, ...] = (),
 ) -> bool:
     """Worker-set deliverables gate — implement, none paths, or packet obligation.
 
@@ -97,7 +97,7 @@ def compute_deliverables_expected(
     """
     if (contract or "").lower() == "implement":
         return True
-    if light_bounded_expected_paths:
+    if residual_expected_paths:
         return True
     return packet_names_deliverable_obligation(instruction_text or "")
 

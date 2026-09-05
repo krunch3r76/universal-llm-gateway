@@ -1,21 +1,8 @@
-"""Closeout-truth backstop for none cursor-sdk dispatch (friction 21654).
+"""Closeout-truth backstop for residual cursor-sdk dispatch (friction 21654).
 
 Fix #3. Independent of the #1 stream-capture and #2 large-write-path fixes: a
-none dispatch must not report ``status: complete`` when a named
-deliverable never landed. Two source-independent signals feed one PARTIAL
-degrade decision:
-
-1. Structured — a deliverable-write-shaped tool call (from
-   ``SdkRunOutcome.tool_calls``, populated by ``observe_run_stream``) that
-   failed/truncated with no successful write to replace it.
-2. Stated-intent-no-write — the assistant's terminal body states intent to
-   write a durable deliverable but no corresponding write landed. This is the
-   tell that let 21654 be hand-diagnosed with zero instrumentation, so it must
-   hold even when signal 1 is empty (``.stream()`` unsupported, or the choke is
-   upstream of the stream itself).
-
-The output is a ``degraded_reason`` string, consumed by ``_map_closeout_status``
-in ``cursor_sdk_closeout`` (any non-``run_status=`` reason maps to PARTIAL).
+residual dispatch (no wt baseline, not implement/wrap) must not report
+``status: complete`` when a named deliverable never landed.
 """
 
 from __future__ import annotations
@@ -25,8 +12,6 @@ import re
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,
 )
-
-LIGHT_BOUNDED_CONTRACT = "none"
 
 # fs multiplexes read+write under one tool name, so name alone cannot say
 # whether a call was a write. It is only used (a) to key the failure signal —
@@ -47,15 +32,8 @@ _WRITE_FAMILY_TOOLS = frozenset(
     }
 )
 
-# A durable deliverable write carries its content inline in the call args, so a
-# real write dwarfs a read (whose args are just sandbox+op+path, ~<200B). This
-# threshold separates a content-bearing write from a path-only read given that
-# ToolCallObservation exposes arg_bytes but not the fs ``op``.
 _WRITE_CONTENT_MIN_BYTES = 256
 
-# Arg-side truncation is the 21654 signature (large inline content dying in the
-# runtime->stdio->fastmcp-remote hop); result-side truncation is a large-read
-# concern, not a failed deliverable write.
 _ARG_TRUNCATION_FIELDS = frozenset({"args", "arguments", "input", "params", "content"})
 
 _WRITE_INTENT_VERB = (
@@ -73,6 +51,16 @@ _TARGET_RE = re.compile(_DURABLE_TARGET, re.IGNORECASE)
 _INTENT_WINDOW = 160
 
 
+def residual_deliverable_applies(
+    *,
+    contract: str,
+    wt_baseline: str | None,
+) -> bool:
+    """True when the deliverable-land backstop applies to this closeout."""
+    wire = (contract or "").strip().lower()
+    return wt_baseline is None and wire not in {"implement", "wrap"}
+
+
 def _is_write_family_tool(tool_name: str) -> bool:
     name = (tool_name or "").lower()
     return any(
@@ -83,7 +71,6 @@ def _is_write_family_tool(tool_name: str) -> bool:
 
 
 def _completed_deliverable_write(tc: ToolCallObservation) -> bool:
-    """A write-family call that landed a content-bearing payload cleanly."""
     return (
         _is_write_family_tool(tc.tool_name)
         and tc.status == "completed"
@@ -118,7 +105,6 @@ def _body_states_write_intent(body: str) -> bool:
 def deliverable_write_choke_reason(
     tool_calls: tuple[ToolCallObservation, ...],
 ) -> str | None:
-    """Structured signal: a write-family call failed/truncated and none landed."""
     if _landed_deliverable_write(tool_calls):
         return None
     if any(_failed_write_family(tc) for tc in tool_calls):
@@ -130,11 +116,6 @@ def stated_intent_no_write_reason(
     body: str,
     tool_calls: tuple[ToolCallObservation, ...],
 ) -> str | None:
-    """Source-independent signal: body claims a durable write that never landed.
-
-    Robust to an empty ``tool_calls`` (stream unavailable / choke upstream of the
-    stream) — the intent tell is read from the body alone.
-    """
     if not _body_states_write_intent(body):
         return None
     if _landed_deliverable_write(tool_calls):
@@ -142,30 +123,16 @@ def stated_intent_no_write_reason(
     return "stated_intent_no_write"
 
 
-def light_bounded_deliverable_reason(
+def residual_deliverable_reason(
     *,
     body: str,
     tool_calls: tuple[ToolCallObservation, ...],
     contract: str,
+    wt_baseline: str | None = None,
     deliverable_present: bool = False,
 ) -> str | None:
-    """Degrade reason (→ PARTIAL) when a none deliverable did not land.
-
-    Contract-gated: other contract types carry their own closeout semantics
-    (implement has git-baseline capture + files_expected; consult expects no
-    durable artifact), so this backstop applies to ``none`` only.
-
-    ``deliverable_present`` is the filesystem ground-truth override: when the
-    packet-declared deliverable path(s) are verified present on disk/cortex
-    (see ``cursor_sdk_light_bounded_capture.light_bounded_deliverable_present``),
-    a ``tool_calls``-derived ``stated_intent_no_write`` / ``deliverable_write_choked``
-    is a false negative — the SDK stream did not surface the write (e.g. a cortex
-    sidecar; cf. the 22454 ``zero_tool_calls`` gap) — so the degrade is suppressed
-    at birth. Defaults ``False`` so every existing caller keeps prior behavior. A
-    genuine no-write run leaves the declared path absent (``deliverable_present``
-    stays ``False``) and still degrades.
-    """
-    if contract != LIGHT_BOUNDED_CONTRACT:
+    """Degrade reason (→ PARTIAL) when a residual deliverable did not land."""
+    if not residual_deliverable_applies(contract=contract, wt_baseline=wt_baseline):
         return None
     if deliverable_present:
         return None

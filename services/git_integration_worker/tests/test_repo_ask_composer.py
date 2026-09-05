@@ -72,15 +72,15 @@ def test_auto_ask_and_recon_choose_composer_medium() -> None:
         assert effort["clamped"] is False
 
 
-def test_ask_handoff_is_ask_not_answer() -> None:
-    assert resolve_handoff_contract("ask") == "ask"
+def test_ask_handoff_is_sketch_not_answer() -> None:
+    assert resolve_handoff_contract("ask") == "sketch"
     assert resolve_handoff_contract("ask") != "answer"
     text = resolve_prompt_preamble(
-        handoff_contract="ask",
+        handoff_contract="sketch",
         prompt_preamble=None,
         inferred_contract=None,
     )
-    assert "reasoning-posture" not in text
+    assert "reasoning-posture" in text
 
 
 def test_ask_escalation_and_coalesced_cdp_refused() -> None:
@@ -174,7 +174,7 @@ def test_process_job_ask_nests_read_only_without_scope(monkeypatch: pytest.Monke
     asyncio.run(process_job(_ask_job(), bus=bus))
     submit.assert_awaited_once()
     assert submit.await_args.kwargs["read_only"] is True
-    assert submit.await_args.kwargs["handoff_contract"] == "ask"
+    assert submit.await_args.kwargs["handoff_contract"] == "sketch"
 
 
 def test_process_job_answer_still_declines_in_seat(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -324,7 +324,7 @@ def test_conductor_self_gate_suspect_true_for_7419_shape() -> None:
 
 
 @pytest.mark.offline
-def test_conductor_self_gate_suspect_false_when_contract_not_light_bounded() -> None:
+def test_conductor_self_gate_suspect_false_when_contract_not_residual() -> None:
     closeout = _conductor_shape_closeout(contract="implement", gate_d_failed=True)
     assert is_conductor_self_gate_suspect(closeout, g_rows_open=True) is False
 

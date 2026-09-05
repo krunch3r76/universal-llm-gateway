@@ -348,6 +348,33 @@ async def dispatch_cursor_sdk_generate_route(
                     summoning_turn_count=summoning_turn_count,
                 ),
             )
+        elif (
+            body.contract == "sketch"
+            and source_ref
+            and not getattr(body, "packet_path", None)
+        ):
+            loop = asyncio.get_running_loop()
+            bridge = await loop.run_in_executor(
+                None,
+                partial(
+                    resolve_source_ref_to_packet,
+                    source_ref,
+                    cortex=StargateCortexReader(),
+                    workspaces_root=_workspaces_root(),
+                    request_id=request_id,
+                    author_family=body.caller_agent,
+                    contract=body.contract,
+                ),
+            )
+            wrap = GenerateWrapResult(
+                packet_path=bridge.packet_path,
+                materialized=True,
+                warnings=list(bridge.warnings),
+                implement_spec_hash=bridge.implement_spec_hash,
+                packet_sha256=bridge.packet_sha256,
+                materialization_present=bridge.materialization_present,
+                route_contract=bridge.route_contract,
+            )
         elif body.contract == "implement":
             loop = asyncio.get_running_loop()
             wrap = await loop.run_in_executor(

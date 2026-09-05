@@ -41,7 +41,7 @@ def test_resolve_prompt_preamble_preserves_custom_preamble() -> None:
     )
 
 
-def test_resolve_prompt_preamble_injects_reasoning_posture_on_light_bounded() -> None:
+def test_resolve_prompt_preamble_injects_reasoning_posture_on_residual() -> None:
     text = resolve_prompt_preamble(
         handoff_contract="none",
         prompt_preamble=None,
@@ -70,12 +70,12 @@ def test_resolve_prompt_preamble_hypothesize_simulate_judgment_contracts() -> No
         inferred_contract=None,
     )
     assert "Use the `hypothesize-simulate` skill" in consult
-    light_bounded = resolve_prompt_preamble(
+    residual = resolve_prompt_preamble(
         handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
     )
-    assert "Use the `hypothesize-simulate` skill" in light_bounded
+    assert "Use the `hypothesize-simulate` skill" in residual
     implement = resolve_prompt_preamble(
         handoff_contract="implement",
         prompt_preamble=None,

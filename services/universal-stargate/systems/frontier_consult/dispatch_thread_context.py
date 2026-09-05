@@ -440,7 +440,7 @@ def validate_explicit_prompt_sources(
         for field, value in (("prompt", prompt), ("sidecar_ref", sidecar_ref))
         if value is not None
     ]
-    if contract in ("implement", "wrap") and inline_fields:
+    if contract in ("implement", "wrap", "sketch", "conductor") and inline_fields:
         raise ValueError(
             f"{inline_fields[0]} is not supported with contract={contract!r}"
         )

@@ -21,8 +21,8 @@ from services.git_integration_worker.cursor_sdk_capture_policy import (
     deviation_caps_work_at_unverified,
     deviation_degrades_capture_status,
 )
-from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
-    light_bounded_capture_status,
+from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
+    residual_capture_status,
 )
 
 CaptureStatus = Literal["complete", "partial", "unavailable"]
@@ -781,7 +781,7 @@ def positive_deliverable_evidence(
     *,
     files_offgit_produced: Iterable[str] = (),
     artifact_paths: Iterable[str] = (),
-    light_bounded_expected_paths: Iterable[str] = (),
+    residual_expected_paths: Iterable[str] = (),
     files_expected: list[str] | None = None,
     manifest: EffectsManifest | None,
     source_repo: Path,
@@ -801,7 +801,7 @@ def positive_deliverable_evidence(
     for seq in (
         files_offgit_produced,
         artifact_paths,
-        light_bounded_expected_paths,
+        residual_expected_paths,
         files_expected or [],
     ):
         probe_union.extend(_filter_intended_artifact_paths(seq))
@@ -836,7 +836,7 @@ def resolve_work_outcome(
     verification: list[Verification] | None,
     files_offgit_produced: Iterable[str] = (),
     artifact_paths: Iterable[str] = (),
-    light_bounded_expected_paths: Iterable[str] = (),
+    residual_expected_paths: Iterable[str] = (),
     files_expected: list[str] | None = None,
     manifest: EffectsManifest | None,
     source_repo: Path,
@@ -879,7 +879,7 @@ def resolve_work_outcome(
     positive = positive_deliverable_evidence(
         files_offgit_produced=files_offgit_produced,
         artifact_paths=artifact_paths,
-        light_bounded_expected_paths=light_bounded_expected_paths,
+        residual_expected_paths=residual_expected_paths,
         files_expected=files_expected,
         manifest=manifest,
         source_repo=source_repo,
@@ -986,7 +986,7 @@ def resolve_closeout_capture_fields(
     mount_root: Path | None = None,
     outside_repo_paths: tuple[str, ...] = (),
     files_untracked_or_ignored: tuple[str, ...] = (),
-    light_bounded_expected_paths: tuple[str, ...] = (),
+    residual_expected_paths: tuple[str, ...] = (),
     worktree_isolated: bool = False,
     read_only: bool = False,
     dispatch_id: str | None = None,
@@ -1000,17 +1000,17 @@ def resolve_closeout_capture_fields(
         observe_read_only_repo_diff_violation,
     )
 
-    if baseline is None and light_bounded_expected_paths:
-        probeable_paths = filter_probeable_expected_paths(light_bounded_expected_paths)
+    if baseline is None and residual_expected_paths:
+        probeable_paths = filter_probeable_expected_paths(residual_expected_paths)
         if not probeable_paths:
             all_malformed = _expected_paths_all_malformed_token(
-                light_bounded_expected_paths
+                residual_expected_paths
             )
             deviations: list[str] = [all_malformed]
             if deliverables_expected and manifest and _repo_has_shell_entry(manifest):
                 deviations.append("capture:shell_repo_writes_unverified")
             return "unavailable", all_malformed, deviations, manifest
-        capture_status, divergence_reason = light_bounded_capture_status(
+        capture_status, divergence_reason = residual_capture_status(
             probeable_paths,
             source_repo=source_repo,
             cortex_root=cortex_root,

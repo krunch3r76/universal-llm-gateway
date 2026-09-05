@@ -809,6 +809,55 @@ def _migrate_cancelled_status(conn: sqlite3.Connection) -> None:
             )
 
 
+def _migrate_packet_kind_to_contract(conn: sqlite3.Connection) -> None:
+    """Re-key legacy ``sketch`` / ``record_json.packet_kind`` rows."""
+    logger = get_logger(__name__)
+    migrated = 0
+    rows = conn.execute(
+        "SELECT dispatch_id, contract, record_json FROM cursor_sdk_dispatches "
+        "WHERE contract = 'sketch' OR record_json LIKE '%packet_kind%'"
+    ).fetchall()
+    for row in rows:
+        dispatch_id = row["dispatch_id"]
+        contract = (row["contract"] or "").strip().lower()
+        try:
+            data = json.loads(row["record_json"] or "{}")
+        except json.JSONDecodeError:
+            data = {}
+        packet_kind = data.pop("packet_kind", None)
+        record_changed = bool(packet_kind is not None)
+        new_contract = contract
+        if contract == "sketch":
+            if packet_kind == "conductor":
+                new_contract = "conductor"
+            elif packet_kind in ("implement", "wrap", "sketch"):
+                new_contract = str(packet_kind)
+            elif data.get("handoff_contract") in ("conductor", "sketch", "none"):
+                new_contract = str(data["handoff_contract"])
+            elif data.get("source_ref", "").startswith("todo:"):
+                new_contract = "sketch"
+            else:
+                new_contract = "none"
+        if new_contract != contract:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET contract=? WHERE dispatch_id=?",
+                (new_contract, dispatch_id),
+            )
+            migrated += 1
+        if record_changed:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+                (json.dumps(data, sort_keys=True, separators=(",", ":")), dispatch_id),
+            )
+            if new_contract == contract:
+                migrated += 1
+    if migrated:
+        logger.info(
+            "cursor_sdk_dispatches: migrated %d sketch/packet_kind row(s)",
+            migrated,
+        )
+
+
 class CursorDispatchLedger:
     """Durable singleton; survives worker restart. DB methods are sync (F1)."""
 
@@ -871,6 +920,7 @@ class CursorDispatchLedger:
                 conn.execute(
                     "ALTER TABLE cursor_sdk_dispatches ADD COLUMN resume_of TEXT"
                 )
+            _migrate_packet_kind_to_contract(conn)
             _migrate_queued_status(conn)
             _migrate_parked_waiting_status(conn)
             _migrate_lease_key_column(conn)

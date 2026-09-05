@@ -35,10 +35,10 @@ def _files_expected_from_packet(packet_text: str | None) -> list[str]:
 def _files_expected_for_pinning(
     packet_text: str | None,
     deliverables_expected: bool,
-    light_bounded_expected_paths: tuple[str, ...],
+    residual_expected_paths: tuple[str, ...],
 ) -> list[str]:
-    if light_bounded_expected_paths:
-        return list(light_bounded_expected_paths)
+    if residual_expected_paths:
+        return list(residual_expected_paths)
     if deliverables_expected:
         return _files_expected_from_packet(packet_text)
     return []

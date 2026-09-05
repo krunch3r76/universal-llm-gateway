@@ -80,7 +80,7 @@ def test_auto_sentinel_equals_omit() -> None:
         assert resolve_desired_effort(" auto ", contract=contract) == baseline
 
 
-def test_omit_effort_light_bounded_contracts_xhigh() -> None:
+def test_omit_effort_residual_contracts_xhigh() -> None:
     for contract in ("verify", "execute", "propagate"):
         effort = resolve_desired_effort(None, contract=contract)
         assert effort["resolved_effort"] == "xhigh"

@@ -315,7 +315,7 @@ def test_mcp_servers_set_contract_env_for_pure_mechanical(tmp_path: Path) -> Non
     assert env.get("ULG_MCP_CONTRACT") == "pure-mechanical"
 
 
-def test_mcp_servers_omit_contract_env_for_light_bounded(tmp_path: Path) -> None:
+def test_mcp_servers_omit_contract_env_for_residual(tmp_path: Path) -> None:
     repo = _stub_repo(tmp_path)
     env = build_mcp_servers(repo, handoff_contract="none")["user-vortex"].env or {}
     assert "ULG_MCP_CONTRACT" not in env

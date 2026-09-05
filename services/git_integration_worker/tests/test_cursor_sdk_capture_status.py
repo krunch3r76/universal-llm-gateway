@@ -455,7 +455,7 @@ def test_ac4_residual_twin_work_outcome_shipped_status_complete(tmp_path: Path) 
             source_repo=source_repo,
             cortex_root=cortex_root,
             manifest=None,
-            light_bounded_expected_paths=("cortex://",),
+            residual_expected_paths=("cortex://",),
         )
     )
     assert capture_status == "unavailable"
@@ -465,7 +465,7 @@ def test_ac4_residual_twin_work_outcome_shipped_status_complete(tmp_path: Path) 
         verification=[],
         files_offgit_produced=offgit,
         artifact_paths=offgit,
-        light_bounded_expected_paths=("cortex://",),
+        residual_expected_paths=("cortex://",),
         files_expected=[],
         manifest=None,
         source_repo=source_repo,
@@ -498,7 +498,7 @@ def test_ac4_residual_twin_work_outcome_shipped_status_complete(tmp_path: Path) 
         offgit_deliverable_uris=offgit,
         source_repo=source_repo,
         cortex_root=cortex_root,
-        light_bounded_expected_paths=("cortex://",),
+        residual_expected_paths=("cortex://",),
         deliverables_expected=True,
     )
     import json
@@ -626,7 +626,7 @@ def test_g1_negative_control_pinned_write_failed_gate_d_exit1(tmp_path: Path) ->
         verification=verification,
         files_offgit_produced=[],
         artifact_paths=[],
-        light_bounded_expected_paths=(),
+        residual_expected_paths=(),
         files_expected=[f"cortex://{missing_rel}"],
         manifest=None,
         source_repo=source_repo,
@@ -746,7 +746,7 @@ def test_g2_ac4_bare_filename_fixture_8b2fdfd6ae7d(tmp_path: Path) -> None:
             source_repo=source_repo,
             cortex_root=cortex_root,
             manifest=None,
-            light_bounded_expected_paths=(bare_filename,),
+            residual_expected_paths=(bare_filename,),
         )
     )
     work_outcome = resolve_work_outcome(
@@ -754,7 +754,7 @@ def test_g2_ac4_bare_filename_fixture_8b2fdfd6ae7d(tmp_path: Path) -> None:
         verification=[],
         files_offgit_produced=offgit,
         artifact_paths=offgit,
-        light_bounded_expected_paths=(bare_filename,),
+        residual_expected_paths=(bare_filename,),
         files_expected=[],
         manifest=None,
         source_repo=source_repo,
@@ -797,7 +797,7 @@ def test_g2_ac4_bare_filename_fixture_8b2fdfd6ae7d(tmp_path: Path) -> None:
         offgit_deliverable_uris=offgit,
         source_repo=source_repo,
         cortex_root=cortex_root,
-        light_bounded_expected_paths=(bare_filename,),
+        residual_expected_paths=(bare_filename,),
         deliverables_expected=True,
     )
     import json
@@ -816,7 +816,7 @@ def test_g3a_deviations_conserved_across_work_outcome_split(tmp_path: Path) -> N
         {
             "label": "8fa565 bare-scheme",
             "baseline": None,
-            "light_bounded": ("cortex://",),
+            "residual": ("cortex://",),
             "offgit": (
                 "cortex://notes/system/specs/cursor-auto-request-liveness-degrade.md",
                 "cortex://notes/system/specs/g4-terra-check.md",
@@ -826,7 +826,7 @@ def test_g3a_deviations_conserved_across_work_outcome_split(tmp_path: Path) -> N
         {
             "label": "8b2fdfd6 bare-filename",
             "baseline": None,
-            "light_bounded": ("fable-arch-bind-2026-07-31.md",),
+            "residual": ("fable-arch-bind-2026-07-31.md",),
             "offgit": (
                 "cortex://notes/system/threads/capture-status-work-outcome-split/"
                 "d1-falsifier-probe-2026-07-31.md",
@@ -856,7 +856,7 @@ def test_g3a_deviations_conserved_across_work_outcome_split(tmp_path: Path) -> N
                 source_repo=source_repo,
                 cortex_root=cortex_root,
                 manifest=None,
-                light_bounded_expected_paths=fixture["light_bounded"],
+                residual_expected_paths=fixture["residual"],
             )
         )
         deviations_before = list(deviations)
@@ -865,7 +865,7 @@ def test_g3a_deviations_conserved_across_work_outcome_split(tmp_path: Path) -> N
             verification=[],
             files_offgit_produced=fixture["offgit"],
             artifact_paths=list(fixture["offgit"]),
-            light_bounded_expected_paths=fixture["light_bounded"],
+            residual_expected_paths=fixture["residual"],
             files_expected=[],
             manifest=None,
             source_repo=source_repo,
@@ -956,7 +956,7 @@ def test_g1_trace_i_auto_bb6dd0a409f6_refuse_stated_intent_no_write(
         source_repo=repo,
         cortex_root=cortex_root,
         deviations=[
-            "divergence:light_bounded_path_absent:x",
+            "divergence:residual_path_absent:x",
             "degraded:sdk_git_probe_absent",
         ],
         deliverables_expected=False,

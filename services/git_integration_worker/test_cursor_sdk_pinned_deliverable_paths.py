@@ -40,14 +40,14 @@ Consult on `cortex://notes/system/templates/` usage patterns.
 """
 
 
-def test_files_expected_for_pinning_prefers_light_bounded_paths() -> None:
-    light_bounded = ("cortex://notes/system/threads/5121-review.md",)
+def test_files_expected_for_pinning_prefers_residual_paths() -> None:
+    residual = ("cortex://notes/system/threads/5121-review.md",)
     result = _files_expected_for_pinning(
         _REFERENCE_ONLY_PACKET,
         deliverables_expected=False,
-        light_bounded_expected_paths=light_bounded,
+        residual_expected_paths=residual,
     )
-    assert result == list(light_bounded)
+    assert result == list(residual)
 
 
 def test_files_expected_for_pinning_retains_packet_paths_when_deliverables_expected() -> (
@@ -56,7 +56,7 @@ def test_files_expected_for_pinning_retains_packet_paths_when_deliverables_expec
     result = _files_expected_for_pinning(
         _IMPLEMENT_PACKET,
         deliverables_expected=True,
-        light_bounded_expected_paths=(),
+        residual_expected_paths=(),
     )
     assert "cortex://notes/system/specs/my-spec.md" in result
     assert "libs/foo/bar.py" in result
@@ -66,7 +66,7 @@ def test_files_expected_for_pinning_empty_for_non_deliverable_consult() -> None:
     result = _files_expected_for_pinning(
         _CONSULT_PACKET,
         deliverables_expected=False,
-        light_bounded_expected_paths=(),
+        residual_expected_paths=(),
     )
     assert result == []
 

@@ -96,7 +96,7 @@ def test_read_only_does_not_select_b() -> None:
     assert reason == "read_only"
 
 
-def test_auto_light_bounded_omit_stays_a(git_repo) -> None:
+def test_auto_residual_omit_stays_a(git_repo) -> None:
     req = CursorDispatchRequest(
         thread_id="t",
         model="cursor/composer-2.5",

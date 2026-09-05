@@ -51,7 +51,7 @@ _DESIGNED_STOP_LINE_RE = re.compile(
     + "|".join(re.escape(t) for t in STOP_TOKENS)
     + r")\b"
 )
-_PACKET_KIND_RE = re.compile(r"(?im)^packet_kind:\s*(\S+)")
+_CONTRACT_FRONTMATTER_RE = re.compile(r"(?im)^contract:\s*(\S+)")
 _DESIGNED_STOP_DOC_RE = re.compile(
     r"(?im)\bstop:\s*("
     + "|".join(re.escape(t) for t in STOP_TOKENS)
@@ -157,19 +157,12 @@ def _in_fenced_span(spans: tuple[tuple[int, int], ...], offset: int) -> bool:
     return any(start <= offset < end for start, end in spans)
 
 
-def _is_conductor_packet(
-    packet_text: str | None,
-    *,
-    packet_kind: str | None = None,
-) -> bool:
-    """True when packet is a conductor mission."""
-    if packet_kind == "conductor":
-        return True
-    if packet_text:
-        match = _PACKET_KIND_RE.search(packet_text)
-        if match and match.group(1).strip().lower() == "conductor":
-            return True
-    return False
+def _is_conductor_packet(packet_text: str | None) -> bool:
+    """True when packet frontmatter declares ``contract: conductor``."""
+    if not packet_text:
+        return False
+    match = _CONTRACT_FRONTMATTER_RE.search(packet_text)
+    return bool(match and match.group(1).strip().lower() == "conductor")
 
 
 def _iter_designed_stop_matches(text: str):
@@ -242,11 +235,7 @@ def validate_stop_token(token: str) -> bool:
     return token.strip().upper() in STOP_TOKENS
 
 
-def validate_conductor_packet(
-    packet_text: str,
-    *,
-    packet_kind: str | None = None,
-) -> CloseoutStopVerdict:
+def validate_conductor_packet(packet_text: str) -> CloseoutStopVerdict:
     """Require conductor spawn packets to document at least one designed stop."""
     if not _is_conductor_packet(packet_text):
         return CloseoutStopVerdict(ok=True)
@@ -377,7 +366,6 @@ def validate_conductor_closeout(
     live_summoning_chat: bool = False,
     operator_present: bool = False,
     packet_text: str | None = None,
-    packet_kind: str | None = None,
 ) -> CloseoutStopVerdict:
     """Validate closeout stop vocabulary + optional Mode B admit-proof."""
     if _is_conductor_packet(packet_text):

@@ -9,7 +9,7 @@ from systems.frontier_consult.generate_admission_context_store import (
     reset_generate_admission_stores_for_tests,
     write_admission_context,
 )
-from systems.frontier_consult.light_bounded_ac_observer import (
+from systems.frontier_consult.generate_lane_ac_observer import (
     _PATH_SIM_ADMIT_GATE,
     GENERATE_LANE_AC_OBSERVER_FOOTER,
     instruction_mentions_production_code,

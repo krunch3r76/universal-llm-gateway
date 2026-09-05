@@ -83,7 +83,7 @@ async def test_cursor_sdk_implement_admits_without_messages(
 
 
 @pytest.mark.asyncio
-async def test_cursor_sdk_light_bounded_packet_skips_dispatch_thread(
+async def test_cursor_sdk_residual_packet_skips_dispatch_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """none + packet_path admits via packet channel; thread never read."""
@@ -148,7 +148,7 @@ async def test_cursor_sdk_pure_mechanical_packet_skips_dispatch_thread(
 
 
 @pytest.mark.asyncio
-async def test_cursor_sdk_light_bounded_unresolved_packet_returns_422(
+async def test_cursor_sdk_residual_unresolved_packet_returns_422(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Missing packet_path on light generate → 422 packet_path_unresolved."""

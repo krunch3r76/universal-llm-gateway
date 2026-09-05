@@ -45,7 +45,7 @@ def prepare_closeout_delivery(
     gate_d_created_rels: tuple[str, ...] = (),
     deliverables_expected: bool = False,
     divergent_rels: tuple[str, ...] = (),
-    light_bounded_expected_paths: tuple[str, ...] = (),
+    residual_expected_paths: tuple[str, ...] = (),
     execution_id: str = "test-execution",
     post_closeout_sidecar_fn: Callable[..., dict[str, Any] | None] | None = None,
     resolved_model: str | None = None,
@@ -65,7 +65,7 @@ def prepare_closeout_delivery(
         gate_d_created_rels=gate_d_created_rels,
         deliverables_expected=deliverables_expected,
         divergent_rels=divergent_rels,
-        light_bounded_expected_paths=light_bounded_expected_paths,
+        residual_expected_paths=residual_expected_paths,
         execution_id=execution_id,
         post_closeout_sidecar_fn=post_closeout_sidecar_fn,
         resolved_model=resolved_model,
@@ -84,7 +84,7 @@ async def prepare_closeout_delivery_async(
     baseline: dict[str, Any] | None = None,
     packet_text: str | None = None,
     deliverables_expected: bool = False,
-    light_bounded_expected_paths: tuple[str, ...] = (),
+    residual_expected_paths: tuple[str, ...] = (),
     execution_id: str,
     extra_deviations: tuple[str, ...] = (),
     post_closeout_sidecar_fn: Callable[..., Any] | None = None,
@@ -96,7 +96,7 @@ async def prepare_closeout_delivery_async(
     files_expected = _files_expected_for_pinning(
         packet_text,
         deliverables_expected,
-        light_bounded_expected_paths,
+        residual_expected_paths,
     )
     text = full_result_text(outcome.body, degraded_reason)
     pinned = await resolve_cortex_pinned_deliverables(
@@ -130,7 +130,7 @@ async def prepare_closeout_delivery_async(
         gate_d_created_rels=gate_d_created,
         deliverables_expected=deliverables_expected,
         divergent_rels=pinned.divergent_rels,
-        light_bounded_expected_paths=light_bounded_expected_paths,
+        residual_expected_paths=residual_expected_paths,
         execution_id=execution_id,
         extra_deviations=extra_deviations,
         post_closeout_sidecar_fn=post_closeout_sidecar_fn,

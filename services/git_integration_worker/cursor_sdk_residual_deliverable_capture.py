@@ -1,11 +1,7 @@
-"""Light-bounded dispatch deliverable capture — disk/cortex-existence verify.
+"""Residual-dispatch deliverable capture — disk/cortex-existence verify.
 
-Light-bounded dispatches carry ``baseline=None`` (implement-only admit snapshot),
-so ``cursor_sdk_capture_status`` baseline diff never applies. This module is the
-independent completeness signal: paths come **only** from the packet's
-``files_expected:`` deliverable field (AC8 — prose citations and read-loci must
-not enter the expected set), then disk/cortex presence post-dispatch is the sole
-signal — no git diff involved.
+Residual dispatches carry ``baseline=None`` (implement-only admit snapshot),
+so ``cursor_sdk_capture_status`` baseline diff never applies.
 """
 
 from __future__ import annotations
@@ -16,16 +12,19 @@ from pathlib import Path
 from implement_admission.closeout_models import EffectsManifest
 
 from services.git_integration_worker.cursor_sdk_deliverable_truth import (
-    LIGHT_BOUNDED_CONTRACT,
+    residual_deliverable_applies,
 )
 
 __all__ = [
-    "LIGHT_BOUNDED_CONTRACT",
     "extract_instructed_paths",
     "first_landed_fs_uri",
     "fs_write_landed",
-    "light_bounded_capture_status",
-    "light_bounded_deliverable_present",
+    "residual_capture_status",
+    "residual_deliverable_present",
+    "residual_deliverable_applies",
+    # legacy aliases
+    "residual_capture_status",
+    "residual_deliverable_present",
 ]
 
 # Prefixes conservative enough that a bare mention is almost always a real
@@ -260,54 +259,36 @@ def first_landed_fs_uri(
     return uris[0] if uris else ""
 
 
-def light_bounded_capture_status(
+def residual_capture_status(
     expected_paths: tuple[str, ...],
     *,
     source_repo: Path,
     cortex_root: Path,
 ) -> tuple[str, str | None]:
-    """Disk-verify completeness for named none deliverable paths.
-
-    Bypasses the implement-only baseline-diff machinery entirely: presence on
-    disk (either sandbox) post-dispatch is the sole completeness signal, so a
-    dispatch that actually wrote its named path is never false-degraded for
-    lacking a git baseline it was never expected to have.
-    """
+    """Disk-verify completeness for named residual deliverable paths."""
     missing = [
         path
         for path in expected_paths
         if not _path_present(path, source_repo=source_repo, cortex_root=cortex_root)
     ]
     if missing:
-        return "partial", f"divergence:light_bounded_path_absent:{missing[0]}"
+        return "partial", f"divergence:residual_path_absent:{missing[0]}"
     return "complete", None
 
 
-def light_bounded_deliverable_present(
+def residual_deliverable_present(
     expected_paths: tuple[str, ...],
     *,
     source_repo: Path,
     cortex_root: Path,
 ) -> bool:
-    """True iff every declared none deliverable path is present.
-
-    Ground-truth completeness signal for the reason-birth suppression in
-    ``cursor_sdk_deliverable_truth.light_bounded_deliverable_reason``: when the
-    packet-declared deliverable(s) all exist on disk (source repo) or in the
-    cortex sandbox post-dispatch, a tool-call-stream ``stated_intent_no_write``
-    inference is a false negative — the SDK stream simply did not surface the
-    write (e.g. a cortex sidecar; cf. the 22454 ``zero_tool_calls`` gap).
-
-    Empty ``expected_paths`` => ``False`` (no declared deliverable to verify, so
-    nothing to suppress). Named paths only — never scans the working tree — so
-    it cannot over-attribute background/non-agent writes (no 22316-direction
-    over-capture). It does NOT prove *this run* wrote the path (no mtime /
-    baseline-hash check; those remain RC-3 surfaces); presence is treated as
-    completeness, consistent with ``light_bounded_capture_status``.
-    """
     if not expected_paths:
         return False
     return all(
         _path_present(path, source_repo=source_repo, cortex_root=cortex_root)
         for path in expected_paths
     )
+
+
+residual_capture_status = residual_capture_status
+residual_deliverable_present = residual_deliverable_present

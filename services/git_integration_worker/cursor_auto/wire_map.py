@@ -503,13 +503,7 @@ def resolve_handoff_contract(
     contract: str | None,
     body: str | None = None,
 ) -> str:
-    """Map Auto ``request.contract`` → cursor-sdk ``handoff_contract``.
-
-    Unmarked ``implement`` (no body, or body without judgment markers) stays
-    ``pure-mechanical``. A body that declares judgment raises to
-    ``none`` — the existing non-mechanical token — without adding a
-    member to ``REASONING_POSTURE_SKIP_CONTRACTS``.
-    """
+    """Map Auto ``request.contract`` → cursor-sdk ``handoff_contract``."""
     raw = (contract or "answer").strip().lower() or "answer"
     if raw == "implement":
         if body:
@@ -520,14 +514,15 @@ def resolve_handoff_contract(
             if body_declares_judgment(body):
                 return "none"
         return "pure-mechanical"
-    if raw == "execute":
-        return "none"
-    if raw == "propagate":
-        return "none"
-    if raw == "ask":
-        return "ask"
-    if raw in {"investigate", "confer", "seed"}:
-        return "none"
-    if raw == "verify":
-        return "none"
-    return "none"
+    _direct: dict[str, str] = {
+        "answer": "none",
+        "ask": "sketch",
+        "recon": "sketch",
+        "investigate": "none",
+        "confer": "none",
+        "seed": "none",
+        "verify": "none",
+        "execute": "none",
+        "propagate": "none",
+    }
+    return _direct.get(raw, "none")

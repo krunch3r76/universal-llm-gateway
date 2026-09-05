@@ -93,7 +93,7 @@ def test_stage_cdp_prompt_with_skills_prepends_manifest(
 def test_stage_cdp_prompt_omitted_skills_still_gets_judgment_skill(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Light-bounded / skills=None still attaches the judgment skill."""
+    """Sketch / skills=None still attaches the judgment skill."""
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     staged = stage_cdp_prompt_with_skills(
         execution_id="exec-skills-default",

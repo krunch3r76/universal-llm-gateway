@@ -113,8 +113,8 @@ from services.git_integration_worker.cursor_sdk_context import (
     validate_dispatch_context,
 )
 from services.git_integration_worker.cursor_sdk_deliverable_truth import (
-    LIGHT_BOUNDED_CONTRACT,
-    light_bounded_deliverable_reason,
+    residual_deliverable_applies,
+    residual_deliverable_reason,
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
@@ -171,11 +171,11 @@ from services.git_integration_worker.cursor_sdk_lane_select import (
     select_lane,
     wire_lane_explicit,
 )
-from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
+from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
     extract_instructed_paths,
     first_landed_fs_uri,
     fs_write_landed,
-    light_bounded_deliverable_present,
+    residual_deliverable_present,
 )
 from services.git_integration_worker.cursor_sdk_manifest import (
     build_effects_manifest,
@@ -1484,7 +1484,7 @@ async def _deliver_sdk_closeout(
     controller: WorkAdmissionController,
     packet_text: str = "",
     deliverables_expected: bool = False,
-    light_bounded_expected_paths: tuple[str, ...] = (),
+    residual_expected_paths: tuple[str, ...] = (),
     extra_deviations: tuple[str, ...] = (),
     worktree_isolated: bool = False,
 ) -> None:
@@ -1518,7 +1518,7 @@ async def _deliver_sdk_closeout(
         baseline=baseline,
         packet_text=packet_text or None,
         deliverables_expected=deliverables_expected,
-        light_bounded_expected_paths=light_bounded_expected_paths,
+        residual_expected_paths=residual_expected_paths,
         execution_id=req.execution_id,
         extra_deviations=extra_deviations,
         worktree_isolated=worktree_isolated,
@@ -2129,27 +2129,29 @@ async def _finalize_success(
         else None
     )
     work_item_ref = extract_source_ref_from_packet(packet_text) if packet_text else None
-    contract = (req.handoff_contract or inferred_contract or "consult").lower()
+    contract = (req.handoff_contract or inferred_contract or "none").lower()
+    wt_baseline_row = CursorDispatchLedger.instance().read_wt_baseline(
+        dispatch_id=req.dispatch_id
+    )
+    wt_baseline = None if wt_baseline_row is None else json.dumps(wt_baseline_row)
+    applies_residual = residual_deliverable_applies(
+        contract=contract,
+        wt_baseline=wt_baseline,
+    )
     degraded_reason = (
         degraded_implement_reason(outcome) if contract == "implement" else None
     )
-    # deliverables_expected gate (todo:cursor-sdk-deliverables-expected-none
-    # + todo:success-shaped-silence operator bind 6929#534): none path
-    # extract, implement contract, OR commissioner-named files_expected /
-    # evidence_required obligations — worker-set, not producer-declared.
-    light_bounded_expected_paths = (
-        extract_instructed_paths(instruction_text)
-        if contract == LIGHT_BOUNDED_CONTRACT
-        else ()
+    residual_expected_paths = (
+        extract_instructed_paths(instruction_text) if applies_residual else ()
     )
     cortex_root = cortex_files_root()
     path_present = (
-        light_bounded_deliverable_present(
-            light_bounded_expected_paths,
+        residual_deliverable_present(
+            residual_expected_paths,
             source_repo=source_repo,
             cortex_root=cortex_root,
         )
-        if contract == LIGHT_BOUNDED_CONTRACT
+        if applies_residual
         else False
     )
     manifest_landed = (
@@ -2158,7 +2160,7 @@ async def _finalize_success(
             source_repo=source_repo,
             cortex_root=cortex_root,
         )
-        if contract == LIGHT_BOUNDED_CONTRACT
+        if applies_residual
         else False
     )
     deliverable_present = path_present or manifest_landed
@@ -2181,10 +2183,11 @@ async def _finalize_success(
             conductor_closeout_degraded_reason,
         )
 
-        _packet_kind = (
-            extract_packet_kind_from_packet(packet_text) if packet_text else None
+        _is_conductor = contract == "conductor" or (
+            extract_packet_kind_from_packet(packet_text) == "conductor"
+            if packet_text
+            else False
         )
-        _is_conductor = _packet_kind == "conductor"
         _nested_live = False
         if _is_conductor:
             from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
@@ -2202,10 +2205,11 @@ async def _finalize_success(
                 _conductor_reason
                 or empty_assistant_turn_reason(outcome)
                 or empty_output_degraded_reason(outcome)
-                or light_bounded_deliverable_reason(
+                or residual_deliverable_reason(
                     body=outcome.body,
                     tool_calls=outcome.tool_calls,
                     contract=contract,
+                    wt_baseline=wt_baseline,
                     deliverable_present=deliverable_present,
                 )
             )
@@ -2214,25 +2218,27 @@ async def _finalize_success(
                 empty_assistant_turn_reason(outcome)
                 or empty_output_degraded_reason(outcome)
                 or _conductor_reason
-                or light_bounded_deliverable_reason(
+                or residual_deliverable_reason(
                     body=outcome.body,
                     tool_calls=outcome.tool_calls,
                     contract=contract,
+                    wt_baseline=wt_baseline,
                     deliverable_present=deliverable_present,
                 )
             )
         # Observability: if filesystem ground truth suppressed a would-be
         # none degrade, surface it (frontier.sdk.closeout.reconciled).
         if deliverable_present and degraded_reason is None:
-            suppressed_reason = light_bounded_deliverable_reason(
+            suppressed_reason = residual_deliverable_reason(
                 body=outcome.body,
                 tool_calls=outcome.tool_calls,
                 contract=contract,
+                wt_baseline=wt_baseline,
             )
             if suppressed_reason is not None:
                 verifying_path = (
-                    light_bounded_expected_paths[0]
-                    if path_present and light_bounded_expected_paths
+                    residual_expected_paths[0]
+                    if path_present and residual_expected_paths
                     else first_landed_fs_uri(
                         outcome.effects_manifest,
                         source_repo=source_repo,
@@ -2259,9 +2265,9 @@ async def _finalize_success(
         deliverables_expected=compute_deliverables_expected(
             contract=contract,
             instruction_text=instruction_text,
-            light_bounded_expected_paths=light_bounded_expected_paths,
+            residual_expected_paths=residual_expected_paths,
         ),
-        light_bounded_expected_paths=light_bounded_expected_paths,
+        residual_expected_paths=residual_expected_paths,
         extra_deviations=implement_gate_bypass_deviations(
             contract=contract,
             work_item_ref=work_item_ref,

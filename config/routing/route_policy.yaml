@@ -13,7 +13,7 @@ dispatch_lane:
   code:
     platform: sdk
     seat: cursor-sdk
-    work: [recon, review-on-source, implement, light-bounded, pure-mechanical]
+    work: [recon, review-on-source, implement, sketch, pure-mechanical]
   non_code:
     substrate: api
     roles: [reviewer, skeptic, synthesizer, artisan]
@@ -57,9 +57,9 @@ routes:
       transport: team_dispatch
       autonomy: auto_executed
       operator_pickup_required: false
-  light-bounded:
+  sketch:
     cursor-sdk:
-      dispatch_kind: light-bounded
+      dispatch_kind: sketch
       transport: team_dispatch
       autonomy: auto_executed
       operator_pickup_required: false
@@ -89,7 +89,7 @@ workflows:
   auto_judgment:
     seat: cursor-sdk
     model: cursor/composer-2.5
-    contracts: [answer, confer, ask, verify, execute, propagate, light-bounded]
+    contracts: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]
   check_review:
     # Code-lane standing check/review default (decision:code-review-panel-cursor-substrate).
     # role=reviewer omit-model coerces to seat=cursor-sdk + this model. Explicit
@@ -112,7 +112,7 @@ models:
 # Per-contract omit-effort defaults (todo:model-workflow-config-first, P3).
 # Authority for resolve_desired_effort auto/omit — contract-keyed, not workflow-keyed
 # (workflows.* aggregate contracts with differing effort tiers, e.g. recon=medium vs
-# investigate=xhigh within workflows.investigate). implement+light-bounded handoff
+# investigate=xhigh within workflows.investigate). implement+sketch handoff
 # override stays in wire_map (handoff context, not this table).
 contract_effort:
   investigate: xhigh

@@ -4255,7 +4255,7 @@ tools:
     tool: team_dispatch
     substrate_qualified: user-vortex__team_dispatch
   fol_descriptor: "∀ role ∈ GenerateRoles ∧ dispatch_thread_id ∈ AgentBusThread ∧ contract
-    ∈ {light-bounded,pure-mechanical,implement}:\n  team_dispatch(op=generate, role, dispatch_thread_id,
+    ∈ {sketch,pure-mechanical,implement}:\n  team_dispatch(op=generate, role, dispatch_thread_id,
     contract, packet_path?) ⟹\n    execution_id ∈ UUIDv4 ∧ auto-provisions a result thread
     ∧ Stargate posts the role reply ON-BEHALF to it\n    ∧ poll poll_hint (agent-bus wait)
     for content — NOT pipeline(op=result)\n    ∧ knob_resolution ∈ Response ∧ parity ∉ {claimed_by_default}\n\
@@ -4274,7 +4274,7 @@ tools:
     split_thread=true.\nGenerateRoles = generate/to_thread roles (reviewer/synthesizer/artisan/skeptic).\n\
     cursor-sdk ∈ GenerateTargets via auto_dispatchable (substrate=sdk); ¬ cloud CapabilityDispatch.\n\
     \  Default output_contract=thread for sdk; packet_path honored for cursor-sdk generate
-    across {light-bounded,pure-mechanical,implement}; source_ref implement-only; dispatch-thread
+    across {sketch,pure-mechanical,implement}; source_ref implement-only; dispatch-thread
     latest turn is fallback when no packet;\n  poll via poll_hint (agent-bus wait), NOT pipeline(op=result),
     until the execution registry (Track 2).\n¬ web-consult/web-implement/cursor-consult/cursor-implement
     (handoff-only). Async. Mutating. See agent_skill:dispatch."
@@ -4305,9 +4305,10 @@ tools:
       contract:
         type: string
         enum:
-        - light-bounded
-        - pure-mechanical
         - implement
+        - none
+        - pure-mechanical
+        - sketch
       mcp:
         type: boolean
       skills:
@@ -4339,7 +4340,7 @@ tools:
     tool: team_dispatch_to_thread
     substrate_qualified: user-vortex__team_dispatch_to_thread
   fol_descriptor: "∀ role ∈ GenerateRoles ∧ thread ∈ ThreadID ∧ dispatch_thread_id ∈ AgentBusThread
-    ∧ contract ∈ {light-bounded,pure-mechanical}:\n  team_dispatch(op=to_thread, role, dispatch_thread_id,
+    ∧ contract ∈ {sketch,pure-mechanical}:\n  team_dispatch(op=to_thread, role, dispatch_thread_id,
     contract, thread) ⟹\n    Stargate posts the role reply on its behalf to thread after dispatch
     completes.\n  Context is read from dispatch_thread_id's latest agent-bus turn; messages[]
     is not a parameter.\nGenerateRoles = generate/to_thread roles (reviewer/synthesizer/artisan/skeptic).\n\
@@ -4372,8 +4373,10 @@ tools:
       contract:
         type: string
         enum:
-        - light-bounded
+        - implement
+        - none
         - pure-mechanical
+        - sketch
       mcp:
         type: boolean
       skills:

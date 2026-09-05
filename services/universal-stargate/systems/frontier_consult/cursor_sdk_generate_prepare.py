@@ -96,7 +96,7 @@ async def prepare_cursor_sdk_generate(
     resume_of: str | None = None,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
-    from .light_bounded_ac_observer import (
+    from .generate_lane_ac_observer import (
         prepare_lb_auto_review_for_generate,
         stamp_lb_review_spawn_fields,
         validate_generate_contract_packet_rules,

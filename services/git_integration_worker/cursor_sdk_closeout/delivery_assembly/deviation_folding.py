@@ -46,7 +46,7 @@ def fold_closeout_deviations(
     all_outside_repo: tuple[str, ...],
     files_untracked_or_ignored: tuple[str, ...],
     mount: Path,
-    light_bounded_expected_paths: tuple[str, ...],
+    residual_expected_paths: tuple[str, ...],
     worktree_isolated: bool,
     dispatch_id: str,
     thread_id: str,
@@ -76,7 +76,7 @@ def fold_closeout_deviations(
             outside_repo_paths=all_outside_repo,
             files_untracked_or_ignored=files_untracked_or_ignored,
             mount_root=mount,
-            light_bounded_expected_paths=light_bounded_expected_paths,
+            residual_expected_paths=residual_expected_paths,
             worktree_isolated=worktree_isolated,
             read_only=CursorDispatchLedger.instance().read_read_only(
                 dispatch_id=dispatch_id
@@ -117,7 +117,7 @@ def fold_closeout_deviations(
     if dropped_non_file_entries:
         deviations = [*(deviations or []), "capture:non_file_manifest_entry_dropped"]
     expected_cortex_uris = collect_expected_cortex_deliverable_uris(
-        light_bounded_expected_paths=light_bounded_expected_paths,
+        residual_expected_paths=residual_expected_paths,
         files_expected=files_expected,
         cortex_artifact_paths=cortex_artifact_paths,
     )

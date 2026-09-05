@@ -185,7 +185,7 @@ def test_dispatch_thread_id_exempt_for_wrap_generate() -> None:
 # ── F17378 — packet_path on generate; source_ref implement-only ──────────────
 
 
-def test_packet_path_ok_on_light_bounded_generate() -> None:
+def test_packet_path_ok_on_residual_generate() -> None:
     assert (
         reject_unsupported_packet_inputs(
             "generate", "none", "tmp/p.md", None
@@ -211,7 +211,7 @@ def test_source_ref_rejected_on_pure_mechanical_generate() -> None:
     assert err["field"] == "source_ref"
 
 
-def test_source_ref_rejected_on_light_bounded_generate() -> None:
+def test_source_ref_rejected_on_residual_generate() -> None:
     err = reject_unsupported_packet_inputs(
         "generate", "none", None, "todo:x"
     )

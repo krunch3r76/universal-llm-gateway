@@ -42,7 +42,7 @@ def test_packet_preamble_includes_breadth_recon_block() -> None:
     assert "ulg-for-llms" not in preamble
 
 
-def test_packet_preamble_light_bounded_includes_reasoning_posture() -> None:
+def test_packet_preamble_residual_includes_reasoning_posture() -> None:
     preamble = resolve_prompt_preamble(
         handoff_contract="none",
         prompt_preamble=None,

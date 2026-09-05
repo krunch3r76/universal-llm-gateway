@@ -175,7 +175,7 @@ async def test_life_pointer_refusal_omits_split_thread_advice() -> None:
 
 @pytest.mark.asyncio
 async def test_cursor_sdk_alias_self_note_admits() -> None:
-    body = "Light-bounded recon brief for cursor-sdk."
+    body = "Sketch recon brief for cursor-sdk."
     got = await _read_with_turn(
         {"from": "cursor", "to": "cursor", "body": body},
         role="cursor-sdk",

@@ -32,7 +32,7 @@ def build_worker_message(
     limit: int,
     all_candidates: list[dict[str, Any]],
 ) -> str:
-    """Light-bounded worker instruction for LLM skill relevance ranking."""
+    """Sketch worker instruction for LLM skill relevance ranking."""
     ctx_literal = json.dumps(conversation_context, ensure_ascii=False)
     candidates_payload = [
         {

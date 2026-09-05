@@ -133,7 +133,7 @@ def test_turn_343_specimen_is_bus_verbatim() -> None:
 
 
 @pytest.mark.offline
-def test_ruling_acs_raise_to_light_bounded() -> None:
+def test_ruling_acs_raise_to_residual() -> None:
     assert resolve_handoff_contract("implement", body=_TURN_302) == "none"
 
 

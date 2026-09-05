@@ -7,7 +7,7 @@ has one knob (``fast``); there is no ``effort``/``thinking``/``context`` knob to
 carry, and ``align_cursor_knobs`` drops unrecognized knobs silently.
 
 The judgment/implement split now lives in ``contract``, not ``model``:
-``JUDGMENT_MODEL`` dispatches at ``DEFAULT_CONTRACT`` (``light-bounded``), which
+``JUDGMENT_MODEL`` dispatches at ``DEFAULT_CONTRACT`` (``sketch``), which
 GIW ``resolve_prompt_preamble`` auto-scaffolds with ``Use the reasoning-posture
 skill`` + ``Use the hypothesize-simulate skill`` on every cursor-sdk generate —
 Composer's reasoning space is squeezed via those two skills rather than by a
@@ -36,7 +36,7 @@ from typing import Any
 DEFAULT_SEAT = "cursor-sdk"
 JUDGMENT_MODEL = "cursor/composer-2.5"
 JUDGMENT_MODEL_KNOBS: dict[str, str] = {"fast": "true"}
-DEFAULT_CONTRACT = "light-bounded"
+DEFAULT_CONTRACT = "sketch"
 
 IMPLEMENT_MODEL = "cursor/composer-2.5"
 IMPLEMENT_CONTRACT = "implement"

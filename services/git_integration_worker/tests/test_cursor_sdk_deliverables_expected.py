@@ -10,7 +10,7 @@ from services.git_integration_worker.cursor_sdk_deliverables_expected import (
     extract_evidence_required_uris,
     packet_names_deliverable_obligation,
 )
-from services.git_integration_worker.cursor_sdk_light_bounded_capture import (
+from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
     extract_instructed_paths,
 )
 
@@ -40,7 +40,7 @@ def test_compute_deliverables_expected_true_on_evidence_required() -> None:
         compute_deliverables_expected(
             contract="investigate",
             instruction_text=prose,
-            light_bounded_expected_paths=(),
+            residual_expected_paths=(),
         )
         is True
     )

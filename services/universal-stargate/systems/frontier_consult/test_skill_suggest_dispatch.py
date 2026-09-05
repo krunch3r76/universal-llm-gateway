@@ -261,7 +261,7 @@ async def test_dispatch_fallback_on_worker_idle_timeout() -> None:
 
 @pytest.mark.offline
 @pytest.mark.asyncio
-async def test_dispatch_uses_light_bounded_contract() -> None:
+async def test_dispatch_uses_residual_contract() -> None:
     body = SkillSuggestDispatchRequest(agent="claude-cursor", loaded=[])
     fallback_payload = _native_envelope()
     fallback_payload["route"] = "fallback"

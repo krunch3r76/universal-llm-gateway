@@ -746,7 +746,7 @@ def test_auto_regime_empty_scope_pure_mechanical(git_repo: Path) -> None:
     assert reason == "auto_regime"
 
 
-def test_auto_light_bounded_empty_scope_stays_a(git_repo: Path) -> None:
+def test_auto_residual_empty_scope_stays_a(git_repo: Path) -> None:
     req = CursorDispatchRequest(
         thread_id="t-auto",
         model="cursor/composer-2.5",

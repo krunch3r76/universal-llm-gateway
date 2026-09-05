@@ -44,11 +44,11 @@ def _patch_prepare_deps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     )
     monkeypatch.setattr(prepare_mod, "post_coord_admit_pointer", AsyncMock())
     monkeypatch.setattr(
-        "systems.frontier_consult.light_bounded_ac_observer.prepare_lb_auto_review_for_generate",
+        "systems.frontier_consult.generate_lane_ac_observer.prepare_lb_auto_review_for_generate",
         lambda **_k: (False, False, "packet body"),
     )
     monkeypatch.setattr(
-        "systems.frontier_consult.light_bounded_ac_observer.validate_generate_contract_packet_rules",
+        "systems.frontier_consult.generate_lane_ac_observer.validate_generate_contract_packet_rules",
         lambda **_k: None,
     )
     monkeypatch.setattr(

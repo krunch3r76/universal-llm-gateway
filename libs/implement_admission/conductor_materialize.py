@@ -254,7 +254,7 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
     numbered = "\n".join(f"{i}. {c}" for i, c in enumerate(ac, start=1))
     return "\n".join(
         [
-            "contract: conductor conductor session",
+            "contract: conductor session",
             numbered,
             "",
             render_sparse_scoreboard(
