@@ -2,12 +2,89 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 CONDUCTOR_ROW_PINNED = "conductor_row_pinned"
 CONDUCTOR_ROW_HOP = "conductor_row_hop"
 CONDUCTOR_EXIT_PERSIST = "conductor_exit_persist"
 CONDUCTOR_NEST_IN_FLIGHT = "conductor_nest_in_flight"
 
 _LIVE_NEST = frozenset({"queued", "admitted", "running", "parked_waiting"})
+_HOST_RUNNING = frozenset({"pending", "running"})
+SKIP_GATE_LIVE_EXTERNAL = "live_external_gate"
+SKIP_GATE_PROBE_INDETERMINATE = "probe_indeterminate"
+
+
+def _record_data_from_row(row: dict[str, Any]) -> dict[str, Any]:
+    record_json = str(row.get("record_json") or "")
+    try:
+        data = json.loads(record_json) if record_json else {}
+    except json.JSONDecodeError:
+        data = {}
+    return data if isinstance(data, dict) else {}
+
+
+def mission_lane_from_conductor_row(row: dict[str, Any]) -> str:
+    """Bus private-request lane used to join CDP external gate executions."""
+    rec = _record_data_from_row(row)
+    summoning = str(rec.get("summoning_thread_id") or "").strip()
+    if summoning:
+        return summoning
+    return str(row.get("thread_id") or "").strip()
+
+
+def live_external_gate_for_lane(snap: dict[str, Any], mission_lane: str) -> bool:
+    """True when active-work has a pending/running row bound to ``mission_lane``."""
+    lane = (mission_lane or "").strip()
+    if not lane or not snap:
+        return False
+    rows = snap.get("rows")
+    if not isinstance(rows, list):
+        return False
+    for aw_row in rows:
+        if not isinstance(aw_row, dict):
+            continue
+        status = str(aw_row.get("status") or "")
+        if status not in _HOST_RUNNING:
+            continue
+        parent = str(aw_row.get("parent_thread") or "").strip()
+        if parent == lane:
+            return True
+    return False
+
+
+def read_external_gate_lane_snapshot() -> dict[str, Any]:
+    """Shared CDP lane snap for conductor external-gate occupancy (P1.2)."""
+    from services.git_integration_worker.cursor_auto.cdp_escalation import (
+        read_cdp_lane_snapshot,
+    )
+
+    return read_cdp_lane_snapshot()
+
+
+def external_gate_hop_verdict(row: dict[str, Any]) -> tuple[str, str | None]:
+    """Occupancy probe for ``hop_owed`` (P1.2 / P1.4).
+
+    Returns ``(verdict, skip_gate)`` where *skip_gate* is set when the reactor
+    must not POST a successor. Probe fails open when no gate is owed
+    (``closeout_harvest_owed`` false); fails closed when harvest is owed and
+    the snap is empty/indeterminate.
+    """
+    rec = _record_data_from_row(row)
+    harvest_owed = rec.get("closeout_harvest_owed") is True
+    lane = mission_lane_from_conductor_row(row)
+    try:
+        snap = read_external_gate_lane_snapshot()
+    except Exception:
+        snap = {}
+    if not snap:
+        if harvest_owed:
+            return "indeterminate_closed", SKIP_GATE_PROBE_INDETERMINATE
+        return "indeterminate_open", None
+    if live_external_gate_for_lane(snap, lane):
+        return "live", SKIP_GATE_LIVE_EXTERNAL
+    return "clear", None
 
 
 def _packet_is_conductor(

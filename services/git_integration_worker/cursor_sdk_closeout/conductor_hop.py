@@ -23,7 +23,10 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+    SKIP_GATE_LIVE_EXTERNAL,
+    SKIP_GATE_PROBE_INDETERMINATE,
     conductor_has_live_nested,
+    external_gate_hop_verdict,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
     budget_ok_for_hop,
@@ -113,6 +116,11 @@ def _hop_skip_gate(
     closeout_tokens: frozenset[str],
 ) -> str | None:
     """Return skip gate name when hop reactor must not POST successor."""
+    _, ext_gate = external_gate_hop_verdict(row)
+    if ext_gate == SKIP_GATE_LIVE_EXTERNAL:
+        return SKIP_GATE_LIVE_EXTERNAL
+    if ext_gate == SKIP_GATE_PROBE_INDETERMINATE:
+        return SKIP_GATE_PROBE_INDETERMINATE
     if not hop_owed(row, closeout_tokens=closeout_tokens):
         status = str(row.get("status") or "")
         if status not in ("completed", "failed", "cancelled"):
@@ -274,6 +282,9 @@ def hop_owed(
     if not mission_open_for_row(row, closeout_tokens=tokens):
         return False
     if not budget_ok_for_hop(row, closeout_tokens=tokens):
+        return False
+    ext_verdict, _ext_gate = external_gate_hop_verdict(row)
+    if ext_verdict in {"live", "indeterminate_closed"}:
         return False
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     if hop_fields.get("hop_successor"):

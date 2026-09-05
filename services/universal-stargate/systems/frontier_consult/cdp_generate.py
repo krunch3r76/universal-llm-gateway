@@ -60,6 +60,14 @@ def is_cdp_model(model: str | None) -> bool:
         return False
 
 
+_LANE_BIND_PURPOSES = frozenset({"review", "ask"})
+
+
+def _binds_operator_lane(purpose: str) -> bool:
+    norm = (purpose or "").strip().lower()
+    return is_operator_proxy_mission_purpose(purpose) or norm in _LANE_BIND_PURPOSES
+
+
 def default_operator_seat_binding(
     *,
     purpose: str,
@@ -67,16 +75,76 @@ def default_operator_seat_binding(
     mission_kind: str | None,
     thread_id: str,
 ) -> tuple[str | None, str | None]:
-    """Default ``parent_thread`` / ``mission_kind`` for operator-proxy purposes.
+    """Default ``parent_thread`` / ``mission_kind`` for gate and operator purposes.
 
     ``mission_kind="hop"`` is never overwritten. ``parent_thread`` defaults from
-    the generate ``thread_id`` when omitted.
+    the generate ``thread_id`` when omitted for operator-proxy/mission and for
+    ``purpose ∈ {review, ask}``.
     """
-    if not is_operator_proxy_mission_purpose(purpose):
+    if not _binds_operator_lane(purpose):
         return parent_thread, mission_kind
     lane = parent_thread or str(thread_id)
-    kind = mission_kind or "root"
+    if (mission_kind or "").strip().lower() == "hop":
+        kind = "hop"
+    else:
+        kind = mission_kind or "root"
     return lane, kind
+
+
+def _read_lane_snapshot_for_gate() -> dict[str, Any]:
+    from cdp_ask.client import CdpAskClient
+    from claude_bundles.hop_cadence_seat_snap import attach_registry_seated_rows
+
+    snap = CdpAskClient()._request("GET", "/v1/project-ask/active-work")
+    if not isinstance(snap, dict):
+        return {}
+    return attach_registry_seated_rows(snap)
+
+
+def _live_external_gate_for_lane(snap: dict[str, Any], mission_lane: str) -> bool:
+    lane = (mission_lane or "").strip()
+    if not lane or not snap:
+        return False
+    rows = snap.get("rows")
+    if not isinstance(rows, list):
+        return False
+    for aw_row in rows:
+        if not isinstance(aw_row, dict):
+            continue
+        status = str(aw_row.get("status") or "")
+        if status not in {"pending", "running"}:
+            continue
+        parent = str(aw_row.get("parent_thread") or "").strip()
+        if parent == lane:
+            return True
+    return False
+
+
+def refuse_second_external_gate_at_fire(
+    *,
+    purpose: str,
+    parent_thread: str | None,
+    thread_id: str,
+    request_id: str,
+) -> None:
+    """P1.3 — refuse a second gate while one is still streaming for the lane."""
+    if not _binds_operator_lane(purpose):
+        return
+    lane = (parent_thread or thread_id or "").strip()
+    if not lane:
+        return
+    snap = _read_lane_snapshot_for_gate()
+    if _live_external_gate_for_lane(snap, lane):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="purpose",
+            reason=(
+                f"external CDP gate already live for parent_thread={lane!r}; "
+                "wait for harvest before firing another gate"
+            ),
+            status_code=409,
+            code="cdp_external_gate_live",
+        )
 
 
 def reject_cursor_sdk_seat_with_cdp(
@@ -381,12 +449,31 @@ async def dispatch_cdp_generate(
             mission_kind=mission_kind,
             thread_id=str(thread_id),
         )
+        refuse_second_external_gate_at_fire(
+            purpose=purpose,
+            parent_thread=parent_thread,
+            thread_id=str(thread_id),
+            request_id=request_id,
+        )
         observe_mission_binding(
             purpose=purpose,
             dispatch_thread_id=str(thread_id),
             parent_thread=parent_thread,
             mission_kind=mission_kind,
             synthesized=declared_parent is None,
+        )
+    elif (purpose or "").strip().lower() in _LANE_BIND_PURPOSES:
+        parent_thread, mission_kind = default_operator_seat_binding(
+            purpose=purpose,
+            parent_thread=parent_thread,
+            mission_kind=mission_kind,
+            thread_id=str(thread_id),
+        )
+        refuse_second_external_gate_at_fire(
+            purpose=purpose,
+            parent_thread=parent_thread,
+            thread_id=str(thread_id),
+            request_id=request_id,
         )
     opts = getattr(body, "generation_options", None) or {}
     from .cdp_dispatch_topic import extract_cdp_dispatch_topic
