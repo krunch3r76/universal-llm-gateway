@@ -406,6 +406,7 @@ def build_hop_team_dispatch_body(
         "dispatch_thread_id": dispatch_thread_id,
         "reuse_thread": thread_id,
         "source_ref": source_ref,
+        "packet_kind": "conductor",
         "model": routing_model,
         "generation_options": generation_options,
     }

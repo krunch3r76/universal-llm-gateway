@@ -23,7 +23,7 @@ def _record_packet_kind(record_json: str) -> str | None:
         return None
     if not isinstance(data, dict):
         return None
-    kind = data.get("packet_kind")
+    kind = data.get("packet_kind") or data.get("contract")
     return str(kind).strip().lower() if kind else None
 
 
