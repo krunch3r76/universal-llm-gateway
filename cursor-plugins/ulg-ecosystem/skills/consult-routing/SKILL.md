@@ -64,6 +64,24 @@ Standing: verifier ≠ producer; independent check ≠ author; Other Models /
 `cursor/claude-fable-5{,-1}` are not substitutes. Slash commands cite this table —
 they are not SOT.
 
+### Fable 5.1 SDK outage (a:32393 — open until recovery probe passes)
+
+**Verdict (a:32403):** upstream Cursor serving defect on `claude-fable-5-1` over the
+**SDK/agent surface**, knob-independent — hollow ~5s / 0 tools at `medium`, `xhigh`,
+and `max` after 2026-09-05 ~14:33Z. Wire and detection gaps are closed; do **not**
+denylist `xhigh` on the card.
+
+| Need | Route while outage open | Do not |
+|---|---|---|
+| Judgment / width | `cdp/fable` (Cowork transport) | Rebind to another Fable SDK rung |
+| Bind / sketch on SDK | `cursor/claude-opus-5` `{high\|xhigh\|max}` | `cursor/claude-fable-5{,-1}` on cursor-sdk |
+| Mechanical | `cursor/composer-2.5` | Third retry at a different Fable effort |
+
+**Recovery probe:** one trivial Fable SDK run — body non-empty and duration >15s ⇒
+stand down this row. Empty ~5s ⇒ still broken; route off model, not knob.
+
+SoT: `cortex://notes/system/specs/a32393-narrow-fix-bind.md` (verdict, routing, upstream report template)
+
 ## Dispatch targets (code surface only)
 
 Poll `poll_hint` with `agent_bus(wait)`, not `pipeline(result)`.
@@ -220,7 +238,8 @@ guidance that table has no room for — the two are read together.
 | `cdp/opus-5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
 | Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b precedes explicit Other Models (2c) |
 | Silent Terra / Other Models as the next binder | 2c is **explicit pin only**; default after Fable is **`cursor/claude-opus-5`** on cursor-sdk |
-| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` because Fable is wanted | Blocked for cost (both — 5.1 launched 2026-09-01 at same $/M) — use `cdp/fable` |
+| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` because Fable is wanted | Blocked for cost (both — 5.1 launched 2026-09-01 at same $/M) — use `cdp/fable`. While a:32393 SDK outage is open, Fable 5.1 on cursor-sdk is also **observed hollow at every tested rung** — use § Fable 5.1 SDK outage |
+| Rebind Sketch to Fable max/high on cursor-sdk after xhigh hollow | Falsified (a:32403): `medium` and `max` hollow too — rebind **off the Fable SDK surface** |
 | `team_dispatch(model=gpt-5.6-terra)` bare slug on code-lane bind | `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra` — explicit pin only |
 | Spend `cursor/gpt-5.6-sol` on broad open-ended review | `sol` is targeted, low-token, still Other Models — explicit pin only |
 
