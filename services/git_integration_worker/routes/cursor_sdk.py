@@ -629,6 +629,7 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
         hop_seq=req.hop_seq,
         hop_from=req.hop_from,
         hop_reason=req.hop_reason,
+        continuity_root_thread_id=req.continuity_root_thread_id,
     )
     return f"{preamble}{packet_text}"
 

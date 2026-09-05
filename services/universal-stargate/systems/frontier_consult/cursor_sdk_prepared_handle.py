@@ -53,6 +53,7 @@ class PreparedCursorSdkHandle:
     hop_seq: int | None = None
     hop_reason: str | None = None
     resume_of: str | None = None
+    continuity_root_thread_id: str | None = None
 
 
 def mint_cursor_sdk_ids(*, request_id: str) -> tuple[str, str]:
@@ -116,6 +117,7 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "hop_seq": handle.hop_seq,
         "hop_reason": handle.hop_reason,
         "resume_of": handle.resume_of,
+        "continuity_root_thread_id": handle.continuity_root_thread_id,
     }
 
 
@@ -164,4 +166,5 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         hop_seq=data.get("hop_seq"),
         hop_reason=data.get("hop_reason"),
         resume_of=data.get("resume_of"),
+        continuity_root_thread_id=data.get("continuity_root_thread_id"),
     )

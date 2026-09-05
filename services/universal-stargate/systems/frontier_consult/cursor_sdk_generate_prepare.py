@@ -25,7 +25,11 @@ from .cursor_sdk_prepared_handle import (
     mint_cursor_sdk_ids,
 )
 from .cursor_sdk_reasoning_effort_reject import reject_nonempty_reasoning_effort
-from .cursor_sdk_thread_reuse import probe_thread, refuse_occupied_worker_thread
+from .cursor_sdk_thread_reuse import (
+    probe_continuity_root_thread_id,
+    probe_thread,
+    refuse_occupied_worker_thread,
+)
 from .cursor_sdk_worker_dispatch import derive_cursor_sdk_prompt_preamble
 from .handoff import (
     PendingShellContention,
@@ -474,6 +478,10 @@ async def prepare_cursor_sdk_generate(
         message_text=worker_message,
     )
 
+    continuity_root_thread_id = await probe_continuity_root_thread_id(
+        parent_dispatch_thread_id
+    )
+
     return PreparedCursorSdkHandle(
         request_id=request_id,
         execution_id=execution_id,
@@ -517,4 +525,5 @@ async def prepare_cursor_sdk_generate(
         hop_seq=hop_seq,
         hop_reason=hop_reason,
         resume_of=resume_of,
+        continuity_root_thread_id=continuity_root_thread_id,
     )

@@ -126,6 +126,27 @@ def _is_continuity_root(payload: dict[str, Any]) -> bool:
     return not payload.get("parent_thread")
 
 
+async def probe_continuity_root_thread_id(thread_id: str | None) -> str | None:
+    """Return *thread_id* back when it is a continuity root, else ``None``.
+
+    Reuses the same probe + classification the conductor coord-split gate uses
+    (``_is_continuity_root``) so a plain (non-conductor) generate learns the
+    same fact: this coordination thread carries standing house rules a worker
+    must read before acting. Non-numeric or empty ``thread_id`` short-circuits
+    without an HTTP call (slug coordination threads are never continuity
+    roots in the ``role:root`` sense).
+    """
+    normalized = (thread_id or "").strip()
+    if not normalized or not normalized.isdigit():
+        return None
+    payload = await probe_thread(normalized)
+    if payload is None:
+        return None
+    if _is_continuity_root(payload):
+        return normalized
+    return None
+
+
 def _is_pending_empty_child(payload: dict[str, Any]) -> bool:
     """Pending shell that is a child of a root — legal conductor reuse (shape 2)."""
     parent = payload.get("parent_thread")

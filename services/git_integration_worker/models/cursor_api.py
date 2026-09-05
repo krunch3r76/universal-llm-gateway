@@ -50,6 +50,7 @@ class CursorDispatchRequest(BaseModel):
     admitted_via: Literal["cursor-auto", "stargate"] | None = None
     work_key: str | None = None
     resume_of: str | None = None
+    continuity_root_thread_id: str | None = None
     hop_from: str | None = None
     hop_seq: int | None = Field(default=None, ge=0)
     hop_reason: (

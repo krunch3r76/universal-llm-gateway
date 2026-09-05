@@ -94,6 +94,7 @@ async def dispatch_prepared_cursor_sdk(
             hop_seq=handle.hop_seq,
             hop_reason=handle.hop_reason,
             resume_of=handle.resume_of,
+            continuity_root_thread_id=handle.continuity_root_thread_id,
         )
     else:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker_message(
@@ -115,6 +116,7 @@ async def dispatch_prepared_cursor_sdk(
             hop_seq=handle.hop_seq,
             hop_reason=handle.hop_reason,
             resume_of=handle.resume_of,
+            continuity_root_thread_id=handle.continuity_root_thread_id,
         )
 
     if not worker_ok:

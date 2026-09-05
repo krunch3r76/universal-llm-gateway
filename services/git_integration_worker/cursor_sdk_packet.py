@@ -165,6 +165,27 @@ _LANE_B_BRANCH_CONTRACT_TEMPLATE = (
     "declared outcomes archive the tip first, so neither loses work."
 )
 
+_CONTINUITY_ROOT_TEMPLATE = (
+    "CONTINUITY THREAD (mandatory): coordination thread {thread_id} is a "
+    "continuity root carrying standing house rules and history for this "
+    "lane — independent of whether this dispatch is a conductor packet. "
+    "Before any checkout-sensitive, scheduling, or judgment-bearing action, "
+    "load its current state:\n"
+    '  1. cortex(tool="entity_get", arguments=\'{{"entity_id": '
+    '"document:{thread_id}-continuity", "intent": "card"}}\') for the '
+    'house-card pointer (its source_uri), then fs(op="read", '
+    "path=<that source_uri>) for the card body.\n"
+    '  2. agent_bus(tool="fetch", arguments=\'{{"thread": "{thread_id}", '
+    '"last": 5, "compact": true}}\') for the newest CHECKPOINT subject, '
+    'then agent_bus(tool="get", arguments=\'{{"thread": "{thread_id}", '
+    '"turn_number": <that turn>}}\') for current binds/state.\n'
+    "House rules there (diet, tip floors, schedule windows, vendor bans, "
+    "prior lessons) override generic defaults and this packet's silence on "
+    "them. If this packet already inlines the house card body in "
+    "<corpus>/<invariants>, that inline copy satisfies step 1 — do not "
+    "re-fetch."
+)
+
 _IMPLEMENT_PREAMBLE = (
     "Execute this task NOW using your tools. Make the code/file changes the packet "
     "specifies. If you are blocked, reply with `status: blocked` and the specific "
@@ -326,6 +347,7 @@ def resolve_prompt_preamble(
     hop_seq: int | None = None,
     hop_from: str | None = None,
     hop_reason: str | None = None,
+    continuity_root_thread_id: str | None = None,
 ) -> str:
     """Assemble the worker prompt prefix for one cursor-sdk dispatch.
 
@@ -347,6 +369,10 @@ def resolve_prompt_preamble(
 
     ``thread_id`` / ``hop_seq`` / ``hop_from`` / ``hop_reason`` stamp the conductor hop
     preamble when the admit is a Lane-B conductor packet (bind ``a:31807`` §2.4).
+
+    ``continuity_root_thread_id`` (when the coordination thread is a tagged
+    continuity root) injects a generic house-card/CHECKPOINT-read instruction
+    independent of conductor packet-hood.
     """
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
@@ -357,6 +383,10 @@ def resolve_prompt_preamble(
         preamble = ""
 
     parts = [_DELIVERABLE_ROUTING_PREAMBLE, _BREADTH_RECON_PREAMBLE]
+    if continuity_root_thread_id:
+        parts.append(
+            _CONTINUITY_ROOT_TEMPLATE.format(thread_id=continuity_root_thread_id)
+        )
     if lane == "B":
         parts.append(_LANE_B_REPO_EDIT_PREAMBLE)
         parts.append(

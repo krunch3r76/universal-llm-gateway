@@ -11,6 +11,7 @@ from .cursor_sdk_thread_reuse import (
     CURSOR_WORKER_THREAD_OCCUPIED,
     api_split_warning,
     consolidation_split_warning,
+    probe_continuity_root_thread_id,
     refuse_occupied_worker_thread,
     resolve_cursor_sdk_thread_targets,
     resolve_generate_thread_targets,
@@ -483,3 +484,79 @@ async def test_refuse_occupied_live_status_422(
         )
     assert excinfo.value.code == CURSOR_WORKER_THREAD_OCCUPIED
     assert excinfo.value.details["holder_dispatch_id"] == "85e312e900aa-26c192cf"
+
+
+@pytest.mark.asyncio
+async def test_probe_continuity_root_thread_id_role_root_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        return {"turn_count": 3, "tags": ["role:root"]}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    assert await probe_continuity_root_thread_id("9758") == "9758"
+
+
+@pytest.mark.asyncio
+async def test_probe_continuity_root_thread_id_legacy_root_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        return {"turn_count": 2, "tags": [], "parent_thread": None}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    assert await probe_continuity_root_thread_id("9758") == "9758"
+
+
+@pytest.mark.asyncio
+async def test_probe_continuity_root_thread_id_zero_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(thread_id: str) -> dict | None:
+        return {"turn_count": 0, "tags": ["role:root"]}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    assert await probe_continuity_root_thread_id("9758") is None
+
+
+@pytest.mark.asyncio
+async def test_probe_continuity_root_thread_id_probe_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _probe(_thread_id: str) -> dict | None:
+        return None
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    assert await probe_continuity_root_thread_id("9758") is None
+
+
+@pytest.mark.asyncio
+async def test_probe_continuity_root_thread_id_short_circuits_non_digit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def _probe(thread_id: str) -> dict | None:
+        calls.append(thread_id)
+        return {"turn_count": 3, "tags": ["role:root"]}
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_thread_reuse.probe_thread",
+        _probe,
+    )
+    assert await probe_continuity_root_thread_id(None) is None
+    assert await probe_continuity_root_thread_id("") is None
+    assert await probe_continuity_root_thread_id("my-slug-thread") is None
+    assert calls == []
