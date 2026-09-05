@@ -464,7 +464,8 @@ def _emit_enriched_queued(
         purpose=association["purpose"],
         story_id=association["story_id"],
         topic=association["topic"],
-        nest_under=association["nest_under"]["packet_kind"],
+        nest_under=association["nest_under"],
+        packet_kind=association["packet_kind"],
         model_knobs_requested=_stamp_model_knobs_requested(cached.model_id, req.model_knobs),
         queued_on=f"write_lease:{lease_key}",
     )
@@ -489,7 +490,8 @@ def _maybe_emit_giw_dispatched(
         purpose=association["purpose"],
         story_id=association["story_id"],
         topic=association["topic"],
-        nest_under=association["nest_under"]["packet_kind"],
+        nest_under=association["nest_under"],
+        packet_kind=association["packet_kind"],
         model_knobs_requested=_stamp_model_knobs_requested(req.model, req.model_knobs),
     )
 
@@ -2374,7 +2376,8 @@ async def cursor_dispatch(
             detail_summary="read_only=true is incompatible with contract=implement",
             invalid_fields=["read_only"],
         )
-    candidate_source_ref = req.source_ref or extract_source_ref_from_packet(packet_text)(packet_text) if packet_text else None
+    candidate_source_ref = req.source_ref or extract_source_ref_from_packet(packet_text)
+    packet_kind = extract_packet_kind_from_packet(packet_text) if packet_text else None
     candidate_work_key = req.work_key or (
         extract_work_key_from_packet(packet_text) if packet_text else None
     )
