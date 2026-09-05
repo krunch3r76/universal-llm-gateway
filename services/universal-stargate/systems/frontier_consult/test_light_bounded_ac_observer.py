@@ -163,12 +163,13 @@ async def test_advisory_lifecycle_forced_flag_spawn_and_footer() -> None:
     assert ctx is not None
     assert should_spawn_review_child(ctx) is True
 
-    prompt = await _build_generate_lane_review_prompt(
+    build = await _build_generate_lane_review_prompt(
         request_id="req-ac",
         parent_dispatch_thread_id="thread:parent",
     )
-    assert "Self-check PASS is evidence to inspect, not completion authority" in prompt
-    assert "PASS or FAIL per packet AC" in prompt
+    assert build is not None
+    assert "Self-check PASS is evidence to inspect, not completion authority" in build.prompt
+    assert "PASS or FAIL per packet AC" in build.prompt
 
 
 _SIDECAR_PACKET = """
