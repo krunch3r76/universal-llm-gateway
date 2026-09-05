@@ -294,6 +294,37 @@ def next_admit_names_harvest(body: str) -> bool:
     return _NEXT_ADMIT_HARVEST_RE.search(text) is not None
 
 
+_NEXT_ADMIT_VALUE_RE = re.compile(
+    r"(?im)(?:^|\n)\s*(?:-\s*)?(?:\*\*)?NEXT_ADMIT(?:\*\*)?\s*:\s*(.+)$"
+)
+
+
+def _iter_next_admit_values(body: str):
+    """Yield NEXT_ADMIT payload strings from closeout or scoreboard prose."""
+    for match in _NEXT_ADMIT_VALUE_RE.finditer(body or ""):
+        yield match.group(1).strip()
+
+
+def next_admit_blocks_hop_body(body: str) -> bool:
+    """True when NEXT_ADMIT names harvest, land, or none — refuse hop rematerialize (P3.2)."""
+    text = body or ""
+    if _NEXT_ADMIT_NONE_RE.search(text):
+        return True
+    if "PARKED_TRANSPORT" in parse_stop_tokens(text).tokens:
+        return True
+    if next_admit_names_harvest(text):
+        return True
+    for value in _iter_next_admit_values(text):
+        lower = value.lower()
+        if lower == "none":
+            return True
+        if "harvest" in lower:
+            return True
+        if re.search(r"\b(?:land|git_land)\b", lower):
+            return True
+    return False
+
+
 def resume_row_from_closeout(body: str, *, default: str = "G1") -> str:
     """Return persisted G-row for resume-after-terminal re-admit."""
     match = _RESUME_ROW_RE.search(body or "")
