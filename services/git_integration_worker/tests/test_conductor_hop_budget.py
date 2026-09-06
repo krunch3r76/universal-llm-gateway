@@ -16,9 +16,11 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget im
     _PARK_REASON_MISSION_CAP,
     _PARK_REASON_NO_PROGRESS_CAP,
     HopBudgetConfig,
-    build_parked_transport_body,
     evaluate_hop_budget,
     load_hop_budget_config,
+)
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park import (
+    build_parked_transport_body,
 )
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -238,8 +240,14 @@ def test_crash_backoff_under_cap() -> None:
 
 
 def test_no_progress_cap_parks() -> None:
+    """AC2: same gate, no witness growth, and a lane tip that never moved."""
     ledger = CursorDispatchLedger.instance()
     witness: list[str] = []
+    stuck = {
+        "hop_entry_gate": "G4",
+        "hop_witnessed_done": witness,
+        "hop_lane_tip": "aaaaaaa",
+    }
     for idx in range(1, 4):
         _admit_and_terminal(
             ledger,
@@ -248,7 +256,7 @@ def test_no_progress_cap_parks() -> None:
             hop_from="spawn" if idx == 1 else f"plan-{idx - 1}",
             hop_reason="planned" if idx > 1 else "spawn",
             closeout_tokens=["ROW_HOP"],
-            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": witness},
+            record_patch=dict(stuck),
         )
     row = _admit_and_terminal(
         ledger,
@@ -257,7 +265,7 @@ def test_no_progress_cap_parks() -> None:
         hop_from="plan-3",
         hop_reason="planned",
         closeout_tokens=["ROW_HOP"],
-        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": witness},
+        record_patch=dict(stuck),
     )
     verdict = evaluate_hop_budget(
         row,
@@ -301,10 +309,10 @@ async def test_maybe_fire_parks_on_budget_exhaustion() -> None:
             AsyncMock(),
         ) as post_mock,
         patch(
-            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget.default_park_poster",
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.default_park_poster",
         ) as park_poster,
         patch(
-            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget.page_hop_budget_parked",
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.page_hop_budget_parked",
             AsyncMock(return_value=True),
         ),
         patch(
@@ -345,3 +353,145 @@ async def test_maybe_fire_planned_hop_no_backoff() -> None:
     ):
         await maybe_fire_conductor_hop_reactor(dispatch_id="pred-budget-1")
     sleep_mock.assert_not_called()
+
+
+def _planned_chain(ledger: CursorDispatchLedger, patches: list[dict]) -> dict:
+    """Admit one planned ROW_HOP row per patch; return the last row."""
+    row: dict = {}
+    for idx, record_patch in enumerate(patches, start=1):
+        row = _admit_and_terminal(
+            ledger,
+            dispatch_id=f"a32411-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"a32411-{idx - 1}",
+            hop_reason="planned" if idx > 1 else "spawn",
+            closeout_tokens=["ROW_HOP"],
+            record_patch=record_patch,
+        )
+    return row
+
+
+def test_a32411_shipping_hops_do_not_park() -> None:
+    """AC1: three ROW_HOPs pinned at G1+[] whose lane tip advanced each hop."""
+    ledger = CursorDispatchLedger.instance()
+    row = _planned_chain(
+        ledger,
+        [
+            {"hop_entry_gate": "G1", "hop_witnessed_done": [], "hop_lane_tip": tip}
+            for tip in ("84f53520", "e96037df", "cd5cf10a")
+        ],
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(no_progress_cap=2),
+    )
+    assert verdict.park is False
+    assert verdict.ok is True
+
+
+def test_a32411_unpaid_fold_alone_does_not_park() -> None:
+    """AC1: a fold that never witnessed anything cannot prove a loop by itself."""
+    ledger = CursorDispatchLedger.instance()
+    row = _planned_chain(
+        ledger,
+        [{"hop_entry_gate": "G1", "hop_witnessed_done": []} for _ in range(3)],
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(no_progress_cap=2),
+    )
+    assert verdict.park is False
+    assert verdict.reason is None
+
+
+def test_next_admit_advance_breaks_no_progress_streak() -> None:
+    """A conductor naming a new NEXT_ADMIT each hop is advancing."""
+    ledger = CursorDispatchLedger.instance()
+    row = _planned_chain(
+        ledger,
+        [
+            {"hop_entry_gate": "G1", "hop_witnessed_done": [], "hop_next_admit": admit}
+            for admit in ("harvest G2", "harvest G3", "harvest G4")
+        ],
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(no_progress_cap=2),
+    )
+    assert verdict.park is False
+
+
+def test_static_next_admit_still_parks() -> None:
+    """AC2: an unmoving NEXT_ADMIT is a bound signal, so the loop still parks."""
+    ledger = CursorDispatchLedger.instance()
+    row = _planned_chain(
+        ledger,
+        [
+            {
+                "hop_entry_gate": "G1",
+                "hop_witnessed_done": [],
+                "hop_next_admit": "harvest G1",
+            }
+            for _ in range(3)
+        ],
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(no_progress_cap=2),
+    )
+    assert verdict.park is True
+    assert verdict.reason == _PARK_REASON_NO_PROGRESS_CAP
+
+
+def test_witness_growth_breaks_no_progress_streak() -> None:
+    """AC2 boundary: a fold that did move keeps the mission out of the park."""
+    ledger = CursorDispatchLedger.instance()
+    row = _planned_chain(
+        ledger,
+        [
+            {
+                "hop_entry_gate": "G4",
+                "hop_witnessed_done": done,
+                "hop_lane_tip": "aaaaaaa",
+            }
+            for done in ([], ["G1"], ["G1", "G2"])
+        ],
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(no_progress_cap=2),
+    )
+    assert verdict.park is False
+
+
+def test_budget_authority_patch_carries_bound_progress_signals() -> None:
+    """AC3: the snapshot records every component the streak later compares."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        build_budget_authority_patch,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _admit_and_terminal(
+        ledger,
+        dispatch_id="authority-1",
+        hop_seq=1,
+        hop_from="spawn",
+        hop_reason="spawn",
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_entry_gate": "G4",
+            "hop_witnessed_done": ["G1"],
+            "hop_lane_tip": "cd5cf10a",
+            "hop_next_admit": "harvest G5",
+        },
+    )
+    patch_body = build_budget_authority_patch(row)
+    assert patch_body["hop_entry_gate"] == "G4"
+    assert patch_body["hop_witnessed_done"] == ["G1"]
+    assert patch_body["hop_lane_tip"] == "cd5cf10a"
+    assert patch_body["hop_next_admit"] == "harvest G5"
