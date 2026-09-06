@@ -112,19 +112,31 @@ def reconcile_unregistered_worktrees(
 ) -> tuple[int, int]:
     """Archive-and-remove clean unregistered trees; surface dirty ones as debt.
 
+    ``active`` is advisory — the caller computes it from records that can lag.
+    The live-bridge scan is run here as well, so a tree with a running bridge
+    survives this sweep even when the caller passed a stale active set or none
+    at all (H4).
+
     Returns ``(reconciled, surfaced)``.
     """
     from services.git_integration_worker.cursor_sdk_branch_archive import (
         archive_branch,
     )
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_b_reap_skipped_live_bridge,
+    )
     from services.git_integration_worker.cursor_sdk_worktree_gc import (
         is_lane_b_reconcile_target,
         registered_branch_names,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+        live_bridge_worktree_paths,
     )
 
     repo = source_repo.resolve()
     root = worktree_root.resolve()
     active_paths = active or set()
+    held_paths = live_bridge_worktree_paths(worktree_root=root)
     registered_branches = registered_branch_names()
     registered_paths = _registered_worktree_paths()
 
@@ -136,6 +148,16 @@ def reconcile_unregistered_worktrees(
         if not is_lane_b_reconcile_target(branch=entry.branch, path=entry.path):
             continue
         resolved = str(entry.path)
+        if resolved in held_paths:
+            logger.warning(
+                "unregistered worktree left in place — live bridge holds it path=%s",
+                entry.path,
+            )
+            emit_sdk_lane_b_reap_skipped_live_bridge(
+                worktree_path=resolved,
+                stage="reconcile",
+            )
+            continue
         if resolved in active_paths or resolved in registered_paths:
             continue
         if entry.branch and entry.branch in registered_branches:

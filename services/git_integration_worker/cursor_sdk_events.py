@@ -1414,6 +1414,95 @@ def emit_sdk_lane_b_worktree_missing_observed(
 
 
 @event_factory
+def SdkLaneBReapSkippedLiveBridge(  # noqa: N802
+    worktree_path: str,
+    pid: int | None = None,
+    dispatch_id: str | None = None,
+    stage: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {"worktree_path": worktree_path}
+    for key, value in (
+        ("pid", pid),
+        ("dispatch_id", dispatch_id),
+        ("stage", stage),
+    ):
+        if value is not None:
+            payload[key] = value
+    return Event(
+        signal="sdk.lane_b.reap_skipped_live_bridge",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_reap_skipped_live_bridge(
+    *,
+    worktree_path: str,
+    pid: int | None = None,
+    dispatch_id: str | None = None,
+    stage: str | None = None,
+) -> None:
+    """Emit when a sweep declines to remove a worktree a live bridge is standing in.
+
+    ``stage`` names which remove path was held off (``prune`` / ``reconcile``).
+    A deleted cwd surfaces to the agent as ``spawn /bin/bash ENOENT``, so this
+    signal is the only place the near-miss is visible.
+    """
+    _emit(
+        SdkLaneBReapSkippedLiveBridge(
+            worktree_path=worktree_path,
+            pid=pid,
+            dispatch_id=dispatch_id,
+            stage=stage,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBRegistryGhostRow(  # noqa: N802
+    worktree_path: str,
+    thread_id: str | None = None,
+    branch: str | None = None,
+    dispatch_id: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {"worktree_path": worktree_path}
+    for key, value in (
+        ("thread_id", thread_id),
+        ("branch", branch),
+        ("dispatch_id", dispatch_id),
+    ):
+        if value is not None:
+            payload[key] = value
+    return Event(
+        signal="sdk.lane_b.registry_ghost_row",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_registry_ghost_row(
+    *,
+    worktree_path: str,
+    thread_id: str | None = None,
+    branch: str | None = None,
+    dispatch_id: str | None = None,
+) -> None:
+    """Emit when a lane registry row outlives its worktree directory.
+
+    The row still pins its branch against GC, so it is surfaced rather than
+    deleted: dropping it could release an unmerged lane tip for collection.
+    """
+    _emit(
+        SdkLaneBRegistryGhostRow(
+            worktree_path=worktree_path,
+            thread_id=thread_id,
+            branch=branch,
+            dispatch_id=dispatch_id,
+        )
+    )
+
+
+@event_factory
 def FrontierWriteLeaseAcquired(  # noqa: N802
     dispatch_id: str,
     source_repo: str | None,
