@@ -160,6 +160,7 @@ Scope-lock field shape (consult/path-sim): `cortex://notes/system/specs/consult-
 | Fat `consult-posture` into general reasoning guide | Keep consult fire-gated; reference this |
 | Gate alwaysApply on thinking knobs | `thinking_off ⇏ waive` |
 | Copy path-sim machinery here | Defer by reference |
+| Launch mutating Task without injecting parent kernel (orders/reviews/bus) | Paste kernel per `task-subagent-parity_ulg` — incident agent-bus:9758 turn 71 (Salt & Straw wrong review) |
 
 ## Always-on injection
 

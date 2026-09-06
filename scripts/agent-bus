@@ -26,6 +26,8 @@ Usage:
   agent-bus delete-turn --thread 053 --turn 14
   agent-bus delete-turn --thread 053 --turn 14 --force
   agent-bus mark-closed-read   # mark every turn read in all closed threads (incl. superseded)
+  agent-bus wait --thread 9977 --after-turn 1 --from-agent cursor-sdk --wait-seconds 60
+  agent-bus wait --thread 9977 --after-turn 1 --from-agent cursor-sdk --until-complete
 """
 
 from __future__ import annotations
@@ -42,6 +44,8 @@ from urllib.parse import urlencode
 
 _SOCKET = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
+# Server clamp in libs/agent_bus_store/routes/wait.py — one UDS hold per call.
+_MAX_WAIT_SECONDS = 60.0
 
 
 def _resolve_token() -> str:
@@ -66,13 +70,15 @@ def _request(
     path: str,
     token: str,
     body: dict[str, Any] | None = None,
+    *,
+    timeout: float = 10.0,
 ) -> dict[str, Any]:
     """HTTP request to agent-bus over UDS."""
     import httpx
 
     transport = httpx.HTTPTransport(uds=_SOCKET)
     headers = {"Authorization": f"Bearer {token}"}
-    with httpx.Client(transport=transport, timeout=10.0) as client:
+    with httpx.Client(transport=transport, timeout=timeout) as client:
         resp = client.request(
             method, f"http://localhost{path}", json=body, headers=headers
         )
@@ -211,6 +217,53 @@ def _cmd_fetch(args: argparse.Namespace, token: str) -> None:
         result["_thread_info"] = thread_info
 
     print(json.dumps(result, indent=indent, default=str))
+
+
+def _wait_once(
+    *,
+    thread: str,
+    after_turn: int,
+    wait_seconds: float,
+    completion: str,
+    from_agent: str | None,
+    token: str,
+) -> dict[str, Any]:
+    """One server-side long-poll via GET /threads/{id}/wait."""
+    if completion == "first_reply_from" and not from_agent:
+        print(
+            "wait with completion=first_reply_from requires --from-agent",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    clamped = max(0.0, min(wait_seconds, _MAX_WAIT_SECONDS))
+    params: dict[str, Any] = {
+        "after_turn": after_turn,
+        "wait": clamped,
+        "completion": completion,
+    }
+    if from_agent:
+        params["from_agent"] = from_agent
+    path = f"/threads/{thread}/wait?{urlencode(params)}"
+    # Server may block up to clamped seconds; add connect/read slack.
+    timeout = clamped + 15.0 if clamped > 0 else 10.0
+    return _request("GET", path, token, timeout=timeout)
+
+
+def _cmd_wait(args: argparse.Namespace, token: str) -> None:
+    """Block on UDS long-poll until completion or wait budget elapses."""
+    indent = None if getattr(args, "compact", False) else 2
+    while True:
+        snap = _wait_once(
+            thread=args.thread,
+            after_turn=args.after_turn,
+            wait_seconds=args.wait_seconds,
+            completion=args.completion,
+            from_agent=args.from_agent,
+            token=token,
+        )
+        if snap.get("complete") or not args.until_complete:
+            print(json.dumps(snap, indent=indent, default=str))
+            return
 
 
 def _cmd_fetch_unread(args: argparse.Namespace, token: str) -> None:
@@ -529,6 +582,43 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     fu.add_argument("--compact", action="store_true", help="Omit turn bodies")
 
+    # wait (server-side long-poll on UDS)
+    w = sub.add_parser(
+        "wait",
+        help="Block on GET /threads/{id}/wait (server-side long-poll, max 60s/call)",
+    )
+    w.add_argument("--thread", required=True, help="Thread ID to watch")
+    w.add_argument(
+        "--after-turn",
+        type=int,
+        default=1,
+        help="Pointer turn — wait for activity after this number (default 1)",
+    )
+    w.add_argument(
+        "--wait-seconds",
+        type=float,
+        default=_MAX_WAIT_SECONDS,
+        help=f"Server hold budget per call, 0=snapshot (default {_MAX_WAIT_SECONDS:.0f})",
+    )
+    w.add_argument(
+        "--completion",
+        default="first_reply_from",
+        help=(
+            "Predicate: first_reply_from | thread_closed | status:done | "
+            "status:failed | status:needs-attended | status:superseded"
+        ),
+    )
+    w.add_argument(
+        "--from-agent",
+        help="Required when --completion first_reply_from (e.g. cursor-sdk, web-anthropic)",
+    )
+    w.add_argument(
+        "--until-complete",
+        action="store_true",
+        help="Re-issue UDS wait until complete=true (for background holder processes)",
+    )
+    w.add_argument("--compact", action="store_true", help="Compact JSON output")
+
     # post (new thread + first turn)
     po = sub.add_parser("post", help="Create a new thread and post the first turn")
     po.add_argument("--slug", required=True, help="Thread slug (human-readable name)")
@@ -686,28 +776,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to authored residue markdown",
     )
 
-    w = sub.add_parser(
-        "wait",
-        help="Server-side wait for handoff completion (default proof_reply_from)",
-    )
-    w.add_argument("--thread", required=True, help="Thread id")
-    w.add_argument("--after-turn", type=int, default=1, dest="after_turn")
-    w.add_argument("--wait-seconds", type=float, default=0.0, dest="wait_seconds")
-    w.add_argument(
-        "--completion",
-        default="proof_reply_from",
-        choices=[
-            "first_reply_from",
-            "proof_reply_from",
-            "thread_closed",
-            "status:done",
-            "status:failed",
-            "status:needs-attended",
-            "status:superseded",
-        ],
-    )
-    w.add_argument("--from-agent", default="web-anthropic", dest="from_agent")
-
     return p
 
 
@@ -719,6 +787,7 @@ def main() -> None:
         {
             "fetch": _cmd_fetch,
             "fetch-unread": _cmd_fetch_unread,
+            "wait": _cmd_wait,
             "post": _cmd_post,
             "reply": _cmd_reply,
             "append": _cmd_append,
@@ -728,7 +797,6 @@ def main() -> None:
             "delete-thread": _cmd_delete_thread,
             "delete-turn": _cmd_delete_turn,
             "checkpoint": _cmd_checkpoint,
-            "wait": _cmd_wait,
         }[args.command](args, token)
     except FileNotFoundError:
         print(

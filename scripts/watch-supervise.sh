@@ -15,6 +15,7 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 WATCH_DIR="${WATCH_DIR:-$REPO/tmp/watchers}"
+UNIVERSAL_PYTHON="${HOME}/.venvs/universal/bin/python"
 mkdir -p "$WATCH_DIR"
 
 usage() {
@@ -127,6 +128,20 @@ cmd_start() {
     if [[ "$a" == "--state-file" ]]; then has_state=1; break; fi
   done
   local -a argv=("$@")
+  # Bare ``scripts/*.py`` or system python3 ⇒ re-exec under ULG universal venv.
+  if [[ ${#argv[@]} -gt 0 && "${argv[0]}" == *.py ]]; then
+    if [[ ! -x "$UNIVERSAL_PYTHON" ]]; then
+      echo "watch-supervise: universal venv python missing: $UNIVERSAL_PYTHON" >&2
+      exit 1
+    fi
+    argv=("$UNIVERSAL_PYTHON" "${argv[@]}")
+  elif [[ ${#argv[@]} -gt 0 && "${argv[0]}" == *python* && "${argv[0]}" != "$UNIVERSAL_PYTHON" ]]; then
+    if [[ ! -x "$UNIVERSAL_PYTHON" ]]; then
+      echo "watch-supervise: universal venv python missing: $UNIVERSAL_PYTHON" >&2
+      exit 1
+    fi
+    argv[0]="$UNIVERSAL_PYTHON"
+  fi
   if [[ $has_state -eq 0 ]]; then
     argv+=(--state-file "$state_file")
   fi

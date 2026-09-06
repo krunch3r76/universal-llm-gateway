@@ -5169,7 +5169,7 @@ tools:
   flat_call_shape:
     tool: life_dispatch
     substrate_qualified: user-vortex__life_dispatch
-  fol_descriptor: "Life CDP dispatch — relay POST /api/v1/life/dispatch; Life Cowork project compose (server-pinned UUID). Params: prompt or thread (thread latest turn must be to=life|dispatch and not from=life), optional model/skills. See agent_skill:cdp-operator-proxy.\n"
+  fol_descriptor: "Life→cursor operator-proxy. Mints a Life Cowork CSE (server-pinned project UUID) that drives cursor via request — ¬ life conversation, ¬ claude.ai→claude.ai chat. Stay in-session for correspondence; cursor_request for a DIRECTIVE without a new CSE. prompt XOR thread (thread latest to=life|dispatch, ¬ from=life). Default model=cdp/opus-5. See agent_skill:cdp-operator-proxy.\n"
   json_schema:
     type: object
     properties:

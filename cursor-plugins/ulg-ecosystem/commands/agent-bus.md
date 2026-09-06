@@ -199,6 +199,10 @@ scripts/agent-bus threads --status closed
 
 # Update thread
 scripts/agent-bus update-thread --thread 049 --status closed --summary "Entity resolution shipped"
+
+# Wait (server-side UDS long-poll — no agent-side fetch loop)
+scripts/agent-bus wait --thread 9977 --after-turn 1 --from-agent cursor-sdk --wait-seconds 60
+scripts/agent-bus wait --thread 9977 --after-turn 1 --from-agent cursor-sdk --until-complete --compact
 ```
 
 ## Thread Closure Protocol

@@ -5,7 +5,9 @@
 #   Ctrl-b B       # same, when bound (see end of this script's comments)
 #
 set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Resolve through ~/.local/bin/board symlink so ROOT is the repo, not ~/.local.
+HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
 SESSION="${BOARD_TMUX_SESSION:-0}"
 NAME=dispatch-board
 LAUNCH="$ROOT/scripts/tmux-dispatch-board"

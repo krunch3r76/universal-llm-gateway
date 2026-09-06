@@ -20,6 +20,23 @@ from reasoning_posture_contracts import (
 
 _LARGE_CONTENT_CHUNK_CHARS = 40_000
 
+_TRANSCRIPT_READ_PREAMBLE = (
+    "CURSOR TRANSCRIPT READS (mandatory): When a packet, brief, or operator "
+    "points at a Cursor agent-transcripts JSONL "
+    "(~/.cursor/projects/.../agent-transcripts/<uuid>/<uuid>.jsonl), do NOT "
+    "Read the raw JSONL — it embeds full tool payloads and wastes tokens.\n"
+    "Use server-side assembly first via cortex assemble_transcript: pass "
+    "jsonl_path relative to CURSOR_AGENT_TRANSCRIPTS_ROOT (e.g. "
+    "<uuid>/<uuid>.jsonl) plus any session_id string; read transcript_md "
+    "from the response (verbatim layer only).\n"
+    "Assembly drops embedded tool_result blocks from user turns and replaces "
+    "tool_use with [tool call: NAME] markers — prose preserved, payload bulk "
+    "stripped (~50%+ reduction typical). For targeted binds, search keywords "
+    "within assembled markdown; avoid full raw JSONL reads.\n"
+    "Web seats at session_close: Use the web-transcript-preprocessing skill "
+    "before session_close (payload-vs-metadata strip on transcript_md)."
+)
+
 _DELIVERABLE_ROUTING_PREAMBLE = (
     "DURABLE DELIVERABLE ROUTING (mandatory): Write task deliverables — sidecars, "
     "reviews, specs — to one of the two durable shares, using the exact path from "
@@ -382,7 +399,11 @@ def resolve_prompt_preamble(
     else:
         preamble = ""
 
-    parts = [_DELIVERABLE_ROUTING_PREAMBLE, _BREADTH_RECON_PREAMBLE]
+    parts = [
+        _DELIVERABLE_ROUTING_PREAMBLE,
+        _TRANSCRIPT_READ_PREAMBLE,
+        _BREADTH_RECON_PREAMBLE,
+    ]
     if continuity_root_thread_id:
         parts.append(
             _CONTINUITY_ROOT_TEMPLATE.format(thread_id=continuity_root_thread_id)

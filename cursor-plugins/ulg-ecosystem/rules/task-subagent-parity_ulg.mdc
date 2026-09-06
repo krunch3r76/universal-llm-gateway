@@ -1,0 +1,23 @@
+---
+description: Task subagent parity — parent MUST inject alwaysApply kernel into Task prompts that mutate external state (orders, reviews, bus, cortex). Load before write-capable Task launches.
+alwaysApply: true
+rule_category: workflow
+apply_tier: required_gate
+---
+# Task subagent parity
+
+**Invariant:** Task subagents start cold — they do **not** inherit parent `alwaysApply` rules.
+`Task(…mutates_external_state…) ⇒ parent_injects(kernel)` in the prompt.
+
+## Mutating Task — parent MUST inject
+
+Before `Task(subagent_type="generalPurpose"|"shell"|…)` when the deliverable touches **orders, vendor APIs, reviews, agent_bus, cortex, or operator-facing outbound text**, paste this kernel into the prompt:
+
+1. **`Use the reasoning-posture skill`** — pin Question, one determinate step, verify before acting
+2. **Provenance read-before-mutate** — read current ledger/state before writes; quote observed tool-response payloads before completion claims
+3. **Order/vendor mutations** — explicit **order-ledger read** step before DoorDash/vendor submit or review API calls
+4. **Operator-facing text** → **`Use the outbound-voice-spec skill`**
+
+Explore (`subagent_type="explore"`) is read-only — inject reasoning-posture when judgment residual remains after anchors.
+
+Full gate + verification: `subagent-strategy.mdc` § Task subagent parity. Anti-pattern: agent-bus:9758 turn 71 (Salt & Straw `809e3de4` — no ledger read, wrong-order API submit, false attribution).
