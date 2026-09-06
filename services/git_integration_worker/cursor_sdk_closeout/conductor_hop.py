@@ -34,7 +34,13 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget im
     budget_ok_for_hop,
     build_budget_authority_patch,
     evaluate_hop_budget,
+)
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park import (
     park_conductor_hop_mission,
+)
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress import (
+    HOP_NEXT_ADMIT_KEY,
+    next_admit_in_closeout,
 )
 from services.git_integration_worker.cursor_sdk_conductor_conflict import (
     _record_packet_kind,
@@ -403,6 +409,9 @@ def merge_conductor_closeout_hop_authority(
     if closeout_turn is not None:
         data["closeout_turn"] = int(closeout_turn)
     data["closeout_harvest_owed"] = harvest_still_owed(body=closeout_body)
+    next_admit = next_admit_in_closeout(closeout_body)
+    if next_admit:
+        data[HOP_NEXT_ADMIT_KEY] = next_admit
     if "ROW_HOP" in tokens:
         data["hop_declared"] = True
         hop_seq = _parse_hop_seq_from_closeout(closeout_body)
