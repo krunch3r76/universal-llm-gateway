@@ -101,11 +101,14 @@ thinking models — read the skill body on substantive turns.
 
 **Headless** (`team_dispatch` / `cursor-sdk` / `cursor-auto`): alwaysApply rule
 pruned from the cursor-sdk dispatch HOME; judgment contracts get preamble injection
-only (mechanical/quick skip). `skills=` on cursor-sdk generate is a no-op.
+only (mechanical/quick skip). `skills=` on cursor-sdk generate mounts as well —
+staged into the dispatch HOME for native discovery, Use-line deduped against the
+fixed preambles, so listing `reasoning-posture` there adds nothing on a contract
+that already injects it.
 
 | Path | How |
 |---|---|
-| `op=generate` `seat=cursor-sdk` | GIW `resolve_prompt_preamble` on judgment `handoff_contract`; skip mechanical/quick |
+| `op=generate` `seat=cursor-sdk` | GIW `resolve_prompt_preamble` on judgment `handoff_contract`; skip mechanical/quick. Caller `skills=` staged into HOME `.cursor/skills/` + Use-line (`cursor_sdk_skills_mount`) |
 | `cursor-auto` admit | Admit report appends `REASONING_POSTURE_PREAMBLE` when `handoff_contract` warrants |
 | `op=handoff` consult / light-bounded | Enrich Block 2 `Use the reasoning-posture skill`; skip implement / `cursor-implement` |
 | CDP `model=cdp/…` generate | `skills=` merge (`ensure_cdp_judgment_skills`, purpose-keyed — § CDP transport) |

@@ -555,7 +555,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           ``Use the reasoning-posture skill`` on non-mechanical contracts
           (``light-bounded`` / ``consult``); ``implement`` / ``pure-mechanical``
           and quick (``answer`` / ``execute`` / ``propagate``) skip.
-          ``skills=`` is not mounted on cursor-sdk.
+          ``skills=`` **is** mounted on cursor-sdk: Stargate resolves each slug
+          to a filesystem body at admit (422 ``skills_cursor_unresolvable``
+          naming an unknown or body-less slug), GIW stages it into the dispatch
+          HOME under ``.cursor/skills/`` where ``setting_sources="all"`` finds
+          it, and the preamble emits the matching ``Use the <slug> skill`` line.
+          Slugs already carried by the plugin census are left in place, not
+          copied. Outcome per slug on ``frontier.sdk.worker.skills.mounted``.
           Handoff consult / light-bounded: enrich inserts the same Use-line
           into ``<invariants>``; implement skips.
           MCP-predicated skills on a non-MCP dispatch reject 422
