@@ -47,12 +47,20 @@ _GIT_TIMEOUT_S = 60.0
 _REAPABLE_STATUSES = frozenset({"completed", "failed", "cancelled"})
 # Ghost rows are surfaced once per process, not once per 30s sweep: the drift is
 # persistent by nature and an every-cycle event would bury the live-bridge skip.
+# The budget bounds the opening burst — 120 of 156 lane rows on this node already
+# point at directories that are gone, and re-announcing that backlog on every
+# worker restart would be noise, not observability. The exact count always rides
+# on ``ReapSweepResult.registry_ghost_rows``, so nothing is hidden by the cap.
+_GHOST_EMIT_BUDGET = 20
 _ghost_rows_reported: set[str] = set()
+_ghost_rows_emitted = 0
 
 
 def reset_ghost_row_reports() -> None:
     """Clear process-local ghost-row report memory (tests only)."""
+    global _ghost_rows_emitted
     _ghost_rows_reported.clear()
+    _ghost_rows_emitted = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -412,7 +420,9 @@ def _surface_registry_ghost_rows(
     not to drop the record. Rows the guard reports as active are skipped: a
     lane whose directory is mid-mint is not a ghost.
     """
+    global _ghost_rows_emitted
     ghosts = 0
+    suppressed = 0
     for row in rows:
         path = str(Path(row["worktree_path"]).resolve())
         if path in active or Path(path).is_dir():
@@ -421,6 +431,10 @@ def _surface_registry_ghost_rows(
         if path in _ghost_rows_reported:
             continue
         _ghost_rows_reported.add(path)
+        if _ghost_rows_emitted >= _GHOST_EMIT_BUDGET:
+            suppressed += 1
+            continue
+        _ghost_rows_emitted += 1
         logger.warning(
             "lane_b registry row outlived its worktree thread_id=%s path=%s branch=%s",
             row["thread_id"],
@@ -432,6 +446,14 @@ def _surface_registry_ghost_rows(
             thread_id=str(row["thread_id"] or "") or None,
             branch=row["branch_name"],
             dispatch_id=row["dispatch_id"],
+        )
+    if suppressed:
+        logger.warning(
+            "lane_b registry ghost rows beyond emit budget ghosts=%d suppressed=%d "
+            "budget=%d",
+            ghosts,
+            suppressed,
+            _GHOST_EMIT_BUDGET,
         )
     return ghosts
 

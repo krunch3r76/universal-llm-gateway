@@ -32,6 +32,7 @@ from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
     worktree_held_by_live_bridge,
 )
 from services.git_integration_worker.cursor_sdk_worktree_prune import (
+    _GHOST_EMIT_BUDGET,
     active_managed_worktree_paths,
     prune_dispatch_worktree,
     reset_ghost_row_reports,
@@ -41,6 +42,7 @@ from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
 )
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     lookup_lane_worktree,
+    register_lane_worktree,
     unregister_lane_worktree,
 )
 from services.git_integration_worker.models.cursor_api import (
@@ -394,3 +396,48 @@ def test_registry_ghost_row_is_surfaced_not_dropped(
 
     assert sweep.registry_ghost_rows >= 1
     assert lookup_lane_worktree(thread_id=dispatch_id) is not None
+
+
+def test_ghost_row_backlog_is_counted_in_full_but_emits_within_budget(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pre-existing backlog is counted exactly and announced within a budget.
+
+    120 of 156 lane rows on the node that motivated this work already pointed at
+    missing directories, so a per-row event would re-announce the whole backlog
+    on every worker restart.
+    """
+    worktree_root = tmp_path / "worktrees"
+    worktree_root.mkdir()
+    backlog = _GHOST_EMIT_BUDGET + 5
+    for i in range(backlog):
+        register_lane_worktree(
+            thread_id=f"ghost-{i}",
+            worktree_path=worktree_root / f"lane-ghost-{i}",
+            branch_name=f"cursor-sdk/lane-ghost-{i}",
+            branch_point="master",
+        )
+    emitted: list[str] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_prune."
+        "emit_sdk_lane_b_registry_ghost_row",
+        lambda **kw: emitted.append(kw["worktree_path"]),
+    )
+    _stub_occupancy(monkeypatch)
+
+    sweep = reap_orphan_worktrees(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+    )
+
+    assert sweep.registry_ghost_rows == backlog
+    assert len(emitted) == _GHOST_EMIT_BUDGET
+
+    # Second sweep: the backlog is already reported, so it stays quiet while the
+    # count keeps telling the truth.
+    again = reap_orphan_worktrees(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+    )
+    assert again.registry_ghost_rows == backlog
+    assert len(emitted) == _GHOST_EMIT_BUDGET
