@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import sqlite3
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from universal_logging import get_logger
 
-from services.git_integration_worker.cursor_dispatch_ledger import _connect
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_branch_retained,
+    emit_sdk_lane_b_reap_skipped_live_bridge,
     emit_sdk_lane_b_reaped,
+    emit_sdk_lane_b_registry_ghost_row,
     emit_sdk_lane_b_salvage_failed,
     emit_sdk_lane_b_salvaged,
 )
@@ -23,6 +25,12 @@ from services.git_integration_worker.cursor_sdk_lane_b_commit import (
 from services.git_integration_worker.cursor_sdk_worktree_gc import (
     _delete_orphan_branch,
     gc_merged_dispatch_branches,
+)
+from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    ledger_connection,
+    live_bridge_worktree_paths,
+    live_ledger_worktree_paths,
+    worktree_held_by_live_bridge,
 )
 from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
     reconcile_unregistered_worktrees,
@@ -37,6 +45,22 @@ logger = get_logger(__name__)
 
 _GIT_TIMEOUT_S = 60.0
 _REAPABLE_STATUSES = frozenset({"completed", "failed", "cancelled"})
+# Ghost rows are surfaced once per process, not once per 30s sweep: the drift is
+# persistent by nature and an every-cycle event would bury the live-bridge skip.
+# The budget bounds the opening burst — 120 of 156 lane rows on this node already
+# point at directories that are gone, and re-announcing that backlog on every
+# worker restart would be noise, not observability. The exact count always rides
+# on ``ReapSweepResult.registry_ghost_rows``, so nothing is hidden by the cap.
+_GHOST_EMIT_BUDGET = 20
+_ghost_rows_reported: set[str] = set()
+_ghost_rows_emitted = 0
+
+
+def reset_ghost_row_reports() -> None:
+    """Clear process-local ghost-row report memory (tests only)."""
+    global _ghost_rows_emitted
+    _ghost_rows_reported.clear()
+    _ghost_rows_emitted = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +88,8 @@ class ReapSweepResult:
     debts_reconciled: int = 0
     worktrees_reconciled: int = 0
     worktrees_surfaced: int = 0
+    registry_ghost_rows: int = 0
+    live_bridge_holds: int = 0
 
 
 def is_reapable_dispatch_status(status: str | None) -> bool:
@@ -97,6 +123,24 @@ def prune_dispatch_worktree(
     branch = record.branch_name
     branch_point = record.branch_point
     repo = source_repo.resolve()
+    # Process truth outranks every record we hold: a bridge standing in this
+    # directory loses its shell the moment we remove it (spawn ENOENT, H4).
+    holder_pid = worktree_held_by_live_bridge(worktree_path=wt_path)
+    if holder_pid is not None:
+        logger.warning(
+            "lane_b prune skipped — live bridge holds worktree dispatch_id=%s "
+            "path=%s pid=%s",
+            dispatch_id,
+            wt_path,
+            holder_pid,
+        )
+        emit_sdk_lane_b_reap_skipped_live_bridge(
+            worktree_path=str(wt_path),
+            pid=holder_pid,
+            dispatch_id=dispatch_id,
+            stage="prune",
+        )
+        return PruneResult(pruned=False, branch_retained=True)
     salvaged = False
     salvage = None
     if wt_path.is_dir() and is_worktree_dirty(wt_path):
@@ -240,10 +284,17 @@ def maybe_prune_worktree_on_terminal(
 
 
 def active_managed_worktree_paths(*, worktree_root: Path) -> set[str]:
-    """Resolved worktree paths for non-terminal dispatches under ``worktree_root``."""
+    """Worktree paths under ``worktree_root`` that no sweep may remove.
+
+    Three sources, unioned, because any one of them can be wrong on its own:
+    the ledger lease key (blind when the key points outside the root), the
+    lane registry joined to non-terminal rows (blind when registry status
+    lags), and live bridge processes (blind to nothing, but only sees what is
+    running this instant).
+    """
     root = str(worktree_root.resolve())
     active: set[str] = set()
-    with _connect() as conn:
+    with ledger_connection() as conn:
         rows = conn.execute(
             "SELECT lease_key, source_repo, status FROM cursor_sdk_dispatches "
             "WHERE status IN ('admitted','running','queued','parked_waiting')"
@@ -254,6 +305,8 @@ def active_managed_worktree_paths(*, worktree_root: Path) -> set[str]:
             continue
         if key.startswith(root):
             active.add(str(Path(key).resolve()))
+    active |= live_ledger_worktree_paths(worktree_root=worktree_root)
+    active |= live_bridge_worktree_paths(worktree_root=worktree_root)
     return active
 
 
@@ -287,10 +340,18 @@ def reap_orphan_worktrees(
     branches_retained = 0
     salvage_refused = 0
     active = active_managed_worktree_paths(worktree_root=worktree_root)
+    held = live_bridge_worktree_paths(worktree_root=worktree_root)
     rows = list_registered_worktrees_with_status()
     for row in rows:
         wt_path = str(Path(row["worktree_path"]).resolve())
         status = row["status"]
+        if wt_path in held:
+            emit_sdk_lane_b_reap_skipped_live_bridge(
+                worktree_path=wt_path,
+                dispatch_id=row["dispatch_id"],
+                stage="reap",
+            )
+            continue
         if wt_path in active:
             continue
         if not is_reapable_dispatch_status(status):
@@ -318,6 +379,7 @@ def reap_orphan_worktrees(
             salvaged += 1
         if result.branch_retained:
             branches_retained += 1
+    ghost_rows = _surface_registry_ghost_rows(rows=rows, active=active)
     reconciled, surfaced = reconcile_unregistered_worktrees(
         source_repo=source_repo,
         worktree_root=worktree_root,
@@ -340,7 +402,60 @@ def reap_orphan_worktrees(
         debts_reconciled=debts_reconciled,
         worktrees_reconciled=reconciled,
         worktrees_surfaced=surfaced,
+        registry_ghost_rows=ghost_rows,
+        live_bridge_holds=len(held),
     )
+
+
+def _surface_registry_ghost_rows(
+    *,
+    rows: list[sqlite3.Row],
+    active: set[str],
+) -> int:
+    """Count lane registry rows whose worktree directory is gone; report each once.
+
+    The row is left in place. It still pins its branch against merged-branch
+    GC, and the tree it named is exactly the case where the tip may be the only
+    copy of that work — so the coherent action is to make the drift visible,
+    not to drop the record. Rows the guard reports as active are skipped: a
+    lane whose directory is mid-mint is not a ghost.
+    """
+    global _ghost_rows_emitted
+    ghosts = 0
+    suppressed = 0
+    for row in rows:
+        path = str(Path(row["worktree_path"]).resolve())
+        if path in active or Path(path).is_dir():
+            continue
+        ghosts += 1
+        if path in _ghost_rows_reported:
+            continue
+        _ghost_rows_reported.add(path)
+        if _ghost_rows_emitted >= _GHOST_EMIT_BUDGET:
+            suppressed += 1
+            continue
+        _ghost_rows_emitted += 1
+        logger.warning(
+            "lane_b registry row outlived its worktree thread_id=%s path=%s branch=%s",
+            row["thread_id"],
+            path,
+            row["branch_name"],
+        )
+        emit_sdk_lane_b_registry_ghost_row(
+            worktree_path=path,
+            thread_id=str(row["thread_id"] or "") or None,
+            branch=row["branch_name"],
+            dispatch_id=row["dispatch_id"],
+        )
+    if suppressed:
+        logger.warning(
+            "lane_b registry ghost rows beyond emit budget ghosts=%d suppressed=%d "
+            "budget=%d",
+            ghosts,
+            suppressed,
+            _GHOST_EMIT_BUDGET,
+        )
+    return ghosts
 
 
 def _reconcile_orphaned_debts(*, source_repo: Path) -> int:
