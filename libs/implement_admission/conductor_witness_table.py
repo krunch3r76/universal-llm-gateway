@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -28,6 +29,16 @@ _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 _G4_BLOCKS_DONE_RE = re.compile(
     r"(?is)does not clear G5|withhold G5|withhold(?:s)? completeness"
     r"|AC-\d+\s*\|\s*\*\*FAIL\*\*"
+)
+_G6_REVIEW_AFFIRMATIVE_RE = re.compile(
+    r"(?im)^\s*VERDICT:\s*(RATIFY(?:_WITH_CONDITIONS|-WITH-CONDITIONS)?)\s*$"
+)
+_G6_REVIEW_NEGATIVE_RE = re.compile(
+    r"(?im)^\s*VERDICT:\s*(REVISE|REJECT|SCOPE-DRIFT|SCOPE_DRIFT)\s*$"
+)
+_CITED_SHA_RE = re.compile(
+    r"(?:`(?:sha256:)?([0-9a-f]{7,64})`|read_sha256[=:]([0-9a-f]{7,64}))",
+    re.IGNORECASE,
 )
 _ROW_URI_RE = re.compile(
     rf"^\|\s*(?P<rid>{_SCOREBOARD_ROW_ID})\s*\|.*?(?P<uri>cortex://[^\s|`]+)",
@@ -87,6 +98,50 @@ def _artifact_map(tip_body: str) -> dict[str, str]:
     return artifacts
 
 
+def _artifact_cited_sha(tip_body: str, artifact_id: str) -> str | None:
+    """Return a cited sha256 digest for one sidecar artifact row, if present."""
+    row_re = re.compile(
+        rf"^\|\s*{re.escape(artifact_id)}\s*\|[^\n]*$",
+        re.MULTILINE | re.IGNORECASE,
+    )
+    match = row_re.search(tip_body)
+    if not match:
+        return None
+    for sha_match in _CITED_SHA_RE.finditer(match.group(0)):
+        digest = sha_match.group(1) or sha_match.group(2)
+        if digest:
+            return digest.lower()
+    return None
+
+
+def _cortex_text(uri: str, *, files_root: Path) -> str | None:
+    if not uri.startswith("cortex://"):
+        return None
+    path = files_root / uri.removeprefix("cortex://")
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _cortex_bytes_sha(uri: str, *, files_root: Path) -> str | None:
+    if not uri.startswith("cortex://"):
+        return None
+    path = files_root / uri.removeprefix("cortex://")
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _sha_digest_matches(cited: str, actual: str) -> bool:
+    cited_norm = cited.lower().removeprefix("sha256:")
+    actual_norm = actual.lower().removeprefix("sha256:")
+    if len(cited_norm) < len(actual_norm):
+        return actual_norm.startswith(cited_norm)
+    return cited_norm == actual_norm
+
+
 def _uri_resolves(uri: str, *, files_root: Path, repo: Path | None) -> bool:
     if uri.startswith("cortex://"):
         rel = uri.removeprefix("cortex://")
@@ -101,14 +156,52 @@ def _uri_resolves(uri: str, *, files_root: Path, repo: Path | None) -> bool:
 
 def _g4_body_clears(uri: str, *, files_root: Path) -> bool:
     """URI-resolve is not enough: a withhold/FAIL G4 body is not a witness."""
-    if not uri.startswith("cortex://"):
-        return True
-    path = files_root / uri.removeprefix("cortex://")
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return False
+    text = _cortex_text(uri, files_root=files_root)
+    if text is None:
+        return uri.startswith("cortex://") is False
     return _G4_BLOCKS_DONE_RE.search(text) is None
+
+
+def _g6_review_body_witnesses(
+    uri: str,
+    *,
+    files_root: Path,
+    tip_body: str,
+    artifact_id: str,
+) -> bool:
+    """After-ship review (R1): affirmative verdict + optional cited-sha bind."""
+    return _g6_review_failure_reason(
+        uri,
+        files_root=files_root,
+        tip_body=tip_body,
+        artifact_id=artifact_id,
+    ) is None
+
+
+def _g6_review_failure_reason(
+    uri: str,
+    *,
+    files_root: Path,
+    tip_body: str,
+    artifact_id: str,
+) -> str | None:
+    """Return a block reason when an R1 artifact does not witness G6."""
+    text = _cortex_text(uri, files_root=files_root)
+    if text is None:
+        return "artifact unreadable"
+    if _G6_REVIEW_NEGATIVE_RE.search(text):
+        return "negative review verdict"
+    if _G6_REVIEW_AFFIRMATIVE_RE.search(text) is None:
+        return "unrecognized review verdict"
+    cited_sha = _artifact_cited_sha(tip_body, artifact_id)
+    if cited_sha is None:
+        return None
+    actual_sha = _cortex_bytes_sha(uri, files_root=files_root)
+    if actual_sha is None:
+        return "artifact unreadable"
+    if not _sha_digest_matches(cited_sha, actual_sha):
+        return "witness_sha_mismatch"
+    return None
 
 
 def _g3_journal_written_at(slug: str, *, files_root: Path) -> str | None:
@@ -319,7 +412,12 @@ def _row_witnesses_g_ladder(
         if (
             g6_id
             and g6_uri
-            and _g4_body_clears(g6_uri, files_root=files_root)
+            and _g6_review_body_witnesses(
+                g6_uri,
+                files_root=files_root,
+                tip_body=tip_body,
+                artifact_id=g6_id,
+            )
         ):
             witnesses["G6"] = Witness(
                 row="G6", source=f"artifact:{g6_id}", detail=g6_uri

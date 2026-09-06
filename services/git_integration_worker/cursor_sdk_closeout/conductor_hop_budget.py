@@ -167,27 +167,27 @@ def _no_progress_verdict(
 ) -> HopBudgetVerdict:
     """Park a planned chain only when a live progress signal stayed still.
 
-    ``provable`` is the guard against the false park: a streak assembled
-    entirely from hops whose only signal is an empty fold shows that nothing
-    was ever measurable, not that nothing happened.
+    An unprovable pair (empty fold, unstamped tip) breaks the streak rather
+    than padding it: hops 1–3 on this mission never recorded a tip, so they
+    must not count against hop 4 after hop 4 stamped today's head.
     """
     signature = progress_signature_for_row(row)
     streak = 0
-    provable = False
     last = signature
     for prior in reversed(chain):
         if prior.get("dispatch_id") == dispatch_id:
             continue
         if not _planned_closeout(prior, closeout_tokens=prior_record_tokens(prior)):
             break
-        prior_signature = progress_signature_for_row(prior)
+        prior_signature = progress_signature_for_row(prior, live=False)
         if signature_advanced(last, prior_signature):
             break
-        provable = provable or signature_can_prove_loop(last, prior_signature)
+        if not signature_can_prove_loop(last, prior_signature):
+            break
         streak += 1
         last = prior_signature
 
-    if config.no_progress_cap > 0 and streak >= config.no_progress_cap and provable:
+    if config.no_progress_cap > 0 and streak >= config.no_progress_cap:
         return HopBudgetVerdict(
             ok=False,
             park=True,

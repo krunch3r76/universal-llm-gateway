@@ -124,3 +124,23 @@ def test_signature_for_row_reads_stamps_without_touching_the_fold() -> None:
     assert signature.witnessed_done == frozenset()
     assert signature.lane_tip == "cd5cf10a"
     assert signature.next_admit == "harvest G1"
+
+
+def test_historical_signature_does_not_live_read_lane_tip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unstamped priors stay tip-less even when git would return today's head."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress.read_lane_tip",
+        lambda **_kwargs: "d34aacd2deadbeef",
+    )
+    row = {
+        "work_key": "todo:conductor-hop-wait-protocol",
+        "thread_id": "10128",
+        "source_repo": "/repo",
+        "record_json": '{"hop_entry_gate":"G1","hop_witnessed_done":[]}',
+    }
+    live = progress_signature_for_row(row, live=True)
+    historical = progress_signature_for_row(row, live=False)
+    assert live.lane_tip == "d34aacd2deadbeef"
+    assert historical.lane_tip is None

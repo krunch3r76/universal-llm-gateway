@@ -61,7 +61,10 @@ def stall_predicate(
         thread_id=thread_id,
         probe_fn=probe_fn,
     )
-    owed = successor_owed(closeout_tokens=closeout_tokens)
+    owed = successor_owed(
+        closeout_tokens=closeout_tokens,
+        closeout_body=closeout_body,
+    )
 
     if not (open_mission and not live and not owed):
         return False, ""

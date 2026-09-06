@@ -840,6 +840,84 @@ def test_default_operator_seat_binding_skips_ask() -> None:
     assert kind is None
 
 
+def test_default_operator_seat_binding_binds_review_from_thread_id() -> None:
+    from systems.frontier_consult.cdp_generate import default_operator_seat_binding
+
+    lane, kind = default_operator_seat_binding(
+        purpose="review",
+        parent_thread=None,
+        mission_kind=None,
+        thread_id="9638",
+    )
+    assert lane == "9638"
+    assert kind == "root"
+
+
+def test_refuse_second_external_gate_at_fire_when_lane_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [
+                {
+                    "execution_id": "exec-live-gate",
+                    "parent_thread": "9638",
+                    "status": "running",
+                    "purpose": "review",
+                }
+            ]
+        },
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        refuse_second_external_gate_at_fire(
+            purpose="review",
+            parent_thread="9638",
+            thread_id="9638",
+            request_id="req-ac9",
+        )
+    assert exc.value.code == "cdp_external_gate_live"
+
+
+def test_refuse_second_external_gate_seated_rows_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B1 — gate seated with no stream row must block via identity_rows union."""
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [],
+            "seated_rows": [
+                {
+                    "execution_id": "exec-seated-only",
+                    "parent_thread": "10128",
+                    "status": "running",
+                    "purpose": "review",
+                    "registration_id": "reg-seated",
+                }
+            ],
+        },
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        refuse_second_external_gate_at_fire(
+            purpose="review",
+            parent_thread="10128",
+            thread_id="10128",
+            request_id="req-b1",
+        )
+    assert exc.value.code == "cdp_external_gate_live"
+
+
 def _capture_mission_provenance(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     from systems.frontier_consult import cdp_mission_provenance as prov
 

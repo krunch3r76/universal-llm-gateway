@@ -14,6 +14,8 @@ from typing import Any
 import httpx
 from claude_bundles.conductor_stop import (
     EXIT_PERSIST_STOPS,
+    consult_pending_blocks_progression,
+    next_admit_blocks_hop_body,
     parse_designed_stop_tokens,
 )
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
@@ -23,7 +25,10 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+    SKIP_GATE_LIVE_EXTERNAL,
+    SKIP_GATE_PROBE_INDETERMINATE,
     conductor_has_live_nested,
+    external_gate_hop_verdict,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
     budget_ok_for_hop,
@@ -61,6 +66,7 @@ _HOP_SEQ_LINE_RE = re.compile(
     r"(?im)^(?:\*\*)?hop_seq(?:\*\*)?:\s*(\d+)\s*$"
 )
 _RELAY_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=15.0, pool=5.0)
+SKIP_GATE_NEXT_ADMIT_BLOCKED = "next_admit_blocked"
 
 
 def _load_row(dispatch_id: str) -> dict[str, Any] | None:
@@ -87,6 +93,60 @@ def _record_data(row: dict[str, Any]) -> dict[str, Any]:
     except json.JSONDecodeError:
         data = {}
     return data if isinstance(data, dict) else {}
+
+
+def _scoreboard_text_for_row(row: dict[str, Any]) -> tuple[str, str | None]:
+    """Return ``(body, tip_sha)`` from the mission scoreboard when resolvable."""
+    work_key = str(row.get("work_key") or "")
+    if not work_key.startswith("todo:"):
+        return "", None
+    slug = work_key.split(":", 1)[1].strip()
+    if not slug:
+        return "", None
+    try:
+        from implement_admission.conductor_score_journal import read_tip
+
+        tip = read_tip(slug)
+    except Exception as exc:  # noqa: BLE001 — fold is advisory on hop path
+        logger.warning(
+            "conductor hop scoreboard read failed slug=%s err=%s",
+            slug,
+            exc,
+        )
+        return "", None
+    if tip is None:
+        return "", None
+    body, sha = tip
+    return body, sha
+
+
+def _next_admit_guard_text(row: dict[str, Any], rec: dict[str, Any]) -> str:
+    """Closeout + scoreboard text consulted for P3.2 hop-body refusal."""
+    parts: list[str] = []
+    closeout_body = rec.get("closeout_body")
+    if isinstance(closeout_body, str) and closeout_body.strip():
+        parts.append(closeout_body)
+    scoreboard_body, _ = _scoreboard_text_for_row(row)
+    if scoreboard_body:
+        parts.append(scoreboard_body)
+    return "\n".join(parts)
+
+
+def hop_body_build_refused(row: dict[str, Any], rec: dict[str, Any] | None = None) -> bool:
+    """True when NEXT_ADMIT forbids rematerializing a conductor successor (AC7)."""
+    data = rec if rec is not None else _record_data(row)
+    return next_admit_blocks_hop_body(_next_admit_guard_text(row, data))
+
+
+def _scoreboard_entry_gate(scoreboard_body: str) -> str | None:
+    """Parse ``**Entry gate:** Gn`` from the scoreboard tip when present."""
+    match = re.search(
+        r"(?im)(?:\*\*)?Entry gate(?:\*\*)?\s*:\s*(G[1-8])\b",
+        scoreboard_body or "",
+    )
+    if match is None:
+        return None
+    return match.group(1).upper()
 
 
 def _resolve_source_ref(row: dict[str, Any], rec: dict[str, Any]) -> str:
@@ -119,6 +179,11 @@ def _hop_skip_gate(
     closeout_tokens: frozenset[str],
 ) -> str | None:
     """Return skip gate name when hop reactor must not POST successor."""
+    _, ext_gate = external_gate_hop_verdict(row)
+    if ext_gate == SKIP_GATE_LIVE_EXTERNAL:
+        return SKIP_GATE_LIVE_EXTERNAL
+    if ext_gate == SKIP_GATE_PROBE_INDETERMINATE:
+        return SKIP_GATE_PROBE_INDETERMINATE
     if not hop_owed(row, closeout_tokens=closeout_tokens):
         status = str(row.get("status") or "")
         if status not in ("completed", "failed", "cancelled"):
@@ -180,6 +245,14 @@ def _closeout_tokens_from_row(row: dict[str, Any]) -> frozenset[str]:
     if isinstance(raw, list):
         return frozenset(str(t).upper() for t in raw)
     return frozenset()
+
+
+def _closeout_body_from_row(row: dict[str, Any]) -> str:
+    rec = _record_data(row)
+    body = rec.get("closeout_body")
+    if isinstance(body, str) and body.strip():
+        return body
+    return str(row.get("closeout_body") or row.get("message") or "")
 
 
 def _parse_hop_seq_from_closeout(body: str) -> int | None:
@@ -267,6 +340,8 @@ def hop_owed(
     tokens = closeout_tokens or _closeout_tokens_from_row(row)
     if tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})):
         return False
+    if consult_pending_blocks_progression(_closeout_body_from_row(row)):
+        return False
     thread_id = str(row.get("thread_id") or "")
     dispatch_id = str(row.get("dispatch_id") or "")
     if not thread_id or not dispatch_id:
@@ -280,6 +355,9 @@ def hop_owed(
     if not mission_open_for_row(row, closeout_tokens=tokens):
         return False
     if not budget_ok_for_hop(row, closeout_tokens=tokens):
+        return False
+    ext_verdict, _ext_gate = external_gate_hop_verdict(row)
+    if ext_verdict in {"live", "indeterminate_closed"}:
         return False
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     if hop_fields.get("hop_successor"):
@@ -327,6 +405,7 @@ def merge_conductor_closeout_hop_authority(
     if not isinstance(data, dict):
         data = {}
     data[_CLOSEOUT_TOKENS_KEY] = sorted(tokens)
+    data["closeout_body"] = closeout_body
     if closeout_turn is not None:
         data["closeout_turn"] = int(closeout_turn)
     data["closeout_harvest_owed"] = harvest_still_owed(body=closeout_body)
@@ -381,6 +460,8 @@ def build_hop_team_dispatch_body(
         rec = {}
     if not isinstance(rec, dict):
         rec = {}
+    if hop_body_build_refused(row, rec):
+        return None
     closeout_tokens = _closeout_tokens_from_row(row)
     predecessor_id = str(row.get("dispatch_id") or "")
     thread_id = str(row.get("thread_id") or "")
@@ -403,13 +484,25 @@ def build_hop_team_dispatch_body(
     generation_options["idempotency_key"] = build_conductor_hop_idempotency_key(
         predecessor_id
     )
+    scoreboard_body, scoreboard_sha = _scoreboard_text_for_row(row)
+    if scoreboard_sha:
+        generation_options["scoreboard_tip_sha"] = scoreboard_sha
+    if scoreboard_body:
+        generation_options["scoreboard_entry_gate"] = _scoreboard_entry_gate(
+            scoreboard_body
+        )
     summoning_thread_id = str(rec.get("summoning_thread_id") or "").strip()
     dispatch_thread_id = summoning_thread_id or thread_id
     routing_model = rec.get("model") or row.get("resolved_model")
+    contract = (
+        rec.get("contract")
+        or row.get("contract")
+        or "light-bounded"
+    )
     body: dict[str, Any] = {
         "op": "generate",
         "seat": "cursor-sdk",
-        "contract": "light-bounded",
+        "contract": str(contract),
         "caller_agent": "conductor-hop",
         "dispatch_thread_id": dispatch_thread_id,
         "reuse_thread": thread_id,
@@ -489,7 +582,12 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     body = build_hop_team_dispatch_body(row)
     if body is None:
         rec = _record_data(row)
-        gate = "missing_source_ref" if not _resolve_source_ref(row, rec) else "body_build_failed"
+        if hop_body_build_refused(row, rec):
+            gate = SKIP_GATE_NEXT_ADMIT_BLOCKED
+        elif not _resolve_source_ref(row, rec):
+            gate = "missing_source_ref"
+        else:
+            gate = "body_build_failed"
         _emit_hop_skipped(row, gate=gate)
         return
     thread_id = str(row.get("thread_id") or "")
@@ -544,9 +642,11 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
 
 
 __all__ = [
+    "SKIP_GATE_NEXT_ADMIT_BLOCKED",
     "build_conductor_hop_idempotency_key",
     "build_hop_team_dispatch_body",
     "budget_ok_for_hop",
+    "hop_body_build_refused",
     "hop_owed",
     "live_conductor_row_on_thread",
     "merge_conductor_closeout_hop_authority",

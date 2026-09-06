@@ -8,7 +8,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+    SKIP_GATE_LIVE_EXTERNAL,
+    SKIP_GATE_PROBE_INDETERMINATE,
+)
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+    SKIP_GATE_NEXT_ADMIT_BLOCKED,
+    _hop_skip_gate,
     build_conductor_hop_idempotency_key,
     build_hop_team_dispatch_body,
     hop_owed,
@@ -156,6 +162,34 @@ def test_hop_owed_false_when_exit_persist_token() -> None:
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_PINNED"])
     assert hop_owed(row, closeout_tokens=frozenset({"ROW_PINNED"})) is False
+
+
+_CONSULT_PENDING_WAIT_CLOSEOUT = """\
+status: complete
+stop: CONSULT_PENDING
+CONSULT_PENDING
+execution_id: exec-abc
+poll_hint: wait 5s
+NEXT_ADMIT: G5
+"""
+
+
+def test_hop_owed_false_when_consult_pending_wait_p24() -> None:
+    """P2.4: CONSULT_PENDING wait blocks hop like degraded_reasons."""
+    ledger = CursorDispatchLedger.instance()
+    _admit_conductor(ledger, _req())
+    merge_conductor_closeout_hop_authority(
+        dispatch_id="pred-hop-1",
+        closeout_body=_CONSULT_PENDING_WAIT_CLOSEOUT,
+        thread_id="9964",
+    )
+    ledger.mark_terminal(dispatch_id="pred-hop-1", terminal_status="completed")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: row[k] for k in row.keys()}
+    assert hop_owed(row, closeout_tokens=frozenset({"CONSULT_PENDING"})) is False
 
 
 def test_hop_owed_false_when_successor_already_stamped() -> None:
@@ -429,3 +463,247 @@ async def test_maybe_fire_reactor_stamps_admit_error_on_failure() -> None:
     fields = hop_fields_from_record_json(row["record_json"])
     assert "hop_admit_error" in fields
     assert fields.get("hop_successor") is None
+
+
+def _live_gate_snap(*, parent_thread: str = "9638") -> dict:
+    return {
+        "observed_at": "2026-09-05T00:00:00+00:00",
+        "rows": [
+            {
+                "execution_id": "exec-ext-gate",
+                "parent_thread": parent_thread,
+                "status": "running",
+                "purpose": "review",
+            }
+        ],
+    }
+
+
+def _live_gate_snap_seated_only(*, parent_thread: str = "9638") -> dict:
+    return {
+        "observed_at": "2026-09-05T00:00:00+00:00",
+        "rows": [],
+        "seated_rows": [
+            {
+                "execution_id": "exec-seated-gate",
+                "parent_thread": parent_thread,
+                "status": "running",
+                "purpose": "review",
+                "registration_id": "reg-gate",
+            }
+        ],
+    }
+
+
+def test_hop_owed_false_when_live_gate_in_seated_rows_only() -> None:
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"summoning_thread_id": "9638", "closeout_harvest_owed": False},
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value=_live_gate_snap_seated_only(),
+    ):
+        assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is False
+
+
+def test_hop_owed_false_when_live_external_gate_ac1() -> None:
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"summoning_thread_id": "9638", "closeout_harvest_owed": False},
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value=_live_gate_snap(),
+    ):
+        assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is False
+        assert (
+            _hop_skip_gate(row, closeout_tokens=frozenset({"ROW_HOP"}))
+            == SKIP_GATE_LIVE_EXTERNAL
+        )
+
+
+def test_hop_owed_true_when_external_gate_completed_ac1() -> None:
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"summoning_thread_id": "9638"},
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value={"observed_at": "2026-09-05T00:00:00+00:00", "rows": []},
+    ):
+        assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is True
+
+
+@pytest.mark.asyncio
+async def test_ac2_five_terminals_zero_posts_while_external_gate_live() -> None:
+    ledger = CursorDispatchLedger.instance()
+    dispatch_id = "pred-hop-1"
+    _terminal_row(ledger, closeout_tokens=["ROW_HOP"], dispatch_id=dispatch_id)
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"summoning_thread_id": "9638"},
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "should-not-fire"}))
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value=_live_gate_snap(),
+    ):
+        with patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ):
+            for _ in range(5):
+                await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+    post_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ac8_probe_down_no_gate_owed_hop_proceeds() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"closeout_harvest_owed": False},
+    )
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value={},
+    ):
+        with patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            AsyncMock(return_value=(True, {"dispatch_id": "succ-ac8-open"})),
+        ):
+            await maybe_fire_conductor_hop_reactor(dispatch_id="pred-hop-1")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    fields = hop_fields_from_record_json(row["record_json"])
+    assert fields.get("hop_successor") == "succ-ac8-open"
+
+
+@pytest.mark.asyncio
+async def test_ac8_probe_down_gate_owed_no_hop() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"closeout_harvest_owed": True},
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "should-not-fire"}))
+    skipped_gates: list[str] = []
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value={},
+    ):
+        with patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            post_mock,
+        ):
+            with patch(
+                "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.emit_frontier_sdk_conductor_hop_skipped",
+                side_effect=lambda **kw: skipped_gates.append(kw["gate"]),
+            ):
+                await maybe_fire_conductor_hop_reactor(dispatch_id="pred-hop-1")
+    post_mock.assert_not_called()
+    assert SKIP_GATE_PROBE_INDETERMINATE in skipped_gates
+
+
+def test_ac7_build_hop_body_refused_when_next_admit_none_in_closeout() -> None:
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"closeout_body": _NONE_NEXT_ADMIT_CLOSEOUT},
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    assert build_hop_team_dispatch_body(row) is None
+
+
+def test_ac7_build_hop_body_refused_when_scoreboard_next_admit_land(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    scoreboards = tmp_path / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    body = (
+        "# Scoreboard\n\n"
+        "- **NEXT_ADMIT:** git_land · sidecar L1\n\n"
+        "| G8 | Land | OPEN |\n"
+    )
+    (scoreboards / "conductor-hop-fixture-scoreboard.md").write_text(
+        body, encoding="utf-8"
+    )
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    assert build_hop_team_dispatch_body(row) is None
+
+
+@pytest.mark.asyncio
+async def test_ac7_reactor_skips_with_next_admit_blocked_gate() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"closeout_body": _NONE_NEXT_ADMIT_CLOSEOUT},
+    )
+    post_mock = AsyncMock(return_value=(True, {"dispatch_id": "should-not-fire"}))
+    skipped_gates: list[str] = []
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+        post_mock,
+    ):
+        with patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.emit_frontier_sdk_conductor_hop_skipped",
+            side_effect=lambda **kw: skipped_gates.append(kw["gate"]),
+        ):
+            await maybe_fire_conductor_hop_reactor(dispatch_id="pred-hop-1")
+    post_mock.assert_not_called()
+    assert SKIP_GATE_NEXT_ADMIT_BLOCKED in skipped_gates
+
+
+def test_ac10_three_hop_post_paths_use_shared_builder() -> None:
+    import inspect
+
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        conductor_hop_watchdog,
+        conductor_park_harvest,
+    )
+
+    assert (
+        conductor_hop_watchdog.build_hop_team_dispatch_body
+        is build_hop_team_dispatch_body
+    )
+    park_source = inspect.getsource(conductor_park_harvest.fire_park_harvest_continue)
+    assert (
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop"
+        in park_source
+    )
+    assert "build_hop_team_dispatch_body" in park_source

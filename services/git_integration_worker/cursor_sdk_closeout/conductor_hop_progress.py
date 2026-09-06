@@ -83,12 +83,18 @@ def _fold_for_slug(slug: str) -> Any | None:
     )
 
 
-def entry_gate_for_row(row: dict[str, Any]) -> str:
-    """Stamped entry gate, else a live fold, else the unpaid sentinel."""
+def entry_gate_for_row(row: dict[str, Any], *, live: bool = True) -> str:
+    """Stamped entry gate, else a live fold, else the unpaid sentinel.
+
+    ``live=False`` is for historical hops in a budget chain: today's fold
+    is not what that hop recorded.
+    """
     record = record_data(str(row.get("record_json") or ""))
     gate = record.get(HOP_ENTRY_GATE_KEY)
     if isinstance(gate, str) and gate:
         return gate
+    if not live:
+        return UNPAID_ENTRY_GATE
     slug = _slug_for_row(row)
     if slug is None:
         return UNPAID_ENTRY_GATE
@@ -103,12 +109,14 @@ def entry_gate_for_row(row: dict[str, Any]) -> str:
     return UNPAID_ENTRY_GATE
 
 
-def witnessed_done_for_row(row: dict[str, Any]) -> frozenset[str]:
+def witnessed_done_for_row(row: dict[str, Any], *, live: bool = True) -> frozenset[str]:
     """Stamped witness set, else a live fold, else empty (nothing witnessed)."""
     record = record_data(str(row.get("record_json") or ""))
     raw = record.get(HOP_WITNESSED_DONE_KEY)
     if isinstance(raw, list):
         return frozenset(str(v) for v in raw)
+    if not live:
+        return frozenset()
     slug = _slug_for_row(row)
     if slug is None:
         return frozenset()
@@ -149,12 +157,19 @@ def read_lane_tip(*, source_repo: str, thread_id: str) -> str | None:
     return proc.stdout.strip() or None
 
 
-def lane_tip_for_row(row: dict[str, Any]) -> str | None:
-    """Lane branch tip — moves whenever a hop ships a commit."""
+def lane_tip_for_row(row: dict[str, Any], *, live: bool = True) -> str | None:
+    """Lane branch tip — moves whenever a hop ships a commit.
+
+    Live ``git rev-parse`` is only for the hop under evaluation. Unstamped
+    priors must stay ``None``: reading today's head onto hops 1–3 makes a
+    shipping hop look identical to its history (hop 4 park, 2026-09-06).
+    """
     record = record_data(str(row.get("record_json") or ""))
     stamped = record.get(HOP_LANE_TIP_KEY)
     if isinstance(stamped, str) and stamped:
         return stamped
+    if not live:
+        return None
     return read_lane_tip(
         source_repo=str(row.get("source_repo") or ""),
         thread_id=str(row.get("thread_id") or ""),
@@ -176,12 +191,18 @@ def next_admit_for_row(row: dict[str, Any]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def progress_signature_for_row(row: dict[str, Any]) -> HopProgressSignature:
-    """Every progress component this terminal row can supply."""
+def progress_signature_for_row(
+    row: dict[str, Any], *, live: bool = True
+) -> HopProgressSignature:
+    """Every progress component this terminal row can supply.
+
+    ``live=True`` (default) stamps the hop now closing. ``live=False``
+    reconstructs a prior hop from ledger stamps only.
+    """
     return HopProgressSignature(
-        entry_gate=entry_gate_for_row(row),
-        witnessed_done=witnessed_done_for_row(row),
-        lane_tip=lane_tip_for_row(row),
+        entry_gate=entry_gate_for_row(row, live=live),
+        witnessed_done=witnessed_done_for_row(row, live=live),
+        lane_tip=lane_tip_for_row(row, live=live),
         next_admit=next_admit_for_row(row),
     )
 
