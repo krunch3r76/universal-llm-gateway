@@ -96,6 +96,17 @@ def build_harvest_request(
     return body
 
 
+def should_drop_satellite_id(harvest: dict[str, Any]) -> bool:
+    """N1: drop satellite id after detach so next poll harvests by chat_url."""
+    outcome = str(harvest.get("outcome") or "")
+    if outcome in {"not_attached", "dormant"}:
+        return True
+    prov = harvest.get("provenance") or {}
+    if isinstance(prov, dict) and not prov.get("registration_id"):
+        return True
+    return False
+
+
 def harvest_miss_outcome(outcome: str, *, turns: list[Any] | None = None) -> bool:
     if outcome in HARVEST_MISS_OUTCOMES:
         return True

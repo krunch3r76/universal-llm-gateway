@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from cdp_hop_reactor_night import ReactorState
 from cdp_hop_reactor_wait import (
@@ -10,6 +14,7 @@ from cdp_hop_reactor_wait import (
     build_harvest_request,
     harvest_miss_outcome,
     is_cdp_external_gate_live,
+    should_drop_satellite_id,
     terminal,
 )
 
@@ -63,6 +68,13 @@ def test_harvest_miss_outcome():
 def test_terminal_counter():
     assert terminal("not_attached", False, False, False, 4) is False
     assert terminal("not_attached", False, False, False, 5) is True
+
+
+def test_should_drop_satellite_id_not_attached():
+    assert should_drop_satellite_id({"outcome": "not_attached"}) is True
+    assert should_drop_satellite_id({"outcome": "dormant"}) is True
+    assert should_drop_satellite_id({"outcome": "harvested", "provenance": {}}) is True
+    assert should_drop_satellite_id({"outcome": "harvested", "provenance": {"registration_id": "r1"}}) is False
 
 
 def test_reactor_state_drops_fable_execution_id():

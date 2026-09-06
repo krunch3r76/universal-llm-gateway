@@ -33,6 +33,7 @@ from cdp_hop_reactor_wait import (
     http_json_status,
     id_fields,
     is_cdp_external_gate_live,
+    should_drop_satellite_id,
     terminal,
 )
 from cdp_hop_watch_steer import load_steer_hint, steer_path
@@ -287,6 +288,9 @@ def wait_fable_stream_end(state: ReactorState) -> tuple[str, None]:
             continue
         harvest_miss_streak = 0 if not harvest_miss_outcome(str(harvest.get("outcome") or ""), turns=harvest.get("turns")) else harvest_miss_streak + 1
         apply_harvest_ids(state, harvest)
+        if should_drop_satellite_id(harvest):
+            log("satellite_id_dropped", outcome=str(harvest.get("outcome") or ""), **id_fields(state))
+            state.fable_satellite_execution_id = None
         outcome = str(harvest.get("outcome") or "")
         streaming = bool(harvest.get("streaming"))
         tool_pause = bool(harvest.get("tool_pause"))
