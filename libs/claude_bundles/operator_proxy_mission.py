@@ -36,6 +36,7 @@ MISSION_SKILL_SLUGS: tuple[str, ...] = (
     "cdp-operator-proxy",
     "ulg-for-llms",
     "reasoning-posture",
+    "hypothesize-simulate",
     # Member 6: status/rank/liveness register at mission-close authoring.
     "completion-provenance-discipline",
     # Spine/genus/species on new/pivoted lanes — decision:thread-genus +

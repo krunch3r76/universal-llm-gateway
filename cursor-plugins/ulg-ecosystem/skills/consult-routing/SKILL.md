@@ -40,7 +40,7 @@ is gone from `tools/list` — do not call it.
 merges `ulg-for-llms` + `reasoning-posture`. `ask` also prepends the arch pair
 and adds `hypothesize-simulate`; `review` adds `consult-posture` and
 `hypothesize-simulate`; `mission` / `operator-proxy` add
-`cdp-operator-proxy`. Caller `skills=` is additive.
+`cdp-operator-proxy` and `hypothesize-simulate`. Caller `skills=` is additive.
 Omitted purpose + `cdp/sonnet-5` → `produce`; omitted + opus/fable → `ask`.
 Stock container skills (`docx`/`xlsx`/`pptx`/`pdf`/`skill-creator`/…) are a
 **prompt verb**, never `skills=` (`cdp_skills_unknown` 422 is the collision

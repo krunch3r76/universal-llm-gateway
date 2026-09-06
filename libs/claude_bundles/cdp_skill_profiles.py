@@ -23,8 +23,18 @@ CDP_PURPOSE_PROFILES: dict[str, tuple[str, ...]] = {
         "hypothesize-simulate",
     ),
     "produce": ("ulg-for-llms", "reasoning-posture"),
-    "mission": ("cdp-operator-proxy", "ulg-for-llms", "reasoning-posture"),
-    "operator-proxy": ("cdp-operator-proxy", "ulg-for-llms", "reasoning-posture"),
+    "mission": (
+        "cdp-operator-proxy",
+        "ulg-for-llms",
+        "reasoning-posture",
+        "hypothesize-simulate",
+    ),
+    "operator-proxy": (
+        "cdp-operator-proxy",
+        "ulg-for-llms",
+        "reasoning-posture",
+        "hypothesize-simulate",
+    ),
 }
 
 _DEFAULT_FLOOR: tuple[str, ...] = ("ulg-for-llms", "reasoning-posture")
