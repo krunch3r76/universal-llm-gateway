@@ -23,8 +23,8 @@ stamp honest deferral / operator bridge — ¬ call CODE_EXTRA from life.
 
 Read `consult-routing` before consult/review routing. **All recipes in this section = code MCP only.**
 
-Non-mechanical `team_dispatch` (cursor-sdk generate `light-bounded`/`consult`, and
-consult/light-bounded handoff) auto-invokes `reasoning-posture`. Mechanical
+Non-mechanical `team_dispatch` (cursor-sdk generate `none`/`sketch`, and
+consult/none handoff) auto-invokes `reasoning-posture`. Mechanical
 `implement` / `pure-mechanical` skip. Independent of life/operator-proxy.
 
 | Goal | Surface |
@@ -42,8 +42,8 @@ Model family ≠ surface. `want_grok_answer ⇒ team_dispatch(generate, role=<ap
 FOL:
 
 ```text
-want_answer ⇒ team_dispatch(generate, api_role, contract∈{light-bounded,pure-mechanical}, dispatch_thread_id, model?)
-want_code_changes ∧ settled ⇒ team_dispatch(generate, seat=cursor-sdk, contract∈{implement,light-bounded,pure-mechanical,wrap}, source_ref|packet_path, dispatch_thread_id)
+want_answer ⇒ team_dispatch(generate, api_role, contract∈{none,pure-mechanical}, dispatch_thread_id, model?)
+want_code_changes ∧ settled ⇒ team_dispatch(generate, seat=cursor-sdk, contract∈{implement,sketch,pure-mechanical,wrap,none}, source_ref|packet_path, dispatch_thread_id)
 want_code_changes ∧ ¬settled ⇒ R1_reasoning_first  # see consult-routing
 want_answer ∧ grok_model ⇒ team_dispatch(generate, api_role, model="xai/…")  # role=surface, model=affordance
 caller_has_local_mcp ∧ task∈local_surface ⇒ do_locally

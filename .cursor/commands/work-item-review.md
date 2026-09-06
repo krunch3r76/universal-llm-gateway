@@ -170,7 +170,7 @@ team_dispatch(
   model=cdp/opus-5,
   purpose=review,
   reasoning_effort="high",
-  contract=light-bounded,
+  contract=none,
   dispatch_thread_id=<bus thread id or path-sim-{slug}>,
   packet_path=tmp/prompts/work-item-review-{slug}-packet.md,
   skills=[path-sim, review-task-guidance, docstring-quality, event-instrumentation-discipline, cursor-sdk-instruction-standard]

@@ -63,7 +63,7 @@ Store at `notes/system/threads/{label}-corpus-theme-packet.md` or embed in an is
 ## Phase 2 — Composer harvest (dispatch)
 
 ```text
-team_dispatch(op=generate, seat=cursor-sdk, contract=light-bounded, dispatch_thread_id=<isolated>)
+team_dispatch(op=generate, seat=cursor-sdk, contract=none, dispatch_thread_id=<isolated>)
 ```
 
 Packet MUST include:
