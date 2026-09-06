@@ -164,6 +164,34 @@ def test_hop_owed_false_when_exit_persist_token() -> None:
     assert hop_owed(row, closeout_tokens=frozenset({"ROW_PINNED"})) is False
 
 
+_CONSULT_PENDING_WAIT_CLOSEOUT = """\
+status: complete
+stop: CONSULT_PENDING
+CONSULT_PENDING
+execution_id: exec-abc
+poll_hint: wait 5s
+NEXT_ADMIT: G5
+"""
+
+
+def test_hop_owed_false_when_consult_pending_wait_p24() -> None:
+    """P2.4: CONSULT_PENDING wait blocks hop like degraded_reasons."""
+    ledger = CursorDispatchLedger.instance()
+    _admit_conductor(ledger, _req())
+    merge_conductor_closeout_hop_authority(
+        dispatch_id="pred-hop-1",
+        closeout_body=_CONSULT_PENDING_WAIT_CLOSEOUT,
+        thread_id="9964",
+    )
+    ledger.mark_terminal(dispatch_id="pred-hop-1", terminal_status="completed")
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: row[k] for k in row.keys()}
+    assert hop_owed(row, closeout_tokens=frozenset({"CONSULT_PENDING"})) is False
+
+
 def test_hop_owed_false_when_successor_already_stamped() -> None:
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])

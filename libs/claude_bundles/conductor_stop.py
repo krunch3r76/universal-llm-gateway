@@ -281,6 +281,11 @@ def is_consult_pending_wait(body: str) -> bool:
     return True
 
 
+def consult_pending_blocks_progression(body: str) -> bool:
+    """P2.4: ``CONSULT_PENDING`` blocks hop/successor like ``degraded_reasons``."""
+    return is_consult_pending_wait(body)
+
+
 def has_consult_handoff(body: str) -> bool:
     """True when a CONSULT_PENDING wrapper named the next admit (NEXT_ADMIT)."""
     return _NEXT_ADMIT_RE.search(body or "") is not None

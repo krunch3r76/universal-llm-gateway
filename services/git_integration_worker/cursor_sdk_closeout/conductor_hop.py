@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 from claude_bundles.conductor_stop import (
     EXIT_PERSIST_STOPS,
+    consult_pending_blocks_progression,
     next_admit_blocks_hop_body,
     parse_designed_stop_tokens,
 )
@@ -240,6 +241,14 @@ def _closeout_tokens_from_row(row: dict[str, Any]) -> frozenset[str]:
     return frozenset()
 
 
+def _closeout_body_from_row(row: dict[str, Any]) -> str:
+    rec = _record_data(row)
+    body = rec.get("closeout_body")
+    if isinstance(body, str) and body.strip():
+        return body
+    return str(row.get("closeout_body") or row.get("message") or "")
+
+
 def _parse_hop_seq_from_closeout(body: str) -> int | None:
     match = _HOP_SEQ_LINE_RE.search(body or "")
     if match is None:
@@ -325,6 +334,8 @@ def hop_owed(
     tokens = closeout_tokens or _closeout_tokens_from_row(row)
     if tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})):
         return False
+    if consult_pending_blocks_progression(_closeout_body_from_row(row)):
+        return False
     thread_id = str(row.get("thread_id") or "")
     dispatch_id = str(row.get("dispatch_id") or "")
     if not thread_id or not dispatch_id:
@@ -388,6 +399,7 @@ def merge_conductor_closeout_hop_authority(
     if not isinstance(data, dict):
         data = {}
     data[_CLOSEOUT_TOKENS_KEY] = sorted(tokens)
+    data["closeout_body"] = closeout_body
     if closeout_turn is not None:
         data["closeout_turn"] = int(closeout_turn)
     data["closeout_harvest_owed"] = harvest_still_owed(body=closeout_body)
