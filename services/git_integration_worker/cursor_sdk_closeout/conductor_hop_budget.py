@@ -17,6 +17,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from claude_bundles.conductor_stop import STOP_TOKENS
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress import (
@@ -151,6 +152,11 @@ def _planned_closeout(row: dict[str, Any], *, closeout_tokens: frozenset[str]) -
     return False
 
 
+def _is_crash(*, closeout_tokens: frozenset[str]) -> bool:
+    """True when the row carries no designed stop token (bind P1′ crash identity)."""
+    return not (closeout_tokens & STOP_TOKENS)
+
+
 def _crash_backoff_s(*, crash_streak: int, config: HopBudgetConfig) -> float:
     if crash_streak <= 0:
         return 0.0
@@ -231,6 +237,9 @@ def evaluate_hop_budget(
             row, chain=chain, dispatch_id=dispatch_id, config=cfg
         )
 
+    if closeout_tokens & STOP_TOKENS:
+        return HopBudgetVerdict(ok=True)
+
     entry_gate = entry_gate_for_row(row)
     crash_streak = 0
     for prior in reversed(chain):
@@ -238,10 +247,13 @@ def evaluate_hop_budget(
             continue
         if entry_gate_for_row(prior) != entry_gate:
             break
-        if _planned_closeout(prior, closeout_tokens=prior_record_tokens(prior)):
+        prior_tokens = prior_record_tokens(prior)
+        if prior_tokens & STOP_TOKENS:
             break
+        if _is_crash(closeout_tokens=prior_tokens):
+            crash_streak += 1
+    if _is_crash(closeout_tokens=closeout_tokens):
         crash_streak += 1
-    crash_streak += 1
 
     if cfg.crash_cap_per_row > 0 and crash_streak >= cfg.crash_cap_per_row:
         return HopBudgetVerdict(

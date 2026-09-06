@@ -21,6 +21,10 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     maybe_fire_conductor_hop_reactor,
     merge_conductor_closeout_hop_authority,
 )
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+    HopBudgetConfig,
+    evaluate_hop_budget,
+)
 from services.git_integration_worker.cursor_sdk_ledger_hop import (
     hop_fields_from_record_json,
 )
@@ -707,3 +711,214 @@ def test_ac10_three_hop_post_paths_use_shared_builder() -> None:
         in park_source
     )
     assert "build_hop_team_dispatch_body" in park_source
+
+
+# --- AC-B1–B6 (park-after-skip P2) ---
+
+
+def _crash_chain(ledger: CursorDispatchLedger, *, count: int = 3) -> str:
+    """Admit *count* consecutive failed crash rows; return last dispatch_id."""
+    last_id = ""
+    for idx in range(1, count + 1):
+        last_id = f"ac-b-crash-{idx}"
+        _admit_conductor(
+            ledger,
+            _req(dispatch_id=last_id),
+            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        )
+        ledger.mark_terminal(dispatch_id=last_id, terminal_status="failed")
+    return last_id
+
+
+@pytest.mark.asyncio
+async def test_ac_b1_done_after_crash_chain_no_park_announce() -> None:
+    """AC-B1: three failed priors + DONE current → skipped, no park post."""
+    ledger = CursorDispatchLedger.instance()
+    _crash_chain(ledger, count=3)
+    dispatch_id = "ac-b1-done"
+    _admit_conductor(ledger, _req(dispatch_id=dispatch_id))
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"closeout_stop_tokens": ["DONE"], "hop_entry_gate": "G4"},
+    )
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    skipped_gates: list[str] = []
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.default_park_poster",
+        ) as park_poster,
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.page_hop_budget_parked",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            AsyncMock(),
+        ) as post_mock,
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.emit_frontier_sdk_conductor_hop_skipped",
+            side_effect=lambda **kw: skipped_gates.append(kw["gate"]),
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+    park_poster.assert_not_called()
+    post_mock.assert_not_called()
+    assert "mission_closed" in skipped_gates
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    data = json.loads(row["record_json"])
+    assert data.get("hop_parked") is not True
+
+
+@pytest.mark.asyncio
+async def test_ac_b2_mission_cap_done_current_no_announce() -> None:
+    """AC-B2: mission_cap=3 exhausted + DONE current → no park announcement."""
+    ledger = CursorDispatchLedger.instance()
+    for idx in range(1, 4):
+        req = _req(dispatch_id=f"ac-b2-{idx}")
+        _admit_conductor(
+            ledger,
+            req,
+            record_patch={
+                "closeout_stop_tokens": ["ROW_HOP"],
+                "hop_entry_gate": "G4",
+                "hop_witnessed_done": [],
+            },
+        )
+        ledger.mark_terminal(dispatch_id=f"ac-b2-{idx}", terminal_status="completed")
+    dispatch_id = "ac-b2-done"
+    _admit_conductor(ledger, _req(dispatch_id=dispatch_id))
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"closeout_stop_tokens": ["DONE"], "hop_entry_gate": "G4"},
+    )
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget.load_hop_budget_config",
+            return_value=HopBudgetConfig(
+                crash_cap_per_row=3,
+                no_progress_cap=2,
+                mission_cap=3,
+                crash_backoff_s=(30.0, 120.0, 300.0),
+                reactor_grace_s=120.0,
+            ),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.default_park_poster",
+        ) as park_poster,
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            AsyncMock(),
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+    park_poster.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ac_b3_parked_transport_exhausted_chain_no_announce() -> None:
+    """AC-B3: PARKED_TRANSPORT + harvest not owed over exhausted chain → no announce."""
+    ledger = CursorDispatchLedger.instance()
+    _crash_chain(ledger, count=3)
+    dispatch_id = "ac-b3-parked"
+    _admit_conductor(ledger, _req(dispatch_id=dispatch_id))
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={
+            "closeout_stop_tokens": ["PARKED_TRANSPORT"],
+            "closeout_harvest_owed": False,
+            "hop_entry_gate": "G4",
+        },
+    )
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.default_park_poster",
+        ) as park_poster,
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            AsyncMock(),
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+    park_poster.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ac_b4_exhausted_chain_live_sibling_skipped() -> None:
+    """AC-B4: exhausted crash chain + live sibling → live_sibling skip, no park."""
+    ledger = CursorDispatchLedger.instance()
+    last_crash = _crash_chain(ledger, count=3)
+    dispatch_id = "ac-b4-current"
+    _admit_conductor(ledger, _req(dispatch_id=dispatch_id))
+    ledger.merge_record_json(
+        dispatch_id=dispatch_id,
+        patch={"closeout_stop_tokens": [], "hop_entry_gate": "G4"},
+    )
+    ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="failed")
+    skipped_gates: list[str] = []
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.live_conductor_row_on_thread",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.default_park_poster",
+        ) as park_poster,
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            AsyncMock(),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.emit_frontier_sdk_conductor_hop_skipped",
+            side_effect=lambda **kw: skipped_gates.append(kw["gate"]),
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+    park_poster.assert_not_called()
+    assert "live_sibling" in skipped_gates
+    assert last_crash  # chain fixture used
+
+
+@pytest.mark.asyncio
+async def test_ac_b5_evaluate_hop_budget_at_most_once_on_announce_path() -> None:
+    """AC-B5: evaluate_hop_budget runs at most once when announcing park."""
+    ledger = CursorDispatchLedger.instance()
+    for idx in range(1, 4):
+        req = _req(dispatch_id=f"ac-b5-{idx}")
+        _admit_conductor(
+            ledger,
+            req,
+            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        )
+        ledger.mark_terminal(dispatch_id=f"ac-b5-{idx}", terminal_status="failed")
+    dispatch_id = "ac-b5-3"
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget.load_hop_budget_config",
+            return_value=HopBudgetConfig(
+                crash_cap_per_row=3,
+                no_progress_cap=2,
+                mission_cap=24,
+                crash_backoff_s=(30.0, 120.0, 300.0),
+                reactor_grace_s=120.0,
+            ),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.evaluate_hop_budget",
+            wraps=evaluate_hop_budget,
+        ) as budget_eval,
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.default_park_poster",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park.page_hop_budget_parked",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
+    assert budget_eval.call_count <= 1

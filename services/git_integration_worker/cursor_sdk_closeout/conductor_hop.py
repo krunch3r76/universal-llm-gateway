@@ -201,11 +201,11 @@ def _hop_skip_gate(
             return "live_nested"
         if not mission_open_for_row(row, closeout_tokens=tokens):
             return "mission_closed"
-        if not budget_ok_for_hop(row, closeout_tokens=tokens):
-            return "budget"
         hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
         if hop_fields.get("hop_successor"):
             return "already_hopped"
+        if not budget_ok_for_hop(row, closeout_tokens=tokens):
+            return "budget"
         return "mission_closed"
     return None
 
@@ -568,15 +568,13 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     if park_harvest_owed(row, closeout_tokens=closeout_tokens):
         await maybe_fire_conductor_park_harvest(dispatch_id=dispatch_id)
         return
-    verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
-    if verdict.park and verdict.reason:
-        await park_conductor_hop_mission(
-            row,
-            reason=verdict.reason,
-        )
-        return
     skip_gate = _hop_skip_gate(row, closeout_tokens=closeout_tokens)
     if skip_gate is not None:
+        if skip_gate == "budget":
+            verdict = evaluate_hop_budget(row, closeout_tokens=closeout_tokens)
+            if verdict.park and verdict.reason:
+                await park_conductor_hop_mission(row, reason=verdict.reason)
+                return
         _emit_hop_skipped(row, gate=skip_gate)
         return
     body = build_hop_team_dispatch_body(row)

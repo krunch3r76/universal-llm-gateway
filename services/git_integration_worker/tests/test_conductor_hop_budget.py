@@ -495,3 +495,184 @@ def test_budget_authority_patch_carries_bound_progress_signals() -> None:
     assert patch_body["hop_witnessed_done"] == ["G1"]
     assert patch_body["hop_lane_tip"] == "cd5cf10a"
     assert patch_body["hop_next_admit"] == "harvest G5"
+
+
+# --- AC-A1–A6 (crash identity P1′) ---
+
+
+def test_ac_a1_designed_priors_done_current_no_crash_park() -> None:
+    """AC-A1: ROW_HOP + PARKED_TRANSPORT priors, DONE current → no crash park."""
+    ledger = CursorDispatchLedger.instance()
+    chain = [
+        (["ROW_HOP"], "completed"),
+        (["PARKED_TRANSPORT"], "completed"),
+        (["PARKED_TRANSPORT"], "completed"),
+        (["DONE"], "completed"),
+    ]
+    row: dict = {}
+    for idx, (tokens, status) in enumerate(chain, start=1):
+        row = _admit_and_terminal(
+            ledger,
+            dispatch_id=f"ac-a1-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"ac-a1-{idx - 1}",
+            hop_reason="planned" if idx > 1 else "spawn",
+            closeout_tokens=tokens,
+            terminal_status=status,
+            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"DONE"}),
+        config=_tight_config(),
+    )
+    assert verdict.park is False
+    assert verdict.reason is None
+
+
+def test_ac_a2_consult_waits_break_crash_streak() -> None:
+    """AC-A2: two CONSULT_PENDING waits then failed current → ok, backoff 30."""
+    ledger = CursorDispatchLedger.instance()
+    for idx in range(1, 3):
+        _admit_and_terminal(
+            ledger,
+            dispatch_id=f"ac-a2-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"ac-a2-{idx - 1}",
+            hop_reason="planned" if idx > 1 else "spawn",
+            closeout_tokens=["CONSULT_PENDING"],
+            terminal_status="completed",
+            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        )
+    row = _admit_and_terminal(
+        ledger,
+        dispatch_id="ac-a2-3",
+        hop_seq=3,
+        hop_from="ac-a2-2",
+        hop_reason="crash",
+        closeout_tokens=[],
+        terminal_status="failed",
+        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset(),
+        config=_tight_config(crash_cap_per_row=3),
+    )
+    assert verdict.ok is True
+    assert verdict.park is False
+    assert verdict.backoff_s == 30.0
+
+
+def test_ac_a3_completed_empty_tokens_crash_cap_parks() -> None:
+    """AC-A3: three completed rows with empty tokens → third parks on crash cap."""
+    ledger = CursorDispatchLedger.instance()
+    for idx in range(1, 3):
+        _admit_and_terminal(
+            ledger,
+            dispatch_id=f"ac-a3-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"ac-a3-{idx - 1}",
+            hop_reason="silent",
+            closeout_tokens=[],
+            terminal_status="completed",
+            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        )
+    row = _admit_and_terminal(
+        ledger,
+        dispatch_id="ac-a3-3",
+        hop_seq=3,
+        hop_from="ac-a3-2",
+        hop_reason="silent",
+        closeout_tokens=[],
+        terminal_status="completed",
+        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset(),
+        config=_tight_config(crash_cap_per_row=3),
+    )
+    assert verdict.park is True
+    assert verdict.reason == _PARK_REASON_CRASH_CAP
+
+
+@pytest.mark.parametrize(
+    "stop_token",
+    sorted(
+        {
+            "CONSULT_PENDING",
+            "CONFIRM_PENDING",
+            "ROW_PINNED",
+            "HOLD_MERGE",
+            "OPERATOR_GATE",
+            "PARKED_TRANSPORT",
+            "DONE",
+        }
+    ),
+)
+def test_ac_a4_designed_prior_breaks_crash_streak(stop_token: str) -> None:
+    """AC-A4: a prior with any designed stop (except ROW_HOP) breaks crash streak."""
+    ledger = CursorDispatchLedger.instance()
+    for idx in range(1, 3):
+        _admit_and_terminal(
+            ledger,
+            dispatch_id=f"ac-a4-crash-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"ac-a4-crash-{idx - 1}",
+            hop_reason="crash",
+            closeout_tokens=[],
+            terminal_status="failed",
+            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        )
+    _admit_and_terminal(
+        ledger,
+        dispatch_id="ac-a4-designed",
+        hop_seq=3,
+        hop_from="ac-a4-crash-2",
+        hop_reason="planned",
+        closeout_tokens=[stop_token],
+        terminal_status="completed",
+        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+    )
+    row = _admit_and_terminal(
+        ledger,
+        dispatch_id="ac-a4-current",
+        hop_seq=4,
+        hop_from="ac-a4-designed",
+        hop_reason="crash",
+        closeout_tokens=[],
+        terminal_status="failed",
+        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset(),
+        config=_tight_config(crash_cap_per_row=3),
+    )
+    assert verdict.park is False
+    assert verdict.ok is True
+    assert verdict.backoff_s == 30.0
+
+
+def test_ac_a5_third_parked_transport_no_crash_park() -> None:
+    """AC-A5: third consecutive PARKED_TRANSPORT → park False (park_harvest path)."""
+    ledger = CursorDispatchLedger.instance()
+    row: dict = {}
+    for idx in range(1, 4):
+        row = _admit_and_terminal(
+            ledger,
+            dispatch_id=f"ac-a5-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"ac-a5-{idx - 1}",
+            hop_reason="planned" if idx > 1 else "spawn",
+            closeout_tokens=["PARKED_TRANSPORT"],
+            terminal_status="completed",
+            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"PARKED_TRANSPORT"}),
+        config=_tight_config(),
+    )
+    assert verdict.park is False
