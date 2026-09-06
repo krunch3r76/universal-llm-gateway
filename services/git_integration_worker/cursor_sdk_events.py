@@ -330,6 +330,39 @@ def FrontierSdkWorkerProgress(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkWorkerSkillsMounted(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    resolved_model: str,
+    staged: list[str],
+    preexisting: list[str],
+    unresolved: list[str],
+    rows: list[dict[str, str | None]],
+    execution_id: str | None = None,
+) -> Event:
+    # Cursor-sdk counterpart to Stargate's dispatch.skills.* family. The gap this
+    # closes is observability of a *silent* drop: before it, a requested skill that
+    # never mounted left no trace anywhere in the pipeline.
+    payload: dict[str, object] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "resolved_model": resolved_model,
+        "staged": staged,
+        "preexisting": preexisting,
+        "unresolved": unresolved,
+        "mounted_count": len(staged) + len(preexisting),
+        "rows": rows,
+    }
+    if execution_id:
+        payload["execution_id"] = execution_id
+    return Event(
+        signal="frontier.sdk.worker.skills.mounted",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkWorkerFailed(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
@@ -411,6 +444,33 @@ def emit_sdk_worker_progress(
             resolved_model=resolved_model,
             elapsed_s=elapsed_s,
             tool_call_count=tool_call_count,
+            execution_id=execution_id,
+        )
+    )
+
+
+def emit_sdk_skills_mounted(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    resolved_model: str,
+    result: Any,
+    execution_id: str | None = None,
+) -> None:
+    """Publish the per-slug mount outcome for one dispatch's ``skills=``.
+
+    *result* is a ``cursor_sdk_skills_mount.SkillsMountResult``; typed as ``Any`` to
+    keep this module importable without pulling the mount path into event consumers.
+    """
+    _emit(
+        FrontierSdkWorkerSkillsMounted(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            resolved_model=resolved_model,
+            staged=list(result.staged_slugs),
+            preexisting=list(result.preexisting_slugs),
+            unresolved=list(result.unresolved_slugs),
+            rows=result.as_event_payload(),
             execution_id=execution_id,
         )
     )
