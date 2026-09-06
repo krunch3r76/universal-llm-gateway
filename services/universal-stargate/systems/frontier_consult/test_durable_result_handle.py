@@ -196,7 +196,7 @@ async def test_admit_handoff_dispatch_returns_false_when_token_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("AGENT_BUS_TOKEN", raising=False)
-    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "true")
+    monkeypatch.delenv("ALLOW_UNSET_AGENT_BUS_TOKEN", raising=False)
 
     from .handoff import admit_handoff_dispatch
 
@@ -207,7 +207,8 @@ async def test_admit_handoff_dispatch_returns_false_when_token_skipped(
         pipeline_id="cursor-sdk-generate",
         caller_agent="dispatch",
     )
-    assert admitted is False
+    assert admitted.admitted is False
+    assert admitted.reason == "token_unset"
 
 
 @pytest.mark.asyncio
@@ -237,7 +238,8 @@ async def test_admit_handoff_dispatch_returns_true_on_2xx(
             pipeline_id="cursor-sdk-generate",
             caller_agent="dispatch",
         )
-    assert admitted is True
+    assert admitted.admitted is True
+    assert admitted.reason == "ok"
 
 
 def test_frontier_poll_hint_issued_factory_payload() -> None:

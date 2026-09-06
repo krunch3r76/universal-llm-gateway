@@ -37,7 +37,12 @@ from .cdp_generate_mcp_stamp import (
 from .cdp_generate_reconcile import upsert_inflight_leg
 from .cdp_generate_worker import run_cdp_worker
 from .cdp_mission_provenance import observe_mission_binding
-from .handoff import create_handoff_thread, post_pointer_turn
+from .handoff import (
+    admit_handoff_dispatch,
+    create_handoff_thread,
+    post_pointer_turn,
+)
+from .cdp_dispatch_envelope import record_cdp_admit
 from .handoff_response import build_handoff_result, resolve_poll_wait_seconds
 from .poll_hint_events import emit_poll_hint_from_handoff
 
@@ -463,7 +468,10 @@ async def dispatch_cdp_generate(
     )
 
     thread_id = dispatch_thread
-    if thread_id and str(thread_id).strip().isdigit():
+    caller_supplied_thread = bool(
+        thread_id and str(thread_id).strip().isdigit()
+    )
+    if caller_supplied_thread:
         pointer_turn = await post_pointer_turn(
             request_id=request_id,
             thread_id=str(thread_id),
@@ -498,6 +506,22 @@ async def dispatch_cdp_generate(
                 mission_kind=mission_kind,
                 thread_id=str(thread_id),
             )
+
+    admit_result = await admit_handoff_dispatch(
+        request_id=request_id,
+        thread_id=str(thread_id),
+        execution_id=execution_id,
+        pipeline_id="cdp-generate",
+        caller_agent=body.caller_agent,
+        parent_thread_id=parent_thread,
+    )
+    record_cdp_admit(
+        execution_id=execution_id,
+        thread_id=str(thread_id),
+        pointer_turn=after_turn,
+        admit_reason=admit_result.reason,
+        caller_supplied_thread=caller_supplied_thread,
+    )
 
     timeout_seconds = getattr(body, "timeout_seconds", None)
     max_wall = float(timeout_seconds) if timeout_seconds else DEFAULT_MAX_WALL_S

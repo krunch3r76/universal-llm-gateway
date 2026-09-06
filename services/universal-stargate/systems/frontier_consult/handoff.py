@@ -617,6 +617,27 @@ def _slug_from_subject(subject: str) -> str:
     return slug[:50].strip("-") or "handoff"
 
 
+@dataclass(frozen=True, slots=True)
+class AdmitHandoffResult:
+    """Outcome of dispatch-admit for handoff/CDP generate."""
+
+    admitted: bool
+    reason: str
+
+    def __bool__(self) -> bool:
+        return self.admitted
+
+
+def _admit_reason_from_status(status_code: int) -> str:
+    if status_code == 0:
+        return "transport"
+    if status_code == 409:
+        return "http_409"
+    if status_code >= 400:
+        return f"http_{status_code}"
+    return "ok"
+
+
 async def admit_handoff_dispatch(
     *,
     request_id: str,
@@ -625,8 +646,8 @@ async def admit_handoff_dispatch(
     pipeline_id: str,
     caller_agent: str | None,
     parent_thread_id: str | None = None,
-) -> bool:
-    """POST dispatch-admit; return True when a dispatch-link row was persisted."""
+) -> AdmitHandoffResult:
+    """POST dispatch-admit; return admit outcome + reason token for FAILED bodies."""
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
     allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
         "1",
@@ -634,7 +655,7 @@ async def admit_handoff_dispatch(
         "yes",
     )
     if not token and not allow_unset:
-        return False
+        return AdmitHandoffResult(admitted=False, reason="token_unset")
 
     payload = {
         "execution_id": execution_id,
@@ -658,8 +679,11 @@ async def admit_handoff_dispatch(
                     status_code=resp.status_code,
                     error_preview=resp.text[:200],
                 )
-                return False
-            return True
+                return AdmitHandoffResult(
+                    admitted=False,
+                    reason=_admit_reason_from_status(resp.status_code),
+                )
+            return AdmitHandoffResult(admitted=True, reason="ok")
     except httpx.HTTPError as exc:
         logger.error(
             "handoff dispatch-admit transport error: request_id=%s thread=%s error=%s",
@@ -672,6 +696,49 @@ async def admit_handoff_dispatch(
             thread_id=thread_id,
             status_code=0,
             error_preview=str(exc)[:200],
+        )
+        return AdmitHandoffResult(admitted=False, reason="transport")
+
+
+async def terminate_handoff_dispatch(
+    *,
+    request_id: str,
+    thread_id: str,
+    execution_id: str,
+    terminal_status: str,
+    bus_lifecycle: str | None = None,
+) -> bool:
+    """POST dispatch-terminate for one execution_id; fail-open on transport errors."""
+    token = os.getenv("AGENT_BUS_TOKEN", "").strip()
+    allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if not token and not allow_unset:
+        return False
+
+    payload: dict[str, Any] = {
+        "execution_id": execution_id,
+        "terminal_status": terminal_status,
+    }
+    if bus_lifecycle is not None:
+        payload["bus_lifecycle"] = bus_lifecycle
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:
+            resp = await client.post(
+                f"/threads/{thread_id}/dispatch-terminate",
+                headers=headers,
+                json=payload,
+            )
+            return resp.status_code in (200, 201)
+    except httpx.HTTPError as exc:
+        logger.error(
+            "handoff dispatch-terminate transport error: request_id=%s thread=%s error=%s",
+            request_id,
+            thread_id,
+            exc,
         )
         return False
 

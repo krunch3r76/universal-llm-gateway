@@ -578,7 +578,8 @@ def test_cdp_result_subject_unverified_not_failed() -> None:
     text = format_cdp_result_body(result)
     assert "# CDP generate UNVERIFIED" in text
     assert "# CDP generate FAILED" not in text
-    assert "chat_url:" in text
+    assert "cse:" in text
+    assert "https://claude.ai/cowork/cse_abc" in text
 
 
 def test_cdp_result_subject_reconcile_abandoned_unverifiable() -> None:

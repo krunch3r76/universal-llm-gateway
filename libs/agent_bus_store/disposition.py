@@ -244,11 +244,19 @@ def maybe_auto_close_after_dispatch_terminate(
     *,
     terminal_status: str,
     explicit_bus_lifecycle: BusLifecycle | None = None,
+    dispatch_links: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     if terminal_status != "completed":
         return None
     thread = get_thread(thread_id)
     if thread is None or thread.get("status") == ThreadStatus.CLOSED:
+        return None
+    if dispatch_links is None:
+        from agent_bus_store.db.threads import get_thread_with_links
+
+        detail = get_thread_with_links(thread_id)
+        dispatch_links = (detail or {}).get("dispatch_links") or []
+    if any(link.get("terminal_status") is None for link in dispatch_links):
         return None
     tags = thread.get("tags") or []
     if "lane:cursor-auto" in tags:

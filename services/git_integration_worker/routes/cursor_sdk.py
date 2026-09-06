@@ -1474,12 +1474,16 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
 
 
 async def _terminate_link(
-    bus: CursorBusClient, *, thread_id: str, terminal_status: str
+    bus: CursorBusClient,
+    *,
+    thread_id: str,
+    terminal_status: str,
+    execution_id: str | None = None,
 ) -> None:
     result = await bus.terminate_dispatch(
         thread_id=thread_id,
         terminal_status=terminal_status,
-        bus_lifecycle=terminal_status,
+        execution_id=execution_id,
     )
     if result.status_code >= 400:
         logger.error(
@@ -1650,7 +1654,12 @@ async def _deliver_sdk_closeout(
                 turn_number=turn_number,
             ),
         )
-        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="completed")
+        await _terminate_link(
+            bus,
+            thread_id=req.thread_id,
+            terminal_status="completed",
+            execution_id=req.execution_id,
+        )
         await asyncio.to_thread(
             merge_conductor_closeout_hop_authority,
             dispatch_id=req.dispatch_id,
@@ -1720,7 +1729,12 @@ async def _deliver_sdk_closeout(
         degraded_reasons=completed_reasons,
         **association_fields,
     )
-    await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+    await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
     await _mark_terminal_and_promote(
         dispatch_id=req.dispatch_id,
         terminal_status="failed",
@@ -1962,7 +1976,12 @@ async def _run_sdk_dispatch_gated(
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (timeout)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
-        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+        await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
         await asyncio.to_thread(persist_timeout_retain, dispatch_id=req.dispatch_id)
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
@@ -1991,7 +2010,12 @@ async def _run_sdk_dispatch_gated(
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (home/auth)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
-        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+        await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
@@ -2013,7 +2037,12 @@ async def _run_sdk_dispatch_gated(
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (venv config)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
-        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+        await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
@@ -2121,7 +2150,12 @@ async def _finalize_failed(
         subject=f"cursor-sdk dispatch {req.dispatch_id} {subject_suffix}",
         body=f"```json\n{json.dumps(env, indent=2)}\n```",
     )
-    await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+    await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
     await _mark_terminal_and_promote(
         dispatch_id=req.dispatch_id,
         terminal_status="failed",

@@ -221,11 +221,73 @@ async def finalize_cdp_generate(
     attested_by: str | None = None,
 ) -> None:
     """Publish proof/stalled once, then attempt on-behalf delivery (AC8/AC9)."""
+    from .cdp_dispatch_envelope import (
+        get_cdp_dispatch_envelope,
+        record_cdp_dispatch_link_terminal,
+    )
     from .cdp_generate_worker import (
         _emit_upstream_overload_friction,
         _upstream_overloaded,
         deliver_cdp_result_turn,
     )
+    from .handoff import terminate_handoff_dispatch
+
+    envelope = get_cdp_dispatch_envelope(result.execution_id)
+    dispatch_link_terminal: bool | None = None
+
+    async def _terminate_dispatch_link(*, terminal_status: str) -> None:
+        nonlocal dispatch_link_terminal
+        if envelope is None or envelope.admit_reason != "ok":
+            dispatch_link_terminal = None
+            return
+        bus_lifecycle = (
+            "persistent"
+            if terminal_status == "completed" and envelope.caller_supplied_thread
+            else None
+        )
+        ok = await terminate_handoff_dispatch(
+            request_id=request_id,
+            thread_id=thread_id,
+            execution_id=result.execution_id,
+            terminal_status=terminal_status,
+            bus_lifecycle=bus_lifecycle,
+        )
+        dispatch_link_terminal = ok
+        record_cdp_dispatch_link_terminal(
+            execution_id=result.execution_id, terminated=ok
+        )
+
+    def _enrich_result(base: CdpGenerateResult) -> CdpGenerateResult:
+        if envelope is None:
+            return base
+        merged = dict(base.extras or {})
+        merged.setdefault("thread_id", envelope.thread_id)
+        merged.setdefault("pointer_turn", envelope.pointer_turn)
+        if envelope.admit_reason == "ok":
+            if dispatch_link_terminal is True:
+                term = "failed" if not base.ok else "completed"
+                merged.setdefault("dispatch_link", f"terminated:{term}")
+            elif dispatch_link_terminal is False:
+                merged.setdefault("dispatch_link", "absent:terminate_failed")
+        else:
+            merged.setdefault("dispatch_link", f"absent:{envelope.admit_reason}")
+        return CdpGenerateResult(
+            ok=base.ok,
+            body=base.body,
+            execution_id=base.execution_id,
+            satellite_execution_id=base.satellite_execution_id,
+            prompt_uri=base.prompt_uri,
+            picker_model=base.picker_model,
+            archive_uri=base.archive_uri,
+            content_proof_uri=base.content_proof_uri,
+            content_proof_sha256=base.content_proof_sha256,
+            stall_stage=base.stall_stage,
+            error=base.error,
+            substrate=base.substrate,
+            cost_source=base.cost_source,
+            poll_snapshots=base.poll_snapshots,
+            extras=merged,
+        )
 
     leg = read_inflight_leg(result.execution_id)
     if leg is not None and leg.proof_emitted:
@@ -235,8 +297,11 @@ async def finalize_cdp_generate(
         mark_proof_emitted(result.execution_id)
         if not try_claim_delivery(execution_id=result.execution_id):
             return
+        if not result.ok:
+            await _terminate_dispatch_link(terminal_status="failed")
+        enriched = _enrich_result(result)
         posted = await deliver_cdp_result_turn(
-            result=result,
+            result=enriched,
             thread_id=thread_id,
             to_agent=to_agent,
             request_id=request_id,
@@ -250,7 +315,20 @@ async def finalize_cdp_generate(
     if not try_claim_proof_publish(execution_id=result.execution_id, holder=holder):
         return
 
+    if not result.ok:
+        await _terminate_dispatch_link(terminal_status="failed")
+
     sat_id = result.satellite_execution_id
+    event_extras = {
+        "thread_id": thread_id,
+        "pointer_turn": pointer_turn,
+        "dispatch_link_terminal": dispatch_link_terminal,
+    }
+    if result.extras:
+        if result.extras.get("registration_id"):
+            event_extras["registration_id"] = result.extras["registration_id"]
+        if result.extras.get("chat_url"):
+            event_extras["chat_url"] = result.extras["chat_url"]
     if result.ok:
         publish_cdp_kwargs(
             CdpGenerateProof,
@@ -261,6 +339,7 @@ async def finalize_cdp_generate(
             content_proof_uri=result.content_proof_uri,
             via=via,
             attested_by=attested_by,
+            **event_extras,
         )
     else:
         publish_cdp_kwargs(
@@ -278,6 +357,7 @@ async def finalize_cdp_generate(
                 or result.content_proof_uri
                 or (result.extras or {}).get("deliverable_present_unproven")
             ),
+            **event_extras,
         )
         if _upstream_overloaded(result):
             await _emit_upstream_overload_friction(
@@ -298,13 +378,29 @@ async def finalize_cdp_generate(
 
     if not try_claim_delivery(execution_id=result.execution_id):
         return
-    posted = await deliver_cdp_result_turn(
-        result=result,
-        thread_id=thread_id,
-        to_agent=to_agent,
-        request_id=request_id,
-        pointer_turn=pointer_turn,
-    )
+    if result.ok:
+        enriched = _enrich_result(result)
+        posted = await deliver_cdp_result_turn(
+            result=enriched,
+            thread_id=thread_id,
+            to_agent=to_agent,
+            request_id=request_id,
+            pointer_turn=pointer_turn,
+        )
+        if posted:
+            await _terminate_dispatch_link(terminal_status="completed")
+            enriched = _enrich_result(result)
+        else:
+            enriched = _enrich_result(result)
+    else:
+        enriched = _enrich_result(result)
+        posted = await deliver_cdp_result_turn(
+            result=enriched,
+            thread_id=thread_id,
+            to_agent=to_agent,
+            request_id=request_id,
+            pointer_turn=pointer_turn,
+        )
     if not posted:
         clear_delivery_claim(result.execution_id)
 
