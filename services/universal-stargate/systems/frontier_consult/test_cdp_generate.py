@@ -836,11 +836,11 @@ def test_default_operator_seat_binding_skips_ask() -> None:
         mission_kind=None,
         thread_id="6655",
     )
-    assert lane == "6655"
-    assert kind == "root"
+    assert lane is None
+    assert kind is None
 
 
-def test_default_operator_seat_binding_review_from_thread_id() -> None:
+def test_default_operator_seat_binding_binds_review_from_thread_id() -> None:
     from systems.frontier_consult.cdp_generate import default_operator_seat_binding
 
     lane, kind = default_operator_seat_binding(
@@ -863,7 +863,7 @@ def test_refuse_second_external_gate_at_fire_when_lane_live(
 
     monkeypatch.setattr(
         "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
-        lambda: {
+        lambda **_: {
             "rows": [
                 {
                     "execution_id": "exec-live-gate",
@@ -880,6 +880,40 @@ def test_refuse_second_external_gate_at_fire_when_lane_live(
             parent_thread="9638",
             thread_id="9638",
             request_id="req-ac9",
+        )
+    assert exc.value.code == "cdp_external_gate_live"
+
+
+def test_refuse_second_external_gate_seated_rows_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B1 — gate seated with no stream row must block via identity_rows union."""
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [],
+            "seated_rows": [
+                {
+                    "execution_id": "exec-seated-only",
+                    "parent_thread": "10128",
+                    "status": "running",
+                    "purpose": "review",
+                    "registration_id": "reg-seated",
+                }
+            ],
+        },
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        refuse_second_external_gate_at_fire(
+            purpose="review",
+            parent_thread="10128",
+            thread_id="10128",
+            request_id="req-b1",
         )
     assert exc.value.code == "cdp_external_gate_live"
 

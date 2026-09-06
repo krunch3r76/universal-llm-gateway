@@ -479,6 +479,41 @@ def _live_gate_snap(*, parent_thread: str = "9638") -> dict:
     }
 
 
+def _live_gate_snap_seated_only(*, parent_thread: str = "9638") -> dict:
+    return {
+        "observed_at": "2026-09-05T00:00:00+00:00",
+        "rows": [],
+        "seated_rows": [
+            {
+                "execution_id": "exec-seated-gate",
+                "parent_thread": parent_thread,
+                "status": "running",
+                "purpose": "review",
+                "registration_id": "reg-gate",
+            }
+        ],
+    }
+
+
+def test_hop_owed_false_when_live_gate_in_seated_rows_only() -> None:
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"summoning_thread_id": "9638", "closeout_harvest_owed": False},
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value=_live_gate_snap_seated_only(),
+    ):
+        assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is False
+
+
 def test_hop_owed_false_when_live_external_gate_ac1() -> None:
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])

@@ -34,19 +34,34 @@ def mission_lane_from_conductor_row(row: dict[str, Any]) -> str:
     return str(row.get("thread_id") or "").strip()
 
 
-def live_external_gate_for_lane(snap: dict[str, Any], mission_lane: str) -> bool:
-    """True when active-work has a pending/running row bound to ``mission_lane``."""
+_GATE_OCCUPANCY_PURPOSES = frozenset(
+    {"review", "operator-proxy", "operator_proxy", "mission"}
+)
+
+
+def live_external_gate_for_lane(
+    snap: dict[str, Any],
+    mission_lane: str,
+    *,
+    exclude_execution_id: str | None = None,
+) -> bool:
+    """True when active-work has a pending/running gate row bound to ``mission_lane``."""
+    from claude_bundles.hop_cadence_id_map import ids_match_exclude, normalize_exclude_ids
+    from claude_bundles.hop_cadence_seat_snap import identity_rows
+
     lane = (mission_lane or "").strip()
     if not lane or not snap:
         return False
-    rows = snap.get("rows")
-    if not isinstance(rows, list):
-        return False
-    for aw_row in rows:
-        if not isinstance(aw_row, dict):
-            continue
+    exclude = normalize_exclude_ids(exclude_execution_id)
+    for aw_row in identity_rows(snap):
         status = str(aw_row.get("status") or "")
         if status not in _HOST_RUNNING:
+            continue
+        purpose = str(aw_row.get("purpose") or "").strip().lower()
+        if purpose not in _GATE_OCCUPANCY_PURPOSES:
+            continue
+        exec_id = str(aw_row.get("execution_id") or "").strip()
+        if exec_id and ids_match_exclude(exec_id, exclude):
             continue
         parent = str(aw_row.get("parent_thread") or "").strip()
         if parent == lane:

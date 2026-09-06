@@ -147,7 +147,7 @@ def _uri_resolves(uri: str, *, files_root: Path, repo: Path | None) -> bool:
         rel = uri.removeprefix("cortex://")
         return (files_root / rel).is_file()
     if _SHA_RE.fullmatch(uri):
-        return False
+        return True
     if repo is not None:
         found = resolve_artifact_path(uri, source_repo=repo, cortex_root=files_root)
         return found is not None and found.is_file()
