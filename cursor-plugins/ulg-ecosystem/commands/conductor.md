@@ -83,8 +83,8 @@ tick-enrolled.
 
 **Required skill on the dispatch (binding):** first line of `<invariants>` MUST be
 `Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows; cost
-tier from this skill.` (`team_dispatch(skills=…)` is not mounted on cursor-sdk —
-the Use-line is the engagement channel.)
+tier from this skill.` (`team_dispatch(skills=["conductor"])` mounts too, but the
+Use-line is what survives a replayed or `skills=`-less admit — send both.)
 
 Validate: line-anchored six tags + `acceptance` in `<task_guidance>` + conductor
 Use-line present.

@@ -76,8 +76,15 @@ GIW `resolve_prompt_preamble` prepends `Use the reasoning-posture skill` on ever
 non-mechanical cursor-sdk **generate** (`light-bounded` / `consult`) — `team_dispatch`
 from IDE, charter-runner, or Auto nested. Skip `implement` / `pure-mechanical` and
 quick (`answer` / `execute` / `propagate`). Authors may omit the line; do not strip
-it. `skills=` is not mounted on cursor-sdk. Consult handoff enrich inserts the same
+it. Consult handoff enrich inserts the same
 Use-line into `<invariants>`. SOT: skill `reasoning-posture` § Always-on injection.
+
+`skills=` mounts on cursor-sdk and composes with the above: Stargate resolves each
+slug to a body at admit (422 `skills_cursor_unresolvable` on unknown / body-less),
+GIW stages it into the dispatch HOME `.cursor/skills/` for native discovery, and
+adds the `Use the <slug> skill` line — deduped against the fixed preambles, so
+naming `reasoning-posture` in `skills=` is a no-op, not a double invoke. Census
+slugs are left in place. Per-slug outcome: `frontier.sdk.worker.skills.mounted`.
 
 ## D-lane — explicit checkout lane (top-level generate)
 

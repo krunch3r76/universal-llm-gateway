@@ -10,6 +10,7 @@ mechanical/quick contracts skip.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from reasoning_posture_contracts import (
     HYPOTHESIZE_SIMULATE_CONTRACTS,
@@ -218,8 +219,10 @@ _IMPLEMENT_PREAMBLE = (
     "closeout automatically. Produce your result as your final message only."
 )
 
-# Cursor-sdk analog of CDP ``ensure_cdp_judgment_skills`` — prompt invoke, not
-# ``skills=`` mount (cursor-sdk skips skills_mount). Mechanical/quick skip.
+# Cursor-sdk analog of CDP ``ensure_cdp_judgment_skills``. These two fire by
+# contract on every judgment dispatch, independent of ``skills=``; caller-requested
+# slugs get their invoke lines from ``_skill_invoke_lines`` and their bodies staged
+# into the dispatch HOME by ``cursor_sdk_skills_mount``. Mechanical/quick skip.
 _HYPOTHESIZE_SIMULATE_PREAMBLE = (
     "Use the `hypothesize-simulate` skill — structured hypothesis generation "
     "and simulation before merits or transport."
@@ -244,6 +247,13 @@ _HYPOTHESIZE_SIMULATE_INVOKE_RE = re.compile(
 _ULG_FOR_LLMS_INVOKE_RE = re.compile(
     r"Use the `?ulg-for-llms`? skill",
     re.IGNORECASE,
+)
+_SKILL_ID_PREFIXES = ("agent_skill:", "rule:")
+_CALLER_SKILLS_HEADER = (
+    "REQUESTED SKILLS (mandatory): this dispatch was admitted with "
+    "`skills=` naming the slugs below. Their bodies are staged in your dispatch "
+    "HOME under `.cursor/skills/` (or already present via the plugin census) — "
+    "the harness fetches them on the Use-line; do NOT fs-read a SKILL.md path."
 )
 _CONDUCTOR_PACKET_MARKER_RE = re.compile(
     r"Use the `?conductor`? skill",
@@ -349,6 +359,48 @@ def _already_invokes_ulg_for_llms(*texts: str | None) -> bool:
     return any(bool(t) and _ULG_FOR_LLMS_INVOKE_RE.search(t) for t in texts)
 
 
+def _bare_skill_slug(skill_id: str) -> str:
+    """Strip entity prefixes without importing the catalog.
+
+    Stargate canonicalizes ``skills=`` before it ships the list, so this only has
+    to survive a hand-written ``agent_skill:``/``rule:`` id arriving on a direct
+    worker POST. Mirrors ``claude_bundles.catalog.SkillCatalog.canonical_slug``'s
+    prefix handling; keeping this module free of the catalog import keeps prompt
+    assembly pure text.
+    """
+    raw = skill_id.strip()
+    for prefix in _SKILL_ID_PREFIXES:
+        if raw.startswith(prefix):
+            return raw.removeprefix(prefix).strip()
+    return raw
+
+
+def _skill_invoke_block(
+    skills: Sequence[str] | None,
+    *texts: str | None,
+) -> str | None:
+    """Use-lines for caller-requested slugs, minus any already invoked.
+
+    Idempotency is the load-bearing part: the fixed judgment preambles and the
+    packet body both carry Use-lines, and a caller naming ``reasoning-posture``
+    explicitly must not produce a second one.
+    """
+    lines: list[str] = []
+    seen: set[str] = set()
+    for raw in skills or ():
+        slug = _bare_skill_slug(str(raw or ""))
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        invoke_re = re.compile(rf"Use the `?{re.escape(slug)}`? skill", re.IGNORECASE)
+        if any(bool(t) and invoke_re.search(t) for t in texts):
+            continue
+        lines.append(f"Use the `{slug}` skill.")
+    if not lines:
+        return None
+    return "\n".join([_CALLER_SKILLS_HEADER, *lines])
+
+
 def resolve_prompt_preamble(
     *,
     handoff_contract: str | None,
@@ -365,6 +417,7 @@ def resolve_prompt_preamble(
     hop_from: str | None = None,
     hop_reason: str | None = None,
     continuity_root_thread_id: str | None = None,
+    skills: Sequence[str] | None = None,
 ) -> str:
     """Assemble the worker prompt prefix for one cursor-sdk dispatch.
 
@@ -390,6 +443,11 @@ def resolve_prompt_preamble(
     ``continuity_root_thread_id`` (when the coordination thread is a tagged
     continuity root) injects a generic house-card/CHECKPOINT-read instruction
     independent of conductor packet-hood.
+
+    ``skills`` are the caller's ``team_dispatch(skills=[...])`` slugs. This half of
+    the mount supplies the *invoke*; ``cursor_sdk_skills_mount`` stages the bodies so
+    the invoke can resolve. Slugs already invoked by a fixed preamble or by the
+    packet body are skipped rather than repeated.
     """
     contract = (handoff_contract or inferred_contract or "consult").lower()
     if prompt_preamble:
@@ -483,6 +541,11 @@ def resolve_prompt_preamble(
         and not _already_invokes_hypothesize_simulate(prompt_preamble, existing_text)
     ):
         parts.append(_HYPOTHESIZE_SIMULATE_PREAMBLE)
+    skill_block = _skill_invoke_block(
+        skills, prompt_preamble, existing_text, *parts
+    )
+    if skill_block:
+        parts.append(skill_block)
     if preamble:
         parts.append(preamble.strip())
     return "\n\n".join(parts) + "\n\n"
