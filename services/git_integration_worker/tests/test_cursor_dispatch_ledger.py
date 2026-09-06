@@ -379,6 +379,7 @@ def _admit(
     source_ref: str | None = None,
     work_key: str | None = None,
     force: bool = False,
+    nest_under: str | None = None,
 ) -> CursorDispatchResponse | None:
     return ledger.admit(
         req=req,
@@ -394,6 +395,7 @@ def _admit(
         source_ref=source_ref,
         work_key=work_key,
         force=force,
+        nest_under=nest_under,
     )
 
 
@@ -1350,3 +1352,26 @@ def test_should_block_top_level_implement_not_nested() -> None:
         nest_under="parent-dispatch",
         work_key=_CONDUCTOR_WORK_KEY,
     )
+
+
+def test_nested_implement_same_work_key_under_conductor_allowed() -> None:
+    """nest_under the work-key holder must not 409 SourceRefConflict."""
+    ledger = CursorDispatchLedger.instance()
+    parent = "cond-parent-1"
+    _admit(
+        ledger,
+        _req(dispatch_id=parent, thread_id="t-cond"),
+        source_repo=_REPO,
+        contract="implement",
+        work_key=_CONDUCTOR_WORK_KEY,
+    )
+    child = _req(dispatch_id="child-nest-1", thread_id="t-child")
+    result = _admit(
+        ledger,
+        child,
+        source_repo=_REPO,
+        contract="implement",
+        work_key=_CONDUCTOR_WORK_KEY,
+        nest_under=parent,
+    )
+    assert result is None or result.status in ("admitted", "queued")
