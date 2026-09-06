@@ -22,7 +22,8 @@
 #   scripts/cortex/claude-ai-sync-jupiter upload --all --continue-on-error   # NEW slugs only
 #   # --all --replace is refused unless --force-replace-all (never the default)
 #   scripts/cortex/claude-ai-sync-jupiter uninstall --slugs retired-skill
-#   scripts/cortex/claude-ai-sync-jupiter restore-connector
+#   scripts/cortex/claude-ai-sync-jupiter restore-connector   # probe / first add / vortex rename
+#   scripts/cortex/claude-ai-sync-jupiter refresh-connector  # operator restore (default)
 #   scripts/cortex/claude-ai-sync-jupiter set-tool-permissions
 #   scripts/cortex/claude-ai-sync-jupiter refresh-connector
 #   scripts/cortex/claude-ai-sync-jupiter project-chrome ensure|destroy|get|render-prompt …

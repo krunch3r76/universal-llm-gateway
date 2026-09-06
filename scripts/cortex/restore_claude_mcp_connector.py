@@ -13,12 +13,16 @@ Default URL: https://mcp.k-1.me/mcp/life
 
 Playbook: agent_skill:claude-ai-mcp-connect → .cursor/skills/claude-ai-mcp-connect/SKILL.md
 
+Operator restore (tools dead / connection expired): prefer wrapper
+``refresh-connector`` (this script with ``--force-reconnect`` + permission repair).
+Plain restore may exit ``already_connected`` while chat tools remain stale.
+
 Usage (CDP host / Jupiter):
   BROWSER_CDP_URL=http://127.0.0.1:9222 python scripts/cortex/restore_claude_mcp_connector.py \\
-    --mcp-url 'https://mcp.k-1.me/mcp/life' --connector-name toys
+    --mcp-url 'https://mcp.k-1.me/mcp/life' --connector-name toys --force-reconnect
 
 From Cursor / remote seat:
-  scripts/cortex/claude-ai-sync-jupiter restore-connector \\
+  scripts/cortex/claude-ai-sync-jupiter refresh-connector \\
     --mcp-url 'https://mcp.k-1.me/mcp/life' --connector-name toys
 """
 

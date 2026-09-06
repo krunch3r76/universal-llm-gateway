@@ -71,8 +71,8 @@ remote shell. Calling `upload_claude_bundles_ui.py` locally without SSH fails wi
 Cross-ref: `agent-skills/jupiter-browser-via-mcp` (CDP bring-up patterns;
 `--remote-allow-origins=*` is required for Playwright WebSocket access).
 
-**MCP connector (not Skills):** connect/rewire claude.ai → toys `/mcp/life` —
-Use the `claude-ai-mcp-connect` skill (`restore-connector`, OAuth DCR, dual-endpoint).
+**MCP connector (not Skills):** connect/restore claude.ai → toys `/mcp/life` —
+Use the `claude-ai-mcp-connect` skill (operator restore → `refresh-connector`; OAuth DCR, dual-endpoint).
 
 ## Prerequisites
 
@@ -266,25 +266,31 @@ Helper: `libs/claude_bundles/chat_context_skills.py` (`scrape_loaded_skills`).
 
 ## MCP connector restore (toys / <mcp-host>)
 
-When claude.ai shows **Connection expired** for the toys connector, re-auth via
-Jupiter Playwright (home-network Chrome — not your VPN laptop):
+When claude.ai toys is broken (**Connection expired**, tools dead in chat, operator
+"restore toys"), re-auth via Jupiter Playwright (home-network Chrome — not your VPN laptop).
+
+**Default (operator restore):**
+
+```bash
+scripts/cortex/claude-ai-sync-jupiter refresh-connector
+```
+
+Composes forced Disconnect→Connect+OAuth with Other-tools permission repair.
+Expect reconnect **`restored`**; permissions **`changed`** or **`already_set`**.
+
+**Probe / first add / legacy `vortex` rename only:**
 
 ```bash
 scripts/cortex/claude-ai-sync-jupiter restore-connector
 ```
 
-Exit `restored` = OAuth re-approved; `already_connected` = token still valid server-side.
+Exit `restored` = OAuth re-approved; **`already_connected` ≠ operator success** when
+tools still fail in chat — run `refresh-connector` next (incident 2026-09-05).
 
-After an MCP surface change, repair the Claude tool policy without reconnecting:
+After an MCP surface change with a healthy Connected UI, permissions alone:
 
 ```bash
 scripts/cortex/claude-ai-sync-jupiter set-tool-permissions
-```
-
-When both OAuth and permission state need refresh, use the explicit combined path:
-
-```bash
-scripts/cortex/claude-ai-sync-jupiter refresh-connector
 ```
 
 The permission command targets only `toys` → `/mcp/life` → `Other tools`, returns
