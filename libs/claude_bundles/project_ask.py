@@ -407,10 +407,10 @@ async def send_prompt(
     composer = await find_composer(page)
     if composer is None:
         raise RuntimeError(f"composer not found on page url={page.url!r}")
-    await composer.click(force=True)
-    await page.wait_for_timeout(300)
-    await page.keyboard.press("Control+A")
-    await page.keyboard.press("Backspace")
+    from claude_bundles.composer_submit import clear_composer_verified
+
+    await clear_composer_verified(page, composer)
+    await page.wait_for_timeout(180)
     await _insert_prompt_text(
         page,
         text,

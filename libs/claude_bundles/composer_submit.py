@@ -66,6 +66,31 @@ async def read_composer_draft(page) -> dict[str, Any]:
     }
 
 
+def normalize_committed_turn(text: str) -> str:
+    """Whitespace-normalize user-turn text for equality checks."""
+    return " ".join((text or "").split())
+
+
+async def clear_composer_verified(page, composer) -> None:
+    """Clear composer and fail closed when draft persists (``composer_dirty``)."""
+    await composer.click(force=True)
+    await page.wait_for_timeout(120)
+    await page.keyboard.press("Control+A")
+    await page.keyboard.press("Backspace")
+    await page.wait_for_timeout(120)
+    draft = await read_composer_draft(page)
+    if int(draft.get("len") or 0) > 0:
+        await page.keyboard.press("Control+A")
+        await page.keyboard.press("Backspace")
+        await page.wait_for_timeout(120)
+        draft = await read_composer_draft(page)
+    if int(draft.get("len") or 0) > 0:
+        snippet = str(draft.get("text") or "")[:120]
+        raise RuntimeError(
+            f"composer_dirty: composer not empty after clear ({snippet!r})"
+        )
+
+
 async def composer_holds_draft(page, needle: str) -> bool:
     """True when the submit needle is still in the composer."""
     if not needle:

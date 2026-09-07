@@ -62,8 +62,8 @@ async def test_send_verified_true_when_marker_in_growing_transcript() -> None:
     prompt = f"TYPE: BREAK_IN\n{marker}\nForce now\n"
     page.evaluate = AsyncMock(
         side_effect=[
-            {"count": 1, "last_len": 10, "last_snippet": "old"},
-            {"count": 2, "last_len": 80, "last_snippet": prompt[:400]},
+            {"count": 1, "last_len": 10, "last_snippet": "old", "last_text": "old"},
+            {"count": 2, "last_len": 80, "last_snippet": prompt[:400], "last_text": prompt},
             True,
         ]
     )
@@ -87,8 +87,8 @@ async def test_dom_paste_when_marker_does_not_survive_settle() -> None:
     prompt = f"TYPE: BREAK_IN\n{marker}\nForce now\n"
     page.evaluate = AsyncMock(
         side_effect=[
-            {"count": 1, "last_len": 10, "last_snippet": "old"},
-            {"count": 2, "last_len": 80, "last_snippet": prompt[:400]},
+            {"count": 1, "last_len": 10, "last_snippet": "old", "last_text": "old"},
+            {"count": 2, "last_len": 80, "last_snippet": prompt[:400], "last_text": prompt},
             True,
         ]
     )
@@ -222,13 +222,34 @@ async def test_send_unverified_when_no_transcript_delta() -> None:
 
 
 @pytest.mark.asyncio
+async def test_composer_dirty_when_committed_turn_contains_extra_text() -> None:
+    """10219 R3 — seed draft + nonce must not pass as clean submit."""
+    page = AsyncMock()
+    page.url = "https://claude.ai/cowork/cse_test"
+    payload = "DOGFOOD-10219-R2-7k3m"
+    dirty = f"R2 stream seed — write a long detailed analysis\n{payload}"
+    page.evaluate = AsyncMock(
+        side_effect=[
+            {"count": 1, "last_len": 10, "last_snippet": "old", "last_text": "old"},
+            {"count": 2, "last_len": len(dirty), "last_snippet": dirty[:400], "last_text": dirty},
+            True,
+        ]
+    )
+    with _paste_env(survives=True):
+        result = await send_followup_paste_half(page, payload)
+    assert result["send_verified"] is False
+    assert result["receipt"] is None
+    assert result["error"] == "composer_dirty"
+
+
+@pytest.mark.asyncio
 async def test_no_wait_assistant_reply_or_resolve_harvest_body() -> None:
     page = AsyncMock()
     page.url = "https://claude.ai/cowork/cse_test"
     page.evaluate = AsyncMock(
         side_effect=[
-            {"count": 0, "last_len": 0, "last_snippet": ""},
-            {"count": 1, "last_len": 17, "last_snippet": "hi there mid body"},
+            {"count": 0, "last_len": 0, "last_snippet": "", "last_text": ""},
+            {"count": 1, "last_len": 17, "last_snippet": "hi there mid body", "last_text": "hi there mid body"},
             True,
         ]
     )
