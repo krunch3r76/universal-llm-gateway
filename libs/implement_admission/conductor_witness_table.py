@@ -8,8 +8,8 @@ from pathlib import Path
 
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.conductor_score_journal import (
-    G_ROWS,
     _SCOREBOARD_ROW_ID,
+    G_ROWS,
     is_g_ladder_rows,
     load_journal,
 )
@@ -17,6 +17,7 @@ from implement_admission.conductor_witness_types import (
     FoldDeps,
     Witness,
     WitnessCortex,
+    stops_block_reason,
 )
 from implement_admission.evidence_verify import resolve_artifact_path
 
@@ -29,6 +30,9 @@ _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 _G4_BLOCKS_DONE_RE = re.compile(
     r"(?is)does not clear G5|withhold G5|withhold(?:s)? completeness"
     r"|AC-\d+\s*\|\s*\*\*FAIL\*\*"
+)
+_G4_VERDICT_WITHHOLD_RE = re.compile(
+    r"(?m)^##\s*(?i:verdict)\s*$[^*]{0,400}?\*\*\s*(?:VERDICT:\s*)?(AMEND|REVISE|REJECT|BLOCK)\b"
 )
 _G6_REVIEW_AFFIRMATIVE_RE = re.compile(
     r"(?im)^\s*VERDICT:\s*(RATIFY(?:_WITH_CONDITIONS|-WITH-CONDITIONS)?)\s*$"
@@ -159,7 +163,9 @@ def _g4_body_clears(uri: str, *, files_root: Path) -> bool:
     text = _cortex_text(uri, files_root=files_root)
     if text is None:
         return uri.startswith("cortex://") is False
-    return _G4_BLOCKS_DONE_RE.search(text) is None
+    if _G4_BLOCKS_DONE_RE.search(text):
+        return False
+    return _G4_VERDICT_WITHHOLD_RE.search(text) is None
 
 
 def _g6_review_body_witnesses(
@@ -372,14 +378,16 @@ def _row_witnesses_g_ladder(
             )
 
     g4_uri = artifacts.get("G4")
+    g4_stops = stops_block_reason(tip_body, "G4")
     if (
-        g4_uri
+        g4_stops is None
+        and g4_uri
         and _uri_resolves(g4_uri, files_root=files_root, repo=repo)
         and _g4_body_clears(g4_uri, files_root=files_root)
     ):
         witnesses["G4"] = Witness(row="G4", source="artifact:G4", detail=g4_uri)
 
-    g4_blocked = bool(g4_uri) and witnesses["G4"] is None
+    g4_blocked = g4_stops is not None or (bool(g4_uri) and witnesses["G4"] is None)
     summon = (deps.summon_mode or "").strip().lower().replace("-", "_")
     if g4_blocked:
         witnesses["G5"] = None
