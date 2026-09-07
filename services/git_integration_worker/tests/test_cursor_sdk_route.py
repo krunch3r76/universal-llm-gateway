@@ -3797,8 +3797,8 @@ async def test_bridge_abort_partial_closeout_after_tool_activity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """10269 class: bridge death after tool calls emits PARTIAL + sidecar, not silent FAILED."""
-    from services.git_integration_worker.routes.cursor_sdk import SdkRunAbortedError
     from services.git_integration_worker.routes import cursor_sdk as route_mod
+    from services.git_integration_worker.routes.cursor_sdk import SdkRunAbortedError
 
     source_repo = tmp_path / "repo"
     source_repo.mkdir()
@@ -3867,8 +3867,8 @@ async def test_bridge_abort_zero_tools_stays_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Pre-arm bridge death with no tool work remains FAILED (not partial)."""
-    from services.git_integration_worker.routes.cursor_sdk import SdkRunAbortedError
     from services.git_integration_worker.routes import cursor_sdk as route_mod
+    from services.git_integration_worker.routes.cursor_sdk import SdkRunAbortedError
 
     source_repo = tmp_path / "repo"
     source_repo.mkdir()
