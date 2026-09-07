@@ -159,6 +159,7 @@ def _op_transcript_seal(
         sealed_by=agent,
         sealed_on=now,
         conversation_uuid=uuid,
+        dominant_lane=str(tid),
     )
     transcript_sealed_by_succession(
         session_id=derived,
@@ -185,6 +186,7 @@ def _stamp_succession_fields(
     sealed_by: str,
     sealed_on: str,
     conversation_uuid: str,
+    dominant_lane: str | None = None,
 ) -> None:
     from ..db import cortex_conn
 
@@ -192,8 +194,16 @@ def _stamp_succession_fields(
     try:
         conn.execute(
             "UPDATE session_journals SET closed_by = ?, sealed_by = ?, "
-            "sealed_on = ?, conversation_uuid = ? WHERE session_id = ?",
-            ("succession", sealed_by, sealed_on, conversation_uuid, session_id),
+            "sealed_on = ?, conversation_uuid = ?, "
+            "dominant_lane = COALESCE(?, dominant_lane) WHERE session_id = ?",
+            (
+                "succession",
+                sealed_by,
+                sealed_on,
+                conversation_uuid,
+                dominant_lane,
+                session_id,
+            ),
         )
         conn.commit()
     finally:

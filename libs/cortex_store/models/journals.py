@@ -46,6 +46,7 @@ class _SessionJournalCommon(BaseModel):
     sealed_by: str | None = None
     sealed_on: str | None = None
     conversation_uuid: str | None = None
+    dominant_lane: str | None = None
 
 
 class SessionJournalCreate(_SessionJournalCommon):

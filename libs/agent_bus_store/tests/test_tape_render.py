@@ -106,10 +106,42 @@ def test_i8_chain_segments_no_double_render(tmp_path: Path) -> None:
 
 
 def test_i9_binding_from_entity_ids_and_dropped_row() -> None:
-    """I9: binding from entity_ids; foreign human row reported as dropped."""
-    assert _binding_for_journal({"entity_ids": ["agent-bus:6341"]}, "6341") == "dominant_write"
-    assert _binding_for_journal({"entity_ids": ["6341"]}, "6341") == "dominant_write"
-    assert _binding_for_journal({"entity_ids": ["agent-bus:9999"]}, "6341") is None
+    """I9: four-valued binding + dominant_lane; foreign rows dropped or read_only."""
+    assert _binding_for_journal(
+        {"entity_ids": ["agent-bus:6341"], "dominant_lane": "6341"},
+        "6341",
+    ) == ("dominant_write", "6341")
+    assert _binding_for_journal(
+        {"entity_ids": ["6341"], "dominant_lane": "6341"},
+        "6341",
+    ) == ("dominant_write", "6341")
+    assert _binding_for_journal(
+        {
+            "entity_ids": [],
+            "conversation_uuid": _UUID,
+            "dominant_lane": "6341",
+        },
+        "6341",
+        explicit_uuids={_UUID},
+    ) == ("explicit_cp", "6341")
+    assert _binding_for_journal(
+        {
+            "entity_ids": [],
+            "conversation_uuid": _UUID,
+            "dominant_lane": "6341",
+            "closed_by": "succession",
+        },
+        "6341",
+    ) == ("dominant_write", "6341")
+    assert _binding_for_journal(
+        {"entity_ids": [], "closed_by": "succession"},
+        "6341",
+    ) == ("sole", "6341")
+    assert _binding_for_journal(
+        {"entity_ids": ["agent-bus:9999"], "dominant_lane": "9999"},
+        "6341",
+    ) == ("read_only", "9999")
+    assert _binding_for_journal({"entity_ids": ["agent-bus:9999"]}, "6341") == (None, None)
 
     journals = [
         {
@@ -118,6 +150,7 @@ def test_i9_binding_from_entity_ids_and_dropped_row() -> None:
             "entity_ids": ["agent-bus:6341"],
             "file_path": "notes/system/transcripts/x.md",
             "conversation_uuid": None,
+            "dominant_lane": "6341",
         },
         {
             "id": 2,
@@ -125,6 +158,7 @@ def test_i9_binding_from_entity_ids_and_dropped_row() -> None:
             "entity_ids": ["agent-bus:9999"],
             "file_path": "notes/system/transcripts/y.md",
             "conversation_uuid": None,
+            "dominant_lane": "9999",
         },
     ]
     excluded = [
@@ -133,10 +167,15 @@ def test_i9_binding_from_entity_ids_and_dropped_row() -> None:
             "reason": "dropped",
         }
         for j in journals
-        if _binding_for_journal(j, "6341") is None
+        if _binding_for_journal(j, "6341")[0] is None
     ]
-    assert len(excluded) == 1
-    assert excluded[0]["session_id"] == "cursor-2026-09-07-100000-x02"
+    read_only = [
+        j["session_id"]
+        for j in journals
+        if _binding_for_journal(j, "6341")[0] == "read_only"
+    ]
+    assert len(excluded) == 0
+    assert read_only == ["cursor-2026-09-07-100000-x02"]
 
 
 def test_render_tape_messages_contain_user_and_assistant_speech(tmp_path: Path) -> None:
@@ -216,6 +255,7 @@ def test_i9_render_tape_reports_dropped_human_row(tmp_path: Path) -> None:
             "file_path": f"notes/system/transcripts/{foreign_sid}.md",
             "entity_ids": json.dumps(["agent-bus:9999"]),
             "closed_by": "cursor",
+            "dominant_lane": "9999",
         },
     ]
 
@@ -230,8 +270,10 @@ def test_i9_render_tape_reports_dropped_human_row(tmp_path: Path) -> None:
         result = render_tape(thread_id="6341")
 
     dropped = [e for e in result["excluded"] if e.get("reason") == "dropped"]
-    assert len(dropped) == 1
-    assert dropped[0]["session_id"] == foreign_sid
+    read_only = [e for e in result["excluded"] if e.get("reason") == "read_only"]
+    assert len(dropped) == 0
+    assert len(read_only) == 1
+    assert read_only[0]["session_id"] == foreign_sid
     assert result["messages"][0]["content"] == "User turn 1."
 
 

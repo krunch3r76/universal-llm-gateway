@@ -53,16 +53,69 @@ def _turn_count_verbatim(verbatim: str) -> int:
     return sum(1 for line in verbatim.splitlines() if line.startswith("## Turn"))
 
 
-def _binding_for_journal(journal: dict[str, Any], thread_id: str) -> str | None:
-    """Derive binding from journal row entity_ids; None ⇒ dropped from tape (I9)."""
+def _parse_entity_ids(journal: dict[str, Any]) -> list[str]:
     entity_ids = journal.get("entity_ids") or []
     if isinstance(entity_ids, str):
         entity_ids = json.loads(entity_ids)
-    agent_bus_ref = f"agent-bus:{thread_id}"
-    cites_lane = agent_bus_ref in entity_ids or thread_id in entity_ids
-    if not cites_lane:
-        return None
-    return "dominant_write"
+    return [str(x) for x in entity_ids]
+
+
+def _journal_cites_lane(journal: dict[str, Any], thread_id: str) -> bool:
+    from cortex_store.dispatch_ops._session_bus_thread_disposition import (
+        parse_bus_thread_refs,
+    )
+
+    return thread_id in parse_bus_thread_refs(_parse_entity_ids(journal))
+
+
+def _explicit_uuids_for_lane(thread_id: str) -> set[str]:
+    """Collect transcript ids named in CP ``Window:`` anchors on *thread_id*."""
+    explicit: set[str] = set()
+    for cp in list_checkpoint_turns(thread_id=thread_id):
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT body FROM turns WHERE thread = ? AND turn_number = ?",
+                (thread_id, cp.turn_number),
+            ).fetchone()
+        body = str(row["body"]) if row else ""
+        for anchor in _parse_window_lines(body):
+            tid = anchor.get("transcript_id")
+            if tid:
+                explicit.add(str(tid))
+    return explicit
+
+
+def _binding_for_journal(
+    journal: dict[str, Any],
+    thread_id: str,
+    *,
+    explicit_uuids: set[str] | None = None,
+) -> tuple[str | None, str | None]:
+    """Derive ``(binding, dominant_lane)`` for render; ``None`` binding ⇒ dropped."""
+    explicit = explicit_uuids or set()
+    dominant_lane = journal.get("dominant_lane")
+    if isinstance(dominant_lane, str):
+        dominant_lane = dominant_lane.strip() or None
+    uuid = journal.get("conversation_uuid")
+    uuid_str = str(uuid) if uuid else None
+    cites = _journal_cites_lane(journal, thread_id)
+    is_explicit = uuid_str is not None and uuid_str in explicit
+    closed_by = journal.get("closed_by")
+    is_succession = closed_by == "succession"
+    on_tape = cites or is_explicit or dominant_lane == thread_id or is_succession
+
+    if not on_tape:
+        if dominant_lane and dominant_lane != thread_id:
+            return "read_only", dominant_lane
+        return None, dominant_lane
+
+    if is_explicit:
+        return "explicit_cp", dominant_lane or thread_id
+    if cites or dominant_lane == thread_id:
+        return "dominant_write", dominant_lane or thread_id
+    if is_succession:
+        return "sole", dominant_lane or thread_id
+    return None, dominant_lane
 
 
 def _ordered_chain_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -428,11 +481,14 @@ def render_tape(
     segments: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
     lane_journals: list[dict[str, Any]] = []
+    explicit_uuids = _explicit_uuids_for_lane(thread_id)
     for journal in journals:
         sid = journal.get("session_id")
         if not sid:
             continue
-        binding = _binding_for_journal(journal, thread_id)
+        binding, dominant_lane = _binding_for_journal(
+            journal, thread_id, explicit_uuids=explicit_uuids
+        )
         if binding is None:
             excluded.append(
                 {
@@ -442,10 +498,20 @@ def render_tape(
                 }
             )
             continue
+        if binding == "read_only":
+            excluded.append(
+                {
+                    "session_id": sid,
+                    "reason": "read_only",
+                    "detail": f"foreign dominant_lane={dominant_lane}",
+                    "dominant_lane": dominant_lane,
+                }
+            )
+            continue
         if journal.get("file_path") is None:
             excluded.append({"session_id": sid, "reason": "segment_unavailable", "depth": "light"})
             continue
-        journal = {**journal, "_binding": binding}
+        journal = {**journal, "_binding": binding, "_dominant_lane": dominant_lane}
         lane_journals.append(journal)
 
     from cortex_store.dispatch_ops._shared import _FILES_ROOT
@@ -455,6 +521,7 @@ def render_tape(
             j for j in lane_journals if j.get("session_id") == chain_seg["session_id"]
         )
         binding = journal.get("_binding", "dominant_write")
+        dominant_lane = journal.get("_dominant_lane")
         segments.append(
             {
                 "session_id": chain_seg["session_id"],
@@ -465,6 +532,7 @@ def render_tape(
                 "verbatim_sha256": chain_seg["verbatim_sha256"],
                 "conversation_uuid": chain_seg["conversation_uuid"],
                 "binding": binding,
+                "dominant_lane": dominant_lane,
                 "boundary": None,
             }
         )
@@ -484,6 +552,7 @@ def render_tape(
                     "verbatim_sha256": seg.verbatim_sha256,
                     "conversation_uuid": seg.conversation_uuid,
                     "binding": journal.get("_binding", seg.binding),
+                    "dominant_lane": journal.get("_dominant_lane"),
                     "boundary": seg.boundary or (
                         "window_whole" if seg.turn_count >= 0 else None
                     ),

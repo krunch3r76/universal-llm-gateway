@@ -46,6 +46,13 @@ from .session_close_validate import (
 logger = get_logger("cortex-api.session_close")
 
 
+def _dominant_lane_from_entity_ids(entity_ids: list[str] | None) -> str | None:
+    from ..dispatch_ops._session_bus_thread_disposition import parse_bus_thread_refs
+
+    refs = parse_bus_thread_refs(entity_ids)
+    return refs[0] if refs else None
+
+
 def try_idempotent_session_close(
     body: SessionCloseRequest,
     ctx: ValidatedCloseContext,
@@ -455,13 +462,15 @@ def persist_session_close(
             if structural_fill
             else (body.closed_by if body.closed_by else body.agent)
         )
+        dominant_lane = _dominant_lane_from_entity_ids(body.entity_ids)
         if reuse_journal_row_id is not None:
             conn.execute(
                 "UPDATE session_journals SET "
                 "timestamp = ?, agent = ?, summary = ?, domains = ?, "
                 "decisions = ?, open_items = ?, entity_ids = ?, file_path = ?, "
                 "prior_session_id = ?, handoff_prompt = ?, source_ref = ?, "
-                "closed_by = ?, conversation_uuid = COALESCE(?, conversation_uuid) "
+                "closed_by = ?, conversation_uuid = COALESCE(?, conversation_uuid), "
+                "dominant_lane = COALESCE(?, dominant_lane) "
                 "WHERE id = ?",
                 (
                     ctx.now,
@@ -477,6 +486,7 @@ def persist_session_close(
                     journal_source_ref,
                     journal_closed_by,
                     conversation_uuid,
+                    dominant_lane,
                     reuse_journal_row_id,
                 ),
             )
@@ -495,8 +505,8 @@ def persist_session_close(
                 "(timestamp, agent, summary, domains, decisions, open_items, "
                 "entity_ids, file_path, session_id, prior_session_id, "
                 "handoff_prompt, source_ref, closed_by, sealed_by, sealed_on, "
-                "conversation_uuid) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "conversation_uuid, dominant_lane) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ctx.now,
                     body.agent,
@@ -514,6 +524,7 @@ def persist_session_close(
                     sealed_by,
                     sealed_on,
                     conversation_uuid,
+                    dominant_lane,
                 ),
             )
             journal_row_id = cur.lastrowid or 0
