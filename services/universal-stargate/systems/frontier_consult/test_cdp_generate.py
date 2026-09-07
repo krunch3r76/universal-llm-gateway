@@ -33,9 +33,7 @@ def test_is_cdp_model() -> None:
 
 
 def test_reject_cursor_sdk_seat_with_cdp() -> None:
-    reject_cursor_sdk_seat_with_cdp(
-        seat=None, model="cdp/opus-4.8", request_id="r1"
-    )
+    reject_cursor_sdk_seat_with_cdp(seat=None, model="cdp/opus-4.8", request_id="r1")
     reject_cursor_sdk_seat_with_cdp(
         seat="cursor-sdk", model="cursor/grok-4.6", request_id="r1"
     )
@@ -47,9 +45,7 @@ def test_reject_cursor_sdk_seat_with_cdp() -> None:
 
 
 def test_reject_role_with_substrate_model() -> None:
-    reject_role_with_substrate_model(
-        role=None, model="cdp/opus-5", request_id="r1"
-    )
+    reject_role_with_substrate_model(role=None, model="cdp/opus-5", request_id="r1")
     reject_role_with_substrate_model(
         role="gatherer", model="openai/gpt-5.5", request_id="r1"
     )
@@ -69,9 +65,7 @@ def test_reject_dispatch_lane_with_cdp() -> None:
     reject_dispatch_lane_with_cdp(
         dispatch_lane=None, model="cdp/opus-5", request_id="r1"
     )
-    reject_dispatch_lane_with_cdp(
-        dispatch_lane="", model="cdp/fable", request_id="r1"
-    )
+    reject_dispatch_lane_with_cdp(dispatch_lane="", model="cdp/fable", request_id="r1")
     reject_dispatch_lane_with_cdp(
         dispatch_lane="cursor-implement",
         model="cursor/grok-4.6",
@@ -122,9 +116,7 @@ def test_stage_inputs_prepends_claude_slash_skills(tmp_path, monkeypatch) -> Non
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-1/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith(
-        "/ulg-for-llms\n/reasoning-posture\n/consult-posture\n"
-    )
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n/consult-posture\n")
     assert "## ask" in text
     assert staged.staged is True
 
@@ -146,9 +138,7 @@ def test_stage_inputs_omitted_skills_gets_judgment_skill(tmp_path, monkeypatch) 
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-light/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith(
-        "/ulg-for-llms\n/reasoning-posture\n"
-    )
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
     assert "## light" in text
     assert staged.staged is True
     assert "<skills_inline>" not in text
@@ -173,9 +163,7 @@ def test_stage_inputs_inlines_non_claude_skills(tmp_path, monkeypatch) -> None:
     )
     text = prompt_path.read_text(encoding="utf-8")
     # Judgment skill always prepended as slash; caller non-Claude stays inline.
-    assert text.startswith(
-        "/ulg-for-llms\n/reasoning-posture\n"
-    )
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
     assert "<skills_inline>" in text
     assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text
@@ -222,9 +210,7 @@ def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith(
-        "/ulg-for-llms\n/reasoning-posture\n"
-    )
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
     assert "/investigation-economy" not in text.split("<skills_inline>", 1)[0]
     assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text
@@ -242,9 +228,7 @@ def test_assert_model_carded_skips_cdp() -> None:
 def test_check_agent_model_consistency_skips_cdp_prefix() -> None:
     from agent_seat.registry import check_agent_model_consistency
 
-    assert (
-        check_agent_model_consistency("claude-web", "cdp/opus-4.8") is None
-    )
+    assert check_agent_model_consistency("claude-web", "cdp/opus-4.8") is None
 
 
 def _ok_result() -> CdpGenerateResult:
@@ -555,7 +539,9 @@ def test_format_cdp_result_body_completed_without_proof_honest() -> None:
         },
     )
     text = format_cdp_result_body(result)
-    assert "- archive_uri: `cortex://notes/system/threads/cdp-ask-archive-new.md`" in text
+    assert (
+        "- archive_uri: `cortex://notes/system/threads/cdp-ask-archive-new.md`" in text
+    )
     assert "- body_len: 15" in text
     assert "- deliverable_present_unproven: true" in text
     assert "do not blind re-dispatch" in text
@@ -774,6 +760,7 @@ async def test_post_cdp_turn_retries_after_unread_409(
     assert len(posts) == 2
     # On-behalf posts as endpoint address
     assert worker.CDP_REPLY_FROM == "web-anthropic"
+
 
 def test_team_dispatch_generate_body_accepts_purpose() -> None:
     from systems.frontier_consult.route import TeamDispatchGenerateBody
@@ -1025,16 +1012,24 @@ async def test_dispatch_cdp_generate_forwards_generation_options(
     from systems.frontier_consult import cdp_generate as mod
     from systems.frontier_consult.route import TeamDispatchGenerateBody
 
-    monkeypatch.setattr(mod, "_stage_inputs", lambda **kw: MagicMock(
-        prompt_uri="cortex://notes/system/ephemeral/prompt.md", staged=True
-    ))
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: MagicMock(
+            prompt_uri="cortex://notes/system/ephemeral/prompt.md", staged=True
+        ),
+    )
     monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
     monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
-    monkeypatch.setattr(mod, "build_handoff_result", lambda **kw: {
-        "handoff_status": "ok",
-        "poll_hint": {"thread_id": "1", "from_agent": "web-anthropic"},
-    })
+    monkeypatch.setattr(
+        mod,
+        "build_handoff_result",
+        lambda **kw: {
+            "handoff_status": "ok",
+            "poll_hint": {"thread_id": "1", "from_agent": "web-anthropic"},
+        },
+    )
     monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
 
     captured: list[dict[str, object]] = []
@@ -1113,7 +1108,7 @@ async def test_build_dispatch_body_cdp_raises_substrate_unimplemented() -> None:
 
 
 def test_format_cdp_result_body_failed_carries_envelope_fields() -> None:
-    """L1-AC-c: FAILED body carries thread_id, pointer_turn, dispatch_link, cse bullets."""
+    """L1-AC-c: FAILED body carries thread_id, pointer_turn, dispatch_link, cse."""
     result = CdpGenerateResult(
         ok=False,
         body="",
@@ -1188,17 +1183,25 @@ async def test_cdp_admit_registers_dispatch_link_row(
     monkeypatch.setattr(
         mod,
         "_stage_inputs",
-        lambda **kw: type("Staged", (), {
-            "prompt_uri": "cortex://notes/system/ephemeral/prompt.md",
-            "staged": True,
-        })(),
+        lambda **kw: type(
+            "Staged",
+            (),
+            {
+                "prompt_uri": "cortex://notes/system/ephemeral/prompt.md",
+                "staged": True,
+            },
+        )(),
     )
     monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
     monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
-    monkeypatch.setattr(mod, "build_handoff_result", lambda **kw: {
-        "handoff_status": "ok",
-        "poll_hint": {"thread_id": thread_id, "from_agent": "web-anthropic"},
-    })
+    monkeypatch.setattr(
+        mod,
+        "build_handoff_result",
+        lambda **kw: {
+            "handoff_status": "ok",
+            "poll_hint": {"thread_id": thread_id, "from_agent": "web-anthropic"},
+        },
+    )
     monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
 
     captured: list[dict[str, object]] = []

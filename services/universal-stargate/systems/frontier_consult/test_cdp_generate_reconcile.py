@@ -14,11 +14,11 @@ from claude_bundles.cdp_model_endpoint import (
 )
 
 from systems.frontier_consult import cdp_generate_reconcile as reconcile
-from systems.frontier_consult.cdp_generate_inflight_ledger import _connect
 from systems.frontier_consult.cdp_dispatch_envelope import (
     record_cdp_admit,
     reset_cdp_dispatch_envelope_for_tests,
 )
+from systems.frontier_consult.cdp_generate_inflight_ledger import _connect
 from systems.frontier_consult.cdp_generate_reconcile import (
     finalize_cdp_generate,
     max_open_leg_s,
