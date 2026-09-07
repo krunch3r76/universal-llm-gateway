@@ -15,11 +15,9 @@ from implement_admission.conductor_materialize import (
     extract_scoreboard_uri,
     load_conductor_context,
     materialize_conductor,
-    rematerialize_context_from_dispatch,
     render_sparse_scoreboard,
     resolve_entry_gate,
 )
-from implement_admission.conductor_witness import FoldDeps
 from implement_admission.conductor_score_journal import (
     forward_mutate_tip,
     load_journal,
@@ -30,6 +28,7 @@ from implement_admission.conductor_score_journal import (
     walk_journal_to_tip,
 )
 from implement_admission.conductor_summon import resolve_summon_mode
+from implement_admission.conductor_witness import FoldDeps
 
 
 class _StubCortex:

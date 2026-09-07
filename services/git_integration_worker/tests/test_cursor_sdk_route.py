@@ -1464,7 +1464,9 @@ async def test_idle_deadline_wait_rearms_on_completed_toolcall() -> None:
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     clock = {"t": 0.0}
-    now_fn = lambda: clock["t"]
+
+    def now_fn() -> float:
+        return clock["t"]
     idle_budget = 100.0
     counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
     worker_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -1511,7 +1513,9 @@ async def test_idle_deadline_wait_fires_without_completed_progress() -> None:
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     clock = {"t": 0.0}
-    now_fn = lambda: clock["t"]
+
+    def now_fn() -> float:
+        return clock["t"]
     idle_budget = 60.0
     counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
 
@@ -1551,7 +1555,9 @@ async def test_idle_deadline_wait_ignores_non_completed_bumps() -> None:
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     clock = {"t": 0.0}
-    now_fn = lambda: clock["t"]
+
+    def now_fn() -> float:
+        return clock["t"]
     idle_budget = 60.0
     counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
     seeded_at = counter.last_progress_at()
@@ -1651,7 +1657,9 @@ def test_live_tool_call_counter_success_filter() -> None:
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     clock = {"t": 0.0}
-    now_fn = lambda: clock["t"]
+
+    def now_fn() -> float:
+        return clock["t"]
     counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
     seeded = counter.last_progress_at()
 
@@ -1696,7 +1704,7 @@ async def test_dispatch_idle_timeout_payload_fields(
     orphan_events: list[dict[str, object]] = []
 
     clock = {"t": 0.0}
-    now_fn = lambda: clock["t"]
+
     monkeypatch.setattr(route_mod, "_SDK_TIMEOUT_S", 60.0)
     monkeypatch.setattr(route_mod, "_SDK_TIMEOUT_BUFFER_S", 0.0)
     monkeypatch.setattr(

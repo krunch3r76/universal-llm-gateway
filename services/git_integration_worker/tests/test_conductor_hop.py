@@ -982,7 +982,9 @@ async def test_ac_b5_evaluate_hop_budget_at_most_once_on_announce_path() -> None
 @pytest.mark.offline
 def test_ac_p1_5_rematerialize_context_roundtrip() -> None:
     """AC-P1-5 — hop body A5 keys round-trip through RematerializeContext."""
-    from implement_admission.conductor_materialize import rematerialize_context_from_dispatch
+    from implement_admission.conductor_materialize import (
+        rematerialize_context_from_dispatch,
+    )
 
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])

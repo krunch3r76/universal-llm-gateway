@@ -299,7 +299,7 @@ def test_ac_p1_5_prepare_conductor_packet_rematerialize_roundtrip(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """AC-P1-5 — prepare_conductor_packet forwards RematerializeContext to materialize."""
+    """AC-P1-5 — prepare_conductor_packet forwards RematerializeContext."""
     from implement_admission.conductor_materialize import RematerializeContext
 
     captured: dict[str, object] = {}
