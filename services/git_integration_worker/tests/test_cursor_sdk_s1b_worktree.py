@@ -402,3 +402,132 @@ def test_ac_b_3_registry_register_emits(
     assert emitted[0]["trigger"] == "register"
     assert emitted[0]["source_repo"] == str(source_repo.resolve())
 
+
+_LEGACY_LANE_DDL = """
+CREATE TABLE cursor_sdk_lane_worktrees (
+    thread_id TEXT PRIMARY KEY,
+    worktree_path TEXT NOT NULL,
+    branch_name TEXT NOT NULL,
+    branch_point TEXT NOT NULL,
+    minted_at TEXT NOT NULL,
+    last_dispatch_id TEXT,
+    salvage_refusal_count INTEGER NOT NULL DEFAULT 0,
+    quarantined_at TEXT
+);
+"""
+
+
+def _run_legacy_migration(conn) -> None:
+    import services.git_integration_worker.cursor_sdk_worktree_registry as reg
+
+    reg._SCHEMA_MIGRATED = False
+    reg.ensure_worktree_schema(conn)
+    conn.commit()
+
+
+def test_migrate_lane_worktrees_pk_empty_legacy_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B1: empty legacy PK table migrates without commit/rollback crash."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    CursorDispatchLedger.instance()
+
+    with _connect() as conn:
+        conn.execute("DROP TABLE IF EXISTS cursor_sdk_lane_worktrees")
+        conn.executescript(_LEGACY_LANE_DDL)
+        conn.commit()
+        _run_legacy_migration(conn)
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(cursor_sdk_lane_worktrees)")
+        }
+        assert "source_repo" in cols
+        assert (
+            conn.execute("SELECT COUNT(*) FROM cursor_sdk_lane_worktrees").fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE name='cursor_sdk_lane_worktrees_new'"
+            ).fetchone()
+            is None
+        )
+
+
+def test_migrate_lane_worktrees_pk_populated_legacy_table(
+    source_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B1: legacy rows resolve ``source_repo`` via ``last_dispatch_id`` join."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    CursorDispatchLedger.instance()
+    repo_str = str(source_repo.resolve())
+    wt_path = tmp_path / "lane-legacy"
+    wt_path.mkdir()
+
+    with _connect() as conn:
+        conn.execute("DROP TABLE IF EXISTS cursor_sdk_lane_worktrees")
+        conn.executescript(_LEGACY_LANE_DDL)
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, resolved_model, status, "
+            "record_json, source_repo) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "disp-mig",
+                "fp",
+                "legacy-t",
+                "cursor/composer-2.5",
+                "completed",
+                "{}",
+                repo_str,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO cursor_sdk_lane_worktrees VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-t",
+                str(wt_path),
+                "cursor-sdk/lane-legacy-t",
+                "abc123",
+                "2026-01-01T00:00:00+00:00",
+                "disp-mig",
+                0,
+                None,
+            ),
+        )
+        conn.commit()
+        _run_legacy_migration(conn)
+        row = conn.execute(
+            "SELECT source_repo, thread_id FROM cursor_sdk_lane_worktrees"
+        ).fetchone()
+        assert row is not None
+        assert row["source_repo"] == repo_str
+        assert row["thread_id"] == "legacy-t"
+
+
+def test_migrate_lane_worktrees_pk_retry_after_orphan_new_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B1: orphan ``_new`` table from a failed attempt does not poison retry."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    CursorDispatchLedger.instance()
+
+    with _connect() as conn:
+        conn.execute("DROP TABLE IF EXISTS cursor_sdk_lane_worktrees")
+        conn.executescript(_LEGACY_LANE_DDL)
+        conn.execute("CREATE TABLE cursor_sdk_lane_worktrees_new (thread_id TEXT)")
+        conn.commit()
+        _run_legacy_migration(conn)
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(cursor_sdk_lane_worktrees)")
+        }
+        assert "source_repo" in cols
+

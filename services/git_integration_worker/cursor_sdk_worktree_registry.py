@@ -224,9 +224,10 @@ def _migrate_lane_worktrees_pk(conn: sqlite3.Connection) -> None:
     if "source_repo" in cols:
         _SCHEMA_MIGRATED = True
         return
+    conn.execute("DROP TABLE IF EXISTS cursor_sdk_lane_worktrees_new")
     conn.execute("BEGIN IMMEDIATE")
     try:
-        conn.executescript(
+        conn.execute(
             """
             CREATE TABLE cursor_sdk_lane_worktrees_new (
                 source_repo           TEXT NOT NULL,
@@ -239,7 +240,7 @@ def _migrate_lane_worktrees_pk(conn: sqlite3.Connection) -> None:
                 salvage_refusal_count INTEGER NOT NULL DEFAULT 0,
                 quarantined_at        TEXT,
                 PRIMARY KEY (source_repo, thread_id)
-            );
+            )
             """
         )
         rows = conn.execute(
@@ -307,7 +308,7 @@ def _migrate_lane_worktrees_pk(conn: sqlite3.Connection) -> None:
         conn.execute("COMMIT")
         _SCHEMA_MIGRATED = True
     except Exception:
-        conn.execute("ROLLBACK")
+        conn.rollback()
         raise
 
 
