@@ -177,6 +177,21 @@ Full proposal: `cortex://notes/system/specs/implement-dispatch-lifecycle.md`.
 **Access**: `cortex(tool="entities", arguments='{"type": "todo", "workflow_state": "open"}')`
 or SQL via `sql(db="cortex", sql="SELECT ... FROM entities WHERE type='todo' AND workflow_state='open'")`.
 
+## Close posture (binding)
+
+**Invariant:** `shipped ∧ acceptance_met ⇒ close(todo)` in the same arc — via
+`pipeline:todo-close`. ¬ leave `workflow_state` `open`/`in_progress` when the
+work is live and acceptance is met.
+
+| Rule | Bind |
+|---|---|
+| **Closed todos hold truth** | `workflow_state=done` + `VERIFIED COMPLETE` closure assertion + `closure_summary_uri` is the durable record of what shipped |
+| **Follow-ons ≠ open parent** | Deferred items, advisories, and nice-to-haves **spin out** — new `todo:` (`workflow_state=deferred` or `attributes.backlog=true`) or `friction(category=feature)` on the owner service — never keep the shipping todo open to track them |
+| **Park on the new entity** | `relationship_create` (`derived_from` → closed parent) + charter assertion citing parent closure; residual-imprint on the follow-on, not prose on the closed todo |
+| **Session / arc close** | Reconcile every touched todo (`entity_get` → close if shippable) before `session_close` — same posture, not a separate gate |
+
+Operator confirmation is for *ambiguous* completion, not for verified ship.
+
 **Completion (preferred)**: `pipeline(op="run", pipeline_id="todo-close",
 messages=[{"role":"user","content":"close"}], options={...closure payload...})`
 — atomically writes the closure **sidecar** (`notes/system/todos/{slug}-closure.md`

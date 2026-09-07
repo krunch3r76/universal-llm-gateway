@@ -98,7 +98,7 @@ Markdown section writes are text-file-only; converted formats reject.
 
 Handoff implement packets use six line-anchored XML blocks (`<scope>`, `<invariants>`, `<task_guidance>`, `<corpus>`, `<mcp_capabilities>`, `<output_format>`). On those files, `md_list` surfaces each block as a navigable section and `md_read(section="<task_guidance>")` (or bare `task_guidance`) returns the block body without the tags. ATX heading navigation is unchanged on normal markdown.
 
-`md_replace | md_append | md_insert ⇒ content = section body only`, not the heading. If body opens with an ATX heading matching target level/text, server strips it and returns `normalized_heading:true`.
+`md_replace | md_append | md_insert ⇒ content = section body only`, not the heading. **`md_replace` requires `target`** — patches within the section only; use **`md_rewrite_section`** for a full body rewrite after `md_read`. Heading-less normalization applies to `md_rewrite_section` / `md_append` / `md_insert` only.
 
 `md_insert` creates a new section: `heading`, `level ∈ 1..6`, `position ∈ {end, after, before}`. `after/before` require `section` anchor; `after` lands past the anchor's whole subtree. Use `md_insert`, not append/replace, to add a section.
 

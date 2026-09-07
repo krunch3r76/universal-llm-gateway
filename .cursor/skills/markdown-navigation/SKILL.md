@@ -21,7 +21,8 @@ for cortex files.
 |---|---|---|
 | `md_list` | `path` | List headings with path, level, line, chars. Always start here on unfamiliar docs. |
 | `md_read` | `path`, `section` | Read one section body. Empty `section` reads preamble. |
-| `md_replace` | `path`, `section`, `content` | Replace section body; heading line preserved. |
+| `md_replace` | `path`, `section`, `target`, `content` | Patch substring within section body (`target` required). |
+| `md_rewrite_section` | `path`, `section`, `content` | Replace entire section body (explicit rewrite). |
 | `md_append` | `path`, `section`, `content` | Append to section body. |
 | `md_insert` | `path`, `heading`, `level`, `position` | Create a new section at `end`/`after`/`before`; `after`/`before` require anchor `section`. |
 | `md_delete` | `path`, `section` | Remove heading + body. |
@@ -52,7 +53,9 @@ Ambiguity returns full paths; copy the exact `path` from `md_list`. Literal `/` 
 
 ## Heading-less-content contract
 
-For `md_replace`, `md_append`, `md_insert`: `content = body_only`.
+For `md_replace`, `md_append`, `md_insert`: `content = body_only` (patch replacement for `md_replace`).
+
+`md_replace` **requires `target`** — it patches within the section and cannot truncate unmentioned content. Full section rewrite ⇒ `md_rewrite_section` after `md_read`.
 
 - Matching ATX heading at content start (same level + text) is stripped and returns `normalized_heading:true`.
 - Non-matching headings are literal Markdown and can create sibling/child sections. To add a real new section, use `md_insert` with explicit `heading`, `level`, `position`.
@@ -80,7 +83,8 @@ Use `chars` from `md_list` to decide whether to read a section directly or desce
 ```text
 fs(op="md_list", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md")
 fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="fs")
-fs(op="md_replace", sandbox="workspaces", path="universal-llm-gateway/notes/research.md", section="Background", content="Updated text.\n")
+fs(op="md_replace", sandbox="workspaces", path="universal-llm-gateway/notes/research.md", section="Background", target="old paragraph", content="Updated text.\n")
+fs(op="md_rewrite_section", sandbox="workspaces", path="universal-llm-gateway/notes/research.md", section="Background", content="Fully new section body.\n")
 fs(op="md_insert", sandbox="workspaces", path="universal-llm-gateway/notes/research.md", heading="Risks", level=2, position="after", section="Background", content="- risk\n")
 fs(op="md_delete", sandbox="workspaces", path="universal-llm-gateway/notes/research.md", section="Scratch")
 fs(op="md_read", sandbox="workspaces", path="universal-llm-gateway/docs/tool-reference.md", section="fs")

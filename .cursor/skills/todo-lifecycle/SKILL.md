@@ -118,7 +118,18 @@ Thread-consolidation preflight first: pre-stage a pending+empty shell thread, ve
 
 ### 9. Ship
 
-Code is **not live until an explicit service restart** — restart is operator-gated, never assumed. Identify which service loads the changed code before asking, ¬ reuse whichever was restarted last. Close the todo via the atomic todo-close pipeline → `rule:todo-lifecycle` § Completion (+ its session-close reconciliation gate).
+Code is **not live until an explicit service restart** — restart is operator-gated, never assumed. Identify which service loads the changed code before asking, ¬ reuse whichever was restarted last.
+
+**Close posture (binding):** `shipped ∧ acceptance_met ⇒ close(todo)` same arc.
+Closed todos hold truth — `workflow_state=done`, `VERIFIED COMPLETE` assertion,
+`closure_summary_uri`. Follow-ons / deferred / advisories **spin out** to new
+`todo:` (`deferred` or `backlog=true`) or `friction(category=feature)`; park
+residuals on the new entity (`derived_from` parent), ¬ keep the shipping todo
+open. Operator confirmation only when completion is ambiguous, not after
+verified ship.
+
+Close via the atomic todo-close pipeline → `rule:todo-lifecycle` § Completion
+(+ its session-close reconciliation gate).
 
 ## Known gotchas (durable)
 

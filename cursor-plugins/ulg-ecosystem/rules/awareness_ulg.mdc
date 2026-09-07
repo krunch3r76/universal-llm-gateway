@@ -29,7 +29,10 @@ validated against `workflow_schemas` registry), `attributes: {priority, domain}`
 1. Query todo entities — check for existing items before proposing new work
 2. Before proposing a multi-todo arc, check open **`project:`** entities (`cortex(tool="entities", arguments='{"type": "project", "workflow_state": "open"}')`) and attach related todos via graph edges — not a master-`todo:`
 3. When a discussion produces a deferred idea or future enhancement, create via `cortex(tool="entity_create", ...)`
-4. When completing work, close via the `pipeline:todo-close` pipeline (confirm with user first):
+4. When work ships and acceptance is met, **close the todo same arc** via
+   `pipeline:todo-close` — closed todos hold truth; spin deferred/follow-ons
+   into new `todo:` or feature friction (see `todo_ulg` § Close posture). Only
+   ask the operator when completion is genuinely ambiguous.
    `pipeline(op="run", pipeline_id="todo-close", messages=[{"role":"user","content":"close"}], options={"todo_id": "todo:...", "summary": "...", ...})`
    — writes the closure assertion + references + depends_on edges + `workflow_state=done` atomically.
    Manual `entity_update` is permitted as a fallback; cortex-api emits
