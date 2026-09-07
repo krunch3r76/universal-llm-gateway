@@ -37,3 +37,11 @@ profile = "~/sms-bridge/profiles/uber-web"
 standing = false
 lapsed_url_prefixes = []
 extra_args = ["--ozone-platform=x11", "--disable-background-timer-throttling", "https://auth.uber.com/v2/"]
+
+[lanes.calendar]
+port = 9290
+display = ":1"
+profile = "~/.gateway/chrome-messages"
+standing = true
+lapsed_url_prefixes = ["workspace.google.com/intl", "accounts.google.com/signin"]
+extra_args = ["https://calendar.google.com/calendar/u/0/r/week"]
