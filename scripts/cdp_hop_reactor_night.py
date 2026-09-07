@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -135,6 +136,21 @@ def parse_composer_signals(text: str) -> list[tuple[str, str]]:
 def parse_next_leg(text: str) -> str | None:
     matches = NEXT_LEG_RE.findall(text)
     return matches[-1].strip() if matches else None
+
+
+def append_composer_task(state: ReactorState, todo_id: str, task: str) -> None:
+    key = (todo_id, task)
+    seen = {(item["todo_id"], item["task"]) for item in state.pending_composer}
+    if key in seen:
+        return
+    state.pending_composer.append({"todo_id": todo_id, "task": task})
+
+
+def night_runner_enabled(*, cli_flag: bool = False) -> bool:
+    if cli_flag:
+        return True
+    token = os.environ.get("CDP_HOP_NIGHT_RUNNER", "").strip().lower()
+    return token in {"1", "true", "yes"}
 
 
 def build_successor_prompt(

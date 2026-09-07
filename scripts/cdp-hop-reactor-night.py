@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Mock CDP hop reactor — harvest Fable chat, respawn with continuity, bounded Composer."""
+"""Mock CDP hop reactor — harvest Fable chat, respawn with continuity, bounded Composer.
+
+Default mode (hold): one harvest episode then exit. Enable multi-episode night runner with
+``--night-runner`` or ``CDP_HOP_NIGHT_RUNNER=1`` (intended near usage-reset / end of week).
+"""
 
 from __future__ import annotations
 
@@ -17,10 +21,12 @@ import httpx
 from bus_watch.state import write_state
 from cdp_hop_reactor_night import (
     ReactorState,
+    append_composer_task,
     build_successor_prompt,
     format_harvest_turns,
     load_harvest_chain,
     load_state,
+    night_runner_enabled,
     parse_composer_signals,
     parse_next_leg,
     save_harvest,
@@ -28,8 +34,10 @@ from cdp_hop_reactor_night import (
 )
 from cdp_hop_reactor_wait import (
     active_row_absent_streak,
+    adopt_at_cycle_start,
     adoptable_lane_rows,
     build_harvest_request,
+    cursor_advanced_since,
     harvest_miss_outcome,
     http_json_status,
     id_fields,
@@ -353,10 +361,19 @@ def wait_fable_stream_end(state: ReactorState) -> tuple[str, None]:
         time.sleep(POLL_S)
 
 
-def run_cycle(state: ReactorState, *, deadline_epoch: float) -> str:
+def run_cycle(
+    state: ReactorState,
+    *,
+    deadline_epoch: float,
+    night_runner: bool,
+) -> str:
+    if not night_runner and state.fable_episode >= 1:
+        return "hold_mode"
     if time.time() >= deadline_epoch or state.fable_episode >= MAX_FABLE_EPISODES:
         return "deadline" if time.time() >= deadline_epoch else "episode_budget"
-    composer_notes = drain_composer_queue(state)
+    baseline_cursor = state.fable_last_turn_ordinal
+    cycle_dispatched = False
+    composer_notes = drain_composer_queue(state) if night_runner else []
     prompt = build_successor_prompt(
         episode=state.fable_episode + 1, charter_path=_CHARTER,
         harvest_chain=load_harvest_chain(_HARVEST_DIR, HARVEST_CHAIN_DEPTH, state.last_harvest_seq),
@@ -364,7 +381,9 @@ def run_cycle(state: ReactorState, *, deadline_epoch: float) -> str:
         steer_hint=load_steer_hint(steer_path(_STATE_DIR)),
     )
     work = active_work() or {}
-    if adopt_seated_lane(state, work, state.fable_thread):
+    if adopt_at_cycle_start(state.last_harvest_seq) and adopt_seated_lane(
+        state, work, state.fable_thread
+    ):
         log(
             "fable_resume_seated",
             execution_id=state.fable_satellite_execution_id,
@@ -372,7 +391,11 @@ def run_cycle(state: ReactorState, *, deadline_epoch: float) -> str:
         )
     else:
         exec_id = fire_fable(state, prompt)
+        if exec_id:
+            cycle_dispatched = True
         if not exec_id:
+            if state.last_harvest_seq > 0:
+                return "successor_dispatch_fail"
             if state.fable_chat_url:
                 log("fable_resume_chat_url", chat_url=state.fable_chat_url)
             else:
@@ -396,13 +419,24 @@ def run_cycle(state: ReactorState, *, deadline_epoch: float) -> str:
     turns = harvest.get("turns") or []
     outcome = str(harvest.get("outcome") or "unknown")
     if outcome == "harvested" and len(turns) >= 1:
+        if not cursor_advanced_since(baseline_cursor, state.fable_last_turn_ordinal) and not cycle_dispatched:
+            log(
+                "episode_reject_no_advance",
+                baseline_cursor=baseline_cursor,
+                cursor=state.fable_last_turn_ordinal,
+                **id_fields(state),
+            )
+            state.fable_episode -= 1
+            save_state(_STATE_PATH, state)
+            return "no_cursor_advance"
         state.last_harvest_seq += 1
         save_harvest(_HARVEST_DIR, state.last_harvest_seq, execution_id=state.fable_satellite_execution_id,
                      outcome=outcome, body=format_harvest_turns(turns))
     state.last_next_leg = parse_next_leg(format_harvest_turns(turns))
-    for todo_id, task in parse_composer_signals(format_harvest_turns(turns)):
-        if state.composer[todo_id].count < state.composer[todo_id].max_per_todo:
-            state.pending_composer.append({"todo_id": todo_id, "task": task})
+    if night_runner:
+        for todo_id, task in parse_composer_signals(format_harvest_turns(turns)):
+            if state.composer[todo_id].count < state.composer[todo_id].max_per_todo:
+                append_composer_task(state, todo_id, task)
     save_state(_STATE_PATH, state)
     log("episode_complete", episode=state.fable_episode, harvest_seq=state.last_harvest_seq)
     return "continue"
@@ -413,29 +447,42 @@ def main() -> int:
     parser.add_argument("--fable-thread", required=True)
     parser.add_argument("--deadline-hours", type=float, default=float(os.environ.get("CDP_HOP_DEADLINE_HOURS", "6")))
     parser.add_argument("--once", action="store_true")
+    parser.add_argument(
+        "--night-runner",
+        action="store_true",
+        help="Multi-episode hop loop until deadline/budget (default: hold after first harvest)",
+    )
     parser.add_argument("--state-file", default="")
     args = parser.parse_args()
+    night_runner = night_runner_enabled(cli_flag=args.night_runner)
     state_path = Path(args.state_file) if str(args.state_file).strip() else None
     state = load_state(_STATE_PATH)
     state.fable_thread = args.fable_thread.strip()
     for budget in state.composer.values():
         budget.max_per_todo = MAX_COMPOSER_PER_TODO
     deadline_epoch = time.time() + args.deadline_hours * 3600.0
-    log("start", fable_thread=state.fable_thread, episode=state.fable_episode)
+    log(
+        "start",
+        fable_thread=state.fable_thread,
+        episode=state.fable_episode,
+        night_runner=night_runner,
+    )
     if state_path:
         write_state(state_path, status="armed", fable_thread=state.fable_thread, episode=state.fable_episode, label="cdp-hop")
     while True:
         if state_path:
             write_state(state_path, status="running", fable_thread=state.fable_thread, episode=state.fable_episode)
-        outcome = run_cycle(state, deadline_epoch=deadline_epoch)
+        outcome = run_cycle(state, deadline_epoch=deadline_epoch, night_runner=night_runner)
         if outcome == "continue":
-            if args.once:
+            if args.once or not night_runner:
                 if state_path:
                     write_state(state_path, status="once_complete", episode=state.fable_episode)
-                return 0
+                return stop("hold_mode" if not night_runner else "once_complete", episodes=state.fable_episode)
             continue
         if state_path:
             write_state(state_path, status="stopped", reason=outcome, episode=state.fable_episode)
+        if outcome == "hold_mode":
+            return stop("hold_mode", episodes=state.fable_episode)
         if outcome == "deadline":
             return stop("deadline", episodes=state.fable_episode)
         if outcome == "episode_budget":

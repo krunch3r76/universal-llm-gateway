@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from cdp_hop_reactor_night import ReactorState
+from cdp_hop_reactor_night import ReactorState, append_composer_task, night_runner_enabled
 from cdp_hop_reactor_wait import (
     ROW_HOLD_MAX_POLLS,
     SEATED_NO_STREAM_EXECUTION,
     active_row_absent_streak,
+    adopt_at_cycle_start,
     adoptable_lane_rows,
     build_harvest_request,
+    cursor_advanced_since,
     harvest_miss_outcome,
     harvest_settled,
     idle_step,
@@ -366,3 +369,32 @@ def test_adopt_refuses_foreign_purpose_even_with_gate_evidence():
 def test_harvest_settled():
     assert harvest_settled({"outcome": "harvested", "turns": [{"t": 1}]}) is True
     assert harvest_settled({"outcome": "harvested", "turns": [], "streaming": True}) is False
+
+
+def test_adopt_at_cycle_start_only_before_first_harvest():
+    assert adopt_at_cycle_start(0) is True
+    assert adopt_at_cycle_start(1) is False
+
+
+def test_cursor_advanced_since():
+    assert cursor_advanced_since(None, 3) is True
+    assert cursor_advanced_since(3, 3) is False
+    assert cursor_advanced_since(3, 5) is True
+    assert cursor_advanced_since(3, None) is False
+
+
+def test_append_composer_task_dedupes():
+    state = ReactorState()
+    append_composer_task(state, "10094", "fix lint")
+    append_composer_task(state, "10094", "fix lint")
+    assert len(state.pending_composer) == 1
+
+
+def test_night_runner_enabled_default_off():
+    old = os.environ.pop("CDP_HOP_NIGHT_RUNNER", None)
+    try:
+        assert night_runner_enabled(cli_flag=False) is False
+        assert night_runner_enabled(cli_flag=True) is True
+    finally:
+        if old is not None:
+            os.environ["CDP_HOP_NIGHT_RUNNER"] = old

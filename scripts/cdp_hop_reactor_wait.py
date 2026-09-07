@@ -241,6 +241,20 @@ def should_drop_satellite_id(harvest: dict[str, Any]) -> bool:
     return outcome in {"not_attached", "dormant"}
 
 
+def adopt_at_cycle_start(last_harvest_seq: int) -> bool:
+    """Resume a seated mission lane only before the first harvest of a run."""
+    return last_harvest_seq == 0
+
+
+def cursor_advanced_since(baseline: int | None, current: int | None) -> bool:
+    """True when harvest cursor moved forward (or baseline was unknown)."""
+    if current is None:
+        return False
+    if baseline is None:
+        return True
+    return current > baseline
+
+
 def harvest_miss_outcome(outcome: str, *, turns: list[Any] | None = None) -> bool:
     if outcome in HARVEST_MISS_OUTCOMES:
         return True
