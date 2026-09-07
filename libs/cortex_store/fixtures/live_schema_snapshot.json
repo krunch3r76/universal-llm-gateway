@@ -337,7 +337,8 @@
     74,
     75,
     76,
-    77
+    77,
+    78
   ],
   "seed_rows": {
     "relationship_types": [
@@ -3309,9 +3310,16 @@
           0,
           null,
           0
+        ],
+        [
+          "dominant_lane",
+          "TEXT",
+          0,
+          null,
+          0
         ]
       ],
-      "sql": "CREATE TABLE session_journals (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, agent TEXT NOT NULL, summary TEXT NOT NULL, domains TEXT, decisions TEXT, open_items TEXT, file_path TEXT, entity_ids TEXT DEFAULT '[]', session_id TEXT, prior_session_id TEXT, handoff_prompt TEXT, source_ref TEXT, closed_by TEXT, sealed_by TEXT, sealed_on TEXT, conversation_uuid TEXT, verbatim_sha256 TEXT, verbatim_bytes INTEGER)"
+      "sql": "CREATE TABLE session_journals (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT NOT NULL, agent TEXT NOT NULL, summary TEXT NOT NULL, domains TEXT, decisions TEXT, open_items TEXT, file_path TEXT, entity_ids TEXT DEFAULT '[]', session_id TEXT, prior_session_id TEXT, handoff_prompt TEXT, source_ref TEXT, closed_by TEXT, sealed_by TEXT, sealed_on TEXT, conversation_uuid TEXT, verbatim_sha256 TEXT, verbatim_bytes INTEGER, dominant_lane TEXT)"
     },
     "surface_forms": {
       "columns": [
