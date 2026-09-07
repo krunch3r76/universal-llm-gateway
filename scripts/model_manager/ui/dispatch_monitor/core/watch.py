@@ -113,6 +113,8 @@ def _cdp_line(row: CdpLegRow, *, width: int | None = None) -> str:
         parts.append(f"url={row.chat_url}")
     if row.thread_id:
         parts.append(f"th={row.thread_id}")
+    if row.dispatch_link_terminal is True:
+        parts.append("link=terminal")
     base = "  " + (" ".join(parts) if parts else "-")
     extras: list[str] = []
     if row.topic:

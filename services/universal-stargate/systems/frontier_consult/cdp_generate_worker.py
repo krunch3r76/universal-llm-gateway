@@ -61,8 +61,18 @@ def _agent_bus_token() -> str:
     return os.getenv("AGENT_BUS_TOKEN", "").strip()
 
 
-def format_cdp_result_body(result: CdpGenerateResult) -> str:
+def format_cdp_result_body(
+    result: CdpGenerateResult,
+    *,
+    thread_id: str | None = None,
+    pointer_turn: int | None = None,
+    dispatch_link: str | None = None,
+) -> str:
     """Render on-behalf turn body from adapter result."""
+    extras = result.extras or {}
+    thread_id = thread_id or extras.get("thread_id")
+    pointer_turn = pointer_turn if pointer_turn is not None else extras.get("pointer_turn")
+    dispatch_link = dispatch_link or extras.get("dispatch_link")
     if result.ok:
         lines = [
             f"# CDP generate result ({result.picker_model})",
@@ -89,14 +99,30 @@ def format_cdp_result_body(result: CdpGenerateResult) -> str:
         f"- substrate: `{result.substrate}`",
         f"- cost_source: `{result.cost_source}`",
     ]
+    if thread_id is not None:
+        lines.append(f"- thread_id: `{thread_id}`")
+    if pointer_turn is not None:
+        lines.append(f"- pointer_turn: `{pointer_turn}`")
+    if dispatch_link:
+        lines.append(f"- dispatch_link: {dispatch_link}")
+    registration_id = extras.get("registration_id")
+    chat_url = extras.get("chat_url")
+    registry_status = extras.get("registry_status")
+    if registration_id or chat_url:
+        parts = []
+        if registration_id:
+            parts.append(str(registration_id))
+        if chat_url:
+            parts.append(str(chat_url))
+        if registry_status:
+            parts.append(str(registry_status))
+        lines.append(f"- cse: {' · '.join(parts)} (seat fact)")
+    else:
+        lines.append("- cse: none for this execution")
     if result.archive_uri:
         lines.append(f"- archive_uri: `{result.archive_uri}`")
     if result.content_proof_uri:
         lines.append(f"- content_proof_uri: `{result.content_proof_uri}`")
-    extras = result.extras or {}
-    chat_url = extras.get("chat_url")
-    if chat_url:
-        lines.append(f"- chat_url: `{chat_url}`")
     if extras.get("deliverable_present_unproven"):
         lines.append("- deliverable_present_unproven: true")
         recovery = extras.get("recovery")

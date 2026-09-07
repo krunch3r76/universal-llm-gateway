@@ -932,6 +932,9 @@ async def test_finalize_proof_carries_via_worker_and_reconcile(
             "content_proof_uri": "cortex://proof.md",
             "via": "worker",
             "attested_by": None,
+            "thread_id": "5583",
+            "pointer_turn": 1,
+            "dispatch_link_terminal": None,
         },
         {
             "request_id": "req-via-2",
@@ -941,6 +944,9 @@ async def test_finalize_proof_carries_via_worker_and_reconcile(
             "content_proof_uri": "cortex://proof.md",
             "via": "reconcile",
             "attested_by": None,
+            "thread_id": "5583",
+            "pointer_turn": 1,
+            "dispatch_link_terminal": None,
         },
     ]
 

@@ -12,7 +12,11 @@ from enum import StrEnum
 from typing import Any
 
 from claude_bundles.hop_cadence_id_map import ids_match_exclude, normalize_exclude_ids
-from claude_bundles.hop_cadence_seat_snap import identity_rows
+from claude_bundles.hop_cadence_seat_snap import (
+    SEATED_NO_STREAM_EXECUTION,
+    identity_rows,
+    is_live_stream_state,
+)
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.hop_cadence_lookup_failed_observe import (
@@ -66,6 +70,20 @@ class PredecessorConfirmError(Exception):
         self.detail = detail
 
 
+_OP_PURPOSES = frozenset({"operator-proxy", "mission", "operator_proxy"})
+
+
+def _row_incumbent_execution_id(row: dict[str, Any]) -> str | None:
+    """Live stream execution id or seated-no-stream sentinel for one union row."""
+    stream_state = str(row.get("stream_state") or "")
+    exec_id = str(row.get("execution_id") or "").strip()
+    if is_live_stream_state(stream_state) and exec_id:
+        return exec_id
+    if exec_id == SEATED_NO_STREAM_EXECUTION:
+        return exec_id
+    return None
+
+
 def execution_id_for_registration(
     snap: dict[str, Any],
     registration_id: str,
@@ -75,10 +93,11 @@ def execution_id_for_registration(
     if not reg:
         return None
     for row in identity_rows(snap):
-        status = str(row.get("status") or "")
         row_reg = str(row.get("registration_id") or "").strip()
-        exec_id = str(row.get("execution_id") or "").strip()
-        if row_reg == reg and exec_id and status in {"pending", "running"}:
+        if row_reg != reg:
+            continue
+        exec_id = _row_incumbent_execution_id(row)
+        if exec_id:
             return exec_id
     return None
 
@@ -110,21 +129,22 @@ def incumbents_on_lane(
     )
     found: list[tuple[str, str]] = []
     for row in identity_rows(snap):
-        status = str(row.get("status") or "")
-        if status not in {"pending", "running"}:
+        stream_state = str(row.get("stream_state") or "")
+        if stream_state.startswith("terminal:"):
+            continue
+        exec_id = _row_incumbent_execution_id(row)
+        if not exec_id:
             continue
         purpose = str(row.get("purpose") or "").strip().lower()
-        if purpose not in {"operator-proxy", "mission", "operator_proxy"}:
+        if purpose not in _OP_PURPOSES:
             continue
         row_lane = str(row.get("parent_thread") or "").strip()
         if row_lane != lane:
             continue
-        exec_id = str(row.get("execution_id") or "").strip()
         reg = str(row.get("registration_id") or "").strip()
-        if exec_id:
-            if ids_match_exclude(exec_id, exclude):
-                continue
-            found.append((reg, exec_id))
+        if ids_match_exclude(exec_id, exclude):
+            continue
+        found.append((reg, exec_id))
     return found
 
 
@@ -139,11 +159,11 @@ def op_row_for_execution_on_lane(
     if not lane or not target:
         return None
     for row in identity_rows(snap):
-        status = str(row.get("status") or "")
-        if status not in {"pending", "running"}:
+        stream_state = str(row.get("stream_state") or "")
+        if not is_live_stream_state(stream_state):
             continue
         purpose = str(row.get("purpose") or "").strip().lower()
-        if purpose not in {"operator-proxy", "mission", "operator_proxy"}:
+        if purpose not in _OP_PURPOSES:
             continue
         row_lane = str(row.get("parent_thread") or "").strip()
         if row_lane != lane:
@@ -179,11 +199,11 @@ def satellite_for_stargate_on_lane(
             return str(direct.get("execution_id") or "").strip() or None
     candidates: list[str] = []
     for row in identity_rows(snap):
-        status = str(row.get("status") or "")
-        if status not in {"pending", "running"}:
+        stream_state = str(row.get("stream_state") or "")
+        if not is_live_stream_state(stream_state):
             continue
         purpose = str(row.get("purpose") or "").strip().lower()
-        if purpose not in {"operator-proxy", "mission", "operator_proxy"}:
+        if purpose not in _OP_PURPOSES:
             continue
         if str(row.get("parent_thread") or "").strip() != lane:
             continue

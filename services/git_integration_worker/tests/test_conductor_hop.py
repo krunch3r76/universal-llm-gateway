@@ -477,6 +477,7 @@ def _live_gate_snap(*, parent_thread: str = "9638") -> dict:
                 "execution_id": "exec-ext-gate",
                 "parent_thread": parent_thread,
                 "status": "running",
+                "stream_state": "running",
                 "purpose": "review",
             }
         ],
@@ -491,7 +492,8 @@ def _live_gate_snap_seated_only(*, parent_thread: str = "9638") -> dict:
             {
                 "execution_id": "exec-seated-gate",
                 "parent_thread": parent_thread,
-                "status": "running",
+                "seat_state": "active",
+                "stream_state": "none",
                 "purpose": "review",
                 "registration_id": "reg-gate",
             }
@@ -499,7 +501,59 @@ def _live_gate_snap_seated_only(*, parent_thread: str = "9638") -> dict:
     }
 
 
-def test_hop_owed_false_when_live_gate_in_seated_rows_only() -> None:
+def test_live_external_gate_reads_stream_state_not_seat() -> None:
+    """L2-AC-h: external gate blocks on live stream_state only."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+        live_external_gate_for_lane,
+    )
+
+    assert live_external_gate_for_lane(
+        {
+            "rows": [],
+            "seated_rows": [
+                {
+                    "execution_id": "exec-seated",
+                    "parent_thread": "9638",
+                    "seat_state": "active",
+                    "stream_state": "none",
+                    "purpose": "review",
+                    "registration_id": "reg-seated",
+                }
+            ],
+        },
+        "9638",
+    ) is False
+    assert live_external_gate_for_lane(
+        {
+            "rows": [
+                {
+                    "execution_id": "exec-live",
+                    "parent_thread": "9638",
+                    "stream_state": "running",
+                    "purpose": "review",
+                }
+            ],
+        },
+        "9638",
+    ) is True
+    exec_id = "exec-dead"
+    assert live_external_gate_for_lane(
+        {
+            "rows": [
+                {
+                    "execution_id": exec_id,
+                    "parent_thread": "9638",
+                    "stream_state": f"terminal:{exec_id}",
+                    "purpose": "review",
+                }
+            ],
+        },
+        "9638",
+    ) is False
+
+
+def test_hop_owed_true_when_seated_only_without_live_stream() -> None:
+    """R2′: seated identity without live stream does not block external gate."""
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
     ledger.merge_record_json(
@@ -515,7 +569,7 @@ def test_hop_owed_false_when_live_gate_in_seated_rows_only() -> None:
         "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
         return_value=_live_gate_snap_seated_only(),
     ):
-        assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is False
+        assert hop_owed(row, closeout_tokens=frozenset({"ROW_HOP"})) is True
 
 
 def test_hop_owed_false_when_live_external_gate_ac1() -> None:

@@ -1077,7 +1077,9 @@ class CursorDispatchLedger:
                         "AND status IN ('queued','admitted','running') LIMIT 1",
                         (source_ref, req.dispatch_id),
                     ).fetchone()
-                if peer is not None:
+                if peer is not None and not (
+                    nest_under and peer["dispatch_id"] == nest_under
+                ):
                     raise SourceRefConflict(
                         source_ref=source_ref,
                         work_key=work_key,

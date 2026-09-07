@@ -11,7 +11,8 @@ from typing import Any, Literal
 
 from universal_protocol.errors import ProtocolError
 
-from claude_bundles.hop_cadence_seat_snap import identity_rows
+from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES
+from claude_bundles.hop_cadence_seat_snap import identity_rows, is_live_stream_state
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
 UnresolvableReason = Literal[
@@ -22,10 +23,17 @@ UnresolvableReason = Literal[
     "ambiguous_matches",
 ]
 
-_ACTIVE_STATUSES = frozenset({"pending", "running"})
 REFUSE_CENSUS_REASONS: frozenset[UnresolvableReason] = frozenset(
     {"ambiguous_matches", "zero_matches", "empty_snap"}
 )
+
+
+def _row_counts_for_census(row: dict[str, Any]) -> bool:
+    """Census reads live ``stream_state`` or listable ``seat_state`` on the union."""
+    if is_live_stream_state(str(row.get("stream_state") or "")):
+        return True
+    seat_state = str(row.get("seat_state") or "")
+    return seat_state in _HOST_LISTABLE_STATUSES
 
 
 def census_match_ids(thread_id: str, snap: dict[str, Any]) -> list[str]:
@@ -33,7 +41,7 @@ def census_match_ids(thread_id: str, snap: dict[str, Any]) -> list[str]:
     matches: list[str] = []
     seen: set[str] = set()
     for row in identity_rows(snap):
-        if str(row.get("status") or "") not in _ACTIVE_STATUSES:
+        if not _row_counts_for_census(row):
             continue
         if str(row.get("purpose") or "") not in OPERATOR_PURPOSES:
             continue

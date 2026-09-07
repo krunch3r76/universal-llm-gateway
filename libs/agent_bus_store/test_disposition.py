@@ -227,7 +227,50 @@ def test_dispatch_terminate_auto_closes_completed(bus_db) -> None:
     assert not (detail.get("summary") or "").strip()
 
 
-def test_dispatch_terminate_preserves_so_what_summary(bus_db) -> None:
+def test_dispatch_terminate_auto_close_blocked_by_second_open_link(bus_db) -> None:
+    thread_row, *_ = create_thread_with_turn(
+        slug="sdk-two-links",
+        from_agent="dispatch",
+        to_agent="cursor-sdk",
+        subject="implement",
+        body="packet pointer",
+        lifecycle_state="pending",
+    )
+    thread_id = thread_row["id"]
+    with connect() as conn:
+        set_thread_tags(conn, thread_id, append_bus_lifecycle_tags([]))
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-sdk",
+        pipeline_id="cursor-sdk-generate",
+    )
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-cdp",
+        pipeline_id="cdp-generate",
+    )
+    bus_db.post(
+        "/turns",
+        json={
+            "thread": thread_id,
+            "from": "cursor-sdk",
+            "to": "dispatch",
+            "subject": "cursor-sdk dispatch closeout",
+            "body": "done",
+            "after_turn": 1,
+        },
+    )
+    resp = bus_db.post(
+        f"/threads/{thread_id}/dispatch-terminate",
+        json={"terminal_status": "completed", "execution_id": "exec-sdk"},
+    )
+    assert resp.status_code == 200
+    detail = resp.json()
+    assert detail["status"] == ThreadStatus.ACTIVE
+    lineage = bus_db.get(f"/threads/{thread_id}/lineage")
+    links = {l["execution_id"]: l for l in lineage.json()["dispatch_links"]}
+    assert links["exec-sdk"]["terminal_status"] == "completed"
+    assert links["exec-cdp"]["terminal_status"] is None
     so_what = "ULG: pager titles carry outcome, not telemetry"
     thread_row, *_ = create_thread_with_turn(
         slug="sdk-so-what",

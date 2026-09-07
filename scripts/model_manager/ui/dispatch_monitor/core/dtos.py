@@ -214,6 +214,8 @@ class CdpLegRow:
     proof_present: bool = False
     root_id: str | None = None
     provenance: str = "signal"
+    dispatch_link_terminal: bool | None = None
+    registration_id: str | None = None
 
 
 @dataclass(frozen=True)

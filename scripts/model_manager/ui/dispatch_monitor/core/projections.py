@@ -150,6 +150,8 @@ def cdp_rows(
                 failure_reason=state.failure_reason,
                 proof_present=bool(state.archive_uri or state.content_proof_uri),
                 root_id=state.root_id or index.root_for_cdp(state.request_id),
+                dispatch_link_terminal=state.dispatch_link_terminal,
+                registration_id=state.registration_id,
             )
         )
     rows.sort(key=lambda r: r.request_id)

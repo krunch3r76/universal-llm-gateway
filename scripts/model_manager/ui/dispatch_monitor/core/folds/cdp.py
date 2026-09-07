@@ -46,6 +46,8 @@ class CdpState:
         "stall_stage",
         "failure_reason",
         "root_id",
+        "dispatch_link_terminal",
+        "registration_id",
     )
 
     def __init__(self, request_id: str) -> None:
@@ -67,6 +69,8 @@ class CdpState:
         self.stall_stage: str | None = None
         self.failure_reason: str | None = None
         self.root_id: str | None = None
+        self.dispatch_link_terminal: bool | None = None
+        self.registration_id: str | None = None
 
 
 def _request_id(payload: Mapping[str, Any], record: EventRecord) -> str | None:
@@ -200,6 +204,17 @@ class CdpFold:
         stage = payload.get("stall_stage")
         if stage:
             row.stall_stage = str(stage)
+        link_terminal = payload.get("dispatch_link_terminal")
+        if link_terminal is not None:
+            row.dispatch_link_terminal = bool(link_terminal)
+        reg = payload.get("registration_id")
+        if reg and row.registration_id is None:
+            row.registration_id = str(reg)
+        if row.chat_url is None:
+            for src in ("chat_url", "cse_chat_url"):
+                if payload.get(src):
+                    row.chat_url = normalize_chat_url(str(payload[src]))
+                    break
         for key in ("error", "failure_reason"):
             if payload.get(key):
                 row.failure_reason = str(payload[key])

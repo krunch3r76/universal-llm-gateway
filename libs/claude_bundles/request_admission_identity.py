@@ -1,10 +1,12 @@
 """Server-side caller identity resolution and lease gate at ``agent_bus.request``.
 
 Census over ``identity_rows`` (execution-store ``rows`` ∪ registry
-``seated_rows``). Bind order: caller wire → N≥2 refuse → N==1
-(origin CSR then single-seat) → N==0 resume chain (watch / mailbox / bus CSE /
-origin CSR) → unresolvable. Watch-row ``registration_id`` is lease SOT for hop
-and resume identity when ``census_n==0`` — never ``superseded_registration_id``.
+``seated_rows``). Census reads ``stream_state`` for live streams and
+``seat_state`` for listable registry seats. Bind order: caller wire → N≥2
+refuse → N==1 (origin CSR then single-seat) → N==0 resume chain (watch /
+mailbox / bus CSE / origin CSR) → unresolvable. Watch-row ``registration_id``
+is lease SOT for hop and resume identity when ``census_n==0`` — never
+``superseded_registration_id``.
 
 N≠1 without a resume bind (``ambiguous_matches`` / ``zero_matches`` /
 ``empty_snap``) refuses at enqueue. ``snap_load_failed`` and
