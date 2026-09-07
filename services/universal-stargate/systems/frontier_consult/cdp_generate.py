@@ -30,6 +30,7 @@ from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purp
 from model_id import ModelId
 
 from .admission import FrontierEndpointError
+from .cdp_dispatch_envelope import record_cdp_admit
 from .cdp_generate_mcp_stamp import (
     publish_cdp_packet_enriched,
     stamp_cdp_packet_mcp_default,
@@ -42,7 +43,6 @@ from .handoff import (
     create_handoff_thread,
     post_pointer_turn,
 )
-from .cdp_dispatch_envelope import record_cdp_admit
 from .handoff_response import build_handoff_result, resolve_poll_wait_seconds
 from .poll_hint_events import emit_poll_hint_from_handoff
 
@@ -124,7 +124,10 @@ def _live_external_gate_for_lane(
     *,
     exclude_execution_id: str | None = None,
 ) -> bool:
-    from claude_bundles.hop_cadence_id_map import ids_match_exclude, normalize_exclude_ids
+    from claude_bundles.hop_cadence_id_map import (
+        ids_match_exclude,
+        normalize_exclude_ids,
+    )
     from claude_bundles.hop_cadence_seat_snap import identity_rows, is_live_stream_state
 
     lane = (mission_lane or "").strip()

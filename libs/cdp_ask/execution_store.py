@@ -188,10 +188,10 @@ class ExecutionStore:
         """
         from claude_bundles.cdp_registry_store import load_active
         from claude_bundles.hop_cadence_seat_snap import (
-            attach_seated_rows,
             attach_seat_rows,
-            seated_rows_from_registry_records,
+            attach_seated_rows,
             seat_rows_from_registry_records,
+            seated_rows_from_registry_records,
         )
         from claude_bundles.x_display_capacity import attach_x_display_capacity
 

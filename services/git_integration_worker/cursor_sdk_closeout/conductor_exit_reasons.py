@@ -46,7 +46,10 @@ def live_external_gate_for_lane(
     exclude_execution_id: str | None = None,
 ) -> bool:
     """True when active-work has a pending/running gate row bound to ``mission_lane``."""
-    from claude_bundles.hop_cadence_id_map import ids_match_exclude, normalize_exclude_ids
+    from claude_bundles.hop_cadence_id_map import (
+        ids_match_exclude,
+        normalize_exclude_ids,
+    )
     from claude_bundles.hop_cadence_seat_snap import identity_rows, is_live_stream_state
 
     lane = (mission_lane or "").strip()
