@@ -26,7 +26,7 @@ UNIVERSAL_PYTHON="${HOME}/.venvs/universal/bin/python"
 mkdir -p "$WATCH_DIR"
 
 usage() {
-  sed -n '2,13p' "$0"
+  sed -n '2,17p' "$0"
   exit 2
 }
 

@@ -72,11 +72,13 @@ do not wait for a rewritten recipe.
 **Attended in-flight (binding — operator 2026-09-01):**
 After admit, when the wait is event-gated, arm **in-session wake** (three legs,
 atomic) and exit — unless already armed or named decline. SoT:
-`runbook:bus-consult-watcher`. **Leg 1:** `watch-supervise.sh start … --no-page`.
+`runbook:bus-consult-watcher` + `runbook:bus-consult-watcher-terminal-harness`
+(IDE terminal ghosts — always leg 2; no slot limit). **Leg 1:** `watch-supervise.sh start … --no-page`.
 **Leg 2 (same turn):** `watch-supervise.sh tail --label L` background +
 `notify_on_output` on `closeout turn=|consult complete|stall-pop:` (tail exits
-when `state.json status=complete`; ¬ `--forever` / raw `tail -F`). **Leg 3 (wake
-turn):** `get` + relay. ¬ start-only; ¬ hold-turn on `wait`; ¬ hang-tail. Cheap = legs 1–2 /
+when `state.json status=complete`; while `status=polling`, tail waiting is
+correct — ¬ hang-tail; ¬ skip to save a slot). **Leg 3 (wake
+turn):** `get` + relay. ¬ start-only; ¬ tail-skipped; ¬ hold-turn on `wait`; ¬ hang-tail after complete. Cheap = legs 1–2 /
 `SCORE_RESURFACE` / `poll_hint` + lean heartbeat (`loop` skill). Costly =
 short-cadence `/loop` or holding this turn. Complements a:31104. ¬ a:31024 liaison.
 

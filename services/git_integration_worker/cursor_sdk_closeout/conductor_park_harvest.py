@@ -169,7 +169,7 @@ def build_park_harvest_arm_recipe(
     lines.extend(
         [
             "Leg 2 — same turn (before close): background tail + notify_on_output on consult complete|stall-pop:",
-            f"scripts/watch-supervise.sh tail --label {label}  # block_until_ms: 0",
+            f"scripts/watch-supervise.sh tail --label {label}  # block_until_ms: 0; exits when state.json status=complete",
             "Leg 3 — on wake: get qualifying turn + relay in chat.",
         ]
     )

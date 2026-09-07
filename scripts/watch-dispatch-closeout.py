@@ -5,7 +5,14 @@ Watches agent-bus thread for the cursor-sdk closeout turn
 (completion=first_reply_from, from_agent=cursor-sdk). Optionally cross-checks
 frontier.sdk.worker.completed via Event Service.
 
+Prefer detached arm via scripts/watch-supervise.sh so Cursor Shell abort cannot
+kill the poller. In-window wake = supervise tail of the log (default
+exit-on-complete when state.json status=complete; --forever debug-only).
+
 Usage:
+  scripts/watch-supervise.sh start --label '74874-close' -- \\
+    scripts/watch-dispatch-closeout.py --thread 6361 --dispatch-id 74874a907d5d-9beddd66
+  scripts/watch-supervise.sh tail --label '74874-close'   # exits on complete; notify on closeout turn=
   scripts/watch-dispatch-closeout-tmux.sh --latest --label 'my arc'
   scripts/watch-dispatch-closeout.py --thread 6361 --dispatch-id 74874a907d5d-9beddd66
   scripts/watch-dispatch-closeout.py --thread 9916 --execution-id 78b387c6-73e7-43f5-bd34-f05f413d3b45
