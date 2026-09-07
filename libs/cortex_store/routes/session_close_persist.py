@@ -32,6 +32,11 @@ from ..source_ref_resolution import (
 )
 from ..status_trait_write import trait_insert_extras, transcript_birth_traits
 from ..transcript_assembly import compute_text_content_hash
+from ..verbatim_succession import (
+    journal_verbatim_bytes,
+    split_verbatim_layer,
+    stamp_verbatim_fields,
+)
 from .session_close_helpers import _ensure_continues_edge, _ensure_transcript_entity
 from .session_close_validate import (
     ValidatedCloseContext,
@@ -277,7 +282,7 @@ def persist_session_close(
         _fill_conn = cortex_conn()
         try:
             prior = _fill_conn.execute(
-                "SELECT closed_by, file_path FROM session_journals WHERE id = ?",
+                "SELECT closed_by, file_path, verbatim_bytes FROM session_journals WHERE id = ?",
                 (reuse_journal_row_id,),
             ).fetchone()
         finally:
@@ -288,18 +293,11 @@ def persist_session_close(
                 prior_path = _FILES_ROOT / prior["file_path"]
                 if prior_path.is_file():
                     prior_text = prior_path.read_text(encoding="utf-8")
-                    marker = "\n## Session Summary"
-                    prior_verbatim = (
-                        prior_text[: prior_text.find(marker)]
-                        if marker in prior_text
-                        else prior_text
+                    prior_verbatim = split_verbatim_layer(
+                        prior_text,
+                        verbatim_bytes=journal_verbatim_bytes(prior),
                     )
-                    new_marker = "\n## Session Summary"
-                    new_verbatim = (
-                        ctx.transcript_md[: ctx.transcript_md.find(new_marker)]
-                        if new_marker in ctx.transcript_md
-                        else ctx.transcript_md
-                    )
+                    new_verbatim = split_verbatim_layer(ctx.transcript_md)
                     if not new_verbatim.startswith(prior_verbatim):
                         conflict = build_validation_error(
                             reason="succession.verbatim_diverged",
@@ -443,6 +441,12 @@ def persist_session_close(
                 ),
             )
             journal_row_id = reuse_journal_row_id
+            if ctx.transcript_md is not None:
+                stamp_verbatim_fields(
+                    conn,
+                    session_id=body.session_id,
+                    verbatim=split_verbatim_layer(ctx.transcript_md),
+                )
         else:
             sealed_by = body.agent if body.closed_by == "succession" else None
             sealed_on = ctx.now if body.closed_by == "succession" else None
@@ -473,6 +477,12 @@ def persist_session_close(
                 ),
             )
             journal_row_id = cur.lastrowid or 0
+            if ctx.transcript_md is not None:
+                stamp_verbatim_fields(
+                    conn,
+                    session_id=body.session_id,
+                    verbatim=split_verbatim_layer(ctx.transcript_md),
+                )
 
         if body.prior_session_id:
             _ensure_transcript_entity(conn, body.prior_session_id, body.agent, ctx.now)

@@ -221,6 +221,86 @@ def test_i5_succession_fill_light_depth_with_jsonl(session_env: dict[str, Path])
     assert _journal_count(db_path) == 1
 
 
+def test_i5_succession_fill_light_depth_without_jsonl(
+    session_env: dict[str, Path],
+) -> None:
+    """R2 SPLICE: light depth succession fill without JSONL splices structural layer."""
+    db_path = session_env["db_path"]
+    files_root = session_env["files_root"]
+    transcripts_root = session_env["transcripts_root"]
+    jsonl = transcripts_root / _UUID / f"{_UUID}.jsonl"
+    _write_jsonl(jsonl, [_START, "2026-09-07T10:30:00+00:00"])
+    rel = f"{_UUID}/{_UUID}.jsonl"
+
+    seal = _op_transcript_seal(thread="10223", jsonl_path=rel)
+    assert "error" not in seal, seal
+    sealed_sid = seal["session_id"]
+    prior_path = files_root / f"notes/system/transcripts/{sealed_sid}.md"
+    assert prior_path.is_file()
+
+    fill = ops_journals._op_session_close(
+        session_id=sealed_sid,
+        agent="cursor",
+        session_summary_md=_summary("SPLICE fill without JSONL path."),
+        summary="SPLICE fill without JSONL path on light depth.",
+        transcript_depth="light",
+        decisions=["Structural fill via SPLICE without JSONL."],
+    )
+    assert "error" not in fill, fill
+    assert fill["transcript_depth"] == "light"
+    assert fill["transcript_path"] is not None
+    assert prior_path.is_file()
+    text = prior_path.read_text(encoding="utf-8")
+    assert "## Turn" in text
+    assert "SPLICE fill without JSONL path." in text
+
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT file_path, closed_by, verbatim_sha256, verbatim_bytes "
+            "FROM session_journals WHERE session_id = ?",
+            (sealed_sid,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] is not None
+        assert row[1] == "cursor"
+        assert row[2] is not None
+        assert row[3] is not None and row[3] > 0
+    finally:
+        conn.close()
+    assert _journal_count(db_path) == 1
+
+
+def test_i5_succession_fill_none_depth_without_jsonl(
+    session_env: dict[str, Path],
+) -> None:
+    """R2: none depth succession fill keeps file_path when sealed verbatim exists."""
+    files_root = session_env["files_root"]
+    transcripts_root = session_env["transcripts_root"]
+    jsonl = transcripts_root / _UUID / f"{_UUID}.jsonl"
+    _write_jsonl(jsonl, [_START])
+    rel = f"{_UUID}/{_UUID}.jsonl"
+
+    seal = _op_transcript_seal(thread="10223", jsonl_path=rel)
+    assert "error" not in seal, seal
+    sealed_sid = seal["session_id"]
+    prior_path = files_root / f"notes/system/transcripts/{sealed_sid}.md"
+    assert prior_path.is_file()
+
+    fill = ops_journals._op_session_close(
+        session_id=sealed_sid,
+        agent="cursor",
+        session_summary_md=_summary("None-depth SPLICE keeps sealed file."),
+        summary="None-depth SPLICE keeps sealed file on disk.",
+        transcript_depth="none",
+        decisions=["Structural fill at none depth without JSONL."],
+    )
+    assert "error" not in fill, fill
+    assert fill["transcript_depth"] == "none"
+    assert fill["transcript_path"] is not None
+    assert prior_path.is_file()
+
+
 class PatchLookup:
     def __init__(self, mapping: dict[str, SealedJournal | None]) -> None:
         self.mapping = mapping

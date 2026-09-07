@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from dataclasses import dataclass
 from typing import Any
 
 from cortex_store.session_close_successor_hop import lookup_sealed_journal
+from cortex_store.verbatim_succession import (
+    journal_verbatim_bytes,
+    split_verbatim_layer,
+    verbatim_fingerprint,
+)
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
@@ -37,16 +41,12 @@ class TapeSegment:
 
 
 def _verbatim_sha256(text: str) -> str:
-    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    return f"sha256:{digest}"
+    digest, _ = verbatim_fingerprint(text)
+    return digest
 
 
-def _split_verbatim_layer(full_md: str) -> str:
-    marker = "\n## Session Summary"
-    idx = full_md.find(marker)
-    if idx == -1:
-        return full_md
-    return full_md[:idx]
+def _split_verbatim_layer(full_md: str, *, verbatim_bytes: int | None = None) -> str:
+    return split_verbatim_layer(full_md, verbatim_bytes=verbatim_bytes)
 
 
 def _turn_count_verbatim(verbatim: str) -> int:
@@ -120,7 +120,9 @@ def build_chain_segments(
         if not path.is_file():
             continue
         full = path.read_text(encoding="utf-8")
-        verbatim = _split_verbatim_layer(full)
+        verbatim = _split_verbatim_layer(
+            full, verbatim_bytes=journal_verbatim_bytes(journal)
+        )
         turn_count = _turn_count_verbatim(verbatim)
         uuid = str(journal.get("conversation_uuid") or sid)
         turn_lo = prior_turn_by_uuid.get(uuid, 0)
@@ -151,8 +153,8 @@ def _load_sealed_segment(session_id: str) -> TapeSegment | None:
     conn = cortex_conn()
     try:
         journal = conn.execute(
-            "SELECT file_path, conversation_uuid, closed_by FROM session_journals "
-            "WHERE session_id = ?",
+            "SELECT file_path, conversation_uuid, closed_by, verbatim_bytes "
+            "FROM session_journals WHERE session_id = ?",
             (session_id,),
         ).fetchone()
     finally:
@@ -165,7 +167,9 @@ def _load_sealed_segment(session_id: str) -> TapeSegment | None:
     if not path.is_file():
         return None
     full = path.read_text(encoding="utf-8")
-    verbatim = _split_verbatim_layer(full)
+    verbatim = _split_verbatim_layer(
+        full, verbatim_bytes=journal_verbatim_bytes(journal)
+    )
     turn_count = sum(1 for line in verbatim.splitlines() if line.startswith("## Turn"))
     uuid = journal["conversation_uuid"]
     binding = "dominant_write"
@@ -386,7 +390,9 @@ def render_tape(
         if not file_path:
             continue
         full = (_FILES_ROOT / file_path).read_text(encoding="utf-8")
-        verbatim = _split_verbatim_layer(full)
+        verbatim = _split_verbatim_layer(
+            full, verbatim_bytes=journal_verbatim_bytes(journal)
+        )
         messages.extend(
             _verbatim_messages_from_segment(
                 verbatim,

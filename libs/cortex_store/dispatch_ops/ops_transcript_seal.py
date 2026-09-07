@@ -12,6 +12,11 @@ from ..models import SessionCloseRequest
 from ..routes.session_close import close_session
 from ..transcript_assembly import TranscriptPathError, resolve_jsonl_path
 from ..transcript_session_id import derive_session_id_from_jsonl_start
+from ..verbatim_succession import (
+    journal_verbatim_bytes,
+    split_verbatim_layer,
+    stamp_verbatim_fields,
+)
 
 logger = get_logger("cortex-api.dispatch_ops.transcript_seal")
 
@@ -101,18 +106,16 @@ def _op_transcript_seal(
 
         with cortex_conn() as conn:
             row = conn.execute(
-                "SELECT file_path FROM session_journals WHERE session_id = ?",
+                "SELECT file_path, verbatim_bytes FROM session_journals WHERE session_id = ?",
                 (derived,),
             ).fetchone()
         if row and row["file_path"]:
             prior_path = _FILES_ROOT / row["file_path"]
             if prior_path.is_file():
                 prior_text = prior_path.read_text(encoding="utf-8")
-                marker = "\n## Session Summary"
-                prior_verbatim = (
-                    prior_text[: prior_text.find(marker)]
-                    if marker in prior_text
-                    else prior_text
+                prior_verbatim = split_verbatim_layer(
+                    prior_text,
+                    verbatim_bytes=journal_verbatim_bytes(row),
                 )
                 prior_turns = sum(
                     1
@@ -158,6 +161,24 @@ def _op_transcript_seal(
         sealed_on=now,
         conversation_uuid=uuid,
     )
+    from ..db import cortex_conn as _conn_fn
+
+    if response.transcript_path:
+        from ..dispatch_ops._shared import _FILES_ROOT
+
+        tx_path = _FILES_ROOT / response.transcript_path
+        if tx_path.is_file():
+            full = tx_path.read_text(encoding="utf-8")
+            conn = _conn_fn()
+            try:
+                stamp_verbatim_fields(
+                    conn,
+                    session_id=derived,
+                    verbatim=split_verbatim_layer(full),
+                )
+                conn.commit()
+            finally:
+                conn.close()
     transcript_sealed_by_succession(
         session_id=derived,
         thread_id=str(tid),
