@@ -9,9 +9,11 @@ from unittest.mock import patch
 import pytest
 from agent_bus_store.tape_render import (
     _binding_for_journal,
+    _cells_for_lane,
     build_chain_segments,
     render_tape,
 )
+from agent_bus_store.checkpoint_windows_render import CheckpointTurnRow
 
 pytestmark = pytest.mark.offline
 
@@ -231,3 +233,86 @@ def test_i9_render_tape_reports_dropped_human_row(tmp_path: Path) -> None:
     assert len(dropped) == 1
     assert dropped[0]["session_id"] == foreign_sid
     assert result["messages"][0]["content"] == "User turn 1."
+
+
+def test_b8_cells_join_chain_segments_and_bus_turn_id(tmp_path: Path) -> None:
+    """B-8 / AC-14: two CPs over one uuid chain join turn ranges + closing bus_turn_id."""
+    files_root = tmp_path / "files"
+    files_root.mkdir()
+    s1 = "cursor-2026-09-07-100000-s01"
+    s2 = "cursor-2026-09-07-110000-s02"
+    p1 = files_root / "notes/system/transcripts" / f"{s1}.md"
+    p2 = files_root / "notes/system/transcripts" / f"{s2}.md"
+    p1.parent.mkdir(parents=True)
+    p1.write_text(_verbatim_md(10, s1), encoding="utf-8")
+    p2.write_text(_verbatim_md(25, s2), encoding="utf-8")
+
+    journals = [
+        {
+            "id": 1,
+            "session_id": s1,
+            "conversation_uuid": _UUID,
+            "prior_session_id": None,
+            "file_path": f"notes/system/transcripts/{s1}.md",
+            "entity_ids": ["agent-bus:6341"],
+        },
+        {
+            "id": 2,
+            "session_id": s2,
+            "conversation_uuid": _UUID,
+            "prior_session_id": s1,
+            "file_path": f"notes/system/transcripts/{s2}.md",
+            "entity_ids": ["agent-bus:6341"],
+        },
+    ]
+
+    cp1 = CheckpointTurnRow(turn_number=5, cp_ordinal=1, created_at="", subject="CHECKPOINT")
+    cp2 = CheckpointTurnRow(turn_number=12, cp_ordinal=2, created_at="", subject="CHECKPOINT")
+    cp_bodies = {
+        5: f"Window: transcript_id={_UUID} · turns@cp=10\n",
+        12: f"Window: transcript_id={_UUID} · turns@cp=15\n",
+    }
+
+    class _Result:
+        def __init__(self, turn_number: int) -> None:
+            self._turn_number = turn_number
+
+        def fetchone(self) -> dict[str, str]:
+            return {"body": cp_bodies[self._turn_number]}
+
+    class _Conn:
+        def execute(self, _sql: str, params: tuple[str, int]) -> _Result:
+            return _Result(int(params[1]))
+
+    class _Connect:
+        def __enter__(self) -> _Conn:
+            return _Conn()
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    with (
+        patch(
+            "agent_bus_store.tape_render.list_checkpoint_turns",
+            return_value=(cp1, cp2),
+        ),
+        patch("agent_bus_store.tape_render.connect", return_value=_Connect()),
+    ):
+        cells = _cells_for_lane(
+            thread_id="6341",
+            lane_journals=journals,
+            files_root=files_root,
+        )
+
+    closed = [c for c in cells if c["bus_turn_id"] is not None]
+    open_cells = [c for c in cells if c["bus_turn_id"] is None]
+    assert len(closed) == 2
+    assert len(open_cells) == 1
+
+    keys = {
+        (c["cp_ordinal"], c["transcript_id"], c["turn_lo"], c["turn_hi"]): c["bus_turn_id"]
+        for c in cells
+    }
+    assert keys[(1, _UUID, 0, 10)] == 5
+    assert keys[(2, _UUID, 10, 15)] == 12
+    assert keys[(3, _UUID, 15, 25)] is None

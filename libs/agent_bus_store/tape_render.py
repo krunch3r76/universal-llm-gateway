@@ -268,9 +268,42 @@ def _parse_window_lines(body: str) -> list[dict[str, Any]]:
     return anchors
 
 
-def _cells_for_lane(*, thread_id: str) -> list[dict[str, Any]]:
+def _last_turns_at_cp(
+    cp_anchors: list[tuple[Any, list[dict[str, Any]]]],
+    *,
+    transcript_id: str,
+    before_index: int | None = None,
+) -> int:
+    """Return the last ``turns@cp`` anchor for *transcript_id* before *before_index*."""
+    limit = len(cp_anchors) if before_index is None else before_index
+    last = 0
+    for idx in range(limit):
+        for anchor in cp_anchors[idx][1]:
+            if anchor.get("transcript_id") == transcript_id and anchor.get("turns_at_cp") is not None:
+                last = int(anchor["turns_at_cp"])
+    return last
+
+
+def _max_turn_hi_by_transcript(chain_segments: list[dict[str, Any]]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for seg in chain_segments:
+        tid = str(seg["transcript_id"])
+        out[tid] = max(out.get(tid, 0), int(seg["turn_hi"]))
+    return out
+
+
+def _cells_for_lane(
+    *,
+    thread_id: str,
+    lane_journals: list[dict[str, Any]],
+    files_root: Any,
+) -> list[dict[str, Any]]:
+    """Join CP window anchors with R7a chain segments (AC-14 / AC-18)."""
     cps = list_checkpoint_turns(thread_id=thread_id)
-    cells: list[dict[str, Any]] = []
+    chain_segments = build_chain_segments(lane_journals, files_root=files_root)
+    max_turn_by_tid = _max_turn_hi_by_transcript(chain_segments)
+
+    cp_anchors: list[tuple[Any, list[dict[str, Any]]]] = []
     for cp in cps:
         with connect() as conn:
             row = conn.execute(
@@ -278,16 +311,94 @@ def _cells_for_lane(*, thread_id: str) -> list[dict[str, Any]]:
                 (thread_id, cp.turn_number),
             ).fetchone()
         body = str(row["body"]) if row else ""
-        for anchor in _parse_window_lines(body):
+        cp_anchors.append((cp, _parse_window_lines(body)))
+
+    cells: list[dict[str, Any]] = []
+
+    if not cp_anchors:
+        for seg in chain_segments:
+            cells.append(
+                {
+                    "cp_ordinal": 0,
+                    "transcript_id": seg["transcript_id"],
+                    "turn_lo": seg["turn_lo"],
+                    "turn_hi": seg["turn_hi"],
+                    "boundary": "window_whole",
+                    "bus_turn_id": None,
+                }
+            )
+        return cells
+
+    seen_transcript_ids: set[str] = set(max_turn_by_tid)
+    for _, anchors in cp_anchors:
+        for anchor in anchors:
+            tid = anchor.get("transcript_id")
+            if tid:
+                seen_transcript_ids.add(str(tid))
+
+    for idx, (cp, anchors) in enumerate(cp_anchors):
+        for anchor in anchors:
+            if anchor.get("boundary") == "window_whole":
+                tid = anchor.get("transcript_id")
+                targets = (
+                    [seg for seg in chain_segments if str(seg["transcript_id"]) == str(tid)]
+                    if tid
+                    else chain_segments
+                )
+                for seg in targets:
+                    cells.append(
+                        {
+                            "cp_ordinal": cp.cp_ordinal,
+                            "transcript_id": seg["transcript_id"],
+                            "turn_lo": seg["turn_lo"],
+                            "turn_hi": seg["turn_hi"],
+                            "boundary": "window_whole",
+                            "bus_turn_id": cp.turn_number,
+                        }
+                    )
+                continue
+
+            tid = anchor.get("transcript_id")
+            turns_at_cp = anchor.get("turns_at_cp")
+            if not tid or turns_at_cp is None:
+                continue
+            transcript_id = str(tid)
+            turn_hi = int(turns_at_cp)
+            turn_lo = _last_turns_at_cp(
+                cp_anchors,
+                transcript_id=transcript_id,
+                before_index=idx,
+            )
+            if turn_hi <= turn_lo:
+                continue
             cells.append(
                 {
                     "cp_ordinal": cp.cp_ordinal,
-                    "cp_turn": cp.turn_number,
-                    "transcript_id": anchor.get("transcript_id"),
-                    "turns_at_cp": anchor.get("turns_at_cp"),
-                    "boundary": anchor.get("boundary"),
+                    "transcript_id": transcript_id,
+                    "turn_lo": turn_lo,
+                    "turn_hi": turn_hi,
+                    "boundary": None,
+                    "bus_turn_id": cp.turn_number,
                 }
             )
+
+    last_cp = cp_anchors[-1][0]
+    for transcript_id in sorted(seen_transcript_ids):
+        turn_lo = _last_turns_at_cp(cp_anchors, transcript_id=transcript_id)
+        turn_hi = max_turn_by_tid.get(transcript_id, turn_lo)
+        if turn_hi <= turn_lo:
+            continue
+        cells.append(
+            {
+                "cp_ordinal": last_cp.cp_ordinal + 1,
+                "transcript_id": transcript_id,
+                "turn_lo": turn_lo,
+                "turn_hi": turn_hi,
+                "boundary": None,
+                "bus_turn_id": None,
+            }
+        )
+
     return cells
 
 
@@ -379,7 +490,11 @@ def render_tape(
                 }
             )
 
-    cells = _cells_for_lane(thread_id=thread_id)
+    cells = _cells_for_lane(
+        thread_id=thread_id,
+        lane_journals=lane_journals,
+        files_root=_FILES_ROOT,
+    )
     messages: list[dict[str, Any]] = []
     for seg in segments:
         sid = seg["session_id"]
