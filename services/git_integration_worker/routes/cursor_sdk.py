@@ -227,6 +227,7 @@ from services.git_integration_worker.cursor_sdk_resume import (
     record_resolved_store_roots,
     reject_resume_if_ineligible,
     resolve_sdk_store_dir,
+    resolve_store_bearing_dispatch_id,
     sdk_agent_id_from_agent,
     start_or_resume_agent,
 )
@@ -819,10 +820,13 @@ def _run_sdk_sync(
     real_home = operator_real_home()
     resume_ctx = load_resume_run_context(dispatch_id=ctx.dispatch_id)
     if resume_ctx is not None:
-        dispatch_home = dispatch_home_path(resume_ctx.resume_of)
+        store_bearing_id = resolve_store_bearing_dispatch_id(
+            parent_id=resume_ctx.resume_of
+        )
+        dispatch_home = dispatch_home_path(store_bearing_id)
         if not dispatch_home.is_dir():
             dispatch_home = setup_cursor_dispatch_home(
-                resume_ctx.resume_of, real_home=real_home
+                store_bearing_id, real_home=real_home
             )
         parent = load_parent_row(
             CursorDispatchLedger.instance(), parent_id=resume_ctx.resume_of

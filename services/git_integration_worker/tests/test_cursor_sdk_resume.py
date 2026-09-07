@@ -519,6 +519,101 @@ def test_empty_state_root_dir_eligible_via_home_store(
     assert child_row["state_root"] == str(store)
 
 
+def test_multi_hop_resume_of_finds_ancestor_home_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A→B→C chain: B has empty bridge-state; C resolves store via A HOME."""
+    homes_root = tmp_path / "homes"
+    monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(homes_root))
+    empty_bridge = tmp_path / "empty-bridge"
+    empty_bridge.mkdir()
+
+    dispatch_a = "dispatch-a-create"
+    dispatch_b = "dispatch-b-hop"
+    dispatch_c = "dispatch-c-resume"
+
+    store = (
+        dispatch_home_path(dispatch_a)
+        / ".cursor"
+        / "projects"
+        / "mnt-torus-projects-repo"
+        / "sdk-agent-store"
+    )
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "agents.db").write_text("x")
+
+    ledger = CursorDispatchLedger.instance()
+    _insert_parent_row(
+        dispatch_id=dispatch_a,
+        status="completed",
+        state_root=str(store),
+        sdk_agent_id="agent-a",
+    )
+
+    req_b = _req(dispatch_id=dispatch_b, message="hop-b")
+    fp_b = ledger.fingerprint(req_b)
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            "message_present, status, state_root, sdk_agent_id, resume_of) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+            (
+                dispatch_b,
+                fp_b,
+                req_b.thread_id,
+                req_b.execution_id,
+                "composer-2.5",
+                "completed",
+                str(empty_bridge),
+                "agent-b",
+                dispatch_a,
+            ),
+        )
+
+    assert resume_eligibility_reason(ledger, parent_id=dispatch_b) is None
+
+    child = _req(dispatch_id=dispatch_c, resume_of=dispatch_b)
+    child_fp = ledger.fingerprint(child)
+    from services.git_integration_worker.models.cursor_api import CursorDispatchResponse
+
+    ledger.admit(
+        req=child,
+        fingerprint=child_fp,
+        execution_id=child.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=child.dispatch_id,
+            thread_id=child.thread_id,
+            model_id="composer-2.5",
+        ),
+    )
+    ctx = load_resume_run_context(dispatch_id=dispatch_c)
+    assert ctx is not None
+    assert ctx.resume_of == dispatch_b
+    assert ctx.sdk_agent_id == "agent-b"
+    assert ctx.state_root == str(store)
+
+    record_resolved_store_roots(
+        parent_id=dispatch_b,
+        child_id=dispatch_c,
+        parent_state_root=str(empty_bridge),
+    )
+    with ledger._connect() as conn:
+        b_row = conn.execute(
+            "SELECT state_root FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_b,),
+        ).fetchone()
+        c_row = conn.execute(
+            "SELECT state_root FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_c,),
+        ).fetchone()
+    assert b_row["state_root"] == str(store)
+    assert c_row["state_root"] == str(store)
+
+
 def test_resume_retain_blocks_prune_for_completed_conductor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -556,6 +651,7 @@ def test_closeout_qualifies_for_resume_retain() -> None:
     )
     assert closeout_qualifies_for_resume_retain(
         closeout_body="status: complete",
+        packet_kind="conductor",
     )
     assert not closeout_qualifies_for_resume_retain(
         closeout_body="status: complete",

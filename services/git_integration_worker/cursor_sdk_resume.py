@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -59,6 +60,7 @@ _DESIGNED_STOP_RETAIN_TOKENS = frozenset(
 )
 
 _DEFAULT_HOME_RETENTION_DAYS = 14
+MAX_RESUME_LINEAGE_HOPS = 11
 
 
 def cursor_sdk_timeout_retain_s() -> int:
@@ -126,16 +128,8 @@ def _find_sdk_store_under_home(home: Path) -> Path | None:
     return None
 
 
-def resolve_sdk_store_dir(
-    *,
-    parent_id: str,
-    state_root: str | None,
-) -> Path | None:
-    """Locate the on-disk SDK sqlite store for a resume parent.
-
-    Prefers a non-empty ``state_root`` directory; falls back to the store under
-    the parent dispatch HOME (store-A — HOME-bound per 9675 observation).
-    """
+def _store_at_dispatch(*, dispatch_id: str, state_root: str | None) -> Path | None:
+    """Return SDK store path for one dispatch row, or None."""
     if state_root:
         root_path = Path(state_root)
         if root_path.is_dir():
@@ -146,8 +140,65 @@ def resolve_sdk_store_dir(
                 return store_in_root
     from services.git_integration_worker.cursor_home import dispatch_home_path
 
-    parent_home = dispatch_home_path(parent_id)
-    return _find_sdk_store_under_home(parent_home)
+    dispatch_home = dispatch_home_path(dispatch_id)
+    return _find_sdk_store_under_home(dispatch_home)
+
+
+def _iter_resume_lineage(
+    ledger: CursorDispatchLedger, *, start_id: str
+) -> Iterator[tuple[str, str | None]]:
+    """Yield ``(dispatch_id, state_root)`` walking ``resume_of`` toward ancestors."""
+    current = start_id
+    seen: set[str] = set()
+    for _ in range(MAX_RESUME_LINEAGE_HOPS):
+        if current in seen:
+            break
+        seen.add(current)
+        row = load_parent_row(ledger, parent_id=current)
+        if row is None:
+            break
+        yield current, row.state_root
+        link = _load_row_columns(ledger, dispatch_id=current, columns="resume_of")
+        if link is None or not link.get("resume_of"):
+            break
+        current = str(link["resume_of"])
+
+
+def resolve_sdk_store_dir(
+    *,
+    parent_id: str,
+    state_root: str | None,
+) -> Path | None:
+    """Locate the on-disk SDK sqlite store for a resume parent.
+
+    Prefers a non-empty ``state_root`` directory; falls back to the store under
+    each dispatch HOME while walking ``resume_of`` lineage (store-A — multi-hop
+    resume_of may leave intermediate rows with empty bridge-state).
+    """
+    ledger = CursorDispatchLedger.instance()
+    if load_parent_row(ledger, parent_id=parent_id) is None:
+        return _store_at_dispatch(dispatch_id=parent_id, state_root=state_root)
+    first = True
+    for dispatch_id, row_state_root in _iter_resume_lineage(
+        ledger, start_id=parent_id
+    ):
+        sr = state_root if first else row_state_root
+        first = False
+        found = _store_at_dispatch(dispatch_id=dispatch_id, state_root=sr)
+        if found is not None:
+            return found
+    return None
+
+
+def resolve_store_bearing_dispatch_id(*, parent_id: str) -> str:
+    """Return the lineage dispatch whose HOME holds the SDK store."""
+    ledger = CursorDispatchLedger.instance()
+    for dispatch_id, row_state_root in _iter_resume_lineage(
+        ledger, start_id=parent_id
+    ):
+        if _store_at_dispatch(dispatch_id=dispatch_id, state_root=row_state_root):
+            return dispatch_id
+    return parent_id
 
 
 def resume_eligibility_reason(
