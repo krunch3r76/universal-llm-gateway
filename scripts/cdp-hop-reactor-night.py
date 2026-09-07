@@ -356,6 +356,8 @@ def run_cycle(state: ReactorState, *, deadline_epoch: float) -> str:
     save_state(_STATE_PATH, state)
     reason, _ = wait_fable_stream_end(state)
     log("fable_stream_end", reason=reason, **id_fields(state))
+    if reason == "harvest_unreachable":
+        return "harvest_unreachable"
     harvest = harvest_cse(state, wait_ms=8000)
     if not harvest:
         return "continue"
