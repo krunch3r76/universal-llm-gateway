@@ -10,7 +10,6 @@ from universal_logging import get_logger
 from ..events_tape import transcript_sealed_by_succession
 from ..models import SessionCloseRequest
 from ..routes.session_close import close_session
-from ..session_close_successor_hop import conversation_uuid_from_jsonl_path
 from ..transcript_assembly import TranscriptPathError, resolve_jsonl_path
 from ..transcript_session_id import derive_session_id_from_jsonl_start
 
