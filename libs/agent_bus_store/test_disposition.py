@@ -268,7 +268,7 @@ def test_dispatch_terminate_auto_close_blocked_by_second_open_link(bus_db) -> No
     detail = resp.json()
     assert detail["status"] == ThreadStatus.ACTIVE
     lineage = bus_db.get(f"/threads/{thread_id}/lineage")
-    links = {l["execution_id"]: l for l in lineage.json()["dispatch_links"]}
+    links = {link["execution_id"]: link for link in lineage.json()["dispatch_links"]}
     assert links["exec-sdk"]["terminal_status"] == "completed"
     assert links["exec-cdp"]["terminal_status"] is None
     so_what = "ULG: pager titles carry outcome, not telemetry"
@@ -339,7 +339,7 @@ def test_dual_link_cdp_terminate_leaves_sdk_open(bus_db) -> None:
     )
     assert resp.status_code == 200
     lineage = bus_db.get(f"/threads/{thread_id}/lineage")
-    links = {l["execution_id"]: l for l in lineage.json()["dispatch_links"]}
+    links = {link["execution_id"]: link for link in lineage.json()["dispatch_links"]}
     assert links["exec-cdp-dual"]["terminal_status"] == "failed"
     assert links["exec-sdk-dual"]["terminal_status"] is None
 
