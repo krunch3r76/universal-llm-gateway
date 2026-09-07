@@ -46,6 +46,7 @@ LIFE_WORKSPACES_WRITE_OPS: frozenset[str] = frozenset(
         "insert_at_line",
         "copy",
         "md_replace",
+        "md_rewrite_section",
         "md_append",
         "md_insert",
         "md_delete",

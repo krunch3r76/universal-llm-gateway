@@ -297,6 +297,34 @@ def replace_section(text: str, section_path: str, new_content: str) -> tuple[str
     body, normd = strip_redundant_leading_heading(new_content, sec)
     return _set_section_body(text, sec, body), normd
 
+
+def patch_section_body(
+    text: str,
+    section_path: str,
+    target: str,
+    replacement: str,
+    *,
+    all_occurrences: bool = False,
+) -> tuple[str, int]:
+    """Replace *target* substring within one section body only."""
+    if not target:
+        raise SectionError("target must be non-empty for section patch")
+    _reject_xml_block_mutation(text, section_path)
+    sec = resolve_section(text, section_path)
+    body = text[sec.start : sec.end]
+    if target not in body:
+        raise SectionError(
+            f"target not found in section {section_path!r} "
+            f"({len(body)} chars); md_read the section before patching"
+        )
+    if all_occurrences:
+        replacements = body.count(target)
+        new_body = body.replace(target, replacement)
+    else:
+        replacements = 1
+        new_body = body.replace(target, replacement, 1)
+    return _set_section_body(text, sec, new_body), replacements
+
 def append_section(text: str, section_path: str, added_content: str) -> tuple[str, bool]:
     """Append to section body; normalizes only *added_content*, not existing body."""
     _reject_xml_block_mutation(text, section_path)

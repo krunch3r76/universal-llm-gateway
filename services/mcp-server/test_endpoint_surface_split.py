@@ -687,7 +687,8 @@ def test_life_fs_workspaces_md_replace_refused_out_of_lease(life_server: dict) -
         sandbox="workspaces",
         path=_workspaces_read_probe_path(),
         section="Overview",
-        content="probe",
+        target="probe",
+        content="patched",
     )
     assert "error" in result
     assert "/mcp/life surface" in result["error"]
@@ -711,7 +712,7 @@ def test_life_fs_cortex_md_replace_permitted_with_write_lease(
 
     fs_fn, _ = _fs_tool_fn(life_server)
     result = fs_fn(
-        op="md_replace",
+        op="md_rewrite_section",
         sandbox="cortex",
         path="notes/tmp/md-lease-probe.md",
         section="Overview",

@@ -27,6 +27,7 @@ MD_OPS: frozenset[str] = frozenset(
         "md_read",
         "md_to_dict",
         "md_replace",
+        "md_rewrite_section",
         "md_append",
         "md_insert",
         "md_delete",
@@ -54,6 +55,7 @@ OP_SANDBOXES: dict[str, frozenset[str]] = {
     "md_read": frozenset({"cortex", "workspaces"}),
     "md_to_dict": frozenset({"cortex", "workspaces"}),
     "md_replace": frozenset({"cortex", "workspaces"}),
+    "md_rewrite_section": frozenset({"cortex", "workspaces"}),
     "md_append": frozenset({"cortex", "workspaces"}),
     "md_insert": frozenset({"cortex", "workspaces"}),
     "md_delete": frozenset({"cortex", "workspaces"}),
@@ -110,8 +112,12 @@ OP_DOC: dict[str, tuple[str, str]] = {
     "md_read": ("(path, section?)", "read one section (see Markdown section ops below)"),
     "md_to_dict": ("(path)", "nested heading dict (see Markdown section ops below)"),
     "md_replace": (
+        "(path, section, target, content, all_occurrences?)",
+        "patch target substring within section body (see Markdown section ops below)",
+    ),
+    "md_rewrite_section": (
         "(path, section, content)",
-        "replace section body (see Markdown section ops below)",
+        "replace entire section body (see Markdown section ops below)",
     ),
     "md_append": (
         "(path, section, content)",
@@ -182,7 +188,8 @@ OP_CONSUMES: dict[str, frozenset[str]] = {
     "md_list": frozenset(),
     "md_read": frozenset({"section"}),
     "md_to_dict": frozenset(),
-    "md_replace": frozenset({"section"}),
+    "md_replace": frozenset({"section", "target", "all_occurrences"}),
+    "md_rewrite_section": frozenset({"section"}),
     "md_append": frozenset({"section"}),
     "md_delete": frozenset({"section"}),
     "md_insert": frozenset({"heading", "level", "position", "section"}),
@@ -196,7 +203,8 @@ OP_REQUIRES: dict[str, frozenset[str]] = {
     "insert_at_line": frozenset({"line"}),
     "move": frozenset({"target"}),
     "copy": frozenset({"target"}),
-    "md_replace": frozenset({"section"}),
+    "md_replace": frozenset({"section", "target"}),
+    "md_rewrite_section": frozenset({"section"}),
     "md_append": frozenset({"section"}),
     "md_delete": frozenset({"section"}),
 }
@@ -216,6 +224,10 @@ REQUIRED_HINTS: dict[tuple[str, str], str] = {
     ("copy", "target"): (
         "an empty target resolves to the sandbox root and would copy the file "
         "there silently. Pass target=<destination path>."
+    ),
+    ("md_replace", "target"): (
+        "md_replace patches within a section only — pass target=<old substring> "
+        "from md_read. For a full section rewrite use md_rewrite_section."
     ),
     ("md_replace", "section"): (
         "an empty section targets the file preamble (YAML frontmatter / "
@@ -315,16 +327,16 @@ def md_section_op_doc() -> str:
         "  md_list    (path)                    — list sections/TOC (PDFs: embedded outline; markdown: ATX headings plus line-anchored XML blocks such as `<scope>` / `<task_guidance>` on six-block handoff packets)\n"
         '  md_read    (path, section?)          — read one section; empty/absent section => full document (text/markdown; PDFs still require a section). XML block keys: `<tag>` or bare `tag` (e.g. section="<task_guidance>" or section="task_guidance")\n'
         "  md_to_dict (path)                    — nested heading dict (PDFs: outline-driven; others: ATX sections)\n"
-        "  md_replace (path, section, content)  — replace section body (text files only); content must NOT include the section heading — if it opens with a matching ATX heading, the op strips it and sets normalized_heading: true; response includes mutation (line/char delta) and _warning when body shrinks by >50%\n"
+        "  md_replace (path, section, target, content, all_occurrences?)  — patch target substring within the section body only; target required; cannot truncate unmentioned content\n"
+        "  md_rewrite_section (path, section, content)  — replace the entire section body (explicit rewrite after md_read); response includes mutation and _warning when body shrinks by >50%\n"
         "  md_append  (path, section, content)  — append to section body (text files only); same heading-less-content contract as md_replace\n"
         "  md_insert  (path, heading, level, position, section?, content?) — insert a new section (text files only); position: end|after|before; section is anchor for after/before; same heading-less-content contract as md_replace\n"
         "  md_delete  (path, section)           — delete section (text files only); response includes mutation summary of removed body\n"
-        "md_replace/md_delete REQUIRE a non-empty section — these ops replace/delete "
-        "the ENTIRE named-section body, and an empty section means the file preamble "
+        "md_replace/md_rewrite_section/md_delete REQUIRE a non-empty section — "
+        "md_replace patches via target= within the section; md_rewrite_section "
+        "replaces the entire named-section body; an empty section means the file preamble "
         "(YAML frontmatter / pre-heading body), so omitting it is rejected (422) to "
-        "prevent silent preamble clobbering. The markdown ops are section-addressed, "
-        "NOT text-anchored: `target` is rejected (use op='replace' for "
-        "text-anchored find/replace).\n"
+        "prevent silent preamble clobbering.\n"
         "Converted formats such as PDF are read-only for markdown section ops:\n"
         "use ``md_list`` / ``md_read`` to inspect them, not ``md_replace`` /\n"
         "``md_append`` / ``md_insert`` / ``md_delete``."

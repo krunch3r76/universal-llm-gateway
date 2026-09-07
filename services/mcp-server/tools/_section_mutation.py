@@ -51,7 +51,7 @@ def delete_mutation_summary(prior_body: str) -> dict[str, Any]:
 
 
 def shrink_warning(prior_body: str, new_body: str, *, op: str) -> str | None:
-    """Warn when a replace shrinks the section body by more than half."""
+    """Advisory when md_rewrite_section drops most of a section body."""
     prior_chars = len(prior_body)
     if prior_chars < _MIN_PRIOR_CHARS_FOR_WARN:
         return None
@@ -63,8 +63,7 @@ def shrink_warning(prior_body: str, new_body: str, *, op: str) -> str | None:
     return (
         f"{op} shrunk section body by ~{pct}% "
         f"({prior_chars} → {new_chars} chars, ~{removed_lines} lines removed). "
-        "These ops replace the ENTIRE section body — for additive edits use "
-        "md_append or md_insert. Re-read with md_read if truncation was unintended."
+        "Re-read with md_read if the rewrite was unintended."
     )
 
 

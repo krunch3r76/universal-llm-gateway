@@ -29,6 +29,9 @@ from markdown_sections import (
     read_section as md_read_section,
 )
 from markdown_sections import (
+    patch_section_body as md_patch_section_body,
+)
+from markdown_sections import (
     replace_section as md_replace_section,
 )
 from mcp_events import record
@@ -225,6 +228,76 @@ def _section_write_result(
     return result
 
 
+def _section_patch_result(
+    resolved: Path,
+    path: str,
+    sandbox: str,
+    section: str,
+    target: str,
+    content: str,
+    *,
+    all_occurrences: bool = False,
+) -> dict[str, Any]:
+    """Patch target substring within a section — cannot truncate unmentioned body."""
+    if is_converted_format(resolved):
+        return {
+            "error": (
+                f"Cannot modify {resolved.suffix} files via section ops — "
+                "converted formats are read-only (use md_list / md_read)"
+            )
+        }
+    if not target.strip():
+        return {
+            "error": (
+                "md_replace requires target=<old substring> — it patches within "
+                "the section body only. For a full section rewrite use "
+                "md_rewrite_section after md_read."
+            ),
+            "reason": "md_replace.target_required",
+        }
+    text, err = _load_text(resolved)
+    if err:
+        return {"error": err}
+    try:
+        prior_body = md_read_section(text, section)
+        after_text, replacements_made = md_patch_section_body(
+            text,
+            section,
+            target,
+            content,
+            all_occurrences=all_occurrences,
+        )
+        new_body = md_read_section(after_text, section)
+    except SectionError as exc:
+        return {"error": str(exc)}
+    try:
+        durable_rmw_text(
+            resolved,
+            lambda _: after_text,
+            retain_store_root=_retain_root_for_sandbox(sandbox),
+        )
+    except FileNotFoundError as exc:
+        return {"error": str(exc)}
+    except (PreImageMismatchError, WriteVerifyError) as exc:
+        return _rmw_error_payload(path, resolved, exc)
+    except OSError as exc:
+        return {"error": f"Failed to write {resolved}: {exc}"}
+    record(
+        "mcp.tool.markdown.section.patched",
+        path=path,
+        sandbox=sandbox,
+        section=section,
+    )
+    return {
+        "status": "replaced",
+        "path": path,
+        "section": section,
+        "patch_mode": True,
+        "replacements_made": replacements_made,
+        "mutation": section_mutation_summary(prior_body, new_body),
+    }
+
+
 def _section_delete_result(
     resolved: Path,
     path: str,
@@ -332,6 +405,8 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         heading: str = "",
         level: int = 0,
         position: str = "",
+        target: str = "",
+        all_occurrences: bool = False,
     ) -> dict[str, Any]:
         """Section-level markdown: list/read/replace/append/insert/delete/to_dict/from_dict.
 
@@ -362,6 +437,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
             _md_write_ops = frozenset(
                 {
                     "replace_section",
+                    "rewrite_section",
                     "append_section",
                     "insert_section",
                     "delete_section",
@@ -445,15 +521,25 @@ def register_markdown_tools(mcp: FastMCP) -> None:
             return {"data": data, "path": path, "sandbox": sandbox}
 
         if op == "replace_section":
+            return _section_patch_result(
+                resolved,
+                path,
+                sandbox,
+                section,
+                target,
+                content,
+                all_occurrences=all_occurrences,
+            )
+        if op == "rewrite_section":
             return _section_write_result(
                 resolved,
                 path,
                 sandbox,
                 section,
-                "mcp.tool.markdown.section.replaced",
-                "replaced",
+                "mcp.tool.markdown.section.rewritten",
+                "rewritten",
                 lambda t: md_replace_section(t, section, content),
-                mutation_op="md_replace",
+                mutation_op="md_rewrite_section",
                 warn_on_shrink=True,
             )
         if op == "append_section":
@@ -519,7 +605,7 @@ def register_markdown_tools(mcp: FastMCP) -> None:
         return {
             "error": (
                 f"Unknown op: {op!r}. Use: list_sections, read_section, "
-                "replace_section, append_section, insert_section, delete_section, "
-                "to_dict, from_dict"
+                "replace_section, rewrite_section, append_section, insert_section, "
+                "delete_section, to_dict, from_dict"
             )
         }

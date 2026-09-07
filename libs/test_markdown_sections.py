@@ -18,6 +18,7 @@ from markdown_sections import (
     insert_section,
     list_sections,
     parse_sections,
+    patch_section_body,
     read_section,
     replace_section,
     resolve_section,
@@ -76,6 +77,26 @@ def test_replace_slash_heading_body() -> None:
     assert not normd
     assert "slash body" not in updated
     assert "NEW BODY" in updated
+
+
+def test_patch_section_body_replaces_target_only() -> None:
+    updated, count = patch_section_body(
+        _DOC,
+        "Fences C / D — PENDING",
+        "slash body",
+        "patched body",
+    )
+    assert count == 1
+    assert "patched body" in updated
+    assert "slash body" not in updated
+    # Sibling section and its nested child are untouched.
+    assert "plain body" in updated
+    assert read_section(updated, "Captured behavior (key cases)").strip() == "nested body"
+
+
+def test_patch_section_body_target_missing_raises() -> None:
+    with pytest.raises(SectionError, match="target not found"):
+        patch_section_body(_DOC, "Fences C / D — PENDING", "missing", "nope")
 
 
 def test_plain_leaf_heading_still_resolves() -> None:

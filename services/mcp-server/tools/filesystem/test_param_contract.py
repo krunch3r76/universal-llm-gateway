@@ -95,7 +95,8 @@ def test_destructive_selector_required(op: str, param: str) -> None:
 def test_valid_calls_pass() -> None:
     """Representative well-formed calls produce no contract error."""
     assert validate_op_params("replace", _values(target="old")) is None
-    assert validate_op_params("md_replace", _values(section="Intro")) is None
+    assert validate_op_params("md_replace", _values(section="Intro", target="old")) is None
+    assert validate_op_params("md_rewrite_section", _values(section="Intro")) is None
     assert validate_op_params("md_read", _values(section="Intro")) is None
     assert validate_op_params("md_read", _values()) is None  # empty == full doc
     assert validate_op_params("move", _values(target="b.md")) is None
@@ -105,7 +106,10 @@ def test_valid_calls_pass() -> None:
     )
 
 
-def test_md_target_still_rejected() -> None:
-    """The original 21250 case: target on a markdown op is rejected."""
-    err = validate_op_params("md_replace", _values(section="Intro", target="old"))
+def test_md_replace_requires_target() -> None:
+    err = validate_op_params("md_replace", _values(section="Intro"))
     assert err is not None and "target" in err["error"]
+
+
+def test_md_target_on_replace_is_valid() -> None:
+    assert validate_op_params("md_replace", _values(section="Intro", target="old")) is None

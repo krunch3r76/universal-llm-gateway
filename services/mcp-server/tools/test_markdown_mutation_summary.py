@@ -1,4 +1,4 @@
-"""Friction 21874 — md_replace/md_delete return mutation summaries + shrink warnings."""
+"""Friction 21874 — md_replace patch-only; md_rewrite_section shrink warnings."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ def _write(root: Path, name: str, text: str) -> None:
     (root / name).write_text(text, encoding="utf-8")
 
 
-def test_md_replace_reports_mutation_without_warning_on_small_edit(md_tool) -> None:
+def test_md_replace_patches_without_truncating_section(md_tool) -> None:
     fn, root = md_tool
     _write(root, "charter.md", DOC)
     res = fn(
@@ -48,18 +48,23 @@ def test_md_replace_reports_mutation_without_warning_on_small_edit(md_tool) -> N
         path="charter.md",
         sandbox="cortex",
         section="Lessons",
-        content="- lesson one\n- lesson two\n- lesson three\n- lesson four\n- lesson five\n- lesson six\n- lesson seven\n",
+        target="- lesson two\n",
+        content="- lesson two (revised)\n",
     )
     assert res["status"] == "replaced"
-    assert "mutation" in res
-    assert res["mutation"]["prior_body_lines"] >= 6
-    assert res["mutation"]["new_body_lines"] >= res["mutation"]["prior_body_lines"]
+    assert res["patch_mode"] is True
+    assert res["replacements_made"] == 1
+    text = (root / "charter.md").read_text(encoding="utf-8")
+    assert "- lesson one\n" in text
+    assert "- lesson two (revised)\n" in text
+    assert "- lesson six\n" in text
     assert "_warning" not in res
 
 
-def test_md_replace_warns_on_accidental_truncation(md_tool) -> None:
+def test_md_replace_without_target_refuses(md_tool) -> None:
     fn, root = md_tool
     _write(root, "charter.md", DOC)
+    before = (root / "charter.md").read_text(encoding="utf-8")
     res = fn(
         op="replace_section",
         path="charter.md",
@@ -67,13 +72,26 @@ def test_md_replace_warns_on_accidental_truncation(md_tool) -> None:
         section="Lessons",
         content="- one new bullet only\n",
     )
-    assert res["status"] == "replaced"
+    assert "error" in res
+    assert res["reason"] == "md_replace.target_required"
+    assert (root / "charter.md").read_text(encoding="utf-8") == before
+
+
+def test_md_rewrite_section_warns_on_accidental_truncation(md_tool) -> None:
+    fn, root = md_tool
+    _write(root, "charter.md", DOC)
+    res = fn(
+        op="rewrite_section",
+        path="charter.md",
+        sandbox="cortex",
+        section="Lessons",
+        content="- one new bullet only\n",
+    )
+    assert res["status"] == "rewritten"
     mutation = res["mutation"]
     assert mutation["prior_body_lines"] > mutation["new_body_lines"]
-    assert mutation["lines_removed"] > 0
     assert mutation["size_delta_ratio"] < -0.5
     assert "_warning" in res
-    assert "md_append" in res["_warning"]
 
 
 def test_md_delete_reports_removed_body(md_tool) -> None:

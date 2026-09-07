@@ -31,6 +31,7 @@ _MD_OP_MAP: dict[str, str] = {
     "md_read": "read_section",
     "md_to_dict": "to_dict",
     "md_replace": "replace_section",
+    "md_rewrite_section": "rewrite_section",
     "md_append": "append_section",
     "md_insert": "insert_section",
     "md_delete": "delete_section",
@@ -46,6 +47,7 @@ _PATH_WRITE_OPS = frozenset(
         "append_binary",
         "delete",
         "md_replace",
+        "md_rewrite_section",
         "md_append",
         "md_insert",
         "md_delete",
@@ -215,6 +217,8 @@ def fs_impl(
                     heading=heading,
                     level=level,
                     position=position,
+                    target=target,
+                    all_occurrences=all_occurrences,
                 )
             if isinstance(result, dict) and "error" not in result:
                 result.update(ingress_meta)
@@ -235,6 +239,8 @@ def fs_impl(
             heading=heading,
             level=level,
             position=position,
+            target=target,
+            all_occurrences=all_occurrences,
         )
         if isinstance(result, dict) and "error" not in result:
             result.update(ingress_meta)
