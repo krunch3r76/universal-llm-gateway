@@ -192,7 +192,7 @@ def prune_dispatch_worktree(
     repo = source_repo.resolve()
     # Process truth outranks every record we hold: a bridge standing in this
     # directory loses its shell the moment we remove it (spawn ENOENT, H4).
-    holder_pid = worktree_held_by_live_bridge(worktree_path=wt_path)
+    holder_pid = worktree_held_by_live_bridge(worktree_path=wt_path, fresh=True)
     if holder_pid is not None:
         logger.warning(
             "lane_b prune skipped — live bridge holds worktree dispatch_id=%s "

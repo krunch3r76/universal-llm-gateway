@@ -22,6 +22,7 @@ from services.git_integration_worker.cursor_sdk_worktree_registry import (
     lookup_lane_worktree,
     unregister_lane_worktree,
 )
+from services.git_integration_worker import cursor_sdk_events
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -198,3 +199,33 @@ def test_ac_w0_rollback_refuses_sibling_non_terminal(
     )
     assert not result.pruned
     assert wt.is_dir()
+
+
+def test_ac_w0_7_admit_bound_emits_binding_kind(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-W0-7: admit path emits ``sdk.lane_b.admit_bound`` with ``binding_kind``."""
+    worktree_root = tmp_path / "worktrees"
+    binding = resolve_admit_binding(
+        req=_req(dispatch_id="admit-bound-1", thread_id="t-admit-bound"),
+        source_repo=source_repo,
+        hub=source_repo,
+        worktree_root=worktree_root,
+        dispatch_workspace_default=source_repo.parent,
+        lane="B",
+    )
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events.emit_sdk_lane_b_admit_bound",
+        lambda **kwargs: emitted.append(dict(kwargs)),
+    )
+    cursor_sdk_events.emit_sdk_lane_b_admit_bound(
+        dispatch_id="admit-bound-1",
+        thread_id="t-admit-bound",
+        binding_kind=binding.binding_kind,
+        worktree_path=str(binding.workspace),
+    )
+    assert len(emitted) == 1
+    assert emitted[0]["binding_kind"] == "minted"
+    assert emitted[0]["thread_id"] == "t-admit-bound"
+    assert emitted[0]["dispatch_id"] == "admit-bound-1"

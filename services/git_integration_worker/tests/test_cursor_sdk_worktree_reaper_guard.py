@@ -25,6 +25,7 @@ from services.git_integration_worker.cursor_sdk_worktree import (
     reap_orphan_worktrees,
 )
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    _occupancy_snapshot,
     containing_worktree_under_root,
     live_bridge_worktree_paths,
     live_ledger_worktree_paths,
@@ -36,6 +37,7 @@ from services.git_integration_worker.cursor_sdk_worktree_prune import (
     active_managed_worktree_paths,
     prune_dispatch_worktree,
     reset_ghost_row_reports,
+    rollback_dispatch_worktree,
 )
 from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
     reconcile_unregistered_worktrees,
@@ -218,6 +220,113 @@ def test_prune_refuses_worktree_held_by_live_bridge(
     assert wt.is_dir()
     assert lookup_lane_worktree(thread_id=dispatch_id) is not None
     assert worktree_held_by_live_bridge(worktree_path=wt) == 4242
+
+
+def test_ac_w0_4_fresh_rescan_detects_bridge_inside_ttl(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-W0-4: ``fresh=True`` sees a bridge that appeared after the cache filled."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "fresh-guard"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_orphan.live_bridge_occupancy",
+        lambda: [],
+    )
+    reset_occupancy_cache()
+    _occupancy_snapshot()
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_orphan.live_bridge_occupancy",
+        lambda: [
+            BridgeOccupancy(pid=5555, cwd=str(wt), dispatch_id=dispatch_id),
+        ],
+    )
+
+    result = prune_dispatch_worktree(
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+    )
+
+    assert not result.pruned
+    assert result.branch_retained
+    assert wt.is_dir()
+
+
+def test_ac_w0_5_rollback_emits_worktree_removed(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-W0-5: rollback removal emits ``sdk.lane_b.worktree_removed`` trigger=rollback."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "rollback-emit"
+    thread_id = "t-rollback-emit"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
+    _stub_occupancy(monkeypatch)
+    emitted: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_worktree_prune."
+        "emit_sdk_lane_b_worktree_removed",
+        lambda **kwargs: emitted.append(dict(kwargs)),
+    )
+
+    result = rollback_dispatch_worktree(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        source_repo=source_repo,
+    )
+
+    assert result.pruned
+    assert not wt.exists()
+    assert len(emitted) == 1
+    assert emitted[0]["trigger"] == "rollback"
+    assert emitted[0]["dispatch_id"] == dispatch_id
+
+
+def test_ac_w0_6b_terminal_sibling_bridge_live_tree_survives(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-W0-6b: terminal sibling ledger row + live bridge → tree survives rollback."""
+    worktree_root = tmp_path / "worktrees"
+    thread_id = "t-10143-shape"
+    dispatch_id = "victim-dispatch"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
+    ledger = CursorDispatchLedger.instance()
+    sibling_id = "sibling-terminal"
+    _admit(
+        ledger=ledger,
+        dispatch_id=sibling_id,
+        thread_id=thread_id,
+        source_repo=source_repo,
+        lease_key=str(wt.resolve()),
+    )
+    ledger.mark_terminal(dispatch_id=sibling_id, terminal_status="completed")
+    _stub_occupancy(
+        monkeypatch,
+        BridgeOccupancy(pid=7777, cwd=str(wt), dispatch_id=sibling_id),
+    )
+
+    result = rollback_dispatch_worktree(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        source_repo=source_repo,
+    )
+
+    assert not result.pruned
+    assert wt.is_dir()
 
 
 def test_prune_proceeds_when_no_bridge_holds_the_tree(
