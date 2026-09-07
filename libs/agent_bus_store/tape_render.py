@@ -49,6 +49,99 @@ def _split_verbatim_layer(full_md: str) -> str:
     return full_md[:idx]
 
 
+def _turn_count_verbatim(verbatim: str) -> int:
+    return sum(1 for line in verbatim.splitlines() if line.startswith("## Turn"))
+
+
+def _binding_for_journal(journal: dict[str, Any], thread_id: str) -> str | None:
+    """Derive binding from journal row entity_ids; None ⇒ dropped from tape (I9)."""
+    entity_ids = journal.get("entity_ids") or []
+    if isinstance(entity_ids, str):
+        entity_ids = json.loads(entity_ids)
+    agent_bus_ref = f"agent-bus:{thread_id}"
+    cites_lane = agent_bus_ref in entity_ids or thread_id in entity_ids
+    if not cites_lane:
+        return None
+    return "dominant_write"
+
+
+def _ordered_chain_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Order rows sharing a conversation_uuid by prior_session_id chain (R7a)."""
+    by_uuid: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        uuid = row.get("conversation_uuid")
+        if not uuid:
+            continue
+        by_uuid.setdefault(str(uuid), []).append(row)
+    ordered: list[dict[str, Any]] = []
+    for uuid_rows in by_uuid.values():
+        by_sid = {
+            str(r["session_id"]): r for r in uuid_rows if r.get("session_id")
+        }
+        roots = [
+            r
+            for r in uuid_rows
+            if not r.get("prior_session_id")
+            or str(r["prior_session_id"]) not in by_sid
+        ]
+        if not roots:
+            ordered.extend(sorted(uuid_rows, key=lambda r: int(r.get("id") or 0)))
+            continue
+        chain = [roots[0]]
+        while True:
+            child = next(
+                (
+                    r
+                    for r in uuid_rows
+                    if str(r.get("prior_session_id") or "") == str(chain[-1]["session_id"])
+                ),
+                None,
+            )
+            if child is None:
+                break
+            chain.append(child)
+        ordered.extend(chain)
+    solo = [r for r in rows if not r.get("conversation_uuid")]
+    ordered.extend(solo)
+    return ordered
+
+
+def build_chain_segments(
+    journals: list[dict[str, Any]], *, files_root: Any
+) -> list[dict[str, Any]]:
+    """Slice uuid chains into (turn_lo, turn_hi] segments without double render (I8)."""
+    segments: list[dict[str, Any]] = []
+    prior_turn_by_uuid: dict[str, int] = {}
+    for journal in _ordered_chain_rows(journals):
+        sid = journal.get("session_id")
+        if not sid or not journal.get("file_path"):
+            continue
+        path = files_root / journal["file_path"]
+        if not path.is_file():
+            continue
+        full = path.read_text(encoding="utf-8")
+        verbatim = _split_verbatim_layer(full)
+        turn_count = _turn_count_verbatim(verbatim)
+        uuid = str(journal.get("conversation_uuid") or sid)
+        turn_lo = prior_turn_by_uuid.get(uuid, 0)
+        turn_hi = turn_count
+        prior_turn_by_uuid[uuid] = turn_hi
+        if turn_hi <= turn_lo:
+            continue
+        segments.append(
+            {
+                "session_id": sid,
+                "transcript_id": uuid,
+                "turn_lo": turn_lo,
+                "turn_hi": turn_hi,
+                "turn_count": turn_hi - turn_lo,
+                "verbatim_sha256": _verbatim_sha256(verbatim),
+                "conversation_uuid": journal.get("conversation_uuid"),
+            }
+        )
+    return segments
+
+
 def _load_sealed_segment(session_id: str) -> TapeSegment | None:
     row = lookup_sealed_journal(session_id)
     if row is None:
@@ -153,30 +246,68 @@ def render_tape(
 
     segments: list[dict[str, Any]] = []
     excluded: list[dict[str, Any]] = []
+    lane_journals: list[dict[str, Any]] = []
     for journal in journals:
         sid = journal.get("session_id")
         if not sid:
             continue
+        binding = _binding_for_journal(journal, thread_id)
+        if binding is None:
+            excluded.append(
+                {
+                    "session_id": sid,
+                    "reason": "dropped",
+                    "detail": "human row neither cites lane nor is CP-named",
+                }
+            )
+            continue
         if journal.get("file_path") is None:
             excluded.append({"session_id": sid, "reason": "segment_unavailable", "depth": "light"})
             continue
-        seg = _load_sealed_segment(str(sid))
-        if seg is None:
-            excluded.append({"session_id": sid, "reason": "segment_unavailable", "depth": "light"})
-            continue
+        journal = {**journal, "_binding": binding}
+        lane_journals.append(journal)
+
+    from cortex_store.dispatch_ops._shared import _FILES_ROOT
+
+    for chain_seg in build_chain_segments(lane_journals, files_root=_FILES_ROOT):
+        journal = next(
+            j for j in lane_journals if j.get("session_id") == chain_seg["session_id"]
+        )
+        binding = journal.get("_binding", "dominant_write")
         segments.append(
             {
-                "session_id": seg.session_id,
-                "transcript_id": seg.transcript_id,
-                "turn_count": seg.turn_count,
-                "verbatim_sha256": seg.verbatim_sha256,
-                "conversation_uuid": seg.conversation_uuid,
-                "binding": seg.binding,
-                "boundary": seg.boundary or (
-                    "window_whole" if seg.turn_count >= 0 else None
-                ),
+                "session_id": chain_seg["session_id"],
+                "transcript_id": chain_seg["transcript_id"],
+                "turn_count": chain_seg["turn_count"],
+                "turn_lo": chain_seg["turn_lo"],
+                "turn_hi": chain_seg["turn_hi"],
+                "verbatim_sha256": chain_seg["verbatim_sha256"],
+                "conversation_uuid": chain_seg["conversation_uuid"],
+                "binding": binding,
+                "boundary": None,
             }
         )
+
+    for journal in lane_journals:
+        sid = journal.get("session_id")
+        if sid and not any(s["session_id"] == sid for s in segments):
+            seg = _load_sealed_segment(str(sid))
+            if seg is None:
+                excluded.append({"session_id": sid, "reason": "segment_unavailable", "depth": "light"})
+                continue
+            segments.append(
+                {
+                    "session_id": seg.session_id,
+                    "transcript_id": seg.transcript_id,
+                    "turn_count": seg.turn_count,
+                    "verbatim_sha256": seg.verbatim_sha256,
+                    "conversation_uuid": seg.conversation_uuid,
+                    "binding": journal.get("_binding", seg.binding),
+                    "boundary": seg.boundary or (
+                        "window_whole" if seg.turn_count >= 0 else None
+                    ),
+                }
+            )
 
     cells = _cells_for_lane(thread_id=thread_id)
     messages: list[dict[str, Any]] = []
@@ -231,4 +362,4 @@ def render_tape(
     }
 
 
-__all__ = ["render_tape", "TapeSegment"]
+__all__ = ["render_tape", "TapeSegment", "build_chain_segments", "_binding_for_journal"]

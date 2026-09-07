@@ -81,6 +81,13 @@ def try_idempotent_session_close(
     ):
         return None, existing["id"]
 
+    if (
+        existing["file_path"] is not None
+        and existing["closed_by"] == "succession"
+        and body.closed_by == "succession"
+    ):
+        return None, existing["id"]
+
     prior_transcript_id = f"transcript:{body.session_id}"
     prior_depth = "none"
     with cortex_conn() as _depth_conn:
@@ -101,14 +108,16 @@ def try_idempotent_session_close(
                 )
                 prior_depth = "verbatim"
                 entity_stamped_by_close = True  # can't prove legacy; be safe
-        if existing["file_path"] is None and not entity_stamped_by_close:
-            # No transcript file AND no close-stamped transcript entity
-            # (verbatim/light closes always leave both; journal_write leaves a
-            # stub entity with empty attributes, or none at all; a real
-            # depth="none" close leaves neither — re-closing it with content is
-            # the intended repair path). This row cannot be attributed to a
-            # real session_close: run the full close, reusing the row, instead
-            # of silently returning a no-op success envelope (friction 22962).
+        has_bare_transcript_entity = depth_row is not None
+        if (
+            existing["file_path"] is None
+            and not entity_stamped_by_close
+            and has_bare_transcript_entity
+        ):
+            # ``journal_write`` leaves a bare transcript entity (opened_at/
+            # closed_at) without ``transcript_depth``. A genuine depth="none"
+            # close leaves neither file nor entity — idempotent echo below.
+            # Re-close only the journal_write legacy stub in place (22962).
             logger.info(
                 "session_close: session_id %s has a legacy journal row "
                 "(id=%d, file_path NULL, no close-stamped transcript entity) "
@@ -162,8 +171,28 @@ def try_idempotent_session_close(
                 detail=conflict_detail,
             )
     # Genuinely re-closing an already-closed session: echo the prior close
-    # explicitly. Do NOT re-post a bus debrief — the prior close already
-    # posted one, and re-posting here replays stale summary text (22962).
+    # and retry debrief with stored journal fields (idempotent debrief retry).
+    stored_domains = (
+        json.loads(existing["domains"]) if existing["domains"] else None
+    )
+    stored_decisions = (
+        json.loads(existing["decisions"]) if existing["decisions"] else None
+    )
+    stored_open_items = (
+        json.loads(existing["open_items"]) if existing["open_items"] else None
+    )
+    debrief = attempt_session_close_debrief(
+        session_id=body.session_id,
+        agent=str(existing["agent"] or body.agent),
+        summary=str(existing["summary"]),
+        journal_row_id=int(existing["id"]),
+        transcript_depth=prior_depth,
+        content_hash=None,
+        domains=stored_domains,
+        decisions=stored_decisions,
+        open_items=stored_open_items,
+        closed_by=existing["closed_by"],
+    )
     return (
         SessionCloseResponse(
             transcript_entity_id=(
@@ -183,9 +212,9 @@ def try_idempotent_session_close(
                 handoff_retry.provenance,
                 handoff_retry.handoff_verification,
             ),
-            debrief_turn_number=None,
-            debrief_status="skipped_existing",
-            debrief_body=None,
+            debrief_turn_number=debrief.debrief_turn_number,
+            debrief_status=debrief.debrief_status,
+            debrief_body=debrief.debrief_body,
         ),
         None,
     )

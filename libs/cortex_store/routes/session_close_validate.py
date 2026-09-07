@@ -16,6 +16,10 @@ from ..dispatch_ops._shared import (
 )
 from ..handoff_audit import check_handoff_transcript_anchor
 from ..models import SessionCloseRequest
+from ..session_close_successor_hop import (
+    SUCCESSION_FILL_REASON,
+    resolve_successor_hop,
+)
 from ..session_close_validation import (
     _USER_VOICE_RE,
     build_validation_error,
@@ -30,7 +34,50 @@ from ..transcript_assembly import (
     resolve_jsonl_path,
     validate_transcript_turn_grammar,
 )
+from ..transcript_session_id import derive_session_id_from_jsonl_start
 from .session_close_helpers import _parse_opened_at, _raise_422
+
+
+def _guard_succession_fill_required(body: SessionCloseRequest) -> None:
+    """R1b: block non-fill close when an unfilled succession row awaits fill."""
+    if body.closed_by == "succession" or not body.transcript_jsonl_path:
+        return
+    try:
+        jsonl_path = resolve_jsonl_path(body.transcript_jsonl_path)
+    except TranscriptPathError:
+        return
+    from_jsonl = derive_session_id_from_jsonl_start(
+        jsonl_path=jsonl_path, agent=body.agent
+    )
+    if not from_jsonl:
+        return
+    hop = resolve_successor_hop(
+        supplied_session_id=body.session_id,
+        jsonl_start_id=from_jsonl,
+        jsonl_path=jsonl_path,
+        agent=body.agent,
+    )
+    if hop is None or hop.hop_reason != SUCCESSION_FILL_REASON:
+        return
+    if body.session_id != hop.session_id:
+        from fastapi import HTTPException, status
+
+        conflict = build_validation_error(
+            reason="session.succession_fill_required",
+            field="session_id",
+            received=body.session_id,
+            expected=hop.session_id,
+            examples=[hop.session_id],
+            hint=(
+                "Preflight returned hop_reason=succession_fill — close under the "
+                "returned session_id with transcript_jsonl_path to fill structure."
+            ),
+            detail=(
+                f"session {body.session_id!r} must fill succession row "
+                f"{hop.session_id!r} before a new close on this uuid."
+            ),
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=conflict)
 
 
 @dataclass(frozen=True)
@@ -128,6 +175,8 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             detail=payload["error"],
             payload=payload,
         )
+
+    _guard_succession_fill_required(body)
 
     if len(body.summary) < 20:
         _structured_422(

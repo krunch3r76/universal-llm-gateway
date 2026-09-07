@@ -61,7 +61,8 @@ def _op_transcript_seal(
 
     from ..session_close_successor_hop import lookup_sealed_journal
 
-    if lookup_sealed_journal(derived) is not None:
+    sealed = lookup_sealed_journal(derived)
+    if sealed is not None and sealed.closed_by != "succession":
         return {
             "error": f"session {derived!r} already sealed",
             "reason": "already_closed",
@@ -70,6 +71,49 @@ def _op_transcript_seal(
         }
 
     agent = _agent_label_from_session_id(derived)
+    if sealed is not None and sealed.closed_by == "succession":
+        from ..transcript_assembly import assemble_verbatim_md
+
+        try:
+            new_verbatim, new_turns = assemble_verbatim_md(
+                jsonl_path=resolved,
+                session_id=derived,
+            )
+        except ValueError as exc:
+            return {"error": str(exc), "reason": "jsonl_parse_error"}
+        from ..dispatch_ops._shared import _FILES_ROOT
+
+        prior_turns = 0
+        from ..db import cortex_conn
+
+        with cortex_conn() as conn:
+            row = conn.execute(
+                "SELECT file_path FROM session_journals WHERE session_id = ?",
+                (derived,),
+            ).fetchone()
+        if row and row["file_path"]:
+            prior_path = _FILES_ROOT / row["file_path"]
+            if prior_path.is_file():
+                prior_text = prior_path.read_text(encoding="utf-8")
+                marker = "\n## Session Summary"
+                prior_verbatim = (
+                    prior_text[: prior_text.find(marker)]
+                    if marker in prior_text
+                    else prior_text
+                )
+                prior_turns = sum(
+                    1
+                    for line in prior_verbatim.splitlines()
+                    if line.startswith("## Turn")
+                )
+        if new_turns <= prior_turns:
+            return {
+                "error": f"session {derived!r} already sealed",
+                "reason": "already_closed",
+                "code": "transcript_seal.already_closed",
+                "session_id": derived,
+                "turn_count": prior_turns,
+            }
     now = datetime.now(tz=UTC).isoformat()
     body = SessionCloseRequest(
         session_id=derived,
