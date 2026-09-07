@@ -74,8 +74,9 @@ After admit, when the wait is event-gated, arm **in-session wake** (three legs,
 atomic) and exit — unless already armed or named decline. SoT:
 `runbook:bus-consult-watcher`. **Leg 1:** `watch-supervise.sh start … --no-page`.
 **Leg 2 (same turn):** `watch-supervise.sh tail --label L` background +
-`notify_on_output` on `closeout turn=|consult complete|stall-pop:`. **Leg 3 (wake
-turn):** `get` + relay. ¬ start-only; ¬ hold-turn on `wait`. Cheap = legs 1–2 /
+`notify_on_output` on `closeout turn=|consult complete|stall-pop:` (tail exits
+when `state.json status=complete`; ¬ `--forever` / raw `tail -F`). **Leg 3 (wake
+turn):** `get` + relay. ¬ start-only; ¬ hold-turn on `wait`; ¬ hang-tail. Cheap = legs 1–2 /
 `SCORE_RESURFACE` / `poll_hint` + lean heartbeat (`loop` skill). Costly =
 short-cadence `/loop` or holding this turn. Complements a:31104. ¬ a:31024 liaison.
 
@@ -485,6 +486,16 @@ worktree (`resume_retain`).
 |---|---|---|---|
 | `ROW_PINNED`, `HOLD_MERGE`, `OPERATOR_GATE` (when gate clears) | **same agent** | `team_dispatch(… resume_of=<pinned dispatch_id>, reuse_thread=<worker thread>, source_ref=todo:<slug>, dispatch_thread_id=<coord>)`, lane omitted | liaison / IDE lead when the pin lifts |
 | `ROW_HOP` (planned), crash, silent, watchdog | **fresh agent** | GIW hop reactor → Stargate generate with `reuse_thread` + `hop_*`, **no `resume_of`** | substrate |
+
+**Designed-stop CLOSEOUT identity (binding — a:32548):** exit-and-persist
+tokens (`ROW_PINNED`, `HOLD_MERGE`, …) terminate the **parent** dispatch that
+carried the conductor packet and scoreboard. When the pin lifts,
+`resume_of=<that parent dispatch_id>` re-admits the **same agent** on the same
+worker thread. Scoreboard `NEXT_ADMIT` / nested `nest_under` targets the
+**child** dispatch id minted by that resume — never the terminal parent.
+Multi-hop `resume_of` chains walk lineage to the store-bearing ancestor HOME
+(GIW `resolve_sdk_store_dir`); intermediate hop rows may carry empty
+`bridge-state` while the sqlite store lives under an earlier dispatch HOME.
 
 `resume_of` **requires** `reuse_thread` (same mailbox + Lane-B isolation). XOR
 `nest_under`. GIW is sole eligibility authority; resume within
