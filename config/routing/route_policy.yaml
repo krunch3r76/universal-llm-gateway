@@ -63,6 +63,12 @@ routes:
       transport: team_dispatch
       autonomy: auto_executed
       operator_pickup_required: false
+  conductor:
+    cursor-sdk:
+      dispatch_kind: conductor
+      transport: team_dispatch
+      autonomy: auto_executed
+      operator_pickup_required: false
   pure-mechanical:
     cursor-sdk:
       dispatch_kind: pure-mechanical

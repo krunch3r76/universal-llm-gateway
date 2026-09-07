@@ -207,16 +207,19 @@ async def resolve_cursor_sdk_thread_targets(
     *,
     reuse_thread: str | None,
     dispatch_thread_id: str | None,
+    contract: str | None = None,
     packet_kind: str | None = None,
     request_id: str = "",
 ) -> tuple[str | None, str | None, bool]:
     """Return ``(reuse_thread, parent_dispatch_thread_id, is_auto_consolidation)``.
 
     Thin delegate over ``resolve_generate_thread_targets`` for cursor-sdk lane.
-    Conductor ``packet_kind`` refuses grandchild coord-split (422) before resolve.
+    Conductor ``contract`` refuses grandchild coord-split (422) before resolve.
     """
+    effective_contract = (contract or packet_kind or "").strip().lower() or None
     await refuse_conductor_coord_split(
         request_id=request_id,
+        contract=effective_contract,
         reuse_thread=reuse_thread,
         dispatch_thread_id=dispatch_thread_id,
     )

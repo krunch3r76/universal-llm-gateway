@@ -69,7 +69,7 @@ def prepare_conductor_packet(
         source_ref,
         cortex=cortex,
         workspaces_root=workspaces_root,
-        contract="none",
+        contract="conductor",
         caller_agent=caller_agent,
         summon_text=summon_text,
         summon_mode=summon_mode,
