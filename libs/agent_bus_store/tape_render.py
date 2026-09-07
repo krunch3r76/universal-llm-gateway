@@ -182,6 +182,72 @@ def _load_sealed_segment(session_id: str) -> TapeSegment | None:
     )
 
 
+_TURN_HEADING_RE = re.compile(r"^## Turn (\d+)")
+
+
+def _verbatim_messages_from_segment(
+    verbatim: str,
+    *,
+    seg: dict[str, Any],
+    session_id: str,
+) -> list[dict[str, Any]]:
+    """Parse ``### User`` / ``### Assistant`` blocks into speech messages (AC-9/18)."""
+    turn_lo = int(seg.get("turn_lo") or 0)
+    turn_hi = seg.get("turn_hi")
+    turn_hi_int = int(turn_hi) if turn_hi is not None else None
+    transcript_id = str(seg["transcript_id"])
+    window_whole = seg.get("boundary") == "window_whole"
+
+    messages: list[dict[str, Any]] = []
+    current_turn = 0
+    current_role: str | None = None
+    body_lines: list[str] = []
+
+    def flush() -> None:
+        nonlocal body_lines, current_role
+        if current_role is None:
+            body_lines = []
+            return
+        if turn_hi_int is not None:
+            if current_turn <= turn_lo or current_turn > turn_hi_int:
+                body_lines = []
+                current_role = None
+                return
+        content = "\n".join(body_lines).strip()
+        if content:
+            messages.append(
+                {
+                    "role": current_role,
+                    "content": content,
+                    "transcript_id": transcript_id,
+                    "session_id": session_id,
+                    "turn_index": current_turn,
+                    "window_whole": window_whole,
+                }
+            )
+        body_lines = []
+        current_role = None
+
+    for line in verbatim.splitlines():
+        turn_match = _TURN_HEADING_RE.match(line)
+        if turn_match:
+            flush()
+            current_turn = int(turn_match.group(1))
+            continue
+        if line.startswith("### User"):
+            flush()
+            current_role = "user"
+            continue
+        if line.startswith("### "):
+            flush()
+            current_role = "assistant"
+            continue
+        if current_role is not None:
+            body_lines.append(line)
+    flush()
+    return messages
+
+
 def _parse_window_lines(body: str) -> list[dict[str, Any]]:
     anchors: list[dict[str, Any]] = []
     for line in body.splitlines():
@@ -321,21 +387,13 @@ def render_tape(
             continue
         full = (_FILES_ROOT / file_path).read_text(encoding="utf-8")
         verbatim = _split_verbatim_layer(full)
-        for idx, line in enumerate(verbatim.splitlines(), start=1):
-            if line.startswith("### User"):
-                continue
-            if line.startswith("### "):
-                role = "assistant"
-                messages.append(
-                    {
-                        "role": role,
-                        "content": line,
-                        "transcript_id": seg["transcript_id"],
-                        "session_id": sid,
-                        "turn_index": idx,
-                        "window_whole": seg.get("boundary") == "window_whole",
-                    }
-                )
+        messages.extend(
+            _verbatim_messages_from_segment(
+                verbatim,
+                seg=seg,
+                session_id=sid,
+            )
+        )
 
     payload_bytes = len(json.dumps(messages).encode("utf-8"))
     truncated = payload_bytes > budget_bytes

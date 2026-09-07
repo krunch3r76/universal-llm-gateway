@@ -38,6 +38,30 @@ from ..transcript_session_id import derive_session_id_from_jsonl_start
 from .session_close_helpers import _parse_opened_at, _raise_422
 
 
+def _succession_fill_channel(body: SessionCloseRequest) -> bool:
+    """True when this close fills an unfilled succession row (R2)."""
+    if not body.transcript_jsonl_path:
+        return False
+    try:
+        jsonl_path = resolve_jsonl_path(body.transcript_jsonl_path)
+    except TranscriptPathError:
+        return False
+    from_jsonl = derive_session_id_from_jsonl_start(
+        jsonl_path=jsonl_path, agent=body.agent
+    )
+    hop = resolve_successor_hop(
+        supplied_session_id=body.session_id,
+        jsonl_start_id=from_jsonl,
+        jsonl_path=jsonl_path,
+        agent=body.agent,
+    )
+    return (
+        hop is not None
+        and hop.hop_reason == SUCCESSION_FILL_REASON
+        and hop.session_id == body.session_id
+    )
+
+
 def _guard_succession_fill_required(body: SessionCloseRequest) -> None:
     """R1b: block non-fill close when an unfilled succession row awaits fill."""
     if body.closed_by == "succession" or not body.transcript_jsonl_path:
@@ -92,6 +116,7 @@ class ValidatedCloseContext:
     source_uri: str | None
     now: str
     opened_at: str | None
+    archival_depth: str = "verbatim"
 
 
 def _structured_422(
@@ -178,6 +203,9 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
 
     _guard_succession_fill_required(body)
 
+    succession_fill = _succession_fill_channel(body)
+    effective_depth = "verbatim" if succession_fill else body.transcript_depth
+
     if len(body.summary) < 20:
         _structured_422(
             body,
@@ -232,7 +260,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
     )
 
     handoff_reject = reject_handoff_at_none_depth(
-        transcript_depth=body.transcript_depth,
+        transcript_depth=effective_depth,
         handoff_prompt=body.handoff_prompt,
         handoff_source_path=body.handoff_source_path,
     )
@@ -249,7 +277,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         )
 
     if (
-        body.transcript_depth == "verbatim"
+        effective_depth == "verbatim"
         and not body.transcript_jsonl_path
         and not body.transcript_md
     ):
@@ -261,7 +289,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             expected=(
                 f"exactly one of {{transcript_jsonl_path (cursor), "
                 f"transcript_md (web)}} for transcript_depth="
-                f"{body.transcript_depth!r}"
+                f"{effective_depth!r}"
             ),
             examples=[],
             hint=(
@@ -275,14 +303,14 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             detail=(
                 f"either transcript_jsonl_path (cursor) or transcript_md "
                 f"(web) is required for transcript_depth="
-                f"{body.transcript_depth!r} — neither was supplied"
+                f"{effective_depth!r} — neither was supplied"
             ),
         )
 
-    if body.transcript_depth == "none":
+    if effective_depth == "none":
         transcript_md = None
         turn_count = 0
-    elif body.transcript_depth == "light":
+    elif effective_depth == "light":
         transcript_md = body.session_summary_md
         turn_count = 0
         if "## Session Summary" not in transcript_md:
@@ -439,11 +467,11 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             )
 
     transcript_entity_id: str | None = (
-        None if body.transcript_depth == "none" else f"transcript:{body.session_id}"
+        None if effective_depth == "none" else f"transcript:{body.session_id}"
     )
     transcript_path: str | None = (
         None
-        if body.transcript_depth == "none"
+        if effective_depth == "none"
         else f"notes/system/transcripts/{body.session_id}.md"
     )
     source_uri = f"files://{transcript_path}" if transcript_path else None
@@ -471,6 +499,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         source_uri=source_uri,
         now=now,
         opened_at=opened_at,
+        archival_depth=effective_depth,
     )
 
 

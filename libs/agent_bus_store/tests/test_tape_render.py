@@ -135,3 +135,99 @@ def test_i9_binding_from_entity_ids_and_dropped_row() -> None:
     ]
     assert len(excluded) == 1
     assert excluded[0]["session_id"] == "cursor-2026-09-07-100000-x02"
+
+
+def test_render_tape_messages_contain_user_and_assistant_speech(tmp_path: Path) -> None:
+    """AC-9/18: messages payload carries speech bodies, not heading lines."""
+    files_root = tmp_path / "files"
+    files_root.mkdir()
+    sid = "cursor-2026-09-07-100000-sp1"
+    rel_path = f"notes/system/transcripts/{sid}.md"
+    path = files_root / rel_path
+    path.parent.mkdir(parents=True)
+    path.write_text(_verbatim_md(2, sid), encoding="utf-8")
+
+    journal_row = {
+        "id": 1,
+        "session_id": sid,
+        "conversation_uuid": _UUID,
+        "prior_session_id": None,
+        "file_path": rel_path,
+        "entity_ids": json.dumps(["agent-bus:6341"]),
+        "closed_by": "cursor",
+    }
+
+    with (
+        patch("agent_bus_store.tape_render.list_checkpoint_turns", return_value=()),
+        patch("cortex_store.db.cortex_conn") as mock_conn,
+        patch("cortex_store.events_tape.agent_bus_tape_rendered"),
+        patch("cortex_store.dispatch_ops._shared._FILES_ROOT", files_root),
+    ):
+        conn = mock_conn.return_value.__enter__.return_value
+        conn.execute.return_value.fetchall.return_value = [journal_row]
+        result = render_tape(thread_id="6341")
+
+    assert result["segment_count"] == 1
+    msgs = result["messages"]
+    assert len(msgs) == 4
+    assert msgs[0]["role"] == "user"
+    assert msgs[0]["content"] == "User turn 1."
+    assert msgs[0]["turn_index"] == 1
+    assert msgs[1]["role"] == "assistant"
+    assert msgs[1]["content"] == "Assistant turn 1."
+    assert msgs[2]["content"] == "User turn 2."
+    assert msgs[3]["content"] == "Assistant turn 2."
+    assert not any(m["content"].startswith("### ") for m in msgs)
+    assert len(result["excluded"]) == 0
+
+
+def test_i9_render_tape_reports_dropped_human_row(tmp_path: Path) -> None:
+    """I9: after binding filter, dropped human rows appear in excluded."""
+    files_root = tmp_path / "files"
+    files_root.mkdir()
+    lane_sid = "cursor-2026-09-07-100000-lane"
+    foreign_sid = "cursor-2026-09-07-100000-foreign"
+    for sid, eids in (
+        (lane_sid, ["agent-bus:6341"]),
+        (foreign_sid, ["agent-bus:9999"]),
+    ):
+        rel = f"notes/system/transcripts/{sid}.md"
+        path = files_root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_verbatim_md(1, sid), encoding="utf-8")
+
+    rows = [
+        {
+            "id": 1,
+            "session_id": lane_sid,
+            "conversation_uuid": _UUID,
+            "prior_session_id": None,
+            "file_path": f"notes/system/transcripts/{lane_sid}.md",
+            "entity_ids": json.dumps(["agent-bus:6341"]),
+            "closed_by": "cursor",
+        },
+        {
+            "id": 2,
+            "session_id": foreign_sid,
+            "conversation_uuid": None,
+            "prior_session_id": None,
+            "file_path": f"notes/system/transcripts/{foreign_sid}.md",
+            "entity_ids": json.dumps(["agent-bus:9999"]),
+            "closed_by": "cursor",
+        },
+    ]
+
+    with (
+        patch("agent_bus_store.tape_render.list_checkpoint_turns", return_value=()),
+        patch("cortex_store.db.cortex_conn") as mock_conn,
+        patch("cortex_store.events_tape.agent_bus_tape_rendered"),
+        patch("cortex_store.dispatch_ops._shared._FILES_ROOT", files_root),
+    ):
+        conn = mock_conn.return_value.__enter__.return_value
+        conn.execute.return_value.fetchall.return_value = rows
+        result = render_tape(thread_id="6341")
+
+    dropped = [e for e in result["excluded"] if e.get("reason") == "dropped"]
+    assert len(dropped) == 1
+    assert dropped[0]["session_id"] == foreign_sid
+    assert result["messages"][0]["content"] == "User turn 1."

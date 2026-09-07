@@ -114,6 +114,32 @@ def lookup_sealed_journal(session_id: str) -> SealedJournal | None:
     )
 
 
+def lookup_journaled_by_conversation_uuid(conversation_uuid: str) -> SealedJournal | None:
+    """Return the latest human-closed journal for a tab uuid (R4 resume lookup)."""
+    from .db import cortex_conn
+
+    conn = cortex_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, session_id, timestamp, prior_session_id, closed_by "
+            "FROM session_journals WHERE conversation_uuid = ? "
+            "AND closed_by IS NOT NULL AND closed_by != 'succession' "
+            "ORDER BY id DESC LIMIT 1",
+            (conversation_uuid,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or not row["session_id"]:
+        return None
+    return SealedJournal(
+        session_id=str(row["session_id"]),
+        journal_row_id=int(row["id"]),
+        timestamp=str(row["timestamp"]),
+        prior_session_id=row["prior_session_id"],
+        closed_by=row["closed_by"],
+    )
+
+
 def _lookup_child_journal(prior_session_id: str) -> SealedJournal | None:
     """Latest journal that lists *prior_session_id* as its predecessor."""
     from .db import cortex_conn
@@ -368,6 +394,7 @@ __all__ = [
     "first_user_timestamp_after",
     "iter_jsonl_user_timestamps",
     "latest_journal_in_chain",
+    "lookup_journaled_by_conversation_uuid",
     "lookup_sealed_journal",
     "mint_successor_session_id",
     "parse_utc_timestamp",

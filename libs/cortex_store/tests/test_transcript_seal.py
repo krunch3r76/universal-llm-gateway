@@ -12,6 +12,7 @@ import pytest
 
 from cortex_store.dispatch_ops import ops_journals
 from cortex_store.dispatch_ops.ops_transcript_seal import _op_transcript_seal
+from cortex_store.transcript_session_id import derive_session_id_from_jsonl_start
 
 pytestmark = pytest.mark.offline
 
@@ -67,10 +68,13 @@ def test_seal_requires_thread_and_jsonl() -> None:
     )
 
 
+@patch("cortex_store.session_close_successor_hop.lookup_journaled_by_conversation_uuid")
 @patch("cortex_store.session_close_successor_hop.lookup_sealed_journal")
 @patch("cortex_store.dispatch_ops.ops_transcript_seal.derive_session_id_from_jsonl_start")
 @patch("cortex_store.dispatch_ops.ops_transcript_seal.resolve_jsonl_path")
-def test_seal_already_closed(mock_resolve, mock_derive, mock_lookup, tmp_path) -> None:
+def test_seal_already_closed(
+    mock_resolve, mock_derive, mock_lookup, mock_uuid_lookup, tmp_path
+) -> None:
     from cortex_store.session_close_successor_hop import SealedJournal
 
     p = tmp_path / "u" / "u.jsonl"
@@ -78,6 +82,7 @@ def test_seal_already_closed(mock_resolve, mock_derive, mock_lookup, tmp_path) -
     p.write_text("{}\n", encoding="utf-8")
     mock_resolve.return_value = p
     mock_derive.return_value = "cursor-2026-09-07-120000-abc"
+    mock_uuid_lookup.return_value = None
     mock_lookup.return_value = SealedJournal(
         session_id="cursor-2026-09-07-120000-abc",
         journal_row_id=1,
@@ -90,9 +95,7 @@ def test_seal_already_closed(mock_resolve, mock_derive, mock_lookup, tmp_path) -
 
 
 def test_i6_human_close_then_resume_already_closed(session_env: dict[str, Path]) -> None:
-    """I6: boot-held human close then resume seal ⇒ no new rows, already_closed."""
-    from cortex_store.transcript_session_id import derive_session_id_from_jsonl_start
-
+    """I6: boot-held human close then resume seal ⇒ already_closed via conversation_uuid."""
     db_path = session_env["db_path"]
     transcripts_root = session_env["transcripts_root"]
     jsonl = transcripts_root / _UUID / f"{_UUID}.jsonl"
@@ -100,9 +103,11 @@ def test_i6_human_close_then_resume_already_closed(session_env: dict[str, Path])
     rel = f"{_UUID}/{_UUID}.jsonl"
     derived = derive_session_id_from_jsonl_start(jsonl_path=jsonl, agent="cursor")
     assert derived is not None
+    boot_held = "cursor-2026-09-07-120000-b00"
+    assert boot_held != derived
 
     human = ops_journals._op_session_close(
-        session_id=derived,
+        session_id=boot_held,
         agent="cursor",
         transcript_jsonl_path=rel,
         session_summary_md=_summary("Human close before resume."),
@@ -112,8 +117,20 @@ def test_i6_human_close_then_resume_already_closed(session_env: dict[str, Path])
     assert "error" not in human, human
     before = _journal_count(db_path)
 
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT conversation_uuid FROM session_journals WHERE session_id = ?",
+            (boot_held,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == _UUID
+    finally:
+        conn.close()
+
     resume = _op_transcript_seal(thread="10223", jsonl_path=rel)
     assert resume.get("code") == "transcript_seal.already_closed"
+    assert resume.get("session_id") == boot_held
     assert _journal_count(db_path) == before
 
 
@@ -137,8 +154,19 @@ def test_i7_prefix_extend_then_already_closed(session_env: dict[str, Path]) -> N
     extended = _op_transcript_seal(thread="10223", jsonl_path=rel)
     assert "error" not in extended, extended
     assert extended["session_id"] == sealed_sid
-    assert extended.get("turn_count", 0) >= 10
+    assert extended.get("turn_count") == 20
     assert _journal_count(db_path) == 1
+
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT closed_by FROM session_journals WHERE session_id = ?",
+            (sealed_sid,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "succession"
+    finally:
+        conn.close()
 
     unchanged = _op_transcript_seal(thread="10223", jsonl_path=rel)
     assert unchanged.get("code") == "transcript_seal.already_closed"

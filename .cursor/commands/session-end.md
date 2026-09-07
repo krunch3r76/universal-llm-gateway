@@ -169,13 +169,16 @@ cortex(tool="session_close_preflight", arguments='{
    Optional: `prior_session_id_suggestion`.
 
    **`light` / `none` depth + no boot-held ID (id-derivation ≠ archival depth):**
-   Step 0 was skipped, so you have no `<PATH FROM STEP 0>` — but preflight is the
-   only server-side source of a correct-format `session_id`, and preflight
-   **writes nothing**. Resolve the transcript JSONL path (command Step 0
-   metadata-first / `ls -lt` fallback) and pass it as `transcript_jsonl_path`
-   **on the preflight call only** to obtain `session_id_from_jsonl_start`; then
-   **omit** `transcript_jsonl_path` on the real close (keeps the light/none
-   archival contract). Do NOT hand-construct the ID from the `<timestamp>` —
+   Step 0 was skipped for path discovery, but preflight still needs
+   `transcript_jsonl_path` to derive a correct-format `session_id` (preflight
+   writes nothing). Resolve the transcript JSONL path (command Step 0
+   metadata-first / `ls -lt` fallback) and pass it on the **preflight call** to
+   obtain `session_id_from_jsonl_start`.
+
+   On the **real close**, pass `transcript_jsonl_path` regardless of declared
+   depth when the path is available — the server uses it for succession fill /
+   PREFIX-EXTEND and uuid stamping without requiring `transcript_depth=verbatim`.
+   Do NOT hand-construct the ID from the `<timestamp>` —
    dropping the seconds or `-{3hex}` suffix yields `session_id.invalid` and a
    retry loop (recurrence class: friction 23135 / `cursor-2026-07-16` light
    close). If you cannot obtain the JSONL, the ID template is
@@ -262,8 +265,12 @@ Self-check:
 
 ### Step 3: Call `session_close`
 
-Set `transcript_depth` per the table above. Include `transcript_jsonl_path`
-**only** when depth is `verbatim`.
+Set `transcript_depth` per the table above. Pass `transcript_jsonl_path` on
+every real close when the path is available (including `light` / `none`) — the
+server uses it for uuid stamping and succession fill; archival depth still
+controls entity/file shape except on succession fill (forced verbatim).
+
+For `verbatim`, also ensure `"transcript_depth": "verbatim"`.
 
 ```
 cortex(tool="session_close", arguments='{

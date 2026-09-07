@@ -59,7 +59,21 @@ def _op_transcript_seal(
             "code": "transcript_seal.hollow",
         }
 
-    from ..session_close_successor_hop import lookup_sealed_journal
+    from ..session_close_successor_hop import (
+        conversation_uuid_from_jsonl_path,
+        lookup_journaled_by_conversation_uuid,
+        lookup_sealed_journal,
+    )
+
+    uuid = conversation_uuid_from_jsonl_path(resolved)
+    human_closed = lookup_journaled_by_conversation_uuid(uuid)
+    if human_closed is not None:
+        return {
+            "error": f"session {human_closed.session_id!r} already sealed",
+            "reason": "already_closed",
+            "code": "transcript_seal.already_closed",
+            "session_id": human_closed.session_id,
+        }
 
     sealed = lookup_sealed_journal(derived)
     if sealed is not None and sealed.closed_by != "succession":
@@ -139,7 +153,6 @@ def _op_transcript_seal(
             return {"error": str(detail), "reason": "refused", "code": "transcript_seal.refused"}
         raise
 
-    uuid = conversation_uuid_from_jsonl_path(resolved)
     _stamp_succession_fields(
         session_id=derived,
         sealed_by=agent,

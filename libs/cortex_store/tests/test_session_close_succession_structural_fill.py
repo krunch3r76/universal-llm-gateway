@@ -177,6 +177,50 @@ def test_i5_r1b_wrong_close_409(session_env: dict[str, Path]) -> None:
     assert detail.get("expected") == sealed_sid
 
 
+def test_i5_succession_fill_light_depth_with_jsonl(session_env: dict[str, Path]) -> None:
+    """I5/R2: light depth + jsonl on succession fill ⇒ verbatim archival, file_path kept."""
+    db_path = session_env["db_path"]
+    files_root = session_env["files_root"]
+    transcripts_root = session_env["transcripts_root"]
+    jsonl = transcripts_root / _UUID / f"{_UUID}.jsonl"
+    _write_jsonl(jsonl, [_START, "2026-09-07T10:30:00+00:00"])
+    rel = f"{_UUID}/{_UUID}.jsonl"
+
+    seal = _op_transcript_seal(thread="10223", jsonl_path=rel)
+    assert "error" not in seal, seal
+    sealed_sid = seal["session_id"]
+    prior_path = files_root / f"notes/system/transcripts/{sealed_sid}.md"
+    assert prior_path.is_file()
+
+    fill = ops_journals._op_session_close(
+        session_id=sealed_sid,
+        agent="cursor",
+        transcript_jsonl_path=rel,
+        session_summary_md=_summary("Light-declared fill still archives verbatim."),
+        summary="Light-declared fill still archives verbatim.",
+        transcript_depth="light",
+        decisions=["Structural fill under light depth declaration."],
+    )
+    assert "error" not in fill, fill
+    assert fill["transcript_depth"] == "verbatim"
+    assert fill["transcript_path"] is not None
+    assert fill["turn_count"] >= 1
+
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT file_path, closed_by FROM session_journals WHERE session_id = ?",
+            (sealed_sid,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] is not None
+        assert row[1] == "cursor"
+    finally:
+        conn.close()
+    assert prior_path.is_file()
+    assert _journal_count(db_path) == 1
+
+
 class PatchLookup:
     def __init__(self, mapping: dict[str, SealedJournal | None]) -> None:
         self.mapping = mapping

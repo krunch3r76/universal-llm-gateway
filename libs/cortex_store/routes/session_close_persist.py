@@ -319,9 +319,12 @@ def persist_session_close(
                         )
 
     abs_path: Path | None = None
+    prior_transcript_snapshot: str | None = None
     if ctx.transcript_path is not None:
         assert ctx.transcript_md is not None
         abs_path = _FILES_ROOT / ctx.transcript_path
+        if structural_fill and abs_path.is_file():
+            prior_transcript_snapshot = abs_path.read_text(encoding="utf-8")
         try:
             durable_write_text(
                 abs_path, ctx.transcript_md, retain_store_root=_FILES_ROOT
@@ -366,7 +369,7 @@ def persist_session_close(
             tx_attributes: dict[str, object] = {
                 "opened_at": ctx.opened_at,
                 "closed_at": ctx.now,
-                "transcript_depth": body.transcript_depth,
+                "transcript_depth": ctx.archival_depth,
             }
             if handoff_prompt:
                 tx_attributes["handoff_prompt"] = handoff_prompt
@@ -490,7 +493,7 @@ def persist_session_close(
         if ctx.heading_warning is not None:
             findings = [*findings, ctx.heading_warning]
         depth_advisory = source_ref_depth_advisory(
-            transcript_depth=body.transcript_depth,
+            transcript_depth=ctx.archival_depth,
             has_source_ref=source_ref_resolution is not None,
         )
         if depth_advisory is not None:
@@ -500,10 +503,18 @@ def persist_session_close(
         conn.rollback()
         if abs_path is not None:
             try:
-                abs_path.unlink(missing_ok=True)
+                if prior_transcript_snapshot is not None:
+                    durable_write_text(
+                        abs_path,
+                        prior_transcript_snapshot,
+                        retain_store_root=_FILES_ROOT,
+                    )
+                elif not structural_fill:
+                    abs_path.unlink(missing_ok=True)
             except OSError:
                 logger.warning(
-                    "Failed to unlink transcript after DB rollback: %s", abs_path
+                    "Failed to restore/unlink transcript after DB rollback: %s",
+                    abs_path,
                 )
                 record(
                     "mcp.session.close.cleanup.failed",
@@ -542,7 +553,7 @@ def persist_session_close(
         session_id=body.session_id,
         agent=body.agent,
         journal_row_id=journal_row_id,
-        transcript_depth=body.transcript_depth,
+        transcript_depth=ctx.archival_depth,
     )
     if structural_fill:
         from ..events_tape import session_close_succession_structural_filled
@@ -558,7 +569,7 @@ def persist_session_close(
         agent=body.agent,
         summary=body.summary,
         journal_row_id=journal_row_id,
-        transcript_depth=body.transcript_depth,
+        transcript_depth=ctx.archival_depth,
         content_hash=content_hash,
         domains=body.domains,
         decisions=body.decisions,
@@ -571,7 +582,7 @@ def persist_session_close(
         transcript_path=ctx.transcript_path,
         journal_row_id=journal_row_id,
         session_id=body.session_id,
-        transcript_depth=body.transcript_depth,
+        transcript_depth=ctx.archival_depth,
         content_hash=content_hash,
         turn_count=ctx.turn_count,
         byte_count=byte_count,
