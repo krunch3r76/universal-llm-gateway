@@ -125,15 +125,16 @@ def _live_external_gate_for_lane(
     exclude_execution_id: str | None = None,
 ) -> bool:
     from claude_bundles.hop_cadence_id_map import ids_match_exclude, normalize_exclude_ids
-    from claude_bundles.hop_cadence_seat_snap import identity_rows
+    from claude_bundles.hop_cadence_seat_snap import identity_rows, is_live_stream_state
 
     lane = (mission_lane or "").strip()
     if not lane or not snap:
         return False
     exclude = normalize_exclude_ids(exclude_execution_id)
+
     for aw_row in identity_rows(snap):
-        status = str(aw_row.get("status") or "")
-        if status not in {"pending", "running"}:
+        stream_state = str(aw_row.get("stream_state") or "")
+        if not is_live_stream_state(stream_state):
             continue
         purpose = str(aw_row.get("purpose") or "").strip().lower()
         if purpose not in _GATE_OCCUPANCY_PURPOSES:

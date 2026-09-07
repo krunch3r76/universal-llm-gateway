@@ -870,6 +870,7 @@ def test_refuse_second_external_gate_at_fire_when_lane_live(
                     "execution_id": "exec-live-gate",
                     "parent_thread": "9638",
                     "status": "running",
+                    "stream_state": "running",
                     "purpose": "review",
                 }
             ]
@@ -888,8 +889,7 @@ def test_refuse_second_external_gate_at_fire_when_lane_live(
 def test_refuse_second_external_gate_seated_rows_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """B1 — gate seated with no stream row must block via identity_rows union."""
-    from systems.frontier_consult.admission import FrontierEndpointError
+    """Seated identity without a live stream must not block the external gate (R2′)."""
     from systems.frontier_consult.cdp_generate import (
         refuse_second_external_gate_at_fire,
     )
@@ -902,21 +902,52 @@ def test_refuse_second_external_gate_seated_rows_only(
                 {
                     "execution_id": "exec-seated-only",
                     "parent_thread": "10128",
-                    "status": "running",
+                    "seat_state": "active",
+                    "stream_state": "none",
                     "purpose": "review",
                     "registration_id": "reg-seated",
                 }
             ],
         },
     )
-    with pytest.raises(FrontierEndpointError) as exc:
-        refuse_second_external_gate_at_fire(
-            purpose="review",
-            parent_thread="10128",
-            thread_id="10128",
-            request_id="req-b1",
-        )
-    assert exc.value.code == "cdp_external_gate_live"
+    refuse_second_external_gate_at_fire(
+        purpose="review",
+        parent_thread="10128",
+        thread_id="10128",
+        request_id="req-b1",
+    )
+
+
+def test_refuse_second_external_gate_ignores_terminal_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L2-AC-c: terminal stream on lane does not block a second external gate admit."""
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    exec_id = "exec-terminal-gate"
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [
+                {
+                    "execution_id": exec_id,
+                    "parent_thread": "10128",
+                    "status": "failed",
+                    "stream_state": f"terminal:{exec_id}",
+                    "purpose": "review",
+                    "registration_id": "reg-terminal",
+                }
+            ],
+        },
+    )
+    refuse_second_external_gate_at_fire(
+        purpose="review",
+        parent_thread="10128",
+        thread_id="10128",
+        request_id="req-terminal",
+    )
 
 
 def _capture_mission_provenance(monkeypatch: pytest.MonkeyPatch) -> list[Any]:

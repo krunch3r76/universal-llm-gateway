@@ -199,10 +199,17 @@ class ExecutionStore:
 
         rows, execution_ids = await self._active_rows_snapshot()
         payload, decl = admission_projection(rows, execution_ids)
+        async with self._lock:
+            stream_index = {
+                rec.execution_id: rec.status for rec in self._records.values()
+            }
+        payload["execution_streams"] = dict(stream_index)
         try:
             raw = load_active()
-            seated = seated_rows_from_registry_records(raw)
-            seat = seat_rows_from_registry_records(raw)
+            seated = seated_rows_from_registry_records(
+                raw, stream_index=stream_index
+            )
+            seat = seat_rows_from_registry_records(raw, stream_index=stream_index)
         except Exception:  # noqa: BLE001 — identity attach must not break admission
             seated = []
             seat = []

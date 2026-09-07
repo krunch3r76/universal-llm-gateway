@@ -577,6 +577,50 @@ def test_cdp_stalled_raises_attention() -> None:
     assert item.severity == "crit"
 
 
+def test_cdp_stalled_terminal_link_badge_retains_url() -> None:
+    """L2-AC-e: stalled terminal with dispatch_link_terminal paints badge + url=."""
+    from scripts.model_manager.ui.dispatch_monitor.core.watch import _cdp_line
+
+    model = Model()
+    chat = "https://claude.ai/cowork/cse_stalled"
+    model.apply(
+        Event(
+            signals.CDP_ADMITTED,
+            1_000,
+            {
+                "request_id": "req-link-term",
+                "execution_id": "exec-link",
+                "model": "cdp/opus-5",
+                "thread_id": "5902",
+            },
+        )
+    )
+    model.apply(
+        Event(
+            signals.CDP_STALLED,
+            2_000,
+            {
+                "request_id": "req-link-term",
+                "execution_id": "exec-link",
+                "stall_stage": "satellite_timeout",
+                "error": "wall exceeded",
+                "dispatch_link_terminal": True,
+                "registration_id": "reg-stalled",
+                "chat_url": chat,
+            },
+        )
+    )
+    frame = model.derive(2_000)
+    row = _row(frame.cdp, "request_id", "req-link-term")
+    assert row.state == "stalled"
+    assert row.terminal_ms is not None
+    assert row.dispatch_link_terminal is True
+    assert row.chat_url == "claude.ai/cowork/cse_stalled"
+    line = _cdp_line(row)
+    assert "link=terminal" in line
+    assert "url=claude.ai/cowork/cse_stalled" in line
+
+
 def test_cdp_admitted_submitted_proof_one_row() -> None:
     """Admitted → submitted → proof on one request_id yields exactly one row."""
     model = Model()
