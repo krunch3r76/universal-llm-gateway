@@ -13,7 +13,8 @@ Arm:
   scripts/watch-supervise.sh start --label cdp-backup -- \\
     scripts/watch-cdp-hop-backup.py --fable-thread 10188
 
-IDE wake: notify_on_output on ``stall-pop:|steer-wake:`` while tailing:
+IDE wake: notify_on_output on ``stall-pop:|steer-wake:`` while tailing
+(exits when state.json status=complete):
   scripts/watch-supervise.sh tail --label cdp-backup
 """
 

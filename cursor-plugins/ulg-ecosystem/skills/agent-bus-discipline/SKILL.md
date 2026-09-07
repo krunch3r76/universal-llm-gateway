@@ -54,7 +54,9 @@ When a bus-consult / dispatch-closeout arm misfires:
 | Class | Specimen |
 |---|---|
 | **Arm-only** | `watch-supervise.sh start` without same-turn `tail` + `notify_on_output` (a:32280) |
+| **Tail-skipped** | Poller only — skipped leg 2 to "save an IDE terminal"; autoadvance stalls (IDE slots unlimited; always background tail same turn) |
 | **Hold-turn** | Foreground `wait`/`Await`/`tail \| grep` instead of background tail + exit |
+| **Hang-tail** | `tail --forever`, raw `tail -F` on watcher log, or tail still running **after** `state.json status=complete` — **not** tail waiting while `status=polling` |
 | **Wake-no-relay** | Leg 2 fired; turn closed without `get` + operator translate (leg 3) |
 | **Wrong target** | Wrong script family, bad `after_turn`, omitted `poll_hint.after_turn`, invalid flags, false `complete` |
 
@@ -66,9 +68,11 @@ On any class — **same turn** before close:
 2. **`assert` on `runbook:bus-consult-watcher`** — specimen + falsifier candidate.
 3. **¬ `todo:`** — accumulate; consolidate only on commission/triage.
 
-**Atomic arm (IDE):** leg 1 `start … --no-page` → leg 2 `tail --label L` background +
-`notify_on_output` on `closeout turn=|consult complete|stall-pop:` → exit → leg 3 on wake.
-SoT: `runbook:bus-consult-watcher` · posture: `operator-posture` Rule 2.
+**Atomic arm (IDE):** leg 1 `start … --no-page` → leg 2 `tail --label L` background
+(exit-on-complete default; ¬ `--forever`; **always leg 2** — IDE terminal slots
+unlimited ghosts) + `notify_on_output` on
+`closeout turn=|consult complete|stall-pop:` → exit → leg 3 on wake.
+SoT: `runbook:bus-consult-watcher` · `runbook:bus-consult-watcher-terminal-harness` · posture: `operator-posture` Rule 2.
 
 ## Pre-flight before reply
 

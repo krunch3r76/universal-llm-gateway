@@ -2,12 +2,13 @@
 """Poll agent-bus until a consult reply lands; page operator once.
 
 Prefer detached arm via scripts/watch-supervise.sh (a:32280) so Cursor Shell
-abort cannot kill the poller. In-window wake = supervise tail of the log.
+abort cannot kill the poller. In-window wake = supervise tail of the log
+(default exit-on-complete when state.json status=complete; --forever debug-only).
 
 Usage:
   scripts/watch-supervise.sh start --label '6341-close' -- \\
     scripts/watch-bus-consult-and-page.py --thread 6341 --after-turn 54 --no-page
-  scripts/watch-supervise.sh tail --label '6341-close'   # notify on 'consult complete'
+  scripts/watch-supervise.sh tail --label '6341-close'   # exits on complete; notify on 'consult complete'
   scripts/watch-bus-consult-tmux.sh --thread 6341 --after-turn 54 --label '6341 close-arc'
 """
 

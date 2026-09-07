@@ -120,8 +120,8 @@ decision table into this command.
 | Invocation | Behavior |
 |---|---|
 | `/agent-bus` | Fetch all unread turns to cursor, act on each sequentially |
-| `/agent-bus {thread}` | Fetch all unread turns in a specific thread, act on each; retitle tab `{id} {slug}` |
-| `/agent-bus {thread} --all` | Fetch ALL turns in a specific thread (read and unread); retitle tab `{id} {slug}` |
+| `/agent-bus {thread}` | Fetch all unread turns in a specific thread (**id or slug**), act on each; retitle tab `{id} {slug}` |
+| `/agent-bus {thread} --all` | Fetch ALL turns in a specific thread (**id or slug**); retitle tab `{id} {slug}` |
 | `/agent-bus --peek` | Fetch but do NOT mark read or act — just show the turn |
 | `/agent-bus --status` | Show thread list |
 
@@ -129,7 +129,7 @@ decision table into this command.
 
 Attended Cursor IDE only — headless seats / agent-only continuity ⇒ no-op.
 
-`∀` `/agent-bus {n}` ∨ `/agent-bus {n} --all` in Cursor IDE: **first determinate
+`∀` `/agent-bus {n|slug}` ∨ `/agent-bus {n|slug} --all` in Cursor IDE: **first determinate
 action** (before acting on turns) = `cursor-app-control rename_chat` to exactly
 `{n} {slug}` — slug from `thread_get` / fetch `_thread_info` (truncate ≤200).
 **¬** bare `{n}` · slug alone · turn `subject`. Verify slug matches
@@ -138,7 +138,8 @@ action** (before acting on turns) = `cursor-app-control rename_chat` to exactly
 already satisfied; do not wait for a second “rename the tab.” Sticky
 re-injection is idempotent. ¬ inbox `/agent-bus` (multi-thread) · ¬ `--peek` ·
 ¬ `--status`. ¬ Mission/Objective as the title (slug is the tab; Mission stays
-spoken). Same bind as operator-posture `resume <n>`. CHECKPOINT authoring uses
+spoken). Same bind as operator-posture `resume <n>` **or** `resume <slug>` (slug
+is the common operator form lately). CHECKPOINT authoring uses
 `. {id} {slug}` instead — see `checkpoint-discipline` / operator-posture Rule 3.
 
 ### `/agent-bus {thread}`

@@ -3,11 +3,18 @@
 # Owns poller lifetime outside Cursor Shell; IDE seat tails the log.
 # Attended wake: notify_on_output on ``stall-pop:`` (see runbook:bus-consult-watcher).
 #
+# IDE harness (operator 2026-09-07): background tail (leg 2) is required for
+# autoadvance — fire it every arm; IDE terminal slots have no practical limit.
+# Exit-on-complete when state.json status=complete. While status=polling, tail
+# waiting is correct — not hang-tail. Hang-tail = --forever / tail -F / still
+# running after complete only.
+#
 # Usage:
 #   scripts/watch-supervise.sh start --label L -- <watcher argv...>
 #   scripts/watch-supervise.sh status --label L
 #   scripts/watch-supervise.sh stop --label L
-#   scripts/watch-supervise.sh tail --label L
+#   scripts/watch-supervise.sh tail --label L          # exit when state status=complete
+#   scripts/watch-supervise.sh tail --label L --forever  # debug: never exit
 #
 # SoT arm recipe: runbook:bus-consult-watcher
 
@@ -25,6 +32,7 @@ usage() {
 
 label=""
 cmd=""
+tail_forever=0
 if [[ $# -lt 1 ]]; then usage; fi
 cmd="$1"
 shift
@@ -34,6 +42,10 @@ while [[ $# -gt 0 ]]; do
     --label)
       label="${2:-}"
       shift 2
+      ;;
+    --forever)
+      tail_forever=1
+      shift
       ;;
     --)
       shift
@@ -164,12 +176,36 @@ cmd_start() {
   echo "tail: scripts/watch-supervise.sh tail --label $safe"
 }
 
+state_complete() {
+  [[ -f "$state_file" ]] || return 1
+  grep -q '"status"[[:space:]]*:[[:space:]]*"complete"' "$state_file" 2>/dev/null
+}
+
 cmd_tail() {
   if [[ ! -f "$log_file" ]]; then
     echo "no log yet: $log_file" >&2
     exit 1
   fi
-  exec tail -n +1 -F "$log_file"
+  if [[ "$tail_forever" -eq 1 ]]; then
+    exec tail -n +1 -F "$log_file"
+  fi
+  # Session wake: stream log until poller marks complete, then release the terminal.
+  if state_complete; then
+    cat "$log_file"
+    exit 0
+  fi
+  tail -n +1 -F "$log_file" &
+  local tail_pid=$!
+  trap 'kill "$tail_pid" 2>/dev/null; exit 130' INT TERM
+  while kill -0 "$tail_pid" 2>/dev/null; do
+    if state_complete; then
+      kill "$tail_pid" 2>/dev/null || true
+      wait "$tail_pid" 2>/dev/null || true
+      exit 0
+    fi
+    sleep 0.5
+  done
+  wait "$tail_pid" 2>/dev/null || true
 }
 
 case "$cmd" in
