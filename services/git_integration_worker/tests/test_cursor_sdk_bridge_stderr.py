@@ -194,11 +194,62 @@ def test_abort_forensics_snapshot_preserves_sdk_network_reason() -> None:
     }
     assert forensics["bridge_exit_code"] == 1
     assert forensics["bridge_stderr_tail"] == ["dying"]
+    assert forensics["bridge_death_class"] == "unclassified"
     assert forensics["cause"].startswith("ConnectError")
 
     wrapped = SdkRunAbortedError("abort", forensics=forensics)
     wrapped.__cause__ = NetworkError("connection refused")
     assert degraded_reasons_from_exception(wrapped) == ("sdk_network",)
+
+
+def test_ac_c_1_classify_spawn_enoent() -> None:
+    from services.git_integration_worker.cursor_sdk_bridge_stderr import (
+        classify_bridge_stderr,
+    )
+
+    tail = ["Error: spawn /bin/bash ENOENT"]
+    assert classify_bridge_stderr(tail=tail) == "spawn_enoent_missing_cwd"
+
+
+def test_ac_c_2_classify_uncaught_exception_bundle() -> None:
+    from services.git_integration_worker.cursor_sdk_bridge_stderr import (
+        classify_bridge_stderr,
+    )
+
+    prefix = "Warning: something about sqlite\n"
+    body = "x" * 65000 + "\nError: TypeError: boom\n    at foo (file:1:1)\n"
+    assert classify_bridge_stderr(text=prefix + body) == "uncaught_exception_bundle"
+
+
+def test_ac_e_2_bridge_exit_event_carries_death_class(
+    _captured_exits: list[dict[str, Any]],
+) -> None:
+    proc = _spawn(
+        "import sys; sys.stderr.write('Error: spawn /bin/bash ENOENT\\n'); sys.exit(1)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-enoent", thread_id="t-7", client=_FakeClient(proc)
+    )
+    assert tap is not None
+    _await_drain(tap)
+    assert _captured_exits[0]["bridge_death_class"] == "spawn_enoent_missing_cwd"
+
+
+def test_ac_e_2_spawn_enoent_degraded_reason_before_sdk_network() -> None:
+    from cursor_sdk.errors import NetworkError
+
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        degraded_reasons_from_exception,
+    )
+    from services.git_integration_worker.routes.cursor_sdk import SdkRunAbortedError
+
+    forensics = {
+        "bridge_death_class": "spawn_enoent_missing_cwd",
+        "bridge_stderr_tail": ["Error: spawn /bin/bash ENOENT"],
+    }
+    wrapped = SdkRunAbortedError("abort", forensics=forensics)
+    wrapped.__cause__ = NetworkError("connection refused")
+    assert degraded_reasons_from_exception(wrapped) == ("spawn_enoent_missing_cwd",)
 
 
 class _FakeProc:

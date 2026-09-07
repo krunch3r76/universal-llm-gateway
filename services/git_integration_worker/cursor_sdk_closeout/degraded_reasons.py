@@ -92,6 +92,13 @@ def degraded_reasons_from_exception(exc: BaseException) -> tuple[str, ...]:
         code = getattr(exc, "code", None) or "unknown"
         return (f"sdk_error:{code}",)
     if type(exc).__name__ == "SdkRunAbortedError":
+        forensics = getattr(exc, "forensics", None)
+        if isinstance(forensics, dict):
+            bridge_class = forensics.get("bridge_death_class")
+            if bridge_class == "spawn_enoent_missing_cwd":
+                return ("spawn_enoent_missing_cwd",)
+            if bridge_class == "uncaught_exception_bundle":
+                return ("uncaught_exception_bundle",)
         cause = exc.__cause__
         if cause is not None:
             inner = degraded_reasons_from_exception(cause)

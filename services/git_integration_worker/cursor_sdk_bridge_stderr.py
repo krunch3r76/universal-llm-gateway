@@ -16,6 +16,7 @@ the kernel pipe buffer fills.
 from __future__ import annotations
 
 import os
+import re
 import signal as signal_module
 import subprocess
 import threading
@@ -45,6 +46,35 @@ _STDERR_DIR = Path(
 _MAX_HEAD_BYTES = 1_048_576
 _TAIL_LINES = 40
 _JOIN_TIMEOUT_S = 2.0
+
+BridgeDeathClass = str  # spawn_enoent_missing_cwd | uncaught_exception_bundle | empty | unclassified
+
+_SPAWN_ENOENT_RE = re.compile(
+    r"spawn\s+.+\s+enoent|errno\s*-2|missing cwd",
+    re.IGNORECASE,
+)
+_UNCAUGHT_BUNDLE_RE = re.compile(
+    r"(?:^|\s)(?:error|typeerror|referenceerror|syntaxerror):",
+    re.IGNORECASE,
+)
+
+
+def classify_bridge_stderr(
+    *,
+    tail: list[str] | None = None,
+    text: str | None = None,
+) -> str:
+    """Classify bridge death shape from drained stderr tail or raw text."""
+    combined = text if text is not None else "\n".join(tail or [])
+    if not combined.strip():
+        return "empty"
+    if _SPAWN_ENOENT_RE.search(combined):
+        return "spawn_enoent_missing_cwd"
+    if _UNCAUGHT_BUNDLE_RE.search(combined):
+        return "uncaught_exception_bundle"
+    if "node.js v" in combined.lower() and len(combined) > 4096:
+        return "uncaught_exception_bundle"
+    return "unclassified"
 
 
 @dataclass
@@ -164,6 +194,7 @@ def _on_eof(tap: BridgeStderrTap) -> None:
     if terminal_emitted(tap.dispatch_id):
         return
     exit_code, signal_name = _decode_exit(tap.process.returncode)
+    death_class = classify_bridge_stderr(tail=tap.tail())
     emit_sdk_bridge_exited(
         dispatch_id=tap.dispatch_id,
         thread_id=tap.thread_id,
@@ -173,6 +204,7 @@ def _on_eof(tap: BridgeStderrTap) -> None:
         stderr_bytes=tap.byte_count(),
         stderr_tail=tap.tail(),
         log_path=str(tap.log_path),
+        bridge_death_class=death_class,
     )
 
 
@@ -232,6 +264,7 @@ def bridge_exit_snapshot(tap: BridgeStderrTap | None) -> dict[str, Any]:
     tail = tap.tail()
     if tail:
         snapshot["bridge_stderr_tail"] = tail
+    snapshot["bridge_death_class"] = classify_bridge_stderr(tail=tail)
     return snapshot
 
 

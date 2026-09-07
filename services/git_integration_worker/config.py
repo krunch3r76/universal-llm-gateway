@@ -28,6 +28,10 @@ _DEFAULT_GREEN_GATE = ["bash", "-lc", _DIFF_SCOPED_GATE_SCRIPT]
 _DEFAULT_SOURCE_REPO = "/mnt/torus/projects/universal-llm-gateway"
 _DEFAULT_DISPATCH_WORKSPACE = str(Path(_DEFAULT_SOURCE_REPO).parent)
 _DEFAULT_WORKTREE_ROOT = "/mnt/torus/projects/ulg-arc-worktrees"
+# Shared-root policy: ``GIT_INTEGRATION_WORKTREE_ROOT`` is one filesystem tree
+# shared by every configured ``source_repo``. Lane-B paths are namespaced per
+# repo as ``{worktree_root}/{repo_basename}/lane-{thread_id}`` so discharge,
+# unpin, and reconcile never collide across repos on the same ``thread_id``.
 
 
 @dataclass(frozen=True, slots=True)

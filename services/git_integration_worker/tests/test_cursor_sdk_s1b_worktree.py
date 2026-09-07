@@ -82,7 +82,8 @@ def test_s1b_mint_pins_resolved_commit(source_repo: Path, tmp_path: Path) -> Non
     head = _git("rev-parse", "HEAD", cwd=wt).stdout.strip()
     assert head == tip
     assert wt.is_dir()
-    assert wt.parent == worktree_root.resolve()
+    slug = source_repo.resolve().name
+    assert wt.parent == (worktree_root / slug).resolve()
 
 
 def test_s1b_lane_b_resolve_admit_binding_mints(
@@ -191,7 +192,7 @@ def test_s1b_reaper_retains_standing_lane_after_terminal(
     assert removed.reaped == 0
     assert wt.is_dir()
     assert branch in _git("branch", "--list", branch, cwd=source_repo).stdout
-    assert lookup_lane_worktree(thread_id=dispatch_id) is not None
+    assert lookup_lane_worktree(thread_id=dispatch_id, source_repo=source_repo) is not None
 
 
 def test_s1b_route_wires_resolve_admit_binding() -> None:
@@ -300,3 +301,104 @@ def test_s1b_lane_a_binding_unchanged(source_repo: Path, tmp_path: Path) -> None
     assert binding.binding_kind == "lane_a"
     assert binding.workspace == shared
     assert binding.lease_key == str(source_repo.resolve())
+
+
+def test_ac_b_1_discharge_scoped_by_source_repo(
+    source_repo: Path,
+    tmp_path: Path,
+) -> None:
+    """AC-B-1: ``_record_for_branch`` resolves per ``source_repo``."""
+    from services.git_integration_worker.cursor_sdk_branch_unpin import (
+        _record_for_branch,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        register_lane_worktree,
+    )
+
+    worktree_root = tmp_path / "worktrees"
+    tip = resolve_master_branch_point(source_repo)
+    other = tmp_path / "other-repo"
+    other.mkdir()
+    _git("init", "-b", "master", cwd=other)
+    _git("config", "user.email", "t@example.com", cwd=other)
+    _git("config", "user.name", "t", cwd=other)
+    (other / "README.md").write_text("x\n", encoding="utf-8")
+    _git("add", "README.md", cwd=other)
+    _git("commit", "-m", "seed", cwd=other)
+    branch = "cursor-sdk/lane-collision"
+    wt_a = worktree_root / source_repo.name / "lane-collision"
+    wt_b = worktree_root / other.name / "lane-collision"
+    wt_a.mkdir(parents=True)
+    wt_b.mkdir(parents=True)
+    register_lane_worktree(
+        source_repo=source_repo,
+        thread_id="collision",
+        worktree_path=wt_a,
+        branch_name=branch,
+        branch_point=tip,
+    )
+    register_lane_worktree(
+        source_repo=other,
+        thread_id="collision",
+        worktree_path=wt_b,
+        branch_name=branch,
+        branch_point=tip,
+    )
+    rec_a = _record_for_branch(source_repo=source_repo, branch_name=branch)
+    rec_b = _record_for_branch(source_repo=other, branch_name=branch)
+    assert rec_a is not None and rec_a.worktree_path.resolve() == wt_a.resolve()
+    assert rec_b is not None and rec_b.worktree_path.resolve() == wt_b.resolve()
+
+
+def test_ac_b_4_mint_path_matches_git_worktree_list(
+    source_repo: Path,
+    tmp_path: Path,
+) -> None:
+    """AC-B-4: registry path equals ``git worktree list`` after mint."""
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        lookup_lane_worktree,
+    )
+
+    worktree_root = tmp_path / "worktrees"
+    thread_id = "path-check"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id="disp-path",
+        thread_id=thread_id,
+    )
+    record = lookup_lane_worktree(thread_id=thread_id, source_repo=source_repo)
+    assert record is not None
+    assert record.worktree_path.resolve() == wt.resolve()
+    listed = {
+        line.removeprefix("worktree ").strip()
+        for line in _git("worktree", "list", "--porcelain", cwd=source_repo)
+        .stdout.splitlines()
+        if line.startswith("worktree ")
+    }
+    assert str(wt.resolve()) in listed
+
+
+def test_ac_b_3_registry_register_emits(
+    source_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-B-3: register emits ``sdk.lane_b.registry_registered``."""
+    emitted: list[dict] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events."
+        "emit_sdk_lane_b_registry_registered",
+        lambda **kwargs: emitted.append(kwargs),
+    )
+    worktree_root = tmp_path / "worktrees"
+    mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id="emit-reg",
+        thread_id="emit-reg",
+    )
+    assert emitted
+    assert emitted[0]["trigger"] == "register"
+    assert emitted[0]["source_repo"] == str(source_repo.resolve())
+

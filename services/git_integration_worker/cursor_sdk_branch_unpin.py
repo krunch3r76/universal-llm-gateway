@@ -9,12 +9,22 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
-from services.git_integration_worker.cursor_dispatch_ledger import _connect
 from services.git_integration_worker.cursor_sdk_branch_archive import (
     branch_checked_out_at,
 )
+from services.git_integration_worker.cursor_sdk_events import (
+    emit_sdk_lane_b_reap_skipped_live_bridge,
+    emit_sdk_lane_b_worktree_removed,
+)
 from services.git_integration_worker.cursor_sdk_lane_b_commit import salvage_commit
 from services.git_integration_worker.cursor_sdk_lane_inherit import thread_has_inheritor
+from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    ledger_connection,
+    worktree_held_by_live_bridge,
+)
+from services.git_integration_worker.cursor_sdk_worktree_prune import (
+    _ledger_status_for_dispatch,
+)
 from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
     list_git_worktrees,
 )
@@ -38,14 +48,19 @@ class UnpinResult:
     refused_reason: str | None = None
 
 
-def _record_for_branch(branch_name: str) -> DispatchWorktreeRecord | None:
+def _record_for_branch(
+    *,
+    source_repo: Path,
+    branch_name: str,
+) -> DispatchWorktreeRecord | None:
     try:
-        with _connect() as conn:
+        with ledger_connection() as conn:
             ensure_worktree_schema(conn)
             row = conn.execute(
-                "SELECT thread_id, worktree_path, branch_name, branch_point, "
-                "last_dispatch_id FROM cursor_sdk_lane_worktrees WHERE branch_name=?",
-                (branch_name,),
+                "SELECT source_repo, thread_id, worktree_path, branch_name, "
+                "branch_point, last_dispatch_id FROM cursor_sdk_lane_worktrees "
+                "WHERE source_repo=? AND branch_name=?",
+                (str(source_repo.resolve()), branch_name),
             ).fetchone()
     except sqlite3.OperationalError:
         return None
@@ -57,6 +72,7 @@ def _record_for_branch(branch_name: str) -> DispatchWorktreeRecord | None:
         branch_point=row["branch_point"],
         thread_id=str(row["thread_id"] or ""),
         last_dispatch_id=row["last_dispatch_id"],
+        source_repo=str(row["source_repo"] or ""),
     )
 
 
@@ -99,7 +115,7 @@ def unpin_registered_lane_worktree(
     branch before remove; a salvage refusal keeps the only copy.
     """
     root = repo.resolve()
-    record = _record_for_branch(branch_name)
+    record = _record_for_branch(source_repo=root, branch_name=branch_name)
     pinned = branch_checked_out_at(repo=root, branch_name=branch_name)
     if record is None:
         if pinned is not None:
@@ -125,13 +141,30 @@ def unpin_registered_lane_worktree(
         )
 
     registered = record.worktree_path.resolve()
-    if pinned is not None and Path(pinned).resolve() != registered:
-        return UnpinResult(
-            unpinned=False,
-            refused_reason=f"branch checked out at {pinned}",
-        )
 
     if registered.is_dir() and _is_git_worktree(repo=root, worktree_path=registered):
+        holder_pid = worktree_held_by_live_bridge(
+            worktree_path=registered,
+            fresh=True,
+        )
+        if holder_pid is not None:
+            logger.warning(
+                "lane_b unpin skipped — live bridge holds worktree branch=%s "
+                "path=%s pid=%s",
+                branch_name,
+                registered,
+                holder_pid,
+            )
+            emit_sdk_lane_b_reap_skipped_live_bridge(
+                worktree_path=str(registered),
+                pid=holder_pid,
+                dispatch_id=record.last_dispatch_id,
+                stage="unpin",
+            )
+            return UnpinResult(
+                unpinned=False,
+                refused_reason="live bridge holds worktree",
+            )
         salvage = salvage_commit(
             registered,
             message=f"cursor-sdk: discharge salvage {branch_name}",
@@ -144,9 +177,25 @@ def unpin_registered_lane_worktree(
         error = _remove_worktree(repo=root, worktree_path=registered)
         if error is not None:
             return UnpinResult(unpinned=False, refused_reason=error)
+        ledger_status = "none"
+        if record.last_dispatch_id:
+            ledger_status = _ledger_status_for_dispatch(
+                dispatch_id=record.last_dispatch_id
+            )
+        emit_sdk_lane_b_worktree_removed(
+            worktree_path=str(registered),
+            trigger="unpin",
+            ledger_status_at_remove=ledger_status,
+            dispatch_id=record.last_dispatch_id,
+            thread_id=record.thread_id or None,
+            branch=branch_name,
+        )
 
     if record.thread_id:
-        unregister_lane_worktree(thread_id=record.thread_id)
+        unregister_lane_worktree(
+            thread_id=record.thread_id,
+            source_repo=root,
+        )
     logger.info(
         "lane_b worktree unpinned branch=%s path=%s",
         branch_name,

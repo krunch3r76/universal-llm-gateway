@@ -3726,3 +3726,21 @@ def test_delete_route_running_refuses_not_404(client: TestClient) -> None:
     assert body["code"] == "not_cancellable_running"
     assert body["retryable"] is False
     assert body["data"]["dispatch_id"] == "del-running"
+
+
+def test_abort_forensics_includes_bridge_death_class() -> None:
+    """Forensics merge from ``bridge_exit_snapshot`` surfaces ``bridge_death_class``."""
+    from services.git_integration_worker.cursor_sdk_bridge_stderr import (
+        bridge_exit_snapshot,
+        classify_bridge_stderr,
+    )
+
+    tail = ["Error: spawn /bin/bash ENOENT"]
+    snapshot = {
+        "bridge_stderr_tail": tail,
+        "bridge_death_class": classify_bridge_stderr(tail=tail),
+    }
+    merged = {"cause": "ConnectError: refused", **snapshot}
+    assert merged["bridge_death_class"] == "spawn_enoent_missing_cwd"
+    assert bridge_exit_snapshot(None) == {}
+

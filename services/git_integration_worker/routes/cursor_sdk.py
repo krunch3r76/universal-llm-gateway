@@ -2498,12 +2498,6 @@ async def cursor_dispatch(
             execution_id=req.execution_id,
         )
     files_expected = _files_from_packet(packet_text) if packet_text else []
-    prior_lane = lookup_lane_worktree(thread_id=req.thread_id)
-    prior_lane_tree = (
-        prior_lane.worktree_path
-        if prior_lane is not None and prior_lane.worktree_path.is_dir()
-        else None
-    )
     source_repo_str = str(cfg.source_repo.resolve())
     try:
         resolved_source_repo = resolve_dispatch_source_repo(
@@ -2520,6 +2514,15 @@ async def cursor_dispatch(
             detail_summary=exc.message,
             invalid_fields=["workspace"],
         )
+    prior_lane = lookup_lane_worktree(
+        thread_id=req.thread_id,
+        source_repo=resolved_source_repo,
+    )
+    prior_lane_tree = (
+        prior_lane.worktree_path
+        if prior_lane is not None and prior_lane.worktree_path.is_dir()
+        else None
+    )
     dispatch_git_str = str(resolved_source_repo.resolve())
     parent_isolated: bool | None = None
     inherit_parent = req.nest_under or req.resume_of
