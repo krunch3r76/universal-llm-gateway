@@ -194,6 +194,24 @@ def test_containing_worktree_resolves_bridge_subdirectory(tmp_path: Path) -> Non
     )
 
 
+@pytest.mark.offline
+def test_containing_worktree_resolves_two_level_subroot(tmp_path: Path) -> None:
+    """Per-repo subroot layout resolves the lane directory, not the repo slug."""
+    root = tmp_path / "worktrees"
+    nested = (
+        root
+        / "universal-llm-gateway"
+        / "lane-10273"
+        / "services"
+        / "git_integration_worker"
+    )
+    nested.mkdir(parents=True)
+
+    assert containing_worktree_under_root(path=nested, worktree_root=root) == str(
+        (root / "universal-llm-gateway" / "lane-10273").resolve()
+    )
+
+
 def test_prune_refuses_worktree_held_by_live_bridge(
     source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -218,7 +236,7 @@ def test_prune_refuses_worktree_held_by_live_bridge(
     assert not result.pruned
     assert result.branch_retained
     assert wt.is_dir()
-    assert lookup_lane_worktree(thread_id=dispatch_id) is not None
+    assert lookup_lane_worktree(thread_id=dispatch_id, source_repo=source_repo) is not None
     assert worktree_held_by_live_bridge(worktree_path=wt) == 4242
 
 
@@ -374,7 +392,7 @@ def test_reconcile_leaves_unregistered_tree_held_by_live_bridge(
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
     )
-    unregister_lane_worktree(thread_id=dispatch_id)
+    unregister_lane_worktree(thread_id=dispatch_id, source_repo=source_repo)
     _stub_occupancy(
         monkeypatch,
         BridgeOccupancy(
@@ -414,7 +432,7 @@ def test_sweep_leaves_tree_held_by_env_stamped_bridge(
         lease_key=str(wt.resolve()),
     )
     ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status="completed")
-    unregister_lane_worktree(thread_id=dispatch_id)
+    unregister_lane_worktree(thread_id=dispatch_id, source_repo=source_repo)
     _stub_occupancy(
         monkeypatch,
         BridgeOccupancy(pid=1234, cwd="/", dispatch_id=dispatch_id),
@@ -504,7 +522,7 @@ def test_registry_ghost_row_is_surfaced_not_dropped(
     )
 
     assert sweep.registry_ghost_rows >= 1
-    assert lookup_lane_worktree(thread_id=dispatch_id) is not None
+    assert lookup_lane_worktree(thread_id=dispatch_id, source_repo=source_repo) is not None
 
 
 def test_ghost_row_backlog_is_counted_in_full_but_emits_within_budget(
@@ -521,6 +539,7 @@ def test_ghost_row_backlog_is_counted_in_full_but_emits_within_budget(
     backlog = _GHOST_EMIT_BUDGET + 5
     for i in range(backlog):
         register_lane_worktree(
+            source_repo=source_repo,
             thread_id=f"ghost-{i}",
             worktree_path=worktree_root / f"lane-ghost-{i}",
             branch_name=f"cursor-sdk/lane-ghost-{i}",

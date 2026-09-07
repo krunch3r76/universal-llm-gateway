@@ -108,6 +108,9 @@ def containing_worktree_under_root(
         return None
     if not rel.parts:
         return None
+    for index, part in enumerate(rel.parts):
+        if part.startswith("lane-"):
+            return str(root.joinpath(*rel.parts[: index + 1]))
     return str(root / rel.parts[0])
 
 
@@ -211,9 +214,7 @@ def live_ledger_worktree_paths(*, worktree_root: Path) -> set[str]:
         for key in (row["lease_key"] or row["source_repo"], row["worktree_path"]):
             if not key:
                 continue
-            path = containing_worktree_under_root(
-                path=key, worktree_root=worktree_root
-            )
+            path = containing_worktree_under_root(path=key, worktree_root=worktree_root)
             if path is not None:
                 active.add(path)
     return active
