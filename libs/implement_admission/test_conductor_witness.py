@@ -22,6 +22,8 @@ from implement_admission.conductor_witness import (
 )
 from implement_admission.conductor_witness_defaults import score_resurface_in_turns
 
+pytestmark = pytest.mark.offline
+
 _LIVE_TIP = Path(
     "/mnt/torus/mcp-data/files/notes/system/scoreboards/entity-private-id-mutable-name-scoreboard.md"
 )
@@ -462,3 +464,85 @@ def test_score_resurface_in_turns_respects_cutoff() -> None:
         [{"subject": "CHECKPOINT 87", "created_at": "2026-08-26T06:30:00Z"}],
         after_written_at=None,
     ) is False
+
+
+@pytest.mark.offline
+def test_ac_p1_4_fold_deps_summoning_thread(tmp_path: Path) -> None:
+    """AC-P1-4 — fold_deps_for_admit carries predecessor summoning_thread_id."""
+    from implement_admission.conductor_witness_defaults import fold_deps_for_admit
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    deps = fold_deps_for_admit(
+        "todo:conductor-admit-integrity",
+        cortex=_StubCortex(),
+        repo=repo,
+        summoning_thread_id="10223",
+    )
+    assert deps.summoning_thread_id == "10223"
+
+
+@pytest.mark.offline
+def test_ac_p2_3_fold_missing_witnesses_stops(tmp_path: Path) -> None:
+    """AC-P2-3 — fold missing_witnesses cites Stops; OPEN rows land in blocked_rows."""
+    files_root = tmp_path / "cortex"
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    reviews = files_root / "notes/system/reviews"
+    reviews.mkdir(parents=True)
+    g4_uri = "cortex://notes/system/reviews/withhold-stops.md"
+    (reviews / "withhold-stops.md").write_text(
+        "Verdict: G4 **does not** clear G5.\n",
+        encoding="utf-8",
+    )
+    done_tip = (
+        "# Scoreboard\n\n## Gated deliverables\n\n"
+        "| ID | Deliverable | Status | Stops |\n|---|---|---|---|\n"
+        f"| G4 | Skeptic | DONE | ROW_PINNED |\n\n"
+        "## Sidecars\n\n| ID | Artifact URI |\n|---|---|\n"
+        f"| G4 | `{g4_uri}` |\n"
+    )
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(done_tip, encoding="utf-8")
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=tmp_path / "repo",
+    )
+    fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=False)
+    assert fold is not None
+    assert fold.missing_witnesses.get("G4") == "stops: ROW_PINNED"
+
+    open_tip = done_tip.replace("| G4 | Skeptic | DONE |", "| G4 | Skeptic | OPEN |")
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(open_tip, encoding="utf-8")
+    fold_open = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=False)
+    assert fold_open is not None
+    assert fold_open.blocked_rows.get("G4") == "ROW_PINNED"
+    assert "G4" not in fold_open.missing_witnesses
+
+
+@pytest.mark.offline
+def test_ac_p2_4_score_resurface_no_g5_when_stops_block(tmp_path: Path) -> None:
+    """AC-P2-4 — SCORE_RESURFACE alone does not witness G5 when G4 Stops blocks."""
+    tip_body = (
+        "## Gated deliverables\n\n"
+        "| ID | Deliverable | Status | Stops |\n|---|---|---|---|\n"
+        "| G4 | Skeptic | OPEN | ROW_PINNED |\n"
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(resurface=True),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        summon_mode="attended",
+        summoning_thread_id="9638",
+        repo=tmp_path / "repo",
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=tmp_path / "cortex",
+    )
+    assert witnesses.get("G5") is None

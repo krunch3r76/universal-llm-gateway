@@ -207,7 +207,14 @@ async def fire_park_harvest(
     dispatch_id = str(row.get("dispatch_id") or "")
     thread_id = str(row.get("thread_id") or "")
     rec = _record_data(row)
-    summoning_thread_id = str(rec.get("summoning_thread_id") or thread_id).strip()
+    summoning_thread_id = str(rec.get("summoning_thread_id") or "").strip()
+    if not summoning_thread_id:
+        logger.warning(
+            "park harvest skipped — summoning_thread_id unset dispatch=%s worker=%s",
+            dispatch_id,
+            thread_id,
+        )
+        return False
     hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
     hop_seq = hop_fields.get("hop_seq")
     hop_seq_int = int(hop_seq) if isinstance(hop_seq, int) else 1

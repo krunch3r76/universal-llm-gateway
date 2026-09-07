@@ -6,7 +6,6 @@ from pathlib import Path
 
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.conductor_score_journal import (
-    G_ROWS,
     forward_mutate_tip,
     read_tip,
     resolve_scoreboard_rows,
@@ -18,12 +17,12 @@ from implement_admission.conductor_witness_defaults import (
     closeout_witnesses_for_slug,
 )
 from implement_admission.conductor_witness_table import (
-    row_witnesses,
     _G6_REVIEW_ARTIFACT_IDS,
     _artifact_map,
     _first_resolving_artifact,
     _g6_review_failure_reason,
     _uri_resolves,
+    row_witnesses,
 )
 from implement_admission.conductor_witness_types import (
     FoldDeps,
@@ -34,6 +33,7 @@ from implement_admission.conductor_witness_types import (
     WitnessGit,
     done_rows_claimed_in_closeout,
     row_status_in_tip,
+    stops_block_reason,
 )
 from implement_admission.events_conductor_witness import (
     emit_conductor_score_witness_fold,
@@ -57,7 +57,9 @@ __all__ = [
 ]
 
 
-def _missing_witness_message(row_id: str) -> str:
+def _missing_witness_message(row_id: str, *, stops: str | None = None) -> str:
+    if stops:
+        return f"stops: {stops}"
     if row_id == "G1":
         return "hang active derived_from todo→document:* (consult_kind=architecture)"
     if row_id == "G2":
@@ -151,14 +153,19 @@ def fold_scoreboard(
     row_status: dict[str, str] = {}
     rows_claimed: set[str] = set()
     missing: dict[str, str] = {}
+    blocked: dict[str, str] = {}
     for row_id in rows:
         raw_status = (row_status_in_tip(raw_body, row_id) or "OPEN").upper()
+        stops = stops_block_reason(raw_body, row_id) if row_id == "G4" else None
         if witnesses.get(row_id) is not None:
             row_status[row_id] = "DONE"
         elif raw_status in {"DONE", "CLAIMED"}:
             row_status[row_id] = "CLAIMED"
             rows_claimed.add(row_id)
-            missing[row_id] = _missing_witness_message(row_id)
+            missing[row_id] = _missing_witness_message(row_id, stops=stops)
+        elif stops:
+            blocked[row_id] = stops
+            row_status[row_id] = raw_status if raw_status != "DONE" else "OPEN"
         else:
             row_status[row_id] = raw_status if raw_status != "DONE" else "OPEN"
 
@@ -188,11 +195,17 @@ def fold_scoreboard(
     sources = {row_id: w.source for row_id, w in witnesses.items() if w is not None}
     journal_applied = False
     if folded_body != raw_body and write_journal:
-        delta = " ".join(
-            f"{row_id} {row_status_in_tip(raw_body, row_id) or 'OPEN'}→{row_status[row_id]}"
-            for row_id in rows
-            if (row_status_in_tip(raw_body, row_id) or "OPEN") != row_status[row_id]
-        )
+        delta_parts: list[str] = []
+        for row_id in rows:
+            prior = row_status_in_tip(raw_body, row_id) or "OPEN"
+            if prior == row_status[row_id]:
+                continue
+            part = f"{row_id} {prior}→{row_status[row_id]}"
+            stops = stops_block_reason(raw_body, row_id) if row_id == "G4" else None
+            if stops:
+                part = f"{part} [stops: {stops}]"
+            delta_parts.append(part)
+        delta = " ".join(delta_parts) or "witness fold render"
         result = forward_mutate_tip(
             slug,
             next_body=folded_body,
@@ -204,7 +217,7 @@ def fold_scoreboard(
                 for row_id in rows
                 if row_status[row_id] != (row_status_in_tip(raw_body, row_id) or "OPEN")
             ),
-            delta=delta or "witness fold render",
+            delta=delta,
             files_root=root,
             prior_witnessed_done=witnessed_done,
         )
@@ -229,6 +242,7 @@ def fold_scoreboard(
             rows[-1],
         ),
         missing_witnesses=missing,
+        blocked_rows=blocked,
         journal_applied=journal_applied,
         tip_sha=tip_sha256(folded_body),
     )

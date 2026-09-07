@@ -62,6 +62,7 @@ def prepare_conductor_packet(
     transport: str = "team_dispatch",
     summoning_thread_id: str | None = None,
     summoning_turn_count: int | None = None,
+    rematerialize: Any | None = None,
 ) -> GenerateWrapResult:
     """Materialize a conductor six-block packet from ``source_ref=todo:``."""
     del request_id, role, transport
@@ -75,6 +76,7 @@ def prepare_conductor_packet(
         summon_mode=summon_mode,
         summoning_thread_id=summoning_thread_id,
         summoning_turn_count=summoning_turn_count,
+        rematerialize=rematerialize,
     )
     if bridge.gated:
         return GenerateWrapResult(
@@ -327,6 +329,20 @@ async def dispatch_cursor_sdk_generate_route(
                 thread_payload = await probe_thread(str(dispatch_tid).strip())
                 if thread_payload is not None:
                     summoning_turn_count = int(thread_payload.get("turn_count") or 0)
+            from implement_admission.conductor_materialize import (
+                rematerialize_context_from_dispatch,
+            )
+
+            rematerialize = rematerialize_context_from_dispatch(
+                hop_seq=getattr(body, "hop_seq", None),
+                hop_from=getattr(body, "hop_from", None),
+                dispatch_thread_id=(
+                    str(dispatch_tid).strip()
+                    if dispatch_tid and str(dispatch_tid).strip()
+                    else None
+                ),
+                generation_options=gen_opts,
+            )
             wrap = await loop.run_in_executor(
                 None,
                 partial(
@@ -346,6 +362,7 @@ async def dispatch_cursor_sdk_generate_route(
                         else None
                     ),
                     summoning_turn_count=summoning_turn_count,
+                    rematerialize=rematerialize,
                 ),
             )
         elif (

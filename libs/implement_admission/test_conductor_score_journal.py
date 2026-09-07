@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from implement_admission.conductor_score_journal import (
     JournalRecord,
     _tip_path,
@@ -16,6 +18,8 @@ from implement_admission.conductor_score_journal import (
     tip_sha256,
     walk_journal_to_tip,
 )
+
+pytestmark = pytest.mark.offline
 
 
 def _sparse_body() -> str:
@@ -197,3 +201,48 @@ def test_birth_crash_journal_present_tip_absent_read_tip_recovers(tmp_path: Path
     assert tip[0] == body
     assert tip[1] == expected_sha
     assert walk_journal_to_tip(slug, files_root=files_root) == expected_sha
+
+
+@pytest.mark.offline
+def test_ac_p2_5_journal_stops_block_reason(tmp_path: Path) -> None:
+    """AC-P2-5 — journal delta carries Stops reason when G4 DONE re-renders CLAIMED."""
+    files_root = tmp_path
+    slug = "stops-journal"
+    tip_body = "\n".join(
+        [
+            "# Scoreboard — todo:stops-journal",
+            "",
+            "## Gated deliverables",
+            "",
+            "| ID | Deliverable | Status | Stops |",
+            "|---|---|---|---|",
+            "| G4 | Skeptic | DONE | ROW_PINNED |",
+            "",
+        ]
+    )
+    birth_scoreboard(slug, scoreboard_body=tip_body, files_root=files_root)
+    from implement_admission.conductor_witness import FoldDeps, fold_scoreboard
+
+    class _Cortex:
+        def entity_get(self, entity_id: str, **kwargs):  # noqa: ANN003, ANN201
+            return {"id": entity_id, "attributes": {"density_triage": "judgment_required"}}
+
+        def list_relationships(self, entity_id: str, *, type_id: str | None = None):  # noqa: ARG002
+            return []
+
+    deps = FoldDeps(
+        cortex=_Cortex(),
+        bus=None,
+        git=None,
+        source_ref="todo:stops-journal",
+        repo=tmp_path / "repo",
+    )
+    fold = fold_scoreboard(slug, deps=deps, files_root=files_root, write_journal=True)
+    assert fold is not None
+    assert fold.row_status["G4"] == "CLAIMED"
+    journal = load_journal(slug, files_root=files_root)
+    fold_records = [r for r in journal if r.get("reason") == "witness_fold"]
+    assert fold_records
+    last = fold_records[-1]
+    assert "G4" in last.get("rows", ())
+    assert "[stops: ROW_PINNED]" in str(last.get("delta"))

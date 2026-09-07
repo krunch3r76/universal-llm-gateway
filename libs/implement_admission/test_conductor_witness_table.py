@@ -2,13 +2,24 @@
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from implement_admission.conductor_witness import FoldDeps, fold_scoreboard, row_witnesses
 from implement_admission.conductor_score_journal import G_ROWS
+from implement_admission.conductor_witness import (
+    FoldDeps,
+    fold_scoreboard,
+    row_witnesses,
+)
+from implement_admission.conductor_witness_table import _g4_body_clears
+from implement_admission.degraded_reasons import (
+    stops_block_reason,
+)
+
+pytestmark = pytest.mark.offline
 
 _SLUG = "conductor-hop-wait-protocol-fixture"
 _SOURCE_REF = "todo:conductor-hop-wait-protocol"
@@ -180,3 +191,122 @@ def test_ac6_unrecognized_verdict_not_witness(tmp_path: Path) -> None:
         rows=G_ROWS,
     )
     assert witnesses.get("G6") is None
+
+
+def _gated_rows(*rows: tuple[str, str, str, str]) -> str:
+    lines = [
+        "## Gated deliverables",
+        "",
+        "| ID | Deliverable | Status | Stops |",
+        "|---|---|---|---|",
+    ]
+    for row_id, label, status, stops in rows:
+        lines.append(f"| {row_id} | {label} | {status} | {stops} |")
+    return "\n".join(lines) + "\n"
+
+
+def _write_g4_review(files_root: Path, body: str) -> str:
+    path = files_root / "notes/system/reviews/conductor-hop-wait-protocol-g4.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+    return "cortex://notes/system/reviews/conductor-hop-wait-protocol-g4.md"
+
+
+def _g4_stops_tip(
+    files_root: Path,
+    *,
+    g4_status: str,
+    g4_stops: str,
+    g4_body: str | None = None,
+    include_g4_sidecar: bool = True,
+) -> str:
+    sidecars = [
+        "## Sidecars",
+        "",
+        "| ID | Artifact URI | What it is |",
+        "|---|---|---|",
+    ]
+    if include_g4_sidecar and g4_body is not None:
+        uri = _write_g4_review(files_root, g4_body)
+        sidecars.append(f"| G4 | `{uri}` | G4 verdict |")
+    return _gated_rows(("G4", "Skeptic", g4_status, g4_stops)) + "\n".join(sidecars) + "\n"
+
+
+@pytest.mark.offline
+def test_ac_p2_1_g4_stops_row_pinned_blocks(tmp_path: Path) -> None:
+    """AC-P2-1 — G4 URI resolves but Stops=ROW_PINNED blocks G4/G5 witnesses."""
+    files_root = tmp_path / "cortex"
+    tip_body = _g4_stops_tip(
+        files_root,
+        g4_status="DONE",
+        g4_stops="ROW_PINNED",
+        g4_body="## Verdict\n\n**CLEAR.**\n",
+    )
+    deps = _deps(tmp_path)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G4") is None
+    assert witnesses.get("G5") is None
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(tip_body, encoding="utf-8")
+    fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=False)
+    assert fold is not None
+    assert fold.row_status["G4"] == "CLAIMED"
+
+
+@pytest.mark.offline
+def test_ac_p2_1b_absent_g4_uri_stops_blocks_g5(tmp_path: Path) -> None:
+    """AC-P2-1b — absent G4 URI + Stops still blocks G5."""
+    files_root = tmp_path / "cortex"
+    tip_body = _g4_stops_tip(
+        files_root,
+        g4_status="OPEN",
+        g4_stops="ROW_PINNED",
+        g4_body=None,
+        include_g4_sidecar=False,
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G5") is None
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("## Verdict\n\n**AMEND — scope drift.**\n", False),
+        (
+            "Verdict: G4 **does not** clear G5.\nAC-7 | **FAIL**\n",
+            False,
+        ),
+        ("## Verdict\n\n**CLEAR.**\n", True),
+        (
+            "## Verdict\n\n**CLEAR.** The prior AMEND collapses after review.\n",
+            True,
+        ),
+    ],
+)
+@pytest.mark.offline
+def test_ac_p2_2_g4_body_withhold_param(tmp_path: Path, body: str, expected: bool) -> None:
+    """AC-P2-2 — G4 body AMEND withhold via _g4_body_clears."""
+    files_root = tmp_path / "cortex"
+    uri = _write_g4_review(files_root, body)
+    assert _g4_body_clears(uri, files_root=files_root) is expected
+
+
+@pytest.mark.offline
+def test_ac_p2_7_degraded_reasons_imports_stops_helper() -> None:
+    """AC-P2-7 — sole Stops parse locus re-exported from degraded_reasons."""
+    mod = importlib.import_module("implement_admission.degraded_reasons")
+    assert mod.stops_block_reason is stops_block_reason
+    assert mod.g4_stops_block_reason("| G4 | x | OPEN | ROW_PINNED |") == "ROW_PINNED"

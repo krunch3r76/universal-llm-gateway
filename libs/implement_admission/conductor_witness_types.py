@@ -17,6 +17,9 @@ _G_DONE_CLAIM_RE = re.compile(
     rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|\s*DONE\b",
     re.IGNORECASE | re.MULTILINE,
 )
+STOPS_BLOCK_TOKENS: frozenset[str] = frozenset(
+    {"ROW_PINNED", "CONSULT_PENDING", "HOLD_MERGE", "OPERATOR_GATE"}
+)
 
 
 class WitnessCortex(Protocol):
@@ -86,6 +89,7 @@ class FoldResult:
     rows_claimed: frozenset[str]
     entry_gate: str
     missing_witnesses: dict[str, str] = field(default_factory=dict)
+    blocked_rows: dict[str, str] = field(default_factory=dict)
     journal_applied: bool = False
     tip_sha: str | None = None
 
@@ -101,3 +105,29 @@ def row_status_in_tip(body: str, gid: str) -> str | None:
 def done_rows_claimed_in_closeout(body: str) -> frozenset[str]:
     """Return G-row ids the closeout prose marks DONE."""
     return frozenset(_G_DONE_CLAIM_RE.findall(body or ""))
+
+
+def stops_block_reason(tip_body: str, row_id: str) -> str | None:
+    """Return a Stops-column block token for one scoreboard row, if present.
+
+    Parses ``parts[4]`` (the Stops cell) of a markdown table row. A block is an
+    exact whole-word token from ``STOPS_BLOCK_TOKENS`` (case-sensitive). Prose
+    without a token is not a block.
+    """
+    for line in (tip_body or "").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("|"):
+            continue
+        parts = line.split("|")
+        if len(parts) < 5:
+            continue
+        if parts[1].strip().upper() != row_id.upper():
+            continue
+        cell = parts[4].strip()
+        if not cell:
+            return None
+        for token in STOPS_BLOCK_TOKENS:
+            if re.search(rf"(?<![A-Za-z0-9_]){re.escape(token)}(?![A-Za-z0-9_])", cell):
+                return token
+        return None
+    return None

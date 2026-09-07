@@ -291,7 +291,8 @@ def test_build_hop_team_dispatch_body_clones_predecessor() -> None:
     assert body["seat"] == "cursor-sdk"
     assert body["caller_agent"] == "conductor-hop"
     assert body["reuse_thread"] == "9964"
-    assert body["dispatch_thread_id"] == "9964"
+    assert "dispatch_thread_id" not in body
+    assert body["generation_options"]["summoning_thread_id_unresolved"] is True
     assert body["source_ref"] == _WORK_KEY
     assert body["packet_kind"] == "conductor"
     assert body["lane"] == "B"
@@ -976,3 +977,68 @@ async def test_ac_b5_evaluate_hop_budget_at_most_once_on_announce_path() -> None
     ):
         await maybe_fire_conductor_hop_reactor(dispatch_id=dispatch_id)
     assert budget_eval.call_count <= 1
+
+
+@pytest.mark.offline
+def test_ac_p1_5_rematerialize_context_roundtrip() -> None:
+    """AC-P1-5 — hop body A5 keys round-trip through RematerializeContext."""
+    from implement_admission.conductor_materialize import (
+        rematerialize_context_from_dispatch,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"summoning_thread_id": "10223"},
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    body = build_hop_team_dispatch_body(row)
+    assert body is not None
+    ctx = rematerialize_context_from_dispatch(
+        hop_seq=body.get("hop_seq"),
+        hop_from=body.get("hop_from"),
+        dispatch_thread_id=body.get("dispatch_thread_id"),
+        generation_options=body.get("generation_options"),
+    )
+    assert ctx is not None
+    assert ctx.hop_seq == body["hop_seq"]
+    assert ctx.predecessor_dispatch_id == body["hop_from"]
+    assert ctx.summoning_thread_id == "10223"
+    assert ctx.summoning_thread_id_unresolved is False
+
+
+@pytest.mark.offline
+def test_ac_p1_6_hop_no_worker_thread_substitution() -> None:
+    """AC-P1-6 — empty ledger summoning_thread_id must not become worker thread_id."""
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    body = build_hop_team_dispatch_body(row)
+    assert body is not None
+    assert "dispatch_thread_id" not in body
+    assert body["generation_options"]["summoning_thread_id_unresolved"] is True
+
+
+@pytest.mark.offline
+def test_ac_p1_6_hop_carries_ledger_summoning_thread() -> None:
+    """AC-P1-6 — predecessor summoning_thread_id flows to hop generation_options."""
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"summoning_thread_id": "10223"},
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    row = {k: refreshed[k] for k in refreshed.keys()}
+    body = build_hop_team_dispatch_body(row)
+    assert body is not None
+    assert body["dispatch_thread_id"] == "10223"
+    assert body["generation_options"]["summoning_thread_id"] == "10223"
+    assert "summoning_thread_id_unresolved" not in body["generation_options"]

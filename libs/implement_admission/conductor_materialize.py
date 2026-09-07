@@ -67,6 +67,68 @@ class CortexReader(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class RematerializeContext:
+    """Scoped-leg keys round-tripped on conductor hop rematerialize (S4b P1)."""
+
+    hop_seq: int | None = None
+    predecessor_dispatch_id: str | None = None
+    scoreboard_tip_sha: str | None = None
+    scoreboard_entry_gate: str | None = None
+    summoning_thread_id: str | None = None
+    summoning_thread_id_unresolved: bool = False
+
+    def effective_summoning(
+        self, *, top_level_summoning_thread_id: str | None
+    ) -> tuple[str | None, bool]:
+        """Top-level ``dispatch_thread_id`` wins over ``generation_options``."""
+        if self.summoning_thread_id_unresolved:
+            return None, True
+        top = str(top_level_summoning_thread_id or "").strip()
+        if top:
+            return top, False
+        gen = str(self.summoning_thread_id or "").strip()
+        if gen:
+            return gen, False
+        return None, False
+
+
+def rematerialize_context_from_dispatch(
+    *,
+    hop_seq: int | None = None,
+    hop_from: str | None = None,
+    dispatch_thread_id: str | None = None,
+    generation_options: dict[str, Any] | None = None,
+) -> RematerializeContext | None:
+    """Build scoped-leg context from hop ``team_dispatch`` body carriers (A5 table)."""
+    opts = dict(generation_options or {})
+    unresolved = bool(opts.get("summoning_thread_id_unresolved"))
+    gen_summoning = str(opts.get("summoning_thread_id") or "").strip() or None
+    top_summoning = str(dispatch_thread_id or "").strip() or None
+    tip_sha = str(opts.get("scoreboard_tip_sha") or "").strip() or None
+    entry_gate_meta = str(opts.get("scoreboard_entry_gate") or "").strip() or None
+    predecessor = str(hop_from or "").strip() or None
+    has_any = (
+        hop_seq is not None
+        or predecessor is not None
+        or tip_sha is not None
+        or entry_gate_meta is not None
+        or gen_summoning is not None
+        or top_summoning is not None
+        or unresolved
+    )
+    if not has_any:
+        return None
+    return RematerializeContext(
+        hop_seq=hop_seq,
+        predecessor_dispatch_id=predecessor,
+        scoreboard_tip_sha=tip_sha,
+        scoreboard_entry_gate=entry_gate_meta,
+        summoning_thread_id=gen_summoning,
+        summoning_thread_id_unresolved=unresolved,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class ConductorMaterializeContext:
     """Resolved todo attrs used to build a conductor spawn packet."""
 
@@ -83,6 +145,8 @@ class ConductorMaterializeContext:
     acceptance: str | None
     fold_missing_witnesses: dict[str, str] | None = None
     summoning_thread_id: str | None = None
+    summoning_thread_id_unresolved: bool = False
+    rematerialize: RematerializeContext | None = None
     rows: tuple[str, ...] = G_ROWS
     row_labels: dict[str, str] | None = None
 
@@ -115,6 +179,8 @@ def load_conductor_context(
     fold_entry_gate: str | None = None,
     fold_missing_witnesses: dict[str, str] | None = None,
     summoning_thread_id: str | None = None,
+    summoning_thread_id_unresolved: bool = False,
+    rematerialize: RematerializeContext | None = None,
 ) -> ConductorMaterializeContext:
     """Read todo attrs and derive conductor spawn context."""
     ref = parse_source_ref(source_ref)
@@ -164,6 +230,8 @@ def load_conductor_context(
         acceptance=attrs.get("acceptance") or attrs.get("Acceptance"),
         fold_missing_witnesses=fold_missing_witnesses,
         summoning_thread_id=summoning_thread_id,
+        summoning_thread_id_unresolved=summoning_thread_id_unresolved,
+        rematerialize=rematerialize,
         rows=rows,
         row_labels=row_labels,
     )
@@ -178,11 +246,29 @@ def _render_scope(ctx: ConductorMaterializeContext) -> str:
         "Checkout: Lane B (explicit).",
         f"summon_mode: {ctx.summon_mode}.",
     ]
-    if ctx.summoning_thread_id:
+    if ctx.summoning_thread_id_unresolved:
+        lines.append(
+            "summoning_thread_id: unresolved — post SCORE_RESURFACE only after "
+            "resolving the parent thread."
+        )
+    elif ctx.summoning_thread_id:
         lines.append(f"summoning_thread_id: {ctx.summoning_thread_id}.")
         lines.append(
             "SCORE_RESURFACE posts to that parent/root thread, not this worker thread."
         )
+    if ctx.rematerialize is not None:
+        rm = ctx.rematerialize
+        if rm.hop_seq is not None:
+            lines.append(f"hop_seq: {rm.hop_seq} (hop metadata).")
+        if rm.predecessor_dispatch_id:
+            lines.append(f"hop_from: {rm.predecessor_dispatch_id} (hop metadata).")
+        if rm.scoreboard_tip_sha:
+            lines.append(f"scoreboard_tip_sha: {rm.scoreboard_tip_sha} (hop metadata).")
+        if rm.scoreboard_entry_gate:
+            lines.append(
+                f"scoreboard_entry_gate: {rm.scoreboard_entry_gate} "
+                "(hop metadata — not live entry_gate)."
+            )
     if ctx.fold_missing_witnesses:
         lines.append("CLAIMED rows — attach witnesses, do not re-derive:")
         for row_id in ctx.rows:
@@ -375,6 +461,7 @@ def materialize_conductor(
     summoning_turn_count: int | None = None,
     fold_deps: FoldDeps | None = None,
     summoning_thread_id: str | None = None,
+    rematerialize: RematerializeContext | None = None,
 ) -> MaterializedPacket:
     """Write conductor six-block packet; birth scoreboard/journal only when tip absent.
 
@@ -383,9 +470,16 @@ def materialize_conductor(
     When a tip exists and ``fold_deps`` is supplied, fold witness projection first.
     """
     slug = todo_slug_from_ref(source_ref)
+    effective_summoning = summoning_thread_id
+    summoning_unresolved = False
+    if rematerialize is not None:
+        effective_summoning, summoning_unresolved = rematerialize.effective_summoning(
+            top_level_summoning_thread_id=summoning_thread_id
+        )
     fold_entry_gate: str | None = None
     fold_missing: dict[str, str] | None = None
     if read_tip(slug, files_root=files_root) is not None and fold_deps is not None:
+        fold_summoning = fold_deps.summoning_thread_id or effective_summoning
         effective_deps = FoldDeps(
             cortex=fold_deps.cortex,
             bus=fold_deps.bus,
@@ -398,7 +492,7 @@ def materialize_conductor(
                 summon_text=summon_text,
                 summoning_turn_count=summoning_turn_count,
             ),
-            summoning_thread_id=fold_deps.summoning_thread_id or summoning_thread_id,
+            summoning_thread_id=fold_summoning,
             repo=fold_deps.repo,
         )
         fold = fold_scoreboard(slug, deps=effective_deps, files_root=files_root)
@@ -415,7 +509,9 @@ def materialize_conductor(
         summoning_turn_count=summoning_turn_count,
         fold_entry_gate=fold_entry_gate,
         fold_missing_witnesses=fold_missing,
-        summoning_thread_id=summoning_thread_id,
+        summoning_thread_id=effective_summoning,
+        summoning_thread_id_unresolved=summoning_unresolved,
+        rematerialize=rematerialize,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"conductor-{slug}.md"

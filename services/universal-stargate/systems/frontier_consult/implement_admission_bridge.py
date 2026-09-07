@@ -307,6 +307,7 @@ def resolve_source_ref_to_packet(
     summon_mode: str | None = None,
     summoning_thread_id: str | None = None,
     summoning_turn_count: int | None = None,
+    rematerialize: Any | None = None,
 ) -> BridgeResult:
     """Normalize + materialize source_ref into a workspaces-relative packet path."""
     root = (workspaces_root or _workspaces_root()).resolve()
@@ -359,6 +360,7 @@ def resolve_source_ref_to_packet(
                 summoning_thread_id=summoning_thread_id,
             ),
             summoning_thread_id=summoning_thread_id,
+            rematerialize=rematerialize,
         )
         rel_path = _path_relative_to_workspaces(Path(mp.path), root)
         probe_root = _executor_probe_root(root)

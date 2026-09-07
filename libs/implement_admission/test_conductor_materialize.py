@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from implement_admission.conductor_materialize import (
+    RematerializeContext,
     conductor_packet_contains_use_line,
     conductor_packet_has_lane_b,
     extract_scoreboard_uri,
@@ -27,6 +28,7 @@ from implement_admission.conductor_score_journal import (
     walk_journal_to_tip,
 )
 from implement_admission.conductor_summon import resolve_summon_mode
+from implement_admission.conductor_witness import FoldDeps
 
 
 class _StubCortex:
@@ -42,6 +44,15 @@ class _StubCortex:
                 **self._attrs,
             },
         }
+
+    def list_relationships(
+        self,
+        entity_id: str,
+        *,
+        type_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        _ = entity_id, type_id
+        return []
 
 
 def test_resolve_entry_gate_g1_without_fold() -> None:
@@ -403,3 +414,132 @@ def test_materialize_conductor_default_confer_and_finish_strings(tmp_path: Path)
         in auto_mp.text
     )
     assert "Explicit see-score: ROW_PINNED at G3 + ping." in auto_mp.text
+
+
+@pytest.mark.offline
+def test_ac_p1_1_rematerialize_summoning_thread_scope(tmp_path: Path) -> None:
+    """AC-P1-1 — rematerialize injects summoning_thread_id + SCORE_RESURFACE rule.
+
+    Regression guard (A8): pre-change rematerialize omitted scoped summoning_thread_id
+    when only the predecessor ledger carried it — scope showed worker thread only.
+    """
+    files_root = tmp_path / "cortex"
+    slug = "rematerialize-summoning"
+    source_ref = f"todo:{slug}"
+    out_dir = tmp_path / "packets"
+    materialize_conductor(
+        source_ref,
+        cortex=_StubCortex(),
+        out_dir=out_dir,
+        files_root=files_root,
+        caller_agent="cursor",
+    )
+    rematerialize = RematerializeContext(summoning_thread_id="10223")
+    mp = materialize_conductor(
+        source_ref,
+        cortex=_StubCortex(),
+        out_dir=tmp_path / "packets-remint",
+        files_root=files_root,
+        caller_agent="cursor",
+        summoning_thread_id="10223",
+        rematerialize=rematerialize,
+    )
+    assert "summoning_thread_id: 10223" in mp.text
+    assert "SCORE_RESURFACE posts to that parent/root thread" in mp.text
+    assert "never this worker thread" in mp.text
+
+
+@pytest.mark.offline
+def test_ac_p1_2_hop_fields_in_rendered_packet(tmp_path: Path) -> None:
+    """AC-P1-2 — A5 RematerializeContext keys appear in rendered scope."""
+    out_dir = tmp_path / "packets"
+    rematerialize = RematerializeContext(
+        hop_seq=3,
+        predecessor_dispatch_id="pred-disp-9",
+        scoreboard_tip_sha="abc123",
+        scoreboard_entry_gate="G2",
+        summoning_thread_id="9638",
+    )
+    mp = materialize_conductor(
+        "todo:layer-conductor-unify",
+        cortex=_StubCortex(),
+        out_dir=out_dir,
+        caller_agent="cursor",
+        summoning_thread_id="9638",
+        rematerialize=rematerialize,
+    )
+    assert "hop_seq: 3 (hop metadata)" in mp.text
+    assert "hop_from: pred-disp-9 (hop metadata)" in mp.text
+    assert "scoreboard_tip_sha: abc123 (hop metadata)" in mp.text
+    assert "scoreboard_entry_gate: G2 (hop metadata — not live entry_gate)" in mp.text
+    assert "Entry gate: G1" in mp.text
+
+
+@pytest.mark.offline
+def test_ac_p1_3_rematerialize_entry_gate_from_fold(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AC-P1-3 — live fold entry_gate on rematerialize, not sparse G1 default.
+
+    Regression guard (A8): pre-change rematerialize rewound entry_gate to G1 despite
+    witness fold resolving G3 on an existing tip.
+    """
+    from implement_admission.conductor_witness_types import FoldResult
+
+    class _FoldBus:
+        def has_score_resurface_after(self, **kwargs: object) -> bool:
+            return False
+
+        def nested_implement_has_commits(self, **kwargs: object) -> bool:
+            return False
+
+    class _FoldGit:
+        def is_ancestor(self, commit: str, ref: str) -> bool:
+            return False
+
+    def _fold_g3(*_args: object, **_kwargs: object) -> FoldResult:
+        return FoldResult(
+            slug="entry-gate-fold",
+            raw_body="",
+            folded_body="",
+            row_status={"G1": "DONE", "G2": "DONE", "G3": "OPEN"},
+            witnesses={},
+            witnessed_done=frozenset({"G1", "G2"}),
+            rows_claimed=frozenset(),
+            entry_gate="G3",
+            missing_witnesses={},
+        )
+
+    monkeypatch.setattr(
+        "implement_admission.conductor_materialize.fold_scoreboard",
+        _fold_g3,
+    )
+
+    files_root = tmp_path / "cortex"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    slug = "entry-gate-fold"
+    source_ref = f"todo:{slug}"
+    materialize_conductor(
+        source_ref,
+        cortex=_StubCortex(),
+        out_dir=tmp_path / "packets-birth",
+        files_root=files_root,
+    )
+    fold_deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_FoldBus(),
+        git=_FoldGit(),
+        source_ref=source_ref,
+        repo=repo,
+    )
+    mp = materialize_conductor(
+        source_ref,
+        cortex=_StubCortex(),
+        out_dir=tmp_path / "packets-remint",
+        files_root=files_root,
+        fold_deps=fold_deps,
+    )
+    assert "Entry gate: G3" in mp.text
+    assert "Resume at persisted row (entry gate G3)" in mp.text
