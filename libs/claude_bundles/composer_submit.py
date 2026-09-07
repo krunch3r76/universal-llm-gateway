@@ -113,10 +113,9 @@ async def click_submit_button(btn) -> bool:
 
 
 async def press_send_chords(page, needle: str = "") -> None:
-    """Send chords after a click that left the draft in the box.
+    """Legacy send shortcuts when Enter alone did not commit the draft.
 
-    Bare Enter is refused (multiline contenteditable inserts a newline).
-    Control+Enter then Meta+Enter are the product send shortcuts.
+    Control+Enter then Meta+Enter cover pre-stream-break-in compose surfaces.
     """
     await page.keyboard.press("Control+Enter")
     if needle and not await composer_holds_draft(page, needle):
@@ -125,15 +124,59 @@ async def press_send_chords(page, needle: str = "") -> None:
     await page.keyboard.press("Meta+Enter")
 
 
+async def is_generation_active(page) -> bool:
+    """True when the assistant is streaming or Stop is visible (break-in lane)."""
+    from claude_bundles.chat_reply_wait import harvest_assistant
+
+    state = await harvest_assistant(page)
+    return bool(state.get("streaming") or state.get("stop"))
+
+
+async def try_discover_click_submit(page, *, composer) -> bool:
+    """Click composer-local Send / Start task when discoverable."""
+    from claude_bundles.compose_attest import (
+        await_live_submit_visible,
+        click_discovered_submit,
+        warm_submit_settle_ms,
+    )
+
+    if composer is None:
+        return False
+    await composer.click(force=True)
+    await page.wait_for_timeout(warm_submit_settle_ms())
+    submit = await await_live_submit_visible(page, composer=composer, timeout_s=2.0)
+    if not submit.get("ok"):
+        return False
+    await click_discovered_submit(page, submit, composer=composer)
+    return True
+
+
+async def submit_composer_content(page, prompt: str, *, composer) -> None:
+    """Commit composer text: button when present; Enter on stream / no-button UI.
+
+    Warm Cowork break-in and claude.ai/chat mid-stream often hide Send; Enter
+    commits (Shift+Enter inserts newlines). Fail closed via draft-clear proof.
+    """
+    clicked = await try_discover_click_submit(page, composer=composer)
+    if not clicked:
+        await composer.click(force=True)
+        await page.wait_for_timeout(120)
+    await prove_composer_submitted(page, prompt)
+
+
 async def prove_composer_submitted(page, prompt: str) -> None:
     """Fail closed unless the prompt needle leaves the composer.
 
-    After the caller has clicked Send, wait for draft-clear. If the needle
-    remains, retry Control/Meta+Enter. Still present ⇒ raise — never reload.
+    After the caller has clicked Send (or not, on stream break-in), wait for
+    draft-clear. If the needle remains, retry Enter then Control/Meta+Enter.
+    Still present ⇒ raise — never reload.
     """
     needle = verification_marker(prompt)
     if not needle:
         return
+    if await await_composer_released(page, needle):
+        return
+    await page.keyboard.press("Enter")
     if await await_composer_released(page, needle):
         return
     await press_send_chords(page, needle)

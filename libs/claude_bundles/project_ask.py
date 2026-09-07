@@ -385,9 +385,8 @@ async def send_prompt(
     Contract: leading ``/<slug>\\n`` tokens name Customize skills to attach via
     ``+`` → Skills → pick-each (not typed); remaining body (incl. hybrid escape
     Use-the lines / ``<skills_inline>``) pastes via insert_text. Fail-closed
-    submit: composer-local Send click, then prove the draft needle left the
-    composer (Control/Meta+Enter retry). Bare Enter remains refused. Click
-    self-report is not submit proof.
+    submit: composer-local Send click when visible; warm/stream surfaces fall
+    back to Enter then Control/Meta+Enter with draft-clear proof.
 
     Correlation ids optional: threaded into channel-attest telemetry only;
     empty strings are valid for non-seating harness callers.
@@ -431,16 +430,10 @@ async def send_prompt(
 
     strategy = resolve_submit_strategy(page.url or "", fp)
 
+    from claude_bundles.composer_submit import submit_composer_content
+
     if strategy == "live_discover":
-        await composer.click(force=True)
-        await page.wait_for_timeout(warm_submit_settle_ms())
-        submit = await await_live_submit_visible(page, composer=composer, timeout_s=8.0)
-        if not submit.get("ok"):
-            raise RuntimeError(
-                "submit control missing on warm session: need composer-local enabled "
-                f"submit (live_discover) — refusing Enter fallback; last={submit.get('last')}"
-            )
-        await click_discovered_submit(page, submit, composer=composer)
+        await submit_composer_content(page, text, composer=composer)
     else:
         mode: str = fp.get("mode") or ("cowork" if fp.get("approval") else "chat")
         if mode not in ("chat", "cowork"):
@@ -467,14 +460,19 @@ async def send_prompt(
                 if await loc.count():
                     clicked = await click_submit_button(loc.first)
         if not clicked:
-            raise RuntimeError(
-                "submit control missing: need visible Start task (Cowork) or "
-                "Send message (Chat) — refusing Enter fallback"
-            )
+            from claude_bundles.composer_submit import is_generation_active
 
-    from claude_bundles.composer_submit import prove_composer_submitted
+            if await is_generation_active(page):
+                await submit_composer_content(page, text, composer=composer)
+            else:
+                raise RuntimeError(
+                    "submit control missing: need visible Start task (Cowork) or "
+                    "Send message (Chat) on a non-streaming surface"
+                )
+        else:
+            from claude_bundles.composer_submit import prove_composer_submitted
 
-    await prove_composer_submitted(page, text)
+            await prove_composer_submitted(page, text)
 
     required_authority = extract_cdp_required_authority(text)
     attach_slugs, inline_slugs, _rest = parse_cdp_sealed_skill_channels(text)
