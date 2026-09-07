@@ -1,4 +1,11 @@
-"""SQLite registry and mint mutex for lane-owned Lane-B worktrees."""
+"""SQLite registry and mint mutex for lane-owned Lane-B worktrees.
+
+Registry rows are keyed by ``(source_repo, thread_id)`` so discharge and unpin
+resolve removal authority to exactly one repo. Rows append to
+``cursor_sdk_lane_worktree_journal`` on register/unregister/quarantine; if the
+journal is unavailable, recovery falls back to git ground truth
+(``git -C <repo> worktree list``) plus ``sdk.lane_b.discharged`` archive tags.
+"""
 
 from __future__ import annotations
 
@@ -12,6 +19,9 @@ from pathlib import Path
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
     ledger_connection,
 )
+from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
+    list_git_worktrees,
+)
 
 _MINT_MUTEX_DDL = """
 CREATE TABLE IF NOT EXISTS cursor_sdk_mint_mutex (
@@ -20,14 +30,16 @@ CREATE TABLE IF NOT EXISTS cursor_sdk_mint_mutex (
     acquired_at   TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS cursor_sdk_lane_worktrees (
-    thread_id             TEXT PRIMARY KEY,
+    source_repo           TEXT NOT NULL,
+    thread_id             TEXT NOT NULL,
     worktree_path         TEXT NOT NULL,
     branch_name           TEXT NOT NULL,
     branch_point          TEXT NOT NULL,
     minted_at             TEXT NOT NULL,
     last_dispatch_id      TEXT,
     salvage_refusal_count INTEGER NOT NULL DEFAULT 0,
-    quarantined_at        TEXT
+    quarantined_at        TEXT,
+    PRIMARY KEY (source_repo, thread_id)
 );
 CREATE TABLE IF NOT EXISTS cursor_sdk_dispatch_worktrees (
     dispatch_id   TEXT PRIMARY KEY,
@@ -35,6 +47,29 @@ CREATE TABLE IF NOT EXISTS cursor_sdk_dispatch_worktrees (
     branch_name   TEXT NOT NULL,
     branch_point  TEXT NOT NULL,
     minted_at     TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cursor_sdk_lane_worktree_journal (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    transition        TEXT NOT NULL,
+    source_repo       TEXT NOT NULL,
+    thread_id         TEXT NOT NULL,
+    worktree_path     TEXT NOT NULL,
+    branch_name       TEXT NOT NULL,
+    last_dispatch_id  TEXT,
+    trigger           TEXT,
+    transitioned_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS cursor_sdk_lane_worktrees_quarantine (
+    source_repo           TEXT,
+    thread_id             TEXT NOT NULL,
+    worktree_path         TEXT NOT NULL,
+    branch_name           TEXT NOT NULL,
+    branch_point          TEXT NOT NULL,
+    minted_at             TEXT NOT NULL,
+    last_dispatch_id      TEXT,
+    salvage_refusal_count INTEGER NOT NULL DEFAULT 0,
+    quarantined_at        TEXT NOT NULL,
+    quarantine_reason     TEXT NOT NULL
 );
 """
 
@@ -47,6 +82,8 @@ _LANE_COLUMN_MIGRATIONS = (
 
 _MINT_LOCK_POLL_S = 0.02
 _MINT_LOCK_TIMEOUT_S = 120.0
+_GIT_TIMEOUT_S = 60.0
+_SCHEMA_MIGRATED = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,10 +95,221 @@ class DispatchWorktreeRecord:
     branch_point: str
     thread_id: str = ""
     last_dispatch_id: str | None = None
+    source_repo: str = ""
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _repo_slug(source_repo: Path) -> str:
+    return source_repo.resolve().name
+
+
+def repo_worktree_subroot(worktree_root: Path, source_repo: Path) -> Path:
+    """Per-repo lane directory under the shared worktree root."""
+    return worktree_root.resolve() / _repo_slug(source_repo)
+
+
+def _candidate_repos(conn: sqlite3.Connection) -> list[Path]:
+    repos: set[Path] = set()
+    try:
+        for row in conn.execute(
+            "SELECT DISTINCT source_repo FROM cursor_sdk_dispatches "
+            "WHERE source_repo IS NOT NULL AND source_repo != ''"
+        ):
+            if row[0]:
+                repos.add(Path(str(row[0])).resolve())
+    except sqlite3.OperationalError:
+        pass
+    from services.git_integration_worker.config import load_config
+
+    repos.add(load_config().source_repo.resolve())
+    return sorted(repos, key=str)
+
+
+def _resolve_source_repo_for_path(
+    conn: sqlite3.Connection,
+    worktree_path: Path,
+    *,
+    last_dispatch_id: str | None,
+) -> str | None:
+    if last_dispatch_id:
+        try:
+            row = conn.execute(
+                "SELECT source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (last_dispatch_id,),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            row = None
+        if row is not None and row["source_repo"]:
+            return str(row["source_repo"])
+    target = worktree_path.resolve()
+    for repo in _candidate_repos(conn):
+        for wt in list_git_worktrees(source_repo=repo):
+            if wt.path.resolve() == target:
+                return str(repo.resolve())
+    return None
+
+
+def _append_journal(
+    conn: sqlite3.Connection,
+    *,
+    transition: str,
+    source_repo: str,
+    thread_id: str,
+    worktree_path: str,
+    branch_name: str,
+    last_dispatch_id: str | None,
+    trigger: str | None,
+) -> None:
+    conn.execute(
+        "INSERT INTO cursor_sdk_lane_worktree_journal "
+        "(transition, source_repo, thread_id, worktree_path, branch_name, "
+        "last_dispatch_id, trigger, transitioned_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            transition,
+            source_repo,
+            thread_id,
+            worktree_path,
+            branch_name,
+            last_dispatch_id,
+            trigger,
+            _now(),
+        ),
+    )
+
+
+def _emit_registry_transition(
+    *,
+    transition: str,
+    source_repo: str,
+    thread_id: str,
+    worktree_path: str,
+    branch_name: str,
+    last_dispatch_id: str | None,
+    trigger: str | None,
+) -> None:
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_b_registry_quarantined,
+        emit_sdk_lane_b_registry_registered,
+        emit_sdk_lane_b_registry_unregistered,
+    )
+
+    payload_kwargs = {
+        "thread_id": thread_id,
+        "source_repo": source_repo,
+        "worktree_path": worktree_path,
+        "branch_name": branch_name,
+        "last_dispatch_id": last_dispatch_id,
+        "trigger": trigger,
+    }
+    if transition == "registered":
+        emit_sdk_lane_b_registry_registered(**payload_kwargs)
+    elif transition == "unregistered":
+        emit_sdk_lane_b_registry_unregistered(**payload_kwargs)
+    elif transition == "quarantined":
+        emit_sdk_lane_b_registry_quarantined(**payload_kwargs)
+
+
+def _migrate_lane_worktrees_pk(conn: sqlite3.Connection) -> None:
+    global _SCHEMA_MIGRATED
+    cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(cursor_sdk_lane_worktrees)")
+    }
+    if not cols:
+        return
+    if "source_repo" in cols:
+        _SCHEMA_MIGRATED = True
+        return
+    conn.execute("DROP TABLE IF EXISTS cursor_sdk_lane_worktrees_new")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            """
+            CREATE TABLE cursor_sdk_lane_worktrees_new (
+                source_repo           TEXT NOT NULL,
+                thread_id             TEXT NOT NULL,
+                worktree_path         TEXT NOT NULL,
+                branch_name           TEXT NOT NULL,
+                branch_point          TEXT NOT NULL,
+                minted_at             TEXT NOT NULL,
+                last_dispatch_id      TEXT,
+                salvage_refusal_count INTEGER NOT NULL DEFAULT 0,
+                quarantined_at        TEXT,
+                PRIMARY KEY (source_repo, thread_id)
+            )
+            """
+        )
+        rows = conn.execute(
+            "SELECT thread_id, worktree_path, branch_name, branch_point, minted_at, "
+            "last_dispatch_id, salvage_refusal_count, quarantined_at "
+            "FROM cursor_sdk_lane_worktrees"
+        ).fetchall()
+        for row in rows:
+            resolved = _resolve_source_repo_for_path(
+                conn,
+                Path(row["worktree_path"]),
+                last_dispatch_id=row["last_dispatch_id"],
+            )
+            if resolved is None:
+                conn.execute(
+                    "INSERT INTO cursor_sdk_lane_worktrees_quarantine "
+                    "(source_repo, thread_id, worktree_path, branch_name, branch_point, "
+                    "minted_at, last_dispatch_id, salvage_refusal_count, quarantined_at, "
+                    "quarantine_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        None,
+                        row["thread_id"],
+                        row["worktree_path"],
+                        row["branch_name"],
+                        row["branch_point"],
+                        row["minted_at"],
+                        row["last_dispatch_id"],
+                        row["salvage_refusal_count"],
+                        row["quarantined_at"] or _now(),
+                        "unresolved_source_repo",
+                    ),
+                )
+                _emit_registry_transition(
+                    transition="quarantined",
+                    source_repo="",
+                    thread_id=str(row["thread_id"]),
+                    worktree_path=str(row["worktree_path"]),
+                    branch_name=str(row["branch_name"]),
+                    last_dispatch_id=row["last_dispatch_id"],
+                    trigger="migration",
+                )
+                continue
+            conn.execute(
+                "INSERT INTO cursor_sdk_lane_worktrees_new "
+                "(source_repo, thread_id, worktree_path, branch_name, branch_point, "
+                "minted_at, last_dispatch_id, salvage_refusal_count, quarantined_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    resolved,
+                    row["thread_id"],
+                    row["worktree_path"],
+                    row["branch_name"],
+                    row["branch_point"],
+                    row["minted_at"],
+                    row["last_dispatch_id"],
+                    row["salvage_refusal_count"],
+                    row["quarantined_at"],
+                ),
+            )
+        conn.execute("DROP TABLE cursor_sdk_lane_worktrees")
+        conn.execute(
+            "ALTER TABLE cursor_sdk_lane_worktrees_new "
+            "RENAME TO cursor_sdk_lane_worktrees"
+        )
+        conn.execute("COMMIT")
+        _SCHEMA_MIGRATED = True
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def ensure_worktree_schema(conn: sqlite3.Connection) -> None:
@@ -70,6 +318,12 @@ def ensure_worktree_schema(conn: sqlite3.Connection) -> None:
         row[1]
         for row in conn.execute("PRAGMA table_info(cursor_sdk_lane_worktrees)")
     }
+    if cols and "source_repo" not in cols:
+        _migrate_lane_worktrees_pk(conn)
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(cursor_sdk_lane_worktrees)")
+        }
     for name, decl in _LANE_COLUMN_MIGRATIONS:
         if name not in cols:
             try:
@@ -143,67 +397,135 @@ def _row_to_record(row: sqlite3.Row) -> DispatchWorktreeRecord:
         branch_point=row["branch_point"],
         thread_id=str(row["thread_id"] or ""),
         last_dispatch_id=row["last_dispatch_id"],
+        source_repo=str(row["source_repo"] or ""),
     )
 
 
 def register_lane_worktree(
     *,
+    source_repo: Path,
     thread_id: str,
     worktree_path: Path,
     branch_name: str,
     branch_point: str,
     last_dispatch_id: str | None = None,
+    trigger: str | None = "register",
 ) -> None:
     """Insert or replace the lane-owned worktree row."""
     from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
         clear_disposition,
     )
 
+    repo_str = str(source_repo.resolve())
     clear_disposition(branch_name=branch_name)
+    wt_str = str(worktree_path.resolve())
     with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         conn.execute(
             "INSERT OR REPLACE INTO cursor_sdk_lane_worktrees "
-            "(thread_id, worktree_path, branch_name, branch_point, minted_at, "
-            "last_dispatch_id) VALUES (?, ?, ?, ?, ?, ?)",
+            "(source_repo, thread_id, worktree_path, branch_name, branch_point, "
+            "minted_at, last_dispatch_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
+                repo_str,
                 thread_id,
-                str(worktree_path.resolve()),
+                wt_str,
                 branch_name,
                 branch_point,
                 _now(),
                 last_dispatch_id,
             ),
         )
+        _append_journal(
+            conn,
+            transition="registered",
+            source_repo=repo_str,
+            thread_id=thread_id,
+            worktree_path=wt_str,
+            branch_name=branch_name,
+            last_dispatch_id=last_dispatch_id,
+            trigger=trigger,
+        )
+    _emit_registry_transition(
+        transition="registered",
+        source_repo=repo_str,
+        thread_id=thread_id,
+        worktree_path=wt_str,
+        branch_name=branch_name,
+        last_dispatch_id=last_dispatch_id,
+        trigger=trigger,
+    )
 
 
-def touch_lane_worktree_dispatch(*, thread_id: str, dispatch_id: str) -> None:
+def touch_lane_worktree_dispatch(
+    *,
+    source_repo: Path,
+    thread_id: str,
+    dispatch_id: str,
+) -> None:
     """Record the latest dispatch occupying an existing lane worktree."""
     with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         conn.execute(
-            "UPDATE cursor_sdk_lane_worktrees SET last_dispatch_id=? WHERE thread_id=?",
-            (dispatch_id, thread_id),
+            "UPDATE cursor_sdk_lane_worktrees SET last_dispatch_id=? "
+            "WHERE source_repo=? AND thread_id=?",
+            (dispatch_id, str(source_repo.resolve()), thread_id),
         )
 
 
-def unregister_lane_worktree(*, thread_id: str) -> None:
-    with ledger_connection() as conn:
-        ensure_worktree_schema(conn)
-        conn.execute(
-            "DELETE FROM cursor_sdk_lane_worktrees WHERE thread_id=?",
-            (thread_id,),
-        )
-
-
-def lookup_lane_worktree(*, thread_id: str) -> DispatchWorktreeRecord | None:
-    """Return the lane-owned worktree for ``thread_id``, if registered."""
+def unregister_lane_worktree(
+    *,
+    source_repo: Path,
+    thread_id: str,
+    trigger: str | None = "unregister",
+) -> None:
+    repo_str = str(source_repo.resolve())
     with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         row = conn.execute(
-            "SELECT thread_id, worktree_path, branch_name, branch_point, "
-            "last_dispatch_id FROM cursor_sdk_lane_worktrees WHERE thread_id=?",
-            (thread_id,),
+            "SELECT worktree_path, branch_name, last_dispatch_id "
+            "FROM cursor_sdk_lane_worktrees WHERE source_repo=? AND thread_id=?",
+            (repo_str, thread_id),
+        ).fetchone()
+        if row is None:
+            return
+        conn.execute(
+            "DELETE FROM cursor_sdk_lane_worktrees WHERE source_repo=? AND thread_id=?",
+            (repo_str, thread_id),
+        )
+        _append_journal(
+            conn,
+            transition="unregistered",
+            source_repo=repo_str,
+            thread_id=thread_id,
+            worktree_path=str(row["worktree_path"]),
+            branch_name=str(row["branch_name"]),
+            last_dispatch_id=row["last_dispatch_id"],
+            trigger=trigger,
+        )
+        _emit_registry_transition(
+            transition="unregistered",
+            source_repo=repo_str,
+            thread_id=thread_id,
+            worktree_path=str(row["worktree_path"]),
+            branch_name=str(row["branch_name"]),
+            last_dispatch_id=row["last_dispatch_id"],
+            trigger=trigger,
+        )
+
+
+def lookup_lane_worktree(
+    *,
+    thread_id: str,
+    source_repo: Path,
+) -> DispatchWorktreeRecord | None:
+    """Return the lane-owned worktree for ``(source_repo, thread_id)``."""
+    with ledger_connection() as conn:
+        ensure_worktree_schema(conn)
+        row = conn.execute(
+            "SELECT source_repo, thread_id, worktree_path, branch_name, branch_point, "
+            "last_dispatch_id FROM cursor_sdk_lane_worktrees "
+            "WHERE source_repo=? AND thread_id=?",
+            (str(source_repo.resolve()), thread_id),
         ).fetchone()
     if row is None:
         return None
@@ -212,6 +534,7 @@ def lookup_lane_worktree(*, thread_id: str) -> DispatchWorktreeRecord | None:
 
 def register_dispatch_worktree(
     *,
+    source_repo: Path,
     dispatch_id: str,
     worktree_path: Path,
     branch_name: str,
@@ -220,6 +543,7 @@ def register_dispatch_worktree(
 ) -> None:
     """Register a lane worktree; ``thread_id`` defaults to ``dispatch_id``."""
     register_lane_worktree(
+        source_repo=source_repo,
         thread_id=thread_id or dispatch_id,
         worktree_path=worktree_path,
         branch_name=branch_name,
@@ -228,43 +552,82 @@ def register_dispatch_worktree(
     )
 
 
-def unregister_dispatch_worktree(*, dispatch_id: str) -> None:
-    record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+def unregister_dispatch_worktree(
+    *,
+    dispatch_id: str,
+    source_repo: Path | None = None,
+) -> None:
+    record = lookup_dispatch_worktree(
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+    )
     if record is None or not record.thread_id:
         return
-    unregister_lane_worktree(thread_id=record.thread_id)
+    repo = source_repo or Path(record.source_repo)
+    unregister_lane_worktree(thread_id=record.thread_id, source_repo=repo)
 
 
-def lookup_dispatch_worktree(*, dispatch_id: str) -> DispatchWorktreeRecord | None:
-    """Resolve a worktree via last_dispatch_id, then thread_id == dispatch_id."""
+def lookup_dispatch_worktree(
+    *,
+    dispatch_id: str,
+    source_repo: Path | None = None,
+) -> DispatchWorktreeRecord | None:
+    """Resolve a worktree via last_dispatch_id, then thread-scoped fallback."""
     with ledger_connection() as conn:
         ensure_worktree_schema(conn)
-        row = conn.execute(
-            "SELECT thread_id, worktree_path, branch_name, branch_point, "
-            "last_dispatch_id FROM cursor_sdk_lane_worktrees "
-            "WHERE last_dispatch_id=?",
-            (dispatch_id,),
-        ).fetchone()
-        if row is None:
+        if source_repo is not None:
+            repo_str = str(source_repo.resolve())
             row = conn.execute(
-                "SELECT thread_id, worktree_path, branch_name, branch_point, "
-                "last_dispatch_id FROM cursor_sdk_lane_worktrees WHERE thread_id=?",
+                "SELECT source_repo, thread_id, worktree_path, branch_name, "
+                "branch_point, last_dispatch_id FROM cursor_sdk_lane_worktrees "
+                "WHERE source_repo=? AND last_dispatch_id=?",
+                (repo_str, dispatch_id),
+            ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT source_repo, thread_id, worktree_path, branch_name, "
+                    "branch_point, last_dispatch_id FROM cursor_sdk_lane_worktrees "
+                    "WHERE source_repo=? AND thread_id=?",
+                    (repo_str, dispatch_id),
+                ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT source_repo, thread_id, worktree_path, branch_name, "
+                "branch_point, last_dispatch_id FROM cursor_sdk_lane_worktrees "
+                "WHERE last_dispatch_id=?",
                 (dispatch_id,),
             ).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT source_repo, thread_id, worktree_path, branch_name, "
+                    "branch_point, last_dispatch_id FROM cursor_sdk_lane_worktrees "
+                    "WHERE thread_id=?",
+                    (dispatch_id,),
+                ).fetchone()
         if row is None:
             try:
                 thread_row = conn.execute(
-                    "SELECT thread_id FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                    "SELECT thread_id, source_repo FROM cursor_sdk_dispatches "
+                    "WHERE dispatch_id=?",
                     (dispatch_id,),
                 ).fetchone()
             except sqlite3.OperationalError:
                 thread_row = None
             if thread_row is not None and thread_row["thread_id"]:
-                row = conn.execute(
-                    "SELECT thread_id, worktree_path, branch_name, branch_point, "
-                    "last_dispatch_id FROM cursor_sdk_lane_worktrees WHERE thread_id=?",
-                    (thread_row["thread_id"],),
-                ).fetchone()
+                params: list[str] = [thread_row["thread_id"]]
+                query = (
+                    "SELECT source_repo, thread_id, worktree_path, branch_name, "
+                    "branch_point, last_dispatch_id FROM cursor_sdk_lane_worktrees "
+                    "WHERE thread_id=?"
+                )
+                dispatch_repo = thread_row["source_repo"]
+                if source_repo is not None:
+                    query += " AND source_repo=?"
+                    params.append(str(source_repo.resolve()))
+                elif dispatch_repo:
+                    query += " AND source_repo=?"
+                    params.append(str(dispatch_repo))
+                row = conn.execute(query, params).fetchone()
     if row is None:
         return None
     return _row_to_record(row)
@@ -275,56 +638,75 @@ def list_registered_worktrees_with_status() -> list[sqlite3.Row]:
     with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         return conn.execute(
-            "SELECT w.thread_id, w.last_dispatch_id AS dispatch_id, "
+            "SELECT w.source_repo, w.thread_id, w.last_dispatch_id AS dispatch_id, "
             "w.worktree_path, w.branch_name, w.branch_point, "
             "w.salvage_refusal_count, w.quarantined_at, "
             "(SELECT d.status FROM cursor_sdk_dispatches d "
-            " WHERE d.thread_id = w.thread_id AND COALESCE(d.read_only,0)=0 "
-            " AND d.status IN ('admitted','running') LIMIT 1) AS status "
+            " WHERE d.thread_id = w.thread_id AND d.status IN ('admitted','running') "
+            " LIMIT 1) AS status "
             "FROM cursor_sdk_lane_worktrees w"
         ).fetchall()
 
 
-def _resolve_thread_id(*, thread_id: str | None, dispatch_id: str | None) -> str | None:
+def _resolve_thread_id(
+    *,
+    thread_id: str | None,
+    dispatch_id: str | None,
+    source_repo: Path | None = None,
+) -> tuple[str | None, Path | None]:
+    if thread_id and source_repo is not None:
+        return thread_id, source_repo
     if thread_id:
-        return thread_id
+        return thread_id, source_repo
     if not dispatch_id:
-        return None
-    record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
+        return None, source_repo
+    record = lookup_dispatch_worktree(
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+    )
     if record is not None and record.thread_id:
-        return record.thread_id
-    return dispatch_id
+        repo = source_repo or (
+            Path(record.source_repo) if record.source_repo else None
+        )
+        return record.thread_id, repo
+    return dispatch_id, source_repo
 
 
 def record_salvage_refusal(
     *,
     dispatch_id: str | None = None,
     thread_id: str | None = None,
+    source_repo: Path | None = None,
 ) -> int:
     """Increment consecutive salvage refusals; quarantine the row at 3. Return count."""
-    key = _resolve_thread_id(thread_id=thread_id, dispatch_id=dispatch_id)
-    if key is None:
+    key, repo = _resolve_thread_id(
+        thread_id=thread_id,
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+    )
+    if key is None or repo is None:
         return 0
+    repo_str = str(repo.resolve())
     with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         conn.execute(
             "UPDATE cursor_sdk_lane_worktrees "
             "SET salvage_refusal_count = COALESCE(salvage_refusal_count, 0) + 1 "
-            "WHERE thread_id=?",
-            (key,),
+            "WHERE source_repo=? AND thread_id=?",
+            (repo_str, key),
         )
         row = conn.execute(
             "SELECT salvage_refusal_count FROM cursor_sdk_lane_worktrees "
-            "WHERE thread_id=?",
-            (key,),
+            "WHERE source_repo=? AND thread_id=?",
+            (repo_str, key),
         ).fetchone()
         count = int(row["salvage_refusal_count"]) if row is not None else 0
         if count >= _QUARANTINE_AFTER:
             conn.execute(
                 "UPDATE cursor_sdk_lane_worktrees "
                 "SET quarantined_at = COALESCE(quarantined_at, ?) "
-                "WHERE thread_id=?",
-                (_now(), key),
+                "WHERE source_repo=? AND thread_id=?",
+                (_now(), repo_str, key),
             )
         return count
 
@@ -333,18 +715,24 @@ def clear_salvage_refusal(
     *,
     dispatch_id: str | None = None,
     thread_id: str | None = None,
+    source_repo: Path | None = None,
 ) -> None:
     """Reset refusal count and lift quarantine after a successful salvage."""
-    key = _resolve_thread_id(thread_id=thread_id, dispatch_id=dispatch_id)
-    if key is None:
+    key, repo = _resolve_thread_id(
+        thread_id=thread_id,
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+    )
+    if key is None or repo is None:
         return
+    repo_str = str(repo.resolve())
     with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         conn.execute(
             "UPDATE cursor_sdk_lane_worktrees "
             "SET salvage_refusal_count = 0, quarantined_at = NULL "
-            "WHERE thread_id=?",
-            (key,),
+            "WHERE source_repo=? AND thread_id=?",
+            (repo_str, key),
         )
 
 
@@ -352,16 +740,23 @@ def worktree_is_quarantined(
     *,
     dispatch_id: str | None = None,
     thread_id: str | None = None,
+    source_repo: Path | None = None,
 ) -> bool:
     """True when the registry row is parked after consecutive salvage refusals."""
-    key = _resolve_thread_id(thread_id=thread_id, dispatch_id=dispatch_id)
-    if key is None:
+    key, repo = _resolve_thread_id(
+        thread_id=thread_id,
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+    )
+    if key is None or repo is None:
         return False
+    repo_str = str(repo.resolve())
     with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         row = conn.execute(
-            "SELECT quarantined_at FROM cursor_sdk_lane_worktrees WHERE thread_id=?",
-            (key,),
+            "SELECT quarantined_at FROM cursor_sdk_lane_worktrees "
+            "WHERE source_repo=? AND thread_id=?",
+            (repo_str, key),
         ).fetchone()
     return row is not None and bool(row["quarantined_at"])
 
@@ -385,5 +780,5 @@ def mintable_worktrees() -> int:
         if status not in ("admitted", "running"):
             continue
         if Path(row["worktree_path"]).is_dir():
-            live_lanes.add(str(row["thread_id"]))
+            live_lanes.add(f"{row['source_repo']}:{row['thread_id']}")
     return max(0, ceiling - len(live_lanes))

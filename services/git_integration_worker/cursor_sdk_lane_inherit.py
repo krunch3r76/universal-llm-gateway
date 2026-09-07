@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import sqlite3
 
-from services.git_integration_worker.cursor_dispatch_ledger import _connect
+from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    ledger_connection,
+)
 
 
 def thread_has_inheritor(
@@ -16,7 +18,8 @@ def thread_has_inheritor(
 
     The completing Auto job is still ``claimed`` at closeout; one live Auto
     job is not an inheritor. Two or more queued/claimed Auto jobs are.
-    A different admitted/running SDK dispatch on the same thread is.
+    A different admitted/running SDK dispatch on the same thread is — including
+    ``read_only=1`` dispatches standing in the lane worktree.
     """
     if not thread_id.strip():
         return False
@@ -43,10 +46,10 @@ def _other_live_sdk_dispatch(
     completing_dispatch_id: str | None,
 ) -> bool:
     try:
-        with _connect() as conn:
+        with ledger_connection() as conn:
             rows = conn.execute(
                 "SELECT dispatch_id FROM cursor_sdk_dispatches "
-                "WHERE thread_id=? AND COALESCE(read_only,0)=0 "
+                "WHERE thread_id=? "
                 "AND status IN ('admitted','running')",
                 (thread_id,),
             ).fetchall()

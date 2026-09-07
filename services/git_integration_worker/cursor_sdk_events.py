@@ -1443,9 +1443,9 @@ def emit_sdk_lane_b_reap_skipped_live_bridge(
 ) -> None:
     """Emit when a sweep declines to remove a worktree a live bridge is standing in.
 
-    ``stage`` names which remove path was held off (``prune`` / ``reconcile``).
-    A deleted cwd surfaces to the agent as ``spawn /bin/bash ENOENT``, so this
-    signal is the only place the near-miss is visible.
+    ``stage`` names which remove path was held off (``prune`` / ``reconcile`` /
+    ``unpin``). A deleted cwd surfaces to the agent as ``spawn /bin/bash ENOENT``,
+    so this signal is the only place the near-miss is visible.
     """
     _emit(
         SdkLaneBReapSkippedLiveBridge(
@@ -1502,6 +1502,147 @@ def emit_sdk_lane_b_registry_ghost_row(
 
 
 @event_factory
+def SdkLaneBRegistryRegistered(  # noqa: N802
+    thread_id: str,
+    source_repo: str,
+    worktree_path: str,
+    branch_name: str,
+    last_dispatch_id: str | None = None,
+    trigger: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "thread_id": thread_id,
+        "source_repo": source_repo,
+        "worktree_path": worktree_path,
+        "branch_name": branch_name,
+    }
+    for key, value in (("last_dispatch_id", last_dispatch_id), ("trigger", trigger)):
+        if value is not None:
+            payload[key] = value
+    return Event(
+        signal="sdk.lane_b.registry_registered",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_registry_registered(
+    *,
+    thread_id: str,
+    source_repo: str,
+    worktree_path: str,
+    branch_name: str,
+    last_dispatch_id: str | None = None,
+    trigger: str | None = None,
+) -> None:
+    """Emit when a lane registry row is inserted or replaced."""
+    _emit(
+        SdkLaneBRegistryRegistered(
+            thread_id=thread_id,
+            source_repo=source_repo,
+            worktree_path=worktree_path,
+            branch_name=branch_name,
+            last_dispatch_id=last_dispatch_id,
+            trigger=trigger,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBRegistryUnregistered(  # noqa: N802
+    thread_id: str,
+    source_repo: str,
+    worktree_path: str,
+    branch_name: str,
+    last_dispatch_id: str | None = None,
+    trigger: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "thread_id": thread_id,
+        "source_repo": source_repo,
+        "worktree_path": worktree_path,
+        "branch_name": branch_name,
+    }
+    for key, value in (("last_dispatch_id", last_dispatch_id), ("trigger", trigger)):
+        if value is not None:
+            payload[key] = value
+    return Event(
+        signal="sdk.lane_b.registry_unregistered",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_registry_unregistered(
+    *,
+    thread_id: str,
+    source_repo: str,
+    worktree_path: str,
+    branch_name: str,
+    last_dispatch_id: str | None = None,
+    trigger: str | None = None,
+) -> None:
+    """Emit when a lane registry row is deleted."""
+    _emit(
+        SdkLaneBRegistryUnregistered(
+            thread_id=thread_id,
+            source_repo=source_repo,
+            worktree_path=worktree_path,
+            branch_name=branch_name,
+            last_dispatch_id=last_dispatch_id,
+            trigger=trigger,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBRegistryQuarantined(  # noqa: N802
+    thread_id: str,
+    source_repo: str,
+    worktree_path: str,
+    branch_name: str,
+    last_dispatch_id: str | None = None,
+    trigger: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "thread_id": thread_id,
+        "source_repo": source_repo,
+        "worktree_path": worktree_path,
+        "branch_name": branch_name,
+    }
+    for key, value in (("last_dispatch_id", last_dispatch_id), ("trigger", trigger)):
+        if value is not None:
+            payload[key] = value
+    return Event(
+        signal="sdk.lane_b.registry_quarantined",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_registry_quarantined(
+    *,
+    thread_id: str,
+    source_repo: str,
+    worktree_path: str,
+    branch_name: str,
+    last_dispatch_id: str | None = None,
+    trigger: str | None = None,
+) -> None:
+    """Emit when a lane registry row is quarantined (unresolved ``source_repo``)."""
+    _emit(
+        SdkLaneBRegistryQuarantined(
+            thread_id=thread_id,
+            source_repo=source_repo,
+            worktree_path=worktree_path,
+            branch_name=branch_name,
+            last_dispatch_id=last_dispatch_id,
+            trigger=trigger,
+        )
+    )
+
+
+@event_factory
 def SdkLaneBAdmitBound(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
@@ -1549,6 +1690,7 @@ def SdkLaneBWorktreeRemoved(  # noqa: N802
     worktree_path: str,
     trigger: str,
     ledger_status_at_remove: str,
+    source_repo: str | None = None,
     dispatch_id: str | None = None,
     thread_id: str | None = None,
     branch: str | None = None,
@@ -1559,6 +1701,7 @@ def SdkLaneBWorktreeRemoved(  # noqa: N802
         "ledger_status_at_remove": ledger_status_at_remove,
     }
     for key, value in (
+        ("source_repo", source_repo),
         ("dispatch_id", dispatch_id),
         ("thread_id", thread_id),
         ("branch", branch),
@@ -1577,6 +1720,7 @@ def emit_sdk_lane_b_worktree_removed(
     worktree_path: str,
     trigger: str,
     ledger_status_at_remove: str,
+    source_repo: str | None = None,
     dispatch_id: str | None = None,
     thread_id: str | None = None,
     branch: str | None = None,
@@ -1587,6 +1731,7 @@ def emit_sdk_lane_b_worktree_removed(
             worktree_path=worktree_path,
             trigger=trigger,
             ledger_status_at_remove=ledger_status_at_remove,
+            source_repo=source_repo,
             dispatch_id=dispatch_id,
             thread_id=thread_id,
             branch=branch,

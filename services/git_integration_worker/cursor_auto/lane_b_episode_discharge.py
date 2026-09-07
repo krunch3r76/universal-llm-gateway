@@ -12,6 +12,7 @@ from services.git_integration_worker.cursor_sdk_branch_discharge import (
     DischargeResult,
     discharge,
 )
+from services.git_integration_worker.cursor_sdk_lane_inherit import thread_has_inheritor
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     lookup_lane_worktree,
 )
@@ -44,7 +45,8 @@ def maybe_discharge_failed_episode(
     summary: str,
 ) -> DischargeResult | None:
     """Discard a Lane-B tree when Auto fails after mint and no successor inherits."""
-    record = lookup_lane_worktree(thread_id=job.thread_id)
+    source_repo = _source_repo()
+    record = lookup_lane_worktree(thread_id=job.thread_id, source_repo=source_repo)
     if record is None:
         return None
     if same_thread_successor_exists(job):
@@ -54,9 +56,19 @@ def maybe_discharge_failed_episode(
             job.thread_id,
         )
         return None
+    if thread_has_inheritor(
+        job.thread_id,
+        completing_dispatch_id=dispatch_id,
+    ):
+        logger.info(
+            "cursor-auto lane_b discharge skipped sdk successor job=%s thread=%s",
+            job.job_id,
+            job.thread_id,
+        )
+        return None
     reason = f"auto_status_failed:{summary[:240]}"
     result = discharge(
-        repo=_source_repo(),
+        repo=source_repo,
         branch_name=record.branch_name,
         verb="discard",
         reason=reason,

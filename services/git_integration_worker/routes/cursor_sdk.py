@@ -172,12 +172,6 @@ from services.git_integration_worker.cursor_sdk_lane_select import (
     select_lane,
     wire_lane_explicit,
 )
-from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
-    extract_instructed_paths,
-    first_landed_fs_uri,
-    fs_write_landed,
-    residual_deliverable_present,
-)
 from services.git_integration_worker.cursor_sdk_manifest import (
     build_effects_manifest,
     classify_mcp_capture_branch,
@@ -212,6 +206,12 @@ from services.git_integration_worker.cursor_sdk_park import (
     release_or_restore_for_child,
     release_or_restore_for_child_sync,
     transfer_capacity_after_park,
+)
+from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
+    extract_instructed_paths,
+    first_landed_fs_uri,
+    fs_write_landed,
+    residual_deliverable_present,
 )
 from services.git_integration_worker.cursor_sdk_restart_orphan import (
     emit_restart_survivor_terminal,
@@ -2498,12 +2498,6 @@ async def cursor_dispatch(
             execution_id=req.execution_id,
         )
     files_expected = _files_from_packet(packet_text) if packet_text else []
-    prior_lane = lookup_lane_worktree(thread_id=req.thread_id)
-    prior_lane_tree = (
-        prior_lane.worktree_path
-        if prior_lane is not None and prior_lane.worktree_path.is_dir()
-        else None
-    )
     source_repo_str = str(cfg.source_repo.resolve())
     try:
         resolved_source_repo = resolve_dispatch_source_repo(
@@ -2520,6 +2514,15 @@ async def cursor_dispatch(
             detail_summary=exc.message,
             invalid_fields=["workspace"],
         )
+    prior_lane = lookup_lane_worktree(
+        thread_id=req.thread_id,
+        source_repo=resolved_source_repo,
+    )
+    prior_lane_tree = (
+        prior_lane.worktree_path
+        if prior_lane is not None and prior_lane.worktree_path.is_dir()
+        else None
+    )
     dispatch_git_str = str(resolved_source_repo.resolve())
     parent_isolated: bool | None = None
     inherit_parent = req.nest_under or req.resume_of

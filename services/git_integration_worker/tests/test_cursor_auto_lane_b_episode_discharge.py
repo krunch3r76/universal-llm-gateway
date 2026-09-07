@@ -112,6 +112,7 @@ def test_terminal_failed_discharges_when_no_successor(
     wt = git_repo.parent / "lane-9554"
     wt.mkdir()
     register_lane_worktree(
+        source_repo=git_repo,
         thread_id="9554",
         worktree_path=wt,
         branch_name=branch,
@@ -148,6 +149,7 @@ def test_terminal_failed_skips_discharge_when_successor(
     wt = git_repo.parent / "lane-9554"
     wt.mkdir()
     register_lane_worktree(
+        source_repo=git_repo,
         thread_id="9554",
         worktree_path=wt,
         branch_name=branch,
@@ -202,6 +204,7 @@ def test_supersede_inherits_lane_tree(
     wt = git_repo.parent / "lane-9554"
     wt.mkdir()
     register_lane_worktree(
+        source_repo=git_repo,
         thread_id="9554",
         worktree_path=wt,
         branch_name=branch,
@@ -241,6 +244,71 @@ def test_supersede_inherits_lane_tree(
             old,
             dispatch_id="auto-old",
             summary="superseded",
+        )
+    assert result is None
+    discharge_mock.assert_not_called()
+
+
+def test_terminal_failed_skips_discharge_when_live_sdk_successor(
+    git_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sweep item 7: live SDK dispatch on thread blocks Auto episode discharge."""
+    tip = subprocess.check_output(
+        ["git", "-C", str(git_repo), "rev-parse", "HEAD"],
+        text=True,
+    ).strip()
+    branch = "cursor-sdk/lane-9554"
+    _git("branch", branch, tip, cwd=git_repo)
+    wt = git_repo.parent / "lane-9554"
+    wt.mkdir()
+    register_lane_worktree(
+        source_repo=git_repo,
+        thread_id="9554",
+        worktree_path=wt,
+        branch_name=branch,
+        branch_point=tip,
+    )
+    monkeypatch.setenv("GIT_INTEGRATION_SOURCE_REPO", str(git_repo))
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+    from services.git_integration_worker.models.cursor_api import (
+        CursorDispatchRequest,
+        CursorDispatchResponse,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    ledger.admit(
+        req=CursorDispatchRequest(
+            thread_id="9554",
+            model="cursor/composer-2.5",
+            dispatch_id="sdk-successor",
+            execution_id="exec-sdk",
+            message="x",
+        ),
+        fingerprint="fp",
+        execution_id="exec-sdk",
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id="sdk-successor",
+            thread_id="9554",
+            model_id="composer-2.5",
+        ),
+        source_repo=str(git_repo.resolve()),
+        lease_key=str(wt.resolve()),
+        contract="implement",
+        worker_instance="worker-a",
+    )
+    with patch(
+        "services.git_integration_worker.cursor_auto.lane_b_episode_discharge.discharge"
+    ) as discharge_mock:
+        result = maybe_discharge_failed_episode(
+            _job(),
+            dispatch_id="auto-deadbeef",
+            summary="poll timeout",
         )
     assert result is None
     discharge_mock.assert_not_called()

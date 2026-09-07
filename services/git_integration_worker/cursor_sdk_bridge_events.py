@@ -27,6 +27,7 @@ def FrontierSdkBridgeExited(  # noqa: N802
     log_path: str,
     exit_code: int | None = None,
     signal_name: str | None = None,
+    bridge_death_class: str | None = None,
 ) -> Event:
     # Distinct from frontier.sdk.worker.failed, which reports what the HTTP
     # client saw after the fact (connection refused). This reports why the
@@ -44,6 +45,8 @@ def FrontierSdkBridgeExited(  # noqa: N802
         payload["exit_code"] = exit_code
     if signal_name is not None:
         payload["signal_name"] = signal_name
+    if bridge_death_class is not None:
+        payload["bridge_death_class"] = bridge_death_class
     return Event(
         signal="frontier.sdk.bridge.exited",
         payload=payload,
@@ -61,6 +64,7 @@ def emit_sdk_bridge_exited(
     log_path: str,
     exit_code: int | None = None,
     signal_name: str | None = None,
+    bridge_death_class: str | None = None,
 ) -> None:
     """Publish an unexpected bridge subprocess exit with its captured stderr tail."""
     emit_frontier_event(
@@ -73,15 +77,17 @@ def emit_sdk_bridge_exited(
             log_path=log_path,
             exit_code=exit_code,
             signal_name=signal_name,
+            bridge_death_class=bridge_death_class,
         )
     )
     logger.error(
         "cursor sdk bridge exited unexpectedly: dispatch_id=%s thread_id=%s "
-        "exit_code=%s signal=%s elapsed_s=%s stderr_bytes=%s log=%s",
+        "exit_code=%s signal=%s bridge_death_class=%s elapsed_s=%s stderr_bytes=%s log=%s",
         dispatch_id,
         thread_id,
         exit_code,
         signal_name,
+        bridge_death_class,
         elapsed_s,
         stderr_bytes,
         log_path,

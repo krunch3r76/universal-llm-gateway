@@ -198,6 +198,7 @@ def reconcile_unregistered_worktrees(
                 worktree_path=resolved,
                 trigger="reconcile",
                 ledger_status_at_remove="none",
+                source_repo=str(repo),
                 branch=entry.branch,
             )
             logger.info(

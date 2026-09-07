@@ -82,7 +82,8 @@ def test_s1b_mint_pins_resolved_commit(source_repo: Path, tmp_path: Path) -> Non
     head = _git("rev-parse", "HEAD", cwd=wt).stdout.strip()
     assert head == tip
     assert wt.is_dir()
-    assert wt.parent == worktree_root.resolve()
+    slug = source_repo.resolve().name
+    assert wt.parent == (worktree_root / slug).resolve()
 
 
 def test_s1b_lane_b_resolve_admit_binding_mints(
@@ -191,7 +192,7 @@ def test_s1b_reaper_retains_standing_lane_after_terminal(
     assert removed.reaped == 0
     assert wt.is_dir()
     assert branch in _git("branch", "--list", branch, cwd=source_repo).stdout
-    assert lookup_lane_worktree(thread_id=dispatch_id) is not None
+    assert lookup_lane_worktree(thread_id=dispatch_id, source_repo=source_repo) is not None
 
 
 def test_s1b_route_wires_resolve_admit_binding() -> None:
@@ -300,3 +301,276 @@ def test_s1b_lane_a_binding_unchanged(source_repo: Path, tmp_path: Path) -> None
     assert binding.binding_kind == "lane_a"
     assert binding.workspace == shared
     assert binding.lease_key == str(source_repo.resolve())
+
+
+def test_ac_b_1_discharge_scoped_by_source_repo(
+    source_repo: Path,
+    tmp_path: Path,
+) -> None:
+    """AC-B-1: ``_record_for_branch`` resolves per ``source_repo``."""
+    from services.git_integration_worker.cursor_sdk_branch_unpin import (
+        _record_for_branch,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        register_lane_worktree,
+    )
+
+    worktree_root = tmp_path / "worktrees"
+    tip = resolve_master_branch_point(source_repo)
+    other = tmp_path / "other-repo"
+    other.mkdir()
+    _git("init", "-b", "master", cwd=other)
+    _git("config", "user.email", "t@example.com", cwd=other)
+    _git("config", "user.name", "t", cwd=other)
+    (other / "README.md").write_text("x\n", encoding="utf-8")
+    _git("add", "README.md", cwd=other)
+    _git("commit", "-m", "seed", cwd=other)
+    branch = "cursor-sdk/lane-collision"
+    wt_a = worktree_root / source_repo.name / "lane-collision"
+    wt_b = worktree_root / other.name / "lane-collision"
+    wt_a.mkdir(parents=True)
+    wt_b.mkdir(parents=True)
+    register_lane_worktree(
+        source_repo=source_repo,
+        thread_id="collision",
+        worktree_path=wt_a,
+        branch_name=branch,
+        branch_point=tip,
+    )
+    register_lane_worktree(
+        source_repo=other,
+        thread_id="collision",
+        worktree_path=wt_b,
+        branch_name=branch,
+        branch_point=tip,
+    )
+    rec_a = _record_for_branch(source_repo=source_repo, branch_name=branch)
+    rec_b = _record_for_branch(source_repo=other, branch_name=branch)
+    assert rec_a is not None and rec_a.worktree_path.resolve() == wt_a.resolve()
+    assert rec_b is not None and rec_b.worktree_path.resolve() == wt_b.resolve()
+
+
+def test_ac_b_4_mint_path_matches_git_worktree_list(
+    source_repo: Path,
+    tmp_path: Path,
+) -> None:
+    """AC-B-4: registry path equals ``git worktree list`` after mint."""
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        lookup_lane_worktree,
+    )
+
+    worktree_root = tmp_path / "worktrees"
+    thread_id = "path-check"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id="disp-path",
+        thread_id=thread_id,
+    )
+    record = lookup_lane_worktree(thread_id=thread_id, source_repo=source_repo)
+    assert record is not None
+    assert record.worktree_path.resolve() == wt.resolve()
+    listed = {
+        line.removeprefix("worktree ").strip()
+        for line in _git("worktree", "list", "--porcelain", cwd=source_repo)
+        .stdout.splitlines()
+        if line.startswith("worktree ")
+    }
+    assert str(wt.resolve()) in listed
+
+
+def test_ac_b_3_registry_register_emits(
+    source_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-B-3: register emits ``sdk.lane_b.registry_registered``."""
+    emitted: list[dict] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_events."
+        "emit_sdk_lane_b_registry_registered",
+        lambda **kwargs: emitted.append(kwargs),
+    )
+    worktree_root = tmp_path / "worktrees"
+    mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id="emit-reg",
+        thread_id="emit-reg",
+    )
+    assert emitted
+    assert emitted[0]["trigger"] == "register"
+    assert emitted[0]["source_repo"] == str(source_repo.resolve())
+
+
+def test_ac_b_2_worktree_removed_emit_carries_source_repo(
+    source_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-B-2: removal emit carries ``source_repo`` on all paths (unpin sample)."""
+    from services.git_integration_worker.cursor_sdk_branch_unpin import (
+        unpin_registered_lane_worktree,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        register_lane_worktree,
+    )
+
+    tip = _git("rev-parse", "HEAD", cwd=source_repo).stdout.strip()
+    branch = "cursor-sdk/lane-ac-b-2"
+    _git("branch", branch, tip, cwd=source_repo)
+    wt = source_repo.parent / "lane-ac-b-2"
+    wt.mkdir()
+    _git("worktree", "add", str(wt), branch, cwd=source_repo)
+    register_lane_worktree(
+        source_repo=source_repo,
+        thread_id="ac-b-2",
+        worktree_path=wt,
+        branch_name=branch,
+        branch_point=tip,
+    )
+    removed: list[dict] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_unpin."
+        "emit_sdk_lane_b_worktree_removed",
+        lambda **kwargs: removed.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_unpin."
+        "worktree_held_by_live_bridge",
+        lambda **kwargs: None,
+    )
+    result = unpin_registered_lane_worktree(repo=source_repo, branch_name=branch)
+    assert result.unpinned is True
+    assert removed
+    assert removed[0]["source_repo"] == str(source_repo.resolve())
+    assert removed[0]["trigger"] == "unpin"
+
+
+_LEGACY_LANE_DDL = """
+CREATE TABLE cursor_sdk_lane_worktrees (
+    thread_id TEXT PRIMARY KEY,
+    worktree_path TEXT NOT NULL,
+    branch_name TEXT NOT NULL,
+    branch_point TEXT NOT NULL,
+    minted_at TEXT NOT NULL,
+    last_dispatch_id TEXT,
+    salvage_refusal_count INTEGER NOT NULL DEFAULT 0,
+    quarantined_at TEXT
+);
+"""
+
+
+def _run_legacy_migration(conn) -> None:
+    import services.git_integration_worker.cursor_sdk_worktree_registry as reg
+
+    reg._SCHEMA_MIGRATED = False
+    reg.ensure_worktree_schema(conn)
+    conn.commit()
+
+
+def test_migrate_lane_worktrees_pk_empty_legacy_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B1: empty legacy PK table migrates without commit/rollback crash."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    CursorDispatchLedger.instance()
+
+    with _connect() as conn:
+        conn.execute("DROP TABLE IF EXISTS cursor_sdk_lane_worktrees")
+        conn.executescript(_LEGACY_LANE_DDL)
+        conn.commit()
+        _run_legacy_migration(conn)
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(cursor_sdk_lane_worktrees)")
+        }
+        assert "source_repo" in cols
+        assert (
+            conn.execute("SELECT COUNT(*) FROM cursor_sdk_lane_worktrees").fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE name='cursor_sdk_lane_worktrees_new'"
+            ).fetchone()
+            is None
+        )
+
+
+def test_migrate_lane_worktrees_pk_populated_legacy_table(
+    source_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B1: legacy rows resolve ``source_repo`` via ``last_dispatch_id`` join."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    CursorDispatchLedger.instance()
+    repo_str = str(source_repo.resolve())
+    wt_path = tmp_path / "lane-legacy"
+    wt_path.mkdir()
+
+    with _connect() as conn:
+        conn.execute("DROP TABLE IF EXISTS cursor_sdk_lane_worktrees")
+        conn.executescript(_LEGACY_LANE_DDL)
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, resolved_model, status, "
+            "record_json, source_repo) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                "disp-mig",
+                "fp",
+                "legacy-t",
+                "cursor/composer-2.5",
+                "completed",
+                "{}",
+                repo_str,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO cursor_sdk_lane_worktrees VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "legacy-t",
+                str(wt_path),
+                "cursor-sdk/lane-legacy-t",
+                "abc123",
+                "2026-01-01T00:00:00+00:00",
+                "disp-mig",
+                0,
+                None,
+            ),
+        )
+        conn.commit()
+        _run_legacy_migration(conn)
+        row = conn.execute(
+            "SELECT source_repo, thread_id FROM cursor_sdk_lane_worktrees"
+        ).fetchone()
+        assert row is not None
+        assert row["source_repo"] == repo_str
+        assert row["thread_id"] == "legacy-t"
+
+
+def test_migrate_lane_worktrees_pk_retry_after_orphan_new_table(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B1: orphan ``_new`` table from a failed attempt does not poison retry."""
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    CursorDispatchLedger.instance()
+
+    with _connect() as conn:
+        conn.execute("DROP TABLE IF EXISTS cursor_sdk_lane_worktrees")
+        conn.executescript(_LEGACY_LANE_DDL)
+        conn.execute("CREATE TABLE cursor_sdk_lane_worktrees_new (thread_id TEXT)")
+        conn.commit()
+        _run_legacy_migration(conn)
+        cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(cursor_sdk_lane_worktrees)")
+        }
+        assert "source_repo" in cols
+
