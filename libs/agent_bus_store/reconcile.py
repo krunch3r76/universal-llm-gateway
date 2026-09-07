@@ -152,6 +152,9 @@ def _backfill_terminal_link(
 
 def _reap_orphan_link(link: dict[str, Any]) -> bool:
     """Reconcile one non-terminal link. Returns True when work was done."""
+    if link.get("pipeline_id") != "cursor-sdk-generate":
+        return False
+
     thread_id = link["thread_id"]
     execution_id = link["execution_id"]
     pipeline_id = link["pipeline_id"]

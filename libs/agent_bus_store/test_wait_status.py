@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agent_bus_store.producer_projection import classify_producer_link
 from agent_bus_store.turns_models import ThreadStatus
 from agent_bus_store.wait_status import (
     build_suggested_next,
@@ -208,6 +209,7 @@ def test_no_awaiting_push_status_exists():
         "no_new_turn",
         "predicate_unmet",
         "complete",
+        "producer_terminal",
     }
     assert "awaiting_push" not in get_args(WaitStatus)
 
@@ -331,3 +333,145 @@ def test_proof_reply_from_failed_envelope_predicate_unmet():
     ]
     assert not is_complete(thread, turns, after_turn=1, completion=comp)
     assert derive_status(thread, turns, after_turn=1, completion=comp) == "predicate_unmet"
+
+
+def test_proof_reply_from_failed_link_producer_terminal():
+    """Failed cdp-generate dispatch link yields producer_terminal when execution_id matches."""
+    thread = {
+        "status": ThreadStatus.ACTIVE,
+        "dispatch_links": [
+            {
+                "execution_id": "exec-fail",
+                "pipeline_id": "cdp-generate",
+                "terminal_status": "failed",
+            }
+        ],
+    }
+    comp = {"mode": "proof_reply_from", "from_agent": "web-anthropic"}
+    turns = [
+        _turn(1, "cursor"),
+        _turn(
+            2,
+            "web-anthropic",
+            subject="cdp FAILED — deadbeef",
+            body=SPECIMEN_347_BODY,
+        ),
+    ]
+    assert not is_complete(thread, turns, after_turn=1, completion=comp)
+    assert (
+        derive_status(
+            thread,
+            turns,
+            after_turn=1,
+            completion=comp,
+            execution_id="exec-fail",
+        )
+        == "producer_terminal"
+    )
+
+
+def test_non_cdp_generate_failed_link_stays_predicate_unmet():
+    """SDK failed link must not satisfy producer_terminal (M4 guard)."""
+    thread = {
+        "status": ThreadStatus.ACTIVE,
+        "dispatch_links": [
+            {
+                "execution_id": "exec-sdk",
+                "pipeline_id": "cursor-sdk-generate",
+                "terminal_status": "failed",
+            }
+        ],
+    }
+    comp = {"mode": "proof_reply_from", "from_agent": "web-anthropic"}
+    turns = [
+        _turn(1, "cursor"),
+        _turn(
+            2,
+            "web-anthropic",
+            subject="cdp FAILED — deadbeef",
+            body=SPECIMEN_347_BODY,
+        ),
+    ]
+    assert (
+        derive_status(
+            thread,
+            turns,
+            after_turn=1,
+            completion=comp,
+            execution_id="exec-sdk",
+        )
+        == "predicate_unmet"
+    )
+
+
+def test_classify_producer_link_unknown_without_execution_id() -> None:
+    assert classify_producer_link(execution_id=None, dispatch_links=[]) == {
+        "execution_id": None,
+        "pipeline_id": None,
+        "state": "unknown",
+        "terminal_status": None,
+        "linked_at": None,
+        "delivery_at": None,
+        "source": "thread_dispatch_links",
+    }
+
+
+def test_classify_producer_link_unlinked_when_row_missing() -> None:
+    assert classify_producer_link(
+        execution_id="exec-missing",
+        dispatch_links=[
+            {
+                "execution_id": "exec-other",
+                "pipeline_id": "cdp-generate",
+                "linked_at": "2026-09-07T05:41:20Z",
+                "terminal_status": None,
+                "delivery_at": None,
+            }
+        ],
+    ) == {
+        "execution_id": "exec-missing",
+        "pipeline_id": None,
+        "state": "unlinked",
+        "terminal_status": None,
+        "linked_at": None,
+        "delivery_at": None,
+        "source": "thread_dispatch_links",
+    }
+
+
+def test_classify_producer_link_in_flight_from_gate0_payload() -> None:
+    """Gate-0 captured row: agent-bus:10142 cdp-generate admit."""
+    row = {
+        "execution_id": "d6a93d64-18a9-4779-8238-89d6af49e415",
+        "pipeline_id": "cdp-generate",
+        "linked_at": "2026-09-07T05:41:20Z",
+        "terminal_status": None,
+        "delivery_at": None,
+    }
+    assert classify_producer_link(
+        execution_id="d6a93d64-18a9-4779-8238-89d6af49e415",
+        dispatch_links=[row],
+    ) == {
+        "execution_id": "d6a93d64-18a9-4779-8238-89d6af49e415",
+        "pipeline_id": "cdp-generate",
+        "state": "in_flight",
+        "terminal_status": None,
+        "linked_at": "2026-09-07T05:41:20Z",
+        "delivery_at": None,
+        "source": "thread_dispatch_links",
+    }
+
+
+def test_classify_producer_link_terminal() -> None:
+    assert classify_producer_link(
+        execution_id="exec-done",
+        dispatch_links=[
+            {
+                "execution_id": "exec-done",
+                "pipeline_id": "cdp-generate",
+                "linked_at": "2026-09-07T05:41:20Z",
+                "terminal_status": "failed",
+                "delivery_at": "2026-09-07T06:00:00Z",
+            }
+        ],
+    )["state"] == "terminal"

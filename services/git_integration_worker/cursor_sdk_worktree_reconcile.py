@@ -112,19 +112,37 @@ def reconcile_unregistered_worktrees(
 ) -> tuple[int, int]:
     """Archive-and-remove clean unregistered trees; surface dirty ones as debt.
 
+    ``active`` is advisory — the caller computes it from records that can lag.
+    The live-bridge and live-ledger scans are run here as well, so a tree with
+    a running bridge or a non-terminal ledger row survives this sweep even when
+    the caller passed a stale active set or none at all (H4).
+
     Returns ``(reconciled, surfaced)``.
     """
     from services.git_integration_worker.cursor_sdk_branch_archive import (
         archive_branch,
     )
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_b_reap_skipped_live_bridge,
+        emit_sdk_lane_b_reconcile_skipped_live_ledger,
+        emit_sdk_lane_b_worktree_removed,
+    )
     from services.git_integration_worker.cursor_sdk_worktree_gc import (
         is_lane_b_reconcile_target,
         registered_branch_names,
     )
+    from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+        live_bridge_worktree_paths,
+        live_ledger_worktree_paths,
+        worktree_held_by_live_bridge,
+    )
 
     repo = source_repo.resolve()
     root = worktree_root.resolve()
-    active_paths = active or set()
+    active_paths = set(active or ())
+    held_paths = live_bridge_worktree_paths(worktree_root=root)
+    ledger_paths = live_ledger_worktree_paths(worktree_root=root)
+    active_paths |= ledger_paths
     registered_branches = registered_branch_names()
     registered_paths = _registered_worktree_paths()
 
@@ -135,7 +153,24 @@ def reconcile_unregistered_worktrees(
             continue
         if not is_lane_b_reconcile_target(branch=entry.branch, path=entry.path):
             continue
-        resolved = str(entry.path)
+        resolved = str(entry.path.resolve())
+        if resolved in held_paths:
+            logger.warning(
+                "unregistered worktree left in place — live bridge holds it path=%s",
+                entry.path,
+            )
+            emit_sdk_lane_b_reap_skipped_live_bridge(
+                worktree_path=resolved,
+                stage="reconcile",
+            )
+            continue
+        if resolved in ledger_paths and resolved not in held_paths:
+            logger.warning(
+                "unregistered worktree left in place — live ledger holds it path=%s",
+                entry.path,
+            )
+            emit_sdk_lane_b_reconcile_skipped_live_ledger(worktree_path=resolved)
+            continue
         if resolved in active_paths or resolved in registered_paths:
             continue
         if entry.branch and entry.branch in registered_branches:
@@ -143,10 +178,28 @@ def reconcile_unregistered_worktrees(
         if entry.path.is_dir() and _is_dirty(entry.path):
             surfaced += _surface_dirty_tree(entry)
             continue
+        holder_pid = worktree_held_by_live_bridge(
+            worktree_path=entry.path,
+            worktree_root=root,
+            fresh=True,
+        )
+        if holder_pid is not None:
+            emit_sdk_lane_b_reap_skipped_live_bridge(
+                worktree_path=resolved,
+                pid=holder_pid,
+                stage="reconcile",
+            )
+            continue
         if entry.branch:
             archive_branch(repo=repo, branch_name=entry.branch)
         if _remove_worktree(source_repo=repo, worktree=entry.path):
             reconciled += 1
+            emit_sdk_lane_b_worktree_removed(
+                worktree_path=resolved,
+                trigger="reconcile",
+                ledger_status_at_remove="none",
+                branch=entry.branch,
+            )
             logger.info(
                 "unregistered worktree reconciled path=%s branch=%s",
                 entry.path,
@@ -179,12 +232,14 @@ def _surface_dirty_tree(entry: GitWorktree) -> int:
 
 
 def _registered_worktree_paths() -> set[str]:
-    from services.git_integration_worker.cursor_dispatch_ledger import _connect
+    from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+        ledger_connection,
+    )
     from services.git_integration_worker.cursor_sdk_worktree_registry import (
         ensure_worktree_schema,
     )
 
-    with _connect() as conn:
+    with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         rows = conn.execute(
             "SELECT worktree_path FROM cursor_sdk_lane_worktrees"

@@ -1,11 +1,23 @@
 ---
 name: claude-ai-mcp-connect
-description: "Connect or rewire claude.ai Customize→Connectors to the toys MCP (/mcp/life) via Jupiter CDP — OAuth DCR, permission repair, dual-endpoint cutover."
+description: "Connect or restore claude.ai toys MCP (/mcp/life) — operator restore defaults to refresh-connector (not plain restore); OAuth DCR, permission repair, dual-endpoint."
 ---
 
 # Claude.ai → toys MCP connect
 
 `connect|rewire|restore(claude.ai MCP) ⇒ Jupiter CDP ∧ life URL ∧ OAuth Approve ∧ verify Connected`.
+
+### Restore routing (BINDING)
+
+Operator asks to **restore / fix / reconnect toys** (incl. "connection expired", tools dead in chat):
+
+| Step | Command |
+|---|---|
+| **Default (first try)** | `refresh-connector` — forced Disconnect→Connect+OAuth **and** Other-tools permission repair |
+| First-time add / legacy `vortex` rename | `restore-connector` only (may Remove→Add custom) |
+| After MCP schema/deploy change | `refresh-connector` or `restore-connector --force-reconnect` |
+
+**`already_connected` trap (incident 2026-09-05):** plain `restore-connector` exits `already_connected` when the Customize UI shows **Connected** and no connection-issue copy — even while life chat tools fail. That exit is **not** operator success. If the operator still reports broken toys after `already_connected`, run **`refresh-connector`** (or `--force-reconnect`) and quote fresh `mcp.oauth.token.accepted` events. Tell the operator to **start a new chat** — stale CSE sessions can keep dead tool handles after OAuth refresh.
 
 **Default remote URL:** `https://<mcp-host>/mcp/life` (life surface).
 **claude.ai connector display name (SETTLED):** `toys` — product label for what’s available.
@@ -27,7 +39,7 @@ Cross-ref: `agent-skills/jupiter-browser-via-mcp` · `claude-ai-bundle-sync` (Sk
 
 ## When to load
 
-- Operator: "connect claude.ai to MCP", "rewire toys connector", "MCP connection expired"
+- Operator: "connect claude.ai to MCP", "restore toys connection", "rewire toys connector", "MCP connection expired", "toys not working"
 - Dual-endpoint cutover / anyone proposing bare `/mcp` as the live URL
 - Toast: `Couldn't register with vortex's sign-in service`
 
@@ -35,7 +47,7 @@ Cross-ref: `agent-skills/jupiter-browser-via-mcp` · `claude-ai-bundle-sync` (Sk
 
 ```
 Cursor agent
-  → scripts/cortex/claude-ai-sync-jupiter ensure-chrome | restore-connector
+  → scripts/cortex/claude-ai-sync-jupiter ensure-chrome | refresh-connector
   → Jupiter Chrome CDP :9222 (logged-in claude.ai profile)
   → claude.ai Settings → Customize → Connectors → toys
   → <mcp-host> OAuth (/oauth/register DCR ∨ pre-registered client_id=claude-ai)
@@ -44,24 +56,31 @@ Cursor agent
 
 ## Happy path (prefer automation)
 
+**Operator restore (default):**
+
 ```bash
 cd /mnt/torus/projects/universal-llm-gateway
 scripts/cortex/claude-ai-sync-jupiter ensure-chrome
-scripts/cortex/claude-ai-sync-jupiter restore-connector \
-  --mcp-url 'https://<mcp-host>/mcp/life' --connector-name toys
-# After MCP schema/deploy changes (tools/list refresh): add --force-reconnect
-# (Disconnect → Connect+OAuth). Bare restore returns already_connected when live.
-scripts/cortex/claude-ai-sync-jupiter set-tool-permissions \
-  --mcp-url 'https://<mcp-host>/mcp/life' --connector-name toys
-# Explicit surface-refresh path: reconnect, then repair Other tools permission.
 scripts/cortex/claude-ai-sync-jupiter refresh-connector \
   --mcp-url 'https://<mcp-host>/mcp/life' --connector-name toys
-# Mid-rename (UI still labeled vortex): same command — script removes vortex
-# and re-adds as toys (claude.ai has no in-UI rename). Or pass
-# --connector-name vortex only to reconnect without renaming.
 ```
 
-`restore-connector` opens Connectors; if life URL exists under a legacy name (`vortex`) and `--connector-name toys`, **Remove → Add custom** then OAuth. Otherwise Connect/Reconnect + Approve. Returns `restored` | `already_connected` | `renamed_readded`. `--force-reconnect` forces Disconnect then Connect even when Connected.
+Expect reconnect exit **`restored`** and permissions **`changed`** or **`already_set`**. Verify server-side:
+`observability(operation="signal-events", params={"signal":"mcp.oauth*","minutes":5,"limit":10})`
+→ fresh `mcp.oauth.token.accepted`, zero `*.rejected`.
+
+**First add / legacy rename / probe-only:**
+
+```bash
+scripts/cortex/claude-ai-sync-jupiter restore-connector \
+  --mcp-url 'https://<mcp-host>/mcp/life' --connector-name toys
+# Mid-rename (UI still labeled vortex): same — script removes vortex and re-adds as toys.
+# Or --connector-name vortex to reconnect without renaming.
+```
+
+**MCP schema/deploy change only** (Connected UI already good): `set-tool-permissions` alone.
+
+`restore-connector` opens Connectors; if life URL exists under a legacy name (`vortex`) and `--connector-name toys`, **Remove → Add custom** then OAuth. Otherwise Connect/Reconnect + Approve. Returns `restored` | `already_connected` | `renamed_readded`. `--force-reconnect` forces Disconnect then Connect even when Connected. **`refresh-connector`** = `restore-connector --force-reconnect` then `set-tool-permissions`.
 
 `set-tool-permissions` targets only the `toys` life connector's `Other tools`
 group. It returns `changed` or `already_set`, and reload-verifies `Always allow`
@@ -133,9 +152,14 @@ observability(operation="signal-events",
 
 ## Verify success
 
-Connector detail shows URL `…/mcp/life`, **¬** "not connected to toys", **¬** connection-issue toast.  
-UI **Connected** ⇏ tools work — confirm life `tools/call` (or admit) events for `/mcp/life` after a real tool use; stale Anthropic sessions can show Connected while calls fail opaque.  
-Life chat: life primaries (`cortex`, `close`, …); coding tools (`manage`, `team_dispatch`) stay on `/mcp/code`.
+| Check | Pass |
+|---|---|
+| Script exit | `restored` (reconnect leg) — not `already_connected` when operator reported broken |
+| OAuth events | `mcp.oauth.token.accepted` within last few minutes; no `*.rejected` |
+| Customize UI | URL `…/mcp/life`, **¬** "not connected to toys", **¬** connection-issue toast |
+| Chat | New claude.ai chat shows "Used toys integration" after a life tool prompt |
+
+UI **Connected** ⇏ tools work — stale CSE/chat sessions keep dead handles after OAuth refresh; operator must open a **new chat**. Life primaries (`cortex`, `close`, …); coding tools (`manage`, `team_dispatch`) stay on `/mcp/code`.
 
 ## Cursor dual bridges (companion)
 

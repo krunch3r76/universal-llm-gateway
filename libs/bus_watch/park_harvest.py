@@ -7,6 +7,7 @@ from claude_bundles.conductor_stop import (
     _G_ROW_RE,
     _NEXT_ADMIT_NONE_RE,
     EXIT_PERSIST_STOPS,
+    consult_pending_blocks_progression,
     is_consult_pending_wait,
     next_admit_names_harvest,
     parse_stop_tokens,
@@ -49,8 +50,14 @@ def exit_persist_terminal(*, closeout_tokens: frozenset[str]) -> bool:
     return bool(closeout_tokens & EXIT_PERSIST_STOPS)
 
 
-def successor_owed(*, closeout_tokens: frozenset[str]) -> bool:
+def successor_owed(
+    *,
+    closeout_tokens: frozenset[str],
+    closeout_body: str = "",
+) -> bool:
     """Watcher heuristic: ROW_HOP boundary would owe a hop successor."""
     if closeout_tokens & (EXIT_PERSIST_STOPS | frozenset({"DONE"})):
+        return False
+    if consult_pending_blocks_progression(closeout_body):
         return False
     return "ROW_HOP" in closeout_tokens

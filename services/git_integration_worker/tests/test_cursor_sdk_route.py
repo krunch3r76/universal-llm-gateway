@@ -470,7 +470,7 @@ async def test_dispatch_large_result_posts_bounded_closeout_with_sidecar(
     sidecar = source_repo / "tmp/reviews/closeouts/disp-big.md"
     assert sidecar.read_text(encoding="utf-8") == big_body
     bus.terminate_dispatch.assert_awaited_once_with(
-        thread_id="1831", terminal_status="completed", bus_lifecycle="completed"
+        thread_id="1831", terminal_status="completed", execution_id="exec-big"
     )
 
 
@@ -542,7 +542,7 @@ async def test_dispatch_reply_413_emits_delivery_failed_and_terminates_failed(
     assert delivery_failed[0]["sidecar_ref"] in fallback_body
     assert "DELIVERY FAILED" in bus.reply.await_args_list[1].kwargs["subject"]
     bus.terminate_dispatch.assert_awaited_once_with(
-        thread_id="1831", terminal_status="failed", bus_lifecycle="failed"
+        thread_id="1831", terminal_status="failed", execution_id="exec-413"
     )
 
 
@@ -667,8 +667,54 @@ async def test_dispatch_implement_success_ok(
     assert emitted[0]["tool_call_count"] == 2
     assert emitted[0]["execution_id"] == "exec-ok"
     bus.terminate_dispatch.assert_awaited_once_with(
-        thread_id="1590", terminal_status="completed", bus_lifecycle="completed"
+        thread_id="1590", terminal_status="completed", execution_id="exec-ok"
     )
+
+
+@pytest.mark.asyncio
+async def test_sdk_terminate_sends_execution_id_m1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L1-AC-m: SDK success path passes execution_id; bus_lifecycle omitted (M1)."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    req = CursorDispatchRequest(
+        thread_id="1591",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-m1",
+        execution_id="exec-m1",
+        message="---\ncontract: implement\n---\npacket",
+        handoff_contract="implement",
+    )
+    bus = _mock_bus()
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_kwargs: None)
+
+    def _ok_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return _sdk_outcome(tool_call_count=1)
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
+        bus=bus,
+        controller=_make_controller(),
+    )
+
+    bus.terminate_dispatch.assert_awaited_once()
+    call_kwargs = bus.terminate_dispatch.await_args.kwargs
+    assert call_kwargs["thread_id"] == "1591"
+    assert call_kwargs["terminal_status"] == "completed"
+    assert call_kwargs["execution_id"] == "exec-m1"
+    assert "bus_lifecycle" not in call_kwargs
 
 
 @pytest.mark.asyncio
@@ -920,7 +966,7 @@ async def test_dispatch_exception_posts_failure_turn_and_event(
 
     bus.reply.assert_awaited_once()
     bus.terminate_dispatch.assert_awaited_once_with(
-        thread_id="1601", terminal_status="failed", bus_lifecycle="failed"
+        thread_id="1601", terminal_status="failed", execution_id=req.execution_id
     )
     call = bus.reply.await_args
     assert call is not None
@@ -1044,7 +1090,7 @@ async def test_dispatch_home_config_error_posts_bus_reply(
 
     bus.reply.assert_awaited_once()
     bus.terminate_dispatch.assert_awaited_once_with(
-        thread_id="99", terminal_status="failed", bus_lifecycle="failed"
+        thread_id="99", terminal_status="failed", execution_id=req.execution_id
     )
     call = bus.reply.await_args
     assert call is not None
@@ -1333,7 +1379,7 @@ async def test_dispatch_venv_config_error_posts_bus_reply(
     assert not launch_called
     bus.reply.assert_awaited_once()
     bus.terminate_dispatch.assert_awaited_once_with(
-        thread_id="1752", terminal_status="failed", bus_lifecycle="failed"
+        thread_id="1752", terminal_status="failed", execution_id=req.execution_id
     )
     call = bus.reply.await_args
     assert call is not None
@@ -1388,7 +1434,7 @@ async def test_dispatch_timeout_posts_failure_and_terminates(
     bus.reply.assert_awaited_once()
     assert "FAILED (timeout)" in bus.reply.await_args.kwargs["subject"]
     bus.terminate_dispatch.assert_awaited_once_with(
-        thread_id="1607", terminal_status="failed", bus_lifecycle="failed"
+        thread_id="1607", terminal_status="failed", execution_id=req.execution_id
     )
     assert timeout_events[0]["dispatch_id"] == "disp-timeout"
     assert timeout_events[0]["thread_id"] == "1607"
@@ -1909,7 +1955,7 @@ async def test_worker_base_exception_marks_terminal_and_delivers(
     assert _row_status(req.dispatch_id) == ("failed", "failed")
     bus.reply.assert_awaited_once()
     bus.terminate_dispatch.assert_awaited_once_with(
-        thread_id="2680", terminal_status="failed", bus_lifecycle="failed"
+        thread_id="2680", terminal_status="failed", execution_id=req.execution_id
     )
     assert failed and "bridge subprocess vanished" in str(failed[0]["error"])
 
@@ -1963,7 +2009,7 @@ async def test_closeout_exception_marks_terminal_and_delivers(
     assert _row_status(req.dispatch_id) == ("failed", "failed")
     bus.reply.assert_awaited()
     bus.terminate_dispatch.assert_awaited_with(
-        thread_id="2681", terminal_status="failed", bus_lifecycle="failed"
+        thread_id="2681", terminal_status="failed", execution_id=req.execution_id
     )
 
 

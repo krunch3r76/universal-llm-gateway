@@ -229,3 +229,44 @@ def test_sweep_reaps_admitted_before_reconcile(bus_db) -> None:
         _sweep()
 
     assert order == ["pending", "admitted", "active", "reconcile", "quiet"]
+
+
+def test_admitted_reap_ignores_latest_cdp_link(bus_db) -> None:
+    """L1-AC-l: latest dispatch link is CDP — admitted reap is not blocked."""
+    thread_row, *_ = create_thread_with_turn(
+        slug="cdp-only-reap",
+        from_agent="dispatch",
+        to_agent="web-anthropic",
+        subject="cdp generate",
+        body="pointer only",
+        lifecycle_state="pending",
+    )
+    thread_id = thread_row["id"]
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-cdp-reap",
+        pipeline_id="cdp-generate",
+        caller_agent="cursor",
+    )
+    old = (datetime.now(UTC) - timedelta(seconds=4000)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with connect() as conn:
+        conn.execute(
+            "UPDATE threads SET updated_at = ? WHERE id = ?",
+            (old, thread_id),
+        )
+
+    def _live_sdk(_thread_id: str) -> ProbeResult:
+        """Would block SDK-holder threads; CDP-only threads must not defer on this."""
+        return ProbeResult(
+            payload={"status": "running", "execution_id": "exec-other"},
+            http_status=200,
+            error=None,
+        )
+
+    with patch("agent_bus_store.watchdog.emit_thread_abandoned") as abandoned:
+        _reap_admitted(_cutoff_for_ttl(3600), probe_fn=_live_sdk)
+
+    lifecycle, status = _lifecycle(thread_id)
+    assert lifecycle == "abandoned"
+    assert status == "closed"
+    abandoned.assert_called_once()

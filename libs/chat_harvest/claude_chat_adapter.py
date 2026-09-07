@@ -381,14 +381,9 @@ async def execute_claude_paste(
             return ChatPasteResponse(ok=False, code="unreachable", reason=f"composer not found url={page.url!r}")
         await composer.click(force=True)
         await page.keyboard.insert_text(prompt_text.strip())
-        btn = page.get_by_role("button", name=re.compile(r"^Send message$", re.I))
-        for i in range(await btn.count()):
-            el = btn.nth(i)
-            if await el.is_visible():
-                await el.click()
-                break
-        else:
-            raise RuntimeError("Send message button not visible")
+        from claude_bundles.composer_submit import submit_composer_content
+
+        await submit_composer_content(page, prompt_text.strip(), composer=composer)
         await wait_assistant_reply(page, before=pre_send)
         live_url, live_id = page.url or url, _live_id(page.url or url)
         turns, raw = await harvest_full_transcript(page)

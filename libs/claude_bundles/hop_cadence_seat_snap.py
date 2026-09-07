@@ -8,6 +8,14 @@ registry seats onto the snap that both predecessor capture and
 ``refuse_cadence_hop_for_live_seat`` already share, without mutating admission
 scalars (``running_count``, ``free_slots``). X occupancy is a separate
 active-work attach (``x_*``), not this union.
+
+Identity union field guide (R2′):
+
+- ``rows`` (execution store): ``stream_state`` is authoritative for stream
+  liveness; admission scalars still read ``status`` on store rows only.
+- ``seated_rows`` / ``seat_rows`` (registry): ``seat_state`` is registry
+  status; ``stream_state`` joins the execution store / inflight leg for the
+  registration's current ``execution_id``.
 """
 
 from __future__ import annotations
@@ -23,15 +31,105 @@ SEAT_ROWS_KEY = "seat_rows"
 SEATED_SOURCE = "cse-session-registry"
 SEAT_SOURCE = "cse-session-registry:seat-axis"
 
+STREAM_NONE = "none"
+STREAM_PENDING = "pending"
+STREAM_RUNNING = "running"
+_LIVE_STREAM_STATES = frozenset({STREAM_PENDING, STREAM_RUNNING})
+_TERMINAL_EXECUTION_STATUSES = frozenset({"completed", "failed", "aborted"})
 
-def seated_row_from_registry_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
+StreamIndex = dict[str, str]
+
+
+def is_live_stream_state(stream_state: str | None) -> bool:
+    """True when ``stream_state`` is a pending or running execution stream."""
+    return str(stream_state or "") in _LIVE_STREAM_STATES
+
+
+def stream_state_terminal(execution_id: str) -> str:
+    """Format a terminal stream token bound to ``execution_id``."""
+    return f"terminal:{execution_id}"
+
+
+def merge_stream_index(*indexes: Mapping[str, str] | None) -> StreamIndex:
+    """Merge execution-id → status maps; later indexes override earlier keys."""
+    out: StreamIndex = {}
+    for index in indexes:
+        if not index:
+            continue
+        for key, value in index.items():
+            token = str(key or "").strip()
+            if token:
+                out[token] = str(value or "")
+    return out
+
+
+def build_stream_index_from_snap(snap: Mapping[str, Any]) -> StreamIndex:
+    """Build a join index from snap ``rows`` and optional ``execution_streams``."""
+    rows = snap.get("rows") if isinstance(snap.get("rows"), list) else []
+    store_rows = [row for row in rows if isinstance(row, dict)]
+    raw_streams = snap.get("execution_streams")
+    extra: StreamIndex = {}
+    if isinstance(raw_streams, Mapping):
+        extra = {
+            str(k): str(v)
+            for k, v in raw_streams.items()
+            if str(k or "").strip()
+        }
+    return merge_stream_index(
+        build_stream_index_from_rows(store_rows),
+        extra,
+    )
+
+
+def build_stream_index_from_rows(rows: list[Mapping[str, Any]]) -> StreamIndex:
+    """Derive execution-id → status from projected identity/store rows."""
+    index: StreamIndex = {}
+    for row in rows:
+        exec_id = str(row.get("execution_id") or "").strip()
+        if not exec_id or exec_id == SEATED_NO_STREAM_EXECUTION:
+            continue
+        stream = str(row.get("stream_state") or "")
+        if stream.startswith("terminal:"):
+            index[exec_id] = "failed"
+            continue
+        if stream in _LIVE_STREAM_STATES:
+            index[exec_id] = stream
+            continue
+        status = str(row.get("status") or "")
+        if status:
+            index[exec_id] = status
+    return index
+
+
+def project_stream_state(
+    execution_id: str,
+    *,
+    stream_index: StreamIndex | None = None,
+) -> str:
+    """Map an execution id to ``none`` | ``pending`` | ``running`` | ``terminal:<id>``."""
+    token = str(execution_id or "").strip()
+    if not token or token == SEATED_NO_STREAM_EXECUTION:
+        return STREAM_NONE
+    raw = (stream_index or {}).get(token)
+    if raw in _LIVE_STREAM_STATES:
+        return raw
+    if raw in _TERMINAL_EXECUTION_STATUSES:
+        return stream_state_terminal(token)
+    return STREAM_NONE
+
+
+def seated_row_from_registry_record(
+    record: Mapping[str, Any],
+    *,
+    stream_index: StreamIndex | None = None,
+) -> dict[str, Any] | None:
     """Project one listable registry row into a hop-identity snap row.
 
     Listable statuses mean a Chrome process may still hold the CSE. Empty
     ``execution_id`` becomes ``SEATED_NO_STREAM_EXECUTION`` so incumbency
-    filters that require a nonempty execution id still see the seat. Status
-    is synthesized as ``running`` for identity consumers; admission scalars
-    are not derived from these rows.
+    filters that require a nonempty execution id still see the seat.
+    ``seat_state`` carries registry status; ``stream_state`` joins the
+    execution store for the registration's current execution.
     """
     status = str(record.get("status") or "")
     if status not in _HOST_LISTABLE_STATUSES:
@@ -40,18 +138,22 @@ def seated_row_from_registry_record(record: Mapping[str, Any]) -> dict[str, Any]
     if not registration_id:
         return None
     execution_id = str(record.get("execution_id") or "").strip()
+    exec_for_row = execution_id or SEATED_NO_STREAM_EXECUTION
     return {
         "registration_id": registration_id,
-        "execution_id": execution_id or SEATED_NO_STREAM_EXECUTION,
+        "execution_id": exec_for_row,
         "parent_thread": record.get("parent_thread"),
         "purpose": record.get("purpose"),
-        "status": "running",
+        "seat_state": status,
+        "stream_state": project_stream_state(exec_for_row, stream_index=stream_index),
         "source": SEATED_SOURCE,
     }
 
 
 def seated_rows_from_registry_records(
     records: Mapping[str, Mapping[str, Any]] | list[Mapping[str, Any]],
+    *,
+    stream_index: StreamIndex | None = None,
 ) -> list[dict[str, Any]]:
     """Project listable registry records into hop-identity seated rows for capture and refuse."""
     values: list[Mapping[str, Any]]
@@ -61,7 +163,9 @@ def seated_rows_from_registry_records(
         values = [row for row in records if isinstance(row, Mapping)]
     out: list[dict[str, Any]] = []
     for record in values:
-        projected = seated_row_from_registry_record(record)
+        projected = seated_row_from_registry_record(
+            record, stream_index=stream_index
+        )
         if projected is not None:
             out.append(projected)
     return out
@@ -70,6 +174,7 @@ def seated_rows_from_registry_records(
 def read_registry_seated_rows(
     *,
     load_active: Callable[[], Mapping[str, Mapping[str, Any]]] | None = None,
+    stream_index: StreamIndex | None = None,
 ) -> list[dict[str, Any]]:
     """Load listable CSE-registry seats as hop-identity rows; empty on I/O fault."""
     try:
@@ -83,16 +188,19 @@ def read_registry_seated_rows(
         return []
     if not isinstance(raw, Mapping):
         return []
-    return seated_rows_from_registry_records(raw)
+    return seated_rows_from_registry_records(raw, stream_index=stream_index)
 
 
-def seat_row_from_registry_record(record: Mapping[str, Any]) -> dict[str, Any] | None:
+def seat_row_from_registry_record(
+    record: Mapping[str, Any],
+    *,
+    stream_index: StreamIndex | None = None,
+) -> dict[str, Any] | None:
     """Project one seat-open registry row into a hop-identity snap row.
 
     ``seat_open`` is status-independent: dormant driving seats count here.
-    Empty ``execution_id`` becomes ``SEATED_NO_STREAM_EXECUTION``. Status
-    is synthesized as ``running`` for identity consumers; ``host_status``
-    carries the real registry status for hygiene only.
+    Empty ``execution_id`` becomes ``SEATED_NO_STREAM_EXECUTION``.
+    ``seat_state`` carries registry status; ``stream_state`` joins the store.
     """
     if not seat_open(record):
         return None
@@ -100,13 +208,15 @@ def seat_row_from_registry_record(record: Mapping[str, Any]) -> dict[str, Any] |
     if not registration_id:
         return None
     execution_id = str(record.get("execution_id") or "").strip()
+    exec_for_row = execution_id or SEATED_NO_STREAM_EXECUTION
     host_status = str(record.get("status") or "")
     return {
         "registration_id": registration_id,
-        "execution_id": execution_id or SEATED_NO_STREAM_EXECUTION,
+        "execution_id": exec_for_row,
         "parent_thread": record.get("parent_thread"),
         "purpose": record.get("purpose"),
-        "status": "running",
+        "seat_state": host_status,
+        "stream_state": project_stream_state(exec_for_row, stream_index=stream_index),
         "source": SEAT_SOURCE,
         "seat": True,
         "host_status": host_status,
@@ -115,6 +225,8 @@ def seat_row_from_registry_record(record: Mapping[str, Any]) -> dict[str, Any] |
 
 def seat_rows_from_registry_records(
     records: Mapping[str, Mapping[str, Any]] | list[Mapping[str, Any]],
+    *,
+    stream_index: StreamIndex | None = None,
 ) -> list[dict[str, Any]]:
     """Project seat-open registry records into hop-identity seat-axis rows."""
     values: list[Mapping[str, Any]]
@@ -124,7 +236,9 @@ def seat_rows_from_registry_records(
         values = [row for row in records if isinstance(row, Mapping)]
     out: list[dict[str, Any]] = []
     for record in values:
-        projected = seat_row_from_registry_record(record)
+        projected = seat_row_from_registry_record(
+            record, stream_index=stream_index
+        )
         if projected is not None:
             out.append(projected)
     return out
@@ -156,6 +270,7 @@ def attach_registry_seated_rows(snap: dict[str, Any]) -> dict[str, Any]:
     need_seat = not isinstance(snap.get(SEAT_ROWS_KEY), list)
     if not need_seated and not need_seat:
         return snap
+    stream_index = build_stream_index_from_snap(snap)
     try:
         from claude_bundles.cdp_registry_store import load_active as _load_active
 
@@ -166,9 +281,15 @@ def attach_registry_seated_rows(snap: dict[str, Any]) -> dict[str, Any]:
         raw = {}
     out = snap
     if need_seated:
-        out = attach_seated_rows(out, seated_rows_from_registry_records(raw))
+        out = attach_seated_rows(
+            out,
+            seated_rows_from_registry_records(raw, stream_index=stream_index),
+        )
     if need_seat:
-        out = attach_seat_rows(out, seat_rows_from_registry_records(raw))
+        out = attach_seat_rows(
+            out,
+            seat_rows_from_registry_records(raw, stream_index=stream_index),
+        )
     return out
 
 
@@ -177,6 +298,10 @@ def identity_rows(snap: dict[str, Any]) -> list[dict[str, Any]]:
 
     Capacity keeps reading snap scalars / ``rows``. Identity questions
     (who is seated) — including request-admission census — read this union.
+
+    Field use by leg:
+    - execution-store ``rows``: ``stream_state`` (``seat_state`` unset)
+    - ``seated_rows`` / ``seat_rows``: ``seat_state`` + ``stream_state``
     """
     store = [
         row

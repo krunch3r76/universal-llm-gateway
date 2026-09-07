@@ -422,17 +422,22 @@ def admit_dispatch(
     ts = now()
     with connect() as conn:
         row = conn.execute(
-            "SELECT id, bus_lifecycle_state FROM threads WHERE id = ?", (thread_id,)
+            "SELECT id, bus_lifecycle_state, status FROM threads WHERE id = ?",
+            (thread_id,),
         ).fetchone()
         if row is None:
             return None
 
         lifecycle = row["bus_lifecycle_state"]
+        thread_status = row["status"]
         if lifecycle in TERMINAL_STATES:
-            raise ValueError(
-                f"Thread {thread_id!r} is in terminal state {lifecycle!r}; "
-                "dispatch-admit rejected"
-            )
+            if thread_status == "closed":
+                raise ValueError(
+                    f"Thread {thread_id!r} is closed with terminal lifecycle "
+                    f"{lifecycle!r}; dispatch-admit rejected"
+                )
+            _transition_lifecycle_state(conn, thread_id, "active", "reopen")
+            lifecycle = "active"
 
         _insert_dispatch_link_row(
             conn,

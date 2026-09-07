@@ -70,6 +70,11 @@ def CdpGenerateProof(  # noqa: N802
     content_proof_uri: str | None = None,
     via: str = "worker",
     attested_by: str | None = None,
+    thread_id: str | None = None,
+    pointer_turn: int | None = None,
+    dispatch_link_terminal: bool | None = None,
+    registration_id: str | None = None,
+    chat_url: str | None = None,
 ) -> Event:
     """Harvest proof present (archive or content_proof)."""
     payload: dict[str, Any] = {
@@ -82,6 +87,16 @@ def CdpGenerateProof(  # noqa: N802
     }
     if attested_by is not None:
         payload["attested_by"] = attested_by
+    if thread_id is not None:
+        payload["thread_id"] = thread_id
+    if pointer_turn is not None:
+        payload["pointer_turn"] = pointer_turn
+    if dispatch_link_terminal is not None:
+        payload["dispatch_link_terminal"] = dispatch_link_terminal
+    if registration_id is not None:
+        payload["registration_id"] = registration_id
+    if chat_url is not None:
+        payload["chat_url"] = chat_url
     return Event(
         signal="cdp.generate.proof",
         payload=payload,
@@ -100,6 +115,11 @@ def CdpGenerateStalled(  # noqa: N802
     archive_uri: str | None = None,
     deliverable_present: bool = False,
     since_last_progress_s: float | None = None,
+    thread_id: str | None = None,
+    pointer_turn: int | None = None,
+    dispatch_link_terminal: bool | None = None,
+    registration_id: str | None = None,
+    chat_url: str | None = None,
 ) -> Event:
     """CDP generate terminated without proof (stall or satellite failure).
 
@@ -127,6 +147,17 @@ def CdpGenerateStalled(  # noqa: N802
             "archive_uri": archive_uri,
             "deliverable_present": deliverable_present,
             "since_last_progress_s": since_last_progress_s,
+            **{
+                k: v
+                for k, v in (
+                    ("thread_id", thread_id),
+                    ("pointer_turn", pointer_turn),
+                    ("dispatch_link_terminal", dispatch_link_terminal),
+                    ("registration_id", registration_id),
+                    ("chat_url", chat_url),
+                )
+                if v is not None
+            },
         },
         scope="node",
     )

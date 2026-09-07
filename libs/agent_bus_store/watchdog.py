@@ -141,10 +141,13 @@ def _holder_blocks_admitted_reap(
     with connect() as conn:
         link = conn.execute(
             "SELECT execution_id FROM thread_dispatch_links "
-            "WHERE thread_id = ? ORDER BY linked_at DESC LIMIT 1",
+            "WHERE thread_id = ? AND pipeline_id = 'cursor-sdk-generate' "
+            "ORDER BY linked_at DESC LIMIT 1",
             (thread_id,),
         ).fetchone()
     execution_id = None if link is None else link["execution_id"]
+    if execution_id is None:
+        return False
     verdict, _reason, _terminal = evaluate_link_liveness(
         thread_id=thread_id,
         link_execution_id=execution_id,

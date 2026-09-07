@@ -30,6 +30,7 @@ from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purp
 from model_id import ModelId
 
 from .admission import FrontierEndpointError
+from .cdp_dispatch_envelope import record_cdp_admit
 from .cdp_generate_mcp_stamp import (
     publish_cdp_packet_enriched,
     stamp_cdp_packet_mcp_default,
@@ -37,7 +38,11 @@ from .cdp_generate_mcp_stamp import (
 from .cdp_generate_reconcile import upsert_inflight_leg
 from .cdp_generate_worker import run_cdp_worker
 from .cdp_mission_provenance import observe_mission_binding
-from .handoff import create_handoff_thread, post_pointer_turn
+from .handoff import (
+    admit_handoff_dispatch,
+    create_handoff_thread,
+    post_pointer_turn,
+)
 from .handoff_response import build_handoff_result, resolve_poll_wait_seconds
 from .poll_hint_events import emit_poll_hint_from_handoff
 
@@ -60,6 +65,17 @@ def is_cdp_model(model: str | None) -> bool:
         return False
 
 
+_LANE_BIND_PURPOSES = frozenset({"review"})
+_GATE_OCCUPANCY_PURPOSES = frozenset(
+    {"review", "operator-proxy", "operator_proxy", "mission"}
+)
+
+
+def _binds_operator_lane(purpose: str) -> bool:
+    norm = (purpose or "").strip().lower()
+    return is_operator_proxy_mission_purpose(purpose) or norm in _LANE_BIND_PURPOSES
+
+
 def default_operator_seat_binding(
     *,
     purpose: str,
@@ -67,16 +83,102 @@ def default_operator_seat_binding(
     mission_kind: str | None,
     thread_id: str,
 ) -> tuple[str | None, str | None]:
-    """Default ``parent_thread`` / ``mission_kind`` for operator-proxy purposes.
+    """Default ``parent_thread`` / ``mission_kind`` for gate and operator purposes.
 
     ``mission_kind="hop"`` is never overwritten. ``parent_thread`` defaults from
-    the generate ``thread_id`` when omitted.
+    the generate ``thread_id`` when omitted for operator-proxy/mission and for
+    ``purpose=review``.
     """
-    if not is_operator_proxy_mission_purpose(purpose):
+    if not _binds_operator_lane(purpose):
         return parent_thread, mission_kind
     lane = parent_thread or str(thread_id)
-    kind = mission_kind or "root"
+    if (mission_kind or "").strip().lower() == "hop":
+        kind = "hop"
+    else:
+        kind = mission_kind or "root"
     return lane, kind
+
+
+def _read_lane_snapshot_for_gate(*, request_id: str) -> dict[str, Any]:
+    from cdp_ask.client import CdpAskClient
+    from claude_bundles.hop_cadence_seat_snap import attach_registry_seated_rows
+
+    try:
+        snap = CdpAskClient()._request("GET", "/v1/project-ask/active-work")
+    except Exception as exc:
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="active-work",
+            reason=f"cdp_ask active-work probe failed: {exc}",
+            status_code=503,
+            code="cdp_gate_probe_failed",
+        ) from exc
+    if not isinstance(snap, dict):
+        return {}
+    return attach_registry_seated_rows(snap)
+
+
+def _live_external_gate_for_lane(
+    snap: dict[str, Any],
+    mission_lane: str,
+    *,
+    exclude_execution_id: str | None = None,
+) -> bool:
+    from claude_bundles.hop_cadence_id_map import (
+        ids_match_exclude,
+        normalize_exclude_ids,
+    )
+    from claude_bundles.hop_cadence_seat_snap import identity_rows, is_live_stream_state
+
+    lane = (mission_lane or "").strip()
+    if not lane or not snap:
+        return False
+    exclude = normalize_exclude_ids(exclude_execution_id)
+
+    for aw_row in identity_rows(snap):
+        stream_state = str(aw_row.get("stream_state") or "")
+        if not is_live_stream_state(stream_state):
+            continue
+        purpose = str(aw_row.get("purpose") or "").strip().lower()
+        if purpose not in _GATE_OCCUPANCY_PURPOSES:
+            continue
+        exec_id = str(aw_row.get("execution_id") or "").strip()
+        if exec_id and ids_match_exclude(exec_id, exclude):
+            continue
+        parent = str(aw_row.get("parent_thread") or "").strip()
+        if parent == lane:
+            return True
+    return False
+
+
+def refuse_second_external_gate_at_fire(
+    *,
+    purpose: str,
+    parent_thread: str | None,
+    thread_id: str,
+    request_id: str,
+    exclude_execution_id: str | None = None,
+) -> None:
+    """P1.3 — refuse a second gate while one is still streaming for the lane."""
+    if not _binds_operator_lane(purpose):
+        return
+    lane = (parent_thread or thread_id or "").strip()
+    if not lane:
+        return
+    snap = _read_lane_snapshot_for_gate(request_id=request_id)
+    if _live_external_gate_for_lane(
+        snap, lane, exclude_execution_id=exclude_execution_id
+    ):
+        raise FrontierEndpointError(
+            request_id=request_id,
+            field="purpose",
+            reason=(
+                f"external CDP gate already live for parent_thread={lane!r}; "
+                "wait for harvest before firing another gate"
+            ),
+            status_code=409,
+            code="cdp_external_gate_live",
+        )
 
 
 def reject_cursor_sdk_seat_with_cdp(
@@ -315,13 +417,65 @@ async def dispatch_cdp_generate(
             code=exc.code,
         ) from exc
 
+    mission_kind_raw = getattr(body, "mission_kind", None)
+    mission_kind = (
+        str(mission_kind_raw).strip()
+        if isinstance(mission_kind_raw, str) and mission_kind_raw.strip()
+        else None
+    )
+    parent_thread_raw = getattr(body, "parent_thread", None)
+    parent_thread = (
+        str(parent_thread_raw).strip()
+        if isinstance(parent_thread_raw, str) and parent_thread_raw.strip()
+        else None
+    )
+    dispatch_thread = body.dispatch_thread_id
+    provisional_thread = (
+        str(dispatch_thread).strip()
+        if dispatch_thread and str(dispatch_thread).strip().isdigit()
+        else ""
+    )
+    declared_parent = parent_thread
+    if is_operator_proxy_mission_purpose(purpose):
+        parent_thread, mission_kind = default_operator_seat_binding(
+            purpose=purpose,
+            parent_thread=parent_thread,
+            mission_kind=mission_kind,
+            thread_id=provisional_thread,
+        )
+        refuse_second_external_gate_at_fire(
+            purpose=purpose,
+            parent_thread=parent_thread,
+            thread_id=provisional_thread,
+            request_id=request_id,
+            exclude_execution_id=execution_id,
+        )
+    elif (purpose or "").strip().lower() in _LANE_BIND_PURPOSES:
+        parent_thread, mission_kind = default_operator_seat_binding(
+            purpose=purpose,
+            parent_thread=parent_thread,
+            mission_kind=mission_kind,
+            thread_id=provisional_thread,
+        )
+        refuse_second_external_gate_at_fire(
+            purpose=purpose,
+            parent_thread=parent_thread,
+            thread_id=provisional_thread,
+            request_id=request_id,
+            exclude_execution_id=execution_id,
+        )
+
     thread_subject = f"cdp generate — {request_id}"
     pointer_body = (
         f"CDP generate admitted (model={model}, execution_id={execution_id}). "
         f"Poll poll_hint (from_agent=web-anthropic). Terminal only after harvest proof."
     )
-    thread_id = body.dispatch_thread_id
-    if thread_id and str(thread_id).strip().isdigit():
+
+    thread_id = dispatch_thread
+    caller_supplied_thread = bool(
+        thread_id and str(thread_id).strip().isdigit()
+    )
+    if caller_supplied_thread:
         pointer_turn = await post_pointer_turn(
             request_id=request_id,
             thread_id=str(thread_id),
@@ -347,6 +501,31 @@ async def dispatch_cdp_generate(
             bus_lifecycle=getattr(body, "bus_lifecycle", None),
         )
         after_turn = 1
+        if is_operator_proxy_mission_purpose(purpose) or (
+            (purpose or "").strip().lower() in _LANE_BIND_PURPOSES
+        ):
+            parent_thread, mission_kind = default_operator_seat_binding(
+                purpose=purpose,
+                parent_thread=parent_thread,
+                mission_kind=mission_kind,
+                thread_id=str(thread_id),
+            )
+
+    admit_result = await admit_handoff_dispatch(
+        request_id=request_id,
+        thread_id=str(thread_id),
+        execution_id=execution_id,
+        pipeline_id="cdp-generate",
+        caller_agent=body.caller_agent,
+        parent_thread_id=parent_thread,
+    )
+    record_cdp_admit(
+        execution_id=execution_id,
+        thread_id=str(thread_id),
+        pointer_turn=after_turn,
+        admit_reason=admit_result.reason,
+        caller_supplied_thread=caller_supplied_thread,
+    )
 
     timeout_seconds = getattr(body, "timeout_seconds", None)
     max_wall = float(timeout_seconds) if timeout_seconds else DEFAULT_MAX_WALL_S
@@ -361,26 +540,7 @@ async def dispatch_cdp_generate(
         max_wall_s=max_wall,
     )
 
-    mission_kind_raw = getattr(body, "mission_kind", None)
-    mission_kind = (
-        str(mission_kind_raw).strip()
-        if isinstance(mission_kind_raw, str) and mission_kind_raw.strip()
-        else None
-    )
-    parent_thread_raw = getattr(body, "parent_thread", None)
-    parent_thread = (
-        str(parent_thread_raw).strip()
-        if isinstance(parent_thread_raw, str) and parent_thread_raw.strip()
-        else None
-    )
     if is_operator_proxy_mission_purpose(purpose):
-        declared_parent = parent_thread
-        parent_thread, mission_kind = default_operator_seat_binding(
-            purpose=purpose,
-            parent_thread=parent_thread,
-            mission_kind=mission_kind,
-            thread_id=str(thread_id),
-        )
         observe_mission_binding(
             purpose=purpose,
             dispatch_thread_id=str(thread_id),
@@ -452,6 +612,7 @@ async def dispatch_cdp_generate(
         after_turn=after_turn,
         poll_wait_seconds=resolve_poll_wait_seconds(caller_agent=body.caller_agent),
         completion="proof_reply_from",
+        execution_id=execution_id,
     )
     emit_poll_hint_from_handoff(
         request_id=request_id,

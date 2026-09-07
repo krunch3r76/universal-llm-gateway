@@ -11,8 +11,10 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
-from services.git_integration_worker.cursor_dispatch_ledger import _connect
 from services.git_integration_worker.cursor_sdk_events import emit_sdk_lane_b_reaped
+from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    ledger_connection,
+)
 
 logger = get_logger(__name__)
 
@@ -34,7 +36,7 @@ def is_lane_b_reconcile_target(*, branch: str | None, path: Path) -> bool:
 
 
 def registered_branch_names() -> set[str]:
-    with _connect() as conn:
+    with ledger_connection() as conn:
         from services.git_integration_worker.cursor_sdk_worktree_registry import (
             ensure_worktree_schema,
         )

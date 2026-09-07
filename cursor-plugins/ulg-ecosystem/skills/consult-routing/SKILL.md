@@ -40,7 +40,7 @@ is gone from `tools/list` — do not call it.
 merges `ulg-for-llms` + `reasoning-posture`. `ask` also prepends the arch pair
 and adds `hypothesize-simulate`; `review` adds `consult-posture` and
 `hypothesize-simulate`; `mission` / `operator-proxy` add
-`cdp-operator-proxy`. Caller `skills=` is additive.
+`cdp-operator-proxy` and `hypothesize-simulate`. Caller `skills=` is additive.
 Omitted purpose + `cdp/sonnet-5` → `produce`; omitted + opus/fable → `ask`.
 Stock container skills (`docx`/`xlsx`/`pptx`/`pdf`/`skill-creator`/…) are a
 **prompt verb**, never `skills=` (`cdp_skills_unknown` 422 is the collision
@@ -64,6 +64,24 @@ Standing: verifier ≠ producer; independent check ≠ author; Other Models /
 `cursor/claude-fable-5{,-1}` are not substitutes. Slash commands cite this table —
 they are not SOT.
 
+### Fable 5.1 SDK outage (a:32393 — open until recovery probe passes)
+
+**Verdict (a:32403):** upstream Cursor serving defect on `claude-fable-5-1` over the
+**SDK/agent surface**, knob-independent — hollow ~5s / 0 tools at `medium`, `xhigh`,
+and `max` after 2026-09-05 ~14:33Z. Wire and detection gaps are closed; do **not**
+denylist `xhigh` on the card.
+
+| Need | Route while outage open | Do not |
+|---|---|---|
+| Judgment / width | `cdp/fable` (Cowork transport) | Rebind to another Fable SDK rung |
+| Bind / sketch on SDK | `cursor/claude-opus-5` `{high\|xhigh\|max}` | `cursor/claude-fable-5{,-1}` on cursor-sdk |
+| Mechanical | `cursor/composer-2.5` | Third retry at a different Fable effort |
+
+**Recovery probe:** one trivial Fable SDK run — body non-empty and duration >15s ⇒
+stand down this row. Empty ~5s ⇒ still broken; route off model, not knob.
+
+SoT: `cortex://notes/system/specs/a32393-narrow-fix-bind.md` (verdict, routing, upstream report template)
+
 ## Dispatch targets (code surface only)
 
 Poll `poll_hint` with `agent_bus(wait)`, not `pipeline(result)`.
@@ -83,11 +101,14 @@ thinking models — read the skill body on substantive turns.
 
 **Headless** (`team_dispatch` / `cursor-sdk` / `cursor-auto`): alwaysApply rule
 pruned from the cursor-sdk dispatch HOME; judgment contracts get preamble injection
-only (mechanical/quick skip). `skills=` on cursor-sdk generate is a no-op.
+only (mechanical/quick skip). `skills=` on cursor-sdk generate mounts as well —
+staged into the dispatch HOME for native discovery, Use-line deduped against the
+fixed preambles, so listing `reasoning-posture` there adds nothing on a contract
+that already injects it.
 
 | Path | How |
 |---|---|
-| `op=generate` `seat=cursor-sdk` | GIW `resolve_prompt_preamble` on judgment `handoff_contract`; skip mechanical/quick |
+| `op=generate` `seat=cursor-sdk` | GIW `resolve_prompt_preamble` on judgment `handoff_contract`; skip mechanical/quick. Caller `skills=` staged into HOME `.cursor/skills/` + Use-line (`cursor_sdk_skills_mount`) |
 | `cursor-auto` admit | Admit report appends `REASONING_POSTURE_PREAMBLE` when `handoff_contract` warrants |
 | `op=handoff` consult / none | Enrich Block 2 `Use the reasoning-posture skill`; skip implement / `cursor-implement` |
 | CDP `model=cdp/…` generate | `skills=` merge (`ensure_cdp_judgment_skills`, purpose-keyed — § CDP transport) |
@@ -220,7 +241,8 @@ guidance that table has no room for — the two are read together.
 | `cdp/opus-5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
 | Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b precedes explicit Other Models (2c) |
 | Silent Terra / Other Models as the next binder | 2c is **explicit pin only**; default after Fable is **`cursor/claude-opus-5`** on cursor-sdk |
-| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` because Fable is wanted | Blocked for cost (both — 5.1 launched 2026-09-01 at same $/M) — use `cdp/fable` |
+| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` because Fable is wanted | Blocked for cost (both — 5.1 launched 2026-09-01 at same $/M) — use `cdp/fable`. While a:32393 SDK outage is open, Fable 5.1 on cursor-sdk is also **observed hollow at every tested rung** — use § Fable 5.1 SDK outage |
+| Rebind Sketch to Fable max/high on cursor-sdk after xhigh hollow | Falsified (a:32403): `medium` and `max` hollow too — rebind **off the Fable SDK surface** |
 | `team_dispatch(model=gpt-5.6-terra)` bare slug on code-lane bind | `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra` — explicit pin only |
 | Spend `cursor/gpt-5.6-sol` on broad open-ended review | `sol` is targeted, low-token, still Other Models — explicit pin only |
 

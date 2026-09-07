@@ -19,6 +19,7 @@ from claude_bundles.conductor_stop import (
     is_consult_pending_wait,
     is_exit_persist_stop,
     is_g1_pin,
+    next_admit_blocks_hop_body,
     next_admit_names_harvest,
     parse_designed_stop_tokens,
     parse_stop_tokens,
@@ -433,3 +434,12 @@ def test_next_admit_presence_without_value_not_harvest() -> None:
     body = "CONSULT_PENDING\nexecution_id: exec-abc\npoll_hint: wait\nNEXT_ADMIT"
     assert has_consult_handoff(body)
     assert not next_admit_names_harvest(body)
+
+
+def test_next_admit_blocks_hop_body_none_harvest_land() -> None:
+    assert next_admit_blocks_hop_body("NEXT_ADMIT: none\n")
+    assert next_admit_blocks_hop_body("NEXT_ADMIT: harvest G7\n")
+    assert next_admit_blocks_hop_body("- **NEXT_ADMIT:** git_land · sidecar L1\n")
+    assert not next_admit_blocks_hop_body(
+        "- **NEXT_ADMIT:** Conductor hop 3 — entry gate G4\n"
+    )

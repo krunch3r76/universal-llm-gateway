@@ -39,6 +39,15 @@ def test_wait_zero_returns_snapshot_no_new_turn(tmp_path) -> None:
         assert body["complete"] is False
         assert body["push_required"] is False
         assert body["thread_id"] == thread_id
+        assert body["producer"] == {
+            "execution_id": None,
+            "pipeline_id": None,
+            "state": "unknown",
+            "terminal_status": None,
+            "linked_at": None,
+            "delivery_at": None,
+            "source": "thread_dispatch_links",
+        }
 
 
 def test_wait_complete_after_qualifying_reply(tmp_path) -> None:
@@ -79,6 +88,7 @@ def test_wait_complete_after_qualifying_reply(tmp_path) -> None:
         assert body["status"] == "complete"
         assert body["complete"] is True
         assert body["qualifying_reply_turn"] == 2
+        assert body["producer"]["state"] == "unknown"
         nudge = body["suggested_next"]
         assert nudge is not None
         assert nudge["phase"] == "consult_turn_posted"
@@ -328,3 +338,67 @@ def test_wait_proof_reply_from_specimen_347_complete(tmp_path) -> None:
         assert body["status"] == "complete"
         assert body["complete"] is True
         assert body["qualifying_reply_turn"] == 2
+
+
+def test_wait_producer_unlinked_when_execution_id_has_no_row(tmp_path) -> None:
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-producer-unlinked",
+                "from": "claude-cursor",
+                "to": "web-anthropic",
+                "subject": "handoff",
+                "body": "brief",
+            },
+        )
+        thread_id = created.json()["thread"]["id"]
+        resp = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=proof_reply_from"
+            "&from_agent=web-anthropic&execution_id=exec-missing"
+        )
+        body = resp.json()
+        assert body["producer"] == {
+            "execution_id": "exec-missing",
+            "pipeline_id": None,
+            "state": "unlinked",
+            "terminal_status": None,
+            "linked_at": None,
+            "delivery_at": None,
+            "source": "thread_dispatch_links",
+        }
+
+
+def test_wait_producer_in_flight_when_link_row_exists(tmp_path) -> None:
+    from agent_bus_store.db import admit_dispatch
+
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-producer-in-flight",
+                "from": "claude-cursor",
+                "to": "web-anthropic",
+                "subject": "handoff",
+                "body": "brief",
+                "lifecycle_state": "pending",
+            },
+        )
+        thread_id = created.json()["thread"]["id"]
+        admit_dispatch(
+            thread_id=thread_id,
+            execution_id="d6a93d64-18a9-4779-8238-89d6af49e415",
+            pipeline_id="cdp-generate",
+        )
+        resp = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=proof_reply_from"
+            "&from_agent=web-anthropic"
+            "&execution_id=d6a93d64-18a9-4779-8238-89d6af49e415"
+        )
+        body = resp.json()
+        assert body["producer"]["state"] == "in_flight"
+        assert body["producer"]["pipeline_id"] == "cdp-generate"
+        assert body["producer"]["execution_id"] == "d6a93d64-18a9-4779-8238-89d6af49e415"
+        assert body["producer"]["linked_at"] is not None

@@ -410,8 +410,14 @@ def test_lane_b_shared_master_lease_is_422(
 
     repo = git_repo.resolve()
 
-    def _shared_master_binding(**_kwargs: object) -> tuple[Path, str]:
-        return repo, str(repo)
+    from services.git_integration_worker.cursor_sdk_worktree import AdmitBindingResult
+
+    def _shared_master_binding(**_kwargs: object) -> AdmitBindingResult:
+        return AdmitBindingResult(
+            workspace=repo,
+            lease_key=str(repo),
+            binding_kind="lane_a",
+        )
 
     monkeypatch.setattr(route_mod, "resolve_admit_binding", _shared_master_binding)
     resp = client.post(
@@ -545,7 +551,7 @@ def test_ac_s2_7_nest_under_lane_b_inherits_parent_tree(
         message="parent",
         lane="B",
     )
-    parent_ws, parent_key = resolve_admit_binding(
+    parent = resolve_admit_binding(
         req=parent_req,
         source_repo=git_repo,
         hub=git_repo,
@@ -553,6 +559,8 @@ def test_ac_s2_7_nest_under_lane_b_inherits_parent_tree(
         dispatch_workspace_default=worker_cfg.dispatch_workspace,
         lane="B",
     )
+    parent_ws = parent.workspace
+    parent_key = parent.lease_key
     ledger = CursorDispatchLedger.instance()
     ledger.admit(
         req=parent_req,
@@ -579,7 +587,7 @@ def test_ac_s2_7_nest_under_lane_b_inherits_parent_tree(
         message="child",
         nest_under="parent-b",
     )
-    child_ws, child_key = resolve_admit_binding(
+    child = resolve_admit_binding(
         req=child_req,
         source_repo=git_repo,
         hub=git_repo,
@@ -587,8 +595,9 @@ def test_ac_s2_7_nest_under_lane_b_inherits_parent_tree(
         dispatch_workspace_default=worker_cfg.dispatch_workspace,
         lane="A",
     )
-    assert child_ws == parent_ws
-    assert child_key == parent_key
+    assert child.binding_kind == "nested"
+    assert child.workspace == parent_ws
+    assert child.lease_key == parent_key
     assert lookup_dispatch_worktree(dispatch_id="child-b") is None
 
 

@@ -12,6 +12,8 @@ def test_resolve_prompt_preamble_always_includes_deliverable_routing() -> None:
         inferred_contract="none",
     )
     assert "DURABLE DELIVERABLE ROUTING" in text
+    assert "CURSOR TRANSCRIPT READS" in text
+    assert "assemble_transcript" in text
     assert "/tmp/summaries/" in text
     assert 'path="cortex://' in text
     assert "workspaces://" in text
@@ -328,3 +330,24 @@ def test_conductor_hop_preamble_absent_without_thread_id() -> None:
         has_packet_path=True,
     )
     assert "CONDUCTOR HOP" not in text
+
+
+def test_continuity_root_thread_id_injects_preamble() -> None:
+    text = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        continuity_root_thread_id="9758",
+    )
+    assert "CONTINUITY THREAD" in text
+    assert "9758" in text
+    assert "document:9758-continuity" in text
+
+
+def test_continuity_root_thread_id_absent_by_default() -> None:
+    text = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+    )
+    assert "CONTINUITY THREAD" not in text

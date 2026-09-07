@@ -330,6 +330,39 @@ def FrontierSdkWorkerProgress(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkWorkerSkillsMounted(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    resolved_model: str,
+    staged: list[str],
+    preexisting: list[str],
+    unresolved: list[str],
+    rows: list[dict[str, str | None]],
+    execution_id: str | None = None,
+) -> Event:
+    # Cursor-sdk counterpart to Stargate's dispatch.skills.* family. The gap this
+    # closes is observability of a *silent* drop: before it, a requested skill that
+    # never mounted left no trace anywhere in the pipeline.
+    payload: dict[str, object] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "resolved_model": resolved_model,
+        "staged": staged,
+        "preexisting": preexisting,
+        "unresolved": unresolved,
+        "mounted_count": len(staged) + len(preexisting),
+        "rows": rows,
+    }
+    if execution_id:
+        payload["execution_id"] = execution_id
+    return Event(
+        signal="frontier.sdk.worker.skills.mounted",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkWorkerFailed(  # noqa: N802
     dispatch_id: str,
     thread_id: str,
@@ -411,6 +444,33 @@ def emit_sdk_worker_progress(
             resolved_model=resolved_model,
             elapsed_s=elapsed_s,
             tool_call_count=tool_call_count,
+            execution_id=execution_id,
+        )
+    )
+
+
+def emit_sdk_skills_mounted(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    resolved_model: str,
+    result: Any,
+    execution_id: str | None = None,
+) -> None:
+    """Publish the per-slug mount outcome for one dispatch's ``skills=``.
+
+    *result* is a ``cursor_sdk_skills_mount.SkillsMountResult``; typed as ``Any`` to
+    keep this module importable without pulling the mount path into event consumers.
+    """
+    _emit(
+        FrontierSdkWorkerSkillsMounted(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            resolved_model=resolved_model,
+            staged=list(result.staged_slugs),
+            preexisting=list(result.preexisting_slugs),
+            unresolved=list(result.unresolved_slugs),
+            rows=result.as_event_payload(),
             execution_id=execution_id,
         )
     )
@@ -1348,6 +1408,217 @@ def emit_sdk_lane_b_worktree_missing_observed(
             thread_id=thread_id,
             lease_key=lease_key,
             source_repo=source_repo,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBReapSkippedLiveBridge(  # noqa: N802
+    worktree_path: str,
+    pid: int | None = None,
+    dispatch_id: str | None = None,
+    stage: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {"worktree_path": worktree_path}
+    for key, value in (
+        ("pid", pid),
+        ("dispatch_id", dispatch_id),
+        ("stage", stage),
+    ):
+        if value is not None:
+            payload[key] = value
+    return Event(
+        signal="sdk.lane_b.reap_skipped_live_bridge",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_reap_skipped_live_bridge(
+    *,
+    worktree_path: str,
+    pid: int | None = None,
+    dispatch_id: str | None = None,
+    stage: str | None = None,
+) -> None:
+    """Emit when a sweep declines to remove a worktree a live bridge is standing in.
+
+    ``stage`` names which remove path was held off (``prune`` / ``reconcile``).
+    A deleted cwd surfaces to the agent as ``spawn /bin/bash ENOENT``, so this
+    signal is the only place the near-miss is visible.
+    """
+    _emit(
+        SdkLaneBReapSkippedLiveBridge(
+            worktree_path=worktree_path,
+            pid=pid,
+            dispatch_id=dispatch_id,
+            stage=stage,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBRegistryGhostRow(  # noqa: N802
+    worktree_path: str,
+    thread_id: str | None = None,
+    branch: str | None = None,
+    dispatch_id: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {"worktree_path": worktree_path}
+    for key, value in (
+        ("thread_id", thread_id),
+        ("branch", branch),
+        ("dispatch_id", dispatch_id),
+    ):
+        if value is not None:
+            payload[key] = value
+    return Event(
+        signal="sdk.lane_b.registry_ghost_row",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_registry_ghost_row(
+    *,
+    worktree_path: str,
+    thread_id: str | None = None,
+    branch: str | None = None,
+    dispatch_id: str | None = None,
+) -> None:
+    """Emit when a lane registry row outlives its worktree directory.
+
+    The row still pins its branch against GC, so it is surfaced rather than
+    deleted: dropping it could release an unmerged lane tip for collection.
+    """
+    _emit(
+        SdkLaneBRegistryGhostRow(
+            worktree_path=worktree_path,
+            thread_id=thread_id,
+            branch=branch,
+            dispatch_id=dispatch_id,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBAdmitBound(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    binding_kind: str,
+    worktree_path: str,
+    branch: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "binding_kind": binding_kind,
+        "worktree_path": worktree_path,
+    }
+    if branch is not None:
+        payload["branch"] = branch
+    return Event(
+        signal="sdk.lane_b.admit_bound",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_admit_bound(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    binding_kind: str,
+    worktree_path: str,
+    branch: str | None = None,
+) -> None:
+    """Emit after Lane-B admit binding resolves workspace + lease key."""
+    _emit(
+        SdkLaneBAdmitBound(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            binding_kind=binding_kind,
+            worktree_path=worktree_path,
+            branch=branch,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBWorktreeRemoved(  # noqa: N802
+    worktree_path: str,
+    trigger: str,
+    ledger_status_at_remove: str,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
+    branch: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "worktree_path": worktree_path,
+        "trigger": trigger,
+        "ledger_status_at_remove": ledger_status_at_remove,
+    }
+    for key, value in (
+        ("dispatch_id", dispatch_id),
+        ("thread_id", thread_id),
+        ("branch", branch),
+    ):
+        if value is not None:
+            payload[key] = value
+    return Event(
+        signal="sdk.lane_b.worktree_removed",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_worktree_removed(
+    *,
+    worktree_path: str,
+    trigger: str,
+    ledger_status_at_remove: str,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
+    branch: str | None = None,
+) -> None:
+    """Emit when a Lane-B worktree directory is removed from disk."""
+    _emit(
+        SdkLaneBWorktreeRemoved(
+            worktree_path=worktree_path,
+            trigger=trigger,
+            ledger_status_at_remove=ledger_status_at_remove,
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            branch=branch,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBReconcileSkippedLiveLedger(  # noqa: N802
+    worktree_path: str,
+    dispatch_id: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {"worktree_path": worktree_path}
+    if dispatch_id is not None:
+        payload["dispatch_id"] = dispatch_id
+    return Event(
+        signal="sdk.lane_b.reconcile_skipped_live_ledger",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_reconcile_skipped_live_ledger(
+    *,
+    worktree_path: str,
+    dispatch_id: str | None = None,
+) -> None:
+    """Emit when reconcile skips removal because live ledger still claims the tree."""
+    _emit(
+        SdkLaneBReconcileSkippedLiveLedger(
+            worktree_path=worktree_path,
+            dispatch_id=dispatch_id,
         )
     )
 

@@ -47,6 +47,20 @@ For `seat=cursor-sdk` dispatches (`op=generate`): poll with `completion="first_r
 
 Human-authored closeouts may coincidentally include `closeout` in the subject; treat that as incidental, not a protocol signal. Full arc context: `orchestrator-workflow` § Post-dispatch poll recipe.
 
+### Watcher mis-arm imprint (binding)
+
+When a bus-consult / dispatch-closeout arm misfires (wrong script, omitted
+`poll_hint.after_turn`, invalid CLI flags, false `complete` on a stale turn):
+
+1. **Informing `friction()`** — `friction-review` § Informing frictions; owner
+   `agent_skill:agent-bus-discipline` for cursor-sdk closeout class; cite surfaces
+   (`watch-dispatch-closeout.py`, `watch-supervise.sh`, `poll_hint`, runbook §).
+2. **`assert` on `runbook:bus-consult-watcher`** — specimen + falsifier candidate.
+3. **¬ `todo:`** on the specimen — accumulate; consolidate under one implement todo
+   only on operator commission or triage (`friction-review` § Accumulate then consolidate).
+
+SoT arm: `runbook:bus-consult-watcher` · posture: `operator-posture` Rule 2.
+
 ## Pre-flight before reply
 
 Use `get(thread, turn_number="latest")` when you have not fetched this thread in-session. On `409 unread_turns_exist`, read `latest_turn_number` from the error body and retry with that value as `after_turn` — no probe-downward loop.
@@ -305,13 +319,45 @@ says "wake" separately; movement is implied.
 |---|---|
 | Post | Structured audit to thread **191** (no diff inline) — files changed, what it does, risk controls touched, assumptions |
 | Wake | CDP wake web-anthropic on the same leg (`team_dispatch(model=cdp/…)` or escape per `claude-ai-cdp-navigation`) |
-| Watcher | Arm thread-191 consult watcher before leg close |
+| Watcher | **`runbook:bus-consult-watcher`** — IDE terminal primary; optional pane in tmux session `0` (¬ new session) |
 | Pager | Transition awareness page: audit in flight |
 
 Mechanical entry: `scripts/post-gate1-audit.sh --subject … --body-file …`
-(default `--watch-label watch-191`, `--thread 191`).
+(default `--watch-label watch-191`, `--thread 191`). Watcher steps live only in the runbook.
 
-Doctrine: `decision:gate1-audit-implied-movement` · claudeburst `audit_ws.mdc` Step 1.
+Doctrine: `decision:gate1-audit-implied-movement` · claudeburst `audit_ws.mdc` Step 1 · `runbook:bus-consult-watcher`.
+
+## CONFER protocol (bus + doorbell)
+
+**Shape:** chat/claude.ai paste = doorbell only (`CONFER — read bus…` + thread/turn/sidecar pointer). Payload, skills, and agreement live on **agent_bus + cortex sidecar**. Progressive dev/test confers may go live before bind closes — hop refreshes MCP attach.
+
+### Skills gate (binding — three moments)
+
+Use the `required-skills-pickup` skill. Sidecar carries a **`## Required skills`** block (catalog slugs only — `config/skills.yaml` `shared_sync` or explicit on-demand slugs).
+
+| Moment | When | Requirement |
+|---|---|---|
+| **Instantiation** | Turn 1 / sidecar birth | **`## Required skills` MUST be present** before the recipient's first reply. Author lists must-load slugs for that confer's domain. |
+| **Hop** | `agent_bus(tool="hop")` after deploy, MCP surface change, or stale attach | **Re-emphasize skills** in the hop body or a sidecar patch in the **same write** as hop — hop is a skill-reload boundary, not MCP refresh alone. Recipient: load listed skills before continuing. |
+| **Direction change** | New round, new domain, or tooling surface shifts mid-confer | **Amend** `## Required skills` on the sidecar (patch write + bus turn pointer). Prior round's skills do not carry by default — add slugs when the new direction warrants them. |
+
+Turn 1 body template (minimal):
+
+```
+TYPE: CONFER
+contract: confer · [progressive-dev | …]
+
+Sidecar: cortex://notes/system/threads/<thread>-<slug>.md
+(includes ## Required skills)
+
+Round N: …
+```
+
+Doorbell paste (chat): thread id, turn, sidecar URI only — **not** skills inline; recipient reads sidecar after hop/instantiation.
+
+**Anti-duplication (binding):** once a confer reply lands on the bus lane, **¬ paste the same substance to chat**. Chat is doorbell-in only; bus + sidecar is doorbell-out. Full answers, R1 binds, and test matrices on chat when `agent-bus:{thread}` already carries them = double work and protocol drift. Operator may *observe* chat; agents do not mirror lane payload there.
+
+Housekeeping: lane chat archive/delete on closeout; dead viz URLs noted on continuity card (`continuity-thread-shaping`).
 
 ## Related
 

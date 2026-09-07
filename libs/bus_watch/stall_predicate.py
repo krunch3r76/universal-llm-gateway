@@ -50,6 +50,8 @@ def stall_predicate(
     predicate_unmet_slices: int = 0,
     last_turn_count: int | None = None,
     probe_fn: Callable[[str], ProbeResult] = probe_dispatch_status,
+    producer: dict[str, Any] | None = None,
+    producer_grace_expired: bool = False,
 ) -> tuple[bool, str]:
     """Return (should_stall_pop, reason) for watcher incomplete branch."""
     closeout_tokens = parse_stop_tokens(closeout_body).tokens
@@ -61,7 +63,10 @@ def stall_predicate(
         thread_id=thread_id,
         probe_fn=probe_fn,
     )
-    owed = successor_owed(closeout_tokens=closeout_tokens)
+    owed = successor_owed(
+        closeout_tokens=closeout_tokens,
+        closeout_body=closeout_body,
+    )
 
     if not (open_mission and not live and not owed):
         return False, ""
@@ -82,12 +87,20 @@ def stall_predicate(
     if park_context:
         return True, "park_harvest_stall"
 
+    producer_state = (producer or {}).get("state")
+    if producer_state == "terminal":
+        return True, "producer_terminal_no_reply"
+
     if status == "predicate_unmet" and predicate_unmet_slices >= 2:
+        if producer_state == "in_flight" and not producer_grace_expired:
+            return False, ""
         if last_turn_count is None or turn_count_i == last_turn_count:
             return True, "predicate_unmet_no_progress"
 
     if open_mission and not live and not owed and not scoreboard_body:
         if status == "predicate_unmet" and predicate_unmet_slices >= 2:
+            if producer_state == "in_flight" and not producer_grace_expired:
+                return False, ""
             return True, "predicate_unmet_no_progress"
 
     return False, ""

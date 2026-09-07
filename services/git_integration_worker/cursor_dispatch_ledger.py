@@ -281,6 +281,7 @@ def _dispatch_record_json(req: CursorDispatchRequest) -> str:
         "packet_path": req.packet_path,
         "handoff_contract": req.handoff_contract,
         "prompt_preamble": req.prompt_preamble,
+        "skills": req.skills,
         "model_knobs": req.model_knobs,
         "read_only": req.read_only,
         "lane": req.lane,
@@ -1126,7 +1127,9 @@ class CursorDispatchLedger:
                         "AND status IN ('queued','admitted','running') LIMIT 1",
                         (source_ref, req.dispatch_id),
                     ).fetchone()
-                if peer is not None:
+                if peer is not None and not (
+                    nest_under and peer["dispatch_id"] == nest_under
+                ):
                     raise SourceRefConflict(
                         source_ref=source_ref,
                         work_key=work_key,
@@ -2039,6 +2042,7 @@ class CursorDispatchLedger:
             message=data.get("message"),
             handoff_contract=data.get("handoff_contract") or promoted.contract,
             prompt_preamble=data.get("prompt_preamble"),
+            skills=data.get("skills"),
             model_knobs=data.get("model_knobs"),
             read_only=bool(data.get("read_only", promoted.read_only)),
             lane=data.get("lane"),

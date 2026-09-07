@@ -304,6 +304,46 @@ def test_ledger_db_path_stable_across_home_swap(
     CursorDispatchLedger._instance = None
 
 
+def test_register_lane_worktree_writes_pinned_db_across_home_swap(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-W1-1..3: ``register_lane_worktree`` writes through the pinned ledger DB."""
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    swapped_home = tmp_path / "dispatch-home"
+    swapped_home.mkdir()
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(real_home))
+    CursorDispatchLedger._instance = None
+
+    ledger = CursorDispatchLedger.instance()
+    pinned_db = ledger._db_path
+    worktree_path = real_home / "wt-lane"
+    worktree_path.mkdir()
+
+    monkeypatch.setenv("HOME", str(swapped_home))
+
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        lookup_lane_worktree,
+        register_lane_worktree,
+    )
+
+    register_lane_worktree(
+        thread_id="10143",
+        worktree_path=worktree_path,
+        branch_name="cursor-sdk/lane-10143",
+        branch_point="master",
+        last_dispatch_id="disp-10143",
+    )
+
+    record = lookup_lane_worktree(thread_id="10143")
+    assert record is not None
+    assert record.worktree_path == worktree_path.resolve()
+    assert pinned_db == real_home / ".gateway" / "cursor-sdk-dispatch.db"
+    assert pinned_db.exists()
+    CursorDispatchLedger._instance = None
+
+
 def test_execution_id_stable_across_restart() -> None:
     """AC3: re-admit after singleton reset returns same persisted execution_id."""
     ledger = CursorDispatchLedger.instance()
@@ -379,6 +419,7 @@ def _admit(
     source_ref: str | None = None,
     work_key: str | None = None,
     force: bool = False,
+    nest_under: str | None = None,
 ) -> CursorDispatchResponse | None:
     return ledger.admit(
         req=req,
@@ -394,6 +435,7 @@ def _admit(
         source_ref=source_ref,
         work_key=work_key,
         force=force,
+        nest_under=nest_under,
     )
 
 
@@ -1350,3 +1392,26 @@ def test_should_block_top_level_implement_not_nested() -> None:
         nest_under="parent-dispatch",
         work_key=_CONDUCTOR_WORK_KEY,
     )
+
+
+def test_nested_implement_same_work_key_under_conductor_allowed() -> None:
+    """nest_under the work-key holder must not 409 SourceRefConflict."""
+    ledger = CursorDispatchLedger.instance()
+    parent = "cond-parent-1"
+    _admit(
+        ledger,
+        _req(dispatch_id=parent, thread_id="t-cond"),
+        source_repo=_REPO,
+        contract="implement",
+        work_key=_CONDUCTOR_WORK_KEY,
+    )
+    child = _req(dispatch_id="child-nest-1", thread_id="t-child")
+    result = _admit(
+        ledger,
+        child,
+        source_repo=_REPO,
+        contract="implement",
+        work_key=_CONDUCTOR_WORK_KEY,
+        nest_under=parent,
+    )
+    assert result is None or result.status in ("admitted", "queued")

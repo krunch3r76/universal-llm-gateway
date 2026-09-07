@@ -167,7 +167,7 @@ def test_falsifier_ac1_lane_b_mints_worktree_under_root(
         message="hello",
         worktree_isolated=True,
     )
-    workspace, lease_key = resolve_admit_binding(
+    binding = resolve_admit_binding(
         req=req,
         source_repo=source_repo,
         hub=source_repo,
@@ -175,10 +175,10 @@ def test_falsifier_ac1_lane_b_mints_worktree_under_root(
         dispatch_workspace_default=shared,
         lane="B",
     )
-    assert workspace != shared
-    assert workspace.is_dir()
-    assert str(workspace.resolve()) == lease_key
-    assert workspace.relative_to(worktree_root.resolve())
+    assert binding.workspace != shared
+    assert binding.workspace.is_dir()
+    assert str(binding.workspace.resolve()) == binding.lease_key
+    assert binding.workspace.relative_to(worktree_root.resolve())
 
 
 def test_falsifier_ac_s6_1_reaper_salvages_dirty_terminal(

@@ -98,7 +98,7 @@ def _admit(
 
 def test_second_dispatch_reuses_lane_tree(source_repo: Path, tmp_path: Path) -> None:
     worktree_root = tmp_path / "worktrees"
-    first, key1 = resolve_admit_binding(
+    first = resolve_admit_binding(
         req=_req(dispatch_id="disp-1"),
         source_repo=source_repo,
         hub=source_repo,
@@ -106,7 +106,7 @@ def test_second_dispatch_reuses_lane_tree(source_repo: Path, tmp_path: Path) -> 
         dispatch_workspace_default=source_repo.parent,
         lane="B",
     )
-    second, key2 = resolve_admit_binding(
+    second = resolve_admit_binding(
         req=_req(dispatch_id="disp-2", execution_id="exec-disp-2"),
         source_repo=source_repo,
         hub=source_repo,
@@ -114,9 +114,11 @@ def test_second_dispatch_reuses_lane_tree(source_repo: Path, tmp_path: Path) -> 
         dispatch_workspace_default=source_repo.parent,
         lane="B",
     )
-    assert first == second
-    assert key1 == key2
-    assert first == lane_worktree_dir(worktree_root, "t-lane").resolve()
+    assert first.workspace == second.workspace
+    assert first.lease_key == second.lease_key
+    assert first.binding_kind == "minted"
+    assert second.binding_kind == "reused"
+    assert first.workspace == lane_worktree_dir(worktree_root, "t-lane").resolve()
     record = lookup_lane_worktree(thread_id="t-lane")
     assert record is not None
     assert record.branch_name == lane_branch_name("t-lane")
@@ -125,7 +127,7 @@ def test_second_dispatch_reuses_lane_tree(source_repo: Path, tmp_path: Path) -> 
 
 def test_distinct_lanes_get_distinct_trees(source_repo: Path, tmp_path: Path) -> None:
     worktree_root = tmp_path / "worktrees"
-    a, key_a = resolve_admit_binding(
+    a = resolve_admit_binding(
         req=_req(thread_id="lane-a", dispatch_id="da"),
         source_repo=source_repo,
         hub=source_repo,
@@ -133,7 +135,7 @@ def test_distinct_lanes_get_distinct_trees(source_repo: Path, tmp_path: Path) ->
         dispatch_workspace_default=source_repo.parent,
         lane="B",
     )
-    b, key_b = resolve_admit_binding(
+    b = resolve_admit_binding(
         req=_req(thread_id="lane-b", dispatch_id="db", execution_id="exec-db"),
         source_repo=source_repo,
         hub=source_repo,
@@ -141,13 +143,13 @@ def test_distinct_lanes_get_distinct_trees(source_repo: Path, tmp_path: Path) ->
         dispatch_workspace_default=source_repo.parent,
         lane="B",
     )
-    assert a != b
-    assert key_a != key_b
+    assert a.workspace != b.workspace
+    assert a.lease_key != b.lease_key
 
 
 def test_same_lane_write_lease_queues(source_repo: Path, tmp_path: Path) -> None:
     worktree_root = tmp_path / "worktrees"
-    workspace, lease_key = resolve_admit_binding(
+    binding = resolve_admit_binding(
         req=_req(dispatch_id="holder"),
         source_repo=source_repo,
         hub=source_repo,
@@ -155,6 +157,8 @@ def test_same_lane_write_lease_queues(source_repo: Path, tmp_path: Path) -> None
         dispatch_workspace_default=source_repo.parent,
         lane="B",
     )
+    workspace = binding.workspace
+    lease_key = binding.lease_key
     ledger = CursorDispatchLedger.instance()
     repo = str(source_repo.resolve())
     _admit(
@@ -198,7 +202,7 @@ def test_existing_lane_tree_binds_empty_files_expected(
     source_repo: Path, tmp_path: Path
 ) -> None:
     worktree_root = tmp_path / "worktrees"
-    workspace, _key = resolve_admit_binding(
+    binding = resolve_admit_binding(
         req=_req(dispatch_id="first"),
         source_repo=source_repo,
         hub=source_repo,
@@ -206,6 +210,7 @@ def test_existing_lane_tree_binds_empty_files_expected(
         dispatch_workspace_default=source_repo.parent,
         lane="B",
     )
+    workspace = binding.workspace
     lane, _advisories, reason = select_lane(
         req=_req(lane=None, dispatch_id="second", message="consult"),
         regime_active=True,
@@ -237,7 +242,7 @@ def test_lane_tree_survives_terminal(source_repo: Path, tmp_path: Path) -> None:
 
 def test_sequential_lane_work_is_visible(source_repo: Path, tmp_path: Path) -> None:
     worktree_root = tmp_path / "worktrees"
-    first, _key = resolve_admit_binding(
+    first = resolve_admit_binding(
         req=_req(dispatch_id="n1"),
         source_repo=source_repo,
         hub=source_repo,
@@ -245,10 +250,10 @@ def test_sequential_lane_work_is_visible(source_repo: Path, tmp_path: Path) -> N
         dispatch_workspace_default=source_repo.parent,
         lane="B",
     )
-    (first / "from_n1.py").write_text("n1\n", encoding="utf-8")
-    _git("add", "from_n1.py", cwd=first)
-    _git("commit", "-m", "n1 work", cwd=first)
-    second, _key2 = resolve_admit_binding(
+    (first.workspace / "from_n1.py").write_text("n1\n", encoding="utf-8")
+    _git("add", "from_n1.py", cwd=first.workspace)
+    _git("commit", "-m", "n1 work", cwd=first.workspace)
+    second = resolve_admit_binding(
         req=_req(dispatch_id="n2", execution_id="exec-n2"),
         source_repo=source_repo,
         hub=source_repo,
@@ -256,5 +261,5 @@ def test_sequential_lane_work_is_visible(source_repo: Path, tmp_path: Path) -> N
         dispatch_workspace_default=source_repo.parent,
         lane="B",
     )
-    assert second == first
-    assert (second / "from_n1.py").read_text(encoding="utf-8") == "n1\n"
+    assert second.workspace == first.workspace
+    assert (second.workspace / "from_n1.py").read_text(encoding="utf-8") == "n1\n"

@@ -15,7 +15,10 @@ from claude_bundles.hop_cadence_seat_snap import (
     attach_registry_seated_rows,
     attach_seated_rows,
     identity_rows,
+    project_stream_state,
+    seated_row_from_registry_record,
     seated_rows_from_registry_records,
+    stream_state_terminal,
 )
 from claude_bundles.hop_seat_cutover import (
     refuse_cadence_hop_for_live_seat,
@@ -44,7 +47,8 @@ def _seated_row(**overrides: object) -> dict:
         "execution_id": SEATED_NO_STREAM_EXECUTION,
         "parent_thread": _THREAD,
         "purpose": "operator-proxy",
-        "status": "running",
+        "seat_state": "active",
+        "stream_state": "none",
         "source": "cse-session-registry",
     }
     row.update(overrides)
@@ -98,7 +102,7 @@ def test_refuse_and_capture_agree_who_is_seated() -> None:
 
 
 def test_dormant_seat_does_not_refuse_successor() -> None:
-    """Seat-open dormant projected as seated running must not refuse a successor hop."""
+    """Seat-open dormant projected with stream_state=none must not refuse a successor hop."""
     snap = {
         "rows": [],
         "running_count": 0,
@@ -106,7 +110,7 @@ def test_dormant_seat_does_not_refuse_successor() -> None:
         "at_soft_limit": False,
         "at_hard_limit": False,
         "seated_rows": [
-            _seated_row(status="running"),
+            _seated_row(seat_state="dormant", stream_state="none"),
         ],
     }
     row = {"thread_id": _THREAD, "registration_id": _REG, "last_hop_at": time.time() - 60.0}
@@ -142,6 +146,7 @@ def test_identity_rows_store_wins_on_registration_id() -> None:
         "registration_id": _REG,
         "execution_id": "exec-live",
         "status": "running",
+        "stream_state": "running",
         "purpose": "operator-proxy",
         "parent_thread": _THREAD,
     }
@@ -179,7 +184,51 @@ def test_seated_rows_from_registry_records_skips_non_listable() -> None:
     )
     assert [row["registration_id"] for row in seated] == ["reg-a"]
     assert seated[0]["execution_id"] == SEATED_NO_STREAM_EXECUTION
-    assert seated[0]["status"] == "running"
+    assert seated[0]["seat_state"] == "active"
+    assert seated[0]["stream_state"] == "none"
+
+
+def test_s1_dead_admit_listable_seat_terminal_stream() -> None:
+    """L2-AC-a: listable seat + terminal execution → stream_state=terminal:<id>."""
+    exec_id = "exec-dead-admit"
+    projected = seated_row_from_registry_record(
+        {
+            "registration_id": "reg-s1",
+            "status": "active",
+            "execution_id": exec_id,
+            "purpose": "operator-proxy",
+            "parent_thread": _THREAD,
+        },
+        stream_index={exec_id: "failed"},
+    )
+    assert projected is not None
+    assert projected["seat_state"] == "active"
+    assert projected["stream_state"] == stream_state_terminal(exec_id)
+
+
+def test_s3_stale_seat_no_execution_stream_none() -> None:
+    """L2-AC-b: seated row without execution → stream_state=none."""
+    projected = seated_row_from_registry_record(
+        {
+            "registration_id": "reg-s3",
+            "status": "active",
+            "purpose": "operator-proxy",
+            "parent_thread": _THREAD,
+        }
+    )
+    assert projected is not None
+    assert projected["stream_state"] == "none"
+    assert projected["execution_id"] == SEATED_NO_STREAM_EXECUTION
+
+
+def test_project_stream_state_pending_and_terminal() -> None:
+    exec_id = "exec-abc"
+    assert project_stream_state(exec_id, stream_index={exec_id: "running"}) == "running"
+    assert (
+        project_stream_state(exec_id, stream_index={exec_id: "completed"})
+        == stream_state_terminal(exec_id)
+    )
+    assert project_stream_state(SEATED_NO_STREAM_EXECUTION) == "none"
 
 
 def test_attach_seated_rows_does_not_rewrite_admission_rows() -> None:
@@ -199,8 +248,15 @@ def test_read_cdp_lane_snapshot_attaches_registry_seats() -> None:
         "at_hard_limit": False,
     }
     with patch(
-        "claude_bundles.hop_cadence_seat_snap.read_registry_seated_rows",
-        return_value=[_seated_row()],
+        "claude_bundles.cdp_registry_store.load_active",
+        return_value={
+            _REG: {
+                "registration_id": _REG,
+                "status": "active",
+                "purpose": "operator-proxy",
+                "parent_thread": _THREAD,
+            }
+        },
     ):
         snap = read_cdp_lane_snapshot(client=client)
     assert snap["rows"] == []

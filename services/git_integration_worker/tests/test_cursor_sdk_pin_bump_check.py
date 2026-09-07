@@ -30,7 +30,7 @@ def mod():
 
 def test_parse_pin_line_reads_requirements(mod, monkeypatch) -> None:
     req = mod.repo_root() / "requirements.host.txt"
-    assert mod.parse_pin_line(req) == "1.0.30"
+    assert mod.parse_pin_line(req) == "1.0.31"
 
 
 def test_classify_holds_on_all_pass(mod) -> None:

@@ -4,6 +4,7 @@
 # Invariant: post(Gate1_audit, thread=191) on one leg implies
 # wake(web-anthropic) + arm_watcher(191) + transition_pager("audit in flight").
 # Post without wake + watcher on the same leg is incomplete.
+# Watcher arm recipe SoT: runbook:bus-consult-watcher (not restated here).
 #
 # Usage:
 #   scripts/post-gate1-audit.sh \
@@ -203,38 +204,26 @@ if [[ "${NO_PAGE}" -eq 0 ]]; then
   fi
 fi
 
-# --- 5. Arm tmux watcher (watch-bus-consult pattern, detached session) ---
+# --- 5. Watcher arm recipe (SoT: runbook:bus-consult-watcher) ---
+# Do NOT mint a detached tmux session. Primary = IDE Cursor terminal.
+# Optional IDE-closed pager = split a pane in existing session 0.
 if [[ "${NO_WATCH}" -eq 0 ]]; then
   WATCH_AFTER="${WAKE_TURN}"
   if [[ "${WATCH_AFTER}" -eq 0 ]]; then
     WATCH_AFTER="${AUDIT_TURN}"
   fi
-  slug="$(printf '%s' "${WATCH_LABEL}" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')"
-  slug="${slug#-}"
-  slug="${slug%-}"
-  SESSION="watch-${slug}"
-  LOG="/tmp/${SESSION}.log"
   PYTHON="${HOME}/.venvs/universal/bin/python"
-  watch_args=(
-    scripts/watch-bus-consult-and-page.py
-    --thread "${THREAD}"
-    --after-turn "${WATCH_AFTER}"
-    --from-agent web-anthropic
-    --label "${WATCH_LABEL}"
-  )
-  quoted_args=""
-  for arg in "${watch_args[@]}"; do
-    quoted_args+=$(printf '%q ' "$arg")
-  done
-  inner="cd ${REPO} && ${PYTHON} ${quoted_args}; echo; echo '--- watcher done ---'; read"
-  if tmux has-session -t "${SESSION}" 2>/dev/null; then
-    tmux kill-session -t "${SESSION}"
-  fi
-  tmux new-session -d -s "${SESSION}" -n "${WATCH_LABEL}" \
-    "bash -lc $(printf '%q' "${inner} | tee -a ${LOG}")"
+  WATCH_CMD="${PYTHON} scripts/watch-bus-consult-and-page.py --thread ${THREAD} --after-turn ${WATCH_AFTER} --from-agent web-anthropic --label ${WATCH_LABEL}"
   echo ""
-  echo "watcher armed — attach: tmux attach -t ${SESSION}"
-  echo "log: ${LOG}"
+  echo "Watcher SoT: runbook:bus-consult-watcher (cortex://notes/runbooks/bus-consult-watcher.md)"
+  echo "PRIMARY — arm in an IDE Cursor terminal (seat harvest notify):"
+  echo "  cd ${REPO} && ${WATCH_CMD}"
+  if tmux has-session -t 0 2>/dev/null; then
+    tmux split-window -t 0:0.0 -v -c "${REPO}" "${WATCH_CMD}"
+    echo "OPTIONAL pane armed — tmux session 0 (split from 0:0.0)"
+  else
+    echo "tmux session 0 absent — skip optional pane; use IDE terminal above"
+  fi
 fi
 
 echo ""

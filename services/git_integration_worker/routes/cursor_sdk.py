@@ -16,7 +16,6 @@ from threading import Thread
 from typing import Any
 
 import httpx
-from cursor_capabilities import effective_knobs
 from fastapi import APIRouter, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 from implement_admission.closeout_helpers import cortex_files_root
@@ -128,11 +127,13 @@ from services.git_integration_worker.cursor_sdk_dispatch_context import (
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_reconciled,
     emit_sdk_implement_unresolved_source_ref,
+    emit_sdk_lane_b_admit_bound,
     emit_sdk_lane_b_mint_rolled_back,
     emit_sdk_lane_b_minted,
     emit_sdk_lane_b_worktree_missing_observed,
     emit_sdk_lane_selected,
     emit_sdk_restart_bridge_reap_failed,
+    emit_sdk_skills_mounted,
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
     emit_sdk_worker_dispatched,
@@ -233,6 +234,9 @@ from services.git_integration_worker.cursor_sdk_satellite_workspace import (
     CursorWorkspaceError,
     resolve_dispatch_source_repo,
 )
+from services.git_integration_worker.cursor_sdk_skills_mount import (
+    stage_dispatch_skills,
+)
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     StreamCapture,
     finalize_request_id_capture,
@@ -265,7 +269,7 @@ from services.git_integration_worker.cursor_sdk_worktree import (
     resolve_admit_binding,
 )
 from services.git_integration_worker.cursor_sdk_worktree_prune import (
-    prune_dispatch_worktree,
+    rollback_dispatch_worktree,
 )
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     lookup_dispatch_worktree,
@@ -500,10 +504,26 @@ def _stamp_model_knobs_requested(
     model: str,
     overrides: Mapping[str, str] | None,
 ) -> dict[str, str] | None:
-    """Project omit-path defaults onto admit knobs for observability stamps."""
-    bare = resolve_cursor(model).model_id
-    stamped = effective_knobs(bare, overrides)
+    """Stamp ``model_knobs_requested`` from emitted ``ModelSelection.params``.
+
+    Uses the same ``build_model_selection`` path as the bridge — not
+    ``effective_knobs`` recomputation (a:24299 recurrence / Opus 869974272bca).
+    """
+    config = resolve_cursor(model)
+    selection = build_model_selection(config, overrides)
+    stamped = {param.id: param.value for param in selection.params}
     return stamped or None
+
+
+def _stamp_model_knobs_from_outcome(
+    outcome: SdkRunOutcome,
+    model: str,
+    overrides: Mapping[str, str] | None,
+) -> dict[str, str] | None:
+    """Prefer knobs captured at bridge emit time; fall back to rebuild."""
+    if outcome.model_knobs_emitted:
+        return dict(outcome.model_knobs_emitted)
+    return _stamp_model_knobs_requested(model, overrides)
 
 
 _DISPATCH_ROUTE = "/api/v1/cursor/dispatch"
@@ -629,6 +649,8 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
         hop_seq=req.hop_seq,
         hop_from=req.hop_from,
         hop_reason=req.hop_reason,
+        continuity_root_thread_id=req.continuity_root_thread_id,
+        skills=req.skills,
     )
     return f"{preamble}{packet_text}"
 
@@ -644,8 +666,9 @@ async def _rollback_lane_b_mint_if_needed(
     if not minted_lane_b:
         return
     await asyncio.to_thread(
-        prune_dispatch_worktree,
+        rollback_dispatch_worktree,
         dispatch_id=dispatch_id,
+        thread_id=thread_id,
         source_repo=source_repo,
     )
     if lookup_dispatch_worktree(dispatch_id=dispatch_id) is None:
@@ -789,6 +812,7 @@ def _run_sdk_sync(
     execution_id: str | None = None,
     gate_loop: asyncio.AbstractEventLoop,
     live_counter: _LiveToolCallCounter | None = None,
+    skills: list[str] | None = None,
 ) -> SdkRunOutcome:
     # Pin operator home via passwd — never trust process HOME (may be a leaked
     # dispatch overlay; CURSOR_VENV_CONFIG / agent-bus:6468).
@@ -816,11 +840,39 @@ def _run_sdk_sync(
         CursorDispatchLedger.instance().record_state_root(
             dispatch_id=ctx.dispatch_id, state_root=str(bridge_state)
         )
+    # Mount requested skills into the HOME user layer before the bridge launches:
+    # cursor-agent discovers skills from the filesystem, so this is the only window
+    # in which `skills=` can become real. Guidance, not transport — a mount failure
+    # is reported and the dispatch continues.
+    try:
+        mount_result = stage_dispatch_skills(
+            dispatch_home / ".cursor",
+            skills,
+            source_repo=ctx.hub,
+            workspace_roots=(ctx.dispatch_workspace, ctx.workspace_root),
+        )
+    except Exception as exc:  # skill mount is advisory; never kill the dispatch
+        logger.warning(
+            "skills mount failed: dispatch_id=%s skills=%s err=%s",
+            ctx.dispatch_id,
+            skills,
+            exc,
+        )
+    else:
+        if mount_result.rows:
+            emit_sdk_skills_mounted(
+                dispatch_id=ctx.dispatch_id,
+                thread_id=ctx.thread_id,
+                resolved_model=resolved_model,
+                result=mount_result,
+                execution_id=execution_id,
+            )
     repo_venv = resolve_repo_venv(real_home=real_home)
     validate_repo_venv(repo_venv)
     try:
         config = resolve_cursor(config_model_id)
         selection = build_model_selection(config, selection_overrides)
+        model_knobs_emitted = {p.id: p.value for p in selection.params} or None
         key_res = resolve_cursor_api_key(resolved_model, real_home=real_home)
         parity = validate_dispatch_context(
             ctx.hub, resolved_model=resolved_model, real_home=real_home
@@ -1041,6 +1093,7 @@ def _run_sdk_sync(
                 degraded_reasons=extra_reasons,
                 sdk_git=post_wait.sdk_git,
                 stream_only_deviations=stream_deviations,
+                model_knobs_emitted=model_knobs_emitted,
             )
         except BaseException as exc:
             sdk_request_id, request_id_source = request_id_from_sdk_error(exc)
@@ -1456,12 +1509,16 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
 
 
 async def _terminate_link(
-    bus: CursorBusClient, *, thread_id: str, terminal_status: str
+    bus: CursorBusClient,
+    *,
+    thread_id: str,
+    terminal_status: str,
+    execution_id: str | None = None,
 ) -> None:
     result = await bus.terminate_dispatch(
         thread_id=thread_id,
         terminal_status=terminal_status,
-        bus_lifecycle=terminal_status,
+        execution_id=execution_id,
     )
     if result.status_code >= 400:
         logger.error(
@@ -1585,8 +1642,8 @@ async def _deliver_sdk_closeout(
                 "cursor check/review role bridge failed: dispatch_id=%s",
                 req.dispatch_id,
             )
-        # model_knobs_requested: effective/aligned knobs (omit-path defaults included),
-        # projected from req.model + admit-time overrides — not raw caller wire alone.
+        # model_knobs_requested: emitted ModelSelection.params (or rebuild at
+        # closeout); queued/dispatched stamps use the same build path at admit.
         # Missing SDK requestId is an observability gap (R F-1), not a crash.
         # Emit with request_id_source=absent + degrade token so fleet join stays
         # diagnosable without aborting an otherwise successful closeout.
@@ -1610,7 +1667,9 @@ async def _deliver_sdk_closeout(
                 run_outcome=run_outcome, delivery_ok=True
             ),
             resolved_model=req.model,
-            model_knobs_requested=_stamp_model_knobs_requested(req.model, req.model_knobs),
+            model_knobs_requested=_stamp_model_knobs_from_outcome(
+                outcome, req.model, req.model_knobs
+            ),
             usage=outcome.usage,
             usage_capture_status=outcome.usage_capture_status,
             request_id=envelope_request_id,
@@ -1633,7 +1692,12 @@ async def _deliver_sdk_closeout(
                 turn_number=turn_number,
             ),
         )
-        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="completed")
+        await _terminate_link(
+            bus,
+            thread_id=req.thread_id,
+            terminal_status="completed",
+            execution_id=req.execution_id,
+        )
         await asyncio.to_thread(
             merge_conductor_closeout_hop_authority,
             dispatch_id=req.dispatch_id,
@@ -1689,7 +1753,9 @@ async def _deliver_sdk_closeout(
         result_bytes=delivery.full_result_bytes,
         outcome=resolve_completion_outcome(run_outcome=run_outcome, delivery_ok=False),
         resolved_model=req.model,
-        model_knobs_requested=_stamp_model_knobs_requested(req.model, req.model_knobs),
+        model_knobs_requested=_stamp_model_knobs_from_outcome(
+            outcome, req.model, req.model_knobs
+        ),
         usage=outcome.usage,
         usage_capture_status=outcome.usage_capture_status,
         request_id=envelope_request_id,
@@ -1700,7 +1766,12 @@ async def _deliver_sdk_closeout(
         degraded_reasons=completed_reasons,
         **association_fields,
     )
-    await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+    await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
     await _mark_terminal_and_promote(
         dispatch_id=req.dispatch_id,
         terminal_status="failed",
@@ -1876,6 +1947,7 @@ async def _run_sdk_dispatch_gated(
             execution_id=req.execution_id,
             gate_loop=gate_loop,
             live_counter=live_counter,
+            skills=req.skills,
         ),
         op_id=f"{req.dispatch_id}:worker",
     )
@@ -1942,7 +2014,12 @@ async def _run_sdk_dispatch_gated(
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (timeout)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
-        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+        await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
         await asyncio.to_thread(persist_timeout_retain, dispatch_id=req.dispatch_id)
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
@@ -1971,7 +2048,12 @@ async def _run_sdk_dispatch_gated(
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (home/auth)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
-        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+        await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
@@ -1993,7 +2075,12 @@ async def _run_sdk_dispatch_gated(
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (venv config)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
-        await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+        await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
@@ -2101,7 +2188,12 @@ async def _finalize_failed(
         subject=f"cursor-sdk dispatch {req.dispatch_id} {subject_suffix}",
         body=f"```json\n{json.dumps(env, indent=2)}\n```",
     )
-    await _terminate_link(bus, thread_id=req.thread_id, terminal_status="failed")
+    await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
     await _mark_terminal_and_promote(
         dispatch_id=req.dispatch_id,
         terminal_status="failed",
@@ -2469,7 +2561,7 @@ async def cursor_dispatch(
     mint_wait_ms = 0.0
     try:
         mint_started = time.monotonic()
-        dispatch_workspace, lease_key = await asyncio.to_thread(
+        binding = await asyncio.to_thread(
             resolve_admit_binding,
             req=req,
             source_repo=resolved_source_repo,
@@ -2479,33 +2571,38 @@ async def cursor_dispatch(
             lane=selected_lane,
         )
         mint_wait_ms = (time.monotonic() - mint_started) * 1000.0
-        minted_lane_b = (
-            selected_lane == "B"
-            and not req.nest_under
-            and req.worktree_path is None
-            and not req.resume_of
-            and prior_lane_tree is None
-        )
+        dispatch_workspace = binding.workspace
+        lease_key = binding.lease_key
+        minted_lane_b = binding.binding_kind == "minted"
         isolation_materialized = b_worktree_materialized(
             admit_lane=selected_lane,
             lease_key=lease_key,
             source_repo=dispatch_git_str,
         )
-        if minted_lane_b:
+        if binding.binding_kind in ("minted", "adopted"):
             from services.git_integration_worker.cursor_sdk_worktree_registry import (
                 lookup_dispatch_worktree,
             )
 
             record = lookup_dispatch_worktree(dispatch_id=req.dispatch_id)
+            branch_name = record.branch_name if record is not None else None
+            emit_sdk_lane_b_admit_bound(
+                dispatch_id=req.dispatch_id,
+                thread_id=req.thread_id,
+                binding_kind=binding.binding_kind,
+                worktree_path=str(dispatch_workspace.resolve()),
+                branch=branch_name,
+            )
             if record is not None:
-                emit_sdk_lane_b_minted(
-                    dispatch_id=req.dispatch_id,
-                    thread_id=req.thread_id,
-                    worktree_path=str(record.worktree_path),
-                    branch=record.branch_name,
-                    branch_point=record.branch_point,
-                    mint_wait_ms=round(mint_wait_ms, 1),
-                )
+                if binding.binding_kind == "minted":
+                    emit_sdk_lane_b_minted(
+                        dispatch_id=req.dispatch_id,
+                        thread_id=req.thread_id,
+                        worktree_path=str(record.worktree_path),
+                        branch=record.branch_name,
+                        branch_point=record.branch_point,
+                        mint_wait_ms=round(mint_wait_ms, 1),
+                    )
                 await associate_lane_branch(
                     thread_id=req.thread_id,
                     branch_name=record.branch_name,

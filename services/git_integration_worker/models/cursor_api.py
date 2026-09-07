@@ -22,6 +22,15 @@ class CursorDispatchRequest(BaseModel):
     message: str | None = None
     handoff_contract: str | None = None
     prompt_preamble: str | None = None
+    skills: list[str] | None = Field(
+        default=None,
+        description=(
+            "Canonical skill slugs to mount for this dispatch. Staged into the "
+            "dispatch HOME user layer for native Cursor discovery and invoked by "
+            "prompt Use-line; see cursor_sdk_skills_mount. Stargate fail-closes on "
+            "an unresolvable slug at admit."
+        ),
+    )
     model_knobs: dict[str, str] | None = None
     read_only: bool = False
     close_contract: Literal["lead", "auto"] = "auto"
@@ -50,6 +59,7 @@ class CursorDispatchRequest(BaseModel):
     admitted_via: Literal["cursor-auto", "stargate"] | None = None
     work_key: str | None = None
     resume_of: str | None = None
+    continuity_root_thread_id: str | None = None
     hop_from: str | None = None
     hop_seq: int | None = Field(default=None, ge=0)
     hop_reason: (

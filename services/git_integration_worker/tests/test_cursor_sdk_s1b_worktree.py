@@ -91,7 +91,7 @@ def test_s1b_lane_b_resolve_admit_binding_mints(
     """AC1: Lane-B admit binding mints under worktree_root."""
     worktree_root = tmp_path / "worktrees"
     req = _req(dispatch_id="lane-b-1", worktree_isolated=True)
-    workspace, lease_key = resolve_admit_binding(
+    binding = resolve_admit_binding(
         req=req,
         source_repo=source_repo,
         hub=source_repo,
@@ -99,9 +99,10 @@ def test_s1b_lane_b_resolve_admit_binding_mints(
         dispatch_workspace_default=source_repo.parent,
         lane="B",
     )
-    assert workspace.is_dir()
-    assert str(workspace.resolve()) == lease_key
-    assert workspace.relative_to(worktree_root.resolve())
+    assert binding.binding_kind == "minted"
+    assert binding.workspace.is_dir()
+    assert str(binding.workspace.resolve()) == binding.lease_key
+    assert binding.workspace.relative_to(worktree_root.resolve())
 
 
 def test_s1b_prune_on_terminal(source_repo: Path, tmp_path: Path) -> None:
@@ -239,7 +240,7 @@ def test_s1b_admit_reattaches_when_registry_dir_gone(
 ) -> None:
     """Registry row pointing at a missing dir still remints by attaching the branch."""
     worktree_root = tmp_path / "worktrees"
-    first, _key = resolve_admit_binding(
+    first = resolve_admit_binding(
         req=_req(dispatch_id="gone-dir-1", thread_id="t-gone", worktree_isolated=True),
         source_repo=source_repo,
         hub=source_repo,
@@ -247,13 +248,13 @@ def test_s1b_admit_reattaches_when_registry_dir_gone(
         dispatch_workspace_default=source_repo.parent,
         lane="B",
     )
-    (first / "kept.txt").write_text("visible\n", encoding="utf-8")
-    _git("add", "kept.txt", cwd=first)
-    _git("commit", "-m", "keep", cwd=first)
-    _git("worktree", "remove", "--force", str(first), cwd=source_repo)
-    assert not first.exists()
+    (first.workspace / "kept.txt").write_text("visible\n", encoding="utf-8")
+    _git("add", "kept.txt", cwd=first.workspace)
+    _git("commit", "-m", "keep", cwd=first.workspace)
+    _git("worktree", "remove", "--force", str(first.workspace), cwd=source_repo)
+    assert not first.workspace.exists()
 
-    second, key2 = resolve_admit_binding(
+    second = resolve_admit_binding(
         req=_req(dispatch_id="gone-dir-2", thread_id="t-gone", worktree_isolated=True),
         source_repo=source_repo,
         hub=source_repo,
@@ -261,9 +262,9 @@ def test_s1b_admit_reattaches_when_registry_dir_gone(
         dispatch_workspace_default=source_repo.parent,
         lane="B",
     )
-    assert second.is_dir()
-    assert (second / "kept.txt").read_text(encoding="utf-8") == "visible\n"
-    assert str(second.resolve()) == key2
+    assert second.workspace.is_dir()
+    assert (second.workspace / "kept.txt").read_text(encoding="utf-8") == "visible\n"
+    assert str(second.workspace.resolve()) == second.lease_key
 
 
 def test_worktree_mint_error_defaults_not_retryable() -> None:
@@ -288,7 +289,7 @@ def test_s1b_lane_a_binding_unchanged(source_repo: Path, tmp_path: Path) -> None
     shared = tmp_path / "shared"
     shared.mkdir()
     req = _req(worktree_isolated=False)
-    workspace, lease_key = resolve_admit_binding(
+    binding = resolve_admit_binding(
         req=req,
         source_repo=source_repo,
         hub=source_repo,
@@ -296,5 +297,6 @@ def test_s1b_lane_a_binding_unchanged(source_repo: Path, tmp_path: Path) -> None
         dispatch_workspace_default=shared,
         lane="A",
     )
-    assert workspace == shared
-    assert lease_key == str(source_repo.resolve())
+    assert binding.binding_kind == "lane_a"
+    assert binding.workspace == shared
+    assert binding.lease_key == str(source_repo.resolve())

@@ -27,6 +27,9 @@ from urllib.parse import urlencode
 import httpx
 import yaml
 
+from bus_watch.poll import DEFAULT_MAX_HOURS, DEFAULT_WAIT_SLICE_S
+from bus_watch.state import write_state
+
 _REPO = Path(__file__).resolve().parents[1]
 _QUERY_EVENTS = _REPO / "scripts" / "query-events"
 _AGENT_BUS_SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
@@ -34,7 +37,7 @@ _EMAIL_BRIDGE_SOCK = os.environ.get(
     "EMAIL_BRIDGE_SOCK", "/tmp/universal-protocol/email-bridge.sock"
 )
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
-_WAIT_SECONDS = 55.0
+_WAIT_SECONDS = 55.0  # client timeout floor; loop uses --wait-slice-seconds
 _POLL_SLEEP_S = 2.0
 
 
@@ -91,10 +94,11 @@ def _wait_closeout(
     thread_id: str,
     after_turn: int,
     from_agent: str,
+    wait_s: int,
 ) -> dict[str, Any]:
     params = {
         "after_turn": after_turn,
-        "wait": int(_WAIT_SECONDS),
+        "wait": wait_s,
         "completion": "first_reply_from",
         "from_agent": from_agent,
     }
@@ -114,11 +118,6 @@ def _fetch_closeout_turn(
         if row.get("turn_number") == turn:
             return row
     return {}
-
-
-def _fetch_closeout_subject(client: httpx.Client, thread_id: str, turn: int) -> str:
-    row = _fetch_closeout_turn(client, thread_id, turn)
-    return str(row.get("subject") or "")
 
 
 def _parse_closeout_json(body: str) -> dict[str, Any]:
@@ -368,6 +367,28 @@ def main() -> int:
         action="store_true",
         help="pager subject COME TO IDE — {label}; body reminds operator to return",
     )
+    parser.add_argument(
+        "--wait-slice-seconds",
+        type=float,
+        default=DEFAULT_WAIT_SLICE_S,
+        help=f"long-poll slice + heartbeat cadence (default {DEFAULT_WAIT_SLICE_S:g})",
+    )
+    parser.add_argument(
+        "--max-hours",
+        type=float,
+        default=DEFAULT_MAX_HOURS,
+        help=f"orphan ceiling (default {DEFAULT_MAX_HOURS:g})",
+    )
+    parser.add_argument(
+        "--state-file",
+        default="",
+        help="durable JSON status path (watch-supervise sets this)",
+    )
+    parser.add_argument(
+        "--no-page",
+        action="store_true",
+        help="print closeout only; do not SMS",
+    )
     args = parser.parse_args()
 
     thread_id = str(args.thread or "").strip()
@@ -383,16 +404,41 @@ def main() -> int:
 
     token = _token()
     from_agent = str(args.from_agent or "cursor-sdk").strip()
+    slice_s = max(1, int(float(args.wait_slice_seconds)))
+    state_path = Path(args.state_file) if str(args.state_file).strip() else None
     started_at = time.monotonic()
     print(
         f"watching thread={thread_id} watch_id={watch_id} "
         f"after_turn={args.after_turn} from_agent={from_agent} label={args.label!r} "
+        f"wait_slice_s={slice_s} "
         f"started_at={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}",
         flush=True,
     )
+    if state_path is not None:
+        write_state(
+            state_path,
+            status="armed",
+            thread=thread_id,
+            after_turn=args.after_turn,
+            label=args.label,
+        )
 
     with _bus_client(token) as client:
         while True:
+            elapsed_s = time.monotonic() - started_at
+            if float(args.max_hours) > 0 and elapsed_s >= float(args.max_hours) * 3600.0:
+                print(
+                    f"watcher expired label={args.label!r} elapsed={elapsed_s:.0f}s",
+                    flush=True,
+                )
+                if state_path is not None:
+                    write_state(state_path, status="expired", elapsed_s=round(elapsed_s, 1))
+                return 2
+            print(
+                f"… heartbeat label={args.label} thread={thread_id} "
+                f"after_turn={args.after_turn} elapsed={elapsed_s:.0f}s",
+                flush=True,
+            )
             if from_agent == "cursor-sdk" and not _worker_completed(watch_id):
                 print(_queue_status_line(watch_id, thread_id), flush=True)
             elif from_agent != "cursor-sdk":
@@ -402,6 +448,7 @@ def main() -> int:
                 thread_id=thread_id,
                 after_turn=args.after_turn,
                 from_agent=from_agent,
+                wait_s=slice_s,
             )
             if snap.get("complete"):
                 reply_turn = int(snap.get("qualifying_reply_turn") or 0)
@@ -425,6 +472,16 @@ def main() -> int:
                     f"outcome={outcome} duration_s={duration} elapsed_s={elapsed_s:.0f} model={model}",
                     flush=True,
                 )
+                if state_path is not None:
+                    write_state(
+                        state_path,
+                        status="complete",
+                        qualifying_reply_turn=reply_turn,
+                        subject=subject,
+                        outcome=outcome,
+                    )
+                if args.no_page:
+                    return 0
                 if args.come_to_ide:
                     page_subject = f"COME TO IDE — {args.label}"
                     page_body = (
@@ -461,6 +518,14 @@ def main() -> int:
                 f"… waiting ({thread_status}, turns={turn_count})",
                 flush=True,
             )
+            if state_path is not None:
+                write_state(
+                    state_path,
+                    status="polling",
+                    last_status=snap.get("status"),
+                    turn_count=turn_count,
+                    thread_status=thread_status,
+                )
             time.sleep(_POLL_SLEEP_S)
 
 

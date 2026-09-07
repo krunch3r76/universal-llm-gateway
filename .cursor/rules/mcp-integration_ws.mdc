@@ -9,6 +9,8 @@ trigger_match_terms:
   - observability
   - tool
   - integration
+  - toys
+  - restore
 ---
 # MCP Integration (Workspace)
 
@@ -23,6 +25,10 @@ Cursor registers **dual** stdio bridges in `~/.cursor/mcp.json`:
 
 Both launch `scripts/mcp-fastmcp-remote-bridge.py` (FastMCP remote → stdio).
 Anthropic web connector **`toys`** attaches **only** to `/mcp/life`.
+
+**Operator restore** ("restore toys", connection expired, tools dead in chat): Use the
+`claude-ai-mcp-connect` skill — default **`refresh-connector`**, not plain
+`restore-connector` (`already_connected` ≠ working; new chat after OAuth refresh).
 
 ### Dual-endpoint invariant (BINDING)
 

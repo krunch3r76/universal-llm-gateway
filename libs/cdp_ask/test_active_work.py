@@ -43,6 +43,7 @@ def _row(
         "holder": holder,
         "purpose": purpose,
         "status": status,
+        "stream_state": status,
         "cdp_url": cdp_url,
         "chat_url": chat_url,
         "source": source,
@@ -57,12 +58,20 @@ def _capacity(
     running_count: int,
     execution_ids: list[str],
     rows: list[dict[str, object]] | None = None,
+    execution_streams: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     admission_count = running_count
     rows_list = list(rows or [])
     seat_count, other_count = count_by_purpose_class(rows_list)
     regime = admission_regime(seat_count)
     abs_hard_effective = effective_abs_hard(seat_count)
+    stream_map = execution_streams
+    if stream_map is None:
+        stream_map = {
+            str(row["execution_id"]): str(row["status"])
+            for row in rows_list
+            if row.get("execution_id") and row.get("status")
+        }
     return {
         "busy": busy,
         "running_count": running_count,
@@ -85,6 +94,7 @@ def _capacity(
         "effective_abs_hard": abs_hard_effective,
         "seated_rows": [],
         "seat_rows": [],
+        "execution_streams": stream_map,
         **x_display_wire_fields(probe_x_display()),
     }
 
@@ -197,7 +207,12 @@ async def test_active_work_snapshot_ignores_terminal_executions(
         record.execution_id, status="completed", result={"ok": True}
     )
     snap = await store.active_work_snapshot()
-    assert snap == _capacity(busy=False, running_count=0, execution_ids=[])
+    assert snap == _capacity(
+        busy=False,
+        running_count=0,
+        execution_ids=[],
+        execution_streams={record.execution_id: "completed"},
+    )
 
 
 def test_active_work_endpoint_idle(

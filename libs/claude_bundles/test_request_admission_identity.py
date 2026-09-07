@@ -71,6 +71,7 @@ def test_resolve_single_seat_active_work_when_empty_wire():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             }
         ]
     }
@@ -128,7 +129,8 @@ def test_census_n1_from_seated_rows_only_operator_proxy():
                 "registration_id": "driving-root",
                 "parent_thread": "9497",
                 "purpose": "operator-proxy",
-                "status": "running",
+                "seat_state": "active",
+                "stream_state": "none",
                 "source": "cse-session-registry",
             }
         ],
@@ -185,13 +187,15 @@ def test_census_hop_plus_driving_is_n2() -> None:
                 "registration_id": "hop-row",
                 "parent_thread": "9506",
                 "purpose": "operator-proxy",
-                "status": "running",
+                "seat_state": "active",
+                "stream_state": "none",
             },
             {
                 "registration_id": "root-row",
                 "parent_thread": "9506",
                 "purpose": "operator-proxy",
-                "status": "running",
+                "seat_state": "active",
+                "stream_state": "none",
             },
         ],
     }
@@ -262,6 +266,7 @@ def test_gate_admits_holder_via_single_seat_bind_without_wire_id():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             }
         ]
     }
@@ -298,6 +303,7 @@ def test_gate_refuses_predecessor_bound_via_single_seat_active_work():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             }
         ]
     }
@@ -348,6 +354,7 @@ def test_gate_admits_self_supersede_poison_row_via_single_seat_bind():
                 "parent_thread": "9031",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             }
         ]
     }
@@ -401,6 +408,7 @@ def test_n1_watch_ignored_when_census_has_row():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             }
         ]
     }
@@ -536,6 +544,7 @@ def test_counterfactual_refuse_when_bound_predecessor_after_confirm():
                 "execution_id": "sat-live",
                 "registration_id": "reg-new",
                 "status": "running",
+                "stream_state": "running",
             }
         ]
     }
@@ -611,6 +620,7 @@ def test_identity_gated_emits_on_both_outcomes_and_unwatched():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             }
         ],
         "seated_rows": [],
@@ -623,6 +633,7 @@ def test_identity_gated_emits_on_both_outcomes_and_unwatched():
                 "parent_thread": "7199",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             }
         ],
         "seated_rows": [],
@@ -747,6 +758,7 @@ def test_unresolvable_reason_zero_matches():
                 "parent_thread": "9999",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             }
         ]
     }
@@ -781,6 +793,7 @@ def test_unresolvable_reason_ambiguous_matches():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             },
             {
                 "execution_id": "b",
@@ -788,6 +801,7 @@ def test_unresolvable_reason_ambiguous_matches():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             },
         ]
     }
@@ -819,6 +833,7 @@ def test_census_counts_store_row_and_seated_row_on_same_parent_thread():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             }
         ],
         "seated_rows": [
@@ -827,7 +842,8 @@ def test_census_counts_store_row_and_seated_row_on_same_parent_thread():
                 "registration_id": "cowork-seated",
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
-                "status": "running",
+                "seat_state": "active",
+                "stream_state": "none",
                 "source": "cse-session-registry",
             }
         ],
@@ -863,6 +879,7 @@ def test_gate_refuses_ambiguous_census_with_structured_reason():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             },
             {
                 "execution_id": "b",
@@ -870,6 +887,7 @@ def test_gate_refuses_ambiguous_census_with_structured_reason():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             },
         ]
     }
@@ -910,6 +928,7 @@ def test_origin_cse_does_not_pick_one_when_census_n_ge_2():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             },
             {
                 "execution_id": "b",
@@ -917,6 +936,7 @@ def test_origin_cse_does_not_pick_one_when_census_n_ge_2():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             },
         ]
     }
@@ -949,6 +969,7 @@ def test_gate_refuses_zero_matches():
                 "parent_thread": "9999",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             }
         ]
     }
@@ -986,6 +1007,7 @@ def test_caller_supplied_admits_when_census_n_ge_2():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             },
             {
                 "execution_id": "b",
@@ -993,6 +1015,7 @@ def test_caller_supplied_admits_when_census_n_ge_2():
                 "parent_thread": "7188",
                 "purpose": "operator-proxy",
                 "status": "running",
+                "stream_state": "running",
             },
         ]
     }

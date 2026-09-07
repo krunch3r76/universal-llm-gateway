@@ -12,6 +12,7 @@ from claude_bundles.chat_session_hygiene import (
 from claude_bundles.composer_submit import (
     composer_holds_draft,
     marker_survives_settle,
+    normalize_committed_turn,
     verification_marker,
 )
 from claude_bundles.cowork_output_download import (
@@ -88,6 +89,7 @@ _TRANSCRIPT_MARKER_JS = """
   return {
     count: primaryNodes.length,
     last_len: last.length,
+    last_text: last,
     last_snippet: last.slice(0, 400),
   };
 }
@@ -200,6 +202,26 @@ async def send_followup_paste_half(
     if receipt and marker and marker_in_committed:
         if await marker_survives_settle(page, marker):
             receipt = "dom_committed"
+    committed_text = str(after.get("last_text") or after.get("last_snippet") or "")
+    expected = normalize_committed_turn(prompt)
+    if receipt and expected:
+        actual = normalize_committed_turn(committed_text)
+        if actual and actual != expected:
+            state = await harvest_assistant(page)
+            return {
+                "send_verified": False,
+                "receipt": None,
+                "streaming_at_paste": bool(state.get("streaming")),
+                "url": str(state.get("url") or page.url or url),
+                "pasted_at": time.time(),
+                "verification_marker": marker,
+                "error": "composer_dirty",
+                "detail": (
+                    f"committed turn != payload "
+                    f"(expected {len(expected)} chars, got {len(actual)} chars)"
+                ),
+                "target_binding": target_binding,
+            }
     state = await harvest_assistant(page)
     pasted_at = time.time()
     send_verified = receipt is not None

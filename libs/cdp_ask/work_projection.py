@@ -113,6 +113,7 @@ def active_rows(records: Iterable[Any]) -> tuple[list[dict[str, Any]], list[str]
                 "holder": record.holder,
                 "purpose": record.purpose,
                 "status": record.status,
+                "stream_state": record.status,
                 "cdp_url": projection["cdp_url"],
                 "chat_url": projection["chat_url"],
                 "source": projection["source"],

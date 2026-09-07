@@ -6,14 +6,34 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+pytest.importorskip("playwright")
+from playwright.async_api import async_playwright  # noqa: E402
+
 from claude_bundles.composer_submit import (
     composer_holds_needle,
     press_send_chords,
     prove_composer_submitted,
+    submit_composer_content,
     verification_marker,
 )
 
 pytestmark = pytest.mark.offline
+
+_STREAMING_NO_SEND_HTML = """
+<!doctype html><html><head><title>Chat - Claude</title></head><body>
+<main>
+  <div data-is-streaming="true"></div>
+  <div data-testid="chat-input" contenteditable="true" style="min-height:80px;width:400px"></div>
+</main>
+<script>
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    const el = document.querySelector('[data-testid="chat-input"]');
+    if (el) { el.innerText = ''; el.textContent = ''; }
+  });
+</script>
+</body></html>
+"""
 
 
 def test_verification_marker_prefers_unique_token() -> None:
@@ -52,6 +72,7 @@ async def test_prove_chords_then_raises_when_draft_stays() -> None:
     with pytest.raises(RuntimeError, match="did not clear composer"):
         await prove_composer_submitted(page, f"{needle}\nbody")
     pressed = [c.args[0] for c in page.keyboard.press.await_args_list]
+    assert "Enter" in pressed
     assert "Control+Enter" in pressed
     assert "Meta+Enter" in pressed
 
@@ -65,3 +86,42 @@ async def test_press_send_chords_skips_meta_when_control_clears() -> None:
     page.keyboard.press = AsyncMock()
     await press_send_chords(page, needle)
     page.keyboard.press.assert_awaited_once_with("Control+Enter")
+
+
+@pytest.mark.asyncio
+async def test_clear_composer_verified_raises_when_draft_persists() -> None:
+    page = AsyncMock()
+    composer = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    page.keyboard.press = AsyncMock()
+    page.evaluate = AsyncMock(
+        side_effect=[
+            {"ok": True, "text": "leftover draft", "len": 15},
+            {"ok": True, "text": "leftover draft", "len": 15},
+        ]
+    )
+    from claude_bundles.composer_submit import clear_composer_verified
+
+    with pytest.raises(RuntimeError, match="composer_dirty"):
+        await clear_composer_verified(page, composer)
+
+
+@pytest.mark.asyncio
+async def test_submit_composer_content_enter_when_no_send_button() -> None:
+    prompt = "#9-unique: stream-break-in\nCONFER doorbell"
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await page.set_content(_STREAMING_NO_SEND_HTML)
+        composer = page.locator('[data-testid="chat-input"]')
+        await composer.click()
+        await page.keyboard.insert_text(prompt)
+        await submit_composer_content(page, prompt, composer=composer)
+        draft = await page.evaluate(
+            """() => {
+              const el = document.querySelector('[data-testid="chat-input"]');
+              return (el && (el.innerText || el.textContent || '')).trim();
+            }"""
+        )
+        assert draft == ""
+        await browser.close()

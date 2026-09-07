@@ -53,6 +53,10 @@ class PreparedCursorSdkHandle:
     hop_seq: int | None = None
     hop_reason: str | None = None
     resume_of: str | None = None
+    continuity_root_thread_id: str | None = None
+    #: Canonical skill slugs, already resolved to a Cursor-discoverable SoT at
+    #: admit. The worker stages these into the dispatch HOME user layer.
+    skills: tuple[str, ...] = ()
 
 
 def mint_cursor_sdk_ids(*, request_id: str) -> tuple[str, str]:
@@ -116,6 +120,8 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "hop_seq": handle.hop_seq,
         "hop_reason": handle.hop_reason,
         "resume_of": handle.resume_of,
+        "continuity_root_thread_id": handle.continuity_root_thread_id,
+        "skills": list(handle.skills),
     }
 
 
@@ -152,7 +158,8 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         alignment_warnings=tuple(data.get("alignment_warnings") or ()),
         knob_resolution=tuple(data.get("knob_resolution") or ()),
         nest_under=data.get("nest_under"),
-        topic=data.get("topic").get("packet_kind"),
+        topic=data.get("topic"),
+        packet_kind=data.get("packet_kind"),
         lane=data.get("lane"),
         workspace=data.get("workspace"),
         refuse_if_lease_held=bool(data.get("refuse_if_lease_held", False)),
@@ -163,4 +170,6 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         hop_seq=data.get("hop_seq"),
         hop_reason=data.get("hop_reason"),
         resume_of=data.get("resume_of"),
+        continuity_root_thread_id=data.get("continuity_root_thread_id"),
+        skills=tuple(data.get("skills") or ()),
     )

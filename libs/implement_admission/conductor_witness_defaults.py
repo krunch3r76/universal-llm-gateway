@@ -120,8 +120,13 @@ class DefaultWitnessBus:
         return score_resurface_in_turns(turns, after_written_at=after_written_at)
 
     def nested_implement_has_commits(self, *, nest_under_dispatch_id: str) -> bool:
-        _ = nest_under_dispatch_id
-        return False
+        from services.git_integration_worker.cursor_sdk_nested_witness import (
+            nested_implement_has_commits as _nested_implement_has_commits,
+        )
+
+        return _nested_implement_has_commits(
+            nest_under_dispatch_id=nest_under_dispatch_id,
+        )
 
 
 def fold_deps_for_admit(

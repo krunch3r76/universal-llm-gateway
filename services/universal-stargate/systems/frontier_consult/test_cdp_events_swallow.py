@@ -136,3 +136,25 @@ def test_stalled_payload_carries_deliverable_present() -> None:
     )
     assert event.payload["archive_uri"].endswith("cdp-ask-archive-new.md")
     assert event.payload["deliverable_present"] is True
+
+
+def test_stalled_payload_carries_join_key_fields() -> None:
+    """L1-AC-d: CdpGenerateStalled payload includes join-key fields."""
+    event = cdp_events.CdpGenerateStalled(
+        request_id="r",
+        execution_id="e",
+        satellite_execution_id="s",
+        stall_stage="completed_without_proof",
+        error="stall",
+        thread_id="10142",
+        pointer_turn=12,
+        dispatch_link_terminal=True,
+        registration_id="reg-join",
+        chat_url="https://claude.ai/cowork/cse_join",
+    )
+    payload = event.payload
+    assert payload["thread_id"] == "10142"
+    assert payload["pointer_turn"] == 12
+    assert payload["dispatch_link_terminal"] is True
+    assert payload["registration_id"] == "reg-join"
+    assert payload["chat_url"] == "https://claude.ai/cowork/cse_join"

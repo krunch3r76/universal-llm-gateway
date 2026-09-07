@@ -33,9 +33,7 @@ def test_is_cdp_model() -> None:
 
 
 def test_reject_cursor_sdk_seat_with_cdp() -> None:
-    reject_cursor_sdk_seat_with_cdp(
-        seat=None, model="cdp/opus-4.8", request_id="r1"
-    )
+    reject_cursor_sdk_seat_with_cdp(seat=None, model="cdp/opus-4.8", request_id="r1")
     reject_cursor_sdk_seat_with_cdp(
         seat="cursor-sdk", model="cursor/grok-4.6", request_id="r1"
     )
@@ -47,9 +45,7 @@ def test_reject_cursor_sdk_seat_with_cdp() -> None:
 
 
 def test_reject_role_with_substrate_model() -> None:
-    reject_role_with_substrate_model(
-        role=None, model="cdp/opus-5", request_id="r1"
-    )
+    reject_role_with_substrate_model(role=None, model="cdp/opus-5", request_id="r1")
     reject_role_with_substrate_model(
         role="gatherer", model="openai/gpt-5.5", request_id="r1"
     )
@@ -69,9 +65,7 @@ def test_reject_dispatch_lane_with_cdp() -> None:
     reject_dispatch_lane_with_cdp(
         dispatch_lane=None, model="cdp/opus-5", request_id="r1"
     )
-    reject_dispatch_lane_with_cdp(
-        dispatch_lane="", model="cdp/fable", request_id="r1"
-    )
+    reject_dispatch_lane_with_cdp(dispatch_lane="", model="cdp/fable", request_id="r1")
     reject_dispatch_lane_with_cdp(
         dispatch_lane="cursor-implement",
         model="cursor/grok-4.6",
@@ -122,9 +116,7 @@ def test_stage_inputs_prepends_claude_slash_skills(tmp_path, monkeypatch) -> Non
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-1/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith(
-        "/ulg-for-llms\n/reasoning-posture\n/consult-posture\n"
-    )
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n/consult-posture\n")
     assert "## ask" in text
     assert staged.staged is True
 
@@ -146,9 +138,7 @@ def test_stage_inputs_omitted_skills_gets_judgment_skill(tmp_path, monkeypatch) 
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-light/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith(
-        "/ulg-for-llms\n/reasoning-posture\n"
-    )
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
     assert "## light" in text
     assert staged.staged is True
     assert "<skills_inline>" not in text
@@ -173,9 +163,7 @@ def test_stage_inputs_inlines_non_claude_skills(tmp_path, monkeypatch) -> None:
     )
     text = prompt_path.read_text(encoding="utf-8")
     # Judgment skill always prepended as slash; caller non-Claude stays inline.
-    assert text.startswith(
-        "/ulg-for-llms\n/reasoning-posture\n"
-    )
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
     assert "<skills_inline>" in text
     assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text
@@ -222,9 +210,7 @@ def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith(
-        "/ulg-for-llms\n/reasoning-posture\n"
-    )
+    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
     assert "/investigation-economy" not in text.split("<skills_inline>", 1)[0]
     assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text
@@ -242,9 +228,7 @@ def test_assert_model_carded_skips_cdp() -> None:
 def test_check_agent_model_consistency_skips_cdp_prefix() -> None:
     from agent_seat.registry import check_agent_model_consistency
 
-    assert (
-        check_agent_model_consistency("claude-web", "cdp/opus-4.8") is None
-    )
+    assert check_agent_model_consistency("claude-web", "cdp/opus-4.8") is None
 
 
 def _ok_result() -> CdpGenerateResult:
@@ -555,7 +539,9 @@ def test_format_cdp_result_body_completed_without_proof_honest() -> None:
         },
     )
     text = format_cdp_result_body(result)
-    assert "- archive_uri: `cortex://notes/system/threads/cdp-ask-archive-new.md`" in text
+    assert (
+        "- archive_uri: `cortex://notes/system/threads/cdp-ask-archive-new.md`" in text
+    )
     assert "- body_len: 15" in text
     assert "- deliverable_present_unproven: true" in text
     assert "do not blind re-dispatch" in text
@@ -578,7 +564,8 @@ def test_cdp_result_subject_unverified_not_failed() -> None:
     text = format_cdp_result_body(result)
     assert "# CDP generate UNVERIFIED" in text
     assert "# CDP generate FAILED" not in text
-    assert "chat_url:" in text
+    assert "cse:" in text
+    assert "https://claude.ai/cowork/cse_abc" in text
 
 
 def test_cdp_result_subject_reconcile_abandoned_unverifiable() -> None:
@@ -774,6 +761,7 @@ async def test_post_cdp_turn_retries_after_unread_409(
     # On-behalf posts as endpoint address
     assert worker.CDP_REPLY_FROM == "web-anthropic"
 
+
 def test_team_dispatch_generate_body_accepts_purpose() -> None:
     from systems.frontier_consult.route import TeamDispatchGenerateBody
 
@@ -838,6 +826,115 @@ def test_default_operator_seat_binding_skips_ask() -> None:
     )
     assert lane is None
     assert kind is None
+
+
+def test_default_operator_seat_binding_binds_review_from_thread_id() -> None:
+    from systems.frontier_consult.cdp_generate import default_operator_seat_binding
+
+    lane, kind = default_operator_seat_binding(
+        purpose="review",
+        parent_thread=None,
+        mission_kind=None,
+        thread_id="9638",
+    )
+    assert lane == "9638"
+    assert kind == "root"
+
+
+def test_refuse_second_external_gate_at_fire_when_lane_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [
+                {
+                    "execution_id": "exec-live-gate",
+                    "parent_thread": "9638",
+                    "status": "running",
+                    "stream_state": "running",
+                    "purpose": "review",
+                }
+            ]
+        },
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        refuse_second_external_gate_at_fire(
+            purpose="review",
+            parent_thread="9638",
+            thread_id="9638",
+            request_id="req-ac9",
+        )
+    assert exc.value.code == "cdp_external_gate_live"
+
+
+def test_refuse_second_external_gate_seated_rows_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seated identity without a live stream must not block the external gate (R2′)."""
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [],
+            "seated_rows": [
+                {
+                    "execution_id": "exec-seated-only",
+                    "parent_thread": "10128",
+                    "seat_state": "active",
+                    "stream_state": "none",
+                    "purpose": "review",
+                    "registration_id": "reg-seated",
+                }
+            ],
+        },
+    )
+    refuse_second_external_gate_at_fire(
+        purpose="review",
+        parent_thread="10128",
+        thread_id="10128",
+        request_id="req-b1",
+    )
+
+
+def test_refuse_second_external_gate_ignores_terminal_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L2-AC-c: terminal stream on lane does not block a second external gate admit."""
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    exec_id = "exec-terminal-gate"
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [
+                {
+                    "execution_id": exec_id,
+                    "parent_thread": "10128",
+                    "status": "failed",
+                    "stream_state": f"terminal:{exec_id}",
+                    "purpose": "review",
+                    "registration_id": "reg-terminal",
+                }
+            ],
+        },
+    )
+    refuse_second_external_gate_at_fire(
+        purpose="review",
+        parent_thread="10128",
+        thread_id="10128",
+        request_id="req-terminal",
+    )
 
 
 def _capture_mission_provenance(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
@@ -915,16 +1012,24 @@ async def test_dispatch_cdp_generate_forwards_generation_options(
     from systems.frontier_consult import cdp_generate as mod
     from systems.frontier_consult.route import TeamDispatchGenerateBody
 
-    monkeypatch.setattr(mod, "_stage_inputs", lambda **kw: MagicMock(
-        prompt_uri="cortex://notes/system/ephemeral/prompt.md", staged=True
-    ))
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: MagicMock(
+            prompt_uri="cortex://notes/system/ephemeral/prompt.md", staged=True
+        ),
+    )
     monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
     monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
     monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
-    monkeypatch.setattr(mod, "build_handoff_result", lambda **kw: {
-        "handoff_status": "ok",
-        "poll_hint": {"thread_id": "1", "from_agent": "web-anthropic"},
-    })
+    monkeypatch.setattr(
+        mod,
+        "build_handoff_result",
+        lambda **kw: {
+            "handoff_status": "ok",
+            "poll_hint": {"thread_id": "1", "from_agent": "web-anthropic"},
+        },
+    )
     monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
 
     captured: list[dict[str, object]] = []
@@ -1000,3 +1105,154 @@ async def test_build_dispatch_body_cdp_raises_substrate_unimplemented() -> None:
     assert exc.value.details is not None
     assert exc.value.details["substrate"] == "cdp"
     assert exc.value.details["capability"] == "pipeline_dispatch_admission"
+
+
+def test_format_cdp_result_body_failed_carries_envelope_fields() -> None:
+    """L1-AC-c: FAILED body carries thread_id, pointer_turn, dispatch_link, cse."""
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="abcdef0123456789",
+        satellite_execution_id="sat-env",
+        prompt_uri="cortex://notes/system/threads/r-prompt.md",
+        picker_model="fable-5",
+        stall_stage="wall_clock_exceeded",
+        error="CDP generate exceeded max_wall_s",
+        extras={
+            "thread_id": "10142",
+            "pointer_turn": 7,
+            "dispatch_link": "terminated:failed",
+            "registration_id": "reg-abc",
+            "chat_url": "https://claude.ai/cowork/cse_xyz",
+        },
+    )
+    text = format_cdp_result_body(result)
+    assert "- thread_id: `10142`" in text
+    assert "- pointer_turn: `7`" in text
+    assert "- dispatch_link: terminated:failed" in text
+    assert "reg-abc" in text
+    assert "https://claude.ai/cowork/cse_xyz" in text
+    assert "# CDP generate FAILED" in text
+
+
+@pytest.fixture
+def _cdp_bus_env(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Hermetic agent-bus ASGI transport for CDP admit integration (L1-AC-a)."""
+    import httpx
+    from agent_bus_store import create_app
+    from agent_bus_store.auth import require_token
+    from agent_bus_store.db import init_db
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "1")
+    init_db()
+    app = create_app(db_path=str(db_path))
+    app.dependency_overrides[require_token] = lambda: None
+    transport = httpx.ASGITransport(app=app)
+
+    def _client_factory(_url: str, *, timeout: float = 10.0) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=transport, base_url="http://test", timeout=timeout
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.make_async_client",
+        _client_factory,
+    )
+    return transport
+
+
+@pytest.mark.asyncio
+async def test_cdp_admit_registers_dispatch_link_row(
+    _cdp_bus_env, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """L1-AC-a: CDP admit registers dispatch link row (GET /dispatch-links → 200)."""
+    import httpx
+    from agent_bus_store.db import create_thread
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    row = create_thread(
+        thread_id=None, slug="cdp-admit-link", lifecycle_state="pending"
+    )
+    assert row is not None
+    thread_id = row["id"]
+
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: type(
+            "Staged",
+            (),
+            {
+                "prompt_uri": "cortex://notes/system/ephemeral/prompt.md",
+                "staged": True,
+            },
+        )(),
+    )
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
+    monkeypatch.setattr(
+        mod,
+        "build_handoff_result",
+        lambda **kw: {
+            "handoff_status": "ok",
+            "poll_hint": {"thread_id": thread_id, "from_agent": "web-anthropic"},
+        },
+    )
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+
+    captured: list[dict[str, object]] = []
+    pending: list[object] = []
+
+    async def _fake_worker(**kwargs: object) -> None:
+        captured.append(dict(kwargs))
+
+    class _FakeTask:
+        def add_done_callback(self, _cb: object) -> None:
+            return None
+
+        def cancelled(self) -> bool:
+            return False
+
+        def exception(self) -> None:
+            return None
+
+    monkeypatch.setattr(mod, "run_cdp_worker", _fake_worker)
+
+    def _capture_task(coro: object, **_kw: object) -> _FakeTask:
+        pending.append(coro)
+        return _FakeTask()
+
+    monkeypatch.setattr(mod.asyncio, "create_task", _capture_task)
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        contract="none",
+        dispatch_thread_id=str(thread_id),
+        model="cdp/fable",
+        prompt="consult",
+    )
+    response = MagicMock()
+    response.status_code = 202
+    await mod.dispatch_cdp_generate(
+        request_id="req-admit-link",
+        body=body,
+        response=response,
+    )
+    assert pending
+    await pending[0]
+    assert captured
+    execution_id = str(captured[0]["execution_id"])
+
+    async with httpx.AsyncClient(
+        transport=_cdp_bus_env, base_url="http://test"
+    ) as client:
+        resp = await client.get(f"/dispatch-links/{execution_id}")
+    assert resp.status_code == 200, resp.text
+    link = resp.json()
+    assert link["thread_id"] == thread_id
+    assert link["pipeline_id"] == "cdp-generate"
+    assert link["terminal_status"] is None

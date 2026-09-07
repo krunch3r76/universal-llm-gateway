@@ -145,6 +145,7 @@ async def dispatch_terminate_route(
         thread_id,
         terminal_status=body.terminal_status,
         explicit_bus_lifecycle=body.bus_lifecycle,
+        dispatch_links=row.get("dispatch_links") if isinstance(row, dict) else None,
     )
     if closed is not None:
         row = closed

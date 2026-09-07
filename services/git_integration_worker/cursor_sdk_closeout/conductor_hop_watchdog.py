@@ -25,6 +25,8 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
     evaluate_hop_budget,
+)
+from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park import (
     park_conductor_hop_mission,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (

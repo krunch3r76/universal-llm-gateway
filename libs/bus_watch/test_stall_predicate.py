@@ -156,3 +156,91 @@ def test_stall_predicate_predicate_unmet_no_progress() -> None:
     )
     assert should
     assert reason == "predicate_unmet_no_progress"
+
+
+def test_stall_predicate_suppresses_predicate_unmet_while_producer_in_flight() -> None:
+    snapshot = {"status": "predicate_unmet", "turn_count": 60}
+    producer = {"state": "in_flight", "pipeline_id": "cdp-generate"}
+    should, reason = stall_predicate(
+        thread_snapshot=snapshot,
+        scoreboard_body="",
+        closeout_body="",
+        predicate_unmet_slices=5,
+        last_turn_count=60,
+        producer=producer,
+        producer_grace_expired=False,
+    )
+    assert not should
+    assert reason == ""
+
+
+def test_stall_predicate_pops_after_grace_expired() -> None:
+    snapshot = {"status": "predicate_unmet", "turn_count": 60}
+    producer = {"state": "in_flight", "pipeline_id": "cdp-generate"}
+    should, reason = stall_predicate(
+        thread_snapshot=snapshot,
+        scoreboard_body="",
+        closeout_body="",
+        predicate_unmet_slices=5,
+        last_turn_count=60,
+        producer=producer,
+        producer_grace_expired=True,
+    )
+    assert should
+    assert reason == "predicate_unmet_no_progress"
+
+
+def test_stall_predicate_terminal_pop_even_on_no_new_turn() -> None:
+    producer = {
+        "state": "terminal",
+        "terminal_status": "failed",
+        "pipeline_id": "cdp-generate",
+    }
+    should, reason = stall_predicate(
+        thread_snapshot={"status": "no_new_turn", "turn_count": 57},
+        scoreboard_body="",
+        closeout_body="",
+        predicate_unmet_slices=0,
+        producer=producer,
+    )
+    assert should
+    assert reason == "producer_terminal_no_reply"
+
+
+def test_stall_predicate_park_harvest_not_suppressed_by_in_flight_producer() -> None:
+    should, reason = stall_predicate(
+        thread_snapshot={"status": "predicate_unmet", "turn_count": 48},
+        thread_id=_A2_THREAD_ID,
+        scoreboard_body=_OPEN_MISSION_SCOREBOARD,
+        closeout_body=_PARKED_CLOSEOUT,
+        predicate_unmet_slices=1,
+        probe_fn=_probe_not_live,
+        producer={"state": "in_flight", "pipeline_id": "cdp-generate"},
+        producer_grace_expired=False,
+    )
+    assert should
+    assert reason == "park_harvest_stall"
+
+
+def test_stall_predicate_done_unchanged_with_terminal_producer() -> None:
+    should, reason = stall_predicate(
+        thread_snapshot={"status": "predicate_unmet", "turn_count": 50},
+        scoreboard_body=_ALL_DONE_SCOREBOARD,
+        closeout_body="stop: DONE\n",
+        producer={"state": "terminal", "terminal_status": "failed"},
+    )
+    assert not should
+    assert reason == ""
+
+
+def test_stall_predicate_no_pop_when_turn_count_advances() -> None:
+    """A10 equivalence wall: advancing turn_count resets slice semantics."""
+    should, reason = stall_predicate(
+        thread_snapshot={"status": "predicate_unmet", "turn_count": 59},
+        scoreboard_body="",
+        closeout_body="",
+        predicate_unmet_slices=1,
+        last_turn_count=58,
+    )
+    assert not should
+    assert reason == ""
