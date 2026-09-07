@@ -67,6 +67,22 @@ def _succession_fill_channel(body: SessionCloseRequest) -> bool:
     )
 
 
+def _guard_succession_seal_authority(body: SessionCloseRequest) -> None:
+    """B-11: only ``transcript_seal`` may claim ``closed_by=succession``."""
+    if body.closed_by != "succession" or body.succession_seal_authority:
+        return
+    from fastapi import HTTPException, status
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "reason": "succession.caller_forbidden",
+            "code": "succession.caller_forbidden",
+            "hint": "Machine succession closes require transcript_seal.",
+        },
+    )
+
+
 def _guard_succession_fill_required(body: SessionCloseRequest) -> None:
     """R1b: block non-fill close when an unfilled succession row awaits fill."""
     if body.closed_by == "succession" or not body.transcript_jsonl_path:
@@ -208,6 +224,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             payload=payload,
         )
 
+    _guard_succession_seal_authority(body)
     _guard_succession_fill_required(body)
 
     succession_fill = _succession_fill_channel(body)
@@ -215,6 +232,22 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         effective_depth = "verbatim"
     else:
         effective_depth = body.transcript_depth
+    if (
+        succession_fill
+        and body.transcript_depth in ("light", "none")
+        and body.entity_ids
+    ):
+        from ..dispatch_ops._session_bus_thread_disposition import parse_bus_thread_refs
+        from ..events_tape import session_close_root_window_depth_upgraded
+
+        for lane_thread in parse_bus_thread_refs(body.entity_ids):
+            session_close_root_window_depth_upgraded(
+                session_id=body.session_id,
+                thread_id=lane_thread,
+                prior_depth=body.transcript_depth,
+                new_depth="verbatim",
+            )
+            break
 
     splice_fill = (
         succession_fill

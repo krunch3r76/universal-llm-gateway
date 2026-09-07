@@ -140,6 +140,7 @@ def _op_transcript_seal(
         entity_ids=[str(tid), f"agent-bus:{tid}"],
         closed_by="succession",
         assistant_label="Assistant",
+        succession_seal_authority=True,
     )
     try:
         response = close_session(body)

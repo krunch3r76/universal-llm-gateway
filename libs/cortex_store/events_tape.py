@@ -14,6 +14,8 @@ def session_close_succession_structural_filled(
     session_id: str,
     agent: str,
     journal_row_id: int,
+    extended: bool = False,
+    reason: str = "SPLICE",
 ) -> Event:
     ev = Event(
         signal="cortex.session_close.succession_structural_filled",
@@ -23,6 +25,8 @@ def session_close_succession_structural_filled(
             "session_id": session_id,
             "agent": agent,
             "journal_row_id": journal_row_id,
+            "extended": extended,
+            "reason": reason,
         },
     )
     record(ev.signal, **ev.payload)

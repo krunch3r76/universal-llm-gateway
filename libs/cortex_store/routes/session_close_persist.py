@@ -619,10 +619,23 @@ def persist_session_close(
     if structural_fill:
         from ..events_tape import session_close_succession_structural_filled
 
+        fill_reason = "PREFIX-EXTEND" if ctx.turn_count > 0 and body.transcript_jsonl_path else "SPLICE"
         session_close_succession_structural_filled(
             session_id=body.session_id,
             agent=body.agent,
             journal_row_id=journal_row_id,
+            extended=bool(body.transcript_jsonl_path),
+            reason=fill_reason,
+        )
+    elif succession_extend:
+        from ..events_tape import session_close_succession_structural_filled
+
+        session_close_succession_structural_filled(
+            session_id=body.session_id,
+            agent=body.agent,
+            journal_row_id=journal_row_id,
+            extended=True,
+            reason="PREFIX-EXTEND",
         )
 
     debrief = attempt_session_close_debrief(

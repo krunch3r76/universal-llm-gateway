@@ -164,6 +164,7 @@ class SessionCloseRequest(BaseModel):
     source_ref: str | None = None
     source_ref_derivation: str | None = None
     closed_by: str | None = None
+    succession_seal_authority: bool = False
 
 
 class SessionCloseResponse(BaseModel):
