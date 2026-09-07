@@ -7,7 +7,6 @@ import pytest
 from cortex_store.session_close_successor_hop import (
     SUCCESSION_FILL_REASON,
     SealedJournal,
-    resolve_successor_hop,
 )
 
 pytestmark = pytest.mark.offline
@@ -20,7 +19,7 @@ def test_succession_fill_before_post_lid_hop(tmp_path) -> None:
     jsonl.parent.mkdir(parents=True)
     jsonl.write_text("", encoding="utf-8")
 
-    with patch_lookup(
+    with PatchLookup(
         {
             "sealed-id": SealedJournal(
                 session_id="sealed-id",
@@ -42,7 +41,7 @@ def test_succession_fill_before_post_lid_hop(tmp_path) -> None:
     assert hop.session_id == "sealed-id"
 
 
-class patch_lookup:
+class PatchLookup:
     def __init__(self, mapping: dict[str, SealedJournal | None]) -> None:
         self.mapping = mapping
 

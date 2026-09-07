@@ -5,7 +5,6 @@ from __future__ import annotations
 from unittest.mock import patch
 
 import pytest
-
 from agent_bus_store.tape_render import render_tape
 
 pytestmark = pytest.mark.offline
