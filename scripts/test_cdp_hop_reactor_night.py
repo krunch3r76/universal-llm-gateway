@@ -10,11 +10,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from cdp_hop_reactor_night import ReactorState
 from cdp_hop_reactor_wait import (
+    ROW_HOLD_MAX_POLLS,
+    SEATED_NO_STREAM_EXECUTION,
     active_row_absent_streak,
+    adoptable_lane_rows,
     build_harvest_request,
     harvest_miss_outcome,
+    harvest_settled,
+    idle_step,
     is_cdp_external_gate_live,
     is_http_error_envelope,
+    lane_stream_rows,
     merge_active_work_rows,
     should_drop_satellite_id,
     terminal,
@@ -153,3 +159,210 @@ def test_reactor_state_drops_fable_execution_id():
     data = state.to_json()
     assert "fable_execution_id" not in data
     assert "fable_stargate_execution_id" in data
+
+
+def test_lane_liveness_ignores_seated_rows():
+    data = {
+        "rows": [],
+        "seated_rows": [
+            {
+                "parent_thread": "10196",
+                "status": "running",
+                "purpose": "review",
+                "registration_id": "reg-review",
+            }
+        ],
+    }
+    assert lane_stream_rows(data, "10196") == []
+
+
+def test_lane_liveness_reads_execution_store_rows():
+    data = {
+        "rows": [
+            {
+                "parent_thread": "10196",
+                "status": "running",
+                "purpose": "mission",
+                "execution_id": "exec-mission",
+            }
+        ],
+    }
+    assert len(lane_stream_rows(data, "10196")) == 1
+
+
+def test_lane_liveness_ignores_non_mission_purpose_row():
+    data = {
+        "rows": [
+            {
+                "parent_thread": "10196",
+                "status": "running",
+                "purpose": "review",
+                "execution_id": "exec-review",
+            }
+        ],
+    }
+    assert lane_stream_rows(data, "10196") == []
+
+
+def test_lane_liveness_ignores_seated_no_stream_sentinel():
+    data = {
+        "rows": [
+            {
+                "parent_thread": "10196",
+                "status": "running",
+                "purpose": "mission",
+                "execution_id": SEATED_NO_STREAM_EXECUTION,
+            }
+        ],
+    }
+    assert lane_stream_rows(data, "10196") == []
+
+
+def test_idle_step_settled_harvest_beats_live_row():
+    harvest = {"outcome": "harvested", "turns": [{"text": "x"}], "streaming": False}
+    lane_rows = [{"parent_thread": "10196", "status": "running", "purpose": "mission"}]
+    idle, hold, source = idle_step(
+        harvest=harvest,
+        prev_cursor=0,
+        lane_rows=lane_rows,
+        idle_streak=0,
+        row_hold_streak=0,
+    )
+    assert idle == 1
+    assert source == "authority_settled"
+
+
+def test_idle_step_tool_pause_does_not_reset_on_live_row():
+    harvest = {"outcome": "harvested", "turns": [], "tool_pause": True}
+    lane_rows = [{"parent_thread": "10196", "status": "running", "purpose": "mission"}]
+    idle, _, source = idle_step(
+        harvest=harvest,
+        prev_cursor=0,
+        lane_rows=lane_rows,
+        idle_streak=1,
+        row_hold_streak=0,
+    )
+    assert idle == 2
+    assert source == "tool_pause"
+    assert terminal("harvested", False, False, True, 2, idle_confirmations=2) is True
+
+
+def test_idle_step_row_hold_is_bounded():
+    harvest = {"outcome": "no_reply_yet", "turns": []}
+    lane_rows = [{"parent_thread": "10196", "status": "running", "purpose": "mission"}]
+    idle = 0
+    hold = 0
+    for _ in range(ROW_HOLD_MAX_POLLS):
+        idle, hold, source = idle_step(
+            harvest=harvest,
+            prev_cursor=0,
+            lane_rows=lane_rows,
+            idle_streak=idle,
+            row_hold_streak=hold,
+        )
+        assert source == "projection_hold"
+    idle, hold, source = idle_step(
+        harvest=harvest,
+        prev_cursor=0,
+        lane_rows=lane_rows,
+        idle_streak=idle,
+        row_hold_streak=hold,
+    )
+    assert source == "idle"
+    assert idle == 1
+
+
+def test_wedge_regression_thread_10196():
+    data = {
+        "rows": [],
+        "seated_rows": [
+            {
+                "parent_thread": "10196",
+                "status": "running",
+                "purpose": "review",
+                "registration_id": "95819039",
+            }
+        ],
+    }
+    assert lane_stream_rows(data, "10196") == []
+    harvest = {
+        "outcome": "harvested",
+        "turns": [{"text": "review output"}],
+        "streaming": False,
+        "cursor": 0,
+    }
+    idle = 0
+    hold = 0
+    for _ in range(3):
+        idle, hold, source = idle_step(
+            harvest=harvest,
+            prev_cursor=0,
+            lane_rows=lane_stream_rows(data, "10196"),
+            idle_streak=idle,
+            row_hold_streak=hold,
+        )
+    assert source == "authority_settled"
+    assert terminal("harvested", False, False, False, idle, idle_confirmations=2) is True
+
+
+def test_adopt_refuses_non_mission_purpose_seated_row():
+    data = {
+        "seated_rows": [
+            {
+                "parent_thread": "10196",
+                "purpose": "review",
+                "registration_id": "reg-1",
+                "execution_id": "exec-1",
+            }
+        ],
+    }
+    rows, disposition = adoptable_lane_rows(data, "10196")
+    assert disposition == "none"
+    assert rows == []
+
+
+def test_adopt_refuses_when_two_mission_rows_same_parent_thread():
+    data = {
+        "rows": [
+            {"parent_thread": "10196", "purpose": "mission", "registration_id": "a"},
+            {"parent_thread": "10196", "purpose": "mission", "registration_id": "b"},
+        ],
+    }
+    rows, disposition = adoptable_lane_rows(data, "10196")
+    assert disposition == "ambiguous"
+    assert len(rows) == 2
+
+
+def test_adopt_binds_pinned_registration_when_state_already_seated():
+    data = {
+        "rows": [
+            {"parent_thread": "10196", "purpose": "mission", "registration_id": "keep"},
+            {"parent_thread": "10196", "purpose": "mission", "registration_id": "other"},
+        ],
+    }
+    rows, disposition = adoptable_lane_rows(data, "10196", known_registration_id="keep")
+    assert disposition == "bind"
+    assert rows[0]["registration_id"] == "keep"
+
+
+def test_adopt_binds_purposeless_row_on_gate_evidence_path():
+    data = {"seated_rows": [{"parent_thread": "10196", "registration_id": "reg-1", "execution_id": "exec-1"}]}
+    rows, disposition = adoptable_lane_rows(data, "10196", gate_evidence=True)
+    assert disposition == "bind"
+    assert rows[0]["registration_id"] == "reg-1"
+
+
+def test_adopt_refuses_foreign_purpose_even_with_gate_evidence():
+    data = {
+        "seated_rows": [
+            {"parent_thread": "10196", "purpose": "review", "registration_id": "reg-1"},
+        ],
+    }
+    rows, disposition = adoptable_lane_rows(data, "10196", gate_evidence=True)
+    assert disposition == "none"
+    assert rows == []
+
+
+def test_harvest_settled():
+    assert harvest_settled({"outcome": "harvested", "turns": [{"t": 1}]}) is True
+    assert harvest_settled({"outcome": "harvested", "turns": [], "streaming": True}) is False

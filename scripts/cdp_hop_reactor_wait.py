@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 # Harvest-miss outcomes that increment the breaker (N4).
@@ -15,6 +16,12 @@ CDP_EXTERNAL_GATE_LIVE = "cdp_external_gate_live"
 PERSISTENT_IDLE_OUTCOMES = frozenset(
     {"no_reply_yet", "incomplete_dom", "unauthenticated", "dormant"}
 )
+
+SEATED_NO_STREAM_EXECUTION = "__none:seated_no_stream__"
+
+REACTOR_LANE_PURPOSES = frozenset({"mission"})
+
+ROW_HOLD_MAX_POLLS = int(os.environ.get("CDP_HOP_ROW_HOLD_MAX_POLLS", "5"))
 
 
 def is_http_error_envelope(value: dict[str, Any] | None) -> bool:
@@ -110,6 +117,99 @@ def merge_active_work_rows(data: dict[str, Any] | None) -> list[dict[str, Any]]:
             seen.add(token)
             merged.append(row)
     return merged
+
+
+def lane_stream_rows(
+    data: dict[str, Any] | None,
+    fable_thread: str,
+    *,
+    purposes: frozenset[str] = REACTOR_LANE_PURPOSES,
+) -> list[dict[str, Any]]:
+    """Execution-store ``rows`` for this lane — never ``seated_rows`` (G3 authority shift)."""
+    rows = (data or {}).get("rows")
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("parent_thread") or "") != fable_thread:
+            continue
+        if str(row.get("status") or "") not in {"pending", "running"}:
+            continue
+        if str(row.get("purpose") or "").strip().lower() not in purposes:
+            continue
+        if str(row.get("execution_id") or "") == SEATED_NO_STREAM_EXECUTION:
+            continue
+        out.append(row)
+    return out
+
+
+def harvest_settled(harvest: dict[str, Any] | None) -> bool:
+    h = harvest or {}
+    if bool(h.get("streaming")) or str(h.get("outcome") or "") == "streaming":
+        return False
+    if str(h.get("outcome") or "") != "harvested":
+        return False
+    return bool(h.get("turns"))
+
+
+def idle_step(
+    *,
+    harvest: dict[str, Any] | None,
+    prev_cursor: int | None,
+    lane_rows: list[dict[str, Any]],
+    idle_streak: int,
+    row_hold_streak: int,
+    row_hold_max: int = ROW_HOLD_MAX_POLLS,
+) -> tuple[int, int, str]:
+    h = harvest or {}
+    if bool(h.get("streaming")) or str(h.get("outcome") or "") == "streaming":
+        return 0, 0, "authority_streaming"
+    cur = h.get("cursor")
+    try:
+        cur_int = int(cur) if cur is not None else None
+    except (TypeError, ValueError):
+        cur_int = None
+    if cur_int is not None and (prev_cursor is None or cur_int > prev_cursor):
+        return 0, 0, "authority_cursor_advance"
+    if bool(h.get("tool_pause")):
+        return idle_streak + 1, row_hold_streak, "tool_pause"
+    if harvest_settled(h):
+        return idle_streak + 1, row_hold_streak, "authority_settled"
+    if lane_rows and row_hold_streak < row_hold_max:
+        return 0, row_hold_streak + 1, "projection_hold"
+    return idle_streak + 1, row_hold_streak, "idle"
+
+
+def adoptable_lane_rows(
+    data: dict[str, Any] | None,
+    fable_thread: str,
+    *,
+    purposes: frozenset[str] = REACTOR_LANE_PURPOSES,
+    known_registration_id: str | None = None,
+    gate_evidence: bool = False,
+) -> tuple[list[dict[str, Any]], str]:
+    candidates: list[dict[str, Any]] = []
+    for row in merge_active_work_rows(data):
+        if str(row.get("parent_thread") or "") != fable_thread:
+            continue
+        purpose = str(row.get("purpose") or "").strip().lower()
+        if purpose not in purposes and not (gate_evidence and not purpose):
+            continue
+        candidates.append(row)
+    if known_registration_id:
+        pinned = [
+            row for row in candidates
+            if str(row.get("registration_id") or "").strip() == known_registration_id
+        ]
+        if pinned:
+            return pinned[:1], "bind"
+    if not candidates:
+        return [], "none"
+    if len(candidates) > 1:
+        return candidates, "ambiguous"
+    return candidates, "bind"
 
 
 def build_harvest_request(

@@ -28,13 +28,15 @@ from cdp_hop_reactor_night import (
 )
 from cdp_hop_reactor_wait import (
     active_row_absent_streak,
+    adoptable_lane_rows,
     build_harvest_request,
     harvest_miss_outcome,
     http_json_status,
     id_fields,
+    idle_step,
     is_cdp_external_gate_live,
     is_http_error_envelope,
-    merge_active_work_rows,
+    lane_stream_rows,
     should_drop_satellite_id,
     terminal,
 )
@@ -132,20 +134,34 @@ def active_work() -> dict[str, Any] | None:
     return result
 
 
-def adopt_seated_lane(state: ReactorState, data: dict[str, Any], fable_thread: str) -> bool:
-    """Bind registry/execution-store seated identity for this parent_thread."""
+def adopt_seated_lane(
+    state: ReactorState,
+    data: dict[str, Any],
+    fable_thread: str,
+    *,
+    gate_evidence: bool = False,
+) -> bool:
+    rows, disposition = adoptable_lane_rows(
+        data,
+        fable_thread,
+        known_registration_id=state.fable_registration_id,
+        gate_evidence=gate_evidence,
+    )
+    if disposition == "ambiguous":
+        log("seated_lane_ambiguous", candidates=len(rows), **id_fields(state))
+        return False
+    if disposition != "bind":
+        return False
+    row = rows[0]
     adopted = False
-    for row in merge_active_work_rows(data):
-        if str(row.get("parent_thread") or "") != fable_thread:
-            continue
-        exec_id = str(row.get("execution_id") or "").strip()
-        reg_id = str(row.get("registration_id") or "").strip()
-        if exec_id and not exec_id.startswith("__none"):
-            state.fable_satellite_execution_id = exec_id
-            adopted = True
-        if reg_id:
-            state.fable_registration_id = reg_id
-            adopted = True
+    exec_id = str(row.get("execution_id") or "").strip()
+    reg_id = str(row.get("registration_id") or "").strip()
+    if exec_id and not exec_id.startswith("__none"):
+        state.fable_satellite_execution_id = exec_id
+        adopted = True
+    if reg_id:
+        state.fable_registration_id = reg_id
+        adopted = True
     return adopted
 
 
@@ -193,7 +209,7 @@ def fire_fable(state: ReactorState, prompt: str) -> str | None:
     if is_http_error_envelope(resp):
         if is_cdp_external_gate_live(resp):
             log("fable_gate_409", **id_fields(state))
-            adopt_seated_lane(state, active_work() or {}, state.fable_thread)
+            adopt_seated_lane(state, active_work() or {}, state.fable_thread, gate_evidence=True)
             h = harvest_cse(state)
             if h:
                 apply_harvest_ids(state, h)
@@ -219,8 +235,8 @@ def await_fable_attach(state: ReactorState, exec_id: str) -> str | None:
         data = active_work()
         if data is None:
             continue
-        rows = merge_active_work_rows(data)
-        if adopt_seated_lane(state, data, state.fable_thread):
+        rows = [row for row in (data.get("rows") or []) if isinstance(row, dict)]
+        if adopt_seated_lane(state, data, state.fable_thread, gate_evidence=True):
             return state.fable_satellite_execution_id
         if not active_row_absent_streak(rows, state.fable_thread):
             row_absent_streak = 0
@@ -292,15 +308,12 @@ def drain_composer_queue(state: ReactorState) -> list[str]:
 
 def wait_fable_stream_end(state: ReactorState) -> tuple[str, None]:
     idle_streak = 0
+    row_hold_streak = 0
     harvest_miss_streak = 0
     while True:
         data = active_work()
-        running = False
-        if data:
-            for row in merge_active_work_rows(data):
-                if str(row.get("parent_thread") or "") == state.fable_thread:
-                    if str(row.get("status") or "") in {"pending", "running"}:
-                        running = True
+        lane_rows = lane_stream_rows(data, state.fable_thread)
+        prev_cursor = state.fable_last_turn_ordinal
         harvest = harvest_cse(state)
         if not harvest:
             harvest_miss_streak += 1
@@ -318,12 +331,22 @@ def wait_fable_stream_end(state: ReactorState) -> tuple[str, None]:
         streaming = bool(harvest.get("streaming"))
         tool_pause = bool(harvest.get("tool_pause"))
         stop_flag = bool(harvest.get("stop"))
-        if outcome == "streaming" or running:
-            idle_streak = 0
-        else:
-            idle_streak += 1
+        idle_streak, row_hold_streak, idle_source = idle_step(
+            harvest=harvest,
+            prev_cursor=prev_cursor,
+            lane_rows=lane_rows,
+            idle_streak=idle_streak,
+            row_hold_streak=row_hold_streak,
+        )
         if terminal(outcome, stop_flag, streaming, tool_pause, idle_streak, idle_confirmations=IDLE_CONFIRMATIONS):
-            log("fable_stream_terminal", outcome=outcome, **id_fields(state))
+            log(
+                "fable_stream_terminal",
+                outcome=outcome,
+                idle_source=idle_source,
+                row_hold_streak=row_hold_streak,
+                lane_rows=len(lane_rows),
+                **id_fields(state),
+            )
             return "harvest_stop" if stop_flag else "idle", None
         if harvest_miss_streak >= HARVEST_MISS_LIMIT:
             return "harvest_unreachable", None
