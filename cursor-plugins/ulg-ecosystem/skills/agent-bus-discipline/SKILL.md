@@ -49,17 +49,26 @@ Human-authored closeouts may coincidentally include `closeout` in the subject; t
 
 ### Watcher mis-arm imprint (binding)
 
-When a bus-consult / dispatch-closeout arm misfires (wrong script, omitted
-`poll_hint.after_turn`, invalid CLI flags, false `complete` on a stale turn):
+When a bus-consult / dispatch-closeout arm misfires:
+
+| Class | Specimen |
+|---|---|
+| **Arm-only** | `watch-supervise.sh start` without same-turn `tail` + `notify_on_output` (a:32280) |
+| **Hold-turn** | Foreground `wait`/`Await`/`tail \| grep` instead of background tail + exit |
+| **Wake-no-relay** | Leg 2 fired; turn closed without `get` + operator translate (leg 3) |
+| **Wrong target** | Wrong script family, bad `after_turn`, omitted `poll_hint.after_turn`, invalid flags, false `complete` |
+
+On any class — **same turn** before close:
 
 1. **Informing `friction()`** — `friction-review` § Informing frictions; owner
-   `agent_skill:agent-bus-discipline` for cursor-sdk closeout class; cite surfaces
-   (`watch-dispatch-closeout.py`, `watch-supervise.sh`, `poll_hint`, runbook §).
+   `agent_skill:agent-bus-discipline`; cite surfaces (`watch-dispatch-closeout.py`,
+   `watch-supervise.sh`, `poll_hint`, runbook §).
 2. **`assert` on `runbook:bus-consult-watcher`** — specimen + falsifier candidate.
-3. **¬ `todo:`** on the specimen — accumulate; consolidate under one implement todo
-   only on operator commission or triage (`friction-review` § Accumulate then consolidate).
+3. **¬ `todo:`** — accumulate; consolidate only on commission/triage.
 
-SoT arm: `runbook:bus-consult-watcher` · posture: `operator-posture` Rule 2.
+**Atomic arm (IDE):** leg 1 `start … --no-page` → leg 2 `tail --label L` background +
+`notify_on_output` on `closeout turn=|consult complete|stall-pop:` → exit → leg 3 on wake.
+SoT: `runbook:bus-consult-watcher` · posture: `operator-posture` Rule 2.
 
 ## Pre-flight before reply
 

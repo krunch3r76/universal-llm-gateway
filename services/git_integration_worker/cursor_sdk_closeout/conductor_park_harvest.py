@@ -157,6 +157,7 @@ def build_park_harvest_arm_recipe(
     scoreboard_uri = str(rec.get("scoreboard_uri") or rec.get("scoreboard") or "")
     lines = [
         "park-harvest: arm watcher for CDP reply arrival (Phase A).",
+        "Leg 1 — detached poller:",
         f"scripts/watch-supervise.sh start --label {label} -- \\",
         "  scripts/watch-bus-consult-and-page.py \\",
         f"  --thread {thread_id} --after-turn {after_turn} \\",
@@ -165,6 +166,13 @@ def build_park_harvest_arm_recipe(
     if scoreboard_uri:
         lines.append(f"  --scoreboard-uri {scoreboard_uri} \\")
     lines.append(f"  --label {label}")
+    lines.extend(
+        [
+            "Leg 2 — same turn (before close): background tail + notify_on_output on consult complete|stall-pop:",
+            f"scripts/watch-supervise.sh tail --label {label}  # block_until_ms: 0",
+            "Leg 3 — on wake: get qualifying turn + relay in chat.",
+        ]
+    )
     return "\n".join(lines)
 
 

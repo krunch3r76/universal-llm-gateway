@@ -69,15 +69,15 @@ Operator direction ≠ hop recipe. Anticipate harvested score / `NEXT_ADMIT: non
 spawn-stale materialize / in-flight orphan; choose the next useful move. Inform;
 do not wait for a rewritten recipe.
 
-**Attended in-flight (binding — operator 2026-09-01; audience split 2026-09-04):**
-After admit, when the wait is event-gated, arm a cheap wake and exit — unless
-costly, already armed, or named decline. SoT: `runbook:bus-consult-watcher`.
-**This seat** wakes via IDE terminal / Shell + `notify_on_output` (`--no-page`).
-**Human** out-of-IDE SMS uses optional tmux pane in session `0` **with** page —
-¬ tmux for agent self-arming. Cheap = that watcher / `SCORE_RESURFACE` /
-`poll_hint` + lean heartbeat (`loop` skill local event path). Costly =
-short-cadence full-agent `/loop`, or holding this turn. Complements a:31104.
-¬ a:31024 always-on liaison.
+**Attended in-flight (binding — operator 2026-09-01):**
+After admit, when the wait is event-gated, arm **in-session wake** (three legs,
+atomic) and exit — unless already armed or named decline. SoT:
+`runbook:bus-consult-watcher`. **Leg 1:** `watch-supervise.sh start … --no-page`.
+**Leg 2 (same turn):** `watch-supervise.sh tail --label L` background +
+`notify_on_output` on `closeout turn=|consult complete|stall-pop:`. **Leg 3 (wake
+turn):** `get` + relay. ¬ start-only; ¬ hold-turn on `wait`. Cheap = legs 1–2 /
+`SCORE_RESURFACE` / `poll_hint` + lean heartbeat (`loop` skill). Costly =
+short-cadence `/loop` or holding this turn. Complements a:31104. ¬ a:31024 liaison.
 
 **Decide-before-admit:** Use the `reasoning-posture` skill — pin Question / OOS /
 detent. Question is whether the leftover score is still the remit. Resident
