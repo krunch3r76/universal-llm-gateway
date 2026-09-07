@@ -200,6 +200,7 @@ def test_ac_a_2_unpin_emits_worktree_removed(
     result = unpin_registered_lane_worktree(repo=git_repo, branch_name=branch)
     assert result.unpinned is True
     assert removed and removed[0]["trigger"] == "unpin"
+    assert removed[0]["source_repo"] == str(git_repo.resolve())
     assert not wt.is_dir()
 
 

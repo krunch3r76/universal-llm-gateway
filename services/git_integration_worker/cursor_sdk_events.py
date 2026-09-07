@@ -1690,6 +1690,7 @@ def SdkLaneBWorktreeRemoved(  # noqa: N802
     worktree_path: str,
     trigger: str,
     ledger_status_at_remove: str,
+    source_repo: str | None = None,
     dispatch_id: str | None = None,
     thread_id: str | None = None,
     branch: str | None = None,
@@ -1700,6 +1701,7 @@ def SdkLaneBWorktreeRemoved(  # noqa: N802
         "ledger_status_at_remove": ledger_status_at_remove,
     }
     for key, value in (
+        ("source_repo", source_repo),
         ("dispatch_id", dispatch_id),
         ("thread_id", thread_id),
         ("branch", branch),
@@ -1718,6 +1720,7 @@ def emit_sdk_lane_b_worktree_removed(
     worktree_path: str,
     trigger: str,
     ledger_status_at_remove: str,
+    source_repo: str | None = None,
     dispatch_id: str | None = None,
     thread_id: str | None = None,
     branch: str | None = None,
@@ -1728,6 +1731,7 @@ def emit_sdk_lane_b_worktree_removed(
             worktree_path=worktree_path,
             trigger=trigger,
             ledger_status_at_remove=ledger_status_at_remove,
+            source_repo=source_repo,
             dispatch_id=dispatch_id,
             thread_id=thread_id,
             branch=branch,

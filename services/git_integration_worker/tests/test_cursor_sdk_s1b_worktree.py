@@ -403,6 +403,49 @@ def test_ac_b_3_registry_register_emits(
     assert emitted[0]["source_repo"] == str(source_repo.resolve())
 
 
+def test_ac_b_2_worktree_removed_emit_carries_source_repo(
+    source_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-B-2: removal emit carries ``source_repo`` on all paths (unpin sample)."""
+    from services.git_integration_worker.cursor_sdk_branch_unpin import (
+        unpin_registered_lane_worktree,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        register_lane_worktree,
+    )
+
+    tip = _git("rev-parse", "HEAD", cwd=source_repo).stdout.strip()
+    branch = "cursor-sdk/lane-ac-b-2"
+    _git("branch", branch, tip, cwd=source_repo)
+    wt = source_repo.parent / "lane-ac-b-2"
+    wt.mkdir()
+    _git("worktree", "add", str(wt), branch, cwd=source_repo)
+    register_lane_worktree(
+        source_repo=source_repo,
+        thread_id="ac-b-2",
+        worktree_path=wt,
+        branch_name=branch,
+        branch_point=tip,
+    )
+    removed: list[dict] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_unpin."
+        "emit_sdk_lane_b_worktree_removed",
+        lambda **kwargs: removed.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_unpin."
+        "worktree_held_by_live_bridge",
+        lambda **kwargs: None,
+    )
+    result = unpin_registered_lane_worktree(repo=source_repo, branch_name=branch)
+    assert result.unpinned is True
+    assert removed
+    assert removed[0]["source_repo"] == str(source_repo.resolve())
+    assert removed[0]["trigger"] == "unpin"
+
+
 _LEGACY_LANE_DDL = """
 CREATE TABLE cursor_sdk_lane_worktrees (
     thread_id TEXT PRIMARY KEY,

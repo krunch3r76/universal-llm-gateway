@@ -186,6 +186,7 @@ def unpin_registered_lane_worktree(
             worktree_path=str(registered),
             trigger="unpin",
             ledger_status_at_remove=ledger_status,
+            source_repo=str(root),
             dispatch_id=record.last_dispatch_id,
             thread_id=record.thread_id or None,
             branch=branch_name,

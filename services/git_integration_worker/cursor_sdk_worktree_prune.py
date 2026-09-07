@@ -298,6 +298,7 @@ def prune_dispatch_worktree(
                 worktree_path=str(wt_path.resolve()),
                 trigger=remove_trigger,
                 ledger_status_at_remove=ledger_status,
+                source_repo=str(repo),
                 dispatch_id=dispatch_id,
                 thread_id=thread_id,
                 branch=branch,
