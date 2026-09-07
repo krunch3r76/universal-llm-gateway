@@ -283,14 +283,39 @@ def sweep_unowned_bridges(
     return BridgeSweepResult(scanned=scanned, killed=killed, kill_failed=kill_failed)
 
 
-def shutdown_active_bridges() -> int:
+def active_bridge_dispatch_ids() -> list[str]:
+    """Return dispatch ids with a live in-process bridge client registry entry."""
+    with _lock:
+        return list(_active_clients.keys())
+
+
+def active_bridge_count() -> int:
+    """Count in-process bridge clients registered for this worker process."""
+    with _lock:
+        return len(_active_clients)
+
+
+def has_active_bridge_registry() -> bool:
+    """True when at least one dispatch still owns an in-process bridge client."""
+    return active_bridge_count() > 0
+
+
+def shutdown_active_bridges(*, defer: bool = False) -> int:
     """Hard-close every in-process bridge client registered for this worker process.
 
-    Invoked from the worker lifespan shutdown hook before drain; reuses
-    ``abort_orphaned_bridge`` for each active dispatch id.
+    When ``defer`` is true and the registry is non-empty, return 0 without
+    closing — used when lifespan shutdown must wait for in-flight dispatches
+    to finish before SIGTERM tears down bridges (agent-bus:10269).
     """
     with _lock:
         items = list(_active_clients.items())
+    if defer and items:
+        logger.warning(
+            "shutdown_active_bridges deferred: active_bridge_count=%d ids=%s",
+            len(items),
+            [dispatch_id for dispatch_id, _ in items],
+        )
+        return 0
     aborted = 0
     for dispatch_id, client in items:
         if abort_orphaned_bridge(dispatch_id=dispatch_id, client=client):

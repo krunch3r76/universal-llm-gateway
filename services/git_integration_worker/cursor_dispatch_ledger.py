@@ -2098,7 +2098,17 @@ class CursorDispatchLedger:
         reconciler view of survivors.
         """
         live = [op["op_id"] for op in self.live_dispatch_projections()]
-        return {"running": len(live), "dispatch_ids": live}
+        from services.git_integration_worker.cursor_sdk_orphan import (
+            active_bridge_dispatch_ids,
+        )
+
+        bridge_ids = active_bridge_dispatch_ids()
+        return {
+            "running": len(live),
+            "dispatch_ids": live,
+            "active_bridges": len(bridge_ids),
+            "active_bridge_dispatch_ids": bridge_ids,
+        }
 
     def live_dispatch_projections(self) -> list[dict[str, Any]]:
         """Human-readable live cursor-sdk ops for busy / active-work probes.

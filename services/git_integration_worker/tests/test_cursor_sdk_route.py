@@ -3790,3 +3790,122 @@ def test_abort_forensics_includes_bridge_death_class() -> None:
     assert merged["bridge_death_class"] == "spawn_enoent_missing_cwd"
     assert bridge_exit_snapshot(None) == {}
 
+
+@pytest.mark.asyncio
+async def test_bridge_abort_partial_closeout_after_tool_activity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """10269 class: bridge death after tool calls emits PARTIAL + sidecar, not silent FAILED."""
+    from services.git_integration_worker.routes.cursor_sdk import SdkRunAbortedError
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    req = CursorDispatchRequest(
+        thread_id="10269",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-bridge-partial",
+        execution_id="exec-bridge-partial",
+        message="---\ncontract: none\n---\nwork",
+        handoff_contract="none",
+    )
+    bus = _mock_bus()
+    forensics = {
+        "cause": "ReadTimeout: bridge read timed out",
+        "elapsed_s": 779.0,
+        "stream_tool_call_count": 52,
+        "last_tool_calls": [{"tool_name": "fs", "status": "completed"}],
+        "state_root": "/tmp/bridge-state",
+    }
+
+    def _abort(**_kwargs: object) -> SdkRunOutcome:
+        raise SdkRunAbortedError("bridge read timeout", forensics=forensics)
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _abort)
+    monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", AsyncMock())
+    failed_events: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        route_mod,
+        "emit_sdk_worker_failed",
+        lambda **kwargs: failed_events.append(dict(kwargs)),
+    )
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
+        bus=bus,
+        controller=_make_controller(),
+    )
+
+    bus.reply.assert_awaited()
+    subject = bus.reply.await_args.kwargs.get("subject") or bus.reply.await_args.args[3]
+    assert "PARTIAL" in subject
+    assert "52 tool calls" in subject
+    body = bus.reply.await_args.kwargs.get("body") or bus.reply.await_args.args[4]
+    assert "resume_of" in body
+    assert "sidecar_ref" in body
+    sidecar_path = source_repo / "tmp/reviews/closeouts/disp-bridge-partial.md"
+    assert sidecar_path.is_file()
+    sidecar_text = sidecar_path.read_text(encoding="utf-8")
+    assert "status: partial" in sidecar_text
+    assert "resume_of: disp-bridge-partial" in sidecar_text
+    assert "stream_tool_call_count: 52" in sidecar_text
+    assert failed_events
+    assert failed_events[0]["worker_error_code"] == "CURSOR_SDK_BRIDGE_ABORT"
+
+
+@pytest.mark.asyncio
+async def test_bridge_abort_zero_tools_stays_failed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pre-arm bridge death with no tool work remains FAILED (not partial)."""
+    from services.git_integration_worker.routes.cursor_sdk import SdkRunAbortedError
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    req = CursorDispatchRequest(
+        thread_id="10269-zero",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-bridge-failed",
+        execution_id="exec-bridge-failed",
+        message="hello",
+    )
+    bus = _mock_bus()
+
+    def _abort(**_kwargs: object) -> SdkRunOutcome:
+        raise SdkRunAbortedError(
+            "bridge refused",
+            forensics={"stream_tool_call_count": 0, "cause": "ConnectError"},
+        )
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _abort)
+    monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", AsyncMock())
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
+        bus=bus,
+        controller=_make_controller(),
+    )
+
+    subject = bus.reply.await_args.kwargs.get("subject") or bus.reply.await_args.args[3]
+    assert "FAILED" in subject
+    assert "PARTIAL" not in subject
+    sidecar_path = source_repo / "tmp/reviews/closeouts/disp-bridge-failed.md"
+    assert not sidecar_path.exists()
+

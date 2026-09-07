@@ -50,7 +50,10 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 from services.git_integration_worker.cursor_sdk_events import (
     register_cursor_sdk_event_publisher,
 )
-from services.git_integration_worker.cursor_sdk_orphan import shutdown_active_bridges
+from services.git_integration_worker.cursor_sdk_orphan import (
+    active_bridge_count,
+    shutdown_active_bridges,
+)
 from services.git_integration_worker.events import publish_lib_signal
 from services.git_integration_worker.fault_dump import arm_stack_dumps
 from services.git_integration_worker.git_worker_drain_events import (
@@ -191,7 +194,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         app.state.shutting_down = True
         clear_tool_op_invoker()
-        shutdown_active_bridges()
         await shutdown_auto_jobs(app)
         for attr in (
             "startup_persistence_task",
@@ -225,9 +227,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if not drained:
             logger.warning(
                 "git-integration-worker lifespan drain timed out after %.1fs "
-                "with %d op(s) still in flight",
+                "with %d op(s) still in flight active_bridges=%d",
                 _DRAIN_LIFESPAN_TIMEOUT_S,
                 controller.active_count(),
+                active_bridge_count(),
+            )
+        # Bridge teardown AFTER drain wait — never SIGTERM mid-judgment while
+        # operator dispatches still hold registry entries (10269 / friction 23057).
+        bridges_aborted = shutdown_active_bridges()
+        if bridges_aborted:
+            logger.warning(
+                "lifespan shutdown aborted %d active bridge(s) after drain wait",
+                bridges_aborted,
             )
         logger.info(
             "git-integration-worker stopped after %.1fs",

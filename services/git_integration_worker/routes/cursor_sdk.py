@@ -58,6 +58,11 @@ from services.git_integration_worker.cursor_sdk_association import (
 from services.git_integration_worker.cursor_sdk_bridge_launch import (
     launch_sdk_bridge,
 )
+from services.git_integration_worker.cursor_sdk_bridge_read_idle import (
+    BRIDGE_READ_IDLE_MARGIN_S,
+    bridge_read_timeout_for_idle,
+    touch_bridge_read_deadline,
+)
 from services.git_integration_worker.cursor_sdk_bridge_stderr import (
     bridge_exit_snapshot,
     start_bridge_stderr_drain,
@@ -118,6 +123,7 @@ from services.git_integration_worker.cursor_sdk_deliverable_truth import (
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
+    write_repo_sidecar,
 )
 from services.git_integration_worker.cursor_sdk_deliverables_expected import (
     compute_deliverables_expected,
@@ -324,11 +330,12 @@ def _sdk_client_read_timeout() -> float | None:
     connected bridge would hold the slot forever and brick the dispatch
     lane. Outer idle budget < read idle is preserved by the +60 margin.
     Set CURSOR_SDK_CLIENT_READ_TIMEOUT to override (<=0 for unbounded — not
-    recommended).
+    recommended). ``touch_bridge_read_deadline`` re-arms from each completed
+    tool call so the read clock tracks progress, not wall-from-start.
     """
     raw = os.environ.get("CURSOR_SDK_CLIENT_READ_TIMEOUT", "").strip()
     if not raw:
-        return _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S + 60.0
+        return bridge_read_timeout_for_idle(idle_budget_s=_SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S)
     value = float(raw)
     return value if value > 0 else None
 
@@ -924,6 +931,16 @@ def _run_sdk_sync(
         )
         if live_counter is None:
             live_counter = _LiveToolCallCounter()
+        outer_idle_s = _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S
+
+        def _on_tool_call(observation: object = None) -> None:
+            live_counter.bump(observation)
+            touch_bridge_read_deadline(
+                client,
+                idle_budget_s=outer_idle_s,
+                margin_s=BRIDGE_READ_IDLE_MARGIN_S,
+            )
+
         hb_thread, hb_stop = _start_heartbeat(
             dispatch_id=ctx.dispatch_id,
             thread_id=ctx.thread_id,
@@ -995,7 +1012,7 @@ def _run_sdk_sync(
                 thread_id=ctx.thread_id,
                 resolved_model=resolved_model,
                 execution_id=execution_id,
-                on_tool_call=live_counter.bump,
+                on_tool_call=_on_tool_call,
             )
             result = run.wait()
             usage_record = finalize_dispatch_usage(
@@ -2100,6 +2117,18 @@ async def _run_sdk_dispatch_gated(
         # with zero delivery (the orphaned-dispatch failure mode). Finalize on
         # ANY worker outcome so there is no silent path.
         logger.exception("cursor sdk dispatch failed: dispatch_id=%s", req.dispatch_id)
+        if isinstance(exc, SdkRunAbortedError):
+            tool_call_count = int(exc.forensics.get("stream_tool_call_count") or 0)
+            if tool_call_count > 0:
+                await _finalize_bridge_abort_partial(
+                    req=req,
+                    bus=bus,
+                    reply_to=reply_to,
+                    controller=controller,
+                    exc=exc,
+                    source_repo=ctx.hub,
+                )
+                return
         forensics = getattr(exc, "forensics", None)
         await _finalize_failed(
             req=req,
@@ -2147,6 +2176,98 @@ async def _run_sdk_dispatch_gated(
                 "recovery": "full Composer result persisted in sidecar; re-deliver from sidecar",
             },
         )
+
+
+def _format_bridge_abort_sidecar(
+    *,
+    dispatch_id: str,
+    forensics: dict[str, Any],
+    tool_call_count: int,
+) -> str:
+    """Sidecar body for a bridge-death partial with resume hint."""
+    lines = [
+        "status: partial",
+        "degraded_reason: bridge_read_timeout",
+        f"resume_of: {dispatch_id}",
+        f"stream_tool_call_count: {tool_call_count}",
+        f"sidecar_ref: {sidecar_workspaces_ref(dispatch_id)}",
+        "",
+        "## forensics",
+        "```json",
+        json.dumps(forensics, indent=2),
+        "```",
+    ]
+    return "\n".join(lines)
+
+
+async def _finalize_bridge_abort_partial(
+    *,
+    req: CursorDispatchRequest,
+    bus: CursorBusClient,
+    reply_to: str,
+    controller: WorkAdmissionController,
+    exc: SdkRunAbortedError,
+    source_repo: Path,
+) -> None:
+    """Partial terminal when bridge dies after substantive tool work (10269 class)."""
+    forensics = exc.forensics
+    tool_call_count = int(forensics.get("stream_tool_call_count") or 0)
+    sidecar_ref = sidecar_workspaces_ref(req.dispatch_id)
+    sidecar_body = _format_bridge_abort_sidecar(
+        dispatch_id=req.dispatch_id,
+        forensics=forensics,
+        tool_call_count=tool_call_count,
+    )
+    await asyncio.to_thread(
+        write_repo_sidecar, source_repo, req.dispatch_id, sidecar_body
+    )
+    degraded_reasons = degraded_reasons_from_exception(exc)
+    emit_sdk_worker_failed(
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+        execution_id=req.execution_id,
+        error=f"{type(exc).__name__}: {exc}",
+        worker_error_code="CURSOR_SDK_BRIDGE_ABORT",
+        degraded_reasons=list(degraded_reasons) if degraded_reasons else None,
+    )
+    env_data: dict[str, Any] = {
+        "status": "partial",
+        "sidecar_ref": sidecar_ref,
+        "resume_of": req.dispatch_id,
+        "stream_tool_call_count": tool_call_count,
+        "forensics": forensics,
+    }
+    if degraded_reasons:
+        env_data["degraded_reasons"] = list(degraded_reasons)
+    env = error_envelope(
+        code="CURSOR_SDK_BRIDGE_ABORT",
+        message=str(exc),
+        source="gateway",
+        retryable=True,
+        data=env_data,
+    )
+    await bus.reply(
+        thread_id=req.thread_id,
+        to_agent=reply_to,
+        from_agent="cursor-sdk",
+        subject=(
+            f"cursor-sdk dispatch {req.dispatch_id} PARTIAL "
+            f"(bridge abort after {tool_call_count} tool calls)"
+        ),
+        body=f"```json\n{json.dumps(env, indent=2)}\n```",
+    )
+    await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
+    await _mark_terminal_and_promote(
+        dispatch_id=req.dispatch_id,
+        terminal_status="failed",
+        controller=controller,
+        emit_tag="CURSOR_SDK_BRIDGE_ABORT",
+    )
 
 
 async def _finalize_failed(
