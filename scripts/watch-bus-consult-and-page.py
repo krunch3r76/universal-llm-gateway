@@ -17,6 +17,8 @@ import argparse
 import json
 import os
 import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -24,6 +26,7 @@ from urllib.parse import urlencode
 import httpx
 import yaml
 from bus_watch.poll import DEFAULT_MAX_HOURS, DEFAULT_WAIT_SLICE_S, sliced_wait_loop
+from bus_watch.producer_grace import ProducerGrace
 from bus_watch.stall_pop import emit_stall_pop, should_emit_stall_pop
 from bus_watch.stall_predicate import stall_predicate
 from bus_watch.state import write_state
@@ -35,6 +38,7 @@ _EMAIL_BRIDGE_SOCK = os.environ.get(
 )
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
 _DEFAULT_COMPLETION = "proof_reply_from"
+_DEFAULT_PRODUCER_GRACE_SECONDS = 900.0
 _BUS_TRANSPORT_ERRORS = (httpx.TransportError, httpx.TimeoutException)
 
 
@@ -63,6 +67,7 @@ def _wait_reply(
     from_agent: str,
     wait_s: int,
     completion: str = _DEFAULT_COMPLETION,
+    execution_id: str = "",
 ) -> dict[str, Any]:
     params = {
         "after_turn": after_turn,
@@ -70,6 +75,8 @@ def _wait_reply(
         "completion": completion,
         "from_agent": from_agent,
     }
+    if execution_id:
+        params["execution_id"] = execution_id
     resp = client.get(f"http://localhost/threads/{thread_id}/wait?{urlencode(params)}")
     resp.raise_for_status()
     return resp.json()
@@ -201,13 +208,32 @@ def main() -> int:
         default="",
         help="durable JSON status path (supervise sets this)",
     )
+    parser.add_argument(
+        "--execution-id",
+        default="",
+        help="cdp-generate execution_id to pin producer projection (from team_dispatch payload)",
+    )
+    parser.add_argument(
+        "--producer-grace-seconds",
+        type=float,
+        default=_DEFAULT_PRODUCER_GRACE_SECONDS,
+        help=(
+            "wall-clock grace while producer.state=in_flight before predicate_unmet pop "
+            f"(default {_DEFAULT_PRODUCER_GRACE_SECONDS:g})"
+        ),
+    )
     args = parser.parse_args()
 
     thread_id = str(args.thread).strip()
     from_agent = str(args.from_agent).strip()
+    execution_id = str(args.execution_id).strip()
     state_path = Path(args.state_file) if str(args.state_file).strip() else None
     token = _token()
     slice_s = max(1.0, float(args.wait_slice_seconds))
+    producer_grace = ProducerGrace(
+        grace_seconds=float(args.producer_grace_seconds),
+        now_fn=time.monotonic,
+    )
     scoreboard_body = _load_scoreboard_body(str(args.scoreboard_uri))
     closeout_body = ""
     if str(args.closeout_body_file).strip():
@@ -218,7 +244,8 @@ def main() -> int:
     print(
         f"watching thread={thread_id} after_turn={args.after_turn} "
         f"from_agent={from_agent!r} label={args.label!r} "
-        f"wait_slice_s={slice_s:g} max_hours={args.max_hours:g}",
+        f"wait_slice_s={slice_s:g} max_hours={args.max_hours:g}"
+        f"{f' execution_id={execution_id!r}' if execution_id else ''}",
         flush=True,
     )
     if state_path is not None:
@@ -235,6 +262,7 @@ def main() -> int:
     predicate_unmet_slices = 0
     last_turn_count: int | None = None
     last_stall_reason: str | None = None
+    unlinked_warned = False
 
     def wait_once(wait_s: int) -> dict[str, Any]:
         return _wait_reply(
@@ -243,6 +271,7 @@ def main() -> int:
             after_turn=args.after_turn,
             from_agent=from_agent,
             wait_s=wait_s,
+            execution_id=execution_id,
         )
 
     def on_transport(exc: BaseException) -> None:
@@ -255,10 +284,11 @@ def main() -> int:
         client = _bus_client(token, timeout_s=slice_s)
 
     def on_incomplete(snap: dict[str, Any]) -> None:
-        nonlocal predicate_unmet_slices, last_turn_count, last_stall_reason
+        nonlocal predicate_unmet_slices, last_turn_count, last_stall_reason, unlinked_warned
         status = snap.get("status")
         turn_count = snap.get("turn_count")
         thread_status = snap.get("thread_status")
+        producer = snap.get("producer") or {}
         turn_count_i: int | None
         if isinstance(turn_count, int):
             turn_count_i = turn_count
@@ -267,6 +297,15 @@ def main() -> int:
                 turn_count_i = int(turn_count) if turn_count is not None else None
             except (TypeError, ValueError):
                 turn_count_i = None
+
+        if execution_id and producer.get("state") == "unlinked" and not unlinked_warned:
+            print(
+                f"watch-bus-consult: mis-arm — execution_id={execution_id!r} "
+                f"has no dispatch link on thread {thread_id}",
+                file=sys.stderr,
+                flush=True,
+            )
+            unlinked_warned = True
 
         if status == "predicate_unmet":
             if turn_count_i is not None and turn_count_i == last_turn_count:
@@ -284,8 +323,8 @@ def main() -> int:
                 f"… waiting ({thread_status}, turns={turn_count})",
                 flush=True,
             )
-        last_turn_count = turn_count_i
 
+        grace_expired = producer_grace.observe(producer, turn_count_i or 0)
         should_pop, reason = stall_predicate(
             thread_snapshot=snap,
             thread_id=thread_id,
@@ -294,7 +333,10 @@ def main() -> int:
             wait_slice_s=slice_s,
             predicate_unmet_slices=predicate_unmet_slices,
             last_turn_count=last_turn_count,
+            producer=producer,
+            producer_grace_expired=grace_expired,
         )
+        last_turn_count = turn_count_i
         if should_pop and reason:
             emit, next_reason = should_emit_stall_pop(
                 last_reason=last_stall_reason,

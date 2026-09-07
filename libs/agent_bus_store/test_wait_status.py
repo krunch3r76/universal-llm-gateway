@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agent_bus_store.producer_projection import classify_producer_link
 from agent_bus_store.turns_models import ThreadStatus
 from agent_bus_store.wait_status import (
     build_suggested_next,
@@ -401,3 +402,76 @@ def test_non_cdp_generate_failed_link_stays_predicate_unmet():
         )
         == "predicate_unmet"
     )
+
+
+def test_classify_producer_link_unknown_without_execution_id() -> None:
+    assert classify_producer_link(execution_id=None, dispatch_links=[]) == {
+        "execution_id": None,
+        "pipeline_id": None,
+        "state": "unknown",
+        "terminal_status": None,
+        "linked_at": None,
+        "delivery_at": None,
+        "source": "thread_dispatch_links",
+    }
+
+
+def test_classify_producer_link_unlinked_when_row_missing() -> None:
+    assert classify_producer_link(
+        execution_id="exec-missing",
+        dispatch_links=[
+            {
+                "execution_id": "exec-other",
+                "pipeline_id": "cdp-generate",
+                "linked_at": "2026-09-07T05:41:20Z",
+                "terminal_status": None,
+                "delivery_at": None,
+            }
+        ],
+    ) == {
+        "execution_id": "exec-missing",
+        "pipeline_id": None,
+        "state": "unlinked",
+        "terminal_status": None,
+        "linked_at": None,
+        "delivery_at": None,
+        "source": "thread_dispatch_links",
+    }
+
+
+def test_classify_producer_link_in_flight_from_gate0_payload() -> None:
+    """Gate-0 captured row: agent-bus:10142 cdp-generate admit."""
+    row = {
+        "execution_id": "d6a93d64-18a9-4779-8238-89d6af49e415",
+        "pipeline_id": "cdp-generate",
+        "linked_at": "2026-09-07T05:41:20Z",
+        "terminal_status": None,
+        "delivery_at": None,
+    }
+    assert classify_producer_link(
+        execution_id="d6a93d64-18a9-4779-8238-89d6af49e415",
+        dispatch_links=[row],
+    ) == {
+        "execution_id": "d6a93d64-18a9-4779-8238-89d6af49e415",
+        "pipeline_id": "cdp-generate",
+        "state": "in_flight",
+        "terminal_status": None,
+        "linked_at": "2026-09-07T05:41:20Z",
+        "delivery_at": None,
+        "source": "thread_dispatch_links",
+    }
+
+
+def test_classify_producer_link_terminal() -> None:
+    assert classify_producer_link(
+        execution_id="exec-done",
+        dispatch_links=[
+            {
+                "execution_id": "exec-done",
+                "pipeline_id": "cdp-generate",
+                "linked_at": "2026-09-07T05:41:20Z",
+                "terminal_status": "failed",
+                "delivery_at": "2026-09-07T06:00:00Z",
+            }
+        ],
+    )["state"] == "terminal"

@@ -18,13 +18,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
 
 from ..auth import require_token
-from ..db import get_thread, get_thread_turns_asc, get_thread_with_links, normalize_thread_id
+from ..db import (
+    get_thread,
+    get_thread_turns_asc,
+    get_thread_with_links,
+    normalize_thread_id,
+)
 from ..wait_status import (
     DEAD_WAIT_DETAIL,
     DEAD_WAIT_ERROR,
     STATUS_COMPLETION_MODES,
     Completion,
     build_suggested_next,
+    classify_producer_link,
     derive_status,
     is_complete,
     is_dead_wait_no_auto_producer,
@@ -99,10 +105,15 @@ def _snapshot(
         after_turn=after_turn,
         turns=turns,
     )
+    producer = classify_producer_link(
+        execution_id=execution_id,
+        dispatch_links=dispatch_links,
+    )
     return {
         "thread_id": thread_id,
         "complete": complete,
         "status": wait_status,
+        "producer": producer,
         "suggested_next": suggested,
         # push_required is never asserted under C (no observable push signal).
         # The field is retained at constant False for forward-compat with a

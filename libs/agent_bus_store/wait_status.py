@@ -37,7 +37,26 @@ from chat_harvest.chrome import (
 
 from .close_on_read import CLOSE_ON_READ_TAG
 from .disposition import first_line_is_disposition_type, resolve_bus_lifecycle
+from .producer_projection import classify_producer_link
 from .turns_models import ThreadStatus
+
+__all__ = [
+    "Completion",
+    "CompletionMode",
+    "DEAD_WAIT_DETAIL",
+    "DEAD_WAIT_ERROR",
+    "STATUS_COMPLETION_MODES",
+    "WaitStatus",
+    "build_suggested_next",
+    "classify_producer_link",
+    "derive_status",
+    "is_complete",
+    "is_dead_wait_no_auto_producer",
+    "is_disposition_one_correction",
+    "qualifying_proof_reply",
+    "qualifying_reply",
+    "qualifying_status_turn",
+]
 
 WaitStatus = Literal["no_new_turn", "predicate_unmet", "complete", "producer_terminal"]
 
