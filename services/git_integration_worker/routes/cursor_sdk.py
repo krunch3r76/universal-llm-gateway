@@ -172,12 +172,6 @@ from services.git_integration_worker.cursor_sdk_lane_select import (
     select_lane,
     wire_lane_explicit,
 )
-from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
-    extract_instructed_paths,
-    first_landed_fs_uri,
-    fs_write_landed,
-    residual_deliverable_present,
-)
 from services.git_integration_worker.cursor_sdk_manifest import (
     build_effects_manifest,
     classify_mcp_capture_branch,
@@ -212,6 +206,12 @@ from services.git_integration_worker.cursor_sdk_park import (
     release_or_restore_for_child,
     release_or_restore_for_child_sync,
     transfer_capacity_after_park,
+)
+from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
+    extract_instructed_paths,
+    first_landed_fs_uri,
+    fs_write_landed,
+    residual_deliverable_present,
 )
 from services.git_integration_worker.cursor_sdk_restart_orphan import (
     emit_restart_survivor_terminal,
