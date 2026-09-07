@@ -8,14 +8,57 @@ description: "On friction triage, feature-request vs todo classify, or investiga
 Friction rows are **assertions** on an allowed friction-owner entity (`service:`/`agent_skill:`/`ai_agent:`) with claims like `[tool_error] …`.
 They record tool/schema/boot/protocol gaps (F5 funnel) **and** feature asks (`category=feature`).
 
-**Critical split:** `friction()` = **observation log**. A fix cycle = **codified bug ticket**
-via the investigate→execute lifecycle; once the investigate close distills attributes, the
-execute default is server materialization via
+**Critical split:** `friction()` = **informing observation log** (see § Informing frictions).
+A fix cycle = **codified bug ticket** via the investigate→execute lifecycle; once the
+investigate close distills attributes, the execute default is server materialization via
 `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug})` —
 `cursor-implement` / `web-implement` + `packet_path` are the named fallback. Operator says
 "dispatch / address / fix the friction" → open the ticket; do not stop at logging.
 
+**Todo is not default.** Per specimen: `friction()` (+ runbook/assert pin when SoT-owned) →
+**stop**. `todo:` only on operator commission or consolidation triage when same-class
+frictions accumulate (§ Accumulate then consolidate). ¬ mint a follow-on todo because the
+gap is actionable or memorable.
+
 Full transport matrix: Use the `consult-routing` skill § Codified bug reports.
+
+## Informing frictions (binding)
+
+A friction row must leave the **next seat** smarter than a one-line symptom. The filing
+seat's job is brief analysis, not just logging that something broke.
+
+**Minimum body** (in `note` / claim text; `suggestion` for fix hints):
+
+| Block | Content |
+|---|---|
+| **Surfaces** | Paths, skills, runbooks, MCP ops, bus params that matter (`poll_hint.after_turn`, scripts, rules) |
+| **Symptom** | What the operator/seat observed (timing, false signal, wrong turn) |
+| **Mechanism** | Why it misfired — defaults, missing gate, wrong script family, doc/runbook vs code drift |
+| **Class / cluster** | Same-pattern friction ids (`a:32401`) or owner; subsume, don't fork parallel narratives |
+| **SoT pin** | When procedure-owned: `assert` on `runbook:*` (or spec/decision) with specimen + falsifier candidate |
+
+`evidence_uris`: thread/turn, closeout sidecar, script path, runbook URI.
+
+**Anti-pattern:** `[regression] watcher broke` with no surfaces — unusable for triage or
+consolidation. **Anti-pattern:** friction → immediate `entity_create(todo:…)` on every specimen.
+
+Doctrine: operator bind 2026-09-06 (friction-informing · accumulate-not-mint); incident
+agent-bus:10143 / a:32463.
+
+## Accumulate then consolidate
+
+| Stage | Action |
+|---|---|
+| **Per specimen** | Informing `friction()` on owner skill/service + runbook/assert pin when SoT-owned |
+| **Accumulate** | Same class on same owner stays in the friction log; link cluster in claim + runbook assert |
+| **Triage** | `frictions` / `assertions` on owner — count open same-class rows |
+| **Commission** | Operator "fix the watcher class" **or** triage decides density → **one** todo |
+| **Mint** | S0 lookup for open todo on that class → extend/re-admit; ¬ `todo:friction-{id}` per row |
+| **Close** | `spawned_by_friction` on primary; `friction_close` siblings at land with shared evidence |
+
+Charter `reconcile_charter_frictions` auto-enqueue is **not** permission to mint from the
+IDE seat on every `actionable=true` row — default specimen filing uses `actionable=false` +
+`defer_enqueue=true` unless the operator commissioned work this turn.
 
 ## Classify before park (feature vs todo vs residual)
 
@@ -37,8 +80,8 @@ memorable; seed when work is commissioned.
 
 | Operator input | `friction()`? | `todo:`? | Then |
 |---|---|---|---|
-| "Report this as a friction" **and** it names a tool/schema/boot/protocol gap | Yes — log first | Yes if actionable — cite the friction assertion as context | Mint via `work-item-seed-path` (`/work-item-seed friction a:{id}`) when no todo yet → then spawn conductor; existing todo → re-admit |
-| "This broke / is wrong / fix this" (defect, clear fix) | Yes if not already logged and it fits a category | Yes — fix-cycle `todo:` unless one exists | Same mint path if no todo; else investigate→execute below |
+| "Report this as a friction" **and** it names a tool/schema/boot/protocol gap | Yes — informing log + SoT assert if runbook-owned | **No** unless commissioned | Stop; triage cluster later |
+| "This broke / is wrong / fix this" (defect, clear fix) | Yes — informing log | Yes — **only** on explicit fix commission | Consolidate: existing open todo on class → re-admit; else `/work-item-seed` once for the class |
 | "Feature request: add X" / "file this as a feature" — no defect, design may be open | Yes — `category=feature` | **No** unless the operator commissions work | Reopen via `frictions(category=feature)`. Identity-punch only on commission; architecture-open ⇒ Mode B (Fable-before-S4b) |
 | "Maybe this is a friction" / ambiguous root cause | Yes only if symptom maps to a category | Yes only if there is an actionable change | Prefer investigate; ask only if it changes the next action; mint via seed path when actionable |
 | Pure observation of a real tool/protocol gap, no requested change | Yes — records the gap | No unless a fix is asked for or nameable | None |
@@ -252,9 +295,23 @@ Valid `resolution_kind`: `agent_skill:{slug}`, `workflow:{slug}`, `todo:{slug}`,
 
 ## Log new friction (observation only)
 
+Use the **Informing frictions** block template (§ above). Default `actionable=false` +
+`defer_enqueue=true` on specimen filing unless the operator commissioned fix work this turn.
+
 ```
-cortex(tool="friction", arguments='{"service": "mcp-server", "category": "tool_error", "note": "...", "agent": "web-anthropic"}')
+cortex(tool="friction", arguments='{
+  "owner": "agent_skill:agent-bus-discipline",
+  "category": "regression",
+  "note": "Surfaces: … | Symptom: … | Mechanism: … | Class: a:…",
+  "suggestion": "…",
+  "actionable": false,
+  "defer_enqueue": true,
+  "actionable_false_reason": "specimen log — accumulate; todo only on commission/consolidation",
+  "evidence_uris": ["agent-bus:…", "runbook:bus-consult-watcher"]
+}')
 ```
+
+When runbook-owned: also `assert` on `runbook:bus-consult-watcher` with specimen + falsifier.
 
 Categories: `tool_error`, `tool_mismatch`, `tool_absent`, `schema_gap`, `boot_drift`,
 `lesson_gap`, `lesson_conflict`, `stale_context`, `doc_drift`, `protocol`,

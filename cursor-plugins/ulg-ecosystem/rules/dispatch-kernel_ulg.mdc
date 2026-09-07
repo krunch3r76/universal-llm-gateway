@@ -56,6 +56,18 @@ Binder order: `cdp/opus-5` (non-Anthropic producer) → **`cdp/fable`** (produce
   when it matters) — it is not a judgment call this seat gets to make unasked, even for a "just an effort knob"
   substitution (incident: `agent-bus:9638`, Fable Max → High swap, 2026-09-01).
 
+## Runbook binding
+
+**Invariant:** `cite(runbook:<id>) ⇒ load(cited_section*) ∧ execute(seat-bound_steps)` before turn end.
+Resident on IDE and cursor-sdk — unified hook when skills/rules only name the SoT.
+
+When a rule, skill, packet, or script names `runbook:<id>` (or `cortex://notes/runbooks/<slug>.md`):
+1. **Resolve + read** — fetch SoT (`fs` / `cortex`); partial cite (`§N`, "arm recipe") ⇒ that section only, in this turn.
+2. **Execute** — every step binding this seat; skip human-only legs on headless seats.
+3. **¬** cite-from-memory, partial arm, or claim armed/done before the read + bound steps.
+
+Skills/rules say *when*; runbook body owns *how*. Citing without load/execute = liaison failure (arm-without-relay class).
+
 ## Front door
 
 ```
