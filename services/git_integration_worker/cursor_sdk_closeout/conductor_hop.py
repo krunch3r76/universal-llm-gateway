@@ -492,7 +492,10 @@ def build_hop_team_dispatch_body(
             scoreboard_body
         )
     summoning_thread_id = str(rec.get("summoning_thread_id") or "").strip()
-    dispatch_thread_id = summoning_thread_id or thread_id
+    if summoning_thread_id:
+        generation_options["summoning_thread_id"] = summoning_thread_id
+    else:
+        generation_options["summoning_thread_id_unresolved"] = True
     routing_model = rec.get("model") or row.get("resolved_model")
     contract = (
         rec.get("contract")
@@ -505,13 +508,14 @@ def build_hop_team_dispatch_body(
         "contract": str(contract),
         "lane": rec.get("lane") or "B",
         "caller_agent": "conductor-hop",
-        "dispatch_thread_id": dispatch_thread_id,
         "reuse_thread": thread_id,
         "source_ref": source_ref,
         "packet_kind": "conductor",
         "model": routing_model,
         "generation_options": generation_options,
     }
+    if summoning_thread_id:
+        body["dispatch_thread_id"] = summoning_thread_id
     if rec.get("model_knobs"):
         body["model_knobs"] = rec.get("model_knobs")
     body["hop_from"] = predecessor_id

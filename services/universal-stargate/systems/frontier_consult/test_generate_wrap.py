@@ -292,3 +292,48 @@ def test_prepare_implement_packet_noops_for_task_front_matter_source_ref(
     assert result.packet_path == packet_path
     assert result.materialized is False
     assert result.gated is False
+
+
+@pytest.mark.offline
+def test_ac_p1_5_prepare_conductor_packet_rematerialize_roundtrip(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """AC-P1-5 — prepare_conductor_packet forwards RematerializeContext to materialize."""
+    from implement_admission.conductor_materialize import RematerializeContext
+
+    captured: dict[str, object] = {}
+
+    def _bridge(source_ref: str, **kwargs: object) -> BridgeResult:
+        captured.update(kwargs)
+        return BridgeResult(
+            gated=False,
+            packet_path="tmp/reviews/conductor-hop.md",
+            packet_sha256="abc",
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.generate_wrap.resolve_source_ref_to_packet",
+        _bridge,
+    )
+    rematerialize = RematerializeContext(
+        hop_seq=2,
+        predecessor_dispatch_id="pred-1",
+        scoreboard_tip_sha="deadbeef",
+        scoreboard_entry_gate="G2",
+        summoning_thread_id="9638",
+    )
+    from systems.frontier_consult.generate_wrap import prepare_conductor_packet
+
+    result = prepare_conductor_packet(
+        request_id="req-p1-5",
+        source_ref="todo:conductor-admit-integrity",
+        caller_agent="cursor",
+        cortex=MagicMock(),
+        workspaces_root=tmp_path,
+        summoning_thread_id="9638",
+        rematerialize=rematerialize,
+    )
+    assert result.materialized is True
+    assert captured.get("rematerialize") == rematerialize
+    assert captured.get("summoning_thread_id") == "9638"

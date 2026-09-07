@@ -467,6 +467,22 @@ def test_score_resurface_in_turns_respects_cutoff() -> None:
 
 
 @pytest.mark.offline
+def test_ac_p1_4_fold_deps_summoning_thread(tmp_path: Path) -> None:
+    """AC-P1-4 — fold_deps_for_admit carries predecessor summoning_thread_id."""
+    from implement_admission.conductor_witness_defaults import fold_deps_for_admit
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    deps = fold_deps_for_admit(
+        "todo:conductor-admit-integrity",
+        cortex=_StubCortex(),
+        repo=repo,
+        summoning_thread_id="10223",
+    )
+    assert deps.summoning_thread_id == "10223"
+
+
+@pytest.mark.offline
 def test_ac_p2_3_fold_missing_witnesses_stops(tmp_path: Path) -> None:
     """AC-P2-3 — fold missing_witnesses cites Stops; OPEN rows land in blocked_rows."""
     files_root = tmp_path / "cortex"

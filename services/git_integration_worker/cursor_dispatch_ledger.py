@@ -293,6 +293,23 @@ def _dispatch_record_json(req: CursorDispatchRequest) -> str:
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
+def resolve_conductor_summoning_thread_id(
+    *,
+    packet_summoning_thread_id: str | None,
+    explicit_summoning_thread_id: str | None = None,
+    worker_thread_id: str | None = None,
+) -> str | None:
+    """Resolve conductor ``summoning_thread_id`` — never substitute worker thread id."""
+    _ = worker_thread_id
+    explicit = str(explicit_summoning_thread_id or "").strip()
+    if explicit:
+        return explicit
+    packet = str(packet_summoning_thread_id or "").strip()
+    if packet:
+        return packet
+    return None
+
+
 def _subject_preview(record_json: str, packet_path: str | None = None) -> str | None:
     try:
         data = json.loads(record_json) if record_json else {}

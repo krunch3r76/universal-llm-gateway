@@ -36,6 +36,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     SourceRefConflict,
     WorkerThreadOccupied,
     WriteLeaseHeld,
+    resolve_conductor_summoning_thread_id,
 )
 from services.git_integration_worker.cursor_home import (
     CursorHomeConfigError,
@@ -2913,7 +2914,12 @@ async def cursor_dispatch(
         if summon_mode:
             conductor_patch["summon_mode"] = summon_mode
             conductor_patch["generation_options"] = {"summon_mode": summon_mode}
-        summoning_thread_id = extract_summoning_thread_id_from_packet(packet_text or "")
+        summoning_thread_id = resolve_conductor_summoning_thread_id(
+            packet_summoning_thread_id=extract_summoning_thread_id_from_packet(
+                packet_text or ""
+            ),
+            worker_thread_id=req.thread_id,
+        )
         if summoning_thread_id:
             conductor_patch["summoning_thread_id"] = summoning_thread_id
         ledger.merge_record_json(

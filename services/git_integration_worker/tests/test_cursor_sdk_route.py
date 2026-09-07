@@ -2149,6 +2149,44 @@ def test_conductor_composer_admits(
     assert body["model_id"] == "composer-2.5"
 
 
+@pytest.mark.offline
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_ac_p1_6_conductor_summoning_thread_from_packet_not_worker(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    """AC-P1-6 — ledger persists packet summoning_thread_id; never worker thread_id."""
+    worker_thread = "1558"
+    parent_thread = "9638"
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(
+            thread_id=worker_thread,
+            dispatch_id="disp-conductor-parent",
+            execution_id="exec-conductor-parent",
+            model="cursor/composer-2.5",
+            handoff_contract="none",
+            message=(
+                "---\npacket_kind: conductor\ncontract: conductor\n---\n"
+                "Use the conductor skill.\n"
+                f"summoning_thread_id: {parent_thread}\n"
+            ),
+        ),
+    )
+    assert resp.status_code == 200
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id='disp-conductor-parent'"
+        ).fetchone()
+    rec = json.loads(row["record_json"])
+    assert rec.get("summoning_thread_id") == parent_thread
+    assert rec.get("summoning_thread_id") != worker_thread
+
+
 @patch(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
