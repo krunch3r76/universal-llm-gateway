@@ -131,6 +131,14 @@ def _parse_closeout_json(body: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _is_sdk_closeout_turn(row: dict[str, Any]) -> bool:
+    """True only for machine CLOSEOUT — not CHECKPOINT / PARK / other cursor-sdk turns."""
+    subject = str(row.get("subject") or "")
+    if "cursor-sdk CLOSEOUT" in subject:
+        return True
+    return bool(_parse_closeout_json(str(row.get("body") or "")).get("schema_version"))
+
+
 def _arc_outcome_line(
     closeout: dict[str, Any],
     *,
@@ -423,6 +431,7 @@ def main() -> int:
             label=args.label,
         )
 
+    after_turn = int(args.after_turn)
     with _bus_client(token) as client:
         while True:
             elapsed_s = time.monotonic() - started_at
@@ -436,7 +445,7 @@ def main() -> int:
                 return 2
             print(
                 f"… heartbeat label={args.label} thread={thread_id} "
-                f"after_turn={args.after_turn} elapsed={elapsed_s:.0f}s",
+                f"after_turn={after_turn} elapsed={elapsed_s:.0f}s",
                 flush=True,
             )
             if from_agent == "cursor-sdk" and not _worker_completed(watch_id):
@@ -446,13 +455,29 @@ def main() -> int:
             snap = _wait_closeout(
                 client,
                 thread_id=thread_id,
-                after_turn=args.after_turn,
+                after_turn=after_turn,
                 from_agent=from_agent,
                 wait_s=slice_s,
             )
             if snap.get("complete"):
                 reply_turn = int(snap.get("qualifying_reply_turn") or 0)
                 closeout_row = _fetch_closeout_turn(client, thread_id, reply_turn)
+                if from_agent == "cursor-sdk" and not _is_sdk_closeout_turn(closeout_row):
+                    subject = str(closeout_row.get("subject") or "")
+                    print(
+                        f"… non-closeout turn={reply_turn} subject={subject!r}; "
+                        f"continuing after_turn={reply_turn}",
+                        flush=True,
+                    )
+                    after_turn = reply_turn
+                    if state_path is not None:
+                        write_state(
+                            state_path,
+                            status="polling",
+                            after_turn=after_turn,
+                            last_status="skipped_non_closeout",
+                        )
+                    continue
                 subject = str(closeout_row.get("subject") or "")
                 closeout_json = _parse_closeout_json(str(closeout_row.get("body") or ""))
                 parent_subj = _parent_harvest_subject(
