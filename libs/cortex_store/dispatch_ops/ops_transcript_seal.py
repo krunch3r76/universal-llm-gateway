@@ -15,7 +15,6 @@ from ..transcript_session_id import derive_session_id_from_jsonl_start
 from ..verbatim_succession import (
     journal_verbatim_bytes,
     split_verbatim_layer,
-    stamp_verbatim_fields,
 )
 
 logger = get_logger("cortex-api.dispatch_ops.transcript_seal")
@@ -161,24 +160,6 @@ def _op_transcript_seal(
         sealed_on=now,
         conversation_uuid=uuid,
     )
-    from ..db import cortex_conn as _conn_fn
-
-    if response.transcript_path:
-        from ..dispatch_ops._shared import _FILES_ROOT
-
-        tx_path = _FILES_ROOT / response.transcript_path
-        if tx_path.is_file():
-            full = tx_path.read_text(encoding="utf-8")
-            conn = _conn_fn()
-            try:
-                stamp_verbatim_fields(
-                    conn,
-                    session_id=derived,
-                    verbatim=split_verbatim_layer(full),
-                )
-                conn.commit()
-            finally:
-                conn.close()
     transcript_sealed_by_succession(
         session_id=derived,
         thread_id=str(tid),

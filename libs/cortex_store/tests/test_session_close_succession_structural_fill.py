@@ -271,6 +271,88 @@ def test_i5_succession_fill_light_depth_without_jsonl(
     assert _journal_count(db_path) == 1
 
 
+def test_b13_splice_preserves_verbatim_with_session_summary_heading(
+    session_env: dict[str, Path],
+) -> None:
+    """B-13: user turn containing '## Session Summary' survives SPLICE fill."""
+    db_path = session_env["db_path"]
+    files_root = session_env["files_root"]
+    transcripts_root = session_env["transcripts_root"]
+    jsonl = transcripts_root / _UUID / f"{_UUID}.jsonl"
+    collision_text = (
+        "<timestamp>2026-09-07T10:00:00+00:00</timestamp>\n"
+        "Please review this heading:\n## Session Summary\nNot the structural layer."
+    )
+    path = jsonl
+    path.parent.mkdir(parents=True, exist_ok=True)
+    records: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "message": {"content": [{"type": "text", "text": collision_text}]},
+        },
+        {
+            "role": "assistant",
+            "message": {"content": [{"type": "text", "text": "Ack."}]},
+        },
+    ]
+    with path.open("w", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec) + "\n")
+    rel = f"{_UUID}/{_UUID}.jsonl"
+
+    seal = _op_transcript_seal(thread="10223", jsonl_path=rel)
+    assert "error" not in seal, seal
+    sealed_sid = seal["session_id"]
+    prior_path = files_root / f"notes/system/transcripts/{sealed_sid}.md"
+    assert prior_path.is_file()
+    sealed_full = prior_path.read_text(encoding="utf-8")
+    assert "## Session Summary" in sealed_full
+    assert "Not the structural layer." in sealed_full
+
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT verbatim_bytes FROM session_journals WHERE session_id = ?",
+            (sealed_sid,),
+        ).fetchone()
+        assert row is not None
+        sealed_vbytes = int(row[0])
+        assert sealed_vbytes > 0
+    finally:
+        conn.close()
+    sealed_verbatim_prefix = sealed_full.encode("utf-8")[:sealed_vbytes]
+
+    fill = ops_journals._op_session_close(
+        session_id=sealed_sid,
+        agent="cursor",
+        session_summary_md=_summary("SPLICE after heading collision."),
+        summary="SPLICE fill preserves verbatim with embedded heading.",
+        transcript_depth="light",
+        decisions=["Structural fill via SPLICE with heading collision."],
+    )
+    assert "error" not in fill, fill
+
+    after_full = prior_path.read_text(encoding="utf-8")
+    after_verbatim_prefix = after_full.encode("utf-8")[:sealed_vbytes]
+    assert after_verbatim_prefix == sealed_verbatim_prefix, (
+        "SPLICE fill must preserve sealed verbatim byte-identity; "
+        "marker split would truncate at embedded heading."
+    )
+    assert "SPLICE after heading collision." in after_full
+    assert "Not the structural layer." in after_full
+
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT verbatim_bytes FROM session_journals WHERE session_id = ?",
+            (sealed_sid,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == sealed_vbytes
+    finally:
+        conn.close()
+
+
 def test_i5_succession_fill_none_depth_without_jsonl(
     session_env: dict[str, Path],
 ) -> None:

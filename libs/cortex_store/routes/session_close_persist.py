@@ -278,6 +278,7 @@ def persist_session_close(
             conversation_uuid = None
 
     structural_fill = False
+    succession_extend = False
     if reuse_journal_row_id is not None and body.closed_by != "succession":
         _fill_conn = cortex_conn()
         try:
@@ -289,7 +290,7 @@ def persist_session_close(
             _fill_conn.close()
         if prior is not None and prior["closed_by"] == "succession":
             structural_fill = True
-            if prior["file_path"] and ctx.transcript_md is not None:
+            if prior["file_path"] and ctx.verbatim_md is not None:
                 prior_path = _FILES_ROOT / prior["file_path"]
                 if prior_path.is_file():
                     prior_text = prior_path.read_text(encoding="utf-8")
@@ -297,7 +298,7 @@ def persist_session_close(
                         prior_text,
                         verbatim_bytes=journal_verbatim_bytes(prior),
                     )
-                    new_verbatim = split_verbatim_layer(ctx.transcript_md)
+                    new_verbatim = ctx.verbatim_md
                     if not new_verbatim.startswith(prior_verbatim):
                         conflict = build_validation_error(
                             reason="succession.verbatim_diverged",
@@ -315,13 +316,52 @@ def persist_session_close(
                             status_code=status.HTTP_409_CONFLICT,
                             detail=conflict,
                         )
+    elif (
+        reuse_journal_row_id is not None
+        and body.closed_by == "succession"
+        and ctx.verbatim_md is not None
+    ):
+        succession_extend = True
+        _ext_conn = cortex_conn()
+        try:
+            prior = _ext_conn.execute(
+                "SELECT file_path, verbatim_bytes FROM session_journals WHERE id = ?",
+                (reuse_journal_row_id,),
+            ).fetchone()
+        finally:
+            _ext_conn.close()
+        if prior is not None and prior["file_path"]:
+            prior_path = _FILES_ROOT / prior["file_path"]
+            if prior_path.is_file():
+                prior_text = prior_path.read_text(encoding="utf-8")
+                prior_verbatim = split_verbatim_layer(
+                    prior_text,
+                    verbatim_bytes=journal_verbatim_bytes(prior),
+                )
+                if not ctx.verbatim_md.startswith(prior_verbatim):
+                    conflict = build_validation_error(
+                        reason="succession.verbatim_diverged",
+                        field="transcript_md",
+                        received="non-prefix extension",
+                        expected="byte-prefix of sealed verbatim",
+                        examples=[],
+                        hint="Succession extend requires PREFIX-EXTEND from live JSONL.",
+                        detail=(
+                            f"session {body.session_id!r} succession extend refused: "
+                            "new verbatim is not a prefix extension of sealed verbatim."
+                        ),
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=conflict,
+                    )
 
     abs_path: Path | None = None
     prior_transcript_snapshot: str | None = None
     if ctx.transcript_path is not None:
         assert ctx.transcript_md is not None
         abs_path = _FILES_ROOT / ctx.transcript_path
-        if structural_fill and abs_path.is_file():
+        if (structural_fill or succession_extend) and abs_path.is_file():
             prior_transcript_snapshot = abs_path.read_text(encoding="utf-8")
         try:
             durable_write_text(
@@ -441,11 +481,11 @@ def persist_session_close(
                 ),
             )
             journal_row_id = reuse_journal_row_id
-            if ctx.transcript_md is not None:
+            if ctx.verbatim_md is not None:
                 stamp_verbatim_fields(
                     conn,
                     session_id=body.session_id,
-                    verbatim=split_verbatim_layer(ctx.transcript_md),
+                    verbatim=ctx.verbatim_md,
                 )
         else:
             sealed_by = body.agent if body.closed_by == "succession" else None
@@ -477,11 +517,11 @@ def persist_session_close(
                 ),
             )
             journal_row_id = cur.lastrowid or 0
-            if ctx.transcript_md is not None:
+            if ctx.verbatim_md is not None:
                 stamp_verbatim_fields(
                     conn,
                     session_id=body.session_id,
-                    verbatim=split_verbatim_layer(ctx.transcript_md),
+                    verbatim=ctx.verbatim_md,
                 )
 
         if body.prior_session_id:
@@ -519,7 +559,7 @@ def persist_session_close(
                         prior_transcript_snapshot,
                         retain_store_root=_FILES_ROOT,
                     )
-                elif not structural_fill:
+                elif not structural_fill and not succession_extend:
                     abs_path.unlink(missing_ok=True)
             except OSError:
                 logger.warning(

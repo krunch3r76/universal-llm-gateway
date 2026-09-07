@@ -122,6 +122,8 @@ class ValidatedCloseContext:
     now: str
     opened_at: str | None
     archival_depth: str = "verbatim"
+    verbatim_md: str | None = None
+    verbatim_bytes: int | None = None
 
 
 def _structured_422(
@@ -347,12 +349,17 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             ),
         )
 
+    verbatim_md: str | None = None
+    verbatim_bytes: int | None = None
+
     if effective_depth == "none" and not splice_fill:
         transcript_md = None
         turn_count = 0
     elif effective_depth == "light" and not splice_fill:
         transcript_md = body.session_summary_md
         turn_count = 0
+        verbatim_md = ""
+        verbatim_bytes = 0
         if "## Session Summary" not in transcript_md:
             _structured_422(
                 body,
@@ -370,6 +377,8 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             )
     elif splice_fill:
         assert sealed_verbatim is not None
+        verbatim_md = sealed_verbatim
+        verbatim_bytes = len(sealed_verbatim.encode("utf-8"))
         transcript_md = compose_full_transcript(
             sealed_verbatim, body.session_summary_md
         )
@@ -469,6 +478,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
                 )
             turn_count = count_canonical_turn_headings(verbatim_md)
 
+        verbatim_bytes = len(verbatim_md.encode("utf-8"))
         transcript_md = compose_full_transcript(verbatim_md, body.session_summary_md)
 
         if len(transcript_md) < 200:
@@ -565,6 +575,8 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         now=now,
         opened_at=opened_at,
         archival_depth=effective_depth,
+        verbatim_md=verbatim_md,
+        verbatim_bytes=verbatim_bytes,
     )
 
 

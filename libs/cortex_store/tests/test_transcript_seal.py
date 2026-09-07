@@ -170,3 +170,58 @@ def test_i7_prefix_extend_then_already_closed(session_env: dict[str, Path]) -> N
 
     unchanged = _op_transcript_seal(thread="10223", jsonl_path=rel)
     assert unchanged.get("code") == "transcript_seal.already_closed"
+
+
+def test_b14_extend_rollback_restores_sealed_file(
+    session_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """B-14: DB rollback on succession extend restores prior sealed transcript bytes."""
+    from cortex_store.routes import session_close_persist
+
+    db_path = session_env["db_path"]
+    files_root = session_env["files_root"]
+    transcripts_root = session_env["transcripts_root"]
+    jsonl = transcripts_root / _UUID / f"{_UUID}.jsonl"
+    stamps_10 = [f"2026-09-07T12:{i:02d}:00+00:00" for i in range(10)]
+    _write_jsonl(jsonl, stamps_10)
+    rel = f"{_UUID}/{_UUID}.jsonl"
+
+    first = _op_transcript_seal(thread="10223", jsonl_path=rel)
+    assert "error" not in first, first
+    sealed_sid = first["session_id"]
+    tx_path = files_root / f"notes/system/transcripts/{sealed_sid}.md"
+    prior_bytes = tx_path.read_bytes()
+    assert len(prior_bytes) > 0
+
+    stamps_20 = stamps_10 + [f"2026-09-07T13:{i:02d}:00+00:00" for i in range(10)]
+    _write_jsonl(jsonl, stamps_20)
+
+    call_count = 0
+    original_json_encode = session_close_persist.json_encode
+
+    def _fail_on_extend(*args: object, **kwargs: object) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            raise RuntimeError("extend journal update failed")
+        return original_json_encode(*args, **kwargs)
+
+    monkeypatch.setattr(session_close_persist, "json_encode", _fail_on_extend)
+
+    with pytest.raises(RuntimeError, match="extend journal update failed"):
+        _op_transcript_seal(thread="10223", jsonl_path=rel)
+
+    assert tx_path.read_bytes() == prior_bytes
+
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT closed_by FROM session_journals WHERE session_id = ?",
+            (sealed_sid,),
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "succession"
+    finally:
+        conn.close()
+    assert _journal_count(db_path) == 1
