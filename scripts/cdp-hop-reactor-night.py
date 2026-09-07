@@ -34,6 +34,7 @@ from cdp_hop_reactor_wait import (
     id_fields,
     is_cdp_external_gate_live,
     is_http_error_envelope,
+    merge_active_work_rows,
     should_drop_satellite_id,
     terminal,
 )
@@ -131,14 +132,21 @@ def active_work() -> dict[str, Any] | None:
     return result
 
 
-def seated_satellite_id(data: dict[str, Any], fable_thread: str) -> str | None:
-    for row in data.get("rows") or []:
+def adopt_seated_lane(state: ReactorState, data: dict[str, Any], fable_thread: str) -> bool:
+    """Bind registry/execution-store seated identity for this parent_thread."""
+    adopted = False
+    for row in merge_active_work_rows(data):
         if str(row.get("parent_thread") or "") != fable_thread:
             continue
         exec_id = str(row.get("execution_id") or "").strip()
+        reg_id = str(row.get("registration_id") or "").strip()
         if exec_id and not exec_id.startswith("__none"):
-            return exec_id
-    return None
+            state.fable_satellite_execution_id = exec_id
+            adopted = True
+        if reg_id:
+            state.fable_registration_id = reg_id
+            adopted = True
+    return adopted
 
 
 def apply_harvest_ids(state: ReactorState, harvest: dict[str, Any]) -> None:
@@ -162,6 +170,7 @@ def apply_harvest_ids(state: ReactorState, harvest: dict[str, Any]) -> None:
 def harvest_cse(state: ReactorState, *, wait_ms: int = 5000) -> dict[str, Any] | None:
     req = build_harvest_request(
         chat_url=state.fable_chat_url,
+        registration_id=state.fable_registration_id,
         satellite_execution_id=state.fable_satellite_execution_id,
         stargate_execution_id=state.fable_stargate_execution_id,
     )
@@ -184,6 +193,7 @@ def fire_fable(state: ReactorState, prompt: str) -> str | None:
     if is_http_error_envelope(resp):
         if is_cdp_external_gate_live(resp):
             log("fable_gate_409", **id_fields(state))
+            adopt_seated_lane(state, active_work() or {}, state.fable_thread)
             h = harvest_cse(state)
             if h:
                 apply_harvest_ids(state, h)
@@ -209,11 +219,9 @@ def await_fable_attach(state: ReactorState, exec_id: str) -> str | None:
         data = active_work()
         if data is None:
             continue
-        rows = data.get("rows") or []
-        seated = seated_satellite_id(data, state.fable_thread)
-        if seated:
-            state.fable_satellite_execution_id = seated
-            return seated
+        rows = merge_active_work_rows(data)
+        if adopt_seated_lane(state, data, state.fable_thread):
+            return state.fable_satellite_execution_id
         if not active_row_absent_streak(rows, state.fable_thread):
             row_absent_streak = 0
             grace_start = None
@@ -289,7 +297,7 @@ def wait_fable_stream_end(state: ReactorState) -> tuple[str, None]:
         data = active_work()
         running = False
         if data:
-            for row in data.get("rows") or []:
+            for row in merge_active_work_rows(data):
                 if str(row.get("parent_thread") or "") == state.fable_thread:
                     if str(row.get("status") or "") in {"pending", "running"}:
                         running = True
@@ -333,10 +341,12 @@ def run_cycle(state: ReactorState, *, deadline_epoch: float) -> str:
         steer_hint=load_steer_hint(steer_path(_STATE_DIR)),
     )
     work = active_work() or {}
-    seated = seated_satellite_id(work, state.fable_thread)
-    if seated:
-        state.fable_satellite_execution_id = seated
-        log("fable_resume_seated", execution_id=seated)
+    if adopt_seated_lane(state, work, state.fable_thread):
+        log(
+            "fable_resume_seated",
+            execution_id=state.fable_satellite_execution_id,
+            registration_id=state.fable_registration_id,
+        )
     else:
         exec_id = fire_fable(state, prompt)
         if not exec_id:
@@ -344,10 +354,8 @@ def run_cycle(state: ReactorState, *, deadline_epoch: float) -> str:
                 log("fable_resume_chat_url", chat_url=state.fable_chat_url)
             else:
                 retry = active_work() or {}
-                seated = seated_satellite_id(retry, state.fable_thread)
-                if not seated:
+                if not adopt_seated_lane(state, retry, state.fable_thread):
                     return "dispatch_fail"
-                state.fable_satellite_execution_id = seated
         else:
             adopted = await_fable_attach(state, exec_id)
             if not adopted and not state.fable_chat_url:

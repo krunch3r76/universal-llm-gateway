@@ -15,6 +15,7 @@ from cdp_hop_reactor_wait import (
     harvest_miss_outcome,
     is_cdp_external_gate_live,
     is_http_error_envelope,
+    merge_active_work_rows,
     should_drop_satellite_id,
     terminal,
 )
@@ -23,6 +24,7 @@ from cdp_hop_reactor_wait import (
 def test_build_harvest_request_chat_url_only():
     req = build_harvest_request(
         chat_url="https://claude.ai/c/x",
+        registration_id="reg-1",
         satellite_execution_id="sat-uuid",
         stargate_execution_id="stg-uuid",
     )
@@ -30,9 +32,20 @@ def test_build_harvest_request_chat_url_only():
     assert "execution_id" not in req
 
 
+def test_build_harvest_request_registration_when_no_chat_url():
+    req = build_harvest_request(
+        chat_url=None,
+        registration_id="reg-1",
+        satellite_execution_id="sat-uuid",
+        stargate_execution_id="stg-uuid",
+    )
+    assert req == {"registration_id": "reg-1"}
+
+
 def test_build_harvest_request_never_chat_url_with_stargate():
     req = build_harvest_request(
         chat_url="https://claude.ai/c/x",
+        registration_id=None,
         satellite_execution_id=None,
         stargate_execution_id="stg-uuid",
     )
@@ -42,10 +55,28 @@ def test_build_harvest_request_never_chat_url_with_stargate():
 def test_build_harvest_request_satellite_when_no_chat_url():
     req = build_harvest_request(
         chat_url=None,
+        registration_id=None,
         satellite_execution_id="sat-uuid",
         stargate_execution_id="stg-uuid",
     )
     assert req["execution_id"] == "sat-uuid"
+
+
+def test_merge_active_work_rows_includes_seated_rows():
+    data = {
+        "rows": [],
+        "seated_rows": [
+            {
+                "parent_thread": "10196",
+                "execution_id": "exec-1",
+                "registration_id": "reg-1",
+                "status": "running",
+            }
+        ],
+    }
+    merged = merge_active_work_rows(data)
+    assert len(merged) == 1
+    assert merged[0]["registration_id"] == "reg-1"
 
 
 def test_is_cdp_external_gate_live():

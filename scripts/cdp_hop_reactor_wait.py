@@ -94,16 +94,38 @@ def id_fields(state: Any) -> dict[str, Any]:
     }
 
 
+def merge_active_work_rows(data: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Union execution-store rows and registry seated_rows (identity lives in both)."""
+    if not data:
+        return []
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for key in ("rows", "seated_rows"):
+        for row in data.get(key) or []:
+            if not isinstance(row, dict):
+                continue
+            token = str(row.get("registration_id") or row.get("execution_id") or id(row))
+            if token in seen:
+                continue
+            seen.add(token)
+            merged.append(row)
+    return merged
+
+
 def build_harvest_request(
     *,
     chat_url: str | None,
+    registration_id: str | None,
     satellite_execution_id: str | None,
     stargate_execution_id: str | None,
 ) -> dict[str, Any]:
-    """B1/N1 harvest identity precedence: chat_url ≻ satellite ≻ stargate (probe only)."""
+    """B1/N1 harvest identity precedence: chat_url ≻ registration ≻ satellite ≻ stargate."""
     body: dict[str, Any] = {}
     if chat_url:
         body["chat_url"] = chat_url
+        return body
+    if registration_id:
+        body["registration_id"] = registration_id
         return body
     if satellite_execution_id:
         body["execution_id"] = satellite_execution_id
