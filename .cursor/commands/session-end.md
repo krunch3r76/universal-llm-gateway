@@ -47,11 +47,11 @@ Pass `transcript_depth` on `session_close`. Kernel: plain `/session-end` ⇒
 Full criteria: `session-close.mdc` depth dial + §0-depth (kernel skill points
 Cursor here).
 
-| Depth | Typical Cursor sessions | JSONL Step 0? |
+| Depth | Typical Cursor sessions | JSONL on real close |
 |---|---|---|
-| `verbatim` | Multi-domain reasoning, novel decisions, operator said **ceremoniously close**, enrichment wanted | **Yes** — path required |
-| `light` | Operator requested **handoff** (minimum), or bus+summary worth indexing without turn walk-back | **No** — omit `transcript_jsonl_path` |
-| `none` | Mechanical close, **no** `handoff_prompt` / `handoff_source_path`; bus/todo already durable | **No** — omit `transcript_jsonl_path` |
+| `verbatim` | Multi-domain reasoning, novel decisions, operator said **ceremoniously close**, enrichment wanted | **Yes** — path required for assembly |
+| `light` | Operator requested **handoff** (minimum), or bus+summary worth indexing without turn walk-back | **Yes when available** — server skips assembly but uses path for uuid / succession fill |
+| `none` | Mechanical close, **no** `handoff_prompt` / `handoff_source_path`; bus/todo already durable | **Yes when available** — same uuid / succession-fill contract as `light` |
 
 **Handoff gate:** `handoff_prompt` or `handoff_source_path` ⟹ depth **`light`** or **`verbatim`** only.
 Server 422: `handoff.requires_transcript_entity` if `none` + handoff.
@@ -99,13 +99,21 @@ command in the composer or start a fresh chat (often caused by appending freefor
 text after `/session-end` in one input — Cursor replays the compound invocation
 for the rest of the thread). See `session-close.mdc` §0a-i.
 
-### Step 0: Resolve the JSONL path (`verbatim` only)
+### Step 0: Resolve the JSONL path
 
 **Declare `transcript_depth` before any filesystem work.** Plain `/session-end`
 ⇒ `light` (kernel). Ceremonious/full ⇒ `verbatim`.
 
-**Skip this step entirely** when `transcript_depth` is `light` or `none` — do
-**not** `ls` agent-transcripts; omit `transcript_jsonl_path`. Go to Step 0b.
+**Assembly vs path (R1).** Only `transcript_depth=verbatim` requires JSONL for
+server-side turn assembly. For **`light` / `none`**, still resolve and pass
+`transcript_jsonl_path` on preflight and on the **real close** when the path is
+available — the server uses it for uuid stamping and succession fill without
+requiring verbatim assembly.
+
+When `transcript_depth=verbatim`, resolve the path before close (metadata-first,
+then `ls -lt` fallback). When depth is `light` / `none`, resolve the same path
+when available; if unavailable, preflight may still run with placeholders but
+the real close should pass the path once known.
 
 **Metadata-first (MANDATORY).** When the harness exposes `transcript_id`, build:
 
@@ -162,17 +170,22 @@ cortex(tool="session_close_preflight", arguments='{
    Use returned copy-paste **`session_id`** when present, else
    `session_id_from_jsonl_start`. When `hop_reason=session_id_already_journaled`,
    use returned `session_id` + `prior_session_id` (work since the last lid
-   only; do not ask). Persist of a sealed id still echoes `already_closed`.
+   only; do not ask). When `hop_reason=succession_fill`, use returned
+   `session_id` — this close **fills the succession row** (structural layer
+   only; verbatim PREFIX-EXTENDS). Persist of a sealed id still echoes
+   `already_closed` unless `succession_fill` applies.
    Optional: `prior_session_id_suggestion`.
 
-   **`light` / `none` depth + no boot-held ID (id-derivation ≠ archival depth):**
-   Step 0 was skipped, so you have no `<PATH FROM STEP 0>` — but preflight is the
-   only server-side source of a correct-format `session_id`, and preflight
-   **writes nothing**. Resolve the transcript JSONL path (command Step 0
-   metadata-first / `ls -lt` fallback) and pass it as `transcript_jsonl_path`
-   **on the preflight call only** to obtain `session_id_from_jsonl_start`; then
-   **omit** `transcript_jsonl_path` on the real close (keeps the light/none
-   archival contract). Do NOT hand-construct the ID from the `<timestamp>` —
+   **`light` / `none` depth:** Step 0 assembly is skipped, but preflight and the
+   real close still pass `transcript_jsonl_path` when available for
+   `session_id_from_jsonl_start`, uuid stamping, and succession fill (preflight
+   writes nothing). Resolve the transcript JSONL path (metadata-first /
+   `ls -lt` fallback) and include it on both calls.
+
+   On the **real close**, pass `transcript_jsonl_path` regardless of declared
+   depth when the path is available — the server uses it for succession fill /
+   PREFIX-EXTEND and uuid stamping without requiring `transcript_depth=verbatim`.
+   Do NOT hand-construct the ID from the `<timestamp>` —
    dropping the seconds or `-{3hex}` suffix yields `session_id.invalid` and a
    retry loop (recurrence class: friction 23135 / `cursor-2026-07-16` light
    close). If you cannot obtain the JSONL, the ID template is
@@ -259,8 +272,12 @@ Self-check:
 
 ### Step 3: Call `session_close`
 
-Set `transcript_depth` per the table above. Include `transcript_jsonl_path`
-**only** when depth is `verbatim`.
+Set `transcript_depth` per the table above. Pass `transcript_jsonl_path` on
+every real close when the path is available (including `light` / `none`) — the
+server uses it for uuid stamping and succession fill; archival depth still
+controls entity/file shape except on succession fill (forced verbatim).
+
+For `verbatim`, also ensure `"transcript_depth": "verbatim"`.
 
 ```
 cortex(tool="session_close", arguments='{

@@ -15,9 +15,21 @@ DEFAULT_LIVE_DB_PATH = Path(
     os.environ.get("CORTEX_DB_PATH", str(Path.home() / ".cortex" / "cortex.db"))
 )
 
+_SEED_TABLES: dict[str, tuple[str, ...]] = {
+    "relationship_types": (
+        "type",
+        "description",
+        "inverse",
+        "is_transitive",
+        "is_symmetric",
+        "from_type",
+        "to_type",
+    ),
+}
+
 
 def dump_sqlite_schema(conn: sqlite3.Connection) -> dict[str, Any]:
-    """Capture tables, columns, and indexes from ``sqlite_master``."""
+    """Capture tables, columns, indexes, version stamp, and registry seed rows."""
     schema: dict[str, Any] = {"tables": {}, "indexes": {}}
 
     tables = conn.execute(
@@ -37,6 +49,28 @@ def dump_sqlite_schema(conn: sqlite3.Connection) -> dict[str, Any]:
     ).fetchall()
     for name, tbl, sql in indexes:
         schema["indexes"][name] = {"table": tbl, "sql": sql}
+
+    try:
+        schema["schema_versions"] = [
+            r[0]
+            for r in conn.execute(
+                "SELECT version FROM schema_version ORDER BY version"
+            )
+        ]
+    except sqlite3.OperationalError:
+        schema["schema_versions"] = []
+
+    schema["seed_rows"] = {}
+    for table, cols in _SEED_TABLES.items():
+        try:
+            rows = conn.execute(
+                f"SELECT {', '.join(cols)} FROM {table} ORDER BY {cols[0]}"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+        schema["seed_rows"][table] = [
+            dict(zip(cols, row, strict=True)) for row in rows
+        ]
 
     return schema
 
@@ -75,6 +109,35 @@ def apply_canonical_schema_snapshot(conn: sqlite3.Connection) -> None:
         sql = snapshot["indexes"][index].get("sql")
         if sql:
             _exec_idempotent(sql)
+
+    for version in snapshot.get("schema_versions", []):
+        conn.execute(
+            "INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)",
+            (version, "snapshot"),
+        )
+
+    seed = snapshot.get("seed_rows", {})
+    for row in seed.get("relationship_types", []):
+        conn.execute(
+            "INSERT OR IGNORE INTO relationship_types "
+            "(type, description, is_transitive, is_symmetric, from_type, to_type) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                row["type"],
+                row["description"],
+                row["is_transitive"],
+                row["is_symmetric"],
+                row["from_type"],
+                row["to_type"],
+            ),
+        )
+    for row in seed.get("relationship_types", []):
+        if row.get("inverse"):
+            conn.execute(
+                "UPDATE relationship_types SET inverse = ? WHERE type = ? AND inverse IS NULL",
+                (row["inverse"], row["type"]),
+            )
+
     conn.commit()
 
 

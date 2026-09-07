@@ -61,6 +61,36 @@ def test_g2_head_schema_template_matches_live_modulo_allowlist() -> None:
     assert issues == [], "head-template-vs-live schema drift:\n" + "\n".join(issues)
 
 
+def test_g2_head_template_carries_version_stamp_and_registry_seed() -> None:
+    """Template must stamp schema_version and seed relationship_types from snapshot."""
+    snapshot = load_canonical_live_snapshot()
+    expected_versions = snapshot.get("schema_versions", [])
+    assert expected_versions, "fixture must carry schema_versions after refresh"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "head.db"
+        materialize_head_schema_template(db_path)
+        conn = sqlite3.connect(db_path)
+        try:
+            stamped = [
+                r[0]
+                for r in conn.execute(
+                    "SELECT version FROM schema_version ORDER BY version"
+                )
+            ]
+            assert stamped[: len(expected_versions)] == expected_versions
+            assert all(v in stamped for v in expected_versions)
+
+            derived_from = conn.execute(
+                "SELECT 1 FROM relationship_types WHERE type='derived_from'"
+            ).fetchone()
+            assert derived_from is not None
+
+            assert run_migrations(conn) == []
+        finally:
+            conn.close()
+
+
 def test_g2_guard_trips_on_unlisted_divergence() -> None:
     """Prove G2 is not vacuously green — unlisted drift must fail."""
     with tempfile.NamedTemporaryFile(suffix=".db") as handle:

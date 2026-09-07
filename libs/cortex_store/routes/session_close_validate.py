@@ -16,6 +16,11 @@ from ..dispatch_ops._shared import (
 )
 from ..handoff_audit import check_handoff_transcript_anchor
 from ..models import SessionCloseRequest
+from ..session_close_successor_hop import (
+    SUCCESSION_FILL_REASON,
+    lookup_sealed_journal,
+    resolve_successor_hop,
+)
 from ..session_close_validation import (
     _USER_VOICE_RE,
     build_validation_error,
@@ -30,7 +35,94 @@ from ..transcript_assembly import (
     resolve_jsonl_path,
     validate_transcript_turn_grammar,
 )
+from ..transcript_session_id import derive_session_id_from_jsonl_start
+from ..verbatim_succession import load_sealed_verbatim_for_session
 from .session_close_helpers import _parse_opened_at, _raise_422
+
+
+def _succession_fill_channel(body: SessionCloseRequest) -> bool:
+    """True when this close fills an unfilled succession row (R2)."""
+    sealed = lookup_sealed_journal(body.session_id)
+    if sealed is not None and sealed.closed_by == "succession":
+        return True
+    if not body.transcript_jsonl_path:
+        return False
+    try:
+        jsonl_path = resolve_jsonl_path(body.transcript_jsonl_path)
+    except TranscriptPathError:
+        return False
+    from_jsonl = derive_session_id_from_jsonl_start(
+        jsonl_path=jsonl_path, agent=body.agent
+    )
+    hop = resolve_successor_hop(
+        supplied_session_id=body.session_id,
+        jsonl_start_id=from_jsonl,
+        jsonl_path=jsonl_path,
+        agent=body.agent,
+    )
+    return (
+        hop is not None
+        and hop.hop_reason == SUCCESSION_FILL_REASON
+        and hop.session_id == body.session_id
+    )
+
+
+def _guard_succession_seal_authority(body: SessionCloseRequest) -> None:
+    """B-11: only ``transcript_seal`` may claim ``closed_by=succession``."""
+    if body.closed_by != "succession" or body.succession_seal_authority:
+        return
+    from fastapi import HTTPException, status
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail={
+            "reason": "succession.caller_forbidden",
+            "code": "succession.caller_forbidden",
+            "hint": "Machine succession closes require transcript_seal.",
+        },
+    )
+
+
+def _guard_succession_fill_required(body: SessionCloseRequest) -> None:
+    """R1b: block non-fill close when an unfilled succession row awaits fill."""
+    if body.closed_by == "succession" or not body.transcript_jsonl_path:
+        return
+    try:
+        jsonl_path = resolve_jsonl_path(body.transcript_jsonl_path)
+    except TranscriptPathError:
+        return
+    from_jsonl = derive_session_id_from_jsonl_start(
+        jsonl_path=jsonl_path, agent=body.agent
+    )
+    if not from_jsonl:
+        return
+    hop = resolve_successor_hop(
+        supplied_session_id=body.session_id,
+        jsonl_start_id=from_jsonl,
+        jsonl_path=jsonl_path,
+        agent=body.agent,
+    )
+    if hop is None or hop.hop_reason != SUCCESSION_FILL_REASON:
+        return
+    if body.session_id != hop.session_id:
+        from fastapi import HTTPException, status
+
+        conflict = build_validation_error(
+            reason="session.succession_fill_required",
+            field="session_id",
+            received=body.session_id,
+            expected=hop.session_id,
+            examples=[hop.session_id],
+            hint=(
+                "Preflight returned hop_reason=succession_fill — close under the "
+                "returned session_id with transcript_jsonl_path to fill structure."
+            ),
+            detail=(
+                f"session {body.session_id!r} must fill succession row "
+                f"{hop.session_id!r} before a new close on this uuid."
+            ),
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=conflict)
 
 
 @dataclass(frozen=True)
@@ -45,6 +137,9 @@ class ValidatedCloseContext:
     source_uri: str | None
     now: str
     opened_at: str | None
+    archival_depth: str = "verbatim"
+    verbatim_md: str | None = None
+    verbatim_bytes: int | None = None
 
 
 def _structured_422(
@@ -129,6 +224,63 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             payload=payload,
         )
 
+    _guard_succession_seal_authority(body)
+    _guard_succession_fill_required(body)
+
+    succession_fill = _succession_fill_channel(body)
+    if succession_fill and body.transcript_jsonl_path:
+        effective_depth = "verbatim"
+    else:
+        effective_depth = body.transcript_depth
+    if (
+        succession_fill
+        and body.transcript_depth in ("light", "none")
+        and body.entity_ids
+    ):
+        from ..dispatch_ops._session_bus_thread_disposition import parse_bus_thread_refs
+        from ..events_tape import session_close_root_window_depth_upgraded
+
+        for lane_thread in parse_bus_thread_refs(body.entity_ids):
+            session_close_root_window_depth_upgraded(
+                session_id=body.session_id,
+                thread_id=lane_thread,
+                prior_depth=body.transcript_depth,
+                new_depth="verbatim",
+            )
+            break
+
+    splice_fill = (
+        succession_fill
+        and not body.transcript_jsonl_path
+        and not body.transcript_md
+    )
+    sealed_verbatim: str | None = None
+    sealed_transcript_path: str | None = None
+    if splice_fill:
+        from ..dispatch_ops._shared import _FILES_ROOT
+
+        loaded = load_sealed_verbatim_for_session(
+            body.session_id, files_root=_FILES_ROOT
+        )
+        if loaded is None:
+            _structured_422(
+                body,
+                reason="succession.sealed_verbatim_missing",
+                field="session_id",
+                received=body.session_id,
+                expected="succession row with sealed verbatim on disk",
+                examples=[],
+                hint=(
+                    "Succession fill without JSONL requires a prior "
+                    "transcript_seal row with a transcript file on disk."
+                ),
+                detail=(
+                    f"session {body.session_id!r} is not a succession row with "
+                    "a readable sealed verbatim file for SPLICE fill."
+                ),
+            )
+        sealed_verbatim, sealed_transcript_path = loaded
+
     if len(body.summary) < 20:
         _structured_422(
             body,
@@ -183,7 +335,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
     )
 
     handoff_reject = reject_handoff_at_none_depth(
-        transcript_depth=body.transcript_depth,
+        transcript_depth=effective_depth,
         handoff_prompt=body.handoff_prompt,
         handoff_source_path=body.handoff_source_path,
     )
@@ -200,7 +352,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         )
 
     if (
-        body.transcript_depth == "verbatim"
+        effective_depth == "verbatim"
         and not body.transcript_jsonl_path
         and not body.transcript_md
     ):
@@ -212,7 +364,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             expected=(
                 f"exactly one of {{transcript_jsonl_path (cursor), "
                 f"transcript_md (web)}} for transcript_depth="
-                f"{body.transcript_depth!r}"
+                f"{effective_depth!r}"
             ),
             examples=[],
             hint=(
@@ -226,16 +378,21 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             detail=(
                 f"either transcript_jsonl_path (cursor) or transcript_md "
                 f"(web) is required for transcript_depth="
-                f"{body.transcript_depth!r} — neither was supplied"
+                f"{effective_depth!r} — neither was supplied"
             ),
         )
 
-    if body.transcript_depth == "none":
+    verbatim_md: str | None = None
+    verbatim_bytes: int | None = None
+
+    if effective_depth == "none" and not splice_fill:
         transcript_md = None
         turn_count = 0
-    elif body.transcript_depth == "light":
+    elif effective_depth == "light" and not splice_fill:
         transcript_md = body.session_summary_md
         turn_count = 0
+        verbatim_md = ""
+        verbatim_bytes = 0
         if "## Session Summary" not in transcript_md:
             _structured_422(
                 body,
@@ -250,6 +407,31 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
                     "'## Session Summary' heading."
                 ),
                 detail="session_summary_md missing '## Session Summary' heading",
+            )
+    elif splice_fill:
+        assert sealed_verbatim is not None
+        verbatim_md = sealed_verbatim
+        verbatim_bytes = len(sealed_verbatim.encode("utf-8"))
+        transcript_md = compose_full_transcript(
+            sealed_verbatim, body.session_summary_md
+        )
+        turn_count = count_canonical_turn_headings(sealed_verbatim)
+        if len(transcript_md) < 200:
+            _structured_422(
+                body,
+                reason="transcript.missing_structure",
+                field="session_summary_md",
+                received=len(transcript_md),
+                expected="spliced transcript length >= 200",
+                examples=[],
+                hint=(
+                    "Succession SPLICE fill keeps the sealed verbatim prefix "
+                    "and replaces the structural layer — add substance to "
+                    "session_summary_md."
+                ),
+                detail=(
+                    f"spliced transcript is {len(transcript_md)} chars (< 200)."
+                ),
             )
     else:
         if body.transcript_jsonl_path:
@@ -329,6 +511,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
                 )
             turn_count = count_canonical_turn_headings(verbatim_md)
 
+        verbatim_bytes = len(verbatim_md.encode("utf-8"))
         transcript_md = compose_full_transcript(verbatim_md, body.session_summary_md)
 
         if len(transcript_md) < 200:
@@ -389,14 +572,16 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
                 ),
             )
 
+    keep_transcript_artifact = effective_depth != "none" or succession_fill
     transcript_entity_id: str | None = (
-        None if body.transcript_depth == "none" else f"transcript:{body.session_id}"
+        f"transcript:{body.session_id}" if keep_transcript_artifact else None
     )
-    transcript_path: str | None = (
-        None
-        if body.transcript_depth == "none"
-        else f"notes/system/transcripts/{body.session_id}.md"
-    )
+    if succession_fill and sealed_transcript_path:
+        transcript_path: str | None = sealed_transcript_path
+    elif effective_depth == "none":
+        transcript_path = None
+    else:
+        transcript_path = f"notes/system/transcripts/{body.session_id}.md"
     source_uri = f"files://{transcript_path}" if transcript_path else None
     now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     opened_at = _parse_opened_at(body.session_id)
@@ -422,6 +607,9 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         source_uri=source_uri,
         now=now,
         opened_at=opened_at,
+        archival_depth=effective_depth,
+        verbatim_md=verbatim_md,
+        verbatim_bytes=verbatim_bytes,
     )
 
 

@@ -32,6 +32,11 @@ from ..source_ref_resolution import (
 )
 from ..status_trait_write import trait_insert_extras, transcript_birth_traits
 from ..transcript_assembly import compute_text_content_hash
+from ..verbatim_succession import (
+    journal_verbatim_bytes,
+    split_verbatim_layer,
+    stamp_verbatim_fields,
+)
 from .session_close_helpers import _ensure_continues_edge, _ensure_transcript_entity
 from .session_close_validate import (
     ValidatedCloseContext,
@@ -39,6 +44,13 @@ from .session_close_validate import (
 )
 
 logger = get_logger("cortex-api.session_close")
+
+
+def _dominant_lane_from_entity_ids(entity_ids: list[str] | None) -> str | None:
+    from ..dispatch_ops._session_bus_thread_disposition import parse_bus_thread_refs
+
+    refs = parse_bus_thread_refs(entity_ids)
+    return refs[0] if refs else None
 
 
 def try_idempotent_session_close(
@@ -65,7 +77,7 @@ def try_idempotent_session_close(
     try:
         existing = _idem_conn.execute(
             "SELECT id, file_path, handoff_prompt, agent, summary, domains, "
-            "decisions, open_items FROM session_journals "
+            "decisions, open_items, closed_by FROM session_journals "
             "WHERE session_id = ?",
             (body.session_id,),
         ).fetchone()
@@ -73,6 +85,20 @@ def try_idempotent_session_close(
         _idem_conn.close()
     if existing is None:
         return None, None
+
+    if (
+        existing["file_path"] is not None
+        and existing["closed_by"] == "succession"
+        and body.closed_by != "succession"
+    ):
+        return None, existing["id"]
+
+    if (
+        existing["file_path"] is not None
+        and existing["closed_by"] == "succession"
+        and body.closed_by == "succession"
+    ):
+        return None, existing["id"]
 
     prior_transcript_id = f"transcript:{body.session_id}"
     prior_depth = "none"
@@ -94,14 +120,16 @@ def try_idempotent_session_close(
                 )
                 prior_depth = "verbatim"
                 entity_stamped_by_close = True  # can't prove legacy; be safe
-        if existing["file_path"] is None and not entity_stamped_by_close:
-            # No transcript file AND no close-stamped transcript entity
-            # (verbatim/light closes always leave both; journal_write leaves a
-            # stub entity with empty attributes, or none at all; a real
-            # depth="none" close leaves neither — re-closing it with content is
-            # the intended repair path). This row cannot be attributed to a
-            # real session_close: run the full close, reusing the row, instead
-            # of silently returning a no-op success envelope (friction 22962).
+        has_bare_transcript_entity = depth_row is not None
+        if (
+            existing["file_path"] is None
+            and not entity_stamped_by_close
+            and has_bare_transcript_entity
+        ):
+            # ``journal_write`` leaves a bare transcript entity (opened_at/
+            # closed_at) without ``transcript_depth``. A genuine depth="none"
+            # close leaves neither file nor entity — idempotent echo below.
+            # Re-close only the journal_write legacy stub in place (22962).
             logger.info(
                 "session_close: session_id %s has a legacy journal row "
                 "(id=%d, file_path NULL, no close-stamped transcript entity) "
@@ -132,28 +160,51 @@ def try_idempotent_session_close(
         expected_source_file_sha256=body.expected_source_file_sha256,
     )
     if handoff_retry.handoff_prompt != prior_handoff:
-        conflict_detail = build_validation_error(
-            reason="session.handoff_would_change",
-            field="handoff_prompt",
-            received=handoff_retry.handoff_prompt,
-            expected=prior_handoff,
-            examples=[],
-            hint=(
-                "Already-closed sessions cannot change handoff via session_close; "
-                "use session_handoff_upsert."
-            ),
-            detail=(
-                f"session {body.session_id!r} is already closed; re-close would "
-                "change stored handoff_prompt."
-            ),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=conflict_detail,
-        )
+        if existing["closed_by"] == "succession" and body.closed_by != "succession":
+            pass
+        else:
+            conflict_detail = build_validation_error(
+                reason="session.handoff_would_change",
+                field="handoff_prompt",
+                received=handoff_retry.handoff_prompt,
+                expected=prior_handoff,
+                examples=[],
+                hint=(
+                    "Already-closed sessions cannot change handoff via session_close; "
+                    "use session_handoff_upsert."
+                ),
+                detail=(
+                    f"session {body.session_id!r} is already closed; re-close would "
+                    "change stored handoff_prompt."
+                ),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=conflict_detail,
+            )
     # Genuinely re-closing an already-closed session: echo the prior close
-    # explicitly. Do NOT re-post a bus debrief — the prior close already
-    # posted one, and re-posting here replays stale summary text (22962).
+    # and retry debrief with stored journal fields (idempotent debrief retry).
+    stored_domains = (
+        json.loads(existing["domains"]) if existing["domains"] else None
+    )
+    stored_decisions = (
+        json.loads(existing["decisions"]) if existing["decisions"] else None
+    )
+    stored_open_items = (
+        json.loads(existing["open_items"]) if existing["open_items"] else None
+    )
+    debrief = attempt_session_close_debrief(
+        session_id=body.session_id,
+        agent=str(existing["agent"] or body.agent),
+        summary=str(existing["summary"]),
+        journal_row_id=int(existing["id"]),
+        transcript_depth=prior_depth,
+        content_hash=None,
+        domains=stored_domains,
+        decisions=stored_decisions,
+        open_items=stored_open_items,
+        closed_by=existing["closed_by"],
+    )
     return (
         SessionCloseResponse(
             transcript_entity_id=(
@@ -173,9 +224,9 @@ def try_idempotent_session_close(
                 handoff_retry.provenance,
                 handoff_retry.handoff_verification,
             ),
-            debrief_turn_number=None,
-            debrief_status="skipped_existing",
-            debrief_body=None,
+            debrief_turn_number=debrief.debrief_turn_number,
+            debrief_status=debrief.debrief_status,
+            debrief_body=debrief.debrief_body,
         ),
         None,
     )
@@ -221,10 +272,104 @@ def persist_session_close(
         handoff_source_path=body.handoff_source_path,
     )
 
+    conversation_uuid: str | None = None
+    if body.transcript_jsonl_path:
+        from ..session_close_successor_hop import conversation_uuid_from_jsonl_path
+        from ..transcript_assembly import TranscriptPathError, resolve_jsonl_path
+
+        try:
+            conversation_uuid = conversation_uuid_from_jsonl_path(
+                resolve_jsonl_path(body.transcript_jsonl_path)
+            )
+        except TranscriptPathError:
+            conversation_uuid = None
+
+    structural_fill = False
+    succession_extend = False
+    if reuse_journal_row_id is not None and body.closed_by != "succession":
+        _fill_conn = cortex_conn()
+        try:
+            prior = _fill_conn.execute(
+                "SELECT closed_by, file_path, verbatim_bytes FROM session_journals WHERE id = ?",
+                (reuse_journal_row_id,),
+            ).fetchone()
+        finally:
+            _fill_conn.close()
+        if prior is not None and prior["closed_by"] == "succession":
+            structural_fill = True
+            if prior["file_path"] and ctx.verbatim_md is not None:
+                prior_path = _FILES_ROOT / prior["file_path"]
+                if prior_path.is_file():
+                    prior_text = prior_path.read_text(encoding="utf-8")
+                    prior_verbatim = split_verbatim_layer(
+                        prior_text,
+                        verbatim_bytes=journal_verbatim_bytes(prior),
+                    )
+                    new_verbatim = ctx.verbatim_md
+                    if not new_verbatim.startswith(prior_verbatim):
+                        conflict = build_validation_error(
+                            reason="succession.verbatim_diverged",
+                            field="transcript_md",
+                            received="non-prefix extension",
+                            expected="byte-prefix of sealed verbatim",
+                            examples=[],
+                            hint="Succession fill requires PREFIX-EXTEND from live JSONL.",
+                            detail=(
+                                f"session {body.session_id!r} succession fill refused: "
+                                "new verbatim is not a prefix extension of sealed verbatim."
+                            ),
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=conflict,
+                        )
+    elif (
+        reuse_journal_row_id is not None
+        and body.closed_by == "succession"
+        and ctx.verbatim_md is not None
+    ):
+        succession_extend = True
+        _ext_conn = cortex_conn()
+        try:
+            prior = _ext_conn.execute(
+                "SELECT file_path, verbatim_bytes FROM session_journals WHERE id = ?",
+                (reuse_journal_row_id,),
+            ).fetchone()
+        finally:
+            _ext_conn.close()
+        if prior is not None and prior["file_path"]:
+            prior_path = _FILES_ROOT / prior["file_path"]
+            if prior_path.is_file():
+                prior_text = prior_path.read_text(encoding="utf-8")
+                prior_verbatim = split_verbatim_layer(
+                    prior_text,
+                    verbatim_bytes=journal_verbatim_bytes(prior),
+                )
+                if not ctx.verbatim_md.startswith(prior_verbatim):
+                    conflict = build_validation_error(
+                        reason="succession.verbatim_diverged",
+                        field="transcript_md",
+                        received="non-prefix extension",
+                        expected="byte-prefix of sealed verbatim",
+                        examples=[],
+                        hint="Succession extend requires PREFIX-EXTEND from live JSONL.",
+                        detail=(
+                            f"session {body.session_id!r} succession extend refused: "
+                            "new verbatim is not a prefix extension of sealed verbatim."
+                        ),
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=conflict,
+                    )
+
     abs_path: Path | None = None
+    prior_transcript_snapshot: str | None = None
     if ctx.transcript_path is not None:
         assert ctx.transcript_md is not None
         abs_path = _FILES_ROOT / ctx.transcript_path
+        if (structural_fill or succession_extend) and abs_path.is_file():
+            prior_transcript_snapshot = abs_path.read_text(encoding="utf-8")
         try:
             durable_write_text(
                 abs_path, ctx.transcript_md, retain_store_root=_FILES_ROOT
@@ -269,7 +414,7 @@ def persist_session_close(
             tx_attributes: dict[str, object] = {
                 "opened_at": ctx.opened_at,
                 "closed_at": ctx.now,
-                "transcript_depth": body.transcript_depth,
+                "transcript_depth": ctx.archival_depth,
             }
             if handoff_prompt:
                 tx_attributes["handoff_prompt"] = handoff_prompt
@@ -284,6 +429,8 @@ def persist_session_close(
                 tx_attributes["source_ref_provenance"] = (
                     source_ref_resolution.provenance
                 )
+            if conversation_uuid:
+                tx_attributes["conversation_uuid"] = conversation_uuid
             tx_attributes_json = json_encode(tx_attributes)
             tx_vals: list[object] = [
                 ctx.transcript_entity_id,
@@ -310,12 +457,20 @@ def persist_session_close(
         journal_source_ref = (
             source_ref_resolution.stamped_ref if source_ref_resolution else None
         )
+        journal_closed_by = (
+            body.agent
+            if structural_fill
+            else (body.closed_by if body.closed_by else body.agent)
+        )
+        dominant_lane = _dominant_lane_from_entity_ids(body.entity_ids)
         if reuse_journal_row_id is not None:
             conn.execute(
                 "UPDATE session_journals SET "
                 "timestamp = ?, agent = ?, summary = ?, domains = ?, "
                 "decisions = ?, open_items = ?, entity_ids = ?, file_path = ?, "
-                "prior_session_id = ?, handoff_prompt = ?, source_ref = ? "
+                "prior_session_id = ?, handoff_prompt = ?, source_ref = ?, "
+                "closed_by = ?, conversation_uuid = COALESCE(?, conversation_uuid), "
+                "dominant_lane = COALESCE(?, dominant_lane) "
                 "WHERE id = ?",
                 (
                     ctx.now,
@@ -329,17 +484,29 @@ def persist_session_close(
                     body.prior_session_id,
                     handoff_prompt,
                     journal_source_ref,
+                    journal_closed_by,
+                    conversation_uuid,
+                    dominant_lane,
                     reuse_journal_row_id,
                 ),
             )
             journal_row_id = reuse_journal_row_id
+            if ctx.verbatim_md is not None:
+                stamp_verbatim_fields(
+                    conn,
+                    session_id=body.session_id,
+                    verbatim=ctx.verbatim_md,
+                )
         else:
+            sealed_by = body.agent if body.closed_by == "succession" else None
+            sealed_on = ctx.now if body.closed_by == "succession" else None
             cur = conn.execute(
                 "INSERT INTO session_journals "
                 "(timestamp, agent, summary, domains, decisions, open_items, "
                 "entity_ids, file_path, session_id, prior_session_id, "
-                "handoff_prompt, source_ref) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "handoff_prompt, source_ref, closed_by, sealed_by, sealed_on, "
+                "conversation_uuid, dominant_lane) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ctx.now,
                     body.agent,
@@ -353,9 +520,20 @@ def persist_session_close(
                     body.prior_session_id,
                     handoff_prompt,
                     journal_source_ref,
+                    journal_closed_by,
+                    sealed_by,
+                    sealed_on,
+                    conversation_uuid,
+                    dominant_lane,
                 ),
             )
             journal_row_id = cur.lastrowid or 0
+            if ctx.verbatim_md is not None:
+                stamp_verbatim_fields(
+                    conn,
+                    session_id=body.session_id,
+                    verbatim=ctx.verbatim_md,
+                )
 
         if body.prior_session_id:
             _ensure_transcript_entity(conn, body.prior_session_id, body.agent, ctx.now)
@@ -376,7 +554,7 @@ def persist_session_close(
         if ctx.heading_warning is not None:
             findings = [*findings, ctx.heading_warning]
         depth_advisory = source_ref_depth_advisory(
-            transcript_depth=body.transcript_depth,
+            transcript_depth=ctx.archival_depth,
             has_source_ref=source_ref_resolution is not None,
         )
         if depth_advisory is not None:
@@ -386,10 +564,18 @@ def persist_session_close(
         conn.rollback()
         if abs_path is not None:
             try:
-                abs_path.unlink(missing_ok=True)
+                if prior_transcript_snapshot is not None:
+                    durable_write_text(
+                        abs_path,
+                        prior_transcript_snapshot,
+                        retain_store_root=_FILES_ROOT,
+                    )
+                elif not structural_fill and not succession_extend:
+                    abs_path.unlink(missing_ok=True)
             except OSError:
                 logger.warning(
-                    "Failed to unlink transcript after DB rollback: %s", abs_path
+                    "Failed to restore/unlink transcript after DB rollback: %s",
+                    abs_path,
                 )
                 record(
                     "mcp.session.close.cleanup.failed",
@@ -428,19 +614,41 @@ def persist_session_close(
         session_id=body.session_id,
         agent=body.agent,
         journal_row_id=journal_row_id,
-        transcript_depth=body.transcript_depth,
+        transcript_depth=ctx.archival_depth,
     )
+    if structural_fill:
+        from ..events_tape import session_close_succession_structural_filled
+
+        fill_reason = "PREFIX-EXTEND" if ctx.turn_count > 0 and body.transcript_jsonl_path else "SPLICE"
+        session_close_succession_structural_filled(
+            session_id=body.session_id,
+            agent=body.agent,
+            journal_row_id=journal_row_id,
+            extended=bool(body.transcript_jsonl_path),
+            reason=fill_reason,
+        )
+    elif succession_extend:
+        from ..events_tape import session_close_succession_structural_filled
+
+        session_close_succession_structural_filled(
+            session_id=body.session_id,
+            agent=body.agent,
+            journal_row_id=journal_row_id,
+            extended=True,
+            reason="PREFIX-EXTEND",
+        )
 
     debrief = attempt_session_close_debrief(
         session_id=body.session_id,
         agent=body.agent,
         summary=body.summary,
         journal_row_id=journal_row_id,
-        transcript_depth=body.transcript_depth,
+        transcript_depth=ctx.archival_depth,
         content_hash=content_hash,
         domains=body.domains,
         decisions=body.decisions,
         open_items=body.open_items,
+        closed_by=body.closed_by,
     )
 
     return SessionCloseResponse(
@@ -448,7 +656,7 @@ def persist_session_close(
         transcript_path=ctx.transcript_path,
         journal_row_id=journal_row_id,
         session_id=body.session_id,
-        transcript_depth=body.transcript_depth,
+        transcript_depth=ctx.archival_depth,
         content_hash=content_hash,
         turn_count=ctx.turn_count,
         byte_count=byte_count,

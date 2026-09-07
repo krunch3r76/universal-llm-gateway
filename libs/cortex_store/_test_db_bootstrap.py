@@ -1,8 +1,8 @@
 """Test-only cortex DB bootstrap via ``run_migrations`` on a head-schema template.
 
-The session template is materialized once by replaying migrations 001→056 on an
-empty SQLite file — same chain production uses, with no live-substrate dependency.
-Per-test copies keep isolation without re-running the full migration chain.
+The session template is materialized once from the canonical snapshot (DDL +
+version stamp + registry seed) then tracked migrations newer than the snapshot
+head. Per-test copies keep isolation without re-running the full migration chain.
 """
 
 from __future__ import annotations

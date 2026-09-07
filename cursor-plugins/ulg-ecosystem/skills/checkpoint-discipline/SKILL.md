@@ -105,6 +105,18 @@ Watchdog SOT: `scripts/opus-summons-watchdog.py` (`successor_fast` when seq adva
 
 **Vocabulary:** `resume <n>` → this section; `checkpoint <n>` → post per profile + tip hygiene.
 
+## Window anchor (human continuity speech tape)
+
+On CHECKPOINT, under `## Anchor`, cite the posting window:
+
+`Window: transcript_id=<uuid> · turns@cp=<K>`
+
+`K` = `turn_count` from `session_close_preflight` or `assemble_transcript` on that
+window's JSONL in the same turn (hand counts forbidden). Zero-CP windows:
+`boundary=window_whole`. Resume on a living topic/work lane: succession harvest
+seals idle windows, then `agent_bus_read tape` pours the growing dump once — bus
+turns stay lean; do not load `## Windows` on resume.
+
 **Mid-tier / B6:** scoreboard gated lane + tip first. Charter-health dispatch only when densified Next/WIP ∉ OPEN G-row or operator asks how-are-we-doing (≤15 lines).
 
 ## Autonomous tick runtime (compressed)

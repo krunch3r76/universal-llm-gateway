@@ -165,8 +165,11 @@ def attempt_session_close_debrief(
     domains: list[str] | None = None,
     decisions: list[str] | None = None,
     open_items: list[str] | None = None,
+    closed_by: str | None = None,
 ) -> DebriefOutcome:
     """Best-effort thread-480 debrief after a successful session close."""
+    if closed_by == "succession":
+        return DebriefOutcome(None, "skipped_existing")
     if not _agent_bus_token():
         logger.warning("session_close debrief skipped: AGENT_BUS_TOKEN not configured")
         return DebriefOutcome(None, "disabled")

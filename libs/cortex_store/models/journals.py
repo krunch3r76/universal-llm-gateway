@@ -42,6 +42,11 @@ class _SessionJournalCommon(BaseModel):
     prior_session_id: str | None = None
     handoff_prompt: str | None = None
     source_ref: str | None = None
+    closed_by: str | None = None
+    sealed_by: str | None = None
+    sealed_on: str | None = None
+    conversation_uuid: str | None = None
+    dominant_lane: str | None = None
 
 
 class SessionJournalCreate(_SessionJournalCommon):
@@ -132,6 +137,8 @@ class SessionCloseRequest(BaseModel):
         ``transcript:{session_id}.attributes.source_ref`` and the journal row.
       source_ref_derivation: optional provenance tag from the IDE capture door
         (e.g. ``ide-todo-pickup``, ``ide-implement-plan-executor``).
+      closed_by:          close authority discriminator. ``succession`` on harvest
+        seal; flipped to the closing agent slug after A-1 structural fill.
     """
 
     session_id: str
@@ -156,6 +163,8 @@ class SessionCloseRequest(BaseModel):
     assistant_label: str | None = None
     source_ref: str | None = None
     source_ref_derivation: str | None = None
+    closed_by: str | None = None
+    succession_seal_authority: bool = False
 
 
 class SessionCloseResponse(BaseModel):

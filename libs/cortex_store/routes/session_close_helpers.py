@@ -118,7 +118,15 @@ def _ensure_continues_edge(
     """Write a continues edge: transcript:{session_id} → transcript:{prior_session_id}.
 
     Checks for an existing active edge before inserting to stay idempotent.
+    Ensures the ``continues`` edge type and both transcript entity endpoints
+    exist so ``session_edges.edge_type`` and endpoint FK checks succeed.
     """
+    conn.execute(  # type: ignore[union-attr]
+        "INSERT OR IGNORE INTO session_edge_types (type, description, directional) "
+        "VALUES ('continues', 'Transcript session continuation', 1)"
+    )
+    _ensure_transcript_entity(conn, session_id, agent, timestamp)
+    _ensure_transcript_entity(conn, prior_session_id, agent, timestamp)
     from_node = f"transcript:{session_id}"
     to_node = f"transcript:{prior_session_id}"
     existing = conn.execute(  # type: ignore[union-attr]
