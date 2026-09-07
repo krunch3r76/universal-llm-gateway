@@ -8,10 +8,16 @@ from typing import Any
 
 import pytest
 
-from implement_admission.conductor_witness import FoldDeps, fold_scoreboard, row_witnesses
 from implement_admission.conductor_score_journal import G_ROWS
+from implement_admission.conductor_witness import (
+    FoldDeps,
+    fold_scoreboard,
+    row_witnesses,
+)
 from implement_admission.conductor_witness_table import _g4_body_clears
-from implement_admission.degraded_reasons import g4_stops_block_reason, stops_block_reason
+from implement_admission.degraded_reasons import (
+    stops_block_reason,
+)
 
 pytestmark = pytest.mark.offline
 
