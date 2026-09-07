@@ -14,6 +14,7 @@ from cdp_hop_reactor_wait import (
     build_harvest_request,
     harvest_miss_outcome,
     is_cdp_external_gate_live,
+    is_http_error_envelope,
     should_drop_satellite_id,
     terminal,
 )
@@ -73,8 +74,42 @@ def test_terminal_counter():
 def test_should_drop_satellite_id_not_attached():
     assert should_drop_satellite_id({"outcome": "not_attached"}) is True
     assert should_drop_satellite_id({"outcome": "dormant"}) is True
-    assert should_drop_satellite_id({"outcome": "harvested", "provenance": {}}) is True
+    assert should_drop_satellite_id({"outcome": "harvested", "provenance": {}}) is False
     assert should_drop_satellite_id({"outcome": "harvested", "provenance": {"registration_id": "r1"}}) is False
+
+
+def test_is_http_error_envelope():
+    assert is_http_error_envelope({"status": 404, "body": {}, "code": "x"}) is True
+    assert is_http_error_envelope({"status": "running", "execution_id": "e1"}) is False
+    assert is_http_error_envelope({"op": "generate", "status": "running"}) is False
+
+
+def test_terminal_all_harvest_outcomes_bounded():
+    outcomes = [
+        "harvested",
+        "no_reply_yet",
+        "streaming",
+        "incomplete_dom",
+        "unauthenticated",
+        "not_attached",
+        "dormant",
+        "conflict",
+        "unreachable",
+        "refused",
+    ]
+    for outcome in outcomes:
+        streaming = outcome == "streaming"
+        if streaming:
+            assert terminal(outcome, False, True, False, 2) is False
+            continue
+        miss_streak = 5 if outcome in {"not_attached", "conflict", "unreachable", "refused"} else 2
+        assert terminal(outcome, False, False, False, miss_streak, idle_confirmations=2) is True
+
+
+def test_fire_fable_accepts_202_running_body():
+    """D1: success dispatch body with status='running' must not be treated as HTTP error."""
+    body = {"op": "generate", "status": "running", "execution_id": "exec-1"}
+    assert is_http_error_envelope(body) is False
 
 
 def test_reactor_state_drops_fable_execution_id():

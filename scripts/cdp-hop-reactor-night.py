@@ -33,6 +33,7 @@ from cdp_hop_reactor_wait import (
     http_json_status,
     id_fields,
     is_cdp_external_gate_live,
+    is_http_error_envelope,
     should_drop_satellite_id,
     terminal,
 )
@@ -62,6 +63,7 @@ MAX_COMPOSER_PER_TODO = int(os.environ.get("CDP_HOP_MAX_COMPOSER_PER_TODO", "2")
 HARVEST_CHAIN_DEPTH = int(os.environ.get("CDP_HOP_HARVEST_CHAIN_DEPTH", "3"))
 ATTACH_GRACE_S = int(os.environ.get("CDP_HOP_ATTACH_GRACE_S", "180"))
 ATTACH_ROW_ABSENT_POLLS = int(os.environ.get("CDP_HOP_ATTACH_ROW_ABSENT_POLLS", "4"))
+ROW_LIVE_UNSEATED_POLLS = int(os.environ.get("CDP_HOP_ROW_LIVE_UNSEATED_POLLS", "8"))
 COMPOSER_WAIT_SLICE_S = int(os.environ.get("CDP_HOP_COMPOSER_WAIT_SLICE_S", "120"))
 COMPOSER_WAIT_MAX_S = int(os.environ.get("CDP_HOP_COMPOSER_WAIT_MAX_S", "7200"))
 HARVEST_MISS_LIMIT = 5
@@ -122,7 +124,11 @@ def stop(reason: str, code: int = 0, **fields: Any) -> int:
 
 
 def active_work() -> dict[str, Any] | None:
-    return http_json("GET", _ACTIVE_WORK, timeout=15.0)
+    result = http_json("GET", _ACTIVE_WORK, timeout=15.0)
+    if is_http_error_envelope(result):
+        log("active_work_error", status=result.get("status"), code=result.get("code"))
+        return None
+    return result
 
 
 def seated_satellite_id(data: dict[str, Any], fable_thread: str) -> str | None:
@@ -163,7 +169,7 @@ def harvest_cse(state: ReactorState, *, wait_ms: int = 5000) -> dict[str, Any] |
     req["source"] = "auto"
     req["waited_ms"] = wait_ms
     result = http_json("POST", _HARVEST_URL, req, timeout=max(30.0, wait_ms / 1000 + 20))
-    if isinstance(result, dict) and result.get("status", 200) >= 400:
+    if is_http_error_envelope(result):
         return {"outcome": "http_error", "envelope": result}
     return result if isinstance(result, dict) else None
 
@@ -175,7 +181,7 @@ def fire_fable(state: ReactorState, prompt: str) -> str | None:
     if resp is None:
         log("fable_dispatch_failed", response=None)
         return None
-    if resp.get("status", 200) >= 400:
+    if is_http_error_envelope(resp):
         if is_cdp_external_gate_live(resp):
             log("fable_gate_409", **id_fields(state))
             h = harvest_cse(state)
@@ -196,6 +202,7 @@ def fire_fable(state: ReactorState, prompt: str) -> str | None:
 
 def await_fable_attach(state: ReactorState, exec_id: str) -> str | None:
     row_absent_streak = 0
+    row_live_unseated_streak = 0
     grace_start: float | None = None
     while True:
         time.sleep(15)
@@ -210,7 +217,15 @@ def await_fable_attach(state: ReactorState, exec_id: str) -> str | None:
         if not active_row_absent_streak(rows, state.fable_thread):
             row_absent_streak = 0
             grace_start = None
+            row_live_unseated_streak += 1
+            if row_live_unseated_streak >= ROW_LIVE_UNSEATED_POLLS:
+                log("fable_attach_timeout", execution_id=exec_id, reason="row_live_unseated",
+                    row_live_unseated_streak=row_live_unseated_streak)
+                if state.fable_chat_url:
+                    return None
+                return exec_id
             continue
+        row_live_unseated_streak = 0
         row_absent_streak += 1
         if grace_start is None:
             grace_start = time.time()
@@ -273,7 +288,7 @@ def wait_fable_stream_end(state: ReactorState) -> tuple[str, None]:
     while True:
         data = active_work()
         running = False
-        if data and state.fable_satellite_execution_id:
+        if data:
             for row in data.get("rows") or []:
                 if str(row.get("parent_thread") or "") == state.fable_thread:
                     if str(row.get("status") or "") in {"pending", "running"}:
@@ -325,11 +340,14 @@ def run_cycle(state: ReactorState, *, deadline_epoch: float) -> str:
     else:
         exec_id = fire_fable(state, prompt)
         if not exec_id:
-            retry = active_work() or {}
-            seated = seated_satellite_id(retry, state.fable_thread)
-            if not seated:
-                return "dispatch_fail"
-            state.fable_satellite_execution_id = seated
+            if state.fable_chat_url:
+                log("fable_resume_chat_url", chat_url=state.fable_chat_url)
+            else:
+                retry = active_work() or {}
+                seated = seated_satellite_id(retry, state.fable_thread)
+                if not seated:
+                    return "dispatch_fail"
+                state.fable_satellite_execution_id = seated
         else:
             adopted = await_fable_attach(state, exec_id)
             if not adopted and not state.fable_chat_url:

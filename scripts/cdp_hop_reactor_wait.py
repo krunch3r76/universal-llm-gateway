@@ -11,6 +11,19 @@ HARVEST_MISS_OUTCOMES = frozenset(
 
 CDP_EXTERNAL_GATE_LIVE = "cdp_external_gate_live"
 
+# Outcomes that need idle-streak termination when not streaming (AC4 / D2).
+PERSISTENT_IDLE_OUTCOMES = frozenset(
+    {"no_reply_yet", "incomplete_dom", "unauthenticated", "dormant"}
+)
+
+
+def is_http_error_envelope(value: dict[str, Any] | None) -> bool:
+    """True when value is the 4xx/5xx envelope from http_json, not a success body."""
+    if not value or not isinstance(value, dict):
+        return False
+    status = value.get("status")
+    return isinstance(status, int) and status >= 400
+
 
 def http_json_status(
     status_code: int,
@@ -62,6 +75,10 @@ def terminal(
         return True
     if outcome == "harvested" and not streaming and streak >= idle_confirmations:
         return True
+    if outcome in PERSISTENT_IDLE_OUTCOMES and not streaming and streak >= idle_confirmations:
+        return True
+    if not streaming and streak >= idle_confirmations:
+        return True
     return False
 
 
@@ -99,12 +116,7 @@ def build_harvest_request(
 def should_drop_satellite_id(harvest: dict[str, Any]) -> bool:
     """N1: drop satellite id after detach so next poll harvests by chat_url."""
     outcome = str(harvest.get("outcome") or "")
-    if outcome in {"not_attached", "dormant"}:
-        return True
-    prov = harvest.get("provenance") or {}
-    if isinstance(prov, dict) and not prov.get("registration_id"):
-        return True
-    return False
+    return outcome in {"not_attached", "dormant"}
 
 
 def harvest_miss_outcome(outcome: str, *, turns: list[Any] | None = None) -> bool:
