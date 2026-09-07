@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
 
 from ..auth import require_token
-from ..db import get_thread, get_thread_turns_asc, normalize_thread_id
+from ..db import get_thread, get_thread_turns_asc, get_thread_with_links, normalize_thread_id
 from ..wait_status import (
     DEAD_WAIT_DETAIL,
     DEAD_WAIT_ERROR,
@@ -45,7 +45,11 @@ _POLL_INTERVAL_SECONDS = 1.0
 
 
 def _snapshot(
-    thread_id: str, *, after_turn: int, completion: Completion
+    thread_id: str,
+    *,
+    after_turn: int,
+    completion: Completion,
+    execution_id: str | None = None,
 ) -> dict[str, Any]:
     """Read thread + turns once and build the wait response payload.
 
@@ -53,18 +57,24 @@ def _snapshot(
     a caller can inspect them, but never promotes them to a lifecycle ``status``
     (decision: ship C — no read_at-derived awaiting_push).
     """
-    thread_row = get_thread(thread_id)
+    thread_row = get_thread_with_links(thread_id)
     if thread_row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {thread_id} not found",
         )
+    dispatch_links = thread_row.get("dispatch_links") or []
     turns = get_thread_turns_asc(thread_id)
     complete = is_complete(
         thread_row, turns, after_turn=after_turn, completion=completion
     )
     wait_status = derive_status(
-        thread_row, turns, after_turn=after_turn, completion=completion
+        thread_row,
+        turns,
+        after_turn=after_turn,
+        completion=completion,
+        execution_id=execution_id,
+        dispatch_links=dispatch_links,
     )
     pointer = next((t for t in turns if t["turn_number"] == after_turn), None)
     mode = completion.get("mode", "first_reply_from")
@@ -117,6 +127,7 @@ async def wait_thread_route(
     wait: float = Query(0.0, ge=0.0),
     completion: str = Query("first_reply_from"),
     from_agent: str | None = Query(None),
+    execution_id: str | None = Query(None),
 ) -> dict[str, Any]:
     """Bounded server-side wait. ``wait=0`` is an immediate snapshot.
 
@@ -176,7 +187,12 @@ async def wait_thread_route(
     deadline = loop.time() + wait_clamped
 
     while True:
-        snap = _snapshot(thread_id, after_turn=after_turn, completion=comp)
+        snap = _snapshot(
+            thread_id,
+            after_turn=after_turn,
+            completion=comp,
+            execution_id=execution_id,
+        )
         if snap["complete"] or loop.time() >= deadline:
             return snap
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)

@@ -39,7 +39,7 @@ from .close_on_read import CLOSE_ON_READ_TAG
 from .disposition import first_line_is_disposition_type, resolve_bus_lifecycle
 from .turns_models import ThreadStatus
 
-WaitStatus = Literal["no_new_turn", "predicate_unmet", "complete"]
+WaitStatus = Literal["no_new_turn", "predicate_unmet", "complete", "producer_terminal"]
 
 # Terminal Auto-orchestrator status tokens (agent_bus.request completion).
 STATUS_COMPLETION_MODES: frozenset[str] = frozenset(
@@ -352,12 +352,31 @@ def _any_turn_after(turns: list[dict[str, Any]], *, after_turn: int) -> bool:
     return any(int(t["turn_number"]) > after_turn for t in turns)
 
 
+def _failed_cdp_generate_link(
+    dispatch_links: list[dict[str, Any]] | None,
+    execution_id: str | None,
+) -> bool:
+    """True when the waited-for execution has a terminal failed cdp-generate link."""
+    if not execution_id or not dispatch_links:
+        return False
+    for link in dispatch_links:
+        if (
+            link.get("execution_id") == execution_id
+            and link.get("pipeline_id") == "cdp-generate"
+            and link.get("terminal_status") == "failed"
+        ):
+            return True
+    return False
+
+
 def derive_status(
     thread_row: dict[str, Any],
     turns: list[dict[str, Any]],
     *,
     after_turn: int,
     completion: Completion,
+    execution_id: str | None = None,
+    dispatch_links: list[dict[str, Any]] | None = None,
 ) -> WaitStatus:
     """Map thread state to an observable wait status.
 
@@ -371,6 +390,12 @@ def derive_status(
     """
     if is_complete(thread_row, turns, after_turn=after_turn, completion=completion):
         return "complete"
+    mode = completion.get("mode", "first_reply_from")
+    links = dispatch_links if dispatch_links is not None else thread_row.get(
+        "dispatch_links"
+    )
+    if mode == "proof_reply_from" and _failed_cdp_generate_link(links, execution_id):
+        return "producer_terminal"
     if _any_turn_after(turns, after_turn=after_turn):
         return "predicate_unmet"
     return "no_new_turn"

@@ -82,8 +82,20 @@ def test_build_poll_hint_wait_proof_reply_from() -> None:
         thread_id="cdp-1",
         from_agent="web-anthropic",
         completion="proof_reply_from",
+        execution_id="exec-cdp-1",
     )
     assert hint["arguments"]["completion"] == "proof_reply_from"
+    assert hint["arguments"]["execution_id"] == "exec-cdp-1"
+
+
+def test_build_handoff_result_forwards_execution_id() -> None:
+    result = build_handoff_result(
+        thread_id="cdp-t",
+        to_agent="web-anthropic",
+        completion="proof_reply_from",
+        execution_id="exec-handoff",
+    )
+    assert result["poll_hint"]["arguments"]["execution_id"] == "exec-handoff"
 
 
 def test_build_handoff_result_forwards_completion() -> None:

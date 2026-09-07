@@ -566,3 +566,102 @@ def test_orphan_body_differs_by_reason() -> None:
     fallback = _orphan_body_for_reason("future_reason", "exec-x")
     assert "future_reason" in fallback
     assert "likely service restart" not in fallback
+
+
+def test_cdp_generate_link_untouched_by_reconcile_sweep(bus_db) -> None:
+    """M4: reconcile allowlist skips cdp-generate links (L1-AC-j)."""
+    thread_row, *_ = create_thread_with_turn(
+        slug="cdp-m4-solo",
+        from_agent="dispatch",
+        to_agent="web-anthropic",
+        subject="cdp generate",
+        body="pointer",
+        lifecycle_state="active",
+    )
+    thread_id = thread_row["id"]
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-cdp-only",
+        pipeline_id="cdp-generate",
+        caller_agent="cursor",
+    )
+    assert reconcile_orphaned_dispatches() == 0
+    detail = get_thread_with_links(thread_id)
+    assert detail is not None
+    link = detail["dispatch_links"][0]
+    assert link["pipeline_id"] == "cdp-generate"
+    assert link["terminal_status"] is None
+
+
+def test_cdp_generate_link_survives_with_sdk_closeout_present(bus_db) -> None:
+    """M4: cdp-generate link survives when SDK closeout is on the thread (L1-AC-j)."""
+    thread_row, *_ = create_thread_with_turn(
+        slug="cdp-m4-mixed",
+        from_agent="dispatch",
+        to_agent="cursor-sdk",
+        subject="cursor-sdk generate",
+        body="pointer",
+        lifecycle_state="active",
+    )
+    thread_id = thread_row["id"]
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-sdk-m4",
+        pipeline_id="cursor-sdk-generate",
+        caller_agent="cursor",
+    )
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-cdp-m4",
+        pipeline_id="cdp-generate",
+        caller_agent="cursor",
+    )
+    with TestClient(_app(bus_db)) as client:
+        client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor-sdk",
+                "to": "dispatch",
+                "subject": "cursor-sdk dispatch closeout",
+                "body": "done",
+                "after_turn": 1,
+            },
+        )
+    reconcile_orphaned_dispatches()
+    links = {
+        row["execution_id"]: row
+        for row in (get_thread_with_links(thread_id) or {})["dispatch_links"]
+    }
+    assert links["exec-cdp-m4"]["terminal_status"] is None
+
+
+def test_cdp_generate_link_untouched_after_mismatch_probes(bus_db) -> None:
+    """M4: execution_id_mismatch probe does not touch cdp-generate links (L1-AC-k)."""
+    thread_row, *_ = create_thread_with_turn(
+        slug="cdp-m4-mismatch",
+        from_agent="dispatch",
+        to_agent="web-anthropic",
+        subject="cdp generate",
+        body="pointer",
+        lifecycle_state="active",
+    )
+    thread_id = thread_row["id"]
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-cdp-mismatch",
+        pipeline_id="cdp-generate",
+        caller_agent="cursor",
+    )
+
+    def _mismatch(**_kwargs: object):
+        return LivenessVerdict.ALLOW_ORPHAN, "execution_id_mismatch", None
+
+    with patch(
+        "agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_mismatch
+    ):
+        assert reconcile_orphaned_dispatches() == 0
+        assert reconcile_orphaned_dispatches() == 0
+
+    link = get_thread_with_links(thread_id)["dispatch_links"][0]
+    assert link["terminal_status"] is None

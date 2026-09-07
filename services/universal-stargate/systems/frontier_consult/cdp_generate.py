@@ -608,6 +608,7 @@ async def dispatch_cdp_generate(
         after_turn=after_turn,
         poll_wait_seconds=resolve_poll_wait_seconds(caller_agent=body.caller_agent),
         completion="proof_reply_from",
+        execution_id=execution_id,
     )
     emit_poll_hint_from_handoff(
         request_id=request_id,

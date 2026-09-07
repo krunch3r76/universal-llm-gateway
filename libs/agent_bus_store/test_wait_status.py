@@ -208,6 +208,7 @@ def test_no_awaiting_push_status_exists():
         "no_new_turn",
         "predicate_unmet",
         "complete",
+        "producer_terminal",
     }
     assert "awaiting_push" not in get_args(WaitStatus)
 
@@ -331,3 +332,72 @@ def test_proof_reply_from_failed_envelope_predicate_unmet():
     ]
     assert not is_complete(thread, turns, after_turn=1, completion=comp)
     assert derive_status(thread, turns, after_turn=1, completion=comp) == "predicate_unmet"
+
+
+def test_proof_reply_from_failed_link_producer_terminal():
+    """Failed cdp-generate dispatch link yields producer_terminal when execution_id matches."""
+    thread = {
+        "status": ThreadStatus.ACTIVE,
+        "dispatch_links": [
+            {
+                "execution_id": "exec-fail",
+                "pipeline_id": "cdp-generate",
+                "terminal_status": "failed",
+            }
+        ],
+    }
+    comp = {"mode": "proof_reply_from", "from_agent": "web-anthropic"}
+    turns = [
+        _turn(1, "cursor"),
+        _turn(
+            2,
+            "web-anthropic",
+            subject="cdp FAILED — deadbeef",
+            body=SPECIMEN_347_BODY,
+        ),
+    ]
+    assert not is_complete(thread, turns, after_turn=1, completion=comp)
+    assert (
+        derive_status(
+            thread,
+            turns,
+            after_turn=1,
+            completion=comp,
+            execution_id="exec-fail",
+        )
+        == "producer_terminal"
+    )
+
+
+def test_non_cdp_generate_failed_link_stays_predicate_unmet():
+    """SDK failed link must not satisfy producer_terminal (M4 guard)."""
+    thread = {
+        "status": ThreadStatus.ACTIVE,
+        "dispatch_links": [
+            {
+                "execution_id": "exec-sdk",
+                "pipeline_id": "cursor-sdk-generate",
+                "terminal_status": "failed",
+            }
+        ],
+    }
+    comp = {"mode": "proof_reply_from", "from_agent": "web-anthropic"}
+    turns = [
+        _turn(1, "cursor"),
+        _turn(
+            2,
+            "web-anthropic",
+            subject="cdp FAILED — deadbeef",
+            body=SPECIMEN_347_BODY,
+        ),
+    ]
+    assert (
+        derive_status(
+            thread,
+            turns,
+            after_turn=1,
+            completion=comp,
+            execution_id="exec-sdk",
+        )
+        == "predicate_unmet"
+    )
