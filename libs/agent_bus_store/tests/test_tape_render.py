@@ -358,3 +358,77 @@ def test_b8_cells_join_chain_segments_and_bus_turn_id(tmp_path: Path) -> None:
     assert keys[(1, _UUID, 0, 10)] == 5
     assert keys[(2, _UUID, 10, 15)] == 12
     assert keys[(3, _UUID, 15, 25)] is None
+
+
+def test_b12_post_lid_turns_on_segment(tmp_path: Path) -> None:
+    """B-12 / AC-5: sealed segment reports live JSONL tail as post_lid_turns."""
+    files_root = tmp_path / "files"
+    files_root.mkdir()
+    sid = "cursor-2026-09-07-100000-pl1"
+    rel_path = f"notes/system/transcripts/{sid}.md"
+    path = files_root / rel_path
+    path.parent.mkdir(parents=True)
+    path.write_text(_verbatim_md(2, sid), encoding="utf-8")
+
+    journal_row = {
+        "id": 1,
+        "session_id": sid,
+        "conversation_uuid": _UUID,
+        "prior_session_id": None,
+        "file_path": rel_path,
+        "entity_ids": json.dumps(["agent-bus:6341"]),
+        "closed_by": "cursor",
+        "dominant_lane": "6341",
+    }
+
+    with (
+        patch("agent_bus_store.tape_render.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_render._post_lid_tail", return_value=(3, None)),
+        patch("cortex_store.db.cortex_conn") as mock_conn,
+        patch("cortex_store.events_tape.agent_bus_tape_rendered"),
+        patch("cortex_store.dispatch_ops._shared._FILES_ROOT", files_root),
+    ):
+        conn = mock_conn.return_value.__enter__.return_value
+        conn.execute.return_value.fetchall.return_value = [journal_row]
+        result = render_tape(thread_id="6341")
+
+    assert result["segments"][0]["post_lid_turns"] == 3
+
+
+def test_b9_degrade_emits_index_lines_with_pointers() -> None:
+    """B-9 / AC-6: budget overflow degrades dropped speech to Index lines."""
+    cells = [
+        {
+            "transcript_id": _UUID,
+            "turn_lo": 0,
+            "turn_hi": 2,
+            "bus_turn_id": 7,
+        }
+    ]
+    messages = [
+        {
+            "role": "user",
+            "content": "x" * 400,
+            "session_id": "s1",
+            "transcript_id": _UUID,
+            "turn_index": 1,
+        },
+        {
+            "role": "assistant",
+            "content": "y" * 400,
+            "session_id": "s1",
+            "transcript_id": _UUID,
+            "turn_index": 1,
+        },
+    ]
+    from agent_bus_store.tape_render import _degrade_overflow_messages
+
+    out, truncated = _degrade_overflow_messages(
+        messages,
+        cells=cells,
+        budget_bytes=500,
+    )
+    assert truncated is True
+    assert out[0]["role"] == "index"
+    assert out[0]["transcript_span"] == "transcript:s1#turn-1"
+    assert out[0]["bus_turn_id"] == 7

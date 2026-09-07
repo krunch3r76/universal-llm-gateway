@@ -305,6 +305,47 @@ def _verbatim_messages_from_segment(
     return messages
 
 
+def _find_jsonl_for_uuid(conversation_uuid: str) -> Any | None:
+    from cortex_store.transcript_assembly import _transcripts_root
+    from cortex_store.session_close_successor_hop import conversation_uuid_from_jsonl_path
+    from cortex_store.transcript_session_id import _jsonl_paths_by_mtime_desc
+
+    root = _transcripts_root()
+    for jsonl_path in _jsonl_paths_by_mtime_desc(root):
+        try:
+            if conversation_uuid_from_jsonl_path(jsonl_path) == conversation_uuid:
+                return jsonl_path
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def _post_lid_tail(
+    *,
+    conversation_uuid: str | None,
+    sealed_turn_count: int,
+    session_id: str,
+) -> tuple[int, str | None]:
+    """Return live JSONL turns beyond *sealed_turn_count* (AC-5)."""
+    if not conversation_uuid or sealed_turn_count < 0:
+        return 0, None
+    jsonl_path = _find_jsonl_for_uuid(str(conversation_uuid))
+    if jsonl_path is None:
+        return 0, None
+    from cortex_store.transcript_assembly import assemble_verbatim_md
+
+    try:
+        live_md, live_turns = assemble_verbatim_md(
+            jsonl_path=jsonl_path,
+            session_id=session_id,
+        )
+    except (OSError, ValueError):
+        return 0, None
+    if live_turns <= sealed_turn_count:
+        return 0, None
+    return live_turns - sealed_turn_count, live_md
+
+
 def _parse_window_lines(body: str) -> list[dict[str, Any]]:
     anchors: list[dict[str, Any]] = []
     for line in body.splitlines():
@@ -455,6 +496,58 @@ def _cells_for_lane(
     return cells
 
 
+def _bus_turn_id_for_turn(
+    cells: list[dict[str, Any]],
+    *,
+    transcript_id: str,
+    turn_index: int,
+) -> int | None:
+    for cell in cells:
+        if str(cell.get("transcript_id") or "") != transcript_id:
+            continue
+        turn_lo = int(cell.get("turn_lo") or 0)
+        turn_hi = int(cell.get("turn_hi") or 0)
+        if turn_lo < turn_index <= turn_hi:
+            bus_turn_id = cell.get("bus_turn_id")
+            return int(bus_turn_id) if bus_turn_id is not None else None
+    return None
+
+
+def _degrade_overflow_messages(
+    messages: list[dict[str, Any]],
+    *,
+    cells: list[dict[str, Any]],
+    budget_bytes: int,
+) -> tuple[list[dict[str, Any]], bool]:
+    """AC-6: overflow drops oldest speech into Index lines with locate pointers."""
+    payload_bytes = len(json.dumps(messages).encode("utf-8"))
+    if payload_bytes <= budget_bytes:
+        return messages, False
+    kept = messages[-max(1, budget_bytes // 256) :]
+    dropped = messages[: len(messages) - len(kept)]
+    index_lines: list[dict[str, Any]] = []
+    for msg in dropped:
+        sid = str(msg.get("session_id") or "")
+        turn_index = int(msg.get("turn_index") or 0)
+        tid = str(msg.get("transcript_id") or "")
+        index_lines.append(
+            {
+                "role": "index",
+                "content": f"transcript:{sid}#turn-{turn_index}",
+                "transcript_span": f"transcript:{sid}#turn-{turn_index}",
+                "bus_turn_id": _bus_turn_id_for_turn(
+                    cells,
+                    transcript_id=tid,
+                    turn_index=turn_index,
+                ),
+                "session_id": sid,
+                "transcript_id": tid,
+                "turn_index": turn_index,
+            }
+        )
+    return index_lines + kept, True
+
+
 def render_tape(
     *,
     thread_id: str,
@@ -522,6 +615,20 @@ def render_tape(
         )
         binding = journal.get("_binding", "dominant_write")
         dominant_lane = journal.get("_dominant_lane")
+        sealed_full_turns = 0
+        post_lid_turns = 0
+        file_path = journal.get("file_path")
+        if file_path:
+            full = (_FILES_ROOT / file_path).read_text(encoding="utf-8")
+            verbatim = _split_verbatim_layer(
+                full, verbatim_bytes=journal_verbatim_bytes(journal)
+            )
+            sealed_full_turns = _turn_count_verbatim(verbatim)
+            post_lid_turns, _ = _post_lid_tail(
+                conversation_uuid=journal.get("conversation_uuid"),
+                sealed_turn_count=sealed_full_turns,
+                session_id=str(chain_seg["session_id"]),
+            )
         segments.append(
             {
                 "session_id": chain_seg["session_id"],
@@ -533,6 +640,7 @@ def render_tape(
                 "conversation_uuid": chain_seg["conversation_uuid"],
                 "binding": binding,
                 "dominant_lane": dominant_lane,
+                "post_lid_turns": post_lid_turns,
                 "boundary": None,
             }
         )
@@ -584,13 +692,50 @@ def render_tape(
                 session_id=sid,
             )
         )
+        post_lid = int(seg.get("post_lid_turns") or 0)
+        if post_lid > 0:
+            sealed_full = sum(
+                1 for line in verbatim.splitlines() if line.startswith("## Turn")
+            )
+            _, live_md = _post_lid_tail(
+                conversation_uuid=journal.get("conversation_uuid"),
+                sealed_turn_count=sealed_full,
+                session_id=sid,
+            )
+            if live_md:
+                messages.extend(
+                    _verbatim_messages_from_segment(
+                        live_md,
+                        seg={
+                            **seg,
+                            "turn_lo": sealed_full,
+                            "turn_hi": sealed_full + post_lid,
+                        },
+                        session_id=sid,
+                    )
+                )
 
     payload_bytes = len(json.dumps(messages).encode("utf-8"))
     truncated = payload_bytes > budget_bytes
     if truncated:
-        messages = messages[-max(1, budget_bytes // 256) :]
+        messages, truncated = _degrade_overflow_messages(
+            messages,
+            cells=cells,
+            budget_bytes=budget_bytes,
+        )
 
-    from cortex_store.events_tape import agent_bus_tape_rendered
+    from cortex_store.events_tape import (
+        agent_bus_tape_rendered,
+        agent_bus_tape_segment_unavailable,
+    )
+
+    for ex in excluded:
+        if ex.get("reason") == "segment_unavailable":
+            agent_bus_tape_segment_unavailable(
+                thread_id=thread_id,
+                session_id=str(ex["session_id"]),
+                depth=str(ex.get("depth") or "light"),
+            )
 
     agent_bus_tape_rendered(
         thread_id=thread_id,
