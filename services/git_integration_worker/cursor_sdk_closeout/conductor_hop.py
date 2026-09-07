@@ -382,6 +382,24 @@ def _write_budget_authority(dispatch_id: str, row: dict[str, Any]) -> None:
     )
 
 
+def _closeout_harvest_owed(closeout_body: str, *, tokens: frozenset[str]) -> bool:
+    """Whether Phase B (park-harvest continue) must arm after this terminal.
+
+    A stronger-model wait exits ``PARKED_TRANSPORT``; the grader envelope
+    often omits ``NEXT_ADMIT`` / ``CONSULT_PENDING`` (hop 6 on 10128). That
+    must not drop the mission onto a liaison resume — continue is the hop.
+    ``NEXT_ADMIT: none`` remains the explicit no-harvest close.
+    """
+    from bus_watch.park_harvest import harvest_still_owed
+
+    next_admit = next_admit_in_closeout(closeout_body)
+    if next_admit is not None and next_admit.casefold() == "none":
+        return False
+    if harvest_still_owed(body=closeout_body):
+        return True
+    return "PARKED_TRANSPORT" in tokens
+
+
 def merge_conductor_closeout_hop_authority(
     *,
     dispatch_id: str,
@@ -390,8 +408,6 @@ def merge_conductor_closeout_hop_authority(
     closeout_turn: int | None = None,
 ) -> None:
     """Merge ``hop_declared`` and closeout tokens before ``mark_terminal``."""
-    from bus_watch.park_harvest import harvest_still_owed
-
     parsed = parse_designed_stop_tokens(closeout_body)
     tokens = parsed.designed_tokens or parsed.tokens
     row = _load_row(dispatch_id)
@@ -408,7 +424,9 @@ def merge_conductor_closeout_hop_authority(
     data["closeout_body"] = closeout_body
     if closeout_turn is not None:
         data["closeout_turn"] = int(closeout_turn)
-    data["closeout_harvest_owed"] = harvest_still_owed(body=closeout_body)
+    data["closeout_harvest_owed"] = _closeout_harvest_owed(
+        closeout_body, tokens=tokens
+    )
     next_admit = next_admit_in_closeout(closeout_body)
     if next_admit:
         data[HOP_NEXT_ADMIT_KEY] = next_admit

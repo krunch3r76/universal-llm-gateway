@@ -406,6 +406,71 @@ def test_a32411_unpaid_fold_alone_does_not_park() -> None:
     assert verdict.reason is None
 
 
+def test_live_tip_on_unstamped_priors_does_not_park(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hop 4 park: today's head must not become hops 1–3's recorded tip."""
+    tip = "d34aacd2f12aa1120766cf89c084ef4f2d4fe495"
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress.read_lane_tip",
+        lambda **_kwargs: tip,
+    )
+    ledger = CursorDispatchLedger.instance()
+    _planned_chain(
+        ledger,
+        [{"hop_entry_gate": "G1", "hop_witnessed_done": []} for _ in range(3)],
+    )
+    row = _admit_and_terminal(
+        ledger,
+        dispatch_id="a32411-4",
+        hop_seq=4,
+        hop_from="a32411-3",
+        hop_reason="planned",
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_entry_gate": "G1",
+            "hop_witnessed_done": [],
+            "hop_lane_tip": tip,
+        },
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(no_progress_cap=2),
+    )
+    assert verdict.park is False
+
+
+def test_unstamped_history_does_not_pad_a_same_tip_pair() -> None:
+    """One same-tip pair after unstamped hops is streak 1 — under cap 2."""
+    tip = "d34aacd2f12aa1120766cf89c084ef4f2d4fe495"
+    ledger = CursorDispatchLedger.instance()
+    row = _planned_chain(
+        ledger,
+        [
+            {"hop_entry_gate": "G1", "hop_witnessed_done": []},
+            {"hop_entry_gate": "G1", "hop_witnessed_done": []},
+            {"hop_entry_gate": "G1", "hop_witnessed_done": []},
+            {
+                "hop_entry_gate": "G1",
+                "hop_witnessed_done": [],
+                "hop_lane_tip": tip,
+            },
+            {
+                "hop_entry_gate": "G1",
+                "hop_witnessed_done": [],
+                "hop_lane_tip": tip,
+            },
+        ],
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset({"ROW_HOP"}),
+        config=_tight_config(no_progress_cap=2),
+    )
+    assert verdict.park is False
+
+
 def test_next_admit_advance_breaks_no_progress_streak() -> None:
     """A conductor naming a new NEXT_ADMIT each hop is advancing."""
     ledger = CursorDispatchLedger.instance()
