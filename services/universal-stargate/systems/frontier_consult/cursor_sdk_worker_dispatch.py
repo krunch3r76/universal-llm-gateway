@@ -221,6 +221,7 @@ async def dispatch_cursor_sdk_worker(
     hop_reason: str | None = None,
     resume_of: str | None = None,
     continuity_root_thread_id: str | None = None,
+    skills: tuple[str, ...] | list[str] | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
 
@@ -265,6 +266,8 @@ async def dispatch_cursor_sdk_worker(
         payload["resume_of"] = resume_of
     if continuity_root_thread_id:
         payload["continuity_root_thread_id"] = continuity_root_thread_id
+    if skills:
+        payload["skills"] = list(skills)
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT
@@ -320,6 +323,7 @@ async def dispatch_cursor_sdk_worker_message(
     hop_reason: str | None = None,
     resume_of: str | None = None,
     continuity_root_thread_id: str | None = None,
+    skills: tuple[str, ...] | list[str] | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (prompt= path)."""
     effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -353,6 +357,8 @@ async def dispatch_cursor_sdk_worker_message(
         payload["resume_of"] = resume_of
     if continuity_root_thread_id:
         payload["continuity_root_thread_id"] = continuity_root_thread_id
+    if skills:
+        payload["skills"] = list(skills)
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

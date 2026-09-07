@@ -134,10 +134,12 @@ lead MUST put `conductor` on the dispatch as a required skill:
 2. Treat slug `conductor` as `required_skills` for the admit (same catalog duty as
    Gate-2 — catalog-registered in `config/skills.yaml`).
 
-`team_dispatch(skills=[…])` is **not** mounted on cursor-sdk (`skills=` skipped
-when `backend_type=cursor_sdk`). Do **not** rely on `skills=["conductor"]` alone —
-the packet Use-line is the engagement channel. Reasoning-posture may still be
-auto-prepended by GIW for `light-bounded`; that does **not** substitute for
+`team_dispatch(skills=["conductor"])` now mounts on cursor-sdk — the body is
+staged into the dispatch HOME and the Use-line is emitted. Keep the packet
+`<invariants>` line anyway: it is the one channel that survives a packet replayed
+by hand, pasted into another seat, or admitted without `skills=`, and step 1 is
+what the Gate-2 audit reads. Belt and suspenders, not redundancy to prune.
+Reasoning-posture auto-prepend for `light-bounded` does **not** substitute for
 `conductor`.
 
 ## Invariant
@@ -694,7 +696,7 @@ transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed).
 | Bad | Good |
 |---|---|
 | Admit conductor packet without `Use the conductor skill` in `<invariants>` | Continuity-lead required-skill gate (Audience) |
-| Rely on `team_dispatch(skills=["conductor"])` alone for cursor-sdk | Packet Use-line — `skills=` is not mounted on cursor-sdk |
+| Drop the packet Use-line because `skills=["conductor"]` now mounts | Both — the Use-line is what survives a replayed or `skills=`-less admit |
 | One flat `implement` "does the whole mission" | Conductor + nested contracts per G-row |
 | Page human "which remedy?" | Nest binder; `needs-attended` only for operator-only |
 | Conductor hand-codes any G-row whose remainder is files+tests after a pick | Nest Composer |

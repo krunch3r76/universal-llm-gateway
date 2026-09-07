@@ -14,6 +14,13 @@ confirming cursor-sdk bridge identity via cmdline/exe (friction 26765).
 bridge processes themselves rather than off ledger rows, so a bridge whose row
 already went terminal — or which never had a row, as with test fixtures — still
 gets collected instead of surviving indefinitely (assertion 31706).
+
+``live_bridge_occupancy`` inverts the same scan for the worktree reaper: the
+question there is not "may this bridge be killed" but "which directories may
+not be deleted while this bridge runs". Node's ``spawn`` reports a missing
+``cwd`` as ``ENOENT`` naming the *shell* (``spawn /bin/bash ENOENT``), so a
+reaped worktree under a live bridge presents as a phantom missing-bash failure
+mid-dispatch rather than as a directory error (todo:cursor-sdk-bridge-death-root-cause H4).
 """
 
 from __future__ import annotations
@@ -81,6 +88,47 @@ def is_cursor_sdk_bridge_process(proc: psutil.Process) -> bool:
     if configured and configured.lower() in haystack:
         return True
     return any(marker in haystack for marker in _BRIDGE_MARKERS)
+
+
+@dataclass(frozen=True, slots=True)
+class BridgeOccupancy:
+    """A live cursor-sdk bridge and the directory it is standing in.
+
+    ``cwd`` is the bridge's working directory at scan time; ``dispatch_id`` is
+    the ``CURSOR_SDK_DISPATCH_ID`` env stamp when the bridge was launched by a
+    GIW dispatch overlay. Either one alone is enough to pin a worktree.
+    """
+
+    pid: int
+    cwd: str | None
+    dispatch_id: str | None
+
+
+def live_bridge_occupancy() -> list[BridgeOccupancy]:
+    """Enumerate live cursor-sdk bridges with their cwd and dispatch stamp.
+
+    Read-only counterpart to ``reap_orphan_bridge_os``: same identity test, no
+    kill. Best-effort and never raises — a process that vanishes or denies
+    inspection mid-scan is skipped, so callers must treat the result as a lower
+    bound on occupancy and fail closed on what it does report.
+    """
+    found: list[BridgeOccupancy] = []
+    for proc in psutil.process_iter(["pid"]):
+        try:
+            if not is_cursor_sdk_bridge_process(proc):
+                continue
+            try:
+                cwd = proc.cwd()
+            except (psutil.AccessDenied, OSError):
+                cwd = None
+            try:
+                dispatch_id = proc.environ().get(_ENV_DISPATCH_ID)
+            except (psutil.AccessDenied, OSError):
+                dispatch_id = None
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+        found.append(BridgeOccupancy(pid=proc.pid, cwd=cwd, dispatch_id=dispatch_id))
+    return found
 
 
 def reap_orphan_bridge_os(dispatch_id: str) -> BridgeReapResult:

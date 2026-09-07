@@ -47,11 +47,13 @@ def test_review_produce_mission_floors() -> None:
         "cdp-operator-proxy",
         "ulg-for-llms",
         "reasoning-posture",
+        "hypothesize-simulate",
     ]
     assert ensure_cdp_judgment_skills(None, purpose="operator-proxy") == [
         "cdp-operator-proxy",
         "ulg-for-llms",
         "reasoning-posture",
+        "hypothesize-simulate",
     ]
 
 

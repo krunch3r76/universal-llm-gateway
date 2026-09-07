@@ -12,6 +12,8 @@ def test_resolve_prompt_preamble_always_includes_deliverable_routing() -> None:
         inferred_contract="light-bounded",
     )
     assert "DURABLE DELIVERABLE ROUTING" in text
+    assert "CURSOR TRANSCRIPT READS" in text
+    assert "assemble_transcript" in text
     assert "/tmp/summaries/" in text
     assert 'path="cortex://' in text
     assert "workspaces://" in text

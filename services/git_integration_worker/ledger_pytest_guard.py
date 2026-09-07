@@ -10,6 +10,7 @@ so a new store cannot get the fallback without the belt.
 from __future__ import annotations
 
 import os
+import pwd
 from pathlib import Path
 
 _FIXTURE_HINT = (
@@ -27,7 +28,9 @@ def refuse_live_ledger_under_pytest(data_dir: Path, *, ledger_label: str) -> Non
     """
     if not os.environ.get("PYTEST_CURRENT_TEST"):
         return
-    live = (Path.home() / ".gateway").resolve()
+    # Real passwd home — not monkeypatched HOME (HOME-swap regression tests
+    # deliberately point HOME at tmp paths that must not trip this belt).
+    live = (Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway").resolve()
     try:
         resolved = data_dir.resolve()
     except OSError:

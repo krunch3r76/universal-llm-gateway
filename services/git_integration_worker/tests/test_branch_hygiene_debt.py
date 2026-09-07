@@ -8,6 +8,8 @@ escalation that announces instead of deleting, and worktree reconcile.
 
 from __future__ import annotations
 
+import os
+import pwd
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -773,7 +775,8 @@ def test_discard_inherits_when_second_auto_job_is_queued(
 def test_ledger_path_refuses_the_live_gateway_dir(monkeypatch) -> None:
     from services.git_integration_worker.cursor_dispatch_ledger import _ledger_path
 
-    monkeypatch.setenv("DATA_DIR", str(Path.home() / ".gateway"))
+    real_gateway = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway"
+    monkeypatch.setenv("DATA_DIR", str(real_gateway))
     monkeypatch.setenv("PYTEST_CURRENT_TEST", "test_branch_hygiene_debt")
     with pytest.raises(RuntimeError, match="refusing to open the live dispatch ledger"):
         _ledger_path()

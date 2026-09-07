@@ -103,10 +103,10 @@ websockets>=11.0
 # argv shim that the SDK must forward verbatim as argv[0..n], appending its own
 # --workspace/--state-root/callback flags after it, with the subprocess env built
 # from os.environ untouched; bridge bin via cursor_sdk._vendor.resolve_bridge_path.
-# Installed-good in /home/io/.venvs/universal as of 2026-09-01 (1.0.30;
+# Installed-good in /home/io/.venvs/universal as of 2026-09-06 (1.0.31;
 # LocalAgentOptions.dirs wired for multi-root dispatches).
 # Unpinned drift on pip -U/rebuild can silently break the bridge launch.
 # See cortex notes/system/threads/cursor-sdk-bridge-token-fix.md.
-cursor-sdk==1.0.30
+cursor-sdk==1.0.31
 # Track 3: stdio bridge for cursor-sdk dispatches (replaces custom mcp-stdio-proxy)
 fastmcp-remote==3.4.2

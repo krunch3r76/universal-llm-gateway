@@ -305,13 +305,13 @@ says "wake" separately; movement is implied.
 |---|---|
 | Post | Structured audit to thread **191** (no diff inline) — files changed, what it does, risk controls touched, assumptions |
 | Wake | CDP wake web-anthropic on the same leg (`team_dispatch(model=cdp/…)` or escape per `claude-ai-cdp-navigation`) |
-| Watcher | Arm thread-191 consult watcher before leg close |
+| Watcher | **`runbook:bus-consult-watcher`** — IDE terminal primary; optional pane in tmux session `0` (¬ new session) |
 | Pager | Transition awareness page: audit in flight |
 
 Mechanical entry: `scripts/post-gate1-audit.sh --subject … --body-file …`
-(default `--watch-label watch-191`, `--thread 191`).
+(default `--watch-label watch-191`, `--thread 191`). Watcher steps live only in the runbook.
 
-Doctrine: `decision:gate1-audit-implied-movement` · claudeburst `audit_ws.mdc` Step 1.
+Doctrine: `decision:gate1-audit-implied-movement` · claudeburst `audit_ws.mdc` Step 1 · `runbook:bus-consult-watcher`.
 
 ## Related
 

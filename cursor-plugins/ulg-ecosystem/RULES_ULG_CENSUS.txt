@@ -34,6 +34,7 @@ restart-drain-discipline_ulg
 skill-authoring_ulg
 skill-surface_ulg
 skill-surface-sync_ulg
+task-subagent-parity_ulg
 todo_ulg
 ulg-for-llms_ulg
 web-anthropic-canvas-dialogue_ulg

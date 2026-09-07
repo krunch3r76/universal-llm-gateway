@@ -74,8 +74,14 @@ Workspace-rule catalog and discovery conventions live in `.cursor/rules/index.md
 - **Hooks** — `.cursor/hooks.json` (when present) wires shell scripts to
   agent events.
 - **Agent transcripts** — past chat transcripts live under
-  `~/.cursor/projects/<workspace-mount>/agent-transcripts/<uuid>.jsonl`.
+  `~/.cursor/projects/<workspace-mount>/agent-transcripts/<uuid>/<uuid>.jsonl`.
   Cite parent transcripts by uuid; never cite subagent transcripts.
+  **Do not Read raw JSONL for bind/harvest** — it embeds full tool payloads.
+  Use `cortex(assemble_transcript, jsonl_path=<uuid>/<uuid>.jsonl, session_id=…)`
+  for the server-assembled verbatim layer (tool JSON collapsed to
+  `[tool call: NAME]` markers; ~50%+ smaller). Search assembled markdown for
+  keywords when a full arc read is unnecessary. Web session_close: Use the
+  `web-transcript-preprocessing` skill before close.
 - **Terminals folder** — open terminals are mirrored as text files at
   `~/.cursor/projects/<workspace-mount>/terminals/<id>.txt`. Each file's
   first ~10 lines carry metadata (pid, cwd, last command, exit code); the

@@ -304,6 +304,46 @@ def test_ledger_db_path_stable_across_home_swap(
     CursorDispatchLedger._instance = None
 
 
+def test_register_lane_worktree_writes_pinned_db_across_home_swap(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-W1-1..3: ``register_lane_worktree`` writes through the pinned ledger DB."""
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    swapped_home = tmp_path / "dispatch-home"
+    swapped_home.mkdir()
+    monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.setenv("HOME", str(real_home))
+    CursorDispatchLedger._instance = None
+
+    ledger = CursorDispatchLedger.instance()
+    pinned_db = ledger._db_path
+    worktree_path = real_home / "wt-lane"
+    worktree_path.mkdir()
+
+    monkeypatch.setenv("HOME", str(swapped_home))
+
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        lookup_lane_worktree,
+        register_lane_worktree,
+    )
+
+    register_lane_worktree(
+        thread_id="10143",
+        worktree_path=worktree_path,
+        branch_name="cursor-sdk/lane-10143",
+        branch_point="master",
+        last_dispatch_id="disp-10143",
+    )
+
+    record = lookup_lane_worktree(thread_id="10143")
+    assert record is not None
+    assert record.worktree_path == worktree_path.resolve()
+    assert pinned_db == real_home / ".gateway" / "cursor-sdk-dispatch.db"
+    assert pinned_db.exists()
+    CursorDispatchLedger._instance = None
+
+
 def test_execution_id_stable_across_restart() -> None:
     """AC3: re-admit after singleton reset returns same persisted execution_id."""
     ledger = CursorDispatchLedger.instance()

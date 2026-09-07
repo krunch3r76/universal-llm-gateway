@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from services.git_integration_worker.cursor_dispatch_ledger import _connect
+from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    ledger_connection,
+)
 
 _MINT_MUTEX_DDL = """
 CREATE TABLE IF NOT EXISTS cursor_sdk_mint_mutex (
@@ -85,7 +87,7 @@ def master_mint_mutex_key(source_repo: Path) -> str:
 
 
 def _try_acquire_mint_mutex(*, mutex_key: str, holder_id: str) -> bool:
-    with _connect() as conn:
+    with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
@@ -103,7 +105,7 @@ def _try_acquire_mint_mutex(*, mutex_key: str, holder_id: str) -> bool:
 
 
 def release_mint_mutex(*, mutex_key: str, holder_id: str) -> None:
-    with _connect() as conn:
+    with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         conn.execute(
             "DELETE FROM cursor_sdk_mint_mutex WHERE mutex_key=? AND holder_id=?",
@@ -158,7 +160,7 @@ def register_lane_worktree(
     )
 
     clear_disposition(branch_name=branch_name)
-    with _connect() as conn:
+    with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         conn.execute(
             "INSERT OR REPLACE INTO cursor_sdk_lane_worktrees "
@@ -177,7 +179,7 @@ def register_lane_worktree(
 
 def touch_lane_worktree_dispatch(*, thread_id: str, dispatch_id: str) -> None:
     """Record the latest dispatch occupying an existing lane worktree."""
-    with _connect() as conn:
+    with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         conn.execute(
             "UPDATE cursor_sdk_lane_worktrees SET last_dispatch_id=? WHERE thread_id=?",
@@ -186,7 +188,7 @@ def touch_lane_worktree_dispatch(*, thread_id: str, dispatch_id: str) -> None:
 
 
 def unregister_lane_worktree(*, thread_id: str) -> None:
-    with _connect() as conn:
+    with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         conn.execute(
             "DELETE FROM cursor_sdk_lane_worktrees WHERE thread_id=?",
@@ -196,7 +198,7 @@ def unregister_lane_worktree(*, thread_id: str) -> None:
 
 def lookup_lane_worktree(*, thread_id: str) -> DispatchWorktreeRecord | None:
     """Return the lane-owned worktree for ``thread_id``, if registered."""
-    with _connect() as conn:
+    with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         row = conn.execute(
             "SELECT thread_id, worktree_path, branch_name, branch_point, "
@@ -235,7 +237,7 @@ def unregister_dispatch_worktree(*, dispatch_id: str) -> None:
 
 def lookup_dispatch_worktree(*, dispatch_id: str) -> DispatchWorktreeRecord | None:
     """Resolve a worktree via last_dispatch_id, then thread_id == dispatch_id."""
-    with _connect() as conn:
+    with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         row = conn.execute(
             "SELECT thread_id, worktree_path, branch_name, branch_point, "
@@ -270,7 +272,7 @@ def lookup_dispatch_worktree(*, dispatch_id: str) -> DispatchWorktreeRecord | No
 
 def list_registered_worktrees_with_status() -> list[sqlite3.Row]:
     """Lane rows with live-writer status (NULL when the lane has no active dispatch)."""
-    with _connect() as conn:
+    with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         return conn.execute(
             "SELECT w.thread_id, w.last_dispatch_id AS dispatch_id, "
@@ -303,7 +305,7 @@ def record_salvage_refusal(
     key = _resolve_thread_id(thread_id=thread_id, dispatch_id=dispatch_id)
     if key is None:
         return 0
-    with _connect() as conn:
+    with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         conn.execute(
             "UPDATE cursor_sdk_lane_worktrees "
@@ -336,7 +338,7 @@ def clear_salvage_refusal(
     key = _resolve_thread_id(thread_id=thread_id, dispatch_id=dispatch_id)
     if key is None:
         return
-    with _connect() as conn:
+    with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         conn.execute(
             "UPDATE cursor_sdk_lane_worktrees "
@@ -355,7 +357,7 @@ def worktree_is_quarantined(
     key = _resolve_thread_id(thread_id=thread_id, dispatch_id=dispatch_id)
     if key is None:
         return False
-    with _connect() as conn:
+    with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         row = conn.execute(
             "SELECT quarantined_at FROM cursor_sdk_lane_worktrees WHERE thread_id=?",

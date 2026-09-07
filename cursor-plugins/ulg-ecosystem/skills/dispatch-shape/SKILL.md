@@ -82,6 +82,7 @@ Polling `from_agent`: on-behalf delivery posts under the **role seat label**, no
 Do not hand-escape large `transcript_md`, `handoff_prompt`, code fences, or quoted JSON into the string. Move payload off the JSON-string channel:
 
 - Write a file and pass server-read path/ref params (`transcript_jsonl_path`, `handoff_source_path`, `source_ref`).
+- For **dispatch bind/harvest** over Cursor JSONL: call `cortex(assemble_transcript, jsonl_path=<uuid>/<uuid>.jsonl, …)` and read `transcript_md` — do not Read raw JSONL (tool payloads bloat tokens). Harness injects this on every cursor-sdk dispatch.
 - On Cursor, use `/agent-bus` / `scripts/agent-bus` direct UDS for fetch/reply/wait or quote-heavy bodies.
 
 Applies uniformly to `cortex`, `agent_bus`, `dispatch`, and `rag`.

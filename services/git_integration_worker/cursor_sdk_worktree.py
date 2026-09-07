@@ -13,10 +13,13 @@ from __future__ import annotations
 import re
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from services.git_integration_worker.cursor_dispatch_ledger import _connect
+from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    ledger_connection,
+)
 from services.git_integration_worker.cursor_sdk_worktree_prune import (
     PruneResult,
     ReapSweepResult,
@@ -39,6 +42,17 @@ from services.git_integration_worker.models.cursor_api import CursorDispatchRequ
 _MINT_LOCK_POLL_S = 0.02
 _GIT_TIMEOUT_S = 60.0
 _BRANCH_SAFE = re.compile(r"[^A-Za-z0-9._/-]+")
+
+AdmitBindingKind = Literal["minted", "adopted", "reused", "resumed", "nested", "lane_a"]
+
+
+@dataclass(frozen=True, slots=True)
+class AdmitBindingResult:
+    """Workspace + lease key for ledger admit, with binding provenance."""
+
+    workspace: Path
+    lease_key: str
+    binding_kind: AdmitBindingKind
 
 
 class WorktreeMintError(RuntimeError):
@@ -290,7 +304,7 @@ def accept_dispatch_worktree(
 
 
 def lookup_parent_lease_key(parent_id: str) -> str | None:
-    with _connect() as conn:
+    with ledger_connection() as conn:
         row = conn.execute(
             "SELECT lease_key, source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
             (parent_id,),
@@ -308,8 +322,8 @@ def resolve_admit_binding(
     worktree_root: Path,
     dispatch_workspace_default: Path,
     lane: Literal["A", "B"],
-) -> tuple[Path, str]:
-    """Return ``(dispatch_workspace, lease_key)`` for ledger admit."""
+) -> AdmitBindingResult:
+    """Return workspace, lease key, and binding kind for ledger admit."""
     if req.resume_of:
         parent_key = lookup_parent_lease_key(req.resume_of)
         if parent_key is None:
@@ -320,14 +334,22 @@ def resolve_admit_binding(
                 thread_id=req.thread_id,
                 dispatch_id=req.dispatch_id,
             )
-        return workspace, str(workspace)
+        return AdmitBindingResult(
+            workspace=workspace,
+            lease_key=str(workspace),
+            binding_kind="resumed",
+        )
 
     if req.nest_under:
         parent_key = lookup_parent_lease_key(req.nest_under)
         if parent_key is None:
             raise WorktreeMintError(f"nest parent not found: {req.nest_under!r}")
         workspace = Path(parent_key).resolve()
-        return workspace, str(workspace)
+        return AdmitBindingResult(
+            workspace=workspace,
+            lease_key=str(workspace),
+            binding_kind="nested",
+        )
 
     if lane == "B":
         existing = lookup_lane_worktree(thread_id=req.thread_id)
@@ -337,7 +359,11 @@ def resolve_admit_binding(
                 dispatch_id=req.dispatch_id,
             )
             workspace = existing.worktree_path.resolve()
-            return workspace, str(workspace)
+            return AdmitBindingResult(
+                workspace=workspace,
+                lease_key=str(workspace),
+                binding_kind="reused",
+            )
 
         expected = lane_worktree_dir(worktree_root, req.thread_id)
         if expected.is_dir():
@@ -348,7 +374,11 @@ def resolve_admit_binding(
                 source_repo=source_repo,
                 thread_id=req.thread_id,
             )
-            return workspace, str(workspace)
+            return AdmitBindingResult(
+                workspace=workspace,
+                lease_key=str(workspace),
+                binding_kind="adopted",
+            )
 
         if req.worktree_path:
             workspace = accept_dispatch_worktree(
@@ -358,7 +388,11 @@ def resolve_admit_binding(
                 source_repo=source_repo,
                 thread_id=req.thread_id,
             )
-            return workspace, str(workspace)
+            return AdmitBindingResult(
+                workspace=workspace,
+                lease_key=str(workspace),
+                binding_kind="adopted",
+            )
 
         workspace = mint_dispatch_worktree(
             source_repo=source_repo,
@@ -366,13 +400,26 @@ def resolve_admit_binding(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
         )
-        return workspace, str(workspace)
+        return AdmitBindingResult(
+            workspace=workspace,
+            lease_key=str(workspace),
+            binding_kind="minted",
+        )
 
     from services.git_integration_worker.cursor_sdk_workspace import lane_a_lease_key
 
     if source_repo.resolve() == hub.resolve():
-        return dispatch_workspace_default, lane_a_lease_key(source_repo)
-    return source_repo.resolve(), lane_a_lease_key(source_repo)
+        return AdmitBindingResult(
+            workspace=dispatch_workspace_default,
+            lease_key=lane_a_lease_key(source_repo),
+            binding_kind="lane_a",
+        )
+    resolved = source_repo.resolve()
+    return AdmitBindingResult(
+        workspace=resolved,
+        lease_key=lane_a_lease_key(source_repo),
+        binding_kind="lane_a",
+    )
 
 
 def workspace_from_promoted_lease(
@@ -390,6 +437,8 @@ def workspace_from_promoted_lease(
 
 
 __all__ = [
+    "AdmitBindingKind",
+    "AdmitBindingResult",
     "DispatchWorktreeRecord",
     "PruneResult",
     "ReapSweepResult",

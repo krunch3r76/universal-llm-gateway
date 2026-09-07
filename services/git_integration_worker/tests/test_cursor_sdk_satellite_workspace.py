@@ -183,7 +183,7 @@ def test_lane_a_satellite_cwd_and_lease(
         lane="A",
         workspace="sat-bot",
     )
-    workspace, lease_key = resolve_admit_binding(
+    binding = resolve_admit_binding(
         req=req,
         source_repo=satellite,
         hub=hub,
@@ -191,8 +191,9 @@ def test_lane_a_satellite_cwd_and_lease(
         dispatch_workspace_default=projects_root,
         lane="A",
     )
-    assert workspace == satellite.resolve()
-    assert lease_key == str(satellite.resolve())
+    assert binding.binding_kind == "lane_a"
+    assert binding.workspace == satellite.resolve()
+    assert binding.lease_key == str(satellite.resolve())
 
 
 def test_canonicalize_satellite_absolute_path(

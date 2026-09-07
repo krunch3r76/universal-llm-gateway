@@ -279,10 +279,12 @@ Auth-gate failures exhaust retry budget — unblock with `auth_gate_ack: <thread
 
 ## Mission boot & continuity hop (BINDING)
 
-**Life seat cannot `team_dispatch`.** Life-native CDP compose (Life Cowork project,
-not `/new`) is **`life_dispatch`** on `/mcp/life` — server-pinned project UUID;
-`prompt` or `thread` (`to=life|dispatch`, not `from=life`). Opening or refreshing
-an operator-proxy **request-lane** window is still **commission cursor-auto**.
+**Life seat cannot `team_dispatch`.** Life→cursor operator-proxy — mint a Life
+Cowork CSE that drives cursor, not a life conversation and not
+claude.ai→claude.ai chat — is **`life_dispatch`** on `/mcp/life` — server-pinned
+project UUID; `prompt` or `thread` (`to=life|dispatch`, not `from=life`).
+Correspondence stays in the current CSE. Opening or refreshing an operator-proxy
+**request-lane** window is still **commission cursor-auto**.
 Fresh lane mint stays `cursor_request` / `agent_bus.request` + `TYPE: DIRECTIVE`.
 Continuity hop on an **existing** private lane is **`agent_bus(tool="hop")`** — ¬ a
 contract token, ¬ hand-authored `TYPE: CONTINUITY_HANDOFF`. The verb authors that

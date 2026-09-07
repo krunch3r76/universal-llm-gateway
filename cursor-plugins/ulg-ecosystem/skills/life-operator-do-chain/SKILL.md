@@ -48,7 +48,7 @@ Canonical hops (say these; aliases in parentheses):
 | **Mission Composer** | **conductor score** | Mission Architect, mission writer, conductor-architect |
 | **Conductor** | plays that score | “admit the conductor”, “run it” |
 
-**conductor score** = conductor packet (admit file) + scoreboard (G-rows). ¬ shorten to **score**. **Admit package** retired. Mission Composer ≠ `cursor/composer-2.5` (T0 mechanical nest). Sketch ≠ path-sim / `/layer` architecture and ≠ a casual doodle — it is the symphony sketchbooks: bind themes, movements, in/out.
+**conductor score** = conductor packet (admit file) + scoreboard (G-rows). ¬ shorten to **score**. **Admit package** retired. Mission Composer (hop) ≠ Conductor admit; fire via `runbook:score-composer-author` with **omit `model=`** → `workflows.auto_judgment` (`route_policy.yaml`). ¬ hard-pin experimental `grok-4.6`; operator-named Grok only → `cursor/grok-4.5` high. Sketch ≠ path-sim / `/layer` architecture and ≠ a casual doodle — it is the symphony sketchbooks: bind themes, movements, in/out.
 
 Lawful sequence: Sketch → Mission Composer → Conductor. They may name any one step.
 

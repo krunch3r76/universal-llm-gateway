@@ -39,13 +39,18 @@ def register_life_dispatch_tools(mcp: FastMCP) -> None:
         model: str = "cdp/opus-5",
         skills: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Life CDP dispatch — opens the configured Life Cowork project compose.
+        """Life→cursor operator-proxy — mint a Life Cowork CSE that drives cursor.
+
+        Not a life conversation and not claude.ai→claude.ai chat. Stay in this
+        session for correspondence; use ``cursor_request`` for a DIRECTIVE
+        without a new CSE.
 
         Supply ``prompt`` (inline text or ``cortex://`` sidecar ref) **or**
         ``thread`` (agent_bus id). For ``thread``, the latest turn must be
         addressed ``to=life`` or ``to=dispatch`` and must not be ``from=life``
         — otherwise admit returns a teaching 422. ``model`` defaults to
         ``cdp/opus-5``. Project UUID is server-pinned — never in this schema.
+        See agent_skill:cdp-operator-proxy.
         """
         body: dict[str, Any] = {"model": model}
         if prompt.strip():
