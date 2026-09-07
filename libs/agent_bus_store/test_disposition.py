@@ -312,6 +312,38 @@ def test_dispatch_terminate_auto_close_blocked_by_second_open_link(bus_db) -> No
     assert "auto-closed" not in (detail["summary"] or "")
 
 
+def test_dual_link_cdp_terminate_leaves_sdk_open(bus_db) -> None:
+    """L1-AC-e (S4): CDP terminate leaves SDK dispatch link non-terminal."""
+    thread_row, *_ = create_thread_with_turn(
+        slug="dual-link-cdp-first",
+        from_agent="dispatch",
+        to_agent="cursor-sdk",
+        subject="implement",
+        body="packet pointer",
+        lifecycle_state="pending",
+    )
+    thread_id = thread_row["id"]
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-sdk-dual",
+        pipeline_id="cursor-sdk-generate",
+    )
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-cdp-dual",
+        pipeline_id="cdp-generate",
+    )
+    resp = bus_db.post(
+        f"/threads/{thread_id}/dispatch-terminate",
+        json={"terminal_status": "failed", "execution_id": "exec-cdp-dual"},
+    )
+    assert resp.status_code == 200
+    lineage = bus_db.get(f"/threads/{thread_id}/lineage")
+    links = {l["execution_id"]: l for l in lineage.json()["dispatch_links"]}
+    assert links["exec-cdp-dual"]["terminal_status"] == "failed"
+    assert links["exec-sdk-dual"]["terminal_status"] is None
+
+
 def test_dispatch_terminate_keeps_failed_open(bus_db) -> None:
     thread_row, *_ = create_thread_with_turn(
         slug="sdk-fail",

@@ -665,3 +665,40 @@ def test_cdp_generate_link_untouched_after_mismatch_probes(bus_db) -> None:
 
     link = get_thread_with_links(thread_id)["dispatch_links"][0]
     assert link["terminal_status"] is None
+
+
+def test_dispatch_admit_on_active_completed_lifecycle(bus_db) -> None:
+    """L1-AC-g: dispatch-admit succeeds when status=active and lifecycle=completed."""
+    thread_row, *_ = create_thread_with_turn(
+        slug="cdp-reopen-admit",
+        from_agent="dispatch",
+        to_agent="web-anthropic",
+        subject="cdp pointer",
+        body="prior pointer",
+        lifecycle_state="pending",
+    )
+    thread_id = thread_row["id"]
+    with connect() as conn:
+        conn.execute(
+            "UPDATE threads SET status = 'active', bus_lifecycle_state = 'completed' "
+            "WHERE id = ?",
+            (thread_id,),
+        )
+        conn.commit()
+
+    with TestClient(_app(bus_db)) as client:
+        resp = client.post(
+            f"/threads/{thread_id}/dispatch-admit",
+            json={
+                "execution_id": "exec-reopen-admit",
+                "pipeline_id": "cdp-generate",
+                "caller_agent": "cursor",
+            },
+        )
+        assert resp.status_code in (200, 201), resp.text
+        link_resp = client.get("/dispatch-links/exec-reopen-admit")
+        assert link_resp.status_code == 200
+        assert link_resp.json()["terminal_status"] is None
+        detail = get_thread_with_links(thread_id)
+        assert detail is not None
+        assert detail["bus_lifecycle_state"] == "active"

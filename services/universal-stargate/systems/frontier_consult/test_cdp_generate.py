@@ -1110,3 +1110,146 @@ async def test_build_dispatch_body_cdp_raises_substrate_unimplemented() -> None:
     assert exc.value.details is not None
     assert exc.value.details["substrate"] == "cdp"
     assert exc.value.details["capability"] == "pipeline_dispatch_admission"
+
+
+def test_format_cdp_result_body_failed_carries_envelope_fields() -> None:
+    """L1-AC-c: FAILED body carries thread_id, pointer_turn, dispatch_link, cse bullets."""
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="abcdef0123456789",
+        satellite_execution_id="sat-env",
+        prompt_uri="cortex://notes/system/threads/r-prompt.md",
+        picker_model="fable-5",
+        stall_stage="wall_clock_exceeded",
+        error="CDP generate exceeded max_wall_s",
+        extras={
+            "thread_id": "10142",
+            "pointer_turn": 7,
+            "dispatch_link": "terminated:failed",
+            "registration_id": "reg-abc",
+            "chat_url": "https://claude.ai/cowork/cse_xyz",
+        },
+    )
+    text = format_cdp_result_body(result)
+    assert "- thread_id: `10142`" in text
+    assert "- pointer_turn: `7`" in text
+    assert "- dispatch_link: terminated:failed" in text
+    assert "reg-abc" in text
+    assert "https://claude.ai/cowork/cse_xyz" in text
+    assert "# CDP generate FAILED" in text
+
+
+@pytest.fixture
+def _cdp_bus_env(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Hermetic agent-bus ASGI transport for CDP admit integration (L1-AC-a)."""
+    import httpx
+    from agent_bus_store import create_app
+    from agent_bus_store.auth import require_token
+    from agent_bus_store.db import init_db
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    monkeypatch.setenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "1")
+    init_db()
+    app = create_app(db_path=str(db_path))
+    app.dependency_overrides[require_token] = lambda: None
+    transport = httpx.ASGITransport(app=app)
+
+    def _client_factory(_url: str, *, timeout: float = 10.0) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            transport=transport, base_url="http://test", timeout=timeout
+        )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.make_async_client",
+        _client_factory,
+    )
+    return transport
+
+
+@pytest.mark.asyncio
+async def test_cdp_admit_registers_dispatch_link_row(
+    _cdp_bus_env, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """L1-AC-a: CDP admit registers dispatch link row (GET /dispatch-links → 200)."""
+    import httpx
+    from agent_bus_store.db import create_thread
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    row = create_thread(
+        thread_id=None, slug="cdp-admit-link", lifecycle_state="pending"
+    )
+    assert row is not None
+    thread_id = row["id"]
+
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: type("Staged", (), {
+            "prompt_uri": "cortex://notes/system/ephemeral/prompt.md",
+            "staged": True,
+        })(),
+    )
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
+    monkeypatch.setattr(mod, "build_handoff_result", lambda **kw: {
+        "handoff_status": "ok",
+        "poll_hint": {"thread_id": thread_id, "from_agent": "web-anthropic"},
+    })
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+
+    captured: list[dict[str, object]] = []
+    pending: list[object] = []
+
+    async def _fake_worker(**kwargs: object) -> None:
+        captured.append(dict(kwargs))
+
+    class _FakeTask:
+        def add_done_callback(self, _cb: object) -> None:
+            return None
+
+        def cancelled(self) -> bool:
+            return False
+
+        def exception(self) -> None:
+            return None
+
+    monkeypatch.setattr(mod, "run_cdp_worker", _fake_worker)
+
+    def _capture_task(coro: object, **_kw: object) -> _FakeTask:
+        pending.append(coro)
+        return _FakeTask()
+
+    monkeypatch.setattr(mod.asyncio, "create_task", _capture_task)
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        contract="light-bounded",
+        dispatch_thread_id=str(thread_id),
+        model="cdp/fable",
+        prompt="consult",
+    )
+    response = MagicMock()
+    response.status_code = 202
+    await mod.dispatch_cdp_generate(
+        request_id="req-admit-link",
+        body=body,
+        response=response,
+    )
+    assert pending
+    await pending[0]
+    assert captured
+    execution_id = str(captured[0]["execution_id"])
+
+    async with httpx.AsyncClient(
+        transport=_cdp_bus_env, base_url="http://test"
+    ) as client:
+        resp = await client.get(f"/dispatch-links/{execution_id}")
+    assert resp.status_code == 200, resp.text
+    link = resp.json()
+    assert link["thread_id"] == thread_id
+    assert link["pipeline_id"] == "cdp-generate"
+    assert link["terminal_status"] is None

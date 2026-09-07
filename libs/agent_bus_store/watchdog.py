@@ -146,6 +146,8 @@ def _holder_blocks_admitted_reap(
             (thread_id,),
         ).fetchone()
     execution_id = None if link is None else link["execution_id"]
+    if execution_id is None:
+        return False
     verdict, _reason, _terminal = evaluate_link_liveness(
         thread_id=thread_id,
         link_execution_id=execution_id,

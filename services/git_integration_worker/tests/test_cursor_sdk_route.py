@@ -672,6 +672,52 @@ async def test_dispatch_implement_success_ok(
 
 
 @pytest.mark.asyncio
+async def test_sdk_terminate_sends_execution_id_m1(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L1-AC-m: SDK success path passes execution_id; bus_lifecycle omitted (M1)."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    req = CursorDispatchRequest(
+        thread_id="1591",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-m1",
+        execution_id="exec-m1",
+        message="---\ncontract: implement\n---\npacket",
+        handoff_contract="implement",
+    )
+    bus = _mock_bus()
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_kwargs: None)
+
+    def _ok_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return _sdk_outcome(tool_call_count=1)
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
+        bus=bus,
+        controller=_make_controller(),
+    )
+
+    bus.terminate_dispatch.assert_awaited_once()
+    call_kwargs = bus.terminate_dispatch.await_args.kwargs
+    assert call_kwargs["thread_id"] == "1591"
+    assert call_kwargs["terminal_status"] == "completed"
+    assert call_kwargs["execution_id"] == "exec-m1"
+    assert "bus_lifecycle" not in call_kwargs
+
+
+@pytest.mark.asyncio
 async def test_dispatch_implement_pin_satisfied_cortex_uri_first(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

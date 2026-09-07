@@ -15,6 +15,10 @@ from claude_bundles.cdp_model_endpoint import (
 
 from systems.frontier_consult import cdp_generate_reconcile as reconcile
 from systems.frontier_consult.cdp_generate_inflight_ledger import _connect
+from systems.frontier_consult.cdp_dispatch_envelope import (
+    record_cdp_admit,
+    reset_cdp_dispatch_envelope_for_tests,
+)
 from systems.frontier_consult.cdp_generate_reconcile import (
     finalize_cdp_generate,
     max_open_leg_s,
@@ -26,6 +30,7 @@ from systems.frontier_consult.cdp_generate_reconcile import (
 @pytest.fixture(autouse=True)
 def _reset_ledger() -> None:
     reset_cdp_generate_reconcile_for_tests()
+    reset_cdp_dispatch_envelope_for_tests()
 
 
 @pytest.fixture(autouse=True)
@@ -997,3 +1002,207 @@ async def test_finalize_attest_does_not_emit_reconciled(
         attested_by="test-seat",
     )
     assert published == ["CdpGenerateProof"]
+
+
+def _failed_result(*, execution_id: str = "exec-fail-order") -> CdpGenerateResult:
+    return CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id=execution_id,
+        satellite_execution_id="sat-fail",
+        prompt_uri="cortex://p.md",
+        picker_model="fable-5",
+        stall_stage="completed_without_proof",
+        error="no proof",
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalize_failed_terminate_before_publish_and_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L1-AC-b: failed finalize terminates link before stalled publish and delivery."""
+    order: list[str] = []
+
+    record_cdp_admit(
+        execution_id="exec-fail-order",
+        thread_id="5583",
+        pointer_turn=3,
+        admit_reason="ok",
+        caller_supplied_thread=True,
+    )
+
+    async def _terminate(**_kwargs: object) -> bool:
+        order.append("terminate")
+        return True
+
+    def _publish(_factory: Any, **_kwargs: Any) -> bool:
+        order.append("publish")
+        return True
+
+    async def _deliver(**_kwargs: object) -> bool:
+        order.append("deliver")
+        return True
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.terminate_handoff_dispatch",
+        _terminate,
+    )
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _publish)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        _deliver,
+    )
+    upsert_inflight_leg(
+        execution_id="exec-fail-order",
+        request_id="req-fail-order",
+        thread_id="5583",
+        pointer_turn=3,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/fable",
+        max_wall_s=1800.0,
+    )
+    await finalize_cdp_generate(
+        result=_failed_result(),
+        request_id="req-fail-order",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=3,
+        via="worker",
+    )
+    assert order.index("terminate") < order.index("publish") < order.index("deliver")
+
+
+@pytest.mark.asyncio
+async def test_finalize_terminal_event_exists_terminate_before_delivery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L1-AC-b: terminal_event_exists path terminates before on-behalf delivery."""
+    order: list[str] = []
+
+    record_cdp_admit(
+        execution_id="exec-term-exists",
+        thread_id="5583",
+        pointer_turn=2,
+        admit_reason="ok",
+        caller_supplied_thread=True,
+    )
+
+    async def _terminate(**_kwargs: object) -> bool:
+        order.append("terminate")
+        return True
+
+    def _publish(_factory: Any, **_kwargs: Any) -> bool:
+        order.append("publish")
+
+    async def _deliver(**_kwargs: object) -> bool:
+        order.append("deliver")
+        return True
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_reconcile.terminal_event_exists",
+        lambda _eid: True,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.terminate_handoff_dispatch",
+        _terminate,
+    )
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _publish)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        _deliver,
+    )
+    upsert_inflight_leg(
+        execution_id="exec-term-exists",
+        request_id="req-term-exists",
+        thread_id="5583",
+        pointer_turn=2,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/fable",
+        max_wall_s=1800.0,
+    )
+    await finalize_cdp_generate(
+        result=_failed_result(execution_id="exec-term-exists"),
+        request_id="req-term-exists",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=2,
+        via="reconcile",
+    )
+    assert "terminate" in order
+    assert "deliver" in order
+    assert order.index("terminate") < order.index("deliver")
+    assert "publish" not in order
+
+
+@pytest.mark.asyncio
+async def test_finalize_stalled_emits_join_key_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L1-AC-d: finalize stalled path passes join-key fields to CdpGenerateStalled."""
+    stalled_kwargs: list[dict[str, Any]] = []
+
+    record_cdp_admit(
+        execution_id="exec-join-keys",
+        thread_id="5583",
+        pointer_turn=5,
+        admit_reason="ok",
+        caller_supplied_thread=True,
+    )
+
+    def _capture(factory: Any, **kwargs: Any) -> bool:
+        if factory.__name__ == "CdpGenerateStalled":
+            stalled_kwargs.append(dict(kwargs))
+        return True
+
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture)
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.terminate_handoff_dispatch",
+        AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+    upsert_inflight_leg(
+        execution_id="exec-join-keys",
+        request_id="req-join-keys",
+        thread_id="5583",
+        pointer_turn=5,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/fable",
+        max_wall_s=1800.0,
+    )
+    result = _failed_result(execution_id="exec-join-keys")
+    result = CdpGenerateResult(
+        ok=result.ok,
+        body=result.body,
+        execution_id=result.execution_id,
+        satellite_execution_id=result.satellite_execution_id,
+        prompt_uri=result.prompt_uri,
+        picker_model=result.picker_model,
+        stall_stage=result.stall_stage,
+        error=result.error,
+        extras={
+            "registration_id": "reg-finalize",
+            "chat_url": "https://claude.ai/cowork/cse_fin",
+        },
+    )
+    await finalize_cdp_generate(
+        result=result,
+        request_id="req-join-keys",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=5,
+        via="worker",
+    )
+    assert len(stalled_kwargs) == 1
+    kw = stalled_kwargs[0]
+    assert kw["thread_id"] == "5583"
+    assert kw["pointer_turn"] == 5
+    assert kw["dispatch_link_terminal"] is True
+    assert kw["registration_id"] == "reg-finalize"
+    assert kw["chat_url"] == "https://claude.ai/cowork/cse_fin"
