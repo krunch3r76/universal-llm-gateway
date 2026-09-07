@@ -50,7 +50,7 @@ def test_compose_investigate_sonnet5_knobs() -> None:
     assert knobs == {
         "effort": "xhigh",
         "thinking": "true",
-        "context": "300k",
+        "context": "1m",
     }
 
 
@@ -116,11 +116,11 @@ def test_compose_grok_investigate_omit_xhigh() -> None:
     assert knobs == {"effort": "xhigh", "fast": "false"}
 
 
-def test_compose_composer_omit_path_fast_true() -> None:
-    """Implement omit ⇒ medium; Composer has no effort knob so knobs stay empty."""
+def test_compose_composer_omit_path_fast_false() -> None:
+    """Implement omit ⇒ medium; Composer has no effort knob; fast=false for cost."""
     knobs = compose_model_knobs(
         {"resolved_model_id": "cursor/composer-2.5"},
         resolve_desired_effort(None, contract="implement"),
         contract="implement",
     )
-    assert knobs == {}
+    assert knobs == {"fast": "false"}

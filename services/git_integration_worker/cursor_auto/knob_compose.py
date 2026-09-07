@@ -2,7 +2,9 @@
 
 Wire resolution (``desired_model`` / ``desired_effort`` / contract) lives in
 ``wire_map``. This module is the second hop: map a resolved effort onto the
-model card, and fill Grok ``fast=false`` when the caller omitted ``fast``.
+model card, and fill ``fast=false`` when the caller omitted ``fast`` on Grok
+and Composer (ListModels/catalog defaults are speed-biased; headless SDK runs
+pay per token).
 Both ``clamp_effort_to_model_card`` and ``compose_model_knobs`` share
 ``resolve_card_effort`` so off-ladder tokens cannot fail open on one surface
 and drop the knob on the other.
@@ -123,12 +125,10 @@ def compose_model_knobs(
     without this merge the resolved effort is reported on the admit turn but never
     reaches the bridge, so every Auto-bound reasoner ran at its catalog default.
 
-    Grok's ListModels catalog default is ``fast=true`` (speed over quality). Auto
-    fills ``fast=false`` when the knob is absent so the bridge never inherits
-    that catalog speed default. Composer omit-path fills ``fast=true`` on every
-    surface so mechanical dispatches stay on the fast variant unless explicitly
-    pinned ``fast=false``. This is a **default, not a pin** — an explicit
-    ``fast`` already on ``model_knobs`` is preserved.
+    Grok and Composer ListModels defaults are ``fast=true`` (speed over quality).
+    Auto fills ``fast=false`` when the knob is absent so headless SDK dispatches
+    stay on the Standard tier (~3× cheaper on cache-read billing) unless the
+    caller explicitly pins ``fast=true``. This is a **default, not a pin**.
     """
     knobs: dict[str, str] = dict(model.get("model_knobs") or {})
     model_id = str(model.get("resolved_model_id") or "").strip()
@@ -150,7 +150,7 @@ def compose_model_knobs(
                 and "fast" in supported_knobs(bare)
                 and "fast" not in knobs
             ):
-                knobs["fast"] = "true"
+                knobs["fast"] = "false"
             if bare == "claude-sonnet-5":
                 card_knobs = supported_knobs(bare)
                 for knob_name, knob_value in _SONNET_AUTO_KNOBS.items():
