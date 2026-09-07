@@ -127,6 +127,7 @@ from services.git_integration_worker.cursor_sdk_dispatch_context import (
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_reconciled,
     emit_sdk_implement_unresolved_source_ref,
+    emit_sdk_lane_b_admit_bound,
     emit_sdk_lane_b_mint_rolled_back,
     emit_sdk_lane_b_minted,
     emit_sdk_lane_b_worktree_missing_observed,
@@ -268,7 +269,7 @@ from services.git_integration_worker.cursor_sdk_worktree import (
     resolve_admit_binding,
 )
 from services.git_integration_worker.cursor_sdk_worktree_prune import (
-    prune_dispatch_worktree,
+    rollback_dispatch_worktree,
 )
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     lookup_dispatch_worktree,
@@ -665,8 +666,9 @@ async def _rollback_lane_b_mint_if_needed(
     if not minted_lane_b:
         return
     await asyncio.to_thread(
-        prune_dispatch_worktree,
+        rollback_dispatch_worktree,
         dispatch_id=dispatch_id,
+        thread_id=thread_id,
         source_repo=source_repo,
     )
     if lookup_dispatch_worktree(dispatch_id=dispatch_id) is None:
@@ -2518,7 +2520,7 @@ async def cursor_dispatch(
     mint_wait_ms = 0.0
     try:
         mint_started = time.monotonic()
-        dispatch_workspace, lease_key = await asyncio.to_thread(
+        binding = await asyncio.to_thread(
             resolve_admit_binding,
             req=req,
             source_repo=resolved_source_repo,
@@ -2528,33 +2530,38 @@ async def cursor_dispatch(
             lane=selected_lane,
         )
         mint_wait_ms = (time.monotonic() - mint_started) * 1000.0
-        minted_lane_b = (
-            selected_lane == "B"
-            and not req.nest_under
-            and req.worktree_path is None
-            and not req.resume_of
-            and prior_lane_tree is None
-        )
+        dispatch_workspace = binding.workspace
+        lease_key = binding.lease_key
+        minted_lane_b = binding.binding_kind == "minted"
         isolation_materialized = b_worktree_materialized(
             admit_lane=selected_lane,
             lease_key=lease_key,
             source_repo=dispatch_git_str,
         )
-        if minted_lane_b:
+        if binding.binding_kind in ("minted", "adopted"):
             from services.git_integration_worker.cursor_sdk_worktree_registry import (
                 lookup_dispatch_worktree,
             )
 
             record = lookup_dispatch_worktree(dispatch_id=req.dispatch_id)
+            branch_name = record.branch_name if record is not None else None
+            emit_sdk_lane_b_admit_bound(
+                dispatch_id=req.dispatch_id,
+                thread_id=req.thread_id,
+                binding_kind=binding.binding_kind,
+                worktree_path=str(dispatch_workspace.resolve()),
+                branch=branch_name,
+            )
             if record is not None:
-                emit_sdk_lane_b_minted(
-                    dispatch_id=req.dispatch_id,
-                    thread_id=req.thread_id,
-                    worktree_path=str(record.worktree_path),
-                    branch=record.branch_name,
-                    branch_point=record.branch_point,
-                    mint_wait_ms=round(mint_wait_ms, 1),
-                )
+                if binding.binding_kind == "minted":
+                    emit_sdk_lane_b_minted(
+                        dispatch_id=req.dispatch_id,
+                        thread_id=req.thread_id,
+                        worktree_path=str(record.worktree_path),
+                        branch=record.branch_name,
+                        branch_point=record.branch_point,
+                        mint_wait_ms=round(mint_wait_ms, 1),
+                    )
                 await associate_lane_branch(
                     thread_id=req.thread_id,
                     branch_name=record.branch_name,

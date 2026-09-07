@@ -185,6 +185,11 @@ def launch_sdk_bridge(
                 client_timeout=client_timeout,
                 local=local,
             )
+            from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+                reset_occupancy_cache,
+            )
+
+            reset_occupancy_cache()
             break
         except Exception as launch_exc:  # noqa: BLE001
             is_last = attempt + 1 >= _SDK_LAUNCH_ATTEMPTS

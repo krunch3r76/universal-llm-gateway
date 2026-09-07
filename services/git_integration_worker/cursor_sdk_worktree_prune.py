@@ -16,6 +16,7 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_registry_ghost_row,
     emit_sdk_lane_b_salvage_failed,
     emit_sdk_lane_b_salvaged,
+    emit_sdk_lane_b_worktree_removed,
 )
 from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     branch_state,
@@ -27,6 +28,7 @@ from services.git_integration_worker.cursor_sdk_worktree_gc import (
     gc_merged_dispatch_branches,
 )
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    containing_worktree_under_root,
     ledger_connection,
     live_bridge_worktree_paths,
     live_ledger_worktree_paths,
@@ -45,6 +47,7 @@ logger = get_logger(__name__)
 
 _GIT_TIMEOUT_S = 60.0
 _REAPABLE_STATUSES = frozenset({"completed", "failed", "cancelled"})
+_LIVE_DISPATCH_STATUSES = ("admitted", "running", "queued", "parked_waiting")
 # Ghost rows are surfaced once per process, not once per 30s sweep: the drift is
 # persistent by nature and an every-cycle event would bury the live-bridge skip.
 # The budget bounds the opening burst — 120 of 156 lane rows on this node already
@@ -102,10 +105,72 @@ def is_reapable_dispatch_status(status: str | None) -> bool:
     return status in _REAPABLE_STATUSES
 
 
+def sibling_non_terminal_dispatch_on_thread(
+    *,
+    thread_id: str,
+    exclude_dispatch_id: str,
+) -> str | None:
+    """Return a sibling dispatch id on ``thread_id`` that is still non-terminal."""
+    placeholders = ", ".join("?" for _ in _LIVE_DISPATCH_STATUSES)
+    with ledger_connection() as conn:
+        row = conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches "
+            f"WHERE thread_id=? AND dispatch_id!=? AND status IN ({placeholders}) "
+            "LIMIT 1",
+            (thread_id, exclude_dispatch_id, *_LIVE_DISPATCH_STATUSES),
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row["dispatch_id"])
+
+
+def _ledger_status_for_dispatch(*, dispatch_id: str) -> str:
+    with ledger_connection() as conn:
+        row = conn.execute(
+            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None or row["status"] is None:
+        return "none"
+    return str(row["status"])
+
+
+def rollback_dispatch_worktree(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    source_repo: Path,
+) -> PruneResult:
+    """Remove a freshly minted worktree when post-mint admit fails.
+
+    Refuses when another non-terminal dispatch on the same thread still needs
+    the lane tree.
+    """
+    sibling = sibling_non_terminal_dispatch_on_thread(
+        thread_id=thread_id,
+        exclude_dispatch_id=dispatch_id,
+    )
+    if sibling is not None:
+        logger.warning(
+            "lane_b rollback refused — sibling dispatch holds thread "
+            "dispatch_id=%s thread_id=%s sibling=%s",
+            dispatch_id,
+            thread_id,
+            sibling,
+        )
+        return PruneResult(pruned=False, branch_retained=True)
+    return prune_dispatch_worktree(
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+        remove_trigger="rollback",
+    )
+
+
 def prune_dispatch_worktree(
     *,
     dispatch_id: str,
     source_repo: Path,
+    remove_trigger: str | None = "reap",
 ) -> PruneResult:
     """Remove a registered dispatch worktree; retain unmerged branches (S3).
 
@@ -122,6 +187,8 @@ def prune_dispatch_worktree(
     wt_path = record.worktree_path
     branch = record.branch_name
     branch_point = record.branch_point
+    thread_id = record.thread_id or dispatch_id
+    ledger_status = _ledger_status_for_dispatch(dispatch_id=dispatch_id)
     repo = source_repo.resolve()
     # Process truth outranks every record we hold: a bridge standing in this
     # directory loses its shell the moment we remove it (spawn ENOENT, H4).
@@ -226,6 +293,15 @@ def prune_dispatch_worktree(
                 wt_path,
                 proc.stderr.strip(),
             )
+        elif remove_trigger is not None:
+            emit_sdk_lane_b_worktree_removed(
+                worktree_path=str(wt_path.resolve()),
+                trigger=remove_trigger,
+                ledger_status_at_remove=ledger_status,
+                dispatch_id=dispatch_id,
+                thread_id=thread_id,
+                branch=branch,
+            )
     state = branch_state(
         repo,
         branch_name=branch,
@@ -292,7 +368,7 @@ def active_managed_worktree_paths(*, worktree_root: Path) -> set[str]:
     lags), and live bridge processes (blind to nothing, but only sees what is
     running this instant).
     """
-    root = str(worktree_root.resolve())
+    root = worktree_root.resolve()
     active: set[str] = set()
     with ledger_connection() as conn:
         rows = conn.execute(
@@ -303,8 +379,9 @@ def active_managed_worktree_paths(*, worktree_root: Path) -> set[str]:
         key = row["lease_key"] or row["source_repo"]
         if not key:
             continue
-        if key.startswith(root):
-            active.add(str(Path(key).resolve()))
+        path = containing_worktree_under_root(path=key, worktree_root=root)
+        if path is not None:
+            active.add(path)
     active |= live_ledger_worktree_paths(worktree_root=worktree_root)
     active |= live_bridge_worktree_paths(worktree_root=worktree_root)
     return active

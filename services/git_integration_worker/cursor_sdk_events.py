@@ -1503,6 +1503,128 @@ def emit_sdk_lane_b_registry_ghost_row(
 
 
 @event_factory
+def SdkLaneBAdmitBound(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    binding_kind: str,
+    worktree_path: str,
+    branch: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "binding_kind": binding_kind,
+        "worktree_path": worktree_path,
+    }
+    if branch is not None:
+        payload["branch"] = branch
+    return Event(
+        signal="sdk.lane_b.admit_bound",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_admit_bound(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    binding_kind: str,
+    worktree_path: str,
+    branch: str | None = None,
+) -> None:
+    """Emit after Lane-B admit binding resolves workspace + lease key."""
+    _emit(
+        SdkLaneBAdmitBound(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            binding_kind=binding_kind,
+            worktree_path=worktree_path,
+            branch=branch,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBWorktreeRemoved(  # noqa: N802
+    worktree_path: str,
+    trigger: str,
+    ledger_status_at_remove: str,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
+    branch: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "worktree_path": worktree_path,
+        "trigger": trigger,
+        "ledger_status_at_remove": ledger_status_at_remove,
+    }
+    for key, value in (
+        ("dispatch_id", dispatch_id),
+        ("thread_id", thread_id),
+        ("branch", branch),
+    ):
+        if value is not None:
+            payload[key] = value
+    return Event(
+        signal="sdk.lane_b.worktree_removed",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_worktree_removed(
+    *,
+    worktree_path: str,
+    trigger: str,
+    ledger_status_at_remove: str,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
+    branch: str | None = None,
+) -> None:
+    """Emit when a Lane-B worktree directory is removed from disk."""
+    _emit(
+        SdkLaneBWorktreeRemoved(
+            worktree_path=worktree_path,
+            trigger=trigger,
+            ledger_status_at_remove=ledger_status_at_remove,
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            branch=branch,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBReconcileSkippedLiveLedger(  # noqa: N802
+    worktree_path: str,
+    dispatch_id: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {"worktree_path": worktree_path}
+    if dispatch_id is not None:
+        payload["dispatch_id"] = dispatch_id
+    return Event(
+        signal="sdk.lane_b.reconcile_skipped_live_ledger",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_reconcile_skipped_live_ledger(
+    *,
+    worktree_path: str,
+    dispatch_id: str | None = None,
+) -> None:
+    """Emit when reconcile skips removal because live ledger still claims the tree."""
+    _emit(
+        SdkLaneBReconcileSkippedLiveLedger(
+            worktree_path=worktree_path,
+            dispatch_id=dispatch_id,
+        )
+    )
+
+
+@event_factory
 def FrontierWriteLeaseAcquired(  # noqa: N802
     dispatch_id: str,
     source_repo: str | None,

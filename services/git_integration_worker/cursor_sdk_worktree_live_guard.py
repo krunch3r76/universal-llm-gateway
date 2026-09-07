@@ -195,7 +195,6 @@ def live_ledger_worktree_paths(*, worktree_root: Path) -> set[str]:
         ensure_worktree_schema,
     )
 
-    root = str(worktree_root.resolve())
     active: set[str] = set()
     placeholders = ", ".join("?" for _ in _LIVE_LEDGER_STATUSES)
     with ledger_connection() as conn:
@@ -212,9 +211,11 @@ def live_ledger_worktree_paths(*, worktree_root: Path) -> set[str]:
         for key in (row["lease_key"] or row["source_repo"], row["worktree_path"]):
             if not key:
                 continue
-            resolved = str(Path(key).resolve())
-            if resolved.startswith(root):
-                active.add(resolved)
+            path = containing_worktree_under_root(
+                path=key, worktree_root=worktree_root
+            )
+            if path is not None:
+                active.add(path)
     return active
 
 
@@ -223,13 +224,18 @@ def worktree_held_by_live_bridge(
     worktree_path: Path,
     worktree_root: Path | None = None,
     occupancy: list[BridgeOccupancy] | None = None,
+    fresh: bool = False,
 ) -> int | None:
     """Pid of a live bridge standing in ``worktree_path``, or ``None`` if free.
 
     ``worktree_root`` defaults to the parent of ``worktree_path``, which makes
     the single-path check usable from ``prune_dispatch_worktree`` where the
     caller knows the tree but not the root.
+
+    ``fresh=True`` drops the occupancy cache and rescans process truth.
     """
+    if fresh:
+        reset_occupancy_cache()
     target = worktree_path.resolve()
     root = (worktree_root or worktree_path.parent).resolve()
     bridges = occupancy if occupancy is not None else _occupancy_snapshot()
