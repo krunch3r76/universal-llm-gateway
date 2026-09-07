@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from .checkpoint_citation_lint import CitationToken
 from .checkpoint_projection import (
     ArtifactAnchor,
@@ -161,6 +163,26 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
 
 def maybe_project_checkpoint_body(*, thread: str, subject: str, body: str) -> str:
     """Apply projection when subject is CHECKPOINT; otherwise passthrough."""
+    if is_checkpoint_subject(subject):
+        from agent_bus_store.thread_classification import classify_thread
+
+        from .db import get_thread
+
+        row = get_thread(thread)
+        tags = (row or {}).get("tags") or []
+        if classify_thread(tags)["spine"] == "root" and re.search(
+            r"^### User\b", body, re.MULTILINE
+        ):
+            from fastapi import HTTPException, status
+
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "CHECKPOINT body must not contain user speech",
+                    "code": "checkpoint.speech_in_body",
+                    "reason": "checkpoint.speech_in_body",
+                },
+            )
     if not is_checkpoint_subject(subject):
         return body
     resolvers = build_post_resolvers(root_thread=thread)

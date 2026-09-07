@@ -162,7 +162,10 @@ cortex(tool="session_close_preflight", arguments='{
    Use returned copy-paste **`session_id`** when present, else
    `session_id_from_jsonl_start`. When `hop_reason=session_id_already_journaled`,
    use returned `session_id` + `prior_session_id` (work since the last lid
-   only; do not ask). Persist of a sealed id still echoes `already_closed`.
+   only; do not ask). When `hop_reason=succession_fill`, use returned
+   `session_id` — this close **fills the succession row** (structural layer
+   only; verbatim PREFIX-EXTENDS). Persist of a sealed id still echoes
+   `already_closed` unless `succession_fill` applies.
    Optional: `prior_session_id_suggestion`.
 
    **`light` / `none` depth + no boot-held ID (id-derivation ≠ archival depth):**

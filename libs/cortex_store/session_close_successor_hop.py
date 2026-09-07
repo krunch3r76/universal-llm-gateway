@@ -19,6 +19,7 @@ from agent_seat.session_id import derive_session_id_from_timestamp
 from .transcript_session_id import _JSONL_TIMESTAMP_TAG_RE, _normalize_cursor_timestamp
 
 HOP_REASON = "session_id_already_journaled"
+SUCCESSION_FILL_REASON = "succession_fill"
 _TS_RE = re.compile(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):?(\d{2})(?::(\d{2}))?")
 _CHAIN_WALK_CAP = 32
 
@@ -31,6 +32,7 @@ class SealedJournal:
     journal_row_id: int
     timestamp: str
     prior_session_id: str | None
+    closed_by: str | None = None
 
 
 @dataclass(frozen=True)
@@ -95,7 +97,7 @@ def lookup_sealed_journal(session_id: str) -> SealedJournal | None:
     conn = cortex_conn()
     try:
         row = conn.execute(
-            "SELECT id, session_id, timestamp, prior_session_id "
+            "SELECT id, session_id, timestamp, prior_session_id, closed_by "
             "FROM session_journals WHERE session_id = ?",
             (session_id,),
         ).fetchone()
@@ -108,6 +110,7 @@ def lookup_sealed_journal(session_id: str) -> SealedJournal | None:
         journal_row_id=int(row["id"]),
         timestamp=str(row["timestamp"]),
         prior_session_id=row["prior_session_id"],
+        closed_by=row["closed_by"],
     )
 
 
@@ -118,7 +121,7 @@ def _lookup_child_journal(prior_session_id: str) -> SealedJournal | None:
     conn = cortex_conn()
     try:
         row = conn.execute(
-            "SELECT id, session_id, timestamp, prior_session_id "
+            "SELECT id, session_id, timestamp, prior_session_id, closed_by "
             "FROM session_journals WHERE prior_session_id = ? "
             "ORDER BY id DESC LIMIT 1",
             (prior_session_id,),
@@ -132,6 +135,7 @@ def _lookup_child_journal(prior_session_id: str) -> SealedJournal | None:
         journal_row_id=int(row["id"]),
         timestamp=str(row["timestamp"]),
         prior_session_id=row["prior_session_id"],
+        closed_by=row["closed_by"],
     )
 
 
@@ -229,6 +233,12 @@ def resolve_successor_hop(
         tip = latest_journal_in_chain(anchor)
         if tip is None:
             continue
+        if tip.closed_by == "succession":
+            return SuccessorHop(
+                session_id=tip.session_id,
+                prior_session_id=tip.prior_session_id or anchor,
+                hop_reason=SUCCESSION_FILL_REASON,
+            )
         after = parse_utc_timestamp(tip.timestamp)
         if after is None:
             continue
@@ -348,6 +358,7 @@ def apply_successor_hop_fields(
 
 __all__ = [
     "HOP_REASON",
+    "SUCCESSION_FILL_REASON",
     "SealedJournal",
     "SessionIdResolution",
     "SuccessorHop",

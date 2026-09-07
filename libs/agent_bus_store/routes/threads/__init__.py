@@ -22,6 +22,7 @@ from . import (  # noqa: E402,F401
     send,
     send_prep,
     send_sidecar,
+    tape,
     triage,
     with_turn,
 )

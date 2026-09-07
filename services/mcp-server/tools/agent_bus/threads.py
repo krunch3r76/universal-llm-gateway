@@ -232,3 +232,26 @@ def _create_thread_dispatch(
         thread_id=thread_id,
         enroll_charter_runner=enroll_charter_runner,
     )
+
+
+def _tape_dispatch(
+    *,
+    thread: str | int = "",
+    thread_id: str | int = "",
+    budget_bytes: int | None = None,
+) -> dict[str, Any]:
+    """Relay GET /threads/{thread}/tape — continuity tape render."""
+    lane = str(thread or thread_id or "")
+    if not lane:
+        return {"error": "tape requires: thread", "reason": "missing_arg"}
+    params = ""
+    if budget_bytes is not None:
+        params = f"?budget_bytes={int(budget_bytes)}"
+    result = relay("agent-bus", "GET", f"/threads/{lane}/tape{params}")
+    if isinstance(result, dict) and "error" in result:
+        structured = _structured_relay_error(result, op="tape")
+        if structured is not None:
+            return structured
+        return {"error": f"agent-bus error: {result['error']}"}
+    record("mcp.agentbus.tape.rendered", thread=lane)
+    return result if isinstance(result, dict) else {"tape": result}

@@ -65,7 +65,7 @@ def try_idempotent_session_close(
     try:
         existing = _idem_conn.execute(
             "SELECT id, file_path, handoff_prompt, agent, summary, domains, "
-            "decisions, open_items FROM session_journals "
+            "decisions, open_items, closed_by FROM session_journals "
             "WHERE session_id = ?",
             (body.session_id,),
         ).fetchone()
@@ -73,6 +73,13 @@ def try_idempotent_session_close(
         _idem_conn.close()
     if existing is None:
         return None, None
+
+    if (
+        existing["file_path"] is not None
+        and existing["closed_by"] == "succession"
+        and body.closed_by != "succession"
+    ):
+        return None, existing["id"]
 
     prior_transcript_id = f"transcript:{body.session_id}"
     prior_depth = "none"
@@ -132,25 +139,28 @@ def try_idempotent_session_close(
         expected_source_file_sha256=body.expected_source_file_sha256,
     )
     if handoff_retry.handoff_prompt != prior_handoff:
-        conflict_detail = build_validation_error(
-            reason="session.handoff_would_change",
-            field="handoff_prompt",
-            received=handoff_retry.handoff_prompt,
-            expected=prior_handoff,
-            examples=[],
-            hint=(
-                "Already-closed sessions cannot change handoff via session_close; "
-                "use session_handoff_upsert."
-            ),
-            detail=(
-                f"session {body.session_id!r} is already closed; re-close would "
-                "change stored handoff_prompt."
-            ),
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=conflict_detail,
-        )
+        if existing["closed_by"] == "succession" and body.closed_by != "succession":
+            pass
+        else:
+            conflict_detail = build_validation_error(
+                reason="session.handoff_would_change",
+                field="handoff_prompt",
+                received=handoff_retry.handoff_prompt,
+                expected=prior_handoff,
+                examples=[],
+                hint=(
+                    "Already-closed sessions cannot change handoff via session_close; "
+                    "use session_handoff_upsert."
+                ),
+                detail=(
+                    f"session {body.session_id!r} is already closed; re-close would "
+                    "change stored handoff_prompt."
+                ),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=conflict_detail,
+            )
     # Genuinely re-closing an already-closed session: echo the prior close
     # explicitly. Do NOT re-post a bus debrief — the prior close already
     # posted one, and re-posting here replays stale summary text (22962).
@@ -221,6 +231,64 @@ def persist_session_close(
         handoff_source_path=body.handoff_source_path,
     )
 
+    conversation_uuid: str | None = None
+    if body.transcript_jsonl_path:
+        from ..session_close_successor_hop import conversation_uuid_from_jsonl_path
+        from ..transcript_assembly import TranscriptPathError, resolve_jsonl_path
+
+        try:
+            conversation_uuid = conversation_uuid_from_jsonl_path(
+                resolve_jsonl_path(body.transcript_jsonl_path)
+            )
+        except TranscriptPathError:
+            conversation_uuid = None
+
+    structural_fill = False
+    if reuse_journal_row_id is not None and body.closed_by != "succession":
+        _fill_conn = cortex_conn()
+        try:
+            prior = _fill_conn.execute(
+                "SELECT closed_by, file_path FROM session_journals WHERE id = ?",
+                (reuse_journal_row_id,),
+            ).fetchone()
+        finally:
+            _fill_conn.close()
+        if prior is not None and prior["closed_by"] == "succession":
+            structural_fill = True
+            if prior["file_path"] and ctx.transcript_md is not None:
+                prior_path = _FILES_ROOT / prior["file_path"]
+                if prior_path.is_file():
+                    prior_text = prior_path.read_text(encoding="utf-8")
+                    marker = "\n## Session Summary"
+                    prior_verbatim = (
+                        prior_text[: prior_text.find(marker)]
+                        if marker in prior_text
+                        else prior_text
+                    )
+                    new_marker = "\n## Session Summary"
+                    new_verbatim = (
+                        ctx.transcript_md[: ctx.transcript_md.find(new_marker)]
+                        if new_marker in ctx.transcript_md
+                        else ctx.transcript_md
+                    )
+                    if not new_verbatim.startswith(prior_verbatim):
+                        conflict = build_validation_error(
+                            reason="succession.verbatim_diverged",
+                            field="transcript_md",
+                            received="non-prefix extension",
+                            expected="byte-prefix of sealed verbatim",
+                            examples=[],
+                            hint="Succession fill requires PREFIX-EXTEND from live JSONL.",
+                            detail=(
+                                f"session {body.session_id!r} succession fill refused: "
+                                "new verbatim is not a prefix extension of sealed verbatim."
+                            ),
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=conflict,
+                        )
+
     abs_path: Path | None = None
     if ctx.transcript_path is not None:
         assert ctx.transcript_md is not None
@@ -284,6 +352,8 @@ def persist_session_close(
                 tx_attributes["source_ref_provenance"] = (
                     source_ref_resolution.provenance
                 )
+            if conversation_uuid:
+                tx_attributes["conversation_uuid"] = conversation_uuid
             tx_attributes_json = json_encode(tx_attributes)
             tx_vals: list[object] = [
                 ctx.transcript_entity_id,
@@ -310,12 +380,18 @@ def persist_session_close(
         journal_source_ref = (
             source_ref_resolution.stamped_ref if source_ref_resolution else None
         )
+        journal_closed_by = (
+            body.agent
+            if structural_fill
+            else (body.closed_by if body.closed_by else body.agent)
+        )
         if reuse_journal_row_id is not None:
             conn.execute(
                 "UPDATE session_journals SET "
                 "timestamp = ?, agent = ?, summary = ?, domains = ?, "
                 "decisions = ?, open_items = ?, entity_ids = ?, file_path = ?, "
-                "prior_session_id = ?, handoff_prompt = ?, source_ref = ? "
+                "prior_session_id = ?, handoff_prompt = ?, source_ref = ?, "
+                "closed_by = ?, conversation_uuid = COALESCE(?, conversation_uuid) "
                 "WHERE id = ?",
                 (
                     ctx.now,
@@ -329,17 +405,22 @@ def persist_session_close(
                     body.prior_session_id,
                     handoff_prompt,
                     journal_source_ref,
+                    journal_closed_by,
+                    conversation_uuid,
                     reuse_journal_row_id,
                 ),
             )
             journal_row_id = reuse_journal_row_id
         else:
+            sealed_by = body.agent if body.closed_by == "succession" else None
+            sealed_on = ctx.now if body.closed_by == "succession" else None
             cur = conn.execute(
                 "INSERT INTO session_journals "
                 "(timestamp, agent, summary, domains, decisions, open_items, "
                 "entity_ids, file_path, session_id, prior_session_id, "
-                "handoff_prompt, source_ref) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "handoff_prompt, source_ref, closed_by, sealed_by, sealed_on, "
+                "conversation_uuid) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     ctx.now,
                     body.agent,
@@ -353,6 +434,10 @@ def persist_session_close(
                     body.prior_session_id,
                     handoff_prompt,
                     journal_source_ref,
+                    journal_closed_by,
+                    sealed_by,
+                    sealed_on,
+                    conversation_uuid,
                 ),
             )
             journal_row_id = cur.lastrowid or 0
@@ -430,6 +515,14 @@ def persist_session_close(
         journal_row_id=journal_row_id,
         transcript_depth=body.transcript_depth,
     )
+    if structural_fill:
+        from ..events_tape import session_close_succession_structural_filled
+
+        session_close_succession_structural_filled(
+            session_id=body.session_id,
+            agent=body.agent,
+            journal_row_id=journal_row_id,
+        )
 
     debrief = attempt_session_close_debrief(
         session_id=body.session_id,
@@ -441,6 +534,7 @@ def persist_session_close(
         domains=body.domains,
         decisions=body.decisions,
         open_items=body.open_items,
+        closed_by=body.closed_by,
     )
 
     return SessionCloseResponse(
