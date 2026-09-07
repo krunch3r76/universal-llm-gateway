@@ -57,6 +57,10 @@ class PreparedCursorSdkHandle:
     #: Canonical skill slugs, already resolved to a Cursor-discoverable SoT at
     #: admit. The worker stages these into the dispatch HOME user layer.
     skills: tuple[str, ...] = ()
+    work_key: str | None = None
+    source_ref: str | None = None
+    force: bool = False
+    force_reason: str | None = None
 
 
 def mint_cursor_sdk_ids(*, request_id: str) -> tuple[str, str]:
@@ -122,6 +126,10 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "resume_of": handle.resume_of,
         "continuity_root_thread_id": handle.continuity_root_thread_id,
         "skills": list(handle.skills),
+        "work_key": handle.work_key,
+        "source_ref": handle.source_ref,
+        "force": handle.force,
+        "force_reason": handle.force_reason,
     }
 
 
@@ -172,4 +180,8 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         resume_of=data.get("resume_of"),
         continuity_root_thread_id=data.get("continuity_root_thread_id"),
         skills=tuple(data.get("skills") or ()),
+        work_key=data.get("work_key"),
+        source_ref=data.get("source_ref"),
+        force=bool(data.get("force", False)),
+        force_reason=data.get("force_reason"),
     )

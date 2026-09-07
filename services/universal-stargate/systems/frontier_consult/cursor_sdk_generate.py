@@ -96,6 +96,10 @@ async def dispatch_prepared_cursor_sdk(
             resume_of=handle.resume_of,
             continuity_root_thread_id=handle.continuity_root_thread_id,
             skills=handle.skills,
+            work_key=handle.work_key,
+            source_ref=handle.source_ref,
+            force=handle.force,
+            force_reason=handle.force_reason,
         )
     else:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker_message(
@@ -119,6 +123,10 @@ async def dispatch_prepared_cursor_sdk(
             resume_of=handle.resume_of,
             continuity_root_thread_id=handle.continuity_root_thread_id,
             skills=handle.skills,
+            work_key=handle.work_key,
+            source_ref=handle.source_ref,
+            force=handle.force,
+            force_reason=handle.force_reason,
         )
 
     if not worker_ok:
@@ -244,6 +252,9 @@ async def dispatch_cursor_sdk_generate(
     hop_reason: str | None = None,
     resume_of: str | None = None,
     skills: list[str] | None = None,
+    work_key: str | None = None,
+    force: bool = False,
+    force_reason: str | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -291,5 +302,8 @@ async def dispatch_cursor_sdk_generate(
         hop_reason=hop_reason,
         resume_of=resume_of,
         skills=skills,
+        work_key=work_key,
+        force=force,
+        force_reason=force_reason,
     )
     return await dispatch_prepared_cursor_sdk(handle)

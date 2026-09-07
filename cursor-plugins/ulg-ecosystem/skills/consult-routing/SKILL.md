@@ -314,6 +314,20 @@ Kickoff body = Stargate materializer or explicit `packet_path` on non-conductor 
 **never** `sidecar_ref` beside `source_ref` (`multiple_prompt_sources`). Conductor
 forbids `packet_path`; materializer owns the six-block packet.
 
+## cursor-sdk work identity (`work_key=`)
+
+Write-class / Lane-B `team_dispatch(seat=cursor-sdk)` admits require a declared
+`work_key` (D4 grammar: `todo:`, `plan:`, `plan_phase:`, `packet:`,
+`agent-bus:`, `friction:`, `decision:`). Read-only `contract=none` on Lane A
+may omit — GIW derives `adhoc:{fingerprint}` and excludes from dedupe.
+
+Designed fan-out (A/B, panel) on the same key: `force=true` +
+`force_reason="fanout:<label>"` — never silent twin admits.
+
+Rollout: `CURSOR_SDK_WORK_KEY_GATE_MODE=observe` (default) emits
+`work_key_required_refused` without blocking; switch to `enforce` after observe
+day.
+
 ## cursor-sdk checkout lane (`lane=`)
 
 `team_dispatch(op=generate|to_thread, seat=cursor-sdk)`: `lane=` is a **wire

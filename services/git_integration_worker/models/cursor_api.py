@@ -36,6 +36,7 @@ class CursorDispatchRequest(BaseModel):
     close_contract: Literal["lead", "auto"] = "auto"
     force: bool = False
     source_ref: str | None = None
+    force_reason: str | None = None
     nest_under: str | None = None
     refuse_if_lease_held: bool = False
     lane: Literal["A", "B"] | None = None
@@ -134,3 +135,6 @@ class CursorDispatchResponse(BaseModel):
     lane_branch: str | None = None
     lane_open_debts: int | None = None
     lane_debt_branches: list[str] | None = None
+    identity_class: str | None = None
+    work_key_seq: int | None = None
+    steer: dict[str, str] | None = None

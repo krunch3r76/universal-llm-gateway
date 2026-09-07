@@ -284,7 +284,16 @@ _SOURCE_REF_FRONTMATTER_RE = re.compile(
 _WORK_ITEM_KEY_RE = re.compile(
     r"^(?:todo|plan|plan_phase|packet):\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
 )
-_WORK_ITEM_SCHEMES = ("todo:", "plan:", "plan_phase:", "packet:", "agent-bus:")
+_WORK_ITEM_SCHEMES = (
+    "todo:",
+    "plan:",
+    "plan_phase:",
+    "packet:",
+    "agent-bus:",
+    "friction:",
+    "decision:",
+)
+_ADHOC_SCHEME = "adhoc:"
 
 
 _WORK_KEY_FRONTMATTER_RE = re.compile(
@@ -295,12 +304,34 @@ _PACKET_KIND_FRONTMATTER_RE = re.compile(
 )
 
 
+def is_valid_work_key_scheme(work_key: str) -> bool:
+    """D4 grammar — scheme-prefixed work identity."""
+    key = work_key.strip()
+    if key.startswith(_ADHOC_SCHEME):
+        return True
+    return any(key.startswith(prefix) for prefix in _WORK_ITEM_SCHEMES)
+
+
 def extract_work_key_from_packet(text: str) -> str | None:
-    """Return ``work_key:`` frontmatter when present."""
+    """Return ``work_key:`` from bare or ``---``-fenced frontmatter."""
+    if not text:
+        return None
+    fenced = re.search(
+        r"^---\s*\n(.*?)\n---",
+        text,
+        re.DOTALL | re.MULTILINE,
+    )
+    if fenced:
+        block = fenced.group(1)
+        match = _WORK_KEY_FRONTMATTER_RE.search(block)
+        if match:
+            value = match.group(1).strip()
+            return value if is_valid_work_key_scheme(value) else None
     match = _WORK_KEY_FRONTMATTER_RE.search(text)
     if not match:
         return None
-    return match.group(1).strip()
+    value = match.group(1).strip()
+    return value if is_valid_work_key_scheme(value) else None
 
 
 def extract_packet_kind_from_packet(text: str) -> str | None:

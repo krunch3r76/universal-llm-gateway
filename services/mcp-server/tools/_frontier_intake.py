@@ -209,6 +209,12 @@ def reject_unsupported_packet_inputs(
             field="source_ref",
             code=f"{wire}_with_source_ref",
         )
+    if wire == "none" and source_ref is not None:
+        return _validation_error(
+            "source_ref is forbidden for contract='none'; use work_key instead",
+            field="source_ref",
+            code="none_with_source_ref",
+        )
     if wire == "none" and stop_after:
         return _validation_error(
             "stop_after is forbidden with contract='none'",
@@ -299,21 +305,45 @@ def reject_supersede_wire_field(supersede: Any) -> dict[str, Any] | None:
     )
 
 
-def validate_force_on_implement(
-    force: bool,
-    contract: str | None,
+def validate_work_key(
+    work_key: str | None,
 ) -> dict[str, Any] | None:
-    """``force`` bypasses same-``source_ref`` reject only; valid on implement."""
-    if not force:
+    """D4 grammar — reject unparseable explicit ``work_key`` at intake."""
+    if work_key is None:
         return None
-    if contract != "implement":
+    key = work_key.strip()
+    if not key:
         return _validation_error(
-            "force is only valid with contract='implement'",
-            field="force",
-            code="force_implement_only",
+            "work_key must be non-empty when supplied",
+            field="work_key",
+            code="work_key_unparseable",
+        )
+    from services.git_integration_worker.cursor_sdk_packet import is_valid_work_key_scheme
+
+    if not is_valid_work_key_scheme(key):
+        return _validation_error(
+            "work_key must use a scheme prefix "
+            "(todo:, plan:, plan_phase:, packet:, agent-bus:, friction:, decision:)",
+            field="work_key",
+            code="work_key_unparseable",
         )
     return None
 
+
+def validate_force(
+    force: bool,
+    force_reason: str | None,
+) -> dict[str, Any] | None:
+    """``force`` bypasses Gates 2–4; ``force_reason`` is required when forcing."""
+    if not force:
+        return None
+    if not force_reason or not str(force_reason).strip():
+        return _validation_error(
+            "force_reason is required when force=true",
+            field="force_reason",
+            code="force_reason_required",
+        )
+    return None
 
 def reject_pointer_body_on_generate(
     op: str,

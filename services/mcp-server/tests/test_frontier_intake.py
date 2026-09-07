@@ -13,7 +13,9 @@ from tools._frontier_intake import (
     reject_unsupported_packet_inputs,
     require_cursor_sdk_checkout_lane,
     require_dispatch_thread_id,
+    validate_force,
     validate_inline_prompt_inputs,
+    validate_work_key,
     validate_wrap_inputs,
 )
 
@@ -449,3 +451,45 @@ def test_cursor_sdk_checkout_lane_required_on_model_only() -> None:
     )
     assert err is not None
     assert err["error"]["code"] == "lane_required"
+
+
+def test_validate_work_key_unparseable_ac4() -> None:
+    err = validate_work_key("foo")
+    assert err is not None
+    assert err["field"] == "work_key"
+    assert err["error"]["code"] == "work_key_unparseable"
+
+
+def test_validate_work_key_accepts_todo() -> None:
+    assert validate_work_key("todo:cursor-sdk-dispatch-work-key-gate") is None
+
+
+def test_validate_force_requires_reason_ac7() -> None:
+    err = validate_force(True, None)
+    assert err is not None
+    assert err["error"]["code"] == "force_reason_required"
+
+
+def test_validate_force_with_reason_clean() -> None:
+    assert validate_force(True, "fanout:composer-ab") is None
+
+
+def test_validate_work_key_unparseable_ac4() -> None:
+    err = validate_work_key("foo")
+    assert err is not None
+    assert err["field"] == "work_key"
+    assert err["error"]["code"] == "work_key_unparseable"
+
+
+def test_validate_work_key_accepts_todo() -> None:
+    assert validate_work_key("todo:cursor-sdk-dispatch-work-key-gate") is None
+
+
+def test_validate_force_requires_reason_ac7() -> None:
+    err = validate_force(True, None)
+    assert err is not None
+    assert err["error"]["code"] == "force_reason_required"
+
+
+def test_validate_force_with_reason_clean() -> None:
+    assert validate_force(True, "fanout:composer-ab") is None

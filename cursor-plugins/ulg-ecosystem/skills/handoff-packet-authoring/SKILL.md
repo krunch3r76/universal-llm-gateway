@@ -106,6 +106,11 @@ Web-anthropic: `inline_authoritative` (full body + sha256) **or** verified serve
 
 Implement needs `acceptance` in `<task_guidance>`. Frontmatter `contract:` is **required**
 on consult/none packets (checked AC — missing ⇒ dispatch reject at enrich).
+
+Materialized cursor-sdk packets (conductor/sketch/wrap) must include a `---` block with
+`work_key:`, `packet_kind:`, and `contract:` — GIW Gate 1 refuses write-class admits
+without identity when these are absent on the wire and in frontmatter.
+
 Executor override in frontmatter;
 silence ⇒ composer (`consult-routing` R1/R2). Primers + skeleton: L3 annex.
 

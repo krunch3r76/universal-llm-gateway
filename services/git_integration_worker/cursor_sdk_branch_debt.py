@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS cursor_sdk_branch_debts (
 
 _DEBT_COLUMN_MIGRATIONS = (
     ("source_repo", "TEXT"),
+    ("work_key", "TEXT"),
 )
 
 
@@ -58,6 +59,7 @@ class BranchDebt:
     discharge_verb: str | None = None
     discharge_note: str | None = None
     source_repo: str | None = None
+    work_key: str | None = None
 
     @property
     def open(self) -> bool:
@@ -110,6 +112,7 @@ def _row_to_debt(row: sqlite3.Row) -> BranchDebt:
         files = []
     keys = row.keys()
     source_repo = row["source_repo"] if "source_repo" in keys else None
+    work_key = row["work_key"] if "work_key" in keys else None
     return BranchDebt(
         branch_name=row["branch_name"],
         thread_id=row["thread_id"],
@@ -123,6 +126,7 @@ def _row_to_debt(row: sqlite3.Row) -> BranchDebt:
         discharge_verb=row["discharge_verb"],
         discharge_note=row["discharge_note"],
         source_repo=source_repo,
+        work_key=work_key,
     )
 
 
@@ -179,6 +183,7 @@ def open_branch_debt(
     tip_sha: str | None = None,
     files: list[str] | None = None,
     source_repo: str | None = None,
+    work_key: str | None = None,
 ) -> BranchDebt:
     """Open a debt for *branch_name*, or return the existing open one.
 
@@ -186,6 +191,19 @@ def open_branch_debt(
     keeps its original ``opened_at`` so age escalation reflects when the residue
     first appeared, not when it was last observed.
     """
+    if not thread_id or not dispatch_id:
+        from services.git_integration_worker.cursor_sdk_events import (
+            emit_sdk_branch_debt_null_attribution_refused,
+        )
+
+        emit_sdk_branch_debt_null_attribution_refused(
+            branch_name=branch_name,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+        )
+        raise ValueError(
+            "open_branch_debt requires non-null thread_id and dispatch_id"
+        )
     existing = get_branch_debt(branch_name=branch_name)
     if existing is not None and existing.open:
         return existing
@@ -196,8 +214,8 @@ def open_branch_debt(
             "INSERT OR REPLACE INTO cursor_sdk_branch_debts "
             "(branch_name, thread_id, dispatch_id, caller_agent, tip_sha, "
             "files_json, opened_at, escalated_at, discharged_at, discharge_verb, "
-            "discharge_note, source_repo) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)",
+            "discharge_note, source_repo, work_key) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)",
             (
                 branch_name,
                 thread_id,
@@ -207,6 +225,7 @@ def open_branch_debt(
                 json.dumps(sorted(files or [])),
                 opened_at,
                 source_repo,
+                work_key,
             ),
         )
     return BranchDebt(
@@ -218,7 +237,22 @@ def open_branch_debt(
         files=sorted(files or []),
         opened_at=opened_at,
         source_repo=source_repo,
+        work_key=work_key,
     )
+
+
+def open_debts_for_work_key(work_key: str) -> list[BranchDebt]:
+    """Open debts keyed by ``work_key`` (Gate 3 lineage)."""
+    if not work_key:
+        return []
+    with _connect() as conn:
+        ensure_debt_schema(conn)
+        rows = conn.execute(
+            "SELECT * FROM cursor_sdk_branch_debts WHERE discharged_at IS NULL "
+            "AND work_key=? ORDER BY opened_at",
+            (work_key,),
+        ).fetchall()
+    return [_row_to_debt(row) for row in rows]
 
 
 def get_branch_debt(*, branch_name: str) -> BranchDebt | None:

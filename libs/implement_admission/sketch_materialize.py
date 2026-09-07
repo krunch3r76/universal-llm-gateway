@@ -89,6 +89,7 @@ def _render_packet(ctx: SketchMaterializeContext) -> str:
         [
             "---",
             f"work_key: {ctx.source_ref}",
+            "packet_kind: sketch",
             "role_name: sketch",
             "contract: sketch",
             "lane: B",

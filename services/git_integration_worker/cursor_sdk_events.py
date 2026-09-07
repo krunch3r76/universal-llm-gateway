@@ -760,6 +760,335 @@ def emit_sdk_implement_unresolved_source_ref(
 
 
 @event_factory
+def FrontierSdkAdmitWorkKeyRequiredRefused(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    contract: str,
+    caller_agent: str | None,
+    mode: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.admit.work_key_required_refused",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "contract": contract,
+            "caller_agent": caller_agent,
+            "mode": mode,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkAdmitWorkKeyInFlightRefused(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    identity_class: str | None,
+    contract: str,
+    caller_agent: str | None,
+    holder_kind: str | None,
+    mode: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.admit.work_key_in_flight_refused",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "work_key": work_key,
+            "identity_class": identity_class,
+            "contract": contract,
+            "caller_agent": caller_agent,
+            "holder_kind": holder_kind,
+            "mode": mode,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkAdmitWorkKeyInFlightForced(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    force_reason: str | None,
+    contract: str,
+    caller_agent: str | None,
+    mode: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.admit.work_key_in_flight_forced",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "work_key": work_key,
+            "force_reason": force_reason,
+            "contract": contract,
+            "caller_agent": caller_agent,
+            "mode": mode,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkAdmitRemint(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str,
+    work_key_seq: int,
+    prior_dispatch_id: str | None,
+    prior_terminal_status: str | None,
+    contract: str,
+    caller_agent: str | None,
+    mode: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.admit.remint",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "work_key": work_key,
+            "work_key_seq": work_key_seq,
+            "prior_dispatch_id": prior_dispatch_id,
+            "prior_terminal_status": prior_terminal_status,
+            "contract": contract,
+            "caller_agent": caller_agent,
+            "mode": mode,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkAdmitBranchDebtLineageRefused(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str,
+    debt_branch: str,
+    debt_thread_id: str | None,
+    contract: str,
+    caller_agent: str | None,
+    mode: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.admit.branch_debt_lineage_refused",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "work_key": work_key,
+            "debt_branch": debt_branch,
+            "debt_thread_id": debt_thread_id,
+            "contract": contract,
+            "caller_agent": caller_agent,
+            "mode": mode,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkAdmitIdentityAdhoc(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str,
+    contract: str,
+    caller_agent: str | None,
+    mode: str,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.admit.identity_adhoc",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "work_key": work_key,
+            "identity_class": "adhoc",
+            "contract": contract,
+            "caller_agent": caller_agent,
+            "mode": mode,
+        },
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkBranchDebtNullAttributionRefused(  # noqa: N802
+    branch_name: str,
+    thread_id: str | None,
+    dispatch_id: str | None,
+) -> Event:
+    return Event(
+        signal="frontier.sdk.branch_debt.null_attribution_refused",
+        payload={
+            "branch_name": branch_name,
+            "thread_id": thread_id,
+            "dispatch_id": dispatch_id,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_admit_work_key_required_refused(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    contract: str,
+    caller_agent: str | None,
+    mode: str,
+) -> None:
+    _emit(
+        FrontierSdkAdmitWorkKeyRequiredRefused(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            contract=contract,
+            caller_agent=caller_agent,
+            mode=mode,
+        )
+    )
+
+
+def emit_sdk_admit_work_key_in_flight_refused(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    identity_class: str | None,
+    contract: str,
+    caller_agent: str | None,
+    holder_kind: str | None = None,
+    mode: str = "enforce",
+) -> None:
+    _emit(
+        FrontierSdkAdmitWorkKeyInFlightRefused(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            work_key=work_key,
+            identity_class=identity_class,
+            contract=contract,
+            caller_agent=caller_agent,
+            holder_kind=holder_kind,
+            mode=mode,
+        )
+    )
+
+
+def emit_sdk_admit_work_key_in_flight_forced(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    force_reason: str | None,
+    contract: str,
+    caller_agent: str | None,
+) -> None:
+    _emit(
+        FrontierSdkAdmitWorkKeyInFlightForced(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            work_key=work_key,
+            force_reason=force_reason,
+            contract=contract,
+            caller_agent=caller_agent,
+            mode=gate_mode_label(),
+        )
+    )
+
+
+def emit_sdk_admit_remint(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str,
+    work_key_seq: int,
+    prior_dispatch_id: str | None,
+    prior_terminal_status: str | None,
+    contract: str,
+    caller_agent: str | None,
+) -> None:
+    _emit(
+        FrontierSdkAdmitRemint(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            work_key=work_key,
+            work_key_seq=work_key_seq,
+            prior_dispatch_id=prior_dispatch_id,
+            prior_terminal_status=prior_terminal_status,
+            contract=contract,
+            caller_agent=caller_agent,
+            mode=gate_mode_label(),
+        )
+    )
+
+
+def emit_sdk_admit_branch_debt_lineage_refused(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str,
+    debt_branch: str,
+    debt_thread_id: str | None,
+    contract: str,
+    caller_agent: str | None,
+    mode: str,
+) -> None:
+    _emit(
+        FrontierSdkAdmitBranchDebtLineageRefused(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            work_key=work_key,
+            debt_branch=debt_branch,
+            debt_thread_id=debt_thread_id,
+            contract=contract,
+            caller_agent=caller_agent,
+            mode=mode,
+        )
+    )
+
+
+def emit_sdk_admit_identity_adhoc(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    work_key: str,
+    contract: str,
+    caller_agent: str | None,
+    mode: str,
+) -> None:
+    _emit(
+        FrontierSdkAdmitIdentityAdhoc(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            work_key=work_key,
+            contract=contract,
+            caller_agent=caller_agent,
+            mode=mode,
+        )
+    )
+
+
+def emit_sdk_branch_debt_null_attribution_refused(
+    *,
+    branch_name: str,
+    thread_id: str | None,
+    dispatch_id: str | None,
+) -> None:
+    _emit(
+        FrontierSdkBranchDebtNullAttributionRefused(
+            branch_name=branch_name,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+        )
+    )
+
+
+def gate_mode_label() -> str:
+    from services.git_integration_worker.cursor_sdk_work_key_gate import gate_mode
+
+    return gate_mode()
+
+
+@event_factory
 def SdkLaneSelected(  # noqa: N802
     dispatch_id: str,
     thread_id: str,

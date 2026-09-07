@@ -33,6 +33,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
     DispatchConflict,
     PromotedDispatch,
+    RemintCapExceeded,
     SourceRefConflict,
     WorkerThreadOccupied,
     WriteLeaseHeld,
@@ -2603,22 +2604,90 @@ async def cursor_dispatch(
             invalid_fields=["read_only"],
         )
     candidate_source_ref = req.source_ref or extract_source_ref_from_packet(packet_text)
-    packet_kind = extract_packet_kind_from_packet(packet_text) if packet_text else None
-    candidate_work_key = req.work_key or (
+    packet_kind = (
+        extract_packet_kind_from_packet(packet_text) if packet_text else None
+    ) or (contract if contract in ("conductor", "sketch") else None)
+    packet_work_key = (
         extract_work_key_from_packet(packet_text) if packet_text else None
     )
-    if packet_kind == "conductor":
-        if not candidate_work_key and req.source_ref:
-            candidate_work_key = req.source_ref
-        candidate_source_ref = None
-    elif not candidate_work_key and candidate_source_ref:
-        candidate_work_key = candidate_source_ref
-    if contract == "implement" and not candidate_source_ref:
-        emit_sdk_implement_unresolved_source_ref(
+    from services.git_integration_worker.cursor_sdk_work_key_gate import (
+        compute_write_class,
+        derive_work_identity,
+        gate_mode,
+    )
+
+    content_wf = ledger.work_fingerprint(req)
+    write_class = compute_write_class(
+        read_only=effective_read_only,
+        lane=wire_lane_explicit(req),
+        contract=contract,
+    )
+    candidate_work_key, identity_class = derive_work_identity(
+        req_work_key=req.work_key,
+        packet_work_key=packet_work_key,
+        source_ref=candidate_source_ref,
+        work_fingerprint=content_wf,
+        write_class=write_class,
+    )
+    if identity_class == "invalid":
+        return _reject_pre_admission(
+            req,
+            worker_error_code="work_key_unparseable",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary="work_key uses an unrecognized scheme prefix",
+            invalid_fields=["work_key"],
+        )
+    if write_class and not candidate_work_key:
+        from services.git_integration_worker.cursor_sdk_events import (
+            emit_sdk_admit_work_key_required_refused,
+        )
+
+        emit_sdk_admit_work_key_required_refused(
             dispatch_id=req.dispatch_id,
             thread_id=req.thread_id,
-            execution_id=req.execution_id,
+            contract=contract,
+            caller_agent=req.caller_agent,
+            mode=gate_mode(),
         )
+        if gate_mode() == "enforce":
+            return _reject_pre_admission(
+                req,
+                worker_error_code="CURSOR_WORK_KEY_REQUIRED",
+                failure_layer="validation",
+                http_status=422,
+                detail_summary=(
+                    "write-class cursor-sdk admit requires work_key "
+                    "(todo:, plan:, agent-bus:, packet:, friction:, decision:)"
+                ),
+                invalid_fields=["work_key"],
+            )
+    if req.force and not req.caller_agent:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="force_caller_required",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary="force=true requires caller_agent",
+            invalid_fields=["caller_agent", "force"],
+        )
+    if identity_class == "adhoc" and candidate_work_key:
+        from services.git_integration_worker.cursor_sdk_events import (
+            emit_sdk_admit_identity_adhoc,
+        )
+
+        emit_sdk_admit_identity_adhoc(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            work_key=candidate_work_key,
+            contract=contract,
+            caller_agent=req.caller_agent,
+            mode=gate_mode(),
+        )
+    if not candidate_work_key and candidate_source_ref:
+        candidate_work_key = candidate_source_ref
+        if identity_class == "missing":
+            identity_class = "derived"
     files_expected = _files_from_packet(packet_text) if packet_text else []
     source_repo_str = str(cfg.source_repo.resolve())
     try:
@@ -2811,40 +2880,6 @@ async def cursor_dispatch(
         if concurrency_posture is not None
         else 1
     )
-    block_key = candidate_work_key or candidate_source_ref
-    if (
-        should_block_implement_for_open_conductor(
-            contract=contract,
-            nest_under=req.nest_under,
-            work_key=block_key,
-        )
-        and block_key
-    ):
-        with ledger._connect() as conn:
-            holder = find_open_conductor_holder_conn(
-                conn,
-                work_key=block_key,
-                exclude_dispatch_id=req.dispatch_id,
-            )
-        if holder is not None:
-            return _reject_pre_admission(
-                req,
-                worker_error_code="CURSOR_SOURCE_REF_IN_FLIGHT",
-                failure_layer="admission",
-                http_status=409,
-                detail_summary=(
-                    f"open conductor holds work identity {block_key!r} "
-                    f"(holder_dispatch_id={holder.dispatch_id!r})"
-                ),
-                retryable=False,
-                validation_stage="ledger_conductor_open",
-                extra_data={
-                    "work_key": block_key,
-                    "holder_dispatch_id": holder.dispatch_id,
-                    "holder_thread_id": holder.thread_id,
-                    "holder_kind": "conductor",
-                },
-            )
     try:
         admit_kwargs: dict[str, object] = {
             "req": req,
@@ -2866,6 +2901,8 @@ async def cursor_dispatch(
             "concurrency_posture": concurrency_posture,
             "write_lease_slot_limit": slot_limit,
             "isolation_materialized": isolation_materialized,
+            "identity_class": identity_class,
+            "packet_kind": packet_kind,
         }
         if (
             req.hop_seq is not None
@@ -2922,8 +2959,21 @@ async def cursor_dispatch(
             worker_code = "CURSOR_WORK_FINGERPRINT_IN_FLIGHT"
             validation_stage = "ledger_work_fingerprint"
         else:
+            from services.git_integration_worker.cursor_sdk_events import (
+                emit_sdk_admit_work_key_in_flight_refused,
+            )
+
+            emit_sdk_admit_work_key_in_flight_refused(
+                dispatch_id=req.dispatch_id,
+                thread_id=req.thread_id,
+                work_key=exc.work_key,
+                identity_class=identity_class,
+                contract=contract,
+                caller_agent=req.caller_agent,
+                holder_kind=exc.holder_kind,
+            )
             worker_code = "CURSOR_SOURCE_REF_IN_FLIGHT"
-            validation_stage = "ledger_source_ref"
+            validation_stage = "ledger_work_key"
         return _reject_pre_admission(
             req,
             worker_error_code=worker_code,
@@ -2938,6 +2988,30 @@ async def cursor_dispatch(
                 "work_fingerprint": exc.work_fingerprint,
                 "holder_dispatch_id": exc.holder_dispatch_id,
                 "holder_thread_id": exc.holder_thread_id,
+                "holder_kind": exc.holder_kind,
+                "steer": exc.steer,
+            },
+        )
+    except RemintCapExceeded as exc:
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=resolved_source_repo,
+            minted_lane_b=minted_lane_b,
+            reason="remint_cap",
+        )
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_WORK_KEY_REMINT_CAP",
+            failure_layer="admission",
+            http_status=409,
+            detail_summary=str(exc),
+            retryable=False,
+            validation_stage="ledger_remint_cap",
+            extra_data={
+                "work_key": exc.work_key,
+                "work_key_seq": exc.work_key_seq,
+                "cap": exc.cap,
             },
         )
     except DispatchConflict as exc:

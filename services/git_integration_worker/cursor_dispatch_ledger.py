@@ -46,7 +46,9 @@ _STATUS_CHECK = (
     "'queued','admitted','running','parked_waiting','completed','failed','cancelled'"
 )
 _TERMINAL_STATUS_CHECK = "'completed','failed','cancelled'"
-_WORK_IDENTITY_CONTRACTS = frozenset({"implement", "consult", "none"})
+_ACTIVE_IDENTITY_STATUSES = (
+    "'queued','admitted','running','parked_waiting'"
+)
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS cursor_sdk_dispatches (
@@ -128,7 +130,7 @@ class WorkerThreadOccupied(Exception):  # noqa: N818 — second live admit on th
         )
 
 
-class SourceRefConflict(Exception):  # noqa: N818 — peer implement gate
+class SourceRefConflict(Exception):  # noqa: N818 — peer work-identity gate
     """Raised when a non-terminal dispatch already holds the same work identity.
 
     Attributes:
@@ -137,6 +139,8 @@ class SourceRefConflict(Exception):  # noqa: N818 — peer implement gate
         work_fingerprint: Content-identity fingerprint when the dup gate fires.
         holder_dispatch_id: In-flight peer dispatch id.
         holder_thread_id: In-flight peer bus thread id, when persisted.
+        holder_kind: ``conductor`` | ``implement`` | ``other`` for steer hints.
+        steer: Caller may pass ``nest_under`` / ``resume_of`` / ``reuse_thread``.
     """
 
     def __init__(
@@ -147,17 +151,39 @@ class SourceRefConflict(Exception):  # noqa: N818 — peer implement gate
         holder_thread_id: str | None,
         work_key: str | None = None,
         work_fingerprint: str | None = None,
+        holder_kind: str | None = None,
+        steer: dict[str, str] | None = None,
     ) -> None:
         self.source_ref = source_ref
         self.work_key = work_key
         self.work_fingerprint = work_fingerprint
         self.holder_dispatch_id = holder_dispatch_id
         self.holder_thread_id = holder_thread_id
+        self.holder_kind = holder_kind
+        self.steer = steer
         identity = work_key or work_fingerprint or source_ref or "?"
         super().__init__(
             f"work identity {identity!r} already has non-terminal dispatch "
             f"(holder_dispatch_id={holder_dispatch_id!r}, "
             f"holder_thread_id={holder_thread_id!r})"
+        )
+
+
+class RemintCapExceeded(Exception):  # noqa: N818 — Gate 4 soft cap
+    """Raised when ``work_key_seq`` exceeds cap without ``force``."""
+
+    def __init__(
+        self,
+        *,
+        work_key: str,
+        work_key_seq: int,
+        cap: int,
+    ) -> None:
+        self.work_key = work_key
+        self.work_key_seq = work_key_seq
+        self.cap = cap
+        super().__init__(
+            f"work_key {work_key!r} remint seq {work_key_seq} exceeds cap {cap}"
         )
 
 
@@ -938,6 +964,19 @@ class CursorDispatchLedger:
                 conn.execute(
                     "ALTER TABLE cursor_sdk_dispatches ADD COLUMN resume_of TEXT"
                 )
+            for col, decl in (
+                ("identity_class", "TEXT"),
+                ("work_key_seq", "INTEGER"),
+                ("packet_kind", "TEXT"),
+                ("lineage_depth", "INTEGER"),
+                ("hop_from", "TEXT"),
+                ("nest_under", "TEXT"),
+            ):
+                if col not in cols:
+                    conn.execute(
+                        f"ALTER TABLE cursor_sdk_dispatches ADD COLUMN {col} {decl}"
+                    )
+                    cols.add(col)
             _migrate_packet_kind_to_contract(conn)
             _migrate_queued_status(conn)
             _migrate_parked_waiting_status(conn)
@@ -961,7 +1000,11 @@ class CursorDispatchLedger:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_work_key_active "
                 "ON cursor_sdk_dispatches(work_key, status) "
-                "WHERE status IN ('queued','admitted','running')"
+                f"WHERE status IN ({_ACTIVE_IDENTITY_STATUSES})"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_work_key_started "
+                "ON cursor_sdk_dispatches(work_key, started_at)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_work_fingerprint_active "
@@ -1039,24 +1082,36 @@ class CursorDispatchLedger:
         hop_from: str | None = None,
         hop_reason: str | None = None,
         hop_declared: bool | None = None,
+        identity_class: str | None = None,
+        packet_kind: str | None = None,
+        lineage_depth: int | None = None,
+        work_key_seq: int | None = None,
     ) -> CursorDispatchResponse | None:
         """Durable idempotency (F2). Returns cached admission on hit, None on first
         admitted insert, or a queued ticket when the write-lease is held.
 
-        Same-``source_ref`` implement gate (``contract=implement`` only): when
-        ``source_ref`` is set and ``force`` is false, a peer row with the same
-        ``source_ref`` and status in ``{queued,admitted,running}`` raises
-        ``SourceRefConflict`` without inserting. The SELECT and INSERT share the
-        existing ``BEGIN IMMEDIATE`` transaction, so concurrent admits cannot
-        both observe an empty peer set and both insert.
+        Work-identity gate (contract-agnostic): when ``identity_class != adhoc``,
+        ``work_key`` is set, and ``force`` is false, a peer row with the same
+        ``work_key`` and status in ``{queued,admitted,running,parked_waiting}``
+        raises ``SourceRefConflict`` without inserting. Lineage exemptions:
+        ``nest_under == holder``, terminal ``resume_of`` / ``hop_from`` same key.
+        The SELECT and INSERT share ``BEGIN IMMEDIATE``.
 
         Nest park: when ``nest_under`` names the live write-lease holder for
         ``lease_key``, that parent is moved to ``parked_waiting`` and the
-        child inserts as ``admitted`` (caller must also ``transfer_holder``).
+        child inserts as ``admitted``.
 
         Raises ``DispatchConflict`` on fingerprint mismatch."""
         record_json = _dispatch_record_json(req)
         content_wf = self.work_fingerprint(req)
+        if req.force and getattr(req, "force_reason", None):
+            try:
+                data = json.loads(record_json)
+            except json.JSONDecodeError:
+                data = {}
+            if isinstance(data, dict):
+                data["force_reason"] = req.force_reason
+                record_json = json.dumps(data, sort_keys=True, separators=(",", ":"))
         if concurrency_posture:
             from services.git_integration_worker.cursor_sdk_concurrency_posture import (
                 stamp_posture_on_record_json,
@@ -1124,35 +1179,109 @@ class CursorDispatchLedger:
                         holder=holder,
                     )
                 return _response_from_row(existing, admission=admission)
-            if (
-                contract in _WORK_IDENTITY_CONTRACTS
-                and (work_key or source_ref)
-                and not force
-            ):
-                peer = None
-                if work_key:
-                    peer = conn.execute(
-                        "SELECT dispatch_id, thread_id FROM cursor_sdk_dispatches "
-                        "WHERE work_key=? AND dispatch_id<>? "
-                        "AND status IN ('queued','admitted','running') LIMIT 1",
-                        (work_key, req.dispatch_id),
-                    ).fetchone()
-                if peer is None and source_ref:
-                    peer = conn.execute(
-                        "SELECT dispatch_id, thread_id FROM cursor_sdk_dispatches "
-                        "WHERE source_ref=? AND dispatch_id<>? "
-                        "AND status IN ('queued','admitted','running') LIMIT 1",
-                        (source_ref, req.dispatch_id),
-                    ).fetchone()
-                if peer is not None and not (
-                    nest_under and peer["dispatch_id"] == nest_under
-                ):
-                    raise SourceRefConflict(
-                        source_ref=source_ref,
-                        work_key=work_key,
-                        holder_dispatch_id=peer["dispatch_id"],
-                        holder_thread_id=peer["thread_id"],
+            from services.git_integration_worker.cursor_sdk_work_key_gate import (
+                count_root_rows_24h,
+                holder_kind_from_row,
+                is_root_row,
+                lineage_depth_for_parent,
+                steer_for_holder,
+                work_key_seq_cap,
+            )
+
+            effective_nest = nest_under or req.nest_under
+            effective_hop = hop_from or req.hop_from
+            effective_work_key = work_key or (
+                source_ref if identity_class != "adhoc" else None
+            )
+            computed_seq = work_key_seq
+            effective_lineage_depth = lineage_depth
+            if effective_lineage_depth is None:
+                parent_carrier = req.resume_of or effective_nest or effective_hop
+                if parent_carrier:
+                    effective_lineage_depth = lineage_depth_for_parent(
+                        conn, parent_carrier
                     )
+                else:
+                    effective_lineage_depth = 0
+            is_root = is_root_row(
+                resume_of=req.resume_of,
+                nest_under=effective_nest,
+                hop_from=effective_hop,
+            )
+            computed_seq = work_key_seq
+            if effective_work_key and is_root and identity_class != "adhoc":
+                prior_roots = count_root_rows_24h(
+                    conn,
+                    work_key=effective_work_key,
+                    exclude_dispatch_id=req.dispatch_id,
+                )
+                computed_seq = prior_roots + 1
+                cap = work_key_seq_cap()
+                if computed_seq > cap and not force:
+                    raise RemintCapExceeded(
+                        work_key=effective_work_key,
+                        work_key_seq=computed_seq,
+                        cap=cap,
+                    )
+            elif effective_work_key and not is_root and work_key_seq is None:
+                parent_id = req.resume_of or effective_nest or effective_hop
+                if parent_id:
+                    parent_row = conn.execute(
+                        "SELECT work_key_seq FROM cursor_sdk_dispatches "
+                        "WHERE dispatch_id=?",
+                        (parent_id,),
+                    ).fetchone()
+                    if parent_row is not None:
+                        computed_seq = parent_row["work_key_seq"]
+
+            if identity_class != "adhoc" and effective_work_key and not force:
+                peer = conn.execute(
+                    "SELECT dispatch_id, thread_id, contract, packet_kind, "
+                    "record_json FROM cursor_sdk_dispatches "
+                    "WHERE work_key=? AND dispatch_id<>? "
+                    f"AND status IN ({_ACTIVE_IDENTITY_STATUSES}) LIMIT 1",
+                    (effective_work_key, req.dispatch_id),
+                ).fetchone()
+                if peer is not None:
+                    exempt = False
+                    if nest_under and peer["dispatch_id"] == nest_under:
+                        exempt = True
+                    if req.resume_of:
+                        term = conn.execute(
+                            "SELECT work_key, terminal_status FROM "
+                            "cursor_sdk_dispatches WHERE dispatch_id=?",
+                            (req.resume_of,),
+                        ).fetchone()
+                        if (
+                            term is not None
+                            and term["terminal_status"] is not None
+                            and term["work_key"] == effective_work_key
+                        ):
+                            exempt = True
+                    if effective_hop:
+                        term = conn.execute(
+                            "SELECT work_key, terminal_status FROM "
+                            "cursor_sdk_dispatches WHERE dispatch_id=?",
+                            (effective_hop,),
+                        ).fetchone()
+                        if (
+                            term is not None
+                            and term["terminal_status"] is not None
+                            and term["work_key"] == effective_work_key
+                        ):
+                            exempt = True
+                    if not exempt:
+                        raise SourceRefConflict(
+                            source_ref=source_ref,
+                            work_key=effective_work_key,
+                            holder_dispatch_id=peer["dispatch_id"],
+                            holder_thread_id=peer["thread_id"],
+                            holder_kind=holder_kind_from_row(peer),
+                            steer=steer_for_holder(
+                                holder_dispatch_id=peer["dispatch_id"],
+                                holder_thread_id=peer["thread_id"],
+                            ),
+                        )
             if content_wf and not force:
                 fp_peer = conn.execute(
                     "SELECT dispatch_id, thread_id FROM cursor_sdk_dispatches "
@@ -1284,8 +1413,11 @@ class CursorDispatchLedger:
                 "(dispatch_id, fingerprint, thread_id, execution_id, caller_agent, "
                 " resolved_model, packet_path, message_present, status, record_json, "
                 " wt_baseline, contract, source_repo, lease_key, read_only, worker_instance, "
-                " queued_at, source_ref, work_key, work_fingerprint, resume_of) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " queued_at, source_ref, work_key, work_fingerprint, resume_of, "
+                " identity_class, work_key_seq, packet_kind, lineage_depth, hop_from, "
+                " nest_under) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "?, ?, ?, ?, ?, ?)",
                 (
                     req.dispatch_id,
                     fingerprint,
@@ -1305,9 +1437,15 @@ class CursorDispatchLedger:
                     worker_instance,
                     queued_at,
                     source_ref,
-                    work_key,
+                    effective_work_key,
                     content_wf,
                     req.resume_of,
+                    identity_class,
+                    computed_seq,
+                    packet_kind,
+                    effective_lineage_depth,
+                    effective_hop,
+                    effective_nest,
                 ),
             )
             if nested_park_parent is not None:

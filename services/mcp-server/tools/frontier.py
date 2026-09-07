@@ -51,7 +51,9 @@ from ._frontier_intake import (
     require_cursor_sdk_checkout_lane,
     require_dispatch_thread_id,
     require_explicit_cursor_seat_for_handoff,
+    validate_force,
     validate_inline_prompt_inputs,
+    validate_work_key,
     validate_wrap_inputs,
 )
 from ._restart_probe import annotate_unreachable_error
@@ -360,6 +362,36 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "CDP registry/mission purpose tag on model=cdp/… generate "
                     "(default ask). Set purpose=operator-proxy or mission for "
                     "operator-proxy skill-chip inject; ignored on non-CDP models."
+                ),
+            ),
+        ] = None,
+        work_key: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Stable work identity for cursor-sdk admits (D4 grammar: "
+                    "todo:, plan:, agent-bus:, packet:, friction:, decision:). "
+                    "Required for write-class / Lane B; allowed on every contract "
+                    "including none."
+                ),
+            ),
+        ] = None,
+        force: Annotated[
+            bool,
+            Field(
+                description=(
+                    "Bypass Gates 2–4 (in-flight, branch debt, remint cap) when "
+                    "true; requires force_reason. Never bypasses Gate 1 or "
+                    "write-lease FIFO."
+                ),
+            ),
+        ] = False,
+        force_reason: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Audit reason when force=true (e.g. fanout:composer-ab). "
+                    "Required with force."
                 ),
             ),
         ] = None,
@@ -848,6 +880,14 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         if pointer_body_err is not None:
             return pointer_body_err
 
+        work_key_err = validate_work_key(work_key)
+        if work_key_err is not None:
+            return work_key_err
+
+        force_err = validate_force(force, force_reason)
+        if force_err is not None:
+            return force_err
+
         # Intake normalization + validation (F16655/F16656/F16657) — see
         # tools/_frontier_intake.py. Each guard returns an error envelope the
         # caller surfaces verbatim; the model strip is applied before forwarding.
@@ -952,6 +992,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["workspace"] = workspace
             if purpose is not None:
                 body["purpose"] = purpose
+            if work_key is not None:
+                body["work_key"] = work_key
+            if force:
+                body["force"] = True
+            if force_reason is not None:
+                body["force_reason"] = force_reason
         else:
             if contract in ("implement", "wrap"):
                 return {

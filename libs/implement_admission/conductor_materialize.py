@@ -392,6 +392,7 @@ def _render_packet(ctx: ConductorMaterializeContext) -> str:
         [
             "---",
             f"work_key: {ctx.source_ref}",
+            "packet_kind: conductor",
             "role_name: conductor",
             "contract: conductor",
             "lane: B",

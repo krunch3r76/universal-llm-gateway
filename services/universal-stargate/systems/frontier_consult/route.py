@@ -238,6 +238,9 @@ class TeamDispatchGenerateBody(_DispatchCommon):
         ]
         | None
     ) = None
+    work_key: str | None = None
+    force: bool = False
+    force_reason: str | None = None
     # thread / subject MUST NOT appear — extra="forbid" rejects any caller that
     # supplies them (schema-level enforcement per Phase 0 contract).
 

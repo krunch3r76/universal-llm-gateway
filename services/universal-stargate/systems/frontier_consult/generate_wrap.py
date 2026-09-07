@@ -516,6 +516,9 @@ async def dispatch_cursor_sdk_generate_route(
             hop_reason=getattr(body, "hop_reason", None),
             resume_of=getattr(body, "resume_of", None),
             skills=getattr(body, "skills", None),
+            work_key=getattr(body, "work_key", None),
+            force=bool(getattr(body, "force", False)),
+            force_reason=getattr(body, "force_reason", None),
         )
         if isinstance(result, dict):
             split_warning = consolidation_split_warning(
