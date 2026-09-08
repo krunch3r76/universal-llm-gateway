@@ -169,6 +169,18 @@ def test_classify_failed_backfills_without_orphan() -> None:
     assert terminal == "failed"
 
 
+def test_classify_cancelled_backfills_as_failed() -> None:
+    probe = ProbeResult(
+        payload={"status": "cancelled", "execution_id": "exec-1"},
+        http_status=200,
+        error=None,
+    )
+    verdict, reason, terminal = classify_probe(probe, link_execution_id="exec-1")
+    assert verdict is LivenessVerdict.TERMINAL_BACKFILL
+    assert reason == "probe_terminal"
+    assert terminal == "failed"
+
+
 def test_classify_parked_waiting_fresh_skips_orphan() -> None:
     probe = ProbeResult(
         payload={

@@ -23,7 +23,12 @@ logger = logging.getLogger("agent-bus.sdk_liveness")
 # task). Omitting it classifies as DEFER `probe_status_unknown_parked_waiting`
 # (thread 9476, 2026-08-18T08:40:37Z) and must not be treated as death.
 _LIVE_STATUSES = frozenset({"queued", "admitted", "running", "parked_waiting"})
-_TERMINAL_STATUSES = frozenset({"completed", "failed"})
+# GIW ledger also emits ``cancelled`` (park/restart); bus links only store completed|failed.
+_WORKER_TERMINAL_TO_BUS = {
+    "completed": "completed",
+    "failed": "failed",
+    "cancelled": "failed",
+}
 _HEARTBEAT_STALE_S: float = float(os.getenv("AGENT_BUS_SDK_HEARTBEAT_STALE_S", "300"))
 _PROBE_TIMEOUT_S: float = float(os.getenv("AGENT_BUS_SDK_PROBE_TIMEOUT_S", "2"))
 
@@ -111,8 +116,9 @@ def classify_probe(
     ):
         return LivenessVerdict.ALLOW_ORPHAN, "execution_id_mismatch", None
 
-    if status in _TERMINAL_STATUSES:
-        return LivenessVerdict.TERMINAL_BACKFILL, "probe_terminal", status
+    bus_terminal = _WORKER_TERMINAL_TO_BUS.get(status)
+    if bus_terminal is not None:
+        return LivenessVerdict.TERMINAL_BACKFILL, "probe_terminal", bus_terminal
 
     if status not in _LIVE_STATUSES:
         return LivenessVerdict.DEFER, f"probe_status_unknown_{status}", None
