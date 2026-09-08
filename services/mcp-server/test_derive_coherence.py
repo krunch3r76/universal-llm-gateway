@@ -298,6 +298,7 @@ def _collect_registered_tool_names() -> set[str]:
         ("tools.extract_directory", "register_extract_directory_tools"),
         ("tools.pipeline", "register_pipeline_tools"),
         ("tools.pipeline_consult", "register_pipeline_consult_tools"),
+        ("tools.continuity", "register_continuity_tools"),
         ("tools.frontier", "register_frontier_tools"),
         ("tools.panel_dispatch", "register_panel_dispatch_tools"),
         ("tools.git_integrate", "register_git_integrate_tools"),

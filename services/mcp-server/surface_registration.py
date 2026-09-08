@@ -14,6 +14,7 @@ from tools.browser import register_browser_tools
 from tools.chat_session import register_chat_session_tool
 from tools.close import register_close_tools
 from tools.context import register_context_tools
+from tools.continuity import register_continuity_tools
 from tools.cortex import register_cortex_tools
 from tools.cortex_named_tools import register_cortex_named_tools
 from tools.cse_session import register_cse_session_tool
@@ -124,6 +125,7 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
         register_event_tools(mcp)
         register_pipeline_tools(mcp)
         register_pipeline_consult_tools(mcp)
+        register_continuity_tools(mcp)
         register_frontier_tools(mcp)
         register_panel_dispatch_tools(mcp)
         register_git_integrate_tools(mcp)

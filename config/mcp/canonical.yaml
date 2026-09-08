@@ -3438,6 +3438,107 @@ tools:
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-05-22
+- canonical_name: continuity_consolidate
+  domain: continuity
+  operation: consolidate
+  dispatcher_call_shape:
+    tool: continuity
+    dispatch_key: op
+    dispatch_value: consolidate
+  flat_call_shape:
+    tool: continuity_consolidate
+    substrate_qualified: user-vortex__continuity_consolidate
+  fol_descriptor: "∀ trigger_thread ∈ str ∧ turn ∈ ℕ: continuity(op=consolidate, …) ⟹\n  resolve_root
+    → build_consolidate_options → async dispatch consolidate-continuity.\nMutating async pipeline
+    dispatch. See cortex://notes/system/specs/continuity-consolidate-pipeline.md.\n"
+  json_schema:
+    type: object
+    properties:
+      trigger_thread:
+        type: string
+      turn:
+        type: integer
+      dispatch_thread_id:
+        type: string
+      model_ref_overrides:
+        type: object
+        additionalProperties:
+          type: string
+    required:
+    - trigger_thread
+    - turn
+  skill_uri: agent_skill:pipeline
+  seat_visibility:
+  - mcp
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-09-08
+- canonical_name: continuity_replay
+  domain: continuity
+  operation: replay
+  dispatcher_call_shape:
+    tool: continuity
+    dispatch_key: op
+    dispatch_value: replay
+  flat_call_shape:
+    tool: continuity_replay
+    substrate_qualified: user-vortex__continuity_replay
+  fol_descriptor: "Manual P6 replay of consolidate-continuity — same option assembly as consolidate
+    with force=true and dry_run default true.\nMutating when dry_run=false. See continuity-consolidate-pipeline
+    spec.\n"
+  json_schema:
+    type: object
+    properties:
+      trigger_thread:
+        type: string
+      turn:
+        type: integer
+      dry_run:
+        type: boolean
+      force:
+        type: boolean
+      dispatch_thread_id:
+        type: string
+      model_ref_overrides:
+        type: object
+        additionalProperties:
+          type: string
+    required:
+    - trigger_thread
+    - turn
+  skill_uri: agent_skill:pipeline
+  seat_visibility:
+  - mcp
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-09-08
+- canonical_name: continuity_status
+  domain: continuity
+  operation: status
+  dispatcher_call_shape:
+    tool: continuity
+    dispatch_key: op
+    dispatch_value: status
+  flat_call_shape:
+    tool: continuity_status
+    substrate_qualified: user-vortex__continuity_status
+  fol_descriptor: "Given execution_id: pipeline tracker result. Given root_thread: hub WATERMARK
+    via cortex assertions. Read-only.\n"
+  json_schema:
+    type: object
+    properties:
+      execution_id:
+        type: string
+      root_thread:
+        type: string
+      wait_seconds:
+        type: number
+  skill_uri: agent_skill:pipeline
+  seat_visibility:
+  - mcp
+  mandate_safety: read_only
+  cache_priority: on_demand
+  introduced: 2026-09-08
 - canonical_name: pipeline_run
   domain: pipeline
   operation: run
