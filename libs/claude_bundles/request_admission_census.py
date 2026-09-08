@@ -27,6 +27,25 @@ REFUSE_CENSUS_REASONS: frozenset[UnresolvableReason] = frozenset(
     {"ambiguous_matches", "zero_matches", "empty_snap"}
 )
 
+# ``zero_matches`` / ``empty_snap`` bind hop-seat lanes (watch present). Unwatched
+# cursor-auto threads have no CSE census row — admit rather than refuse continue.
+_WATCHED_ONLY_REFUSE_REASONS: frozenset[UnresolvableReason] = frozenset(
+    {"zero_matches", "empty_snap"}
+)
+
+
+def should_refuse_census(
+    *,
+    unresolvable_reason: UnresolvableReason | None,
+    watch_present: bool,
+) -> bool:
+    """Return whether enqueue should refuse on census miss."""
+    if unresolvable_reason not in REFUSE_CENSUS_REASONS:
+        return False
+    if unresolvable_reason == "ambiguous_matches":
+        return True
+    return watch_present
+
 
 def _row_counts_for_census(row: dict[str, Any]) -> bool:
     """Census reads live ``stream_state`` or listable ``seat_state`` on the union."""

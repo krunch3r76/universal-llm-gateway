@@ -976,7 +976,7 @@ def test_gate_refuses_zero_matches():
     with (
         patch(
             "claude_bundles.hop_seat_cutover.load_watches",
-            return_value={},
+            return_value={"7188": {"thread_id": "7188"}},
         ),
         patch(
             "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
@@ -996,6 +996,42 @@ def test_gate_refuses_zero_matches():
     assert refusal["code"] == "seat.identity_unresolvable"
     assert refusal["data"]["reason"] == "zero_matches"
     assert refusal["data"]["census_n"] == 0
+
+
+def test_gate_admits_zero_matches_on_unwatched_cursor_auto_lane():
+    """Unwatched cursor-auto continue has no CSE census row — admit, do not refuse."""
+    snap = {
+        "rows": [
+            {
+                "execution_id": "other-lane",
+                "registration_id": "5420b367-other",
+                "parent_thread": "9999",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "stream_state": "running",
+            }
+        ]
+    }
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
+            return_value=None,
+        ),
+    ):
+        refusal = gate_request_admission(
+            thread_id="10324",
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert refusal is None
 
 
 def test_caller_supplied_admits_when_census_n_ge_2():

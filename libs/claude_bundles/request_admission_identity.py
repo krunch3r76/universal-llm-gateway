@@ -27,11 +27,11 @@ from claude_bundles.hop_cadence_lease_events import emit_identity_bound, emit_le
 from claude_bundles.hop_cadence_seat_snap import attach_registry_seated_rows
 from claude_bundles.hop_seat_cutover import resolve_request_refusal
 from claude_bundles.request_admission_census import (
-    REFUSE_CENSUS_REASONS,
     UnresolvableReason,
     census_match_ids,
     census_refusal_envelope,
     classify_unresolvable,
+    should_refuse_census,
 )
 from claude_bundles.request_admission_resume import resolve_n0_resume_identity
 
@@ -250,9 +250,10 @@ def gate_request_admission(
 ) -> dict[str, Any] | None:
     """Return ``None`` to admit, or a ProtocolError envelope.
 
-    Census N≠1 (``ambiguous_matches`` / ``zero_matches`` / ``empty_snap``)
-    refuses at enqueue. ``snap_load_failed`` and ``missing_thread_id`` still
-    admit. Live loads attach registry ``seated_rows``; injected test snaps
+    Census N≠1 refuses at enqueue on watched hop lanes
+    (``ambiguous_matches`` always; ``zero_matches`` / ``empty_snap`` when
+    ``watch_present``). Unwatched cursor-auto continues admit on N=0.
+    ``snap_load_failed`` and ``missing_thread_id`` still admit. Live loads attach registry ``seated_rows``; injected test snaps
     are left unchanged.
     """
     tid = (thread_id or "").strip()
@@ -283,7 +284,10 @@ def gate_request_admission(
 
     if (
         identity.source == "unresolvable"
-        and identity.unresolvable_reason in REFUSE_CENSUS_REASONS
+        and should_refuse_census(
+            unresolvable_reason=identity.unresolvable_reason,
+            watch_present=identity.watch_present,
+        )
     ):
         _increment("census_refuse")
         _increment(f"census_refuse:{identity.unresolvable_reason}")
