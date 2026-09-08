@@ -175,7 +175,7 @@ def _g6_review_body_witnesses(
     tip_body: str,
     artifact_id: str,
 ) -> bool:
-    """After-ship review (R1): affirmative verdict + optional cited-sha bind."""
+    """After-ship review (R1): affirmative verdict + cited-sha bind."""
     return _g6_review_failure_reason(
         uri,
         files_root=files_root,
@@ -201,7 +201,7 @@ def _g6_review_failure_reason(
         return "unrecognized review verdict"
     cited_sha = _artifact_cited_sha(tip_body, artifact_id)
     if cited_sha is None:
-        return None
+        return "missing_cited_sha"
     actual_sha = _cortex_bytes_sha(uri, files_root=files_root)
     if actual_sha is None:
         return "artifact unreadable"

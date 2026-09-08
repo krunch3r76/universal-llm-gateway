@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib
 from pathlib import Path
 from typing import Any
@@ -100,9 +101,14 @@ def _deps(tmp_path: Path) -> FoldDeps:
     )
 
 
-def _g5_precondition_tip(files_root: Path, review_body: str) -> str:
+def _g5_precondition_tip(
+    files_root: Path,
+    review_body: str,
+    *,
+    cited_sha: str | None = None,
+) -> str:
     _write_review(files_root, review_body)
-    return _review_tip(body=review_body)
+    return _review_tip(cited_sha=cited_sha, body=review_body)
 
 
 @pytest.mark.parametrize("verdict_line", ["VERDICT: REVISE", "VERDICT: REVISE\n"])
@@ -123,10 +129,11 @@ def test_ac3_revise_body_does_not_witness_g6(tmp_path: Path, verdict_line: str) 
 
 
 def test_ac4_ratify_with_conditions_witnesses_g6(tmp_path: Path) -> None:
-    """AC4 — VERDICT: RATIFY_WITH_CONDITIONS ⇒ G6 witness."""
+    """AC4 — VERDICT: RATIFY_WITH_CONDITIONS + cited sha ⇒ G6 witness."""
     files_root = tmp_path / "cortex"
     review_body = "VERDICT: RATIFY_WITH_CONDITIONS\n\nMinor nits only.\n"
-    tip_body = _g5_precondition_tip(files_root, review_body)
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
     witnesses = row_witnesses(
         _SLUG,
         tip_body=tip_body,
@@ -185,6 +192,40 @@ def test_ac5_fold_reports_witness_sha_mismatch(tmp_path: Path) -> None:
     assert fold is not None
     assert fold.witnesses.get("G6") is None
     assert fold.missing_witnesses.get("G6") == "witness_sha_mismatch"
+
+
+def test_r2_c6_affirmative_without_cited_sha_not_witness(tmp_path: Path) -> None:
+    """R2 C6 — affirmative verdict without cited sha ⇒ G6 unbound (fail-closed)."""
+    files_root = tmp_path / "cortex"
+    review_body = "VERDICT: RATIFY\n"
+    tip_body = _g5_precondition_tip(files_root, review_body)
+    deps = _deps(tmp_path)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G5") is not None
+    assert witnesses.get("G6") is None
+
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    score_tip = (
+        "# Scoreboard\n\n## Gated deliverables\n\n| ID | Status |\n|---|---|\n"
+        + tip_body
+    )
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(score_tip, encoding="utf-8")
+    fold = fold_scoreboard(
+        _SLUG,
+        deps=deps,
+        files_root=files_root,
+        write_journal=False,
+    )
+    assert fold is not None
+    assert fold.witnesses.get("G6") is None
+    assert fold.missing_witnesses.get("G6") == "missing_cited_sha"
 
 
 def test_ac6_unrecognized_verdict_not_witness(tmp_path: Path) -> None:
