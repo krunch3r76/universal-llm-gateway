@@ -33,7 +33,11 @@ from ..transcript_projection_membership import (
     parse_iso_datetime,
     prose_tail_for_range,
 )
-from ..transcript_projection_render import render_projection_markdown, sha256_text
+from ..transcript_projection_render import (
+    derive_open_interval,
+    render_projection_markdown,
+    sha256_text,
+)
 from ..transcript_projection_state import (
     CellFacts,
     compact_state,
@@ -435,11 +439,13 @@ def _build_open_line(
     windows = {**prior_state.get("windows", {}), **window_updates}
     latest_tid = next(reversed(window_updates), None) or next(iter(windows), None)
     latest = windows.get(latest_tid, {}) if latest_tid else {}
+    merged_state = {**prior_state, "windows": windows, "anchor_mismatches": anchor_rows}
     return {
         "thread": thread,
         "windows": len(windows),
         "cells": sum(len(w.get("cells", [])) for w in windows.values()),
         "open_tails": sum(1 for w in windows.values() if w.get("open_tail")),
+        "open_interval": derive_open_interval(merged_state),
         "latest_window": {
             "transcript_id": latest_tid,
             "tab_title": latest.get("tab_title"),

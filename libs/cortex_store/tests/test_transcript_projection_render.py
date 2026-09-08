@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 
 from cortex_store.transcript_projection_render import (
+    cp_cells_by_ordinal,
+    derive_open_interval,
     extract_operator_notes,
     render_projection_markdown,
     sha256_text,
@@ -60,3 +62,99 @@ def test_p8_render_budget_and_operator_notes() -> None:
     assert len(md.encode("utf-8")) <= 8_192
     assert collapsed > 0
     assert md.count("|") >= 30
+
+
+@pytest.mark.offline
+def test_ac_15_2_cells_cp_ordinal_order() -> None:
+    tid = "9c37637d-379f-467e-89fd-849f6950ee19"
+    state = {
+        "thread": "10223",
+        "updated_at": "2026-09-08",
+        "runs": 1,
+        "windows": {
+            tid: {
+                "tab_title": "tab",
+                "lane": "10223",
+                "binding": "dominant_write",
+                "turn_count": 10,
+                "source": "live",
+                "jsonl": {"mtime": "2026-09-08T00:00:00+00:00"},
+                "cells": [
+                    {
+                        "turn_lo": 0,
+                        "turn_hi": 3,
+                        "note": "cp2",
+                        "boundary": {
+                            "kind": "CHECKPOINT",
+                            "cp_ordinal": 2,
+                            "turn_number": 155,
+                        },
+                    },
+                    {
+                        "turn_lo": 3,
+                        "turn_hi": 6,
+                        "note": "cp1",
+                        "boundary": {
+                            "kind": "CHECKPOINT",
+                            "cp_ordinal": 1,
+                            "turn_number": 150,
+                        },
+                    },
+                ],
+            }
+        },
+        "anchor_mismatches": [],
+        "last_run": {},
+    }
+    ordered = cp_cells_by_ordinal(state)
+    assert [row["cp_ordinal"] for row in ordered] == [1, 2]
+    md, _ = render_projection_markdown(state, state_sha256=sha256_text("x"))
+    assert "## Cells (cp_ordinal order)" in md
+    assert "| 1 | 150 |" in md
+    assert "| 2 | 155 |" in md
+    assert len(ordered) == 2
+
+
+@pytest.mark.offline
+def test_ac_15_3_open_interval_matches_derived() -> None:
+    tid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    state = {
+        "thread": "10223",
+        "updated_at": "2026-09-08",
+        "runs": 1,
+        "windows": {
+            tid: {
+                "tab_title": "tab",
+                "lane": "10223",
+                "binding": "dominant_write",
+                "turn_count": 12,
+                "source": "live",
+                "jsonl": {"mtime": "2026-09-08T00:00:00+00:00"},
+                "cells": [],
+                "open_tail": {
+                    "turn_lo": 8,
+                    "turn_hi": 12,
+                    "note": "open",
+                },
+            }
+        },
+        "anchor_mismatches": [],
+        "last_run": {},
+    }
+    interval = derive_open_interval(state)
+    assert interval == {
+        "transcript_ids": [tid],
+        "turns": 4,
+        "windows": [
+            {
+                "transcript_id": tid,
+                "turn_lo": 8,
+                "turn_hi": 12,
+                "turns": 4,
+            }
+        ],
+    }
+    md, _ = render_projection_markdown(state, state_sha256=sha256_text("y"))
+    assert "## Open interval (derived)" in md
+    assert "turns: 4" in md
+    assert f"`{tid[:8]}…` · turns 8→12 unsealed (4 turns)" in md

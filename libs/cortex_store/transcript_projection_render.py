@@ -26,6 +26,62 @@ def _window_activity_key(window: dict[str, Any]) -> str:
     return str(jsonl.get("mtime") or window.get("first_seen") or "")
 
 
+def cp_cells_by_ordinal(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """CHECKPOINT cells across windows, sorted by ``cp_ordinal`` (AC-15-2)."""
+    items: list[dict[str, Any]] = []
+    for tid, window in (state.get("windows") or {}).items():
+        for cell in window.get("cells") or []:
+            boundary = cell.get("boundary") or {}
+            if boundary.get("kind") != "CHECKPOINT":
+                continue
+            items.append(
+                {
+                    "transcript_id": tid,
+                    "cell": cell,
+                    "cp_ordinal": boundary.get("cp_ordinal"),
+                    "turn_number": boundary.get("turn_number"),
+                }
+            )
+    items.sort(
+        key=lambda row: (
+            row["cp_ordinal"] is None,
+            row["cp_ordinal"] if row["cp_ordinal"] is not None else 0,
+        )
+    )
+    return items
+
+
+def derive_open_interval(state: dict[str, Any]) -> dict[str, Any]:
+    """Unsealed tail turns per window — matches ``open_line.open_interval`` (AC-15-3)."""
+    transcript_ids: list[str] = []
+    total_turns = 0
+    windows: list[dict[str, Any]] = []
+    for tid, window in (state.get("windows") or {}).items():
+        tail = window.get("open_tail")
+        if not tail:
+            continue
+        lo = int(tail.get("turn_lo", 0))
+        hi = int(tail.get("turn_hi", 0))
+        if hi <= lo:
+            continue
+        turns = hi - lo
+        transcript_ids.append(tid)
+        total_turns += turns
+        windows.append(
+            {
+                "transcript_id": tid,
+                "turn_lo": lo,
+                "turn_hi": hi,
+                "turns": turns,
+            }
+        )
+    return {
+        "transcript_ids": transcript_ids,
+        "turns": total_turns,
+        "windows": windows,
+    }
+
+
 def render_projection_markdown(
     state: dict[str, Any],
     *,
@@ -64,6 +120,41 @@ def render_projection_markdown(
     registry_rows = [_registry_row(tid, windows[tid]) for tid in ordered_ids]
     for row in registry_rows:
         lines.append(row)
+    lines.extend(["", "## Cells (cp_ordinal order)"])
+    cp_cells = cp_cells_by_ordinal(state)
+    if cp_cells:
+        lines.extend(
+            [
+                "| cp | bus_turn | window | turns | note |",
+                "|---|---:|---|---|---|",
+            ]
+        )
+        for row in cp_cells:
+            cell = row["cell"]
+            boundary = cell.get("boundary") or {}
+            tid = row["transcript_id"]
+            lines.append(
+                f"| {row.get('cp_ordinal', '')} | {row.get('turn_number', '')} "
+                f"| `{tid[:8]}…` | ({cell.get('turn_lo')},{cell.get('turn_hi')}] "
+                f"| {cell.get('note', '')[:80]} |"
+            )
+    else:
+        lines.append("_none_")
+    open_interval = derive_open_interval(state)
+    lines.extend(["", "## Open interval (derived)"])
+    if open_interval["windows"]:
+        lines.append(
+            f"transcript_ids: {len(open_interval['transcript_ids'])} · "
+            f"turns: {open_interval['turns']}"
+        )
+        for row in open_interval["windows"]:
+            lines.append(
+                f"- `{row['transcript_id'][:8]}…` · turns "
+                f"{row['turn_lo']}→{row['turn_hi']} unsealed "
+                f"({row['turns']} turns)"
+            )
+    else:
+        lines.append("_none_")
     lines.extend(
         [
             "",
@@ -78,16 +169,24 @@ def render_projection_markdown(
     lines.extend(
         [
             "",
-            "## Anchor mismatches",
-            "| cp_turn | cp_ordinal | claimed | observed | kind |",
-            "|---|---:|---|---|---|",
+            "## Mismatch (derived)",
         ]
     )
-    for row in state.get("anchor_mismatches", []):
-        lines.append(
-            f"| {row.get('cp_turn')} | {row.get('cp_ordinal', '')} | "
-            f"{row.get('claimed')} | {row.get('observed')} | {row.get('kind')} |"
+    mismatches = state.get("anchor_mismatches", [])
+    if mismatches:
+        lines.extend(
+            [
+                "| cp_turn | cp_ordinal | claimed | observed | kind |",
+                "|---|---:|---|---|---|",
+            ]
         )
+        for row in mismatches:
+            lines.append(
+                f"| {row.get('cp_turn')} | {row.get('cp_ordinal', '')} | "
+                f"{row.get('claimed')} | {row.get('observed')} | {row.get('kind')} |"
+            )
+    else:
+        lines.append("none")
     detail_ids = list(ordered_ids)
     collapsed = 0
     while detail_ids:
@@ -226,6 +325,8 @@ def sha256_text(text: str) -> str:
 
 
 __all__ = [
+    "cp_cells_by_ordinal",
+    "derive_open_interval",
     "extract_operator_notes",
     "render_projection_markdown",
     "sha256_text",
