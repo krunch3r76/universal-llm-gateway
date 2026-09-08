@@ -3546,7 +3546,7 @@ async def cancel_cursor_dispatch(
 )
 async def park_cursor_dispatch(
     dispatch_id: str, req: ParkDispatchRequest, request: Request
-) -> JSONResponse:
+):
     """202 ``park_requested`` / 200 ``already_parked`` / D3 refusal envelope."""
     status_code, body = await park_one_dispatch(
         dispatch_id=dispatch_id,
@@ -3565,7 +3565,7 @@ async def park_cursor_dispatch(
 )
 async def park_for_restart_sweep_route(
     req: ParkForRestartRequest, request: Request
-) -> JSONResponse:
+):
     """202 ``{requested, refused, already_parked, live_after}`` for the intent."""
     status_code, body = await _park_for_restart(
         intent_id=req.intent_id,
