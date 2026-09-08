@@ -113,6 +113,27 @@ def test_inject_pools_checkpoint_projection(
     assert f"- Pools block · sha256:{digest}" in projected
 
 
+def test_pools_residue_token_aligns_with_checkpoint_anchor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    """D1 resume: authored ``Pools:`` token matches CP artifact anchor digest."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    card = _card_with_block()
+    card_path = tmp_path / "notes/system/threads/10223-continuity.md"
+    card_path.parent.mkdir(parents=True)
+    card_path.write_text(card, encoding="utf-8")
+    token = pools_residue_token(card)
+    assert token is not None
+    residue = f"Settled: fold lands · {token}\n"
+    body = f"{residue}\n### Artifact anchors\n_none cited_\n\n## Residue"
+    projected = inject_pools_checkpoint_projection(body, "10223")
+    digest = pools_block_sha256(card)
+    assert digest is not None
+    assert f"- Pools block · sha256:{digest}" in projected
+    assert pools_residue_matches_card(residue, card)
+    assert extract_pools_residue_sha8(residue) == digest[:8]
+
+
 def test_format_house_read_first_block() -> None:
     row = parse_pools(_card_with_block())["fable"]
     block = format_house_read_first_block(house_id="10223", row=row)
