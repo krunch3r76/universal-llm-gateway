@@ -15,7 +15,10 @@ import httpx
 from claude_bundles.conductor_stop import (
     EXIT_PERSIST_STOPS,
     consult_pending_blocks_progression,
+    last_next_admit_payload,
     next_admit_blocks_hop_body,
+    next_admit_payload_blocks_hop,
+    next_admit_payload_matches_entry_gate,
     parse_designed_stop_tokens,
 )
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
@@ -42,6 +45,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress 
     HOP_NEXT_ADMIT_KEY,
     next_admit_in_closeout,
 )
+from implement_admission.conductor_witness_types import row_status_in_tip
 from services.git_integration_worker.cursor_sdk_conductor_conflict import (
     _record_packet_kind,
 )
@@ -120,15 +124,83 @@ def _scoreboard_text_for_row(row: dict[str, Any]) -> tuple[str, str | None]:
     return body, sha
 
 
+def _first_open_row_in_scoreboard(scoreboard_body: str) -> str | None:
+    """First table row whose Status cell is not DONE."""
+    for match in re.finditer(
+        r"^\|\s*(G\d+|R\d+|L\d+)\s*\|",
+        scoreboard_body or "",
+        re.MULTILINE,
+    ):
+        row_id = match.group(1).upper()
+        status = (row_status_in_tip(scoreboard_body, row_id) or "OPEN").upper()
+        if status != "DONE":
+            return row_id
+    return None
+
+
+def _live_entry_gate_for_row(
+    row: dict[str, Any], scoreboard_body: str
+) -> str | None:
+    """Entry gate from scoreboard header, fold, or first OPEN row."""
+    gate = _scoreboard_entry_gate(scoreboard_body)
+    if gate:
+        return gate
+    work_key = str(row.get("work_key") or "")
+    if work_key.startswith("todo:"):
+        slug = work_key.split(":", 1)[1].strip()
+        if slug:
+            try:
+                from implement_admission.conductor_witness import (
+                    fold_scoreboard,
+                    resolve_entry_gate_from_fold,
+                )
+                from implement_admission.conductor_witness_defaults import (
+                    DefaultWitnessCortex,
+                )
+                from implement_admission.conductor_witness_types import FoldDeps
+
+                fold = fold_scoreboard(
+                    slug,
+                    deps=FoldDeps(cortex=DefaultWitnessCortex()),
+                    write_journal=False,
+                )
+                if fold is not None:
+                    return resolve_entry_gate_from_fold(fold)
+            except Exception as exc:  # noqa: BLE001 — fold is advisory on hop path
+                logger.warning(
+                    "conductor hop entry_gate fold failed slug=%s err=%s",
+                    slug,
+                    exc,
+                )
+    return _first_open_row_in_scoreboard(scoreboard_body)
+
+
+def _scoreboard_next_admit_guard_snippet(
+    row: dict[str, Any], scoreboard_body: str
+) -> str | None:
+    """Recency-scoped scoreboard NEXT_ADMIT when closeout did not name one."""
+    admit = last_next_admit_payload(scoreboard_body)
+    if not admit or not next_admit_payload_blocks_hop(admit):
+        return None
+    entry_gate = _live_entry_gate_for_row(row, scoreboard_body)
+    if not next_admit_payload_matches_entry_gate(admit, entry_gate):
+        return None
+    return f"NEXT_ADMIT: {admit}"
+
+
 def _next_admit_guard_text(row: dict[str, Any], rec: dict[str, Any]) -> str:
-    """Closeout + scoreboard text consulted for P3.2 hop-body refusal."""
+    """Closeout + gate-scoped scoreboard NEXT_ADMIT for P3.2 hop-body refusal."""
     parts: list[str] = []
     closeout_body = rec.get("closeout_body")
     if isinstance(closeout_body, str) and closeout_body.strip():
         parts.append(closeout_body)
+    if next_admit_in_closeout(closeout_body or "") is not None:
+        return "\n".join(parts)
     scoreboard_body, _ = _scoreboard_text_for_row(row)
     if scoreboard_body:
-        parts.append(scoreboard_body)
+        snippet = _scoreboard_next_admit_guard_snippet(row, scoreboard_body)
+        if snippet:
+            parts.append(snippet)
     return "\n".join(parts)
 
 

@@ -20,7 +20,10 @@ from claude_bundles.conductor_stop import (
     is_exit_persist_stop,
     is_g1_pin,
     next_admit_blocks_hop_body,
+    last_next_admit_payload,
     next_admit_names_harvest,
+    next_admit_payload_blocks_hop,
+    next_admit_payload_matches_entry_gate,
     parse_designed_stop_tokens,
     parse_stop_tokens,
     pings_for_stops,
@@ -443,3 +446,19 @@ def test_next_admit_blocks_hop_body_none_harvest_land() -> None:
     assert not next_admit_blocks_hop_body(
         "- **NEXT_ADMIT:** Conductor hop 3 — entry gate G4\n"
     )
+
+
+def test_last_next_admit_payload_recency() -> None:
+    body = (
+        "NEXT_ADMIT: harvest G1\n"
+        "some prose\n"
+        "NEXT_ADMIT: Conductor hop 3 — entry gate G4\n"
+    )
+    assert last_next_admit_payload(body) == "Conductor hop 3 — entry gate G4"
+
+
+def test_next_admit_payload_matches_entry_gate_land() -> None:
+    assert next_admit_payload_matches_entry_gate("git_land · sidecar L1", "G8")
+    assert not next_admit_payload_matches_entry_gate("git_land · sidecar L1", "G4")
+    assert next_admit_payload_matches_entry_gate("harvest G3", "G3")
+    assert not next_admit_payload_matches_entry_gate("harvest G3", "G4")

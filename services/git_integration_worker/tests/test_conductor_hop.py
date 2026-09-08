@@ -725,6 +725,30 @@ def test_ac7_build_hop_body_refused_when_scoreboard_next_admit_land(
     assert build_hop_team_dispatch_body(row) is None
 
 
+def test_ac7_stale_scoreboard_harvest_does_not_block_row_hop(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stale harvest NEXT_ADMIT on a prior gate must not wedge ROW_HOP successors."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    scoreboards = tmp_path / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    body = (
+        "# Scoreboard\n\n"
+        "- **Entry gate:** G4\n"
+        "- **NEXT_ADMIT:** harvest G1\n"
+        "- **NEXT_ADMIT:** Conductor hop 3 — entry gate G4\n\n"
+        "| G4 | Skeptic | OPEN |\n"
+        "| G8 | Land | DONE |\n"
+    )
+    (scoreboards / "conductor-hop-fixture-scoreboard.md").write_text(
+        body, encoding="utf-8"
+    )
+    ledger = CursorDispatchLedger.instance()
+    row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    assert build_hop_team_dispatch_body(row) is not None
+
+
 @pytest.mark.asyncio
 async def test_ac7_reactor_skips_with_next_admit_blocked_gate() -> None:
     ledger = CursorDispatchLedger.instance()

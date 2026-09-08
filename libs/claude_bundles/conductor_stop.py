@@ -299,6 +299,42 @@ def _iter_next_admit_values(body: str):
         yield match.group(1).strip()
 
 
+def last_next_admit_payload(body: str) -> str | None:
+    """Return the last NEXT_ADMIT payload in prose (recency wins over stale lines)."""
+    last: str | None = None
+    for value in _iter_next_admit_values(body):
+        last = value
+    return last
+
+
+def next_admit_payload_blocks_hop(payload: str) -> bool:
+    """True when one NEXT_ADMIT payload forbids hop rematerialize."""
+    lower = (payload or "").lower().strip()
+    if not lower or lower == "none":
+        return True
+    if "harvest" in lower:
+        return True
+    return re.search(r"\b(?:land|git_land)\b", lower) is not None
+
+
+def next_admit_payload_matches_entry_gate(
+    payload: str,
+    entry_gate: str | None,
+) -> bool:
+    """True when a scoreboard NEXT_ADMIT is authoritative for the live entry gate."""
+    if entry_gate is None:
+        return True
+    lower = (payload or "").lower().strip()
+    if lower == "none":
+        return True
+    harvest_match = re.search(r"harvest\s+(G\d+|R\d+)", lower, re.IGNORECASE)
+    if harvest_match:
+        return harvest_match.group(1).upper() == entry_gate
+    if re.search(r"\b(?:land|git_land)\b", lower):
+        return entry_gate in ("G7", "G8") or entry_gate.startswith("L")
+    return False
+
+
 def next_admit_blocks_hop_body(body: str) -> bool:
     """True when NEXT_ADMIT names harvest, land, or none — refuse hop rematerialize (P3.2)."""
     text = body or ""
