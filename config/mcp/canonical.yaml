@@ -4743,6 +4743,44 @@ tools:
   mandate_safety: write
   cache_priority: on_demand
   introduced: '2026-07-12'
+- canonical_name: cortex_transcript_project
+  domain: cortex
+  operation: transcript_project
+  family: write
+  dispatcher_call_shape:
+    tool: cortex
+    dispatch_key: op
+    dispatch_value: transcript_project
+  flat_call_shape:
+    tool: cortex_transcript_project
+    substrate_qualified: user-vortex__cortex_transcript_project
+  fol_descriptor: "Project Cursor JSONL windows into a derived transcript sidecar for a root lane.\n\
+    \    Mechanical v1 — zero model cost. Code surface only.\n"
+  json_schema:
+    type: object
+    properties:
+      thread:
+        type: string
+      children_policy:
+        type: string
+      render_budget_bytes:
+        type: integer
+      dry_run:
+        type: boolean
+      transcript_ids:
+        type: array
+        items:
+          type: string
+    required:
+    - thread
+  skill_uri: rule:cortex
+  seat_visibility:
+  - mcp
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: '2026-09-08'
+  endpoint_visibility:
+  - code
 - canonical_name: cortex_recon_sidecar_write
   domain: cortex
   operation: recon_sidecar_write
@@ -5611,6 +5649,7 @@ cortex_families:
     - rj_link
     - rj_write
     - supersede
+    - transcript_project
     session:
     - session_audit
     - session_close
