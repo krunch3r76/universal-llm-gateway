@@ -244,6 +244,14 @@ stop: PARKED_TRANSPORT
 NEXT_ADMIT: none
 """
 
+_OMITTED_NEXT_ADMIT_PARKED_CLOSEOUT = """\
+status: complete
+stop: PARKED_TRANSPORT
+CONSULT_PENDING
+execution_id: exec-abc
+poll_hint: wait
+"""
+
 
 def test_merge_closeout_stamps_closeout_turn_and_harvest_owed() -> None:
     """L1-1: production path stamps closeout_turn + closeout_harvest_owed."""
@@ -280,6 +288,49 @@ def test_merge_closeout_harvest_owed_false_when_next_admit_none() -> None:
         ).fetchone()
     data = json.loads(row["record_json"])
     assert data.get("closeout_harvest_owed") is False
+
+
+def test_merge_closeout_harvest_owed_true_when_next_admit_omitted() -> None:
+    """L1-2b: grader envelope omitting NEXT_ADMIT still owes park harvest."""
+    ledger = CursorDispatchLedger.instance()
+    _admit_conductor(ledger, _req())
+    merge_conductor_closeout_hop_authority(
+        dispatch_id="pred-hop-1",
+        closeout_body=_OMITTED_NEXT_ADMIT_PARKED_CLOSEOUT,
+        thread_id="9964",
+        closeout_turn=48,
+    )
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id='pred-hop-1'"
+        ).fetchone()
+    data = json.loads(row["record_json"])
+    assert data.get("closeout_harvest_owed") is True
+
+
+def test_external_gate_hop_verdict_body_overrides_false_stamp() -> None:
+    """Probe fails closed when body still owes harvest despite stale stamp."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons import (
+        external_gate_hop_verdict,
+    )
+
+    row = {
+        "thread_id": "9964",
+        "record_json": json.dumps(
+            {
+                "closeout_harvest_owed": False,
+                "closeout_body": _OMITTED_NEXT_ADMIT_PARKED_CLOSEOUT,
+                "summoning_thread_id": "9638",
+            }
+        ),
+    }
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_exit_reasons.read_external_gate_lane_snapshot",
+        return_value={},
+    ):
+        verdict, skip_gate = external_gate_hop_verdict(row)
+    assert verdict == "indeterminate_closed"
+    assert skip_gate == SKIP_GATE_PROBE_INDETERMINATE
 
 
 def test_build_hop_team_dispatch_body_clones_predecessor() -> None:
