@@ -2165,3 +2165,125 @@ status: partial
     assert cell.strip() != "…"
     assert not cell.strip().startswith("truncated:")
     assert not cell.strip().startswith("fenced —")
+
+
+# --- O14-D4 / AC-14-5 — closeout relay subject matches envelope status ---
+
+
+def test_envelope_status_to_subject_token_blocked_and_failed() -> None:
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        envelope_status_to_subject_token,
+    )
+
+    assert envelope_status_to_subject_token("blocked") == "status:blocked"
+    assert envelope_status_to_subject_token("failed") == "status:failed"
+    assert envelope_status_to_subject_token("partial") == "status:partial"
+    assert envelope_status_to_subject_token("partial:work") == "status:partial:work"
+    assert (
+        envelope_status_to_subject_token("relay_parse_failed")
+        == "status:relay_parse_failed"
+    )
+
+
+def test_envelope_status_to_subject_token_complete_aliases_done() -> None:
+    """Documented exception — wait predicates use completion=status:done."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        envelope_status_to_subject_token,
+    )
+
+    assert envelope_status_to_subject_token("complete") == "status:done"
+
+
+@pytest.mark.asyncio
+async def test_post_operator_closeout_subject_matches_body_blocked_ac14_5() -> None:
+    """AC-14-5 — M7 class: blocked envelope must not post status:done subject."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.nested_sdk import (
+        post_operator_closeout,
+    )
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    closeout_body = (
+        "TYPE: CLOSEOUT\nstatus: blocked\ncheckpoint: nothing_authored\n\n"
+        "| Field | Value |\n|---|---|\n"
+        "| status_claim | blocked |\n"
+        "| ac_verdict | BLOCKED — gate refused |\n"
+    )
+    job = AutoJob(
+        job_id="j-m7",
+        thread_id="10308",
+        turn_number=6,
+        subject="nested composer leg",
+        body="TYPE: DIRECTIVE",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="composer-2.5",
+        desired_effort="default",
+        contract="implement",
+    )
+    bus = MagicMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body="ok"))
+    await post_operator_closeout(
+        job,
+        status="blocked",
+        dispatch_id="auto-b55b419f3964",
+        model_id="cursor/composer-2.5",
+        sdk_body=None,
+        closeout_body=closeout_body,
+        closeout_source="empty",
+        extra={"terminal_status": "failed"},
+        bus=bus,
+        skip_outbox_persist=True,
+    )
+    subject = bus.reply.await_args.kwargs["subject"]
+    body = bus.reply.await_args.kwargs["body"]
+    assert subject.startswith("status:blocked —")
+    assert "status:done" not in subject
+    assert "status: blocked" in body.splitlines()[1]
+
+
+@pytest.mark.asyncio
+async def test_post_operator_closeout_subject_partial_not_done() -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_auto.nested_sdk import (
+        post_operator_closeout,
+    )
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    closeout_body = (
+        "TYPE: CLOSEOUT\nstatus: partial\ncheckpoint: nothing_authored\n\n"
+        "| Field | Value |\n|---|---|\n"
+        "| status_claim | complete |\n"
+        "| ac_verdict | PASS |\n"
+    )
+    job = AutoJob(
+        job_id="j-partial",
+        thread_id="6561",
+        turn_number=22,
+        subject="DIRECTIVE",
+        body="TYPE: DIRECTIVE",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="composer-2.5",
+        desired_effort="default",
+        contract="implement",
+    )
+    bus = MagicMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body="ok"))
+    await post_operator_closeout(
+        job,
+        status="partial",
+        dispatch_id="auto-c4-fix",
+        model_id="cursor/composer-2.5",
+        sdk_body=None,
+        closeout_body=closeout_body,
+        closeout_source="section2_sidecar",
+        extra={"terminal_status": "completed"},
+        bus=bus,
+        skip_outbox_persist=True,
+    )
+    subject = bus.reply.await_args.kwargs["subject"]
+    assert subject.startswith("status:partial —")
+    assert "status:done" not in subject

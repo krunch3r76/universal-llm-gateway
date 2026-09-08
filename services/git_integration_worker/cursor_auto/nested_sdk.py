@@ -32,6 +32,7 @@ from services.git_integration_worker.cursor_auto.closeout_relay import (
     ledger_status_to_closeout,
 )
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+    build_closeout_relay_subject,
     resolve_relay_status,
     strip_projected_closeout_envelope,
 )
@@ -461,7 +462,7 @@ async def post_operator_confer(
         thread_id=job.thread_id,
         to_agent=job.from_agent,
         from_agent="cursor-auto",
-        subject=f"status:done — {job.subject[:60]}",
+        subject=build_closeout_relay_subject(status, job.subject),
         body="\n".join(lines),
         allow_long_body=True,
     )
@@ -605,7 +606,7 @@ async def post_operator_closeout(
         checkpoint_value = extract_checkpoint_claim(body)
         tree_match = _TREE_RESIDUE_RE.search(body)
         tree_residue = int(tree_match.group(1)) if tree_match else None
-        subject = f"status:done — {job.subject[:60]}"
+        subject = build_closeout_relay_subject(envelope_status, job.subject)
         row = get_outbox_store().persist_pending(
             dispatch_id=dispatch_id,
             job_id=job.job_id,
@@ -639,7 +640,7 @@ async def post_operator_closeout(
         thread_id=job.thread_id,
         to_agent=job.from_agent,
         from_agent="cursor-auto",
-        subject=f"status:done — {job.subject[:60]}",
+        subject=build_closeout_relay_subject(envelope_status, job.subject),
         body=body,
         allow_long_body=True,
     )

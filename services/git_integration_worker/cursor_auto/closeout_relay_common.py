@@ -435,6 +435,27 @@ def resolve_relay_status(body: str, measurement_status: str) -> str:
     return "partial"
 
 
+def envelope_status_to_subject_token(envelope_status: str) -> str:
+    """Map envelope ``status:`` measurement to the bus subject wait token.
+
+    Matches body ``status:`` for every measurement except ``complete``, which
+    stays ``status:done`` so ``completion=status:done`` wait predicates keep
+    resolving on successful CLOSEOUT relays (O14-D4 / AC-14-5).
+    """
+    normalized = (envelope_status or "").strip().lower()
+    if not normalized:
+        return "status:partial"
+    if normalized == "complete":
+        return "status:done"
+    return f"status:{normalized}"
+
+
+def build_closeout_relay_subject(envelope_status: str, job_subject: str) -> str:
+    """Build ``status:* — {job_subject}`` for operator CLOSEOUT/CONFER relays."""
+    token = envelope_status_to_subject_token(envelope_status)
+    return f"{token} — {job_subject[:60]}"
+
+
 def wrapper_status(text: str) -> str | None:
     """Return wrapper manifest ``status`` when it is a known closeout value."""
     if not is_wrapper_manifest(text):
@@ -465,6 +486,8 @@ __all__ = [
     "_table_cell",
     "as_str_list",
     "build_ac_verdict_cell",
+    "build_closeout_relay_subject",
+    "envelope_status_to_subject_token",
     "_DEVIATION_EFFECTS_ENRICHED",
     "default_relay_cell_cap",
     "extract_structured_closeout_full_text",
