@@ -61,6 +61,17 @@ def prior_ids_by_prefix(rows: list[dict[str, Any]], prefix: str) -> list[int]:
     return sorted(ids, reverse=True)
 
 
+def matching_prior_id(rows: list[dict[str, Any]], claim: str) -> int | None:
+    """Newest active pipeline row whose claim equals ``claim`` (whitespace/case-folded)."""
+    ids = [
+        int(row["id"])
+        for row in rows
+        if row.get("seeded_by") == SEEDED_BY
+        and norm(str(row.get("claim") or "")) == norm(claim)
+    ]
+    return max(ids) if ids else None
+
+
 def assert_args(
     hub_id: str,
     claim: str,
@@ -191,10 +202,22 @@ class WritePlan:
         new_id = _written_id(reply) if reply else None
         if new_id is None:
             return
-        for stale in prior_ids[1:]:
+        await self.chain_stale(client, kind, keep_id=new_id, stale_ids=prior_ids[1:])
+
+    async def chain_stale(
+        self, client: Any, kind: str, *, keep_id: int, stale_ids: list[int]
+    ) -> None:
+        """Supersede every ``stale_ids`` row with ``keep_id`` (singleton repair).
+
+        Used after a fresh write and when a singleton is unchanged but earlier
+        runs left duplicates behind — the graph converges either way.
+        """
+        for stale in stale_ids:
+            if stale == keep_id:
+                continue
             await self.run(
                 client,
                 f"{kind}_chain",
                 "assertion_update",
-                {"assertion_id": stale, "superseded_by": new_id},
+                {"assertion_id": stale, "superseded_by": keep_id},
             )

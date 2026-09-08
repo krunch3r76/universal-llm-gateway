@@ -36,6 +36,7 @@ from ._plan import (
     WritePlan,
     assert_args,
     describe_hub,
+    matching_prior_id,
     norm,
     prior_ids_by_prefix,
     quoted_mission,
@@ -121,8 +122,19 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
             mission_text = mission_quote or str(fold.get("mission") or "").strip()
             if mission_text:
                 mission_claim = f"{MISSION_PREFIX}{mission_text}"
-                if norm(mission_claim) in existing_claims:
-                    plan.skip("mission", "unchanged")
+                keep_id = matching_prior_id(prior_rows, mission_claim)
+                if keep_id is not None:
+                    # Unchanged mission: keep the matching row, fold any other
+                    # live MISSION rows (earlier failed runs) into it.
+                    plan.skip("mission", "unchanged", id=keep_id)
+                    await plan.chain_stale(
+                        client,
+                        "mission",
+                        keep_id=keep_id,
+                        stale_ids=prior_ids_by_prefix(prior_rows, MISSION_PREFIX),
+                    )
+                elif norm(mission_claim) in existing_claims:
+                    plan.skip("mission", "stated_by_other_author")
                 else:
                     await plan.write_singleton(
                         client,
