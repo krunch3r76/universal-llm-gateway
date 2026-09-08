@@ -266,6 +266,7 @@ def test_ac6_stale_marker_cleared_on_mint_register(
     wt_path = worktree_root / f"cursor-sdk-{dispatch_id}"
     branch_point = resolve_master_branch_point(source_repo)
     register_dispatch_worktree(
+        source_repo=source_repo,
         dispatch_id=dispatch_id,
         worktree_path=wt_path,
         branch_name=branch,

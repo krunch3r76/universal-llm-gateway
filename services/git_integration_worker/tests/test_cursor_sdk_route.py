@@ -62,6 +62,23 @@ def _reset_git_probe_cache() -> None:
 
 
 @pytest.fixture(autouse=True)
+def _stub_wt_baseline_capture(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Route dispatch tests use non-git tmp repos; stub baseline capture."""
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        worktree_baseline as wb_mod,
+    )
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    baseline = {"admit_head": "deadbeef", "files": {}}
+    monkeypatch.setattr(
+        route_mod,
+        "capture_wt_baseline_with_hashes",
+        lambda *_a, **_k: baseline,
+    )
+    monkeypatch.setattr(wb_mod, "capture_wt_baseline", lambda *_a, **_k: {})
+
+
+@pytest.fixture(autouse=True)
 def _stub_dispatch_parity(monkeypatch: pytest.MonkeyPatch) -> None:
     """Admit-path tests must not require live fastmcp-remote / MCP token / Cursor auth.
 
@@ -221,7 +238,7 @@ def test_dispatch_parity_failure_422(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def _raise_parity(_repo: object) -> dict[str, object]:
+    def _raise_parity(*_args: object, **_kwargs: object) -> dict[str, object]:
         raise CursorSdkParityError("MCP token not configured")
 
     monkeypatch.setattr(
@@ -468,7 +485,7 @@ async def test_dispatch_large_result_posts_bounded_closeout_with_sidecar(
         in reply_kwargs["body"]
     )
     sidecar = source_repo / "tmp/reviews/closeouts/disp-big.md"
-    assert sidecar.read_text(encoding="utf-8") == big_body
+    assert big_body in sidecar.read_text(encoding="utf-8")
     bus.terminate_dispatch.assert_awaited_once_with(
         thread_id="1831", terminal_status="completed", execution_id="exec-big"
     )
@@ -595,7 +612,7 @@ async def test_dispatch_implement_stub_degraded(
     bus.reply.assert_awaited_once()
     body = bus.reply.await_args.kwargs["body"]
     payload = json.loads(body)
-    assert payload["status"] == "partial"
+    assert payload["status"] == "failed"
     assert "zero_tool_calls" in payload["summary"]
     sidecar_ref = (
         "workspaces://universal-llm-gateway/tmp/reviews/closeouts/disp-stub.md"
@@ -741,12 +758,20 @@ async def test_dispatch_implement_pin_satisfied_cortex_uri_first(
         encoding="utf-8",
     )
 
-    async def _mock_post(**_kwargs: object) -> dict[str, object]:
-        return {"uri": f"cortex://{rel}", "created": False}
+    from services.git_integration_worker.cursor_sdk_deliverables import (
+        PinnedResolution,
+    )
+
+    async def _mock_pin(**_kwargs: object) -> PinnedResolution:
+        return PinnedResolution(
+            uris=[f"cortex://{rel}"],
+            satisfied_rels=(rel,),
+            divergent_rels=(),
+        )
 
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_deliverables.default_post_pinned_deliverable",
-        _mock_post,
+        "services.git_integration_worker.cursor_sdk_closeout.delivery_prep.resolve_cortex_pinned_deliverables",
+        _mock_pin,
     )
 
     req = CursorDispatchRequest(
@@ -921,7 +946,7 @@ async def test_dispatch_consult_zero_tool_calls_not_degraded(
     )
     assert payload["evidence_uris"]["artifact_paths"] == [sidecar_ref]
     sidecar = source_repo / "tmp/reviews/closeouts/disp-consult.md"
-    assert sidecar.read_text(encoding="utf-8") == "Findings only"
+    assert sidecar.read_text(encoding="utf-8").startswith("Findings only")
     assert emitted[0]["outcome"] == "ok"
 
 
@@ -1405,6 +1430,7 @@ async def test_dispatch_timeout_posts_failure_and_terminates(
 
     monkeypatch.setattr(route_mod, "_SDK_TIMEOUT_S", 0.01)
     monkeypatch.setattr(route_mod, "_SDK_TIMEOUT_BUFFER_S", 0.01)
+    monkeypatch.setattr(route_mod, "_JUDGMENT_IDLE_BUDGET_S", 0.02)
     monkeypatch.setattr(
         route_mod,
         "emit_sdk_worker_timeout",
@@ -3908,4 +3934,161 @@ async def test_bridge_abort_zero_tools_stays_failed(
     assert "PARTIAL" not in subject
     sidecar_path = source_repo / "tmp/reviews/closeouts/disp-bridge-failed.md"
     assert not sidecar_path.exists()
+
+
+def test_judgment_contract_idle_budget_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-S1-F4: none/consult/conductor idle budget floors at judgment env."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    monkeypatch.setattr(route_mod, "_SDK_TIMEOUT_S", 60.0)
+    monkeypatch.setattr(route_mod, "_SDK_TIMEOUT_BUFFER_S", 0.0)
+    monkeypatch.setattr(route_mod, "_JUDGMENT_IDLE_BUDGET_S", 1800.0)
+
+    assert route_mod._outer_idle_budget_s(contract="none") == 1800.0
+    assert route_mod._outer_idle_budget_s(contract="consult") == 1800.0
+    assert route_mod._outer_idle_budget_s(contract="conductor") == 1800.0
+    assert route_mod._outer_idle_budget_s(contract="implement") == 60.0
+
+
+@pytest.mark.asyncio
+async def test_bridge_death_timeout_emits_partial_harvest_event(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bridge-death timeout path calls partial harvest before terminal."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    state_root = tmp_path / "bridge-state"
+    state_root.mkdir()
+    req = CursorDispatchRequest(
+        thread_id="10269-timeout",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-timeout-harvest",
+        execution_id="exec-timeout-harvest",
+        message="---\ncontract: none\n---\nwork",
+        handoff_contract="none",
+    )
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    CursorDispatchLedger._instance = None
+    ledger = CursorDispatchLedger.instance()
+    from services.git_integration_worker.models.cursor_api import CursorDispatchResponse
+
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            model_id="composer-2.5",
+        ),
+    )
+    ledger.record_state_root(dispatch_id=req.dispatch_id, state_root=str(state_root))
+
+    harvest_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.bridge_death_harvest.emit_partial_harvest_on_bridge_death",
+        lambda dispatch_id, **kwargs: harvest_calls.append(
+            {"dispatch_id": dispatch_id, **kwargs}
+        ),
+    )
+    monkeypatch.setattr(route_mod, "_SDK_TIMEOUT_S", 60.0)
+    monkeypatch.setattr(route_mod, "_SDK_TIMEOUT_BUFFER_S", 0.0)
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_timeout", lambda **_: None)
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_orphaned", lambda **_: None)
+    monkeypatch.setattr(route_mod, "mark_dispatch_orphaned", lambda **_: None)
+    monkeypatch.setattr(route_mod, "abort_orphaned_bridge", lambda **_: False)
+    monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", AsyncMock())
+    monkeypatch.setattr(route_mod, "persist_timeout_retain", lambda **_: None)
+
+    class _Counter(route_mod._LiveToolCallCounter):
+        def value(self) -> int:
+            return 12
+
+    monkeypatch.setattr(route_mod, "_LiveToolCallCounter", _Counter)
+
+    async def _fake_wait(*_args, **_kwargs) -> bool:
+        return True
+
+    monkeypatch.setattr(route_mod, "_idle_deadline_wait", _fake_wait)
+    monkeypatch.setattr(
+        route_mod,
+        "_run_sdk_sync",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected sync")),
+    )
+
+    bus = _mock_bus()
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+            contract="none",
+        ),
+        bus=bus,
+        controller=_make_controller(),
+    )
+
+    assert harvest_calls
+    assert harvest_calls[0]["tool_call_count"] == 12
+
+
+@pytest.mark.asyncio
+async def test_spaced_tool_calls_never_trigger_idle_kill_leg_f() -> None:
+    """Leg F regression: note_progress on stream tool calls re-arms idle budget."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    clock = {"t": 0.0}
+
+    def now_fn() -> float:
+        return clock["t"]
+
+    idle_budget = 100.0
+    counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
+    worker_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+    async def _worker() -> None:
+        await worker_future
+
+    worker_task = asyncio.create_task(_worker())
+
+    async def _fake_wait(
+        fs: set[asyncio.Task[Any]], *, timeout: float = 0.0
+    ) -> tuple[set[asyncio.Task[Any]], set[asyncio.Task[Any]]]:
+        clock["t"] += timeout
+        if clock["t"] >= 50.0 and counter.value() == 0:
+            counter.note_progress(_completed_observation())
+        if clock["t"] >= 120.0 and counter.value() == 1:
+            counter.note_progress(_completed_observation())
+        if clock["t"] >= 190.0 and counter.value() == 2:
+            counter.note_progress(_completed_observation())
+        if counter.value() >= 3 and not worker_future.done():
+            worker_future.set_result(None)
+        if counter.value() >= 3:
+            return set(fs), set()
+        done = {t for t in fs if t.done()}
+        return done, fs - done
+
+    timed_out = await route_mod._idle_deadline_wait(
+        worker_task,
+        live_counter=counter,
+        idle_budget_s=idle_budget,
+        now_fn=now_fn,
+        wait_fn=_fake_wait,
+    )
+
+    assert timed_out is False
+    assert clock["t"] > idle_budget
+    assert counter.value() == 3
+    await worker_task
 

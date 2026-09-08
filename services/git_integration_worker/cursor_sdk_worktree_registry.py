@@ -41,13 +41,20 @@ CREATE TABLE IF NOT EXISTS cursor_sdk_lane_worktrees (
     quarantined_at        TEXT,
     PRIMARY KEY (source_repo, thread_id)
 );
-CREATE TABLE IF NOT EXISTS cursor_sdk_dispatch_worktrees (
-    dispatch_id   TEXT PRIMARY KEY,
-    worktree_path TEXT NOT NULL,
-    branch_name   TEXT NOT NULL,
-    branch_point  TEXT NOT NULL,
-    minted_at     TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS cursor_sdk_lane_worktree_pins (
+    source_repo     TEXT NOT NULL,
+    thread_id       TEXT NOT NULL,
+    dispatch_id     TEXT NOT NULL,
+    worktree_path   TEXT NOT NULL,
+    pinned_at       TEXT NOT NULL,
+    released_at     TEXT,
+    release_reason  TEXT,
+    lock_reason     TEXT NOT NULL,
+    PRIMARY KEY (source_repo, thread_id, dispatch_id)
 );
+CREATE INDEX IF NOT EXISTS idx_lane_worktree_pins_active
+    ON cursor_sdk_lane_worktree_pins (source_repo, thread_id)
+    WHERE released_at IS NULL;
 CREATE TABLE IF NOT EXISTS cursor_sdk_lane_worktree_journal (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     transition        TEXT NOT NULL,
@@ -96,6 +103,20 @@ class DispatchWorktreeRecord:
     thread_id: str = ""
     last_dispatch_id: str | None = None
     source_repo: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class PinRow:
+    """Active or historical pin row for a lane worktree."""
+
+    source_repo: str
+    thread_id: str
+    dispatch_id: str
+    worktree_path: str
+    pinned_at: str
+    released_at: str | None
+    release_reason: str | None
+    lock_reason: str
 
 
 def _now() -> str:
@@ -333,6 +354,129 @@ def ensure_worktree_schema(conn: sqlite3.Connection) -> None:
             except sqlite3.OperationalError as exc:
                 if "duplicate column" not in str(exc).lower():
                     raise
+
+
+def _row_to_pin(row: sqlite3.Row) -> PinRow:
+    return PinRow(
+        source_repo=str(row["source_repo"]),
+        thread_id=str(row["thread_id"]),
+        dispatch_id=str(row["dispatch_id"]),
+        worktree_path=str(row["worktree_path"]),
+        pinned_at=str(row["pinned_at"]),
+        released_at=row["released_at"],
+        release_reason=row["release_reason"],
+        lock_reason=str(row["lock_reason"]),
+    )
+
+
+def pin_lane_worktree(
+    conn: sqlite3.Connection,
+    *,
+    source_repo: Path,
+    thread_id: str,
+    dispatch_id: str,
+    worktree_path: Path,
+    lock_reason: str,
+) -> PinRow:
+    """Supersede any active pin for the lane pair and insert a new pin row."""
+    repo_str = str(source_repo.resolve())
+    wt_str = str(worktree_path.resolve())
+    now = _now()
+    conn.execute(
+        "UPDATE cursor_sdk_lane_worktree_pins "
+        "SET released_at=?, release_reason=? "
+        "WHERE source_repo=? AND thread_id=? AND released_at IS NULL",
+        (now, f"superseded_by:{dispatch_id}", repo_str, thread_id),
+    )
+    conn.execute(
+        "INSERT INTO cursor_sdk_lane_worktree_pins "
+        "(source_repo, thread_id, dispatch_id, worktree_path, pinned_at, "
+        "released_at, release_reason, lock_reason) "
+        "VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)",
+        (repo_str, thread_id, dispatch_id, wt_str, now, lock_reason),
+    )
+    _append_journal(
+        conn,
+        transition="pinned",
+        source_repo=repo_str,
+        thread_id=thread_id,
+        worktree_path=wt_str,
+        branch_name="",
+        last_dispatch_id=dispatch_id,
+        trigger="pin",
+    )
+    row = conn.execute(
+        "SELECT source_repo, thread_id, dispatch_id, worktree_path, pinned_at, "
+        "released_at, release_reason, lock_reason "
+        "FROM cursor_sdk_lane_worktree_pins "
+        "WHERE source_repo=? AND thread_id=? AND dispatch_id=?",
+        (repo_str, thread_id, dispatch_id),
+    ).fetchone()
+    assert row is not None
+    return _row_to_pin(row)
+
+
+def release_pin(
+    *,
+    source_repo: Path,
+    thread_id: str,
+    dispatch_id: str,
+    release_reason: str,
+) -> None:
+    """Mark the active pin released for ``(source_repo, thread_id, dispatch_id)``."""
+    repo_str = str(source_repo.resolve())
+    with ledger_connection() as conn:
+        ensure_worktree_schema(conn)
+        conn.execute(
+            "UPDATE cursor_sdk_lane_worktree_pins "
+            "SET released_at=?, release_reason=? "
+            "WHERE source_repo=? AND thread_id=? AND dispatch_id=? "
+            "AND released_at IS NULL",
+            (_now(), release_reason, repo_str, thread_id, dispatch_id),
+        )
+
+
+def active_pin(
+    *,
+    source_repo: Path,
+    thread_id: str,
+) -> PinRow | None:
+    """Return the active pin for a lane pair, if any."""
+    repo_str = str(source_repo.resolve())
+    with ledger_connection() as conn:
+        ensure_worktree_schema(conn)
+        row = conn.execute(
+            "SELECT source_repo, thread_id, dispatch_id, worktree_path, pinned_at, "
+            "released_at, release_reason, lock_reason "
+            "FROM cursor_sdk_lane_worktree_pins "
+            "WHERE source_repo=? AND thread_id=? AND released_at IS NULL "
+            "ORDER BY pinned_at DESC LIMIT 1",
+            (repo_str, thread_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_pin(row)
+
+
+def list_active_pins(*, source_repo: Path | None = None) -> list[PinRow]:
+    """List active pins, optionally scoped to one repo."""
+    with ledger_connection() as conn:
+        ensure_worktree_schema(conn)
+        if source_repo is not None:
+            rows = conn.execute(
+                "SELECT source_repo, thread_id, dispatch_id, worktree_path, pinned_at, "
+                "released_at, release_reason, lock_reason "
+                "FROM cursor_sdk_lane_worktree_pins "
+                "WHERE source_repo=? AND released_at IS NULL",
+                (str(source_repo.resolve()),),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT source_repo, thread_id, dispatch_id, worktree_path, pinned_at, "
+                "released_at, release_reason, lock_reason "
+                "FROM cursor_sdk_lane_worktree_pins WHERE released_at IS NULL"
+            ).fetchall()
+    return [_row_to_pin(row) for row in rows]
 
 
 def master_mint_mutex_key(source_repo: Path) -> str:

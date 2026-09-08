@@ -12,6 +12,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
 from services.git_integration_worker.cursor_sdk_branch_unpin import (
+    _record_for_branch,
     unpin_registered_lane_worktree,
 )
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
@@ -188,7 +189,7 @@ def test_ac_a_2_unpin_emits_worktree_removed(
     )
     removed: list[dict] = []
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_branch_unpin."
+        "services.git_integration_worker.cursor_sdk_worktree_release."
         "emit_sdk_lane_b_worktree_removed",
         lambda **kwargs: removed.append(kwargs),
     )
@@ -236,20 +237,9 @@ def test_record_for_branch_scoped_by_source_repo(
         branch_name=branch,
         branch_point=tip_b,
     )
-    with patch(
-        "services.git_integration_worker.cursor_sdk_branch_unpin._remove_worktree",
-        return_value=None,
-    ) as remove_mock:
-        with patch(
-            "services.git_integration_worker.cursor_sdk_branch_unpin."
-            "worktree_held_by_live_bridge",
-            return_value=None,
-        ):
-            with patch(
-                "services.git_integration_worker.cursor_sdk_branch_unpin."
-                "_is_git_worktree",
-                return_value=True,
-            ):
-                unpin_registered_lane_worktree(repo=git_repo, branch_name=branch)
-    remove_mock.assert_called_once()
-    assert remove_mock.call_args.kwargs["worktree_path"].resolve() == wt_a.resolve()
+    record_a = _record_for_branch(source_repo=git_repo, branch_name=branch)
+    record_b = _record_for_branch(source_repo=git_repo_b, branch_name=branch)
+    assert record_a is not None
+    assert record_b is not None
+    assert record_a.worktree_path.resolve() == wt_a.resolve()
+    assert record_b.worktree_path.resolve() == wt_b.resolve()
