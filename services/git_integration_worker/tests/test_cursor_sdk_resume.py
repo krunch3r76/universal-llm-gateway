@@ -247,6 +247,7 @@ def test_timeout_retain_blocks_prune(tmp_path: Path, monkeypatch: pytest.MonkeyP
     wt_path = tmp_path / "wt"
     wt_path.mkdir()
     register_dispatch_worktree(
+        source_repo=source_repo,
         dispatch_id="parent-disp",
         worktree_path=wt_path,
         branch_name="cursor-sdk/test",
@@ -277,6 +278,7 @@ def test_non_timeout_failed_still_prunes(
     wt_path = tmp_path / "wt"
     wt_path.mkdir()
     register_dispatch_worktree(
+        source_repo=source_repo,
         dispatch_id="fail-disp",
         worktree_path=wt_path,
         branch_name="cursor-sdk/fail",
@@ -349,17 +351,28 @@ def test_parent_row_byte_stable_after_child_admit() -> None:
     assert before_blob == after_blob
 
 
-def test_lane_worktree_reuse_updates_last_dispatch() -> None:
-    wt_path = Path("/tmp/wt-lane")
+def test_lane_worktree_reuse_updates_last_dispatch(tmp_path: Path) -> None:
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    wt_path = tmp_path / "wt-lane"
+    wt_path.mkdir()
     register_dispatch_worktree(
+        source_repo=source_repo,
         dispatch_id="parent-disp",
         worktree_path=wt_path,
         branch_name="cursor-sdk/lane-t-reuse",
         branch_point="abc",
         thread_id="t-reuse",
     )
-    touch_lane_worktree_dispatch(thread_id="t-reuse", dispatch_id="child-disp")
-    child = lookup_dispatch_worktree(dispatch_id="child-disp")
+    touch_lane_worktree_dispatch(
+        source_repo=source_repo,
+        thread_id="t-reuse",
+        dispatch_id="child-disp",
+    )
+    child = lookup_dispatch_worktree(
+        dispatch_id="child-disp",
+        source_repo=source_repo,
+    )
     assert child is not None
     assert child.worktree_path == wt_path
     assert child.thread_id == "t-reuse"
@@ -367,7 +380,7 @@ def test_lane_worktree_reuse_updates_last_dispatch() -> None:
         lookup_lane_worktree,
     )
 
-    lane = lookup_lane_worktree(thread_id="t-reuse")
+    lane = lookup_lane_worktree(thread_id="t-reuse", source_repo=source_repo)
     assert lane is not None
     assert lane.last_dispatch_id == "child-disp"
 
@@ -622,6 +635,7 @@ def test_resume_retain_blocks_prune_for_completed_conductor(
     wt_path = tmp_path / "wt"
     wt_path.mkdir()
     register_dispatch_worktree(
+        source_repo=source_repo,
         dispatch_id="parent-disp",
         worktree_path=wt_path,
         branch_name="cursor-sdk/test",
