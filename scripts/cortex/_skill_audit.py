@@ -105,6 +105,9 @@ _PARITY_ALLOWLIST: dict[str, dict[str, str]] = {
     "build-pipeline": _meta(
         "workspace-only stub (no cortex SOT file)", directionality="stub-only"
     ),
+    "cheap-recon-before-escalation": _meta(
+        "plugin census SOT only (no hub .cursor stub)", directionality="stub-only"
+    ),
     "git-posture": _meta(
         "workspace-only stub (no cortex SOT file)", directionality="stub-only"
     ),

@@ -43,7 +43,7 @@ skill-catalog-check:
 	$(PYTHON) scripts/cortex/validate_skill_catalog.py --root .
 
 skill-graph-reconcile:
-	$(PYTHON) scripts/cortex/ingest_skills.py && $(PYTHON) scripts/cortex/gen_skill_stubs.py --generate && $(PYTHON) scripts/rag/attribute_skill_vocabulary.py
+	$(PYTHON) scripts/cortex/ingest_skills.py && $(PYTHON) scripts/cortex/gen_skill_stubs.py --generate && PYTHONPATH=.:libs:services/universal-stargate $(PYTHON) scripts/rag/attribute_skill_vocabulary.py
 
 claude-bundles:
 	scripts/gen-rules --target agent-skill-bundles

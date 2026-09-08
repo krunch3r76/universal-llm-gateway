@@ -1,4 +1,5 @@
 ---
+description: In-the-moment VOI gate before read-class observations — every fs read, entity_get, or confirm call.
 trigger_match_terms: ["investigation-economy", "investigation_economy", "read-class", "observation", "voi", "gate", "review-reasoning", "cross-cutting", "behavioral", "discipline", "fires", "instant"]
 ---
 

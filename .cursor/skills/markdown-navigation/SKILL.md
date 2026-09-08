@@ -1,4 +1,5 @@
 ---
+description: Section-level navigation and editing of large Markdown-like documents via fs md_read/md_replace/md_append.
 trigger_match_terms: ["markdown-navigation", "markdown_navigation", "pdf", "docx", "chars", "md_list", "tooling-observability", "markdown", "file", "inspect", "section", "tree"]
 ---
 

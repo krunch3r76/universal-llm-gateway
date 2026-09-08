@@ -26,9 +26,10 @@ from _skill_audit import (  # noqa: E402
     parity_verdict,
     stub_critical_field_verdict,
 )
-from claude_bundles.resolver import cursor_indexed_slugs  # noqa: E402
+from claude_bundles.resolver import cursor_indexed_slugs, life_local_slugs  # noqa: E402
 
 _CURSOR_PRIMARY_SLUGS = set(cursor_indexed_slugs())
+_LIFE_LOCAL_SLUGS = frozenset(life_local_slugs())
 from _skill_constants import (  # noqa: E402
     _SOT_DRIFT_HOLDOUTS,
     _SOT_DRIFT_KNOWN_RESIDUALS,
@@ -78,12 +79,16 @@ def _sot_drift_verdict(client: object, repo_root: Path) -> tuple[str, list[str]]
     skills_dir = repo_root / ".cursor" / "skills"
     dirty_lines: list[str] = []
     info_lines: list[str] = []
+    allowlist = set(_PARITY_ALLOWLIST)
+    life_local = _LIFE_LOCAL_SLUGS
     for slug, entity in sorted(entities.items()):
         if entity.get("type") != "agent_skill":
             continue
         if entity.get("lifecycle") in _SUPPRESSED:
             continue
         if slug in _SOT_DRIFT_HOLDOUTS:
+            continue
+        if slug in allowlist or slug in life_local:
             continue
         fields = extract_renderer_fields(entity, slug)
         source_uri = str(fields.get("source_uri") or entity.get("source_uri") or "")
@@ -181,7 +186,12 @@ def run_generate(client: object, repo_root: Path) -> int:
     skipped_allowlist = sorted(allowlist)
     changed = False
     for slug in sorted(entities):
+        entity = entities[slug]
+        if entity.get("type") != "agent_skill":
+            continue
         if slug in allowlist or slug in blocked or slug in _CURSOR_PRIMARY_SLUGS:
+            continue
+        if slug in _LIFE_LOCAL_SLUGS:
             continue
         fields = extract_renderer_fields(entities[slug], slug)
         content = render_stub(slug, fields)
