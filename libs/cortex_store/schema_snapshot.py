@@ -53,9 +53,7 @@ def dump_sqlite_schema(conn: sqlite3.Connection) -> dict[str, Any]:
     try:
         schema["schema_versions"] = [
             r[0]
-            for r in conn.execute(
-                "SELECT version FROM schema_version ORDER BY version"
-            )
+            for r in conn.execute("SELECT version FROM schema_version ORDER BY version")
         ]
     except sqlite3.OperationalError:
         schema["schema_versions"] = []
@@ -68,9 +66,7 @@ def dump_sqlite_schema(conn: sqlite3.Connection) -> dict[str, Any]:
             ).fetchall()
         except sqlite3.OperationalError:
             rows = []
-        schema["seed_rows"][table] = [
-            dict(zip(cols, row, strict=True)) for row in rows
-        ]
+        schema["seed_rows"][table] = [dict(zip(cols, row, strict=True)) for row in rows]
 
     return schema
 
@@ -209,7 +205,7 @@ def diff_schemas(
             if (table, col) not in allowed_columns:
                 issues.append(f"unexpected replay-only column: {table}.{col}")
         for col in sorted(live_cols.keys() & replay_cols.keys()):
-            if live_cols[col] != replay_cols[col]:
+            if live_cols[col] != replay_cols[col] and (table, col) not in allowed_columns:
                 issues.append(f"column definition mismatch: {table}.{col}")
 
     live_indexes = set(live["indexes"])

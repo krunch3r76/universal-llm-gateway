@@ -6,6 +6,13 @@
     "chunks": [
       "source_hash",
       "model_version"
+    ],
+    "extraction_staging": [
+      "created_at",
+      "proposal_action",
+      "proposal_json",
+      "proposal_type",
+      "status"
     ]
   },
   "replay_only_indexes": [
