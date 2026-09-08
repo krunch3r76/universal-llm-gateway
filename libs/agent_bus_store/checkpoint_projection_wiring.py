@@ -15,7 +15,7 @@ from .checkpoint_projection import (
 )
 from .checkpoint_projection_producers import (
     ProducerDispatchRow,
-    filter_visible_producer_links,
+    filter_cp_projection_producer_links,
 )
 
 
@@ -82,7 +82,7 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
         lineage = _lineage()
         if lineage is None:
             return ()
-        return filter_visible_producer_links(
+        return filter_cp_projection_producer_links(
             lineage.dispatch_links,
             lane_thread_id=lineage.thread_id,
         )
@@ -185,6 +185,25 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
     )
 
 
+def _refresh_transcript_projection(thread: str) -> None:
+    """Best-effort O15 sidecar refresh at CP post; never blocks the turn."""
+    try:
+        from cortex_store.dispatch_ops.ops_transcript_project import (
+            run_transcript_project,
+        )
+
+        run_transcript_project(thread=thread)
+    except Exception:
+        logger = __import__("universal_logging", fromlist=["get_logger"]).get_logger(
+            "agent_bus_store.checkpoint_projection_wiring"
+        )
+        logger.warning(
+            "transcript_project hook failed for thread %s",
+            thread,
+            exc_info=True,
+        )
+
+
 def maybe_project_checkpoint_body(*, thread: str, subject: str, body: str) -> str:
     """Apply projection when subject is CHECKPOINT; otherwise passthrough."""
     from .db import get_thread
@@ -216,6 +235,9 @@ def maybe_project_checkpoint_body(*, thread: str, subject: str, body: str) -> st
     projected = project_checkpoint_body(
         root_thread=thread, residue=body, resolvers=resolvers
     )
+    from agent_bus_store.house_pools import inject_pools_checkpoint_projection
+
+    projected = inject_pools_checkpoint_projection(projected, thread)
     producers = resolvers.producer_registry(root_thread=thread)
     from .events.checkpoint_producers_projected import emit_checkpoint_producers_projected
 
@@ -224,6 +246,7 @@ def maybe_project_checkpoint_body(*, thread: str, subject: str, body: str) -> st
         producer_count=len(producers),
         execution_ids=[row.execution_id[:8] for row in producers],
     )
+    _refresh_transcript_projection(thread)
     return projected
 
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from agent_bus_store.checkpoint_citation_lint import CitationToken
 from agent_bus_store.checkpoint_projection import (
@@ -16,7 +18,10 @@ from agent_bus_store.checkpoint_projection import (
     extract_authored_residue,
     project_checkpoint_body,
 )
-from agent_bus_store.checkpoint_projection_producers import ProducerDispatchRow
+from agent_bus_store.checkpoint_projection_producers import (
+    CHECKPOINT_MAX_PRODUCER_ROWS,
+    ProducerDispatchRow,
+)
 from agent_bus_store.checkpoint_projection_wiring import maybe_project_checkpoint_body
 from agent_bus_store.turns_models import MAX_TURN_BODY_CHARS
 
@@ -169,26 +174,23 @@ def test_snippet_and_staleness_flags() -> None:
         resolvers=_resolvers(rows={("assertion", "27033"): row}),
     )
     assert "a:27033 · todo:spec-v0" in body
-    assert "Over-capture anchor" in body
-    assert "conf=0.97" in body
-    assert "superseded_by=a:28000" in body
-    assert "valid_until=2026-08-01T00:00:00Z" in body
-    assert "newer_assertion_on_entity" in body
+    assert "Over-capture anchor" not in body
+    assert "conf=0.97" not in body
+    assert "superseded_by=a:28000" not in body
 
 
 def test_closed_child_compression_rule() -> None:
     children = tuple(
         ChildThreadRow(str(7000 + i), "closed", i + 1) for i in range(120)
     )
-    cited = " ".join(f"agent-bus:{7000 + i}" for i in range(120))
-    residue = cited + "\n" + ("z" * 2200)
+    residue = "Settled: large house fold.\n" + ("z" * 2200)
     body = project_checkpoint_body(
         root_thread="6341",
         residue=residue,
         resolvers=_resolvers(children=children),
     )
     assert len(body) <= MAX_TURN_BODY_CHARS
-    assert "agent-bus:7000 closed@1" in body
+    assert "child_lanes: 0 active · 120 closed · registry:" in body
     assert " · closed · turn " not in body
 
 
@@ -925,10 +927,8 @@ def test_producer_registry_renders_open_dispatch_link(tmp_path, monkeypatch) -> 
         body = posted["body"]
 
     assert "### In-flight producers" in body
-    assert (
-        f"- agent-bus:{thread_id} · d6a93d64 · cursor-sdk · in_flight since"
-        in body
-    )
+    assert "producers: 1 in_flight · registry:" in body
+    assert "transcript-projection.md" in body
     assert body.index("### Child lanes") < body.index("### In-flight producers")
     assert body.index("### In-flight producers") < body.index("### Cited lanes")
 
@@ -956,10 +956,145 @@ def test_producer_registry_unit_rendering() -> None:
         residue="Settled.",
         resolvers=_resolvers(producers=(row,)),
     )
-    assert (
-        "- agent-bus:10223 · d6a93d64 · cursor-sdk · in_flight since "
-        "2026-09-08T02:15:00"
-    ) in body
+    assert "producers: 1 in_flight · registry:" in body
+    assert "cortex://notes/system/threads/10223-transcript-projection.md" in body
+
+
+def test_summary_mode_large_house_under_4k() -> None:
+    """AC-T23-1: 10223-class scale stays under 4k chars in summary mode."""
+    children = tuple(
+        ChildThreadRow(
+            str(10300 + i),
+            "closed" if i >= 6 else "active",
+            i + 1,
+            lane_role="sub_mission" if i < 6 else None,
+        )
+        for i in range(34)
+    )
+    producers = tuple(
+        ProducerDispatchRow(
+            lane_thread_id="10223",
+            execution_id=f"{i:08d}-0000-0000-0000-000000000000",
+            model_or_seat="cursor-sdk",
+            state="in_flight" if i < 55 else "terminal",
+            linked_at="2026-09-08T12:00:00Z",
+        )
+        for i in range(72)
+    )
+    residue = "Window: transcript_id=abc · turns@cp=3\nSettled: sprint fold."
+    body = project_checkpoint_body(
+        root_thread="10223",
+        residue=residue,
+        resolvers=_resolvers(children=children, producers=producers),
+    )
+    assert len(body) <= 4_000
+    assert "child_lanes: 6 active · 28 closed · registry:" in body
+    assert "producers: 55 in_flight · registry:" in body
+    assert "- agent-bus:10223 ·" not in body
+
+
+def test_summary_mode_lists_active_sub_missions_only() -> None:
+    children = (
+        ChildThreadRow("10303", "active", 14, lane_role="sub_mission"),
+        ChildThreadRow("10281", "active", 7, lane_role="sub_mission"),
+        ChildThreadRow("9901", "closed", 3, lane_role="sub_mission"),
+    )
+    body = project_checkpoint_body(
+        root_thread="10223",
+        residue="Settled.",
+        resolvers=_resolvers(children=children),
+    )
+    assert "agent-bus:10303 · sub_mission · active · turn 14" in body
+    assert "agent-bus:10281 · sub_mission · active · turn 7" in body
+    assert "agent-bus:9901" not in body
+    assert "child_lanes: 2 active · 1 closed · registry:" in body
+
+
+def test_stale_in_flight_excluded_from_cp_projection() -> None:
+    from agent_bus_store.checkpoint_projection_producers import (
+        filter_cp_projection_producer_links,
+        filter_visible_producer_links,
+    )
+    from agent_bus_store.db.lineage import LineageDispatchLink
+
+    now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
+    fresh = LineageDispatchLink(
+        execution_id="fresh-exec",
+        pipeline_id="cdp-generate",
+        caller_agent="cursor-sdk",
+        linked_at="2026-09-08T11:00:00Z",
+        terminal_status=None,
+        terminal_at=None,
+        delivery_at=None,
+    )
+    stale = LineageDispatchLink(
+        execution_id="stale-exec",
+        pipeline_id="cdp-generate",
+        caller_agent="cursor-sdk",
+        linked_at="2026-09-06T11:00:00Z",
+        terminal_status=None,
+        terminal_at=None,
+        delivery_at=None,
+    )
+    links = (fresh, stale)
+    wait_rows = filter_visible_producer_links(
+        links, lane_thread_id="10223", now=now
+    )
+    cp_rows = filter_cp_projection_producer_links(
+        links, lane_thread_id="10223", now=now
+    )
+    assert len(wait_rows) == 2
+    assert len(cp_rows) == 1
+    assert cp_rows[0].execution_id == "fresh-exec"
+
+
+def test_maybe_project_checkpoint_refreshes_transcript_projection(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_bus_store.db import create_thread, init_db
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    thread_row = create_thread(thread_id=None, slug="cp-transcript-hook")
+    thread_id = thread_row["id"]
+    calls: list[str] = []
+
+    def _fake_run(*, thread: str, **kwargs: object) -> dict[str, object]:
+        calls.append(thread)
+        return {"open_line": {"thread": thread}}
+
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_transcript_project.run_transcript_project",
+        _fake_run,
+    )
+    maybe_project_checkpoint_body(
+        thread=thread_id,
+        subject="CHECKPOINT — transcript hook",
+        body="Settled.",
+    )
+    assert calls == [thread_id]
+
+
+def test_producer_section_summary_count_only() -> None:
+    producers = tuple(
+        ProducerDispatchRow(
+            lane_thread_id="10223",
+            execution_id=f"{i:08d}-0000-0000-0000-000000000000",
+            model_or_seat="cursor",
+            state="in_flight" if i < 60 else "terminal",
+            linked_at=f"2026-09-08T{10 + (i % 10):02d}:00:00Z",
+        )
+        for i in range(72)
+    )
+    body = project_checkpoint_body(
+        root_thread="10223",
+        residue="Fold: accelerated window WORK harvest.",
+        resolvers=_resolvers(producers=producers),
+    )
+    assert "producers: 60 in_flight · registry:" in body
+    assert "_+64 more" not in body
+    assert len(body) <= MAX_TURN_BODY_CHARS
 
 
 def test_maybe_project_checkpoint_emits_producers_projected_event(

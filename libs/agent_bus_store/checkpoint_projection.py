@@ -216,7 +216,9 @@ def _render_unresolved_anchor(uri: str) -> str:
     return f"- {uri} · unresolved"
 
 
-def _render_entity_row(row: EntityAssertionRow) -> str:
+def _render_entity_row(row: EntityAssertionRow, *, summary_mode: bool) -> str:
+    if summary_mode:
+        return f"- {row.row_id} · {row.entity}"
     flags: list[str] = []
     if row.superseded_by:
         flags.append(f"superseded_by={row.superseded_by}")
@@ -234,6 +236,7 @@ def _render_entity_row(row: EntityAssertionRow) -> str:
 
 def _render_derived_zone(
     *,
+    root_thread: str,
     unprojected: bool,
     child_lanes: tuple[ChildThreadRow, ...],
     cited_lanes: tuple[ChildThreadRow, ...],
@@ -242,6 +245,7 @@ def _render_derived_zone(
     unresolved_uris: tuple[str, ...],
     rows: tuple[EntityAssertionRow, ...],
     compress_closed_children: bool,
+    summary_mode: bool,
 ) -> str:
     parts = [_DERIVED_HEADER]
     if unprojected:
@@ -249,10 +253,12 @@ def _render_derived_zone(
     parts.append("")
     parts.extend(
         render_lane_derived_sections(
+            root_thread=root_thread,
             child_lanes=child_lanes,
             cited_lanes=cited_lanes,
             producer_rows=producer_rows,
             compress_closed_children=compress_closed_children,
+            summary_mode=summary_mode,
         )
     )
     parts.append("")
@@ -265,7 +271,7 @@ def _render_derived_zone(
     parts.append("")
     parts.append("### Entity / assertion rows")
     if rows:
-        parts.extend(_render_entity_row(r) for r in rows)
+        parts.extend(_render_entity_row(r, summary_mode=summary_mode) for r in rows)
     else:
         parts.append("_none cited_")
     return "\n".join(parts)
@@ -326,6 +332,7 @@ def project_checkpoint_body(
             entity_rows.append(row)
 
     return _assemble_body(
+        root_thread=root_thread,
         unprojected=unprojected,
         child_lanes=child_lanes,
         cited_lanes=cited_lanes,
@@ -336,11 +343,13 @@ def project_checkpoint_body(
         residue=clean_residue,
         resume_footer=resume_footer,
         compress_closed_children=False,
+        summary_mode=True,
     )
 
 
 def _assemble_body(
     *,
+    root_thread: str,
     unprojected: bool,
     child_lanes: tuple[ChildThreadRow, ...],
     cited_lanes: tuple[ChildThreadRow, ...],
@@ -351,8 +360,10 @@ def _assemble_body(
     residue: str,
     resume_footer: str,
     compress_closed_children: bool,
+    summary_mode: bool,
 ) -> str:
     derived = _render_derived_zone(
+        root_thread=root_thread,
         unprojected=unprojected,
         child_lanes=child_lanes,
         cited_lanes=cited_lanes,
@@ -361,6 +372,7 @@ def _assemble_body(
         unresolved_uris=unresolved_uris,
         rows=rows,
         compress_closed_children=compress_closed_children,
+        summary_mode=summary_mode,
     )
     body = "\n\n".join(
         [
@@ -377,6 +389,7 @@ def _assemble_body(
             body_chars=len(body), limit_chars=MAX_TURN_BODY_CHARS
         )
     return _assemble_body(
+        root_thread=root_thread,
         unprojected=unprojected,
         child_lanes=child_lanes,
         cited_lanes=cited_lanes,
@@ -387,6 +400,7 @@ def _assemble_body(
         residue=residue,
         resume_footer=resume_footer,
         compress_closed_children=True,
+        summary_mode=summary_mode,
     )
 
 
