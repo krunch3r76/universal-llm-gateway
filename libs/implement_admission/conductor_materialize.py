@@ -484,6 +484,7 @@ def materialize_conductor(
         effective_deps = FoldDeps(
             cortex=fold_deps.cortex,
             bus=fold_deps.bus,
+            nested_implement=fold_deps.nested_implement,
             git=fold_deps.git,
             source_ref=source_ref,
             summon_mode=fold_deps.summon_mode

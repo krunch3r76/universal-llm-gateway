@@ -49,6 +49,8 @@ class _StubBus:
         _ = thread_id, after_written_at
         return True
 
+
+class _StubNestedImplement:
     def nested_implement_has_commits(self, *, nest_under_dispatch_id: str) -> bool:
         _ = nest_under_dispatch_id
         return False

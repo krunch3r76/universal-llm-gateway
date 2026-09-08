@@ -121,3 +121,10 @@ def nested_implement_has_commits(*, nest_under_dispatch_id: str) -> bool:
             ):
                 return True
     return False
+
+
+class LedgerNestedImplementWitness:
+    """FoldDeps adapter — wires GIW ledger reads at the production boundary."""
+
+    def nested_implement_has_commits(self, *, nest_under_dispatch_id: str) -> bool:
+        return nested_implement_has_commits(nest_under_dispatch_id=nest_under_dispatch_id)

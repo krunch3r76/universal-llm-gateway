@@ -11,7 +11,11 @@ from typing import Any
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.conductor_score_journal import read_tip
 from implement_admission.conductor_witness_table import row_witnesses
-from implement_admission.conductor_witness_types import FoldDeps, Witness
+from implement_admission.conductor_witness_types import (
+    FoldDeps,
+    Witness,
+    WitnessNestedImplement,
+)
 
 _BUS_TIMEOUT_S = 8.0
 _TURNS_PAGE = 80
@@ -119,15 +123,6 @@ class DefaultWitnessBus:
             return False
         return score_resurface_in_turns(turns, after_written_at=after_written_at)
 
-    def nested_implement_has_commits(self, *, nest_under_dispatch_id: str) -> bool:
-        from services.git_integration_worker.cursor_sdk_nested_witness import (
-            nested_implement_has_commits as _nested_implement_has_commits,
-        )
-
-        return _nested_implement_has_commits(
-            nest_under_dispatch_id=nest_under_dispatch_id,
-        )
-
 
 def fold_deps_for_admit(
     source_ref: str,
@@ -136,11 +131,13 @@ def fold_deps_for_admit(
     repo: Path,
     summon_mode: str | None = None,
     summoning_thread_id: str | None = None,
+    nested_implement: WitnessNestedImplement | None = None,
 ) -> FoldDeps:
     """Live fold readers for Stargate conductor materialize."""
     return FoldDeps(
         cortex=cortex,
         bus=DefaultWitnessBus(),
+        nested_implement=nested_implement,
         git=DefaultWitnessGit(repo),
         source_ref=source_ref,
         summon_mode=summon_mode,

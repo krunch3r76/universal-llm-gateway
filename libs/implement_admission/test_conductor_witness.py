@@ -72,9 +72,8 @@ class _StubCortex:
 
 
 class _StubBus:
-    def __init__(self, *, resurface: bool = False, nested_commits: bool = False) -> None:
+    def __init__(self, *, resurface: bool = False) -> None:
         self._resurface = resurface
-        self._nested_commits = nested_commits
 
     def has_score_resurface_after(
         self,
@@ -85,9 +84,14 @@ class _StubBus:
         _ = thread_id, after_written_at
         return self._resurface
 
+
+class _StubNestedImplement:
+    def __init__(self, *, has_commits: bool = False) -> None:
+        self._has_commits = has_commits
+
     def nested_implement_has_commits(self, *, nest_under_dispatch_id: str) -> bool:
         _ = nest_under_dispatch_id
-        return self._nested_commits
+        return self._has_commits
 
 
 class _StubGit:
@@ -546,3 +550,45 @@ def test_ac_p2_4_score_resurface_no_g5_when_stops_block(tmp_path: Path) -> None:
         files_root=tmp_path / "cortex",
     )
     assert witnesses.get("G5") is None
+
+
+@pytest.mark.offline
+def test_default_witness_bus_has_no_services_import() -> None:
+    """FoldDeps default bus must not import services.git_integration_worker."""
+    from implement_admission.conductor_witness_defaults import DefaultWitnessBus
+
+    bus = DefaultWitnessBus()
+    assert not hasattr(bus, "nested_implement_has_commits")
+    source = Path(__file__).resolve().parents[0] / "conductor_witness_defaults.py"
+    text = source.read_text(encoding="utf-8")
+    assert "services.git_integration_worker" not in text
+
+
+@pytest.mark.offline
+def test_nested_implement_injection_witnesses_g5(tmp_path: Path) -> None:
+    """Injected nested_implement reader witnesses G5 without services import."""
+    dispatch_id = "12345678-abcd-1234-abcd-123456789abc"
+    tip_body = (
+        "## Gated deliverables\n\n"
+        "| ID | Deliverable | Status | Stops |\n|---|---|---|---|\n"
+        "| G4 | Skeptic | OPEN | |\n\n"
+        f"conductor dispatch_id `{dispatch_id}`\n"
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(),
+        nested_implement=_StubNestedImplement(has_commits=True),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=tmp_path / "repo",
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=tmp_path / "cortex",
+    )
+    g5 = witnesses.get("G5")
+    assert g5 is not None
+    assert g5.source == "ledger:nested_implement"
+    assert g5.detail == dispatch_id

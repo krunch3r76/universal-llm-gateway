@@ -341,6 +341,9 @@ def resolve_source_ref_to_packet(
         )
     if materialize_kind == MATERIALIZE_KIND_CONDUCTOR:
         from implement_admission.conductor_witness_defaults import fold_deps_for_admit
+        from services.git_integration_worker.cursor_sdk_nested_witness import (
+            LedgerNestedImplementWitness,
+        )
 
         out_dir = _materialized_out_dir(root)
         repo = _repo_base(root)
@@ -358,6 +361,7 @@ def resolve_source_ref_to_packet(
                 repo=repo,
                 summon_mode=summon_mode,
                 summoning_thread_id=summoning_thread_id,
+                nested_implement=LedgerNestedImplementWitness(),
             ),
             summoning_thread_id=summoning_thread_id,
             rematerialize=rematerialize,

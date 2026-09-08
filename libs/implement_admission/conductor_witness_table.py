@@ -402,9 +402,9 @@ def _row_witnesses_g_ladder(
                 source="bus:SCORE_RESURFACE",
                 detail=deps.summoning_thread_id,
             )
-    elif deps.bus is not None:
+    elif deps.nested_implement is not None:
         dispatch_id = _conductor_dispatch_id(tip_body)
-        if dispatch_id and deps.bus.nested_implement_has_commits(
+        if dispatch_id and deps.nested_implement.nested_implement_has_commits(
             nest_under_dispatch_id=dispatch_id,
         ):
             witnesses["G5"] = Witness(

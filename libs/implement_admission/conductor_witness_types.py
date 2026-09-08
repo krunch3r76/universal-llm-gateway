@@ -45,6 +45,10 @@ class WitnessBus(Protocol):
         after_written_at: str | None,
     ) -> bool: ...
 
+
+class WitnessNestedImplement(Protocol):
+    """Ledger read surface for headless G5 nested-implement commit witness."""
+
     def nested_implement_has_commits(self, *, nest_under_dispatch_id: str) -> bool: ...
 
 
@@ -69,6 +73,7 @@ class FoldDeps:
 
     cortex: WitnessCortex
     bus: WitnessBus | None = None
+    nested_implement: WitnessNestedImplement | None = None
     git: WitnessGit | None = None
     source_ref: str | None = None
     summon_mode: str | None = None
