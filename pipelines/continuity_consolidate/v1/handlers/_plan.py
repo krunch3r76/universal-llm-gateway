@@ -45,15 +45,20 @@ def norm(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip().lower()
 
 
-def prior_by_prefix(rows: list[dict[str, Any]], prefix: str) -> int | None:
-    """Newest assertion this pipeline wrote with ``prefix`` — the one to supersede."""
+def prior_ids_by_prefix(rows: list[dict[str, Any]], prefix: str) -> list[int]:
+    """Active assertions this pipeline wrote with ``prefix``, newest first.
+
+    Singleton rows (watermark, mission, resume) should have exactly one active
+    instance; anything beyond the newest is debris from an earlier failed run
+    and gets chained onto the new row as well.
+    """
     ids = [
         int(row["id"])
         for row in rows
         if row.get("seeded_by") == SEEDED_BY
         and str(row.get("claim") or "").startswith(prefix)
     ]
-    return max(ids) if ids else None
+    return sorted(ids, reverse=True)
 
 
 def assert_args(
@@ -150,3 +155,46 @@ class WritePlan:
         entry.update(status="written", id=_written_id(reply))
         self.entries.append(entry)
         return reply
+
+    async def write_singleton(
+        self,
+        client: Any,
+        kind: str,
+        *,
+        hub_id: str,
+        claim: str,
+        quoted: bool,
+        evidence: str,
+        evidence_uris: list[str],
+        prior_ids: list[int],
+    ) -> None:
+        """Assert a row that must be the only active one of its kind.
+
+        The newest prior is superseded atomically by the assert (force +
+        supersedes_id); any older survivors are chained onto the new row
+        afterwards so the hub never carries two live watermarks or missions.
+        """
+        newest = prior_ids[0] if prior_ids else None
+        reply = await self.run(
+            client,
+            kind,
+            "assert",
+            assert_args(
+                hub_id,
+                claim,
+                quoted=quoted,
+                evidence=evidence,
+                evidence_uris=evidence_uris,
+                supersedes=newest,
+            ),
+        )
+        new_id = _written_id(reply) if reply else None
+        if new_id is None:
+            return
+        for stale in prior_ids[1:]:
+            await self.run(
+                client,
+                f"{kind}_chain",
+                "assertion_update",
+                {"assertion_id": stale, "superseded_by": new_id},
+            )

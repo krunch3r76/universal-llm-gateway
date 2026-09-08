@@ -37,7 +37,7 @@ from ._plan import (
     assert_args,
     describe_hub,
     norm,
-    prior_by_prefix,
+    prior_ids_by_prefix,
     quoted_mission,
 )
 
@@ -103,19 +103,16 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
             # 1. Watermark — the idempotency anchor; first, so a crash after it
             #    never re-folds the same trigger.
             stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-            await plan.run(
+            await plan.write_singleton(
                 client,
                 "watermark",
-                "assert",
-                assert_args(
-                    hub_id,
-                    f"{WATERMARK_PREFIX}{trigger.get('thread')}#{trigger.get('turn')} at {stamp} "
-                    f"(consolidate-continuity v1; root {root_ref})",
-                    quoted=True,
-                    evidence=quoted_evidence,
-                    evidence_uris=[trigger_ref],
-                    supersedes=prior_by_prefix(prior_rows, WATERMARK_PREFIX),
-                ),
+                hub_id=hub_id,
+                claim=f"{WATERMARK_PREFIX}{trigger.get('thread')}#{trigger.get('turn')} at {stamp} "
+                f"(consolidate-continuity v1; root {root_ref})",
+                quoted=True,
+                evidence=quoted_evidence,
+                evidence_uris=[trigger_ref],
+                prior_ids=prior_ids_by_prefix(prior_rows, WATERMARK_PREFIX),
             )
 
             # 2. Mission — quoted from the tip CHECKPOINT when it states one; the
@@ -127,22 +124,17 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
                 if norm(mission_claim) in existing_claims:
                     plan.skip("mission", "unchanged")
                 else:
-                    await plan.run(
+                    await plan.write_singleton(
                         client,
                         "mission",
-                        "assert",
-                        assert_args(
-                            hub_id,
-                            mission_claim,
-                            quoted=mission_quote is not None,
-                            evidence=quoted_evidence
-                            if mission_quote
-                            else folded_evidence,
-                            evidence_uris=[tip_ref]
-                            if mission_quote and tip_ref
-                            else [trigger_ref],
-                            supersedes=prior_by_prefix(prior_rows, MISSION_PREFIX),
-                        ),
+                        hub_id=hub_id,
+                        claim=mission_claim,
+                        quoted=mission_quote is not None,
+                        evidence=quoted_evidence if mission_quote else folded_evidence,
+                        evidence_uris=[tip_ref]
+                        if mission_quote and tip_ref
+                        else [trigger_ref],
+                        prior_ids=prior_ids_by_prefix(prior_rows, MISSION_PREFIX),
                     )
 
             # 3. Resume line — settled | live | next, always model-authored.
@@ -150,23 +142,19 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
             if isinstance(resume, dict) and any(
                 resume.get(k) for k in ("settled", "live", "next")
             ):
-                resume_claim = (
-                    f"{RESUME_PREFIX}settled={str(resume.get('settled') or '').strip()} | "
-                    f"live={str(resume.get('live') or '').strip()} | "
-                    f"next={str(resume.get('next') or '').strip()} (after {trigger_ref})"
-                )
-                await plan.run(
+                await plan.write_singleton(
                     client,
                     "resume",
-                    "assert",
-                    assert_args(
-                        hub_id,
-                        resume_claim,
-                        quoted=False,
-                        evidence=folded_evidence,
-                        evidence_uris=[trigger_ref],
-                        supersedes=prior_by_prefix(prior_rows, RESUME_PREFIX),
+                    hub_id=hub_id,
+                    claim=(
+                        f"{RESUME_PREFIX}settled={str(resume.get('settled') or '').strip()} | "
+                        f"live={str(resume.get('live') or '').strip()} | "
+                        f"next={str(resume.get('next') or '').strip()} (after {trigger_ref})"
                     ),
+                    quoted=False,
+                    evidence=folded_evidence,
+                    evidence_uris=[trigger_ref],
+                    prior_ids=prior_ids_by_prefix(prior_rows, RESUME_PREFIX),
                 )
 
             # 4. Claims — bounded, deduplicated, evidence limited to the payload.
