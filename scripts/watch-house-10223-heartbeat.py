@@ -26,6 +26,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -36,16 +38,49 @@ import httpx
 import yaml
 
 from bus_watch.state import read_state, write_state
+from orchestrator_handoff.queue import HandoffQueue, default_queue_path
+from orchestrator_handoff.repair import repair_tick
 
 _REPO = Path(__file__).resolve().parents[1]
 _AGENT_BUS_SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
 _INDEX_PATH = _REPO / "tmp/prompts/tab-launch-index-10223.md"
+_OPPORTUNITIES_PATH = _REPO / "cortex" / "notes/system/threads/10223-opportunities.md"
+# Fallback when cortex mount not in repo — try fs path via repo-relative notes if synced
+if not _OPPORTUNITIES_PATH.is_file():
+    _OPPORTUNITIES_PATH = _REPO / "tmp/prompts/10223-opportunities.md"
+if not _OPPORTUNITIES_PATH.is_file():
+    _OPPORTUNITIES_PATH = Path(
+        os.environ.get("CORTEX_FILES_ROOT", str(Path.home() / "mcp-data/files"))
+    ) / "notes/system/threads/10223-opportunities.md"
 _WAKE_SENTINEL = "AGENT_LOOP_WAKE_HOUSE10223"
 _LABEL = "house-10223-heartbeat"
 _DEFAULT_COORDINATOR = "10223"
 _DEFAULT_CLOSEOUT_LANE = "10303"
 _DEFAULT_INTERVAL_S = 600
+_HANDOFF_SCRIPT = _REPO / "scripts/orchestrator-tab-handoff.py"
+
+
+def _orchestrator_lock_held() -> bool:
+    """True when fresh-tab handoff lock blocks heartbeat WORK launch."""
+    if not _HANDOFF_SCRIPT.is_file():
+        return False
+    import subprocess
+
+    proc = subprocess.run(
+        [sys.executable, str(_HANDOFF_SCRIPT), "status"],
+        capture_output=True,
+        text=True,
+        cwd=str(_REPO),
+        timeout=15,
+    )
+    if proc.returncode != 0:
+        return False
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return False
+    return bool(data.get("held"))
 
 
 def _token() -> str:
@@ -132,6 +167,22 @@ def _parse_ready_rows(index_text: str) -> list[dict[str, str]]:
     return rows
 
 
+def _parse_opportunity_ready(opportunities_text: str) -> list[dict[str, str]]:
+    """Rows with Status `ready` and a tab-launch or tmp/prompts follow-on path."""
+    rows: list[dict[str, str]] = []
+    current_title = ""
+    for line in opportunities_text.splitlines():
+        if line.startswith("### "):
+            current_title = line.removeprefix("### ").strip()
+        if "**Status**" in line and "`ready`" in line.lower():
+            rows.append({"opportunity": current_title, "status": "ready"})
+        if "tab-launch" in line and ".md" in line:
+            m = re.search(r"`([^`]+\.md)`", line)
+            if m and rows and rows[-1].get("opportunity") == current_title:
+                rows[-1]["prompt"] = m.group(1).split("/")[-1]
+    return [r for r in rows if r.get("prompt")]
+
+
 def _tick(
     *,
     coordinator: str,
@@ -143,7 +194,6 @@ def _tick(
     state = read_state(state_path)
     last_seen = int(state.get("last_closeout_turn") or 0)
     relayed: set[int] = set(state.get("relayed_closeout_turns") or [])
-    in_flight = state.get("in_flight_prompt")
     bootstrapped = bool(state.get("bootstrapped"))
 
     result: dict[str, Any] = {
@@ -151,59 +201,87 @@ def _tick(
         "new_closeouts": [],
         "relayed": [],
         "work_pending": None,
-        "ready_rows": [],
-        "in_flight_prompt": in_flight,
         "bootstrapped": bootstrapped,
+        "repairs": [],
     }
 
-    with _bus_client(token) as client:
-        turns = _fetch_turns(client, closeout_lane, last=40)
-        turns_sorted = sorted(turns, key=lambda r: int(r.get("turn_number") or 0))
+    queue = HandoffQueue.open()
+    result["repairs"] = repair_tick(queue, lock_path=_LOCK_PATH)
+
+    try:
+        token = _token()
+        with _bus_client(token) as client:
+            turns = _fetch_turns(client, closeout_lane, last=40)
+            turns_sorted = sorted(turns, key=lambda r: int(r.get("turn_number") or 0))
+            max_turn = last_seen
+            for row in turns_sorted:
+                tn = int(row.get("turn_number") or 0)
+                max_turn = max(max_turn, tn)
+                if tn <= last_seen:
+                    continue
+                if not _is_closeout(row):
+                    continue
+                result["new_closeouts"].append({"turn": tn, "subject": row.get("subject")})
+                if not bootstrapped:
+                    continue
+                if tn in relayed:
+                    continue
+                if dry_run:
+                    result["relayed"].append({"turn": tn, "dry_run": True})
+                else:
+                    created = _relay_info(
+                        client,
+                        coordinator=coordinator,
+                        closeout_lane=closeout_lane,
+                        turn=row,
+                    )
+                    result["relayed"].append(
+                        {
+                            "turn": tn,
+                            "relay_turn": created.get("turn_number"),
+                        }
+                    )
+                    relayed.add(tn)
+    except Exception as exc:  # noqa: BLE001 — heartbeat must survive bus wedge
+        result["bus_error"] = str(exc)[:500]
         max_turn = last_seen
-        for row in turns_sorted:
-            tn = int(row.get("turn_number") or 0)
-            max_turn = max(max_turn, tn)
-            if tn <= last_seen:
-                continue
-            if not _is_closeout(row):
-                continue
-            result["new_closeouts"].append({"turn": tn, "subject": row.get("subject")})
-            if not bootstrapped:
-                # First arm: advance watermark only — do not replay lane history.
-                continue
-            if tn in relayed:
-                continue
-            if dry_run:
-                result["relayed"].append({"turn": tn, "dry_run": True})
-            else:
-                created = _relay_info(
-                    client,
-                    coordinator=coordinator,
-                    closeout_lane=closeout_lane,
-                    turn=row,
-                )
-                result["relayed"].append(
-                    {
-                        "turn": tn,
-                        "relay_turn": created.get("turn_number"),
-                    }
-                )
-                relayed.add(tn)
 
     if not bootstrapped:
         bootstrapped = True
 
-    if _INDEX_PATH.is_file():
-        ready = _parse_ready_rows(_INDEX_PATH.read_text(encoding="utf-8"))
-        result["ready_rows"] = ready
-        if ready and not in_flight:
-            top = ready[0]
-            result["work_pending"] = {
-                "prompt_path": str(_REPO / "tmp/prompts" / top["prompt"]),
-                "prompt_file": top["prompt"],
-                "priority": top["priority"],
-                "notes": top["notes"],
-            }
+    lock_held = _orchestrator_lock_held()
+    result["orchestrator_lock_held"] = lock_held
+
+    queue_peek = queue.peek()
+    if not queue_peek and not lock_held:
+        disc = queue.discover_work(
+            index_path=_INDEX_PATH,
+            opportunities_path=_OPPORTUNITIES_PATH if _OPPORTUNITIES_PATH.is_file() else None,
+            enqueue_opportunities=True,
+        )
+        result["discover"] = disc
+        queue_peek = queue.peek()
+        if disc.get("opportunities"):
+            result["opportunity_candidates"] = disc["opportunities"]
+        if disc.get("consult_suggested") and not queue_peek:
+            result["consult_suggested"] = True
+    result["queue_peek"] = queue_peek
+    result["queue_active"] = queue.active_item()
+
+    if queue_peek and not lock_held:
+        wp = queue_peek.get("work_prompt") or ""
+        prompt_path = _REPO / wp if wp else None
+        if prompt_path and not prompt_path.is_file():
+            prompt_path = None
+        result["work_pending"] = {
+            "source": "registrar_queue",
+            "queue_id": queue_peek.get("id"),
+            "intent": queue_peek.get("intent"),
+            "prompt_path": str(prompt_path) if prompt_path else wp,
+            "prompt_file": Path(wp).name if wp else "",
+            "priority": queue_peek.get("priority", ""),
+            "notes": queue_peek.get("notes", ""),
+        }
 
     write_state(
         state_path,
@@ -213,7 +291,6 @@ def _tick(
         closeout_lane=closeout_lane,
         last_closeout_turn=max_turn,
         relayed_closeout_turns=sorted(relayed),
-        in_flight_prompt=in_flight,
         bootstrapped=bootstrapped,
         last_tick=result,
     )
@@ -228,6 +305,11 @@ def _wake_prompt(result: dict[str, Any]) -> str | None:
     if result.get("relayed"):
         parts.append(
             f"Closeouts relayed: {json.dumps(result['relayed'])} — summarize in chat if material."
+        )
+    if result.get("orchestrator_lock_held"):
+        parts.append(
+            "ORCHESTRATOR_LOCK: tmp/watchers/orchestrator-handoff.lock held — "
+            "skip WORK launch until release (see tmp/prompts/orchestrator-tab-handoff-protocol.md)."
         )
     work = result.get("work_pending")
     if work:
@@ -262,6 +344,11 @@ def main() -> int:
     parser.add_argument("--loop", action="store_true", help="Poll forever (use with watch-supervise)")
     parser.add_argument("--interval-seconds", type=int, default=_DEFAULT_INTERVAL_S)
     parser.add_argument("--emit-wake", action="store_true", help="Print AGENT_LOOP_WAKE sentinel when action needed")
+    parser.add_argument(
+        "--emit-keystroke-launch",
+        action="store_true",
+        help="When WORK pending, run orchestrator-tab-handoff.py launch on orion-node (Wayland)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Do not post bus relays")
     parser.add_argument("--mark-in-flight", metavar="PROMPT_FILE", help="Record in-flight WORK prompt filename")
     parser.add_argument("--clear-in-flight", action="store_true", help="Clear in_flight_prompt after CLOSEOUT")
@@ -287,13 +374,52 @@ def main() -> int:
             dry_run=args.dry_run,
         )
         print(json.dumps(tick, indent=2))
-        if args.emit_wake:
+        if args.emit_keystroke_launch:
+            work = tick.get("work_pending")
+            if work and not tick.get("orchestrator_lock_held"):
+                queue = HandoffQueue.open()
+                queue_id = work.get("queue_id")
+                if queue_id:
+                    queue.mark_launching(str(queue_id))
+                wp = work.get("prompt_path") or ""
+                intent = str(work.get("intent") or Path(wp).stem or "heartbeat-work")[:80]
+                launch_cmd = [
+                    sys.executable,
+                    str(_REPO / "scripts/orchestrator-tab-handoff.py"),
+                    "launch",
+                    "--intent",
+                    intent,
+                    "--work-prompt",
+                    wp,
+                ]
+                if queue_id:
+                    launch_cmd.extend(["--queue-id", str(queue_id)])
+                proc = subprocess.run(launch_cmd, capture_output=True, text=True, timeout=120)
+                launch_meta: dict[str, Any] = {
+                    "returncode": proc.returncode,
+                    "stdout": proc.stdout[-2000:],
+                    "stderr": proc.stderr[-500:],
+                }
+                if proc.returncode == 0 and queue_id:
+                    try:
+                        out = json.loads(proc.stdout.strip().split("\n")[-1])
+                        holder = out.get("holder")
+                        if holder:
+                            queue.mark_in_flight(str(queue_id), str(holder))
+                            launch_meta["holder"] = holder
+                    except json.JSONDecodeError:
+                        pass
+                elif queue_id and proc.returncode != 0:
+                    queue.requeue_launch_failure(
+                        str(queue_id),
+                        proc.stderr[:200] or "launch_failed",
+                    )
+                print(json.dumps({"keystroke_launch": launch_meta}), flush=True)
+        elif args.emit_wake:
             prompt = _wake_prompt(tick)
             if prompt:
                 payload = json.dumps({"prompt": prompt})
                 print(f"{_WAKE_SENTINEL} {payload}", flush=True)
-        if tick.get("new_closeouts") and not args.dry_run:
-            write_state(state_path, in_flight_prompt=None)
         return tick
 
     if args.loop:

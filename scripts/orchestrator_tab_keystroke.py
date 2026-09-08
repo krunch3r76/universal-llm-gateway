@@ -1,0 +1,309 @@
+#!/usr/bin/env python3
+"""Wayland keystroke helper for Cursor orchestrator tab handoff (orion-node / COSMIC).
+
+Uses evdev uinput (writable /dev/uinput on orion-node) + wl-copy for paste.
+Requires: WAYLAND_DISPLAY, XDG_RUNTIME_DIR, focused-or-raised Cursor window.
+
+Not imported — invoked via SSH on the graphical host:
+  WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \\
+    python3 scripts/orchestrator_tab_keystroke.py launch --message 'resume 10223'
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from evdev import UInput, ecodes as e
+
+_REPO = Path(__file__).resolve().parents[1]
+_DEFAULT_REPO = "/mnt/torus/projects/universal-llm-gateway"
+
+
+def _require_display() -> None:
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        raise SystemExit("WAYLAND_DISPLAY unset — run on graphical session (orion-node)")
+
+
+def _wl_copy(text: str) -> None:
+    proc = subprocess.run(
+        ["wl-copy", "--paste-once", "--trim-newline", text],
+        env=os.environ,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=10,
+    )
+    if proc.returncode != 0:
+        raise SystemExit(f"wl-copy failed rc={proc.returncode}")
+
+
+def _raise_cursor(repo: str) -> None:
+    subprocess.run(
+        ["cursor", "-r", repo],
+        env=os.environ,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+    )
+
+
+def _ui() -> UInput:
+    cap = {e.EV_KEY: [
+        e.KEY_LEFTCTRL,
+        e.KEY_LEFTSHIFT,
+        e.KEY_LEFTALT,
+        e.KEY_LEFTMETA,
+        e.KEY_ENTER,
+        e.KEY_V,
+        e.KEY_P,
+        e.KEY_N,
+        e.KEY_L,
+        e.KEY_SLASH,
+    ]}
+    return UInput(events=cap, name="orchestrator-handoff-kbd", bustype=e.BUS_USB)
+
+
+def _syn(ui: UInput) -> None:
+    ui.write(e.EV_SYN, e.SYN_REPORT, 0)
+    ui.syn()
+
+
+def _key_down(ui: UInput, key: int) -> None:
+    ui.write(e.EV_KEY, key, 1)
+    _syn(ui)
+
+
+def _key_up(ui: UInput, key: int) -> None:
+    ui.write(e.EV_KEY, key, 0)
+    _syn(ui)
+
+
+def _tap(ui: UInput, key: int, delay: float = 0.03) -> None:
+    _key_down(ui, key)
+    time.sleep(delay)
+    _key_up(ui, key)
+    time.sleep(delay)
+
+
+def _chord(ui: UInput, *keys: int) -> None:
+    for key in keys:
+        _key_down(ui, key)
+        time.sleep(0.02)
+    time.sleep(0.04)
+    for key in reversed(keys):
+        _key_up(ui, key)
+        time.sleep(0.02)
+
+
+def _paste(ui: UInput) -> None:
+    _chord(ui, e.KEY_LEFTCTRL, e.KEY_V)
+
+
+def _command_palette(ui: UInput) -> None:
+    _chord(ui, e.KEY_LEFTCTRL, e.KEY_LEFTSHIFT, e.KEY_P)
+    time.sleep(0.35)
+
+
+def _ctrl_slash_palette(ui: UInput) -> None:
+    """Glass quick-command chord (operator recipe: ctrl-/ then filter)."""
+    _chord(ui, e.KEY_LEFTCTRL, e.KEY_SLASH)
+    time.sleep(0.35)
+
+
+def _quick_command(ui: UInput, query: str, *, opener: str = "ctrl_slash") -> None:
+    if opener == "ctrl_slash":
+        _ctrl_slash_palette(ui)
+    elif opener == "ctrl_shift_p":
+        _command_palette(ui)
+    else:
+        raise ValueError(f"unknown opener: {opener}")
+    _wl_copy(query)
+    time.sleep(0.05)
+    _paste(ui)
+    time.sleep(0.25)
+    _tap(ui, e.KEY_ENTER)
+    time.sleep(0.45)
+
+
+def _palette_run(ui: UInput, query: str) -> None:
+    _wl_copy(query)
+    time.sleep(0.05)
+    _command_palette(ui)
+    _paste(ui)
+    time.sleep(0.25)
+    _tap(ui, e.KEY_ENTER)
+    time.sleep(0.45)
+
+
+def launch_new_chat_with_message(
+    message: str,
+    *,
+    repo: str,
+    palette_query: str = "New Chat",
+    dry_run: bool = False,
+) -> dict[str, object]:
+    _require_display()
+    if dry_run:
+        return {
+            "dry_run": True,
+            "repo": repo,
+            "palette_query": palette_query,
+            "message_preview": message[:120],
+        }
+    _raise_cursor(repo)
+    time.sleep(0.9)
+    ui = _ui()
+    try:
+        _palette_run(ui, palette_query)
+        _wl_copy(message)
+        time.sleep(0.08)
+        _paste(ui)
+        time.sleep(0.15)
+        _tap(ui, e.KEY_ENTER)
+    finally:
+        ui.close()
+    return {"ok": True, "palette_query": palette_query, "message_len": len(message)}
+
+
+def glass_quick_command(
+    query: str,
+    *,
+    repo: str,
+    opener: str = "ctrl_slash",
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Raise Cursor, open Glass quick command (ctrl-/ or palette), run query."""
+    _require_display()
+    if dry_run:
+        return {
+            "dry_run": True,
+            "repo": repo,
+            "opener": opener,
+            "query": query,
+        }
+    _raise_cursor(repo)
+    time.sleep(0.9)
+    ui = _ui()
+    try:
+        _quick_command(ui, query, opener=opener)
+    finally:
+        ui.close()
+    return {"ok": True, "opener": opener, "query": query}
+
+
+def select_composer_model(
+    *,
+    repo: str,
+    model_query: str = "Composer 2.5",
+    dry_run: bool = False,
+) -> dict[str, object]:
+    """Try ctrl-/composer then pick model — operator Glass default-model recipe."""
+    _require_display()
+    if dry_run:
+        return {
+            "dry_run": True,
+            "repo": repo,
+            "steps": ["ctrl-/", "composer", "enter", f"filter:{model_query}", "enter"],
+        }
+    _raise_cursor(repo)
+    time.sleep(0.9)
+    ui = _ui()
+    try:
+        _quick_command(ui, "composer", opener="ctrl_slash")
+        _quick_command(ui, model_query, opener="ctrl_slash")
+    finally:
+        ui.close()
+    return {"ok": True, "model_query": model_query}
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    lp = sub.add_parser("launch", help="Raise Cursor, new chat via palette, paste message")
+    lp.add_argument("--message", help="First user message (e.g. resume 10223 …)")
+    lp.add_argument("--message-file", help="Read message from file (preferred for multiline)")
+    lp.add_argument("--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO))
+    lp.add_argument(
+        "--palette-query",
+        default=os.environ.get("ORCHESTRATOR_PALETTE_QUERY", "New Chat"),
+        help="Command palette filter for new chat (default: New Chat)",
+    )
+    lp.add_argument("--dry-run", action="store_true")
+    gq = sub.add_parser("glass-cmd", help="Raise Cursor, ctrl-/ (or palette), run query")
+    gq.add_argument("query", help="Filter text after opening quick command")
+    gq.add_argument("--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO))
+    gq.add_argument(
+        "--opener",
+        choices=("ctrl_slash", "ctrl_shift_p"),
+        default=os.environ.get("ORCHESTRATOR_GLASS_OPENER", "ctrl_slash"),
+    )
+    gq.add_argument("--dry-run", action="store_true")
+    mc = sub.add_parser(
+        "select-composer",
+        help="ctrl-/composer<CR> then ctrl-/Composer 2.5<CR> (Glass model pick probe)",
+    )
+    mc.add_argument("--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO))
+    mc.add_argument(
+        "--model-query",
+        default=os.environ.get("ORCHESTRATOR_MODEL_QUERY", "Composer 2.5"),
+    )
+    mc.add_argument("--dry-run", action="store_true")
+    sub.add_parser("smoke", help="Raise Cursor only (no keys)")
+
+    args = p.parse_args()
+    if args.cmd == "smoke":
+        _require_display()
+        if args.dry_run if hasattr(args, "dry_run") else False:
+            print({"dry_run": True})
+            return 0
+        _raise_cursor(getattr(args, "repo", _DEFAULT_REPO))
+        print('{"ok": true, "action": "raise"}')
+        return 0
+    if args.cmd == "launch":
+        if args.message_file:
+            message = Path(args.message_file).read_text(encoding="utf-8").strip()
+        elif args.message:
+            message = args.message.strip()
+        else:
+            raise SystemExit("launch requires --message or --message-file")
+        out = launch_new_chat_with_message(
+            message,
+            repo=args.repo,
+            palette_query=args.palette_query,
+            dry_run=args.dry_run,
+        )
+        import json
+
+        print(json.dumps(out, indent=2))
+        return 0
+    if args.cmd == "glass-cmd":
+        import json
+
+        out = glass_quick_command(
+            args.query,
+            repo=args.repo,
+            opener=args.opener,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps(out, indent=2))
+        return 0
+    if args.cmd == "select-composer":
+        import json
+
+        out = select_composer_model(
+            repo=args.repo,
+            model_query=args.model_query,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps(out, indent=2))
+        return 0
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
