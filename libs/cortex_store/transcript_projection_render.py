@@ -169,7 +169,8 @@ def render_projection_markdown(
     lines.extend(
         [
             "",
-            "## Mismatch (derived)",
+            "## Mismatch (derived — anchor check (CP Window: vs observed send); "
+            "seal coverage lives on tape.open_line.mismatch)",
         ]
     )
     mismatches = state.get("anchor_mismatches", [])

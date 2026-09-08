@@ -158,3 +158,20 @@ def test_ac_15_3_open_interval_matches_derived() -> None:
     assert "## Open interval (derived)" in md
     assert "turns: 4" in md
     assert f"`{tid[:8]}…` · turns 8→12 unsealed (4 turns)" in md
+
+
+@pytest.mark.offline
+def test_mismatch_header_disambiguates_anchor_vs_seal() -> None:
+    state = {
+        "thread": "10223",
+        "updated_at": "2026-09-08",
+        "runs": 1,
+        "windows": {},
+        "anchor_mismatches": [],
+        "last_run": {},
+    }
+    md, _ = render_projection_markdown(state, state_sha256=sha256_text("z"))
+    assert (
+        "## Mismatch (derived — anchor check (CP Window: vs observed send); "
+        "seal coverage lives on tape.open_line.mismatch)" in md
+    )
