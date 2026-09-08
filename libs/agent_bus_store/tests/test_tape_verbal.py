@@ -124,3 +124,107 @@ def test_harvest_forwards_format_verbal_to_render_tape(mock_render) -> None:
     )
     assert mock_render.call_args.kwargs["format"] == "verbal"
     assert mock_render.call_args.kwargs["scope"] == "last_session"
+
+
+@patch("agent_bus_store.resume_envelope._last_checkpoint_highlight", return_value="portable highlight")
+@patch("agent_bus_store.resume_envelope.render_tape_with_harvest")
+def test_resume_envelope_seal_pending_strips_unsealed_open_tail(
+    mock_render,
+    _mock_highlight,
+) -> None:
+    from agent_bus_store.resume_envelope import build_resume_envelope
+
+    mock_render.return_value = {
+        "messages": [
+            {
+                "role": "user",
+                "content": "sealed cell",
+                "transcript_id": "uuid-a",
+                "turn_index": 5,
+            },
+            {
+                "role": "user",
+                "content": "open tail",
+                "transcript_id": "uuid-a",
+                "turn_index": 12,
+            },
+        ],
+        "verbal_messages": [
+            {"role": "user", "content": "sealed cell"},
+            {"role": "user", "content": "open tail"},
+        ],
+        "open_line": {
+            "scope": "last_session",
+            "mismatch": [
+                {
+                    "transcript_id": "uuid-a",
+                    "turns_at_cp": 12,
+                    "sealed_turn_hi": 5,
+                    "post_lid_turns": 0,
+                }
+            ],
+            "last_cp": {
+                "transcript_id": "uuid-a",
+                "turn_hi": 12,
+            },
+        },
+    }
+    env = build_resume_envelope("10223")
+    assert env["seal_status"] == "seal_pending"
+    assert env["tape_verbal"] == [{"role": "user", "content": "sealed cell"}]
+    assert env["checkpoint_highlight"] == "portable highlight"
+
+
+@patch("agent_bus_store.resume_envelope._last_checkpoint_highlight")
+@patch("agent_bus_store.resume_envelope.render_tape_with_harvest")
+@patch("agent_bus_store.resume_envelope._find_jsonl_for_uuid", return_value=None)
+def test_resume_envelope_foreign_surface_without_jsonl_is_seal_pending(
+    _mock_jsonl,
+    mock_render,
+    _mock_highlight,
+) -> None:
+    """Cross-surface fixture: no local JSONL ⇒ degrade, sealed interval only."""
+    from agent_bus_store.resume_envelope import build_resume_envelope
+
+    mock_render.return_value = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "journaled speech",
+                "transcript_id": "uuid-b",
+                "turn_index": 3,
+            },
+            {
+                "role": "user",
+                "content": "would-be open tail",
+                "transcript_id": "uuid-b",
+                "turn_index": 7,
+            },
+        ],
+        "open_line": {
+            "scope": "last_session",
+            "mismatch": [],
+            "open_interval": {"transcript_ids": ["uuid-b"], "turns": 4},
+            "last_cp": {
+                "transcript_id": "uuid-b",
+                "turn_hi": 7,
+            },
+        },
+    }
+    env = build_resume_envelope("10223")
+    assert env["seal_status"] == "seal_pending"
+    assert env["tape_verbal"] == [{"role": "assistant", "content": "journaled speech"}]
+
+
+@patch("agent_bus_store.resume_envelope.render_tape_with_harvest")
+def test_resume_envelope_sealed_status_when_no_mismatch(mock_render) -> None:
+    from agent_bus_store.resume_envelope import build_resume_envelope
+
+    mock_render.return_value = {
+        "messages": [],
+        "verbal_messages": [{"role": "user", "content": "ok"}],
+        "open_line": {"scope": "last_session", "mismatch": []},
+    }
+    env = build_resume_envelope("10223")
+    assert env["seal_status"] == "sealed"
+    assert env["checkpoint_highlight"] is None

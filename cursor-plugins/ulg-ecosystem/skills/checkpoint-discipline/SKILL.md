@@ -120,10 +120,13 @@ window's JSONL in the same turn (hand counts forbidden; **CHECKPOINT-authoring
 only** — resume ¬ loads this JSONL). Zero-CP windows:
 `boundary=window_whole`. **On resume:** the Window line is the **anchor citation**
 (which posting window) — execute § Resume step 5 before operator-facing prose;
-harvest/seal is substrate. Resume on a living topic/work lane:
-succession harvest seals idle windows, then `agent_bus_read tape(thread, harvest=true)`
-pours verbal `role`/`content` once — bus turns stay lean; do not load `## Windows`
-on resume.
+harvest/seal is substrate. **Lid-close seal (O15 D2):** root CHECKPOINT post with a
+`Window:` anchor schedules `request_lid_close_seal` (async, max one bindable window per
+anchor). `resume_envelope.seal_status` surfaces `sealed` vs `seal_pending`; when pending,
+pour degrades to sealed cells + `checkpoint_highlight` only — ¬ imply full open-tail
+speech on foreign surfaces. Resume on a living topic/work lane: succession harvest seals
+idle windows, then `agent_bus_read tape(thread, harvest=true)` pours verbal
+`role`/`content` once — bus turns stay lean; do not load `## Windows` on resume.
 
 **Mid-tier / B6:** scoreboard gated lane + tip first. Charter-health dispatch only when densified Next/WIP ∉ OPEN G-row or operator asks how-are-we-doing (≤15 lines).
 

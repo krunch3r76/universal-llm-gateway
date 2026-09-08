@@ -143,4 +143,5 @@ def test_request_lid_close_seal_caps_at_one() -> None:
         thread_id="10223",
         explicit_ids=["uuid-a"],
         max_seals=1,
+        timeout=120.0,
     )
