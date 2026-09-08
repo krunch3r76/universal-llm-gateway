@@ -321,6 +321,80 @@ def _find_jsonl_for_uuid(conversation_uuid: str) -> Any | None:
     return None
 
 
+def _load_live_anchor_transcript(
+    transcript_id: str,
+) -> tuple[int, str, str] | None:
+    """Load open-window speech from Cursor JSONL named in a CP anchor."""
+    jsonl_path = _find_jsonl_for_uuid(transcript_id)
+    if jsonl_path is None:
+        return None
+    from cortex_store.transcript_assembly import assemble_verbatim_md
+    from cortex_store.transcript_session_id import derive_session_id_from_jsonl_start
+
+    try:
+        session_id = (
+            derive_session_id_from_jsonl_start(jsonl_path=jsonl_path, agent="cursor")
+            or transcript_id
+        )
+        live_md, live_turns = assemble_verbatim_md(
+            jsonl_path=jsonl_path,
+            session_id=session_id,
+        )
+    except (OSError, ValueError):
+        return None
+    if live_turns <= 0:
+        return None
+    return live_turns, live_md, session_id
+
+
+def _live_jsonl_turn_count(transcript_id: str) -> int:
+    loaded = _load_live_anchor_transcript(transcript_id)
+    return loaded[0] if loaded is not None else 0
+
+
+def _anchor_jsonl_messages(
+    thread_id: str,
+    *,
+    existing: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge live JSONL speech for CP-anchored transcript ids (open windows)."""
+    seen = {
+        (
+            str(msg.get("transcript_id") or ""),
+            int(msg.get("turn_index") or 0),
+            str(msg.get("role") or ""),
+            str(msg.get("content") or ""),
+        )
+        for msg in existing
+    }
+    added: list[dict[str, Any]] = []
+    for transcript_id in sorted(_explicit_uuids_for_lane(thread_id)):
+        loaded = _load_live_anchor_transcript(transcript_id)
+        if loaded is None:
+            continue
+        live_turns, live_md, session_id = loaded
+        for msg in _verbatim_messages_from_segment(
+            live_md,
+            seg={
+                "transcript_id": transcript_id,
+                "turn_lo": 0,
+                "turn_hi": live_turns,
+            },
+            session_id=session_id,
+        ):
+            key = (
+                str(msg.get("transcript_id") or ""),
+                int(msg.get("turn_index") or 0),
+                str(msg.get("role") or ""),
+                str(msg.get("content") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            added.append(msg)
+    return added
+
+
 def _post_lid_tail(
     *,
     conversation_uuid: str | None,
@@ -482,7 +556,10 @@ def _cells_for_lane(
         turn_lo = _last_turns_at_cp(cp_anchors, transcript_id=transcript_id)
         turn_hi = max_turn_by_tid.get(transcript_id, turn_lo)
         if turn_hi <= turn_lo:
-            continue
+            live_hi = _live_jsonl_turn_count(transcript_id)
+            if live_hi <= turn_lo:
+                continue
+            turn_hi = live_hi
         cells.append(
             {
                 "cp_ordinal": last_cp.cp_ordinal + 1,
@@ -586,6 +663,41 @@ def _build_mismatch_rows(
     return mismatches
 
 
+def _last_session_cells(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Cells for the posting interval between the prior CHECKPOINT and tip CP."""
+    last_cp_ordinal: int | None = None
+    for cell in reversed(cells):
+        if cell.get("bus_turn_id") is not None:
+            last_cp_ordinal = int(cell.get("cp_ordinal") or 0)
+            break
+    if last_cp_ordinal is None:
+        return list(cells)
+    allowed = {last_cp_ordinal, last_cp_ordinal + 1}
+    return [cell for cell in cells if int(cell.get("cp_ordinal") or 0) in allowed]
+
+
+def _message_in_cell(msg: dict[str, Any], cell: dict[str, Any]) -> bool:
+    if str(msg.get("transcript_id") or "") != str(cell.get("transcript_id") or ""):
+        return False
+    turn_index = int(msg.get("turn_index") or 0)
+    turn_lo = int(cell.get("turn_lo") or 0)
+    turn_hi = int(cell.get("turn_hi") or 0)
+    return turn_lo < turn_index <= turn_hi
+
+
+def _filter_messages_to_cells(
+    messages: list[dict[str, Any]],
+    cells: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not cells:
+        return []
+    return [
+        msg
+        for msg in messages
+        if any(_message_in_cell(msg, cell) for cell in cells)
+    ]
+
+
 def _build_open_line(
     *,
     thread_id: str,
@@ -599,6 +711,7 @@ def _build_open_line(
     payload_bytes: int,
     harvest: dict[str, Any] | None,
     mismatch: list[dict[str, Any]],
+    scope: str,
 ) -> dict[str, Any]:
     last_cp: dict[str, Any] | None = None
     for cell in reversed(cells):
@@ -631,6 +744,7 @@ def _build_open_line(
     }
     return {
         "thread_id": thread_id,
+        "scope": scope,
         "segment_count": len(segments),
         "turn_count": sum(s.get("turn_count", 0) for s in segments),
         "message_count": len(messages),
@@ -668,8 +782,12 @@ def render_tape(
     budget_bytes: int = _DEFAULT_BUDGET_BYTES,
     harvest_stats: dict[str, Any] | None = None,
     format: str | None = None,
+    scope: str = "last_session",
 ) -> dict[str, Any]:
     """Render messages+extras dump for a continuity lane (read-only).
+
+    ``scope='last_session'`` (default): pour only the posting interval between
+    the prior CHECKPOINT and the tip CP window. ``scope='full'``: entire lane tape.
 
     ``format='verbal'`` adds ``verbal_messages`` ({role, content} only) after
     overflow degrade; mechanical ``messages`` stay intact. Other format values
@@ -834,6 +952,12 @@ def render_tape(
                     )
                 )
 
+    messages.extend(_anchor_jsonl_messages(thread_id, existing=messages))
+
+    if scope == "last_session":
+        cells = _last_session_cells(cells)
+        messages = _filter_messages_to_cells(messages, cells)
+
     payload_bytes = len(json.dumps(messages).encode("utf-8"))
     truncated = payload_bytes > budget_bytes
     if truncated:
@@ -876,6 +1000,7 @@ def render_tape(
         payload_bytes=payload_bytes,
         harvest=harvest_stats,
         mismatch=mismatch,
+        scope=scope,
     )
     summary = _summary_line(open_line)
     body = {
@@ -893,4 +1018,13 @@ def render_tape(
     return {"open_line": open_line, "summary": summary, **body}
 
 
-__all__ = ["render_tape", "TapeSegment", "build_chain_segments", "_binding_for_journal"]
+__all__ = [
+    "render_tape",
+    "TapeSegment",
+    "build_chain_segments",
+    "_binding_for_journal",
+    "_last_session_cells",
+    "_filter_messages_to_cells",
+    "_anchor_jsonl_messages",
+    "_load_live_anchor_transcript",
+]

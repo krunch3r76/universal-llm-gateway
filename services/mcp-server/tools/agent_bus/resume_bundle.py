@@ -33,7 +33,7 @@ def _harvested_tape(thread_id: str) -> dict[str, Any]:
     result = relay(
         "agent-bus",
         "GET",
-        f"/threads/{thread_id}/tape?harvest=true&format=verbal",
+        f"/threads/{thread_id}/tape?harvest=false&format=verbal&scope=last_session",
     )
     if isinstance(result, dict) and "error" in result:
         structured = _structured_relay_error(result, op="resume_bundle")

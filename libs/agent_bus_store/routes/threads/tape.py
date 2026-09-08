@@ -23,6 +23,13 @@ async def tape_route(
     budget_bytes: int = Query(512_000, ge=1024, le=8_000_000),
     harvest: bool = Query(False),
     max_seals: int = Query(8, ge=0, le=64),
+    scope: Literal["last_session", "full"] = Query(
+        "last_session",
+        description=(
+            "last_session (default): pour the posting interval between the prior "
+            "CHECKPOINT and the tip CP window. full: entire lane tape."
+        ),
+    ),
     format: Literal["verbal"] | None = Query(
         None,
         description=(
@@ -53,6 +60,7 @@ async def tape_route(
             harvest=harvest,
             max_seals=max_seals,
             format=format,
+            scope=scope,
         )
     except HTTPException:
         raise

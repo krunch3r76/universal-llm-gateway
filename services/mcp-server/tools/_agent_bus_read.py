@@ -72,7 +72,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
         auto-approve reads. For post/reply/update/close/delete_* use agent_bus.
 
         Operations (identical semantics to the matching agent_bus ops):
-          thread_get   (thread)  — single ThreadDetail (+ cursor_auto_job when a non-terminal Auto job is on the lane)
+          thread_get   (thread)  — single ThreadDetail (+ cursor_auto_job when a non-terminal Auto job is on the lane; spine=root threads include resume_envelope with last-session tape_verbal by default)
           threads      (status?, tags?, lifecycle_state?, last?, has_unread?, query?)
           job_state    (thread|thread_id?, job_id?, include_terminal?)  — keyed cursor-auto phase+clocks
           fetch        (to?, thread?, last?, unread?, compact?, mark_read?, all?)

@@ -6,7 +6,11 @@ from unittest.mock import patch
 
 import pytest
 from agent_bus_store.tape_harvest import render_tape_with_harvest
-from agent_bus_store.tape_render import render_tape
+from agent_bus_store.tape_render import (
+    _filter_messages_to_cells,
+    _last_session_cells,
+    render_tape,
+)
 from agent_bus_store.tape_verbal import (
     VERBAL_KEYS,
     to_verbal_message,
@@ -76,6 +80,23 @@ def test_index_role_overflow_rows_stay_on_verbal_tape_with_role_content_only() -
     assert [m["role"] for m in mapped] == ["user", "index"]
 
 
+def test_last_session_scope_keeps_only_last_cp_interval() -> None:
+    cells = [
+        {"cp_ordinal": 1, "transcript_id": "a", "turn_lo": 0, "turn_hi": 5, "bus_turn_id": 10},
+        {"cp_ordinal": 2, "transcript_id": "a", "turn_lo": 5, "turn_hi": 12, "bus_turn_id": 20},
+        {"cp_ordinal": 3, "transcript_id": "a", "turn_lo": 12, "turn_hi": 18, "bus_turn_id": None},
+    ]
+    scoped = _last_session_cells(cells)
+    assert [c["cp_ordinal"] for c in scoped] == [2, 3]
+    messages = [
+        {"transcript_id": "a", "turn_index": 4, "role": "user", "content": "old"},
+        {"transcript_id": "a", "turn_index": 8, "role": "user", "content": "last"},
+        {"transcript_id": "a", "turn_index": 15, "role": "user", "content": "open"},
+    ]
+    filtered = _filter_messages_to_cells(messages, scoped)
+    assert [m["content"] for m in filtered] == ["last", "open"]
+
+
 def test_render_tape_format_verbal_adds_verbal_messages_keeps_mechanical() -> None:
     with (
         patch("agent_bus_store.tape_render.list_checkpoint_turns", return_value=()),
@@ -102,3 +123,4 @@ def test_harvest_forwards_format_verbal_to_render_tape(mock_render) -> None:
         format="verbal",
     )
     assert mock_render.call_args.kwargs["format"] == "verbal"
+    assert mock_render.call_args.kwargs["scope"] == "last_session"

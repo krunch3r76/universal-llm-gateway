@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -15,6 +16,8 @@ from ...db import (
     list_threads_v2,
     normalize_thread_id,
 )
+from ...resume_envelope import build_resume_envelope
+from ...thread_classification import classify_thread
 from ...turns_models import (
     ThreadDetail,
     ThreadListResponse,
@@ -22,6 +25,8 @@ from ...turns_models import (
     ThreadSummaryResponse,
 )
 from . import router
+
+_RESUME_ENVELOPE_TIMEOUT_S = 10.0
 
 
 def _thread_detail(row: dict[str, Any]) -> ThreadDetail:
@@ -113,7 +118,16 @@ async def list_threads_route(
     response_model=ThreadDetail,
     openapi_extra=x_mcp("thread_get", tool="agent_bus"),
 )
-async def get_thread_route(thread_id: str) -> ThreadDetail:
+async def get_thread_route(
+    thread_id: str,
+    include_resume: bool = Query(
+        True,
+        description=(
+            "When true (default), spine=root continuity threads include "
+            "resume_envelope (last-session verbal tape pour). Work threads omit it."
+        ),
+    ),
+) -> ThreadDetail:
     """Fetch one thread by id after normalizing numeric aliases first."""
     thread_id = normalize_thread_id(thread_id)
     row = get_thread(thread_id)
@@ -122,7 +136,21 @@ async def get_thread_route(thread_id: str) -> ThreadDetail:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {thread_id} not found",
         )
-    return _thread_detail(row)
+    detail = _thread_detail(row)
+    if include_resume and classify_thread(detail.tags)["spine"] == "root":
+        try:
+            detail.resume_envelope = await asyncio.wait_for(
+                asyncio.to_thread(build_resume_envelope, thread_id),
+                timeout=_RESUME_ENVELOPE_TIMEOUT_S,
+            )
+        except TimeoutError:
+            detail.resume_envelope = {
+                "error": (
+                    f"resume_envelope timed out after {_RESUME_ENVELOPE_TIMEOUT_S}s"
+                ),
+                "reason": "tape_render_timeout",
+            }
+    return detail
 
 
 @router.get(

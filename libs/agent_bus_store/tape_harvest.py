@@ -5,11 +5,16 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import httpx
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
 from cortex_store.transcript_cp_anchors import explicit_uuids_for_lane
 
 from .tape_render import render_tape
+
+# Read-path harvest must quick-fail; lid-close seal may take longer.
+TAPE_HARVEST_TIMEOUT_S = 8.0
+LID_CLOSE_HARVEST_TIMEOUT_S = 120.0
 
 
 def _call_transcript_harvest(
@@ -17,6 +22,7 @@ def _call_transcript_harvest(
     thread_id: str,
     explicit_ids: list[str],
     max_seals: int,
+    timeout: float = TAPE_HARVEST_TIMEOUT_S,
 ) -> dict[str, Any]:
     body = {
         "tool": "transcript_harvest",
@@ -28,12 +34,24 @@ def _call_transcript_harvest(
             }
         ),
     }
-    with make_sync_client(DEFAULT_CORTEX_URL, timeout=120.0) as client:
-        response = client.post("/dispatch", json=body)
+    try:
+        with make_sync_client(DEFAULT_CORTEX_URL, timeout=timeout) as client:
+            response = client.post("/dispatch", json=body)
+    except httpx.TimeoutException:
+        return {
+            "error": f"transcript_harvest timed out after {timeout}s",
+            "reason": "harvest_timeout",
+        }
+    except httpx.HTTPError as exc:
+        return {
+            "error": f"transcript_harvest request failed: {exc}",
+            "reason": "harvest_unreachable",
+        }
     if response.status_code >= 400:
         return {
             "error": f"cortex-api harvest failed: HTTP {response.status_code}",
             "detail": response.text[:500],
+            "reason": "harvest_http_error",
         }
     payload = response.json()
     return payload if isinstance(payload, dict) else {"error": "invalid harvest response"}
@@ -49,6 +67,7 @@ def request_lid_close_seal(
         thread_id=thread_id,
         explicit_ids=explicit_transcript_ids,
         max_seals=1,
+        timeout=LID_CLOSE_HARVEST_TIMEOUT_S,
     )
 
 
@@ -59,6 +78,8 @@ def render_tape_with_harvest(
     harvest: bool = False,
     max_seals: int = 8,
     format: str | None = None,
+    scope: str = "last_session",
+    harvest_timeout: float = TAPE_HARVEST_TIMEOUT_S,
 ) -> dict[str, Any]:
     """Optionally harvest bindable windows, then render the continuity tape.
 
@@ -71,6 +92,7 @@ def render_tape_with_harvest(
             thread_id=thread_id,
             explicit_ids=explicit,
             max_seals=max_seals,
+            timeout=harvest_timeout,
         )
         if harvest_result.get("error"):
             return harvest_result
@@ -93,7 +115,13 @@ def render_tape_with_harvest(
         budget_bytes=budget_bytes,
         harvest_stats=harvest_stats,
         format=format,
+        scope=scope,
     )
 
 
-__all__ = ["render_tape_with_harvest", "request_lid_close_seal"]
+__all__ = [
+    "LID_CLOSE_HARVEST_TIMEOUT_S",
+    "TAPE_HARVEST_TIMEOUT_S",
+    "render_tape_with_harvest",
+    "request_lid_close_seal",
+]

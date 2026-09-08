@@ -164,7 +164,7 @@ def _thread_get_impl(*, thread: str) -> dict[str, Any]:
         thread = str(thread)
     if not thread:
         return {"error": "thread_get requires: thread (str)"}
-    result = relay("agent-bus", "GET", f"/threads/{thread}")
+    result = relay("agent-bus", "GET", f"/threads/{thread}?include_resume=true")
     if not isinstance(result, dict):
         return {"error": f"agent-bus error: unexpected response for thread {thread!r}"}
     if "error" in result:

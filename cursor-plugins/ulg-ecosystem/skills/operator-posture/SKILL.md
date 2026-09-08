@@ -57,7 +57,7 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
 
    **IDE tab — Step 0 (BINDING — operator 2026-08-27, amended 2026-09-02):** Attended **Cursor IDE** chat only. On `resume <n>` / `resume <slug>` / `/agent-bus {n}` / `/agent-bus {slug}` / thread pickup: **first determinate action** = `cursor-app-control rename_chat` with title exactly `{n} {slug}` — before fetch/act on turns and before Been→Are→Going prose. Headless seats (`cursor-sdk` / `cursor-auto` dispatch HOME, Cowork / life) ⇒ **no-op**. Agent-only continuity with no IDE chat tab ⇒ no-op.
 
-   **Partial transcript pour — Step 1 (BINDING — operator 2026-09-07):** On continuity-root resume (`spine=root`, both profiles): after Step 0 `rename_chat` and **before** Mission / Been→Are→Going, execute `checkpoint-discipline` § Resume step 5 — read the tip CHECKPOINT `Window: transcript_id=<uuid>` JSONL (tail substantive assistant turns + keyword search; ¬ full dump). **¬** skip because continuity doc or sidecar exists — those carry state; transcript carries tab choreography. Operator pasted `transcript_id` on resume counts as the Window anchor when the tip CHECKPOINT predates the session.
+   **Last-session tape pour — Step 1 (STRUCTURAL — operator 2026-09-08):** On **`∀ spine=root`** resume: after Step 0 `rename_chat`, **`thread_get(thread)`** (default) returns **`resume_envelope`** with last-session `tape_verbal` — synthesize it before Mission / Been→Are→Going. **¬** skip because continuity doc exists. **¬** call `tape()` separately on resume. **Work threads** (`spine≠root`): no envelope — bounded packet / CLOSEOUT only.
 
    | Trigger | Tab title |
    |---|---|

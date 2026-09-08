@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -399,6 +399,9 @@ class ThreadDetail(BaseModel):
     (only the three dispatch-lifecycle routes populated it; everything else
     used the plain ``get_thread()`` path) — a field that only sometimes
     matches its own schema is a worse contract than no field.
+
+    ``resume_envelope`` is populated on ``GET /threads/{id}`` when
+    ``include_resume=true`` (default) and ``spine=root``. Work lanes omit it.
     """
 
     id: str
@@ -418,6 +421,7 @@ class ThreadDetail(BaseModel):
     lane_role: str | None = None
     cse_chat_url: str | None = None
     cse_registration_id: str | None = None
+    resume_envelope: dict[str, Any] | None = None
 
 
 class ThreadSummaryResponse(BaseModel):
