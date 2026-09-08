@@ -9,7 +9,9 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress 
     next_admit_in_closeout,
     progress_signature_for_row,
     signature_advanced,
+    signature_can_prove_crash,
     signature_can_prove_loop,
+    signatures_share_crash_row,
 )
 
 pytestmark = pytest.mark.offline
@@ -92,6 +94,26 @@ def test_lane_tip_on_both_sides_proves_loop() -> None:
 def test_next_admit_on_both_sides_proves_loop() -> None:
     both = _sig(next_admit="harvest G1")
     assert signature_can_prove_loop(both, both) is True
+
+
+def test_empty_fold_cannot_prove_crash() -> None:
+    assert signature_can_prove_crash(_sig()) is False
+
+
+def test_entry_gate_alone_cannot_prove_crash() -> None:
+    assert signature_can_prove_crash(_sig(entry_gate="G4")) is False
+
+
+def test_lane_tip_proves_crash_row() -> None:
+    assert signature_can_prove_crash(_sig(lane_tip="cd5cf10a")) is True
+
+
+def test_signatures_share_crash_row_requires_matching_bound_signals() -> None:
+    same = _sig(entry_gate="G4", lane_tip="cd5cf10a")
+    moved_tip = _sig(entry_gate="G4", lane_tip="e96037df")
+    assert signatures_share_crash_row(same, same) is True
+    assert signatures_share_crash_row(same, moved_tip) is False
+    assert signatures_share_crash_row(_sig(), _sig()) is False
 
 
 @pytest.mark.parametrize(

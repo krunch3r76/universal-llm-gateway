@@ -90,7 +90,13 @@ def external_gate_hop_verdict(row: dict[str, Any]) -> tuple[str, str | None]:
     the snap is empty/indeterminate.
     """
     rec = _record_data_from_row(row)
-    harvest_owed = rec.get("closeout_harvest_owed") is True
+    closeout_body = str(rec.get("closeout_body") or "").strip()
+    if closeout_body:
+        from bus_watch.park_harvest import harvest_still_owed
+
+        harvest_owed = harvest_still_owed(body=closeout_body)
+    else:
+        harvest_owed = rec.get("closeout_harvest_owed") is True
     lane = mission_lane_from_conductor_row(row)
     try:
         snap = read_external_gate_lane_snapshot()

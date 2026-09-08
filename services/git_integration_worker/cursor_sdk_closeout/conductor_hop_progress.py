@@ -10,9 +10,11 @@ identically to three hops that did nothing (``assertion:32411``).
 This module records the several independent facts that move when a conductor
 mission advances, and keeps two questions apart:
 
-``signature_advanced``      — did anything move between two hops?
-``signature_can_prove_loop`` — is any component able to show movement at all,
-                               so that its stillness is evidence?
+``signature_advanced``       — did anything move between two hops?
+``signature_can_prove_loop``   — is any component able to show movement at all,
+                                so that its stillness is evidence?
+``signature_can_prove_crash``  — can a crash be attributed to a specific row,
+                                so repeated crashes count toward the cap?
 """
 
 from __future__ import annotations
@@ -243,6 +245,41 @@ def signature_can_prove_loop(
     return False
 
 
+def signature_can_prove_crash(signature: HopProgressSignature) -> bool:
+    """True when a crash can be charged to a specific scoreboard row.
+
+    The unpaid-fold shape (``G1`` with nothing witnessed and no lane tip or
+    ``NEXT_ADMIT``) cannot attribute crashes to a row — the instrument is
+    unpaid, not the mission defective. A stamped entry gate alone is a table
+    projection, not row identity (``assertion:32411``).
+    """
+    if signature.witnessed_done:
+        return True
+    if signature.lane_tip:
+        return True
+    if signature.next_admit:
+        return True
+    return False
+
+
+def signatures_share_crash_row(
+    newer: HopProgressSignature,
+    older: HopProgressSignature,
+) -> bool:
+    """True when two hops crashed on the same provable scoreboard row."""
+    if newer.entry_gate != older.entry_gate:
+        return False
+    if not signature_can_prove_crash(newer) or not signature_can_prove_crash(older):
+        return False
+    if newer.witnessed_done != older.witnessed_done:
+        return False
+    if newer.lane_tip != older.lane_tip:
+        return False
+    if newer.next_admit != older.next_admit:
+        return False
+    return True
+
+
 __all__ = [
     "HOP_ENTRY_GATE_KEY",
     "HOP_LANE_TIP_KEY",
@@ -258,6 +295,8 @@ __all__ = [
     "read_lane_tip",
     "record_data",
     "signature_advanced",
+    "signature_can_prove_crash",
     "signature_can_prove_loop",
+    "signatures_share_crash_row",
     "witnessed_done_for_row",
 ]

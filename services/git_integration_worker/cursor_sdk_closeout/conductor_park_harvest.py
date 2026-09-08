@@ -116,13 +116,16 @@ def park_harvest_owed(
         return False
     if rec.get(_HOP_PARK_HARVEST_FIRED_KEY):
         return False
-    rec_harvest = rec.get("closeout_harvest_owed")
-    if isinstance(rec_harvest, bool):
-        if not rec_harvest:
+    body = _closeout_body_from_row(row)
+    if body.strip():
+        if not harvest_still_owed(body=body):
             return False
     else:
-        body = _closeout_body_from_row(row)
-        if not harvest_still_owed(body=body):
+        rec_harvest = rec.get("closeout_harvest_owed")
+        if isinstance(rec_harvest, bool):
+            if not rec_harvest:
+                return False
+        elif not harvest_still_owed(body=body):
             return False
     sb = scoreboard_body if scoreboard_body is not None else _scoreboard_body_for_row(row)
     if sb and not mission_open(scoreboard_body=sb):

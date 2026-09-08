@@ -30,6 +30,11 @@ from services.git_integration_worker.models.cursor_api import (
 pytestmark = pytest.mark.offline
 
 _WORK_KEY = "todo:hop-budget-fixture"
+_PROVABLE_CRASH_ROW = {
+    "hop_entry_gate": "G4",
+    "hop_witnessed_done": [],
+    "hop_lane_tip": "aaaaaaa",
+}
 
 
 @pytest.fixture(autouse=True)
@@ -198,7 +203,7 @@ def test_crash_cap_parks() -> None:
             hop_from="spawn" if idx == 1 else f"crash-{idx - 1}",
             hop_reason="crash",
             terminal_status="failed",
-            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+            record_patch=dict(_PROVABLE_CRASH_ROW),
         )
     row = _admit_and_terminal(
         ledger,
@@ -207,7 +212,7 @@ def test_crash_cap_parks() -> None:
         hop_from="crash-2",
         hop_reason="crash",
         terminal_status="failed",
-        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        record_patch=dict(_PROVABLE_CRASH_ROW),
     )
     verdict = evaluate_hop_budget(
         row,
@@ -227,7 +232,7 @@ def test_crash_backoff_under_cap() -> None:
         hop_from="spawn",
         hop_reason="crash",
         terminal_status="failed",
-        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        record_patch=dict(_PROVABLE_CRASH_ROW),
     )
     verdict = evaluate_hop_budget(
         row,
@@ -297,7 +302,7 @@ async def test_maybe_fire_parks_on_budget_exhaustion() -> None:
             hop_from="spawn" if idx == 1 else f"park-{idx - 1}",
             hop_reason="crash",
             terminal_status="failed",
-            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+            record_patch=dict(_PROVABLE_CRASH_ROW),
         )
     with (
         patch(
@@ -542,7 +547,7 @@ def test_ac_a2_consult_waits_break_crash_streak() -> None:
             hop_reason="planned" if idx > 1 else "spawn",
             closeout_tokens=["CONSULT_PENDING"],
             terminal_status="completed",
-            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+            record_patch=dict(_PROVABLE_CRASH_ROW),
         )
     row = _admit_and_terminal(
         ledger,
@@ -552,7 +557,7 @@ def test_ac_a2_consult_waits_break_crash_streak() -> None:
         hop_reason="crash",
         closeout_tokens=[],
         terminal_status="failed",
-        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        record_patch=dict(_PROVABLE_CRASH_ROW),
     )
     verdict = evaluate_hop_budget(
         row,
@@ -576,7 +581,7 @@ def test_ac_a3_completed_empty_tokens_crash_cap_parks() -> None:
             hop_reason="silent",
             closeout_tokens=[],
             terminal_status="completed",
-            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+            record_patch=dict(_PROVABLE_CRASH_ROW),
         )
     row = _admit_and_terminal(
         ledger,
@@ -586,7 +591,7 @@ def test_ac_a3_completed_empty_tokens_crash_cap_parks() -> None:
         hop_reason="silent",
         closeout_tokens=[],
         terminal_status="completed",
-        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        record_patch=dict(_PROVABLE_CRASH_ROW),
     )
     verdict = evaluate_hop_budget(
         row,
@@ -623,7 +628,7 @@ def test_ac_a4_designed_prior_breaks_crash_streak(stop_token: str) -> None:
             hop_reason="crash",
             closeout_tokens=[],
             terminal_status="failed",
-            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+            record_patch=dict(_PROVABLE_CRASH_ROW),
         )
     _admit_and_terminal(
         ledger,
@@ -633,7 +638,7 @@ def test_ac_a4_designed_prior_breaks_crash_streak(stop_token: str) -> None:
         hop_reason="planned",
         closeout_tokens=[stop_token],
         terminal_status="completed",
-        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        record_patch=dict(_PROVABLE_CRASH_ROW),
     )
     row = _admit_and_terminal(
         ledger,
@@ -643,7 +648,7 @@ def test_ac_a4_designed_prior_breaks_crash_streak(stop_token: str) -> None:
         hop_reason="crash",
         closeout_tokens=[],
         terminal_status="failed",
-        record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        record_patch=dict(_PROVABLE_CRASH_ROW),
     )
     verdict = evaluate_hop_budget(
         row,
@@ -676,3 +681,94 @@ def test_ac_a5_third_parked_transport_no_crash_park() -> None:
         config=_tight_config(),
     )
     assert verdict.park is False
+
+
+# --- H1: crash streak keyed per provable row, not per dispatch ---
+
+
+def test_h1_unpaid_fold_crash_chain_does_not_park() -> None:
+    """G1+[] crashes cannot attribute to a row — no crash cap park."""
+    ledger = CursorDispatchLedger.instance()
+    row: dict = {}
+    for idx in range(1, 4):
+        row = _admit_and_terminal(
+            ledger,
+            dispatch_id=f"h1-unpaid-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"h1-unpaid-{idx - 1}",
+            hop_reason="crash",
+            closeout_tokens=[],
+            terminal_status="failed",
+            record_patch={"hop_entry_gate": "G1", "hop_witnessed_done": []},
+        )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset(),
+        config=_tight_config(crash_cap_per_row=3),
+    )
+    assert verdict.park is False
+    assert verdict.backoff_s == 0.0
+
+
+def test_h1_stamped_gate_alone_does_not_count_crash_streak() -> None:
+    """A stamped G4 without witness/tip/admit is still an unpaid instrument."""
+    ledger = CursorDispatchLedger.instance()
+    row: dict = {}
+    for idx in range(1, 4):
+        row = _admit_and_terminal(
+            ledger,
+            dispatch_id=f"h1-gate-only-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"h1-gate-only-{idx - 1}",
+            hop_reason="crash",
+            closeout_tokens=[],
+            terminal_status="failed",
+            record_patch={"hop_entry_gate": "G4", "hop_witnessed_done": []},
+        )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset(),
+        config=_tight_config(crash_cap_per_row=3),
+    )
+    assert verdict.park is False
+
+
+def test_h1_lane_tip_move_breaks_crash_streak() -> None:
+    """Shipping between crashes resets the row identity."""
+    ledger = CursorDispatchLedger.instance()
+    for idx, tip in enumerate(("aaaaaaa", "bbbbbbb"), start=1):
+        _admit_and_terminal(
+            ledger,
+            dispatch_id=f"h1-tip-{idx}",
+            hop_seq=idx,
+            hop_from="spawn" if idx == 1 else f"h1-tip-{idx - 1}",
+            hop_reason="crash",
+            closeout_tokens=[],
+            terminal_status="failed",
+            record_patch={
+                "hop_entry_gate": "G4",
+                "hop_witnessed_done": [],
+                "hop_lane_tip": tip,
+            },
+        )
+    row = _admit_and_terminal(
+        ledger,
+        dispatch_id="h1-tip-3",
+        hop_seq=3,
+        hop_from="h1-tip-2",
+        hop_reason="crash",
+        closeout_tokens=[],
+        terminal_status="failed",
+        record_patch={
+            "hop_entry_gate": "G4",
+            "hop_witnessed_done": [],
+            "hop_lane_tip": "bbbbbbb",
+        },
+    )
+    verdict = evaluate_hop_budget(
+        row,
+        closeout_tokens=frozenset(),
+        config=_tight_config(crash_cap_per_row=3),
+    )
+    assert verdict.park is False
+    assert verdict.backoff_s == 120.0

@@ -25,11 +25,12 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress 
     HOP_LANE_TIP_KEY,
     HOP_NEXT_ADMIT_KEY,
     HOP_WITNESSED_DONE_KEY,
-    entry_gate_for_row,
     progress_signature_for_row,
     record_data,
     signature_advanced,
+    signature_can_prove_crash,
     signature_can_prove_loop,
+    signatures_share_crash_row,
 )
 
 logger = get_logger(__name__)
@@ -240,20 +241,28 @@ def evaluate_hop_budget(
     if closeout_tokens & STOP_TOKENS:
         return HopBudgetVerdict(ok=True)
 
-    entry_gate = entry_gate_for_row(row)
-    crash_streak = 0
+    if not _is_crash(closeout_tokens=closeout_tokens):
+        return HopBudgetVerdict(ok=True)
+
+    signature = progress_signature_for_row(row)
+    if not signature_can_prove_crash(signature):
+        return HopBudgetVerdict(ok=True)
+
+    crash_streak = 1
+    last = signature
     for prior in reversed(chain):
         if prior.get("dispatch_id") == dispatch_id:
             continue
-        if entry_gate_for_row(prior) != entry_gate:
-            break
         prior_tokens = prior_record_tokens(prior)
         if prior_tokens & STOP_TOKENS:
             break
-        if _is_crash(closeout_tokens=prior_tokens):
-            crash_streak += 1
-    if _is_crash(closeout_tokens=closeout_tokens):
+        if not _is_crash(closeout_tokens=prior_tokens):
+            break
+        prior_signature = progress_signature_for_row(prior, live=False)
+        if not signatures_share_crash_row(last, prior_signature):
+            break
         crash_streak += 1
+        last = prior_signature
 
     if cfg.crash_cap_per_row > 0 and crash_streak >= cfg.crash_cap_per_row:
         return HopBudgetVerdict(

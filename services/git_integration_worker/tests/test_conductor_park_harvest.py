@@ -182,6 +182,37 @@ def test_park_harvest_owed_true_on_production_shape_fixture(tmp_path) -> None:
     assert park_harvest_owed(mapped, scoreboard_body=_OPEN_SCOREBOARD)
 
 
+def test_park_harvest_owed_body_overrides_false_stamp(tmp_path) -> None:
+    """Stale closeout_harvest_owed=false must not block PARKED_TRANSPORT harvest."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req()
+    _admit_conductor(ledger, req)
+    omitted_next = """\
+status: complete
+stop: PARKED_TRANSPORT
+CONSULT_PENDING
+execution_id: exec-abc
+poll_hint: wait
+"""
+    row = _terminal_row(
+        ledger,
+        req,
+        closeout_body=omitted_next,
+        closeout_tokens=["PARKED_TRANSPORT", "CONSULT_PENDING"],
+    )
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={"closeout_harvest_owed": False},
+    )
+    with ledger._connect() as conn:
+        refreshed = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (req.dispatch_id,),
+        ).fetchone()
+    mapped = {k: refreshed[k] for k in refreshed.keys()}
+    assert park_harvest_owed(mapped, scoreboard_body=_OPEN_SCOREBOARD)
+
+
 def test_park_harvest_owed_false_when_row_hop_would_fire(tmp_path) -> None:
     ledger = CursorDispatchLedger.instance()
     req = _req()

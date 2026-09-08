@@ -34,13 +34,15 @@ def parked_or_none_next_admit(*, body: str) -> bool:
 
 
 def harvest_still_owed(*, body: str) -> bool:
-    """CONSULT_PENDING without archive, or NEXT_ADMIT names harvest (not none)."""
+    """PARKED_TRANSPORT, CONSULT_PENDING wait, or NEXT_ADMIT harvest — not none/archive."""
     text = body or ""
     if _ARCHIVE_OR_HARVEST_RE.search(text):
         return False
     if _NEXT_ADMIT_NONE_RE.search(text):
         return False
     if next_admit_names_harvest(text):
+        return True
+    if "PARKED_TRANSPORT" in parse_stop_tokens(text).tokens:
         return True
     return is_consult_pending_wait(text)
 
