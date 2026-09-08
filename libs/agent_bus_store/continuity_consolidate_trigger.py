@@ -38,6 +38,11 @@ _TIP_SCAN_WINDOW = 60
 _TRIGGER_BODY_CAP = 6000
 _RESIDUE_CAP = 4000
 _DISPATCH_TIMEOUT_S = 10.0
+_DEBOUNCE_S_DEFAULT = 3.0
+
+_pending_lock = threading.Lock()
+_pending: dict[str, tuple[str, int]] = {}
+_timers: dict[str, threading.Timer] = {}
 
 
 def consolidation_enabled() -> bool:
@@ -130,6 +135,90 @@ def build_consolidate_options(
     }
 
 
+def debounce_seconds() -> float:
+    """Burst coalesce window — ``AGENT_BUS_CONTINUITY_DEBOUNCE_S`` (default 3.0)."""
+    raw = os.environ.get("AGENT_BUS_CONTINUITY_DEBOUNCE_S", "")
+    if not raw:
+        return _DEBOUNCE_S_DEFAULT
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return _DEBOUNCE_S_DEFAULT
+
+
+def _should_replace_pending(
+    existing: tuple[str, int], incoming: tuple[str, int]
+) -> bool:
+    """v1: same ``trigger_thread`` keeps max turn; cross-lane replaces the slot."""
+    if existing[0] == incoming[0]:
+        return incoming[1] > existing[1]
+    return True
+
+
+def _cancel_debounce_timer(root: str) -> None:
+    timer = _timers.pop(root, None)
+    if timer is not None:
+        timer.cancel()
+
+
+def reset_debounce_state() -> None:
+    """Test helper — clear pending slots and cancel armed timers."""
+    with _pending_lock:
+        for root in list(_timers):
+            _cancel_debounce_timer(root)
+        _pending.clear()
+
+
+def _fire_pending(root: str) -> None:
+    with _pending_lock:
+        pending = _pending.pop(root, None)
+        _timers.pop(root, None)
+    if pending is None:
+        return
+    trigger_thread, turn_number = pending
+    try:
+        options = build_consolidate_options(
+            root=root, trigger_thread=trigger_thread, turn_number=turn_number
+        )
+        if options.get("trigger") is None:
+            log.warning(
+                "continuity consolidate: trigger %s#%s not readable, no dispatch",
+                trigger_thread,
+                turn_number,
+            )
+            return
+        enqueue_consolidate(options)
+    except Exception:  # noqa: BLE001 — background hygiene must never surface into the bus
+        log.warning(
+            "continuity consolidate debounced dispatch failed root=%s trigger=%s#%s",
+            root,
+            trigger_thread,
+            turn_number,
+            exc_info=True,
+        )
+
+
+def _schedule_debounced(root: str, trigger_thread: str, turn_number: int) -> None:
+    incoming = (trigger_thread, turn_number)
+    debounce_s = debounce_seconds()
+    if debounce_s <= 0:
+        with _pending_lock:
+            _pending[root] = incoming
+        _fire_pending(root)
+        return
+
+    with _pending_lock:
+        existing = _pending.get(root)
+        if existing is not None and not _should_replace_pending(existing, incoming):
+            return
+        _pending[root] = incoming
+        _cancel_debounce_timer(root)
+        timer = threading.Timer(debounce_s, _fire_pending, args=(root,))
+        timer.daemon = True
+        _timers[root] = timer
+        timer.start()
+
+
 def enqueue_consolidate(options: dict[str, Any]) -> str | None:
     """Fire-and-forget ``POST /api/v1/pipelines/dispatch``; returns the execution id."""
     from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
@@ -167,17 +256,7 @@ def _run(thread_id: str, turn_number: int) -> None:
         root = resolve_root(thread_id)
         if root is None:
             return
-        options = build_consolidate_options(
-            root=root, trigger_thread=thread_id, turn_number=turn_number
-        )
-        if options.get("trigger") is None:
-            log.warning(
-                "continuity consolidate: trigger %s#%s not readable, no dispatch",
-                thread_id,
-                turn_number,
-            )
-            return
-        enqueue_consolidate(options)
+        _schedule_debounced(root, thread_id, turn_number)
     except Exception:  # noqa: BLE001 — background hygiene must never surface into the bus
         log.warning(
             "continuity consolidate trigger failed thread=%s turn=%s",

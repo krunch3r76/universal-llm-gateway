@@ -16,7 +16,19 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ._cortex import SEEDED_BY, dispatch
+from ._cortex import (
+    MISSION_PREFIX,
+    RESUME_PREFIX,
+    SEEDED_BY,
+    WATERMARK_PREFIX,
+    dispatch,
+)
+
+SINGLETON_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("watermark", WATERMARK_PREFIX),
+    ("mission", MISSION_PREFIX),
+    ("resume", RESUME_PREFIX),
+)
 
 _MISSION_LINE_RE = re.compile(
     r"^\s*\**Mission:?\**\s*(?P<text>.+?)\s*$", re.IGNORECASE | re.MULTILINE
@@ -34,6 +46,15 @@ _FOLDED = {
     "confidence_score": 0.7,
 }
 
+# S4-A — per-kind caps on distill output (drop oldest when over cap).
+CLAIM_KIND_CAPS: dict[str, int] = {
+    "closed": 8,
+    "open": 4,
+    "decided": 4,
+    "artifact": 4,
+    "superseded": 2,
+}
+
 
 def quoted_mission(residue: str | None) -> str | None:
     """First ``Mission:`` line of the tip CHECKPOINT residue, verbatim."""
@@ -45,6 +66,56 @@ def norm(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip().lower()
 
 
+def cap_distill_claims(claims: list[Any]) -> tuple[list[dict[str, Any]], int]:
+    """Cap per claim kind; drop oldest rows when distill exceeds S4-A limits."""
+    by_kind: dict[str, list[tuple[int, dict[str, Any]]]] = {
+        kind: [] for kind in CLAIM_KIND_CAPS
+    }
+    passthrough: list[tuple[int, dict[str, Any]]] = []
+    for index, item in enumerate(claims):
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "").lower()
+        if kind in CLAIM_KIND_CAPS:
+            by_kind[kind].append((index, item))
+        else:
+            passthrough.append((index, item))
+
+    keep_indices: set[int] = {index for index, _ in passthrough}
+    dropped = 0
+    for kind, cap in CLAIM_KIND_CAPS.items():
+        items = by_kind[kind]
+        if len(items) > cap:
+            dropped += len(items) - cap
+            items = items[-cap:]
+        keep_indices.update(index for index, _ in items)
+
+    capped = [
+        item
+        for index, item in enumerate(claims)
+        if isinstance(item, dict) and index in keep_indices
+    ]
+    return capped, dropped
+
+
+def _row_active(row: dict[str, Any]) -> bool:
+    return not row.get("superseded_by")
+
+
+def active_pipeline_ids_by_prefix(
+    rows: list[dict[str, Any]], prefix: str
+) -> list[int]:
+    """Live pipeline rows for ``prefix``, newest first — F1 repair input."""
+    ids = [
+        int(row["id"])
+        for row in rows
+        if row.get("seeded_by") == SEEDED_BY
+        and _row_active(row)
+        and str(row.get("claim") or "").startswith(prefix)
+    ]
+    return sorted(ids, reverse=True)
+
+
 def prior_ids_by_prefix(rows: list[dict[str, Any]], prefix: str) -> list[int]:
     """Active assertions this pipeline wrote with ``prefix``, newest first.
 
@@ -52,13 +123,15 @@ def prior_ids_by_prefix(rows: list[dict[str, Any]], prefix: str) -> list[int]:
     instance; anything beyond the newest is debris from an earlier failed run
     and gets chained onto the new row as well.
     """
-    ids = [
-        int(row["id"])
-        for row in rows
-        if row.get("seeded_by") == SEEDED_BY
-        and str(row.get("claim") or "").startswith(prefix)
-    ]
-    return sorted(ids, reverse=True)
+    return active_pipeline_ids_by_prefix(rows, prefix)
+
+
+def singleton_active_counts(rows: list[dict[str, Any]]) -> dict[str, int]:
+    """P7 F1 probe — active pipeline singleton rows per prefix."""
+    return {
+        kind: len(active_pipeline_ids_by_prefix(rows, prefix))
+        for kind, prefix in SINGLETON_PREFIXES
+    }
 
 
 def matching_prior_id(rows: list[dict[str, Any]], claim: str) -> int | None:
@@ -202,7 +275,29 @@ class WritePlan:
         new_id = _written_id(reply) if reply else None
         if new_id is None:
             return
-        await self.chain_stale(client, kind, keep_id=new_id, stale_ids=prior_ids[1:])
+        # Chain every other live prior — burst replay can leave sibling rows
+        # when two applies both supersede the same parent (prior_ids[1:] alone
+        # misses the concurrent sibling).
+        await self.chain_stale(
+            client,
+            kind,
+            keep_id=new_id,
+            stale_ids=[row_id for row_id in prior_ids if row_id != new_id],
+        )
+
+    async def repair_pipeline_singletons(
+        self, client: Any, rows: list[dict[str, Any]]
+    ) -> dict[str, int]:
+        """Chain duplicate pipeline singletons; keep newest per prefix (F1 guard)."""
+        chained: dict[str, int] = {}
+        for kind, prefix in SINGLETON_PREFIXES:
+            ids = active_pipeline_ids_by_prefix(rows, prefix)
+            if len(ids) <= 1:
+                chained[kind] = 0
+                continue
+            await self.chain_stale(client, kind, keep_id=ids[0], stale_ids=ids[1:])
+            chained[kind] = len(ids) - 1
+        return chained
 
     async def chain_stale(
         self, client: Any, kind: str, *, keep_id: int, stale_ids: list[int]

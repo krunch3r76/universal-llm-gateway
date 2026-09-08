@@ -29,12 +29,14 @@ from ._cortex import (
     RESUME_PREFIX,
     SEEDED_BY,
     WATERMARK_PREFIX,
+    active_assertions,
     cortex_client,
     dispatch,
 )
 from ._plan import (
     WritePlan,
     assert_args,
+    cap_distill_claims,
     describe_hub,
     matching_prior_id,
     norm,
@@ -101,6 +103,19 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
         folded_evidence = f"consolidate-continuity v1: model fold of CLOSEOUT {trigger_ref} against hub {hub_id}{tip_note}"
 
         async with cortex_client() as client:
+            live_rows = await active_assertions(client, hub_id)
+            singleton_repair = await plan.repair_pipeline_singletons(client, live_rows)
+            prior_rows = [
+                {
+                    "id": row.get("id"),
+                    "claim": row.get("claim"),
+                    "seeded_by": row.get("seeded_by"),
+                    "superseded_by": row.get("superseded_by"),
+                }
+                for row in live_rows
+                if row.get("seeded_by") == SEEDED_BY
+            ]
+
             # 1. Watermark — the idempotency anchor; first, so a crash after it
             #    never re-folds the same trigger.
             stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -169,8 +184,13 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
                     prior_ids=prior_ids_by_prefix(prior_rows, RESUME_PREFIX),
                 )
 
-            # 4. Claims — bounded, deduplicated, evidence limited to the payload.
-            for item in (fold.get("claims") or [])[: int(options.get("max_claims", 6))]:
+            # 4. Claims — per-kind caps (S4-A), deduplicated, evidence from payload.
+            raw_claims = fold.get("claims") or []
+            capped_claims, claims_dropped = cap_distill_claims(raw_claims)
+            legacy_cap = int(options.get("max_claims", 0))
+            if legacy_cap > 0:
+                capped_claims = capped_claims[:legacy_cap]
+            for item in capped_claims:
                 if not isinstance(item, dict):
                     continue
                 prefix = CLAIM_PREFIXES.get(str(item.get("kind") or "").lower())
@@ -263,6 +283,8 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
             "mission_source": "checkpoint"
             if mission_quote
             else ("model" if mission_text else "none"),
+            "singleton_repair": singleton_repair,
+            "claims_dropped_by_cap": claims_dropped,
             "counts": {
                 "written": plan.count("written"),
                 "planned": plan.count("planned"),
