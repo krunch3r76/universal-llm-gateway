@@ -111,6 +111,45 @@ Materialized cursor-sdk packets (conductor/sketch/wrap) must include a `---` blo
 `work_key:`, `packet_kind:`, and `contract:` — GIW Gate 1 refuses write-class admits
 without identity when these are absent on the wire and in frontmatter.
 
+**`sdk_mode:` on recon / bind packets (cursor-sdk plan mode):** optional frontmatter
+on `contract: none|consult|ask|recon|seed` packets. Omitted + `read_only=true`
+defaults to **`plan`** at admit unless `sdk_mode: agent` overrides. Forbidden on
+`implement|pure-mechanical|conductor` (422). SoT: `cursor_sdk_mode.py`.
+
+Example — sparse recon before implement:
+
+```yaml
+---
+contract: recon
+sdk_mode: plan
+work_key: todo:{slug}
+read_only: true
+---
+```
+
+Example — explicit agent on a consult leg (override default plan):
+
+```yaml
+---
+contract: consult
+sdk_mode: agent
+work_key: todo:{slug}
+---
+```
+
+Example — implement after plan harvest (separate dispatch / G5 nest):
+
+```yaml
+---
+contract: implement
+work_key: todo:{slug}
+nest_under: <plan_dispatch_id>
+---
+```
+
+Plan closeout carries `plan:closeout_verdict=PLAN_COMPLETE`; implement packet
+`<corpus>` cites plan artifact URIs. See `implement-work-item` § Plan-leg pickup.
+
 Executor override in frontmatter;
 silence ⇒ composer (`consult-routing` R1/R2). Primers + skeleton: L3 annex.
 

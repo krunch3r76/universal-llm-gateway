@@ -1,0 +1,54 @@
+---
+description: ULG workspace extension for Plan mode — cross-links Cursor IDE Plan mode with cursor-sdk sdk_mode plan (read-only plan-first dispatches). Load with parent plan-mode.mdc on Plan-mode entry or sdk_mode routing.
+alwaysApply: false
+rule_category: workflow
+apply_tier: command
+trigger_match_terms:
+  - plan
+  - sdk_mode
+  - plan-first
+  - conversation_mode
+  - cursor-sdk plan
+---
+# Plan Mode — workspace extension (cursor-sdk)
+
+Parent rule: `../.cursor/rules/plan-mode.mdc` (Cursor IDE Plan mode checklist).
+This file adds **cursor-sdk `sdk_mode: plan`** — a distinct but composable
+plan-first dispatch path on the SDK substrate.
+
+## Two plan surfaces
+
+| Surface | Mechanism | Output | Land |
+|---|---|---|---|
+| **Cursor IDE Plan mode** | IDE mode switch + parent `plan-mode.mdc` checklist | `tmp/prompts/{project}/phase{n}.md` | Lead / attended implement |
+| **cursor-sdk plan mode** | `sdk_mode: plan` on `team_dispatch(seat=cursor-sdk)` | cortex:// sidecars, specs, reviews | **Forbidden** on plan leg — nest `contract=implement` after |
+
+Do not conflate them: IDE Plan mode is in-seat authoring; cursor-sdk plan is a
+headless read-only dispatch (`read_only=true`, lease-exempt) that closes with
+`plan:closeout_verdict=PLAN_COMPLETE|PARTIAL`.
+
+## When to use cursor-sdk plan
+
+- Sparse recon / architecture bind before implement (`contract: none|consult|ask|recon|seed`)
+- Conductor G3 row before `implement_ready` (`work-item-seed-path` G-row ladder)
+- Packet or wire explicitly names `sdk_mode: plan`
+- `read_only=true` on plan-default contracts (unless `sdk_mode: agent` overrides)
+
+## When **not** to use cursor-sdk plan
+
+- `implement`, `pure-mechanical`, `conductor` — worker **422** for `sdk_mode=plan`
+- Default implement dispatches (omit → `agent`)
+
+## After plan — implement handoff
+
+1. Plan closeout: artifact URIs + `plan:closeout_verdict=PLAN_COMPLETE`
+2. Stamp `implement_ready` on todo when densify complete
+3. Nest or sibling dispatch: `contract=implement`, `sdk_mode: agent` (or omit),
+   `nest_under=<plan_dispatch_id>` when continuing on same worktree
+
+Skills: `consult-routing` § cursor-sdk `sdk_mode` · `conductor` § Scoreboard
+`sdk_mode` column · `implement-work-item` § Plan-leg pickup ·
+`handoff-packet-authoring` § `sdk_mode:` examples.
+
+SoT: `docs/agent-guides/cursor-sdk-conversation-mode.md` ·
+`services/git_integration_worker/cursor_sdk_mode.py`.

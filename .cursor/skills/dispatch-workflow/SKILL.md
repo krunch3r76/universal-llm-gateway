@@ -32,6 +32,7 @@ consult/none handoff) auto-invokes `reasoning-posture`. Mechanical
 | Model answer/reasoning | `team_dispatch(op="generate", role=<api_role>, contract=…, dispatch_thread_id=…, model?="provider/model")` |
 | ≥2-provider material-decision panel | `panel_dispatch`; see `consensus-steelman-posture` |
 | Code changes (settled, unattended) | `team_dispatch(op="generate", seat="cursor-sdk", contract="implement", source_ref="todo:{slug}", dispatch_thread_id=…)` — default; attended `cursor-implement`/`web-implement` handoff is fallback |
+| Sparse recon / bind before implement | `team_dispatch(…, contract=none\|recon\|seed\|consult, sdk_mode=plan)` — artifact URIs only; follow with separate `contract=implement` after `implement_ready` — see `consult-routing` § cursor-sdk `sdk_mode` |
 | Packet heavy reasoning / web research | `team_dispatch(op="handoff", role="web-consult", …)` or `panel_dispatch` |
 | Manual web handoff / self-handoff | `team_dispatch(op="handoff", role="web-consult", packet_path=…)` |
 | Cursor IDE consult / implement | `handoff` roles `cursor-consult` / `cursor-implement` |
@@ -180,6 +181,7 @@ CODE_EXTRA call names below are **code-surface vocabulary** (see Surface gate).
 |---|---|
 | Workflow lane case studies | `cortex://notes/system/specs/dispatch-workflow-case-studies.md` |
 | Unattended code execution (cursor-sdk) | `consult-routing` § General execution lane + `cursor-sdk-instruction-standard` |
+| Plan vs agent on cursor-sdk | `consult-routing` § cursor-sdk `sdk_mode` · `docs/agent-guides/cursor-sdk-conversation-mode.md` |
 
 ## Minimal operating summary
 

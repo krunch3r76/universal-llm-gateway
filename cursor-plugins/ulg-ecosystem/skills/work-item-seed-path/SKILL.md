@@ -273,9 +273,36 @@ Problem/Scope/Acceptance may be sparse. **Do not** set
 
 **Plan-first recon (cursor-sdk):** when S4a spawns a sparse recon leg before
 implement, set packet `sdk_mode: plan` (or rely on `read_only=true` default on
-`consult|none|ask|recon|seed`) so the nested dispatch runs Cursor plan mode —
-artifact URIs only, no land claims. Follow with a separate `contract=implement`
-dispatch after `density_triage` reaches `implement_ready`.
+`consult|none|ask|recon|seed`) so the nested dispatch runs Cursor SDK **plan**
+mode — artifact URIs only, no land claims. Follow with a separate
+`contract=implement` dispatch (`sdk_mode: agent` or omit) after
+`density_triage` reaches `implement_ready`. SoT:
+`docs/agent-guides/cursor-sdk-conversation-mode.md` ·
+`services/git_integration_worker/cursor_sdk_mode.py`.
+
+#### G-row `sdk_mode` ladder (conductor-owned — BINDING default)
+
+After S6 spawn the **conductor** stamps `sdk_mode` on nested cursor-sdk legs.
+CDP rows (G1/G2/G4/G6) are out of scope — they use `team_dispatch(model=cdp/…)`.
+
+| G-row | Leg | Default `contract` | Default `sdk_mode` | When to override |
+|---|---|---|---|---|
+| **G1** | Architecture consult | — (CDP `purpose=ask`) | — | Never cursor-sdk plan |
+| **G2** | Frame | — (CDP followup) | — | — |
+| **G3** | Sparse recon / bind / densify-before-ready | `none` \| `recon` \| `seed` \| `consult` | **`plan`** | `density_triage: implement_ready` or dense packet ⇒ **`agent`** + `contract=implement` |
+| **G4** | Skeptic | — (CDP) | — | — |
+| **G5** | Implement | `implement` \| `pure-mechanical` | **`agent`** | `sdk_mode=plan` **422** at admit (`validate_sdk_mode_at_admit`) |
+| **G6** | After-ship review | — (CDP `purpose=review`) | — | — |
+| **G7** | Land / merge | `conductor` (orchestrator) | **`agent`** | Conductor admit is always agent-class |
+
+**W3 nest hint (plan → implement):** when a G3 plan leg closes
+`plan:closeout_verdict=PLAN_COMPLETE`, the conductor's `NEXT_ADMIT` is a nested
+`contract=implement` dispatch with `nest_under=<plan_dispatch_id>` (inherit lane
++ worktree). Read plan artifact URIs + verdict from the plan closeout before
+authoring the implement packet. `cursor-auto` nested `ask|recon|seed` without
+`implement_ready` auto-stamps `sdk_mode=plan` via `nested_auto_sdk_mode` — the
+conductor still owns the explicit implement nest after harvest (v1 does not
+auto-fire implement).
 
 **S4b — rich-seed after G1 harvest (conductor):** after architecture consult
 harvest, densify Problem/Scope/Acceptance on the **same slug**, hang
