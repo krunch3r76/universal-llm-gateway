@@ -226,19 +226,32 @@ def _bridge_death_resume_eligible(record_json: str | None) -> bool:
     return reason == "bridge_read_timeout"
 
 
+def _parked_for_restart(ledger: CursorDispatchLedger, *, parent_id: str) -> bool:
+    data = _load_row_columns(ledger, dispatch_id=parent_id, columns="park_kind")
+    return bool(data and data.get("park_kind"))
+
+
 def resume_eligibility_reason(
     ledger: CursorDispatchLedger, *, parent_id: str
 ) -> ResumeIneligibleReason | None:
-    """Return ineligibility reason, or ``None`` when parent may be resumed."""
+    """Return ineligibility reason, or ``None`` when parent may be resumed.
+
+    A ``park_for_restart`` parent (``park_kind`` set) is terminal ``cancelled``
+    by design with a consistent store, so only the identity and on-disk store
+    checks apply to it — named here so the path is a contract, not incidental.
+    """
     row = load_parent_row(ledger, parent_id=parent_id)
     if row is None:
         return "parent_missing"
-    if row.status in _LIVE_STATUSES:
+    parked = _parked_for_restart(ledger, parent_id=parent_id)
+    if not parked and row.status in _LIVE_STATUSES:
         if _bridge_death_resume_eligible(row.record_json):
             return None
         return "parent_still_live"
-    if row.terminal_status == "failed" and not _bridge_death_resume_eligible(
-        row.record_json
+    if (
+        not parked
+        and row.terminal_status == "failed"
+        and not _bridge_death_resume_eligible(row.record_json)
     ):
         rec = _record_data(row.record_json)
         if rec.get("bridge_death_partial_uri") and not rec.get("resume_eligible"):

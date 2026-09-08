@@ -713,16 +713,24 @@ def _merge_record_json_conn(
     )
 
 
-def _resume_bridge_death_work_key_exempt(
+def _resume_parent_work_key_exempt(
     conn: sqlite3.Connection, *, resume_of: str
 ) -> bool:
-    """True when ``resume_of`` parent failed bridge death with ``resume_eligible``."""
+    """True when the ``resume_of`` parent is a lineage the child may re-enter.
+
+    Two parent shapes qualify: a bridge-death failure stamped ``resume_eligible``
+    (``bridge_read_timeout``), and a ``park_for_restart`` row (``park_kind`` set).
+    Both hold their ``work_key`` open on purpose — the child is the same work,
+    not a competing admit — so the work-identity gate must not 409 it.
+    """
     row = conn.execute(
-        "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+        "SELECT record_json, park_kind FROM cursor_sdk_dispatches WHERE dispatch_id=?",
         (resume_of,),
     ).fetchone()
     if row is None:
         return False
+    if row["park_kind"]:
+        return True
     try:
         data = json.loads(row["record_json"] or "{}")
     except json.JSONDecodeError:
@@ -730,6 +738,38 @@ def _resume_bridge_death_work_key_exempt(
     if not isinstance(data, dict) or not data.get("resume_eligible"):
         return False
     return str(data.get("bridge_death_degraded_reason") or "") == "bridge_read_timeout"
+
+
+# Open park rows keep their ``work_key`` reserved between park and auto-resume so
+# a foreign implement cannot take over the lineage in that window (spec D5.4b).
+_OPEN_PARK_ROW_SQL = (
+    "(park_kind IS NOT NULL AND park_resumed_by IS NULL "
+    "AND (park_expires_at IS NULL OR park_expires_at > ?))"
+)
+
+
+def _migrate_park_columns(conn: sqlite3.Connection) -> None:
+    """Additive ``park_*`` columns + open-park partial index (steer-restart v1).
+
+    Runs after the table-rebuild migrations so a rebuild on an old database
+    cannot drop these columns; no status-vocabulary change — a parked row is
+    terminal ``cancelled`` and the lineage continues through ``resume_of``.
+    """
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(cursor_sdk_dispatches)")}
+    for col in (
+        "park_kind",
+        "park_intent_id",
+        "parked_at",
+        "park_resumed_by",
+        "park_expires_at",
+    ):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE cursor_sdk_dispatches ADD COLUMN {col} TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_park_open "
+        "ON cursor_sdk_dispatches(park_kind) "
+        "WHERE park_kind IS NOT NULL AND park_resumed_by IS NULL"
+    )
 
 
 def _migrate_cancelled_status(conn: sqlite3.Connection) -> None:
@@ -1001,6 +1041,7 @@ class CursorDispatchLedger:
             _migrate_parked_waiting_status(conn)
             _migrate_lease_key_column(conn)
             _migrate_cancelled_status(conn)
+            _migrate_park_columns(conn)
             from services.git_integration_worker.cursor_sdk_land_lease import (
                 ensure_land_lease_schema,
             )
@@ -1258,14 +1299,15 @@ class CursorDispatchLedger:
                     "SELECT dispatch_id, thread_id, contract, packet_kind, "
                     "record_json FROM cursor_sdk_dispatches "
                     "WHERE work_key=? AND dispatch_id<>? "
-                    f"AND status IN ({_ACTIVE_IDENTITY_STATUSES}) LIMIT 1",
-                    (effective_work_key, req.dispatch_id),
+                    f"AND (status IN ({_ACTIVE_IDENTITY_STATUSES}) "
+                    f"OR {_OPEN_PARK_ROW_SQL}) LIMIT 1",
+                    (effective_work_key, req.dispatch_id, _now()),
                 ).fetchone()
                 if peer is not None:
                     exempt = False
                     if nest_under and peer["dispatch_id"] == nest_under:
                         exempt = True
-                    if req.resume_of and _resume_bridge_death_work_key_exempt(
+                    if req.resume_of and _resume_parent_work_key_exempt(
                         conn, resume_of=req.resume_of
                     ):
                         exempt = True

@@ -38,9 +38,36 @@ async def lease_snapshot(
 
 
 @router.get("/dispatch-status", summary="Status of the latest dispatch on a thread.")
-async def dispatch_status(request: Request, thread_id: str) -> dict[str, object]:
-    row = CursorDispatchLedger.instance().dispatch_status_by_thread(thread_id=thread_id)
-    return row if row is not None else {"thread_id": thread_id, "status": None}
+async def dispatch_status(
+    request: Request, thread_id: str | None = None, dispatch_id: str | None = None
+) -> dict[str, object]:
+    """Latest row on ``thread_id`` (or the named ``dispatch_id``) plus its ``park`` block.
+
+    ``park`` is ``None`` for rows never parked; otherwise
+    ``{state ∈ parked|resumed|expired, intent_id, parked_at, park_resumed_by, …}``
+    (steer-restart D2 projection).
+    """
+    from services.git_integration_worker.cursor_sdk_park_ledger import (
+        load_park_row,
+        park_projection,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    if dispatch_id:
+        row = ledger.dispatch_status_by_id(dispatch_id=dispatch_id)
+    elif thread_id:
+        row = ledger.dispatch_status_by_thread(thread_id=thread_id)
+    else:
+        return {"thread_id": None, "dispatch_id": None, "status": None, "park": None}
+    if row is None:
+        return {
+            "thread_id": thread_id,
+            "dispatch_id": dispatch_id,
+            "status": None,
+            "park": None,
+        }
+    row["park"] = park_projection(load_park_row(dispatch_id=str(row["dispatch_id"])))
+    return row
 
 
 class BeginDrainRequest(BaseModel):

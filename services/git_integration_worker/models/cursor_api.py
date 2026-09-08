@@ -57,7 +57,7 @@ class CursorDispatchRequest(BaseModel):
             "parallel under the derived standard load pool. There is no branch= arg."
         ),
     )
-    admitted_via: Literal["cursor-auto", "stargate"] | None = None
+    admitted_via: Literal["cursor-auto", "stargate", "giw_park_resume"] | None = None
     work_key: str | None = None
     resume_of: str | None = None
     continuity_root_thread_id: str | None = None
@@ -117,6 +117,33 @@ class LaneWorktreeReleaseRequest(BaseModel):
     thread_id: str
     dispatch_id: str | None = None
     actor: str | None = None
+
+
+class ParkDispatchRequest(BaseModel):
+    """Body for ``POST /dispatch/{dispatch_id}/park`` — park one live dispatch.
+
+    ``intent_id`` / ``drain_epoch`` bind the park to a manage restart intent;
+    both absent means a single-dispatch park (free a slot, hand a lane over).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str
+    actor: str
+    intent_id: str | None = None
+    drain_epoch: int | None = None
+    mode: Literal["cancel"] = "cancel"
+
+
+class ParkForRestartRequest(BaseModel):
+    """Body for ``POST /park-for-restart`` — park every live dispatch for an intent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    intent_id: str
+    actor: str
+    reason: str
+    drain_epoch: int | None = None
 
 
 class CursorDispatchResponse(BaseModel):

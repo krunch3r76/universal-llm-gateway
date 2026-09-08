@@ -95,6 +95,12 @@ def live_run_for_thread(thread_id: str) -> LiveRun | None:
     return max(candidates, key=lambda rec: rec.started_at)
 
 
+def live_run_for_dispatch(dispatch_id: str) -> LiveRun | None:
+    """Return the streaming run registered for *dispatch_id* (park ladder entry)."""
+    with _lock:
+        return _live.get(dispatch_id)
+
+
 def is_dispatch_live(*, dispatch_id: str) -> bool:
     """True while the worker thread still owns the bridge stream."""
     with _lock:

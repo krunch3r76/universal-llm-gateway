@@ -21,12 +21,19 @@ logger = get_logger(__name__)
 _BRIDGE_DEATH_PARTIAL_REL = (
     "notes/system/threads/{thread_id}-bridge-death-partial-{dispatch_id}.md"
 )
+_PARK_PARTIAL_REL = "notes/system/threads/{thread_id}-park-partial-{dispatch_id}.md"
 
 
 def bridge_death_partial_uri(*, thread_id: str, dispatch_id: str) -> str:
     rel = _BRIDGE_DEATH_PARTIAL_REL.format(
         thread_id=thread_id, dispatch_id=dispatch_id
     )
+    return f"cortex://{rel}"
+
+
+def park_partial_uri(*, thread_id: str, dispatch_id: str) -> str:
+    """Sidecar URI for the partial harvest written when a run is parked."""
+    rel = _PARK_PARTIAL_REL.format(thread_id=thread_id, dispatch_id=dispatch_id)
     return f"cortex://{rel}"
 
 
@@ -63,20 +70,72 @@ def _sidecar_body(
     cortex_writes_observed: list[str] | None,
     forensics: dict[str, Any] | None,
     resume_eligible: bool,
+    status: str = "partial",
+    degraded_reason: str = "bridge_read_timeout",
 ) -> str:
     payload: dict[str, Any] = {
-        "status": "partial",
+        "status": status,
         "dispatch_id": dispatch_id,
         "thread_id": thread_id,
         "tool_call_count": tool_call_count,
         "last_tool_calls": list(last_tools or ()),
         "cortex_writes_observed": list(cortex_writes_observed or ()),
         "resume_eligible": resume_eligible,
-        "degraded_reason": "bridge_read_timeout",
+        "degraded_reason": degraded_reason,
     }
     if forensics:
         payload["forensics"] = forensics
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+
+def _write_sidecar(uri: str, body: str) -> None:
+    rel = uri[len("cortex://") :]
+    dest = cortex_files_root() / rel
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    durable_write_text(dest, body, retain_store_root=cortex_files_root())
+
+
+def emit_partial_harvest_on_park(
+    dispatch_id: str,
+    *,
+    thread_id: str,
+    intent_id: str | None,
+    method: str,
+    tool_call_count: int,
+    last_tools: list[dict[str, str]] | None = None,
+) -> dict[str, Any]:
+    """Write the park partial sidecar (steer-restart D6) and emit the harvest event.
+
+    Unlike bridge death, a park is resume-eligible by construction — the run
+    was cancelled cooperatively and ``sdk_agent_id`` is present — so no
+    ``bridge_death_*`` keys are stamped; ``cursor_sdk_park_ledger.mark_parked``
+    owns the ``record_json.park`` block that carries the sidecar URI.
+    """
+    uri = park_partial_uri(thread_id=thread_id, dispatch_id=dispatch_id)
+    body = _sidecar_body(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        tool_call_count=tool_call_count,
+        last_tools=last_tools,
+        cortex_writes_observed=[],
+        forensics={
+            "cause": "park_for_restart",
+            "intent_id": intent_id,
+            "method": method,
+        },
+        resume_eligible=True,
+        status="parked",
+        degraded_reason="park_for_restart",
+    )
+    _write_sidecar(uri, body)
+    emit_sdk_bridge_partial_harvest(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        tool_call_count=tool_call_count,
+        sidecar_uri=uri,
+        resume_eligible=True,
+    )
+    return {"sidecar_uri": uri, "resume_eligible": True}
 
 
 def emit_partial_harvest_on_bridge_death(
@@ -108,7 +167,6 @@ def emit_partial_harvest_on_bridge_death(
     uri = bridge_death_partial_uri(
         thread_id=resolved_thread, dispatch_id=dispatch_id
     )
-    rel = uri[len("cortex://") :]
     body = _sidecar_body(
         dispatch_id=dispatch_id,
         thread_id=resolved_thread,
@@ -118,9 +176,7 @@ def emit_partial_harvest_on_bridge_death(
         forensics=forensics,
         resume_eligible=resume_eligible,
     )
-    dest = cortex_files_root() / rel
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    durable_write_text(dest, body, retain_store_root=cortex_files_root())
+    _write_sidecar(uri, body)
 
     patch: dict[str, Any] = {
         "bridge_death_partial_uri": uri,
@@ -153,4 +209,6 @@ def emit_partial_harvest_on_bridge_death(
 __all__ = [
     "bridge_death_partial_uri",
     "emit_partial_harvest_on_bridge_death",
+    "emit_partial_harvest_on_park",
+    "park_partial_uri",
 ]

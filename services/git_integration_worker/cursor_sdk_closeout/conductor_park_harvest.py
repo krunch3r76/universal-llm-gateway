@@ -114,6 +114,10 @@ def park_harvest_owed(
     rec = _record_data(row)
     if rec.get("hop_parked"):
         return False
+    if rec.get("park"):
+        # GIW park_for_restart: the wake is the substrate's own resume child
+        # (cursor_sdk_park_resume), not a CDP reply — no harvest arm recipe.
+        return False
     if rec.get(_HOP_PARK_HARVEST_FIRED_KEY):
         return False
     body = _closeout_body_from_row(row)
@@ -328,7 +332,7 @@ def park_harvest_continue_owed(
         return False
     if rec.get(_HOP_PARK_HARVEST_CONTINUED_KEY):
         return False
-    if rec.get("hop_parked"):
+    if rec.get("hop_parked") or rec.get("park"):
         return False
     from services.git_integration_worker.cursor_sdk_park import _successor_admitted
 

@@ -91,6 +91,9 @@ from services.git_integration_worker.cursor_sdk_closeout import (
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     merge_conductor_closeout_hop_authority,
 )
+from services.git_integration_worker.cursor_sdk_closeout.park_finalize import (
+    finalize_parked,
+)
 from services.git_integration_worker.cursor_sdk_closeout_subject import (
     build_sdk_closeout_subject,
 )
@@ -209,6 +212,13 @@ from services.git_integration_worker.cursor_sdk_park import (
     release_or_restore_for_child_sync,
     transfer_capacity_after_park,
 )
+from services.git_integration_worker.cursor_sdk_park_for_restart import park_mark
+from services.git_integration_worker.cursor_sdk_park_http import (
+    park_for_restart as _park_for_restart,
+)
+from services.git_integration_worker.cursor_sdk_park_http import (
+    park_one_dispatch,
+)
 from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
     extract_instructed_paths,
     first_landed_fs_uri,
@@ -290,6 +300,8 @@ from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
     LaneWorktreeReleaseRequest,
+    ParkDispatchRequest,
+    ParkForRestartRequest,
 )
 
 logger = get_logger(__name__)
@@ -1353,18 +1365,48 @@ async def _start_promoted_dispatch(
     _maybe_emit_giw_dispatched(req=req, packet_text=packet_text)
 
 
+async def _resume_parked_rows(
+    *,
+    controller: WorkAdmissionController,
+    cfg: WorkerConfig,
+    code_version: str,
+) -> None:
+    """Re-admit open park rows (steer-restart D5); advisory — never kills the caller."""
+    from services.git_integration_worker.cursor_sdk_park_resume import (
+        resume_parked_dispatches,
+    )
+
+    try:
+        summary = await resume_parked_dispatches(
+            cfg=cfg, controller=controller, code_version=code_version
+        )
+    except Exception:  # noqa: BLE001 — resume is recovery; boot/tick must proceed
+        logger.exception("park auto-resume pass failed")
+        return
+    if summary.admitted or summary.refused or summary.expired or summary.reconciled:
+        logger.info(
+            "park auto-resume admitted=%s refused=%s expired=%s reconciled=%s",
+            summary.admitted,
+            summary.refused,
+            summary.expired,
+            summary.reconciled,
+        )
+
+
 async def reconcile_stale_leases(
     controller: WorkAdmissionController,
     *,
     reap_only: bool = False,
     worker_cfg: WorkerConfig | None = None,
+    code_version: str | None = None,
 ) -> None:
     """Periodic sweeper: release stale lease holders and promote queued writers.
 
     ``reap_only`` keeps the reap half and drops the promote half. Used while
     draining, where clearing a wedged holder is exactly what lets the drain
     finish, but starting its queued successor would admit new work into a
-    worker that is shutting down.
+    worker that is shutting down. The promote half also re-drives park
+    auto-resume for rows refused on an earlier pass.
     """
     from services.git_integration_worker.cursor_sdk_gate import (
         reclaim_cross_lane_phantom_holders,
@@ -1433,6 +1475,9 @@ async def reconcile_stale_leases(
             )
     if reap_only:
         return
+    await _resume_parked_rows(
+        controller=controller, cfg=cfg, code_version=code_version or "unknown"
+    )
     for lease_key in repos:
         await _promote_queued_for_lease(
             lease_key=lease_key,
@@ -1460,6 +1505,7 @@ async def stale_lease_sweeper(app: FastAPI) -> None:
                 controller,
                 reap_only=controller.is_draining(),
                 worker_cfg=getattr(app.state, "worker_config", None),
+                code_version=getattr(app.state, "worker_version", None),
             )
         except Exception as exc:  # sweeper must never kill the worker
             logger.warning("stale-lease sweeper failed: %s", exc)
@@ -1561,6 +1607,13 @@ async def startup_ledger_reconcile(app: FastAPI) -> None:
         emit_restart_survivor_terminal(orphan, bridge_aborted=reap.bridge_aborted)
         if lease_key:
             repos.append(lease_key)
+    # Parked rows re-enter before queued heads: they held their write lease
+    # when the restart began, so lineage continuity outranks FIFO newcomers.
+    await _resume_parked_rows(
+        controller=controller,
+        cfg=cfg,
+        code_version=str(getattr(app.state, "worker_version", "unknown")),
+    )
     for lease_key in sorted(set(repos)):
         await _promote_queued_for_lease(
             lease_key=lease_key,
@@ -2051,6 +2104,32 @@ async def _run_sdk_dispatch_gated(
         live_counter=live_counter,
         idle_budget_s=outer_timeout_s,
     )
+
+    if timed_out and park_mark(req.dispatch_id) is not None:
+        # A park cancelled the run right as the idle deadline fired; the cancel
+        # unblocks the worker thread within seconds, so give the parked path
+        # precedence over the orphan/timeout path.
+        done, _ = await asyncio.wait({worker_task}, timeout=_SDK_IDLE_WAIT_SLICE_S)
+        timed_out = not done
+
+    if not timed_out and park_mark(req.dispatch_id) is not None:
+        park_outcome: SdkRunOutcome | None = None
+        park_exc: BaseException | None = None
+        try:
+            park_outcome = worker_task.result()
+        except BaseException as exc:  # noqa: BLE001 — a cancelled stream may raise
+            park_exc = exc
+        await finalize_parked(
+            req=req,
+            source_repo=ctx.hub,
+            bus=bus,
+            reply_to=reply_to,
+            controller=controller,
+            mark=park_mark(req.dispatch_id),  # type: ignore[arg-type]
+            outcome=park_outcome,
+            exc=park_exc,
+        )
+        return
 
     if timed_out:
         since_last_progress_s = live_counter.since_last_progress_s()
@@ -2607,7 +2686,28 @@ async def _finalize_success(
 async def cursor_dispatch(
     req: CursorDispatchRequest, request: Request
 ) -> CursorDispatchResponse:
-    cfg = _config(request)
+    return await admit_cursor_dispatch(  # type: ignore[return-value]
+        req,
+        cfg=_config(request),
+        controller=_controller(request),
+        request=request,
+    )
+
+
+async def admit_cursor_dispatch(
+    req: CursorDispatchRequest,
+    *,
+    cfg: WorkerConfig,
+    controller: WorkAdmissionController,
+    request: Request | None = None,
+) -> JSONResponse:
+    """Full admission path shared by the POST route and in-process re-admits.
+
+    ``cursor_sdk_park_resume`` calls this without a ``Request`` so a parked
+    row's ``resume_of`` child passes every gate the wire path applies — lane
+    binding (S1 re-pin), write lease, work-key identity, resume eligibility —
+    rather than a shortcut that would skip them.
+    """
     try:
         config = resolve_cursor(req.model)
     except ValueError as exc:
@@ -2650,7 +2750,6 @@ async def cursor_dispatch(
         parity,
     )
 
-    controller = _controller(request)
     # Early synchronous drain reject: skip creating a ledger row at all in the
     # common draining case. The binding TOCTOU guarantee is in try_admit below
     # (its drain check and ticket reservation share one synchronous frame).
@@ -3437,6 +3536,43 @@ async def cancel_cursor_dispatch(
         cancelled_by=cancelled_by,
         controller=controller,
         request=request,
+    )
+    return JSONResponse(status_code=status_code, content=body)
+
+
+@router.post(
+    "/dispatch/{dispatch_id}/park",
+    summary="Park one live dispatch: cancel its run, keep it resumable (steer-restart).",
+)
+async def park_cursor_dispatch(
+    dispatch_id: str, req: ParkDispatchRequest, request: Request
+) -> JSONResponse:
+    """202 ``park_requested`` / 200 ``already_parked`` / D3 refusal envelope."""
+    status_code, body = await park_one_dispatch(
+        dispatch_id=dispatch_id,
+        intent_id=req.intent_id,
+        drain_epoch=req.drain_epoch,
+        actor=req.actor,
+        reason=req.reason,
+        controller=_controller(request),
+    )
+    return JSONResponse(status_code=status_code, content=body)
+
+
+@router.post(
+    "/park-for-restart",
+    summary="Park every live dispatch for a manage restart intent (idempotent sweep).",
+)
+async def park_for_restart_sweep_route(
+    req: ParkForRestartRequest, request: Request
+) -> JSONResponse:
+    """202 ``{requested, refused, already_parked, live_after}`` for the intent."""
+    status_code, body = await _park_for_restart(
+        intent_id=req.intent_id,
+        drain_epoch=req.drain_epoch,
+        actor=req.actor,
+        reason=req.reason,
+        controller=_controller(request),
     )
     return JSONResponse(status_code=status_code, content=body)
 
