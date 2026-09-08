@@ -237,11 +237,12 @@ async def _post_resumed_turn(
         )
 
 
-async def _expire(row: ParkRow, bus: CursorBusClient) -> None:
+async def _expire(row: ParkRow, bus: CursorBusClient) -> bool:
+    """Stamp expiry once; emit, close the link, post the awareness turn. False if already done."""
     from services.git_integration_worker.routes.cursor_sdk import _terminate_link
 
     if not mark_park_expired(parent_id=row.dispatch_id):
-        return
+        return False
     emit_sdk_park_expired(
         parent_dispatch_id=row.dispatch_id,
         parked_at=row.parked_at,
@@ -267,6 +268,7 @@ async def _expire(row: ParkRow, bus: CursorBusClient) -> None:
             "remains possible until the resume-retain TTL."
         ),
     )
+    return True
 
 
 async def resume_parked_dispatches(
@@ -286,8 +288,8 @@ async def resume_parked_dispatches(
         if controller.is_draining():
             break
         if row.expired:
-            await _expire(row, bus)
-            summary.expired.append(row.dispatch_id)
+            if await _expire(row, bus):
+                summary.expired.append(row.dispatch_id)
             continue
         existing = _existing_child(row.dispatch_id)
         if existing is not None:
@@ -296,7 +298,8 @@ async def resume_parked_dispatches(
             continue
         reason = resume_eligibility_reason(ledger, parent_id=row.dispatch_id)
         if reason is not None:
-            attempt = record_resume_refusal(parent_id=row.dispatch_id, reason=reason)
+            attempt = bump_resume_attempt(parent_id=row.dispatch_id)
+            record_resume_refusal(parent_id=row.dispatch_id, reason=reason)
             emit_sdk_park_resume_refused(
                 parent_dispatch_id=row.dispatch_id, reason=reason, attempt=attempt
             )

@@ -229,7 +229,11 @@ def mark_park_resumed(*, parent_id: str, child_id: str) -> bool:
 
 
 def record_resume_refusal(*, parent_id: str, reason: str) -> int:
-    """Append a refusal to ``record_json.park.resume_refusals``; return attempt count."""
+    """Append a refusal to ``record_json.park.resume_refusals``; return attempt count.
+
+    Does not count an attempt — ``bump_resume_attempt`` owns that so a refused
+    admission (bumped before the admit) is not double-counted.
+    """
     ledger = CursorDispatchLedger.instance()
     with ledger._connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -243,10 +247,9 @@ def record_resume_refusal(*, parent_id: str, reason: str) -> int:
         park = data.get(_RECORD_KEY)
         if not isinstance(park, dict):
             park = {}
-        attempts = int(park.get("resume_attempts") or 0) + 1
+        attempts = int(park.get("resume_attempts") or 0)
         refusals = list(park.get("resume_refusals") or [])
-        refusals.append({"reason": reason, "at": _now()})
-        park["resume_attempts"] = attempts
+        refusals.append({"reason": reason, "at": _now(), "attempt": attempts})
         park["resume_refusals"] = refusals[-10:]
         data[_RECORD_KEY] = park
         conn.execute(

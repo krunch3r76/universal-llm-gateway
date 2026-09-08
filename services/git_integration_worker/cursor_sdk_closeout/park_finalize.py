@@ -33,6 +33,9 @@ from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
+from services.git_integration_worker.cursor_sdk_cancel_events import (
+    emit_sdk_worker_cancelled,
+)
 from services.git_integration_worker.cursor_sdk_closeout.bridge_death_harvest import (
     emit_partial_harvest_on_park,
 )
@@ -48,6 +51,7 @@ from services.git_integration_worker.cursor_sdk_closeout_trigger import (
 from services.git_integration_worker.cursor_sdk_conductor_conflict import (
     _record_packet_kind,
 )
+from services.git_integration_worker.cursor_sdk_events import terminal_emitted
 from services.git_integration_worker.cursor_sdk_park_events import (
     emit_sdk_park_parked,
 )
@@ -221,6 +225,21 @@ async def finalize_parked(
         sidecar_uri=sidecar_uri,
         sdk_agent_id_present=bool(park_row is not None and park_row.sdk_agent_id),
     )
+    if not terminal_emitted(dispatch_id):
+        # signal_park normally emitted worker.cancelled; guarantee the foldable
+        # terminal is cancelled so the terminal path never synthesizes failed
+        # for a park (I-SR-3).
+        emit_sdk_worker_cancelled(
+            dispatch_id=dispatch_id,
+            method=mark.method,
+            reason=(
+                f"park_for_restart:{mark.intent_id}"
+                if mark.intent_id
+                else "park_for_restart"
+            ),
+            thread_id=req.thread_id,
+            terminal_status="cancelled",
+        )
     logger.warning(
         "cursor-sdk dispatch parked dispatch_id=%s intent_id=%s method=%s "
         "tool_calls=%s sidecar=%s",
