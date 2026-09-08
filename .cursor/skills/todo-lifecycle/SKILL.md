@@ -151,7 +151,7 @@ Close via the atomic todo-close pipeline → `rule:todo-lifecycle` § Completion
 - Verify new test deliverables with `ls`/`Read` on the `files_expected` paths, not `git status` — `**/test_*.py` is gitignored repo-wide; new tests never appear in `git status`/`git diff --stat` though they exist and pass (21661).
 - `agent-bus reply` CLI: pass `--to`, `--subject`, `--after-turn` on every call — the CLI is stricter than the MCP tool's looser description (21662).
 
-- Dense-spec path gate is basename-keyed to `cortex://notes/system/specs/{slug}.md`: `normalize_dense_spec_path` (`libs/implement_admission/gate_distillation.py`) silently discards any `source_uri` whose basename ≠ `{slug}.md`, falls back to the slug stub, and emits `dense_spec_sections_missing` against a path you never supplied — so one differently-named unified spec covering several todos can never satisfy the gate for any of them. Workaround: materialize the validated spec **byte-identical** (same sha) at each todo's `cortex://notes/system/specs/{slug}.md` and repoint that todo's `source_uri` there; verify via `doc_validate` + `implement_ready_preflight` (21998).
+- Dense-spec path contract (`decision:cortex-spec-gaps-bundle-v1` Bind 1): the todo's `source_uri` is the spec identity; any `cortex://notes/system/specs/*.md` is accepted as cited; `{slug}.md` is the default when `source_uri` is empty or non-spec; distill payloads carry `path_resolution` (cited/resolved/action). One spec may serve several todos — a later edit drifts `spec_sha256` for all of them (`implement_spec_drifted_since_ready`), which is correct. Copy-to-slug workaround (21998) retired.
 
 ## Grounding manifest
 

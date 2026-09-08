@@ -9,7 +9,10 @@ from unittest.mock import patch
 
 import pytest
 from implement_admission.dense_spec_schema import dense_spec_hash_uri
-from implement_admission.gate_distillation import prepare_gate_distillation
+from implement_admission.gate_distillation import (
+    GateDistillationInputs,
+    prepare_gate_distillation,
+)
 
 from cortex_store import db
 from cortex_store._test_db_bootstrap import copy_template_db
@@ -71,6 +74,7 @@ _GATE_KWARGS = {
     "agent": "claude-cursor",
 }
 _SPEC_URI = "workspaces://universal-llm-gateway/tasks/specs/wire-gate.md"
+_CORTEX_SPEC_URI = "cortex://notes/system/specs/wire-gate.md"
 
 
 @pytest.fixture()
@@ -89,6 +93,9 @@ def gate_env(
     monkeypatch.setenv("PROJECT_ROOT", str(tmp_path))
     files_root = tmp_path / "cortex-files"
     files_root.mkdir()
+    cortex_spec_dir = files_root / "notes" / "system" / "specs"
+    cortex_spec_dir.mkdir(parents=True)
+    (cortex_spec_dir / "wire-gate.md").write_text(_VALID_DENSE_SPEC, encoding="utf-8")
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(files_root))
     archive_rel = Path("notes/system/threads/archives/wire-gate.md")
     archive_path = files_root / archive_rel
@@ -135,7 +142,7 @@ def gate_env(
                         "consult_thread": "agent-bus:8801",
                         "verdict": "proceed_with_amendments",
                         "consultant_model": "claude-fable-5-1",
-        "consultant_effort": "high",
+                        "consultant_effort": "high",
                         "consultant_substrate": "web-anthropic",
                     }
                 ),
@@ -177,7 +184,7 @@ def _evaluate_from_persisted_state() -> object:
         todo_id="todo:wire-gate",
         source_uri=entity.get("source_uri"),
     )
-    assert not isinstance(prepared, tuple)
+    assert isinstance(prepared, GateDistillationInputs)
     return _evaluate_from_persisted(
         entity_id="todo:wire-gate",
         prepared=prepared,
@@ -202,13 +209,15 @@ def test_todo_distill_implement_gate_wires_trio(gate_env: Path) -> None:
     _seed_skeptic_ratification()
     result = _distill()
     assert result.get("ok") is True, result
-    assert result["source_uri"] == _SPEC_URI
+    assert result["source_uri"] == _CORTEX_SPEC_URI
+    assert result["path_resolution"]["action"] == "relocated_retired_home"
+    assert result["path_resolution"]["resolved"] == _CORTEX_SPEC_URI
     assert result["implement_ready_assertion_id"] == 2
-    assert result["evidence_uris"][0] == _SPEC_URI
+    assert result["evidence_uris"][0] == _CORTEX_SPEC_URI
     assert result["evidence_uris"][1].startswith("spec_sha256:")
 
     entity = execute_op("entity_get", {"entity_id": "todo:wire-gate", "intent": "full"})
-    assert entity["source_uri"] == _SPEC_URI
+    assert entity["source_uri"] == _CORTEX_SPEC_URI
     attrs = entity["attributes"]
     assert attrs["implement_ready_assertion_id"] == 2
     assert attrs["files_expected"] == ["libs/a.py"]
@@ -219,7 +228,7 @@ def test_todo_distill_implement_gate_wires_trio(gate_env: Path) -> None:
 
     assertion = execute_op("assertion_get", {"assertion_id": 2})
     assert assertion["entity_id"] == "todo:wire-gate"
-    assert _SPEC_URI in assertion["evidence_uris"]
+    assert _CORTEX_SPEC_URI in assertion["evidence_uris"]
 
 
 @pytest.mark.offline
@@ -344,6 +353,51 @@ def test_todo_distill_implement_gate_mechanical_bypasses_skeptic(
 
     verdict = _evaluate_from_persisted_state()
     assert verdict.admitted is True
+
+
+@pytest.mark.offline
+def test_todo_distill_descriptive_basename_source_uri(gate_env: Path) -> None:
+    descriptive = "friction-26462-cursor-auto-auth-gate-budget.md"
+    descriptive_uri = f"cortex://notes/system/specs/{descriptive}"
+    files_root = gate_env / "cortex-files"
+    spec_dir = files_root / "notes" / "system" / "specs"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / descriptive).write_text(_VALID_DENSE_SPEC, encoding="utf-8")
+
+    now = "2026-06-15T00:00:00Z"
+    with db.cortex_conn() as conn:
+        conn.execute(
+            "INSERT INTO entities "
+            "(id, type, name, source_uri, workflow_state, attributes, created_at, updated_at) "
+            "VALUES (?, 'todo', ?, ?, 'in_progress', ?, ?, ?)",
+            (
+                "todo:friction-26462",
+                "friction-26462",
+                descriptive_uri,
+                json.dumps({"density_triage": "mechanical"}),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+
+    result = execute_op(
+        "todo_distill_implement_gate",
+        {
+            "todo_id": "todo:friction-26462",
+            **_GATE_KWARGS,
+            "density_triage": "mechanical",
+        },
+    )
+    assert result.get("ok") is True, result
+    assert result["path_resolution"]["action"] == "as_cited"
+    assert result["path_resolution"]["basename_nonstandard"] is True
+    assert result["source_uri"] == descriptive_uri
+
+    entity = execute_op(
+        "entity_get", {"entity_id": "todo:friction-26462", "intent": "full"}
+    )
+    assert entity["source_uri"] == descriptive_uri
 
 
 @pytest.mark.offline

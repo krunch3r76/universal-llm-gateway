@@ -13,12 +13,15 @@ from implement_admission.dense_spec_schema import (
     validate_dense_spec,
 )
 from implement_admission.gate_distillation import (
+    DenseSpecPathResolution,
+    GateDistillationFailure,
     GateDistillationInputs,
     build_implement_ready_evidence_uris,
     default_dense_spec_uri,
     normalize_dense_spec_path,
     prepare_gate_distillation,
     read_dense_spec_text,
+    resolve_dense_spec_path,
     todo_slug,
 )
 from implement_admission.implement_ready import (
@@ -44,7 +47,9 @@ from implement_admission.spec import ImplementSpec, implement_spec_hash
 __all__ = [
     "ADAPTERS",
     "DecisionNotAssertedError",
+    "DenseSpecPathResolution",
     "DenseSpecVerdict",
+    "GateDistillationFailure",
     "GateDistillationInputs",
     "ImplementCloseout",
     "ImplementReadyVerdict",
@@ -61,6 +66,7 @@ __all__ = [
     "normalize_dense_spec_path",
     "prepare_gate_distillation",
     "read_dense_spec_text",
+    "resolve_dense_spec_path",
     "todo_slug",
     "GateReport",
     "GateStatus",

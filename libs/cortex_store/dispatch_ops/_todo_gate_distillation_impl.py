@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
 
@@ -313,6 +314,7 @@ def _success_payload(
         "spec_sha256": prepared.evidence_uris[-1],
         "files_expected": expected,
         "acceptance_criteria": acs,
+        "path_resolution": asdict(prepared.path_resolution),
     }
     if idempotent:
         payload["idempotent"] = True
@@ -437,8 +439,12 @@ def distill_todo_implement_gate(
             source_uri=str(spec_source) if spec_source else None,
         )
         if isinstance(prepared, tuple):
-            code, reason = prepared
-            return {"error": reason, "code": code}
+            code, reason = prepared[0], prepared[1]
+            envelope: dict[str, Any] = {"error": reason, "code": code}
+            path_resolution = getattr(prepared, "path_resolution", None)
+            if path_resolution is not None:
+                envelope["path_resolution"] = asdict(path_resolution)
+            return envelope
 
         waived_by = seeded_by or agent or "todo_distill_implement_gate"
         incoming_waiver = _incoming_waiver_from_params(
