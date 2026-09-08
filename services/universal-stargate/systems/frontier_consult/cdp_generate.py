@@ -279,6 +279,7 @@ def _stage_inputs(
     skills: list[str] | None = None,
     purpose: str | None = None,
     request_id: str | None = None,
+    dispatch_thread_id: str | None = None,
 ) -> Any:
     """Stage prompt; ``skills`` → slash manifest for + → Skills attach at runtime.
 
@@ -326,6 +327,7 @@ def _stage_inputs(
             sidecar_ref=staged_sidecar,
             skills=skills if isinstance(skills, list) else None,
             purpose=purpose,
+            dispatch_thread_id=dispatch_thread_id,
         )
     except CdpStagingError:
         raise
@@ -421,9 +423,13 @@ async def dispatch_cdp_generate(
             skills=skills if isinstance(skills, list) else None,
             purpose=purpose,
             request_id=request_id,
+            dispatch_thread_id=getattr(body, "dispatch_thread_id", None),
         )
     except CdpStagingError as exc:
-        field = "skills" if str(exc.code).startswith("cdp_skills") else "prompt"
+        if exc.code == "pool_blocked":
+            field = "dispatch_thread_id"
+        else:
+            field = "skills" if str(exc.code).startswith("cdp_skills") else "prompt"
         raise FrontierEndpointError(
             request_id=request_id,
             field=field,

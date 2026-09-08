@@ -100,6 +100,7 @@ _OP_SPECS: dict[str, str] = {
     "transcript_discover": "ops_transcript_discover:_op_transcript_discover",
     "transcript_seal": "ops_transcript_seal:_op_transcript_seal",
     "transcript_harvest": "ops_transcript_harvest:_op_transcript_harvest",
+    "transcript_project": "ops_transcript_project:_op_transcript_project",
     "review_queue": "ops_assertions:_op_review_queue",
     "predicate_renormalize": "ops_predicate_renormalize:_op_predicate_renormalize",
     "edge_create": "ops_edges:_op_edge_create",

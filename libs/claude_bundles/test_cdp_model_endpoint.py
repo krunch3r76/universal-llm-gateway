@@ -90,6 +90,35 @@ def test_stage_cdp_prompt_with_skills_prepends_manifest(
     assert staged.prompt_uri.endswith("exec-skills/prompt.md")
 
 
+def test_stage_cdp_prompt_with_skills_prepends_house_block(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    card_path = tmp_path / "notes/system/threads/10223-continuity.md"
+    card_path.parent.mkdir(parents=True)
+    card_path.write_text(
+        """<!-- pools v1 -->
+## Pools
+| pool | executor | status | must_load | must_read | closeout | forbidden |
+|---|---|---|---|---|---|---|
+| fable | cdp/fable | open | ulg-for-llms · reasoning-posture | this card · tip CP | sidecar + send | code diffs |
+""",
+        encoding="utf-8",
+    )
+    staged = stage_cdp_prompt_with_skills(
+        execution_id="exec-house",
+        prompt_text="house agent-bus:**10223**\n\n## Task\n",
+        skills=["consult-posture"],
+        dispatch_thread_id="10223",
+    )
+    on_disk = tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-house/prompt.md"
+    text = on_disk.read_text(encoding="utf-8")
+    assert "## House (read first)" in text
+    assert "/ulg-for-llms" in text
+    assert "## Task" in text
+    assert staged.prompt_uri.endswith("exec-house/prompt.md")
+
+
 def test_stage_cdp_prompt_omitted_skills_still_gets_judgment_skill(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

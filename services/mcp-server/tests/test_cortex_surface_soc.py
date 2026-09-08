@@ -116,7 +116,7 @@ def test_code_enum_excludes_admin() -> None:
     assert not _ADMIN_OPS & set(code.ops_enum)
     # ``digest`` is write+fol but fol is not yet reconciled for life (§ F-c);
     # code admits it, life does not — intentional asymmetry after 2026-07-14.
-    assert set(code.ops_enum) == _LIFE_ENUM | {"digest"}
+    assert set(code.ops_enum) == _LIFE_ENUM | {"digest", "transcript_project"}
 
 
 def test_census_completeness() -> None:

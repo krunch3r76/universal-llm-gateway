@@ -221,6 +221,7 @@ def stage_cdp_prompt_with_skills(
     sidecar_ref: str | None = None,
     skills: list[str] | None = None,
     purpose: str | None = None,
+    dispatch_thread_id: str | None = None,
 ) -> StagedPrompt:
     """Stage CDP input; ``skills`` prepends slash/inline manifest.
 
@@ -273,6 +274,27 @@ def stage_cdp_prompt_with_skills(
         packet_path=packet_path,
         sidecar_ref=sidecar_ref,
     )
+    from agent_bus_store.house_pools import (
+        PoolsParseError,
+        apply_fable_house_staging,
+        resolve_house_thread_id,
+    )
+
+    house_id = resolve_house_thread_id(dispatch_thread_id, context_text=body)
+    if house_id:
+        try:
+            body, effective = apply_fable_house_staging(
+                body,
+                house_id=house_id,
+                skills=effective,
+            )
+        except PoolsParseError as exc:
+            if exc.cell and exc.cell.startswith("status@"):
+                raise CdpStagingError(
+                    f"status:blocked · pool_blocked · {exc}",
+                    code="pool_blocked",
+                ) from exc
+            raise CdpStagingError(str(exc), code="pool_blocked") from exc
     try:
         merged, _, _ = prepend_cdp_dispatch_skills(body, effective)
     except KeyError as exc:

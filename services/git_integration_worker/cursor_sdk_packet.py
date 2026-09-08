@@ -573,8 +573,26 @@ def resolve_prompt_preamble(
         and not _already_invokes_hypothesize_simulate(prompt_preamble, existing_text)
     ):
         parts.append(_HYPOTHESIZE_SIMULATE_PREAMBLE)
+    effective_skills: list[str] = list(skills or [])
+    if continuity_root_thread_id and is_conductor_packet:
+        from agent_bus_store.house_pools import (
+            load_continuity_card,
+            merge_house_pool_skills,
+            parse_pools,
+        )
+
+        card = load_continuity_card(continuity_root_thread_id)
+        if card:
+            try:
+                conductor_row = parse_pools(card)["conductor"]
+                effective_skills = merge_house_pool_skills(
+                    effective_skills,
+                    extra=conductor_row.must_load,
+                )
+            except Exception:
+                pass
     skill_block = _skill_invoke_block(
-        skills, prompt_preamble, existing_text, *parts
+        effective_skills, prompt_preamble, existing_text, *parts
     )
     if skill_block:
         parts.append(skill_block)

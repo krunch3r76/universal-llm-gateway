@@ -228,7 +228,7 @@ def derive_claude_manifest(
 # ── Cortex per-surface op partition (Option C) ────────────────────────────────
 
 Surface = Literal["life", "code"]
-_CORTEX_CENSUS_SIZE = 73
+_CORTEX_CENSUS_SIZE = 74
 _FOL_MARKERS = frozenset({"∀", "∃", "⟹", "¬", "∈"})
 
 

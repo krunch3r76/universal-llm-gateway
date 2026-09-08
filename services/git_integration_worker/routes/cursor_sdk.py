@@ -615,6 +615,33 @@ def _branch_debt_refusal(req: CursorDispatchRequest) -> str | None:
     return debt_admit_refusal(req.thread_id)
 
 
+def _conductor_pool_refusal(
+    req: CursorDispatchRequest,
+    *,
+    contract: str,
+    packet_text: str,
+) -> str | None:
+    """Refuse conductor-pool admit when the house card marks conductor blocked."""
+    if not req.continuity_root_thread_id:
+        return None
+    from services.git_integration_worker.cursor_sdk_packet import (
+        _CONDUCTOR_PACKET_MARKER_RE,
+    )
+
+    is_conductor = contract == "conductor" or (
+        bool(packet_text)
+        and _CONDUCTOR_PACKET_MARKER_RE.search(packet_text) is not None
+    )
+    if not is_conductor:
+        return None
+    from agent_bus_store.house_pools import conductor_pool_admit_refusal
+
+    reason = conductor_pool_admit_refusal(req.continuity_root_thread_id)
+    if reason is None:
+        return None
+    return f"status:blocked · pool_blocked · {reason}"
+
+
 def _lane_branch_standing(req: CursorDispatchRequest) -> dict[str, Any]:
     """Branch obligation plus the lane's open debt, for the admit response.
 
@@ -2633,6 +2660,18 @@ async def cursor_dispatch(
         else None
     )
     contract = (req.handoff_contract or inferred_contract or "consult").lower()
+    pool_refusal = _conductor_pool_refusal(
+        req, contract=contract, packet_text=packet_text
+    )
+    if pool_refusal is not None:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="pool_blocked",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=pool_refusal,
+            retryable=False,
+        )
     effective_read_only = _effective_read_only(req, contract)
     if effective_read_only and wire_lane_explicit(req) == "B":
         return _reject_pre_admission(

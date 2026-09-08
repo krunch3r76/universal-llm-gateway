@@ -1,198 +1,106 @@
-"""Computed lane binding from Cursor JSONL agent-bus touches (AMEND-R D1)."""
+"""Lane touch tallies from Cursor JSONL tool_use inputs — projection membership input.
+
+Counts agent-bus read/write touches per thread id from assistant ``tool_use``
+blocks only (E11: never parse tool responses). Used by transcript projection
+membership to classify windows as dominant_write, read_only, foreign_dominant,
+or no_touch relative to a root lane and its children.
+"""
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field
-from pathlib import Path
+from collections import defaultdict
 from typing import Any
 
-_WRITE_OPS = frozenset(
-    {
-        "send",
-        "post",
-        "reply",
-        "update",
-        "update_thread",
-        "close",
-        "lane_bind",
-        "add_tags",
-        "remove_tags",
-        "delete_turn",
-        "delete_thread",
-    }
-)
-_BUS_TOOLS = frozenset({"agent_bus", "agent_bus_read"})
+BusTouch = dict[str, int]
+LaneTouches = dict[str, BusTouch]
+
+from cortex_store.transcript_tool_normalize import iter_normalized_tool_uses
+
+_WRITE_OPS = frozenset({"send", "post", "reply"})
+_READ_OPS = frozenset({"get", "fetch", "wait", "read", "list", "search", "thread_get"})
 
 
-@dataclass
-class LaneTouch:
-    """Read/write touch counts for one continuity lane."""
-
-    writes: int = 0
-    reads: int = 0
-    last_write_index: int = -1
+def _iter_tool_uses(records: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    return list(iter_normalized_tool_uses(records))
 
 
-def _parse_inner_arguments(raw: Any) -> dict[str, Any]:
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str) and raw.strip():
-        try:
-            parsed = json.loads(raw)
-        except (json.JSONDecodeError, TypeError, ValueError):
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    return {}
+def _bus_thread_from_input(inp: dict[str, Any]) -> str | None:
+    for key in ("thread", "thread_id", "id"):
+        val = inp.get(key)
+        if val is not None and str(val).strip():
+            return str(val).strip()
+    return None
 
 
-def _lane_from_arguments(args: dict[str, Any]) -> str | None:
-    for key in ("thread", "thread_id"):
-        value = args.get(key)
-        if value is None:
+def _bus_op_from_input(inp: dict[str, Any], tool_name: str) -> str | None:
+    op = inp.get("op")
+    if isinstance(op, str) and op.strip():
+        return op.strip().lower()
+    if "agent_bus" in tool_name.lower():
+        return "send"
+    return None
+
+
+def lane_touches(records: list[dict[str, Any]]) -> LaneTouches:
+    """Return per-thread bus read/write tallies parsed from tool_use inputs."""
+    tallies: dict[str, dict[str, int]] = defaultdict(lambda: {"w": 0, "r": 0})
+    for tool_name, inp in _iter_tool_uses(records):
+        lname = tool_name.lower()
+        if lname != "agent_bus":
             continue
-        text = str(value).strip()
-        if text:
-            return text
-    return None
+        thread = _bus_thread_from_input(inp)
+        if thread is None:
+            continue
+        op = _bus_op_from_input(inp, tool_name)
+        if op in _WRITE_OPS:
+            tallies[thread]["w"] += 1
+        elif op in _READ_OPS:
+            tallies[thread]["r"] += 1
+    return {tid: dict(vals) for tid, vals in tallies.items()}
 
 
-def _bus_op_from_arguments(tool_name: str, args: dict[str, Any]) -> str | None:
-    if tool_name == "agent_bus_read":
-        return None
-    for key in ("tool", "op"):
-        value = args.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-def _record_touch_from_block(
-    block: dict[str, Any],
-    *,
-    line_index: int,
-    touches: dict[str, LaneTouch],
-) -> None:
-    name = str(block.get("name") or "").strip()
-    payload = block.get("input")
-    if not isinstance(payload, dict):
-        payload = block.get("args") if isinstance(block.get("args"), dict) else {}
-    if not isinstance(payload, dict):
-        return
-
-    tool_name = str(payload.get("toolName") or payload.get("tool_name") or name).strip()
-    if tool_name == "mcp":
-        tool_name = str(payload.get("toolName") or payload.get("tool_name") or "").strip()
-    if tool_name not in _BUS_TOOLS:
-        return
-
-    inner = _parse_inner_arguments(payload.get("arguments"))
-    nested = payload.get("args")
-    if isinstance(nested, dict):
-        inner = {**nested, **inner}
-        if "arguments" in nested:
-            inner = {**inner, **_parse_inner_arguments(nested.get("arguments"))}
-
-    lane = _lane_from_arguments(inner)
-    if lane is None:
-        lane = _lane_from_arguments(payload)
-    if lane is None:
-        return
-
-    touch = touches.setdefault(lane, LaneTouch())
-    op = _bus_op_from_arguments(tool_name, inner)
-    if tool_name == "agent_bus" and op in _WRITE_OPS:
-        touch.writes += 1
-        touch.last_write_index = line_index
-    else:
-        touch.reads += 1
-
-
-def _extract_touches_from_record(
-    record: dict[str, Any],
-    *,
-    line_index: int,
-    touches: dict[str, LaneTouch],
-) -> None:
-    message = record.get("message")
-    if isinstance(message, dict):
-        content = message.get("content")
-        if isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    _record_touch_from_block(
-                        block, line_index=line_index, touches=touches
-                    )
-    if record.get("type") == "toolCall" and isinstance(record.get("message"), dict):
-        _record_touch_from_block(
-            record["message"], line_index=line_index, touches=touches
-        )
-
-
-def lane_touches(jsonl_path: Path) -> dict[str, LaneTouch]:
-    """Return per-lane read/write touch tallies from a Cursor JSONL transcript."""
-    touches: dict[str, LaneTouch] = {}
-    if not jsonl_path.is_file():
-        return touches
-    with jsonl_path.open("r", encoding="utf-8") as fh:
-        for line_index, line in enumerate(fh):
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                record = json.loads(stripped)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(record, dict):
-                _extract_touches_from_record(
-                    record, line_index=line_index, touches=touches
-                )
-    return touches
-
-
-def dominant_lane(touches: dict[str, LaneTouch]) -> str | None:
-    """Argmax write touches; tie-break on latest write index."""
-    candidates = [(lane, touch) for lane, touch in touches.items() if touch.writes > 0]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda item: (item[1].writes, item[1].last_write_index))[0]
+def dominant_lane(
+    touches: LaneTouches,
+    root: str,
+    children: list[str],
+) -> str:
+    """Pick the lane with the highest write count; ties resolve to *root*."""
+    candidates = [root, *children]
+    best = root
+    best_w = -1
+    for lane in candidates:
+        w = touches.get(lane, {}).get("w", 0)
+        if w > best_w:
+            best_w = w
+            best = lane
+    return best
 
 
 def binding_for(
     lane: str,
-    touches: dict[str, LaneTouch],
+    touches: LaneTouches,
     *,
-    explicit_uuids: set[str],
-    conversation_uuid: str,
-) -> tuple[str, str | None]:
-    """Classify how a JSONL window binds to *lane* for discover/seal."""
-    lane_key = str(lane).strip()
-    dom = dominant_lane(touches)
-    if conversation_uuid in explicit_uuids:
-        return "explicit_cp", dom or lane_key
-
-    total_touches = sum(t.reads + t.writes for t in touches.values())
-    if total_touches == 0:
-        return "no_touch", dom
-
-    lane_touch = touches.get(lane_key)
-    if dom is None:
-        if lane_touch and lane_touch.reads > 0 and lane_touch.writes == 0:
-            return "read_only", dom
-        return "no_touch", dom
-
-    if dom == lane_key and lane_touch and lane_touch.writes >= 1:
-        return "dominant_write", dom
-
-    if lane_touch and lane_touch.reads > 0 and lane_touch.writes == 0:
-        return "read_only", dom
-
-    return "foreign_dominant", dom
+    explicit_uuids: set[str] | None = None,
+    transcript_id: str | None = None,
+) -> str:
+    """Classify how a window binds to *lane* from bus touch tallies."""
+    if explicit_uuids and transcript_id and transcript_id in explicit_uuids:
+        return "explicit_cp"
+    lane_touch = touches.get(lane, {})
+    w = lane_touch.get("w", 0)
+    r = lane_touch.get("r", 0)
+    if w == 0 and r == 0:
+        return "no_touch"
+    if w == 0 and r > 0:
+        return "read_only"
+    total_w = sum(t.get("w", 0) for t in touches.values())
+    if total_w > 0 and w < total_w and w <= max(
+        touches.get(other, {}).get("w", 0)
+        for other in touches
+        if other != lane
+    ):
+        return "foreign_dominant"
+    return "dominant_write"
 
 
-__all__ = [
-    "LaneTouch",
-    "binding_for",
-    "dominant_lane",
-    "lane_touches",
-]
+__all__ = ["binding_for", "dominant_lane", "lane_touches"]
