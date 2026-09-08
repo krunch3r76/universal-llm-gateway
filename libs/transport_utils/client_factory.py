@@ -51,6 +51,10 @@ EMAIL_BRIDGE_SOCK = os.environ.get(
 )
 DEFAULT_EMAIL_BRIDGE_URL = f"unix://{EMAIL_BRIDGE_SOCK}"
 
+# Host-process callers (cortex-api digest-close reader) reach journal-bridge via
+# the published localhost port; MCP relay uses the docker-network hostname.
+DEFAULT_JOURNAL_BRIDGE_URL = "http://localhost:8200"
+
 
 def parse_rag_url(url: str) -> tuple[str | None, str]:
     """Parse a service URL into (uds_path, base_url)."""

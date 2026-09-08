@@ -20,6 +20,7 @@ from universal_logging import get_logger
 from ...model.service_state import ServiceState
 from ..service_config import (
     GATEWAY_DIR,
+    apply_cortex_digest_close_env_pin,
     build_service_env,
     cortex_api_http_bind,
     ensure_cortex_api_config,
@@ -91,6 +92,11 @@ def _build_cortex_runtime_env(root: Path) -> dict[str, str]:
             / "agent-transcripts"
         )
     extra_env["CURSOR_AGENT_TRANSCRIPTS_ROOT"] = transcripts_root
+    apply_cortex_digest_close_env_pin(
+        extra_env,
+        bridge_token=cfg.bridge_token if cfg is not None else "",
+        journal_bridge_url=cfg.journal_bridge_url if cfg is not None else "",
+    )
     return extra_env
 
 

@@ -164,6 +164,31 @@ def build_service_env(
     return env
 
 
+def apply_cortex_digest_close_env_pin(
+    env: dict[str, str],
+    *,
+    bridge_token: str = "",
+    journal_bridge_url: str = "",
+) -> None:
+    """Pin digest-close auto-derive env on the cortex-api host process.
+
+    Fleet contract (digest-close T1, a:32142): hook on, journal-bridge URL,
+    and Bearer token available for ``digest_close_payload._read_journal_uri``.
+    """
+    from transport_utils import DEFAULT_JOURNAL_BRIDGE_URL
+
+    env["CORTEX_DIGEST_CLOSE_HOOK"] = "1"
+    url = (
+        journal_bridge_url.strip().rstrip("/")
+        or env.get("JOURNAL_BRIDGE_URL", "").strip().rstrip("/")
+        or DEFAULT_JOURNAL_BRIDGE_URL
+    )
+    env["JOURNAL_BRIDGE_URL"] = url
+    token = bridge_token.strip() or env.get("BRIDGE_TOKEN", "").strip()
+    if token:
+        env["BRIDGE_TOKEN"] = token
+
+
 def apply_checkout_code_version(
     env: dict[str, str], workspace_root: Path
 ) -> dict[str, str]:
@@ -244,6 +269,7 @@ class McpConfig:
     firefox_profile_dir: str = ""
     enable_context_tools: bool = True  # expose tasks/ context tools at all
     bridge_token: str = ""
+    journal_bridge_url: str = ""
     agent_bus_token: str = ""
     anthropic_api_key: str = ""
     openai_api_key: str = ""
@@ -640,6 +666,9 @@ def load_mcp_config() -> McpConfig | None:
             "BRAVE_SEARCH_API_KEY", "brave_search_api_key"
         ),
         bridge_token=_get_stripped_str("BRIDGE_TOKEN", "bridge_token"),
+        journal_bridge_url=_get_stripped_str(
+            "JOURNAL_BRIDGE_URL", "journal_bridge_url"
+        ),
         agent_bus_token=_get_stripped_str("AGENT_BUS_TOKEN", "agent_bus_token"),
         anthropic_api_key=(
             _get_stripped_str("ANTHROPIC_API_KEY", "anthropic_api_key")
