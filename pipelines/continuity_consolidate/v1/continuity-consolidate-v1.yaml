@@ -13,9 +13,11 @@
 #   distill — one bounded model call → structured fold (mission line,
 #             settled/live/next, ≤6 claims, relationships, stale flags).
 #   apply   — validate against the graph, then cortex writes: watermark +
-#             mission assertions (bus-quoted, never model-authored), model
-#             claims as assertions, relationships to existing entities only.
-#             Card regeneration is out of scope for v1 (projection lane).
+#             mission assertions (bus-quoted when the tip CHECKPOINT states a
+#             mission), resume line + claims as inference assertions,
+#             relationships to existing entities only, hub description =
+#             mission + settled/live/next + watermark (the card summary_row).
+#             Markdown card regeneration is out of scope for v1 (projection lane).
 #
 # Serial per root house: concurrency key = dispatch_thread_id. Idempotent:
 # the watermark assertion `WATERMARK: consolidated_through=<thread>#<turn>`
@@ -54,8 +56,9 @@ options:
   dry_run: false
   # Ignore the watermark (re-fold an already consolidated trigger).
   force: false
-  # Let the model retitle the hub entity (name/description). Off by default:
-  # renames are visible to every other seat and belong to an attended pass.
+  # Let the model rename the hub entity. Off by default: a rename is visible
+  # to every other seat and belongs to an attended pass. The description is
+  # always rewritten — it is the card's summary_row, i.e. the resume surface.
   allow_retitle: false
   # Upper bound on model-authored claims written per run. Mission/resume are
   # superseded in place (constant size); claims append — at the observed

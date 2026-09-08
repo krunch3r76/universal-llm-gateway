@@ -2,7 +2,8 @@
 
 Takes the distill fold, checks every reference against what ingest actually
 saw in the graph, and writes the delta through cortex-api in a fixed order:
-watermark → mission → resume → claims → relationships → (opt-in) retitle.
+watermark → mission → resume → claims → relationships → hub description
+(name change opt-in).
 Provenance classes and the write ledger live in ``_plan``.
 
 Boundaries kept deliberately narrow for v1: stale flags are *reported*, not
@@ -31,7 +32,14 @@ from ._cortex import (
     cortex_client,
     dispatch,
 )
-from ._plan import WritePlan, assert_args, norm, prior_by_prefix, quoted_mission
+from ._plan import (
+    WritePlan,
+    assert_args,
+    describe_hub,
+    norm,
+    prior_by_prefix,
+    quoted_mission,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -226,20 +234,25 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
                 )
                 existing_targets.add(target)
 
-            # 6. Retitle — opt-in only; renames are visible to every seat.
+            # 6. Hub description — the card's summary_row, the first thing a cold
+            #    seat reads. Owned by this pipeline as a projection of the current
+            #    fold; `name` stays opt-in (a rename is visible everywhere).
+            entity_args: dict[str, Any] = {
+                "entity_id": hub_id,
+                "description": describe_hub(
+                    mission=mission_text,
+                    resume=resume if isinstance(resume, dict) else {},
+                    trigger_ref=trigger_ref,
+                    stamp=stamp,
+                ),
+            }
             retitle = fold.get("retitle")
-            if isinstance(retitle, dict) and (
-                retitle.get("name") or retitle.get("description")
-            ):
+            if isinstance(retitle, dict) and retitle.get("name"):
                 if options.get("allow_retitle"):
-                    args: dict[str, Any] = {"entity_id": hub_id}
-                    if retitle.get("name"):
-                        args["name"] = str(retitle["name"])[:120]
-                    if retitle.get("description"):
-                        args["description"] = str(retitle["description"])[:600]
-                    await plan.run(client, "retitle", "entity_update", args)
+                    entity_args["name"] = str(retitle["name"])[:120]
                 else:
                     plan.skip("retitle", "allow_retitle=false", proposed=retitle)
+            await plan.run(client, "describe", "entity_update", entity_args)
 
         errors = plan.errors()
         result = {

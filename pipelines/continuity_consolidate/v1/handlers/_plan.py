@@ -74,8 +74,29 @@ def assert_args(
         **(_QUOTED if quoted else _FOLDED),
     }
     if supersedes:
+        # cortex-api chains lineage only for force=true + supersedes_id; without
+        # force the id is ignored and the prior row stays active (live run
+        # 6e96f80e left two WATERMARK rows).
         args["supersedes_id"] = supersedes
+        args["force"] = True
     return args
+
+
+def describe_hub(
+    *, mission: str, resume: dict[str, Any], trigger_ref: str, stamp: str
+) -> str:
+    """Hub description = the resume surface: mission, settled/live/next, watermark."""
+    parts = [
+        f"Mission: {mission.rstrip('.')}." if mission else "Mission: (none folded yet)."
+    ]
+    for key in ("settled", "live", "next"):
+        value = str(resume.get(key) or "").strip()
+        if value:
+            parts.append(f"{key.capitalize()}: {value.rstrip('.')}.")
+    parts.append(
+        f"Consolidated through {trigger_ref} at {stamp} (consolidate-continuity v1)."
+    )
+    return " ".join(parts)[:1200]
 
 
 def _written_id(reply: dict[str, Any]) -> Any:
