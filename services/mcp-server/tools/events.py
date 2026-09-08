@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 _QUERY_SOCKET = os.environ.get(
     "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
 )
+_CLAUDEBURST_QUERY_SOCKET = os.environ.get(
+    "CLAUDEBURST_EVENTS_QUERY_SOCK",
+    "/tmp/universal-protocol/claudeburst-events-query.sock",
+)
+_VALID_TARGETS = ("ulg", "claudeburst")
 _QUERY_TIMEOUT = 10.0
 _CURSOR_PREVIEW_LIMIT = 50
 _CURSOR_PREVIEW_BLOCKED = frozenset(
@@ -78,6 +83,11 @@ def _resolve_target(target: str) -> _EventQueryTarget | None:
             name="ulg",
             url=f"unix://{_QUERY_SOCKET}",
         )
+    if normalized == "claudeburst":
+        return _EventQueryTarget(
+            name="claudeburst",
+            url=f"unix://{_CLAUDEBURST_QUERY_SOCKET}",
+        )
     return None
 
 
@@ -92,7 +102,10 @@ def _query_event_service(
     resolved_target = _resolve_target(target)
     if resolved_target is None:
         return {
-            "error": (f"Unknown observability target: {target}. Valid targets: ulg")
+            "error": (
+                f"Unknown observability target: {target}. "
+                f"Valid targets: {', '.join(_VALID_TARGETS)}"
+            )
         }
     try:
         client_ctx = make_sync_client(
@@ -146,7 +159,8 @@ def register_event_tools(mcp: FastMCP) -> None:
 
         operation: named operation (see table below)
         params: dict with operation-specific parameters (optional)
-        target: event service target, default "ulg"
+        target: event service target — "ulg" (default fleet) or "claudeburst"
+                 (perps embedded event store on claudeburst-events-query.sock)
 
         Operations:
           recent-failures      (limit?)              — failures/errors in current session
@@ -249,7 +263,8 @@ def register_event_tools(mcp: FastMCP) -> None:
         """Run bounded observability queries suitable for cursor_safe profile.
 
         Prefer this tool when the caller only needs a small recent slice of
-        telemetry. Use `target="ulg"` for the default repo-wide instance.
+        telemetry. Use `target="ulg"` for fleet events or `target="claudeburst"`
+        for claudeburst.perps.* signals on the embedded perps event store.
         """
         if operation not in _VALID_OPERATIONS:
             return {
