@@ -68,12 +68,20 @@ def hub_entity_id(root_thread: str) -> str:
     return f"document:{root_thread}-continuity"
 
 
-async def resolve_hub(client: Any, root_thread: str) -> dict[str, Any] | None:
-    """Return the hub entity dict, or None when the house has no hub yet.
+def hub_card_uri(root_thread: str) -> str:
+    return f"cortex://notes/system/threads/{root_thread}-continuity.md"
 
-    The hub is minted by the CHECKPOINT fold, not by this job — a house that
-    has never checkpointed has nothing to consolidate into.
-    """
+
+def default_hub_description(root_thread: str, root_meta: dict[str, Any]) -> str:
+    """Minimal resume surface when no card write has happened yet."""
+    summary = compact(root_meta.get("summary") or "", 400)
+    slug = root_meta.get("slug") or root_thread
+    mission = summary or f"Continuity house for agent-bus:{root_thread} ({slug})."
+    return f"Mission: {mission} agent-bus:{root_thread}"
+
+
+async def resolve_hub(client: Any, root_thread: str) -> dict[str, Any] | None:
+    """Return the hub entity dict, or None when the house has no hub yet."""
     entity_id = hub_entity_id(root_thread)
     reply = await dispatch(
         client, "entity_get", {"entity_id": entity_id, "intent": "full"}
@@ -82,6 +90,53 @@ async def resolve_hub(client: Any, root_thread: str) -> dict[str, Any] | None:
         return None
     entity = reply.get("entity") if isinstance(reply.get("entity"), dict) else reply
     return entity if entity.get("id") else None
+
+
+async def ensure_hub(
+    client: Any, root_thread: str, root_meta: dict[str, Any] | None = None
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Return the hub entity, bootstrapping a minimal hub when the house has none.
+
+    Multi-lane AMEND-A: every ``role:root`` house may fold on CLOSEOUT even before
+    a CHECKPOINT birth mints the card — the graph hub is created here on first
+    ingest when missing. Explicit card writes (9740, 10327, …) remain the richer
+    reconstitution surface; this bootstrap only unblocks the pipeline.
+    """
+    hub = await resolve_hub(client, root_thread)
+    if hub is not None:
+        return hub, None
+
+    meta = root_meta or {}
+    entity_id = hub_entity_id(root_thread)
+    reply = await dispatch(
+        client,
+        "entity_create",
+        {
+            "id": entity_id,
+            "type": "document",
+            "name": compact(
+                f"{root_thread} {meta.get('slug') or 'continuity'} house", 120
+            ),
+            "description": default_hub_description(root_thread, meta),
+            "source_uri": hub_card_uri(root_thread),
+            "duplicate_name_ok": True,
+        },
+    )
+    if "error" in reply:
+        hub = await resolve_hub(client, root_thread)
+        if hub is not None:
+            return hub, "race_recovered"
+        return None, str(reply.get("error"))
+
+    entity = reply.get("entity") if isinstance(reply.get("entity"), dict) else reply
+    if entity.get("id"):
+        logger.info(
+            "continuity ingest bootstrapped hub=%s root=%s",
+            entity_id,
+            root_thread,
+        )
+        return entity, "bootstrapped"
+    return None, "entity_create_no_id"
 
 
 async def active_assertions(client: Any, entity_id: str) -> list[dict[str, Any]]:

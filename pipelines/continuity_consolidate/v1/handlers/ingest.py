@@ -8,7 +8,7 @@ never talks to agent-bus.
 
 Skip sentinels (``json.skip``), each terminal for the run:
 - ``missing_options``          — hook payload malformed (no root/trigger)
-- ``no_hub``                   — house has no ``document:{root}-continuity`` yet
+- ``no_hub``                   — hub bootstrap failed (``ensure_hub`` could not mint)
 - ``superseded_by_watermark``  — an equal-or-newer trigger already consolidated
 """
 
@@ -26,9 +26,9 @@ from ._cortex import (
     active_assertions,
     compact,
     cortex_client,
+    ensure_hub,
     parse_watermark,
     relationships,
-    resolve_hub,
 )
 
 logger = logging.getLogger(__name__)
@@ -123,10 +123,11 @@ class ContinuityConsolidateIngestHandler(BaseHandler):
                 expected=["root_thread", "trigger.thread", "trigger.turn"],
             )
 
+        root_meta = options.get("root") or {}
         async with cortex_client() as client:
-            hub = await resolve_hub(client, root_thread)
+            hub, bootstrap = await ensure_hub(client, root_thread, root_meta)
             if hub is None:
-                return _skip("no_hub", root_thread=root_thread)
+                return _skip("no_hub", root_thread=root_thread, detail=bootstrap)
             hub_id = str(hub["id"])
             rows = await active_assertions(client, hub_id)
             rels = await relationships(client, hub_id)
@@ -146,6 +147,7 @@ class ContinuityConsolidateIngestHandler(BaseHandler):
         result = {
             "ok": True,
             "hub_id": hub_id,
+            "hub_bootstrap": bootstrap,
             "hub": {"name": hub.get("name"), "description": hub.get("description")},
             "assertion_ids": [row.get("id") for row in rows],
             "claims": [row.get("claim") for row in rows],

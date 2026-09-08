@@ -60,11 +60,18 @@ def test_resolve_root_direct_lane_and_none(bus_db):
     root = _thread(
         "house", subject="CHECKPOINT — open", body=_CHECKPOINT_BODY, tags=["role:root"]
     )
+    money = _thread(
+        "money",
+        subject="CHECKPOINT — open",
+        body=_CHECKPOINT_BODY,
+        tags=["role:root"],
+    )
     lane = _thread("lane", subject="dispatch")
     orphan = _thread("orphan", subject="dispatch")
     associate_lane(thread_id=lane, parent_thread_id=root, lane_role="sub_mission")
 
     assert trig.resolve_root(root) == root
+    assert trig.resolve_root(money) == money
     assert trig.resolve_root(lane) == root
     assert trig.resolve_root(orphan) is None
 
