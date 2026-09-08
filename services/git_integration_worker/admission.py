@@ -436,6 +436,15 @@ class WorkAdmissionController:
             return
         if self.active_count() != 0:
             return
+        from services.git_integration_worker.cursor_sdk_restart_bridge_gate import (
+            defer_restart_for_live_bridges,
+        )
+
+        if defer_restart_for_live_bridges(
+            force=True,
+            intent_id=self._intent_id,
+        ):
+            return
         self._completed_epochs.add(self._drain_epoch)
         self._progress.note_completed(time.monotonic())
         drain_events.emit_drain_completed(

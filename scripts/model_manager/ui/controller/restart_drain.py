@@ -206,6 +206,22 @@ class RestartDrainGate:
         proceed = False
         try:
             if force:
+                if service == "git_integration_worker":
+                    from services.git_integration_worker.cursor_sdk_restart_bridge_gate import (
+                        defer_restart_for_live_bridges,
+                        live_bridge_blocks_restart,
+                    )
+
+                    if live_bridge_blocks_restart(force=True):
+                        defer_restart_for_live_bridges(force=True)
+                        return DrainOutcome(
+                            state="draining",
+                            service=service,
+                            reason=(
+                                "git_integration_worker has live operator bridges; "
+                                "force restart deferred until bridges exit"
+                            ),
+                        )
                 logger.info("restart of %s forced; skipping drain check", service)
                 proceed = True
                 return None  # slot held; proceed

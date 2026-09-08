@@ -519,6 +519,86 @@ def test_empty_state_root_dir_eligible_via_home_store(
     assert child_row["state_root"] == str(store)
 
 
+def test_resume_of_bridge_death_parent_exempts_work_key_409(
+    tmp_path: Path,
+) -> None:
+    """AC-S1-F2: resume_of parent with bridge_read_timeout + resume_eligible admits."""
+    from services.git_integration_worker.models.cursor_api import CursorDispatchResponse
+
+    work_key = "todo:dispatch-substrate-v2-s1"
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "agent.db").write_text("x")
+    ledger = CursorDispatchLedger.instance()
+    parent_req = _req(dispatch_id="parent-bridge", message="parent")
+    parent_fp = ledger.fingerprint(parent_req)
+    with ledger._connect() as conn:
+        conn.execute(
+            "INSERT INTO cursor_sdk_dispatches "
+            "(dispatch_id, fingerprint, thread_id, execution_id, resolved_model, "
+            "message_present, status, work_key, state_root, sdk_agent_id, "
+            "terminal_status, record_json) "
+            "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
+            (
+                "parent-bridge",
+                parent_fp,
+                parent_req.thread_id,
+                parent_req.execution_id,
+                "composer-2.5",
+                "running",
+                work_key,
+                str(store),
+                "agent-parent",
+                "failed",
+                json.dumps(
+                    {
+                        "resume_eligible": True,
+                        "bridge_death_degraded_reason": "bridge_read_timeout",
+                    }
+                ),
+            ),
+        )
+
+    child = _req(
+        dispatch_id="child-bridge-resume",
+        resume_of="parent-bridge",
+        work_key=work_key,
+    )
+    child_fp = ledger.fingerprint(child)
+    ledger.admit(
+        req=child,
+        fingerprint=child_fp,
+        execution_id=child.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=child.dispatch_id,
+            thread_id=child.thread_id,
+            model_id="composer-2.5",
+        ),
+        work_key=work_key,
+    )
+
+
+def test_bridge_death_resume_eligible_while_parent_running(
+    tmp_path: Path,
+) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "agent.db").write_text("x")
+    _insert_parent_row(
+        status="running",
+        state_root=str(store),
+        record_json={
+            "resume_eligible": True,
+            "bridge_death_degraded_reason": "bridge_read_timeout",
+        },
+    )
+    ledger = CursorDispatchLedger.instance()
+    assert resume_eligibility_reason(ledger, parent_id="parent-disp") is None
+
+
 def test_multi_hop_resume_of_finds_ancestor_home_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

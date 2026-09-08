@@ -108,10 +108,6 @@ from services.git_integration_worker.cursor_sdk_concurrency_posture import (
     lease_is_isolated_worktree,
     write_lease_slot_limit,
 )
-from services.git_integration_worker.cursor_sdk_conductor_conflict import (
-    find_open_conductor_holder_conn,
-    should_block_implement_for_open_conductor,
-)
 from services.git_integration_worker.cursor_sdk_context import (
     CursorSdkParityError,
     build_agent_options,
@@ -134,7 +130,6 @@ from services.git_integration_worker.cursor_sdk_dispatch_context import (
 )
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_closeout_reconciled,
-    emit_sdk_implement_unresolved_source_ref,
     emit_sdk_lane_b_admit_bound,
     emit_sdk_lane_b_mint_rolled_back,
     emit_sdk_lane_b_minted,
@@ -295,6 +290,7 @@ from services.git_integration_worker.models.cursor_api import (
     BranchDischargeRequest,
     CursorDispatchRequest,
     CursorDispatchResponse,
+    LaneWorktreeReleaseRequest,
 )
 
 logger = get_logger(__name__)
@@ -306,6 +302,18 @@ router = APIRouter(prefix="/api/v1/cursor", tags=["cursor-sdk"])
 _CONFIG: WorkerConfig = load_config()
 _SDK_TIMEOUT_S = float(os.environ.get("CURSOR_SDK_TIMEOUT", "1800"))
 _SDK_TIMEOUT_BUFFER_S = 120.0
+_JUDGMENT_IDLE_BUDGET_S = float(
+    os.environ.get("CURSOR_SDK_JUDGMENT_IDLE_BUDGET_S", "1800")
+)
+_JUDGMENT_IDLE_CONTRACTS = frozenset({"none", "consult", "conductor"})
+
+
+def _outer_idle_budget_s(*, contract: str) -> float:
+    """Idle-since-progress budget; judgment contracts floor at env budget."""
+    base = _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S
+    if contract.lower() in _JUDGMENT_IDLE_CONTRACTS:
+        return max(base, _JUDGMENT_IDLE_BUDGET_S)
+    return base
 # Bounded slice for the idle-since-progress outer wait loop. Overshoot on
 # timeout fire is at most one slice; ~60 wakeups per 30-min idle window.
 _SDK_IDLE_WAIT_SLICE_S = 30.0
@@ -725,6 +733,10 @@ class _LiveToolCallCounter:
         if getattr(observation, "status", None) == "completed":
             self._last_progress_at = self._now_fn()
 
+    def note_progress(self, observation: object = None) -> None:
+        """Advance idle clock on successful stream tool calls."""
+        self.bump(observation)
+
     def value(self) -> int:
         return self._n
 
@@ -932,10 +944,10 @@ def _run_sdk_sync(
         )
         if live_counter is None:
             live_counter = _LiveToolCallCounter()
-        outer_idle_s = _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S
+        outer_idle_s = _outer_idle_budget_s(contract=ctx.handoff_contract or "none")
 
         def _on_tool_call(observation: object = None) -> None:
-            live_counter.bump(observation)
+            live_counter.note_progress(observation)
             touch_bridge_read_deadline(
                 client,
                 idle_budget_s=outer_idle_s,
@@ -1605,7 +1617,9 @@ async def _deliver_sdk_closeout(
         resolved_model=req.model,
     )
     run_outcome = resolve_run_outcome_label(degraded_reason)
-    if delivery.closeout_status.value == "partial":
+    if delivery.closeout_status.value == "failed":
+        run_outcome = "degraded"
+    elif delivery.closeout_status.value == "partial" and degraded_reason:
         run_outcome = "degraded"
     duration_s = outcome.duration_ms / 1000.0
     completed_reasons = list(
@@ -1837,7 +1851,8 @@ async def _run_sdk_dispatch_gated(
     worktree_isolated: bool = False,
 ) -> None:
     reply_to = req.caller_agent or "dispatch"
-    outer_timeout_s = _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S
+    contract = (req.handoff_contract or "none").lower()
+    outer_timeout_s = _outer_idle_budget_s(contract=contract)
     gate_loop = asyncio.get_running_loop()
     capacity_lane = sdk_dispatch_lane(
         caller_agent=req.caller_agent,
@@ -2022,6 +2037,24 @@ async def _run_sdk_dispatch_gated(
                 fut.exception() if fut.done() and not fut.cancelled() else None,
             )
         )
+        if tool_call_count > 0:
+            from services.git_integration_worker.cursor_sdk_closeout.bridge_death_harvest import (
+                emit_partial_harvest_on_bridge_death,
+            )
+
+            await asyncio.to_thread(
+                emit_partial_harvest_on_bridge_death,
+                req.dispatch_id,
+                tool_call_count=tool_call_count,
+                last_tools=[],
+                cortex_writes_observed=[],
+                thread_id=req.thread_id,
+                forensics={
+                    "cause": "outer_idle_timeout",
+                    "since_last_progress_s": since_last_progress_s,
+                    "timeout_s": outer_timeout_s,
+                },
+            )
         env = error_envelope(
             code="CURSOR_SDK_TIMEOUT",
             message=(
@@ -2213,7 +2246,23 @@ async def _finalize_bridge_abort_partial(
     """Partial terminal when bridge dies after substantive tool work (10269 class)."""
     forensics = exc.forensics
     tool_call_count = int(forensics.get("stream_tool_call_count") or 0)
-    sidecar_ref = sidecar_workspaces_ref(req.dispatch_id)
+    last_tools = forensics.get("last_tool_calls")
+    if not isinstance(last_tools, list):
+        last_tools = []
+    from services.git_integration_worker.cursor_sdk_closeout.bridge_death_harvest import (
+        emit_partial_harvest_on_bridge_death,
+    )
+
+    harvest = await asyncio.to_thread(
+        emit_partial_harvest_on_bridge_death,
+        req.dispatch_id,
+        tool_call_count=tool_call_count,
+        last_tools=last_tools,
+        cortex_writes_observed=[],
+        thread_id=req.thread_id,
+        forensics=forensics,
+    )
+    sidecar_ref = harvest.get("sidecar_uri") or sidecar_workspaces_ref(req.dispatch_id)
     sidecar_body = _format_bridge_abort_sidecar(
         dispatch_id=req.dispatch_id,
         forensics=forensics,
@@ -2805,6 +2854,42 @@ async def cursor_dispatch(
                     thread_id=req.thread_id,
                     branch_name=record.branch_name,
                 )
+        if selected_lane == "B" and binding.binding_kind in (
+            "minted",
+            "adopted",
+            "reused",
+            "nested",
+            "resumed",
+        ):
+            from services.git_integration_worker.cursor_sdk_worktree import (
+                pin_lane_worktree_on_admit,
+            )
+
+            try:
+                await asyncio.to_thread(
+                    pin_lane_worktree_on_admit,
+                    source_repo=resolved_source_repo,
+                    thread_id=req.thread_id,
+                    dispatch_id=req.dispatch_id,
+                    worktree_path=binding.workspace,
+                )
+            except Exception as exc:
+                await _rollback_lane_b_mint_if_needed(
+                    dispatch_id=req.dispatch_id,
+                    thread_id=req.thread_id,
+                    source_repo=resolved_source_repo,
+                    minted_lane_b=minted_lane_b,
+                    reason="lane_pin_failed",
+                )
+                return _reject_pre_admission(
+                    req,
+                    worker_error_code="CURSOR_LANE_PIN_FAILED",
+                    failure_layer="admission",
+                    http_status=503,
+                    detail_summary=str(exc),
+                    retryable=True,
+                    validation_stage="lane_pin",
+                )
     except WorktreeMintError as exc:
         return _reject_pre_admission(
             req,
@@ -3385,3 +3470,32 @@ async def cursor_branch_discharge(
     if not result.discharged:
         return JSONResponse(status_code=409, content=payload)  # type: ignore[return-value]
     return payload
+
+
+@router.post(
+    "/lane-worktree/release",
+    summary="Operator release of a terminal lane worktree (explicit lead release).",
+)
+async def cursor_lane_worktree_release(
+    req: LaneWorktreeReleaseRequest, request: Request
+) -> dict:
+    """Release a lane worktree waiving only the UNHARVESTED gate (AMEND-A)."""
+    from services.git_integration_worker.cursor_sdk_worktree_release import (
+        release_lane_worktree,
+    )
+
+    cfg = _config(request)
+    actor = req.actor or "operator"
+    result = await asyncio.to_thread(
+        release_lane_worktree,
+        source_repo=cfg.source_repo,
+        thread_id=req.thread_id,
+        dispatch_id=req.dispatch_id,
+        allow_unharvested=True,
+        reason=f"operator_release:{actor}",
+        actor=actor,
+    )
+    return {
+        "released": result.released,
+        "refusal": result.refusal.value if result.refusal else None,
+    }

@@ -46,6 +46,7 @@ ResumeIneligibleReason = Literal[
     "dispatch_id_equals_parent",
     "nest_under_conflict",
     "thread_mismatch",
+    "bridge_death_not_resume_eligible",
 ]
 
 _LIVE_STATUSES = frozenset({"queued", "admitted", "running", "parked_waiting"})
@@ -201,6 +202,30 @@ def resolve_store_bearing_dispatch_id(*, parent_id: str) -> str:
     return parent_id
 
 
+def _record_data(record_json: str | None) -> dict[str, Any]:
+    try:
+        data = json.loads(record_json or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _bridge_death_resume_eligible(record_json: str | None) -> bool:
+    rec = _record_data(record_json)
+    if not rec.get("resume_eligible"):
+        return False
+    reason = str(rec.get("bridge_death_degraded_reason") or "")
+    if reason == "bridge_read_timeout":
+        return True
+    forensics = rec.get("forensics")
+    if isinstance(forensics, dict):
+        cause = str(forensics.get("cause") or "")
+        signal = str(forensics.get("signal_name") or "")
+        if "bridge_read_timeout" in cause or signal == "SIGTERM":
+            return True
+    return reason == "bridge_read_timeout"
+
+
 def resume_eligibility_reason(
     ledger: CursorDispatchLedger, *, parent_id: str
 ) -> ResumeIneligibleReason | None:
@@ -209,7 +234,15 @@ def resume_eligibility_reason(
     if row is None:
         return "parent_missing"
     if row.status in _LIVE_STATUSES:
+        if _bridge_death_resume_eligible(row.record_json):
+            return None
         return "parent_still_live"
+    if row.terminal_status == "failed" and not _bridge_death_resume_eligible(
+        row.record_json
+    ):
+        rec = _record_data(row.record_json)
+        if rec.get("bridge_death_partial_uri") and not rec.get("resume_eligible"):
+            return "bridge_death_not_resume_eligible"
     if not row.sdk_agent_id:
         return "sdk_agent_id_missing"
     store_dir = resolve_sdk_store_dir(

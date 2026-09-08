@@ -713,6 +713,25 @@ def _merge_record_json_conn(
     )
 
 
+def _resume_bridge_death_work_key_exempt(
+    conn: sqlite3.Connection, *, resume_of: str
+) -> bool:
+    """True when ``resume_of`` parent failed bridge death with ``resume_eligible``."""
+    row = conn.execute(
+        "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+        (resume_of,),
+    ).fetchone()
+    if row is None:
+        return False
+    try:
+        data = json.loads(row["record_json"] or "{}")
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, dict) or not data.get("resume_eligible"):
+        return False
+    return str(data.get("bridge_death_degraded_reason") or "") == "bridge_read_timeout"
+
+
 def _migrate_cancelled_status(conn: sqlite3.Connection) -> None:
     """Add ``cancelled`` terminal + ``work_fingerprint`` via table rebuild."""
     row = conn.execute(
@@ -1245,6 +1264,10 @@ class CursorDispatchLedger:
                 if peer is not None:
                     exempt = False
                     if nest_under and peer["dispatch_id"] == nest_under:
+                        exempt = True
+                    if req.resume_of and _resume_bridge_death_work_key_exempt(
+                        conn, resume_of=req.resume_of
+                    ):
                         exempt = True
                     if req.resume_of:
                         term = conn.execute(
