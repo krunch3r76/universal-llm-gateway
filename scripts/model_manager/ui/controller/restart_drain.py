@@ -181,8 +181,18 @@ class RestartDrainGate:
     def _probe(self, service: str) -> BusyProbe:
         return self._probes.get(service, NullBusyProbe())
 
-    async def evaluate(self, service: str, *, force: bool) -> DrainOutcome | None:
+    async def evaluate(
+        self, service: str, *, force: bool, supervised_drain: bool = False
+    ) -> DrainOutcome | None:
         """Decide whether a restart may proceed.
+
+        ``supervised_drain`` marks the durable git-worker drain path: it takes
+        the mutex like ``force`` (no busy probe — the supervisor owns occupancy)
+        but is **not** an immediate kill, so the live-bridge refusal that
+        protects operator bridges from ``force=true`` does not apply. The drain
+        keep-awaits (or parks, ``park_live``) those bridges instead; refusing
+        to arm while they are live would make park-for-restart unreachable
+        exactly when it is needed (steer-restart v1 AMEND-B).
 
         Returns:
             None — proceed; the restart-mutex slot is HELD. The caller MUST call
@@ -206,7 +216,7 @@ class RestartDrainGate:
         proceed = False
         try:
             if force:
-                if service == "git_integration_worker":
+                if service == "git_integration_worker" and not supervised_drain:
                     from services.git_integration_worker.cursor_sdk_restart_bridge_gate import (
                         defer_restart_for_live_bridges,
                         live_bridge_blocks_restart,
@@ -222,7 +232,8 @@ class RestartDrainGate:
                                 "force restart deferred until bridges exit"
                             ),
                         )
-                logger.info("restart of %s forced; skipping drain check", service)
+                if not supervised_drain:
+                    logger.info("restart of %s forced; skipping drain check", service)
                 proceed = True
                 return None  # slot held; proceed
 
@@ -473,7 +484,7 @@ async def run_gated_drain_supervised(
     ``park_live`` (steer-restart v1) makes the supervisor park live cursor-sdk
     dispatches at drain start instead of keep-awaiting them.
     """
-    outcome = await gate.evaluate(service, force=True)
+    outcome = await gate.evaluate(service, force=True, supervised_drain=True)
     if outcome is not None:
         existing = store.active_for_service(service)
         if existing is not None:
@@ -519,7 +530,7 @@ async def run_gated_drain_supervised_blocking(
     reason: str,
 ) -> dict[str, Any]:
     """Await supervised drain to a terminal intent status before returning to fleet."""
-    outcome = await gate.evaluate(service, force=True)
+    outcome = await gate.evaluate(service, force=True, supervised_drain=True)
     if outcome is not None:
         existing = store.active_for_service(service)
         if existing is None:
@@ -566,7 +577,7 @@ async def resume_drain_supervision(
     gate: RestartDrainGate, service: str, *, supervisor: Any, intent: Any
 ) -> None:
     """Resume a persisted pending intent after manage process restart."""
-    outcome = await gate.evaluate(service, force=True)
+    outcome = await gate.evaluate(service, force=True, supervised_drain=True)
     if outcome is not None:
         return
     _spawn_supervised(gate, service, supervisor, intent)
