@@ -241,8 +241,13 @@ def _tape_dispatch(
     budget_bytes: int | None = None,
     harvest: bool | None = None,
     max_seals: int | None = None,
+    format: str | None = None,
 ) -> dict[str, Any]:
-    """Relay GET /threads/{thread}/tape — continuity tape render."""
+    """Relay GET /threads/{thread}/tape — continuity tape render.
+
+    ``format='verbal'`` is forwarded as a query param so the store adds
+    ``verbal_messages`` without dropping mechanical ``messages``.
+    """
     lane = str(thread or thread_id or "")
     if not lane:
         return {"error": "tape requires: thread", "reason": "missing_arg"}
@@ -253,6 +258,8 @@ def _tape_dispatch(
         params.append("harvest=true")
     if max_seals is not None:
         params.append(f"max_seals={int(max_seals)}")
+    if format:
+        params.append(f"format={format}")
     query = f"?{'&'.join(params)}" if params else ""
     result = relay("agent-bus", "GET", f"/threads/{lane}/tape{query}")
     if isinstance(result, dict) and "error" in result:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
@@ -23,8 +23,18 @@ async def tape_route(
     budget_bytes: int = Query(512_000, ge=1024, le=8_000_000),
     harvest: bool = Query(False),
     max_seals: int = Query(8, ge=0, le=64),
+    format: Literal["verbal"] | None = Query(
+        None,
+        description=(
+            "When verbal, add verbal_messages ({role, content} only) "
+            "alongside intact mechanical messages."
+        ),
+    ),
 ) -> dict[str, Any]:
-    """Render the messages+extras continuity tape for a root lane."""
+    """Render the messages+extras continuity tape for a root lane.
+
+    ``format=verbal`` adds ``verbal_messages``; mechanical ``messages`` stay.
+    """
     tags = load_thread_tags(thread_id)
     if classify_thread(tags)["spine"] != "root":
         raise HTTPException(
@@ -42,6 +52,7 @@ async def tape_route(
             budget_bytes=budget_bytes,
             harvest=harvest,
             max_seals=max_seals,
+            format=format,
         )
     except HTTPException:
         raise

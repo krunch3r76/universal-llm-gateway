@@ -32,6 +32,7 @@ from .agent_bus import (
     _wait_dispatch,
 )
 from .agent_bus.lane_associations import _lane_current_dispatch
+from .agent_bus.resume_bundle import _resume_bundle_dispatch
 from .agent_bus.threads import _job_state_dispatch, _tape_dispatch, _thread_get_dispatch
 
 if TYPE_CHECKING:
@@ -52,6 +53,7 @@ AGENT_BUS_READ_OPS: dict[str, Callable[..., Any]] = {
     "wait": _wait_dispatch,
     "lane_current": _lane_current_dispatch,
     "tape": _tape_dispatch,
+    "resume_bundle": _resume_bundle_dispatch,
 }
 
 
@@ -78,7 +80,8 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
           get          (thread, turn_number)  — turn_number may be int or "latest"
           wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?)
           lane_current (thread) — derived current lane parentage (state=none when unbound)
-          tape         (thread, budget_bytes?) — continuity messages+extras dump (read-only render)
+          tape           (thread, budget_bytes?, harvest?, max_seals?, format?) — continuity dump; format=verbal adds verbal_messages ({role,content} only) alongside mechanical messages
+          resume_bundle  (thread) — verbal tape + projection pointers; no graph/consolidation
 
         Note: mark_read=true mutates per-turn read pointers, not thread/turn
         content; it is permitted here as a read-cursor side effect.

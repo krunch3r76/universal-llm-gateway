@@ -16,6 +16,7 @@ from cortex_store.verbatim_succession import (
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
+from .tape_verbal import to_verbal_messages
 
 _WINDOW_LINE_RE = re.compile(
     r"transcript_id=(?P<uuid>[0-9a-f-]+)\s*·\s*turns@cp=(?P<turns>\d+)",
@@ -666,8 +667,14 @@ def render_tape(
     thread_id: str,
     budget_bytes: int = _DEFAULT_BUDGET_BYTES,
     harvest_stats: dict[str, Any] | None = None,
+    format: str | None = None,
 ) -> dict[str, Any]:
-    """Render messages+extras dump for a continuity lane (read-only)."""
+    """Render messages+extras dump for a continuity lane (read-only).
+
+    ``format='verbal'`` adds ``verbal_messages`` ({role, content} only) after
+    overflow degrade; mechanical ``messages`` stay intact. Other format values
+    are ignored (no verbal field).
+    """
     from cortex_store.db import cortex_conn, decode_row
 
     json_fields = frozenset({"domains", "decisions", "open_items", "entity_ids"})
@@ -881,6 +888,8 @@ def render_tape(
         "segment_count": len(segments),
         "mismatch": mismatch,
     }
+    if format == "verbal":
+        body["verbal_messages"] = to_verbal_messages(messages)
     return {"open_line": open_line, "summary": summary, **body}
 
 
