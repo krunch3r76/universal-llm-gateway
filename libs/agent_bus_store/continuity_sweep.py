@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from typing import Any
 
 from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
@@ -26,17 +25,13 @@ from .continuity_consolidate_trigger import (
     is_closeout_subject,
     resolve_root,
 )
+from .continuity_watermark import hub_entity_id, parse_watermark
 from .db.lane_associations import list_substantiated_child_thread_ids
 from .db.threads import list_threads_v2
 from .db.turns import get_turns
 
 log = logging.getLogger("agent_bus.continuity_sweep")
 
-SEEDED_BY = "continuity-consolidate"
-WATERMARK_PREFIX = "WATERMARK: consolidated_through="
-_WATERMARK_RE = re.compile(
-    r"consolidated_through=(?P<thread>[0-9a-zA-Z_-]+)#(?P<turn>\d+)"
-)
 _CORTEX_TIMEOUT_S = 15.0
 _SCAN_WINDOW = 120
 _MAX_ROOTS_DEFAULT = 5
@@ -63,27 +58,6 @@ def max_roots_per_tick() -> int:
         return max(1, int(raw))
     except ValueError:
         return _MAX_ROOTS_DEFAULT
-
-
-def hub_entity_id(root_thread: str) -> str:
-    return f"document:{root_thread}-continuity"
-
-
-def parse_watermark(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Newest pipeline-authored WATERMARK row, decoded."""
-    for row in sorted(rows, key=lambda r: int(r.get("id") or 0), reverse=True):
-        if row.get("seeded_by") != SEEDED_BY:
-            continue
-        claim = str(row.get("claim") or "")
-        match = _WATERMARK_RE.search(claim)
-        if claim.startswith(WATERMARK_PREFIX) and match:
-            return {
-                "assertion_id": row.get("id"),
-                "thread": match.group("thread"),
-                "turn": int(match.group("turn")),
-                "claim": claim,
-            }
-    return None
 
 
 def _trigger_is_stale(

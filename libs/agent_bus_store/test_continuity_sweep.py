@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from agent_bus_store import continuity_sweep as sweep
+from agent_bus_store import continuity_watermark as wm
 from agent_bus_store.db import create_thread_with_turn, init_db
 from agent_bus_store.db.lane_associations import associate_lane
 from agent_bus_store.db.turns import insert_turn
@@ -65,32 +66,8 @@ def _closeout(thread_id: str, *, n: int = 1) -> int:
     return turn_number
 
 
-class TestParseWatermark:
-    def test_parses_newest_pipeline_row(self) -> None:
-        rows = [
-            {
-                "id": 1,
-                "seeded_by": "continuity-consolidate",
-                "claim": "WATERMARK: consolidated_through=10303#10 at 2026-01-01",
-            },
-            {
-                "id": 2,
-                "seeded_by": "other",
-                "claim": "WATERMARK: consolidated_through=9999#99",
-            },
-            {
-                "id": 3,
-                "seeded_by": "continuity-consolidate",
-                "claim": "WATERMARK: consolidated_through=10303#12 at 2026-01-02",
-            },
-        ]
-        parsed = sweep.parse_watermark(rows)
-        assert parsed == {
-            "assertion_id": 3,
-            "thread": "10303",
-            "turn": 12,
-            "claim": rows[2]["claim"],
-        }
+def test_sweep_parse_watermark_is_shared_module() -> None:
+    assert sweep.parse_watermark is wm.parse_watermark
 
 
 class TestFindStaleCloseout:

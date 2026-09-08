@@ -8,7 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
+from agent_bus_store.continuity_watermark import SEEDED_BY
 from tools import continuity
+from tools.continuity import _continuity_status_watermark
 
 pytestmark = pytest.mark.offline
 
@@ -214,3 +216,49 @@ def test_async_dispatch_http_error_shape() -> None:
 
     assert result["status_code"] == 503
     assert "error" in result
+
+
+def test_status_watermark_uses_shared_parse_newest_id_wins() -> None:
+    """Falsifier: naive first-match parse would return thread-a#1, not thread-b#99."""
+    assertions = [
+        {
+            "id": 10,
+            "seeded_by": "manual-entry",
+            "claim": "WATERMARK: consolidated_through=thread-a#1",
+        },
+        {
+            "id": 42,
+            "seeded_by": SEEDED_BY,
+            "claim": "WATERMARK: consolidated_through=thread-b#99",
+        },
+    ]
+    with patch(
+        "tools.continuity.cx",
+        return_value={"assertions": assertions},
+    ):
+        result = _continuity_status_watermark("root-house")
+
+    assert result["root_thread"] == "root-house"
+    assert result["hub_entity_id"] == "document:root-house-continuity"
+    watermark = result["watermark"]
+    assert watermark is not None
+    assert watermark["assertion_id"] == 42
+    assert watermark["thread"] == "thread-b"
+    assert watermark["turn"] == 99
+
+
+def test_status_watermark_ignores_unseeded_rows() -> None:
+    assertions = [
+        {
+            "id": 99,
+            "seeded_by": "other-pipeline",
+            "claim": "WATERMARK: consolidated_through=spoof#1",
+        },
+    ]
+    with patch(
+        "tools.continuity.cx",
+        return_value={"assertions": assertions},
+    ):
+        result = _continuity_status_watermark("root-x")
+
+    assert result["watermark"] is None
