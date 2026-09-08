@@ -14,7 +14,8 @@ from pathlib import Path
 
 from cortex_store.dispatch_ops._session_bus_thread_disposition import parse_bus_thread_refs
 from cortex_store.transcript_assembly import _transcripts_root
-from cortex_store.transcript_lane_touch import dominant_lane, lane_touches
+from cortex_store.transcript_cp_anchors import explicit_uuids_for_lane
+from cortex_store.transcript_lane_touch import binding_for, dominant_lane, lane_touches
 from cortex_store.transcript_session_id import _jsonl_paths_by_mtime_desc
 from cortex_store.session_close_successor_hop import conversation_uuid_from_jsonl_path
 
@@ -34,7 +35,7 @@ def _window_for_uuid(uuid: str) -> Path | None:
     return None
 
 
-def restamp_rows(*, live: bool) -> dict[str, object]:
+def restamp_rows(*, live: bool, thread_id: str = "10223") -> dict[str, object]:
     db_path = _cortex_db_path()
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -43,7 +44,10 @@ def restamp_rows(*, live: bool) -> dict[str, object]:
         "FROM session_journals WHERE closed_by = 'succession' "
         "AND sealed_on >= '2026-09-07T23:39:11' AND sealed_on <= '2026-09-07T23:39:19'"
     ).fetchall()
+    explicit = explicit_uuids_for_lane(thread_id)
     updates: list[dict[str, object]] = []
+    detach_count = 0
+    keep_count = 0
     for row in rows:
         uuid = row["conversation_uuid"]
         if not uuid:
@@ -53,14 +57,24 @@ def restamp_rows(*, live: bool) -> dict[str, object]:
             continue
         touches = lane_touches(jsonl)
         computed = dominant_lane(touches)
+        binding, _dom = binding_for(
+            thread_id,
+            touches,
+            explicit_uuids=explicit,
+            conversation_uuid=str(uuid),
+        )
         entity_ids = json.loads(row["entity_ids"] or "[]")
-        refs = parse_bus_thread_refs([str(x) for x in entity_ids])
-        new_entity_ids = sorted(refs)
-        if computed:
-            new_entity_ids = sorted({*new_entity_ids, f"agent-bus:{computed}"})
+        if binding in {"explicit_cp", "dominant_write"}:
+            refs = parse_bus_thread_refs([str(x) for x in entity_ids])
+            new_entity_ids = sorted({*refs, f"agent-bus:{thread_id}"})
+            keep_count += 1
+        else:
+            new_entity_ids = []
+            detach_count += 1
         payload = {
             "session_id": row["session_id"],
             "conversation_uuid": uuid,
+            "binding": binding,
             "prior_dominant_lane": row["dominant_lane"],
             "new_dominant_lane": computed,
             "prior_entity_ids": entity_ids,
@@ -83,7 +97,14 @@ def restamp_rows(*, live: bool) -> dict[str, object]:
     if live:
         conn.commit()
     conn.close()
-    return {"dry_run": not live, "candidate_count": len(updates), "updates": updates}
+    return {
+        "dry_run": not live,
+        "thread_id": thread_id,
+        "candidate_count": len(updates),
+        "detach_count": detach_count,
+        "keep_count": keep_count,
+        "updates": updates,
+    }
 
 
 def main() -> None:
@@ -93,8 +114,13 @@ def main() -> None:
         action="store_true",
         help="Apply mutations (default: dry-run only)",
     )
+    parser.add_argument(
+        "--thread",
+        default="10223",
+        help="Continuity lane thread id (default: 10223)",
+    )
     args = parser.parse_args()
-    result = restamp_rows(live=bool(args.live))
+    result = restamp_rows(live=bool(args.live), thread_id=str(args.thread))
     print(json.dumps(result, indent=2))
 
 

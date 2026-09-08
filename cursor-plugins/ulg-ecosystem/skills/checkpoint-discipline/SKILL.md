@@ -71,7 +71,8 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 2. Tip body: `fetch(thread, compact=true, last=K)` → subject index → `get(turn_number=<latest subject starting with CHECKPOINT>)`. **¬** `last=1` as tip (latest turn may be closeout).
 3. Other unread: compact subjects only; ¬ auto-widen on `has_earlier_turns`.
 4. Child lanes (`lane_bind` → append-only `thread_lane_associations`; CHECKPOINT's **Child lanes** derived zone = depth-1 substantiated, per `agent-bus-discipline` § Lane parentage): pointer IDs only — ¬ fetch child history on parent resume. Leftover conductor workers that landed as grandchildren of a coord stub (9676/9677 class) are **not** Child lanes — cite `agent-bus:{worker}` on the root CHECKPOINT or `lane_bind` the worker to the root. `conductor_coord_split_refused` retires the class going forward.
-5. Then: tip → card (shape) → name the purpose → one named hop (runbook body · sidecar · probe); widen only per the table below. **¬** load `## Windows` on resume. **¬** treat a fat continuity-doc as the constitution. Catch-up *card* + runbook association: Use the `continuity-thread-shaping` skill.
+5. **Partial transcript pour (BINDING — all `spine=root` resumes):** After tip CHECKPOINT, read `Window: transcript_id=<uuid> · turns@cp=<K>` from the CHECKPOINT `## Anchor` (or `## Residue` Anchor block). Load that session's JSONL at `~/.cursor/projects/<workspace>/agent-transcripts/<uuid>/<uuid>.jsonl`. Pour method: tail substantive assistant turns (skip `[REDACTED]` / tool-only stubs; min ~400 chars prose) **and** keyword-search (`WORK`, `tab`, `Going`, `land`, `partial`, thread id/slug) — **not** a full JSONL dump. If the Window line is absent, grep `agent-transcripts/` for the thread id or slug before prose. Bus + continuity carry **state**; transcript pour carries **session-local operator choreography** (tab names, land-not-implement, close lists, Fable slotting). Sidecars complement pour; **¬** substitute pour because a continuity doc exists.
+6. Then: tip → card (shape) → pour (step 5) → name the purpose → one named hop (runbook body · sidecar · probe); widen only per the table below. **¬** load `## Windows` on resume. **¬** treat a fat continuity-doc as the constitution. Catch-up *card* + runbook association: Use the `continuity-thread-shaping` skill.
 
 | Widen when | Fetch |
 |---|---|
@@ -113,9 +114,10 @@ On CHECKPOINT, under `## Anchor`, cite the posting window:
 
 `K` = `turn_count` from `session_close_preflight` or `assemble_transcript` on that
 window's JSONL in the same turn (hand counts forbidden). Zero-CP windows:
-`boundary=window_whole`. Resume on a living topic/work lane: succession harvest
-seals idle windows, then `agent_bus_read tape` pours the growing dump once — bus
-turns stay lean; do not load `## Windows` on resume.
+`boundary=window_whole`. **On resume:** the Window line is the pour target — execute
+§ Resume step 5 before operator-facing prose. Resume on a living topic/work lane:
+succession harvest seals idle windows, then `agent_bus_read tape` pours the growing
+dump once — bus turns stay lean; do not load `## Windows` on resume.
 
 **Mid-tier / B6:** scoreboard gated lane + tip first. Charter-health dispatch only when densified Next/WIP ∉ OPEN G-row or operator asks how-are-we-doing (≤15 lines).
 

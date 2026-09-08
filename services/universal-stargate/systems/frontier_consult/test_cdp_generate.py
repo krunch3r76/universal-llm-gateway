@@ -841,6 +841,36 @@ def test_default_operator_seat_binding_binds_review_from_thread_id() -> None:
     assert kind == "root"
 
 
+def test_refuse_second_external_gate_probe_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """C4 — active-work probe fault on fire path → 503 cdp_gate_probe_failed."""
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    class _BrokenClient:
+        def _request(self, method: str, path: str) -> dict[str, object]:
+            raise ConnectionError("cdp_ask unreachable")
+
+    monkeypatch.setattr(
+        "cdp_ask.client.CdpAskClient",
+        lambda: _BrokenClient(),
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        refuse_second_external_gate_at_fire(
+            purpose="review",
+            parent_thread="9638",
+            thread_id="9638",
+            request_id="req-c4-probe",
+        )
+    assert exc.value.code == "cdp_gate_probe_failed"
+    assert exc.value.status_code == 503
+    assert exc.value.field == "active-work"
+    assert "active-work probe failed" in exc.value.reason
+
+
 def test_refuse_second_external_gate_at_fire_when_lane_live(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

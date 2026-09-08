@@ -100,6 +100,16 @@ def default_operator_seat_binding(
 
 
 def _read_lane_snapshot_for_gate(*, request_id: str) -> dict[str, Any]:
+    """Read active-work for external-gate occupancy at generate fire.
+
+    **Fire-closed vs hop-open (C4):** this probe backs
+    ``refuse_second_external_gate_at_fire`` on operator-proxy / review admit.
+    Any ``cdp_ask`` active-work fault is **fail-closed** — callers get
+    ``FrontierEndpointError`` ``503`` ``cdp_gate_probe_failed`` rather than
+    admitting blind. Hop cadence uses the same snapshot reader
+    (``read_cdp_lane_snapshot``) but **fail-open** on probe faults so
+    succession does not stall when occupancy is temporarily unmeasurable.
+    """
     from cdp_ask.client import CdpAskClient
     from claude_bundles.hop_cadence_seat_snap import attach_registry_seated_rows
 
@@ -159,7 +169,12 @@ def refuse_second_external_gate_at_fire(
     request_id: str,
     exclude_execution_id: str | None = None,
 ) -> None:
-    """P1.3 — refuse a second gate while one is still streaming for the lane."""
+    """P1.3 — refuse a second gate while one is still streaming for the lane.
+
+    Probe faults on the occupancy read are fail-closed (``cdp_gate_probe_failed``);
+    hop cadence intentionally fail-opens the same probe class — see
+    ``_read_lane_snapshot_for_gate``.
+    """
     if not _binds_operator_lane(purpose):
         return
     lane = (parent_thread or thread_id or "").strip()

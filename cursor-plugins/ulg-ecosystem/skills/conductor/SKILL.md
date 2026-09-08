@@ -171,6 +171,7 @@ hop(conductor) ⇒
   ∧ mission_continuation ⊥ model_behavior     # granularity is the seat's; continuation is the substrate's
   ∧ owed(designed_stop) ⇒ that token, ¬ROW_HOP  # ROW_PINNED · HOLD_MERGE · OPERATOR_GATE · PARKED_TRANSPORT · DONE win
   ∧ live_nested(predecessor) ⇒ ¬hop            # W3: harvest first
+  ∧ ¬live_external_gate(mission_lane)          # P1.2: CDP gate stream blocks hop_owed / successor_owed
 ```
 
 `ROW_HOP` ends **a dispatch**, never the mission — not a pause (no ack, no
@@ -178,6 +179,39 @@ reply, no page), not a stop the operator answers, not a merge gate. The
 `¬ pause between G-rows` and `¬ second gate on the mission's own merge`
 invariants are untouched because nothing waits on anyone. Machine vocabulary
 only: grader, reactor, journal — never the liaison register or the pager.
+
+### External gate occupancy (binding — `todo:conductor-hop-wait-protocol` / a:32405)
+
+Protocol landed GIW + Stargate (`todo:conductor-hop-wait-protocol`, R2 review
+`cortex://notes/system/reviews/conductor-hop-wait-protocol-r2-review.md` § C8).
+
+**Substrate read, not self-report.** Gate occupancy is read from the CDP lane
+snapshot at `mark_terminal` / fire time — the conductor does **not** declare
+"gate clear" in closeout to unblock hop. The hop reactor's `hop_owed` and
+park-harvest `successor_owed` consult `external_gate_hop_verdict`; a live gate
+⇒ **no successor POST** (reactor skip gate `live_external_gate`), even when the
+closeout carries `stop: ROW_HOP`.
+
+**Live gate definition.** Blocking when `stream_state` is live
+(`queued` / `admitted` / `running` / `parked_waiting`), `purpose` ∈
+`{review, operator-proxy, operator_proxy, mission}`, and `parent_thread`
+matches the mission lane (`summoning_thread_id`, else worker `thread_id`).
+**Seated identity without a live stream does not block** — occupancy follows
+`stream_state`, not seat registration alone (R2′).
+
+**Fire-time 409.** Stargate refuses a second external gate on the same lane
+while one is still streaming: `cdp_external_gate_live` (409). Harvest the
+in-flight gate before firing another `cdp/opus-5` review / operator-proxy gate
+on that lane.
+
+**Conductor posture.** After `ROW_HOP` with a CDP gate still in flight on the
+mission lane, expect the substrate to **defer** the hop successor until the gate
+stream completes — correct reactor behavior, not a stall to self-heal with
+`reuse_thread`. Harvest the gate; the reactor retries on the next terminal or
+watchdog tick. Probe indeterminate while a stronger-model harvest is still owed
+⇒ hop withheld (`probe_indeterminate`); probe indeterminate with no harvest
+owed ⇒ hop may proceed (intentional fail-open on the hop path; gate *fire* is
+fail-closed — do not collapse the asymmetry).
 
 ## Run to completion (binding default)
 
@@ -701,6 +735,7 @@ transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed).
 | `life-operator-do-chain` | Hop names + products (Sketch → shape bind · Mission Composer → conductor score · this seat plays it) — named hop is direction, not a recipe when harvest conflicts |
 | `reasoning-posture` | Liaison decide-before-admit — pin Question / OOS / detent |
 | `runbook:extraordinary-aperture` | Named hop vs harvested state — in-seat widen; ¬ path-sim cascade |
+| `todo:conductor-hop-wait-protocol` | GIW hop reactor occupancy + witness fold — this skill names seat doctrine; substrate detail in R2 review |
 
 ## Anti-patterns
 
@@ -736,3 +771,6 @@ transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed).
 | Treat named hop / `` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |
 | Land then stay silent on recycle (or write LAND-LIVE as only “not live”) | Prompt go-live for each serving process, or announce skip in the same turn; LAND-LIVE names the skipped recycle |
 | Land a named `todo:` and leave the card `open` | Stamp `todo-close` / LANDED on that entity in the same turn |
+| Assume `ROW_HOP` ⇒ immediate successor while a CDP gate still streams on the mission lane | Reactor skip `live_external_gate` is correct — harvest the gate first |
+| Self-report "gate clear" in closeout to unblock hop | Occupancy is a substrate read from the CDP lane snap, not closeout prose |
+| Fire a second `cdp/opus-5` review while the first gate is still live on the lane | 409 `cdp_external_gate_live` — wait for harvest |

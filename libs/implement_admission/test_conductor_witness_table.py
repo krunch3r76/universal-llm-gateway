@@ -14,7 +14,14 @@ from implement_admission.conductor_witness import (
     fold_scoreboard,
     row_witnesses,
 )
-from implement_admission.conductor_witness_table import _g4_body_clears
+from implement_admission.conductor_witness_table import (
+    _G2_ARTIFACT_IDS,
+    _G3_ARTIFACT_IDS,
+    _artifact_map,
+    _first_resolving_artifact,
+    _g4_body_clears,
+    _uri_resolves,
+)
 from implement_admission.degraded_reasons import (
     stops_block_reason,
 )
@@ -312,3 +319,81 @@ def test_ac_p2_7_degraded_reasons_imports_stops_helper() -> None:
     mod = importlib.import_module("implement_admission.degraded_reasons")
     assert mod.stops_block_reason is stops_block_reason
     assert mod.g4_stops_block_reason("| G4 | x | OPEN | ROW_PINNED |") == "ROW_PINNED"
+
+
+_BARE_SHA40 = "deadbeef" + "0" * 32
+
+
+def _sidecar_row(artifact_id: str, sha: str = _BARE_SHA40) -> str:
+    return f"| {artifact_id} | {sha} on master | land witness |\n"
+
+
+def test_r2_c3_uri_resolves_bare_sha40_without_repo_or_files(tmp_path: Path) -> None:
+    """R2 C3 — _uri_resolves bare 40-hex branch (restored once; pin it)."""
+    files_root = tmp_path / "cortex"
+    files_root.mkdir()
+    assert _uri_resolves(_BARE_SHA40, files_root=files_root, repo=None) is True
+
+
+@pytest.mark.parametrize(
+    ("artifact_ids", "sidecar_id"),
+    [
+        (_G2_ARTIFACT_IDS, "F1"),
+        (_G3_ARTIFACT_IDS, "S4b"),
+        (("G4",), "G4"),
+    ],
+)
+def test_r2_c3_first_resolving_artifact_bare_sha40(
+    tmp_path: Path,
+    artifact_ids: tuple[str, ...],
+    sidecar_id: str,
+) -> None:
+    """R2 C3 — sidecar bare sha resolves via _first_resolving_artifact."""
+    tip_body = "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
+    tip_body += _sidecar_row(sidecar_id)
+    artifacts = _artifact_map(tip_body)
+    assert artifacts[sidecar_id] == _BARE_SHA40
+    art_id, uri = _first_resolving_artifact(
+        artifacts,
+        artifact_ids,
+        files_root=tmp_path / "cortex",
+        repo=None,
+    )
+    assert art_id == sidecar_id
+    assert uri == _BARE_SHA40
+
+
+@pytest.mark.parametrize(
+    ("sidecar_id", "row_id", "expected_source"),
+    [
+        ("F1", "G2", "artifact:F1"),
+        ("S4b", "G3", "artifact:S4b"),
+        ("G4", "G4", "artifact:G4"),
+    ],
+)
+def test_r2_c3_bare_sha40_sidecar_witnesses_g2_g3_g4(
+    tmp_path: Path,
+    sidecar_id: str,
+    row_id: str,
+    expected_source: str,
+) -> None:
+    """R2 C3 — G2–G4 row witnesses accept bare 40-hex sidecar URIs."""
+    files_root = tmp_path / "cortex"
+    files_root.mkdir()
+    tip_body = (
+        "## Sidecars\n\n"
+        "| ID | Artifact URI | What it is |\n"
+        "|---|---|---|\n"
+        + _sidecar_row(sidecar_id)
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    witness = witnesses.get(row_id)
+    assert witness is not None
+    assert witness.source == expected_source
+    assert witness.detail == _BARE_SHA40
