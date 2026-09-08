@@ -21,6 +21,7 @@ _REPO = Path(__file__).resolve().parent.parent.parent
 if str(_REPO / "libs") not in sys.path:
     sys.path.insert(0, str(_REPO / "libs"))
 
+from claude_bundles.cdp_cookie_seed import fleet_cookie_rehydrate  # noqa: E402
 from claude_bundles.cdp_lane import chrome_display_env, chrome_launch_argv  # noqa: E402
 
 _POLL_MS = 250
@@ -83,6 +84,9 @@ def main() -> None:
     deadline = time.monotonic() + _LISTEN_IDLE_S
     while time.monotonic() < deadline:
         if _cdp_ready(port):
+            if lane_name == "fleet":
+                result = fleet_cookie_rehydrate(port)
+                print(f"fleet cookie rehydrate: {result}", file=sys.stderr)
             _sd_notify("READY=1")
             break
         if proc.poll() is not None:

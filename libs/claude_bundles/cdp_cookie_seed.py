@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import json
 import urllib.request
+from datetime import UTC, datetime
+from pathlib import Path
 
 PRIMARY_CDP_PORT = 9222
 COOKIE_DOMAIN_SUFFIX = "claude.ai"
+FLEET_COOKIE_BACKUP = Path.home() / ".gateway" / "claude-ai-cookies-backup-latest.json"
 
 # Storage.setCookies takes CookieParam, a strict subset of the Cookie objects
 # Storage.getCookies returns — `size` and `session` are read-only and rejected.
@@ -130,3 +133,73 @@ def seed_lane_cookies(
     cookies = read_session_cookies(source_port, domain_suffix=domain_suffix)
     _cdp_call(port, "Storage.setCookies", {"cookies": cookies})
     return len(cookies)
+
+
+def write_fleet_cookie_backup(
+    port: int = PRIMARY_CDP_PORT,
+    *,
+    backup_path: Path = FLEET_COOKIE_BACKUP,
+    domain_suffix: str = COOKIE_DOMAIN_SUFFIX,
+) -> int:
+    """Persist live ``domain_suffix`` cookies from fleet Chrome to *backup_path*."""
+    cookies = read_session_cookies(port, domain_suffix=domain_suffix)
+    payload = {
+        "cookies": cookies,
+        "backed_up_at": datetime.now(tz=UTC).isoformat(),
+        "source_port": port,
+        "domain_suffix": domain_suffix,
+    }
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = backup_path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(backup_path)
+    return len(cookies)
+
+
+def rehydrate_fleet_from_backup(
+    port: int = PRIMARY_CDP_PORT,
+    *,
+    backup_path: Path = FLEET_COOKIE_BACKUP,
+    domain_suffix: str = COOKIE_DOMAIN_SUFFIX,
+) -> int:
+    """Install cookies from *backup_path* into fleet Chrome on *port*."""
+    if not backup_path.is_file():
+        raise CookieSeedError(f"no cookie backup at {backup_path}")
+    try:
+        payload = json.loads(backup_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CookieSeedError(f"cookie backup unreadable at {backup_path}: {exc}") from exc
+    cookies = [
+        c
+        for c in payload.get("cookies") or []
+        if str(c.get("domain") or "").lstrip(".").endswith(domain_suffix)
+    ]
+    if not cookies:
+        raise CookieSeedError(f"cookie backup at {backup_path} has no {domain_suffix} cookies")
+    _cdp_call(port, "Storage.setCookies", {"cookies": cookies})
+    return len(cookies)
+
+
+FleetRehydrateResult = str  # fresh | restored | signed_out
+
+
+def fleet_cookie_rehydrate(
+    port: int = PRIMARY_CDP_PORT,
+    *,
+    backup_path: Path = FLEET_COOKIE_BACKUP,
+    domain_suffix: str = COOKIE_DOMAIN_SUFFIX,
+) -> FleetRehydrateResult:
+    """Refresh or restore fleet session cookies after Chrome listens on *port*."""
+    try:
+        write_fleet_cookie_backup(
+            port, backup_path=backup_path, domain_suffix=domain_suffix
+        )
+        return "fresh"
+    except CookieSeedError:
+        try:
+            rehydrate_fleet_from_backup(
+                port, backup_path=backup_path, domain_suffix=domain_suffix
+            )
+            return "restored"
+        except CookieSeedError:
+            return "signed_out"
