@@ -34,6 +34,7 @@ from ._cortex import (
     dispatch,
 )
 from ._plan import (
+    CLAIM_KIND_CAPS,
     WritePlan,
     assert_args,
     cap_distill_claims,
@@ -52,6 +53,12 @@ def _passthrough(payload: dict[str, Any], error: str | None = None) -> StepOutpu
 
 
 class ContinuityConsolidateApplyHandler(BaseHandler):
+    """Validate a distill fold against ingest and write the Cortex delta.
+
+    Order: singleton repair, watermark, mission, resume, S4-A capped claims,
+    relationships, hub description. ``dry_run`` validates asserts only.
+    """
+
     step_type = "continuity_consolidate_apply_v1"
 
     @override
@@ -184,12 +191,30 @@ class ContinuityConsolidateApplyHandler(BaseHandler):
                     prior_ids=prior_ids_by_prefix(prior_rows, RESUME_PREFIX),
                 )
 
-            # 4. Claims — per-kind caps (S4-A), deduplicated, evidence from payload.
+            # 4. Claims — S4-A per-kind caps, then dedup + payload evidence.
+            # options.max_claims>0 is an emergency overall slice AFTER the
+            # table (YAML default 0 so CLAIM_KIND_CAPS actually binds).
             raw_claims = fold.get("claims") or []
             capped_claims, claims_dropped = cap_distill_claims(raw_claims)
-            legacy_cap = int(options.get("max_claims", 0))
-            if legacy_cap > 0:
-                capped_claims = capped_claims[:legacy_cap]
+            kept_ids = {id(item) for item in capped_claims}
+            for item in raw_claims:
+                if not isinstance(item, dict) or id(item) in kept_ids:
+                    continue
+                kind = str(item.get("kind") or "").lower()
+                if kind in CLAIM_KIND_CAPS:
+                    plan.skip(
+                        "claim",
+                        "kind_cap",
+                        kind=kind,
+                        claim=item.get("claim"),
+                    )
+            overall_cap = int(options.get("max_claims") or 0)
+            if overall_cap > 0 and len(capped_claims) > overall_cap:
+                extra = capped_claims[overall_cap:]
+                claims_dropped += len(extra)
+                for item in extra:
+                    plan.skip("claim", "max_claims", item=item)
+                capped_claims = capped_claims[:overall_cap]
             for item in capped_claims:
                 if not isinstance(item, dict):
                     continue

@@ -47,6 +47,9 @@ _FOLDED = {
 }
 
 # S4-A — per-kind caps on distill output (drop oldest when over cap).
+# Singletons (WATERMARK / MISSION / RESUME) are unchanged: write_singleton
+# + chain_stale. This table does not compact already-written hub rows
+# (that's option B); it only bounds what this fold may assert.
 CLAIM_KIND_CAPS: dict[str, int] = {
     "closed": 8,
     "open": 4,
@@ -63,11 +66,18 @@ def quoted_mission(residue: str | None) -> str | None:
 
 
 def norm(text: str) -> str:
+    """Whitespace-fold and lowercase a claim so duplicate checks ignore formatting."""
     return re.sub(r"\s+", " ", text or "").strip().lower()
 
 
 def cap_distill_claims(claims: list[Any]) -> tuple[list[dict[str, Any]], int]:
-    """Cap per claim kind; drop oldest rows when distill exceeds S4-A limits."""
+    """Bound one distill fold to ``CLAIM_KIND_CAPS`` before apply asserts.
+
+    Distill list order is oldest-first: overflow drops from the front of each
+    kind so the newest ``cap`` rows survive. Unknown kinds pass through for
+    apply to skip. Does not count already-active hub rows and does not
+    mutate claims. Returns ``(kept_in_original_order, dropped_count)``.
+    """
     by_kind: dict[str, list[tuple[int, dict[str, Any]]]] = {
         kind: [] for kind in CLAIM_KIND_CAPS
     }
@@ -102,9 +112,7 @@ def _row_active(row: dict[str, Any]) -> bool:
     return not row.get("superseded_by")
 
 
-def active_pipeline_ids_by_prefix(
-    rows: list[dict[str, Any]], prefix: str
-) -> list[int]:
+def active_pipeline_ids_by_prefix(rows: list[dict[str, Any]], prefix: str) -> list[int]:
     """Live pipeline rows for ``prefix``, newest first — F1 repair input."""
     ids = [
         int(row["id"])
@@ -154,6 +162,11 @@ def assert_args(
     evidence_uris: list[str],
     supersedes: int | None = None,
 ) -> dict[str, Any]:
+    """Build a cortex ``assert`` payload with provenance class and optional chain.
+
+    ``quoted`` selects confirmed/direct_observation vs believed/inference.
+    ``supersedes`` sets force+supersedes_id so the prior row actually chains.
+    """
     args: dict[str, Any] = {
         "entity_id": hub_id,
         "claim": claim,

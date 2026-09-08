@@ -60,11 +60,10 @@ options:
   # to every other seat and belongs to an attended pass. The description is
   # always rewritten — it is the card's summary_row, i.e. the resume surface.
   allow_retitle: false
-  # Upper bound on model-authored claims written per run. Mission/resume are
-  # superseded in place (constant size); claims append — at the observed
-  # 10303 rate (~16 CLOSEOUTs/h) this bound is the hub's growth budget until
-  # a compaction pass exists.
-  max_claims: 4
+  # S4-A: apply caps per kind via CLAIM_KIND_CAPS (CLOSED 8 / OPEN 4 /
+  # DECIDED 4 / ARTIFACT 4 / SUPERSEDED 2). Keep 0 so the table binds.
+  # A positive value is an emergency overall slice after per-kind caps.
+  max_claims: 0
 
 steps:
   - name: ingest
