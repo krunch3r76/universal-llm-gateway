@@ -259,6 +259,35 @@ def test_service_path_row_tags_distinguishable_from_hand_authored():
     assert parse_verification_tags(hand.reason) is None
 
 
+def test_mcp_service_path_mint_verified_when_smoke_passes(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "implement_admission.mcp_server_import_verify.mcp_server_import_smoke",
+        lambda paths, root=None: "verified",
+    )
+    rows = rows_from_service_paths(
+        ["services/mcp-server/tools/continuity.py"],
+        code_ref="mcp-verified-sha",
+    )
+    assert len(rows) == 1
+    assert rows[0].service == "mcp"
+    assert "import_path:verified" in (rows[0].reason or "")
+    assert "import_path:not_probed" not in (rows[0].reason or "")
+
+
+def test_mcp_service_path_mint_contradicted_when_smoke_fails(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "implement_admission.mcp_server_import_verify.mcp_server_import_smoke",
+        lambda paths, root=None: "contradicted",
+    )
+    rows = rows_from_service_paths(
+        ["services/mcp-server/tools/continuity.py"],
+        code_ref="mcp-bad-sha",
+    )
+    assert len(rows) == 1
+    assert rows[0].service == "mcp"
+    assert "import_path:contradicted" in (rows[0].reason or "")
+
+
 def test_compose_proof_process_live_giw_is_process_identity_not_openapi():
     from services.git_integration_worker.cursor_auto.propagation_probe import (
         IDENTIFIER_FIELDS,

@@ -656,9 +656,18 @@ def rows_from_service_paths(
 ) -> list[PropagationRow]:
     """Derive sync_restart obligation rows from touched service Python paths.
 
-    Generator-derived: stamps ``derived:path_prefix; import_path:not_probed`` —
-    path_prefix never ran the import predicate (Fork 3 / Fork 4).
+    Generator-derived: stamps ``derived:path_prefix; import_path:…`` —
+    mcp-server lands run ``mcp_server_import_smoke``; other services stay
+    ``not_probed`` until probed (Fork 3 / Fork 4).
     """
+    from implement_admission.mcp_server_import_verify import mcp_server_import_smoke
+
+    mcp_import_status = (
+        mcp_server_import_smoke(paths)
+        if any(slug_for_path(p) == "mcp" for p in paths)
+        else None
+    )
+
     rows: list[PropagationRow] = []
     seen: set[str] = set()
     for path in paths:
@@ -667,7 +676,11 @@ def rows_from_service_paths(
             continue
         seen.add(slug)
         pc = default_proof_class(slug)
-        tags = format_verification_tags(derived="path_prefix", import_path="not_probed")
+        if slug == "mcp" and mcp_import_status is not None:
+            import_path = mcp_import_status
+        else:
+            import_path = "not_probed"
+        tags = format_verification_tags(derived="path_prefix", import_path=import_path)
         rows.append(
             _row_with_close_surfaces(
                 service=slug,
