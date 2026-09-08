@@ -193,6 +193,19 @@ def _section_write_result(
             return updated
         return raw
 
+    text, err = _load_text(resolved)
+    if err:
+        return {"error": err}
+    try:
+        preview = _apply_transform(text)
+        try:
+            md_read_section(text, section)
+        except SectionError:
+            pass
+        md_read_section(preview, section)
+    except SectionError as exc:
+        return {"error": str(exc)}
+
     try:
         rmw = durable_rmw_text(
             resolved,
@@ -209,6 +222,10 @@ def _section_write_result(
         return {"error": f"Failed to write {resolved}: {exc}"}
     try:
         prior_body = md_read_section(rmw.before_text, section)
+    except SectionError:
+        # insert_section at end — summary *section* is the new heading (no prior body).
+        prior_body = ""
+    try:
         new_body = md_read_section(rmw.after_text, section)
     except SectionError as exc:
         return {"error": str(exc)}

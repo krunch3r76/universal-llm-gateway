@@ -109,3 +109,49 @@ def test_md_delete_reports_removed_body(md_tool) -> None:
     assert mutation["deleted_body_chars"] >= 80
     assert mutation["new_body_chars"] == 0
     assert "_warning" in res
+
+
+def test_md_insert_at_end_succeeds_without_write_then_error(md_tool) -> None:
+    """Friction a:32587 — insert must not write then fail summary on new heading."""
+    fn, root = md_tool
+    _write(root, "charter.md", DOC)
+    before = (root / "charter.md").read_text(encoding="utf-8")
+    res = fn(
+        op="insert_section",
+        path="charter.md",
+        sandbox="cortex",
+        heading="Follow Up",
+        level=2,
+        position="end",
+        content="New follow-up item.\n",
+    )
+    assert "error" not in res
+    assert res["status"] == "inserted"
+    assert res["section"] == "Follow Up"
+    after = (root / "charter.md").read_text(encoding="utf-8")
+    assert after != before
+    assert "## Follow Up" in after
+    assert "New follow-up item." in after
+    mutation = res["mutation"]
+    assert mutation["prior_body_chars"] == 0
+    assert mutation["new_body_chars"] > 0
+
+
+def test_md_insert_bad_anchor_errors_without_partial_write(md_tool) -> None:
+    """Friction a:32581 — unresolved anchor must not persist a partial insert."""
+    fn, root = md_tool
+    _write(root, "charter.md", DOC)
+    before = (root / "charter.md").read_text(encoding="utf-8")
+    res = fn(
+        op="insert_section",
+        path="charter.md",
+        sandbox="cortex",
+        heading="Orphan",
+        level=2,
+        position="after",
+        section="No Such Section",
+        content="should not land\n",
+    )
+    assert "error" in res
+    assert "Section not found" in res["error"]
+    assert (root / "charter.md").read_text(encoding="utf-8") == before
