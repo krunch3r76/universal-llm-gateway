@@ -246,6 +246,12 @@ async def _floor_postamble(
         await _tick_reconcile.reconcile_enrolled_roots_on_tick(roots)
     except Exception:  # noqa: BLE001 — reconcile must not abort tick
         logger.exception("charter-runner tick-scan friction reconcile failed")
+    try:
+        from . import tick_continuity_sweep as _continuity_sweep
+
+        await _continuity_sweep.sweep_role_roots_on_tick()
+    except Exception:  # noqa: BLE001 — sweep must not abort tick
+        logger.exception("charter-runner continuity sweep failed")
 
 
 ServicesHealthy = Callable[[], bool]
