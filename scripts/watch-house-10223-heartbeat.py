@@ -30,19 +30,22 @@ import re
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
 import httpx
 import yaml
-
 from bus_watch.state import read_state, write_state
-from orchestrator_handoff.queue import HandoffQueue, default_queue_path
+from orchestrator_handoff.queue import HandoffQueue
 from orchestrator_handoff.repair import repair_tick
+from orchestrator_handoff.work_prompt import summarize_work_prompt
 
 _REPO = Path(__file__).resolve().parents[1]
-_AGENT_BUS_SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
+_AGENT_BUS_SOCK = os.environ.get(
+    "AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock"
+)
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
 _INDEX_PATH = _REPO / "tmp/prompts/tab-launch-index-10223.md"
 _OPPORTUNITIES_PATH = _REPO / "cortex" / "notes/system/threads/10223-opportunities.md"
@@ -50,38 +53,32 @@ _OPPORTUNITIES_PATH = _REPO / "cortex" / "notes/system/threads/10223-opportuniti
 if not _OPPORTUNITIES_PATH.is_file():
     _OPPORTUNITIES_PATH = _REPO / "tmp/prompts/10223-opportunities.md"
 if not _OPPORTUNITIES_PATH.is_file():
-    _OPPORTUNITIES_PATH = Path(
-        os.environ.get("CORTEX_FILES_ROOT", str(Path.home() / "mcp-data/files"))
-    ) / "notes/system/threads/10223-opportunities.md"
+    _OPPORTUNITIES_PATH = (
+        Path(os.environ.get("CORTEX_FILES_ROOT", str(Path.home() / "mcp-data/files")))
+        / "notes/system/threads/10223-opportunities.md"
+    )
 _WAKE_SENTINEL = "AGENT_LOOP_WAKE_HOUSE10223"
 _LABEL = "house-10223-heartbeat"
 _DEFAULT_COORDINATOR = "10223"
 _DEFAULT_CLOSEOUT_LANE = "10303"
 _DEFAULT_INTERVAL_S = 600
+_STALL_TICKS = 2
 _HANDOFF_SCRIPT = _REPO / "scripts/orchestrator-tab-handoff.py"
 _LOCK_PATH = _REPO / "tmp/watchers/orchestrator-handoff.lock"
 
 
-def _orchestrator_lock_held() -> bool:
-    """True when fresh-tab handoff lock blocks heartbeat WORK launch."""
-    if not _HANDOFF_SCRIPT.is_file():
-        return False
-    import subprocess
-
-    proc = subprocess.run(
-        [sys.executable, str(_HANDOFF_SCRIPT), "status"],
-        capture_output=True,
-        text=True,
-        cwd=str(_REPO),
-        timeout=15,
-    )
-    if proc.returncode != 0:
-        return False
+def _parse_utc_ts(value: str | None) -> datetime | None:
+    if not value:
+        return None
     try:
-        data = json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        return False
-    return bool(data.get("held"))
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _orchestrator_lock_held() -> bool:
+    """True when repair left a live handoff lock on disk (same source as repair_tick)."""
+    return _LOCK_PATH.is_file()
 
 
 def _token() -> str:
@@ -101,7 +98,9 @@ def _bus_client(token: str) -> httpx.Client:
     )
 
 
-def _fetch_turns(client: httpx.Client, thread_id: str, *, last: int = 30) -> list[dict[str, Any]]:
+def _fetch_turns(
+    client: httpx.Client, thread_id: str, *, last: int = 30
+) -> list[dict[str, Any]]:
     resp = client.get(
         f"http://localhost/turns?{urlencode({'thread': thread_id, 'last': last, 'compact': 'false'})}"
     )
@@ -190,6 +189,7 @@ def _tick(
     closeout_lane: str,
     state_path: Path,
     dry_run: bool,
+    interval_seconds: int = _DEFAULT_INTERVAL_S,
 ) -> dict[str, Any]:
     token = _token()
     state = read_state(state_path)
@@ -207,7 +207,7 @@ def _tick(
     }
 
     queue = HandoffQueue.open()
-    result["repairs"] = repair_tick(queue, lock_path=_LOCK_PATH)
+    result["repairs"] = repair_tick(queue, lock_path=_LOCK_PATH, index_path=_INDEX_PATH)
 
     try:
         token = _token()
@@ -222,7 +222,9 @@ def _tick(
                     continue
                 if not _is_closeout(row):
                     continue
-                result["new_closeouts"].append({"turn": tn, "subject": row.get("subject")})
+                result["new_closeouts"].append(
+                    {"turn": tn, "subject": row.get("subject")}
+                )
                 if not bootstrapped:
                     continue
                 if tn in relayed:
@@ -257,7 +259,9 @@ def _tick(
     if not queue_peek and not lock_held:
         disc = queue.discover_work(
             index_path=_INDEX_PATH,
-            opportunities_path=_OPPORTUNITIES_PATH if _OPPORTUNITIES_PATH.is_file() else None,
+            opportunities_path=_OPPORTUNITIES_PATH
+            if _OPPORTUNITIES_PATH.is_file()
+            else None,
             enqueue_opportunities=True,
         )
         result["discover"] = disc
@@ -274,6 +278,7 @@ def _tick(
         prompt_path = _REPO / wp if wp else None
         if prompt_path and not prompt_path.is_file():
             prompt_path = None
+        meta = summarize_work_prompt(prompt_path or wp) if wp else {}
         result["work_pending"] = {
             "source": "registrar_queue",
             "queue_id": queue_peek.get("id"),
@@ -282,11 +287,47 @@ def _tick(
             "prompt_file": Path(wp).name if wp else "",
             "priority": queue_peek.get("priority", ""),
             "notes": queue_peek.get("notes", ""),
+            "work_class": meta.get(
+                "work_class", queue_peek.get("work_class", "mechanical")
+            ),
         }
+
+    productive = bool(
+        result.get("relayed")
+        or result.get("work_pending")
+        or result.get("repairs")
+        or result.get("new_closeouts")
+    )
+    last_productive_at = state.get("last_productive_at")
+    if productive:
+        last_productive_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    skipped_ready = list(
+        (result.get("discover") or {}).get("import_ready", {}).get("skipped") or []
+    )
+    wedge_signals = {
+        "orchestrator_lock_held": lock_held,
+        "queue_active": bool(result.get("queue_active")),
+        "ready_skipped": skipped_ready,
+        "queue_empty": not queue_peek and not result.get("queue_active"),
+    }
+    hopper_status = "polling"
+    if wedge_signals["orchestrator_lock_held"] or wedge_signals["queue_active"]:
+        hopper_status = "degraded"
+    elif wedge_signals["ready_skipped"] and wedge_signals["queue_empty"]:
+        hopper_status = "degraded"
+    elif last_productive_at:
+        parsed = _parse_utc_ts(str(last_productive_at))
+        if parsed is not None:
+            age_s = (datetime.now(UTC) - parsed).total_seconds()
+            if age_s > interval_seconds * _STALL_TICKS:
+                hopper_status = "stalled"
+    result["hopper_status"] = hopper_status
+    result["wedge_signals"] = wedge_signals
 
     write_state(
         state_path,
-        status="polling",
+        status=hopper_status,
         label=_LABEL,
         coordinator_thread=coordinator,
         closeout_lane=closeout_lane,
@@ -294,6 +335,7 @@ def _tick(
         relayed_closeout_turns=sorted(relayed),
         bootstrapped=bootstrapped,
         last_tick=result,
+        last_productive_at=last_productive_at,
     )
     return result
 
@@ -314,14 +356,29 @@ def _wake_prompt(result: dict[str, Any]) -> str | None:
         )
     work = result.get("work_pending")
     if work:
-        parts.append(
-            "WORK_PENDING: launch ONE Task(subagent_type=generalPurpose, run_in_background=true) "
-            f"with the full contents of {work['prompt_path']}. "
-            "Inject task-subagent-parity kernel (reasoning-posture, provenance, CLOSEOUT 10303). "
-            "Before launch: python scripts/watch-house-10223-heartbeat.py --mark-in-flight "
-            f"{work['prompt_file']!r}. "
-            "Subagent posts CLOSEOUT on agent-bus:10303 only."
-        )
+        wc = work.get("work_class", "mechanical")
+        if wc == "swarm":
+            parts.append(
+                "WORK_PENDING (swarm): keystroke launch opens a hop tab — "
+                f"Multitask ON; session lead executes {work['prompt_path']} and spawns "
+                "Task(Grok) W* slices per prompt. CLOSEOUT 10303 + CHECKPOINT 10223 required."
+            )
+        elif wc == "audit":
+            parts.append(
+                "WORK_PENDING (audit): launch hop tab for evaluate-only "
+                f"{work['prompt_path']}. Multitask OFF; no Task. CLOSEOUT 10303 when done."
+            )
+        elif wc == "implement":
+            parts.append(
+                "WORK_PENDING (implement): launch hop tab — Multitask OFF; "
+                f"execute {work['prompt_path']} in-seat. Sequential Task only "
+                "(composer-2.5 / grok-4.6-xhigh, one at a time). CLOSEOUT 10303 when done."
+            )
+        else:
+            parts.append(
+                "WORK_PENDING (mechanical): launch hop tab for in-seat implement "
+                f"{work['prompt_path']}. CLOSEOUT 10303 when done."
+            )
     if not result.get("relayed") and not work:
         return None
     parts.append("Do not hold the turn on long waits. Next heartbeat in ~10m.")
@@ -340,19 +397,36 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--coordinator", default=_DEFAULT_COORDINATOR)
     parser.add_argument("--closeout-lane", default=_DEFAULT_CLOSEOUT_LANE)
-    parser.add_argument("--state-file", default=str(_REPO / "tmp/watchers/house-10223-heartbeat.state.json"))
+    parser.add_argument(
+        "--state-file",
+        default=str(_REPO / "tmp/watchers/house-10223-heartbeat.state.json"),
+    )
     parser.add_argument("--once", action="store_true", help="Single tick then exit")
-    parser.add_argument("--loop", action="store_true", help="Poll forever (use with watch-supervise)")
+    parser.add_argument(
+        "--loop", action="store_true", help="Poll forever (use with watch-supervise)"
+    )
     parser.add_argument("--interval-seconds", type=int, default=_DEFAULT_INTERVAL_S)
-    parser.add_argument("--emit-wake", action="store_true", help="Print AGENT_LOOP_WAKE sentinel when action needed")
+    parser.add_argument(
+        "--emit-wake",
+        action="store_true",
+        help="Print AGENT_LOOP_WAKE sentinel when action needed",
+    )
     parser.add_argument(
         "--emit-keystroke-launch",
         action="store_true",
         help="When WORK pending, run orchestrator-tab-handoff.py launch on orion-node (Wayland)",
     )
     parser.add_argument("--dry-run", action="store_true", help="Do not post bus relays")
-    parser.add_argument("--mark-in-flight", metavar="PROMPT_FILE", help="Record in-flight WORK prompt filename")
-    parser.add_argument("--clear-in-flight", action="store_true", help="Clear in_flight_prompt after CLOSEOUT")
+    parser.add_argument(
+        "--mark-in-flight",
+        metavar="PROMPT_FILE",
+        help="Record in-flight WORK prompt filename",
+    )
+    parser.add_argument(
+        "--clear-in-flight",
+        action="store_true",
+        help="Clear in_flight_prompt after CLOSEOUT",
+    )
     args = parser.parse_args()
 
     state_path = Path(args.state_file)
@@ -373,6 +447,7 @@ def main() -> int:
             closeout_lane=args.closeout_lane,
             state_path=state_path,
             dry_run=args.dry_run,
+            interval_seconds=max(30, args.interval_seconds),
         )
         print(json.dumps(tick, indent=2))
         if args.emit_keystroke_launch:
@@ -383,7 +458,9 @@ def main() -> int:
                 if queue_id:
                     queue.mark_launching(str(queue_id))
                 wp = work.get("prompt_path") or ""
-                intent = str(work.get("intent") or Path(wp).stem or "heartbeat-work")[:80]
+                intent = str(work.get("intent") or Path(wp).stem or "heartbeat-work")[
+                    :80
+                ]
                 launch_cmd = [
                     sys.executable,
                     str(_REPO / "scripts/orchestrator-tab-handoff.py"),
@@ -395,7 +472,9 @@ def main() -> int:
                 ]
                 if queue_id:
                     launch_cmd.extend(["--queue-id", str(queue_id)])
-                proc = subprocess.run(launch_cmd, capture_output=True, text=True, timeout=120)
+                proc = subprocess.run(
+                    launch_cmd, capture_output=True, text=True, timeout=120
+                )
                 launch_meta: dict[str, Any] = {
                     "returncode": proc.returncode,
                     "stdout": proc.stdout[-2000:],

@@ -91,3 +91,93 @@ def test_repair_orphan_launching(tmp_path: Path) -> None:
     repairs = repair_tick(q, lock_path=lock_path)
     assert any(r["action"] == "orphan_launching" for r in repairs)
     assert q.get(item_id)["status"] == "queued"
+
+
+def test_repair_stale_lock_acked_without_queue_id(tmp_path: Path) -> None:
+    qpath = tmp_path / "queue.json"
+    lock_path = tmp_path / "lock.json"
+    q = HandoffQueue.open(path=qpath)
+    lock_path.write_text(
+        json.dumps(
+            {
+                "holder": "tab-dead",
+                "intent": "manual",
+                "acked_at": (datetime.now(UTC) - timedelta(minutes=30)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+                "updated_at": (datetime.now(UTC) - timedelta(minutes=30)).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+    repairs = repair_tick(q, lock_path=lock_path)
+    assert any(r["action"] == "stale_lock_acked" for r in repairs)
+    assert not lock_path.is_file()
+
+
+def test_repair_stale_lock_no_timestamp(tmp_path: Path) -> None:
+    qpath = tmp_path / "queue.json"
+    lock_path = tmp_path / "lock.json"
+    q = HandoffQueue.open(path=qpath)
+    lock_path.write_text(
+        json.dumps({"holder": "orphan", "intent": "x"}), encoding="utf-8"
+    )
+    repairs = repair_tick(q, lock_path=lock_path)
+    assert any(r["action"] == "stale_lock_no_timestamp" for r in repairs)
+    assert not lock_path.is_file()
+
+
+def test_repair_stale_launch_lock_matching_queue_id(tmp_path: Path) -> None:
+    qpath = tmp_path / "queue.json"
+    lock_path = tmp_path / "lock.json"
+    q = HandoffQueue.open(path=qpath)
+    out = q.enqueue(intent="t", work_prompt=__file__, priority="P0")
+    item_id = out["item"]["id"]
+    stale = (datetime.now(UTC) - timedelta(minutes=17)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    data = json.loads(qpath.read_text())
+    for item in data["items"]:
+        if item["id"] == item_id:
+            item["status"] = "launching"
+            item["started_at"] = stale
+    qpath.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    lock_path.write_text(
+        json.dumps(
+            {
+                "holder": "keystroke-dead",
+                "intent": "t",
+                "queue_id": item_id,
+                "acked_at": stale,
+                "updated_at": stale,
+                "acquired_at": stale,
+            }
+        ),
+        encoding="utf-8",
+    )
+    repairs = repair_tick(q, lock_path=lock_path)
+    assert any(r["action"] == "stale_launch_lock" for r in repairs)
+    assert not lock_path.is_file()
+    assert q.get(item_id)["status"] == "queued"
+
+
+def test_repair_regreenlit_ready(tmp_path: Path, monkeypatch) -> None:
+    import orchestrator_handoff.queue as queue_mod
+
+    monkeypatch.setattr(queue_mod, "_REPO", tmp_path)
+    prompts = tmp_path / "tmp/prompts"
+    prompts.mkdir(parents=True)
+    (prompts / "tab-launch-work-foo.md").write_text("# x\n", encoding="utf-8")
+    qpath = tmp_path / "queue.json"
+    index = tmp_path / "index.md"
+    _write_index(index, "tab-launch-work-foo.md")
+    q = HandoffQueue.open(path=qpath)
+    out = q.enqueue(
+        intent="tab-launch-work-foo",
+        work_prompt="tmp/prompts/tab-launch-work-foo.md",
+        priority="P0",
+    )
+    q.complete(out["item"]["id"])
+    repairs = repair_tick(q, lock_path=tmp_path / "lock.json", index_path=index)
+    assert any(r["action"] == "regreenlit_ready" for r in repairs)
+    assert q.peek() is not None
