@@ -30,8 +30,8 @@ _MANIFEST_BLOCK = """<!-- pools v1 -->
 |---|---|---|---|---|---|---|
 | orchestrator | IDE cursor tab bound to this lane | open | ulg-for-llms · checkpoint-discipline · continuity-thread-shaping · agent-bus-discipline | tip CP · this card · 10223-transcript-projection.md · 10223-opportunities.md | CHECKPOINT on agent-bus:10223 | implement in this tab · linear thread read · burying pending in chat |
 | work | Composer WORK tab (operator opens) | open | abstraction-layering · architecture-invariants · docstring-quality | launch prompt · opportunities row · cited spec | CLOSEOUT on agent-bus:10303 (`commit · pytest · files · verdict · bus_posts`) | posts on agent-bus:10223 · judgment forks (RULING ⇒ escalate) · scope beyond the slice |
-| fable | cdp/fable (escalation=cdp/fable) + watcher armed with --execution-id | open | ulg-for-llms · reasoning-posture · hypothesize-simulate · architecture-invariants(inline) · ulg-architecture(inline) | this card · tip CP · 10223-opportunities.md · cited specs | sidecar + send reply on the request lane (proof_reply_from web-anthropic) | code diffs (write boundary) · editing this card · polling for its own harvest |
-| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | blocked · bridge Timeout TypeError · since 2026-09-08 | conductor · reasoning-posture (non-mechanical) | this card · tip CP (continuity preamble) | worker thread CLOSEOUT + witness | admit while status≠open · G-row skip |
+| fable | cdp/fable (escalation=cdp/fable) + watcher armed with --execution-id | serial · 1 | ulg-for-llms · reasoning-posture · hypothesize-simulate · architecture-invariants(inline) · ulg-architecture(inline) | this card · tip CP · 10223-opportunities.md · cited specs | sidecar + send reply on the request lane (proof_reply_from web-anthropic) | code diffs (write boundary) · editing this card · polling for its own harvest |
+| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | open | conductor · reasoning-posture (non-mechanical) | this card · tip CP (continuity preamble) | worker thread CLOSEOUT + witness | admit while status≠open · G-row skip |
 """
 
 
@@ -165,8 +165,8 @@ def test_apply_fable_house_staging_blocks_when_status_blocked(
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     blocked = _MANIFEST_BLOCK.replace(
-        "| open | ulg-for-llms · reasoning-posture",
-        "| blocked · test · since 2026-09-08 | ulg-for-llms · reasoning-posture",
+        "| fable | cdp/fable (escalation=cdp/fable) + watcher armed with --execution-id | serial · 1 |",
+        "| fable | cdp/fable (escalation=cdp/fable) + watcher armed with --execution-id | blocked · test · since 2026-09-08 |",
         1,
     )
     card_path = tmp_path / "notes/system/threads/10223-continuity.md"
@@ -176,13 +176,28 @@ def test_apply_fable_house_staging_blocks_when_status_blocked(
         apply_fable_house_staging("body", house_id="10223", skills=None)
 
 
-def test_conductor_pool_admit_refusal(
+def test_conductor_pool_admit_refusal_when_open(
     monkeypatch: pytest.MonkeyPatch, tmp_path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     card_path = tmp_path / "notes/system/threads/10223-continuity.md"
     card_path.parent.mkdir(parents=True)
     card_path.write_text(_card_with_block(), encoding="utf-8")
+    assert conductor_pool_admit_refusal("10223") is None
+
+
+def test_conductor_pool_admit_refusal_when_blocked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path,
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    blocked = _MANIFEST_BLOCK.replace(
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | open |",
+        "| conductor | cursor-sdk (team_dispatch seat=cursor-sdk) | blocked · bridge Timeout TypeError · since 2026-09-08 |",
+        1,
+    )
+    card_path = tmp_path / "notes/system/threads/10223-continuity.md"
+    card_path.parent.mkdir(parents=True)
+    card_path.write_text(f"# card\n\n{blocked}", encoding="utf-8")
     reason = conductor_pool_admit_refusal("10223")
     assert reason is not None
     assert reason.startswith("blocked")
