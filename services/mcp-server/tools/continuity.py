@@ -21,10 +21,6 @@ from mcp_events import monotonic_now, record
 from transport_utils import make_sync_client
 from universal_logging import get_logger
 
-from pipelines.continuity_consolidate.v1.handlers._cortex import (
-    hub_entity_id,
-    parse_watermark,
-)
 from tools._cortex_relay import cx
 from tools._restart_probe import annotate_unreachable_error
 from tools.pipeline import STARGATE_URL, _pipeline_result
@@ -35,6 +31,31 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _DISPATCH_TIMEOUT = 15.0
+
+
+def hub_entity_id(root_thread: str) -> str:
+    """Cortex hub card for a continuity root house."""
+    return f"document:{root_thread}-continuity"
+
+
+def parse_watermark(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Parse the latest ``WATERMARK: consolidated_through=…`` assertion row."""
+    for row in rows:
+        claim = str(row.get("claim") or "")
+        if not claim.startswith("WATERMARK:"):
+            continue
+        for token in claim.split():
+            if not token.startswith("consolidated_through="):
+                continue
+            target = token.split("=", 1)[1]
+            if "#" not in target:
+                continue
+            thread, turn_s = target.split("#", 1)
+            try:
+                return {"thread": thread, "turn": int(turn_s)}
+            except ValueError:
+                return None
+    return None
 
 
 def _no_root_house_error(trigger_thread: str) -> dict[str, Any]:
