@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS restart_intents (
     last_seen_event_seq  INTEGER NOT NULL DEFAULT 0,
     reason               TEXT,
     kill_boundary_at     TEXT,
+    park_live            INTEGER NOT NULL DEFAULT 0,
+    park_summary         TEXT,
     created_at           TEXT NOT NULL,
     updated_at           TEXT NOT NULL
 );
@@ -116,7 +118,22 @@ def apply_restart_intent_schema(conn: sqlite3.Connection) -> None:
             ALTER TABLE restart_intents_v2 RENAME TO restart_intents;
             """
         )
+    _ensure_park_columns(conn)
     _ensure_kill_cas_indexes(conn)
+
+
+def _ensure_park_columns(conn: sqlite3.Connection) -> None:
+    """Steer-restart v1: park_live intent flag + last sweep summary JSON."""
+    cols = {
+        row[1]
+        for row in conn.execute("PRAGMA table_info(restart_intents)").fetchall()
+    }
+    if "park_live" not in cols:
+        conn.execute(
+            "ALTER TABLE restart_intents ADD COLUMN park_live INTEGER NOT NULL DEFAULT 0"
+        )
+    if "park_summary" not in cols:
+        conn.execute("ALTER TABLE restart_intents ADD COLUMN park_summary TEXT")
 
 
 __all__ = ["_DDL", "apply_restart_intent_schema"]

@@ -342,6 +342,8 @@ async def emit_manage_recycle_escalated(
     idle_s: float,
     active_count: int,
     stuck_ops: list[dict[str, Any]] | None = None,
+    park_attempted: bool | None = None,
+    park_refusals: list[dict[str, Any]] | None = None,
 ) -> None:
     """Idle-on-no-progress gate tripped; force kill follows."""
     from charter_runner_store.recycle_giw_events import ManageRecycleEscalated
@@ -351,8 +353,29 @@ async def emit_manage_recycle_escalated(
         idle_s=idle_s,
         active_count=active_count,
         stuck_ops=stuck_ops,
+        park_attempted=park_attempted,
+        park_refusals=park_refusals,
     )
     await _emit(event.signal, dict(event.payload))
+
+
+async def emit_manage_restart_park_live_requested(
+    *,
+    intent_id: str,
+    requested: list[str],
+    refused: list[dict[str, Any]],
+    live_after: int,
+) -> None:
+    """Supervisor step 1b asked GIW to park live dispatches for this intent."""
+    await _emit(
+        "manage.restart.park_live_requested",
+        {
+            "intent_id": intent_id,
+            "requested": requested,
+            "refused": refused,
+            "live_after": live_after,
+        },
+    )
 
 
 async def emit_manage_recycle_completed(

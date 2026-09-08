@@ -229,6 +229,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
         clear_wip: bool = False,
         reenroll: bool = False,
         intent_id: str = "",
+        park_live: bool = False,
     ) -> dict[str, Any]:
         """Service lifecycle — start, stop, restart, sync_restart, rebuild, health, wait_healthy.
 
@@ -236,6 +237,9 @@ def register_manage_tools(mcp: FastMCP) -> None:
         service: service name (required for most actions)
         timeout: seconds to wait for wait_healthy (default 120)
         force: bypass the drain check for stop/restart/sync_restart (default False)
+        park_live: for git_integration_worker stop/restart/sync_restart — park live
+                   cursor-sdk dispatches at drain start instead of keep-await/kill
+                   (steer-restart v1; default False)
         reason: optional reason for charter_pause
         intent_id: required for cancel_restart_intent (restart-intent retraction)
 
@@ -404,6 +408,8 @@ def register_manage_tools(mcp: FastMCP) -> None:
             params["timeout"] = timeout
         if force and action in {"stop", "restart", "sync_restart"}:
             params["force"] = True
+        if park_live and action in {"stop", "restart", "sync_restart"}:
+            params["park_live"] = True
         if action == "cancel_restart_intent":
             params["intent_id"] = intent_id
         if action == "restart_intent_status":

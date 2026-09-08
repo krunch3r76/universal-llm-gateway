@@ -1,9 +1,11 @@
-"""Manage-side ``recycle_giw`` — drain first, force only after occupant idle.
+"""Manage-side ``recycle_giw`` — drain first, park at idle, force only if park refuses.
 
 The life MCP sliver is a thin sock relay. Decision logic lives here: arm the
 existing GIW drain supervisor in recycle mode (idle-on-no-progress, not a
-wall-clock completion deadline), then let that supervisor escalate to the
-same kill callable the force path uses.
+wall-clock completion deadline) with park-first wired (steer-restart v1), so an
+idle occupant is parked — bridge ``CancelRun``, row resumable after restart —
+and the supervisor escalates to the kill callable only when the park is refused
+for a reason a restart cannot clear.
 """
 
 from __future__ import annotations
@@ -94,6 +96,7 @@ async def recycle_giw(ctl: ServiceController, params: dict[str, Any], service: s
         kill=ctl.git_worker_kill_for("recycle_giw"),
         idle_escalate_s=idle_s,
         deadline_s=_RECYCLE_DEADLINE_S,
+        park_first=True,
     )
     result = await run_gated_drain_supervised(
         ctl.restart_gate,
@@ -114,6 +117,7 @@ async def recycle_giw(ctl: ServiceController, params: dict[str, Any], service: s
         "service": _SERVICE,
         "idle_s": idle_s,
         "idle_gate": "occupant_progress",
+        "idle_action": "park_first",
     }
     return result
 

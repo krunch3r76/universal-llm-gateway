@@ -144,6 +144,7 @@ def _supervisor(
     *,
     deadline_s: float = 5.0,
     idle_escalate_s: float | None = None,
+    park_for_restart: Any | None = None,
 ) -> GitWorkerDrainSupervisor:
     return GitWorkerDrainSupervisor(
         store=store,
@@ -155,6 +156,7 @@ def _supervisor(
         reconcile_interval_s=0.01,
         progress_interval_s=999.0,
         idle_escalate_s=idle_escalate_s,
+        park_for_restart=park_for_restart,
     )
 
 
@@ -813,3 +815,93 @@ def test_idle_gate_does_not_fire_when_auto_heartbeat_fresh(
     signals = [s for s, _ in events_log]
     assert "manage.recycle.escalated" not in signals
     assert "manage.restart.timeout" in signals
+
+
+def test_park_live_runs_step_1b_and_persists_summary(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """AC-SR-5: park_live intent parks at drain start; summary projected."""
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE,
+        action="restart",
+        deadline_at="d",
+        reason="r",
+        park_live=True,
+    )
+    assert intent.park_live is True
+    done = _snap(draining=True, epoch=1, active=0)
+    worker = _Worker(
+        drain_states=[_snap(draining=False, epoch=0), done],
+        begin_snap=done,
+    )
+    park_calls: list[tuple[str, int | None, str]] = []
+    summary = {
+        "requested": ["dispatch-1"],
+        "refused": [],
+        "already_parked": [],
+        "live_after": 0,
+    }
+
+    async def _park(intent_id: str, drain_epoch: int | None, reason: str) -> dict[str, Any]:
+        park_calls.append((intent_id, drain_epoch, reason))
+        return summary
+
+    kill = _Kill()
+    sup = _supervisor(
+        store,
+        worker,
+        _Feed([_drain_completed(epoch=1)]),
+        kill,
+        park_for_restart=_park,
+    )
+    _run(sup.supervise(intent))
+    assert park_calls
+    assert park_calls[0][0] == intent.intent_id
+    stored = store.get(intent.intent_id)
+    assert stored is not None
+    assert stored.park_summary == summary
+    signals = [s for s, _ in events_log]
+    assert "manage.restart.park_live_requested" in signals
+    assert kill.calls == 1
+
+
+def test_recycle_park_first_before_idle_kill(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """AC-SR-6: recycle idle tries park-for-restart before force kill."""
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="recycle_giw", deadline_at="d", reason="r"
+    )
+    stuck = _snap(
+        draining=True,
+        epoch=1,
+        active=1,
+        ops=[{"op_id": "job-stuck", "kind": "cursor-auto"}],
+    )
+    worker = _Worker(
+        drain_states=[_snap(draining=False, epoch=0, active=1), stuck],
+        begin_snap=stuck,
+    )
+    park_calls = 0
+
+    async def _park(_intent_id: str, _epoch: int | None, _reason: str) -> dict[str, Any]:
+        nonlocal park_calls
+        park_calls += 1
+        return {
+            "requested": ["dispatch-1"],
+            "refused": [{"dispatch_id": "dispatch-2", "refusal": "CANCEL_FAILED"}],
+            "live_after": 1,
+        }
+
+    kill = _Kill()
+    sup = _supervisor(
+        store, worker, _Feed([]), kill, deadline_s=5.0, idle_escalate_s=0.05,
+        park_for_restart=_park,
+    )
+    _run(sup.supervise(intent))
+    assert park_calls >= 1
+    assert kill.calls == 1
+    escalated = [p for s, p in events_log if s == "manage.recycle.escalated"]
+    assert escalated and escalated[-1].get("park_attempted") is True

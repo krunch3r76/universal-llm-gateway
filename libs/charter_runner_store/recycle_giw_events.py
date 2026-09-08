@@ -60,8 +60,14 @@ def ManageRecycleEscalated(  # noqa: N802
     idle_s: float,
     active_count: int,
     stuck_ops: list[dict[str, Any]] | None = None,
+    park_attempted: bool | None = None,
+    park_refusals: list[dict[str, Any]] | None = None,
 ) -> Event:
-    """Idle-on-no-progress gate tripped; escalate to the existing force kill."""
+    """Idle-on-no-progress gate tripped; escalate to the existing force kill.
+
+    ``park_attempted`` / ``park_refusals`` (steer-restart v1) record whether the
+    park-first rung ran before the kill and which occupants it could not free.
+    """
     payload: dict[str, Any] = {
         "intent_id": intent_id,
         "service": service,
@@ -70,6 +76,10 @@ def ManageRecycleEscalated(  # noqa: N802
     }
     if stuck_ops is not None:
         payload["stuck_ops"] = stuck_ops
+    if park_attempted is not None:
+        payload["park_attempted"] = park_attempted
+    if park_refusals is not None:
+        payload["park_refusals"] = park_refusals
     return Event(
         signal="manage.recycle.escalated",
         payload=payload,

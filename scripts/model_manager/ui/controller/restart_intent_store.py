@@ -10,6 +10,7 @@ restart without a second begin-drain.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -85,6 +86,8 @@ class Intent:
     kill_boundary_at: str | None
     created_at: str
     updated_at: str
+    park_live: bool = False
+    park_summary: dict[str, Any] | None = None
 
     @property
     def is_terminal(self) -> bool:
@@ -131,9 +134,27 @@ def _row_to_intent(row: sqlite3.Row) -> Intent:
         kill_boundary_at=row["kill_boundary_at"]
         if "kill_boundary_at" in keys
         else None,
+        park_live=bool(row["park_live"]) if "park_live" in keys else False,
+        park_summary=_decode_park_summary(row["park_summary"])
+        if "park_summary" in keys
+        else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
+
+
+def _decode_park_summary(raw: Any) -> dict[str, Any] | None:
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        parsed = json.loads(str(raw))
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _encode_park_summary(summary: dict[str, Any]) -> str:
+    return json.dumps(summary, separators=(",", ":"), sort_keys=True)
 
 
 class RestartIntentStore:
@@ -159,7 +180,13 @@ class RestartIntentStore:
         return cls._instance
 
     def create_intent(
-        self, *, service: str, action: str, deadline_at: str, reason: str
+        self,
+        *,
+        service: str,
+        action: str,
+        deadline_at: str,
+        reason: str,
+        park_live: bool = False,
     ) -> Intent:
         """INSERT ``pending_drain``, or return existing if status blocks new restart."""
         with self._connect() as conn:
@@ -176,8 +203,17 @@ class RestartIntentStore:
             conn.execute(
                 "INSERT INTO restart_intents "
                 "(intent_id, service, action, status, last_seen_event_seq, reason, "
-                " created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
-                (intent_id, service, action, STATUS_PENDING_DRAIN, reason, now, now),
+                " park_live, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)",
+                (
+                    intent_id,
+                    service,
+                    action,
+                    STATUS_PENDING_DRAIN,
+                    reason,
+                    1 if park_live else 0,
+                    now,
+                    now,
+                ),
             )
             row = conn.execute(
                 "SELECT * FROM restart_intents WHERE intent_id=?", (intent_id,)
@@ -283,6 +319,10 @@ class RestartIntentStore:
 
     def set_last_seen_seq(self, intent_id: str, seq: int) -> None:
         self._update(intent_id, last_seen_event_seq=seq)
+
+    def set_park_summary(self, intent_id: str, *, summary: dict[str, Any]) -> None:
+        """Persist the last park-for-restart sweep for operator projections."""
+        self._update(intent_id, park_summary=_encode_park_summary(summary))
 
     def cancel(self, intent_id: str) -> Intent:
         with self._connect() as conn:

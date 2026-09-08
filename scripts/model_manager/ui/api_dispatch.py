@@ -151,7 +151,9 @@ async def execute(
             require_service(service)
             force = bool(params.get("force", False))
             if service == "git_integration_worker" and not force:
-                return await _git_worker_drain_supervised(ctl, "stop")
+                return await _git_worker_drain_supervised(
+                    ctl, "stop", park_live=bool(params.get("park_live", False))
+                )
             return await run_gated(
                 ctl.restart_gate,
                 "stop",
@@ -183,7 +185,9 @@ async def execute(
                 )
             force = bool(params.get("force", False))
             if service == "git_integration_worker" and not force:
-                result = await _git_worker_drain_supervised(ctl, "restart")
+                result = await _git_worker_drain_supervised(
+                    ctl, "restart", park_live=bool(params.get("park_live", False))
+                )
             else:
                 result = await run_gated(
                     ctl.restart_gate,
@@ -245,6 +249,7 @@ async def execute(
                     "sync_restart",
                     code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
                     row_id=_optional_attr_str(params, "row_id"),
+                    park_live=bool(params.get("park_live", False)),
                 )
             return await run_gated(
                 ctl.restart_gate,
@@ -545,6 +550,7 @@ async def _git_worker_drain_supervised(
     *,
     code_ref: str = "HEAD",
     row_id: str | None = None,
+    park_live: bool = False,
 ) -> dict[str, Any]:
     """Route a non-force git-worker lifecycle action to the drain supervisor.
 
@@ -554,6 +560,8 @@ async def _git_worker_drain_supervised(
     (todo:manage-busy-drain-restart); force=true keeps the existing immediate
     kill path. The terminal lifecycle is action-appropriate: stop vs restart.
     ``code_ref`` / ``row_id`` thread the propagate row identity into mint.
+    ``park_live`` (steer-restart v1) parks live cursor-sdk dispatches at drain
+    start so the drain converges without waiting on or killing them.
     """
     supervisor = ctl.build_git_worker_drain_supervisor(
         kill=ctl.git_worker_kill_for(action)
@@ -564,9 +572,10 @@ async def _git_worker_drain_supervised(
         "git_integration_worker",
         store=ctl.restart_intent_store,
         supervisor=supervisor,
-        reason=f"manage {action} (deferred drain)",
+        reason=f"manage {action} (deferred drain{', park_live' if park_live else ''})",
         code_ref=code_ref,
         row_id=row_id,
+        park_live=park_live,
     )
 
 

@@ -18,6 +18,14 @@ keep-awaits. Stall never SIGTERMs. The sole occupant force is recycle
 deadline is 7 days (assume drain inevitable under normal holds —
 todo:manage-busy-drain-restart); progress heartbeats remain the visibility path.
 
+Steer-restart v1 (``todo:cursor-sdk-steer-restart``): live cursor-sdk dispatches
+are not a reason to wait or kill. Step 1b — when the intent carries
+``park_live`` — asks GIW to *park* them (``POST /api/v1/cursor/park-for-restart``:
+bridge ``CancelRun``, row terminal ``cancelled`` + park columns, GIW auto-resume
+after restart); refusals fall back to keep-await exactly as before. Recycle
+mode is park-first: occupant idle tries the same sweep before ``_sigterm`` and
+kills only when park is refused for a reason a restart cannot clear.
+
 All worker/event transports are injected callables so the lifecycle is unit
 testable with a fake worker + fake event feed + fake kill (AC-2..AC-5). The
 ``build_git_worker_drain_supervisor`` factory wires the real HTTP + WS transports.
@@ -70,11 +78,19 @@ SubscribeFactory = Callable[[int], AsyncIterator[dict[str, Any]]]
 KillCaller = Callable[[], Awaitable[str]]
 # (intent_id, drain_epoch) -> drain_state snapshot after release attempt.
 CancelDrainCaller = Callable[[str, int], Awaitable[dict[str, Any]]]
+# (intent_id, drain_epoch, reason) -> park sweep summary
+# {requested, refused:[{dispatch_id, refusal}], already_parked, live_after}.
+ParkForRestartCaller = Callable[[str, int | None, str], Awaitable[dict[str, Any]]]
 
 _AWAIT_CONVERGED = "converged"
 _AWAIT_TIMEOUT = "timeout"
 _AWAIT_CANCELLED = "cancelled"
 _AWAIT_IDLE = "idle"
+
+# Park refusals a restart cannot clear by waiting: recycle falls through to kill.
+_PARK_HARD_REFUSALS = frozenset({"CANCEL_FAILED", "NEST_CHAIN", "STATE_ROOT_MISSING"})
+# Recycle park-first tries the sweep at most this many idle windows before force.
+_PARK_IDLE_MAX_ATTEMPTS = 3
 
 
 def _field(ev: dict[str, Any], key: str) -> Any:
@@ -118,9 +134,12 @@ class GitWorkerDrainSupervisor:
     on_timeout_mutex_release: Callable[[], Awaitable[None]] | None = None
     idle_escalate_s: float | None = None
     liveness_state: DrainStateCaller | None = None
+    park_for_restart: ParkForRestartCaller | None = None
     _settle_boundary_monotonic: float | None = None
     _idle_last_progress: float | None = None
     _idle_token: tuple[frozenset[str], tuple[tuple[str, str], ...], bool] | None = None
+    _park_idle_attempts: int = 0
+    _last_park_summary: dict[str, Any] | None = None
 
     async def supervise(self, intent: Intent) -> None:
         """Drive one intent from begin-drain to SIGTERM (or alert-only timeout).
@@ -133,6 +152,8 @@ class GitWorkerDrainSupervisor:
         self._settle_boundary_monotonic = None
         self._idle_last_progress = None
         self._idle_token = None
+        self._park_idle_attempts = 0
+        self._last_park_summary = None
         t0 = time.monotonic()
         deadline = t0 + self.deadline_s
         timeout_alerted = False
@@ -141,6 +162,8 @@ class GitWorkerDrainSupervisor:
             if self._intent_cancelled(intent):
                 await self._on_cancelled(intent)
                 return
+            if intent.park_live:
+                await self._park_live(intent)
             while True:
                 outcome = await self._await_drain_completed(intent, deadline, t0)
                 if outcome == _AWAIT_CANCELLED:
@@ -155,6 +178,8 @@ class GitWorkerDrainSupervisor:
                     deadline = time.monotonic() + _DEFAULT_DEADLINE_S
                     continue
                 if outcome == _AWAIT_IDLE:
+                    if await self._park_first_on_idle(intent):
+                        continue
                     await self._on_idle(intent, t0)
                     return
                 break
@@ -240,6 +265,93 @@ class GitWorkerDrainSupervisor:
             deadline_at=intent.deadline_at or "",
         )
         return intent
+
+    # -------------------------------------------------------------- step 1b
+    async def _run_park_sweep(
+        self, intent: Intent, *, reason: str
+    ) -> dict[str, Any] | None:
+        """Ask GIW to park live dispatches; persist the summary. None on failure."""
+        if self.park_for_restart is None:
+            return None
+        try:
+            summary = await self.park_for_restart(
+                intent.intent_id, intent.drain_epoch, reason
+            )
+        except Exception:  # noqa: BLE001 — park is best-effort; keep-await remains
+            logger.exception(
+                "park-for-restart sweep failed: intent_id=%s", intent.intent_id
+            )
+            return None
+        if not isinstance(summary, dict):
+            return None
+        self._last_park_summary = summary
+        try:
+            self.store.set_park_summary(intent.intent_id, summary=summary)
+        except Exception:  # noqa: BLE001 — projection only
+            logger.debug("park summary persist failed", exc_info=True)
+        return summary
+
+    async def _park_live(self, intent: Intent) -> None:
+        """Step 1b: park live cursor-sdk dispatches so drain converges without kill.
+
+        Refusals do not fail the intent — the loop proceeds to keep-await exactly
+        as before, with the refused occupants visible in ``_stuck_ops``.
+        """
+        summary = await self._run_park_sweep(
+            intent, reason=intent.reason or "manage restart (park_live)"
+        )
+        if summary is None:
+            return
+        await events.emit_manage_restart_park_live_requested(
+            intent_id=intent.intent_id,
+            requested=list(summary.get("requested") or []),
+            refused=list(summary.get("refused") or []),
+            live_after=int(summary.get("live_after") or 0),
+        )
+        logger.info(
+            "park_live sweep: intent_id=%s requested=%s refused=%s live_after=%s",
+            intent.intent_id,
+            summary.get("requested"),
+            summary.get("refused"),
+            summary.get("live_after"),
+        )
+
+    @staticmethod
+    def _hard_refusals(summary: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            r
+            for r in (summary.get("refused") or [])
+            if isinstance(r, dict) and str(r.get("refusal")) in _PARK_HARD_REFUSALS
+        ]
+
+    async def _park_first_on_idle(self, intent: Intent) -> bool:
+        """Recycle park-first rung. True ⇒ keep awaiting; False ⇒ escalate to kill.
+
+        A successful sweep (nothing left that a park could not free) resets the
+        idle clock so the parked rows get a window to close their tickets. Hard
+        refusals (``CANCEL_FAILED`` / ``NEST_CHAIN`` / ``STATE_ROOT_MISSING``) or
+        the attempt cap fall through to the existing force kill.
+        """
+        if self.park_for_restart is None:
+            return False
+        if self._park_idle_attempts >= _PARK_IDLE_MAX_ATTEMPTS:
+            return False
+        self._park_idle_attempts += 1
+        summary = await self._run_park_sweep(
+            intent, reason=intent.reason or "manage recycle (park-first)"
+        )
+        if summary is None or self._hard_refusals(summary):
+            return False
+        self._idle_last_progress = time.monotonic()
+        self._idle_token = None
+        logger.info(
+            "recycle park-first: intent_id=%s attempt=%s requested=%s live_after=%s",
+            intent.intent_id,
+            self._park_idle_attempts,
+            summary.get("requested"),
+            summary.get("live_after"),
+        )
+        return True
 
     # --------------------------------------------------------------- step 2
     async def _await_drain_completed(
@@ -361,14 +473,19 @@ class GitWorkerDrainSupervisor:
         await events.emit_manage_restart_cancelled(intent_id=intent.intent_id)
 
     async def _on_idle(self, intent: Intent, t0: float) -> None:
-        """Occupant progress idled; force-kill without waiting for active_count==0."""
+        """Occupant progress idled and park could not free it; force-kill."""
         snapshot = await self._safe_drain_state() or {}
         idle_s = float(self.idle_escalate_s or 0.0)
+        park_summary = self._last_park_summary
         await events.emit_manage_recycle_escalated(
             intent_id=intent.intent_id,
             idle_s=idle_s,
             active_count=int(snapshot.get("active_count", 0) or 0),
             stuck_ops=self._stuck_ops(snapshot),
+            park_attempted=self._park_idle_attempts > 0,
+            park_refusals=(
+                list(park_summary.get("refused") or []) if park_summary else []
+            ),
         )
         logger.warning(
             "recycle_giw idle-escalate to force kill: intent_id=%s active_count=%s",
@@ -552,13 +669,37 @@ def build_git_worker_drain_supervisor(
     kill: KillCaller,
     deadline_s: float = _DEFAULT_DEADLINE_S,
     idle_escalate_s: float | None = None,
+    park_first: bool = True,
 ) -> GitWorkerDrainSupervisor:
-    """Construct a supervisor wired to the live worker + event service."""
+    """Construct a supervisor wired to the live worker + event service.
+
+    ``park_first`` wires the ``park-for-restart`` transport (step 1b for
+    ``park_live`` intents; park-first rung in recycle mode). It is the default
+    posture — pass ``False`` only to reproduce the pre-steer wait-or-kill shape.
+    """
     from transport_utils import make_async_client
 
     async def _begin_drain(body: dict[str, Any]) -> dict[str, Any]:
         async with make_async_client(worker_url, timeout=10.0) as client:
             resp = await client.post("/api/v1/git/admin/begin-drain", json=body)
+            resp.raise_for_status()
+            return resp.json()
+
+    async def _park_for_restart(
+        intent_id: str, drain_epoch: int | None, reason: str
+    ) -> dict[str, Any]:
+        # The sweep issues one bridge CancelRun per live dispatch; allow more
+        # than the 10s control-plane budget.
+        async with make_async_client(worker_url, timeout=60.0) as client:
+            resp = await client.post(
+                "/api/v1/cursor/park-for-restart",
+                json={
+                    "intent_id": intent_id,
+                    "drain_epoch": drain_epoch,
+                    "actor": "manage",
+                    "reason": reason,
+                },
+            )
             resp.raise_for_status()
             return resp.json()
 
@@ -619,6 +760,7 @@ def build_git_worker_drain_supervisor(
         deadline_s=deadline_s,
         idle_escalate_s=idle_escalate_s,
         liveness_state=_liveness_state if idle_escalate_s is not None else None,
+        park_for_restart=_park_for_restart if park_first else None,
     )
 
 

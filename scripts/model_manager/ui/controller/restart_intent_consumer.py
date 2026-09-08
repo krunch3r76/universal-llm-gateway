@@ -39,6 +39,10 @@ def project_restart_intent_consumer(
         "deadline_semantics": DEADLINE_SEMANTICS,
         # Legacy alias — same instant; semantics live in deadline_semantics.
         "deadline_at": ceiling,
+        # Steer-restart: whether live cursor-sdk dispatches are parked at drain
+        # start, and the last park sweep ({requested, refused, live_after, …}).
+        "park_live": intent.park_live,
+        "park_summary": intent.park_summary,
     }
 
 

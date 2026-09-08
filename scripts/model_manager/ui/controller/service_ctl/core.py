@@ -820,12 +820,14 @@ class ServiceController:
         kill: Callable[[], Awaitable[str]],
         idle_escalate_s: float | None = None,
         deadline_s: float | None = None,
+        park_first: bool = True,
     ) -> GitWorkerDrainSupervisor:
         """Construct a drain supervisor wired to the live worker + event service.
 
         ``kill`` is the action-appropriate terminal lifecycle: ``stop_*`` for a stop
         intent, ``restart_*`` for restart/sync_restart/recycle_giw.
         ``idle_escalate_s`` enables recycle mode (force after occupant idle).
+        ``park_first`` wires the GIW ``park-for-restart`` transport (steer-restart).
         """
         return build_git_worker_drain_supervisor(
             self._restart_intent_store,
@@ -836,6 +838,7 @@ class ServiceController:
             kill=kill,
             deadline_s=_GIT_WORKER_DRAIN_DEADLINE_S if deadline_s is None else deadline_s,
             idle_escalate_s=idle_escalate_s,
+            park_first=park_first,
         )
 
     def git_worker_kill_for(self, action: str) -> Callable[[], Awaitable[str]]:

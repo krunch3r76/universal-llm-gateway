@@ -466,8 +466,13 @@ async def run_gated_drain_supervised(
     reason: str,
     code_ref: str = "HEAD",
     row_id: str | None = None,
+    park_live: bool = False,
 ) -> dict[str, Any]:
-    """Arm a durable git-worker drain intent and return the deferred 202 envelope."""
+    """Arm a durable git-worker drain intent and return the deferred 202 envelope.
+
+    ``park_live`` (steer-restart v1) makes the supervisor park live cursor-sdk
+    dispatches at drain start instead of keep-awaiting them.
+    """
     outcome = await gate.evaluate(service, force=True)
     if outcome is not None:
         existing = store.active_for_service(service)
@@ -487,7 +492,11 @@ async def run_gated_drain_supervised(
     ).isoformat()
     try:
         intent = store.create_intent(
-            service=service, action=action, deadline_at=deadline_at, reason=reason
+            service=service,
+            action=action,
+            deadline_at=deadline_at,
+            reason=reason,
+            park_live=park_live,
         )
         validation_id = mint_activation_validation(
             store, intent, code_ref=code_ref, row_id=row_id
