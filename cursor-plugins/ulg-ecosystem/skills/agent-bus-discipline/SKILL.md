@@ -62,6 +62,8 @@ For `seat=cursor-sdk` dispatches (`op=generate`): poll with `completion="first_r
 
 Human-authored closeouts may coincidentally include `closeout` in the subject; treat that as incidental, not a protocol signal. Full arc context: `orchestrator-workflow` § Post-dispatch poll recipe.
 
+**Park → resume chain (steer-restart, AC-SR-12):** `team_dispatch(op="steer", steer="park_for_restart", dispatch_id=…, reason=…)` relays to GIW `POST /dispatch/{id}/park` (Stargate thin relay — ¬ bus poller authority). The parent PARKED turn is **non-terminal** for `poll_hint` / execution tracking: keep polling the same `execution_id` until the **resume child's** terminal CLOSEOUT (`resume_of` inherits `execution_id`). Substrate-initiated park posts `PARKED_TRANSPORT wake=giw_restart:{intent_id}` (conductor designed stop); seat-initiated steer uses the same GIW route without a restart intent.
+
 ### Watcher mis-arm imprint (binding)
 
 When a bus-consult / dispatch-closeout arm misfires:

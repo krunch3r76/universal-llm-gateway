@@ -44,6 +44,105 @@ class _FakeClientContext:
 
 
 @pytest.mark.asyncio
+async def test_recover_running_when_only_parked_turn_present() -> None:
+    """AC-SR-12: PARKED must not terminalize execution recovery."""
+    responses = [
+        _FakeResponse(
+            200,
+            {
+                "thread_id": "048",
+                "pipeline_id": "cursor-sdk-generate",
+                "terminal_status": None,
+                "terminal_at": None,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "turns": [
+                    {
+                        "from": "cursor-sdk",
+                        "subject": (
+                            "cursor-sdk dispatch disp-park PARKED "
+                            "(for GIW restart intent-1)"
+                        ),
+                        "created_at": "2026-06-16T12:01:00+00:00",
+                    }
+                ]
+            },
+        ),
+    ]
+
+    with patch(
+        "systems.proxy.routers.api.dispatch_bus_recovery.make_async_client",
+        return_value=_FakeClientContext(responses),
+    ):
+        recovered = await recover_execution_from_bus_thread(
+            "exec-parked-only",
+            url="unix:///tmp/agent-bus.sock",
+            auth_token="test-token",
+        )
+
+    assert recovered is not None
+    assert recovered["status"] == "running"
+    assert recovered["completed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_recover_completes_on_child_closeout_after_parked() -> None:
+    """AC-SR-12: child CLOSEOUT under inherited execution_id completes wait."""
+    closeout_json = '{"status":"complete","summary":"resumed work"}'
+    responses = [
+        _FakeResponse(
+            200,
+            {
+                "thread_id": "049",
+                "pipeline_id": "cursor-sdk-generate",
+                "terminal_status": None,
+                "terminal_at": None,
+            },
+        ),
+        _FakeResponse(
+            200,
+            {
+                "turns": [
+                    {
+                        "from": "cursor-sdk",
+                        "subject": "cursor-sdk dispatch child-1 COMPLETED",
+                        "created_at": "2026-06-16T12:10:00+00:00",
+                        "turn_number": 5,
+                        "body": closeout_json,
+                    },
+                    {
+                        "from": "cursor-sdk",
+                        "subject": (
+                            "cursor-sdk dispatch parent-1 PARKED "
+                            "(for GIW restart intent-1)"
+                        ),
+                        "created_at": "2026-06-16T12:05:00+00:00",
+                        "turn_number": 4,
+                    },
+                ]
+            },
+        ),
+    ]
+
+    with patch(
+        "systems.proxy.routers.api.dispatch_bus_recovery.make_async_client",
+        return_value=_FakeClientContext(responses),
+    ):
+        recovered = await recover_execution_from_bus_thread(
+            "exec-park-resume",
+            url="unix:///tmp/agent-bus.sock",
+            auth_token="test-token",
+        )
+
+    assert recovered is not None
+    assert recovered["status"] == "completed"
+    assert recovered["result"] == closeout_json
+
+
+@pytest.mark.asyncio
 async def test_recover_from_terminal_dispatch_link() -> None:
     responses = [
         _FakeResponse(

@@ -264,7 +264,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Team Dispatch")
     async def team_dispatch(
-        op: Literal["generate", "to_thread", "handoff"],
+        op: Literal["generate", "to_thread", "handoff", "steer"],
         role: str | None = None,
         seat: str | None = None,
         dispatch_thread_id: str = "",
@@ -395,8 +395,42 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        dispatch_id: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Target cursor-sdk dispatch_id when op='steer' "
+                    "(park_for_restart relay to GIW)."
+                ),
+            ),
+        ] = None,
+        steer: Annotated[
+            Literal["park_for_restart"] | None,
+            Field(
+                description=(
+                    "Steer verb when op='steer'. v1: park_for_restart parks one "
+                    "live dispatch via GIW POST /dispatch/{id}/park."
+                ),
+            ),
+        ] = None,
+        reason: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Human-readable steer reason when op='steer' (required for "
+                    "park_for_restart)."
+                ),
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Team-seat dispatch with explicit op discrimination.
+
+        **``op="steer"``** — seat-initiated GIW park relay (R5). Requires
+        ``dispatch_id``, ``steer="park_for_restart"``, and ``reason``. Optional
+        ``actor`` (defaults server-side). Propagates GIW refusal envelopes
+        (404/409/422/503) fail-closed. Does not arm poll_hint — the parked
+        dispatch's inherited ``execution_id`` stays in-flight until the resume
+        child's terminal CLOSEOUT (AC-SR-12).
 
         **``op="handoff"``** — manual seats; select ``seat``:
 
@@ -673,6 +707,48 @@ def register_frontier_tools(mcp: FastMCP) -> None:
         )
         if prompt_input_err is not None:
             return prompt_input_err
+
+        if op == "steer":
+            if steer != "park_for_restart":
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": (
+                            "steer must be 'park_for_restart' when op='steer'"
+                        ),
+                    },
+                    "field": "steer",
+                }
+            if not dispatch_id:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "dispatch_id is required when op='steer'",
+                    },
+                    "field": "dispatch_id",
+                }
+            if not reason:
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": "reason is required when op='steer'",
+                    },
+                    "field": "reason",
+                }
+            steer_body: dict[str, Any] = {
+                "op": "steer",
+                "dispatch_id": dispatch_id,
+                "steer": steer,
+                "reason": reason,
+            }
+            if caller_agent is not None:
+                steer_body["actor"] = caller_agent
+            record("mcp.team.steer.called")
+            return await _relay(
+                endpoint="/api/v1/team/dispatch",
+                body=steer_body,
+                record_prefix="mcp.team.steer",
+            )
 
         if op == "handoff":
             if contract == "wrap":

@@ -12,6 +12,7 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
+from .cursor_sdk_dispatch_turn import sdk_terminal_closeout_turn
 from .db.connection import connect, now
 from .db.lifecycle import _transition_lifecycle_state
 from .db.threads_atomic import terminate_dispatch
@@ -37,15 +38,9 @@ def _age_seconds(linked_at: str) -> float:
 
 
 def _sdk_terminal_turn(thread_id: str) -> dict[str, Any] | None:
-    """Return the latest cursor-sdk dispatch closeout turn, if any."""
+    """Return the latest cursor-sdk terminal closeout turn, if any."""
     turns = get_turns(thread=thread_id, last=50)
-    for turn in turns:
-        if turn.get("from_agent") != "cursor-sdk":
-            continue
-        subject = turn.get("subject") or ""
-        if subject.startswith("cursor-sdk dispatch"):
-            return turn
-    return None
+    return sdk_terminal_closeout_turn(turns)
 
 
 def _infer_terminal_status(subject: str) -> str:

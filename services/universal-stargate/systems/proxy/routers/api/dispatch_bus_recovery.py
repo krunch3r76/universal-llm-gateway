@@ -15,6 +15,7 @@ import time
 from typing import Any
 
 import httpx
+from agent_bus_store.cursor_sdk_dispatch_turn import sdk_terminal_closeout_turn
 from transport_utils import make_async_client
 from universal_logging import get_logger
 
@@ -27,17 +28,6 @@ _CURSOR_SDK_REPLY_SEAT = "cursor-sdk"
 
 def _infer_terminal_status(subject: str) -> str:
     return "failed" if "FAILED" in subject else "completed"
-
-
-def _sdk_terminal_turn(turns: list[dict[str, Any]]) -> dict[str, Any] | None:
-    for turn in turns:
-        author = turn.get("from_agent") or turn.get("from")
-        if author != "cursor-sdk":
-            continue
-        subject = turn.get("subject") or ""
-        if subject.startswith("cursor-sdk dispatch"):
-            return turn
-    return None
 
 
 def _build_recovered_record(
@@ -208,7 +198,7 @@ async def recover_execution_from_bus_thread(
                 )
                 if turns_resp.status_code == 200:
                     turns = turns_resp.json().get("turns") or []
-                    closeout = _sdk_terminal_turn(turns)
+                    closeout = sdk_terminal_closeout_turn(turns)
                     if closeout is not None:
                         closeout_body = await _closeout_body_for_turn(
                             client,
@@ -233,7 +223,7 @@ async def recover_execution_from_bus_thread(
             if turns_resp.status_code != 200:
                 return None
             turns = turns_resp.json().get("turns") or []
-            closeout = _sdk_terminal_turn(turns)
+            closeout = sdk_terminal_closeout_turn(turns)
             closeout_body = None
             if closeout is not None:
                 closeout_body = await _closeout_body_for_turn(
@@ -258,7 +248,7 @@ async def recover_execution_from_bus_thread(
                     )
                     if turns_resp.status_code == 200:
                         turns = turns_resp.json().get("turns") or []
-                        closeout = _sdk_terminal_turn(turns)
+                        closeout = sdk_terminal_closeout_turn(turns)
 
             if closeout is None:
                 return _build_recovered_record(

@@ -16,8 +16,8 @@ from implement_admission.preflight import (
     DecisionNotAssertedError,
     require_decision_asserted,
 )
-from implement_admission.source_ref import SourceRefError, parse_source_ref
 from implement_admission.skill_delivery_channels import SkillInlineBudgetExceeded
+from implement_admission.source_ref import SourceRefError, parse_source_ref
 from pydantic import BaseModel, Field, model_validator
 from team_dispatch_vocab import (
     HANDOFF_OVERRIDE_CONTRACTS,
@@ -43,6 +43,7 @@ from .cdp_generate import (
 )
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
+from .cursor_sdk_steer_dispatch import steer_park_for_restart
 from .densify_triage import DensityTriage
 from .deploy_state_gate import require_deploy_state
 from .dispatch_thread_context import (
@@ -298,6 +299,18 @@ class TeamDispatchGenerateBody(_DispatchCommon):
         return self
 
 
+class TeamDispatchSteerBody(BaseModel):
+    """``team_dispatch`` with ``op="steer"`` — thin GIW park relay (R5)."""
+
+    model_config = {"extra": "forbid"}
+
+    op: Literal["steer"]
+    dispatch_id: str
+    steer: Literal["park_for_restart"]
+    reason: str
+    actor: str | None = None
+
+
 class TeamDispatchToThreadBody(_DispatchCommon):
     """``team_dispatch`` with ``op="to_thread"`` — result posted to agent-bus thread.
 
@@ -341,7 +354,7 @@ class TeamDispatchToThreadBody(_DispatchCommon):
 
 # FastAPI resolves the union via the ``op`` discriminator key.
 TeamDispatchBody = Annotated[
-    TeamDispatchGenerateBody | TeamDispatchToThreadBody,
+    TeamDispatchGenerateBody | TeamDispatchToThreadBody | TeamDispatchSteerBody,
     Field(discriminator="op"),
 ]
 
@@ -529,6 +542,7 @@ async def team_dispatch(
       ``output_contract=thread``; poll ``poll_hint`` (agent-bus wait).
     - ``op="to_thread"``: caller-owned ``thread``; reply lands on bus after
       dispatch completes.
+    - ``op="steer"``: seat-initiated GIW park (``steer="park_for_restart"``).
 
     Agents use MCP ``team_dispatch`` for all consult surfaces. This HTTP route
     is for Stargate-internal and pipeline-composition callers.
@@ -549,6 +563,31 @@ async def team_dispatch(
         )
     except FrontierEndpointError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+    if body.op == "steer":
+        if body.steer != "park_for_restart":
+            return JSONResponse(
+                status_code=422,
+                content=FrontierEndpointError(
+                    request_id=request_id,
+                    field="steer",
+                    reason=f"unsupported steer value: {body.steer!r}",
+                    status_code=422,
+                    code="steer_unsupported",
+                ).to_dict(),
+            )
+        ok, detail = await steer_park_for_restart(
+            request_id=request_id,
+            dispatch_id=body.dispatch_id,
+            reason=body.reason,
+            actor=body.actor,
+        )
+        if not ok:
+            status_code = int(
+                detail.get("status_code") or detail.get("http_status") or 502
+            )
+            return JSONResponse(status_code=status_code, content=detail)
+        response.status_code = int(detail.get("status_code") or 202)
+        return detail
     role = getattr(body, "role", None)
     seat = getattr(body, "seat", None)
     model = getattr(body, "model", None)

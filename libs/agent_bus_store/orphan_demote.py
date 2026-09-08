@@ -19,6 +19,7 @@ import logging
 import re
 from typing import Any
 
+from .cursor_sdk_dispatch_turn import is_cursor_sdk_dispatch_terminal_subject
 from .db.connection import connect
 from .db.threads import load_dispatch_links
 from .db.turns import get_turns, update_turn, update_turn_status
@@ -36,9 +37,7 @@ _SUPERSEDED_NOTE = (
 
 def is_cursor_sdk_terminal_subject(subject: str) -> bool:
     """True for explicit CLOSEOUT or cursor-sdk dispatch terminal forms."""
-    if not subject:
-        return False
-    return subject.startswith("CLOSEOUT") or subject.startswith("cursor-sdk dispatch")
+    return is_cursor_sdk_dispatch_terminal_subject(subject)
 
 
 def parse_orphan_execution_id(body: str) -> str | None:
