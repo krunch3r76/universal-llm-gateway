@@ -963,6 +963,7 @@ def _run_sdk_sync(
             state_root=str(bridge_state),
             handoff_contract=ctx.handoff_contract,
             api_key=key_res.api_key,
+            sdk_mode=ctx.sdk_mode,
         )
 
         client = launch_sdk_bridge(
@@ -1316,6 +1317,11 @@ async def _start_promoted_dispatch(
         source_repo=cfg.source_repo,
         cfg=cfg,
     )
+    from services.git_integration_worker.cursor_sdk_mode import sdk_mode_from_record_json
+
+    promoted_mode = (
+        sdk_mode_from_record_json(promoted.record_json) or "agent"
+    )
     ctx = SdkDispatchContext(
         dispatch_id=req.dispatch_id,
         thread_id=req.thread_id,
@@ -1323,6 +1329,7 @@ async def _start_promoted_dispatch(
         hub=cfg.source_repo,
         dispatch_workspace=dispatch_workspace,
         capture_binding=binding,
+        sdk_mode=promoted_mode,
     )
     # Friction 23001: baseline capture deferred into _run_sdk_dispatch_gated
     # (post slot acquisition) — also fixes misattribution where a queued
@@ -2804,6 +2811,31 @@ async def admit_cursor_dispatch(
             retryable=False,
         )
     effective_read_only = _effective_read_only(req, contract)
+    from services.git_integration_worker.cursor_sdk_mode import (
+        enforce_plan_read_only,
+        resolve_sdk_mode,
+        validate_sdk_mode_at_admit,
+    )
+
+    resolved_sdk_mode = resolve_sdk_mode(
+        req,
+        contract=contract,
+        packet_text=packet_text,
+        effective_read_only=effective_read_only,
+    )
+    sdk_mode_refusal = validate_sdk_mode_at_admit(resolved_sdk_mode, contract=contract)
+    if sdk_mode_refusal is not None:
+        return _reject_pre_admission(
+            req,
+            worker_error_code="CURSOR_SDK_MODE_CONFLICT",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=sdk_mode_refusal,
+            invalid_fields=["sdk_mode", "handoff_contract"],
+        )
+    effective_read_only = enforce_plan_read_only(
+        resolved_sdk_mode, effective_read_only
+    )
     if effective_read_only and wire_lane_explicit(req) == "B":
         return _reject_pre_admission(
             req,
@@ -3082,6 +3114,7 @@ async def admit_cursor_dispatch(
         hub=cfg.source_repo,
         dispatch_workspace=dispatch_workspace,
         capture_binding=binding,
+        sdk_mode=resolved_sdk_mode,
     )
     gate_lane = sdk_dispatch_lane(
         caller_agent=req.caller_agent,
@@ -3376,6 +3409,11 @@ async def admit_cursor_dispatch(
             dispatch_id=req.dispatch_id,
             patch=conductor_patch,
         )
+
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={"sdk_mode": resolved_sdk_mode},
+    )
 
     if req.resume_of:
         parent_row = load_parent_row(ledger, parent_id=req.resume_of)

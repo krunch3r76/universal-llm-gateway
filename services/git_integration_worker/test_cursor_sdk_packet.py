@@ -2,7 +2,15 @@
 
 import pytest
 
-from services.git_integration_worker.cursor_sdk_packet import resolve_prompt_preamble
+from services.git_integration_worker.cursor_sdk_packet import (
+    extract_sdk_mode_from_packet,
+    resolve_prompt_preamble,
+)
+
+
+def test_extract_sdk_mode_from_packet_plan_line() -> None:
+    text = "---\ncontract: consult\nsdk_mode: plan\n---\nbody"
+    assert extract_sdk_mode_from_packet(text) == "plan"
 
 
 def test_resolve_prompt_preamble_always_includes_deliverable_routing() -> None:

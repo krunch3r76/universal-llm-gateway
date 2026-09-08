@@ -55,6 +55,11 @@ def build_sdk_closeout_subject(req: CursorDispatchRequest, *, contract: str) -> 
         parts.append(f"handoff={handoff}")
     if _effective_read_only(req, wire_contract):
         parts.append("read_only")
+    from services.git_integration_worker.cursor_sdk_mode import sdk_mode_for_dispatch
+
+    resolved_sdk_mode = req.sdk_mode or sdk_mode_for_dispatch(req.dispatch_id)
+    if resolved_sdk_mode and resolved_sdk_mode != "agent":
+        parts.append(f"sdk_mode={resolved_sdk_mode}")
     if req.admitted_via:
         parts.append(f"admitted_via={req.admitted_via}")
     if req.caller_agent:

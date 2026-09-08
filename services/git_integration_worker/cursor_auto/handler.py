@@ -469,6 +469,11 @@ async def process_job(
         return nest_under
 
     read_only = contract in {"ask", "recon"}
+    from services.git_integration_worker.cursor_sdk_mode import nested_auto_sdk_mode
+
+    nested_sdk_mode = nested_auto_sdk_mode(contract=contract, body=job.body)
+    if nested_sdk_mode == "plan":
+        read_only = True
     resolved_lane, _lane_reason = resolve_nested_checkout_lane(
         job, read_only=read_only
     )
@@ -531,6 +536,7 @@ async def process_job(
         nest_under=nest_under,
         model_knobs=knobs or None,
         read_only=True if read_only else None,
+        sdk_mode=nested_sdk_mode,
         relay_ctx=relay_ctx,
     )
     if submit.get("reason") == "worker_draining":

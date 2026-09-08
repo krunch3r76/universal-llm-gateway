@@ -268,6 +268,9 @@ _CONTRACT_FRONTMATTER_RE = re.compile(
     r"^contract:\s*(\S+)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
+_SDK_MODE_FRONTMATTER_RE = re.compile(
+    r"^sdk_mode:\s*(agent|plan)\s*$", re.IGNORECASE | re.MULTILINE
+)
 
 
 def infer_contract_from_text(text: str) -> str | None:
@@ -337,6 +340,14 @@ def extract_work_key_from_packet(text: str) -> str | None:
 def extract_packet_kind_from_packet(text: str) -> str | None:
     """Return ``packet_kind:`` frontmatter when present."""
     match = _PACKET_KIND_FRONTMATTER_RE.search(text)
+    if not match:
+        return None
+    return match.group(1).strip().lower()
+
+
+def extract_sdk_mode_from_packet(text: str) -> str | None:
+    """Return ``sdk_mode:`` frontmatter when present (``agent`` or ``plan``)."""
+    match = _SDK_MODE_FRONTMATTER_RE.search(text or "")
     if not match:
         return None
     return match.group(1).strip().lower()

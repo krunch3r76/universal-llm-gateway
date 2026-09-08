@@ -271,6 +271,12 @@ this *is* a mission followup. Stock skills are a prompt verb, never `skills=`.
 Problem/Scope/Acceptance may be sparse. **Do not** set
 `implement_ready`. **Do not** hand to `/layer` yet.
 
+**Plan-first recon (cursor-sdk):** when S4a spawns a sparse recon leg before
+implement, set packet `sdk_mode: plan` (or rely on `read_only=true` default on
+`consult|none|ask|recon|seed`) so the nested dispatch runs Cursor plan mode —
+artifact URIs only, no land claims. Follow with a separate `contract=implement`
+dispatch after `density_triage` reaches `implement_ready`.
+
 **S4b — rich-seed after G1 harvest (conductor):** after architecture consult
 harvest, densify Problem/Scope/Acceptance on the **same slug**, hang
 `derived_from`, update `density_triage` (still ≠ `implement_ready`), then

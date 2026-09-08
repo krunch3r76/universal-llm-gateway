@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from implement_admission.closeout_models import (
     AmbientRepoMovement,
@@ -118,6 +118,7 @@ def build_implement_closeout_body(
     isolation_materialized: bool | None = None,
     escalation_harvest: str | None = "none",
     resolved_model: str | None = None,
+    sdk_mode: Literal["agent", "plan"] | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -232,6 +233,21 @@ def build_implement_closeout_body(
         landed=landed,
         commits_ahead=commits_ahead,
         deviations=deviations,
+    )
+    from services.git_integration_worker.cursor_sdk_mode import (
+        apply_plan_mode_closeout_gate,
+    )
+
+    status, resolved_work_outcome, landed, deviations, _plan_verdict = (
+        apply_plan_mode_closeout_gate(
+            sdk_mode=sdk_mode,
+            status=status,
+            work_outcome=resolved_work_outcome,
+            landed=landed,
+            deviations=deviations,
+            artifact_paths=artifact_paths,
+            offgit_deliverable_uris=offgit_deliverable_uris,
+        )
     )
     from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
         classify_status_incomplete_class,

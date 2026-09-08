@@ -300,6 +300,32 @@ def test_build_agent_options_wires_model_and_local(
     assert "user-vortex" in opts.mcp_servers
 
 
+def test_build_agent_options_plan_mode_wired(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-1: sdk_mode=plan reaches AgentOptions.mode == plan."""
+    monkeypatch.setenv("MCP_TOKEN", "tok")
+    repo = _stub_repo(tmp_path)
+    dispatch_ws = tmp_path / "dispatch"
+    dispatch_ws.mkdir()
+    model = ModelSelection(id="composer-2.5")
+    binding = CaptureBinding(
+        lane="A",
+        write_tree=repo.resolve(),
+        receipt_tree=repo.resolve(),
+        mount_root=repo.resolve(),
+        repo_roots=(repo.resolve(),),
+    )
+    opts = build_agent_options(
+        repo,
+        dispatch_ws,
+        model,
+        workspace_root=binding.write_tree,
+        sdk_mode="plan",
+    )
+    assert opts.mode == "plan"
+
+
 def test_mcp_servers_set_contract_env_for_implement(tmp_path: Path) -> None:
     repo = _stub_repo(tmp_path)
     env = build_mcp_servers(repo, handoff_contract="implement")["user-vortex"].env or {}

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class CursorDispatchRequest(BaseModel):
@@ -33,6 +33,14 @@ class CursorDispatchRequest(BaseModel):
     )
     model_knobs: dict[str, str] | None = None
     read_only: bool = False
+    sdk_mode: Literal["agent", "plan"] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("sdk_mode", "conversation_mode"),
+        description=(
+            "Cursor SDK conversation mode. ``plan`` runs read-only plan-first "
+            "(no land claims); ``agent`` is the default implement/recon executor."
+        ),
+    )
     close_contract: Literal["lead", "auto"] = "auto"
     force: bool = False
     source_ref: str | None = None

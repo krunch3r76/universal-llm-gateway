@@ -17,6 +17,7 @@ import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from cursor_capabilities.model_pools import is_other_models_pool
 from cursor_sdk.types import (
@@ -333,6 +334,7 @@ def build_agent_options(
     state_root: Path | str | None = None,
     handoff_contract: str | None = None,
     api_key: str | None = None,
+    sdk_mode: Literal["agent", "plan"] = "agent",
 ) -> AgentOptions:
     """Full create_agent options for IDE-parity cursor-sdk dispatch."""
     local = build_local_agent_options(
@@ -344,7 +346,7 @@ def build_agent_options(
     return AgentOptions(
         model=model,
         api_key=api_key,
-        mode="agent",
+        mode=sdk_mode,
         local=local,
         mcp_servers=build_mcp_servers(
             source_repo,

@@ -2211,6 +2211,70 @@ def test_read_only_implement_conflict_422(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
+def test_plan_implement_conflict_422(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    """AC-2: sdk_mode=plan + implement contract rejected at worker."""
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(
+            sdk_mode="plan",
+            read_only=True,
+            handoff_contract="implement",
+            message="---\ncontract: implement\n---\np",
+        ),
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "CURSOR_SDK_MODE_CONFLICT"
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_plan_read_only_admits(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    """AC-3: plan mode admits as read-only consult."""
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(
+            sdk_mode="plan",
+            handoff_contract="consult",
+            message="plan-first spec bind",
+        ),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["admitted"] is True
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_plan_without_read_only_forces_read_only_admit(
+    _mock_task: MagicMock, client: TestClient
+) -> None:
+    """AC-3: sdk_mode=plan without read_only still admits lease-exempt."""
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_dispatch_body(
+            sdk_mode="plan",
+            read_only=False,
+            handoff_contract="none",
+            message="---\nsdk_mode: plan\n---\nplan body",
+        ),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["admitted"] is True
+    ledger = CursorDispatchLedger.instance()
+    assert ledger.read_read_only(dispatch_id="disp-1") is True
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
 def test_conductor_composer_admits(
     _mock_task: MagicMock, client: TestClient
 ) -> None:

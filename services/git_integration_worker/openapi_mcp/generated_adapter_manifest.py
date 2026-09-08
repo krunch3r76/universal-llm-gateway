@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "a4c0b76b9d261fcdc0eb89dbdf15f71f6c3c8661d1315c8488123c93f74556db"
+OPENAPI_SHA256 = "ca461f13f38852207b0c7684aaf05d7fb786e1bcc64eb4db781e3ddf1315910c"
 FACADE_TOOL = "giw"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "cancel": {
@@ -66,7 +66,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "ce80823362811defaef61a26e01ed867a05986acdcb0f875567a2fc657b3832e",
+    "@components": "b5481afd02f221fd123123f175823a384ee06641186209c35ac6fb7187e2635b",
     "@info": "ccfaa10f2c9b783c227fbd0286149ff177219e19207a5632fda5bd9fd68ce6d4",
     "DELETE /api/v1/cursor/dispatch/{dispatch_id}": "041e18df24dd1093ed38938e7d139a950c6716c59aba5ed4c07b3e7e50517332",
     "GET /api/v1/cursor/branch-debt": "9f86e8519040cbd44ae7dc934cacb730d82c8a56bb56e845bb8c0f124b24bf4e",

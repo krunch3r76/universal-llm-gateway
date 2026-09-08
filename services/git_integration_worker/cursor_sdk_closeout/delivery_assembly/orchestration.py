@@ -140,6 +140,9 @@ def _assemble_closeout_delivery(
     thread_id=thread_id,
     gate_d_created_rels=gate_d_created_rels,
     )
+    from services.git_integration_worker.cursor_sdk_mode import sdk_mode_for_dispatch
+
+    resolved_sdk_mode = sdk_mode_for_dispatch(dispatch_id)
     body = implement_body.build_implement_closeout_body(
     dispatch_id=dispatch_id,
     outcome=outcome,
@@ -183,6 +186,7 @@ def _assemble_closeout_delivery(
     isolation_materialized=isolation_mat,
     escalation_harvest=escalation_harvest,
     resolved_model=resolved_model,
+    sdk_mode=resolved_sdk_mode,
     )
     return receipt_finalization.finalize_closeout_receipt(
     source_repo=source_repo,

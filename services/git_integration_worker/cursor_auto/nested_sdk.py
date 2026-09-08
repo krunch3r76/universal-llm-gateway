@@ -182,6 +182,7 @@ async def submit_nested_dispatch(
     nest_under: str | None = None,
     model_knobs: dict[str, str] | None = None,
     read_only: bool | None = None,
+    sdk_mode: str | None = None,
     relay_ctx: CloseoutRelayContext | None = None,
     bind_job: bool = True,
 ) -> dict[str, Any]:
@@ -243,6 +244,8 @@ async def submit_nested_dispatch(
         payload["model_knobs"] = model_knobs
     if read_only is not None:
         payload["read_only"] = read_only
+    if sdk_mode is not None:
+        payload["sdk_mode"] = sdk_mode
     if read_only is not True:
         lane, lane_reason = resolve_nested_checkout_lane(
             job,

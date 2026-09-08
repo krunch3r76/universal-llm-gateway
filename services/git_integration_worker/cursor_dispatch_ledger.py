@@ -1100,8 +1100,9 @@ class CursorDispatchLedger:
             "execution_id": req.execution_id,
             "packet_path": req.packet_path,
             "message": req.message,
-            "read_only": req.read_only,
-        }
+        "read_only": req.read_only,
+        "sdk_mode": req.sdk_mode,
+    }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
