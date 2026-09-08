@@ -110,11 +110,10 @@ def _read_lane_snapshot_for_gate(*, request_id: str) -> dict[str, Any]:
     (``read_cdp_lane_snapshot``) but **fail-open** on probe faults so
     succession does not stall when occupancy is temporarily unmeasurable.
     """
-    from cdp_ask.client import CdpAskClient
-    from claude_bundles.hop_cadence_seat_snap import attach_registry_seated_rows
+    from cdp_ask.lane_snapshot import read_cdp_lane_snapshot
 
     try:
-        snap = CdpAskClient()._request("GET", "/v1/project-ask/active-work")
+        return read_cdp_lane_snapshot()
     except Exception as exc:
         raise FrontierEndpointError(
             request_id=request_id,
@@ -123,9 +122,6 @@ def _read_lane_snapshot_for_gate(*, request_id: str) -> dict[str, Any]:
             status_code=503,
             code="cdp_gate_probe_failed",
         ) from exc
-    if not isinstance(snap, dict):
-        return {}
-    return attach_registry_seated_rows(snap)
 
 
 def _live_external_gate_for_lane(
