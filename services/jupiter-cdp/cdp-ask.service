@@ -6,7 +6,9 @@ Type=forking
 PIDFile=%h/.gateway/cdp-ask.pid
 EnvironmentFile=%h/.gateway/cdp-ask.env
 ExecStart=%h/.local/bin/cdp-ask-start
-Restart=no
+Restart=on-failure
+RestartSec=10
+SuccessExitStatus=SIGTERM SIGINT
 RefuseManualStop=yes
 
 [Install]
