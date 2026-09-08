@@ -57,8 +57,11 @@ options:
   # Let the model retitle the hub entity (name/description). Off by default:
   # renames are visible to every other seat and belong to an attended pass.
   allow_retitle: false
-  # Upper bound on model-authored claims written per run.
-  max_claims: 6
+  # Upper bound on model-authored claims written per run. Mission/resume are
+  # superseded in place (constant size); claims append — at the observed
+  # 10303 rate (~16 CLOSEOUTs/h) this bound is the hub's growth budget until
+  # a compaction pass exists.
+  max_claims: 4
 
 steps:
   - name: ingest

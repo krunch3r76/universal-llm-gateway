@@ -5,7 +5,7 @@ Two provenance classes, chosen by who authored the text:
 - **quoted** — copied from a bus turn (watermark, CHECKPOINT mission line):
   ``direct_observation`` / ``confirmed``.
 - **folded** — composed by the distill model (resume line, claims, mission
-  fallback): ``compression`` / ``believed``.
+  fallback): ``inference`` / ``believed``.
 
 Everything carries ``seeded_by=continuity-consolidate`` so the pipeline's
 whole footprint stays auditable and supersedable as one set.
@@ -26,8 +26,10 @@ _QUOTED = {
     "confidence": "confirmed",
     "confidence_score": 0.95,
 }
+# `compression` is reserved for RAG-chunk provenance (requires chunk_id);
+# a fold of bus turns is session-originated → `inference`.
 _FOLDED = {
-    "derivation_type": "compression",
+    "derivation_type": "inference",
     "confidence": "believed",
     "confidence_score": 0.7,
 }
