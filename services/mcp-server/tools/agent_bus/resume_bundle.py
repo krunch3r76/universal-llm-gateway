@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-_DEFAULT_TAPE_BUDGET_BYTES = 512_000
+from ._shared import _structured_relay_error, relay
+
 _MECHANICAL_PROJECTION_URI = (
     "cortex://notes/system/threads/{thread}-transcript-projection.md"
 )
@@ -28,14 +29,17 @@ def _tape_verbal_from_render(tape: dict[str, Any]) -> list[Any]:
 
 
 def _harvested_tape(thread_id: str) -> dict[str, Any]:
-    from agent_bus_store.tape_harvest import render_tape_with_harvest
-
-    result = render_tape_with_harvest(
-        thread_id=thread_id,
-        budget_bytes=_DEFAULT_TAPE_BUDGET_BYTES,
-        harvest=True,
-        format="verbal",
+    """Relay tape render — MCP process lacks agent-bus sqlite (same as ``tape`` op)."""
+    result = relay(
+        "agent-bus",
+        "GET",
+        f"/threads/{thread_id}/tape?harvest=true&format=verbal",
     )
+    if isinstance(result, dict) and "error" in result:
+        structured = _structured_relay_error(result, op="resume_bundle")
+        if structured is not None:
+            return structured
+        return {"error": f"agent-bus error: {result['error']}"}
     return result if isinstance(result, dict) else {}
 
 

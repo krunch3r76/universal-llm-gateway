@@ -35,15 +35,16 @@ def test_resume_bundle_keys_present_and_null_pointers_ok() -> None:
         ]
     }
     with patch(
-        "agent_bus_store.tape_harvest.render_tape_with_harvest",
+        "tools.agent_bus.resume_bundle.relay",
         return_value=tape,
-    ) as harvest:
+    ) as relay_mock:
         result = _resume_bundle_dispatch(thread="10223")
 
-    harvest.assert_called_once()
-    assert harvest.call_args.kwargs["harvest"] is True
-    assert harvest.call_args.kwargs["format"] == "verbal"
-    assert harvest.call_args.kwargs["thread_id"] == "10223"
+    relay_mock.assert_called_once_with(
+        "agent-bus",
+        "GET",
+        "/threads/10223/tape?harvest=true&format=verbal",
+    )
     assert _BUNDLE_KEYS <= result.keys()
     assert result["mechanical_projection_uri"] == (
         "cortex://notes/system/threads/10223-transcript-projection.md"
@@ -65,7 +66,7 @@ def test_resume_bundle_prefers_verbal_messages_from_tape() -> None:
         ],
     }
     with patch(
-        "agent_bus_store.tape_harvest.render_tape_with_harvest",
+        "tools.agent_bus.resume_bundle.relay",
         return_value=tape,
     ):
         result = _resume_bundle_dispatch(thread=10223)
