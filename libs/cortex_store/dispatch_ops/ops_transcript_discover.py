@@ -10,11 +10,13 @@ from agent_bus_store.thread_classification import classify_thread
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 from universal_logging import get_logger
 
+from ..events_tape import transcript_discover_filtered
 from ..session_close_successor_hop import (
     conversation_uuid_from_jsonl_path,
     lookup_sealed_journal,
 )
 from ..transcript_assembly import _transcripts_root
+from ..transcript_lane_touch import binding_for, lane_touches
 from ..transcript_session_id import _jsonl_paths_by_mtime_desc
 
 logger = get_logger("cortex-api.dispatch_ops.transcript_discover")
@@ -48,15 +50,27 @@ def _parse_created_at(raw: str | None) -> datetime | None:
         return None
 
 
+from ..transcript_cp_anchors import explicit_uuids_for_lane
+
+
 def _discover_open_windows(
     *,
     thread_id: str,
     lane_created_at: datetime,
     explicit_uuids: set[str] | None = None,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     root = _transcripts_root()
     open_windows: list[dict[str, Any]] = []
+    excluded: list[dict[str, Any]] = []
+    excluded_counts = {
+        "read_only": 0,
+        "foreign_dominant": 0,
+        "no_touch": 0,
+        "dropped": 0,
+        "segment_unavailable": 0,
+    }
     explicit = explicit_uuids or set()
+    explicit_all = explicit_uuids_for_lane(thread_id, explicit)
     for jsonl_path in _jsonl_paths_by_mtime_desc(root):
         mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=UTC)
         if mtime < lane_created_at:
@@ -70,18 +84,39 @@ def _discover_open_windows(
         )
         if session_id and lookup_sealed_journal(session_id) is not None:
             continue
-        binding = "explicit_cp" if uuid in explicit else "dominant_write"
-        open_windows.append(
-            {
-                "transcript_id": uuid,
-                "jsonl_path": rel,
-                "session_id": session_id,
-                "conversation_uuid": uuid,
-                "binding": binding,
-                "mtime": mtime.isoformat(),
-            }
+        touches = lane_touches(jsonl_path)
+        binding, dominant = binding_for(
+            thread_id,
+            touches,
+            explicit_uuids=explicit_all,
+            conversation_uuid=uuid,
         )
-    return open_windows
+        lane_touch = touches.get(thread_id)
+        write_touches = lane_touch.writes if lane_touch else 0
+        row = {
+            "transcript_id": uuid,
+            "jsonl_path": rel,
+            "session_id": session_id,
+            "conversation_uuid": uuid,
+            "binding": binding,
+            "dominant_lane": dominant,
+            "write_touches": write_touches,
+            "mtime": mtime.isoformat(),
+        }
+        if binding in {"explicit_cp", "dominant_write"}:
+            open_windows.append(row)
+            continue
+        if binding == "read_only":
+            excluded_counts["read_only"] += 1
+        elif binding == "foreign_dominant":
+            excluded_counts["foreign_dominant"] += 1
+        elif binding == "no_touch":
+            excluded_counts["no_touch"] += 1
+        else:
+            excluded_counts["dropped"] += 1
+        excluded.append({**row, "reason": binding})
+        transcript_discover_filtered(reason=binding, thread_id=thread_id, transcript_id=uuid)
+    return open_windows, excluded, excluded_counts
 
 
 def _op_transcript_discover(
@@ -120,7 +155,7 @@ def _op_transcript_discover(
         created_at = datetime.min.replace(tzinfo=UTC)
 
     explicit = {x.strip() for x in (explicit_transcript_ids or []) if x and x.strip()}
-    open_windows = _discover_open_windows(
+    open_windows, excluded, excluded_counts = _discover_open_windows(
         thread_id=str(tid),
         lane_created_at=created_at,
         explicit_uuids=explicit,
@@ -129,6 +164,8 @@ def _op_transcript_discover(
         "thread_id": str(tid),
         "open_windows": open_windows,
         "open_window_count": len(open_windows),
+        "excluded": excluded,
+        "excluded_counts": excluded_counts,
     }
 
 

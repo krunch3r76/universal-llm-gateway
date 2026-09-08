@@ -56,7 +56,7 @@ def test_render_tape_empty_lane() -> None:
         conn = mock_conn.return_value.__enter__.return_value
         conn.execute.return_value.fetchall.return_value = []
         result = render_tape(thread_id="100")
-    assert result["thread_id"] == "100"
+    assert result["open_line"]["thread_id"] == "100"
     assert result["segment_count"] == 0
     assert result["truncated"] is False
 
@@ -401,34 +401,91 @@ def test_b9_degrade_emits_index_lines_with_pointers() -> None:
         {
             "transcript_id": _UUID,
             "turn_lo": 0,
-            "turn_hi": 2,
+            "turn_hi": 4,
             "bus_turn_id": 7,
         }
     ]
     messages = [
         {
             "role": "user",
-            "content": "x" * 400,
+            "content": "x" * 300,
             "session_id": "s1",
             "transcript_id": _UUID,
-            "turn_index": 1,
-        },
-        {
-            "role": "assistant",
-            "content": "y" * 400,
-            "session_id": "s1",
-            "transcript_id": _UUID,
-            "turn_index": 1,
-        },
+            "turn_index": i,
+        }
+        for i in range(1, 5)
     ]
     from agent_bus_store.tape_render import _degrade_overflow_messages
 
     out, truncated = _degrade_overflow_messages(
         messages,
         cells=cells,
-        budget_bytes=500,
+        budget_bytes=1200,
     )
     assert truncated is True
-    assert out[0]["role"] == "index"
-    assert out[0]["transcript_span"] == "transcript:s1#turn-1"
-    assert out[0]["bus_turn_id"] == 7
+    assert len(json.dumps(out).encode("utf-8")) <= 1200
+    index_rows = [m for m in out if m.get("role") == "index"]
+    assert index_rows
+    assert index_rows[0]["transcript_span"] == "transcript:s1#turn-1"
+    assert index_rows[0]["bus_turn_id"] == 7
+
+
+def test_t14_byte_accurate_degrade_under_budget() -> None:
+    messages = [
+        {
+            "role": "user",
+            "content": "x" * 5000,
+            "session_id": "s1",
+            "transcript_id": _UUID,
+            "turn_index": i,
+        }
+        for i in range(1, 101)
+    ]
+    from agent_bus_store.tape_render import _degrade_overflow_messages
+
+    out, truncated = _degrade_overflow_messages(
+        messages,
+        cells=[],
+        budget_bytes=65536,
+    )
+    assert truncated is True
+    assert len(json.dumps(out).encode("utf-8")) <= 65536
+    assert any(m.get("role") != "index" for m in out)
+
+
+def test_t15_open_line_is_first_key() -> None:
+    with (
+        patch("agent_bus_store.tape_render.list_checkpoint_turns", return_value=()),
+        patch("cortex_store.db.cortex_conn") as mock_conn,
+        patch("cortex_store.events_tape.agent_bus_tape_rendered"),
+    ):
+        conn = mock_conn.return_value.__enter__.return_value
+        conn.execute.return_value.fetchall.return_value = []
+        result = render_tape(thread_id="6341")
+    assert list(result.keys())[0] == "open_line"
+    assert "summary" in result
+
+
+def test_t16_mismatch_when_cp_anchor_beyond_sealed(tmp_path: Path) -> None:
+    from agent_bus_store.tape_render import _build_mismatch_rows
+
+    segments = [
+        {
+            "transcript_id": _UUID,
+            "turn_hi": 5,
+            "post_lid_turns": 0,
+        }
+    ]
+    cells = [
+        {
+            "transcript_id": _UUID,
+            "turn_hi": 10,
+            "bus_turn_id": 3,
+            "turn_lo": 0,
+        }
+    ]
+    mismatch = _build_mismatch_rows(cells=cells, segments=segments)
+    assert len(mismatch) == 1
+    assert mismatch[0]["turns_at_cp"] == 10
+    assert mismatch[0]["sealed_turn_hi"] == 5
+

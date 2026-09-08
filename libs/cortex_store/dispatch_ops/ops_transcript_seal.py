@@ -7,15 +7,15 @@ from typing import Any
 
 from universal_logging import get_logger
 
-from ..events_tape import transcript_sealed_by_succession
+from ..events_tape import transcript_sealed_by_succession, transcript_seal_refused_not_lane_window
 from ..models import SessionCloseRequest
 from ..routes.session_close import close_session
 from ..transcript_assembly import TranscriptPathError, resolve_jsonl_path
 from ..transcript_session_id import derive_session_id_from_jsonl_start
-from ..verbatim_succession import (
-    journal_verbatim_bytes,
-    split_verbatim_layer,
-)
+from ..session_close_successor_hop import conversation_uuid_from_jsonl_path
+from ..transcript_cp_anchors import explicit_uuids_for_lane
+from ..transcript_lane_touch import binding_for, dominant_lane, lane_touches
+from ..verbatim_succession import journal_verbatim_bytes, split_verbatim_layer
 
 logger = get_logger("cortex-api.dispatch_ops.transcript_seal")
 
@@ -37,6 +37,7 @@ def _op_transcript_seal(
     jsonl_path: str | None = None,
     transcript_jsonl_path: str | None = None,
     session_id: str | None = None,
+    binding: str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     """Seal an idle window via session_close with ``closed_by=succession``."""
@@ -52,6 +53,33 @@ def _op_transcript_seal(
     except TranscriptPathError as exc:
         return {"error": str(exc), "reason": "jsonl_invalid", "code": "transcript_seal.live"}
 
+    uuid = conversation_uuid_from_jsonl_path(resolved)
+    explicit = explicit_uuids_for_lane(str(tid), set())
+    touches = lane_touches(resolved)
+    computed_binding, computed_lane = binding_for(
+        str(tid),
+        touches,
+        explicit_uuids=explicit,
+        conversation_uuid=uuid,
+    )
+    if binding == "explicit_cp":
+        effective_binding = "explicit_cp"
+    else:
+        effective_binding = computed_binding
+    if effective_binding not in {"explicit_cp", "dominant_write"}:
+        transcript_seal_refused_not_lane_window(
+            thread_id=str(tid),
+            conversation_uuid=uuid,
+            binding=effective_binding,
+        )
+        return {
+            "error": f"window does not bind to lane {tid}",
+            "reason": "not_lane_window",
+            "code": "transcript_seal.not_lane_window",
+            "binding": effective_binding,
+        }
+    stamp_lane = computed_lane or dominant_lane(touches) or str(tid)
+
     derived = session_id or derive_session_id_from_jsonl_start(
         jsonl_path=resolved, agent="cursor"
     )
@@ -63,12 +91,10 @@ def _op_transcript_seal(
         }
 
     from ..session_close_successor_hop import (
-        conversation_uuid_from_jsonl_path,
         lookup_journaled_by_conversation_uuid,
         lookup_sealed_journal,
     )
 
-    uuid = conversation_uuid_from_jsonl_path(resolved)
     human_closed = lookup_journaled_by_conversation_uuid(uuid)
     if human_closed is not None:
         return {
@@ -130,6 +156,9 @@ def _op_transcript_seal(
                 "turn_count": prior_turns,
             }
     now = datetime.now(tz=UTC).isoformat()
+    entity_ids: list[str] = []
+    if effective_binding in {"explicit_cp", "dominant_write"}:
+        entity_ids.append(f"agent-bus:{tid}")
     body = SessionCloseRequest(
         session_id=derived,
         agent=agent,
@@ -137,7 +166,7 @@ def _op_transcript_seal(
         summary="Succession harvest seal for human continuity speech tape.",
         transcript_jsonl_path=jpath,
         transcript_depth="verbatim",
-        entity_ids=[str(tid), f"agent-bus:{tid}"],
+        entity_ids=entity_ids,
         closed_by="succession",
         assistant_label="Assistant",
         succession_seal_authority=True,
@@ -160,7 +189,7 @@ def _op_transcript_seal(
         sealed_by=agent,
         sealed_on=now,
         conversation_uuid=uuid,
-        dominant_lane=str(tid),
+        dominant_lane=stamp_lane,
     )
     transcript_sealed_by_succession(
         session_id=derived,

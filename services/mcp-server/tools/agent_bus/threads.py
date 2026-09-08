@@ -239,15 +239,22 @@ def _tape_dispatch(
     thread: str | int = "",
     thread_id: str | int = "",
     budget_bytes: int | None = None,
+    harvest: bool | None = None,
+    max_seals: int | None = None,
 ) -> dict[str, Any]:
     """Relay GET /threads/{thread}/tape — continuity tape render."""
     lane = str(thread or thread_id or "")
     if not lane:
         return {"error": "tape requires: thread", "reason": "missing_arg"}
-    params = ""
+    params: list[str] = []
     if budget_bytes is not None:
-        params = f"?budget_bytes={int(budget_bytes)}"
-    result = relay("agent-bus", "GET", f"/threads/{lane}/tape{params}")
+        params.append(f"budget_bytes={int(budget_bytes)}")
+    if harvest:
+        params.append("harvest=true")
+    if max_seals is not None:
+        params.append(f"max_seals={int(max_seals)}")
+    query = f"?{'&'.join(params)}" if params else ""
+    result = relay("agent-bus", "GET", f"/threads/{lane}/tape{query}")
     if isinstance(result, dict) and "error" in result:
         structured = _structured_relay_error(result, op="tape")
         if structured is not None:

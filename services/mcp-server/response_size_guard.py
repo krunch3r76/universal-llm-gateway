@@ -984,6 +984,16 @@ def _lean_content(result: ToolResult, *, tool_name: str) -> ToolResult:
         return result
 
 
+def _is_tape_read_exempt(context: MiddlewareContext[mt.CallToolRequestParams]) -> bool:
+    if context.message.name != "agent_bus_read":
+        return False
+    arguments = context.message.arguments
+    if not isinstance(arguments, dict):
+        return False
+    tool = arguments.get("tool")
+    return isinstance(tool, str) and tool.strip() == "tape"
+
+
 class ResponseSizeGuard(Middleware):
     """FastMCP middleware that intercepts oversized tool responses.
 
@@ -1011,6 +1021,8 @@ class ResponseSizeGuard(Middleware):
         tool_name = context.message.name
 
         if tool_name == "retrieve":
+            return result
+        if _is_tape_read_exempt(context):
             return result
 
         threshold = _threshold_for_profile()

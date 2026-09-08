@@ -35,7 +35,11 @@ def test_discover_root_returns_open_windows(mock_detail, mock_windows) -> None:
         "tags": ["role:root"],
         "created_at": "2026-09-07T00:00:00Z",
     }
-    mock_windows.return_value = [{"transcript_id": "uuid-1", "binding": "dominant_write"}]
+    mock_windows.return_value = (
+        [{"transcript_id": "uuid-1", "binding": "dominant_write"}],
+        [],
+        {"read_only": 0, "foreign_dominant": 0, "no_touch": 0, "dropped": 0, "segment_unavailable": 0},
+    )
     result = _op_transcript_discover(thread="100")
     assert result["thread_id"] == "100"
     assert result["open_window_count"] == 1

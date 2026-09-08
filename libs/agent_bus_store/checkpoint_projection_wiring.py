@@ -163,13 +163,16 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
 
 def maybe_project_checkpoint_body(*, thread: str, subject: str, body: str) -> str:
     """Apply projection when subject is CHECKPOINT; otherwise passthrough."""
+    from .db import get_thread
+
+    row = get_thread(thread)
+    tags = (row or {}).get("tags") or []
+    from .checkpoint_scoreboard_wiring import assert_scoreboard_coherent
+
+    assert_scoreboard_coherent(thread=thread, subject=subject, body=body, tags=tags)
     if is_checkpoint_subject(subject):
         from agent_bus_store.thread_classification import classify_thread
 
-        from .db import get_thread
-
-        row = get_thread(thread)
-        tags = (row or {}).get("tags") or []
         if classify_thread(tags)["spine"] == "root" and re.search(
             r"^### User\b", body, re.MULTILINE
         ):

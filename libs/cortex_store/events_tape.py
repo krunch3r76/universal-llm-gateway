@@ -121,3 +121,93 @@ def agent_bus_tape_segment_unavailable(
     )
     record(ev.signal, **ev.payload)
     return ev
+
+
+@event_factory
+def transcript_discover_filtered(
+    *,
+    reason: str,
+    thread_id: str,
+    transcript_id: str,
+) -> Event:
+    ev = Event(
+        signal="cortex.transcript.discover.filtered",
+        role="observation",
+        scope="global",
+        payload={
+            "reason": reason,
+            "thread_id": thread_id,
+            "transcript_id": transcript_id,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def transcript_seal_refused_not_lane_window(
+    *,
+    thread_id: str,
+    conversation_uuid: str,
+    binding: str,
+) -> Event:
+    ev = Event(
+        signal="cortex.transcript.seal.refused_not_lane_window",
+        role="observation",
+        scope="global",
+        payload={
+            "thread_id": thread_id,
+            "conversation_uuid": conversation_uuid,
+            "binding": binding,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def transcript_harvested(
+    *,
+    thread_id: str,
+    discovered: int,
+    sealed: int,
+    deferred: int,
+    refused: int,
+) -> Event:
+    ev = Event(
+        signal="cortex.transcript.harvested",
+        role="observation",
+        scope="global",
+        payload={
+            "thread_id": thread_id,
+            "discovered": discovered,
+            "sealed": sealed,
+            "deferred": deferred,
+            "refused": refused,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def agent_bus_tape_harvest_rendered(
+    *,
+    thread_id: str,
+    discovered: int,
+    sealed: int,
+    deferred: int,
+) -> Event:
+    ev = Event(
+        signal="agent_bus.tape.harvest_rendered",
+        role="observation",
+        scope="global",
+        payload={
+            "thread_id": thread_id,
+            "discovered": discovered,
+            "sealed": sealed,
+            "deferred": deferred,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev

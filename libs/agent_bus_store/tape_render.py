@@ -519,17 +519,16 @@ def _degrade_overflow_messages(
     cells: list[dict[str, Any]],
     budget_bytes: int,
 ) -> tuple[list[dict[str, Any]], bool]:
-    """AC-6: overflow drops oldest speech into Index lines with locate pointers."""
-    payload_bytes = len(json.dumps(messages).encode("utf-8"))
-    if payload_bytes <= budget_bytes:
+    """AC-6: byte-accurate overflow drops oldest speech into Index lines."""
+    if len(json.dumps(messages).encode("utf-8")) <= budget_bytes:
         return messages, False
-    kept = messages[-max(1, budget_bytes // 256) :]
-    dropped = messages[: len(messages) - len(kept)]
+    kept = list(messages)
     index_lines: list[dict[str, Any]] = []
-    for msg in dropped:
-        sid = str(msg.get("session_id") or "")
-        turn_index = int(msg.get("turn_index") or 0)
-        tid = str(msg.get("transcript_id") or "")
+    while len(kept) > 1:
+        dropped = kept.pop(0)
+        sid = str(dropped.get("session_id") or "")
+        turn_index = int(dropped.get("turn_index") or 0)
+        tid = str(dropped.get("transcript_id") or "")
         index_lines.append(
             {
                 "role": "index",
@@ -545,17 +544,130 @@ def _degrade_overflow_messages(
                 "turn_index": turn_index,
             }
         )
-    return index_lines + kept, True
+        candidate = index_lines + kept
+        if len(json.dumps(candidate).encode("utf-8")) <= budget_bytes:
+            return candidate, True
+    return kept, True
+
+
+def _build_mismatch_rows(
+    *,
+    cells: list[dict[str, Any]],
+    segments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    max_turn_by_tid: dict[str, int] = {}
+    post_lid_by_tid: dict[str, int] = {}
+    for seg in segments:
+        tid = str(seg.get("transcript_id") or "")
+        max_turn_by_tid[tid] = max(
+            max_turn_by_tid.get(tid, 0), int(seg.get("turn_hi") or 0)
+        )
+        post_lid_by_tid[tid] = max(
+            post_lid_by_tid.get(tid, 0), int(seg.get("post_lid_turns") or 0)
+        )
+    mismatches: list[dict[str, Any]] = []
+    for cell in cells:
+        if cell.get("bus_turn_id") is None:
+            continue
+        tid = str(cell.get("transcript_id") or "")
+        turns_at_cp = int(cell.get("turn_hi") or 0)
+        sealed_hi = max_turn_by_tid.get(tid, 0)
+        post_lid = post_lid_by_tid.get(tid, 0)
+        if turns_at_cp > sealed_hi + post_lid:
+            mismatches.append(
+                {
+                    "transcript_id": tid,
+                    "turns_at_cp": turns_at_cp,
+                    "sealed_turn_hi": sealed_hi,
+                    "post_lid_turns": post_lid,
+                }
+            )
+    return mismatches
+
+
+def _build_open_line(
+    *,
+    thread_id: str,
+    segments: list[dict[str, Any]],
+    cells: list[dict[str, Any]],
+    messages: list[dict[str, Any]],
+    excluded: list[dict[str, Any]],
+    excluded_counts: dict[str, int] | None,
+    truncated: bool,
+    budget_bytes: int,
+    payload_bytes: int,
+    harvest: dict[str, Any] | None,
+    mismatch: list[dict[str, Any]],
+) -> dict[str, Any]:
+    last_cp: dict[str, Any] | None = None
+    for cell in reversed(cells):
+        if cell.get("bus_turn_id") is not None:
+            last_cp = {
+                "cp_ordinal": cell.get("cp_ordinal"),
+                "bus_turn_id": cell.get("bus_turn_id"),
+                "transcript_id": cell.get("transcript_id"),
+                "turn_lo": cell.get("turn_lo"),
+                "turn_hi": cell.get("turn_hi"),
+            }
+            break
+    open_cells = [c for c in cells if c.get("bus_turn_id") is None]
+    open_interval = {
+        "transcript_ids": sorted(
+            {str(c.get("transcript_id") or "") for c in open_cells if c.get("transcript_id")}
+        ),
+        "turns": sum(max(0, int(c.get("turn_hi") or 0) - int(c.get("turn_lo") or 0)) for c in open_cells),
+    }
+    counts = excluded_counts or {
+        "read_only": sum(1 for e in excluded if e.get("reason") == "read_only"),
+        "foreign_dominant": sum(
+            1 for e in excluded if e.get("reason") == "foreign_dominant"
+        ),
+        "no_touch": sum(1 for e in excluded if e.get("reason") == "no_touch"),
+        "dropped": sum(1 for e in excluded if e.get("reason") == "dropped"),
+        "segment_unavailable": sum(
+            1 for e in excluded if e.get("reason") == "segment_unavailable"
+        ),
+    }
+    return {
+        "thread_id": thread_id,
+        "segment_count": len(segments),
+        "turn_count": sum(s.get("turn_count", 0) for s in segments),
+        "message_count": len(messages),
+        "truncated": truncated,
+        "budget_bytes": budget_bytes,
+        "payload_bytes": payload_bytes,
+        "last_cp": last_cp,
+        "open_interval": open_interval,
+        "excluded_counts": counts,
+        "harvest": harvest,
+        "mismatch": mismatch,
+    }
+
+
+def _summary_line(open_line: dict[str, Any]) -> str:
+    harvest = open_line.get("harvest")
+    harvest_part = ""
+    if isinstance(harvest, dict):
+        harvest_part = (
+            f" harvest sealed={harvest.get('sealed', 0)}"
+            f"/{harvest.get('discovered', 0)}"
+        )
+    return (
+        f"Tape {open_line['thread_id']}: {open_line['segment_count']} segments, "
+        f"{open_line['message_count']} messages, "
+        f"{open_line['payload_bytes']}B/{open_line['budget_bytes']}B"
+        f"{', truncated' if open_line['truncated'] else ''}"
+        f"{harvest_part}."
+    )
 
 
 def render_tape(
     *,
     thread_id: str,
     budget_bytes: int = _DEFAULT_BUDGET_BYTES,
-    seal_first: bool = False,
+    harvest_stats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Render messages+extras dump for a continuity lane (read-only)."""
-    del seal_first  # seal-then-render is orchestrated by the caller/resume path
     from cortex_store.db import cortex_conn, decode_row
 
     json_fields = frozenset({"domains", "decisions", "open_items", "entity_ids"})
@@ -743,8 +855,23 @@ def render_tape(
         turn_count=sum(s.get("turn_count", 0) for s in segments),
         truncated=truncated,
     )
-    return {
-        "thread_id": thread_id,
+    payload_bytes = len(json.dumps(messages).encode("utf-8"))
+    mismatch = _build_mismatch_rows(cells=cells, segments=segments)
+    open_line = _build_open_line(
+        thread_id=thread_id,
+        segments=segments,
+        cells=cells,
+        messages=messages,
+        excluded=excluded,
+        excluded_counts=None,
+        truncated=truncated,
+        budget_bytes=budget_bytes,
+        payload_bytes=payload_bytes,
+        harvest=harvest_stats,
+        mismatch=mismatch,
+    )
+    summary = _summary_line(open_line)
+    body = {
         "segments": segments,
         "cells": cells,
         "messages": messages,
@@ -752,7 +879,9 @@ def render_tape(
         "truncated": truncated,
         "turn_count": sum(s.get("turn_count", 0) for s in segments),
         "segment_count": len(segments),
+        "mismatch": mismatch,
     }
+    return {"open_line": open_line, "summary": summary, **body}
 
 
 __all__ = ["render_tape", "TapeSegment", "build_chain_segments", "_binding_for_journal"]

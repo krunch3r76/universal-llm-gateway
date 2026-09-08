@@ -16,6 +16,13 @@ from cortex_store.transcript_session_id import derive_session_id_from_jsonl_star
 
 pytestmark = pytest.mark.offline
 
+@pytest.fixture(autouse=True)
+def _patch_explicit_uuids(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_transcript_seal.explicit_uuids_for_lane",
+        lambda _thread, extra=None: set(extra or ()),
+    )
+
 _UUID = "b2c3d4e5-f6a7-8901-bcde-f12345678901"
 _START = "2026-09-07T12:00:00+00:00"
 
@@ -44,7 +51,19 @@ def _write_jsonl(path: Path, stamps: list[str]) -> None:
         records.append(
             {
                 "role": "assistant",
-                "message": {"content": [{"type": "text", "text": f"Ack {i + 1}."}]},
+                "message": {
+                    "content": [
+                        {"type": "text", "text": f"Ack {i + 1}."},
+                        {
+                            "type": "tool_use",
+                            "name": "CallDynamicTool",
+                            "input": {
+                                "toolName": "agent_bus",
+                                "arguments": {"tool": "post", "thread": "10223"},
+                            },
+                        },
+                    ]
+                },
             }
         )
     with path.open("w", encoding="utf-8") as fh:
@@ -68,14 +87,19 @@ def test_seal_requires_thread_and_jsonl() -> None:
     )
 
 
+@patch("cortex_store.dispatch_ops.ops_transcript_seal.explicit_uuids_for_lane", return_value=set())
+@patch("cortex_store.dispatch_ops.ops_transcript_seal.lane_touches")
 @patch("cortex_store.session_close_successor_hop.lookup_journaled_by_conversation_uuid")
 @patch("cortex_store.session_close_successor_hop.lookup_sealed_journal")
 @patch("cortex_store.dispatch_ops.ops_transcript_seal.derive_session_id_from_jsonl_start")
 @patch("cortex_store.dispatch_ops.ops_transcript_seal.resolve_jsonl_path")
 def test_seal_already_closed(
-    mock_resolve, mock_derive, mock_lookup, mock_uuid_lookup, tmp_path
+    mock_resolve, mock_derive, mock_lookup, mock_uuid_lookup, mock_touches, _mock_explicit, tmp_path
 ) -> None:
     from cortex_store.session_close_successor_hop import SealedJournal
+    from cortex_store.transcript_lane_touch import LaneTouch
+
+    mock_touches.return_value = {"100": LaneTouch(writes=1, reads=0, last_write_index=1)}
 
     p = tmp_path / "u" / "u.jsonl"
     p.parent.mkdir(parents=True)
