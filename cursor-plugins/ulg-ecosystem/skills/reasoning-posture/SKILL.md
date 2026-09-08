@@ -180,5 +180,4 @@ A short summary renders in non-subagent `cortex_brief` operational context. Scop
 - consult-posture
 - advisor-timing
 - path-sim
-- presence-discipline
 - cheap-recon-before-escalation
