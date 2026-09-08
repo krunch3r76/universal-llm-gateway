@@ -37,6 +37,26 @@ def test_import_skips_done_prompt(tmp_path: Path, monkeypatch) -> None:
     assert not second["imported"]
 
 
+def test_import_requeues_after_cancelled(tmp_path: Path, monkeypatch) -> None:
+    import orchestrator_handoff.queue as queue_mod
+
+    monkeypatch.setattr(queue_mod, "_REPO", tmp_path)
+    prompts = tmp_path / "tmp/prompts"
+    prompts.mkdir(parents=True)
+    (prompts / "tab-launch-work-foo.md").write_text("# x\n", encoding="utf-8")
+    qpath = tmp_path / "queue.json"
+    index = tmp_path / "index.md"
+    _write_index(index, "tab-launch-work-foo.md")
+    q = HandoffQueue.open(path=qpath)
+    first = q.import_ready_index_rows(index)
+    assert first["imported"]
+    item_id = first["imported"][0]
+    q.cancel(item_id)
+    second = q.import_ready_index_rows(index)
+    assert second["imported"]
+    assert not second["skipped"]
+
+
 def test_requeue_launch_failure_then_terminal(tmp_path: Path) -> None:
     qpath = tmp_path / "queue.json"
     q = HandoffQueue.open(path=qpath)

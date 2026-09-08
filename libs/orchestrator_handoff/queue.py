@@ -240,12 +240,15 @@ class HandoffQueue:
             return {"ok": False, "reason": "index_missing", "path": str(index_path)}
         imported: list[str] = []
         skipped: list[str] = []
+        # Block re-import only while active or successfully completed.
+        # Cancelled/failed rows must not pin a **ready** index row — that wedge
+        # stalled house 10223 when hop-overnight was cancelled then re-greenlit.
         existing_prompts = {
             i.get("work_prompt")
             for i in self._load()["items"]
             if isinstance(i, dict)
             and i.get("work_prompt")
-            and i.get("status") in ("queued", "launching", "in_flight", "done", "failed", "cancelled")
+            and i.get("status") in ("queued", "launching", "in_flight", "done")
         }
         for line in index_path.read_text(encoding="utf-8").splitlines():
             if "|" not in line or "**ready**" not in line.lower():
@@ -359,6 +362,7 @@ class HandoffQueue:
                 i.get("work_prompt")
                 for i in self._load()["items"]
                 if isinstance(i, dict)
+                and i.get("work_prompt")
                 and i.get("status") in ("queued", "launching", "in_flight", "done")
             }
             for opp in opportunities:
