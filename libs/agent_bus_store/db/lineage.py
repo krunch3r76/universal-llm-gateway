@@ -33,8 +33,10 @@ class LineageDispatchLink:
 
     execution_id: str
     pipeline_id: str
+    caller_agent: str | None
     linked_at: str
     terminal_status: str | None
+    terminal_at: str | None
     delivery_at: str | None
 
 
@@ -71,9 +73,9 @@ def get_thread_lineage(
     Zero side effects; safe to call on every checkpoint post and on-demand
     via the API. Returns None when the thread does not exist.
 
-    When ``include_dispatch_links`` is False, only lane children are loaded —
-    used by CHECKPOINT projection so substantiated-child rendering does not
-    fail-open when dispatch-link I/O is unavailable (G9).
+    When ``include_dispatch_links`` is False, only lane children are loaded.
+    When True, dispatch-link load failures fail-open to an empty link set so
+    substantiated-child rendering still succeeds (G9).
     """
     thread_id = normalize_thread_id(thread_id)
     if get_thread(thread_id) is None:
@@ -86,18 +88,23 @@ def get_thread_lineage(
 
     dispatch_links: tuple[LineageDispatchLink, ...] = ()
     if include_dispatch_links:
-        with connect() as conn:
-            raw_links = load_dispatch_links(conn, thread_id)
-        dispatch_links = tuple(
-            LineageDispatchLink(
-                execution_id=link["execution_id"],
-                pipeline_id=link["pipeline_id"],
-                linked_at=link["linked_at"],
-                terminal_status=link.get("terminal_status"),
-                delivery_at=link.get("delivery_at"),
+        try:
+            with connect() as conn:
+                raw_links = load_dispatch_links(conn, thread_id)
+            dispatch_links = tuple(
+                LineageDispatchLink(
+                    execution_id=link["execution_id"],
+                    pipeline_id=link["pipeline_id"],
+                    caller_agent=link.get("caller_agent"),
+                    linked_at=link["linked_at"],
+                    terminal_status=link.get("terminal_status"),
+                    terminal_at=link.get("terminal_at"),
+                    delivery_at=link.get("delivery_at"),
+                )
+                for link in raw_links
             )
-            for link in raw_links
-        )
+        except Exception:
+            dispatch_links = ()
 
     return ThreadLineage(
         thread_id=thread_id,

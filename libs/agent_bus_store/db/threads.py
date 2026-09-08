@@ -95,7 +95,8 @@ def load_dispatch_links(
 ) -> list[dict[str, Any]]:
     """Return dispatch link summaries for a single thread."""
     rows = conn.execute(
-        "SELECT execution_id, pipeline_id, linked_at, terminal_status, delivery_at "
+        "SELECT execution_id, pipeline_id, caller_agent, linked_at, "
+        "terminal_status, terminal_at, delivery_at "
         "FROM thread_dispatch_links WHERE thread_id = ? ORDER BY linked_at ASC",
         (thread_id,),
     ).fetchall()

@@ -16,6 +16,7 @@ from agent_bus_store.checkpoint_projection import (
     extract_authored_residue,
     project_checkpoint_body,
 )
+from agent_bus_store.checkpoint_projection_producers import ProducerDispatchRow
 from agent_bus_store.checkpoint_projection_wiring import maybe_project_checkpoint_body
 from agent_bus_store.turns_models import MAX_TURN_BODY_CHARS
 
@@ -23,9 +24,11 @@ from agent_bus_store.turns_models import MAX_TURN_BODY_CHARS
 def _resolvers(
     *,
     children: tuple[ChildThreadRow, ...] = (),
+    producers: tuple[ProducerDispatchRow, ...] = (),
     anchors: dict[str, ArtifactAnchor] | None = None,
     rows: dict[tuple[str, str], EntityAssertionRow] | None = None,
     child_raises: bool = False,
+    producer_raises: bool = False,
     artifact_raises: bool = False,
     row_raises: bool = False,
 ) -> ProjectionResolvers:
@@ -50,6 +53,12 @@ def _resolvers(
             return substantiated, cited
         return (), cited
 
+    def _producer_registry(*, root_thread: str) -> tuple[ProducerDispatchRow, ...]:
+        if producer_raises:
+            raise RuntimeError("dispatch links unreachable")
+        del root_thread
+        return producers
+
     def _artifact_sha(uri: str) -> ArtifactAnchor | None:
         if artifact_raises:
             raise RuntimeError("fs unreachable")
@@ -62,6 +71,7 @@ def _resolvers(
 
     return ProjectionResolvers(
         child_registry=_child_registry,
+        producer_registry=_producer_registry,
         artifact_sha=_artifact_sha,
         citation_row=_citation_row,
     )
@@ -129,6 +139,7 @@ def test_grandchild_not_child_of_root() -> None:
         residue="agent-bus:7188 and agent-bus:7197",
         resolvers=ProjectionResolvers(
             child_registry=_child_registry,
+            producer_registry=lambda *, root_thread: (),
             artifact_sha=lambda uri: None,
             citation_row=lambda token: None,
         ),
@@ -137,7 +148,8 @@ def test_grandchild_not_child_of_root() -> None:
     assert (
         "agent-bus:7197 · spillover of agent-bus:7188 · active · turn 4" in body
     )
-    assert body.index("### Child lanes") < body.index("### Cited lanes")
+    assert body.index("### Child lanes") < body.index("### In-flight producers")
+    assert body.index("### In-flight producers") < body.index("### Cited lanes")
 
 
 def test_snippet_and_staleness_flags() -> None:
@@ -290,16 +302,24 @@ def test_trailing_charter_state_fence_survives_footer_strip() -> None:
     )
 
 
-def test_maybe_project_checkpoint_subject_gate() -> None:
+def test_maybe_project_checkpoint_subject_gate(tmp_path, monkeypatch) -> None:
+    from agent_bus_store.db import create_thread, init_db
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    thread_row = create_thread(thread_id=None, slug="cp-subject-gate")
+    thread_id = thread_row["id"]
+
     plain = "hello"
     assert (
         maybe_project_checkpoint_body(
-            thread="6341", subject="status update", body=plain
+            thread=thread_id, subject="status update", body=plain
         )
         == plain
     )
     projected = maybe_project_checkpoint_body(
-        thread="6341",
+        thread=thread_id,
         subject="CHECKPOINT — wave 2",
         body="Settled: nothing new.",
     )
@@ -847,5 +867,127 @@ def test_all_turn_routes_apply_checkpoint_projection(tmp_path, monkeypatch) -> N
         ("POST /threads/send sidecar", send_sidecar_body),
     ):
         assert "### Child lanes" in body, f"{label}: missing Child lanes marker"
+        assert "### In-flight producers" in body, f"{label}: missing producers marker"
         assert "**UNPROJECTED**" not in body, f"{label}: fail-open banner present"
+
+
+def test_producer_registry_renders_open_dispatch_link(tmp_path, monkeypatch) -> None:
+    """AC-14-3: open dispatch link surfaces under ### In-flight producers."""
+    from agent_bus_store import create_app
+    from agent_bus_store.auth import require_token
+    from agent_bus_store.db import admit_dispatch
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    app = create_app(db_path=str(tmp_path / "bus.db"))
+    app.dependency_overrides[require_token] = lambda: None
+
+    execution_id = "d6a93d64-18a9-4779-8238-89d6af49e415"
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "o14-d3-producers",
+                "from": "cursor",
+                "to": "web",
+                "subject": "seed",
+                "body": "hello",
+                "lifecycle_state": "pending",
+            },
+        )
+        assert created.status_code == 201, created.text
+        thread_id = created.json()["thread"]["id"]
+
+        admit_dispatch(
+            thread_id=thread_id,
+            execution_id=execution_id,
+            pipeline_id="cdp-generate",
+            caller_agent="cursor-sdk",
+        )
+
+        checkpoint = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "CHECKPOINT — O14-D3 producers zone",
+                "body": "Settled: producers zone lands.",
+                "after_turn": 1,
+            },
+        )
+        assert checkpoint.status_code == 201, checkpoint.text
+
+        posted = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=2"
+        ).json()
+        body = posted["body"]
+
+    assert "### In-flight producers" in body
+    assert (
+        f"- agent-bus:{thread_id} · d6a93d64 · cursor-sdk · in_flight since"
+        in body
+    )
+    assert body.index("### Child lanes") < body.index("### In-flight producers")
+    assert body.index("### In-flight producers") < body.index("### Cited lanes")
+
+
+def test_producer_registry_empty_shows_none_linked() -> None:
+    body = project_checkpoint_body(
+        root_thread="6341",
+        residue="Settled: no dispatches.",
+        resolvers=_resolvers(),
+    )
+    assert "### In-flight producers" in body
+    assert "_none linked_" in body
+
+
+def test_producer_registry_unit_rendering() -> None:
+    row = ProducerDispatchRow(
+        lane_thread_id="10223",
+        execution_id="d6a93d64-18a9-4779-8238-89d6af49e415",
+        model_or_seat="cursor-sdk",
+        state="in_flight",
+        linked_at="2026-09-08T02:15:00",
+    )
+    body = project_checkpoint_body(
+        root_thread="10223",
+        residue="Settled.",
+        resolvers=_resolvers(producers=(row,)),
+    )
+    assert (
+        "- agent-bus:10223 · d6a93d64 · cursor-sdk · in_flight since "
+        "2026-09-08T02:15:00"
+    ) in body
+
+
+def test_maybe_project_checkpoint_emits_producers_projected_event(
+    tmp_path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_bus_store.db import create_thread, init_db
+
+    db_path = tmp_path / "bus.db"
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(db_path))
+    init_db()
+    thread_row = create_thread(thread_id=None, slug="cp-producers-event")
+    thread_id = thread_row["id"]
+
+    emitted: list[dict[str, object]] = []
+
+    def _capture(**kwargs: object) -> None:
+        emitted.append(kwargs)
+
+    monkeypatch.setattr(
+        "agent_bus_store.events.checkpoint_producers_projected.emit_checkpoint_producers_projected",
+        _capture,
+    )
+    maybe_project_checkpoint_body(
+        thread=thread_id,
+        subject="CHECKPOINT — event test",
+        body="Settled.",
+    )
+    assert emitted == [
+        {"thread": thread_id, "producer_count": 0, "execution_ids": []}
+    ]
 

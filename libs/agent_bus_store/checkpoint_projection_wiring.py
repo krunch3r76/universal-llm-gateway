@@ -13,6 +13,10 @@ from .checkpoint_projection import (
     is_checkpoint_subject,
     project_checkpoint_body,
 )
+from .checkpoint_projection_producers import (
+    ProducerDispatchRow,
+    filter_visible_producer_links,
+)
 
 
 def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
@@ -20,7 +24,16 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
     from .db import get_thread, get_thread_lineage, get_thread_turn_count
     from .db.lane_associations import get_current_lane
 
-    del root_thread
+    house_thread = root_thread
+
+    _lineage_cache: list = []
+
+    def _lineage():
+        if not _lineage_cache:
+            _lineage_cache.append(
+                get_thread_lineage(house_thread, include_dispatch_links=True)
+            )
+        return _lineage_cache[0]
 
     def _child_row(thread_id: str) -> ChildThreadRow | None:
         row = get_thread(thread_id)
@@ -40,7 +53,7 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
     ) -> tuple[tuple[ChildThreadRow, ...], tuple[ChildThreadRow, ...]]:
         # Substantiated bucket: one shared live-lineage primitive (G2) instead
         # of re-deriving "what are my children" independently here.
-        lineage = get_thread_lineage(root_thread, include_dispatch_links=False)
+        lineage = _lineage()
         substantiated = tuple(
             ChildThreadRow(
                 thread_id=child.thread_id,
@@ -63,6 +76,16 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
             if child is not None:
                 cited.append(child)
         return substantiated, tuple(cited)
+
+    def _producer_registry(*, root_thread: str) -> tuple[ProducerDispatchRow, ...]:
+        del root_thread
+        lineage = _lineage()
+        if lineage is None:
+            return ()
+        return filter_visible_producer_links(
+            lineage.dispatch_links,
+            lane_thread_id=lineage.thread_id,
+        )
 
     def _artifact_sha(uri: str) -> ArtifactAnchor | None:
         """Resolve cortex:// or workspaces:// to sha256 at post time.
@@ -156,6 +179,7 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
 
     return ProjectionResolvers(
         child_registry=_child_registry,
+        producer_registry=_producer_registry,
         artifact_sha=_artifact_sha,
         citation_row=_citation_row,
     )
@@ -189,9 +213,18 @@ def maybe_project_checkpoint_body(*, thread: str, subject: str, body: str) -> st
     if not is_checkpoint_subject(subject):
         return body
     resolvers = build_post_resolvers(root_thread=thread)
-    return project_checkpoint_body(
+    projected = project_checkpoint_body(
         root_thread=thread, residue=body, resolvers=resolvers
     )
+    producers = resolvers.producer_registry(root_thread=thread)
+    from .events.checkpoint_producers_projected import emit_checkpoint_producers_projected
+
+    emit_checkpoint_producers_projected(
+        thread=thread,
+        producer_count=len(producers),
+        execution_ids=[row.execution_id[:8] for row in producers],
+    )
+    return projected
 
 
 __all__ = [

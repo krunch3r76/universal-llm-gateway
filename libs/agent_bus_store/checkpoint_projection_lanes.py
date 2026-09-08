@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .checkpoint_projection_producers import ProducerDispatchRow, render_producers_section
+
 _CLOSED_THREAD_STATUSES = frozenset({"closed"})
 
 
@@ -32,9 +34,10 @@ def render_lane_derived_sections(
     *,
     child_lanes: tuple,
     cited_lanes: tuple,
+    producer_rows: tuple[ProducerDispatchRow, ...],
     compress_closed_children: bool,
 ) -> list[str]:
-    """Return markdown lines for Child lanes + Cited lanes subsections."""
+    """Return markdown lines for Child lanes, In-flight producers, Cited lanes."""
     parts = ["### Child lanes"]
     if child_lanes:
         for child in child_lanes:
@@ -47,6 +50,8 @@ def render_lane_derived_sections(
             )
     else:
         parts.append("_none substantiated_")
+    parts.append("")
+    parts.extend(render_producers_section(producer_rows))
     parts.append("")
     parts.append("### Cited lanes")
     if cited_lanes:

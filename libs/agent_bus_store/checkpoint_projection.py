@@ -8,6 +8,7 @@ from typing import Protocol
 
 from .checkpoint_citation_lint import CitationToken, lint_checkpoint_citations
 from .checkpoint_projection_lanes import render_lane_derived_sections
+from .checkpoint_projection_producers import ProducerDispatchRow
 from .turns_models import MAX_TURN_BODY_CHARS
 
 CANONICAL_RESUME_FOOTER = (
@@ -86,9 +87,14 @@ class CitationRowResolver(Protocol):
     def __call__(self, token: CitationToken) -> EntityAssertionRow | None: ...
 
 
+class ProducerRegistryResolver(Protocol):
+    def __call__(self, *, root_thread: str) -> tuple[ProducerDispatchRow, ...]: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ProjectionResolvers:
     child_registry: ChildRegistryResolver
+    producer_registry: ProducerRegistryResolver
     artifact_sha: ArtifactShaResolver
     citation_row: CitationRowResolver
 
@@ -231,6 +237,7 @@ def _render_derived_zone(
     unprojected: bool,
     child_lanes: tuple[ChildThreadRow, ...],
     cited_lanes: tuple[ChildThreadRow, ...],
+    producer_rows: tuple[ProducerDispatchRow, ...],
     anchors: tuple[ArtifactAnchor, ...],
     unresolved_uris: tuple[str, ...],
     rows: tuple[EntityAssertionRow, ...],
@@ -244,6 +251,7 @@ def _render_derived_zone(
         render_lane_derived_sections(
             child_lanes=child_lanes,
             cited_lanes=cited_lanes,
+            producer_rows=producer_rows,
             compress_closed_children=compress_closed_children,
         )
     )
@@ -285,6 +293,12 @@ def project_checkpoint_body(
         child_lanes, cited_lanes = (), ()
         unprojected = True
 
+    try:
+        producer_rows = resolvers.producer_registry(root_thread=root_thread)
+    except Exception:
+        producer_rows = ()
+        unprojected = True
+
     anchors: list[ArtifactAnchor] = []
     unresolved_uris: list[str] = []
     for uri in uris:
@@ -315,6 +329,7 @@ def project_checkpoint_body(
         unprojected=unprojected,
         child_lanes=child_lanes,
         cited_lanes=cited_lanes,
+        producer_rows=producer_rows,
         anchors=tuple(anchors),
         unresolved_uris=tuple(unresolved_uris),
         rows=tuple(entity_rows),
@@ -329,6 +344,7 @@ def _assemble_body(
     unprojected: bool,
     child_lanes: tuple[ChildThreadRow, ...],
     cited_lanes: tuple[ChildThreadRow, ...],
+    producer_rows: tuple[ProducerDispatchRow, ...],
     anchors: tuple[ArtifactAnchor, ...],
     unresolved_uris: tuple[str, ...],
     rows: tuple[EntityAssertionRow, ...],
@@ -340,6 +356,7 @@ def _assemble_body(
         unprojected=unprojected,
         child_lanes=child_lanes,
         cited_lanes=cited_lanes,
+        producer_rows=producer_rows,
         anchors=anchors,
         unresolved_uris=unresolved_uris,
         rows=rows,
@@ -363,6 +380,7 @@ def _assemble_body(
         unprojected=unprojected,
         child_lanes=child_lanes,
         cited_lanes=cited_lanes,
+        producer_rows=producer_rows,
         anchors=anchors,
         unresolved_uris=unresolved_uris,
         rows=rows,
@@ -380,6 +398,7 @@ __all__ = [
     "CheckpointBodyTooLargeError",
     "ChildThreadRow",
     "EntityAssertionRow",
+    "ProducerDispatchRow",
     "ProjectionResolvers",
     "authored_residue_char_count",
     "extract_authored_residue",
