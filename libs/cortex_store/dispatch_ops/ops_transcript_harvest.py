@@ -10,7 +10,13 @@ from universal_logging import get_logger
 from ..events_tape import transcript_harvested
 from ..transcript_assembly import resolve_jsonl_path, TranscriptPathError
 from ..transcript_lane_touch import binding_for, lane_touches
-from .ops_transcript_discover import _discover_open_windows, _thread_detail, _parse_created_at
+from ..transcript_cp_anchors import explicit_uuids_for_lane
+from .ops_transcript_discover import (
+    _discover_open_windows,
+    _parse_created_at,
+    _resolve_explicit_uuids,
+    _thread_detail,
+)
 from .ops_transcript_seal import _op_transcript_seal
 
 logger = get_logger("cortex-api.dispatch_ops.transcript_harvest")
@@ -61,11 +67,11 @@ def _op_transcript_harvest(
     if created_at is None:
         created_at = datetime.min.replace(tzinfo=UTC)
 
-    explicit = {x.strip() for x in (explicit_transcript_ids or []) if x and x.strip()}
+    explicit_all = _resolve_explicit_uuids(str(tid), explicit_transcript_ids)
     windows, _, _ = _discover_open_windows(
         thread_id=str(tid),
         lane_created_at=created_at,
-        explicit_uuids=explicit,
+        explicit_uuids=explicit_all,
     )
     discovered = len(windows)
     cap = max(0, int(max_seals))

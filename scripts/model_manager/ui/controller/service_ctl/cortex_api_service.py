@@ -23,6 +23,7 @@ from ..service_config import (
     build_service_env,
     cortex_api_http_bind,
     ensure_cortex_api_config,
+    load_agent_bus_config,
     load_mcp_config,
 )
 from .uvicorn_service import _start_uvicorn_service, _stop_uvicorn_service
@@ -78,6 +79,8 @@ def _build_cortex_runtime_env(root: Path) -> dict[str, str]:
         extra_env["CORTEX_FILES_ROOT"] = str(Path(cfg.data_dir).expanduser() / "files")
         if cfg.agent_bus_token:
             extra_env["AGENT_BUS_TOKEN"] = cfg.agent_bus_token
+    ab_cfg = load_agent_bus_config()
+    extra_env["AGENT_BUS_DB_PATH"] = str(Path(ab_cfg.db_path).expanduser())
     transcripts_root = os.environ.get("CURSOR_AGENT_TRANSCRIPTS_ROOT")
     if not transcripts_root:
         transcripts_root = str(

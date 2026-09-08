@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import HTTPException, Query, status
@@ -35,7 +36,8 @@ async def tape_route(
             },
         )
     try:
-        return render_tape_with_harvest(
+        return await asyncio.to_thread(
+            render_tape_with_harvest,
             thread_id=thread_id,
             budget_bytes=budget_bytes,
             harvest=harvest,

@@ -72,3 +72,27 @@ def test_t13_harvest_false_skips_seal(mock_harvest, mock_render) -> None:
     render_tape_with_harvest(thread_id="1", budget_bytes=1000, harvest=False)
     mock_harvest.assert_not_called()
     assert mock_render.call_args.kwargs["harvest_stats"] is None
+
+
+@patch("agent_bus_store.tape_harvest.render_tape")
+@patch("agent_bus_store.tape_harvest._call_transcript_harvest")
+@patch("agent_bus_store.tape_harvest.explicit_uuids_for_lane")
+def test_t14_harvest_passes_merged_explicit_to_cortex(
+    mock_explicit,
+    mock_harvest,
+    mock_render,
+) -> None:
+    """agent_bus merges CP anchors once; cortex discover must not reopen the bus DB."""
+    mock_explicit.return_value = {"uuid-a", "uuid-b"}
+    mock_harvest.return_value = {
+        "discovered": 0,
+        "sealed": 0,
+        "deferred_count": 0,
+        "refused": 0,
+    }
+    mock_render.return_value = {"open_line": {"harvest": {"discovered": 0}}}
+
+    render_tape_with_harvest(thread_id="10223", budget_bytes=1000, harvest=True)
+
+    mock_explicit.assert_called_once_with("10223", set())
+    assert sorted(mock_harvest.call_args.kwargs["explicit_ids"]) == ["uuid-a", "uuid-b"]

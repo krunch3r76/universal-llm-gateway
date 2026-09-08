@@ -53,6 +53,17 @@ def _parse_created_at(raw: str | None) -> datetime | None:
 from ..transcript_cp_anchors import explicit_uuids_for_lane
 
 
+def _resolve_explicit_uuids(
+    thread_id: str,
+    explicit_transcript_ids: list[str] | None,
+) -> set[str]:
+    """Merge CP anchors at the op boundary unless the caller already did."""
+    explicit = {x.strip() for x in (explicit_transcript_ids or []) if x and x.strip()}
+    if explicit_transcript_ids is not None:
+        return explicit
+    return explicit_uuids_for_lane(thread_id, explicit)
+
+
 def _discover_open_windows(
     *,
     thread_id: str,
@@ -69,8 +80,7 @@ def _discover_open_windows(
         "dropped": 0,
         "segment_unavailable": 0,
     }
-    explicit = explicit_uuids or set()
-    explicit_all = explicit_uuids_for_lane(thread_id, explicit)
+    explicit_all = explicit_uuids or set()
     for jsonl_path in _jsonl_paths_by_mtime_desc(root):
         mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=UTC)
         if mtime < lane_created_at:
@@ -154,11 +164,11 @@ def _op_transcript_discover(
     if created_at is None:
         created_at = datetime.min.replace(tzinfo=UTC)
 
-    explicit = {x.strip() for x in (explicit_transcript_ids or []) if x and x.strip()}
+    explicit_all = _resolve_explicit_uuids(str(tid), explicit_transcript_ids)
     open_windows, excluded, excluded_counts = _discover_open_windows(
         thread_id=str(tid),
         lane_created_at=created_at,
-        explicit_uuids=explicit,
+        explicit_uuids=explicit_all,
     )
     return {
         "thread_id": str(tid),
@@ -169,4 +179,4 @@ def _op_transcript_discover(
     }
 
 
-__all__ = ["_discover_open_windows", "_op_transcript_discover"]
+__all__ = ["_discover_open_windows", "_op_transcript_discover", "_resolve_explicit_uuids"]
