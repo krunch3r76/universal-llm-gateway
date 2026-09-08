@@ -31,6 +31,11 @@ from bus_watch.producer_grace import ProducerGrace
 from bus_watch.stall_pop import emit_stall_pop, should_emit_stall_pop
 from bus_watch.stall_predicate import stall_predicate
 from bus_watch.state import write_state
+from bus_watch.verdict import (
+    derive_verdict,
+    emit_verdict_changed,
+    should_emit_verdict_changed,
+)
 
 _REPO = Path(__file__).resolve().parents[1]
 _AGENT_BUS_SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
@@ -257,12 +262,14 @@ def main() -> int:
             after_turn=args.after_turn,
             from_agent=from_agent,
             label=args.label,
+            execution_id=execution_id,
         )
 
     client = _bus_client(token, timeout_s=slice_s)
     predicate_unmet_slices = 0
     last_turn_count: int | None = None
     last_stall_reason: str | None = None
+    last_verdict: str | None = None
     unlinked_warned = False
 
     def wait_once(wait_s: int) -> dict[str, Any]:
@@ -284,8 +291,9 @@ def main() -> int:
         client.close()
         client = _bus_client(token, timeout_s=slice_s)
 
-    def on_incomplete(snap: dict[str, Any]) -> None:
+    def on_incomplete(snap: dict[str, Any]) -> dict[str, Any]:
         nonlocal predicate_unmet_slices, last_turn_count, last_stall_reason, unlinked_warned
+        nonlocal last_verdict
         status = snap.get("status")
         turn_count = snap.get("turn_count")
         thread_status = snap.get("thread_status")
@@ -353,6 +361,35 @@ def main() -> int:
                 reason=reason or "",
                 stall_active=False,
             )
+
+        stall_reason = reason if should_pop and reason else ""
+        verdict = derive_verdict(
+            producer=producer,
+            producer_grace_expired=grace_expired,
+            stall_active=should_pop,
+        )
+        emit_verdict, next_verdict = should_emit_verdict_changed(
+            last_verdict=last_verdict,
+            verdict=verdict,
+        )
+        if emit_verdict:
+            emit_verdict_changed(
+                label=str(args.label),
+                thread=thread_id,
+                execution_id=execution_id,
+                from_verdict=last_verdict or "",
+                to_verdict=verdict,
+            )
+            last_verdict = next_verdict
+
+        return {
+            "execution_id": execution_id,
+            "producer": producer,
+            "predicate_unmet_slices": predicate_unmet_slices,
+            "producer_grace_expired": grace_expired,
+            "stall_reason": stall_reason,
+            "verdict": verdict,
+        }
 
     def on_complete(snap: dict[str, Any]) -> int:
         reply_turn = int(snap.get("qualifying_reply_turn") or 0)

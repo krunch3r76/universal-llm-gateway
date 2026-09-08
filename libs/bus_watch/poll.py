@@ -18,7 +18,7 @@ def sliced_wait_loop(
     *,
     wait_once: Callable[[int], dict[str, Any]],
     is_complete: Callable[[dict[str, Any]], bool],
-    on_incomplete: Callable[[dict[str, Any]], None],
+    on_incomplete: Callable[[dict[str, Any]], dict[str, Any] | None],
     on_complete: Callable[[dict[str, Any]], int],
     transport_errors: tuple[type[BaseException], ...],
     on_transport_error: Callable[[BaseException], None],
@@ -72,13 +72,15 @@ def sliced_wait_loop(
             return on_complete(snap)
 
         status = str(snap.get("status") or "")
+        incomplete_fields = on_incomplete(snap)
         if state_file is not None:
-            write_state(
-                state_file,
-                status=("predicate_unmet" if status == "predicate_unmet" else "polling"),
-                last_status=status,
-                turn_count=snap.get("turn_count"),
-                thread_status=snap.get("thread_status"),
-            )
-        on_incomplete(snap)
+            fields: dict[str, Any] = {
+                "status": ("predicate_unmet" if status == "predicate_unmet" else "polling"),
+                "last_status": status,
+                "turn_count": snap.get("turn_count"),
+                "thread_status": snap.get("thread_status"),
+            }
+            if incomplete_fields:
+                fields.update(incomplete_fields)
+            write_state(state_file, **fields)
         time.sleep(poll_sleep_s)
