@@ -1003,6 +1003,55 @@ async def test_dispatch_exception_posts_failure_turn_and_event(
 
 
 @pytest.mark.asyncio
+async def test_finalize_failed_terminates_before_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """O14 ghost fix: terminate dispatch link before FAILED closeout reply."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req = CursorDispatchRequest(
+        thread_id="t-order",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-order",
+        execution_id="exec-order",
+        message="hello",
+    )
+    _seed_running_row(req)
+    order: list[str] = []
+    bus = _mock_bus()
+
+    async def _terminate(**_kwargs: object) -> MagicMock:
+        order.append("terminate")
+        return MagicMock(status_code=200, body={})
+
+    async def _reply(**_kwargs: object) -> MagicMock:
+        order.append("reply")
+        return MagicMock(status_code=200, body={})
+
+    bus.terminate_dispatch = AsyncMock(side_effect=_terminate)
+    bus.reply = AsyncMock(side_effect=_reply)
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_failed", lambda **_k: None)
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", AsyncMock())
+
+    await route_mod._finalize_failed(
+        req=req,
+        bus=bus,
+        reply_to="dispatch",
+        controller=_make_controller(),
+        code="CURSOR_SDK_DISPATCH",
+        message="TypeError: Timeout object",
+        subject_suffix="FAILED",
+        exc=TypeError("'Timeout' object cannot be interpreted as an integer"),
+    )
+    assert order == ["terminate", "reply"]
+    bus.terminate_dispatch.assert_awaited_once_with(
+        thread_id="t-order",
+        terminal_status="failed",
+        execution_id="exec-order",
+    )
+
+
+@pytest.mark.asyncio
 async def test_finalize_failed_sdk_exceptions_emit_class_derived_reasons(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

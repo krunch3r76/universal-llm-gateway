@@ -232,6 +232,48 @@ def test_ac6_partial_dedup_backfills_terminal(bus_db) -> None:
     assert not any("orphaned" in (t.get("subject") or "").lower() for t in turns)
 
 
+def test_instant_failed_typeerror_class_reconcile_backfill(bus_db) -> None:
+    """Instant FAILED (TypeError class) with NULL link — reconcile backfills failed."""
+    thread_row, *_ = create_thread_with_turn(
+        slug="instant-fail",
+        from_agent="dispatch",
+        to_agent="claude-cursor",
+        subject="cursor-sdk generate",
+        body="pointer",
+        lifecycle_state="pending",
+    )
+    thread_id = thread_row["id"]
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-instant",
+        pipeline_id="cursor-sdk-generate",
+    )
+    insert_turn(
+        thread=thread_id,
+        from_agent="cursor-sdk",
+        to_agent="dispatch",
+        subject="cursor-sdk dispatch disp-type FAILED",
+        body=(
+            '{"code":"CURSOR_SDK_DISPATCH","message":'
+            '"\'Timeout\' object cannot be interpreted as an integer"}'
+        ),
+    )
+    detail_before = get_thread_with_links(thread_id)
+    assert detail_before is not None
+    assert detail_before["dispatch_links"][0]["terminal_status"] is None
+
+    with patch("agent_bus_store.reconcile.emit_dispatch_orphaned") as mock_orphan:
+        before = reconcile_orphaned_dispatches()
+        after = reconcile_orphaned_dispatches()
+
+    assert before == 1
+    assert after == 0
+    mock_orphan.assert_not_called()
+    detail_after = get_thread_with_links(thread_id)
+    assert detail_after is not None
+    assert detail_after["dispatch_links"][0]["terminal_status"] == "failed"
+
+
 def test_with_turn_lifecycle_passthrough(bus_db) -> None:
     """WI-1 route: lifecycle_state forwarded to create_thread_with_turn."""
     with TestClient(_app(bus_db)) as client:

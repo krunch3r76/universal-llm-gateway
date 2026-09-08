@@ -1589,6 +1589,32 @@ async def _terminate_link(
         )
 
 
+async def _emergency_orphan_link_terminate(
+    *,
+    dispatch_id: str,
+    controller: WorkAdmissionController,
+) -> None:
+    """Terminate the bus link when a gated coro escaped without finalize (O14 ghost)."""
+    ledger = CursorDispatchLedger.instance()
+    row = await asyncio.to_thread(load_ledger_row, ledger, dispatch_id=dispatch_id)
+    if row is None or not row.thread_id:
+        return
+    execution_id = row.execution_id or dispatch_id
+    bus = CursorBusClient()
+    await _terminate_link(
+        bus,
+        thread_id=row.thread_id,
+        terminal_status="failed",
+        execution_id=execution_id,
+    )
+    await _mark_terminal_and_promote(
+        dispatch_id=dispatch_id,
+        terminal_status="failed",
+        controller=controller,
+        emit_tag="CURSOR_SDK_ESCAPE_ORPHAN",
+    )
+
+
 async def _deliver_sdk_closeout(
     *,
     req: CursorDispatchRequest,
@@ -1863,6 +1889,10 @@ async def _close_ticket_after(
         # escaping here would otherwise be swallowed by the tracked task with no
         # log (especially CancelledError), reproducing the silent-orphan signature.
         logger.exception("cursor sdk dispatch coro escaped finalize: op_id=%s", op_id)
+        await _emergency_orphan_link_terminate(
+            dispatch_id=op_id,
+            controller=controller,
+        )
         raise
     finally:
         controller.close_ticket(op_id, terminal_status="closed")
@@ -2089,6 +2119,12 @@ async def _run_sdk_dispatch_gated(
             ),
             source="gateway",
         )
+        await _terminate_link(
+            bus,
+            thread_id=req.thread_id,
+            terminal_status="failed",
+            execution_id=req.execution_id,
+        )
         await bus.reply(
             thread_id=req.thread_id,
             to_agent=reply_to,
@@ -2096,12 +2132,6 @@ async def _run_sdk_dispatch_gated(
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (timeout)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
-        await _terminate_link(
-        bus,
-        thread_id=req.thread_id,
-        terminal_status="failed",
-        execution_id=req.execution_id,
-    )
         await asyncio.to_thread(persist_timeout_retain, dispatch_id=req.dispatch_id)
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
@@ -2123,6 +2153,12 @@ async def _run_sdk_dispatch_gated(
         env = error_envelope(
             code="CURSOR_HOME_CONFIG", message=str(exc), source="gateway"
         )
+        await _terminate_link(
+            bus,
+            thread_id=req.thread_id,
+            terminal_status="failed",
+            execution_id=req.execution_id,
+        )
         await bus.reply(
             thread_id=req.thread_id,
             to_agent=reply_to,
@@ -2130,12 +2166,6 @@ async def _run_sdk_dispatch_gated(
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (home/auth)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
-        await _terminate_link(
-        bus,
-        thread_id=req.thread_id,
-        terminal_status="failed",
-        execution_id=req.execution_id,
-    )
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
@@ -2150,6 +2180,12 @@ async def _run_sdk_dispatch_gated(
         env = error_envelope(
             code="CURSOR_VENV_CONFIG", message=str(exc), source="gateway"
         )
+        await _terminate_link(
+            bus,
+            thread_id=req.thread_id,
+            terminal_status="failed",
+            execution_id=req.execution_id,
+        )
         await bus.reply(
             thread_id=req.thread_id,
             to_agent=reply_to,
@@ -2157,12 +2193,6 @@ async def _run_sdk_dispatch_gated(
             subject=f"cursor-sdk dispatch {req.dispatch_id} FAILED (venv config)",
             body=f"```json\n{json.dumps(env, indent=2)}\n```",
         )
-        await _terminate_link(
-        bus,
-        thread_id=req.thread_id,
-        terminal_status="failed",
-        execution_id=req.execution_id,
-    )
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="failed",
@@ -2322,6 +2352,12 @@ async def _finalize_bridge_abort_partial(
         retryable=True,
         data=env_data,
     )
+    await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
     await bus.reply(
         thread_id=req.thread_id,
         to_agent=reply_to,
@@ -2331,12 +2367,6 @@ async def _finalize_bridge_abort_partial(
             f"(bridge abort after {tool_call_count} tool calls)"
         ),
         body=f"```json\n{json.dumps(env, indent=2)}\n```",
-    )
-    await _terminate_link(
-        bus,
-        thread_id=req.thread_id,
-        terminal_status="failed",
-        execution_id=req.execution_id,
     )
     await _mark_terminal_and_promote(
         dispatch_id=req.dispatch_id,
@@ -2360,8 +2390,11 @@ async def _finalize_failed(
     data: dict[str, Any] | None = None,
     exc: BaseException | None = None,
 ) -> None:
-    """Single failure-finalize path: emit, deliver an error envelope, terminate,
-    and mark terminal ``failed`` + promote. Guarantees no silent orphan.
+    """Single failure-finalize path: emit, terminate the bus link, deliver envelope.
+
+    Terminate runs before the closeout reply so a worker restart between the
+    two steps cannot leave ``thread_dispatch_links.terminal_status`` NULL while
+    a FAILED turn exists (O14 ghost projection; friction a:32612).
     """
     effective_error = error if error is not None else f"{code}: {message}"
     degraded_reasons = degraded_reasons_from_exception(exc) if exc is not None else ()
@@ -2383,18 +2416,18 @@ async def _finalize_failed(
         retryable=retryable,
         data=env_data if env_data else None,
     )
+    await _terminate_link(
+        bus,
+        thread_id=req.thread_id,
+        terminal_status="failed",
+        execution_id=req.execution_id,
+    )
     await bus.reply(
         thread_id=req.thread_id,
         to_agent=reply_to,
         from_agent="cursor-sdk",
         subject=f"cursor-sdk dispatch {req.dispatch_id} {subject_suffix}",
         body=f"```json\n{json.dumps(env, indent=2)}\n```",
-    )
-    await _terminate_link(
-        bus,
-        thread_id=req.thread_id,
-        terminal_status="failed",
-        execution_id=req.execution_id,
     )
     await _mark_terminal_and_promote(
         dispatch_id=req.dispatch_id,
