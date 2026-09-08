@@ -25,7 +25,7 @@ from typing import Any
 from .checkpoint_projection import extract_authored_residue
 from .db.lane_associations import get_current_lane
 from .db.threads import get_thread
-from .db.turns import get_turns
+from .db.turns import get_turn_by_number, get_turns
 
 log = logging.getLogger("agent_bus.continuity_consolidate")
 
@@ -99,17 +99,17 @@ def _tip_checkpoint(root: str) -> dict[str, Any] | None:
 
 
 def _trigger_turn(thread_id: str, turn_number: int) -> dict[str, Any] | None:
-    for turn in get_turns(thread=thread_id, last=5):
-        if turn.get("turn_number") == turn_number:
-            return {
-                "thread": thread_id,
-                "turn": turn_number,
-                "from_agent": turn.get("from_agent"),
-                "created_at": turn.get("created_at"),
-                "subject": turn.get("subject"),
-                "body": (turn.get("body") or "")[:_TRIGGER_BODY_CAP],
-            }
-    return None
+    turn = get_turn_by_number(thread_id, turn_number)
+    if turn is None:
+        return None
+    return {
+        "thread": thread_id,
+        "turn": turn_number,
+        "from_agent": turn.get("from_agent"),
+        "created_at": turn.get("created_at"),
+        "subject": turn.get("subject"),
+        "body": (turn.get("body") or "")[:_TRIGGER_BODY_CAP],
+    }
 
 
 def build_consolidate_options(
@@ -170,6 +170,13 @@ def _run(thread_id: str, turn_number: int) -> None:
         options = build_consolidate_options(
             root=root, trigger_thread=thread_id, turn_number=turn_number
         )
+        if options.get("trigger") is None:
+            log.warning(
+                "continuity consolidate: trigger %s#%s not readable, no dispatch",
+                thread_id,
+                turn_number,
+            )
+            return
         enqueue_consolidate(options)
     except Exception:  # noqa: BLE001 — background hygiene must never surface into the bus
         log.warning(

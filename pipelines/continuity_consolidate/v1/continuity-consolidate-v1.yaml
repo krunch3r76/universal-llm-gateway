@@ -73,7 +73,10 @@ steps:
       payload: "ingest.json.payload_text"
     generation_parameters:
       temperature: 0.2
-      max_tokens: 3000
+      # Fold output is ~700 tokens; the headroom is for reasoning-tier cloud
+      # models whose thinking tokens count against the cap (gemini-3.5-flash
+      # truncated at 3000 on the P6 meter).
+      max_tokens: 8000
       response_format:
         type: json_object
         schema:
