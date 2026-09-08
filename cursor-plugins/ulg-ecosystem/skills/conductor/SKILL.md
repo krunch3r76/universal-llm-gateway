@@ -357,6 +357,18 @@ Terra is **not** a standing conductor seat (Other Models + mid GPT rate). Cross-
 Six-block handoff packet (`architecture-handoff-protocol`). Front-matter SHOULD
 set `packet_kind: conductor` and `role_name: conductor`.
 
+**Optional frontmatter `sdk_mode:` (conductor admit vs nested legs):**
+
+| Field | Value | When |
+|---|---|---|
+| *(omit)* | resolves **`agent`** | Standing conductor admit — orchestrates, nests, may land |
+| `sdk_mode: agent` | explicit agent | Same; use when documenting intent in the packet file |
+| `sdk_mode: plan` | **forbidden** on `contract=conductor` | Plan mode is for **nested** G3 recon/bind legs only — worker 422 |
+
+Nested G3 packets (not the top-level conductor admit) MAY carry `sdk_mode: plan`
+when the row is sparse recon before `implement_ready`. SoT:
+`cursor_sdk_mode.py` · `docs/agent-guides/cursor-sdk-conversation-mode.md`.
+
 Required in `<scope>` / `<invariants>`:
 - **`Use the conductor skill — …`** (continuity-lead required-skill gate — see Audience)
 - Root thread id + charter + scoreboard URIs
@@ -415,6 +427,38 @@ Ledger holds
 `work_key=todo:{slug}` (no `todo:` packet front-matter — nested G5 uses
 `nest_under`). Top-level `contract=implement` on the same todo while conductor
 is open → 409.
+
+### Scoreboard `sdk_mode` column (plan vs implement legs)
+
+Bind a **`Mode`** column (or inline `sdk_mode:` on each G-row) on the scoreboard
+tip and continuity sidecar. Values: **`plan`** · **`agent`** · **`—`** (CDP / non-sdk).
+
+| G-row | Mode | Nested contract | Closeout witness |
+|---|---|---|---|
+| G3 recon / bind (pre-ready) | `plan` | `none` \| `recon` \| `seed` \| `consult` | `plan:closeout_verdict=PLAN_COMPLETE` or `PARTIAL` + artifact URIs — **no** land |
+| G5 implement | `agent` | `implement` \| `pure-mechanical` | path-explicit commit / `land_disposition` |
+| G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI |
+| Conductor (top-level) | `agent` | `conductor` | scoreboard drive |
+
+**`NEXT_ADMIT` after `PLAN_COMPLETE`:** when a nested plan leg closes with
+`plan:closeout_verdict=PLAN_COMPLETE`, rewrite scoreboard `NEXT_ADMIT` to nest
+implement:
+
+```text
+team_dispatch(
+  op=generate,
+  seat=cursor-sdk,
+  contract=implement,
+  nest_under=<plan_dispatch_id>,
+  lane=,                          # inherit parent isolation
+  sdk_mode=agent,                 # omit ok — implement-class defaults agent
+  packet_path=…,                  # or source_ref when implement_ready stamped
+)
+```
+
+Harvest plan sidecar URIs into the implement packet `<corpus>` before admit.
+Plan closeout **forbids** `landed` / path-explicit commit claims
+(`apply_plan_mode_closeout_gate`).
 
 ### Score journal + stops
 

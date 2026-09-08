@@ -65,7 +65,8 @@ Parent:
 
 - `../.cursor/rules/testing-discipline.mdc` — when checklist includes migration/registry pytest deliverables
 - `../.cursor/rules/testing_ws.mdc` — same session if ULG paths/commands needed
-- `../.cursor/rules/plan-mode.mdc` — entering Plan mode
+- `../.cursor/rules/plan-mode.mdc` — entering Cursor IDE Plan mode
+- `.cursor/rules/plan-mode_ws.mdc` — cursor-sdk `sdk_mode: plan` (read with parent plan-mode)
 - `../.cursor/rules/subagent-strategy.mdc` — before launching a Task subagent
 
 ## Glob-Matched — Base (from parent)

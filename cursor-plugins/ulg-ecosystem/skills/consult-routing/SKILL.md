@@ -383,6 +383,43 @@ Stay on one designated tree per arc: reuse when `nest_under`, `resume_of`, or
 `lookup_lane_worktree(thread_id)` already holds a worktree — see `git-posture`
 § Stay on one designated tree. `conductor` defers this recipe here.
 
+## cursor-sdk `sdk_mode` — plan vs agent (BINDING)
+
+Wire: `sdk_mode` on `team_dispatch` body or packet frontmatter (`conversation_mode`
+alias on Stargate). Resolved at admit by `cursor_sdk_mode.resolve_sdk_mode`.
+SoT: `services/git_integration_worker/cursor_sdk_mode.py` ·
+`docs/agent-guides/cursor-sdk-conversation-mode.md`.
+
+### Decision table
+
+| Need | `contract` | Default `sdk_mode` | Explicit override | Incompatible |
+|---|---|---|---|---|
+| Sparse recon / architecture bind before code | `none` \| `consult` \| `ask` \| `recon` \| `seed` | **`plan`** when `read_only=true` or unset on these contracts | `sdk_mode: agent` forces agent | — |
+| Packet names plan-first | same as row above | **`plan`** if frontmatter `sdk_mode: plan` | `sdk_mode: agent` | — |
+| Code implement / mechanical | `implement` \| `pure-mechanical` | **`agent`** | omit ok | **`sdk_mode=plan` → 422** |
+| Conductor orchestration | `conductor` | **`agent`** | — | **`sdk_mode=plan` → 422** |
+| After `PLAN_COMPLETE` | `implement` | **`agent`** | nest `nest_under=<plan_id>` | plan land claims forbidden |
+
+### Resolution order (v1)
+
+1. Wire `sdk_mode` on request body (if set)
+2. Packet frontmatter `sdk_mode:`
+3. Implement-class contracts → **`agent`**
+4. `read_only=true` on plan-default contracts → **`plan`**
+5. Else **`agent`**
+
+### cursor-auto nested hook (W3)
+
+`nested_auto_sdk_mode`: nested `contract ∈ {ask, recon, seed}` without
+`density_triage: implement_ready` in body → auto **`plan`** + `read_only=true`.
+Does **not** auto-fire implement — conductor `NEXT_ADMIT` nests implement after
+harvest (`conductor` § Scoreboard `sdk_mode` column).
+
+### Closeout
+
+Plan dispatches: `plan:closeout_verdict=PLAN_COMPLETE|PARTIAL`, artifact URIs only,
+no `landed`. Implement dispatches: normal land / `land_disposition` rules.
+
 ## Scripts / satellites — composed client surface
 
 Scripts and satellite netns that need a **blocking reasoned hop** POST Stargate
