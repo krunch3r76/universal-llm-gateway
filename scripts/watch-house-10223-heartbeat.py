@@ -59,6 +59,7 @@ _DEFAULT_COORDINATOR = "10223"
 _DEFAULT_CLOSEOUT_LANE = "10303"
 _DEFAULT_INTERVAL_S = 600
 _HANDOFF_SCRIPT = _REPO / "scripts/orchestrator-tab-handoff.py"
+_LOCK_PATH = _REPO / "tmp/watchers/orchestrator-handoff.lock"
 
 
 def _orchestrator_lock_held() -> bool:
