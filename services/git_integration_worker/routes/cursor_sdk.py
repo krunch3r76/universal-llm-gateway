@@ -61,7 +61,6 @@ from services.git_integration_worker.cursor_sdk_bridge_launch import (
 )
 from services.git_integration_worker.cursor_sdk_bridge_read_idle import (
     BRIDGE_READ_IDLE_MARGIN_S,
-    bridge_read_timeout_for_idle,
     touch_bridge_read_deadline,
 )
 from services.git_integration_worker.cursor_sdk_bridge_stderr import (
@@ -344,7 +343,7 @@ def _sdk_client_read_timeout() -> float | None:
     """
     raw = os.environ.get("CURSOR_SDK_CLIENT_READ_TIMEOUT", "").strip()
     if not raw:
-        return bridge_read_timeout_for_idle(idle_budget_s=_SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S)
+        return _SDK_TIMEOUT_S + _SDK_TIMEOUT_BUFFER_S + BRIDGE_READ_IDLE_MARGIN_S
     value = float(raw)
     return value if value > 0 else None
 
