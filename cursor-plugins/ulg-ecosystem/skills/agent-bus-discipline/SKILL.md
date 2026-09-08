@@ -39,6 +39,21 @@ agent_bus(tool="wait", arguments=poll_hint.arguments_json)
 wait → interrupt and re-poll with `wait_seconds=0`. `complete=true` means the
 qualifying turn exists, not that findings were applied.
 
+### Producer liveness (O14 D1–D4)
+
+Dispatch-link liveness is substrate-derived — not thread_count, not unrelated closeout subjects.
+
+| Need | Recipe |
+|---|---|
+| Pin one dispatch | `agent_bus(wait, wait_seconds=0, execution_id=<id>, …)` — use `poll_hint.arguments_json` when armed (CDP admits ship `execution_id`) |
+| Read one producer | Response `producer.state` ∈ `{in_flight, terminal, unlinked, unknown}` — authority `thread_dispatch_links`; `unknown` ⇒ call omitted `execution_id`; `unlinked` ⇒ admit never linked |
+| Scan the lane | Same `wait` response `producers[]` when unpinned — all links on the thread (24h terminal window) |
+| Watcher arm | `watch-bus-consult-and-page.py --execution-id <id>`; `tmp/watchers/<label>.state.json` carries `producer`, `verdict`, `stall_reason`; `predicate_unmet` while `verdict=in_flight` ⇒ keep polling |
+| CHECKPOINT read | Server-rendered `### In-flight producers` under `## Derived` (O14 D3); `_none linked_` = explicit negative |
+| Closeout relay | Subject `status:` token must match body `status:` (O14 D4) — parse body, not subject alone |
+
+`predicate_unmet` on a wait poll means the completion predicate is unsatisfied, not that the producer is terminal — read `producer.state` / watcher `verdict` before re-dispatching.
+
 ### cursor-sdk closeout polling
 
 For `seat=cursor-sdk` dispatches (`op=generate`): poll with `completion="first_reply_from"` and `from_agent="cursor-sdk"` from `poll_hint` — the machine closeout always posts under the `cursor-sdk` seat label.
