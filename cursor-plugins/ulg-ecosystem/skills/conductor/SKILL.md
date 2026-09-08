@@ -516,6 +516,15 @@ the first responder.
 (`ROW_PINNED`, `HOLD_MERGE`, `OPERATOR_GATE`, `PARKED_TRANSPORT`) retain store +
 worktree (`resume_retain`).
 
+**Substrate-written `PARKED_TRANSPORT` (GIW restart park):** when manage restarts
+GIW with `park_live=true` (or `recycle_giw` parks at idle), GIW cancels your bridge
+run and posts the PARKED turn itself with the wake record
+`PARKED_TRANSPORT wake=giw_restart:{intent_id}` — a designed stop, not a crash
+(no hop budget charge). The wake is GIW's own `resume_of` child after restart
+(PARK-RESUME preamble + your unchanged packet, `hop_successor` stamped); no CDP
+harvest is owed and the liaison fires nothing. On resume: treat the last tool
+call as unverified, continue from your CHECKPOINT/journal, never restart the row.
+
 **Verb split (resume vs hop):**
 
 | Conductor stop | Continuation | Mechanism | Who initiates |

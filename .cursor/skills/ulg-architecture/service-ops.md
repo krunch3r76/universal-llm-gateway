@@ -58,6 +58,7 @@ Agent forbidden: `manage(action="rebuild", service="gateway"|"mcp")` — route e
 | `gateway` | Restart (bind-mounted source) |
 | `mcp` | Source-sync via `scripts/sync-and-restart-mcp.sh` + restart |
 | `stargate`, `rag`, `cloud_proxy`, `cortex_api`, `agent_bus`, `event_service` | Restart |
+| `git_integration_worker` | Durable drain intent (`status=deferred`, `restart_intent_id`); live cursor-sdk dispatches are **parked**, not awaited or killed — `park_live=true` on `sync_restart`/`restart`/`stop` sweeps `POST /api/v1/cursor/park-for-restart` (bridge `CancelRun` → row terminal `cancelled` + `park_*` → GIW auto-resumes as `resume_of` child after boot). `recycle_giw` is park-first at occupant idle; force only on `CANCEL_FAILED` / `NEST_CHAIN` / `STATE_ROOT_MISSING`. Observe: `sdk.park.sweep` · `sdk.park.parked` · `git_worker.drain.completed` · `sdk.park.resume_admitted{code_version}`; `busy_status.restart_intent.park_summary` |
 
 New MCP `requirements.txt` dependency ⇒ TUI Build Image or `scripts/sync-and-restart-mcp.sh --no-cache`.
 

@@ -13,6 +13,10 @@ Cowork tab, or "this IDE session" is never a reason to skip, park, or route the 
 ```
 ∀ service ≠ git_integration_worker:  busy defers ⇒ re-fire force=true, announce
 service = git_integration_worker:    arm drain (status=deferred, restart_intent_id) — never force, never kill
+  live cursor-sdk dispatch ⇒ park, not wait: manage(sync_restart|restart|stop, park_live=true) —
+  GIW cancels the bridge run (row terminal cancelled + park_*), drain converges, GIW auto-resumes
+  the row as a resume_of child after restart (inherited execution_id/thread). recycle_giw is
+  park-first at idle; force only on CANCEL_FAILED / NEST_CHAIN / STATE_ROOT_MISSING.
 ```
 
 Discriminator: what the interruption destroys. Attach handles / retryable requests (`mcp`, `cdp_ask`,
