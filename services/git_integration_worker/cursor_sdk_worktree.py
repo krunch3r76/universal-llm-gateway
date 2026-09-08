@@ -108,7 +108,9 @@ def _branch_name(thread_id: str) -> str:
     return lane_branch_name(thread_id)
 
 
-def resolve_master_branch_point(source_repo: Path, *, ref: str = "refs/heads/master") -> str:
+def resolve_master_branch_point(
+    source_repo: Path, *, ref: str = "refs/heads/master"
+) -> str:
     """Resolve an explicit commit for the worktree branch point (not tip sampling)."""
     proc = subprocess.run(
         ["git", "-C", str(source_repo.resolve()), "rev-parse", ref],
@@ -244,7 +246,9 @@ def mint_dispatch_worktree(
         raise WorktreeMintError(f"worktree path already exists: {wt_path}")
     branch = _branch_name(lane_id)
     commit = branch_point or resolve_master_branch_point(source_repo)
-    mutex_key = acquire_mint_mutex_blocking(source_repo=source_repo, holder_id=dispatch_id)
+    mutex_key = acquire_mint_mutex_blocking(
+        source_repo=source_repo, holder_id=dispatch_id
+    )
     try:
         if _branch_exists(source_repo, branch):
             _git_worktree_add(
@@ -342,7 +346,17 @@ def resolve_admit_binding(
         parent_key = lookup_parent_lease_key(req.resume_of)
         if parent_key is None:
             raise WorktreeMintError(f"resume parent not found: {req.resume_of!r}")
-        workspace = Path(parent_key).resolve()
+        # The SDK agent store is HOME- and cwd-keyed (store-A): the child must
+        # launch in the parent's cwd or ``resume_agent`` raises AgentNotFound.
+        # A Lane-B lease key *is* the worktree the parent ran in; a Lane-A lease
+        # key is the repo path while the parent ran in dispatch_workspace_default
+        # (steer-restart live proof 743f9f4b8aff-r1, 2026-09-08).
+        workspace = workspace_from_promoted_lease(
+            lease_key=parent_key,
+            source_repo=source_repo,
+            worktree_root=worktree_root,
+            dispatch_workspace_default=dispatch_workspace_default,
+        )
         if req.thread_id:
             touch_lane_worktree_dispatch(
                 source_repo=source_repo,
@@ -351,7 +365,7 @@ def resolve_admit_binding(
             )
         return AdmitBindingResult(
             workspace=workspace,
-            lease_key=str(workspace),
+            lease_key=parent_key,
             binding_kind="resumed",
         )
 

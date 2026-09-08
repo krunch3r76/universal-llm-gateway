@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from services.git_integration_worker import cursor_sdk_events
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_worktree import (
     AdmitBindingResult,
@@ -22,7 +23,6 @@ from services.git_integration_worker.cursor_sdk_worktree_registry import (
     lookup_lane_worktree,
     unregister_lane_worktree,
 )
-from services.git_integration_worker import cursor_sdk_events
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -229,3 +229,81 @@ def test_ac_w0_7_admit_bound_emits_binding_kind(
     assert emitted[0]["binding_kind"] == "minted"
     assert emitted[0]["thread_id"] == "t-admit-bound"
     assert emitted[0]["dispatch_id"] == "admit-bound-1"
+
+
+def _admit_parent(
+    req: CursorDispatchRequest, *, lease_key: str, source_repo: Path
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    ledger.admit(
+        req=req,
+        fingerprint=ledger.fingerprint(req),
+        execution_id=req.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            model_id="composer-2.5",
+        ),
+        source_repo=str(source_repo.resolve()),
+        lease_key=lease_key,
+    )
+
+
+def test_resumed_binding_reuses_parent_cwd_lane_a(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Store-A is cwd-keyed: a Lane-A resume child must launch where the parent ran
+    (dispatch_workspace_default), not in the repo the lease key names
+    (steer-restart live proof 743f9f4b8aff-r1: AgentNotFoundError)."""
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    parent = _req(dispatch_id="parent-a", lane="A")
+    _admit_parent(parent, lease_key=str(source_repo.resolve()), source_repo=source_repo)
+    child = _req(dispatch_id="child-a", lane=None, resume_of="parent-a")
+    binding = resolve_admit_binding(
+        req=child,
+        source_repo=source_repo,
+        hub=source_repo,
+        worktree_root=tmp_path / "worktrees",
+        dispatch_workspace_default=shared,
+        lane="A",
+    )
+    assert binding.binding_kind == "resumed"
+    assert binding.workspace == shared
+    assert binding.lease_key == str(source_repo.resolve())
+
+
+def test_resumed_binding_reuses_parent_worktree_lane_b(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    worktree_root = tmp_path / "worktrees"
+    minted = resolve_admit_binding(
+        req=_req(dispatch_id="parent-b", thread_id="t-b"),
+        source_repo=source_repo,
+        hub=source_repo,
+        worktree_root=worktree_root,
+        dispatch_workspace_default=tmp_path / "shared",
+        lane="B",
+    )
+    assert minted.binding_kind == "minted"
+    _admit_parent(
+        _req(dispatch_id="parent-b", thread_id="t-b"),
+        lease_key=minted.lease_key,
+        source_repo=source_repo,
+    )
+    binding = resolve_admit_binding(
+        req=_req(
+            dispatch_id="child-b", thread_id="t-b", lane=None, resume_of="parent-b"
+        ),
+        source_repo=source_repo,
+        hub=source_repo,
+        worktree_root=worktree_root,
+        dispatch_workspace_default=tmp_path / "shared",
+        lane="B",
+    )
+    assert binding.binding_kind == "resumed"
+    assert binding.workspace == minted.workspace
+    assert binding.lease_key == minted.lease_key
