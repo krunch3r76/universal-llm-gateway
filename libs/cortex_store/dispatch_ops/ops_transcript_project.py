@@ -23,6 +23,7 @@ from ..transcript_projection_membership import (
     classify_membership,
     detect_anchor_mismatches,
     extract_closeout_note,
+    extract_cp_highlight,
     extract_cp_note,
     fetch_lineage_children,
     fetch_thread_detail,
@@ -71,6 +72,14 @@ def _is_root_thread(detail: dict[str, Any]) -> bool:
     return classify_thread(tags if isinstance(tags, list) else [])["spine"] == "root"
 
 
+def _boundary_body(send: Any, bus_index: Any) -> str:
+    """Return agent-bus body for a JSONL-observed boundary send, if indexed."""
+    row = bus_index.by_thread_subject.get((send.thread, send.subject))
+    if row is None:
+        return ""
+    return str(row.get("body") or "")
+
+
 def _window_patch_from_facts(
     facts: WindowFacts,
     *,
@@ -91,13 +100,14 @@ def _window_patch_from_facts(
         if send.turn_index <= closed_hi:
             continue
         turn_number, cp_ordinal = join_boundary_turn_number(send, bus_index)
+        boundary_body = _boundary_body(send, bus_index)
         if send.kind == "CHECKPOINT":
-            note, note_source = extract_cp_note("", send.subject)
+            note, note_source = extract_cp_note(boundary_body, send.subject)
         else:
-            note, note_source = extract_closeout_note(send.subject, "")
+            note, note_source = extract_closeout_note(send.subject, boundary_body)
         lo = new_closed_hi
         hi = send.turn_index
-        cell = {
+        cell: dict[str, Any] = {
             "turn_lo": lo,
             "turn_hi": hi,
             "boundary": {
@@ -115,6 +125,10 @@ def _window_patch_from_facts(
             "projected_at": projected_at,
             "compacted": False,
         }
+        if send.kind == "CHECKPOINT":
+            highlight = extract_cp_highlight(boundary_body)
+            if highlight is not None:
+                cell["highlight"] = highlight
         cells.append(cell)
         new_closed_hi = hi
     open_tail = None

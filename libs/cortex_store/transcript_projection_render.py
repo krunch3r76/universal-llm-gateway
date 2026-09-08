@@ -189,17 +189,19 @@ def _render_with_detail(
             f"lane {window.get('lane')} · {window.get('binding')} · "
             f"turns 1..{window.get('turn_count')} · {window.get('source')}"
         )
-        lines.append("| cell | boundary | note | bus w/r | artifacts | dispatches |")
-        lines.append("|---|---|---|---|---|---|")
+        lines.append("| cell | boundary | note | highlight | bus w/r | artifacts | dispatches |")
+        lines.append("|---|---|---|---|---|---|---|")
         for cell in window.get("cells", []):
             facts = cell.get("facts") or {}
             touch = facts.get("bus_touch") or {}
             wsum = sum(t.get("w", 0) for t in touch.values())
             rsum = sum(t.get("r", 0) for t in touch.values())
             boundary = cell.get("boundary") or {}
+            highlight = str(cell.get("highlight") or "")
             lines.append(
                 f"| ({cell.get('turn_lo')},{cell.get('turn_hi')}] "
                 f"| {boundary.get('kind', '')} | {cell.get('note', '')[:60]} "
+                f"| {highlight} "
                 f"| {wsum}/{rsum} | {len(facts.get('artifacts', []))} "
                 f"| {len(facts.get('dispatches', []))} |"
             )
@@ -207,7 +209,7 @@ def _render_with_detail(
             cell = window["open_tail"]
             lines.append(
                 f"| ({cell.get('turn_lo')},{cell.get('turn_hi')}] | open_tail "
-                f"| {cell.get('note', '')[:60]} | | | |"
+                f"| {cell.get('note', '')[:60]} | | | | |"
             )
         lines.append("")
     child_lines = [tid for tid in detail_ids if windows[tid].get("lane") != thread]

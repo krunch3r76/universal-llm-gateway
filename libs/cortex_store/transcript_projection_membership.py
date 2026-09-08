@@ -33,6 +33,8 @@ _WINDOW_ANCHOR_RE = re.compile(
     r"Window:\s*transcript_id=([0-9a-f-]{36})\s*·\s*turns@cp=(\d+)",
     re.I,
 )
+_HIGHLIGHT_RE = re.compile(r"(?m)^Highlight:\s*(.+)$")
+HIGHLIGHT_MAX_CHARS = 600
 
 
 @dataclass
@@ -263,6 +265,17 @@ def join_boundary_turn_number(
     )
 
 
+def extract_cp_highlight(body: str) -> str | None:
+    """Parse optional ``Highlight:`` residue line from a CHECKPOINT body."""
+    match = _HIGHLIGHT_RE.search(body or "")
+    if not match:
+        return None
+    text = match.group(1).strip()
+    if not text:
+        return None
+    return text[:HIGHLIGHT_MAX_CHARS]
+
+
 def extract_cp_note(body: str, subject: str) -> tuple[str, str]:
     """Derive cell note from CHECKPOINT body (Layer S v1)."""
     for pattern in (
@@ -393,7 +406,9 @@ __all__ = [
     "classify_membership",
     "detect_anchor_mismatches",
     "extract_closeout_note",
+    "extract_cp_highlight",
     "extract_cp_note",
+    "HIGHLIGHT_MAX_CHARS",
     "fetch_lineage_children",
     "fetch_thread_detail",
     "join_boundary_turn_number",

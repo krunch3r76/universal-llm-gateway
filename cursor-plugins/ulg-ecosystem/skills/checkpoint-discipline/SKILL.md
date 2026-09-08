@@ -57,6 +57,7 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 | Myelinate | Checkpoint-time graph: both-ends-known missing links → `relationship_create` / `edge_create` now; load-bearing existing edges → `edge_update` if judgment changed. `¬` defer to session-close (close is not automatic). Detail: `cortex-orientation` § Myelinate |
 | Windows log | Server renders `## Windows` on **read** of role:root CHECKPOINT turns (bus CP ordinals joined with `session_journals` via `entity_ids`). Author **¬** append a Windows table on post. Birth CHECKPOINT without prior windows is valid. Session-close `Arc:` + `journal_row_id` land via journal join. Schema §3.5 |
 | Pools sha | When the continuity card has a `## Pools` block (`continuity-house-pool-manifest`), CP residue carries `Pools: <sha8>` beside other artifact shas; drift ⇒ re-read the target pool row before dispatching to that executor |
+| Highlight | Optional CP residue line `Highlight: <≤600 chars>` — authored at lid-close; projection renders verbatim; absence = index-thin |
 | In-flight producers | Server-rendered CHECKPOINT `## Derived` zone `### In-flight producers` from dispatch links (O14 D3); `_none linked_` = explicit negative; authored pending judgment stays in residue — derived zone carries observable producer liveness only |
 
 ## Tip hygiene (spine=root)
