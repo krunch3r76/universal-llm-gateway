@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from cortex_store.transcript_assembly import _extract_user_text, _read_jsonl
-from cortex_store.transcript_lane_touch import lane_touches
+from cortex_store.transcript_lane_touch import lane_touches_from_records
 from cortex_store.transcript_tool_normalize import iter_normalized_tool_uses
 
 _SHA_RE = re.compile(
@@ -218,7 +218,7 @@ def _parse_records(records: list[dict[str, Any]], transcript_id: str) -> WindowF
                         facts.sha_mentions.append(sha)
 
     facts.opening_ask = first_ask
-    facts.bus_touch = lane_touches(records)
+    facts.bus_touch = lane_touches_from_records(records)
     facts.artifacts = facts.artifacts[:12]
     facts.code_paths = facts.code_paths[:12]
     facts.dispatches = facts.dispatches[:8]

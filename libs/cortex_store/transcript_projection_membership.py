@@ -16,7 +16,11 @@ from typing import Any, Callable
 
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 
-from cortex_store.transcript_lane_touch import binding_for, dominant_lane, lane_touches
+from cortex_store.transcript_lane_touch import (
+    lane_touches_from_records,
+    projection_binding_for,
+    projection_dominant_lane,
+)
 from cortex_store.transcript_projection_facts import (
     BusSendFact,
     WindowFacts,
@@ -187,12 +191,13 @@ def classify_membership(
     sticky: bool,
 ) -> MembershipResult:
     """Decide whether a parsed window belongs to the projection."""
-    touches = facts.bus_touch or lane_touches([])
-    lane = dominant_lane(touches, root, children)
-    binding = binding_for(lane, touches, transcript_id=facts.transcript_id)
+    touches = facts.bus_touch or lane_touches_from_records([])
+    lane = projection_dominant_lane(touches, root, children)
+    binding = projection_binding_for(lane, touches, transcript_id=facts.transcript_id)
     member_bindings = {"dominant_write", "explicit_cp"}
     child_dominant = any(
-        binding_for(child, touches, transcript_id=facts.transcript_id) == "dominant_write"
+        projection_binding_for(child, touches, transcript_id=facts.transcript_id)
+        == "dominant_write"
         for child in children
     )
     if binding in member_bindings or child_dominant or sticky:
@@ -200,7 +205,11 @@ def classify_membership(
             transcript_id=facts.transcript_id,
             member=True,
             lane=lane if binding in member_bindings or sticky else next(
-                (c for c in children if binding_for(c, touches) == "dominant_write"),
+                (
+                    c
+                    for c in children
+                    if projection_binding_for(c, touches) == "dominant_write"
+                ),
                 lane,
             ),
             binding=binding if binding in member_bindings else "dominant_write",

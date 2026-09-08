@@ -8,8 +8,6 @@ from typing import Any
 from universal_logging import get_logger
 
 from ..events_tape import transcript_harvested
-from ..transcript_assembly import resolve_jsonl_path, TranscriptPathError
-from ..transcript_lane_touch import binding_for, lane_touches
 from ..transcript_cp_anchors import explicit_uuids_for_lane
 from .ops_transcript_discover import (
     _discover_open_windows,

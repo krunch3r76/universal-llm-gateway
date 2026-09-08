@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from cortex_store.transcript_lane_touch import lane_touches
+from cortex_store.transcript_lane_touch import lane_touches_from_records
 from cortex_store.transcript_projection_facts import parse_records, turn_index_at
 
 
@@ -90,7 +90,7 @@ def test_p1_synthetic_jsonl_facts(tmp_path: Path) -> None:
     checkpoints = [s for s in facts.bus_sends if s.kind == "CHECKPOINT"]
     assert len(checkpoints) == 1
     assert checkpoints[0].turn_index == 2
-    assert facts.bus_touch == lane_touches(records)
+    assert facts.bus_touch == lane_touches_from_records(records)
     assert any(a.endswith("x.md") for a in facts.artifacts)
     assert facts.dispatches and facts.dispatches[0].op == "generate"
 
