@@ -187,6 +187,7 @@ def _assemble_closeout_delivery(
     escalation_harvest=escalation_harvest,
     resolved_model=resolved_model,
     sdk_mode=resolved_sdk_mode,
+    packet_text=packet_text,
     )
     return receipt_finalization.finalize_closeout_receipt(
     source_repo=source_repo,

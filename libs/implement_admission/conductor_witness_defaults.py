@@ -15,6 +15,7 @@ from implement_admission.conductor_witness_types import (
     FoldDeps,
     Witness,
     WitnessNestedImplement,
+    WitnessPlanHandoff,
 )
 
 _BUS_TIMEOUT_S = 8.0
@@ -132,12 +133,14 @@ def fold_deps_for_admit(
     summon_mode: str | None = None,
     summoning_thread_id: str | None = None,
     nested_implement: WitnessNestedImplement | None = None,
+    plan_handoff: WitnessPlanHandoff | None = None,
 ) -> FoldDeps:
     """Live fold readers for Stargate conductor materialize."""
     return FoldDeps(
         cortex=cortex,
         bus=DefaultWitnessBus(),
         nested_implement=nested_implement,
+        plan_handoff=plan_handoff,
         git=DefaultWitnessGit(repo),
         source_ref=source_ref,
         summon_mode=summon_mode,

@@ -26,6 +26,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from implement_admission.plan_implement_handoff import (
+    parse_nest_implement_hint,
+    plan_implement_handoff_eligible,
+    plan_implement_handoff_open,
+)
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
@@ -34,6 +39,7 @@ HOP_ENTRY_GATE_KEY = "hop_entry_gate"
 HOP_WITNESSED_DONE_KEY = "hop_witnessed_done"
 HOP_LANE_TIP_KEY = "hop_lane_tip"
 HOP_NEXT_ADMIT_KEY = "hop_next_admit"
+HOP_PLAN_HANDOFF_KEY = "hop_plan_implement_handoff"
 
 # Returned when no fold is available. Indistinguishable from a genuine first
 # gate, which is exactly why an empty witness set never justifies a park.
@@ -186,6 +192,27 @@ def next_admit_in_closeout(body: str) -> str | None:
     return match.group(1).strip() or None
 
 
+def nest_implement_hint_in_closeout(body: str | dict[str, Any] | None) -> dict[str, Any] | None:
+    """Parse ``nest_implement_hint`` from ImplementCloseout JSON when present."""
+    return parse_nest_implement_hint(body)
+
+
+def plan_implement_handoff_open_in_closeout(body: str | dict[str, Any] | None) -> bool:
+    """True when closeout JSON carries an eligible plan→implement handoff."""
+    return plan_implement_handoff_open(body)
+
+
+def plan_handoff_for_row(row: dict[str, Any]) -> dict[str, Any] | None:
+    """Eligible ``nest_implement_hint`` stamped on this row's terminal closeout."""
+    record = record_data(str(row.get("record_json") or ""))
+    closeout_body = record.get("closeout_body")
+    if isinstance(closeout_body, str) and closeout_body.strip():
+        hint = nest_implement_hint_in_closeout(closeout_body)
+        if plan_implement_handoff_eligible(hint):
+            return hint
+    return None
+
+
 def next_admit_for_row(row: dict[str, Any]) -> str | None:
     """``NEXT_ADMIT`` stamped from this row's closeout, when it named one."""
     record = record_data(str(row.get("record_json") or ""))
@@ -284,6 +311,7 @@ __all__ = [
     "HOP_ENTRY_GATE_KEY",
     "HOP_LANE_TIP_KEY",
     "HOP_NEXT_ADMIT_KEY",
+    "HOP_PLAN_HANDOFF_KEY",
     "HOP_WITNESSED_DONE_KEY",
     "UNPAID_ENTRY_GATE",
     "HopProgressSignature",
@@ -291,6 +319,9 @@ __all__ = [
     "lane_tip_for_row",
     "next_admit_for_row",
     "next_admit_in_closeout",
+    "nest_implement_hint_in_closeout",
+    "plan_handoff_for_row",
+    "plan_implement_handoff_open_in_closeout",
     "progress_signature_for_row",
     "read_lane_tip",
     "record_data",
