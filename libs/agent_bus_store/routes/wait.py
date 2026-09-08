@@ -24,6 +24,7 @@ from ..db import (
     get_thread_with_links,
     normalize_thread_id,
 )
+from ..producer_projection import project_thread_producers
 from ..wait_status import (
     DEAD_WAIT_DETAIL,
     DEAD_WAIT_ERROR,
@@ -109,11 +110,13 @@ def _snapshot(
         execution_id=execution_id,
         dispatch_links=dispatch_links,
     )
+    producers = project_thread_producers(dispatch_links)
     return {
         "thread_id": thread_id,
         "complete": complete,
         "status": wait_status,
         "producer": producer,
+        "producers": producers,
         "suggested_next": suggested,
         # push_required is never asserted under C (no observable push signal).
         # The field is retained at constant False for forward-compat with a

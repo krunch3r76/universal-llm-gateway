@@ -302,6 +302,7 @@ def _wait_dispatch(
     wait_seconds: float = 0.0,
     completion: str = "first_reply_from",
     from_agent: str | None = None,
+    execution_id: str | None = None,
 ) -> dict[str, Any]:
     """Thin relay to agent-bus GET /threads/{id}/wait."""
     if isinstance(thread, int):
@@ -336,6 +337,8 @@ def _wait_dispatch(
     ]
     if from_agent:
         params.append(("from_agent", from_agent))
+    if execution_id:
+        params.append(("execution_id", execution_id))
     qs = urlencode(params)
     import tools.agent_bus as pkg
 
@@ -346,6 +349,8 @@ def _wait_dispatch(
     }
     if from_agent:
         wait_called_payload["from_agent"] = from_agent
+    if execution_id:
+        wait_called_payload["execution_id"] = execution_id
     pkg.record("mcp.agentbus.wait.called", **wait_called_payload)
     terminal_status = "error"
     try:

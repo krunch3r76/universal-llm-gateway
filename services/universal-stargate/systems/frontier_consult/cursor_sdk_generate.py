@@ -171,6 +171,7 @@ async def dispatch_prepared_cursor_sdk(
         reply_from_agent=CURSOR_SDK_REPLY_SEAT,
         poll_wait_seconds=resolve_poll_wait_seconds(poller_is_cursor_ide=True),
         after_turn=handle.poll_after_turn if handle.poll_after_turn else 1,
+        execution_id=handle.execution_id,
     )
     emit_poll_hint_from_handoff(
         request_id=handle.request_id,

@@ -48,6 +48,7 @@ def test_wait_zero_returns_snapshot_no_new_turn(tmp_path) -> None:
             "delivery_at": None,
             "source": "thread_dispatch_links",
         }
+        assert body["producers"] == []
 
 
 def test_wait_complete_after_qualifying_reply(tmp_path) -> None:
@@ -402,3 +403,75 @@ def test_wait_producer_in_flight_when_link_row_exists(tmp_path) -> None:
         assert body["producer"]["pipeline_id"] == "cdp-generate"
         assert body["producer"]["execution_id"] == "d6a93d64-18a9-4779-8238-89d6af49e415"
         assert body["producer"]["linked_at"] is not None
+        assert body["producers"] == [body["producer"]]
+
+
+def test_wait_producers_orders_in_flight_before_recent_terminal(tmp_path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from agent_bus_store.db import admit_dispatch
+    from agent_bus_store.db.connection import connect
+
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-producers-order",
+                "from": "claude-cursor",
+                "to": "web-anthropic",
+                "subject": "handoff",
+                "body": "brief",
+                "lifecycle_state": "pending",
+            },
+        )
+        thread_id = created.json()["thread"]["id"]
+        admit_dispatch(
+            thread_id=thread_id,
+            execution_id="exec-old-terminal",
+            pipeline_id="cdp-generate",
+        )
+        admit_dispatch(
+            thread_id=thread_id,
+            execution_id="exec-in-flight",
+            pipeline_id="cursor-sdk-generate",
+        )
+        recent = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+        stale = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+        with connect() as conn:
+            conn.execute(
+                "UPDATE thread_dispatch_links "
+                "SET terminal_status = 'completed', delivery_at = ? "
+                "WHERE thread_id = ? AND execution_id = ?",
+                (recent, thread_id, "exec-old-terminal"),
+            )
+            conn.execute(
+                "UPDATE thread_dispatch_links "
+                "SET terminal_status = 'completed', delivery_at = ? "
+                "WHERE thread_id = ? AND execution_id = ?",
+                (stale, thread_id, "exec-stale-terminal"),
+            )
+            conn.execute(
+                "INSERT INTO thread_dispatch_links "
+                "(thread_id, execution_id, pipeline_id, linked_at, terminal_status, delivery_at) "
+                "VALUES (?, ?, ?, ?, 'completed', ?)",
+                (
+                    thread_id,
+                    "exec-stale-terminal",
+                    "cdp-generate",
+                    stale,
+                    stale,
+                ),
+            )
+            conn.commit()
+
+        resp = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=proof_reply_from"
+            "&from_agent=web-anthropic"
+        )
+        body = resp.json()
+        assert [p["execution_id"] for p in body["producers"]] == [
+            "exec-in-flight",
+            "exec-old-terminal",
+        ]
+        assert body["producer"]["state"] == "unknown"

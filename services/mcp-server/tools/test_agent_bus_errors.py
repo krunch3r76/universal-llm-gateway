@@ -211,6 +211,28 @@ def test_update_impl_preserves_409_detail() -> None:
     assert "send(thread=\"4865\"" in result["remediation"]
 
 
+def test_wait_dispatch_forwards_execution_id_query_param() -> None:
+    captured: list[str] = []
+
+    def _relay(_service: str, _method: str, path: str) -> dict[str, Any]:
+        captured.append(path)
+        return {"status": "no_new_turn", "complete": False, "producers": []}
+
+    with patch.object(agent_bus_module, "_relay", side_effect=_relay):
+        with patch.object(agent_bus_module, "record", lambda *_args, **_kwargs: None):
+            result = agent_bus_module._wait_dispatch(
+                thread="5010",
+                after_turn=2,
+                wait_seconds=0,
+                completion="status:done",
+                execution_id="exec-5010",
+            )
+
+    assert "error" not in result
+    assert captured
+    assert "execution_id=exec-5010" in captured[0]
+
+
 def test_wait_dispatch_emits_completed_on_relay_error() -> None:
     recorded: list[tuple[str, dict[str, Any]]] = []
 

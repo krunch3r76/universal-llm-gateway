@@ -319,6 +319,7 @@ async def dispatch_api_role_generate(
         to_agent=role,
         after_turn=after_turn,
         poll_wait_seconds=resolve_poll_wait_seconds(caller_agent=body.caller_agent),
+        execution_id=str(dispatch_result.get("execution_id") or "") or None,
     )
     emit_poll_hint_from_handoff(
         request_id=request_id,
