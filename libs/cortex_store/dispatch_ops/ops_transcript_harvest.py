@@ -87,6 +87,7 @@ def _op_transcript_harvest(
             thread=str(tid),
             jsonl_path=window.get("jsonl_path"),
             binding=window.get("binding"),
+            explicit_transcript_ids=list(explicit_all),
         )
         if result.get("error"):
             code = str(result.get("code") or result.get("reason") or "refused")

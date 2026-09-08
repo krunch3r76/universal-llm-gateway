@@ -13,8 +13,8 @@ from ..routes.session_close import close_session
 from ..transcript_assembly import TranscriptPathError, resolve_jsonl_path
 from ..transcript_session_id import derive_session_id_from_jsonl_start
 from ..session_close_successor_hop import conversation_uuid_from_jsonl_path
-from ..transcript_cp_anchors import explicit_uuids_for_lane
 from ..transcript_lane_touch import binding_for, dominant_lane, lane_touches
+from .ops_transcript_discover import _resolve_explicit_uuids
 from ..verbatim_succession import journal_verbatim_bytes, split_verbatim_layer
 
 logger = get_logger("cortex-api.dispatch_ops.transcript_seal")
@@ -38,6 +38,7 @@ def _op_transcript_seal(
     transcript_jsonl_path: str | None = None,
     session_id: str | None = None,
     binding: str | None = None,
+    explicit_transcript_ids: list[str] | None = None,
     **_: object,
 ) -> dict[str, Any]:
     """Seal an idle window via session_close with ``closed_by=succession``."""
@@ -54,7 +55,7 @@ def _op_transcript_seal(
         return {"error": str(exc), "reason": "jsonl_invalid", "code": "transcript_seal.live"}
 
     uuid = conversation_uuid_from_jsonl_path(resolved)
-    explicit = explicit_uuids_for_lane(str(tid), set())
+    explicit = _resolve_explicit_uuids(str(tid), explicit_transcript_ids)
     touches = lane_touches(resolved)
     computed_binding, computed_lane = binding_for(
         str(tid),
