@@ -430,7 +430,7 @@ def test_ac_b_2_worktree_removed_emit_carries_source_repo(
     )
     removed: list[dict] = []
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_branch_unpin."
+        "services.git_integration_worker.cursor_sdk_worktree_release."
         "emit_sdk_lane_b_worktree_removed",
         lambda **kwargs: removed.append(kwargs),
     )

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,7 +13,6 @@ from services.git_integration_worker.cursor_sdk_branch_archive import (
 )
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_reap_skipped_live_bridge,
-    emit_sdk_lane_b_worktree_removed,
 )
 from services.git_integration_worker.cursor_sdk_lane_b_commit import salvage_commit
 from services.git_integration_worker.cursor_sdk_lane_inherit import thread_has_inheritor
@@ -22,21 +20,19 @@ from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
     ledger_connection,
     worktree_held_by_live_bridge,
 )
-from services.git_integration_worker.cursor_sdk_worktree_prune import (
-    _ledger_status_for_dispatch,
-)
 from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
     list_git_worktrees,
 )
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     DispatchWorktreeRecord,
     ensure_worktree_schema,
-    unregister_lane_worktree,
+)
+from services.git_integration_worker.cursor_sdk_worktree_release import (
+    ReleaseRefusal,
+    release_lane_worktree,
 )
 
 logger = get_logger(__name__)
-
-_GIT_TIMEOUT_S = 60.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,39 +77,13 @@ def _is_git_worktree(*, repo: Path, worktree_path: Path) -> bool:
     return any(wt.path.resolve() == target for wt in list_git_worktrees(source_repo=repo))
 
 
-def _remove_worktree(*, repo: Path, worktree_path: Path) -> str | None:
-    proc = subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo),
-            "worktree",
-            "remove",
-            "--force",
-            str(worktree_path),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT_S,
-        check=False,
-    )
-    if proc.returncode == 0:
-        return None
-    return proc.stderr.strip() or "git worktree remove failed"
-
-
 def unpin_registered_lane_worktree(
     *,
     repo: Path,
     branch_name: str,
     completing_dispatch_id: str | None = None,
 ) -> UnpinResult:
-    """Remove the registry row's worktree so ``git branch -D`` can proceed.
-
-    Unregistered checkouts stay refused. A successor on the same thread
-    inherits — the tree is left in place. Dirty trees are salvaged onto the
-    branch before remove; a salvage refusal keeps the only copy.
-    """
+    """Remove the registry row's worktree via the release chokepoint."""
     root = repo.resolve()
     record = _record_for_branch(source_repo=root, branch_name=branch_name)
     pinned = branch_checked_out_at(repo=root, branch_name=branch_name)
@@ -174,29 +144,19 @@ def unpin_registered_lane_worktree(
                 unpinned=False,
                 refused_reason=f"salvage refused: {salvage.error}",
             )
-        error = _remove_worktree(repo=root, worktree_path=registered)
-        if error is not None:
-            return UnpinResult(unpinned=False, refused_reason=error)
-        ledger_status = "none"
-        if record.last_dispatch_id:
-            ledger_status = _ledger_status_for_dispatch(
-                dispatch_id=record.last_dispatch_id
-            )
-        emit_sdk_lane_b_worktree_removed(
-            worktree_path=str(registered),
-            trigger="unpin",
-            ledger_status_at_remove=ledger_status,
-            source_repo=str(root),
-            dispatch_id=record.last_dispatch_id,
-            thread_id=record.thread_id or None,
-            branch=branch_name,
-        )
-
-    if record.thread_id:
-        unregister_lane_worktree(
-            thread_id=record.thread_id,
+        release = release_lane_worktree(
             source_repo=root,
+            dispatch_id=record.last_dispatch_id,
+            thread_id=record.thread_id,
+            reason="unpin",
+            allow_unharvested=True,
         )
+        if not release.released:
+            refusal = release.refusal.value if release.refusal else "release failed"
+            return UnpinResult(unpinned=False, refused_reason=refusal)
+        if release.refusal == ReleaseRefusal.FOREIGN_LOCK:
+            return UnpinResult(unpinned=False, refused_reason="foreign lock")
+
     logger.info(
         "lane_b worktree unpinned branch=%s path=%s",
         branch_name,

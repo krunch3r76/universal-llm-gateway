@@ -459,6 +459,51 @@ def workspace_from_promoted_lease(
     return dispatch_workspace_default
 
 
+def pin_lane_worktree_on_admit(
+    *,
+    source_repo: Path,
+    thread_id: str,
+    dispatch_id: str,
+    worktree_path: Path,
+) -> str:
+    """Registry pin + git lock after admit binding (S1 Leg B)."""
+    from services.git_integration_worker.cursor_sdk_events import emit_sdk_lane_b_pinned
+    from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+        ledger_connection,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_lock import (
+        lock_lane_worktree,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        ensure_worktree_schema,
+        pin_lane_worktree,
+    )
+
+    lock_reason = lock_lane_worktree(
+        source_repo,
+        worktree_path,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
+    with ledger_connection() as conn:
+        ensure_worktree_schema(conn)
+        pin_lane_worktree(
+            conn,
+            source_repo=source_repo,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
+            worktree_path=worktree_path,
+            lock_reason=lock_reason,
+        )
+    emit_sdk_lane_b_pinned(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        worktree_path=str(worktree_path.resolve()),
+        lock_reason=lock_reason,
+    )
+    return lock_reason
+
+
 __all__ = [
     "AdmitBindingKind",
     "AdmitBindingResult",
@@ -476,6 +521,7 @@ __all__ = [
     "master_mint_mutex_key",
     "maybe_prune_worktree_on_terminal",
     "mint_dispatch_worktree",
+    "pin_lane_worktree_on_admit",
     "prune_dispatch_worktree",
     "reap_orphan_worktrees",
     "resolve_admit_binding",

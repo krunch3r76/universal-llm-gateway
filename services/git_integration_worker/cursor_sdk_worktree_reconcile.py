@@ -87,21 +87,83 @@ def _is_dirty(worktree: Path) -> bool:
 
 
 def _remove_worktree(*, source_repo: Path, worktree: Path) -> bool:
-    proc = subprocess.run(
-        ["git", "-C", str(source_repo.resolve()), "worktree", "remove", str(worktree)],
-        capture_output=True,
-        text=True,
-        timeout=_GIT_TIMEOUT_S,
-        check=False,
+    from services.git_integration_worker.cursor_sdk_worktree_release import (
+        release_lane_worktree,
     )
-    if proc.returncode != 0:
-        logger.warning(
-            "unregistered worktree remove failed path=%s err=%s",
-            worktree,
-            proc.stderr.strip(),
+
+    result = release_lane_worktree(
+        source_repo=source_repo,
+        worktree_path=worktree,
+        reason="reconcile",
+        unregistered=True,
+    )
+    return result.released
+
+
+_vanished_reported: set[str] = set()
+
+
+def reset_vanished_pin_reports() -> None:
+    """Clear vanish-sweep dedupe (tests only)."""
+    _vanished_reported.clear()
+
+
+def sweep_vanished_pinned_worktrees(*, source_repo: Path) -> int:
+    """Emit when a ULG-locked worktree path no longer exists (Leg E)."""
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_b_pinned_worktree_vanished,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+        ledger_connection,
+        worktree_held_by_live_bridge,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_lock import (
+        list_locked_worktrees,
+    )
+
+    repo = source_repo.resolve()
+    count = 0
+    for entry in list_locked_worktrees(repo):
+        if entry.parsed is None or entry.exists:
+            continue
+        key = f"{entry.parsed.dispatch_id}:{entry.path}"
+        if key in _vanished_reported:
+            continue
+        _vanished_reported.add(key)
+        ledger_status = "none"
+        with ledger_connection() as conn:
+            row = conn.execute(
+                "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+                (entry.parsed.dispatch_id,),
+            ).fetchone()
+            if row is not None and row["status"] is not None:
+                ledger_status = str(row["status"])
+        bridge_pid = worktree_held_by_live_bridge(
+            worktree_path=entry.path,
+            fresh=True,
         )
-        return False
-    return True
+        emit_sdk_lane_b_pinned_worktree_vanished(
+            dispatch_id=entry.parsed.dispatch_id,
+            thread_id=entry.parsed.thread_id,
+            worktree_path=str(entry.path),
+            ledger_status=ledger_status,
+            bridge_pid=bridge_pid,
+        )
+        count += 1
+        if ledger_status not in ("completed", "failed", "cancelled") and bridge_pid is None:
+            try:
+                from services.git_integration_worker.cursor_sdk_worktree_remint import (
+                    remint_lane_worktree,
+                )
+            except ImportError:
+                remint_lane_worktree = None  # type: ignore[misc, assignment]
+            if remint_lane_worktree is not None:
+                remint_lane_worktree(
+                    source_repo=repo,
+                    dispatch_id=entry.parsed.dispatch_id,
+                    thread_id=entry.parsed.thread_id,
+                )
+    return count
 
 
 def reconcile_unregistered_worktrees(
@@ -125,7 +187,6 @@ def reconcile_unregistered_worktrees(
     from services.git_integration_worker.cursor_sdk_events import (
         emit_sdk_lane_b_reap_skipped_live_bridge,
         emit_sdk_lane_b_reconcile_skipped_live_ledger,
-        emit_sdk_lane_b_worktree_removed,
     )
     from services.git_integration_worker.cursor_sdk_worktree_gc import (
         is_lane_b_reconcile_target,
@@ -194,13 +255,6 @@ def reconcile_unregistered_worktrees(
             archive_branch(repo=repo, branch_name=entry.branch)
         if _remove_worktree(source_repo=repo, worktree=entry.path):
             reconciled += 1
-            emit_sdk_lane_b_worktree_removed(
-                worktree_path=resolved,
-                trigger="reconcile",
-                ledger_status_at_remove="none",
-                source_repo=str(repo),
-                branch=entry.branch,
-            )
             logger.info(
                 "unregistered worktree reconciled path=%s branch=%s",
                 entry.path,
@@ -221,6 +275,8 @@ def _surface_dirty_tree(entry: GitWorktree) -> int:
         return 0
     open_branch_debt(
         branch_name=branch,
+        thread_id="(unregistered-worktree)",
+        dispatch_id=f"unregistered:{entry.path.name}",
         caller_agent="(unregistered worktree)",
         files=[str(entry.path)],
     )

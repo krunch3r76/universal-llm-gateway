@@ -2069,6 +2069,158 @@ def emit_sdk_lane_b_worktree_removed(
 
 
 @event_factory
+def SdkLaneBPinned(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    worktree_path: str,
+    lock_reason: str,
+    retro: bool = False,
+) -> Event:
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "worktree_path": worktree_path,
+        "lock_reason": lock_reason,
+    }
+    if retro:
+        payload["retro"] = True
+    return Event(signal="sdk.lane_b.pinned", payload=payload, scope="node")
+
+
+def emit_sdk_lane_b_pinned(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    worktree_path: str,
+    lock_reason: str,
+    retro: bool = False,
+) -> None:
+    _emit(
+        SdkLaneBPinned(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            worktree_path=worktree_path,
+            lock_reason=lock_reason,
+            retro=retro,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBPinReleased(  # noqa: N802
+    dispatch_id: str | None,
+    thread_id: str | None,
+    worktree_path: str,
+    reason: str,
+    actor: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "worktree_path": worktree_path,
+        "reason": reason,
+    }
+    if dispatch_id is not None:
+        payload["dispatch_id"] = dispatch_id
+    if thread_id is not None:
+        payload["thread_id"] = thread_id
+    if actor is not None:
+        payload["actor"] = actor
+    return Event(signal="sdk.lane_b.pin_released", payload=payload, scope="node")
+
+
+def emit_sdk_lane_b_pin_released(
+    *,
+    dispatch_id: str | None,
+    thread_id: str | None,
+    worktree_path: str,
+    reason: str,
+    actor: str | None = None,
+) -> None:
+    _emit(
+        SdkLaneBPinReleased(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            worktree_path=worktree_path,
+            reason=reason,
+            actor=actor,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBPinnedWorktreeVanished(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    worktree_path: str,
+    ledger_status: str,
+    bridge_pid: int | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "dispatch_id": dispatch_id,
+        "thread_id": thread_id,
+        "worktree_path": worktree_path,
+        "ledger_status": ledger_status,
+    }
+    if bridge_pid is not None:
+        payload["bridge_pid"] = bridge_pid
+    return Event(
+        signal="sdk.lane_b.pinned_worktree_vanished",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_pinned_worktree_vanished(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    worktree_path: str,
+    ledger_status: str,
+    bridge_pid: int | None = None,
+) -> None:
+    _emit(
+        SdkLaneBPinnedWorktreeVanished(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            worktree_path=worktree_path,
+            ledger_status=ledger_status,
+            bridge_pid=bridge_pid,
+        )
+    )
+
+
+@event_factory
+def SdkLaneBReleaseRefused(  # noqa: N802
+    reason: str,
+    worktree_path: str,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {"reason": reason, "worktree_path": worktree_path}
+    if dispatch_id is not None:
+        payload["dispatch_id"] = dispatch_id
+    if thread_id is not None:
+        payload["thread_id"] = thread_id
+    return Event(signal="sdk.lane_b.release_refused", payload=payload, scope="node")
+
+
+def emit_sdk_lane_b_release_refused(
+    *,
+    reason: str,
+    worktree_path: str,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
+) -> None:
+    _emit(
+        SdkLaneBReleaseRefused(
+            reason=reason,
+            worktree_path=worktree_path,
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+        )
+    )
+
+
+@event_factory
 def SdkLaneBReconcileSkippedLiveLedger(  # noqa: N802
     worktree_path: str,
     dispatch_id: str | None = None,
@@ -2487,6 +2639,115 @@ def emit_sdk_worker_orphaned(
         resolved_model,
         timeout_s,
         bridge_aborted,
+    )
+
+
+@event_factory
+def SdkBridgePartialHarvest(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    tool_call_count: int,
+    sidecar_uri: str,
+    resume_eligible: bool,
+) -> Event:
+    return Event(
+        signal="sdk.bridge.partial_harvest",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "tool_call_count": tool_call_count,
+            "sidecar_uri": sidecar_uri,
+            "resume_eligible": resume_eligible,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_bridge_partial_harvest(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    tool_call_count: int,
+    sidecar_uri: str,
+    resume_eligible: bool,
+) -> None:
+    """Emit when bridge death triggers a partial harvest sidecar write."""
+    _emit(
+        SdkBridgePartialHarvest(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            tool_call_count=tool_call_count,
+            sidecar_uri=sidecar_uri,
+            resume_eligible=resume_eligible,
+        )
+    )
+
+
+@event_factory
+def SdkBridgeResumeEligible(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str,
+    sidecar_uri: str,
+) -> Event:
+    return Event(
+        signal="sdk.bridge.resume_eligible",
+        payload={
+            "dispatch_id": dispatch_id,
+            "thread_id": thread_id,
+            "sidecar_uri": sidecar_uri,
+        },
+        scope="node",
+    )
+
+
+def emit_sdk_bridge_resume_eligible(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    sidecar_uri: str,
+) -> None:
+    """Emit when bridge-death partial harvest marks a dispatch resume-eligible."""
+    _emit(
+        SdkBridgeResumeEligible(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            sidecar_uri=sidecar_uri,
+        )
+    )
+
+
+@event_factory
+def SdkRestartDeferredLiveBridge(  # noqa: N802
+    bridge_count: int,
+    force: bool,
+    intent_id: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "bridge_count": bridge_count,
+        "force": force,
+    }
+    if intent_id is not None:
+        payload["intent_id"] = intent_id
+    return Event(
+        signal="sdk.restart.deferred_live_bridge",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_restart_deferred_live_bridge(
+    *,
+    bridge_count: int,
+    force: bool,
+    intent_id: str | None = None,
+) -> None:
+    """Emit when GIW restart/drain completion defers to protect live bridges."""
+    _emit(
+        SdkRestartDeferredLiveBridge(
+            bridge_count=bridge_count,
+            force=force,
+            intent_id=intent_id,
+        )
     )
 
 

@@ -30,9 +30,6 @@ from services.git_integration_worker.cursor_sdk_branch_debt import (
 from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
     remove_land_required_tag,
 )
-from services.git_integration_worker.cursor_sdk_branch_unpin import (
-    unpin_registered_lane_worktree,
-)
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_discharged,
 )
@@ -202,32 +199,60 @@ def _finish(
     completing_dispatch_id: str | None = None,
 ) -> DischargeResult:
     """Archive, delete, retire the debt, and announce — shared by both verbs."""
+    from services.git_integration_worker.cursor_sdk_branch_unpin import (
+        _record_for_branch,
+    )
+    from services.git_integration_worker.cursor_sdk_lane_inherit import (
+        thread_has_inheritor,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        release_pin,
+    )
+    from services.git_integration_worker.cursor_sdk_worktree_release import (
+        release_lane_worktree,
+    )
+
     root = repo.resolve()
     rev = _git(root, "rev-parse", "--verify", f"{branch_name}^{{commit}}")
     tip_sha = rev.stdout.strip() if rev.returncode == 0 else None
 
-    unpin = unpin_registered_lane_worktree(
-        repo=root,
-        branch_name=branch_name,
+    record = _record_for_branch(source_repo=root, branch_name=branch_name)
+    if record is not None and record.thread_id and thread_has_inheritor(
+        record.thread_id,
         completing_dispatch_id=completing_dispatch_id,
-    )
-    if unpin.inherited:
+    ):
         return DischargeResult(
             discharged=False,
             branch=branch_name,
             verb=verb,
             tip_sha=tip_sha,
-            refused_reason=unpin.refused_reason,
+            refused_reason="inherited by successor",
             inherited=True,
         )
-    if not unpin.unpinned:
-        return DischargeResult(
-            discharged=False,
-            branch=branch_name,
-            verb=verb,
-            tip_sha=tip_sha,
-            refused_reason=unpin.refused_reason,
+
+    if record is not None and record.thread_id:
+        dispatch_id = completing_dispatch_id or record.last_dispatch_id or record.thread_id
+        release_pin(
+            source_repo=root,
+            thread_id=record.thread_id,
+            dispatch_id=dispatch_id,
+            release_reason=f"disposition:{verb}",
         )
+        release = release_lane_worktree(
+            source_repo=root,
+            thread_id=record.thread_id,
+            dispatch_id=dispatch_id,
+            reason="discharge",
+            allow_unharvested=True,
+        )
+        if not release.released and release.refusal is not None:
+            return DischargeResult(
+                discharged=False,
+                branch=branch_name,
+                verb=verb,
+                tip_sha=tip_sha,
+                refused_reason=release.refusal.value,
+            )
 
     archive_tag = archive_branch(repo=root, branch_name=branch_name)
     if archive_tag is None:

@@ -291,7 +291,7 @@ def test_ac_w0_5_rollback_emits_worktree_removed(
     _stub_occupancy(monkeypatch)
     emitted: list[dict[str, object]] = []
     monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_worktree_prune."
+        "services.git_integration_worker.cursor_sdk_worktree_release."
         "emit_sdk_lane_b_worktree_removed",
         lambda **kwargs: emitted.append(dict(kwargs)),
     )

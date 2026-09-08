@@ -14,14 +14,11 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_reap_skipped_live_bridge,
     emit_sdk_lane_b_reaped,
     emit_sdk_lane_b_registry_ghost_row,
-    emit_sdk_lane_b_salvage_failed,
     emit_sdk_lane_b_salvaged,
-    emit_sdk_lane_b_worktree_removed,
 )
 from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     branch_state,
     is_worktree_dirty,
-    salvage_commit,
 )
 from services.git_integration_worker.cursor_sdk_worktree_gc import (
     _delete_orphan_branch,
@@ -32,15 +29,19 @@ from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
     ledger_connection,
     live_bridge_worktree_paths,
     live_ledger_worktree_paths,
-    worktree_held_by_live_bridge,
 )
 from services.git_integration_worker.cursor_sdk_worktree_reconcile import (
     reconcile_unregistered_worktrees,
+    sweep_vanished_pinned_worktrees,
 )
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
+    active_pin,
     list_registered_worktrees_with_status,
     lookup_dispatch_worktree,
-    unregister_dispatch_worktree,
+)
+from services.git_integration_worker.cursor_sdk_worktree_release import (
+    ReleaseRefusal,
+    release_lane_worktree,
 )
 
 logger = get_logger(__name__)
@@ -48,12 +49,6 @@ logger = get_logger(__name__)
 _GIT_TIMEOUT_S = 60.0
 _REAPABLE_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _LIVE_DISPATCH_STATUSES = ("admitted", "running", "queued", "parked_waiting")
-# Ghost rows are surfaced once per process, not once per 30s sweep: the drift is
-# persistent by nature and an every-cycle event would bury the live-bridge skip.
-# The budget bounds the opening burst — 120 of 156 lane rows on this node already
-# point at directories that are gone, and re-announcing that backlog on every
-# worker restart would be noise, not observability. The exact count always rides
-# on ``ReapSweepResult.registry_ghost_rows``, so nothing is hidden by the cap.
 _GHOST_EMIT_BUDGET = 20
 _ghost_rows_reported: set[str] = set()
 _ghost_rows_emitted = 0
@@ -93,15 +88,11 @@ class ReapSweepResult:
     worktrees_surfaced: int = 0
     registry_ghost_rows: int = 0
     live_bridge_holds: int = 0
+    vanished_pins: int = 0
 
 
 def is_reapable_dispatch_status(status: str | None) -> bool:
-    """True when a dispatch row is an explicit terminal token.
-
-    ``None`` means no live writer on a standing lane — idle, not orphan.
-    The registry status subquery only projects admitted/running, so a
-    registered row with NULL status must not enter the reap loop.
-    """
+    """True when a dispatch row is an explicit terminal token."""
     return status in _REAPABLE_STATUSES
 
 
@@ -124,28 +115,13 @@ def sibling_non_terminal_dispatch_on_thread(
     return str(row["dispatch_id"])
 
 
-def _ledger_status_for_dispatch(*, dispatch_id: str) -> str:
-    with ledger_connection() as conn:
-        row = conn.execute(
-            "SELECT status FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-            (dispatch_id,),
-        ).fetchone()
-    if row is None or row["status"] is None:
-        return "none"
-    return str(row["status"])
-
-
 def rollback_dispatch_worktree(
     *,
     dispatch_id: str,
     thread_id: str,
     source_repo: Path,
 ) -> PruneResult:
-    """Remove a freshly minted worktree when post-mint admit fails.
-
-    Refuses when another non-terminal dispatch on the same thread still needs
-    the lane tree.
-    """
+    """Remove a freshly minted worktree when post-mint admit fails."""
     sibling = sibling_non_terminal_dispatch_on_thread(
         thread_id=thread_id,
         exclude_dispatch_id=dispatch_id,
@@ -163,6 +139,7 @@ def rollback_dispatch_worktree(
         dispatch_id=dispatch_id,
         source_repo=source_repo,
         remove_trigger="rollback",
+        allow_unharvested=True,
     )
 
 
@@ -171,155 +148,64 @@ def prune_dispatch_worktree(
     dispatch_id: str,
     source_repo: Path,
     remove_trigger: str | None = "reap",
+    allow_unharvested: bool = False,
 ) -> PruneResult:
-    """Remove a registered dispatch worktree; retain unmerged branches (S3).
-
-    Fails closed: when the worktree holds work that git refused to commit, the
-    worktree is the only copy, so it is kept and the registry row is left intact.
-    """
-    from services.git_integration_worker.cursor_sdk_resume import dispatch_retain_active
-
-    if dispatch_retain_active(dispatch_id=dispatch_id):
-        return PruneResult(pruned=False)
+    """Remove a registered dispatch worktree via the release chokepoint."""
     record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
     if record is None:
         return PruneResult(pruned=False)
-    wt_path = record.worktree_path
     branch = record.branch_name
     branch_point = record.branch_point
     thread_id = record.thread_id or dispatch_id
-    ledger_status = _ledger_status_for_dispatch(dispatch_id=dispatch_id)
-    repo = source_repo.resolve()
-    # Process truth outranks every record we hold: a bridge standing in this
-    # directory loses its shell the moment we remove it (spawn ENOENT, H4).
-    holder_pid = worktree_held_by_live_bridge(worktree_path=wt_path, fresh=True)
-    if holder_pid is not None:
-        logger.warning(
-            "lane_b prune skipped — live bridge holds worktree dispatch_id=%s "
-            "path=%s pid=%s",
-            dispatch_id,
-            wt_path,
-            holder_pid,
-        )
-        emit_sdk_lane_b_reap_skipped_live_bridge(
-            worktree_path=str(wt_path),
-            pid=holder_pid,
-            dispatch_id=dispatch_id,
-            stage="prune",
-        )
+    if remove_trigger is None:
+        return PruneResult(pruned=False)
+    release = release_lane_worktree(
+        source_repo=source_repo,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        reason=remove_trigger,
+        allow_unharvested=allow_unharvested,
+    )
+    if release.refusal == ReleaseRefusal.UNHARVESTED:
         return PruneResult(pruned=False, branch_retained=True)
-    salvaged = False
-    salvage = None
-    if wt_path.is_dir() and is_worktree_dirty(wt_path):
-        salvage = salvage_commit(
-            wt_path,
-            message=f"cursor-sdk: prune salvage {dispatch_id}",
-        )
-        salvaged = salvage.committed
-    if salvage is not None and salvage.refused:
-        logger.error(
-            "lane_b prune aborted — unsalvaged work retained dispatch_id=%s "
-            "path=%s branch=%s err=%s",
-            dispatch_id,
-            wt_path,
-            branch,
-            salvage.error,
-        )
-        emit_sdk_lane_b_salvage_failed(
-            dispatch_id=dispatch_id,
-            branch=branch,
-            worktree_path=str(wt_path),
-            error=salvage.error,
-        )
+    if release.salvage_refused:
         return PruneResult(
             pruned=False,
             branch_retained=True,
-            salvaged=False,
-            head_sha=salvage.head_sha,
             salvage_refused=True,
+            head_sha=release.head_sha,
         )
-    # Empty branch + uncommitted work is the only copy — never remove the worktree.
-    state_pre = branch_state(
-        repo,
-        branch_name=branch,
-        branch_point=branch_point,
-    )
-    if (
-        wt_path.is_dir()
-        and is_worktree_dirty(wt_path)
-        and (state_pre.commits_ahead is None or state_pre.commits_ahead == 0)
-        and (salvage is None or not salvage.committed)
-    ):
-        logger.error(
-            "lane_b prune aborted — dirty worktree on empty branch retained "
-            "dispatch_id=%s path=%s branch=%s",
-            dispatch_id,
-            wt_path,
-            branch,
-        )
-        emit_sdk_lane_b_salvage_failed(
-            dispatch_id=dispatch_id,
-            branch=branch,
-            worktree_path=str(wt_path),
-            error="uncommitted work on empty branch",
+    if not release.released:
+        branch_retained = release.branch_retained or release.refusal in (
+            ReleaseRefusal.LIVE_BRIDGE,
+            ReleaseRefusal.UNHARVESTED,
+            ReleaseRefusal.RETAIN_ACTIVE,
+            ReleaseRefusal.DISPATCH_ACTIVE,
+            ReleaseRefusal.FOREIGN_LOCK,
         )
         return PruneResult(
             pruned=False,
-            branch_retained=True,
-            salvaged=False,
-            head_sha=salvage.head_sha if salvage is not None else state_pre.head_sha,
-            salvage_refused=True,
+            branch_retained=branch_retained,
+            head_sha=release.head_sha,
+            salvage_refused=release.salvage_refused,
         )
-    if wt_path.is_dir():
-        proc = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(repo),
-                "worktree",
-                "remove",
-                "--force",
-                str(wt_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=_GIT_TIMEOUT_S,
-            check=False,
-        )
-        if proc.returncode != 0:
-            logger.warning(
-                "worktree remove failed dispatch_id=%s path=%s err=%s",
-                dispatch_id,
-                wt_path,
-                proc.stderr.strip(),
-            )
-        elif remove_trigger is not None:
-            emit_sdk_lane_b_worktree_removed(
-                worktree_path=str(wt_path.resolve()),
-                trigger=remove_trigger,
-                ledger_status_at_remove=ledger_status,
-                source_repo=str(repo),
-                dispatch_id=dispatch_id,
-                thread_id=thread_id,
-                branch=branch,
-            )
     state = branch_state(
-        repo,
+        source_repo.resolve(),
         branch_name=branch,
         branch_point=branch_point,
     )
-    branch_retained = not state.safe_to_delete
-    if salvaged and salvage is not None and salvage.head_sha:
+    branch_retained = release.branch_retained or not state.safe_to_delete
+    if release.salvaged:
         emit_sdk_lane_b_salvaged(
             dispatch_id=dispatch_id,
-            thread_id=dispatch_id,
-            head_sha=salvage.head_sha,
+            thread_id=thread_id,
+            head_sha=release.head_sha or state.head_sha or "",
             trigger="reaper",
         )
     branch_deleted = False
     if state.safe_to_delete:
         branch_deleted = _delete_orphan_branch(
-            repo=repo,
+            repo=source_repo.resolve(),
             branch_name=branch,
             reason="prune_terminal",
             dispatch_id=dispatch_id,
@@ -333,7 +219,6 @@ def prune_dispatch_worktree(
             branch=branch,
             commits_ahead=state.commits_ahead,
         )
-    unregister_dispatch_worktree(dispatch_id=dispatch_id)
     if not branch_deleted:
         emit_sdk_lane_b_reaped(
             dispatch_id=dispatch_id,
@@ -345,7 +230,7 @@ def prune_dispatch_worktree(
     return PruneResult(
         pruned=True,
         branch_retained=branch_retained,
-        salvaged=salvaged,
+        salvaged=release.salvaged,
         head_sha=state.head_sha,
     )
 
@@ -361,14 +246,7 @@ def maybe_prune_worktree_on_terminal(
 
 
 def active_managed_worktree_paths(*, worktree_root: Path) -> set[str]:
-    """Worktree paths under ``worktree_root`` that no sweep may remove.
-
-    Three sources, unioned, because any one of them can be wrong on its own:
-    the ledger lease key (blind when the key points outside the root), the
-    lane registry joined to non-terminal rows (blind when registry status
-    lags), and live bridge processes (blind to nothing, but only sees what is
-    running this instant).
-    """
+    """Worktree paths under ``worktree_root`` that no sweep may remove."""
     root = worktree_root.resolve()
     active: set[str] = set()
     with ledger_connection() as conn:
@@ -419,6 +297,7 @@ def reap_orphan_worktrees(
     salvage_refused = 0
     active = active_managed_worktree_paths(worktree_root=worktree_root)
     held = live_bridge_worktree_paths(worktree_root=worktree_root)
+    vanished = sweep_vanished_pinned_worktrees(source_repo=source_repo)
     rows = list_registered_worktrees_with_status()
     for row in rows:
         wt_path = str(Path(row["worktree_path"]).resolve())
@@ -434,6 +313,16 @@ def reap_orphan_worktrees(
             continue
         if not is_reapable_dispatch_status(status):
             continue
+        thread_id = str(row["thread_id"] or "")
+        pin = active_pin(source_repo=source_repo, thread_id=thread_id) if thread_id else None
+        if pin is not None:
+            result = prune_dispatch_worktree(
+                dispatch_id=row["dispatch_id"] or thread_id,
+                source_repo=source_repo,
+            )
+            if result.salvage_refused:
+                salvage_refused += 1
+            continue
         wt = Path(row["worktree_path"])
         if wt.is_dir() and is_worktree_dirty(wt):
             continue
@@ -445,7 +334,7 @@ def reap_orphan_worktrees(
         if not state.safe_to_delete:
             continue
         result = prune_dispatch_worktree(
-            dispatch_id=row["dispatch_id"] or row["thread_id"],
+            dispatch_id=row["dispatch_id"] or thread_id,
             source_repo=source_repo,
         )
         if result.salvage_refused:
@@ -465,8 +354,6 @@ def reap_orphan_worktrees(
     )
     stale_metadata_pruned = _git_worktree_prune(source_repo=source_repo)
     branches_gc = gc_merged_dispatch_branches(source_repo=source_repo)
-    # Before escalation: a debt this resolves is discharged, so the aged sweep
-    # does not announce residue that no longer needs an owner's attention.
     debts_reconciled = _reconcile_orphaned_debts(source_repo=source_repo)
     debts_escalated = _escalate_aged_debts()
     return ReapSweepResult(
@@ -482,6 +369,7 @@ def reap_orphan_worktrees(
         worktrees_surfaced=surfaced,
         registry_ghost_rows=ghost_rows,
         live_bridge_holds=len(held),
+        vanished_pins=vanished,
     )
 
 
@@ -490,14 +378,7 @@ def _surface_registry_ghost_rows(
     rows: list[sqlite3.Row],
     active: set[str],
 ) -> int:
-    """Count lane registry rows whose worktree directory is gone; report each once.
-
-    The row is left in place. It still pins its branch against merged-branch
-    GC, and the tree it named is exactly the case where the tip may be the only
-    copy of that work — so the coherent action is to make the drift visible,
-    not to drop the record. Rows the guard reports as active are skipped: a
-    lane whose directory is mid-mint is not a ghost.
-    """
+    """Count lane registry rows whose worktree directory is gone."""
     global _ghost_rows_emitted
     ghosts = 0
     suppressed = 0
@@ -537,7 +418,6 @@ def _surface_registry_ghost_rows(
 
 
 def _reconcile_orphaned_debts(*, source_repo: Path) -> int:
-    """Retire debts whose branch ref is gone; never fatal to the sweep."""
     from services.git_integration_worker.cursor_sdk_branch_debt_reconcile import (
         reconcile_open_branch_debts,
     )
@@ -551,7 +431,6 @@ def _reconcile_orphaned_debts(*, source_repo: Path) -> int:
 
 
 def _escalate_aged_debts() -> int:
-    """Raise aged debt on its owning thread; never fatal to the sweep."""
     from services.git_integration_worker.cursor_sdk_branch_debt_escalation import (
         escalate_aged_debts,
     )

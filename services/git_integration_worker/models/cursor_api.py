@@ -111,6 +111,14 @@ class BranchDischargeRequest(BaseModel):
     reason: str | None = None
 
 
+class LaneWorktreeReleaseRequest(BaseModel):
+    """Operator explicit release of a terminal unharvested lane worktree (AMEND-A)."""
+
+    thread_id: str
+    dispatch_id: str | None = None
+    actor: str | None = None
+
+
 class CursorDispatchResponse(BaseModel):
     """Admission acknowledgement returned before background SDK run."""
 
