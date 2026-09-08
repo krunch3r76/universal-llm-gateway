@@ -344,6 +344,9 @@ def resolve_source_ref_to_packet(
         from services.git_integration_worker.cursor_sdk_nested_witness import (
             LedgerNestedImplementWitness,
         )
+        from services.git_integration_worker.cursor_sdk_plan_handoff_witness import (
+            LedgerPlanHandoffWitness,
+        )
 
         out_dir = _materialized_out_dir(root)
         repo = _repo_base(root)
@@ -362,6 +365,7 @@ def resolve_source_ref_to_packet(
                 summon_mode=summon_mode,
                 summoning_thread_id=summoning_thread_id,
                 nested_implement=LedgerNestedImplementWitness(),
+                plan_handoff=LedgerPlanHandoffWitness(),
             ),
             summoning_thread_id=summoning_thread_id,
             rematerialize=rematerialize,

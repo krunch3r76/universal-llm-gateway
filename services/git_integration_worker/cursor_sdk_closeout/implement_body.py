@@ -119,6 +119,7 @@ def build_implement_closeout_body(
     escalation_harvest: str | None = "none",
     resolved_model: str | None = None,
     sdk_mode: Literal["agent", "plan"] | None = None,
+    packet_text: str | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -236,9 +237,10 @@ def build_implement_closeout_body(
     )
     from services.git_integration_worker.cursor_sdk_mode import (
         apply_plan_mode_closeout_gate,
+        body_implement_ready,
     )
 
-    status, resolved_work_outcome, landed, deviations, _plan_verdict = (
+    status, resolved_work_outcome, landed, deviations, plan_verdict = (
         apply_plan_mode_closeout_gate(
             sdk_mode=sdk_mode,
             status=status,
@@ -248,6 +250,16 @@ def build_implement_closeout_body(
             artifact_paths=artifact_paths,
             offgit_deliverable_uris=offgit_deliverable_uris,
         )
+    )
+    from implement_admission.plan_implement_handoff import build_nest_implement_hint
+
+    nest_implement_hint = build_nest_implement_hint(
+        plan_verdict=plan_verdict,
+        implement_ready=body_implement_ready(packet_text or sidecar_markdown),
+        thread_id=thread_id,
+        dispatch_id=dispatch_id,
+        source_ref=work_item_ref,
+        artifact_paths=artifact_paths,
     )
     from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
         classify_status_incomplete_class,
@@ -417,6 +429,10 @@ def build_implement_closeout_body(
             payload["landed"] = landed
         else:
             payload.pop("landed", None)
+        if sdk_mode is not None and sdk_mode != "agent":
+            payload["sdk_mode"] = sdk_mode
+        if nest_implement_hint is not None:
+            payload["nest_implement_hint"] = nest_implement_hint
         effects = attribution_effects_paths(
             created=repo_files.created,
             modified=repo_files.modified,

@@ -19,6 +19,7 @@ from implement_admission.conductor_witness_types import (
     WitnessCortex,
     stops_block_reason,
 )
+from implement_admission.plan_implement_handoff import plan_implement_handoff_eligible
 from implement_admission.evidence_verify import resolve_artifact_path
 
 _ARTIFACT_URI_RE = re.compile(
@@ -369,13 +370,25 @@ def _row_witnesses_g_ladder(
         g3_uri = _tip_row_uri(tip_body, "G3")
         if g3_uri and _uri_resolves(g3_uri, files_root=files_root, repo=repo):
             g3_id = "tip"
-    if g3_id and g3_uri:
-        entity = deps.cortex.entity_get(source_ref, intent="card")
-        triage = str((entity.get("attributes") or {}).get("density_triage") or "")
-        if triage.strip().lower() != "implement_ready":
-            witnesses["G3"] = Witness(
-                row="G3", source=f"artifact:{g3_id}", detail=g3_uri
+    entity = deps.cortex.entity_get(source_ref, intent="card")
+    triage = str((entity.get("attributes") or {}).get("density_triage") or "")
+    triage_ready = triage.strip().lower() == "implement_ready"
+    if g3_id and g3_uri and not triage_ready:
+        witnesses["G3"] = Witness(
+            row="G3", source=f"artifact:{g3_id}", detail=g3_uri
+        )
+    elif triage_ready and witnesses.get("G3") is None and deps.plan_handoff is not None:
+        dispatch_id = _conductor_dispatch_id(tip_body)
+        if dispatch_id:
+            hint = deps.plan_handoff.plan_handoff_for_conductor(
+                nest_under_dispatch_id=dispatch_id,
             )
+            if plan_implement_handoff_eligible(hint):
+                witnesses["G3"] = Witness(
+                    row="G3",
+                    source="closeout:nest_implement_hint",
+                    detail=dispatch_id,
+                )
 
     g4_uri = artifacts.get("G4")
     g4_stops = stops_block_reason(tip_body, "G4")
