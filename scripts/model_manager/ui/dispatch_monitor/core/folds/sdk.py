@@ -195,6 +195,8 @@ class SdkFold:
             ("topic", "topic"),
             ("nest_under", "nest_under"),
             ("resume_of", "resume_of"),
+            ("sdk_mode", "sdk_mode"),
+            ("conversation_mode", "sdk_mode"),
         ):
             if getattr(row, dst) is None and payload.get(src):
                 setattr(row, dst, str(payload[src]))

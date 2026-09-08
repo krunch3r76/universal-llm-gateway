@@ -5,6 +5,7 @@ from __future__ import annotations
 from .conftest import replay
 
 from scripts.model_manager.ui.dispatch_monitor.core import signals
+from scripts.model_manager.ui.dispatch_monitor.core.dtos import SdkDispatchRow
 from scripts.model_manager.ui.dispatch_monitor.core.model import Model
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
 
@@ -137,3 +138,32 @@ def test_handler_registry_covers_slice2_signals() -> None:
         signals.SDK_CLOSEOUT_RELOCATED,
     }
     assert expected <= handled
+
+
+def test_sdk_mode_folds_from_worker_dispatched_payload() -> None:
+    """sdk_mode on worker.dispatched stamps the SDK row for board paint."""
+    model = Model()
+    model.apply(
+        Event(
+            signals.SDK_WORKER_DISPATCHED,
+            1_000,
+            {
+                "dispatch_id": "plan-d1",
+                "execution_id": "exec-plan-d1",
+                "thread_id": "10363",
+                "sdk_mode": "plan",
+                "contract": "recon",
+            },
+        )
+    )
+    row = _row(model.derive(2_000).sdk, "dispatch_id", "plan-d1")
+    assert row.sdk_mode == "plan"
+
+
+def test_sdk_mode_board_line_shows_plan_token() -> None:
+    """board_lines surfaces mode=plan for operator glance."""
+    from scripts.model_manager.ui.dispatch_monitor.core.board_lines import sdk_live_line
+
+    row = SdkDispatchRow(dispatch_id="plan-line", state="running", sdk_mode="plan")
+    line = sdk_live_line(row, width=200)
+    assert "mode=plan" in line

@@ -252,6 +252,15 @@ def _sdk_cond_token(row: SdkDispatchRow) -> str:
     return ""
 
 
+def _sdk_mode_token(row: SdkDispatchRow) -> str:
+    mode = (row.sdk_mode or "").strip().lower()
+    if mode == "plan":
+        return " mode=plan"
+    if mode and mode != "agent":
+        return f" mode={mode}"
+    return ""
+
+
 def sdk_live_line(
     row: SdkDispatchRow,
     *,
@@ -281,7 +290,7 @@ def sdk_live_line(
     core = (
         f"  {role_tag}{glyph}{row.dispatch_id} {row.state} "
         f"root={row.root_id or '-'} w={row.thread_id or '-'} "
-        f"{model}{_sdk_fast_token(row)}{_sdk_cond_token(row)} {timing}"
+        f"{model}{_sdk_fast_token(row)}{_sdk_cond_token(row)}{_sdk_mode_token(row)} {timing}"
     )
     mission = row.topic or ""
     tool_col = ""

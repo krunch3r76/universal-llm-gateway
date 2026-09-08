@@ -46,6 +46,9 @@ headless read-only dispatch (`read_only=true`, lease-exempt) that closes with
 3. Nest or sibling dispatch: `contract=implement`, `sdk_mode: agent` (or omit),
    `nest_under=<plan_dispatch_id>` when continuing on same worktree
 
+Closeout may carry **`nest_implement_hint`** when `PLAN_COMPLETE` ∧ `implement_ready`
+— see `docs/agent-guides/cursor-sdk-conversation-mode.md` § Two-hop plan → implement.
+
 Skills: `consult-routing` § cursor-sdk `sdk_mode` · `conductor` § Scoreboard
 `sdk_mode` column · `implement-work-item` § Plan-leg pickup ·
 `handoff-packet-authoring` § `sdk_mode:` examples.

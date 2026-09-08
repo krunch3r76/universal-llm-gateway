@@ -27,10 +27,10 @@ def _sparse_body() -> str:
         [
             "# Scoreboard — todo:foo",
             "",
-            "| ID | Deliverable | Status | Stops |",
-            "|---|---|---|---|",
-            "| G1 | Architecture | OPEN | |",
-            "| G2 | Frame | OPEN | |",
+            "| ID | Deliverable | Mode | Status | Stops |",
+            "|---|---|---|---|---|",
+            "| G1 | Architecture | — | OPEN | |",
+            "| G2 | Frame | — | OPEN | |",
         ]
     )
 
@@ -40,10 +40,10 @@ def _g1_done_body() -> str:
         [
             "# Scoreboard — todo:foo",
             "",
-            "| ID | Deliverable | Status | Stops |",
-            "|---|---|---|---|",
-            "| G1 | Architecture | DONE | |",
-            "| G2 | Frame | OPEN | |",
+            "| ID | Deliverable | Mode | Status | Stops |",
+            "|---|---|---|---|---|",
+            "| G1 | Architecture | — | DONE | |",
+            "| G2 | Frame | — | OPEN | |",
         ]
     )
 

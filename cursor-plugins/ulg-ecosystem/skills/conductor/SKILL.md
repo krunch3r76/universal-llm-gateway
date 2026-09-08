@@ -440,6 +440,23 @@ tip and continuity sidecar. Values: **`plan`** · **`agent`** · **`—`** (CDP 
 | G1 · G2 · G4 · G6 | `—` | CDP transport | harvest URI |
 | Conductor (top-level) | `agent` | `conductor` | scoreboard drive |
 
+**Scoreboard tip template (worked example — sparse birth):**
+
+```markdown
+| ID | Deliverable | Mode | Status | Stops |
+|---|---|---|---|---|
+| G1 | Architecture / recon | — | OPEN | |
+| G2 | Frame | — | OPEN | |
+| G3 | Densify | plan | OPEN | |
+| G4 | Skeptic / gate-6 | — | OPEN | |
+| G5 | Implement | agent | OPEN | |
+| G6 | Pre-land review | — | OPEN | |
+| G7 | Ship / land | — | OPEN | |
+```
+
+Rewrite `Mode` when densifying: G3 `plan` → `agent` after `implement_ready` and a
+separate implement nest (or skip plan hop when packet is already dense).
+
 **`NEXT_ADMIT` after `PLAN_COMPLETE`:** when a nested plan leg closes with
 `plan:closeout_verdict=PLAN_COMPLETE`, rewrite scoreboard `NEXT_ADMIT` to nest
 implement:
@@ -546,6 +563,20 @@ content and the why-a-cold-successor-needs-it column:
 §3. **Not** in it: prose narrative of the row's work (that is the journal), the
 scoreboard table itself (pointer + sha), hand-written `DONE` (witnesses render
 DONE). Exceeding roughly `9831-conductor.md` size ⇒ it is carrying journal.
+
+**`Rows` inline `Mode=` (cursor-sdk G3/G5 legs):** append mode on active nested
+legs so cold successors need not infer from ledger:
+
+```text
+Rows: G3 open — Mode=plan — dispatch_id=<id> — artifact=<uri>
+```
+
+After plan harvest:
+
+```text
+Rows: G3 done (PLAN_COMPLETE) — NEXT_ADMIT: nest implement under <plan_dispatch_id>
+Rows: G5 open — Mode=agent — nest_under=<plan_dispatch_id>
+```
 
 ### Resume-if-dead (binding)
 

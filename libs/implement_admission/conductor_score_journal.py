@@ -27,11 +27,11 @@ _RECORD_SEP = "\n---\n"
 # G-ladder ids (G1–G7) or per-finding row ids (R1, R2, …) minted from acceptance_criteria.
 _SCOREBOARD_ROW_ID = r"(?:G[1-7]|R\d+)"
 _CLOSED_ROW_RE = re.compile(
-    rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|\s*DONE\b",
+    rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|(?:[^|]*\|)?\s*DONE\b",
     re.IGNORECASE | re.MULTILINE,
 )
 _ROW_STATUS_RE = re.compile(
-    rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|\s*(?P<status>[A-Za-z_()]+)",
+    rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|(?:[^|]*\|)?\s*(?P<status>[A-Za-z_()]+)",
     re.MULTILINE,
 )
 STATUS_VOCABULARY: frozenset[str] = frozenset(
@@ -58,6 +58,15 @@ _WITNESS_KIND_LAND = "LAND"
 def is_g_ladder_rows(rows: tuple[str, ...]) -> bool:
     """True when rows are the default seven-row G-ladder."""
     return rows == G_ROWS
+
+
+def default_row_mode(row_id: str) -> str:
+    """Default Mode column for a G-row at sparse scoreboard birth (D3)."""
+    if row_id == "G3":
+        return "plan"
+    if row_id == "G5":
+        return "agent"
+    return "—"
 
 
 def resolve_scoreboard_rows(attrs: dict[str, Any]) -> tuple[str, ...]:
@@ -146,7 +155,8 @@ def render_sparse_scoreboard(
         dict(_G_LABELS) if is_g_ladder_rows(rows) else {row_id: row_id for row_id in rows}
     )
     table_rows = "\n".join(
-        f"| {row_id} | {labels.get(row_id, row_id)} | OPEN | |" for row_id in rows
+        f"| {row_id} | {labels.get(row_id, row_id)} | {default_row_mode(row_id)} | OPEN | |"
+        for row_id in rows
     )
     parts = [
         f"# Scoreboard — {source_ref}",
@@ -163,7 +173,7 @@ def render_sparse_scoreboard(
             "",
             "## Gated deliverables",
             "",
-            "| ID | Deliverable | Status | Stops |",
+            "| ID | Deliverable | Mode | Status | Stops |",
             "|---|---|---|---|",
             table_rows,
             "",
