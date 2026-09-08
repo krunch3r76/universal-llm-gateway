@@ -194,6 +194,14 @@ def build_turn_created(
             supersedes_turn=supersedes_turn,
             turn_number=turn_number,
         )
+        from .checkpoint_lid_seal import maybe_schedule_lid_seal_on_checkpoint
+
+        maybe_schedule_lid_seal_on_checkpoint(
+            thread=thread,
+            subject=subject,
+            body=prepared.body,
+            thread_tags=thread_tags,
+        )
     from .events.advisory_fired import emit_advisory_fired
     from .events.turn_body_advisory import emit_turn_body_over_briefing
     from .turns_models import TurnCreated

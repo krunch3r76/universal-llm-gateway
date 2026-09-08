@@ -39,6 +39,19 @@ def _call_transcript_harvest(
     return payload if isinstance(payload, dict) else {"error": "invalid harvest response"}
 
 
+def request_lid_close_seal(
+    *,
+    thread_id: str,
+    explicit_transcript_ids: list[str],
+) -> dict[str, Any]:
+    """O15 D2 lid-close: seal up to one bindable window for explicit ids."""
+    return _call_transcript_harvest(
+        thread_id=thread_id,
+        explicit_ids=explicit_transcript_ids,
+        max_seals=1,
+    )
+
+
 def render_tape_with_harvest(
     *,
     thread_id: str,
@@ -78,4 +91,4 @@ def render_tape_with_harvest(
     )
 
 
-__all__ = ["render_tape_with_harvest"]
+__all__ = ["render_tape_with_harvest", "request_lid_close_seal"]
