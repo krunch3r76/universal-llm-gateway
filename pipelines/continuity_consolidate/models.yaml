@@ -1,0 +1,15 @@
+# consolidate-continuity model aliases.
+#
+# `consolidator` is the production default — a local instruct model is
+# sufficient for a bounded fold (≤ ~6k input tokens, structured JSON out) and
+# costs nothing per run. Override per run without editing YAML:
+#   options.model_ref_overrides: {consolidator: "openai/gpt-5.4"}
+# The two cloud aliases exist so the P6 meter and an operator can name a
+# tier explicitly; they are not referenced by any step by default.
+models:
+  consolidator:
+    model: qwen3-5-9b-q8-0-262144
+  consolidator_cloud_cheap:
+    model: google/gemini-3.5-flash
+  consolidator_cloud_strong:
+    model: openai/gpt-5.4

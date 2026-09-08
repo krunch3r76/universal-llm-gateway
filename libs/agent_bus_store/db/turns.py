@@ -292,6 +292,10 @@ def insert_turn(
         created_at=ts,
         body=body,
     )
+    # Lazy: the trigger reads back through this module (get_turns).
+    from ..continuity_consolidate_trigger import maybe_enqueue_continuity_consolidate
+
+    maybe_enqueue_continuity_consolidate(thread_id=thread, turn_number=turn_number, subject=subject)
     return turn_id, ts, turn_number
 
 

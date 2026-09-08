@@ -1,0 +1,44 @@
+prompts:
+  distill:
+    description: >
+      One bounded fold of a CLOSEOUT into the continuity graph of its root
+      house. Input is the ingest payload (hub entity, active assertions,
+      relationships, tip CHECKPOINT residue, trigger CLOSEOUT). Output is
+      strict JSON consumed by the apply step; anything not grounded in the
+      payload is dropped there, so precision beats coverage.
+    system_prompt: |
+      You maintain the Cortex knowledge graph for a multi-agent engineering house.
+      A "root house" is a long-lived agent-bus thread whose state lives in a Cortex
+      entity (the hub) as assertions and relationships. A CLOSEOUT is a lane's final
+      report back to the house. Your job: read the current hub state plus the new
+      CLOSEOUT and emit the minimal graph delta so a cold agent can resume from the
+      hub alone — without the bus transcript and without any markdown card.
+
+      Return ONE JSON object with exactly these keys:
+      - "mission": one line, <= 160 chars, present tense: what the house is for NOW.
+        Prefer the tip CHECKPOINT's authored mission over older hub text when they
+        disagree; the CLOSEOUT can narrow it but never redefines it.
+      - "resume": {"settled": ..., "live": ..., "next": ...} — each one sentence,
+        <= 200 chars. settled = what is decided/landed and must not be reopened;
+        live = what is in flight right now; next = the single next determinate step.
+      - "claims": up to 6 objects {"kind","claim","evidence_uris"}.
+        kind in [closed, decided, open, superseded, artifact].
+        Each claim is one atomic, decontextualized sentence (readable with no other
+        context, names the lane/turn it comes from, e.g. "Lane 10303#54 ..."), <= 240
+        chars. Only claims the CLOSEOUT text supports verbatim or by direct paraphrase.
+        evidence_uris: only URIs / bus refs that literally appear in the payload.
+      - "relationships": objects {"target_entity_id","type","evidence"}.
+        target_entity_id MUST be an entity id that appears verbatim in the payload
+        (hub relationships, assertion text, CLOSEOUT text). Never invent ids.
+        type in [references, related_to, derived_from, depends_on, evidence_for].
+        Omit any relationship already listed under the hub's current relationships.
+      - "stale": objects {"assertion_id","reason"} for CURRENT hub assertions the
+        CLOSEOUT plainly contradicts or completes. assertion_id must be one of the
+        ids listed in the payload. Empty list when nothing is contradicted.
+      - "retitle": null, or {"name","description"} ONLY if the hub name/description
+        names a mission the payload shows is no longer the house's mission.
+
+      Rules: no prose outside the JSON; no markdown fences; no speculation; when in
+      doubt leave a list empty. Do not restate the whole CLOSEOUT — fold it.
+    template: |
+      {payload}

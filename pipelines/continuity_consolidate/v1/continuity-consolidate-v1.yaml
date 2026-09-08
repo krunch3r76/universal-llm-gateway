@@ -1,0 +1,149 @@
+# consolidate-continuity — AMEND-A continuous consolidation as a Stargate workflow.
+#
+# Trigger: agent_bus_store.continuity_consolidate_trigger fires one async run
+# per CLOSEOUT-subject turn that lands on (or in a lane of) a `role:root`
+# house: POST /api/v1/pipelines/dispatch with dispatch_thread_id=<root>.
+# The bus is transport only — the gateway container carries no bus token, so
+# the hook pre-fetches thread row, tip CHECKPOINT residue and the trigger
+# turn and ships them as pipeline_options. Nothing here reads the bus.
+#
+# Shape (three steps, one model call):
+#   ingest  — read the Cortex hub (`document:{root}-continuity`): entity,
+#             active assertions, relationships; watermark short-circuit.
+#   distill — one bounded model call → structured fold (mission line,
+#             settled/live/next, ≤6 claims, relationships, stale flags).
+#   apply   — validate against the graph, then cortex writes: watermark +
+#             mission assertions (bus-quoted, never model-authored), model
+#             claims as assertions, relationships to existing entities only.
+#             Card regeneration is out of scope for v1 (projection lane).
+#
+# Serial per root house: concurrency key = dispatch_thread_id. Idempotent:
+# the watermark assertion `WATERMARK: consolidated_through=<thread>#<turn>`
+# is superseded on every successful apply; a replay of an older trigger is a
+# no-op (`skip: superseded_by_watermark`).
+#
+# Manual / P6 replay (same path the hook uses):
+#   POST /api/v1/pipelines/dispatch
+#     {"model": "consolidate-continuity", "messages": [{"role":"user","content":"consolidate"}],
+#      "dispatch_thread_id": "10223",
+#      "pipeline_options": {"root_thread": "10223", "root": {...}, "tip_checkpoint": {...},
+#                           "trigger": {"thread": "10303", "turn": 54, "body": "..."},
+#                           "dry_run": true, "force": true,
+#                           "model_ref_overrides": {"consolidator": "openai/gpt-5.4"}}}
+#
+# Spec: cortex://notes/system/specs/continuity-consolidate-pipeline.md
+
+schema_version: 6
+id: consolidate-continuity
+version: "1.0"
+type: continuity_consolidate
+description: >
+  Fold one CLOSEOUT into the Cortex graph of its root continuity house —
+  watermark, mission line, resume state, claims and relationships — so a
+  cold seat can resume from entity_get without reading the bus or the card.
+output: apply
+
+concurrency:
+  key: "continuity:{context.dispatch_thread_id}"
+  scope: execution
+  timeout_seconds: 240
+
+options:
+  timeout_seconds: 300
+  # Report planned writes without touching the graph.
+  dry_run: false
+  # Ignore the watermark (re-fold an already consolidated trigger).
+  force: false
+  # Let the model retitle the hub entity (name/description). Off by default:
+  # renames are visible to every other seat and belong to an attended pass.
+  allow_retitle: false
+  # Upper bound on model-authored claims written per run.
+  max_claims: 6
+
+steps:
+  - name: ingest
+    type: continuity_consolidate_ingest_v1
+
+  - name: distill
+    type: generate
+    model_ref: consolidator
+    prompt_ref: continuity_consolidate.v1.distill
+    condition: "ingest.json.get('skip') is None"
+    handler_inputs:
+      payload: "ingest.json.payload_text"
+    generation_parameters:
+      temperature: 0.2
+      max_tokens: 3000
+      response_format:
+        type: json_object
+        schema:
+          type: object
+          required: [mission, resume, claims, relationships]
+          properties:
+            mission:
+              type: string
+            resume:
+              type: object
+              required: [settled, live, next]
+              properties:
+                settled:
+                  type: string
+                live:
+                  type: string
+                next:
+                  type: string
+            claims:
+              type: array
+              items:
+                type: object
+                required: [kind, claim]
+                properties:
+                  kind:
+                    type: string
+                    enum: [closed, decided, open, superseded, artifact]
+                  claim:
+                    type: string
+                  evidence_uris:
+                    type: array
+                    items:
+                      type: string
+            relationships:
+              type: array
+              items:
+                type: object
+                required: [target_entity_id, type]
+                properties:
+                  target_entity_id:
+                    type: string
+                  type:
+                    type: string
+                    enum: [references, related_to, derived_from, depends_on, evidence_for]
+                  evidence:
+                    type: string
+            stale:
+              type: array
+              items:
+                type: object
+                required: [assertion_id, reason]
+                properties:
+                  assertion_id:
+                    type: integer
+                  reason:
+                    type: string
+            retitle:
+              anyOf:
+                - type: "null"
+                - type: object
+                  properties:
+                    name:
+                      type: string
+                    description:
+                      type: string
+
+  - name: apply
+    type: continuity_consolidate_apply_v1
+    reads_from:
+      - step: ingest
+        fields: [json]
+      - step: distill
+        fields: [json, raw, json_parse_error]
