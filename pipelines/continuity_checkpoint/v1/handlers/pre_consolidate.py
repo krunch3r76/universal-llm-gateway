@@ -133,6 +133,8 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 "contract": "none",
                 "lane": "A",
                 "read_only": True,
+                "mcp": False,
+                "server_tools": False,
                 "dispatch_thread_id": thread,
                 "caller_agent": from_agent,
             }
@@ -162,6 +164,8 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
             "contract": "none",
             "lane": "A",
             "read_only": True,
+            "mcp": False,
+            "server_tools": False,
             "dispatch_thread_id": thread,
             "caller_agent": from_agent,
         }

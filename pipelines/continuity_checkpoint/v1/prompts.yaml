@@ -2,11 +2,10 @@ prompts:
   continuity_checkpoint.v1.pre_consolidate_packet:
     description: >
       cursor-sdk read-only pre-consolidate packet for continuity CHECKPOINT
-      card patch + bounded residue (contract none · sdk_mode plan).
+      card patch + bounded residue (contract none · JSON-only closeout).
     template: |
       ---
       contract: none
-      sdk_mode: plan
       read_only: true
       packet_label: continuity_checkpoint
       ---
@@ -14,7 +13,8 @@ prompts:
       # Continuity CHECKPOINT pre-consolidate
 
       Bind: read-only judgment on the supplied hub card, tape envelope summary,
-      tip CHECKPOINT residue, and seal facts. Return one fenced ```json block only.
+      tip CHECKPOINT residue, and seal facts. **Deliverable = one fenced ```json
+      block only in the CLOSEOUT body** (no sidecar prose, no tool exploration).
 
       ## Required JSON shape
 

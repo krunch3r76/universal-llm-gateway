@@ -14,15 +14,22 @@ _JSON_FENCE_RE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE
 
 
 def parse_worker_json(text: str) -> dict[str, Any] | None:
-    """Extract the first fenced JSON block from worker closeout text."""
+    """Extract pre-consolidate JSON from worker closeout text."""
     match = _JSON_FENCE_RE.search(text)
-    if not match:
+    raw = match.group(1) if match else text.strip()
+    if not raw:
         return None
     try:
-        data = json.loads(match.group(1))
+        data = json.loads(raw)
     except json.JSONDecodeError:
         return None
-    return data if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        return None
+    if "card_patch" in data:
+        return data
+    if data.get("schema_version") == 1:
+        return None
+    return data
 
 
 def validate_worker_payload(data: dict[str, Any]) -> tuple[bool, str]:
