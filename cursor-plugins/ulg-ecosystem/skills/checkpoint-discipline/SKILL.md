@@ -160,6 +160,17 @@ Prefix must stay `— RESUME (any seat, no command):` (parser T8).
 
 `<continuity-source URI/path>` = the durable roadmap or reconstitution index named in the CHECKPOINT body (e.g. `cortex://notes/system/roadmaps/<slug>.md` or a workspaces share path). Parameterize per arc — do not hardcode a single global path.
 
+## Pipeline CHECKPOINT (cursor lane)
+
+On a `role:root` house with a sealed transcript window, post via MCP:
+
+`continuity(op=checkpoint, surface=cursor, thread=<root>, transcript_id=<own tab uuid>)`
+
+The pipeline seals, optionally pre-consolidates (`contract: none` cursor-sdk read-only
+packet), and posts the CHECKPOINT. **`Window:` / `Harvest:` lines come from the seal** —
+never hand-count `turns@cp`. Poll `pipeline(op=result, execution_id=…)` then verify the
+new CP anchor with `agent_bus_read(tape, thread=…)`.
+
 ## Related
 
 - `ulg-for-llms` — standing why; first-class continuity stance trait (not in the RESUME footer string)

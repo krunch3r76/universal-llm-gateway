@@ -1,0 +1,52 @@
+prompts:
+  continuity_checkpoint.v1.pre_consolidate_packet:
+    description: >
+      cursor-sdk read-only pre-consolidate packet for continuity CHECKPOINT
+      card patch + bounded residue (contract none · sdk_mode plan).
+    template: |
+      ---
+      contract: none
+      sdk_mode: plan
+      read_only: true
+      packet_label: continuity_checkpoint
+      ---
+
+      # Continuity CHECKPOINT pre-consolidate
+
+      Bind: read-only judgment on the supplied hub card, tape envelope summary,
+      tip CHECKPOINT residue, and seal facts. Return one fenced ```json block only.
+
+      ## Required JSON shape
+
+      JSON keys: residue (≤800 chars, Mission: required), card_patch.resume_open,
+      card_patch.opportunities_rows (optional list), mission (one line).
+
+      ## Inputs
+
+      ### Thread
+      {{ thread }}
+
+      ### Seal
+      {{ seal_json }}
+
+      ### Tape summary
+      {{ tape_summary }}
+
+      ### Tip CHECKPOINT residue
+      {{ tip_residue }}
+
+      ### Card ## Resume open
+      {{ resume_open }}
+
+      ### Card ## Pools
+      {{ pools_section }}
+
+      ### Hub summary
+      {{ hub_summary }}
+
+      ### Seat residue (authoritative when present)
+      {{ seat_residue }}
+
+      Use checkpoint-discipline and continuity-thread-shaping skills by slug.
+      No ### User sections. card_patch.resume_open replaces the whole
+      ## Resume open body.

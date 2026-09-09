@@ -78,6 +78,36 @@ def test_join_windows_pairs_journal_to_cp_interval() -> None:
     )
 
 
+def test_join_windows_uuid_anchor_uses_session_windows(monkeypatch) -> None:
+    turns = (
+        CheckpointTurnRow(
+            3,
+            1,
+            "2026-09-01T10:00:00",
+            "CHECKPOINT v1",
+            body="Window: transcript_id=550e8400-e29b-41d4-a716-446655440000 · turns@cp=5\n",
+        ),
+    )
+
+    def _lookup(uuid: str):
+        assert uuid == "550e8400-e29b-41d4-a716-446655440000"
+        return {
+            "id": 77,
+            "session_id": "cursor-uuid-window",
+            "summary": "Arc: uuid join",
+            "closed_by": "succession",
+        }
+
+    monkeypatch.setattr(
+        "agent_bus_store.checkpoint_windows_join._lookup_window_by_uuid",
+        _lookup,
+    )
+    rows = join_windows(checkpoint_turns=turns, journals=())
+    assert rows[0].session_id == "cursor-uuid-window"
+    assert rows[0].journal_row_id is None
+    assert rows[0].arc == "uuid join"
+
+
 def test_join_windows_open_cp_without_journal() -> None:
     turns = (CheckpointTurnRow(1, 1, "2026-09-01T10:00:00", "CHECKPOINT birth"),)
     rows = join_windows(checkpoint_turns=turns, journals=())
@@ -556,7 +586,7 @@ def test_read_route_renders_windows(tmp_path, monkeypatch) -> None:
         lambda *, thread_id: turns,
     )
     monkeypatch.setattr(
-        "agent_bus_store.checkpoint_windows_render.fetch_journals_for_thread",
+        "agent_bus_store.checkpoint_windows_join.fetch_journals_for_thread",
         _fetch,
     )
 

@@ -718,6 +718,27 @@ cortex(tool="entities", arguments='{"type": "person", "limit": 20}')
 cortex(tool="assert", arguments='{"entity_id": "person:foo", "claim": "...", "confidence": "confirmed", "evidence": "..."}')
 ```
 
+## continuity
+
+Continuity consolidation and CHECKPOINT pipeline relays (code MCP `/mcp/code`).
+
+### Operations
+
+| Op | Args | Description |
+|---|---|---|
+| `consolidate` | trigger_thread, turn, dispatch_thread_id?, model_ref_overrides? | Async dispatch `consolidate-continuity` after a CLOSEOUT |
+| `replay` | trigger_thread, turn, dry_run?, force?, … | P6 replay path (`force=true`, `dry_run` default true) |
+| `status` | execution_id XOR root_thread | Pipeline tracker result or hub WATERMARK read |
+| `tape_read` | thread, scope?, include_extras?, tools?, budget_bytes?, harvest? | Door 1 sync relay → `POST /api/v1/continuity/tape-read` |
+| `checkpoint` | thread, surface, from_agent?, transcript_id?, jsonl_path?, residue?, pre_consolidate? | Async relay → `POST /api/v1/continuity/checkpoint` (`continuity-checkpoint-v1`). Required: `thread`, `surface` (`cursor` \| `claude_ai`). `surface=claude_ai` → 422 until Phase 3. |
+
+### Example
+
+```
+continuity(op="checkpoint", thread="10223", surface="cursor", transcript_id="<uuid>", from_agent="cursor")
+continuity(op="tape_read", thread="10223", budget_bytes=512000)
+```
+
 ## agent_bus
 
 Inter-agent message bus — threads, turns, read/reply coordination.

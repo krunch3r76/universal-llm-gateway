@@ -1,0 +1,61 @@
+# continuity-checkpoint-v1 — seal-then-post CHECKPOINT pipeline (Phase 4b-core).
+#
+# Trigger: POST /api/v1/continuity/checkpoint or MCP continuity(op=checkpoint).
+# Serial per root thread via concurrency key on dispatch_thread_id.
+#
+# Spec: cortex://notes/system/specs/continuity-messages-pipeline-dense.md §4b
+
+schema_version: 6
+id: continuity-checkpoint-v1
+version: "1.0"
+type: continuity_checkpoint
+description: >
+  Seal an idle transcript window, optionally pre-consolidate via cursor-sdk,
+  and post a CHECKPOINT turn with machine anchors on a continuity root lane.
+output: post
+
+concurrency:
+  key: "continuity-cp:{context.dispatch_thread_id}"
+  scope: execution
+  timeout_seconds: 240
+
+options:
+  timeout_seconds: 1800
+
+steps:
+  - name: resolve
+    type: continuity_checkpoint_resolve_v1
+
+  - name: seal
+    type: continuity_checkpoint_seal_v1
+    condition: "resolve.json.get('refused') is None"
+
+  - name: tape
+    type: continuity_tape_read_v1
+    condition: "seal.json.get('refused') is None"
+    handler_inputs:
+      thread: "context.options.thread"
+      scope: "context.options.get('scope', 'full')"
+      include_extras: "context.options.get('include_extras', False)"
+      tools: "context.options.get('tools', 'none')"
+      budget_bytes: "context.options.get('budget_bytes', 512000)"
+      harvest: "context.options.get('harvest', False)"
+
+  - name: pre_consolidate
+    type: continuity_checkpoint_pre_consolidate_v1
+    condition: "seal.json.get('refused') is None and context.options.get('pre_consolidate', True)"
+    reads_from:
+      - step: tape
+        fields: [json]
+      - step: seal
+        fields: [json]
+
+  - name: post
+    type: continuity_checkpoint_post_v1
+    reads_from:
+      - step: resolve
+        fields: [json]
+      - step: seal
+        fields: [json]
+      - step: pre_consolidate
+        fields: [json]

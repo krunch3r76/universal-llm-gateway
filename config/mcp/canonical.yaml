@@ -3518,6 +3518,85 @@ tools:
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-09-08
+- canonical_name: continuity_tape_read
+  domain: continuity
+  operation: tape_read
+  dispatcher_call_shape:
+    tool: continuity
+    dispatch_key: op
+    dispatch_value: tape_read
+  flat_call_shape:
+    tool: continuity_tape_read
+    substrate_qualified: user-vortex__continuity_tape_read
+  fol_descriptor: "Door 1 sync relay to POST /api/v1/continuity/tape-read. Required: thread.\n"
+  json_schema:
+    type: object
+    properties:
+      thread:
+        type: string
+      scope:
+        type: string
+      include_extras:
+        type: boolean
+      tools:
+        type: string
+      budget_bytes:
+        type: integer
+      harvest:
+        type: boolean
+    required:
+    - thread
+  skill_uri: agent_skill:continuity-thread-shaping
+  seat_visibility:
+  - mcp
+  mandate_safety: read
+  cache_priority: on_demand
+  introduced: 2026-09-09
+- canonical_name: continuity_checkpoint
+  domain: continuity
+  operation: checkpoint
+  dispatcher_call_shape:
+    tool: continuity
+    dispatch_key: op
+    dispatch_value: checkpoint
+  flat_call_shape:
+    tool: continuity_checkpoint
+    substrate_qualified: user-vortex__continuity_checkpoint
+  fol_descriptor: "Async relay to POST /api/v1/continuity/checkpoint (continuity-checkpoint-v1 pipeline).
+    Required: thread, surface.\n"
+  json_schema:
+    type: object
+    properties:
+      thread:
+        type: string
+      surface:
+        type: string
+        enum:
+        - cursor
+        - claude_ai
+      from_agent:
+        type: string
+      transcript_id:
+        type: string
+      jsonl_path:
+        type: string
+      chat_url:
+        type: string
+      residue:
+        type: string
+      pre_consolidate:
+        type: boolean
+      tools:
+        type: string
+    required:
+    - thread
+    - surface
+  skill_uri: agent_skill:checkpoint-discipline
+  seat_visibility:
+  - mcp
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-09-09
 - canonical_name: continuity_status
   domain: continuity
   operation: status

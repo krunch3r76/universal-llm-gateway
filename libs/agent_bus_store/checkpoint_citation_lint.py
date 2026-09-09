@@ -38,6 +38,7 @@ _CITATION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("decision", re.compile(r"\bdecision:([a-z0-9][a-z0-9_-]*)\b", re.IGNORECASE)),
     ("plan", re.compile(r"\bplan:([a-z0-9][a-z0-9_-]*)\b", re.IGNORECASE)),
     ("agent_bus", re.compile(r"\bagent-bus:(\d+)\b", re.IGNORECASE)),
+    ("transcript", re.compile(r"\btranscript:([a-z0-9][a-z0-9_-]*)\b", re.IGNORECASE)),
 )
 
 _AGENT_BUS_ID = re.compile(r"\bagent-bus:(\d+)\b", re.IGNORECASE)

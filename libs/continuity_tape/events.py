@@ -104,8 +104,23 @@ def continuity_messages_extracted(
     return ev
 
 
+from .events_checkpoint import (  # noqa: E402
+    mcp_continuity_checkpoint_requested,
+    stargate_continuity_checkpoint_admitted,
+    stargate_continuity_checkpoint_card_patched,
+    stargate_continuity_checkpoint_failed,
+    stargate_continuity_checkpoint_posted,
+    stargate_continuity_checkpoint_sealed,
+)
+
 __all__ = [
     "stargate_continuity_tape_read_served",
     "mcp_continuity_tape_read_requested",
     "continuity_messages_extracted",
+    "stargate_continuity_checkpoint_admitted",
+    "stargate_continuity_checkpoint_sealed",
+    "stargate_continuity_checkpoint_card_patched",
+    "stargate_continuity_checkpoint_posted",
+    "stargate_continuity_checkpoint_failed",
+    "mcp_continuity_checkpoint_requested",
 ]

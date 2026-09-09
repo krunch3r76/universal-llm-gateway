@@ -247,6 +247,44 @@ def test_status_watermark_uses_shared_parse_newest_id_wins() -> None:
     assert watermark["turn"] == 99
 
 
+def test_checkpoint_missing_required(continuity_fn) -> None:
+    result = continuity_fn(op="checkpoint", thread="10223")
+    assert result["error"]["code"] == "missing_required"
+
+
+def test_checkpoint_relay(continuity_fn) -> None:
+    with patch(
+        "tools._continuity_relays.make_sync_client",
+    ) as mock_client:
+        class _Resp:
+            status_code = 202
+
+            @staticmethod
+            def json():
+                return {"execution_id": "exec-cp-1", "status": "running"}
+
+        class _Client:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def post(self, url, json=None):
+                assert url == "/api/v1/continuity/checkpoint"
+                assert json["surface"] == "cursor"
+                return _Resp()
+
+        mock_client.return_value = _Client()
+        result = continuity_fn(
+            op="checkpoint",
+            thread="10223",
+            surface="cursor",
+            from_agent="cursor",
+        )
+    assert result["execution_id"] == "exec-cp-1"
+
+
 def test_status_watermark_ignores_unseeded_rows() -> None:
     assertions = [
         {

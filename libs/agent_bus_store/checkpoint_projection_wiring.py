@@ -157,6 +157,7 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
             "task": "task",
             "decision": "decision",
             "plan": "plan",
+            "transcript": "transcript",
         }
         prefix = kind_map.get(token.kind)
         if prefix is None:
@@ -171,10 +172,17 @@ def build_post_resolvers(*, root_thread: str) -> ProjectionResolvers:
         if not rows:
             return None
         entity = rows[0]
+        claim_head = (
+            "sealed window"
+            if token.kind == "transcript"
+            else str(entity.get("name") or entity.get("description") or "")
+        )
         return EntityAssertionRow(
-            row_id=entity_id,
+            row_id=f"transcript:{token.identifier}"
+            if token.kind == "transcript"
+            else entity_id,
             entity=entity_id,
-            claim_head=str(entity.get("name") or entity.get("description") or ""),
+            claim_head=claim_head,
         )
 
     return ProjectionResolvers(

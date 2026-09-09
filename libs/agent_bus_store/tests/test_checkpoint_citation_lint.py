@@ -75,6 +75,17 @@ def test_citation_extraction_all_kinds_and_dedup() -> None:
     assert repeat_a > first_a
 
 
+def test_transcript_citation_token_extracted() -> None:
+    body = (
+        "Harvest: transcript:cursor-2026-09-01-test · messages_sha256:abc · "
+        "codec:messages-v1 · surface:cursor"
+    )
+    findings = lint_checkpoint_citations(body)
+    transcript = [t for t in findings.citation_tokens if t.kind == "transcript"]
+    assert len(transcript) == 1
+    assert transcript[0].identifier == "cursor-2026-09-01-test"
+
+
 def test_clean_body_with_no_refs() -> None:
     findings = lint_checkpoint_citations(
         "Settled: registry disposition split landed. Next: Slice A verification."

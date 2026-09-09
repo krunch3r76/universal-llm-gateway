@@ -117,6 +117,10 @@ Residuals: `residual-imprint`. Hub ≠ parking lot.
 
 Inbound LIAISON: body <2KB sidecar-first → `agent-bus-discipline` § Body size. To write the whole continuity artefact you also need spec `checkpoint-schema-profiles` B1–B5 (`cortex://notes/system/specs/checkpoint-schema-profiles.md`).
 
+Pipeline CHECKPOINT pre-consolidate (`continuity-checkpoint-v1`) cites **`checkpoint-discipline`** and
+**`continuity-thread-shaping`** by slug in the cursor-sdk read-only packet — card patch targets
+`## Resume open` / `## Opportunities` on `{thread}-continuity.md`.
+
 ## L2 test
 
 *Would this line still be true as a `runbook:` for one matter?* ⇒ it goes there, pointed from the card — ¬ this skill.

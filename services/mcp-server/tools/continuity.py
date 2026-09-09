@@ -22,6 +22,7 @@ from mcp_events import monotonic_now, record
 from transport_utils import make_sync_client
 from universal_logging import get_logger
 
+from tools._continuity_relays import _continuity_checkpoint, _continuity_tape_read
 from tools._cortex_relay import cx
 from tools._restart_probe import annotate_unreachable_error
 from tools.pipeline import STARGATE_URL, _pipeline_result
@@ -32,7 +33,6 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _DISPATCH_TIMEOUT = 15.0
-_TAPE_READ_TIMEOUT = 60.0
 
 
 def _no_root_house_error(trigger_thread: str) -> dict[str, Any]:
@@ -222,62 +222,12 @@ def _continuity_consolidate_or_replay(
     return result
 
 
-def _continuity_tape_read(
-    *,
-    thread: str,
-    scope: str = "full",
-    include_extras: bool = False,
-    tools: str = "none",
-    budget_bytes: int | None = None,
-    harvest: bool = False,
-) -> dict[str, Any]:
-    """POST Stargate ``/api/v1/continuity/tape-read`` (Door 1 sync relay)."""
-    from continuity_tape.events import mcp_continuity_tape_read_requested
-
-    mcp_continuity_tape_read_requested(thread=thread, scope=scope, door="sync")
-    body: dict[str, Any] = {
-        "thread": thread,
-        "scope": scope,
-        "include_extras": include_extras,
-        "tools": tools,
-        "harvest": harvest,
-    }
-    if budget_bytes is not None:
-        body["budget_bytes"] = budget_bytes
-    stargate_url = os.environ.get("STARGATE_URL", STARGATE_URL)
-    try:
-        with make_sync_client(stargate_url, timeout=_TAPE_READ_TIMEOUT) as client:
-            resp = client.post("/api/v1/continuity/tape-read", json=body)
-        if resp.status_code >= 400:
-            try:
-                payload = resp.json()
-            except ValueError:
-                payload = {
-                    "error": {
-                        "code": f"http_{resp.status_code}",
-                        "message": resp.text[:500],
-                    }
-                }
-            if isinstance(payload, dict):
-                payload.setdefault("status_code", resp.status_code)
-            return payload
-        return resp.json()
-    except httpx.ConnectError as exc:
-        return annotate_unreachable_error(
-            code="stargate_unreachable",
-            message=f"Stargate not reachable: {exc}",
-            service="stargate",
-        )
-    except httpx.HTTPError as exc:
-        return {"error": {"code": "http_error", "message": str(exc)}}
-
-
 def register_continuity_tools(mcp: FastMCP) -> None:
     """Register the unified ``continuity`` tool on the code MCP surface."""
 
     @mcp.tool(title="Continuity")
     def continuity(
-        op: Literal["consolidate", "replay", "status", "tape_read"],
+        op: Literal["consolidate", "replay", "status", "tape_read", "checkpoint"],
         trigger_thread: str | None = None,
         turn: int | None = None,
         dry_run: bool | None = None,
@@ -293,6 +243,13 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         tools: str | None = None,
         budget_bytes: int | None = None,
         harvest: bool | None = None,
+        surface: str | None = None,
+        from_agent: str | None = None,
+        transcript_id: str | None = None,
+        jsonl_path: str | None = None,
+        chat_url: str | None = None,
+        residue: str | None = None,
+        pre_consolidate: bool | None = None,
     ) -> dict[str, Any]:
         """Continuity consolidation — dispatch ``consolidate-continuity`` without CLI.
 
@@ -312,7 +269,31 @@ def register_continuity_tools(mcp: FastMCP) -> None:
 
         - ``tape_read`` — Door 1 sync relay to
           ``POST /api/v1/continuity/tape-read``. Required: ``thread``.
+
+        - ``checkpoint`` — async relay to
+          ``POST /api/v1/continuity/checkpoint``. Required: ``thread``,
+          ``surface`` (``cursor`` or ``claude_ai``).
         """
+        if op == "checkpoint":
+            if not thread or not surface:
+                return {
+                    "error": {
+                        "code": "missing_required",
+                        "message": "op=checkpoint requires thread and surface",
+                    }
+                }
+            return _continuity_checkpoint(
+                thread=thread,
+                surface=surface,
+                from_agent=from_agent,
+                transcript_id=transcript_id,
+                jsonl_path=jsonl_path,
+                chat_url=chat_url,
+                residue=residue,
+                pre_consolidate=True if pre_consolidate is None else pre_consolidate,
+                tools=tools or "none",
+            )
+
         if op == "tape_read":
             if not thread:
                 return {
@@ -375,7 +356,9 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         return {
             "error": {
                 "code": "unknown_op",
-                "message": f"Unknown op: {op}. Valid: consolidate|replay|status|tape_read",
+                "message": (
+                    f"Unknown op: {op}. Valid: consolidate|replay|status|tape_read|checkpoint"
+                ),
             }
         }
 
@@ -386,4 +369,5 @@ __all__ = [
     "_continuity_async_dispatch",
     "_continuity_status_watermark",
     "_continuity_tape_read",
+    "_continuity_checkpoint",
 ]

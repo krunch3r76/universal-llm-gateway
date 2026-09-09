@@ -17,6 +17,28 @@ class TapeReadRequest(BaseModel):
     harvest: bool = False
 
 
+class CheckpointRequest(BaseModel):
+    thread: str
+    surface: Literal["cursor", "claude_ai"]
+    from_agent: str
+    transcript_id: str | None = None
+    jsonl_path: str | None = None
+    chat_url: str | None = None
+    residue: str | None = Field(default=None, max_length=800)
+    pre_consolidate: bool = True
+    tools: Tools = "none"
+    pipeline_options: dict[str, Any] | None = None
+
+
+class CheckpointAccepted(BaseModel):
+    execution_id: str
+    pipeline: str
+    thread: str
+    status: Literal["running"] = "running"
+    started_at: str
+    poll_hint: dict[str, Any]
+
+
 class TapeReadEnvelopeResponse(ContinuityMessagesEnvelope):
     """Door 1 sync read — ``open_line`` first on the wire via route serializer."""
 
