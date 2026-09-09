@@ -374,30 +374,32 @@ def persist_session_close(
         finally:
             _ext_conn.close()
         if prior is not None and prior["file_path"]:
-            prior_path = _FILES_ROOT / prior["file_path"]
-            if prior_path.is_file():
-                prior_text = prior_path.read_text(encoding="utf-8")
-                prior_verbatim = split_verbatim_layer(
-                    prior_text,
-                    verbatim_bytes=journal_verbatim_bytes(prior),
-                )
-                if not ctx.verbatim_md.startswith(prior_verbatim):
-                    conflict = build_validation_error(
-                        reason="succession.verbatim_diverged",
-                        field="transcript_messages",
-                        received="non-prefix extension",
-                        expected="byte-prefix of sealed verbatim",
-                        examples=[],
-                        hint="Succession extend requires PREFIX-EXTEND from live JSONL.",
-                        detail=(
-                            f"session {body.session_id!r} succession extend refused: "
-                            "new verbatim is not a prefix extension of sealed verbatim."
-                        ),
+            prior_codec = str(prior["verbatim_codec"] or "md-v1")
+            if prior_codec != "messages-v1":
+                prior_path = _FILES_ROOT / prior["file_path"]
+                if prior_path.is_file():
+                    prior_text = prior_path.read_text(encoding="utf-8")
+                    prior_verbatim = split_verbatim_layer(
+                        prior_text,
+                        verbatim_bytes=journal_verbatim_bytes(prior),
                     )
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail=conflict,
-                    )
+                    if not ctx.verbatim_md.startswith(prior_verbatim):
+                        conflict = build_validation_error(
+                            reason="succession.verbatim_diverged",
+                            field="transcript_messages",
+                            received="non-prefix extension",
+                            expected="byte-prefix of sealed verbatim",
+                            examples=[],
+                            hint="Succession extend requires PREFIX-EXTEND from live JSONL.",
+                            detail=(
+                                f"session {body.session_id!r} succession extend refused: "
+                                "new verbatim is not a prefix extension of sealed verbatim."
+                            ),
+                        )
+                        raise HTTPException(
+                            status_code=status.HTTP_409_CONFLICT,
+                            detail=conflict,
+                        )
 
     abs_path: Path | None = None
     seal_abs_path: Path | None = None
