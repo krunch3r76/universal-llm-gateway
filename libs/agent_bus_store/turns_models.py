@@ -533,6 +533,7 @@ class TurnSendCreate(BaseModel):
     attachments: list[AttachmentCreate] | None = None
     parent_thread: str | None = None
     lane_role: str | None = None
+    fence_id: str | None = None
 
 
 class TurnSendCreated(BaseModel):

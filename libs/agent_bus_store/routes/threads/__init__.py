@@ -19,6 +19,7 @@ from . import (  # noqa: E402,F401
     detail,
     dispatch,
     lineage,
+    resume_fence,
     send,
     send_prep,
     send_sidecar,

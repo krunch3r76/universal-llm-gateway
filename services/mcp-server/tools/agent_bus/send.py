@@ -41,6 +41,7 @@ def _send_impl(
     enroll_charter_runner: bool = False,
     parent_thread: str | None = None,
     lane_role: str | None = None,
+    fence_id: str | None = None,
 ) -> dict[str, Any]:
     """Relay to POST /threads/send."""
     payload: dict[str, Any] = {
@@ -84,6 +85,8 @@ def _send_impl(
         payload["parent_thread"] = parent_thread
     if lane_role is not None:
         payload["lane_role"] = lane_role
+    if fence_id is not None:
+        payload["fence_id"] = fence_id
 
     result = relay("agent-bus", "POST", "/threads/send", body=payload)
     if "error" in result:
@@ -147,6 +150,7 @@ def _send_dispatch(
     enroll_charter_runner: bool = False,
     parent_thread: str | None = None,
     lane_role: str | None = None,
+    fence_id: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
@@ -283,4 +287,5 @@ def _send_dispatch(
         enroll_charter_runner=enroll_charter_runner,
         parent_thread=parent_thread,
         lane_role=lane_role,
+        fence_id=fence_id,
     )

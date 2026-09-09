@@ -23,6 +23,7 @@ from ...db import (
 )
 from ...db.turns import UnreadTurnsExist
 from ...enrollment_guard import EnrollmentTagError
+from ...resume_fence_citation import check_send_citation_gate, release_on_clean_send
 from ...thread_classification import ThreadClassificationError
 from ...turns_models import TurnSendCreate, TurnSendCreated
 from . import router
@@ -187,6 +188,18 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
 
     thread_id = normalize_thread_id(body.thread)
     thread_tags = load_thread_tags(thread_id)
+    citation_refusal = check_send_citation_gate(
+        thread_id=thread_id,
+        from_agent=body.from_agent,
+        subject=body.subject,
+        body=body.body,
+        fence_id=body.fence_id,
+    )
+    if citation_refusal is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=citation_refusal,
+        )
     storage_supersedes, echo_turn_number, echo_turn_id = _resolve_send_supersedes(
         thread_id=thread_id,
         subject=body.subject,
@@ -251,6 +264,11 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         thread_tags=thread_tags,
         supersedes_turn=echo_turn_number,
     )
+    if body.fence_id:
+        release_on_clean_send(
+            fence_id=body.fence_id,
+            release_turn=turn_number,
+        )
     thread_row = get_thread(thread_id) or thread_row
     return TurnSendCreated(
         send_path="continue",

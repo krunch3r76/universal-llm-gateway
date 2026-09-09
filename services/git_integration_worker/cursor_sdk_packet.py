@@ -271,6 +271,9 @@ _CONTRACT_FRONTMATTER_RE = re.compile(
 _SDK_MODE_FRONTMATTER_RE = re.compile(
     r"^sdk_mode:\s*(agent|plan)\s*$", re.IGNORECASE | re.MULTILINE
 )
+_RESUME_ROOT_FRONTMATTER_RE = re.compile(
+    r"^resume_root:\s*(\d{3,6})\s*$", re.IGNORECASE | re.MULTILINE
+)
 
 
 def infer_contract_from_text(text: str) -> str | None:
@@ -330,6 +333,61 @@ def extract_packet_kind_from_packet(text: str) -> str | None:
     if not match:
         return None
     return match.group(1).strip().lower()
+
+
+def extract_resume_root_from_packet(text: str) -> str | None:
+    """Return ``resume_root:`` frontmatter when present."""
+    match = _RESUME_ROOT_FRONTMATTER_RE.search(text or "")
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _fetch_resume_fence_preamble(root_thread: str) -> str | None:
+    """Best-effort bundle pour for headless resume fence (agent-bus HTTP)."""
+    import os
+
+    import httpx
+
+    sock = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
+    mcp_yaml = os.path.expanduser("~/.gateway/mcp.yaml")
+    token = ""
+    if os.path.isfile(mcp_yaml):
+        try:
+            import yaml
+
+            cfg = yaml.safe_load(open(mcp_yaml, encoding="utf-8")) or {}
+            token = str(cfg.get("AGENT_BUS_TOKEN") or "").strip()
+        except Exception:
+            token = ""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        with httpx.Client(
+            transport=httpx.HTTPTransport(uds=sock),
+            base_url="http://agent-bus",
+            headers=headers,
+            timeout=15.0,
+        ) as client:
+            resp = client.post(
+                f"/threads/{root_thread}/resume-fence",
+                json={"source": "giw_preamble"},
+            )
+        if resp.status_code >= 400:
+            return None
+        bundle = resp.json()
+    except httpx.HTTPError:
+        return None
+    fence_id = (bundle.get("fence") or {}).get("fence_id")
+    read_set = bundle.get("read_set") or {}
+    if not fence_id:
+        return None
+    return (
+        "RESUME FENCE (mandatory): This dispatch carries an open resume fence.\n"
+        f"fence_id={fence_id} · root_thread={root_thread}\n"
+        f"read_set={read_set}\n"
+        f"Every agent_bus send to thread {root_thread} MUST include fence_id={fence_id} "
+        "until the orientation post is citation-clean (then the fence releases)."
+    )
 
 
 def extract_sdk_mode_from_packet(text: str) -> str | None:
@@ -491,6 +549,11 @@ def resolve_prompt_preamble(
         _TRANSCRIPT_READ_PREAMBLE,
         _BREADTH_RECON_PREAMBLE,
     ]
+    resume_root = extract_resume_root_from_packet(existing_text or "")
+    if resume_root and contract in {"recon", "consult", "none"}:
+        fence_block = _fetch_resume_fence_preamble(resume_root)
+        if fence_block:
+            parts.append(fence_block)
     if continuity_root_thread_id:
         parts.append(
             _CONTINUITY_ROOT_TEMPLATE.format(thread_id=continuity_root_thread_id)

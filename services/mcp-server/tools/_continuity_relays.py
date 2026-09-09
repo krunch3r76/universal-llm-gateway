@@ -127,4 +127,34 @@ def _continuity_checkpoint(
         return {"error": {"code": "http_error", "message": str(exc)}}
 
 
-__all__ = ["_continuity_checkpoint", "_continuity_tape_read"]
+def _continuity_resume(
+    *,
+    thread: str,
+    transcript_id: str | None = None,
+    pool: str | None = None,
+    source: str = "mcp",
+) -> dict[str, Any]:
+    """POST agent-bus ``/threads/{thread}/resume-fence`` (Door 1 bundle pour)."""
+    from tools.agent_bus._shared import relay
+
+    body: dict[str, Any] = {"source": source}
+    if transcript_id is not None:
+        body["transcript_id"] = transcript_id
+    if pool is not None:
+        body["pool"] = pool
+    return relay("agent-bus", "POST", f"/threads/{thread}/resume-fence", body=body)
+
+
+def _continuity_resume_release(*, fence_id: str) -> dict[str, Any]:
+    """POST agent-bus ``/resume-fences/{fence_id}/release``."""
+    from tools.agent_bus._shared import relay
+
+    return relay("agent-bus", "POST", f"/resume-fences/{fence_id}/release")
+
+
+__all__ = [
+    "_continuity_checkpoint",
+    "_continuity_resume",
+    "_continuity_resume_release",
+    "_continuity_tape_read",
+]

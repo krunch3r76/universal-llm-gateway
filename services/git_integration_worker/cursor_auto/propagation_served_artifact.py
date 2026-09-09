@@ -96,7 +96,7 @@ SERVED_ARTIFACT_DESCRIPTORS: dict[str, ServedArtifactDescriptor] = {
                 f"{DEFAULT_AGENT_BUS_URL.rstrip('/')}/openapi.json",
             ),
         ),
-        expected_x_mcp_count=18,
+        expected_x_mcp_count=23,
     ),
     "rag": ServedArtifactDescriptor(
         surfaces=(ServedSurface("uds", _rag_openapi_url()),),

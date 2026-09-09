@@ -22,7 +22,12 @@ from mcp_events import monotonic_now, record
 from transport_utils import make_sync_client
 from universal_logging import get_logger
 
-from tools._continuity_relays import _continuity_checkpoint, _continuity_tape_read
+from tools._continuity_relays import (
+    _continuity_checkpoint,
+    _continuity_resume,
+    _continuity_resume_release,
+    _continuity_tape_read,
+)
 from tools._cortex_relay import cx
 from tools._restart_probe import annotate_unreachable_error
 from tools.pipeline import STARGATE_URL, _pipeline_result
@@ -227,7 +232,15 @@ def register_continuity_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Continuity")
     def continuity(
-        op: Literal["consolidate", "replay", "status", "tape_read", "checkpoint"],
+        op: Literal[
+            "consolidate",
+            "replay",
+            "status",
+            "tape_read",
+            "checkpoint",
+            "resume",
+            "resume_release",
+        ],
         trigger_thread: str | None = None,
         turn: int | None = None,
         dry_run: bool | None = None,
@@ -250,6 +263,8 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         chat_url: str | None = None,
         residue: str | None = None,
         pre_consolidate: bool | None = None,
+        pool: str | None = None,
+        fence_id: str | None = None,
     ) -> dict[str, Any]:
         """Continuity consolidation — dispatch ``consolidate-continuity`` without CLI.
 
@@ -273,7 +288,38 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         - ``checkpoint`` — async relay to
           ``POST /api/v1/continuity/checkpoint``. Required: ``thread``,
           ``surface`` (``cursor`` or ``claude_ai``).
+
+        - ``resume`` — sync relay to
+          ``POST /threads/{thread}/resume-fence``. Required: ``thread``.
+          Optional: ``transcript_id``, ``pool``.
+
+        - ``resume_release`` — explicit fence release. Required: ``fence_id``.
         """
+        if op == "resume":
+            if not thread:
+                return {
+                    "error": {
+                        "code": "missing_required",
+                        "message": "op=resume requires thread",
+                    }
+                }
+            return _continuity_resume(
+                thread=thread,
+                transcript_id=transcript_id,
+                pool=pool,
+                source="mcp",
+            )
+
+        if op == "resume_release":
+            if not fence_id:
+                return {
+                    "error": {
+                        "code": "missing_required",
+                        "message": "op=resume_release requires fence_id",
+                    }
+                }
+            return _continuity_resume_release(fence_id=fence_id)
+
         if op == "checkpoint":
             if not thread or not surface:
                 return {
@@ -357,7 +403,8 @@ def register_continuity_tools(mcp: FastMCP) -> None:
             "error": {
                 "code": "unknown_op",
                 "message": (
-                    f"Unknown op: {op}. Valid: consolidate|replay|status|tape_read|checkpoint"
+                    f"Unknown op: {op}. Valid: consolidate|replay|status|"
+                    "tape_read|checkpoint|resume|resume_release"
                 ),
             }
         }
