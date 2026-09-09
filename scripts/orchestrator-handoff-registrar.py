@@ -11,10 +11,10 @@ Usage:
   # Import **ready** rows from tab-launch index:
   scripts/orchestrator-handoff-registrar.py import-index
 
-  # List / peek / one-shot dispatch:
-  scripts/orchestrator-handoff-registrar.py list
-  scripts/orchestrator-handoff-registrar.py peek
+  # One-shot dispatch (FIFO head, or cherry-pick):
   scripts/orchestrator-handoff-registrar.py dispatch-next [--dry-run]
+  scripts/orchestrator-handoff-registrar.py dispatch-next --intent claudeburst-small-pot-growth
+  scripts/orchestrator-handoff-registrar.py dispatch-next --id q-abc123
 
   # Tab completion (also auto on handoff release when lock carries queue_id):
   scripts/orchestrator-handoff-registrar.py complete --holder keystroke-abc
@@ -30,6 +30,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 from orchestrator_handoff.queue import HandoffQueue, default_queue_path
 
@@ -41,10 +42,7 @@ if not _OPPORTUNITIES.is_file():
 _HANDOFF = _REPO / "scripts/orchestrator-tab-handoff.py"
 
 
-def _dispatch_next(q: HandoffQueue, *, dry_run: bool) -> dict:
-    item = q.peek()
-    if not item:
-        return {"ok": False, "reason": "queue_empty"}
+def _dispatch_item(q: HandoffQueue, item: dict[str, Any], *, dry_run: bool) -> dict:
     if dry_run:
         return {"ok": True, "dry_run": True, "item": item}
     q.mark_launching(item["id"])
@@ -78,6 +76,41 @@ def _dispatch_next(q: HandoffQueue, *, dry_run: bool) -> dict:
     return {"ok": True, "item_id": item["id"], "holder": holder, "launch": out}
 
 
+def _resolve_queue_item(
+    q: HandoffQueue,
+    *,
+    item_id: str | None = None,
+    intent: str | None = None,
+) -> dict[str, Any] | None:
+    if item_id:
+        item = q.get(item_id)
+        if item and item.get("status") == "queued":
+            return item
+        return None
+    if intent:
+        needle = intent.strip().lower()
+        for item in q.list_items(status="queued"):
+            if str(item.get("intent") or "").lower() == needle:
+                return item
+            if needle in str(item.get("intent") or "").lower():
+                return item
+        return None
+    return q.peek()
+
+
+def _dispatch_next(
+    q: HandoffQueue,
+    *,
+    dry_run: bool,
+    item_id: str | None = None,
+    intent: str | None = None,
+) -> dict:
+    item = _resolve_queue_item(q, item_id=item_id, intent=intent)
+    if not item:
+        return {"ok": False, "reason": "queue_empty"}
+    return _dispatch_item(q, item, dry_run=dry_run)
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--house", default="10223")
@@ -100,6 +133,8 @@ def main() -> int:
     disc.add_argument("--enqueue-opportunities", action="store_true")
     d = sub.add_parser("dispatch-next")
     d.add_argument("--dry-run", action="store_true")
+    d.add_argument("--id", default=None, help="Cherry-pick queued item by id")
+    d.add_argument("--intent", default=None, help="Cherry-pick queued item by intent substring")
 
     c = sub.add_parser("complete")
     c.add_argument("--id", default=None)
@@ -138,7 +173,12 @@ def main() -> int:
             enqueue_opportunities=args.enqueue_opportunities,
         )
     elif args.cmd == "dispatch-next":
-        out = _dispatch_next(q, dry_run=args.dry_run)
+        out = _dispatch_next(
+            q,
+            dry_run=args.dry_run,
+            item_id=args.id,
+            intent=args.intent,
+        )
     elif args.cmd == "complete":
         out = q.complete(args.id, holder=args.holder, closeout_turn=args.closeout_turn)
     elif args.cmd == "fail":

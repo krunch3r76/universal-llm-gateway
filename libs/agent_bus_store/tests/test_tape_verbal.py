@@ -126,11 +126,16 @@ def test_harvest_forwards_format_verbal_to_render_tape(mock_render) -> None:
     assert mock_render.call_args.kwargs["scope"] == "last_session"
 
 
-@patch("agent_bus_store.resume_envelope._last_checkpoint_highlight", return_value="portable highlight")
+@patch("agent_bus_store.resume_envelope._resume_summary_row", return_value=(None, None, 389))
+@patch(
+    "agent_bus_store.resume_envelope._tip_checkpoint_body",
+    return_value=(389, "Highlight: portable highlight"),
+)
 @patch("agent_bus_store.resume_envelope.render_tape_with_harvest")
 def test_resume_envelope_seal_pending_strips_unsealed_open_tail(
     mock_render,
-    _mock_highlight,
+    _mock_tip,
+    _mock_summary,
 ) -> None:
     from agent_bus_store.resume_envelope import build_resume_envelope
 
@@ -175,13 +180,15 @@ def test_resume_envelope_seal_pending_strips_unsealed_open_tail(
     assert env["checkpoint_highlight"] == "portable highlight"
 
 
-@patch("agent_bus_store.resume_envelope._last_checkpoint_highlight")
+@patch("agent_bus_store.resume_envelope._resume_summary_row", return_value=(None, None, None))
+@patch("agent_bus_store.resume_envelope._tip_checkpoint_body", return_value=(None, ""))
 @patch("agent_bus_store.resume_envelope.render_tape_with_harvest")
 @patch("agent_bus_store.resume_envelope._find_jsonl_for_uuid", return_value=None)
 def test_resume_envelope_foreign_surface_without_jsonl_is_seal_pending(
     _mock_jsonl,
     mock_render,
-    _mock_highlight,
+    _mock_tip,
+    _mock_summary,
 ) -> None:
     """Cross-surface fixture: no local JSONL ⇒ degrade, sealed interval only."""
     from agent_bus_store.resume_envelope import build_resume_envelope
@@ -216,8 +223,15 @@ def test_resume_envelope_foreign_surface_without_jsonl_is_seal_pending(
     assert env["tape_verbal"] == [{"role": "assistant", "content": "journaled speech"}]
 
 
+@patch("agent_bus_store.resume_envelope._resume_summary_row", return_value=(None, None, None))
+@patch(
+    "agent_bus_store.resume_envelope._tip_checkpoint_body",
+    return_value=(389, "**Highlight:** sealed highlight"),
+)
 @patch("agent_bus_store.resume_envelope.render_tape_with_harvest")
-def test_resume_envelope_sealed_status_when_no_mismatch(mock_render) -> None:
+def test_resume_envelope_sealed_status_still_returns_highlight(
+    mock_render, _mock_tip, _mock_summary
+) -> None:
     from agent_bus_store.resume_envelope import build_resume_envelope
 
     mock_render.return_value = {
@@ -227,4 +241,4 @@ def test_resume_envelope_sealed_status_when_no_mismatch(mock_render) -> None:
     }
     env = build_resume_envelope("10223")
     assert env["seal_status"] == "sealed"
-    assert env["checkpoint_highlight"] is None
+    assert env["checkpoint_highlight"] == "sealed highlight"

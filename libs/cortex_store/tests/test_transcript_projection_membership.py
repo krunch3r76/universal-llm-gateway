@@ -20,6 +20,11 @@ def test_extract_cp_highlight_verbatim() -> None:
     assert extract_cp_highlight(body) == "verbatim residue line"
 
 
+def test_extract_cp_highlight_bold_markdown() -> None:
+    body = "**Highlight:** Attended resume reads tip CP, not hop queue state."
+    assert extract_cp_highlight(body) == "Attended resume reads tip CP, not hop queue state."
+
+
 @pytest.mark.offline
 def test_extract_cp_highlight_absent() -> None:
     assert extract_cp_highlight("In one line: no highlight here") is None

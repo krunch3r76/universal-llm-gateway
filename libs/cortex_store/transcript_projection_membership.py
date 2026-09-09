@@ -33,7 +33,7 @@ _WINDOW_ANCHOR_RE = re.compile(
     r"Window:\s*transcript_id=([0-9a-f-]{36})\s*·\s*turns@cp=(\d+)",
     re.I,
 )
-_HIGHLIGHT_RE = re.compile(r"(?m)^Highlight:\s*(.+)$")
+_HIGHLIGHT_RE = re.compile(r"(?m)^(?:\*\*)?Highlight:(?:\*\*)?\s*(.+)$")
 HIGHLIGHT_MAX_CHARS = 600
 
 

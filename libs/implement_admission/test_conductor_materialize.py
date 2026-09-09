@@ -223,6 +223,18 @@ def test_materialize_conductor_hop_contract(tmp_path: Path) -> None:
     assert "hop_seq: <n>" in mp.text
 
 
+def test_sparse_scoreboard_has_mode_column() -> None:
+    body = render_sparse_scoreboard(
+        source_ref="todo:foo",
+        slug="foo",
+        entry_gate="G1",
+        stop_after=None,
+    )
+    assert "| Mode |" in body
+    assert "| G3 | Densify | plan | OPEN |" in body
+    assert "| G5 | Implement | agent | OPEN |" in body
+
+
 def test_sparse_scoreboard_has_stops_column() -> None:
     ctx = load_conductor_context("todo:foo", cortex=_StubCortex())
     body = render_sparse_scoreboard(

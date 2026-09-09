@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -147,6 +148,23 @@ def events_from_ledger(
         "thread_id": data.get("thread_id") or subject,
         "status": str(status),
     }
+    record_json = data.get("record_json")
+    if isinstance(record_json, str) and record_json.strip():
+        try:
+            rec = json.loads(record_json)
+        except json.JSONDecodeError:
+            rec = None
+        if isinstance(rec, dict):
+            mode = rec.get("sdk_mode") or rec.get("conversation_mode")
+            if mode:
+                payload["sdk_mode"] = str(mode)
+    elif isinstance(record_json, dict):
+        mode = record_json.get("sdk_mode") or record_json.get("conversation_mode")
+        if mode:
+            payload["sdk_mode"] = str(mode)
+    sdk_mode = data.get("sdk_mode") or data.get("conversation_mode")
+    if sdk_mode and "sdk_mode" not in payload:
+        payload["sdk_mode"] = str(sdk_mode)
     if signal == signals.SDK_WORKER_COMPLETED:
         payload["outcome"] = "completed"
     if signal == signals.SDK_WORKER_FAILED:

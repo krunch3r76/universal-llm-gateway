@@ -115,6 +115,7 @@ def sdk_rows(
                 checkout_branch=state.checkout_branch,
                 fast=state.fast,
                 packet_kind=state.packet_kind,
+                sdk_mode=state.sdk_mode,
             )
         )
     rows.sort(key=lambda r: r.dispatch_id)

@@ -60,6 +60,7 @@ class SdkState:
         "checkout_branch",
         "fast",
         "packet_kind",
+        "sdk_mode",
     )
 
     def __init__(self, dispatch_id: str) -> None:
@@ -112,6 +113,7 @@ class SdkState:
         self.checkout_branch: str | None = None
         self.fast: bool | None = None
         self.packet_kind: str | None = None
+        self.sdk_mode: str | None = None
 
 
 def absorb_admit_stamps(row: SdkState, payload: Mapping[str, Any]) -> None:

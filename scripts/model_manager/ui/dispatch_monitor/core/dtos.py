@@ -183,6 +183,7 @@ class SdkDispatchRow:
     checkout_branch: str | None = None
     fast: bool | None = None
     packet_kind: str | None = None
+    sdk_mode: str | None = None
 
 
 @dataclass(frozen=True)

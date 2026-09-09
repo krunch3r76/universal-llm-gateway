@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import re
+from pathlib import Path
 from typing import Any
 
 from cortex_store.transcript_projection_membership import extract_cp_highlight
@@ -83,10 +86,10 @@ def _filter_messages_for_seal_pending(
     ]
 
 
-def _last_checkpoint_highlight(thread_id: str) -> str | None:
+def _tip_checkpoint_body(thread_id: str) -> tuple[int | None, str]:
     cps = list_checkpoint_turns(thread_id=thread_id)
     if not cps:
-        return None
+        return None, ""
     tip = cps[-1]
     with connect() as conn:
         row = conn.execute(
@@ -94,7 +97,68 @@ def _last_checkpoint_highlight(thread_id: str) -> str | None:
             (thread_id, tip.turn_number),
         ).fetchone()
     body = str(row["body"]) if row else ""
+    return tip.turn_number, body
+
+
+def _last_checkpoint_highlight(thread_id: str) -> str | None:
+    _, body = _tip_checkpoint_body(thread_id)
     return extract_cp_highlight(body)
+
+
+def _summary_row_from_tip_cp(body: str) -> str | None:
+    """Fold line from tip CHECKPOINT residue when L3 card is unavailable."""
+    for pattern in (
+        r"(?m)^\*\*Highlight:\*\*\s*(.+)$",
+        r"(?m)^In one line:\s*(.+)$",
+        r"(?m)^\*\*Going:\*\*\s*(.+)$",
+        r"(?m)^\*\*Mission:\*\*\s*(.+)$",
+    ):
+        match = re.search(pattern, body or "")
+        if match:
+            text = match.group(1).strip()
+            if text:
+                return text[:600]
+    return None
+
+
+def _read_l3_summary_row(thread_id: str) -> tuple[str | None, str | None]:
+    """Best-effort read of consolidate card summary (L3) from cortex files mount."""
+    root = Path(
+        os.environ.get("CORTEX_FILES_ROOT", str(Path.home() / "mcp-data/files"))
+    )
+    card = root / "notes/system/threads" / f"{thread_id}-continuity.md"
+    if not card.is_file():
+        return None, None
+    text = card.read_text(encoding="utf-8", errors="replace")
+    for pattern in (
+        r"(?m)^\*\*Settled:\*\*\s*(.+)$",
+        r"(?m)^\*\*Live:\*\*\s*(.+)$",
+        r"(?m)^\*\*Next:\*\*\s*(.+)$",
+    ):
+        match = re.search(pattern, text)
+        if match:
+            line = match.group(1).strip()
+            if line:
+                return line[:600], "l3_continuity_card"
+    return None, None
+
+
+def _resume_summary_row(
+    thread_id: str,
+    *,
+    tip_turn: int | None = None,
+    tip_body: str | None = None,
+) -> tuple[str | None, str | None, int | None]:
+    """summary_row + source + as_of_turn per session-effectiveness G-E1."""
+    if tip_turn is None or tip_body is None:
+        tip_turn, tip_body = _tip_checkpoint_body(thread_id)
+    l3_row, l3_source = _read_l3_summary_row(thread_id)
+    if l3_row:
+        return l3_row, l3_source, tip_turn
+    tip_row = _summary_row_from_tip_cp(tip_body or "")
+    if tip_row:
+        return tip_row, "tip_checkpoint_residue", tip_turn
+    return None, None, tip_turn
 
 
 def build_resume_envelope(thread_id: str) -> dict[str, Any]:
@@ -117,8 +181,10 @@ def build_resume_envelope(thread_id: str) -> dict[str, Any]:
     verbal = tape.get("verbal_messages")
     if seal_status == "seal_pending" or not isinstance(verbal, list):
         verbal = to_verbal_messages(messages)
-    checkpoint_highlight = (
-        _last_checkpoint_highlight(thread_id) if seal_status == "seal_pending" else None
+    tip_turn, tip_body = _tip_checkpoint_body(thread_id)
+    checkpoint_highlight = extract_cp_highlight(tip_body)
+    summary_row, summary_row_source, summary_as_of_turn = _resume_summary_row(
+        thread_id, tip_turn=tip_turn, tip_body=tip_body
     )
     return {
         "scope": open_line.get("scope") or "last_session",
@@ -131,7 +197,9 @@ def build_resume_envelope(thread_id: str) -> dict[str, Any]:
             thread=thread_id
         ),
         "word_projection_uri": None,
-        "consolidate_summary_row": None,
+        "consolidate_summary_row": summary_row,
+        "summary_row_source": summary_row_source,
+        "summary_row_as_of_turn": summary_as_of_turn,
     }
 
 

@@ -70,12 +70,20 @@ Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malfo
 
 ## Resume (lean default)
 
+**Pickup stack (BINDING — session-effectiveness A3):** Authority = `decision:continuity-resume-stack-adjudication-2026-09-08`. Enforced order on root resume:
+
+1. **Tip CHECKPOINT** — step 2 body (reconstitution index; not superseded by envelope).
+2. **`thread_get.resume_envelope`** transport (in order): `checkpoint_highlight` → `consolidate_summary_row` (+ `summary_row_source`, `summary_row_as_of_turn`) → `tape_verbal` bounded pour (`seal_status` governs degrade).
+3. Widen per step 6 table — card, pools, scoreboard, sidecars.
+
+`resume_envelope` carries Highlight / summary_row / sealed pour — **not** a layer above tip CP. ¬ competing orderings.
+
 1. Detect root: `role:root` ∨ legacy CHECKPOINT read ∨ enrollment.
-2. Tip body: `fetch(thread, compact=true, last=K)` → subject index → `get(turn_number=<latest subject starting with CHECKPOINT>)`. **¬** `last=1` as tip (latest turn may be closeout).
+2. Tip body: `fetch(thread, compact=true, last=K)` → subject index → `get(turn_number=<latest subject starting with CHECKPOINT>)`. **¬** `last=1` as tip (latest turn may be closeout). Then execute pickup stack layers 1–2 (`resume_envelope` after tip body).
 3. Other unread: compact subjects only; ¬ auto-widen on `has_earlier_turns`.
 4. Child lanes (`lane_bind` → append-only `thread_lane_associations`; CHECKPOINT's **Child lanes** derived zone = depth-1 substantiated, per `agent-bus-discipline` § Lane parentage): pointer IDs only — ¬ fetch child history on parent resume. Leftover conductor workers that landed as grandchildren of a coord stub (9676/9677 class) are **not** Child lanes — cite `agent-bus:{worker}` on the root CHECKPOINT or `lane_bind` the worker to the root. `conductor_coord_split_refused` retires the class going forward.
-5. **Verbal tape pour (STRUCTURAL — all non-work continuity threads):** `∀ spine=root` ⇒ **`thread_get(thread)` includes `resume_envelope`** by default (`include_resume=true`) — last-session verbal tape (`scope=last_session`, interval between prior CHECKPOINT and tip CHECKPOINT). Synthesize `resume_envelope.tape_verbal` into orientation before operator-facing prose. **¬** a separate `tape()` call on resume unless debugging. **`spine≠root`:** `resume_envelope` omitted — bounded packet / CLOSEOUT / sidecar only; `tape` returns 403.
-6. Then: tip → card (shape) → **own `## Pools` row** (when present) → `{id}-transcript-projection.md` if named → scoreboard gated lane if named → tape pour (step 5) → name the purpose → one named hop (runbook body · sidecar · probe); widen only per the table below. **¬** load `## Windows` on resume. **¬** treat a fat continuity-doc as the constitution. Catch-up *card* + runbook association: Use the `continuity-thread-shaping` skill.
+5. **Verbal tape pour (STRUCTURAL — pickup stack layer 2c):** `∀ spine=root` ⇒ **`thread_get(thread)` includes `resume_envelope`** by default (`include_resume=true`) — last-session verbal tape (`scope=last_session`, interval between prior CHECKPOINT and tip CHECKPOINT). After `checkpoint_highlight` and `consolidate_summary_row`, synthesize `resume_envelope.tape_verbal` into orientation before operator-facing prose. **¬** a separate `tape()` call on resume unless debugging. **`spine≠root`:** `resume_envelope` omitted — bounded packet / CLOSEOUT / sidecar only; `tape` returns 403.
+6. Then: card (shape) → **own `## Pools` row** (when present) → `{id}-transcript-projection.md` if named → scoreboard gated lane if named → name the purpose → one named hop (runbook body · sidecar · probe); widen only per the table below. **¬** load `## Windows` on resume. **¬** treat a fat continuity-doc as the constitution. Catch-up *card* + runbook association: Use the `continuity-thread-shaping` skill.
 
 | Widen when | Fetch |
 |---|---|

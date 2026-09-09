@@ -45,9 +45,17 @@ from durable_io.atomic import durable_write_text
 
 try:
     from orchestrator_handoff.queue import HandoffQueue, default_queue_path
+    from orchestrator_handoff.work_prompt import (
+        WorkClass,
+        classify_work_prompt,
+        work_execution_lines,
+    )
 except ImportError:  # pragma: no cover — script invoked without libs on path
     HandoffQueue = None  # type: ignore[misc, assignment]
     default_queue_path = None  # type: ignore[misc, assignment]
+    WorkClass = None  # type: ignore[misc, assignment]
+    classify_work_prompt = None  # type: ignore[misc, assignment]
+    work_execution_lines = None  # type: ignore[misc, assignment]
 
 _REPO = Path(__file__).resolve().parents[1]
 _LOCK = _REPO / "tmp/watchers/orchestrator-handoff.lock"
@@ -193,27 +201,52 @@ def _build_handoff_message(
     intent: str,
     work_prompt: Path | None,
     queue_id: str = "",
+    work_class: str | None = None,
 ) -> str:
-    work_line = (
-        f"Read and execute: `{work_prompt}`" if work_prompt else "Follow heartbeat WORK_PENDING."
+    if classify_work_prompt is not None and work_prompt is not None:
+        wc = classify_work_prompt(work_prompt)
+    elif work_class and WorkClass is not None:
+        wc = WorkClass(work_class)
+    elif WorkClass is not None:
+        wc = WorkClass.MECHANICAL
+    else:
+        wc = None
+
+    exec_lines = (
+        work_execution_lines(work_class=wc, work_prompt=work_prompt)
+        if work_execution_lines is not None and wc is not None
+        else [
+            (
+                f"1. Read and execute: `{work_prompt}` — WORK in-seat."
+                if work_prompt
+                else "1. Follow heartbeat WORK_PENDING."
+            )
+        ]
     )
+
     qline = f" queue_id=`{queue_id}`" if queue_id else ""
-    return (
-        f"resume {thread}\n\n"
-        f"**ORCHESTRATOR_HANDOFF** holder=`{holder}` intent=`{intent}`{qline}\n"
-        f"Lock is pre-held on io — do not acquire again.\n"
+    wc_line = f" work_class=`{wc.value}`" if wc is not None else ""
+
+    parts = [
+        f"resume {thread}\n",
+        f"**ORCHESTRATOR_HANDOFF** holder=`{holder}` intent=`{intent}`{qline}{wc_line}",
+        "Lock is pre-held on io — do not acquire again.",
         f"0. First action: `python scripts/orchestrator-tab-handoff.py ack --holder {holder}` "
-        f"(re-run every ~60 min on long WORK).\n"
-        f"1. {work_line} — WORK **in-seat**, mechanical only (no Task subagent).\n"
-        f"   WORK-prompt \"no posts on 10223\" binds WORK content only; step 3 is required.\n"
-        f"2. If the WORK prompt requires it: CLOSEOUT on 10303.\n"
-        f"3. Exactly one CHECKPOINT on {thread}; note turn N. "
-        f"Rename tab `. {thread} human-continuity-speech-tape-design`.\n"
-        f"4. Same turn: `python scripts/orchestrator-tab-handoff.py release "
-        f"--holder {holder} --checkpoint-turn N`.\n"
-        f"   (completes queue item `{queue_id}` when set)\n"
-        f"If queue empty after job: `registrar discover`.\n"
+        f"(re-run every ~60 min on long WORK).",
+    ]
+    parts.extend(exec_lines)
+    parts.extend(
+        [
+            "2. If the WORK prompt requires it: CLOSEOUT on 10303.",
+            f"3. Exactly one CHECKPOINT on {thread}; note turn N. "
+            f"Rename tab `. {thread} human-continuity-speech-tape-design`.",
+            f"4. Same turn: `python scripts/orchestrator-tab-handoff.py release "
+            f"--holder {holder} --checkpoint-turn N`.",
+            f"   (completes queue item `{queue_id}` when set)",
+            "If queue empty after job: `python scripts/orchestrator-handoff-registrar.py discover`.",
+        ]
     )
+    return "\n".join(parts)
 
 
 def launch_tab(
