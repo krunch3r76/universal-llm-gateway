@@ -10,7 +10,9 @@ from universal_logging import get_logger
 
 from systems.proxy.dependencies import get_auth_dependency
 
-from .models import TapeReadEnvelopeResponse, TapeReadRequest
+from continuity_tape.messages import ContinuityMessagesEnvelope
+
+from .models import TapeReadRequest
 from .tape_read import fetch_tape_envelope
 
 logger = get_logger(__name__)
@@ -19,7 +21,7 @@ router = APIRouter(prefix="/continuity", tags=["continuity"])
 
 @router.post(
     "/tape-read",
-    response_model=TapeReadEnvelopeResponse,
+    response_model=ContinuityMessagesEnvelope,
     responses={
         403: {"description": "Not a root continuity lane"},
         503: {"description": "agent-bus unreachable"},

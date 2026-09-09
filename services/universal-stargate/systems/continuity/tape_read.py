@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
@@ -18,6 +19,11 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 _HTTP_TIMEOUT_S = 30.0
+
+
+def _bus_headers() -> dict[str, str]:
+    token = os.getenv("AGENT_BUS_TOKEN", "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def _agent_surface(agent: str | None) -> str:
@@ -159,7 +165,7 @@ async def fetch_tape_envelope(
     bus_url = DEFAULT_AGENT_BUS_URL
     try:
         async with make_async_client(bus_url, timeout=_HTTP_TIMEOUT_S) as client:
-            resp = await client.get(url, params=params)
+            resp = await client.get(url, params=params, headers=_bus_headers())
     except httpx.ConnectError as exc:
         logger.warning("agent-bus unreachable for tape-read: %s", exc)
         return (
