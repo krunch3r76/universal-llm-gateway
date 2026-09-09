@@ -168,7 +168,7 @@ def build_resume_envelope(thread_id: str) -> dict[str, Any]:
         thread_id=thread_id,
         budget_bytes=512_000,
         harvest=False,
-        format="verbal",
+        include_extras=False,
         scope="last_session",
     )
     if tape.get("error"):
@@ -178,9 +178,7 @@ def build_resume_envelope(thread_id: str) -> dict[str, Any]:
     messages = tape.get("messages") or []
     if seal_status == "seal_pending":
         messages = _filter_messages_for_seal_pending(messages, open_line)
-    verbal = tape.get("verbal_messages")
-    if seal_status == "seal_pending" or not isinstance(verbal, list):
-        verbal = to_verbal_messages(messages)
+    verbal = to_verbal_messages(messages)
     tip_turn, tip_body = _tip_checkpoint_body(thread_id)
     checkpoint_highlight = extract_cp_highlight(tip_body)
     summary_row, summary_row_source, summary_as_of_turn = _resume_summary_row(

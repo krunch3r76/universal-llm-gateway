@@ -1,0 +1,235 @@
+{
+  "$defs": {
+    "EnvelopeMeta": {
+      "additionalProperties": true,
+      "properties": {
+        "budget_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Budget Bytes"
+        },
+        "checkpoint_turns": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checkpoint Turns"
+        },
+        "codec_counts": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "integer"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Codec Counts"
+        },
+        "door": {
+          "anyOf": [
+            {
+              "enum": [
+                "sync",
+                "pipeline"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Door"
+        },
+        "execution_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Execution Id"
+        },
+        "extras": {
+          "default": false,
+          "title": "Extras",
+          "type": "boolean"
+        },
+        "message_count": {
+          "default": 0,
+          "title": "Message Count",
+          "type": "integer"
+        },
+        "messages_sha256": {
+          "default": "",
+          "title": "Messages Sha256",
+          "type": "string"
+        },
+        "payload_bytes": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Payload Bytes"
+        },
+        "request": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Request"
+        },
+        "sources": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sources"
+        },
+        "surface": {
+          "default": "mixed",
+          "enum": [
+            "cursor",
+            "claude_ai",
+            "grok",
+            "mixed"
+          ],
+          "title": "Surface",
+          "type": "string"
+        },
+        "surfaces": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Surfaces"
+        },
+        "tools": {
+          "default": "none",
+          "enum": [
+            "none",
+            "marker",
+            "openai"
+          ],
+          "title": "Tools",
+          "type": "string"
+        },
+        "tools_available": {
+          "default": false,
+          "title": "Tools Available",
+          "type": "boolean"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        },
+        "turn_count": {
+          "default": 0,
+          "title": "Turn Count",
+          "type": "integer"
+        }
+      },
+      "title": "EnvelopeMeta",
+      "type": "object"
+    }
+  },
+  "$id": "ulg.continuity.messages/1",
+  "additionalProperties": true,
+  "properties": {
+    "index": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Index",
+      "type": "array"
+    },
+    "messages": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Messages",
+      "type": "array"
+    },
+    "meta": {
+      "$ref": "#/$defs/EnvelopeMeta"
+    },
+    "open_line": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Open Line"
+    },
+    "schema": {
+      "const": "ulg.continuity.messages/1",
+      "default": "ulg.continuity.messages/1",
+      "title": "Schema",
+      "type": "string"
+    }
+  },
+  "required": [
+    "meta"
+  ],
+  "title": "ContinuityMessagesEnvelope",
+  "type": "object"
+}

@@ -43,7 +43,7 @@ def test_resume_bundle_keys_present_and_null_pointers_ok() -> None:
     relay_mock.assert_called_once_with(
         "agent-bus",
         "GET",
-        "/threads/10223/tape?harvest=false&format=verbal&scope=last_session",
+        "/threads/10223/tape?harvest=false&include_extras=false&scope=last_session",
     )
     assert _BUNDLE_KEYS <= result.keys()
     assert result["mechanical_projection_uri"] == (
@@ -54,9 +54,8 @@ def test_resume_bundle_keys_present_and_null_pointers_ok() -> None:
     assert result["tape_verbal"] == [{"role": "user", "content": "resume me"}]
 
 
-def test_resume_bundle_prefers_verbal_messages_from_tape() -> None:
+def test_resume_bundle_strips_extras_from_messages() -> None:
     tape = {
-        "verbal_messages": [{"role": "assistant", "content": "poured"}],
         "messages": [
             {
                 "role": "assistant",

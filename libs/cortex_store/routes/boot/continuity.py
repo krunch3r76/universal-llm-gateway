@@ -33,7 +33,7 @@ def _decode_json_list(value: Any) -> list[str]:
 def _get_session_row(conn: object, session_id: str) -> dict[str, Any] | None:
     rows = db_query(
         conn,  # type: ignore[arg-type]
-        "SELECT * FROM session_journals WHERE session_id = ? LIMIT 1",
+        "SELECT * FROM session_lids WHERE session_id = ? LIMIT 1",
         (session_id,),
     )
     return rows[0] if rows else None
@@ -67,7 +67,7 @@ def _get_sibling_continuations(
         conn,  # type: ignore[arg-type]
         """
         SELECT session_id
-        FROM session_journals
+        FROM session_lids
         WHERE agent = ?
           AND prior_session_id = ?
           AND session_id != ?
@@ -98,8 +98,8 @@ def get_boot_continuity(
             conn,
             """
             SELECT id, session_id, agent, timestamp, summary, open_items,
-                   prior_session_id
-            FROM session_journals
+                   prior_session_id, closed_by
+            FROM session_lids
             WHERE agent = ?
             ORDER BY id DESC
             LIMIT 1
@@ -133,7 +133,7 @@ def get_boot_continuity(
         if row.get("prior_session_id") is None and len(continuity_chain) == 1:
             earlier = db_query(
                 conn,
-                "SELECT 1 FROM session_journals WHERE agent = ? AND id < ? LIMIT 1",
+                "SELECT 1 FROM session_lids WHERE agent = ? AND id < ? LIMIT 1",
                 (agent, row["id"]),
             )
             if earlier:
@@ -153,6 +153,7 @@ def get_boot_continuity(
                 "summary": row["summary"],
                 "open_items": open_items,
                 "transcript_entity_id": transcript_entity_id,
+                "closed_by": row.get("closed_by"),
             },
             "continuity_chain": continuity_chain,
             "continuations": continuations,

@@ -1,4 +1,4 @@
-"""Verbal tape adapter — extras stripped, role/content kept, index role policy."""
+"""Verbal tape adapter — extras stripped, role/content kept, index in index[] only."""
 
 from __future__ import annotations
 
@@ -7,15 +7,13 @@ from unittest.mock import patch
 import pytest
 from agent_bus_store.tape_harvest import render_tape_with_harvest
 from agent_bus_store.tape_render import (
+    _degrade_overflow_messages,
     _filter_messages_to_cells,
     _last_session_cells,
     render_tape,
 )
-from agent_bus_store.tape_verbal import (
-    VERBAL_KEYS,
-    to_verbal_message,
-    to_verbal_messages,
-)
+from agent_bus_store.tape_verbal import CORE_KEYS, to_verbal_message, to_verbal_messages
+from continuity_tape.messages import strip_extras
 
 pytestmark = pytest.mark.offline
 
@@ -30,7 +28,7 @@ _MECHANICAL = {
     "transcript_span": "transcript:cursor-2026-09-07-100000-sp1#turn-12",
 }
 
-_INDEX = {
+_INDEX_MSG = {
     "role": "index",
     "content": "transcript:cursor-2026-09-07-100000-sp1#turn-3",
     "transcript_span": "transcript:cursor-2026-09-07-100000-sp1#turn-3",
@@ -53,11 +51,10 @@ _EXTRAS = (
 def test_verbal_adapter_strips_transcript_id_turns_at_cp_equivalents_and_bus_turn_id() -> (
     None
 ):
-    """Mechanical extras including turns@cp (turn_index) must not leak into verbal."""
     verbal = to_verbal_message(_MECHANICAL)
     for key in _EXTRAS:
         assert key not in verbal
-    assert set(verbal) == set(VERBAL_KEYS)
+    assert set(verbal) == set(CORE_KEYS)
 
 
 def test_verbal_adapter_preserves_role_and_content() -> None:
@@ -68,16 +65,9 @@ def test_verbal_adapter_preserves_role_and_content() -> None:
     assert "transcript_id" in _MECHANICAL
 
 
-def test_index_role_overflow_rows_stay_on_verbal_tape_with_role_content_only() -> None:
-    """Index-role policy: overflow index rows are kept, not dropped or remapped."""
-    verbal = to_verbal_message(_INDEX)
-    assert verbal["role"] == "index"
-    assert verbal["content"] == "transcript:cursor-2026-09-07-100000-sp1#turn-3"
-    assert set(verbal) == {"role", "content"}
-    for key in _EXTRAS:
-        assert key not in verbal
-    mapped = to_verbal_messages([_MECHANICAL, _INDEX])
-    assert [m["role"] for m in mapped] == ["user", "index"]
+def test_index_role_rows_omitted_from_verbal_tape() -> None:
+    mapped = to_verbal_messages([_MECHANICAL, _INDEX_MSG])
+    assert mapped == [{"role": "user", "content": _MECHANICAL["content"]}]
 
 
 def test_last_session_scope_keeps_only_last_cp_interval() -> None:
@@ -97,7 +87,7 @@ def test_last_session_scope_keeps_only_last_cp_interval() -> None:
     assert [m["content"] for m in filtered] == ["last", "open"]
 
 
-def test_render_tape_format_verbal_adds_verbal_messages_keeps_mechanical() -> None:
+def test_render_tape_returns_messages_and_index_arrays() -> None:
     with (
         patch("agent_bus_store.tape_render.list_checkpoint_turns", return_value=()),
         patch("cortex_store.db.cortex_conn") as mock_conn,
@@ -105,25 +95,45 @@ def test_render_tape_format_verbal_adds_verbal_messages_keeps_mechanical() -> No
     ):
         conn = mock_conn.return_value.__enter__.return_value
         conn.execute.return_value.fetchall.return_value = []
-        omitted = render_tape(thread_id="100")
-        verbal = render_tape(thread_id="100", format="verbal")
-    assert "verbal_messages" not in omitted
-    assert omitted["messages"] == []
-    assert verbal["messages"] == []
-    assert verbal["verbal_messages"] == []
+        result = render_tape(thread_id="100")
+    assert "index" in result
+    assert "verbal_messages" not in result
+    assert result["messages"] == []
+    assert result["index"] == []
+    assert result["open_line"]["message_count"] == len(result["messages"])
+    assert result["open_line"]["index_count"] == len(result["index"])
 
 
 @patch("agent_bus_store.tape_harvest.render_tape")
-def test_harvest_forwards_format_verbal_to_render_tape(mock_render) -> None:
-    mock_render.return_value = {"messages": [], "verbal_messages": []}
+def test_harvest_forwards_include_extras_to_render_tape(mock_render) -> None:
+    mock_render.return_value = {"messages": [], "index": []}
     render_tape_with_harvest(
         thread_id="1",
         budget_bytes=1000,
         harvest=False,
-        format="verbal",
+        include_extras=True,
+        tools="marker",
     )
-    assert mock_render.call_args.kwargs["format"] == "verbal"
+    assert mock_render.call_args.kwargs["include_extras"] is True
+    assert mock_render.call_args.kwargs["tools"] == "marker"
     assert mock_render.call_args.kwargs["scope"] == "last_session"
+
+
+def test_degrade_overflow_puts_rows_in_index_not_messages() -> None:
+    messages = [
+        {"role": "user", "content": "a", "session_id": "s1", "transcript_id": "t1", "turn_index": 1},
+        {"role": "user", "content": "b", "session_id": "s1", "transcript_id": "t1", "turn_index": 2},
+    ]
+    kept, index_rows, truncated = _degrade_overflow_messages(
+        messages,
+        cells=[],
+        budget_bytes=40,
+    )
+    assert truncated is True
+    assert all(msg.get("role") != "index" for msg in kept)
+    assert index_rows
+    assert "transcript_span" in index_rows[0]
+    assert "role" not in index_rows[0]
 
 
 @patch("agent_bus_store.resume_envelope._resume_summary_row", return_value=(None, None, 389))
@@ -154,10 +164,6 @@ def test_resume_envelope_seal_pending_strips_unsealed_open_tail(
                 "turn_index": 12,
             },
         ],
-        "verbal_messages": [
-            {"role": "user", "content": "sealed cell"},
-            {"role": "user", "content": "open tail"},
-        ],
         "open_line": {
             "scope": "last_session",
             "mismatch": [
@@ -177,68 +183,30 @@ def test_resume_envelope_seal_pending_strips_unsealed_open_tail(
     env = build_resume_envelope("10223")
     assert env["seal_status"] == "seal_pending"
     assert env["tape_verbal"] == [{"role": "user", "content": "sealed cell"}]
-    assert env["checkpoint_highlight"] == "portable highlight"
 
 
-@patch("agent_bus_store.resume_envelope._resume_summary_row", return_value=(None, None, None))
-@patch("agent_bus_store.resume_envelope._tip_checkpoint_body", return_value=(None, ""))
+@patch("agent_bus_store.resume_envelope._resume_summary_row", return_value=(None, None, 389))
+@patch(
+    "agent_bus_store.resume_envelope._tip_checkpoint_body",
+    return_value=(389, "Highlight: portable highlight"),
+)
 @patch("agent_bus_store.resume_envelope.render_tape_with_harvest")
-@patch("agent_bus_store.resume_envelope._find_jsonl_for_uuid", return_value=None)
-def test_resume_envelope_foreign_surface_without_jsonl_is_seal_pending(
-    _mock_jsonl,
+def test_resume_envelope_journaled_speech_poured(
     mock_render,
     _mock_tip,
     _mock_summary,
 ) -> None:
-    """Cross-surface fixture: no local JSONL ⇒ degrade, sealed interval only."""
     from agent_bus_store.resume_envelope import build_resume_envelope
 
     mock_render.return_value = {
-        "messages": [
-            {
-                "role": "assistant",
-                "content": "journaled speech",
-                "transcript_id": "uuid-b",
-                "turn_index": 3,
-            },
-            {
-                "role": "user",
-                "content": "would-be open tail",
-                "transcript_id": "uuid-b",
-                "turn_index": 7,
-            },
-        ],
-        "open_line": {
-            "scope": "last_session",
-            "mismatch": [],
-            "open_interval": {"transcript_ids": ["uuid-b"], "turns": 4},
-            "last_cp": {
-                "transcript_id": "uuid-b",
-                "turn_hi": 7,
-            },
-        },
-    }
-    env = build_resume_envelope("10223")
-    assert env["seal_status"] == "seal_pending"
-    assert env["tape_verbal"] == [{"role": "assistant", "content": "journaled speech"}]
-
-
-@patch("agent_bus_store.resume_envelope._resume_summary_row", return_value=(None, None, None))
-@patch(
-    "agent_bus_store.resume_envelope._tip_checkpoint_body",
-    return_value=(389, "**Highlight:** sealed highlight"),
-)
-@patch("agent_bus_store.resume_envelope.render_tape_with_harvest")
-def test_resume_envelope_sealed_status_still_returns_highlight(
-    mock_render, _mock_tip, _mock_summary
-) -> None:
-    from agent_bus_store.resume_envelope import build_resume_envelope
-
-    mock_render.return_value = {
-        "messages": [],
-        "verbal_messages": [{"role": "user", "content": "ok"}],
+        "messages": [{"role": "assistant", "content": "journaled speech"}],
         "open_line": {"scope": "last_session", "mismatch": []},
     }
     env = build_resume_envelope("10223")
-    assert env["seal_status"] == "sealed"
-    assert env["checkpoint_highlight"] == "sealed highlight"
+    assert env["tape_verbal"] == [{"role": "assistant", "content": "journaled speech"}]
+
+
+def test_strip_extras_matches_core_keys() -> None:
+    assert strip_extras([_MECHANICAL]) == [
+        {"role": "user", "content": "Resume from the last window."}
+    ]

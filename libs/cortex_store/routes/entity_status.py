@@ -142,7 +142,7 @@ def get_entity_status(
         journal_rows = query(
             conn,
             "SELECT id, timestamp, agent, summary, decisions "
-            "FROM session_journals "
+            "FROM session_lids "
             "WHERE json_array_length(entity_ids) > 0 "
             "AND EXISTS ("
             "  SELECT 1 FROM json_each(entity_ids) WHERE value = ?"

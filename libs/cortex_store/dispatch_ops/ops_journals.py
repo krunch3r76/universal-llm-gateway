@@ -136,9 +136,14 @@ def _op_deadline_resolve(
 
 
 def _op_journal_read(
-    limit: int | None = None, agent: str | None = None, **_: object
+    limit: int | None = None,
+    agent: str | None = None,
+    facet: str | None = None,
+    **_: object,
 ) -> dict[str, Any]:
-    return _list_session_journals_impl(limit=limit or 3, agent=agent)
+    return _list_session_journals_impl(
+        limit=limit or 3, agent=agent, facet=facet or "lid"
+    )
 
 
 def _op_journal_write(

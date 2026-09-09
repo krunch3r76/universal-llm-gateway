@@ -206,7 +206,7 @@ def test_render_tape_messages_contain_user_and_assistant_speech(tmp_path: Path) 
     ):
         conn = mock_conn.return_value.__enter__.return_value
         conn.execute.return_value.fetchall.return_value = [journal_row]
-        result = render_tape(thread_id="6341")
+        result = render_tape(thread_id="6341", include_extras=True)
 
     assert result["segment_count"] == 1
     msgs = result["messages"]
@@ -417,17 +417,17 @@ def test_b9_degrade_emits_index_lines_with_pointers() -> None:
     ]
     from agent_bus_store.tape_render import _degrade_overflow_messages
 
-    out, truncated = _degrade_overflow_messages(
+    kept, index_rows, truncated = _degrade_overflow_messages(
         messages,
         cells=cells,
         budget_bytes=1200,
     )
     assert truncated is True
-    assert len(json.dumps(out).encode("utf-8")) <= 1200
-    index_rows = [m for m in out if m.get("role") == "index"]
+    assert len(json.dumps({"messages": kept, "index": index_rows}).encode("utf-8")) <= 1200
     assert index_rows
     assert index_rows[0]["transcript_span"] == "transcript:s1#turn-1"
     assert index_rows[0]["bus_turn_id"] == 7
+    assert all(m.get("role") != "index" for m in kept)
 
 
 def test_t14_byte_accurate_degrade_under_budget() -> None:
@@ -443,14 +443,15 @@ def test_t14_byte_accurate_degrade_under_budget() -> None:
     ]
     from agent_bus_store.tape_render import _degrade_overflow_messages
 
-    out, truncated = _degrade_overflow_messages(
+    kept, index_rows, truncated = _degrade_overflow_messages(
         messages,
         cells=[],
         budget_bytes=65536,
     )
     assert truncated is True
-    assert len(json.dumps(out).encode("utf-8")) <= 65536
-    assert any(m.get("role") != "index" for m in out)
+    assert len(json.dumps({"messages": kept, "index": index_rows}).encode("utf-8")) <= 65536
+    assert kept
+    assert all(m.get("role") != "index" for m in kept)
 
 
 def test_t15_open_line_is_first_key() -> None:

@@ -43,11 +43,11 @@ def detect_prior_session_id_omitted(
     """
     sql = """
         SELECT sj.session_id, sj.agent, sj.handoff_prompt, sj.file_path
-        FROM session_journals sj
+        FROM session_lids sj
         WHERE sj.prior_session_id IS NULL
           AND EXISTS (
               SELECT 1
-              FROM session_journals earlier
+              FROM session_lids earlier
               WHERE earlier.agent = sj.agent
                 AND earlier.id < sj.id
           )

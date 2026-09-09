@@ -156,7 +156,7 @@ def batch_frequency(
 ) -> dict[str, float]:
     """Mention dispersion across session journals + surface form count, normalized 0–1."""
     journals = query(
-        conn, "SELECT id, summary, decisions, open_items FROM session_journals"
+        conn, "SELECT id, summary, decisions, open_items FROM session_lids"
     )
     mention_counts: dict[str, int] = {}
     for eid in entity_ids:

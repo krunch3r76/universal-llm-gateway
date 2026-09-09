@@ -13,10 +13,15 @@ from cortex_store.verbatim_succession import (
     split_verbatim_layer,
     verbatim_fingerprint,
 )
+from continuity_tape.messages import (
+    Tools,
+    apply_tools_policy,
+    messages_sha256,
+    strip_extras,
+)
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
-from .tape_verbal import to_verbal_messages
 
 _WINDOW_LINE_RE = re.compile(
     r"transcript_id=(?P<uuid>[0-9a-f-]+)\s*·\s*turns@cp=(?P<turns>\d+)",
@@ -596,21 +601,19 @@ def _degrade_overflow_messages(
     *,
     cells: list[dict[str, Any]],
     budget_bytes: int,
-) -> tuple[list[dict[str, Any]], bool]:
-    """AC-6: byte-accurate overflow drops oldest speech into Index lines."""
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
+    """AC-6: byte-accurate overflow drops oldest speech into ``index[]`` only."""
     if len(json.dumps(messages).encode("utf-8")) <= budget_bytes:
-        return messages, False
+        return messages, [], False
     kept = list(messages)
-    index_lines: list[dict[str, Any]] = []
+    index_rows: list[dict[str, Any]] = []
     while len(kept) > 1:
         dropped = kept.pop(0)
         sid = str(dropped.get("session_id") or "")
         turn_index = int(dropped.get("turn_index") or 0)
         tid = str(dropped.get("transcript_id") or "")
-        index_lines.append(
+        index_rows.append(
             {
-                "role": "index",
-                "content": f"transcript:{sid}#turn-{turn_index}",
                 "transcript_span": f"transcript:{sid}#turn-{turn_index}",
                 "bus_turn_id": _bus_turn_id_for_turn(
                     cells,
@@ -622,10 +625,12 @@ def _degrade_overflow_messages(
                 "turn_index": turn_index,
             }
         )
-        candidate = index_lines + kept
-        if len(json.dumps(candidate).encode("utf-8")) <= budget_bytes:
-            return candidate, True
-    return kept, True
+        candidate_bytes = len(
+            json.dumps({"messages": kept, "index": index_rows}).encode("utf-8")
+        )
+        if candidate_bytes <= budget_bytes:
+            return kept, index_rows, True
+    return kept, index_rows, True
 
 
 def _build_mismatch_rows(
@@ -704,6 +709,7 @@ def _build_open_line(
     segments: list[dict[str, Any]],
     cells: list[dict[str, Any]],
     messages: list[dict[str, Any]],
+    index_rows: list[dict[str, Any]],
     excluded: list[dict[str, Any]],
     excluded_counts: dict[str, int] | None,
     truncated: bool,
@@ -748,9 +754,12 @@ def _build_open_line(
         "segment_count": len(segments),
         "turn_count": sum(s.get("turn_count", 0) for s in segments),
         "message_count": len(messages),
+        "index_count": len(index_rows),
         "truncated": truncated,
         "budget_bytes": budget_bytes,
         "payload_bytes": payload_bytes,
+        "codec_counts": {"md-v1": len(segments), "messages-v1": 0},
+        "surfaces": ["cursor"],
         "last_cp": last_cp,
         "open_interval": open_interval,
         "excluded_counts": counts,
@@ -781,17 +790,14 @@ def render_tape(
     thread_id: str,
     budget_bytes: int = _DEFAULT_BUDGET_BYTES,
     harvest_stats: dict[str, Any] | None = None,
-    format: str | None = None,
     scope: str = "last_session",
+    include_extras: bool = False,
+    tools: Tools = "none",
 ) -> dict[str, Any]:
     """Render messages+extras dump for a continuity lane (read-only).
 
     ``scope='last_session'`` (default): pour only the posting interval between
     the prior CHECKPOINT and the tip CP window. ``scope='full'``: entire lane tape.
-
-    ``format='verbal'`` adds ``verbal_messages`` ({role, content} only) after
-    overflow degrade; mechanical ``messages`` stay intact. Other format values
-    are ignored (no verbal field).
     """
     from cortex_store.db import cortex_conn, decode_row
 
@@ -960,12 +966,17 @@ def render_tape(
 
     payload_bytes = len(json.dumps(messages).encode("utf-8"))
     truncated = payload_bytes > budget_bytes
+    index_rows: list[dict[str, Any]] = []
     if truncated:
-        messages, truncated = _degrade_overflow_messages(
+        messages, index_rows, truncated = _degrade_overflow_messages(
             messages,
             cells=cells,
             budget_bytes=budget_bytes,
         )
+
+    messages = apply_tools_policy(messages, tools=tools)
+    if not include_extras:
+        messages = strip_extras(messages)
 
     from cortex_store.events_tape import (
         agent_bus_tape_rendered,
@@ -985,14 +996,24 @@ def render_tape(
         segment_count=len(segments),
         turn_count=sum(s.get("turn_count", 0) for s in segments),
         truncated=truncated,
+        scope=scope,
+        tools=tools,
+        include_extras=include_extras,
+        index_count=len(index_rows),
+        codec_counts={"md-v1": len(segments), "messages-v1": 0},
+        surfaces=["cursor"],
+        tools_available=False,
     )
-    payload_bytes = len(json.dumps(messages).encode("utf-8"))
+    payload_bytes = len(
+        json.dumps({"messages": messages, "index": index_rows}).encode("utf-8")
+    )
     mismatch = _build_mismatch_rows(cells=cells, segments=segments)
     open_line = _build_open_line(
         thread_id=thread_id,
         segments=segments,
         cells=cells,
         messages=messages,
+        index_rows=index_rows,
         excluded=excluded,
         excluded_counts=None,
         truncated=truncated,
@@ -1003,18 +1024,28 @@ def render_tape(
         scope=scope,
     )
     summary = _summary_line(open_line)
+    meta = {
+        "messages_sha256": messages_sha256(messages),
+        "tools": tools,
+        "tools_available": False,
+        "extras": include_extras,
+        "turn_count": open_line["turn_count"],
+        "message_count": len(messages),
+        "truncated": truncated,
+        "surface": "cursor",
+    }
     body = {
         "segments": segments,
         "cells": cells,
         "messages": messages,
+        "index": index_rows,
         "excluded": excluded,
         "truncated": truncated,
         "turn_count": sum(s.get("turn_count", 0) for s in segments),
         "segment_count": len(segments),
         "mismatch": mismatch,
+        "meta": meta,
     }
-    if format == "verbal":
-        body["verbal_messages"] = to_verbal_messages(messages)
     return {"open_line": open_line, "summary": summary, **body}
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
 from universal_logging import get_logger
@@ -31,9 +33,14 @@ _JSON_FIELDS = frozenset({"domains", "decisions", "open_items", "entity_ids"})
 @router.get("", response_model=SessionJournalList, openapi_extra=x_mcp("journal_read"))
 def list_session_journals(
     agent: str | None = None,
+    facet: Literal["lid", "window"] = Query(
+        "lid",
+        description="lid (default): human session closes. window: sealed speech registry rows.",
+    ),
     limit: int = Query(3, ge=1, le=100),
 ) -> SessionJournalList:
     """List recent session journals in reverse insertion order."""
+    table = "session_lids" if facet == "lid" else "session_windows"
     clauses: list[str] = []
     params: list[str | int] = []
     if agent:
@@ -45,7 +52,7 @@ def list_session_journals(
     try:
         rows = query(
             conn,
-            f"SELECT * FROM session_journals{where} ORDER BY id DESC LIMIT ?",
+            f"SELECT * FROM {table}{where} ORDER BY id DESC LIMIT ?",
             tuple(params),
         )
     finally:
@@ -135,9 +142,11 @@ def close_session_route(body: SessionCloseRequest) -> SessionCloseResponse:
 
 
 def _list_session_journals_impl(
-    *, agent: str | None = None, limit: int = 3
+    *, agent: str | None = None, limit: int = 3, facet: str = "lid"
 ) -> dict[str, object]:
-    return list_session_journals(agent=agent, limit=limit).model_dump(mode="json")
+    return list_session_journals(agent=agent, limit=limit, facet=facet).model_dump(  # type: ignore[arg-type]
+        mode="json"
+    )
 
 
 def _create_session_journal_impl(payload: dict[str, object]) -> dict[str, object]:

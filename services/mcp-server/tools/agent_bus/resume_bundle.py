@@ -17,14 +17,13 @@ _MECHANICAL_PROJECTION_URI = (
 
 
 def _tape_verbal_from_render(tape: dict[str, Any]) -> list[Any]:
-    """Use W1 ``verbal_messages``; else strip mechanical extras to {role, content}."""
-    verbal = tape.get("verbal_messages")
-    if isinstance(verbal, list):
-        return verbal
+    """Strip mechanical extras to {role, content}; index rows omitted."""
+    from continuity_tape.messages import CORE_KEYS
+
     return [
-        {"role": msg.get("role"), "content": msg.get("content")}
+        {k: msg.get(k) for k in CORE_KEYS}
         for msg in (tape.get("messages") or [])
-        if isinstance(msg, dict)
+        if isinstance(msg, dict) and msg.get("role") != "index"
     ]
 
 
@@ -33,7 +32,7 @@ def _harvested_tape(thread_id: str) -> dict[str, Any]:
     result = relay(
         "agent-bus",
         "GET",
-        f"/threads/{thread_id}/tape?harvest=false&format=verbal&scope=last_session",
+        f"/threads/{thread_id}/tape?harvest=false&include_extras=false&scope=last_session",
     )
     if isinstance(result, dict) and "error" in result:
         structured = _structured_relay_error(result, op="resume_bundle")

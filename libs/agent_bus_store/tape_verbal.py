@@ -1,9 +1,7 @@
 """Verbal tape adapter — LLM-safe {role, content} view of mechanical messages.
 
-Callers: ``render_tape`` when ``format=verbal``. Mechanical extras (transcript_id,
-session_id, turn_index / turns@cp, window_whole, bus_turn_id, transcript_span)
-stay on ``messages``; this adapter never mutates the source dicts. Index-role
-overflow rows remain on the verbal tape — role stays ``index``, extras drop.
+Uses ``CORE_KEYS`` from ``continuity_tape.messages``. Index overflow rows live
+only in ``index[]`` on the tape route — they never appear in ``tape_verbal``.
 """
 
 from __future__ import annotations
@@ -11,15 +9,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-VERBAL_KEYS = ("role", "content")
+from continuity_tape.messages import CORE_KEYS
 
 
 def to_verbal_message(message: Mapping[str, Any]) -> dict[str, str]:
-    """Return a strict ``{role, content}`` copy; extra keys are dropped.
-
-    Index-role overflow rows are kept (not converted or omitted). Missing
-    role/content become empty strings so degraded rows still serialize.
-    """
+    """Return a strict ``{role, content}`` copy; extra keys are dropped."""
     return {
         "role": str(message.get("role") or ""),
         "content": str(message.get("content") or ""),
@@ -29,8 +23,15 @@ def to_verbal_message(message: Mapping[str, Any]) -> dict[str, str]:
 def to_verbal_messages(
     messages: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, str]]:
-    """Map a mechanical messages list to verbal copies, preserving order."""
-    return [to_verbal_message(message) for message in messages]
+    """Map speech messages to verbal copies; omit index-role rows."""
+    out: list[dict[str, str]] = []
+    for message in messages:
+        if str(message.get("role") or "") == "index":
+            continue
+        verbal = to_verbal_message(message)
+        if set(verbal) <= set(CORE_KEYS):
+            out.append(verbal)
+    return out
 
 
-__all__ = ["VERBAL_KEYS", "to_verbal_message", "to_verbal_messages"]
+__all__ = ["CORE_KEYS", "to_verbal_message", "to_verbal_messages"]

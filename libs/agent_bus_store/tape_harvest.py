@@ -77,14 +77,12 @@ def render_tape_with_harvest(
     budget_bytes: int,
     harvest: bool = False,
     max_seals: int = 8,
-    format: str | None = None,
     scope: str = "last_session",
+    include_extras: bool = False,
+    tools: str = "none",
     harvest_timeout: float = TAPE_HARVEST_TIMEOUT_S,
 ) -> dict[str, Any]:
-    """Optionally harvest bindable windows, then render the continuity tape.
-
-    ``format`` is forwarded to ``render_tape`` (``verbal`` adds verbal_messages).
-    """
+    """Optionally harvest bindable windows, then render the continuity tape."""
     harvest_stats: dict[str, Any] | None = None
     if harvest:
         explicit = sorted(explicit_uuids_for_lane(thread_id, set()))
@@ -114,8 +112,9 @@ def render_tape_with_harvest(
         thread_id=thread_id,
         budget_bytes=budget_bytes,
         harvest_stats=harvest_stats,
-        format=format,
         scope=scope,
+        include_extras=include_extras,
+        tools=tools,  # type: ignore[arg-type]
     )
 
 

@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _DISPATCH_TIMEOUT = 15.0
+_TAPE_READ_TIMEOUT = 60.0
 
 
 def _no_root_house_error(trigger_thread: str) -> dict[str, Any]:
@@ -221,12 +222,62 @@ def _continuity_consolidate_or_replay(
     return result
 
 
+def _continuity_tape_read(
+    *,
+    thread: str,
+    scope: str = "full",
+    include_extras: bool = False,
+    tools: str = "none",
+    budget_bytes: int | None = None,
+    harvest: bool = False,
+) -> dict[str, Any]:
+    """POST Stargate ``/api/v1/continuity/tape-read`` (Door 1 sync relay)."""
+    from continuity_tape.events import mcp_continuity_tape_read_requested
+
+    mcp_continuity_tape_read_requested(thread=thread, scope=scope, door="sync")
+    body: dict[str, Any] = {
+        "thread": thread,
+        "scope": scope,
+        "include_extras": include_extras,
+        "tools": tools,
+        "harvest": harvest,
+    }
+    if budget_bytes is not None:
+        body["budget_bytes"] = budget_bytes
+    stargate_url = os.environ.get("STARGATE_URL", STARGATE_URL)
+    try:
+        with make_sync_client(stargate_url, timeout=_TAPE_READ_TIMEOUT) as client:
+            resp = client.post("/api/v1/continuity/tape-read", json=body)
+        if resp.status_code >= 400:
+            try:
+                payload = resp.json()
+            except ValueError:
+                payload = {
+                    "error": {
+                        "code": f"http_{resp.status_code}",
+                        "message": resp.text[:500],
+                    }
+                }
+            if isinstance(payload, dict):
+                payload.setdefault("status_code", resp.status_code)
+            return payload
+        return resp.json()
+    except httpx.ConnectError as exc:
+        return annotate_unreachable_error(
+            code="stargate_unreachable",
+            message=f"Stargate not reachable: {exc}",
+            service="stargate",
+        )
+    except httpx.HTTPError as exc:
+        return {"error": {"code": "http_error", "message": str(exc)}}
+
+
 def register_continuity_tools(mcp: FastMCP) -> None:
     """Register the unified ``continuity`` tool on the code MCP surface."""
 
     @mcp.tool(title="Continuity")
     def continuity(
-        op: Literal["consolidate", "replay", "status"],
+        op: Literal["consolidate", "replay", "status", "tape_read"],
         trigger_thread: str | None = None,
         turn: int | None = None,
         dry_run: bool | None = None,
@@ -236,6 +287,12 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         execution_id: str | None = None,
         root_thread: str | None = None,
         wait_seconds: float = 0.0,
+        thread: str | None = None,
+        scope: str | None = None,
+        include_extras: bool | None = None,
+        tools: str | None = None,
+        budget_bytes: int | None = None,
+        harvest: bool | None = None,
     ) -> dict[str, Any]:
         """Continuity consolidation — dispatch ``consolidate-continuity`` without CLI.
 
@@ -252,7 +309,27 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         - ``status`` — given ``execution_id``, fetch pipeline tracker state via
           ``pipeline(op=result)``; given ``root_thread``, read hub WATERMARK
           from Cortex. Provide exactly one of ``execution_id`` or ``root_thread``.
+
+        - ``tape_read`` — Door 1 sync relay to
+          ``POST /api/v1/continuity/tape-read``. Required: ``thread``.
         """
+        if op == "tape_read":
+            if not thread:
+                return {
+                    "error": {
+                        "code": "missing_required",
+                        "message": "op=tape_read requires thread",
+                    }
+                }
+            return _continuity_tape_read(
+                thread=thread,
+                scope=scope or "full",
+                include_extras=bool(include_extras),
+                tools=tools or "none",
+                budget_bytes=budget_bytes,
+                harvest=bool(harvest),
+            )
+
         if op in {"consolidate", "replay"}:
             if not trigger_thread or turn is None:
                 return {
@@ -298,7 +375,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         return {
             "error": {
                 "code": "unknown_op",
-                "message": f"Unknown op: {op}. Valid: consolidate|replay|status",
+                "message": f"Unknown op: {op}. Valid: consolidate|replay|status|tape_read",
             }
         }
 
@@ -308,5 +385,5 @@ __all__ = [
     "_prepare_consolidate",
     "_continuity_async_dispatch",
     "_continuity_status_watermark",
-    "_no_root_house_error",
+    "_continuity_tape_read",
 ]

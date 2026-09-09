@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Literal
 
+from continuity_tape.messages import Tools
 from fastapi import HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
 
@@ -30,18 +31,16 @@ async def tape_route(
             "CHECKPOINT and the tip CP window. full: entire lane tape."
         ),
     ),
-    format: Literal["verbal"] | None = Query(
-        None,
-        description=(
-            "When verbal, add verbal_messages ({role, content} only) "
-            "alongside intact mechanical messages."
-        ),
+    include_extras: bool = Query(
+        False,
+        description="When true, mechanical extras remain on messages[].",
+    ),
+    tools: Tools = Query(
+        "none",
+        description="Tool surface policy: none | marker | openai.",
     ),
 ) -> dict[str, Any]:
-    """Render the messages+extras continuity tape for a root lane.
-
-    ``format=verbal`` adds ``verbal_messages``; mechanical ``messages`` stay.
-    """
+    """Render the messages+extras continuity tape for a root lane."""
     tags = load_thread_tags(thread_id)
     if classify_thread(tags)["spine"] != "root":
         raise HTTPException(
@@ -59,7 +58,8 @@ async def tape_route(
             budget_bytes=budget_bytes,
             harvest=harvest,
             max_seals=max_seals,
-            format=format,
+            include_extras=include_extras,
+            tools=tools,
             scope=scope,
         )
     except HTTPException:

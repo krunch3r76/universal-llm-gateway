@@ -80,7 +80,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
           get          (thread, turn_number)  — turn_number may be int or "latest"
           wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?)
           lane_current (thread) — derived current lane parentage (state=none when unbound)
-          tape           (thread, budget_bytes?, harvest?, max_seals?, format?) — continuity dump; format=verbal adds verbal_messages ({role,content} only) alongside mechanical messages
+          tape           (thread, budget_bytes?, harvest?, max_seals?, scope?, include_extras?, tools?) — continuity dump; messages[] + index[]
           resume_bundle  (thread) — verbal tape + projection pointers; no graph/consolidation
 
         Note: mark_read=true mutates per-turn read pointers, not thread/turn

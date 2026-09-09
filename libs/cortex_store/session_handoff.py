@@ -121,7 +121,7 @@ def require_closed_journal_row(
 ) -> dict[str, Any]:
     """Fetch the journal row for a closed session or raise 404."""
     row = conn.execute(  # type: ignore[union-attr]
-        "SELECT id, session_id, agent, handoff_prompt FROM session_journals "
+        "SELECT id, session_id, agent, handoff_prompt FROM session_lids "
         "WHERE session_id = ? LIMIT 1",
         (session_id,),
     ).fetchone()

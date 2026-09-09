@@ -83,7 +83,7 @@ def _aggregate(conn: Any) -> dict[str, Any]:
     latest = db_query(
         conn,
         "SELECT session_id, agent, summary, open_items "
-        "FROM session_journals ORDER BY id DESC LIMIT 1",
+        "FROM session_lids ORDER BY id DESC LIMIT 1",
     )
     if latest:
         head = latest[0]
@@ -102,8 +102,8 @@ def _aggregate(conn: Any) -> dict[str, Any]:
 
     seats = db_query(
         conn,
-        "SELECT agent, session_id, summary FROM session_journals j "
-        "WHERE id = (SELECT MAX(id) FROM session_journals WHERE agent = j.agent) "
+        "SELECT agent, session_id, summary FROM session_lids j "
+        "WHERE id = (SELECT MAX(id) FROM session_lids WHERE agent = j.agent) "
         "ORDER BY id DESC",
     )
 
@@ -290,7 +290,7 @@ def _derive_alerts(state: dict[str, Any], conn: Any) -> list[dict[str, str]]:
 def _matter_has_owning_session(matter: str, conn: Any) -> bool:
     rows = db_query(
         conn,
-        "SELECT 1 FROM session_journals "
+        "SELECT 1 FROM session_lids "
         "WHERE timestamp > datetime('now', '-30 days') "
         "AND (summary LIKE ? OR open_items LIKE ?) LIMIT 1",
         (f"%{matter}%", f"%{matter}%"),

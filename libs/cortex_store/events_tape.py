@@ -86,6 +86,13 @@ def agent_bus_tape_rendered(
     segment_count: int,
     turn_count: int,
     truncated: bool,
+    scope: str = "last_session",
+    tools: str = "none",
+    include_extras: bool = False,
+    index_count: int = 0,
+    codec_counts: dict[str, int] | None = None,
+    surfaces: list[str] | None = None,
+    tools_available: bool = False,
 ) -> Event:
     ev = Event(
         signal="agent_bus.tape.rendered",
@@ -96,6 +103,13 @@ def agent_bus_tape_rendered(
             "segment_count": segment_count,
             "turn_count": turn_count,
             "truncated": truncated,
+            "scope": scope,
+            "tools": tools,
+            "include_extras": include_extras,
+            "index_count": index_count,
+            "codec_counts": codec_counts or {},
+            "surfaces": surfaces or [],
+            "tools_available": tools_available,
         },
     )
     record(ev.signal, **ev.payload)
