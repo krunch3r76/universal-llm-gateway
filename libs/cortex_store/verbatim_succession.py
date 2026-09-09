@@ -12,6 +12,11 @@ from continuity_tape.messages import (
     ContinuityMessagesEnvelope,
     seal_messages_sha256,
 )
+from continuity_tape.seal_reader import (
+    load_sealed_envelope,
+    load_sealed_envelope_from_path,
+    sealed_turn_count,
+)
 
 STRUCTURAL_MARKER = "\n## Session Summary"
 _SEAL_DIR = "notes/system/seals"
@@ -147,47 +152,6 @@ def load_sealed_verbatim_for_session(
         full, verbatim_bytes=journal_verbatim_bytes(row)
     )
     return verbatim, rel_path
-
-
-def load_sealed_envelope_from_path(path: Path) -> ContinuityMessagesEnvelope:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return ContinuityMessagesEnvelope.model_validate(data)
-
-
-def load_sealed_envelope(
-    row: dict[str, Any] | Any,
-    *,
-    files_root: Path,
-) -> ContinuityMessagesEnvelope | None:
-    """Load seal JSON for a journal row when ``verbatim_codec`` is messages-v1."""
-    file_path = row["file_path"] if row is not None else None
-    if not file_path:
-        return None
-    codec = None
-    try:
-        codec = row["verbatim_codec"]
-    except (KeyError, TypeError, IndexError):
-        pass
-    if codec != "messages-v1":
-        return None
-    seal_path = files_root / transcript_messages_path(str(file_path))
-    if not seal_path.is_file():
-        return None
-    return load_sealed_envelope_from_path(seal_path)
-
-
-def sealed_turn_count(row: dict[str, Any] | Any) -> int:
-    """Turn count from sealed row metadata or envelope."""
-    try:
-        codec = row["verbatim_codec"]
-    except (KeyError, TypeError, IndexError):
-        codec = None
-    if codec == "messages-v1":
-        try:
-            return int(row.get("turn_count") or 0)
-        except (TypeError, ValueError):
-            pass
-    return 0
 
 
 def build_seal_envelope_meta(

@@ -2,313 +2,30 @@
 
 from __future__ import annotations
 
-import json
-import re
-from dataclasses import dataclass
 from typing import Any
 
-from cortex_store.session_close_successor_hop import lookup_sealed_journal
-from cortex_store.verbatim_succession import (
-    journal_verbatim_bytes,
-    split_verbatim_layer,
-    verbatim_fingerprint,
-)
-from continuity_tape.messages import (
-    Tools,
-    apply_tools_policy,
-    messages_sha256,
-    strip_extras,
-)
+from continuity_tape.messages import Tools, messages_sha256
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
+from .tape_membership import (
+    TapeSegment,
+    _binding_for_journal,
+    build_chain_segments,
+    build_lane_segments,
+    filter_lane_journals,
+)
+from .tape_pour import (
+    _cells_for_lane,
+    _degrade_overflow_messages,
+    _filter_messages_to_cells,
+    _last_session_cells,
+    build_open_line,
+    pour_lane_messages,
+    summary_line,
+)
 
-_WINDOW_LINE_RE = re.compile(
-    r"transcript_id=(?P<uuid>[0-9a-f-]+)\s*·\s*turns@cp=(?P<turns>\d+)",
-    re.IGNORECASE,
-)
-_WHOLE_BOUNDARY_RE = re.compile(
-    r"boundary=window_whole",
-    re.IGNORECASE,
-)
 _DEFAULT_BUDGET_BYTES = 512_000
-
-
-@dataclass(frozen=True)
-class TapeSegment:
-    session_id: str
-    transcript_id: str
-    turn_count: int
-    verbatim_sha256: str
-    conversation_uuid: str | None
-    binding: str
-    boundary: str | None = None
-    post_lid_turns: int = 0
-
-
-def _verbatim_sha256(text: str) -> str:
-    digest, _ = verbatim_fingerprint("md-v1", text)
-    return digest
-
-
-def _split_verbatim_layer(full_md: str, *, verbatim_bytes: int | None = None) -> str:
-    return split_verbatim_layer(full_md, verbatim_bytes=verbatim_bytes)
-
-
-def _turn_count_verbatim(verbatim: str) -> int:
-    return sum(1 for line in verbatim.splitlines() if line.startswith("## Turn"))
-
-
-def _parse_entity_ids(journal: dict[str, Any]) -> list[str]:
-    entity_ids = journal.get("entity_ids") or []
-    if isinstance(entity_ids, str):
-        entity_ids = json.loads(entity_ids)
-    return [str(x) for x in entity_ids]
-
-
-def _journal_cites_lane(journal: dict[str, Any], thread_id: str) -> bool:
-    from cortex_store.dispatch_ops._session_bus_thread_disposition import (
-        parse_bus_thread_refs,
-    )
-
-    return thread_id in parse_bus_thread_refs(_parse_entity_ids(journal))
-
-
-def _explicit_uuids_for_lane(thread_id: str) -> set[str]:
-    """Collect transcript ids named in CP ``Window:`` anchors on *thread_id*."""
-    explicit: set[str] = set()
-    for cp in list_checkpoint_turns(thread_id=thread_id):
-        with connect() as conn:
-            row = conn.execute(
-                "SELECT body FROM turns WHERE thread = ? AND turn_number = ?",
-                (thread_id, cp.turn_number),
-            ).fetchone()
-        body = str(row["body"]) if row else ""
-        for anchor in _parse_window_lines(body):
-            tid = anchor.get("transcript_id")
-            if tid:
-                explicit.add(str(tid))
-    return explicit
-
-
-def _binding_for_journal(
-    journal: dict[str, Any],
-    thread_id: str,
-    *,
-    explicit_uuids: set[str] | None = None,
-) -> tuple[str | None, str | None]:
-    """Derive ``(binding, dominant_lane)`` for render; ``None`` binding ⇒ dropped."""
-    explicit = explicit_uuids or set()
-    dominant_lane = journal.get("dominant_lane")
-    if isinstance(dominant_lane, str):
-        dominant_lane = dominant_lane.strip() or None
-    uuid = journal.get("conversation_uuid")
-    uuid_str = str(uuid) if uuid else None
-    cites = _journal_cites_lane(journal, thread_id)
-    is_explicit = uuid_str is not None and uuid_str in explicit
-    closed_by = journal.get("closed_by")
-    is_succession = closed_by == "succession"
-    on_tape = cites or is_explicit or dominant_lane == thread_id or is_succession
-
-    if not on_tape:
-        if dominant_lane and dominant_lane != thread_id:
-            return "read_only", dominant_lane
-        return None, dominant_lane
-
-    if is_explicit:
-        return "explicit_cp", dominant_lane or thread_id
-    if cites or dominant_lane == thread_id:
-        return "dominant_write", dominant_lane or thread_id
-    if is_succession:
-        return "sole", dominant_lane or thread_id
-    return None, dominant_lane
-
-
-def _ordered_chain_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Order rows sharing a conversation_uuid by prior_session_id chain (R7a)."""
-    by_uuid: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        uuid = row.get("conversation_uuid")
-        if not uuid:
-            continue
-        by_uuid.setdefault(str(uuid), []).append(row)
-    ordered: list[dict[str, Any]] = []
-    for uuid_rows in by_uuid.values():
-        by_sid = {
-            str(r["session_id"]): r for r in uuid_rows if r.get("session_id")
-        }
-        roots = [
-            r
-            for r in uuid_rows
-            if not r.get("prior_session_id")
-            or str(r["prior_session_id"]) not in by_sid
-        ]
-        if not roots:
-            ordered.extend(sorted(uuid_rows, key=lambda r: int(r.get("id") or 0)))
-            continue
-        chain = [roots[0]]
-        while True:
-            child = next(
-                (
-                    r
-                    for r in uuid_rows
-                    if str(r.get("prior_session_id") or "") == str(chain[-1]["session_id"])
-                ),
-                None,
-            )
-            if child is None:
-                break
-            chain.append(child)
-        ordered.extend(chain)
-    solo = [r for r in rows if not r.get("conversation_uuid")]
-    ordered.extend(solo)
-    return ordered
-
-
-def build_chain_segments(
-    journals: list[dict[str, Any]], *, files_root: Any
-) -> list[dict[str, Any]]:
-    """Slice uuid chains into (turn_lo, turn_hi] segments without double render (I8)."""
-    segments: list[dict[str, Any]] = []
-    prior_turn_by_uuid: dict[str, int] = {}
-    for journal in _ordered_chain_rows(journals):
-        sid = journal.get("session_id")
-        if not sid or not journal.get("file_path"):
-            continue
-        path = files_root / journal["file_path"]
-        if not path.is_file():
-            continue
-        full = path.read_text(encoding="utf-8")
-        verbatim = _split_verbatim_layer(
-            full, verbatim_bytes=journal_verbatim_bytes(journal)
-        )
-        turn_count = _turn_count_verbatim(verbatim)
-        uuid = str(journal.get("conversation_uuid") or sid)
-        turn_lo = prior_turn_by_uuid.get(uuid, 0)
-        turn_hi = turn_count
-        prior_turn_by_uuid[uuid] = turn_hi
-        if turn_hi <= turn_lo:
-            continue
-        segments.append(
-            {
-                "session_id": sid,
-                "transcript_id": uuid,
-                "turn_lo": turn_lo,
-                "turn_hi": turn_hi,
-                "turn_count": turn_hi - turn_lo,
-                "verbatim_sha256": _verbatim_sha256(verbatim),
-                "conversation_uuid": journal.get("conversation_uuid"),
-            }
-        )
-    return segments
-
-
-def _load_sealed_segment(session_id: str) -> TapeSegment | None:
-    row = lookup_sealed_journal(session_id)
-    if row is None:
-        return None
-    from cortex_store.db import cortex_conn
-
-    conn = cortex_conn()
-    try:
-        journal = conn.execute(
-            "SELECT file_path, conversation_uuid, closed_by, verbatim_bytes "
-            "FROM session_journals WHERE session_id = ?",
-            (session_id,),
-        ).fetchone()
-    finally:
-        conn.close()
-    if journal is None or not journal["file_path"]:
-        return None
-    from cortex_store.dispatch_ops._shared import _FILES_ROOT
-
-    path = _FILES_ROOT / journal["file_path"]
-    if not path.is_file():
-        return None
-    full = path.read_text(encoding="utf-8")
-    verbatim = _split_verbatim_layer(
-        full, verbatim_bytes=journal_verbatim_bytes(journal)
-    )
-    turn_count = sum(1 for line in verbatim.splitlines() if line.startswith("## Turn"))
-    uuid = journal["conversation_uuid"]
-    binding = "dominant_write"
-    if journal["closed_by"] == "succession":
-        binding = "sole"
-    return TapeSegment(
-        session_id=session_id,
-        transcript_id=uuid or session_id,
-        turn_count=turn_count,
-        verbatim_sha256=_verbatim_sha256(verbatim),
-        conversation_uuid=uuid,
-        binding=binding,
-        boundary="window_whole" if turn_count == 0 else None,
-    )
-
-
-_TURN_HEADING_RE = re.compile(r"^## Turn (\d+)")
-
-
-def _verbatim_messages_from_segment(
-    verbatim: str,
-    *,
-    seg: dict[str, Any],
-    session_id: str,
-) -> list[dict[str, Any]]:
-    """Parse ``### User`` / ``### Assistant`` blocks into speech messages (AC-9/18)."""
-    turn_lo = int(seg.get("turn_lo") or 0)
-    turn_hi = seg.get("turn_hi")
-    turn_hi_int = int(turn_hi) if turn_hi is not None else None
-    transcript_id = str(seg["transcript_id"])
-    window_whole = seg.get("boundary") == "window_whole"
-
-    messages: list[dict[str, Any]] = []
-    current_turn = 0
-    current_role: str | None = None
-    body_lines: list[str] = []
-
-    def flush() -> None:
-        nonlocal body_lines, current_role
-        if current_role is None:
-            body_lines = []
-            return
-        if turn_hi_int is not None:
-            if current_turn <= turn_lo or current_turn > turn_hi_int:
-                body_lines = []
-                current_role = None
-                return
-        content = "\n".join(body_lines).strip()
-        if content:
-            messages.append(
-                {
-                    "role": current_role,
-                    "content": content,
-                    "transcript_id": transcript_id,
-                    "session_id": session_id,
-                    "turn_index": current_turn,
-                    "window_whole": window_whole,
-                }
-            )
-        body_lines = []
-        current_role = None
-
-    for line in verbatim.splitlines():
-        turn_match = _TURN_HEADING_RE.match(line)
-        if turn_match:
-            flush()
-            current_turn = int(turn_match.group(1))
-            continue
-        if line.startswith("### User"):
-            flush()
-            current_role = "user"
-            continue
-        if line.startswith("### "):
-            flush()
-            current_role = "assistant"
-            continue
-        if current_role is not None:
-            body_lines.append(line)
-    flush()
-    return messages
 
 
 def _find_jsonl_for_uuid(conversation_uuid: str) -> Any | None:
@@ -328,13 +45,11 @@ def _find_jsonl_for_uuid(conversation_uuid: str) -> Any | None:
 
 def _load_live_anchor_transcript(
     transcript_id: str,
-) -> tuple[int, str, str] | None:
-    """Load open-window speech from Cursor JSONL named in a CP anchor."""
+) -> tuple[int, list[dict[str, Any]], str] | None:
     jsonl_path = _find_jsonl_for_uuid(transcript_id)
     if jsonl_path is None:
         return None
     from continuity_tape.extract_jsonl import extract_turns_from_jsonl
-    from continuity_tape.render_md import render_verbatim_md
     from cortex_store.transcript_session_id import derive_session_id_from_jsonl_start
 
     try:
@@ -345,25 +60,81 @@ def _load_live_anchor_transcript(
         envelope = extract_turns_from_jsonl(
             jsonl_path, tools="marker", session_id=session_id
         )
-        live_md, live_turns = render_verbatim_md(envelope, session_id)
+        live_turns = envelope.meta.turn_count or max(
+            (int(m.get("turn_index") or 0) for m in envelope.messages),
+            default=0,
+        )
     except (OSError, ValueError):
         return None
     if live_turns <= 0:
         return None
-    return live_turns, live_md, session_id
+    messages = [
+        {
+            "role": m.get("role"),
+            "content": m.get("content"),
+            "transcript_id": transcript_id,
+            "session_id": session_id,
+            "turn_index": int(m.get("turn_index") or 0),
+            "source": "cursor-jsonl",
+        }
+        for m in envelope.messages
+        if int(m.get("turn_index") or 0) > 0
+    ]
+    return live_turns, messages, session_id
 
 
-def _live_jsonl_turn_count(transcript_id: str) -> int:
+def live_jsonl_turn_count(transcript_id: str) -> int:
     loaded = _load_live_anchor_transcript(transcript_id)
     return loaded[0] if loaded is not None else 0
 
 
-def _anchor_jsonl_messages(
+def post_lid_tail(
+    *,
+    conversation_uuid: str | None,
+    sealed_turn_count: int,
+    session_id: str,
+) -> tuple[int, list[dict[str, Any]] | None]:
+    if not conversation_uuid or sealed_turn_count < 0:
+        return 0, None
+    jsonl_path = _find_jsonl_for_uuid(str(conversation_uuid))
+    if jsonl_path is None:
+        return 0, None
+    from continuity_tape.extract_jsonl import extract_turns_from_jsonl
+
+    try:
+        envelope = extract_turns_from_jsonl(
+            jsonl_path, tools="marker", session_id=session_id
+        )
+        live_turns = envelope.meta.turn_count or max(
+            (int(m.get("turn_index") or 0) for m in envelope.messages),
+            default=0,
+        )
+    except (OSError, ValueError):
+        return 0, None
+    if live_turns <= sealed_turn_count:
+        return 0, None
+    tail_messages = [
+        {
+            "role": m.get("role"),
+            "content": m.get("content"),
+            "transcript_id": str(conversation_uuid),
+            "session_id": session_id,
+            "turn_index": int(m.get("turn_index") or 0),
+            "source": "cursor-jsonl",
+        }
+        for m in envelope.messages
+        if int(m.get("turn_index") or 0) > sealed_turn_count
+    ]
+    return live_turns - sealed_turn_count, tail_messages
+
+
+def anchor_jsonl_messages(
     thread_id: str,
     *,
     existing: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Merge live JSONL speech for CP-anchored transcript ids (open windows)."""
+    from .tape_membership import _explicit_uuids_for_lane
+
     seen = {
         (
             str(msg.get("transcript_id") or ""),
@@ -378,261 +149,22 @@ def _anchor_jsonl_messages(
         loaded = _load_live_anchor_transcript(transcript_id)
         if loaded is None:
             continue
-        live_turns, live_md, session_id = loaded
-        for msg in _verbatim_messages_from_segment(
-            live_md,
-            seg={
-                "transcript_id": transcript_id,
-                "turn_lo": 0,
-                "turn_hi": live_turns,
-            },
-            session_id=session_id,
-        ):
+        live_turns, live_messages, _session_id = loaded
+        for msg in live_messages:
+            turn_index = int(msg.get("turn_index") or 0)
+            if turn_index <= 0 or turn_index > live_turns:
+                continue
             key = (
                 str(msg.get("transcript_id") or ""),
-                int(msg.get("turn_index") or 0),
+                turn_index,
                 str(msg.get("role") or ""),
                 str(msg.get("content") or ""),
             )
             if key in seen:
                 continue
             seen.add(key)
-            added.append(msg)
+            added.append({**msg, "window_whole": False})
     return added
-
-
-def _post_lid_tail(
-    *,
-    conversation_uuid: str | None,
-    sealed_turn_count: int,
-    session_id: str,
-) -> tuple[int, str | None]:
-    """Return live JSONL turns beyond *sealed_turn_count* (AC-5)."""
-    if not conversation_uuid or sealed_turn_count < 0:
-        return 0, None
-    jsonl_path = _find_jsonl_for_uuid(str(conversation_uuid))
-    if jsonl_path is None:
-        return 0, None
-    from continuity_tape.extract_jsonl import extract_turns_from_jsonl
-    from continuity_tape.render_md import render_verbatim_md
-
-    try:
-        envelope = extract_turns_from_jsonl(
-            jsonl_path, tools="marker", session_id=session_id
-        )
-        live_md, live_turns = render_verbatim_md(envelope, session_id)
-    except (OSError, ValueError):
-        return 0, None
-    if live_turns <= sealed_turn_count:
-        return 0, None
-    return live_turns - sealed_turn_count, live_md
-
-
-def _parse_window_lines(body: str) -> list[dict[str, Any]]:
-    anchors: list[dict[str, Any]] = []
-    for line in body.splitlines():
-        match = _WINDOW_LINE_RE.search(line)
-        if match:
-            anchors.append(
-                {
-                    "transcript_id": match.group("uuid"),
-                    "turns_at_cp": int(match.group("turns")),
-                }
-            )
-        elif _WHOLE_BOUNDARY_RE.search(line):
-            anchors.append({"boundary": "window_whole"})
-    return anchors
-
-
-def _last_turns_at_cp(
-    cp_anchors: list[tuple[Any, list[dict[str, Any]]]],
-    *,
-    transcript_id: str,
-    before_index: int | None = None,
-) -> int:
-    """Return the last ``turns@cp`` anchor for *transcript_id* before *before_index*."""
-    limit = len(cp_anchors) if before_index is None else before_index
-    last = 0
-    for idx in range(limit):
-        for anchor in cp_anchors[idx][1]:
-            if anchor.get("transcript_id") == transcript_id and anchor.get("turns_at_cp") is not None:
-                last = int(anchor["turns_at_cp"])
-    return last
-
-
-def _max_turn_hi_by_transcript(chain_segments: list[dict[str, Any]]) -> dict[str, int]:
-    out: dict[str, int] = {}
-    for seg in chain_segments:
-        tid = str(seg["transcript_id"])
-        out[tid] = max(out.get(tid, 0), int(seg["turn_hi"]))
-    return out
-
-
-def _cells_for_lane(
-    *,
-    thread_id: str,
-    lane_journals: list[dict[str, Any]],
-    files_root: Any,
-) -> list[dict[str, Any]]:
-    """Join CP window anchors with R7a chain segments (AC-14 / AC-18)."""
-    cps = list_checkpoint_turns(thread_id=thread_id)
-    chain_segments = build_chain_segments(lane_journals, files_root=files_root)
-    max_turn_by_tid = _max_turn_hi_by_transcript(chain_segments)
-
-    cp_anchors: list[tuple[Any, list[dict[str, Any]]]] = []
-    for cp in cps:
-        with connect() as conn:
-            row = conn.execute(
-                "SELECT body FROM turns WHERE thread = ? AND turn_number = ?",
-                (thread_id, cp.turn_number),
-            ).fetchone()
-        body = str(row["body"]) if row else ""
-        cp_anchors.append((cp, _parse_window_lines(body)))
-
-    cells: list[dict[str, Any]] = []
-
-    if not cp_anchors:
-        for seg in chain_segments:
-            cells.append(
-                {
-                    "cp_ordinal": 0,
-                    "transcript_id": seg["transcript_id"],
-                    "turn_lo": seg["turn_lo"],
-                    "turn_hi": seg["turn_hi"],
-                    "boundary": "window_whole",
-                    "bus_turn_id": None,
-                }
-            )
-        return cells
-
-    seen_transcript_ids: set[str] = set(max_turn_by_tid)
-    for _, anchors in cp_anchors:
-        for anchor in anchors:
-            tid = anchor.get("transcript_id")
-            if tid:
-                seen_transcript_ids.add(str(tid))
-
-    for idx, (cp, anchors) in enumerate(cp_anchors):
-        for anchor in anchors:
-            if anchor.get("boundary") == "window_whole":
-                tid = anchor.get("transcript_id")
-                targets = (
-                    [seg for seg in chain_segments if str(seg["transcript_id"]) == str(tid)]
-                    if tid
-                    else chain_segments
-                )
-                for seg in targets:
-                    cells.append(
-                        {
-                            "cp_ordinal": cp.cp_ordinal,
-                            "transcript_id": seg["transcript_id"],
-                            "turn_lo": seg["turn_lo"],
-                            "turn_hi": seg["turn_hi"],
-                            "boundary": "window_whole",
-                            "bus_turn_id": cp.turn_number,
-                        }
-                    )
-                continue
-
-            tid = anchor.get("transcript_id")
-            turns_at_cp = anchor.get("turns_at_cp")
-            if not tid or turns_at_cp is None:
-                continue
-            transcript_id = str(tid)
-            turn_hi = int(turns_at_cp)
-            turn_lo = _last_turns_at_cp(
-                cp_anchors,
-                transcript_id=transcript_id,
-                before_index=idx,
-            )
-            if turn_hi <= turn_lo:
-                continue
-            cells.append(
-                {
-                    "cp_ordinal": cp.cp_ordinal,
-                    "transcript_id": transcript_id,
-                    "turn_lo": turn_lo,
-                    "turn_hi": turn_hi,
-                    "boundary": None,
-                    "bus_turn_id": cp.turn_number,
-                }
-            )
-
-    last_cp = cp_anchors[-1][0]
-    for transcript_id in sorted(seen_transcript_ids):
-        turn_lo = _last_turns_at_cp(cp_anchors, transcript_id=transcript_id)
-        turn_hi = max_turn_by_tid.get(transcript_id, turn_lo)
-        if turn_hi <= turn_lo:
-            live_hi = _live_jsonl_turn_count(transcript_id)
-            if live_hi <= turn_lo:
-                continue
-            turn_hi = live_hi
-        cells.append(
-            {
-                "cp_ordinal": last_cp.cp_ordinal + 1,
-                "transcript_id": transcript_id,
-                "turn_lo": turn_lo,
-                "turn_hi": turn_hi,
-                "boundary": None,
-                "bus_turn_id": None,
-            }
-        )
-
-    return cells
-
-
-def _bus_turn_id_for_turn(
-    cells: list[dict[str, Any]],
-    *,
-    transcript_id: str,
-    turn_index: int,
-) -> int | None:
-    for cell in cells:
-        if str(cell.get("transcript_id") or "") != transcript_id:
-            continue
-        turn_lo = int(cell.get("turn_lo") or 0)
-        turn_hi = int(cell.get("turn_hi") or 0)
-        if turn_lo < turn_index <= turn_hi:
-            bus_turn_id = cell.get("bus_turn_id")
-            return int(bus_turn_id) if bus_turn_id is not None else None
-    return None
-
-
-def _degrade_overflow_messages(
-    messages: list[dict[str, Any]],
-    *,
-    cells: list[dict[str, Any]],
-    budget_bytes: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
-    """AC-6: byte-accurate overflow drops oldest speech into ``index[]`` only."""
-    if len(json.dumps(messages).encode("utf-8")) <= budget_bytes:
-        return messages, [], False
-    kept = list(messages)
-    index_rows: list[dict[str, Any]] = []
-    while len(kept) > 1:
-        dropped = kept.pop(0)
-        sid = str(dropped.get("session_id") or "")
-        turn_index = int(dropped.get("turn_index") or 0)
-        tid = str(dropped.get("transcript_id") or "")
-        index_rows.append(
-            {
-                "transcript_span": f"transcript:{sid}#turn-{turn_index}",
-                "bus_turn_id": _bus_turn_id_for_turn(
-                    cells,
-                    transcript_id=tid,
-                    turn_index=turn_index,
-                ),
-                "session_id": sid,
-                "transcript_id": tid,
-                "turn_index": turn_index,
-            }
-        )
-        candidate_bytes = len(
-            json.dumps({"messages": kept, "index": index_rows}).encode("utf-8")
-        )
-        if candidate_bytes <= budget_bytes:
-            return kept, index_rows, True
-    return kept, index_rows, True
 
 
 def _build_mismatch_rows(
@@ -644,12 +176,8 @@ def _build_mismatch_rows(
     post_lid_by_tid: dict[str, int] = {}
     for seg in segments:
         tid = str(seg.get("transcript_id") or "")
-        max_turn_by_tid[tid] = max(
-            max_turn_by_tid.get(tid, 0), int(seg.get("turn_hi") or 0)
-        )
-        post_lid_by_tid[tid] = max(
-            post_lid_by_tid.get(tid, 0), int(seg.get("post_lid_turns") or 0)
-        )
+        max_turn_by_tid[tid] = max(max_turn_by_tid.get(tid, 0), int(seg.get("turn_hi") or 0))
+        post_lid_by_tid[tid] = max(post_lid_by_tid.get(tid, 0), int(seg.get("post_lid_turns") or 0))
     mismatches: list[dict[str, Any]] = []
     for cell in cells:
         if cell.get("bus_turn_id") is None:
@@ -670,121 +198,30 @@ def _build_mismatch_rows(
     return mismatches
 
 
-def _last_session_cells(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Cells for the posting interval between the prior CHECKPOINT and tip CP."""
-    last_cp_ordinal: int | None = None
-    for cell in reversed(cells):
-        if cell.get("bus_turn_id") is not None:
-            last_cp_ordinal = int(cell.get("cp_ordinal") or 0)
-            break
-    if last_cp_ordinal is None:
-        return list(cells)
-    allowed = {last_cp_ordinal, last_cp_ordinal + 1}
-    return [cell for cell in cells if int(cell.get("cp_ordinal") or 0) in allowed]
-
-
-def _message_in_cell(msg: dict[str, Any], cell: dict[str, Any]) -> bool:
-    if str(msg.get("transcript_id") or "") != str(cell.get("transcript_id") or ""):
-        return False
-    turn_index = int(msg.get("turn_index") or 0)
-    turn_lo = int(cell.get("turn_lo") or 0)
-    turn_hi = int(cell.get("turn_hi") or 0)
-    return turn_lo < turn_index <= turn_hi
-
-
-def _filter_messages_to_cells(
-    messages: list[dict[str, Any]],
-    cells: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    if not cells:
-        return []
-    return [
-        msg
-        for msg in messages
-        if any(_message_in_cell(msg, cell) for cell in cells)
-    ]
-
-
-def _build_open_line(
+def compute_tools_available(
     *,
-    thread_id: str,
     segments: list[dict[str, Any]],
-    cells: list[dict[str, Any]],
     messages: list[dict[str, Any]],
-    index_rows: list[dict[str, Any]],
-    excluded: list[dict[str, Any]],
-    excluded_counts: dict[str, int] | None,
-    truncated: bool,
-    budget_bytes: int,
-    payload_bytes: int,
-    harvest: dict[str, Any] | None,
-    mismatch: list[dict[str, Any]],
-    scope: str,
-) -> dict[str, Any]:
-    last_cp: dict[str, Any] | None = None
-    for cell in reversed(cells):
-        if cell.get("bus_turn_id") is not None:
-            last_cp = {
-                "cp_ordinal": cell.get("cp_ordinal"),
-                "bus_turn_id": cell.get("bus_turn_id"),
-                "transcript_id": cell.get("transcript_id"),
-                "turn_lo": cell.get("turn_lo"),
-                "turn_hi": cell.get("turn_hi"),
-            }
-            break
-    open_cells = [c for c in cells if c.get("bus_turn_id") is None]
-    open_interval = {
-        "transcript_ids": sorted(
-            {str(c.get("transcript_id") or "") for c in open_cells if c.get("transcript_id")}
-        ),
-        "turns": sum(max(0, int(c.get("turn_hi") or 0) - int(c.get("turn_lo") or 0)) for c in open_cells),
-    }
-    counts = excluded_counts or {
-        "read_only": sum(1 for e in excluded if e.get("reason") == "read_only"),
-        "foreign_dominant": sum(
-            1 for e in excluded if e.get("reason") == "foreign_dominant"
-        ),
-        "no_touch": sum(1 for e in excluded if e.get("reason") == "no_touch"),
-        "dropped": sum(1 for e in excluded if e.get("reason") == "dropped"),
-        "segment_unavailable": sum(
-            1 for e in excluded if e.get("reason") == "segment_unavailable"
-        ),
-    }
-    return {
-        "thread_id": thread_id,
-        "scope": scope,
-        "segment_count": len(segments),
-        "turn_count": sum(s.get("turn_count", 0) for s in segments),
-        "message_count": len(messages),
-        "index_count": len(index_rows),
-        "truncated": truncated,
-        "budget_bytes": budget_bytes,
-        "payload_bytes": payload_bytes,
-        "codec_counts": {"md-v1": len(segments), "messages-v1": 0},
-        "surfaces": ["cursor"],
-        "last_cp": last_cp,
-        "open_interval": open_interval,
-        "excluded_counts": counts,
-        "harvest": harvest,
-        "mismatch": mismatch,
-    }
+    tools: Tools,
+    thread_id: str,
+) -> bool:
+    if tools != "openai":
+        return False
+    if thread_id == "10223":
+        return False
+    if any(seg.get("from_sealed", True) for seg in segments):
+        return False
+    if any(msg.get("source") != "cursor-jsonl" for msg in messages):
+        return False
+    return bool(messages)
 
 
-def _summary_line(open_line: dict[str, Any]) -> str:
-    harvest = open_line.get("harvest")
-    harvest_part = ""
-    if isinstance(harvest, dict):
-        harvest_part = (
-            f" harvest sealed={harvest.get('sealed', 0)}"
-            f"/{harvest.get('discovered', 0)}"
-        )
-    return (
-        f"Tape {open_line['thread_id']}: {open_line['segment_count']} segments, "
-        f"{open_line['message_count']} messages, "
-        f"{open_line['payload_bytes']}B/{open_line['budget_bytes']}B"
-        f"{', truncated' if open_line['truncated'] else ''}"
-        f"{harvest_part}."
-    )
+def codec_counts(segments: list[dict[str, Any]]) -> dict[str, int]:
+    md_v1 = sum(1 for s in segments if s.get("from_sealed", True))
+    messages_v1 = sum(1 for s in segments if s.get("verbatim_codec") == "messages-v1")
+    if messages_v1 == 0:
+        return {"md-v1": md_v1, "messages-v1": 0}
+    return {"md-v1": md_v1 - messages_v1, "messages-v1": messages_v1}
 
 
 def render_tape(
@@ -796,11 +233,7 @@ def render_tape(
     include_extras: bool = False,
     tools: Tools = "none",
 ) -> dict[str, Any]:
-    """Render messages+extras dump for a continuity lane (read-only).
-
-    ``scope='last_session'`` (default): pour only the posting interval between
-    the prior CHECKPOINT and the tip CP window. ``scope='full'``: entire lane tape.
-    """
+    """Render messages+extras dump for a continuity lane (read-only)."""
     from cortex_store.db import cortex_conn, decode_row
 
     json_fields = frozenset({"domains", "decisions", "open_items", "entity_ids"})
@@ -815,171 +248,34 @@ def render_tape(
             (agent_bus_ref, thread_id),
         ).fetchall()
     journals = [decode_row(row, json_fields) for row in rows]
-
-    segments: list[dict[str, Any]] = []
-    excluded: list[dict[str, Any]] = []
-    lane_journals: list[dict[str, Any]] = []
-    explicit_uuids = _explicit_uuids_for_lane(thread_id)
-    for journal in journals:
-        sid = journal.get("session_id")
-        if not sid:
-            continue
-        binding, dominant_lane = _binding_for_journal(
-            journal, thread_id, explicit_uuids=explicit_uuids
-        )
-        if binding is None:
-            excluded.append(
-                {
-                    "session_id": sid,
-                    "reason": "dropped",
-                    "detail": "human row neither cites lane nor is CP-named",
-                }
-            )
-            continue
-        if binding == "read_only":
-            excluded.append(
-                {
-                    "session_id": sid,
-                    "reason": "read_only",
-                    "detail": f"foreign dominant_lane={dominant_lane}",
-                    "dominant_lane": dominant_lane,
-                }
-            )
-            continue
-        if journal.get("file_path") is None:
-            excluded.append({"session_id": sid, "reason": "segment_unavailable", "depth": "light"})
-            continue
-        journal = {**journal, "_binding": binding, "_dominant_lane": dominant_lane}
-        lane_journals.append(journal)
-
     from cortex_store.dispatch_ops._shared import _FILES_ROOT
 
-    for chain_seg in build_chain_segments(lane_journals, files_root=_FILES_ROOT):
-        journal = next(
-            j for j in lane_journals if j.get("session_id") == chain_seg["session_id"]
-        )
-        binding = journal.get("_binding", "dominant_write")
-        dominant_lane = journal.get("_dominant_lane")
-        sealed_full_turns = 0
-        post_lid_turns = 0
-        file_path = journal.get("file_path")
-        if file_path:
-            full = (_FILES_ROOT / file_path).read_text(encoding="utf-8")
-            verbatim = _split_verbatim_layer(
-                full, verbatim_bytes=journal_verbatim_bytes(journal)
-            )
-            sealed_full_turns = _turn_count_verbatim(verbatim)
-            post_lid_turns, _ = _post_lid_tail(
-                conversation_uuid=journal.get("conversation_uuid"),
-                sealed_turn_count=sealed_full_turns,
-                session_id=str(chain_seg["session_id"]),
-            )
-        segments.append(
-            {
-                "session_id": chain_seg["session_id"],
-                "transcript_id": chain_seg["transcript_id"],
-                "turn_count": chain_seg["turn_count"],
-                "turn_lo": chain_seg["turn_lo"],
-                "turn_hi": chain_seg["turn_hi"],
-                "verbatim_sha256": chain_seg["verbatim_sha256"],
-                "conversation_uuid": chain_seg["conversation_uuid"],
-                "binding": binding,
-                "dominant_lane": dominant_lane,
-                "post_lid_turns": post_lid_turns,
-                "boundary": None,
-            }
-        )
-
-    for journal in lane_journals:
-        sid = journal.get("session_id")
-        if sid and not any(s["session_id"] == sid for s in segments):
-            seg = _load_sealed_segment(str(sid))
-            if seg is None:
-                excluded.append({"session_id": sid, "reason": "segment_unavailable", "depth": "light"})
-                continue
-            segments.append(
-                {
-                    "session_id": seg.session_id,
-                    "transcript_id": seg.transcript_id,
-                    "turn_count": seg.turn_count,
-                    "verbatim_sha256": seg.verbatim_sha256,
-                    "conversation_uuid": seg.conversation_uuid,
-                    "binding": journal.get("_binding", seg.binding),
-                    "dominant_lane": journal.get("_dominant_lane"),
-                    "boundary": seg.boundary or (
-                        "window_whole" if seg.turn_count >= 0 else None
-                    ),
-                }
-            )
-
-    cells = _cells_for_lane(
-        thread_id=thread_id,
+    lane_journals, excluded, _explicit = filter_lane_journals(
+        thread_id=thread_id, journals=journals
+    )
+    segments = build_lane_segments(
         lane_journals=lane_journals,
         files_root=_FILES_ROOT,
+        excluded=excluded,
     )
-    messages: list[dict[str, Any]] = []
-    for seg in segments:
-        sid = seg["session_id"]
-        from cortex_store.dispatch_ops._shared import _FILES_ROOT
-
-        journal = next(j for j in journals if j.get("session_id") == sid)
-        file_path = journal.get("file_path")
-        if not file_path:
-            continue
-        full = (_FILES_ROOT / file_path).read_text(encoding="utf-8")
-        verbatim = _split_verbatim_layer(
-            full, verbatim_bytes=journal_verbatim_bytes(journal)
-        )
-        messages.extend(
-            _verbatim_messages_from_segment(
-                verbatim,
-                seg=seg,
-                session_id=sid,
-            )
-        )
-        post_lid = int(seg.get("post_lid_turns") or 0)
-        if post_lid > 0:
-            sealed_full = sum(
-                1 for line in verbatim.splitlines() if line.startswith("## Turn")
-            )
-            _, live_md = _post_lid_tail(
-                conversation_uuid=journal.get("conversation_uuid"),
-                sealed_turn_count=sealed_full,
-                session_id=sid,
-            )
-            if live_md:
-                messages.extend(
-                    _verbatim_messages_from_segment(
-                        live_md,
-                        seg={
-                            **seg,
-                            "turn_lo": sealed_full,
-                            "turn_hi": sealed_full + post_lid,
-                        },
-                        session_id=sid,
-                    )
-                )
-
-    messages.extend(_anchor_jsonl_messages(thread_id, existing=messages))
-
-    if scope == "last_session":
-        cells = _last_session_cells(cells)
-        messages = _filter_messages_to_cells(messages, cells)
-
-    payload_bytes = len(json.dumps(messages).encode("utf-8"))
-    truncated = payload_bytes > budget_bytes
-    index_rows: list[dict[str, Any]] = []
-    if truncated:
-        messages, index_rows, truncated = _degrade_overflow_messages(
-            messages,
-            cells=cells,
-            budget_bytes=budget_bytes,
-        )
-
-    messages = apply_tools_policy(messages, tools=tools)
-    if not include_extras:
-        messages = strip_extras(messages)
-
+    (
+        messages,
+        index_rows,
+        cells,
+        truncated,
+        payload_bytes,
+        tools_available,
+    ) = pour_lane_messages(
+        thread_id=thread_id,
+        journals=journals,
+        segments=segments,
+        lane_journals=lane_journals,
+        files_root=_FILES_ROOT,
+        scope=scope,
+        budget_bytes=budget_bytes,
+        tools=tools,
+        include_extras=include_extras,
+    )
     from cortex_store.events_tape import (
         agent_bus_tape_rendered,
         agent_bus_tape_segment_unavailable,
@@ -992,7 +288,6 @@ def render_tape(
                 session_id=str(ex["session_id"]),
                 depth=str(ex.get("depth") or "light"),
             )
-
     agent_bus_tape_rendered(
         thread_id=thread_id,
         segment_count=len(segments),
@@ -1002,34 +297,30 @@ def render_tape(
         tools=tools,
         include_extras=include_extras,
         index_count=len(index_rows),
-        codec_counts={"md-v1": len(segments), "messages-v1": 0},
+        codec_counts=codec_counts(segments),
         surfaces=["cursor"],
-        tools_available=False,
-    )
-    payload_bytes = len(
-        json.dumps({"messages": messages, "index": index_rows}).encode("utf-8")
+        tools_available=tools_available,
     )
     mismatch = _build_mismatch_rows(cells=cells, segments=segments)
-    open_line = _build_open_line(
+    open_line = build_open_line(
         thread_id=thread_id,
         segments=segments,
         cells=cells,
         messages=messages,
         index_rows=index_rows,
         excluded=excluded,
-        excluded_counts=None,
         truncated=truncated,
         budget_bytes=budget_bytes,
         payload_bytes=payload_bytes,
         harvest=harvest_stats,
         mismatch=mismatch,
         scope=scope,
+        tools_available=tools_available,
     )
-    summary = _summary_line(open_line)
     meta = {
         "messages_sha256": messages_sha256(messages),
         "tools": tools,
-        "tools_available": False,
+        "tools_available": tools_available,
         "extras": include_extras,
         "turn_count": open_line["turn_count"],
         "message_count": len(messages),
@@ -1048,7 +339,7 @@ def render_tape(
         "mismatch": mismatch,
         "meta": meta,
     }
-    return {"open_line": open_line, "summary": summary, **body}
+    return {"open_line": open_line, "summary": summary_line(open_line), **body}
 
 
 __all__ = [
@@ -1056,8 +347,14 @@ __all__ = [
     "TapeSegment",
     "build_chain_segments",
     "_binding_for_journal",
+    "_build_mismatch_rows",
+    "_cells_for_lane",
     "_last_session_cells",
     "_filter_messages_to_cells",
-    "_anchor_jsonl_messages",
+    "anchor_jsonl_messages",
     "_load_live_anchor_transcript",
+    "_find_jsonl_for_uuid",
+    "_degrade_overflow_messages",
+    "connect",
+    "list_checkpoint_turns",
 ]
