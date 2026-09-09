@@ -132,9 +132,9 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 "seat": "cursor-sdk",
                 "contract": "none",
                 "lane": "A",
+                "read_only": True,
                 "dispatch_thread_id": thread,
                 "caller_agent": from_agent,
-                "subject": f"continuity-cp {thread} {execution_id[:8]}",
             }
             if packet_path:
                 dispatch_body["packet_path"] = packet_path
@@ -161,9 +161,9 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
             "seat": "cursor-sdk",
             "contract": "none",
             "lane": "A",
+            "read_only": True,
             "dispatch_thread_id": thread,
             "caller_agent": from_agent,
-            "subject": f"continuity-cp {thread} {execution_id[:8]}",
         }
         if packet_path:
             dispatch_body["packet_path"] = packet_path
@@ -187,13 +187,26 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
 
         worker_thread = str(
             dispatch_resp.get("thread")
+            or dispatch_resp.get("thread_id")
             or dispatch_resp.get("worker_thread")
             or dispatch_resp.get("dispatch_thread_id")
             or thread
         )
         dispatch_id = dispatch_resp.get("dispatch_id")
-        after_turn = int(dispatch_resp.get("after_turn") or 0)
-        reply_from = str(dispatch_resp.get("reply_from_agent") or "cursor-sdk")
+        poll_hint = dispatch_resp.get("poll_hint") or {}
+        poll_args = poll_hint.get("arguments") if isinstance(poll_hint, dict) else {}
+        if not isinstance(poll_args, dict):
+            poll_args = {}
+        after_turn = int(
+            dispatch_resp.get("after_turn")
+            or poll_args.get("after_turn")
+            or 0
+        )
+        reply_from = str(
+            dispatch_resp.get("reply_from_agent")
+            or poll_args.get("from_agent")
+            or "cursor-sdk"
+        )
 
         last_progress = time.monotonic()
         last_seen_turn = after_turn
