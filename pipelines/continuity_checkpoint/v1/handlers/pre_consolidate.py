@@ -31,6 +31,13 @@ def _mechanical_residue(seal: dict[str, Any]) -> str:
     )
 
 
+def _is_sdk_closeout_turn(turn: dict[str, Any], reply_from: str) -> bool:
+    """True when *turn* is a terminal cursor-sdk CLOSEOUT on the worker lane."""
+    if str(turn.get("from_agent") or turn.get("from") or "") != reply_from:
+        return False
+    return "CLOSEOUT" in str(turn.get("subject") or "").upper()
+
+
 def _tape_summary(tape_json: dict[str, Any] | None) -> str:
     if not tape_json:
         return "(tape unavailable)"
@@ -135,6 +142,7 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 "read_only": True,
                 "mcp": False,
                 "server_tools": False,
+                "max_tool_turns": 0,
                 "dispatch_thread_id": thread,
                 "caller_agent": from_agent,
             }
@@ -166,6 +174,7 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
             "read_only": True,
             "mcp": False,
             "server_tools": False,
+            "max_tool_turns": 0,
             "dispatch_thread_id": thread,
             "caller_agent": from_agent,
         }
@@ -215,6 +224,7 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
         last_progress = time.monotonic()
         last_seen_turn = after_turn
         worker_body = ""
+        closeout_seen = False
         while True:
             wait_resp, _ = await bus_wait(
                 thread=worker_thread,
@@ -229,9 +239,11 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 if tn > last_seen_turn:
                     last_seen_turn = tn
                     last_progress = time.monotonic()
-                    if str(turn.get("from_agent") or "") == reply_from:
+                    if str(turn.get("from_agent") or turn.get("from") or "") == reply_from:
                         worker_body = str(turn.get("body") or "")
-            if complete and worker_body:
+                    if _is_sdk_closeout_turn(turn, reply_from):
+                        closeout_seen = True
+            if worker_body and (complete or closeout_seen):
                 break
             if time.monotonic() - last_progress >= _IDLE_GIVE_UP_S:
                 break

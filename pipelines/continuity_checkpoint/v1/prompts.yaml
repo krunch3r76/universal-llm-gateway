@@ -7,6 +7,7 @@ prompts:
       ---
       contract: none
       read_only: true
+      sdk_mode: agent
       packet_label: continuity_checkpoint
       ---
 

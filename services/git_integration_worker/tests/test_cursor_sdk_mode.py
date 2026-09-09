@@ -53,11 +53,19 @@ def test_resolve_sdk_mode_packet_plan_line() -> None:
     )
 
 
-def test_resolve_sdk_mode_read_only_consult_defaults_plan() -> None:
+def test_resolve_sdk_mode_read_only_consult_defaults_agent() -> None:
     req = _req()
     assert (
         resolve_sdk_mode(req, contract="consult", packet_text="", effective_read_only=True)
-        == "plan"
+        == "agent"
+    )
+
+
+def test_resolve_sdk_mode_read_only_none_defaults_agent() -> None:
+    req = _req()
+    assert (
+        resolve_sdk_mode(req, contract="none", packet_text="", effective_read_only=True)
+        == "agent"
     )
 
 

@@ -7,8 +7,19 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from ._card_patch import validate_worker_payload
+from .pre_consolidate import _is_sdk_closeout_turn
 
 pytestmark = pytest.mark.offline
+
+
+def test_is_sdk_closeout_turn_matches_subject() -> None:
+    turn = {
+        "from_agent": "cursor-sdk",
+        "subject": "cursor-sdk CLOSEOUT abc contract=none",
+        "body": "{}",
+    }
+    assert _is_sdk_closeout_turn(turn, "cursor-sdk")
+    assert not _is_sdk_closeout_turn(turn, "cursor")
 
 
 def test_validate_worker_payload_requires_mission() -> None:

@@ -14,7 +14,6 @@ from services.git_integration_worker.models.cursor_api import CursorDispatchRequ
 SdkMode = Literal["agent", "plan"]
 
 _IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "pure-mechanical", "conductor"})
-_PLAN_DEFAULT_CONTRACTS = frozenset({"none", "consult", "ask", "recon", "seed"})
 _PLAN_CLOSEOUT_VERDICT = "plan:closeout_verdict"
 _IMPLEMENT_READY_RE = re.compile(
     r"^density(?:_triage)?:\s*implement[_-]?ready\b",
@@ -51,8 +50,6 @@ def resolve_sdk_mode(
     contract_l = contract.lower()
     if contract_l in _IMPLEMENT_CLASS_CONTRACTS:
         return "agent"
-    if effective_read_only and contract_l in _PLAN_DEFAULT_CONTRACTS:
-        return "plan"
     return "agent"
 
 
