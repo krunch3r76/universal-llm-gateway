@@ -287,16 +287,8 @@ _SOURCE_REF_FRONTMATTER_RE = re.compile(
 _WORK_ITEM_KEY_RE = re.compile(
     r"^(?:todo|plan|plan_phase|packet):\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
 )
-_WORK_ITEM_SCHEMES = (
-    "todo:",
-    "plan:",
-    "plan_phase:",
-    "packet:",
-    "agent-bus:",
-    "friction:",
-    "decision:",
-)
-_ADHOC_SCHEME = "adhoc:"
+from work_key_grammar import ADHOC_SCHEME as _ADHOC_SCHEME
+from work_key_grammar import WORK_ITEM_SCHEMES as _WORK_ITEM_SCHEMES
 
 
 _WORK_KEY_FRONTMATTER_RE = re.compile(
@@ -307,12 +299,7 @@ _PACKET_KIND_FRONTMATTER_RE = re.compile(
 )
 
 
-def is_valid_work_key_scheme(work_key: str) -> bool:
-    """D4 grammar — scheme-prefixed work identity."""
-    key = work_key.strip()
-    if key.startswith(_ADHOC_SCHEME):
-        return True
-    return any(key.startswith(prefix) for prefix in _WORK_ITEM_SCHEMES)
+from work_key_grammar import is_valid_work_key_scheme  # noqa: F401 — re-export
 
 
 def extract_work_key_from_packet(text: str) -> str | None:

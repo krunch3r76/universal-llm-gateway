@@ -33,11 +33,13 @@ in-progress durable write. Recycling `mcp`/`cdp_ask` drops attach, not the CSE (
 | Report exact `live@<sha>` when served dirt was loaded | Report `live` + tree state; `live@<sha>` needs path-explicit commit **before** restart |
 | Hold graph stamps / todo close for `live@sha` | Close once ACs met and ordinary `live` proven (or `liveness n/a`) |
 
-**Go-live = finishing.** `work_complete ⇒ commit(path-explicit) ∧ recycle(every serving process) ∧
+**Go-live = finishing.** `work_complete ⇒ recycle(every serving process) ∧ commit(path-explicit) ∧
 stamp(graph)`; "go live / activate / everything live?" are that contract, not a second permission gate.
-`commit(work_complete) ⇒ go_live` **autonomously** — the commit is itself the trigger; no separate
-operator utterance needed, and non-GIW busy-defer still resolves via the force+announce invariant above,
-never a skip. Mid-arc checkpoint commit and `/session-end` are not work-complete. When a stamp cites the
+Ordinary `live` may recycle from the working tree (MCP `docker cp`, gateway bind-mount) — **then**
+path-explicit commit of session paths **same turn** after live proof; `recycle(work_complete) ∧
+¬commit(session_paths) ⇒ defect`. Cursor IDE agents never close a work-complete slice with served
+paths still uncommitted. When the claim class is `live@<sha>`, commit **before** recycle
+(forbidden-row-4). Mid-arc checkpoint commit and `/session-end` are not work-complete. When a stamp cites the
 landing commit (`resolution_kind=commit:{sha}`, `live@sha` claims), sequence it **after** the recycle+proof
 for that same commit, not before — cheap now that go-live is the default, and consistent with the
 forbidden-row-5 bar (`live` proven is the close condition either way; this is ordering, not a new gate).

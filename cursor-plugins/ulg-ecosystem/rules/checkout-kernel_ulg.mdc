@@ -15,8 +15,9 @@ get the same rule.
 ## Vocabulary
 
 `commit` = repository checkpoint, not activation, **not a completion gate** (never "waiting to commit").
-`deploy` = propagate a tree/commit identity. `activate` / `go live` = finish: path-explicit commit + recycle
-every serving process + graph stamp (`restart-drain-discipline`). Liveness proof is `fleet_liveness(code_ref=…)`;
+`deploy` = propagate a tree/commit identity. `activate` / `go live` = finish: recycle every serving
+process + path-explicit commit (same turn after live proof; `live@sha` ⇒ commit before recycle) +
+graph stamp (`restart-drain-discipline`). Liveness proof is `fleet_liveness(code_ref=…)`;
 repo timestamps / `recent_commits` are low-confidence fallback.
 
 `land(lane_B) ⇒ git merge cursor-sdk/lane-{thread}` — `checkout <branch> -- <paths>` and `cherry-pick` are

@@ -127,8 +127,10 @@ attribution. A dirty-tree restart remains ordinary `live` and remains legal.
 
 A later commit does not upgrade an earlier dirty-tree `live` to `live@<sha>`.
 That class needs a **new** recycle after the path-explicit commit. Finishing
-work **is** go-live (`restart-drain-discipline` proof loop): path-explicit
-commit of the work paths + recycle of every serving process + graph stamp.
+work **is** go-live (`restart-drain-discipline` proof loop): recycle of every
+serving process + path-explicit commit of the work paths (same turn after live
+proof; `live@sha` ⇒ commit before recycle) + graph stamp. Cursor IDE agents
+**never** close work-complete with served paths still uncommitted.
 A mid-arc checkpoint `commit` and `/session-end` are not work-complete
 (`decision:go-live-proof-loop`).
 

@@ -318,7 +318,7 @@ def validate_work_key(
             field="work_key",
             code="work_key_unparseable",
         )
-    from services.git_integration_worker.cursor_sdk_packet import is_valid_work_key_scheme
+    from work_key_grammar import is_valid_work_key_scheme
 
     if not is_valid_work_key_scheme(key):
         return _validation_error(
