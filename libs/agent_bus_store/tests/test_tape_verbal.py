@@ -95,7 +95,8 @@ def test_last_session_scope_keeps_only_last_cp_interval() -> None:
 
 def test_render_tape_returns_messages_and_index_arrays() -> None:
     with (
-        patch("agent_bus_store.tape_render.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_membership.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_pour.list_checkpoint_turns", return_value=()),
         patch("cortex_store.db.cortex_conn") as mock_conn,
         patch("cortex_store.events_tape.agent_bus_tape_rendered"),
     ):

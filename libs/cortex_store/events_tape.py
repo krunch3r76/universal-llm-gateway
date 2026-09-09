@@ -267,6 +267,29 @@ def transcript_harvested(
 
 
 @event_factory
+def transcript_legacy_md_read(
+    *,
+    session_id: str,
+    sentinel_count: int,
+    marker_count: int,
+    user_marker_hits: int,
+) -> Event:
+    ev = Event(
+        signal="cortex.transcript.legacy_md_read",
+        role="observation",
+        scope="global",
+        payload={
+            "session_id": session_id,
+            "sentinel_count": sentinel_count,
+            "marker_count": marker_count,
+            "user_marker_hits": user_marker_hits,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
 def agent_bus_tape_harvest_rendered(
     *,
     thread_id: str,

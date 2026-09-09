@@ -35,7 +35,8 @@ def _verbatim_md(turn_count: int, session_id: str) -> str:
 def test_i10_tape_render_does_not_load_windows_section() -> None:
     """I10 / AC-15: tape resume payload never embeds audit ``## Windows`` concat."""
     with (
-        patch("agent_bus_store.tape_render.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_membership.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_pour.list_checkpoint_turns", return_value=()),
         patch("cortex_store.db.cortex_conn") as mock_conn,
         patch("cortex_store.events_tape.agent_bus_tape_rendered"),
     ):
@@ -48,11 +49,11 @@ def test_i10_tape_render_does_not_load_windows_section() -> None:
 
 def test_render_tape_empty_lane() -> None:
     with (
-        patch("agent_bus_store.tape_render.list_checkpoint_turns") as mock_cps,
+        patch("agent_bus_store.tape_membership.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_pour.list_checkpoint_turns", return_value=()),
         patch("cortex_store.db.cortex_conn") as mock_conn,
         patch("cortex_store.events_tape.agent_bus_tape_rendered"),
     ):
-        mock_cps.return_value = ()
         conn = mock_conn.return_value.__enter__.return_value
         conn.execute.return_value.fetchall.return_value = []
         result = render_tape(thread_id="100")
@@ -199,9 +200,11 @@ def test_render_tape_messages_contain_user_and_assistant_speech(tmp_path: Path) 
     }
 
     with (
-        patch("agent_bus_store.tape_render.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_membership.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_pour.list_checkpoint_turns", return_value=()),
         patch("cortex_store.db.cortex_conn") as mock_conn,
         patch("cortex_store.events_tape.agent_bus_tape_rendered"),
+        patch("cortex_store.events_tape.transcript_legacy_md_read"),
         patch("cortex_store.dispatch_ops._shared._FILES_ROOT", files_root),
     ):
         conn = mock_conn.return_value.__enter__.return_value
@@ -260,9 +263,11 @@ def test_i9_render_tape_reports_dropped_human_row(tmp_path: Path) -> None:
     ]
 
     with (
-        patch("agent_bus_store.tape_render.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_membership.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_pour.list_checkpoint_turns", return_value=()),
         patch("cortex_store.db.cortex_conn") as mock_conn,
         patch("cortex_store.events_tape.agent_bus_tape_rendered"),
+        patch("cortex_store.events_tape.transcript_legacy_md_read"),
         patch("cortex_store.dispatch_ops._shared._FILES_ROOT", files_root),
     ):
         conn = mock_conn.return_value.__enter__.return_value
@@ -335,10 +340,10 @@ def test_b8_cells_join_chain_segments_and_bus_turn_id(tmp_path: Path) -> None:
 
     with (
         patch(
-            "agent_bus_store.tape_render.list_checkpoint_turns",
+            "agent_bus_store.tape_pour.list_checkpoint_turns",
             return_value=(cp1, cp2),
         ),
-        patch("agent_bus_store.tape_render.connect", return_value=_Connect()),
+        patch("agent_bus_store.tape_pour.connect", return_value=_Connect()),
     ):
         cells = _cells_for_lane(
             thread_id="6341",
@@ -382,10 +387,12 @@ def test_b12_post_lid_turns_on_segment(tmp_path: Path) -> None:
     }
 
     with (
-        patch("agent_bus_store.tape_render.list_checkpoint_turns", return_value=()),
-        patch("agent_bus_store.tape_render._post_lid_tail", return_value=(3, None)),
+        patch("agent_bus_store.tape_membership.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_pour.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_render.post_lid_tail", return_value=(3, None)),
         patch("cortex_store.db.cortex_conn") as mock_conn,
         patch("cortex_store.events_tape.agent_bus_tape_rendered"),
+        patch("cortex_store.events_tape.transcript_legacy_md_read"),
         patch("cortex_store.dispatch_ops._shared._FILES_ROOT", files_root),
     ):
         conn = mock_conn.return_value.__enter__.return_value
@@ -456,7 +463,8 @@ def test_t14_byte_accurate_degrade_under_budget() -> None:
 
 def test_t15_open_line_is_first_key() -> None:
     with (
-        patch("agent_bus_store.tape_render.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_membership.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_pour.list_checkpoint_turns", return_value=()),
         patch("cortex_store.db.cortex_conn") as mock_conn,
         patch("cortex_store.events_tape.agent_bus_tape_rendered"),
     ):
