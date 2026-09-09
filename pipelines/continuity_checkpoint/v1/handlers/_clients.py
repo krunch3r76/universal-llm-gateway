@@ -146,4 +146,24 @@ async def bus_wait(
     return await bus_get(path, params=params)
 
 
-__all__ = ["bus_get", "bus_send", "bus_wait", "cortex_dispatch", "stargate_post"]
+async def bus_fetch_turn(
+    *, thread: str, turn_number: int
+) -> dict[str, Any] | None:
+    """GET ``/turns/by-number`` for a single worker CLOSEOUT body."""
+    payload, status = await bus_get(
+        "/turns/by-number",
+        params={"thread": thread, "turn_number": str(turn_number)},
+    )
+    if status >= 400 or not isinstance(payload, dict):
+        return None
+    return payload
+
+
+__all__ = [
+    "bus_fetch_turn",
+    "bus_get",
+    "bus_send",
+    "bus_wait",
+    "cortex_dispatch",
+    "stargate_post",
+]

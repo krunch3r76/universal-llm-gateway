@@ -8,7 +8,7 @@ import pytest
 
 import json
 
-from ._card_patch import parse_worker_json, validate_worker_payload
+from ._card_patch import _format_opportunity_row, parse_worker_json, validate_worker_payload
 from .pre_consolidate import _is_sdk_closeout_turn
 
 pytestmark = pytest.mark.offline
@@ -55,6 +55,14 @@ def test_parse_worker_json_follows_sdk_envelope_to_sidecar(tmp_path, monkeypatch
     assert parsed["card_patch"]["resume_open"] == "line"
 
 
+def test_format_opportunity_row_accepts_dict_rows() -> None:
+    text = _format_opportunity_row(
+        {"id": "4b.2", "status": "in_flight", "note": "pre_consolidate drill"}
+    )
+    assert "4b.2" in text
+    assert "in_flight" in text
+
+
 def test_validate_worker_payload_accepts_mission_in_residue() -> None:
     ok, _ = validate_worker_payload(
         {
@@ -63,6 +71,79 @@ def test_validate_worker_payload_accepts_mission_in_residue() -> None:
         }
     )
     assert ok
+
+
+@pytest.mark.asyncio
+async def test_pre_consolidate_fetches_closeout_from_qualifying_reply_turn() -> None:
+    from .pre_consolidate import ContinuityCheckpointPreConsolidateHandler
+
+    closeout_body = json.dumps(
+        {
+            "schema_version": 1,
+            "source_ref": "workspaces://universal-llm-gateway/tmp/reviews/closeouts/x.md",
+        }
+    )
+
+    class _Ctx:
+        execution_id = "exec-pre"
+        dispatch_thread_id = "10223"
+        options = {
+            "thread": "10223",
+            "surface": "cursor",
+            "from_agent": "continuity",
+        }
+        outputs = {
+            "seal": {
+                "json": {
+                    "session_id": "cursor-2026-09-09-193600-ead",
+                    "turn_count": 24,
+                }
+            },
+            "tape": {"json": {}},
+        }
+
+    handler = ContinuityCheckpointPreConsolidateHandler()
+    dispatch_resp = {
+        "thread_id": "10435",
+        "poll_hint": {
+            "arguments": {"thread": "10435", "after_turn": 1, "from_agent": "cursor-sdk"}
+        },
+        "reply_from_agent": "cursor-sdk",
+        "dispatch_id": "d1",
+    }
+    with (
+        patch(
+            "handlers.pre_consolidate.stargate_post",
+            new=AsyncMock(return_value=(dispatch_resp, 202)),
+        ),
+        patch(
+            "handlers.pre_consolidate.bus_wait",
+            new=AsyncMock(
+                return_value=(
+                    {"complete": True, "qualifying_reply_turn": 2},
+                    200,
+                )
+            ),
+        ),
+        patch(
+            "handlers.pre_consolidate.bus_fetch_turn",
+            new=AsyncMock(
+                return_value={
+                    "turn_number": 2,
+                    "from": "cursor-sdk",
+                    "subject": "cursor-sdk CLOSEOUT x",
+                    "body": closeout_body,
+                }
+            ),
+        ),
+        patch(
+            "handlers.pre_consolidate.parse_worker_json",
+            return_value=None,
+        ),
+    ):
+        out = await handler.execute(object(), _Ctx())
+    assert out.json["residue_source"] == "mechanical"
+    assert out.json["worker_thread"] == "10435"
 
 
 @pytest.mark.asyncio

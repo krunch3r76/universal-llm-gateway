@@ -112,11 +112,23 @@ def _card_path(thread: str) -> Path | None:
     return path if path.parent.is_dir() or path.is_file() else None
 
 
+def _format_opportunity_row(row: Any) -> str:
+    if isinstance(row, str):
+        return row.strip()
+    if isinstance(row, dict):
+        parts = [str(row.get("id") or "").strip(), str(row.get("status") or "").strip()]
+        extra = row.get("note") or row.get("evidence")
+        if extra:
+            parts.append(str(extra).strip())
+        return " · ".join(p for p in parts if p)
+    return str(row).strip()
+
+
 def apply_card_patch(
     *,
     thread: str,
     resume_open: str,
-    opportunities_rows: list[str],
+    opportunities_rows: list[Any],
 ) -> tuple[bool, str, str]:
     """Patch ## Resume open and append opportunities rows. Returns applied, uri, reason."""
     card_uri = f"cortex://notes/system/threads/{thread}-continuity.md"
@@ -138,7 +150,7 @@ def apply_card_patch(
                 existing = read_section(opp_text, "Opportunities").strip()
             except Exception:  # noqa: BLE001
                 existing = ""
-            rows = [r for r in opportunities_rows if r.strip()]
+            rows = [text for r in opportunities_rows if (text := _format_opportunity_row(r))]
             if rows:
                 block = existing + ("\n" if existing else "") + "\n".join(f"- {r}" for r in rows)
                 try:

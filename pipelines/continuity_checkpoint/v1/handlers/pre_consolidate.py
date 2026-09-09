@@ -12,7 +12,14 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._card_patch import apply_card_patch, parse_worker_json, validate_worker_payload
-from ._clients import bus_get, bus_wait, cortex_dispatch, stargate_post, step_output_json
+from ._clients import (
+    bus_fetch_turn,
+    bus_get,
+    bus_wait,
+    cortex_dispatch,
+    stargate_post,
+    step_output_json,
+)
 from ._packet import render_pre_consolidate_packet, write_packet_file
 
 logger = logging.getLogger(__name__)
@@ -198,18 +205,19 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
             }
             return StepOutput(raw=json.dumps(result), json=result)
 
-        worker_thread = str(
-            dispatch_resp.get("thread")
-            or dispatch_resp.get("thread_id")
-            or dispatch_resp.get("worker_thread")
-            or dispatch_resp.get("dispatch_thread_id")
-            or thread
-        )
-        dispatch_id = dispatch_resp.get("dispatch_id")
         poll_hint = dispatch_resp.get("poll_hint") or {}
         poll_args = poll_hint.get("arguments") if isinstance(poll_hint, dict) else {}
         if not isinstance(poll_args, dict):
             poll_args = {}
+        # poll_hint.thread is the worker lane; dispatch_thread_id is coordination only.
+        worker_thread = str(
+            poll_args.get("thread")
+            or dispatch_resp.get("thread")
+            or dispatch_resp.get("thread_id")
+            or dispatch_resp.get("worker_thread")
+            or thread
+        )
+        dispatch_id = dispatch_resp.get("dispatch_id")
         after_turn = int(
             dispatch_resp.get("after_turn")
             or poll_args.get("after_turn")
@@ -233,17 +241,20 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                 from_agent=reply_from,
             )
             complete = bool(wait_resp.get("complete"))
-            turns = wait_resp.get("turns") or []
-            for turn in turns:
-                tn = int(turn.get("turn_number") or 0)
-                if tn > last_seen_turn:
-                    last_seen_turn = tn
+            qual_turn = wait_resp.get("qualifying_reply_turn")
+            if qual_turn is not None:
+                turn_payload = await bus_fetch_turn(
+                    thread=worker_thread, turn_number=int(qual_turn)
+                )
+                if turn_payload is not None:
+                    tn = int(turn_payload.get("turn_number") or qual_turn)
+                    if tn > last_seen_turn:
+                        last_seen_turn = tn
                     last_progress = time.monotonic()
-                    if str(turn.get("from_agent") or turn.get("from") or "") == reply_from:
-                        worker_body = str(turn.get("body") or "")
-                    if _is_sdk_closeout_turn(turn, reply_from):
+                    worker_body = str(turn_payload.get("body") or "")
+                    if _is_sdk_closeout_turn(turn_payload, reply_from):
                         closeout_seen = True
-            if worker_body and (complete or closeout_seen):
+            if complete or closeout_seen:
                 break
             if time.monotonic() - last_progress >= _IDLE_GIVE_UP_S:
                 break
