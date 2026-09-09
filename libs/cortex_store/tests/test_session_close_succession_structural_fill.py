@@ -416,6 +416,260 @@ def test_i5_succession_fill_none_depth_without_jsonl(
     assert prior_path.is_file()
 
 
+def _write_post_summary_jsonl(
+    path: Path,
+    *,
+    prior_stamps: list[str],
+    new_stamps: list[str],
+    summary_stamp: str | None = None,
+) -> None:
+    """JSONL whose first user turn is a post-summary body (non-prefix at message 0)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stamp = summary_stamp or "2026-09-09T06:00:00+00:00"
+    records: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "message": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            f"<timestamp>{stamp}</timestamp>\n"
+                            "[Summary of prior conversation]\n"
+                            "Condensed context after Cursor mid-history summary."
+                        ),
+                    }
+                ]
+            },
+        },
+        {
+            "role": "assistant",
+            "message": {"content": [{"type": "text", "text": "Continuing after summary."}]},
+        },
+    ]
+    for stamp in new_stamps:
+        records.append(
+            {
+                "role": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"<timestamp>{stamp}</timestamp>\nPost-summary turn.",
+                        }
+                    ]
+                },
+            }
+        )
+        records.append(
+            {
+                "role": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Ack."},
+                        {
+                            "type": "tool_use",
+                            "name": "CallDynamicTool",
+                            "input": {
+                                "toolName": "agent_bus",
+                                "arguments": {"tool": "post", "thread": "10223"},
+                            },
+                        },
+                    ]
+                },
+            }
+        )
+    with path.open("w", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec) + "\n")
+    _ = prior_stamps  # fixture parity — seal used prior_stamps before rewrite
+
+
+def test_4s1_4s2_post_summary_diverged_splice(
+    session_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """4s.1/4s.2: post-summary JSONL on succession fill ⇒ SPLICE, seal bytes unchanged."""
+    captured: list[dict[str, Any]] = []
+
+    def _capture(**kwargs: object) -> None:
+        captured.append(dict(kwargs))
+
+    monkeypatch.setattr(
+        "cortex_store.events_tape.session_close_succession_structural_filled",
+        _capture,
+    )
+
+    db_path = session_env["db_path"]
+    files_root = session_env["files_root"]
+    transcripts_root = session_env["transcripts_root"]
+    jsonl = transcripts_root / _UUID / f"{_UUID}.jsonl"
+    stamps_10 = [f"2026-09-07T10:{i:02d}:00+00:00" for i in range(10)]
+    _write_jsonl(jsonl, stamps_10)
+    rel = f"{_UUID}/{_UUID}.jsonl"
+
+    seal = _op_transcript_seal(thread="10223", jsonl_path=rel)
+    assert "error" not in seal, seal
+    sealed_sid = seal["session_id"]
+    assert seal.get("turn_count") == 10
+
+    tx_path = files_root / f"notes/system/transcripts/{sealed_sid}.md"
+    seal_path = files_root / f"notes/system/seals/{sealed_sid}.messages.json"
+    seal_bytes_before = seal_path.read_bytes()
+    md_bytes_before = tx_path.read_bytes()
+
+    conn = sqlite3.connect(db_path)
+    try:
+        fp_row = conn.execute(
+            "SELECT verbatim_sha256, verbatim_bytes, verbatim_codec FROM session_journals "
+            "WHERE session_id = ?",
+            (sealed_sid,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert fp_row is not None
+
+    new_stamps = [
+        "2026-09-09T06:30:00+00:00",
+        "2026-09-09T06:45:00+00:00",
+        "2026-09-09T07:00:00+00:00",
+    ]
+    _write_post_summary_jsonl(jsonl, prior_stamps=stamps_10, new_stamps=new_stamps)
+
+    sealed_prefix = md_bytes_before[: int(fp_row[1])]
+
+    fill = ops_journals._op_session_close(
+        session_id=sealed_sid,
+        agent="cursor",
+        transcript_jsonl_path=rel,
+        session_summary_md=_summary("Human structural fill after post-summary divergence."),
+        summary="Human structural fill after post-summary divergence.",
+        transcript_depth="verbatim",
+        decisions=["SPLICE fill on post-summary JSONL divergence."],
+    )
+    assert "error" not in fill, fill
+
+    conn = sqlite3.connect(db_path)
+    try:
+        closed = conn.execute(
+            "SELECT closed_by, verbatim_sha256, verbatim_bytes, verbatim_codec FROM session_journals "
+            "WHERE session_id = ?",
+            (sealed_sid,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert closed is not None
+    assert closed[0] == "cursor"
+    assert closed[1] == fp_row[0]
+    assert closed[2] == fp_row[1]
+    assert closed[3] == fp_row[2]
+
+    assert seal_path.read_bytes() == seal_bytes_before
+    after_md = tx_path.read_bytes()
+    assert after_md[: len(sealed_prefix)] == sealed_prefix
+    assert b"Human structural fill after post-summary divergence." in after_md
+
+    assert captured, "expected succession_structural_filled event"
+    ev = captured[-1]
+    assert ev.get("reason") == "SPLICE"
+    assert ev.get("extended") is False
+    assert ev.get("cause") == "diverged"
+    assert fill.get("turn_count") == 10
+
+
+def test_4s_uuid_mismatch_409(session_env: dict[str, Path]) -> None:
+    """Identity guard: wrong conversation uuid on diverged fill ⇒ 409."""
+    transcripts_root = session_env["transcripts_root"]
+    jsonl = transcripts_root / _UUID / f"{_UUID}.jsonl"
+    _write_jsonl(jsonl, [_START, "2026-09-07T10:30:00+00:00"])
+    rel = f"{_UUID}/{_UUID}.jsonl"
+
+    seal = _op_transcript_seal(thread="10223", jsonl_path=rel)
+    assert "error" not in seal, seal
+    sealed_sid = seal["session_id"]
+
+    wrong_uuid = "c3d4e5f6-a7b8-9012-cdef-123456789abc"
+    wrong_jsonl = transcripts_root / wrong_uuid / f"{wrong_uuid}.jsonl"
+    _write_post_summary_jsonl(
+        wrong_jsonl,
+        prior_stamps=[_START],
+        new_stamps=["2026-09-09T08:00:00+00:00"],
+    )
+    wrong_rel = f"{wrong_uuid}/{wrong_uuid}.jsonl"
+
+    from cortex_store.models import SessionCloseRequest
+    from cortex_store.routes.session_close_validate import validate_session_close
+
+    body = SessionCloseRequest(
+        session_id=sealed_sid,
+        agent="cursor",
+        session_summary_md=_summary("Should refuse wrong uuid JSONL."),
+        summary="Should refuse wrong uuid JSONL.",
+        transcript_jsonl_path=wrong_rel,
+        transcript_depth="verbatim",
+    )
+    with pytest.raises(HTTPException) as exc:
+        validate_session_close(body)
+    assert exc.value.status_code == 409
+    detail = exc.value.detail
+    assert isinstance(detail, dict)
+    assert detail.get("reason") == "succession.conversation_uuid_mismatch"
+    assert "transcript_jsonl_path" in (detail.get("hint") or "")
+
+
+def test_4s_md_v1_diverged_splice(session_env: dict[str, Path]) -> None:
+    """md-v1 succession row: diverged fill ⇒ SPLICE with sealed md prefix preserved."""
+    db_path = session_env["db_path"]
+    files_root = session_env["files_root"]
+    transcripts_root = session_env["transcripts_root"]
+    jsonl = transcripts_root / _UUID / f"{_UUID}.jsonl"
+    _write_jsonl(jsonl, [_START])
+    rel = f"{_UUID}/{_UUID}.jsonl"
+
+    seal = _op_transcript_seal(thread="10223", jsonl_path=rel)
+    assert "error" not in seal, seal
+    sealed_sid = seal["session_id"]
+    tx_path = files_root / f"notes/system/transcripts/{sealed_sid}.md"
+    sealed_full = tx_path.read_text(encoding="utf-8")
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "UPDATE session_journals SET verbatim_codec = 'md-v1' WHERE session_id = ?",
+            (sealed_sid,),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT verbatim_bytes FROM session_journals WHERE session_id = ?",
+            (sealed_sid,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    sealed_vbytes = int(row[0])
+    sealed_prefix = sealed_full.encode("utf-8")[:sealed_vbytes]
+
+    _write_post_summary_jsonl(
+        jsonl,
+        prior_stamps=[_START],
+        new_stamps=["2026-09-09T09:00:00+00:00"],
+    )
+
+    fill = ops_journals._op_session_close(
+        session_id=sealed_sid,
+        agent="cursor",
+        transcript_jsonl_path=rel,
+        session_summary_md=_summary("md-v1 diverged SPLICE fill."),
+        summary="md-v1 diverged SPLICE fill.",
+        transcript_depth="verbatim",
+    )
+    assert "error" not in fill, fill
+
+    after_full = tx_path.read_text(encoding="utf-8")
+    assert after_full.encode("utf-8")[:sealed_vbytes] == sealed_prefix
+    assert "md-v1 diverged SPLICE fill." in after_full
+
+
 class PatchLookup:
     def __init__(self, mapping: dict[str, SealedJournal | None]) -> None:
         self.mapping = mapping

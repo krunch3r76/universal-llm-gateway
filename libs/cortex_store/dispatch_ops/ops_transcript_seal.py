@@ -7,15 +7,22 @@ from typing import Any
 
 from universal_logging import get_logger
 
-from ..events_tape import transcript_sealed_by_succession, transcript_seal_refused_not_lane_window
+from ..events_tape import (
+    transcript_seal_refused_not_lane_window,
+    transcript_sealed_by_succession,
+)
 from ..models import SessionCloseRequest
 from ..routes.session_close import close_session
-from ..transcript_assembly import TranscriptPathError, resolve_jsonl_path
-from ..transcript_session_id import derive_session_id_from_jsonl_start
 from ..session_close_successor_hop import conversation_uuid_from_jsonl_path
+from ..transcript_assembly import TranscriptPathError, resolve_jsonl_path
 from ..transcript_lane_touch import binding_for, dominant_lane, lane_touches
+from ..transcript_session_id import derive_session_id_from_jsonl_start
+from ..verbatim_succession import (
+    divergence_index,
+    load_sealed_payload_for_session,
+    prefix_holds,
+)
 from .ops_transcript_discover import _resolve_explicit_uuids
-from ..verbatim_succession import journal_verbatim_bytes, split_verbatim_layer
 
 logger = get_logger("cortex-api.dispatch_ops.transcript_seal")
 
@@ -124,35 +131,61 @@ def _op_transcript_seal(
             envelope = extract_turns_from_jsonl(
                 resolved, tools="marker", session_id=derived
             )
-            _, new_turns = render_verbatim_md(envelope, derived)
+            new_verbatim_md, new_turns = render_verbatim_md(envelope, derived)
         except ValueError as exc:
             return {"error": str(exc), "reason": "jsonl_parse_error"}
         from ..dispatch_ops._shared import _FILES_ROOT
 
-        prior_turns = 0
-        from ..db import cortex_conn
+        sealed_payload = load_sealed_payload_for_session(
+            derived, files_root=_FILES_ROOT
+        )
+        prior_turns = sealed_payload.sealed_turns if sealed_payload else 0
+        if sealed_payload is not None:
+            if sealed_payload.codec == "messages-v1":
+                ok = prefix_holds(
+                    "messages-v1",
+                    sealed_payload.messages or [],
+                    envelope.messages,
+                )
+            else:
+                ok = prefix_holds(
+                    "md-v1",
+                    sealed_payload.verbatim_md,
+                    new_verbatim_md,
+                )
+            if not ok:
+                from ..events_tape import transcript_seal_verbatim_diverged
 
-        from ..transcript_assembly import count_canonical_turn_headings
-
-        with cortex_conn() as conn:
-            row = conn.execute(
-                "SELECT file_path, verbatim_bytes, verbatim_codec FROM session_journals "
-                "WHERE session_id = ?",
-                (derived,),
-            ).fetchone()
-        if row and row["file_path"]:
-            prior_path = _FILES_ROOT / row["file_path"]
-            if prior_path.is_file():
-                prior_text = prior_path.read_text(encoding="utf-8")
-                codec = row["verbatim_codec"] or "md-v1"
-                if codec == "messages-v1":
-                    prior_verbatim = split_verbatim_layer(prior_text)
-                else:
-                    prior_verbatim = split_verbatim_layer(
-                        prior_text,
-                        verbatim_bytes=journal_verbatim_bytes(row),
+                first_idx = (
+                    divergence_index(
+                        "messages-v1",
+                        sealed_payload.messages or [],
+                        envelope.messages,
                     )
-                prior_turns = count_canonical_turn_headings(prior_verbatim)
+                    if sealed_payload.codec == "messages-v1"
+                    else divergence_index(
+                        "md-v1",
+                        sealed_payload.verbatim_md,
+                        new_verbatim_md,
+                    )
+                )
+                transcript_seal_verbatim_diverged(
+                    session_id=derived,
+                    transcript_id=uuid,
+                    mode="extend",
+                    codec=sealed_payload.codec,
+                    sealed_turns=prior_turns,
+                    live_turns=new_turns,
+                    first_divergent_index=first_idx,
+                )
+                return {
+                    "reason": "already_closed",
+                    "code": "transcript_seal.already_closed",
+                    "session_id": derived,
+                    "turn_count": prior_turns,
+                    "live_turn_count": new_turns,
+                    "divergence": "verbatim_diverged",
+                }
         if new_turns <= prior_turns:
             return {
                 "error": f"session {derived!r} already sealed",

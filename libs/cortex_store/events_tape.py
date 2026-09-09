@@ -16,6 +16,7 @@ def session_close_succession_structural_filled(
     journal_row_id: int,
     extended: bool = False,
     reason: str = "SPLICE",
+    cause: str = "no_jsonl",
 ) -> Event:
     ev = Event(
         signal="cortex.session_close.succession_structural_filled",
@@ -27,6 +28,7 @@ def session_close_succession_structural_filled(
             "journal_row_id": journal_row_id,
             "extended": extended,
             "reason": reason,
+            "cause": cause,
         },
     )
     record(ev.signal, **ev.payload)
@@ -213,6 +215,35 @@ def transcript_sealed_messages(
         role="observation",
         scope="global",
         payload=payload,
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def transcript_seal_verbatim_diverged(
+    *,
+    session_id: str,
+    transcript_id: str | None,
+    mode: str,
+    codec: str,
+    sealed_turns: int,
+    live_turns: int,
+    first_divergent_index: int,
+) -> Event:
+    ev = Event(
+        signal="cortex.transcript.seal.verbatim_diverged",
+        role="observation",
+        scope="global",
+        payload={
+            "session_id": session_id,
+            "transcript_id": transcript_id,
+            "mode": mode,
+            "codec": codec,
+            "sealed_turns": sealed_turns,
+            "live_turns": live_turns,
+            "first_divergent_index": first_divergent_index,
+        },
     )
     record(ev.signal, **ev.payload)
     return ev

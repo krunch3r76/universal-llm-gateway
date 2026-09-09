@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -112,14 +112,71 @@ def stamp_verbatim_fields(
     )
 
 
-def load_sealed_verbatim_for_session(
+@dataclass(frozen=True)
+class SealedPayload:
+    """Sealed verbatim payload loaded from a succession row (R2/R3)."""
+
+    codec: str
+    rel_path: str
+    conversation_uuid: str | None
+    sealed_turns: int
+    messages: list[dict[str, Any]] | None
+    verbatim_md: str
+
+
+def divergence_index(
+    codec: str,
+    sealed: str | Sequence[Mapping[str, Any]],
+    new: str | Sequence[Mapping[str, Any]],
+) -> int:
+    """First index/byte offset where *new* breaks prefix of *sealed* (observation only)."""
+    if codec == "md-v1":
+        assert isinstance(sealed, str) and isinstance(new, str)
+        sealed_b = sealed.encode("utf-8")
+        new_b = new.encode("utf-8")
+        limit = min(len(sealed_b), len(new_b))
+        for i in range(limit):
+            if sealed_b[i] != new_b[i]:
+                return i
+        return limit
+    assert isinstance(sealed, list) and isinstance(new, list)
+    if len(new) < len(sealed):
+        return len(new)
+    boundary = len(sealed) - 1 if sealed else 0
+    for i in range(boundary):
+        if new[i] != sealed[i]:
+            return i
+    if not sealed:
+        return 0
+    last_sealed = sealed[-1]
+    last_new = new[boundary]
+    if last_sealed.get("role") != last_new.get("role"):
+        return boundary
+    sealed_content = last_sealed.get("content")
+    new_content = last_new.get("content")
+    if sealed_content is None:
+        return boundary
+    if new_content is None:
+        return boundary
+    sc = str(sealed_content)
+    nc = str(new_content)
+    if nc.startswith(sc):
+        return len(sealed)
+    for j, (a, b) in enumerate(zip(sc, nc)):
+        if a != b:
+            return boundary
+    return boundary
+
+
+def load_sealed_payload_for_session(
     session_id: str,
     *,
     files_root: Path,
-) -> tuple[str, str] | None:
-    """Load verbatim layer from a succession-sealed journal row, if present."""
+) -> SealedPayload | None:
+    """Load sealed verbatim payload from a succession row, if present."""
     from .db import cortex_conn
     from .session_close_successor_hop import lookup_sealed_journal
+    from .transcript_assembly import count_canonical_turn_headings
 
     sealed = lookup_sealed_journal(session_id)
     if sealed is None or sealed.closed_by != "succession":
@@ -127,8 +184,8 @@ def load_sealed_verbatim_for_session(
     conn = cortex_conn()
     try:
         row = conn.execute(
-            "SELECT file_path, verbatim_bytes, verbatim_codec FROM session_journals "
-            "WHERE session_id = ?",
+            "SELECT file_path, verbatim_bytes, verbatim_codec, conversation_uuid "
+            "FROM session_journals WHERE session_id = ?",
             (session_id,),
         ).fetchone()
     finally:
@@ -137,22 +194,50 @@ def load_sealed_verbatim_for_session(
         return None
     rel_path = str(row["file_path"])
     codec = row["verbatim_codec"] or "md-v1"
+    conversation_uuid = row["conversation_uuid"]
     if codec == "messages-v1":
         seal_path = files_root / transcript_messages_path(rel_path)
-        if seal_path.is_file():
-            from continuity_tape.render_md import render_verbatim_md
+        if not seal_path.is_file():
+            return None
+        from continuity_tape.render_md import render_verbatim_md
 
-            envelope = load_sealed_envelope_from_path(seal_path)
-            verbatim, _ = render_verbatim_md(envelope, session_id)
-            return verbatim, rel_path
+        envelope = load_sealed_envelope_from_path(seal_path)
+        verbatim_md, _ = render_verbatim_md(envelope, session_id)
+        return SealedPayload(
+            codec="messages-v1",
+            rel_path=rel_path,
+            conversation_uuid=conversation_uuid,
+            sealed_turns=envelope.meta.turn_count,
+            messages=list(envelope.messages),
+            verbatim_md=verbatim_md,
+        )
     path = files_root / rel_path
     if not path.is_file():
         return None
     full = path.read_text(encoding="utf-8")
-    verbatim = split_verbatim_layer(
+    verbatim_md = split_verbatim_layer(
         full, verbatim_bytes=journal_verbatim_bytes(row)
     )
-    return verbatim, rel_path
+    return SealedPayload(
+        codec="md-v1",
+        rel_path=rel_path,
+        conversation_uuid=conversation_uuid,
+        sealed_turns=count_canonical_turn_headings(verbatim_md),
+        messages=None,
+        verbatim_md=verbatim_md,
+    )
+
+
+def load_sealed_verbatim_for_session(
+    session_id: str,
+    *,
+    files_root: Path,
+) -> tuple[str, str] | None:
+    """Load verbatim layer from a succession-sealed journal row, if present."""
+    payload = load_sealed_payload_for_session(session_id, files_root=files_root)
+    if payload is None:
+        return None
+    return payload.verbatim_md, payload.rel_path
 
 
 def build_seal_envelope_meta(
@@ -197,10 +282,13 @@ def journal_verbatim_bytes(row: dict[str, Any] | Any) -> int | None:
 
 __all__ = [
     "STRUCTURAL_MARKER",
+    "SealedPayload",
     "build_seal_envelope_meta",
+    "divergence_index",
     "journal_verbatim_bytes",
     "load_sealed_envelope",
     "load_sealed_envelope_from_path",
+    "load_sealed_payload_for_session",
     "load_sealed_verbatim_for_session",
     "prefix_holds",
     "sealed_turn_count",

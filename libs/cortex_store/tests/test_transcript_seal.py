@@ -196,6 +196,81 @@ def test_i7_prefix_extend_then_already_closed(session_env: dict[str, Path]) -> N
     assert unchanged.get("code") == "transcript_seal.already_closed"
 
 
+def test_4s3_extend_post_summary_already_closed(
+    session_env: dict[str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """4s.3 extend: post-summary JSONL ⇒ already_closed + divergence; prefix extend still works."""
+    captured: list[dict[str, Any]] = []
+
+    def _capture(**kwargs: object) -> None:
+        captured.append(dict(kwargs))
+
+    monkeypatch.setattr(
+        "cortex_store.events_tape.session_close_succession_structural_filled",
+        _capture,
+    )
+
+    db_path = session_env["db_path"]
+    files_root = session_env["files_root"]
+    transcripts_root = session_env["transcripts_root"]
+    jsonl = transcripts_root / _UUID / f"{_UUID}.jsonl"
+    stamps_10 = [f"2026-09-07T12:{i:02d}:00+00:00" for i in range(10)]
+    _write_jsonl(jsonl, stamps_10)
+    rel = f"{_UUID}/{_UUID}.jsonl"
+
+    first = _op_transcript_seal(thread="10223", jsonl_path=rel)
+    assert "error" not in first, first
+    sealed_sid = first["session_id"]
+    tx_path = files_root / f"notes/system/transcripts/{sealed_sid}.md"
+    seal_path = files_root / f"notes/system/seals/{sealed_sid}.messages.json"
+    md_before = tx_path.read_bytes()
+    seal_before = seal_path.read_bytes()
+
+    from cortex_store.tests.test_session_close_succession_structural_fill import (
+        _write_post_summary_jsonl,
+    )
+
+    _write_post_summary_jsonl(
+        jsonl,
+        prior_stamps=stamps_10,
+        new_stamps=["2026-09-09T10:00:00+00:00"],
+        summary_stamp=stamps_10[0],
+    )
+
+    diverged = _op_transcript_seal(thread="10223", jsonl_path=rel)
+    assert diverged.get("code") == "transcript_seal.already_closed"
+    assert "error" not in diverged
+    assert diverged.get("divergence") == "verbatim_diverged"
+    assert diverged.get("turn_count") == 10
+    assert tx_path.read_bytes() == md_before
+    assert seal_path.read_bytes() == seal_before
+
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT closed_by FROM session_journals WHERE session_id = ?",
+            (sealed_sid,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    assert row[0] == "succession"
+
+    stamps_20 = stamps_10 + [f"2026-09-07T13:{i:02d}:00+00:00" for i in range(10)]
+    _write_jsonl(jsonl, stamps_20)
+
+    extended = _op_transcript_seal(thread="10223", jsonl_path=rel)
+    assert "error" not in extended, extended
+    assert extended.get("turn_count") == 20
+
+    assert captured, "expected PREFIX-EXTEND succession_structural_filled event"
+    ev = captured[-1]
+    assert ev.get("reason") == "PREFIX-EXTEND"
+    assert ev.get("extended") is True
+    assert ev.get("cause") == "prefix_extend"
+
+
 def test_b14_extend_rollback_restores_sealed_file(
     session_env: dict[str, Path],
     monkeypatch: pytest.MonkeyPatch,

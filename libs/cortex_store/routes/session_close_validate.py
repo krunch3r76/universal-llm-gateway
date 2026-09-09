@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from continuity_tape.extract_jsonl import extract_turns_from_jsonl
+from continuity_tape.messages import ContinuityMessagesEnvelope
+from continuity_tape.render_md import render_verbatim_md
+
 from ..dispatch_ops._session_summary_path import resolve_session_summary_md
 from ..dispatch_ops._shared import (
     _AGENT_SLUG_EXAMPLES,
@@ -18,6 +22,7 @@ from ..handoff_audit import check_handoff_transcript_anchor
 from ..models import SessionCloseRequest
 from ..session_close_successor_hop import (
     SUCCESSION_FILL_REASON,
+    conversation_uuid_from_jsonl_path,
     lookup_sealed_journal,
     resolve_successor_hop,
 )
@@ -27,10 +32,6 @@ from ..session_close_validation import (
     normalize_session_summary_heading,
     reject_handoff_at_none_depth,
 )
-from continuity_tape.extract_jsonl import extract_turns_from_jsonl
-from continuity_tape.messages import ContinuityMessagesEnvelope
-from continuity_tape.render_md import render_verbatim_md
-
 from ..transcript_assembly import (
     TranscriptPathError,
     compose_full_transcript,
@@ -38,9 +39,14 @@ from ..transcript_assembly import (
     resolve_jsonl_path,
     validate_transcript_turn_grammar,
 )
-from ..verbatim_succession import transcript_messages_path
 from ..transcript_session_id import derive_session_id_from_jsonl_start
-from ..verbatim_succession import load_sealed_verbatim_for_session
+from ..verbatim_succession import (
+    divergence_index,
+    load_sealed_payload_for_session,
+    load_sealed_verbatim_for_session,
+    prefix_holds,
+    transcript_messages_path,
+)
 from .session_close_helpers import _parse_opened_at, _raise_422
 
 
@@ -148,6 +154,11 @@ class ValidatedCloseContext:
     messages_path: str | None = None
     verbatim_codec: str | None = None
     messages_sha256: str | None = None
+    splice_cause: str | None = None
+    diverged_live_turns: int | None = None
+    diverged_first_index: int | None = None
+    diverged_sealed_turns: int | None = None
+    diverged_codec: str | None = None
 
 
 def _structured_422(
@@ -257,38 +268,186 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             )
             break
 
+    diverged_jsonl_splice = False
+    splice_cause: str | None = None
+    diverged_live_turns: int | None = None
+    diverged_first_index: int | None = None
+    diverged_sealed_turns: int | None = None
+    diverged_codec: str | None = None
+    fill_check_envelope: ContinuityMessagesEnvelope | None = None
+    fill_check_verbatim_md: str | None = None
+    fill_check_turn_count: int | None = None
+
+    if succession_fill and body.transcript_jsonl_path:
+        from ..dispatch_ops._shared import _FILES_ROOT
+
+        try:
+            _fill_resolved = resolve_jsonl_path(body.transcript_jsonl_path)
+        except TranscriptPathError as exc:
+            _structured_422(
+                body,
+                reason="transcript_jsonl.invalid",
+                field="transcript_jsonl_path",
+                received=body.transcript_jsonl_path,
+                expected=(
+                    "absolute or relative path under CURSOR_AGENT_TRANSCRIPTS_ROOT"
+                ),
+                examples=[],
+                hint=(
+                    "Pass the active session's JSONL path under the cursor "
+                    "agent-transcripts root; the server resolves + sandboxes it."
+                ),
+                detail=str(exc),
+            )
+        try:
+            fill_check_envelope = extract_turns_from_jsonl(
+                _fill_resolved,
+                tools="marker",
+                session_id=body.session_id,
+            )
+            fill_check_verbatim_md, fill_check_turn_count = render_verbatim_md(
+                fill_check_envelope,
+                body.session_id,
+                body.assistant_label,
+            )
+        except ValueError as exc:
+            _structured_422(
+                body,
+                reason="transcript_jsonl.invalid",
+                field="transcript_jsonl_path",
+                received=body.transcript_jsonl_path,
+                expected="well-formed JSONL parseable by extract_turns_from_jsonl",
+                examples=[],
+                hint=(
+                    "Confirm the JSONL is the cursor agent-transcripts "
+                    "format (one record per line, user/assistant roles)."
+                ),
+                detail=f"JSONL parse error: {exc}",
+            )
+        sealed_payload = load_sealed_payload_for_session(
+            body.session_id, files_root=_FILES_ROOT
+        )
+        if sealed_payload is not None:
+            if sealed_payload.codec == "messages-v1":
+                ok = prefix_holds(
+                    "messages-v1",
+                    sealed_payload.messages or [],
+                    fill_check_envelope.messages,
+                )
+            else:
+                ok = prefix_holds(
+                    "md-v1",
+                    sealed_payload.verbatim_md,
+                    fill_check_verbatim_md or "",
+                )
+            if not ok:
+                path_uuid = conversation_uuid_from_jsonl_path(_fill_resolved)
+                if (
+                    sealed_payload.conversation_uuid
+                    and path_uuid != sealed_payload.conversation_uuid
+                ):
+                    from fastapi import HTTPException, status
+
+                    conflict = build_validation_error(
+                        reason="succession.conversation_uuid_mismatch",
+                        field="transcript_jsonl_path",
+                        received=path_uuid,
+                        expected=sealed_payload.conversation_uuid,
+                        examples=[],
+                        hint=(
+                            "Succession fill requires JSONL from the same "
+                            "conversation_uuid as the sealed row — check "
+                            "transcript_jsonl_path."
+                        ),
+                        detail=(
+                            f"session {body.session_id!r} succession fill refused: "
+                            f"JSONL uuid {path_uuid!r} != sealed "
+                            f"{sealed_payload.conversation_uuid!r}."
+                        ),
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT, detail=conflict
+                    )
+                diverged_jsonl_splice = True
+                splice_cause = "diverged"
+                diverged_live_turns = fill_check_turn_count
+                diverged_sealed_turns = sealed_payload.sealed_turns
+                diverged_codec = sealed_payload.codec
+                if sealed_payload.codec == "messages-v1":
+                    diverged_first_index = divergence_index(
+                        "messages-v1",
+                        sealed_payload.messages or [],
+                        fill_check_envelope.messages,
+                    )
+                else:
+                    diverged_first_index = divergence_index(
+                        "md-v1",
+                        sealed_payload.verbatim_md,
+                        fill_check_verbatim_md or "",
+                    )
+            else:
+                splice_cause = "prefix_extend"
+
     splice_fill = (
-        succession_fill
-        and not body.transcript_jsonl_path
-        and not body.transcript_messages
-        and not body.transcript_messages_path
+        (
+            succession_fill
+            and not body.transcript_jsonl_path
+            and not body.transcript_messages
+            and not body.transcript_messages_path
+        )
+        or diverged_jsonl_splice
     )
     sealed_verbatim: str | None = None
     sealed_transcript_path: str | None = None
     if splice_fill:
         from ..dispatch_ops._shared import _FILES_ROOT
 
-        loaded = load_sealed_verbatim_for_session(
-            body.session_id, files_root=_FILES_ROOT
-        )
-        if loaded is None:
-            _structured_422(
-                body,
-                reason="succession.sealed_verbatim_missing",
-                field="session_id",
-                received=body.session_id,
-                expected="succession row with sealed verbatim on disk",
-                examples=[],
-                hint=(
-                    "Succession fill without JSONL requires a prior "
-                    "transcript_seal row with a transcript file on disk."
-                ),
-                detail=(
-                    f"session {body.session_id!r} is not a succession row with "
-                    "a readable sealed verbatim file for SPLICE fill."
-                ),
+        if diverged_jsonl_splice:
+            sealed_payload = load_sealed_payload_for_session(
+                body.session_id, files_root=_FILES_ROOT
             )
-        sealed_verbatim, sealed_transcript_path = loaded
+            if sealed_payload is None:
+                _structured_422(
+                    body,
+                    reason="succession.sealed_verbatim_missing",
+                    field="session_id",
+                    received=body.session_id,
+                    expected="succession row with sealed verbatim on disk",
+                    examples=[],
+                    hint=(
+                        "Succession SPLICE on divergence requires a prior "
+                        "transcript_seal row with a readable sealed verbatim."
+                    ),
+                    detail=(
+                        f"session {body.session_id!r} is not a succession row with "
+                        "a readable sealed verbatim file for diverged SPLICE fill."
+                    ),
+                )
+            sealed_verbatim = sealed_payload.verbatim_md
+            sealed_transcript_path = sealed_payload.rel_path
+        else:
+            splice_cause = "no_jsonl"
+            loaded = load_sealed_verbatim_for_session(
+                body.session_id, files_root=_FILES_ROOT
+            )
+            if loaded is None:
+                _structured_422(
+                    body,
+                    reason="succession.sealed_verbatim_missing",
+                    field="session_id",
+                    received=body.session_id,
+                    expected="succession row with sealed verbatim on disk",
+                    examples=[],
+                    hint=(
+                        "Succession fill without JSONL requires a prior "
+                        "transcript_seal row with a transcript file on disk."
+                    ),
+                    detail=(
+                        f"session {body.session_id!r} is not a succession row with "
+                        "a readable sealed verbatim file for SPLICE fill."
+                    ),
+                )
+            sealed_verbatim, sealed_transcript_path = loaded
 
     if len(body.summary) < 20:
         _structured_422(
@@ -423,6 +582,10 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         assert sealed_verbatim is not None
         verbatim_md = sealed_verbatim
         verbatim_bytes = len(sealed_verbatim.encode("utf-8"))
+        envelope = None
+        messages_path = None
+        verbatim_codec = None
+        messages_sha256 = None
         composed_md = compose_full_transcript(
             sealed_verbatim, body.session_summary_md
         )
@@ -446,50 +609,56 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             )
     else:
         if body.transcript_jsonl_path:
-            try:
-                resolved_path = resolve_jsonl_path(body.transcript_jsonl_path)
-            except TranscriptPathError as exc:
-                _structured_422(
-                    body,
-                    reason="transcript_jsonl.invalid",
-                    field="transcript_jsonl_path",
-                    received=body.transcript_jsonl_path,
-                    expected=(
-                        "absolute or relative path under CURSOR_AGENT_TRANSCRIPTS_ROOT"
-                    ),
-                    examples=[],
-                    hint=(
-                        "Pass the active session's JSONL path under the cursor "
-                        "agent-transcripts root; the server resolves + sandboxes it."
-                    ),
-                    detail=str(exc),
-                )
+            if fill_check_envelope is not None:
+                envelope = fill_check_envelope
+                verbatim_md = fill_check_verbatim_md
+                turn_count = fill_check_turn_count or 0
+            else:
+                try:
+                    resolved_path = resolve_jsonl_path(body.transcript_jsonl_path)
+                except TranscriptPathError as exc:
+                    _structured_422(
+                        body,
+                        reason="transcript_jsonl.invalid",
+                        field="transcript_jsonl_path",
+                        received=body.transcript_jsonl_path,
+                        expected=(
+                            "absolute or relative path under "
+                            "CURSOR_AGENT_TRANSCRIPTS_ROOT"
+                        ),
+                        examples=[],
+                        hint=(
+                            "Pass the active session's JSONL path under the cursor "
+                            "agent-transcripts root; the server resolves + sandboxes it."
+                        ),
+                        detail=str(exc),
+                    )
 
-            try:
-                envelope = extract_turns_from_jsonl(
-                    resolved_path,
-                    tools="marker",
-                    session_id=body.session_id,
-                )
-                verbatim_md, turn_count = render_verbatim_md(
-                    envelope,
-                    body.session_id,
-                    body.assistant_label,
-                )
-            except ValueError as exc:
-                _structured_422(
-                    body,
-                    reason="transcript_jsonl.invalid",
-                    field="transcript_jsonl_path",
-                    received=body.transcript_jsonl_path,
-                    expected="well-formed JSONL parseable by extract_turns_from_jsonl",
-                    examples=[],
-                    hint=(
-                        "Confirm the JSONL is the cursor agent-transcripts "
-                        "format (one record per line, user/assistant roles)."
-                    ),
-                    detail=f"JSONL parse error: {exc}",
-                )
+                try:
+                    envelope = extract_turns_from_jsonl(
+                        resolved_path,
+                        tools="marker",
+                        session_id=body.session_id,
+                    )
+                    verbatim_md, turn_count = render_verbatim_md(
+                        envelope,
+                        body.session_id,
+                        body.assistant_label,
+                    )
+                except ValueError as exc:
+                    _structured_422(
+                        body,
+                        reason="transcript_jsonl.invalid",
+                        field="transcript_jsonl_path",
+                        received=body.transcript_jsonl_path,
+                        expected="well-formed JSONL parseable by extract_turns_from_jsonl",
+                        examples=[],
+                        hint=(
+                            "Confirm the JSONL is the cursor agent-transcripts "
+                            "format (one record per line, user/assistant roles)."
+                        ),
+                        detail=f"JSONL parse error: {exc}",
+                    )
             verbatim_codec = "messages-v1"
             messages_path = transcript_messages_path(
                 f"notes/system/transcripts/{body.session_id}.md"
@@ -610,6 +779,11 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         messages_path=messages_path,
         verbatim_codec=verbatim_codec,
         messages_sha256=messages_sha256,
+        splice_cause=splice_cause,
+        diverged_live_turns=diverged_live_turns,
+        diverged_first_index=diverged_first_index,
+        diverged_sealed_turns=diverged_sealed_turns,
+        diverged_codec=diverged_codec,
     )
 
 

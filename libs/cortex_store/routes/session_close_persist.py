@@ -332,32 +332,6 @@ def persist_session_close(
             _fill_conn.close()
         if prior is not None and prior["closed_by"] == "succession":
             structural_fill = True
-            if prior["file_path"] and ctx.verbatim_md is not None:
-                prior_path = _FILES_ROOT / prior["file_path"]
-                if prior_path.is_file():
-                    prior_text = prior_path.read_text(encoding="utf-8")
-                    prior_verbatim = split_verbatim_layer(
-                        prior_text,
-                        verbatim_bytes=journal_verbatim_bytes(prior),
-                    )
-                    new_verbatim = ctx.verbatim_md
-                    if not new_verbatim.startswith(prior_verbatim):
-                        conflict = build_validation_error(
-                            reason="succession.verbatim_diverged",
-                            field="transcript_messages",
-                            received="non-prefix extension",
-                            expected="byte-prefix of sealed verbatim",
-                            examples=[],
-                            hint="Succession fill requires PREFIX-EXTEND from live JSONL.",
-                            detail=(
-                                f"session {body.session_id!r} succession fill refused: "
-                                "new verbatim is not a prefix extension of sealed verbatim."
-                            ),
-                        )
-                        raise HTTPException(
-                            status_code=status.HTTP_409_CONFLICT,
-                            detail=conflict,
-                        )
     elif (
         reuse_journal_row_id is not None
         and body.closed_by == "succession"
@@ -390,7 +364,10 @@ def persist_session_close(
                             received="non-prefix extension",
                             expected="byte-prefix of sealed verbatim",
                             examples=[],
-                            hint="Succession extend requires PREFIX-EXTEND from live JSONL.",
+                            hint=(
+                                "Succession extend requires PREFIX-EXTEND from live JSONL; "
+                                "on divergence use transcript_seal already_closed{divergence}."
+                            ),
                             detail=(
                                 f"session {body.session_id!r} succession extend refused: "
                                 "new verbatim is not a prefix extension of sealed verbatim."
@@ -429,13 +406,14 @@ def persist_session_close(
                     if prior_rel
                     else None
                 )
-                _enforce_messages_v1_prefix_extend(
-                    prior_codec=prior_codec_for_seal,
-                    prior_seal_path=prior_seal_path,
-                    new_messages=ctx.envelope.messages,
-                    session_id=body.session_id,
-                    mode="fill" if structural_fill else "extend",
-                )
+                if ctx.splice_cause is None:
+                    _enforce_messages_v1_prefix_extend(
+                        prior_codec=prior_codec_for_seal,
+                        prior_seal_path=prior_seal_path,
+                        new_messages=ctx.envelope.messages,
+                        session_id=body.session_id,
+                        mode="fill" if structural_fill else "extend",
+                    )
             sealed_envelope = build_seal_envelope_meta(
                 ctx.envelope,
                 session_id=body.session_id,
@@ -802,16 +780,36 @@ def persist_session_close(
         transcript_depth=ctx.archival_depth,
     )
     if structural_fill:
-        from ..events_tape import session_close_succession_structural_filled
+        from ..events_tape import (
+            session_close_succession_structural_filled,
+            transcript_seal_verbatim_diverged,
+        )
 
-        fill_reason = "PREFIX-EXTEND" if ctx.turn_count > 0 and body.transcript_jsonl_path else "SPLICE"
+        fill_reason = (
+            "SPLICE"
+            if ctx.splice_cause in ("no_jsonl", "diverged")
+            else "PREFIX-EXTEND"
+        )
+        extended = fill_reason == "PREFIX-EXTEND"
+        cause = ctx.splice_cause or "prefix_extend"
         session_close_succession_structural_filled(
             session_id=body.session_id,
             agent=body.agent,
             journal_row_id=journal_row_id,
-            extended=bool(body.transcript_jsonl_path),
+            extended=extended,
             reason=fill_reason,
+            cause=cause,
         )
+        if ctx.splice_cause == "diverged":
+            transcript_seal_verbatim_diverged(
+                session_id=body.session_id,
+                transcript_id=conversation_uuid,
+                mode="fill",
+                codec=ctx.diverged_codec or "messages-v1",
+                sealed_turns=ctx.diverged_sealed_turns or 0,
+                live_turns=ctx.diverged_live_turns or 0,
+                first_divergent_index=ctx.diverged_first_index or 0,
+            )
     elif succession_extend:
         from ..events_tape import session_close_succession_structural_filled
 
@@ -821,6 +819,7 @@ def persist_session_close(
             journal_row_id=journal_row_id,
             extended=True,
             reason="PREFIX-EXTEND",
+            cause="prefix_extend",
         )
 
     debrief = attempt_session_close_debrief(
