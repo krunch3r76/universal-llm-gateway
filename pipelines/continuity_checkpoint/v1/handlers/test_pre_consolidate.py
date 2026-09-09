@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from ._card_patch import validate_worker_payload
+import json
+
+from ._card_patch import parse_worker_json, validate_worker_payload
 from .pre_consolidate import _is_sdk_closeout_turn
 
 pytestmark = pytest.mark.offline
@@ -28,6 +30,29 @@ def test_validate_worker_payload_requires_mission() -> None:
     )
     assert not ok
     assert reason == "missing_mission"
+
+
+def test_parse_worker_json_follows_sdk_envelope_to_sidecar(tmp_path, monkeypatch) -> None:
+    sidecar = tmp_path / "closeout.md"
+    sidecar.write_text(
+        '```json\n{"card_patch": {"resume_open": "line"}, '
+        '"residue": "Mission: ok", "mission": "one"}\n```\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "handlers._card_patch._resolve_workspaces_uri",
+        lambda uri: sidecar if "closeout.md" in uri else None,
+    )
+    parsed = parse_worker_json(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "source_ref": "workspaces://universal-llm-gateway/tmp/reviews/closeouts/closeout.md",
+            }
+        )
+    )
+    assert parsed is not None
+    assert parsed["card_patch"]["resume_open"] == "line"
 
 
 def test_validate_worker_payload_accepts_mission_in_residue() -> None:

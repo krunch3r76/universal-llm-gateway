@@ -11,10 +11,54 @@ from typing import Any
 from markdown_sections import read_section, replace_section
 
 _JSON_FENCE_RE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
+_WORKSPACES_ULG_PREFIX = "workspaces://universal-llm-gateway/"
+
+
+def _ulg_repo_root() -> Path | None:
+    for key in ("UNIVERSAL_LLM_GATEWAY_ROOT", "REPO_ROOT", "WORKSPACE_ROOT"):
+        env = os.environ.get(key)
+        if env:
+            root = Path(env)
+            if root.is_dir():
+                return root
+    candidate = Path("/mnt/torus/projects/universal-llm-gateway")
+    return candidate if candidate.is_dir() else None
+
+
+def _resolve_workspaces_uri(uri: str) -> Path | None:
+    """Map ``workspaces://universal-llm-gateway/…`` to a hub repo path."""
+    if not uri.startswith("workspaces://"):
+        return None
+    rel = uri.removeprefix("workspaces://")
+    if rel.startswith("universal-llm-gateway/"):
+        rel = rel[len("universal-llm-gateway/") :]
+    root = _ulg_repo_root()
+    if root is None:
+        return None
+    path = (root / rel).resolve()
+    if not str(path).startswith(str(root.resolve())):
+        return None
+    return path if path.is_file() else None
+
+
+def _closeout_sidecar_path(envelope: dict[str, Any]) -> Path | None:
+    """Resolve SDK closeout sidecar from envelope ``source_ref`` or artifact paths."""
+    ref = str(envelope.get("source_ref") or "")
+    path = _resolve_workspaces_uri(ref)
+    if path is not None:
+        return path
+    evidence = envelope.get("evidence_uris")
+    if not isinstance(evidence, dict):
+        return None
+    for artifact in evidence.get("artifact_paths") or []:
+        path = _resolve_workspaces_uri(str(artifact))
+        if path is not None:
+            return path
+    return None
 
 
 def parse_worker_json(text: str) -> dict[str, Any] | None:
-    """Extract pre-consolidate JSON from worker closeout text."""
+    """Extract pre-consolidate JSON from worker closeout text or sidecar."""
     match = _JSON_FENCE_RE.search(text)
     raw = match.group(1) if match else text.strip()
     if not raw:
@@ -28,6 +72,9 @@ def parse_worker_json(text: str) -> dict[str, Any] | None:
     if "card_patch" in data:
         return data
     if data.get("schema_version") == 1:
+        sidecar = _closeout_sidecar_path(data)
+        if sidecar is not None:
+            return parse_worker_json(sidecar.read_text(encoding="utf-8"))
         return None
     return data
 
