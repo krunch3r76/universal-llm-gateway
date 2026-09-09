@@ -210,7 +210,7 @@ def test_transcript_path_rejected_at_light_depth(cortex_client: TestClient) -> N
     _draft(
         cortex_client,
         sid,
-        _minimal_fields(transcript_md_path="notes/system/x.md", depth="light"),
+        _minimal_fields(transcript_messages_path="notes/system/x.md", depth="light"),
     )
     check = _check(cortex_client, sid)
     assert check["status"] == "FAIL"

@@ -70,4 +70,43 @@ def mcp_continuity_tape_read_requested(
     return ev
 
 
-__all__ = ["stargate_continuity_tape_read_served", "mcp_continuity_tape_read_requested"]
+@event_factory
+def continuity_messages_extracted(
+    *,
+    surface: str,
+    transcript_id: str,
+    message_count: int,
+    turn_count: int,
+    user_turns: int,
+    tools: str,
+    truncated: bool,
+    source: str,
+    chat_url_sha: str | None = None,
+) -> Event:
+    payload: dict[str, object] = {
+        "surface": surface,
+        "transcript_id": transcript_id,
+        "message_count": message_count,
+        "turn_count": turn_count,
+        "user_turns": user_turns,
+        "tools": tools,
+        "truncated": truncated,
+        "source": source,
+    }
+    if chat_url_sha is not None:
+        payload["chat_url_sha"] = chat_url_sha
+    ev = Event(
+        signal="continuity.messages.extracted",
+        role="observation",
+        scope="global",
+        payload=payload,
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+__all__ = [
+    "stargate_continuity_tape_read_served",
+    "mcp_continuity_tape_read_requested",
+    "continuity_messages_extracted",
+]

@@ -41,12 +41,12 @@ def resolve_transcript(
         }
 
     source_uri = entity_raw.get("source_uri") or ""
-    transcript_md = ""
+    composed_md = ""
     if source_uri:
         md_results = read_files_batch([source_uri])
         md_content = md_results.get(source_uri)
         if isinstance(md_content, str):
-            transcript_md = md_content
+            composed_md = md_content
 
     chain_qs = urlencode({"node": entity_key, "edge_type": "continues", "hops": 5})
     chain_raw = cx("GET", f"/edges/traverse?{chain_qs}")
@@ -64,7 +64,7 @@ def resolve_transcript(
         "name": entity_raw.get("name", clean_id),
         "description": entity_raw.get("description", ""),
         "source_uri": source_uri,
-        "markdown": transcript_md,
+        "markdown": composed_md,
         "assertions": entity_raw.get("assertions", []),
         "chain": chain_edges,
         "handoff_prompt": handoff_prompt,

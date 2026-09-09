@@ -58,16 +58,40 @@ def resolve_draft_paths(fields: dict[str, Any]) -> tuple[dict[str, Any], list[di
             errors.append({**err, "priority": "high", "action": "Fix session_summary_md_path"})
         elif text:
             resolved["session_summary_md"] = text
-    tpath = fields.get("transcript_md_path")
+    tpath = fields.get("transcript_messages_path")
     if tpath:
-        text, err = resolve_session_summary_md(
-            session_summary_md=None,
-            session_summary_md_path=str(tpath),
-        )
-        if err:
-            errors.append({**err, "priority": "high", "action": "Fix transcript_md_path"})
-        elif text:
-            resolved["_transcript_md_resolved"] = text
+        import json
+        from pathlib import Path
+
+        from ..dispatch_ops._shared import _FILES_ROOT
+
+        rel = str(tpath).lstrip("/")
+        path = _FILES_ROOT / rel
+        if not path.is_file():
+            errors.append(
+                {
+                    "error": f"transcript_messages_path not found: {rel}",
+                    "reason": "transcript_messages_path.invalid",
+                    "field": "transcript_messages_path",
+                    "priority": "high",
+                    "action": "Fix transcript_messages_path",
+                }
+            )
+        else:
+            try:
+                resolved["_transcript_messages_resolved"] = json.loads(
+                    path.read_text(encoding="utf-8")
+                )
+            except json.JSONDecodeError as exc:
+                errors.append(
+                    {
+                        "error": str(exc),
+                        "reason": "transcript_messages_path.invalid",
+                        "field": "transcript_messages_path",
+                        "priority": "high",
+                        "action": "Fix transcript_messages_path JSON",
+                    }
+                )
     return resolved, errors
 
 
@@ -92,24 +116,24 @@ def coalesce_draft_fields(
 
 def depth_cross_field_gaps(fields: dict[str, Any]) -> list[dict[str, str]]:
     depth = str(fields.get("depth") or default_depth_for_agent(""))
-    has_transcript_path = bool(fields.get("transcript_md_path"))
+    has_transcript_path = bool(fields.get("transcript_messages_path"))
     gaps: list[dict[str, str]] = []
     if depth == "verbatim" and not has_transcript_path:
         gaps.append(
             {
                 "code": "verbatim.missing_transcript_path",
-                "item": "transcript_md_path",
+                "item": "transcript_messages_path",
                 "priority": "critical",
-                "action": "Set transcript_md_path for depth=verbatim",
+                "action": "Set transcript_messages_path for depth=verbatim",
             }
         )
     if depth != "verbatim" and has_transcript_path:
         gaps.append(
             {
                 "code": "transcript_path.depth_mismatch",
-                "item": "transcript_md_path",
+                "item": "transcript_messages_path",
                 "priority": "critical",
-                "action": "Remove transcript_md_path or set depth=verbatim",
+                "action": "Remove transcript_messages_path or set depth=verbatim",
             }
         )
     handoff = fields.get("handoff") or fields.get("handoff_source_path")

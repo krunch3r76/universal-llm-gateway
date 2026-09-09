@@ -180,6 +180,68 @@ def transcript_seal_refused_not_lane_window(
 
 
 @event_factory
+def transcript_sealed_messages(
+    *,
+    session_id: str,
+    thread_id: str | None = None,
+    transcript_id: str | None = None,
+    surface: str,
+    verbatim_codec: str,
+    prior_codec: str | None = None,
+    turn_count: int,
+    messages_sha256: str,
+    extended: bool = False,
+    already_closed: bool = False,
+) -> Event:
+    payload: dict[str, object] = {
+        "session_id": session_id,
+        "surface": surface,
+        "verbatim_codec": verbatim_codec,
+        "turn_count": turn_count,
+        "messages_sha256": messages_sha256,
+        "extended": extended,
+        "already_closed": already_closed,
+    }
+    if thread_id is not None:
+        payload["thread_id"] = thread_id
+    if transcript_id is not None:
+        payload["transcript_id"] = transcript_id
+    if prior_codec is not None:
+        payload["prior_codec"] = prior_codec
+    ev = Event(
+        signal="cortex.transcript.sealed_messages",
+        role="observation",
+        scope="global",
+        payload=payload,
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def transcript_seal_codec_diverged(
+    *,
+    session_id: str,
+    transcript_id: str | None,
+    prior_codec: str,
+    reason: str,
+) -> Event:
+    ev = Event(
+        signal="cortex.transcript.seal.codec_diverged",
+        role="observation",
+        scope="global",
+        payload={
+            "session_id": session_id,
+            "transcript_id": transcript_id,
+            "prior_codec": prior_codec,
+            "reason": reason,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
 def transcript_harvested(
     *,
     thread_id: str,

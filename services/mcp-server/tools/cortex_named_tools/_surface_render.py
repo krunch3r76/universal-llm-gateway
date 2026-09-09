@@ -37,7 +37,7 @@ Cortex knowledge system — entities, assertions, relationships, edges, journals
 
 tool: operation name (enum on wire schema).
 arguments: JSON-encoded object string (e.g. '{"entity_id": "type:slug"}').
-Large/quote-heavy payloads (session_close transcript_md / session_summary_md /
+Large/quote-heavy payloads (session_close transcript_messages / session_summary_md /
 handoff_prompt): write payload to a file and pass a file-path param
 (session_summary_md_path / transcript_jsonl_path / handoff_source_path), or use
 the /agent-bus CLI. See agent_skill:cortex.

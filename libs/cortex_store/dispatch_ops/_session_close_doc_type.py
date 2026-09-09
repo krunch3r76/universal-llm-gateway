@@ -24,7 +24,8 @@ _SESSION_CLOSE_OPTIONAL_FIELDS: tuple[str, ...] = (
     "session_id",
     "transcript_depth",
     "transcript_jsonl_path",
-    "transcript_md",
+    "transcript_messages",
+    "transcript_messages_path",
     "session_summary_md_path",
     "entity_ids",
     "defer_gaps",
@@ -42,12 +43,12 @@ _TRANSCRIPT_DEPTH_RULES = """\
 
 | Depth | Source required | Artifact | Handoff |
 |---|---|---|---|
-| `verbatim` (default) | `transcript_jsonl_path` (cursor) **or** `transcript_md` (web) | dual-layer file + entity | allowed (≥ light) |
+| `verbatim` (default) | `transcript_jsonl_path` (cursor) **or** `transcript_messages*` (web) | dual-layer file + entity | allowed (≥ light) |
 | `light` | `session_summary_md` only | structural file + entity | allowed |
 | `none` | none — journal + continues edge only | no transcript file/entity | **forbidden** (422 `handoff.requires_transcript_entity`) |
 
 - `write_handoff ⟹ depth ≠ none` — handoff lives on the transcript entity.
-- Web seats: compose `transcript_md` from the context window when no file exists.
+- Web seats: supply `transcript_messages` or `transcript_messages_path` (inline envelope or gated path).
 - Cursor seats: prefer `transcript_jsonl_path` (see session-close.mdc Step 0).
 """
 
@@ -131,9 +132,10 @@ def build_session_close_template(*, platform_note: str = "") -> str:
 def build_session_close_template_web() -> str:
     return build_session_close_template(
         platform_note=(
-            "**Web seat:** no JSONL on disk — compose `transcript_md` from the context "
-            "window at `light` or `verbatim`. Load `web-transcript-preprocessing` before "
-            "composing. Reserve `depth=none` only for trivial sessions (no decisions, "
+            "**Web seat:** no JSONL on disk — supply `transcript_messages` or "
+            "`transcript_messages_path` at `light` or `verbatim`. Load "
+            "`web-transcript-preprocessing` before composing the envelope. "
+            "Reserve `depth=none` only for trivial sessions (no decisions, "
             "entities, or handoff)."
         ),
     )

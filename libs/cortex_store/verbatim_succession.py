@@ -3,10 +3,27 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
+
+from continuity_tape.messages import (
+    ContinuityMessagesEnvelope,
+    seal_messages_sha256,
+)
 
 STRUCTURAL_MARKER = "\n## Session Summary"
+_SEAL_DIR = "notes/system/seals"
+_TRANSCRIPT_DIR = "notes/system/transcripts"
+
+
+def transcript_messages_path(file_path: str) -> str:
+    """Map ``notes/system/transcripts/{sid}.md`` → seal JSON path."""
+    name = Path(file_path).name
+    if name.endswith(".md"):
+        name = name[:-3] + ".messages.json"
+    return f"{_SEAL_DIR}/{name}"
 
 
 def split_verbatim_layer(
@@ -14,11 +31,7 @@ def split_verbatim_layer(
     *,
     verbatim_bytes: int | None = None,
 ) -> str:
-    """Return the verbatim prefix of a composed transcript file.
-
-    Prefer ``verbatim_bytes`` from ``session_journals`` (R3); fall back to the
-    structural marker only when the column is absent (legacy rows).
-    """
+    """Return the verbatim prefix of a composed transcript file."""
     if verbatim_bytes is not None and verbatim_bytes >= 0:
         raw = full_md.encode("utf-8")
         if verbatim_bytes <= len(raw):
@@ -29,25 +42,67 @@ def split_verbatim_layer(
     return full_md[:idx]
 
 
-def verbatim_fingerprint(verbatim: str) -> tuple[str, int]:
-    """Return ``(sha256:…, utf-8 byte length)`` for a verbatim layer."""
-    raw = verbatim.encode("utf-8")
+def verbatim_fingerprint(codec: str, payload: str | Sequence[Mapping[str, Any]]) -> tuple[str, int]:
+    """Return ``(sha256:…, byte length)`` for a verbatim payload by codec."""
+    if codec == "messages-v1":
+        assert not isinstance(payload, str)
+        raw = _seal_ndjson_bytes(payload)
+        digest = hashlib.sha256(raw).hexdigest()
+        return f"sha256:{digest}", len(raw)
+    assert isinstance(payload, str)
+    raw = payload.encode("utf-8")
     digest = hashlib.sha256(raw).hexdigest()
     return f"sha256:{digest}", len(raw)
+
+
+def _seal_ndjson_bytes(messages: Sequence[Mapping[str, Any]]) -> bytes:
+    from continuity_tape.messages import seal_messages_canonical_bytes
+
+    return seal_messages_canonical_bytes(messages)
+
+
+def prefix_holds(
+    codec: str,
+    sealed: str | Sequence[Mapping[str, Any]],
+    new: str | Sequence[Mapping[str, Any]],
+) -> bool:
+    """PREFIX-EXTEND check per codec (R5)."""
+    if codec == "md-v1":
+        assert isinstance(sealed, str) and isinstance(new, str)
+        return new.startswith(sealed)
+    assert isinstance(sealed, list) and isinstance(new, list)
+    if len(new) < len(sealed):
+        return False
+    if new[: len(sealed) - 1] != sealed[: len(sealed) - 1]:
+        return False
+    if not sealed:
+        return True
+    last_sealed = sealed[-1]
+    last_new = new[-1]
+    if last_sealed.get("role") != last_new.get("role"):
+        return False
+    sealed_content = last_sealed.get("content")
+    new_content = last_new.get("content")
+    if sealed_content is None:
+        return True
+    if new_content is None:
+        return False
+    return str(new_content).startswith(str(sealed_content))
 
 
 def stamp_verbatim_fields(
     conn: Any,
     *,
     session_id: str,
-    verbatim: str,
+    codec: str,
+    payload: str | Sequence[Mapping[str, Any]],
 ) -> None:
-    """Persist R3 verbatim fingerprint columns on ``session_journals``."""
-    sha, nbytes = verbatim_fingerprint(verbatim)
+    """Persist verbatim fingerprint columns on ``session_journals``."""
+    sha, nbytes = verbatim_fingerprint(codec, payload)
     conn.execute(
-        "UPDATE session_journals SET verbatim_sha256 = ?, verbatim_bytes = ? "
-        "WHERE session_id = ?",
-        (sha, nbytes, session_id),
+        "UPDATE session_journals SET verbatim_sha256 = ?, verbatim_bytes = ?, "
+        "verbatim_codec = ? WHERE session_id = ?",
+        (sha, nbytes, codec, session_id),
     )
 
 
@@ -66,7 +121,8 @@ def load_sealed_verbatim_for_session(
     conn = cortex_conn()
     try:
         row = conn.execute(
-            "SELECT file_path, verbatim_bytes FROM session_journals WHERE session_id = ?",
+            "SELECT file_path, verbatim_bytes, verbatim_codec FROM session_journals "
+            "WHERE session_id = ?",
             (session_id,),
         ).fetchone()
     finally:
@@ -74,6 +130,15 @@ def load_sealed_verbatim_for_session(
     if row is None or not row["file_path"]:
         return None
     rel_path = str(row["file_path"])
+    codec = row["verbatim_codec"] or "md-v1"
+    if codec == "messages-v1":
+        seal_path = files_root / transcript_messages_path(rel_path)
+        if seal_path.is_file():
+            from continuity_tape.render_md import render_verbatim_md
+
+            envelope = load_sealed_envelope_from_path(seal_path)
+            verbatim, _ = render_verbatim_md(envelope, session_id)
+            return verbatim, rel_path
     path = files_root / rel_path
     if not path.is_file():
         return None
@@ -82,6 +147,74 @@ def load_sealed_verbatim_for_session(
         full, verbatim_bytes=journal_verbatim_bytes(row)
     )
     return verbatim, rel_path
+
+
+def load_sealed_envelope_from_path(path: Path) -> ContinuityMessagesEnvelope:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return ContinuityMessagesEnvelope.model_validate(data)
+
+
+def load_sealed_envelope(
+    row: dict[str, Any] | Any,
+    *,
+    files_root: Path,
+) -> ContinuityMessagesEnvelope | None:
+    """Load seal JSON for a journal row when ``verbatim_codec`` is messages-v1."""
+    file_path = row["file_path"] if row is not None else None
+    if not file_path:
+        return None
+    codec = None
+    try:
+        codec = row["verbatim_codec"]
+    except (KeyError, TypeError, IndexError):
+        pass
+    if codec != "messages-v1":
+        return None
+    seal_path = files_root / transcript_messages_path(str(file_path))
+    if not seal_path.is_file():
+        return None
+    return load_sealed_envelope_from_path(seal_path)
+
+
+def sealed_turn_count(row: dict[str, Any] | Any) -> int:
+    """Turn count from sealed row metadata or envelope."""
+    try:
+        codec = row["verbatim_codec"]
+    except (KeyError, TypeError, IndexError):
+        codec = None
+    if codec == "messages-v1":
+        try:
+            return int(row.get("turn_count") or 0)
+        except (TypeError, ValueError):
+            pass
+    return 0
+
+
+def build_seal_envelope_meta(
+    envelope: ContinuityMessagesEnvelope,
+    *,
+    session_id: str,
+    tools: str = "marker",
+    sealed_at: str,
+    source_sha256: str | None = None,
+) -> ContinuityMessagesEnvelope:
+    """Stamp seal-time meta fields on an envelope before writing JSON."""
+    sha = seal_messages_sha256(envelope.messages)
+    meta = envelope.meta.model_copy(
+        update={
+            "surface": "cursor",
+            "session_id": session_id,
+            "tools": tools,
+            "sealed_at": sealed_at,
+            "messages_sha256": sha,
+            "turn_count": envelope.meta.turn_count,
+            "message_count": len(envelope.messages),
+            "source_sha256": source_sha256 or getattr(
+                envelope.meta, "source_sha256", None
+            ),
+        }
+    )
+    return envelope.model_copy(update={"meta": meta})
 
 
 def journal_verbatim_bytes(row: dict[str, Any] | Any) -> int | None:
@@ -99,9 +232,15 @@ def journal_verbatim_bytes(row: dict[str, Any] | Any) -> int | None:
 
 __all__ = [
     "STRUCTURAL_MARKER",
+    "build_seal_envelope_meta",
     "journal_verbatim_bytes",
+    "load_sealed_envelope",
+    "load_sealed_envelope_from_path",
     "load_sealed_verbatim_for_session",
+    "prefix_holds",
+    "sealed_turn_count",
     "split_verbatim_layer",
     "stamp_verbatim_fields",
+    "transcript_messages_path",
     "verbatim_fingerprint",
 ]

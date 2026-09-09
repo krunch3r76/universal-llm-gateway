@@ -28,14 +28,14 @@ _TRANSCRIPT_READ_PREAMBLE = (
     "Read the raw JSONL — it embeds full tool payloads and wastes tokens.\n"
     "Use server-side assembly first via cortex assemble_transcript: pass "
     "jsonl_path relative to CURSOR_AGENT_TRANSCRIPTS_ROOT (e.g. "
-    "<uuid>/<uuid>.jsonl) plus any session_id string; read transcript_md "
+    "<uuid>/<uuid>.jsonl) plus any session_id string; read verbatim_md "
     "from the response (verbatim layer only).\n"
     "Assembly drops embedded tool_result blocks from user turns and replaces "
     "tool_use with [tool call: NAME] markers — prose preserved, payload bulk "
     "stripped (~50%+ reduction typical). For targeted binds, search keywords "
     "within assembled markdown; avoid full raw JSONL reads.\n"
     "Web seats at session_close: Use the web-transcript-preprocessing skill "
-    "before session_close (payload-vs-metadata strip on transcript_md)."
+    "before session_close (payload-vs-metadata strip on transcript_messages)."
 )
 
 _DELIVERABLE_ROUTING_PREAMBLE = (

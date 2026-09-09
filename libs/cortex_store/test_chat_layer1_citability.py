@@ -61,6 +61,45 @@ def _web_verbatim_md(session_id: str, *, turn_lines: list[str] | None = None) ->
     return "\n".join(body_parts)
 
 
+def _web_messages_envelope(session_id: str, *, turn_count: int = 2) -> dict[str, Any]:
+    from continuity_tape.messages import seal_messages_sha256
+
+    messages: list[dict[str, Any]] = []
+    for idx in range(1, turn_count + 1):
+        messages.extend(
+            [
+                {
+                    "role": "user",
+                    "content": f"User message for turn {idx}.",
+                    "turn_index": idx,
+                    "source": "claude-ai-seal-messages",
+                },
+                {
+                    "role": "assistant",
+                    "content": f"Assistant reply for turn {idx}.",
+                    "turn_index": idx,
+                    "source": "claude-ai-seal-messages",
+                },
+            ]
+        )
+    return {
+        "schema": "ulg.continuity.messages/1",
+        "messages": messages,
+        "index": [],
+        "meta": {
+            "surface": "claude_ai",
+            "tools": "marker",
+            "tools_available": False,
+            "extras": False,
+            "turn_count": turn_count,
+            "message_count": len(messages),
+            "truncated": False,
+            "messages_sha256": seal_messages_sha256(messages),
+            "session_id": session_id,
+        },
+    }
+
+
 def _patch_files_root(monkeypatch: pytest.MonkeyPatch, files_root: Path) -> None:
     root = str(files_root)
     monkeypatch.setattr("cortex_store.rag_resolver._FILES_ROOT", root)
@@ -75,12 +114,12 @@ def _seed_entity(
     session_id: str,
     depth: str,
     files_root: Path,
-    transcript_md: str,
+    file_md: str,
 ) -> None:
     rel = f"notes/system/transcripts/{session_id}.md"
     path = files_root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(transcript_md, encoding="utf-8")
+    path.write_text(file_md, encoding="utf-8")
     attrs = json_encode(
         {
             "transcript_depth": depth,
@@ -198,24 +237,21 @@ def test_grammar_gate_accepts_assembly_headings() -> None:
     assert validate_transcript_turn_grammar(_web_verbatim_md("sid")) is None
 
 
-def test_web_close_rejects_malformed_turn_heading() -> None:
+def test_web_close_rejects_removed_verbatim_field() -> None:
     session_id = "web-2026-08-07-130000-a02"
-    summary = "Citability grammar gate rejects malformed web verbatim."
-    body = SessionCloseRequest.model_validate(
-        {
-            "session_id": session_id,
-            "agent": "web",
-            "transcript_md": _web_verbatim_md(session_id, turn_lines=["## Turn 3"]),
-            "session_summary_md": _session_summary(summary),
-            "summary": summary,
-            "transcript_depth": "verbatim",
-        }
-    )
-    with pytest.raises(Exception) as exc:
-        validate_session_close(body)
-    assert getattr(exc.value, "status_code", None) == 422
-    detail = str(getattr(exc.value, "detail", exc.value))
-    assert "transcript.grammar_invalid" in detail or "grammar" in detail.lower()
+    summary = "Citability rejects removed inline verbatim request field."
+    removed_key = f"transcript_{'md'}"
+    with pytest.raises(Exception):
+        SessionCloseRequest.model_validate(
+            {
+                "session_id": session_id,
+                "agent": "web",
+                removed_key: _web_verbatim_md(session_id, turn_lines=["## Turn 3"]),
+                "session_summary_md": _session_summary(summary),
+                "summary": summary,
+                "transcript_depth": "verbatim",
+            }
+        )
 
 
 def test_web_close_accepts_valid_assembly_grammar() -> None:
@@ -225,7 +261,7 @@ def test_web_close_accepts_valid_assembly_grammar() -> None:
         {
             "session_id": session_id,
             "agent": "web",
-            "transcript_md": _web_verbatim_md(session_id),
+            "transcript_messages": _web_messages_envelope(session_id),
             "session_summary_md": _session_summary(summary),
             "summary": summary,
             "transcript_depth": "verbatim",
@@ -248,7 +284,7 @@ def test_grammar_gate_is_write_time_only_not_on_resolve(
         session_id=session_id,
         depth="verbatim",
         files_root=files_root,
-        transcript_md=_web_verbatim_md(session_id, turn_lines=["## Turn 1 — ok only"]),
+        file_md=_web_verbatim_md(session_id, turn_lines=["## Turn 1 — ok only"]),
     )
     hit = resolve_transcript_turn(f"transcript:{session_id}#turn-1")
     assert "User message for turn 1" in hit["body"]
@@ -283,7 +319,7 @@ def test_resolve_transcript_below_verbatim(
         session_id=session_id,
         depth="light",
         files_root=files_root,
-        transcript_md=_session_summary("light only"),
+        file_md=_session_summary("light only"),
     )
     with pytest.raises(TranscriptResolveError) as exc:
         resolve_transcript_turn(f"transcript:{session_id}#turn-1")
@@ -303,7 +339,7 @@ def test_resolve_turn_out_of_range(
         session_id=session_id,
         depth="verbatim",
         files_root=files_root,
-        transcript_md=_web_verbatim_md(session_id),
+        file_md=_web_verbatim_md(session_id),
     )
     with pytest.raises(TranscriptResolveError) as exc:
         resolve_transcript_turn(f"transcript:{session_id}#turn-9")
@@ -327,7 +363,7 @@ def test_resolve_hit_returns_user_assistant_body(
         session_id=session_id,
         depth="verbatim",
         files_root=files_root,
-        transcript_md=_web_verbatim_md(session_id),
+        file_md=_web_verbatim_md(session_id),
     )
     out = resolve_transcript_turn(f"transcript:{session_id}#turn-1")
     assert out["resolved"] == "transcript_turn"
@@ -347,7 +383,7 @@ def test_op_resolve_transcript_branch(
         session_id=session_id,
         depth="verbatim",
         files_root=files_root,
-        transcript_md=_web_verbatim_md(session_id),
+        file_md=_web_verbatim_md(session_id),
     )
     out = ops_misc._op_resolve(uri=f"transcript:{session_id}#turn-2")
     assert out["turn_number"] == 2
@@ -384,7 +420,7 @@ def test_update_too_early_vs_wrong_turn(
         session_id=session_id,
         depth="verbatim",
         files_root=files_root,
-        transcript_md=_web_verbatim_md(session_id),
+        file_md=_web_verbatim_md(session_id),
     )
     with pytest.raises(TranscriptResolveError) as wrong:
         validate_transcript_evidence_uris([f"transcript:{session_id}#turn-99"])

@@ -69,9 +69,9 @@ def _transcript_depth(entity: dict[str, Any]) -> str | None:
     return str(depth) if depth is not None else None
 
 
-def _extract_turn_body(transcript_md: str, turn_num: int) -> str | None:
+def _extract_turn_body(composed_md: str, turn_num: int) -> str | None:
     """Return User+Assistant body for *turn_num*, or None when heading absent."""
-    lines = transcript_md.splitlines()
+    lines = composed_md.splitlines()
     start_idx: int | None = None
     for idx, line in enumerate(lines):
         match = TURN_HEADING_RE.match(line)
@@ -157,7 +157,7 @@ def resolve_transcript_turn(
         source_uri = str(entity["source_uri"])
         abs_path = _source_uri_to_absolute_path(source_uri)
         try:
-            transcript_md = open(abs_path, encoding="utf-8").read()
+            composed_md = open(abs_path, encoding="utf-8").read()
         except OSError as exc:
             raise TranscriptResolveError(
                 code="transcript_absent",
@@ -166,7 +166,7 @@ def resolve_transcript_turn(
                 ),
                 status_code=404,
             ) from exc
-        body = _extract_turn_body(transcript_md, turn_num)
+        body = _extract_turn_body(composed_md, turn_num)
         if body is None:
             raise TranscriptResolveError(
                 code="turn_out_of_range",

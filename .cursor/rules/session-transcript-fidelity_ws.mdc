@@ -13,7 +13,7 @@ alwaysApply: false
 ## What This Governs
 
 As of 2026-05-16, `cortex(tool="session_close", ...)` takes
-`transcript_jsonl_path` + `session_summary_md` — NOT `transcript_md`.
+`transcript_jsonl_path` + `session_summary_md` — or `transcript_messages*` on web seats.
 The verbatim layer is assembled server-side from the Cursor
 agent-transcripts JSONL. The agent authors only the structural layer
 (`## Session Summary` block + decisions / files / open items /

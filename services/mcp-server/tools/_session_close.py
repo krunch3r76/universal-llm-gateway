@@ -40,7 +40,7 @@ def build_session_close(
         "use": (
             'cortex(tool="session_close", arguments=\'{"session_id": ..., '
             '"agent": ..., '
-            '"transcript_jsonl_path": ... (cursor) OR "transcript_md": ... (web), '
+            '"transcript_jsonl_path": ... (cursor) OR "transcript_messages": ... (web), '
             '"session_summary_md": ..., "summary": ...}\')'
         ),
         "reason": (

@@ -182,7 +182,7 @@ def latest_journal_in_chain(session_id: str) -> SealedJournal | None:
 
 def iter_jsonl_user_timestamps(jsonl_path: Path) -> list[datetime]:
     """Parse ``<timestamp>`` tags on JSONL user text turns, in file order."""
-    from .transcript_assembly import _extract_user_text, _read_jsonl
+    from continuity_tape.extract_jsonl import _extract_user_text, _read_jsonl
 
     try:
         records = _read_jsonl(jsonl_path)

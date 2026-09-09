@@ -209,7 +209,7 @@ Skill bodies arrive when you explicitly Use the `<slug>` skill — do NOT fs-rea
 Web seats have **no** auto-loaded `session-close.mdc`. Seat-routed (kernel SOT):
 1. Use the `session-close-kernel` skill — canonical protocol
 2. **Life/web primary:** `close(op=stage|draft|check|commit)` then optional `close(op=handoff)` — ¬ `cortex(tool="session_close")` as primary
-3. claude-web verbatim: Use the `web-transcript-preprocessing` skill before `draft(transcript_md_path=…)`
+3. claude-web verbatim: Use the `web-transcript-preprocessing` skill before `draft(transcript_messages_path=…)`
 4. **Cursor exception only:** `session_close_preflight` → `session_close` (Use the `session-close-audit` skill on that path — not web primary)
 Kernel skill is SOT; `_protocol` on cortex `session_close` responses also points here."""
 

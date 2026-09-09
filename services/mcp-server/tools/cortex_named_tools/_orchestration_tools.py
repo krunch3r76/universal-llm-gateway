@@ -226,6 +226,6 @@ def register_orchestration_tools(
             "detail": (
                 "The reminder path enabled hallucinated closes; atomic path "
                 "prevents it. Supply either transcript_jsonl_path for Cursor "
-                "sessions or transcript_md for web sessions."
+                "sessions or transcript_messages for web sessions."
             ),
         }

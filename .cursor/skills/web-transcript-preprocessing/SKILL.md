@@ -1,14 +1,14 @@
 ---
 name: web-transcript-preprocessing
-description: "Immediately before session_close on web seats, preprocess transcript_md: retain descriptive metadata and narrative, strip payload content, and never reproduce uploaded file contents."
-trigger_match_terms: ["web-transcript-preprocessing", "web_transcript_preprocessing", "pre-close", "transcript_md", "preprocess", "web", "session_close", "dry_run", "uploaded file contents"]
+description: "Immediately before session_close on web seats, preprocess transcript_messages: retain descriptive metadata and narrative, strip payload content, and never reproduce uploaded file contents."
+trigger_match_terms: ["web-transcript-preprocessing", "web_transcript_preprocessing", "pre-close", "transcript_messages", "preprocess", "web", "session_close", "dry_run", "uploaded file contents"]
 ---
 
 # Web Transcript Preprocessing — Session Close
 
-`web_seat ∧ before(session_close)` ⇒ preprocess `transcript_md` in context before the write. Pass the preprocessed markdown inline as `transcript_md` with `session_summary_md` and `summary`. Do not invent a source flag or JSONL path for web sessions.
+`web_seat ∧ before(session_close)` ⇒ preprocess the continuity envelope before the write. Pass the preprocessed envelope inline as `transcript_messages` (or `transcript_messages_path` when staged under a gated root) with `session_summary_md` and `summary`. Do not invent a JSONL path for web sessions.
 
-Recommended preflight: `session_close(dry_run=True, transcript_md=…, handoff_prompt=…, …)` before real close. Fix any returned `would_fail/reason` before the writing call.
+Recommended preflight: `session_close(dry_run=True, transcript_messages=…, handoff_prompt=…, …)` before real close. Fix any returned `would_fail/reason` before the writing call.
 
 ## Core rule
 
@@ -32,7 +32,7 @@ Test: Would a future reader know what happened without this field?
 
 - File body content from `fs(read)`; keep path/section/char count.
 - Full assertion arrays from `entity_get` / `assertions()`; keep entity ID/name/description.
-- Echoed `transcript_md` from prior responses.
+- Echoed verbatim layers from prior responses.
 - Pipeline scaffolding: `prompt_tokens`, `completion_tokens`, `total_tokens`, `reasoning_tokens`, `duration_s`, poll URLs.
 - Uploaded file contents. Record filename, file type, structural overview, and session use only.
 - Raw retrieval payloads: large JSON arrays/objects when their narrative content is captured elsewhere.
@@ -42,7 +42,7 @@ Test: Would a future reader know what happened without this field?
 - Do not trim or summarize prose reasoning, decisions, or synthesis.
 - Do not collapse tool calls to one-liners; keep parameters visible.
 - Do not strip warnings, error details, bus turn bodies, execution IDs, entity IDs, or reference identifiers.
-- Never reproduce uploaded file contents in `transcript_md`.
+- Never reproduce uploaded file contents in `transcript_messages`.
 
 ## Responsibility boundary
 

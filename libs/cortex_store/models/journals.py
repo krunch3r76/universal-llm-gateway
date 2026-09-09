@@ -1,16 +1,11 @@
 """Session-journal and atomic session-close Pydantic models.
 
 Session-close request shape: ``transcript_depth`` (default ``"verbatim"``)
-selects the archival depth.  For ``verbatim`` / ``light``, the verbatim
-source is **either-of** ``{transcript_jsonl_path, transcript_md}`` —
-Cursor agents pass ``transcript_jsonl_path`` (a Cursor agent-transcripts
-JSONL under ``CURSOR_AGENT_TRANSCRIPTS_ROOT``); the server reads it and
-derives the verbatim layer.  Web agents (no JSONL on disk) pass
-``transcript_md`` directly and the server uses it verbatim.  Either way
-the agent-composed ``session_summary_md`` structural layer is appended.
-If both are supplied, ``transcript_jsonl_path`` wins (cursor path is
-canonical; web would not legitimately pass both).  For ``none``, no
-transcript source is required and none is consumed.
+selects the archival depth.  For ``verbatim`` / ``light``, Cursor agents
+pass ``transcript_jsonl_path``; the server extracts a ``messages-v1`` seal
+and derives verbatim markdown.  Web agents pass ``transcript_messages`` or
+``transcript_messages_path`` (inline envelope or gated path).  For
+``none``, no transcript source is required and none is consumed.
 
 Response carries ``content_hash`` (when a transcript file was written)
 so the agent can quote it as provenance evidence per
@@ -26,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class _SessionJournalCommon(BaseModel):
@@ -66,24 +61,25 @@ class SessionJournalList(BaseModel):
 
 
 class SessionCloseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     """Session-close input contract.
 
-    Atomic assembly is server-side: the handler reads the JSONL (or
-    accepts inline ``transcript_md`` for the Web seat), builds the
-    verbatim layer, appends ``session_summary_md``, writes the file,
-    and commits the DB transaction.
+    Atomic assembly is server-side: the handler reads JSONL or a web
+    ``transcript_messages*`` envelope, writes the ``messages-v1`` seal,
+    renders derived markdown, appends ``session_summary_md``, and commits.
 
     ``transcript_depth`` (default ``"verbatim"``) selects what gets
     archived:
 
       - ``verbatim`` — full dual-layer transcript (verbatim turns +
         structural layer); transcript entity created; enrichment-eligible.
-        Transcript source (``transcript_jsonl_path`` or ``transcript_md``)
+        Transcript source (``transcript_jsonl_path`` or ``transcript_messages*``)
         is required. Current behavior; backward-compatible default.
       - ``light``    — structural-layer-only file written; transcript
         entity created with ``attributes.transcript_depth="light"``;
         NOT enrichment-eligible (no verbatim turns to walk). File content
-        is ``session_summary_md``; no ``transcript_md`` / JSONL required.
+        is ``session_summary_md``; no JSONL / envelope required.
       - ``none``     — no file, no transcript entity; journal row +
         ``continues`` edge only. NOT enrichment-eligible. Incompatible
         with ``handoff_prompt`` / ``handoff_source_path`` (422).
@@ -107,9 +103,8 @@ class SessionCloseRequest(BaseModel):
         and journal row.
 
     Required conditionally on ``transcript_depth``:
-      transcript_jsonl_path / transcript_md: required iff
-        ``transcript_depth == "verbatim"``. Cursor passes the path;
-        web passes the markdown. ``light`` uses ``session_summary_md`` only.
+      transcript_jsonl_path / transcript_messages(_path): required iff
+        ``transcript_depth == "verbatim"``. ``light`` uses ``session_summary_md`` only.
 
     Optional fields:
       transcript_depth:   one of {"verbatim", "light", "none"}; default
@@ -146,7 +141,8 @@ class SessionCloseRequest(BaseModel):
     session_summary_md: str
     summary: str
     transcript_jsonl_path: str | None = None
-    transcript_md: str | None = None
+    transcript_messages: dict[str, Any] | None = None
+    transcript_messages_path: str | None = None
     session_summary_md_path: str | None = None
     transcript_depth: Literal["verbatim", "light", "none"] = "verbatim"
     domains: list[str] | None = None
@@ -216,6 +212,9 @@ class SessionCloseResponse(BaseModel):
         Literal["posted", "skipped_existing", "failed", "disabled"] | None
     ) = None
     debrief_body: str | None = None
+    messages_sha256: str | None = None
+    verbatim_codec: str | None = None
+    messages_path: str | None = None
 
 
 class SessionHandoffUpsertRequest(BaseModel):

@@ -14,11 +14,10 @@ from typing import Any
 
 from universal_logging import get_logger
 
-from ..transcript_assembly import (
-    TranscriptPathError,
-    assemble_verbatim_md,
-    resolve_jsonl_path,
-)
+from continuity_tape.extract_jsonl import extract_turns_from_jsonl
+from continuity_tape.render_md import render_verbatim_md
+
+from ..transcript_assembly import TranscriptPathError, resolve_jsonl_path
 
 logger = get_logger("cortex-api.dispatch_ops.transcript_assembly")
 
@@ -42,8 +41,8 @@ def _op_assemble_transcript(
         ``"Assistant"``.
 
     Returns:
-      ``{"transcript_md", "turn_count", "byte_count", "agent"}`` on success,
-      ``{"error", "reason"}`` otherwise.  ``transcript_md`` here is the
+      ``{"verbatim_md", "turn_count", "byte_count", "agent"}`` on success,
+      ``{"error", "reason"}`` otherwise.  ``verbatim_md`` here is the
       verbatim layer ONLY — the dispatch caller (debug / probe) is expected
       to inspect it, NOT to pass it back as a `session_close` argument
       (that path is dead — see Phase 2 of session-close-server-side-transcript).
@@ -66,16 +65,17 @@ def _op_assemble_transcript(
         return {"error": str(exc), "reason": reason}
 
     try:
-        verbatim_md, turn_count = assemble_verbatim_md(
-            jsonl_path=path,
-            session_id=session_id,
-            assistant_label=assistant_label,
+        envelope = extract_turns_from_jsonl(
+            path, tools="marker", session_id=session_id
+        )
+        verbatim_md, turn_count = render_verbatim_md(
+            envelope, session_id, assistant_label
         )
     except ValueError as exc:
         return {"error": str(exc), "reason": "jsonl_parse_error"}
 
     return {
-        "transcript_md": verbatim_md,
+        "verbatim_md": verbatim_md,
         "turn_count": turn_count,
         "byte_count": len(verbatim_md.encode("utf-8")),
         "agent": agent,

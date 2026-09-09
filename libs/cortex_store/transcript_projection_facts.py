@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from cortex_store.transcript_assembly import _extract_user_text, _read_jsonl
+from continuity_tape.extract_jsonl import _extract_user_text, _read_jsonl
 from cortex_store.transcript_lane_touch import lane_touches_from_records
 from cortex_store.transcript_tool_normalize import iter_normalized_tool_uses
 

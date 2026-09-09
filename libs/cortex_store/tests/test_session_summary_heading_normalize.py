@@ -135,5 +135,5 @@ def test_source_missing_web_seat_hint() -> None:
     )
     assert err is not None
     assert err["reason"] == "transcript_source.missing"
-    assert err["field"] == "transcript_md"
+    assert err["field"] == "transcript_messages"
     assert "web/API seat" in err["hint"]

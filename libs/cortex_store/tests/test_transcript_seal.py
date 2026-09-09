@@ -19,7 +19,7 @@ pytestmark = pytest.mark.offline
 @pytest.fixture(autouse=True)
 def _patch_explicit_uuids(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "cortex_store.dispatch_ops.ops_transcript_seal.explicit_uuids_for_lane",
+        "cortex_store.dispatch_ops.ops_transcript_discover.explicit_uuids_for_lane",
         lambda _thread, extra=None: set(extra or ()),
     )
 
@@ -87,7 +87,7 @@ def test_seal_requires_thread_and_jsonl() -> None:
     )
 
 
-@patch("cortex_store.dispatch_ops.ops_transcript_seal.explicit_uuids_for_lane", return_value=set())
+@patch("cortex_store.dispatch_ops.ops_transcript_discover.explicit_uuids_for_lane", return_value=set())
 @patch("cortex_store.dispatch_ops.ops_transcript_seal.lane_touches")
 @patch("cortex_store.session_close_successor_hop.lookup_journaled_by_conversation_uuid")
 @patch("cortex_store.session_close_successor_hop.lookup_sealed_journal")

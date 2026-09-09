@@ -15,7 +15,9 @@ from ..events_projection import (
     cortex_transcript_projection_anchor_mismatch,
     cortex_transcript_projection_refused,
 )
-from ..transcript_assembly import _read_jsonl, _transcripts_root
+from continuity_tape.extract_jsonl import _read_jsonl
+
+from ..transcript_assembly import _transcripts_root
 from ..transcript_projection_facts import WindowFacts, parse_records
 from ..transcript_projection_membership import (
     boundary_sends_for_lane,

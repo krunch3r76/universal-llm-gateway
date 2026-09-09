@@ -38,6 +38,6 @@ Handoff after commit: `close(op=handoff)`.
 - Decisions are settled claims with the settler named, not narrative.
 - Durable follow-ons become `todo:` entities, not prose open items.
 - Reflections: write for next-boot-you; register honestly; consolidation only on a real shift.
-- Verbatim path only (web): Use the `web-transcript-preprocessing` skill, then attach via `draft(transcript_md_path=…)`. Cursor verbatim: supply `transcript_jsonl_path` only; server assembles.
+- Verbatim path only (web): Use the `web-transcript-preprocessing` skill, then attach via `draft(transcript_messages_path=…)`. Cursor verbatim: supply `transcript_jsonl_path` only; server assembles.
 
 STOP line: single line, sentinel + real IDs from the commit/`session_close` response only. Never fabricate a conversation_id.

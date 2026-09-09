@@ -10,6 +10,9 @@ from enum import Enum
 
 SESSION_ID_RE_SOURCE = r"^[a-z]+(-[a-z]+)*-\d{4}-\d{2}-\d{2}-\d{6}-[0-9a-f]{3}$"
 SESSION_ID_RE = re.compile(SESSION_ID_RE_SOURCE)
+_AGENT_SLUG_FROM_SESSION_RE = re.compile(
+    r"^(.+)-\d{4}-\d{2}-\d{2}-\d{6}-[0-9a-f]{3}$"
+)
 SESSION_ID_EXAMPLES = (
     "cursor-2026-05-17-045830-abc",
     "web-anthropic-2026-05-17-045830-1a2",
@@ -46,6 +49,15 @@ def mint_session_id(
     if mode == SessionMintMode.INSPECT:
         return f"inspect-{body}"
     return body
+
+
+def agent_slug_from_session_id(session_id: str) -> str:
+    """Strip the dated tail from a canonical session id → agent slug."""
+    match = _AGENT_SLUG_FROM_SESSION_RE.match(session_id)
+    if match:
+        return match.group(1)
+    prefix = session_id.split("-", 1)[0]
+    return prefix or "cursor"
 
 
 def session_id_time_base(session_id: str) -> str:

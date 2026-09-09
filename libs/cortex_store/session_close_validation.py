@@ -224,7 +224,7 @@ def _emit_rejected(reason: str, *, session_id: str, agent: str, detail: str) -> 
 
 
 def _validate_transcript_structure(
-    transcript_md: str, summary_len: int = 0, transcript_depth: str = "verbatim"
+    composed_md: str, summary_len: int = 0, transcript_depth: str = "verbatim"
 ) -> list[str]:
     """Return a list of structural warning strings (empty = clean).
 
@@ -244,9 +244,9 @@ def _validate_transcript_structure(
 
     violations: list[str] = []
 
-    user_blocks = len(_USER_VOICE_RE.findall(transcript_md))
-    assistant_blocks = len(_ASSISTANT_VOICE_RE.findall(transcript_md))
-    action_log_matches = len(_ACTION_LOG_RE.findall(transcript_md))
+    user_blocks = len(_USER_VOICE_RE.findall(composed_md))
+    assistant_blocks = len(_ASSISTANT_VOICE_RE.findall(composed_md))
+    action_log_matches = len(_ACTION_LOG_RE.findall(composed_md))
 
     # NOTE: user_blocks == 0 is now a hard 422 upstream (transcript.hollow);
     # we no longer surface it here to avoid double-reporting.
@@ -256,9 +256,9 @@ def _validate_transcript_structure(
         violations.append(
             f"Action-log pattern detected ({action_log_matches} matches, no user turns)"
         )
-    if summary_len > 0 and len(transcript_md) <= summary_len:
+    if summary_len > 0 and len(composed_md) <= summary_len:
         violations.append(
-            f"Transcript length ({len(transcript_md)}) is not longer than "
+            f"Transcript length ({len(composed_md)}) is not longer than "
             f"summary length ({summary_len}) — Canary 4"
         )
 
@@ -272,7 +272,8 @@ def _validate_session_close_args(
     transcript_jsonl_path: str | None,
     session_summary_md: str | None,
     summary: str | None,
-    transcript_md: str | None = None,
+    transcript_messages: dict[str, Any] | None = None,
+    transcript_messages_path: str | None = None,
     transcript_depth: str = "verbatim",
     handoff_prompt: str | None = None,
     handoff_source_path: str | None = None,
@@ -289,7 +290,7 @@ def _validate_session_close_args(
     probing.
 
     The verbatim source is required only when ``transcript_depth == "verbatim"``
-    (one of ``{transcript_jsonl_path, transcript_md}``). When
+    (one of ``{transcript_jsonl_path, transcript_messages*}``). When
     ``transcript_depth == "light"``, the on-disk file is ``session_summary_md``
     only — no transcript source required. When ``transcript_depth == "none"``,
     neither source nor transcript entity is written (journal row only).
@@ -369,7 +370,8 @@ def _validate_session_close_args(
     if (
         transcript_depth == "verbatim"
         and not transcript_jsonl_path
-        and not transcript_md
+        and not transcript_messages
+        and not transcript_messages_path
     ):
         # Seat-specific guidance: the slug tells us which source the agent
         # should have supplied, so the retry is a one-shot fix rather than a
@@ -384,12 +386,12 @@ def _validate_session_close_args(
             )
         else:
             seat_hint = (
-                "This is a web/API seat: pass the verbatim conversation "
-                "markdown via transcript_md (server assembles the dual layer)."
+                "This is a web/API seat: pass transcript_messages or "
+                "transcript_messages_path (ContinuityMessagesEnvelope)."
             )
         detail = (
             f"transcript_depth={transcript_depth!r} requires a transcript "
-            f"source, but neither transcript_jsonl_path nor transcript_md was "
+            f"source, but no transcript_jsonl_path or transcript_messages* was "
             f'supplied. {seat_hint} (Use transcript_depth="light" when a '
             'structural summary + handoff suffice; "none" only when no handoff '
             "and no transcript entity is needed.)"
@@ -404,12 +406,16 @@ def _validate_session_close_args(
         return {
             "error": detail,
             "reason": "transcript_source.missing",
-            "field": ("transcript_jsonl_path" if is_cursor_seat else "transcript_md"),
+            "field": (
+                "transcript_jsonl_path"
+                if is_cursor_seat
+                else "transcript_messages"
+            ),
             "received": None,
             "expected": (
                 "transcript_jsonl_path (Cursor seat)"
                 if is_cursor_seat
-                else "transcript_md (web/API seat)"
+                else "transcript_messages* (web/API seat)"
             )
             + f" for transcript_depth={transcript_depth!r}; omit at light/none "
             "(light uses session_summary_md as the file; none writes no file)",

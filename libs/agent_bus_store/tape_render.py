@@ -47,7 +47,7 @@ class TapeSegment:
 
 
 def _verbatim_sha256(text: str) -> str:
-    digest, _ = verbatim_fingerprint(text)
+    digest, _ = verbatim_fingerprint("md-v1", text)
     return digest
 
 
@@ -333,7 +333,8 @@ def _load_live_anchor_transcript(
     jsonl_path = _find_jsonl_for_uuid(transcript_id)
     if jsonl_path is None:
         return None
-    from cortex_store.transcript_assembly import assemble_verbatim_md
+    from continuity_tape.extract_jsonl import extract_turns_from_jsonl
+    from continuity_tape.render_md import render_verbatim_md
     from cortex_store.transcript_session_id import derive_session_id_from_jsonl_start
 
     try:
@@ -341,10 +342,10 @@ def _load_live_anchor_transcript(
             derive_session_id_from_jsonl_start(jsonl_path=jsonl_path, agent="cursor")
             or transcript_id
         )
-        live_md, live_turns = assemble_verbatim_md(
-            jsonl_path=jsonl_path,
-            session_id=session_id,
+        envelope = extract_turns_from_jsonl(
+            jsonl_path, tools="marker", session_id=session_id
         )
+        live_md, live_turns = render_verbatim_md(envelope, session_id)
     except (OSError, ValueError):
         return None
     if live_turns <= 0:
@@ -412,13 +413,14 @@ def _post_lid_tail(
     jsonl_path = _find_jsonl_for_uuid(str(conversation_uuid))
     if jsonl_path is None:
         return 0, None
-    from cortex_store.transcript_assembly import assemble_verbatim_md
+    from continuity_tape.extract_jsonl import extract_turns_from_jsonl
+    from continuity_tape.render_md import render_verbatim_md
 
     try:
-        live_md, live_turns = assemble_verbatim_md(
-            jsonl_path=jsonl_path,
-            session_id=session_id,
+        envelope = extract_turns_from_jsonl(
+            jsonl_path, tools="marker", session_id=session_id
         )
+        live_md, live_turns = render_verbatim_md(envelope, session_id)
     except (OSError, ValueError):
         return 0, None
     if live_turns <= sealed_turn_count:

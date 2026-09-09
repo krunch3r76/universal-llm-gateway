@@ -41,6 +41,13 @@ class EnvelopeMeta(BaseModel):
     message_count: int = 0
     truncated: bool = False
     messages_sha256: str = ""
+    transcript_id: str | None = None
+    session_id: str | None = None
+    chat_url: str | None = None
+    observed_at: str | None = None
+    sealed_at: str | None = None
+    source_sha256: str | None = None
+    streaming: bool | None = None
     budget_bytes: int | None = None
     payload_bytes: int | None = None
     codec_counts: dict[str, int] | None = None
@@ -106,6 +113,20 @@ def messages_sha256(msgs: Sequence[Mapping[str, Any]]) -> str:
     return hashlib.sha256(canonical_messages_bytes(msgs)).hexdigest()
 
 
+def seal_messages_canonical_bytes(msgs: Sequence[Mapping[str, Any]]) -> bytes:
+    """Per-message NDJSON bytes for ``messages-v1`` seal fingerprint (§3.2)."""
+    core = strip_extras(msgs)
+    lines = [
+        json.dumps(m, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        for m in core
+    ]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def seal_messages_sha256(msgs: Sequence[Mapping[str, Any]]) -> str:
+    return hashlib.sha256(seal_messages_canonical_bytes(msgs)).hexdigest()
+
+
 def envelope_wire_dict(envelope: ContinuityMessagesEnvelope) -> dict[str, Any]:
     """Serialize with ``open_line`` first on the wire."""
     data = envelope.model_dump(mode="json", exclude_none=False, by_alias=True)
@@ -131,5 +152,7 @@ __all__ = [
     "apply_tools_policy",
     "canonical_messages_bytes",
     "messages_sha256",
+    "seal_messages_canonical_bytes",
+    "seal_messages_sha256",
     "envelope_wire_dict",
 ]

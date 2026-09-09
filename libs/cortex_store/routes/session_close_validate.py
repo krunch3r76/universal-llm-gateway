@@ -27,14 +27,18 @@ from ..session_close_validation import (
     normalize_session_summary_heading,
     reject_handoff_at_none_depth,
 )
+from continuity_tape.extract_jsonl import extract_turns_from_jsonl
+from continuity_tape.messages import ContinuityMessagesEnvelope
+from continuity_tape.render_md import render_verbatim_md
+
 from ..transcript_assembly import (
     TranscriptPathError,
-    assemble_verbatim_md,
     compose_full_transcript,
     count_canonical_turn_headings,
     resolve_jsonl_path,
     validate_transcript_turn_grammar,
 )
+from ..verbatim_succession import transcript_messages_path
 from ..transcript_session_id import derive_session_id_from_jsonl_start
 from ..verbatim_succession import load_sealed_verbatim_for_session
 from .session_close_helpers import _parse_opened_at, _raise_422
@@ -129,7 +133,7 @@ def _guard_succession_fill_required(body: SessionCloseRequest) -> None:
 class ValidatedCloseContext:
     """Outputs of validation + transcript assembly for persist."""
 
-    transcript_md: str | None
+    composed_md: str | None
     turn_count: int
     heading_warning: dict | None
     transcript_entity_id: str | None
@@ -140,6 +144,10 @@ class ValidatedCloseContext:
     archival_depth: str = "verbatim"
     verbatim_md: str | None = None
     verbatim_bytes: int | None = None
+    envelope: ContinuityMessagesEnvelope | None = None
+    messages_path: str | None = None
+    verbatim_codec: str | None = None
+    messages_sha256: str | None = None
 
 
 def _structured_422(
@@ -252,7 +260,8 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
     splice_fill = (
         succession_fill
         and not body.transcript_jsonl_path
-        and not body.transcript_md
+        and not body.transcript_messages
+        and not body.transcript_messages_path
     )
     sealed_verbatim: str | None = None
     sealed_transcript_path: str | None = None
@@ -354,46 +363,48 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
     if (
         effective_depth == "verbatim"
         and not body.transcript_jsonl_path
-        and not body.transcript_md
+        and not body.transcript_messages
+        and not body.transcript_messages_path
     ):
         _structured_422(
             body,
             reason="transcript_source.missing",
-            field="transcript_jsonl_path|transcript_md",
+            field="transcript_jsonl_path|transcript_messages",
             received=None,
             expected=(
                 f"exactly one of {{transcript_jsonl_path (cursor), "
-                f"transcript_md (web)}} for transcript_depth="
+                f"transcript_messages* (web)}} for transcript_depth="
                 f"{effective_depth!r}"
             ),
             examples=[],
             hint=(
                 "Cursor agents pass transcript_jsonl_path under "
-                "CURSOR_AGENT_TRANSCRIPTS_ROOT; web agents pass the "
-                "verbatim markdown via transcript_md. For structural-only "
-                'archival or handoff pickup use transcript_depth="light" '
-                '(session_summary_md is the file). Use "none" only when no '
-                "handoff and no transcript entity are needed."
+                "CURSOR_AGENT_TRANSCRIPTS_ROOT; web agents pass "
+                "transcript_messages or transcript_messages_path. For "
+                'structural-only archival use transcript_depth="light".'
             ),
             detail=(
-                f"either transcript_jsonl_path (cursor) or transcript_md "
-                f"(web) is required for transcript_depth="
-                f"{effective_depth!r} — neither was supplied"
+                f"transcript source required for transcript_depth="
+                f"{effective_depth!r} — none supplied"
             ),
         )
 
     verbatim_md: str | None = None
     verbatim_bytes: int | None = None
+    envelope: ContinuityMessagesEnvelope | None = None
+    messages_path: str | None = None
+    verbatim_codec: str | None = None
+    messages_sha256: str | None = None
 
     if effective_depth == "none" and not splice_fill:
-        transcript_md = None
+        composed_md = None
         turn_count = 0
     elif effective_depth == "light" and not splice_fill:
-        transcript_md = body.session_summary_md
+        composed_md = body.session_summary_md
         turn_count = 0
         verbatim_md = ""
         verbatim_bytes = 0
-        if "## Session Summary" not in transcript_md:
+        if "## Session Summary" not in composed_md:
             _structured_422(
                 body,
                 reason="transcript.missing_structure",
@@ -412,16 +423,16 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         assert sealed_verbatim is not None
         verbatim_md = sealed_verbatim
         verbatim_bytes = len(sealed_verbatim.encode("utf-8"))
-        transcript_md = compose_full_transcript(
+        composed_md = compose_full_transcript(
             sealed_verbatim, body.session_summary_md
         )
         turn_count = count_canonical_turn_headings(sealed_verbatim)
-        if len(transcript_md) < 200:
+        if len(composed_md) < 200:
             _structured_422(
                 body,
                 reason="transcript.missing_structure",
                 field="session_summary_md",
-                received=len(transcript_md),
+                received=len(composed_md),
                 expected="spliced transcript length >= 200",
                 examples=[],
                 hint=(
@@ -430,7 +441,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
                     "session_summary_md."
                 ),
                 detail=(
-                    f"spliced transcript is {len(transcript_md)} chars (< 200)."
+                    f"spliced transcript is {len(composed_md)} chars (< 200)."
                 ),
             )
     else:
@@ -455,10 +466,15 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
                 )
 
             try:
-                verbatim_md, turn_count = assemble_verbatim_md(
-                    jsonl_path=resolved_path,
+                envelope = extract_turns_from_jsonl(
+                    resolved_path,
+                    tools="marker",
                     session_id=body.session_id,
-                    assistant_label=body.assistant_label,
+                )
+                verbatim_md, turn_count = render_verbatim_md(
+                    envelope,
+                    body.session_id,
+                    body.assistant_label,
                 )
             except ValueError as exc:
                 _structured_422(
@@ -466,7 +482,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
                     reason="transcript_jsonl.invalid",
                     field="transcript_jsonl_path",
                     received=body.transcript_jsonl_path,
-                    expected="well-formed JSONL parseable by assemble_verbatim_md",
+                    expected="well-formed JSONL parseable by extract_turns_from_jsonl",
                     examples=[],
                     hint=(
                         "Confirm the JSONL is the cursor agent-transcripts "
@@ -474,102 +490,82 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
                     ),
                     detail=f"JSONL parse error: {exc}",
                 )
-            grammar_err = validate_transcript_turn_grammar(verbatim_md)
-            if grammar_err is not None:
-                _structured_422(
-                    body,
-                    reason=grammar_err.reason,
-                    field="transcript_jsonl_path",
-                    received=body.transcript_jsonl_path,
-                    expected="turn headings matching assembly grammar ## Turn N — topic",
-                    examples=["## Turn 1 — first user message topic"],
-                    hint=(
-                        "Turn headings must match JSONL assembly output: "
-                        "'## Turn {N} — {topic}' sequential from 1."
-                    ),
-                    detail=grammar_err.detail,
-                )
+            verbatim_codec = "messages-v1"
+            messages_path = transcript_messages_path(
+                f"notes/system/transcripts/{body.session_id}.md"
+            )
+            messages_sha256 = envelope.meta.messages_sha256
         else:
-            assert body.transcript_md is not None
-            verbatim_md = body.transcript_md
-            grammar_err = validate_transcript_turn_grammar(verbatim_md)
-            if grammar_err is not None:
-                _structured_422(
-                    body,
-                    reason=grammar_err.reason,
-                    field="transcript_md",
-                    received=verbatim_md[:120],
-                    expected="each ## Turn line matches '^## Turn (\\\\d+) — .+' sequential 1..N",
-                    examples=["## Turn 1 — topic from first user message"],
-                    hint=(
-                        "Web verbatim must use the same turn grammar as JSONL "
-                        "assembly (## Turn N — topic). Malformed headings are "
-                        "rejected at close — write-time only; existing archives "
-                        "are not retro-scanned."
-                    ),
-                    detail=grammar_err.detail,
-                )
-            turn_count = count_canonical_turn_headings(verbatim_md)
+            envelope = _resolve_transcript_messages_envelope(body)
+            _validate_web_envelope(body, envelope)
+            verbatim_md, turn_count = render_verbatim_md(
+                envelope,
+                body.session_id,
+                body.assistant_label,
+            )
+            verbatim_codec = "messages-v1"
+            messages_path = transcript_messages_path(
+                f"notes/system/transcripts/{body.session_id}.md"
+            )
+            messages_sha256 = envelope.meta.messages_sha256
+
+        grammar_err = validate_transcript_turn_grammar(verbatim_md)
+        if grammar_err is not None:
+            _structured_422(
+                body,
+                reason=grammar_err.reason,
+                field="transcript_jsonl_path|transcript_messages",
+                received=body.transcript_jsonl_path or "envelope",
+                expected="turn headings matching assembly grammar ## Turn N — topic",
+                examples=["## Turn 1 — first user message topic"],
+                hint=(
+                    "Turn headings must match render output: "
+                    "'## Turn {N} — {topic}' sequential from 1."
+                ),
+                detail=grammar_err.detail,
+            )
 
         verbatim_bytes = len(verbatim_md.encode("utf-8"))
-        transcript_md = compose_full_transcript(verbatim_md, body.session_summary_md)
+        composed_md = compose_full_transcript(verbatim_md, body.session_summary_md)
 
-        if len(transcript_md) < 200:
+        if len(composed_md) < 200:
             _structured_422(
                 body,
                 reason="transcript.missing_structure",
-                field="transcript_md|transcript_jsonl_path",
-                received=len(transcript_md),
+                field="transcript_jsonl_path|transcript_messages",
+                received=len(composed_md),
                 expected="composed transcript length >= 200",
                 examples=[],
                 hint=(
-                    "Either JSONL is empty or session_summary_md is too thin; "
-                    "check the JSONL path and re-run."
+                    "Either JSONL/envelope is empty or session_summary_md is too thin."
                 ),
                 detail=(
-                    f"composed transcript is {len(transcript_md)} chars "
-                    "(< 200) — JSONL may be empty or session_summary_md too thin."
+                    f"composed transcript is {len(composed_md)} chars (< 200)."
                 ),
             )
-        if "## Turn" not in transcript_md and "## Session Summary" not in transcript_md:
+        if "## Turn" not in composed_md and "## Session Summary" not in composed_md:
             _structured_422(
                 body,
                 reason="transcript.missing_structure",
-                field="transcript_md|session_summary_md",
+                field="transcript_jsonl_path|session_summary_md",
                 received=None,
                 expected=(
                     "composed transcript contains '## Turn' or '## Session Summary'"
                 ),
                 examples=[],
-                hint=(
-                    "JSONL produced no turn blocks and structural layer lacks "
-                    "'## Session Summary' — verify both sources."
-                ),
-                detail=(
-                    "composed transcript missing structural headings — assembly "
-                    "did not produce '## Turn' blocks and structural layer lacks "
-                    "'## Session Summary'."
-                ),
+                hint="Verify transcript source and session_summary_md.",
+                detail="composed transcript missing structural headings.",
             )
-        if len(_USER_VOICE_RE.findall(transcript_md)) == 0:
+        if len(_USER_VOICE_RE.findall(composed_md)) == 0:
             _structured_422(
                 body,
                 reason="transcript.hollow",
-                field="transcript_jsonl_path|transcript_md",
+                field="transcript_jsonl_path|transcript_messages",
                 received=None,
                 expected="composed transcript contains >=1 User-voice block",
                 examples=[],
-                hint=(
-                    "JSONL contained no user messages — likely pointing at a "
-                    "continuation-with-no-prompt or tool-only record set."
-                ),
-                detail=(
-                    "composed transcript has zero User-voice blocks. The "
-                    "supplied JSONL contained no user messages (or only "
-                    "tool_result records). Confirm transcript_jsonl_path "
-                    "points at the active session, not a continuation-with-"
-                    "no-prompt or a tool-only record set."
-                ),
+                hint="Transcript source contained no user messages.",
+                detail="composed transcript has zero User-voice blocks.",
             )
 
     keep_transcript_artifact = effective_depth != "none" or succession_fill
@@ -599,7 +595,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         )
 
     return ValidatedCloseContext(
-        transcript_md=transcript_md,
+        composed_md=composed_md,
         turn_count=turn_count,
         heading_warning=heading_warning,
         transcript_entity_id=transcript_entity_id,
@@ -610,7 +606,75 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         archival_depth=effective_depth,
         verbatim_md=verbatim_md,
         verbatim_bytes=verbatim_bytes,
+        envelope=envelope,
+        messages_path=messages_path,
+        verbatim_codec=verbatim_codec,
+        messages_sha256=messages_sha256,
     )
+
+
+def _resolve_transcript_messages_envelope(
+    body: SessionCloseRequest,
+) -> ContinuityMessagesEnvelope:
+    from ..dispatch_ops._shared import _FILES_ROOT
+
+    if body.transcript_messages is not None:
+        return ContinuityMessagesEnvelope.model_validate(body.transcript_messages)
+    assert body.transcript_messages_path is not None
+    rel = body.transcript_messages_path.lstrip("/")
+    if not (
+        rel.startswith("ephemeral/harvests/")
+        or rel.startswith("notes/system/transcripts/")
+    ):
+        _structured_422(
+            body,
+            reason="transcript_messages_path.invalid",
+            field="transcript_messages_path",
+            received=body.transcript_messages_path,
+            expected="path under ephemeral/harvests/ or notes/system/transcripts/",
+            examples=["ephemeral/harvests/web-anthropic.json"],
+            hint="Web harvest paths must be gated under allowed roots.",
+            detail=f"transcript_messages_path {rel!r} is outside allowed roots.",
+        )
+    path = _FILES_ROOT / rel
+    if not path.is_file():
+        _structured_422(
+            body,
+            reason="transcript_messages_path.invalid",
+            field="transcript_messages_path",
+            received=body.transcript_messages_path,
+            expected="readable envelope JSON file",
+            examples=[],
+            hint="Confirm the harvest envelope file exists on disk.",
+            detail=f"transcript_messages_path not found: {rel}",
+        )
+    import json
+
+    return ContinuityMessagesEnvelope.model_validate(
+        json.loads(path.read_text(encoding="utf-8"))
+    )
+
+
+def _validate_web_envelope(
+    body: SessionCloseRequest,
+    envelope: ContinuityMessagesEnvelope,
+) -> None:
+    user_with_content = [
+        m
+        for m in envelope.messages
+        if m.get("role") == "user" and m.get("content") not in (None, "")
+    ]
+    if not user_with_content:
+        _structured_422(
+            body,
+            reason="transcript_messages.invalid",
+            field="transcript_messages",
+            received=len(envelope.messages),
+            expected=">= 1 user message with non-null content",
+            examples=[],
+            hint="Web close requires at least one user turn in the envelope.",
+            detail="transcript_messages envelope has no user content.",
+        )
 
 
 def enforce_handoff_transcript_anchor(

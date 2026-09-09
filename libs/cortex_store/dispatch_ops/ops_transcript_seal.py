@@ -27,8 +27,9 @@ _SUCCESSION_STUB = (
 
 
 def _agent_label_from_session_id(session_id: str) -> str:
-    prefix = session_id.split("-", 1)[0]
-    return prefix or "cursor"
+    from agent_seat.session_id import agent_slug_from_session_id
+
+    return agent_slug_from_session_id(session_id)
 
 
 def _op_transcript_seal(
@@ -116,13 +117,14 @@ def _op_transcript_seal(
 
     agent = _agent_label_from_session_id(derived)
     if sealed is not None and sealed.closed_by == "succession":
-        from ..transcript_assembly import assemble_verbatim_md
+        from continuity_tape.extract_jsonl import extract_turns_from_jsonl
+        from continuity_tape.render_md import render_verbatim_md
 
         try:
-            new_verbatim, new_turns = assemble_verbatim_md(
-                jsonl_path=resolved,
-                session_id=derived,
+            envelope = extract_turns_from_jsonl(
+                resolved, tools="marker", session_id=derived
             )
+            _, new_turns = render_verbatim_md(envelope, derived)
         except ValueError as exc:
             return {"error": str(exc), "reason": "jsonl_parse_error"}
         from ..dispatch_ops._shared import _FILES_ROOT
@@ -130,24 +132,27 @@ def _op_transcript_seal(
         prior_turns = 0
         from ..db import cortex_conn
 
+        from ..transcript_assembly import count_canonical_turn_headings
+
         with cortex_conn() as conn:
             row = conn.execute(
-                "SELECT file_path, verbatim_bytes FROM session_journals WHERE session_id = ?",
+                "SELECT file_path, verbatim_bytes, verbatim_codec FROM session_journals "
+                "WHERE session_id = ?",
                 (derived,),
             ).fetchone()
         if row and row["file_path"]:
             prior_path = _FILES_ROOT / row["file_path"]
             if prior_path.is_file():
                 prior_text = prior_path.read_text(encoding="utf-8")
-                prior_verbatim = split_verbatim_layer(
-                    prior_text,
-                    verbatim_bytes=journal_verbatim_bytes(row),
-                )
-                prior_turns = sum(
-                    1
-                    for line in prior_verbatim.splitlines()
-                    if line.startswith("## Turn")
-                )
+                codec = row["verbatim_codec"] or "md-v1"
+                if codec == "messages-v1":
+                    prior_verbatim = split_verbatim_layer(prior_text)
+                else:
+                    prior_verbatim = split_verbatim_layer(
+                        prior_text,
+                        verbatim_bytes=journal_verbatim_bytes(row),
+                    )
+                prior_turns = count_canonical_turn_headings(prior_verbatim)
         if new_turns <= prior_turns:
             return {
                 "error": f"session {derived!r} already sealed",

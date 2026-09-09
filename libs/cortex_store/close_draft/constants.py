@@ -19,7 +19,7 @@ ALLOWED_FIELD_KEYS = frozenset(
         "reflections",
         "handoff",
         "handoff_source_path",
-        "transcript_md_path",
+        "transcript_messages_path",
         "depth",
         "domains",
         "prior_session_id",
@@ -61,7 +61,7 @@ DEFAULT_CHECKLIST: list[dict[str, str]] = [
     },
     {
         "item": "depth",
-        "hint": "light (default via default_depth_for_agent) | verbatim (requires transcript_md_path) | none.",
+        "hint": "light (default via default_depth_for_agent) | verbatim (requires transcript_messages_path) | none.",
     },
     {
         "item": "check",

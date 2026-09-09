@@ -355,32 +355,71 @@ def test_session_close_rolls_back_and_unlinks_transcript_on_journal_insert_failu
     assert _query_count(db_path, "SELECT COUNT(*) FROM journal_links") == 0
 
 
-def _web_transcript_md(session_id: str) -> str:
-    """Plausible web-supplied verbatim markdown (no JSONL exists)."""
-    return (
-        f"# Transcript: {session_id}\n\n"
-        "## Turn 1 — kickoff\n\n"
-        "### User\n\nWe need to validate the either-of path end to end.\n\n"
-        "### Assistant\n\nI confirmed the route handler accepts transcript_md "
-        "directly and writes the composed transcript atomically.\n\n"
-        "## Turn 2 — followup\n\n"
-        "### User\n\nGood — capture the decision and continuation state.\n\n"
-        "### Assistant\n\nSeeded decision and continuation-state assertions; "
-        "the close path now supports both cursor and web.\n\n"
-    )
+def _web_transcript_messages(session_id: str) -> dict[str, Any]:
+    """Plausible web-supplied messages envelope (no JSONL exists)."""
+    from continuity_tape.messages import seal_messages_sha256
+
+    messages = [
+        {
+            "role": "user",
+            "content": "We need to validate the either-of path end to end.",
+            "turn_index": 1,
+            "source": "claude-ai-seal-messages",
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "I confirmed the route handler accepts transcript_messages "
+                "directly and writes the composed transcript atomically."
+            ),
+            "turn_index": 1,
+            "source": "claude-ai-seal-messages",
+        },
+        {
+            "role": "user",
+            "content": "Good — capture the decision and continuation state.",
+            "turn_index": 2,
+            "source": "claude-ai-seal-messages",
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "Seeded decision and continuation-state assertions; "
+                "the close path now supports both cursor and web."
+            ),
+            "turn_index": 2,
+            "source": "claude-ai-seal-messages",
+        },
+    ]
+    return {
+        "schema": "ulg.continuity.messages/1",
+        "messages": messages,
+        "index": [],
+        "meta": {
+            "surface": "claude_ai",
+            "tools": "marker",
+            "tools_available": False,
+            "extras": False,
+            "turn_count": 2,
+            "message_count": 4,
+            "truncated": False,
+            "messages_sha256": seal_messages_sha256(messages),
+            "session_id": session_id,
+        },
+    }
 
 
 def _web_payload(
     *, session_id: str, agent: str = "web", **extra: Any
 ) -> dict[str, Any]:
     summary = (
-        "Validated the web session-close transcript_md path against the "
+        "Validated the web session-close transcript_messages path against the "
         "either-of validator."
     )
     base: dict[str, Any] = {
         "session_id": session_id,
         "agent": agent,
-        "transcript_md": _web_transcript_md(session_id),
+        "transcript_messages": _web_transcript_messages(session_id),
         "session_summary_md": _session_summary(summary),
         "summary": summary,
     }
@@ -388,10 +427,10 @@ def _web_payload(
     return base
 
 
-def test_session_close_accepts_transcript_md_only(
+def test_session_close_accepts_transcript_messages_only(
     session_env: dict[str, Path],
 ) -> None:
-    """Web close path: transcript_md is sufficient — no JSONL needed."""
+    """Web close path: transcript_messages is sufficient — no JSONL needed."""
     db_path = session_env["db_path"]
     files_root = session_env["files_root"]
     result = ops_journals._op_session_close(
@@ -401,6 +440,8 @@ def test_session_close_accepts_transcript_md_only(
     assert result["transcript_entity_id"] == "transcript:web-2026-05-17-041000-a06"
     assert result["turn_count"] == 2
     assert result["content_hash"].startswith("sha256:")
+    assert result.get("verbatim_codec") == "messages-v1"
+    assert result.get("messages_path", "").endswith(".messages.json")
     on_disk = (files_root / result["transcript_path"]).read_text(encoding="utf-8")
     assert "## Turn 1" in on_disk
     assert "## Session Summary" in on_disk
@@ -415,7 +456,7 @@ def test_session_close_accepts_transcript_md_only(
 def test_session_close_rejects_when_neither_source_supplied(
     session_env: dict[str, Path],
 ) -> None:
-    """Either-of: neither jsonl_path nor transcript_md ⟹ structured error."""
+    """Either-of: neither jsonl_path nor transcript_messages ⟹ structured error."""
     summary = (
         "Confirmed the either-of validator rejects when both transcript "
         "sources are missing."
@@ -428,22 +469,21 @@ def test_session_close_rejects_when_neither_source_supplied(
     )
     assert "error" in result
     assert "transcript_jsonl_path" in result["error"]
-    assert "transcript_md" in result["error"]
+    assert "transcript_messages" in result["error"]
 
 
 def test_session_close_prefers_jsonl_path_when_both_supplied(
     session_env: dict[str, Path],
 ) -> None:
-    """Both supplied ⟹ jsonl_path wins; transcript_md is ignored."""
+    """Both supplied ⟹ jsonl_path wins; transcript_messages is ignored."""
     files_root = session_env["files_root"]
     payload = _payload(
         session_id="cursor-2026-05-17-041200-a08",
         agent="cursor",
         transcripts_root=session_env["transcripts_root"],
     )
-    payload["transcript_md"] = (
-        "# Transcript: SHOULD-NOT-APPEAR\n\n"
-        "## Turn 99 — ignored\n\n### User\n\nThis text MUST NOT land on disk.\n"
+    payload["transcript_messages"] = _web_transcript_messages(
+        "cursor-2026-05-17-041200-a08"
     )
     result = ops_journals._op_session_close(**payload)
     assert "error" not in result, result
@@ -781,7 +821,6 @@ def test_close_light_writes_structural_layer_only(
     result = ops_journals._op_session_close(
         session_id="web-2026-05-27-100200-a14",
         agent="web",
-        transcript_md=_web_transcript_md("web-2026-05-27-100200-a14"),
         session_summary_md=summary_md,
         summary=summary,
         transcript_depth="light",
@@ -808,7 +847,7 @@ def test_close_light_writes_structural_layer_only(
 def test_close_light_web_without_transcript_source_succeeds(
     session_env: dict[str, Path],
 ) -> None:
-    """light web close: session_summary_md is the file; no transcript_md required."""
+    """light web close: session_summary_md is the file; no transcript_messages required."""
     summary = "Light-depth web close — structural layer only, no verbatim source."
     summary_md = _session_summary(summary)
     result = ops_journals._op_session_close(
@@ -977,7 +1016,7 @@ def test_close_verbatim_missing_source_still_422(
     )
     assert "error" in result
     assert "transcript_jsonl_path" in result["error"]
-    assert "transcript_md" in result["error"]
+    assert "transcript_messages" in result["error"]
 
 
 def test_close_depth_invalid_value_rejected(session_env: dict[str, Path]) -> None:
@@ -1100,7 +1139,7 @@ def test_dry_run_missing_anchor_would_fail(
     result = ops_journals._op_session_close(
         session_id=session_id,
         agent="web",
-        transcript_md=_web_transcript_md(session_id),
+        transcript_messages=_web_transcript_messages(session_id),
         session_summary_md=_session_summary("Dry-run anchor-gate check."),
         summary="Dry-run anchor-gate check.",
         handoff_prompt="Poll agent-bus and integrate findings.",  # no anchor

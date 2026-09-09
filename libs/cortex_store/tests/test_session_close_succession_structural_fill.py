@@ -19,6 +19,15 @@ from cortex_store.session_close_successor_hop import (
 
 pytestmark = pytest.mark.offline
 
+
+@pytest.fixture(autouse=True)
+def _patch_explicit_uuids(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops.ops_transcript_discover.explicit_uuids_for_lane",
+        lambda _thread, extra=None: set(extra or ()),
+    )
+
+
 _UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 _START = "2026-09-07T10:00:00+00:00"
 _LID = "2026-09-07T11:00:00Z"
@@ -48,7 +57,19 @@ def _write_jsonl(path: Path, stamps: list[str]) -> None:
         records.append(
             {
                 "role": "assistant",
-                "message": {"content": [{"type": "text", "text": "Ack."}]},
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "Ack."},
+                        {
+                            "type": "tool_use",
+                            "name": "CallDynamicTool",
+                            "input": {
+                                "toolName": "agent_bus",
+                                "arguments": {"tool": "post", "thread": "10223"},
+                            },
+                        },
+                    ]
+                },
             }
         )
     with path.open("w", encoding="utf-8") as fh:
@@ -292,7 +313,19 @@ def test_b13_splice_preserves_verbatim_with_session_summary_heading(
         },
         {
             "role": "assistant",
-            "message": {"content": [{"type": "text", "text": "Ack."}]},
+            "message": {
+                "content": [
+                    {"type": "text", "text": "Ack."},
+                    {
+                        "type": "tool_use",
+                        "name": "CallDynamicTool",
+                        "input": {
+                            "toolName": "agent_bus",
+                            "arguments": {"tool": "post", "thread": "10223"},
+                        },
+                    },
+                ]
+            },
         },
     ]
     with path.open("w", encoding="utf-8") as fh:

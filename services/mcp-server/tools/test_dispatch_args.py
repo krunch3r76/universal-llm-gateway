@@ -44,25 +44,41 @@ def test_parse_dict_passthrough_for_direct_callers() -> None:
 
 
 def test_parse_large_quote_heavy_markdown_round_trips() -> None:
-    """Friction 12886/17227: large transcript_md with embedded quotes, newlines,
+    """Friction 12886/17227: large transcript_messages with embedded quotes, newlines,
     code fences, and an embedded JSON object must round-trip when correctly
     JSON-escaped (the wire contract holds; the footgun is hand-escaping)."""
-    transcript_md = (
-        '# Session\n\nHe said "ship it" and pasted:\n\n'
-        "```json\n"
-        '{"handoff": {"next": "open thread 1741", "note": "use \\"poll_hint\\""}}\n'
-        "```\n\n"
-        'Then a quote: "the schema declares arguments: string".\n'
-    )
-    inner = {"session_id": "web-1", "transcript_md": transcript_md}
-    # A correct serializer (json.dumps) escapes the payload; the model's
-    # hand-built string is what historically broke.
+    transcript_messages = {
+        "schema": "ulg.continuity.messages/1",
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    'He said "ship it" and pasted:\n\n'
+                    "```json\n"
+                    '{"handoff": {"next": "open thread 1741", "note": "use \\"poll_hint\\""}}\n'
+                    "```\n\n"
+                    'Then a quote: "the schema declares arguments: string".\n'
+                ),
+                "turn_index": 1,
+            }
+        ],
+        "meta": {
+            "surface": "claude_ai",
+            "tools": "marker",
+            "tools_available": False,
+            "extras": False,
+            "turn_count": 1,
+            "message_count": 1,
+            "truncated": False,
+            "messages_sha256": "sha256:deadbeef",
+        },
+    }
+    inner = {"session_id": "web-1", "transcript_messages": transcript_messages}
     raw = json.dumps(inner)
     parsed = parse_dispatch_arguments(raw)
     assert parsed is not None
-    assert parsed["transcript_md"] == transcript_md
-    # The embedded JSON snippet survives verbatim inside the markdown.
-    assert '{"handoff":' in parsed["transcript_md"]
+    assert parsed["transcript_messages"] == transcript_messages
+    assert '{"handoff":' in parsed["transcript_messages"]["messages"][0]["content"]
 
 
 def test_parse_handoff_prompt_with_nested_poll_hint_round_trips() -> None:
@@ -105,7 +121,7 @@ def test_parse_handoff_prompt_hand_mis_escaped_returns_none() -> None:
 
 def test_parse_malformed_string_returns_none() -> None:
     # Unescaped inner quote — the canonical escaping failure mode.
-    assert parse_dispatch_arguments('{"transcript_md": "he said "hi""}') is None
+    assert parse_dispatch_arguments('{"transcript_messages": "he said "hi""}') is None
 
 
 def test_parse_non_object_json_string_returns_none() -> None:

@@ -76,8 +76,8 @@ def _fields_to_close_payload(
     handoff = fields.get("handoff")
     if handoff:
         body["handoff_prompt"] = str(handoff)
-    if depth == "verbatim" and fields.get("_transcript_md_resolved"):
-        body["transcript_md"] = fields["_transcript_md_resolved"]
+    if depth == "verbatim" and fields.get("_transcript_messages_resolved"):
+        body["transcript_messages"] = fields["_transcript_messages_resolved"]
     return SessionCloseRequest.model_validate(body).model_dump(mode="json")
 
 

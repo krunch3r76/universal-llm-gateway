@@ -101,14 +101,15 @@ def _structural_gaps(
     depth = str(fields.get("depth") or default_depth_for_agent(agent))
     if not summary_md or not summary:
         return []
-    if depth == "verbatim" and not fields.get("_transcript_md_resolved"):
+    if depth == "verbatim" and not fields.get("_transcript_messages_resolved"):
         return []
-    transcript_md = fields.get("_transcript_md_resolved")
+    transcript_messages = fields.get("_transcript_messages_resolved")
     asm = _assemble_transcript_in_memory(
         session_id=session_id,
         agent=agent,
         transcript_jsonl_path=None,
-        transcript_md=transcript_md if depth == "verbatim" else None,
+        transcript_messages=transcript_messages if depth == "verbatim" else None,
+        transcript_messages_path=None,
         transcript_depth=depth,  # type: ignore[arg-type]
         session_summary_md=str(summary_md),
     )

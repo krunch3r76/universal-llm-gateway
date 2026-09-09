@@ -93,7 +93,7 @@ def _normalize_cursor_timestamp(raw: str) -> str:
 
 def _extract_jsonl_start_timestamp(jsonl_path: Path) -> str | None:
     """Best-effort session-start timestamp from the first user turn in JSONL."""
-    from cortex_store.transcript_assembly import _extract_user_text, _read_jsonl
+    from continuity_tape.extract_jsonl import _extract_user_text, _read_jsonl
 
     try:
         records = _read_jsonl(jsonl_path)

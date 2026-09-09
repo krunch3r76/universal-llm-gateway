@@ -17,9 +17,11 @@ from ..session_close_validation import (
     normalize_session_summary_heading,
 )
 from ..session_handoff import handoff_dry_run_preview
+from continuity_tape.extract_jsonl import extract_turns_from_jsonl
+from continuity_tape.render_md import render_verbatim_md
+
 from ..transcript_assembly import (
     TranscriptPathError,
-    assemble_verbatim_md,
     compose_full_transcript,
     derive_prior_session_id_from_jsonl_path,
     derive_session_id_from_jsonl_start,
@@ -179,7 +181,8 @@ def _assemble_transcript_in_memory(
     session_id: str,
     agent: str,
     transcript_jsonl_path: str | None,
-    transcript_md: str | None,
+    transcript_messages: dict[str, Any] | None,
+    transcript_messages_path: str | None,
     transcript_depth: str,
     session_summary_md: str,
     assistant_label: str | None = None,
@@ -205,10 +208,11 @@ def _assemble_transcript_in_memory(
         try:
             resolved = resolve_jsonl_path(transcript_jsonl_path)
             jsonl_resolved = resolved
-            verbatim_md, turn_count = assemble_verbatim_md(
-                jsonl_path=resolved,
-                session_id=session_id,
-                assistant_label=assistant_label,
+            envelope = extract_turns_from_jsonl(
+                resolved, tools="marker", session_id=session_id
+            )
+            verbatim_md, turn_count = render_verbatim_md(
+                envelope, session_id, assistant_label
             )
         except TranscriptPathError as exc:
             return {
@@ -225,12 +229,30 @@ def _assemble_transcript_in_memory(
     elif transcript_depth == "light":
         verbatim_md = ""
         turn_count = 0
-    else:
-        assert transcript_md is not None
-        verbatim_md = transcript_md
-        turn_count = sum(
-            1 for line in verbatim_md.splitlines() if line.startswith("## Turn")
+    elif transcript_messages is not None or transcript_messages_path is not None:
+        from continuity_tape.messages import ContinuityMessagesEnvelope
+
+        if transcript_messages is not None:
+            envelope = ContinuityMessagesEnvelope.model_validate(transcript_messages)
+        else:
+            import json
+            from pathlib import Path
+
+            from ._shared import _FILES_ROOT
+
+            path = _FILES_ROOT / str(transcript_messages_path).lstrip("/")
+            envelope = ContinuityMessagesEnvelope.model_validate(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+        verbatim_md, turn_count = render_verbatim_md(
+            envelope, session_id, assistant_label
         )
+    else:
+        return {
+            "ok": False,
+            "error": "transcript source required",
+            "reason": "transcript_source.missing",
+        }
 
     composed = (
         session_summary_md
@@ -256,7 +278,8 @@ def _op_session_close_preflight(
     session_id: str | None = None,
     agent: str | None = None,
     transcript_jsonl_path: str | None = None,
-    transcript_md: str | None = None,
+    transcript_messages: dict[str, Any] | None = None,
+    transcript_messages_path: str | None = None,
     session_summary_md: str | None = None,
     session_summary_md_path: str | None = None,
     summary: str | None = None,
@@ -306,7 +329,8 @@ def _op_session_close_preflight(
         session_id=session_id,
         agent=agent,
         transcript_jsonl_path=transcript_jsonl_path,
-        transcript_md=transcript_md,
+        transcript_messages=transcript_messages,
+        transcript_messages_path=transcript_messages_path,
         session_summary_md=session_summary_md,
         summary=summary,
         transcript_depth=transcript_depth,
@@ -326,7 +350,8 @@ def _op_session_close_preflight(
         session_id=session_id,
         agent=agent,
         transcript_jsonl_path=transcript_jsonl_path,
-        transcript_md=transcript_md,
+        transcript_messages=transcript_messages,
+        transcript_messages_path=transcript_messages_path,
         transcript_depth=transcript_depth,
         session_summary_md=session_summary_md,
         assistant_label=assistant_label,
@@ -438,7 +463,8 @@ def _op_session_close(
     session_id: str | None = None,
     agent: str | None = None,
     transcript_jsonl_path: str | None = None,
-    transcript_md: str | None = None,
+    transcript_messages: dict[str, Any] | None = None,
+    transcript_messages_path: str | None = None,
     session_summary_md: str | None = None,
     session_summary_md_path: str | None = None,
     summary: str | None = None,
@@ -514,7 +540,8 @@ def _op_session_close(
         session_id=session_id,
         agent=agent,
         transcript_jsonl_path=transcript_jsonl_path,
-        transcript_md=transcript_md,
+        transcript_messages=transcript_messages,
+        transcript_messages_path=transcript_messages_path,
         session_summary_md=session_summary_md,
         summary=summary,
         transcript_depth=transcript_depth,
@@ -549,7 +576,8 @@ def _op_session_close(
             session_id=session_id,
             agent=agent,
             transcript_jsonl_path=transcript_jsonl_path,
-            transcript_md=transcript_md,
+            transcript_messages=transcript_messages,
+            transcript_messages_path=transcript_messages_path,
             transcript_depth=transcript_depth,
             session_summary_md=session_summary_md,
             assistant_label=assistant_label,
@@ -627,7 +655,8 @@ def _op_session_close(
     }
     for key, val in [
         ("transcript_jsonl_path", transcript_jsonl_path),
-        ("transcript_md", transcript_md),
+        ("transcript_messages", transcript_messages),
+        ("transcript_messages_path", transcript_messages_path),
         ("domains", domains),
         ("decisions", decisions),
         ("open_items", open_items),

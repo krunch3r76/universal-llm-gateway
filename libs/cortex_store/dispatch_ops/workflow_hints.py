@@ -21,7 +21,7 @@ _SESSION_CLOSE_PROTOCOL = (
     "¬ retired cortex skill-mirror paths. "
     "Life/web primary: close(op=stage|draft|check|commit) then optional close(op=handoff). "
     "Transitional cortex session_close on web: also Use the `session-close-audit` skill. "
-    "claude-web verbatim: Use the `web-transcript-preprocessing` skill before transcript_md. "
+    "claude-web verbatim: Use the `web-transcript-preprocessing` skill before transcript_messages. "
     "Load before close."
 )
 
@@ -241,7 +241,7 @@ _CORTEX_LARGE_PAYLOAD_OPS: frozenset[str] = frozenset(
 
 _CORTEX_OFFLOAD_HINT = (
     " If the payload contains quotes, newlines, or embedded JSON/code fences "
-    "(e.g. a large transcript_md, session_summary_md, or handoff_prompt), do not "
+    "(e.g. a large transcript_messages envelope, session_summary_md, or handoff_prompt), do not "
     "hand-build the JSON string: write the payload to a file and pass a "
     "file-path parameter instead (session_close: session_summary_md_path / "
     "transcript_jsonl_path / handoff_source_path / source_ref), "

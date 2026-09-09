@@ -1,7 +1,7 @@
 ---
 name: session-close-transcript
-description: "Before composing transcript_md at verbatim or light close — dual-layer shape, C1–C6 canaries, light/none deltas."
-trigger_match_terms: ["canaries", "close", "compose", "composing", "dual-layer", "light", "session-boot-close", "session-close-transcript", "session_close_transcript", "shape", "transcript_md", "verbatim"]
+description: "Before composing transcript_messages at verbatim or light close — dual-layer shape, C1–C6 canaries, light/none deltas."
+trigger_match_terms: ["canaries", "close", "compose", "composing", "dual-layer", "light", "session-boot-close", "session-close-transcript", "session_close_transcript", "shape", "transcript_messages", "verbatim"]
 generator_version: "1.0.0"
 ---
 

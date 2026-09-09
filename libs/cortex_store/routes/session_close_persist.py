@@ -33,6 +33,7 @@ from ..source_ref_resolution import (
 from ..status_trait_write import trait_insert_extras, transcript_birth_traits
 from ..transcript_assembly import compute_text_content_hash
 from ..verbatim_succession import (
+    build_seal_envelope_meta,
     journal_verbatim_bytes,
     split_verbatim_layer,
     stamp_verbatim_fields,
@@ -290,7 +291,8 @@ def persist_session_close(
         _fill_conn = cortex_conn()
         try:
             prior = _fill_conn.execute(
-                "SELECT closed_by, file_path, verbatim_bytes FROM session_journals WHERE id = ?",
+                "SELECT closed_by, file_path, verbatim_bytes, verbatim_codec "
+                "FROM session_journals WHERE id = ?",
                 (reuse_journal_row_id,),
             ).fetchone()
         finally:
@@ -309,7 +311,7 @@ def persist_session_close(
                     if not new_verbatim.startswith(prior_verbatim):
                         conflict = build_validation_error(
                             reason="succession.verbatim_diverged",
-                            field="transcript_md",
+                            field="transcript_messages",
                             received="non-prefix extension",
                             expected="byte-prefix of sealed verbatim",
                             examples=[],
@@ -332,7 +334,8 @@ def persist_session_close(
         _ext_conn = cortex_conn()
         try:
             prior = _ext_conn.execute(
-                "SELECT file_path, verbatim_bytes FROM session_journals WHERE id = ?",
+                "SELECT file_path, verbatim_bytes, verbatim_codec FROM session_journals "
+                "WHERE id = ?",
                 (reuse_journal_row_id,),
             ).fetchone()
         finally:
@@ -348,7 +351,7 @@ def persist_session_close(
                 if not ctx.verbatim_md.startswith(prior_verbatim):
                     conflict = build_validation_error(
                         reason="succession.verbatim_diverged",
-                        field="transcript_md",
+                        field="transcript_messages",
                         received="non-prefix extension",
                         expected="byte-prefix of sealed verbatim",
                         examples=[],
@@ -364,15 +367,102 @@ def persist_session_close(
                     )
 
     abs_path: Path | None = None
+    seal_abs_path: Path | None = None
     prior_transcript_snapshot: str | None = None
+    prior_seal_snapshot: str | None = None
+    prior_codec: str | None = None
     if ctx.transcript_path is not None:
-        assert ctx.transcript_md is not None
+        assert ctx.composed_md is not None
         abs_path = _FILES_ROOT / ctx.transcript_path
+        if ctx.envelope is not None and ctx.messages_path is not None:
+            seal_abs_path = _FILES_ROOT / ctx.messages_path
+            sealed_envelope = build_seal_envelope_meta(
+                ctx.envelope,
+                session_id=body.session_id,
+                tools="marker",
+                sealed_at=ctx.now,
+            )
+            seal_payload = json.dumps(
+                sealed_envelope.model_dump(mode="json", by_alias=True),
+                ensure_ascii=False,
+                indent=2,
+            ) + "\n"
+            if (structural_fill or succession_extend) and seal_abs_path.is_file():
+                prior_seal_snapshot = seal_abs_path.read_text(encoding="utf-8")
+            try:
+                durable_write_text(
+                    seal_abs_path, seal_payload, retain_store_root=_FILES_ROOT
+                )
+            except OSError as exc:
+                logger.error(
+                    "session_close: failed to write seal to %s: %s",
+                    seal_abs_path,
+                    exc,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Seal file write failed: {exc}",
+                ) from exc
         if (structural_fill or succession_extend) and abs_path.is_file():
             prior_transcript_snapshot = abs_path.read_text(encoding="utf-8")
+            if reuse_journal_row_id is not None:
+                _codec_conn = cortex_conn()
+                try:
+                    row = _codec_conn.execute(
+                        "SELECT verbatim_codec FROM session_journals WHERE id = ?",
+                        (reuse_journal_row_id,),
+                    ).fetchone()
+                    prior_codec = row["verbatim_codec"] if row else None
+                finally:
+                    _codec_conn.close()
+        if (
+            ctx.envelope is not None
+            and prior_codec == "md-v1"
+            and prior_transcript_snapshot is not None
+        ):
+            _prior_bytes = None
+            if reuse_journal_row_id is not None:
+                _pb_conn = cortex_conn()
+                try:
+                    _prow = _pb_conn.execute(
+                        "SELECT verbatim_bytes FROM session_journals WHERE id = ?",
+                        (reuse_journal_row_id,),
+                    ).fetchone()
+                    _prior_bytes = journal_verbatim_bytes(_prow)
+                finally:
+                    _pb_conn.close()
+            prior_verbatim = split_verbatim_layer(
+                prior_transcript_snapshot,
+                verbatim_bytes=_prior_bytes,
+            )
+            if not (ctx.verbatim_md or "").startswith(prior_verbatim):
+                from ..events_tape import transcript_seal_codec_diverged
+
+                transcript_seal_codec_diverged(
+                    session_id=body.session_id,
+                    transcript_id=conversation_uuid,
+                    prior_codec="md-v1",
+                    reason="render_prefix_mismatch",
+                )
+                conflict = build_validation_error(
+                    reason="succession.verbatim_diverged",
+                    field="transcript_jsonl_path",
+                    received="non-prefix extension",
+                    expected="byte-prefix of sealed verbatim",
+                    examples=[],
+                    hint="Legacy md-v1 extension requires render prefix match.",
+                    detail=(
+                        f"session {body.session_id!r} md-v1→messages-v1 refused: "
+                        "rendered verbatim is not a prefix of sealed md."
+                    ),
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=conflict,
+                )
         try:
             durable_write_text(
-                abs_path, ctx.transcript_md, retain_store_root=_FILES_ROOT
+                abs_path, ctx.composed_md, retain_store_root=_FILES_ROOT
             )
         except OSError as exc:
             logger.error(
@@ -431,6 +521,14 @@ def persist_session_close(
                 )
             if conversation_uuid:
                 tx_attributes["conversation_uuid"] = conversation_uuid
+            if ctx.verbatim_codec:
+                tx_attributes["verbatim_codec"] = ctx.verbatim_codec
+            if ctx.messages_sha256:
+                tx_attributes["messages_sha256"] = ctx.messages_sha256
+            if ctx.messages_path:
+                tx_attributes["messages_uri"] = f"files://{ctx.messages_path}"
+            if ctx.envelope is not None:
+                tx_attributes["surface"] = ctx.envelope.meta.surface
             tx_attributes_json = json_encode(tx_attributes)
             tx_vals: list[object] = [
                 ctx.transcript_entity_id,
@@ -491,11 +589,17 @@ def persist_session_close(
                 ),
             )
             journal_row_id = reuse_journal_row_id
-            if ctx.verbatim_md is not None:
+            if ctx.verbatim_md is not None and ctx.verbatim_codec:
+                payload = (
+                    ctx.envelope.messages
+                    if ctx.envelope is not None
+                    else ctx.verbatim_md
+                )
                 stamp_verbatim_fields(
                     conn,
                     session_id=body.session_id,
-                    verbatim=ctx.verbatim_md,
+                    codec=ctx.verbatim_codec,
+                    payload=payload,
                 )
         else:
             sealed_by = body.agent if body.closed_by == "succession" else None
@@ -528,11 +632,17 @@ def persist_session_close(
                 ),
             )
             journal_row_id = cur.lastrowid or 0
-            if ctx.verbatim_md is not None:
+            if ctx.verbatim_md is not None and ctx.verbatim_codec:
+                payload = (
+                    ctx.envelope.messages
+                    if ctx.envelope is not None
+                    else ctx.verbatim_md
+                )
                 stamp_verbatim_fields(
                     conn,
                     session_id=body.session_id,
-                    verbatim=ctx.verbatim_md,
+                    codec=ctx.verbatim_codec,
+                    payload=payload,
                 )
 
         if body.prior_session_id:
@@ -562,6 +672,21 @@ def persist_session_close(
         audit_warnings = findings if findings else None
     except Exception:
         conn.rollback()
+        if seal_abs_path is not None:
+            try:
+                if prior_seal_snapshot is not None:
+                    durable_write_text(
+                        seal_abs_path,
+                        prior_seal_snapshot,
+                        retain_store_root=_FILES_ROOT,
+                    )
+                elif not structural_fill and not succession_extend:
+                    seal_abs_path.unlink(missing_ok=True)
+            except OSError:
+                logger.warning(
+                    "Failed to restore/unlink seal after DB rollback: %s",
+                    seal_abs_path,
+                )
         if abs_path is not None:
             try:
                 if prior_transcript_snapshot is not None:
@@ -592,12 +717,12 @@ def persist_session_close(
         conn.close()
 
     content_hash: str | None = (
-        compute_text_content_hash(ctx.transcript_md)
-        if ctx.transcript_md is not None
+        compute_text_content_hash(ctx.composed_md)
+        if ctx.composed_md is not None
         else None
     )
     byte_count = (
-        len(ctx.transcript_md.encode("utf-8")) if ctx.transcript_md is not None else 0
+        len(ctx.composed_md.encode("utf-8")) if ctx.composed_md is not None else 0
     )
     logger.info(
         "session_close: %s agent=%s entity=%s journal_row=%d hash=%s depth=%s",
@@ -651,6 +776,19 @@ def persist_session_close(
         closed_by=body.closed_by,
     )
 
+    if ctx.envelope is not None and ctx.verbatim_codec:
+        from ..events_tape import transcript_sealed_messages
+
+        transcript_sealed_messages(
+            session_id=body.session_id,
+            surface=ctx.envelope.meta.surface,
+            verbatim_codec=ctx.verbatim_codec,
+            prior_codec=prior_codec,
+            turn_count=ctx.turn_count,
+            messages_sha256=ctx.messages_sha256 or "",
+            extended=succession_extend,
+        )
+
     return SessionCloseResponse(
         transcript_entity_id=ctx.transcript_entity_id,
         transcript_path=ctx.transcript_path,
@@ -660,6 +798,9 @@ def persist_session_close(
         content_hash=content_hash,
         turn_count=ctx.turn_count,
         byte_count=byte_count,
+        messages_sha256=ctx.messages_sha256,
+        verbatim_codec=ctx.verbatim_codec,
+        messages_path=ctx.messages_path,
         audit_warnings=audit_warnings,
         handoff_surface_preview=build_handoff_surface_preview(
             handoff_prompt,
