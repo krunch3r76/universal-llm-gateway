@@ -33,17 +33,10 @@ steps:
   - name: tape
     type: continuity_tape_read_v1
     condition: "seal.json.get('refused') is None"
-    handler_inputs:
-      thread: "context.options.thread"
-      scope: "context.options.get('scope', 'full')"
-      include_extras: "context.options.get('include_extras', False)"
-      tools: "context.options.get('tools', 'none')"
-      budget_bytes: "context.options.get('budget_bytes', 512000)"
-      harvest: "context.options.get('harvest', False)"
 
   - name: pre_consolidate
     type: continuity_checkpoint_pre_consolidate_v1
-    condition: "seal.json.get('refused') is None and context.options.get('pre_consolidate', True)"
+    condition: "seal.json.get('refused') is None and options.get('pre_consolidate', True)"
     reads_from:
       - step: tape
         fields: [json]

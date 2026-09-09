@@ -11,7 +11,7 @@ from continuity_tape.events import stargate_continuity_checkpoint_posted
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._clients import bus_get, bus_send
+from ._clients import bus_get, bus_send, step_output_json
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +57,8 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         execution_id = str(context.execution_id or "")
 
         outputs = getattr(context, "outputs", {}) or {}
-        seal = (outputs.get("seal") or {}).get("json") or {}
-        pre = (outputs.get("pre_consolidate") or {}).get("json") or {}
+        seal = step_output_json(outputs, "seal")
+        pre = step_output_json(outputs, "pre_consolidate")
 
         if not pre:
             pre = {

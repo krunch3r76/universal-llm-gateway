@@ -12,7 +12,7 @@ from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
 from ._card_patch import apply_card_patch, parse_worker_json, validate_worker_payload
-from ._clients import bus_get, bus_wait, cortex_dispatch, stargate_post
+from ._clients import bus_get, bus_wait, cortex_dispatch, stargate_post, step_output_json
 from ._packet import render_pre_consolidate_packet, write_packet_file
 
 logger = logging.getLogger(__name__)
@@ -59,8 +59,8 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
         seat_residue = str(options.get("residue") or "")
 
         outputs = getattr(context, "outputs", {}) or {}
-        seal = (outputs.get("seal") or {}).get("json") or {}
-        tape_step = (outputs.get("tape") or {}).get("json") or {}
+        seal = step_output_json(outputs, "seal")
+        tape_step = step_output_json(outputs, "tape")
 
         hub_summary = ""
         hub = await cortex_dispatch(

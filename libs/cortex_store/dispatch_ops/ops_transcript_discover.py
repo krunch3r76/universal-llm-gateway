@@ -26,7 +26,7 @@ def _thread_detail(thread_id: str) -> dict[str, Any] | None:
     token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
-        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as client:
+        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=15.0) as client:
             resp = client.get(f"/threads/{thread_id}", headers=headers)
             if resp.status_code != 200:
                 return None

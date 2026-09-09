@@ -16,6 +16,21 @@ from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
+
+def step_output_json(outputs: dict[str, Any], step_name: str) -> dict[str, Any]:
+    """Read a prior step's ``json`` payload from live ``StepOutput`` or test dicts."""
+    raw = outputs.get(step_name)
+    if raw is None:
+        return {}
+    if hasattr(raw, "json"):
+        data = getattr(raw, "json", None)
+        return data if isinstance(data, dict) else {}
+    if isinstance(raw, dict):
+        inner = raw.get("json")
+        return inner if isinstance(inner, dict) else raw
+    return {}
+
+
 _HTTP_TIMEOUT_S = 30.0
 _CORTEX_TIMEOUT_S = 20.0
 

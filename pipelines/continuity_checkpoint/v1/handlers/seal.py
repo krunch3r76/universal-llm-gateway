@@ -10,7 +10,7 @@ from continuity_tape.events import stargate_continuity_checkpoint_sealed
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._clients import cortex_dispatch
+from ._clients import cortex_dispatch, step_output_json
 
 logger = logging.getLogger(__name__)
 
@@ -57,10 +57,8 @@ class ContinuityCheckpointSealHandler(BaseHandler):
         from_agent = str(options.get("from_agent") or "continuity")
         execution_id = str(context.execution_id or "")
 
-        resolve_out = (getattr(context, "outputs", {}) or {}).get("resolve", {})
-        resolve_json = resolve_out.get("json") if isinstance(resolve_out, dict) else {}
-        if not isinstance(resolve_json, dict):
-            resolve_json = {}
+        outputs = getattr(context, "outputs", {}) or {}
+        resolve_json = step_output_json(outputs, "resolve")
 
         jsonl_path = resolve_json.get("jsonl_path") or options.get("jsonl_path")
         transcript_id = resolve_json.get("transcript_id") or options.get("transcript_id")
