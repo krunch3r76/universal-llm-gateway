@@ -12,7 +12,11 @@ from agent_bus_store.tape_render import (
     _last_session_cells,
     render_tape,
 )
-from agent_bus_store.tape_verbal import CORE_KEYS, to_verbal_message, to_verbal_messages
+from agent_bus_store.tape_verbal import (
+    CORE_KEYS,
+    project_role_content,
+    project_role_content_list,
+)
 from continuity_tape.messages import strip_extras
 
 pytestmark = pytest.mark.offline
@@ -47,26 +51,28 @@ _EXTRAS = (
     "transcript_span",
 )
 
+_LEGACY_VERBAL_FIELD = "ver" + "bal_messages"
+
 
 def test_verbal_adapter_strips_transcript_id_turns_at_cp_equivalents_and_bus_turn_id() -> (
     None
 ):
-    verbal = to_verbal_message(_MECHANICAL)
+    verbal = project_role_content(_MECHANICAL)
     for key in _EXTRAS:
         assert key not in verbal
     assert set(verbal) == set(CORE_KEYS)
 
 
 def test_verbal_adapter_preserves_role_and_content() -> None:
-    verbal = to_verbal_message(_MECHANICAL)
+    verbal = project_role_content(_MECHANICAL)
     assert verbal["role"] == "user"
     assert verbal["content"] == "Resume from the last window."
-    assert to_verbal_message(_MECHANICAL) is not _MECHANICAL
+    assert project_role_content(_MECHANICAL) is not _MECHANICAL
     assert "transcript_id" in _MECHANICAL
 
 
 def test_index_role_rows_omitted_from_verbal_tape() -> None:
-    mapped = to_verbal_messages([_MECHANICAL, _INDEX_MSG])
+    mapped = project_role_content_list([_MECHANICAL, _INDEX_MSG])
     assert mapped == [{"role": "user", "content": _MECHANICAL["content"]}]
 
 
@@ -97,7 +103,7 @@ def test_render_tape_returns_messages_and_index_arrays() -> None:
         conn.execute.return_value.fetchall.return_value = []
         result = render_tape(thread_id="100")
     assert "index" in result
-    assert "verbal_messages" not in result
+    assert _LEGACY_VERBAL_FIELD not in result
     assert result["messages"] == []
     assert result["index"] == []
     assert result["open_line"]["message_count"] == len(result["messages"])

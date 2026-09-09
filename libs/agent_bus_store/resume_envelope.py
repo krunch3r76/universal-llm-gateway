@@ -13,7 +13,7 @@ from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
 from .tape_harvest import render_tape_with_harvest
 from .tape_render import _find_jsonl_for_uuid
-from .tape_verbal import to_verbal_messages
+from .tape_verbal import project_role_content_list
 
 _MECHANICAL_PROJECTION_URI = (
     "cortex://notes/system/threads/{thread}-transcript-projection.md"
@@ -178,7 +178,7 @@ def build_resume_envelope(thread_id: str) -> dict[str, Any]:
     messages = tape.get("messages") or []
     if seal_status == "seal_pending":
         messages = _filter_messages_for_seal_pending(messages, open_line)
-    verbal = to_verbal_messages(messages)
+    verbal = project_role_content_list(messages)
     tip_turn, tip_body = _tip_checkpoint_body(thread_id)
     checkpoint_highlight = extract_cp_highlight(tip_body)
     summary_row, summary_row_source, summary_as_of_turn = _resume_summary_row(

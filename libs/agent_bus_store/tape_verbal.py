@@ -12,7 +12,7 @@ from typing import Any
 from continuity_tape.messages import CORE_KEYS
 
 
-def to_verbal_message(message: Mapping[str, Any]) -> dict[str, str]:
+def project_role_content(message: Mapping[str, Any]) -> dict[str, str]:
     """Return a strict ``{role, content}`` copy; extra keys are dropped."""
     return {
         "role": str(message.get("role") or ""),
@@ -20,18 +20,18 @@ def to_verbal_message(message: Mapping[str, Any]) -> dict[str, str]:
     }
 
 
-def to_verbal_messages(
+def project_role_content_list(
     messages: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, str]]:
-    """Map speech messages to verbal copies; omit index-role rows."""
+    """Map speech messages to role/content copies; omit index-role rows."""
     out: list[dict[str, str]] = []
     for message in messages:
         if str(message.get("role") or "") == "index":
             continue
-        verbal = to_verbal_message(message)
+        verbal = project_role_content(message)
         if set(verbal) <= set(CORE_KEYS):
             out.append(verbal)
     return out
 
 
-__all__ = ["CORE_KEYS", "to_verbal_message", "to_verbal_messages"]
+__all__ = ["CORE_KEYS", "project_role_content", "project_role_content_list"]
