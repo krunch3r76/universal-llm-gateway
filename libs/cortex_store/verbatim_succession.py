@@ -78,14 +78,13 @@ def prefix_holds(
     assert isinstance(sealed, list) and isinstance(new, list)
     if len(new) < len(sealed):
         return False
-    if len(new) > len(sealed):
-        return new[: len(sealed)] == sealed
-    if new[: len(sealed) - 1] != sealed[: len(sealed) - 1]:
-        return False
     if not sealed:
         return True
+    boundary = len(sealed) - 1
+    if new[:boundary] != sealed[:boundary]:
+        return False
     last_sealed = sealed[-1]
-    last_new = new[-1]
+    last_new = new[boundary]
     if last_sealed.get("role") != last_new.get("role"):
         return False
     sealed_content = last_sealed.get("content")

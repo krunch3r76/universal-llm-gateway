@@ -29,6 +29,16 @@ def test_prefix_holds_messages_v1_partial_last_message() -> None:
     assert prefix_holds("messages-v1", sealed, extended) is True
 
 
+def test_prefix_holds_messages_v1_hollow_last_then_more_turns() -> None:
+    """Seal while assistant turn in-flight (content None), then extend."""
+    sealed = [_msg("user", "hello", 1), {"role": "assistant", "content": None, "turn_index": 1}]
+    extended = sealed[:1] + [
+        _msg("assistant", "hello world", 1),
+        _msg("user", "more", 2),
+    ]
+    assert prefix_holds("messages-v1", sealed, extended) is True
+
+
 def test_prefix_holds_messages_v1_role_divergence() -> None:
     sealed = [_msg("user", "hi", 1)]
     diverged = [_msg("assistant", "hi", 1)]
