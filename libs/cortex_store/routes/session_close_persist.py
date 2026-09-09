@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from durable_io.atomic import durable_write_text
 from fastapi import HTTPException, status
@@ -35,8 +36,11 @@ from ..transcript_assembly import compute_text_content_hash
 from ..verbatim_succession import (
     build_seal_envelope_meta,
     journal_verbatim_bytes,
+    load_sealed_envelope_from_path,
+    prefix_holds,
     split_verbatim_layer,
     stamp_verbatim_fields,
+    transcript_messages_path,
 )
 from .session_close_helpers import _ensure_continues_edge, _ensure_transcript_entity
 from .session_close_validate import (
@@ -45,6 +49,35 @@ from .session_close_validate import (
 )
 
 logger = get_logger("cortex-api.session_close")
+
+
+def _enforce_messages_v1_prefix_extend(
+    *,
+    prior_codec: str | None,
+    prior_seal_path: Path | None,
+    new_messages: list[dict[str, Any]],
+    session_id: str,
+    mode: str,
+) -> None:
+    """PREFIX-EXTEND gate for messages-v1 seal succession (R5)."""
+    if prior_codec != "messages-v1" or prior_seal_path is None or not prior_seal_path.is_file():
+        return
+    prior_envelope = load_sealed_envelope_from_path(prior_seal_path)
+    if prefix_holds("messages-v1", prior_envelope.messages, new_messages):
+        return
+    conflict = build_validation_error(
+        reason="succession.verbatim_diverged",
+        field="transcript_messages",
+        received="non-prefix extension",
+        expected="messages-v1 PREFIX-EXTEND of sealed envelope",
+        examples=[],
+        hint=f"Succession {mode} requires PREFIX-EXTEND on sealed messages.",
+        detail=(
+            f"session {session_id!r} messages-v1 {mode} refused: "
+            "new envelope is not a prefix extension of sealed messages."
+        ),
+    )
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=conflict)
 
 
 def _dominant_lane_from_entity_ids(entity_ids: list[str] | None) -> str | None:
@@ -376,6 +409,31 @@ def persist_session_close(
         abs_path = _FILES_ROOT / ctx.transcript_path
         if ctx.envelope is not None and ctx.messages_path is not None:
             seal_abs_path = _FILES_ROOT / ctx.messages_path
+            if reuse_journal_row_id is not None and (structural_fill or succession_extend):
+                _pc_conn = cortex_conn()
+                try:
+                    _prow = _pc_conn.execute(
+                        "SELECT verbatim_codec, file_path FROM session_journals WHERE id = ?",
+                        (reuse_journal_row_id,),
+                    ).fetchone()
+                finally:
+                    _pc_conn.close()
+                prior_rel = str(_prow["file_path"]) if _prow and _prow["file_path"] else None
+                prior_codec_for_seal = (
+                    str(_prow["verbatim_codec"]) if _prow and _prow["verbatim_codec"] else None
+                )
+                prior_seal_path = (
+                    _FILES_ROOT / transcript_messages_path(prior_rel)
+                    if prior_rel
+                    else None
+                )
+                _enforce_messages_v1_prefix_extend(
+                    prior_codec=prior_codec_for_seal,
+                    prior_seal_path=prior_seal_path,
+                    new_messages=ctx.envelope.messages,
+                    session_id=body.session_id,
+                    mode="fill" if structural_fill else "extend",
+                )
             sealed_envelope = build_seal_envelope_meta(
                 ctx.envelope,
                 session_id=body.session_id,

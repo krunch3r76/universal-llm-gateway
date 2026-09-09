@@ -26,6 +26,18 @@ def test_sealed_roundtrip_prefix_extend() -> None:
     assert sealed_roundtrip_holds(sealed=sealed, rendered=rendered, legacy=rendered) == "prefix_extend"
 
 
+def test_sealed_roundtrip_jsonl_edited_after_seal() -> None:
+    sealed = "# Transcript: sid\n\n## Turn 1 — old\n\n### User\n\nold\n\n### Assistant\n\nok\n"
+    rendered = (
+        "# Transcript: sid\n\n## Turn 1 — new\n\n### User\n\nnew\n\n"
+        "### Assistant\n\nok\n"
+    )
+    assert (
+        sealed_roundtrip_holds(sealed=sealed, rendered=rendered, legacy=rendered)
+        == "jsonl_edited_after_seal"
+    )
+
+
 def test_sealed_roundtrip_assistant_fill() -> None:
     sealed = (
         "# Transcript: sid\n\n## Turn 1 — hi\n\n### User\n\nhi\n\n"

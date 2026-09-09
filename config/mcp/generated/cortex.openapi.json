@@ -1845,6 +1845,50 @@
         "title": "AssertionUpdateResponse",
         "type": "object"
       },
+      "AssociationRow": {
+        "description": "Top activate hit \u2014 the walk product on the recall card.",
+        "properties": {
+          "activation_path": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activation Path"
+          },
+          "assertion_id": {
+            "title": "Assertion Id",
+            "type": "integer"
+          },
+          "claim": {
+            "title": "Claim",
+            "type": "string"
+          },
+          "entrenchment": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entrenchment"
+          }
+        },
+        "required": [
+          "claim",
+          "assertion_id"
+        ],
+        "title": "AssociationRow",
+        "type": "object"
+      },
       "BurstClaimItem": {
         "properties": {
           "action": {
@@ -2570,6 +2614,82 @@
         "title": "DispatchRequest",
         "type": "object"
       },
+      "DispositionRow": {
+        "description": "Terminal-first disposition row from burst/terminal_facts partition.",
+        "properties": {
+          "arrival_path": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arrival Path"
+          },
+          "assertion_id": {
+            "title": "Assertion Id",
+            "type": "integer"
+          },
+          "disposition_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition Date"
+          },
+          "epistemic_state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Epistemic State"
+          },
+          "hop_distance": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hop Distance"
+          },
+          "machine_derived": {
+            "default": false,
+            "title": "Machine Derived",
+            "type": "boolean"
+          },
+          "party": {
+            "title": "Party",
+            "type": "string"
+          },
+          "predicate_form": {
+            "title": "Predicate Form",
+            "type": "string"
+          }
+        },
+        "required": [
+          "predicate_form",
+          "party",
+          "assertion_id"
+        ],
+        "title": "DispositionRow",
+        "type": "object"
+      },
       "DraftRequest": {
         "additionalProperties": true,
         "description": "Draft patch \u2014 nested ``fields`` and/or flat ALLOWED_FIELD_KEYS aliases.",
@@ -3046,9 +3166,27 @@
             ],
             "title": "Description"
           },
+          "duplicate_name_ok": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duplicate Name Ok"
+          },
           "id": {
-            "title": "Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
           },
           "name": {
             "title": "Name",
@@ -3139,7 +3277,6 @@
           }
         },
         "required": [
-          "id",
           "type",
           "name"
         ],
@@ -4705,8 +4842,19 @@
         "type": "object"
       },
       "PredicateFormNormalize": {
-        "description": "Result of v1.3 predicate_form normalize-on-write.\n\nSurfaced on assertion create/update responses when the caller seeded a\n``predicate_form`` and the route ran ``normalize_predicate_domain`` over it.\nThe MCP dispatcher layer reads this field and emits\n``mcp.cortex.predicate.normalized`` (always) and\n``mcp.cortex.predicate.review.required`` (when ``requires_human_review`` is\nTrue). cortex-api itself stays HTTP-only \u2014 no ``mcp_events`` dep \u2014 so the\nemission surface lives at the dispatcher contract layer, matching the\nsibling-family invariant for ``mcp.cortex.assertion.*`` signals (per\nassertion 10259 / Q5.5 deferral, dispatch packet\n``cortex://notes/system/threads/cortex-api-event-emission-surface-dispatch.md``).",
+        "description": "Result of v1.3 predicate_form normalize-on-write.\n\nSurfaced on assertion create/update/supersede responses when the caller\nseeded a ``predicate_form`` and the route ran ``normalize_predicate_domain``\nover it. The MCP dispatcher layer reads this field and emits\n``mcp.cortex.predicate.normalized`` (always) and\n``mcp.cortex.predicate.review.required`` (when ``requires_human_review`` is\nTrue). cortex-api itself stays HTTP-only \u2014 no ``mcp_events`` dep \u2014 so the\nemission surface lives at the dispatcher contract layer, matching the\nsibling-family invariant for ``mcp.cortex.assertion.*`` signals (per\nassertion 10259 / Q5.5 deferral, dispatch packet\n``cortex://notes/system/threads/cortex-api-event-emission-surface-dispatch.md``).",
         "properties": {
+          "_next": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next"
+          },
           "canonical_form": {
             "title": "Canonical Form",
             "type": "string"
@@ -4717,6 +4865,24 @@
             },
             "title": "Classes Applied",
             "type": "array"
+          },
+          "flag_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flag Reasons",
+            "type": "array"
+          },
+          "normalization_decision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalization Decision"
           },
           "normalized": {
             "title": "Normalized",
@@ -4729,6 +4895,17 @@
           "requires_human_review": {
             "title": "Requires Human Review",
             "type": "boolean"
+          },
+          "suppression_effect": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Suppression Effect"
           }
         },
         "required": [
@@ -4738,6 +4915,222 @@
           "requires_human_review"
         ],
         "title": "PredicateFormNormalize",
+        "type": "object"
+      },
+      "RecallCandidate": {
+        "description": "Ambiguous resolution option \u2014 seat re-calls with pinned seeds.",
+        "properties": {
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "why_matched": {
+            "title": "Why Matched",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "why_matched"
+        ],
+        "title": "RecallCandidate",
+        "type": "object"
+      },
+      "RecallCard": {
+        "description": "Read-time recall projection \u2014 the unit of return for G1 routes.",
+        "properties": {
+          "_next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RecallNextAdvisory"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "associations": {
+            "items": {
+              "$ref": "#/components/schemas/AssociationRow"
+            },
+            "title": "Associations",
+            "type": "array"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/RecallCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "continuity": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Continuity"
+          },
+          "disclosure": {
+            "$ref": "#/components/schemas/RecallDisclosure"
+          },
+          "dispositions": {
+            "items": {
+              "$ref": "#/components/schemas/DispositionRow"
+            },
+            "title": "Dispositions",
+            "type": "array"
+          },
+          "mode": {
+            "enum": [
+              "matter",
+              "continuity"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "nulls": {
+            "items": {
+              "$ref": "#/components/schemas/RecallNull"
+            },
+            "title": "Nulls",
+            "type": "array"
+          },
+          "resolved": {
+            "items": {
+              "$ref": "#/components/schemas/ResolvedEntity"
+            },
+            "title": "Resolved",
+            "type": "array"
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "title": "RecallCard",
+        "type": "object"
+      },
+      "RecallDisclosure": {
+        "description": "Generalized burst-style disclosure for the whole recall card.",
+        "properties": {
+          "caps_hit": {
+            "default": false,
+            "title": "Caps Hit",
+            "type": "boolean"
+          },
+          "drops": {
+            "default": 0,
+            "title": "Drops",
+            "type": "integer"
+          },
+          "rows_returned": {
+            "default": 0,
+            "title": "Rows Returned",
+            "type": "integer"
+          },
+          "rows_scanned": {
+            "default": 0,
+            "title": "Rows Scanned",
+            "type": "integer"
+          },
+          "scope_truncated": {
+            "default": false,
+            "title": "Scope Truncated",
+            "type": "boolean"
+          },
+          "vocabulary_covered": {
+            "default": false,
+            "title": "Vocabulary Covered",
+            "type": "boolean"
+          }
+        },
+        "title": "RecallDisclosure",
+        "type": "object"
+      },
+      "RecallNextAdvisory": {
+        "description": "Advisory escalation hint \u2014 never authority.",
+        "properties": {
+          "action": {
+            "const": "delegate",
+            "default": "delegate",
+            "title": "Action",
+            "type": "string"
+          },
+          "op": {
+            "const": "investigate",
+            "default": "investigate",
+            "title": "Op",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RecallNextAdvisory",
+        "type": "object"
+      },
+      "RecallNull": {
+        "description": "Closed enum of typed null tokens on a recall card.",
+        "enum": [
+          "resolver_miss",
+          "scope_truncated",
+          "vocab_not_covered",
+          "nothing_on_record"
+        ],
+        "title": "RecallNull",
+        "type": "string"
+      },
+      "RecallRequest": {
+        "description": "POST body for matter and continuity recall routes.",
+        "properties": {
+          "q": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Free-text or typed entity ref",
+            "title": "Q"
+          },
+          "seeds": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Pinned entity refs",
+            "title": "Seeds"
+          }
+        },
+        "title": "RecallRequest",
         "type": "object"
       },
       "RecentCompletion": {
@@ -5471,6 +5864,36 @@
         "title": "RelationshipUpdate",
         "type": "object"
       },
+      "ResolvedEntity": {
+        "description": "A hub or seed entity successfully resolved for recall.",
+        "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "entity_id": {
+            "title": "Entity Id",
+            "type": "string"
+          },
+          "via": {
+            "title": "Via",
+            "type": "string"
+          }
+        },
+        "required": [
+          "entity_id",
+          "via"
+        ],
+        "title": "ResolvedEntity",
+        "type": "object"
+      },
       "SeatClaimHolder": {
         "properties": {
           "age_s": {
@@ -5830,7 +6253,7 @@
         "type": "object"
       },
       "SessionCloseRequest": {
-        "description": "Session-close input contract.\n\nAtomic assembly is server-side: the handler reads the JSONL (or\naccepts inline ``transcript_md`` for the Web seat), builds the\nverbatim layer, appends ``session_summary_md``, writes the file,\nand commits the DB transaction.\n\n``transcript_depth`` (default ``\"verbatim\"``) selects what gets\narchived:\n\n  - ``verbatim`` \u2014 full dual-layer transcript (verbatim turns +\n    structural layer); transcript entity created; enrichment-eligible.\n    Transcript source (``transcript_jsonl_path`` or ``transcript_md``)\n    is required. Current behavior; backward-compatible default.\n  - ``light``    \u2014 structural-layer-only file written; transcript\n    entity created with ``attributes.transcript_depth=\"light\"``;\n    NOT enrichment-eligible (no verbatim turns to walk). File content\n    is ``session_summary_md``; no ``transcript_md`` / JSONL required.\n  - ``none``     \u2014 no file, no transcript entity; journal row +\n    ``continues`` edge only. NOT enrichment-eligible. Incompatible\n    with ``handoff_prompt`` / ``handoff_source_path`` (422).\n\nContinuity (journal row, prior_session_id linkage, open_items) is\nwritten for all depths. Only the transcript archival layer varies.\n\nRequired fields:\n  session_id:         ``{agent}-YYYY-MM-DD-HHMMSS-{3hex}`` (UTC at session **start**;\n    boot ``session_id`` or JSONL birth time for Cursor \u2014 not close time).\n  agent:              agent slug (cursor / web / orion / \u2026).\n  session_summary_md: agent-composed structural layer.  Non-empty; a\n    ``## Session Summary`` heading is normalized in (prepended or\n    rewritten from a near-miss) when absent \u2014 see\n    ``normalize_session_summary_heading``. A Decisions list is\n    recommended but not enforced. May be omitted when\n    ``session_summary_md_path`` is set (path wins if both set).\n  session_summary_md_path: optional CORTEX_FILES_ROOT-relative path to\n    the structural summary file; contents populate ``session_summary_md``.\n  summary:            \u226520 chars synthesis used for the entity name\n    and journal row.\n\nRequired conditionally on ``transcript_depth``:\n  transcript_jsonl_path / transcript_md: required iff\n    ``transcript_depth == \"verbatim\"``. Cursor passes the path;\n    web passes the markdown. ``light`` uses ``session_summary_md`` only.\n\nOptional fields:\n  transcript_depth:   one of {\"verbatim\", \"light\", \"none\"}; default\n    ``\"verbatim\"``.\n  domains / decisions / open_items / entity_ids: journal metadata.\n  prior_session_id:   creates a ``continues`` edge.\n  handoff_prompt:     forward-pickup narrative for the next session;\n    persisted on the ``session_journals`` row in the\n    ``handoff_prompt`` column (added in migration 044) and mirrored to\n    ``transcript:{session_id}`` entity attributes for explicit retrieval\n    via ``entity_get``. Boot omits handoffs (see\n    ``decision:transcript-scoped-handoff-explicit-load``). Replaces the\n    prior write path through ``reflective_journal`` (retired per\n    ``decision:rj-handoff-kind-retirement``, agent-bus thread 1107).\n  handoff_source_path / handoff_source_section: when ``handoff_source_path``\n    is set, the server derives ``handoff_prompt`` from HTML-comment marker\n    pairs in the file (2-A v2, agent-bus 1188). ``handoff_source_section``\n    names an optional marker label; null uses ``<!-- handoff:start/end -->``.\n  expected_handoff_prompt / expected_derived_handoff_prompt_sha256 /\n    expected_source_file_sha256: assertion / TOCTOU guards after ``dry_run``.\n  assistant_label:    H3 heading label for assistant blocks in the\n    assembled verbatim layer (default ``\"Assistant\"``).\n  source_ref:         optional canonical admission ref (``todo:|plan:|plan_phase:``\n    grammar); canonicalized server-side via ``parse_source_ref``; stamped on\n    ``transcript:{session_id}.attributes.source_ref`` and the journal row.\n  source_ref_derivation: optional provenance tag from the IDE capture door\n    (e.g. ``ide-todo-pickup``, ``ide-implement-plan-executor``).",
+        "additionalProperties": false,
         "properties": {
           "agent": {
             "title": "Agent",
@@ -5846,6 +6269,17 @@
               }
             ],
             "title": "Assistant Label"
+          },
+          "closed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed By"
           },
           "decisions": {
             "anyOf": [
@@ -6021,6 +6455,11 @@
             ],
             "title": "Source Ref Derivation"
           },
+          "succession_seal_authority": {
+            "default": false,
+            "title": "Succession Seal Authority",
+            "type": "boolean"
+          },
           "summary": {
             "title": "Summary",
             "type": "string"
@@ -6046,7 +6485,19 @@
             ],
             "title": "Transcript Jsonl Path"
           },
-          "transcript_md": {
+          "transcript_messages": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript Messages"
+          },
+          "transcript_messages_path": {
             "anyOf": [
               {
                 "type": "string"
@@ -6055,7 +6506,7 @@
                 "type": "null"
               }
             ],
-            "title": "Transcript Md"
+            "title": "Transcript Messages Path"
           }
         },
         "required": [
@@ -6160,6 +6611,28 @@
             "title": "Journal Row Id",
             "type": "integer"
           },
+          "messages_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Messages Path"
+          },
+          "messages_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Messages Sha256"
+          },
           "session_id": {
             "title": "Session Id",
             "type": "string"
@@ -6193,6 +6666,17 @@
           "turn_count": {
             "title": "Turn Count",
             "type": "integer"
+          },
+          "verbatim_codec": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verbatim Codec"
           }
         },
         "required": [
@@ -6315,6 +6799,28 @@
             "title": "Agent",
             "type": "string"
           },
+          "closed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed By"
+          },
+          "conversation_uuid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Uuid"
+          },
           "decisions": {
             "anyOf": [
               {
@@ -6342,6 +6848,17 @@
               }
             ],
             "title": "Domains"
+          },
+          "dominant_lane": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dominant Lane"
           },
           "entity_ids": {
             "anyOf": [
@@ -6415,6 +6932,28 @@
             ],
             "title": "Prior Session Id"
           },
+          "sealed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sealed By"
+          },
+          "sealed_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sealed On"
+          },
           "session_id": {
             "anyOf": [
               {
@@ -6460,6 +6999,28 @@
             "title": "Agent",
             "type": "string"
           },
+          "closed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed By"
+          },
+          "conversation_uuid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Uuid"
+          },
           "decisions": {
             "anyOf": [
               {
@@ -6487,6 +7048,17 @@
               }
             ],
             "title": "Domains"
+          },
+          "dominant_lane": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dominant Lane"
           },
           "entity_ids": {
             "anyOf": [
@@ -6552,6 +7124,28 @@
               }
             ],
             "title": "Prior Session Id"
+          },
+          "sealed_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sealed By"
+          },
+          "sealed_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sealed On"
           },
           "session_id": {
             "anyOf": [
@@ -7382,6 +7976,16 @@
           },
           "old": {
             "$ref": "#/components/schemas/AssertionItem"
+          },
+          "predicate_form_normalize": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PredicateFormNormalize"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "validation_warnings": {
             "anyOf": [
@@ -11687,6 +12291,90 @@
         ]
       }
     },
+    "/graph/recall/continuity": {
+      "post": {
+        "description": "Continuity-mode recall \u2014 boot journal + open todos, no burst dispositions.",
+        "operationId": "recall_continuity_graph_recall_continuity_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecallRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecallCard"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Recall Continuity",
+        "tags": [
+          "graph-recall"
+        ]
+      }
+    },
+    "/graph/recall/matter": {
+      "post": {
+        "description": "Matter-mode recall \u2014 hub orientation with burst plug-in and activation.",
+        "operationId": "recall_matter_graph_recall_matter_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecallRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecallCard"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Recall Matter",
+        "tags": [
+          "graph-recall"
+        ]
+      }
+    },
     "/health": {
       "get": {
         "operationId": "health_health_get",
@@ -12746,6 +13434,22 @@
                 }
               ],
               "title": "Agent"
+            }
+          },
+          {
+            "description": "lid (default): human session closes. window: sealed speech registry rows.",
+            "in": "query",
+            "name": "facet",
+            "required": false,
+            "schema": {
+              "default": "lid",
+              "description": "lid (default): human session closes. window: sealed speech registry rows.",
+              "enum": [
+                "lid",
+                "window"
+              ],
+              "title": "Facet",
+              "type": "string"
             }
           },
           {

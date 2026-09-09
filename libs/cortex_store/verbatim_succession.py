@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from continuity_tape.messages import (
     ContinuityMessagesEnvelope,
@@ -73,6 +73,8 @@ def prefix_holds(
     assert isinstance(sealed, list) and isinstance(new, list)
     if len(new) < len(sealed):
         return False
+    if len(new) > len(sealed):
+        return new[: len(sealed)] == sealed
     if new[: len(sealed) - 1] != sealed[: len(sealed) - 1]:
         return False
     if not sealed:

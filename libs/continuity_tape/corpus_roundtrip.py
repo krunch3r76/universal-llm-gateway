@@ -116,7 +116,13 @@ def _assistant_sentinel_only_diff(sealed: str, rendered: str) -> bool:
 
 
 def sealed_roundtrip_holds(*, sealed: str, rendered: str, legacy: str) -> str | None:
-    """Return None when round-trip holds; otherwise a short reason label."""
+    """Return None when round-trip holds; otherwise a short reason label.
+
+    ``jsonl_edited_after_seal`` — live JSONL re-extract matches the legacy
+    assembler but diverges from the sealed on-disk verbatim (§9.1.1). Counted
+    explicitly in ``CorpusRoundtripReport.jsonl_edited_after_seal``; not a
+    silent PASS and not folded into ``diff_rows``.
+    """
     if rendered == sealed:
         return None
     if rendered.startswith(sealed):
@@ -216,7 +222,10 @@ def check_corpus_roundtrip(
     assistant_label: str = "Assistant",
 ) -> CorpusRoundtripReport:
     """Scan sealed rows and compare render output to stored verbatim prefixes."""
-    from cortex_store.verbatim_succession import journal_verbatim_bytes, split_verbatim_layer
+    from cortex_store.verbatim_succession import (
+        journal_verbatim_bytes,
+        split_verbatim_layer,
+    )
 
     db_path = cortex_db or _default_cortex_db()
     store_root = files_root or _default_files_root()
@@ -274,6 +283,7 @@ def check_corpus_roundtrip(
             diff_rows += 1
             continue
 
+        # rendered == legacy: classify sealed drift (incl. jsonl_edited_after_seal).
         reason = sealed_roundtrip_holds(
             sealed=sealed_prefix, rendered=rendered, legacy=legacy
         )

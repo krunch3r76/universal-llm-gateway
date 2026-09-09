@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
+from cortex_store.event_publisher import record
 from universal_event_bus.events import Event
 from universal_event_bus.events.factory import event_factory
-
-from cortex_store.event_publisher import record
 
 
 @event_factory

@@ -175,8 +175,51 @@ _REJECT_REASONS = frozenset(
         "handoff.requires_transcript_entity",
         "handoff.missing_transcript_anchor",
         "agent.invalid",
+        "transcript_md.removed",
     }
 )
+
+_REMOVED_SESSION_CLOSE_FIELDS = frozenset({"transcript_md"})
+
+
+def reject_removed_session_close_fields(
+    parsed: dict[str, Any],
+    *,
+    emit_rejected: bool = True,
+) -> dict[str, Any] | None:
+    """Reject retired verbatim fields on MCP/dispatch session_close paths."""
+    from .dispatch_ops._write_validation import HTTP_422
+
+    for field in _REMOVED_SESSION_CLOSE_FIELDS:
+        if field not in parsed:
+            continue
+        err = build_validation_error(
+            reason="transcript_md.removed",
+            field=field,
+            received=parsed[field],
+            expected=(
+                "transcript_jsonl_path (cursor) or transcript_messages* (web) "
+                "when transcript_depth=verbatim"
+            ),
+            examples=["transcript_jsonl_path", "transcript_messages"],
+            hint=(
+                "transcript_md was removed from session_close — server-side "
+                "assembly derives verbatim from JSONL or transcript_messages."
+            ),
+            detail=f"{field} is not accepted on session_close (removed field).",
+        )
+        if emit_rejected:
+            session_id = parsed.get("session_id")
+            agent = parsed.get("agent")
+            if session_id and agent:
+                _emit_rejected(
+                    err["reason"],
+                    session_id=str(session_id),
+                    agent=str(agent),
+                    detail=err["error"],
+                )
+        return {**err, "status_code": HTTP_422}
+    return None
 
 
 def build_validation_error(

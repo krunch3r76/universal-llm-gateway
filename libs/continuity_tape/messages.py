@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Any, Literal, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 SCHEMA_ID = "ulg.continuity.messages/1"
 CORE_KEYS = ("role", "content")
+SEAL_KEYS = (*CORE_KEYS, "turn_index")
 Tools = Literal["none", "marker", "openai"]
 TOOL_MARKER_RE = re.compile(r"^\[tool call: [^\]]+\]$", re.MULTILINE)
 
@@ -77,6 +79,15 @@ def strip_extras(msgs: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     return [{k: msg.get(k) for k in CORE_KEYS} for msg in msgs]
 
 
+def seal_message_projection(msg: Mapping[str, Any]) -> dict[str, Any]:
+    """Project one message for ``messages-v1`` seal fingerprint (§3.2)."""
+    out = {k: msg.get(k) for k in CORE_KEYS}
+    turn_index = msg.get("turn_index")
+    if turn_index is not None:
+        out["turn_index"] = turn_index
+    return out
+
+
 def strip_tool_markers(msg: Mapping[str, Any]) -> dict[str, Any]:
     """Remove ``[tool call: NAME]`` paragraphs from assistant content when tools=none."""
     out = dict(msg)
@@ -115,7 +126,7 @@ def messages_sha256(msgs: Sequence[Mapping[str, Any]]) -> str:
 
 def seal_messages_canonical_bytes(msgs: Sequence[Mapping[str, Any]]) -> bytes:
     """Per-message NDJSON bytes for ``messages-v1`` seal fingerprint (§3.2)."""
-    core = strip_extras(msgs)
+    core = [seal_message_projection(m) for m in msgs]
     lines = [
         json.dumps(m, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
         for m in core
@@ -147,7 +158,9 @@ __all__ = [
     "IndexRow",
     "EnvelopeMeta",
     "ContinuityMessagesEnvelope",
+    "SEAL_KEYS",
     "strip_extras",
+    "seal_message_projection",
     "strip_tool_markers",
     "apply_tools_policy",
     "canonical_messages_bytes",

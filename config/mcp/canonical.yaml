@@ -790,7 +790,7 @@ tools:
   flat_call_shape:
     tool: cortex_session_close
     substrate_qualified: user-vortex__cortex_session_close
-  fol_descriptor: "∀ session_id ∈ str ∧ agent ∈ str ∧ (transcript_jsonl_path ∨ transcript_md)
+  fol_descriptor: "∀ session_id ∈ str ∧ agent ∈ str ∧ (transcript_jsonl_path ∨ transcript_messages*)
     ≠ ∅:\n  session_close(...) ⟹\n    transcript_entity_id ∈ Cortex ∧ journal_row_id ∈ ℕ ∧
     content_hash ∈ sha256.\nAtomic. Mutating. Idempotent by session_id (second close → 422
     session.already_closed).\nBEFORE close: Use the `session-close-kernel` skill (+ skill
@@ -804,7 +804,11 @@ tools:
         type: string
       transcript_jsonl_path:
         type: string
-      transcript_md:
+      transcript_messages:
+        type: object
+      transcript_messages_path:
+        type: string
+      transcript_depth:
         type: string
       session_summary_md:
         type: string
@@ -862,7 +866,7 @@ tools:
   flat_call_shape:
     tool: cortex_session_close_preflight
     substrate_qualified: user-vortex__cortex_session_close_preflight
-  fol_descriptor: "∀ session_id ∈ str ∧ agent ∈ str ∧ (transcript_jsonl_path ∨ transcript_md)
+  fol_descriptor: "∀ session_id ∈ str ∧ agent ∈ str ∧ (transcript_jsonl_path ∨ transcript_messages*)
     ≠ ∅:\n  session_close_preflight(...) ⟹\n    ok ∈ bool ∧ (ok ⟹ audit ∧ turn_count ∈ ℕ)
     ∧ (¬ok ⟹ reason ∈ str).\nRead-only. ¬side-effects (in-memory assembly; no file, no DB
     row, no audit emit).\nRun BEFORE session_close to learn of a bad JSONL or blocked audit-gate
@@ -876,7 +880,9 @@ tools:
         type: string
       transcript_jsonl_path:
         type: string
-      transcript_md:
+      transcript_messages:
+        type: object
+      transcript_messages_path:
         type: string
       session_summary_md:
         type: string

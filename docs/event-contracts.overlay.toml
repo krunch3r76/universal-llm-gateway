@@ -32,6 +32,7 @@
 "cortex.transcript.seal.refused_not_lane_window" = "transcript_seal refused a window that does not bind to the requesting lane."
 "cortex.transcript.harvested" = "transcript_harvest sealed a capped batch of bindable windows."
 "cortex.transcript.projected" = "transcript_project run completed (or dry-run compute) for a root continuity lane."
+"continuity.messages.extracted" = "Emitted when extract_turns_from_jsonl (or equivalent) materializes a continuity messages envelope."
 "cortex.transcript.projection_refused" = "transcript_project refused before any durable write."
 "cortex.transcript.projection_anchor_mismatch" = "One CP Window anchor mismatch detected during projection."
 "agent_bus.checkpoint.scoreboard_drift" = "CHECKPOINT Scoreboard: line drifted from resolved scoreboard (mode in payload)."

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from continuity_tape.extract_jsonl import extract_turns_from_jsonl
+from continuity_tape.render_md import render_verbatim_md
 from fastapi import HTTPException
 from universal_logging import get_logger
 
@@ -17,9 +19,6 @@ from ..session_close_validation import (
     normalize_session_summary_heading,
 )
 from ..session_handoff import handoff_dry_run_preview
-from continuity_tape.extract_jsonl import extract_turns_from_jsonl
-from continuity_tape.render_md import render_verbatim_md
-
 from ..transcript_assembly import (
     TranscriptPathError,
     compose_full_transcript,
@@ -236,7 +235,6 @@ def _assemble_transcript_in_memory(
             envelope = ContinuityMessagesEnvelope.model_validate(transcript_messages)
         else:
             import json
-            from pathlib import Path
 
             from ._shared import _FILES_ROOT
 

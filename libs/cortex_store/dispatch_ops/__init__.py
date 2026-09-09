@@ -29,6 +29,7 @@ from .workflow_hints import (
     _CORTEX_LARGE_PAYLOAD_OPS,
     _CORTEX_OFFLOAD_HINT,
     _FRICTION_HINT,
+    _SESSION_CLOSE_TOOLS,
     _WORKFLOW_HINTS,
     _enrich_entity_completeness,
     _parse_cortex_arguments,
@@ -210,18 +211,6 @@ def execute_op(
     Telemetry kwargs (surface, seat, via_adapter) are populated by the MCP
     relay pass-through for per-op × per-seat ``mcp.cortex.dispatch`` events.
     """
-    handler = _OPS.get(tool)
-    if handler is None:
-        suggestion = _CORTEX_HALLUCINATED_TOOLS.get(tool)
-        hint = f"Did you mean {suggestion!r}?" if suggestion else None
-        return {
-            "error": f"Unknown cortex tool {tool!r}. Available: {sorted(_OPS)}",
-            **({"hint": hint} if hint else {}),
-            "format_example": (
-                'cortex(tool="entity_get", arguments=\'{"entity_id": "type:slug"}\')'
-            ),
-        }
-
     parsed = _parse_cortex_arguments(arguments, tool)
     if parsed is None:
         error = _CORTEX_FORMAT_HINT
@@ -235,6 +224,25 @@ def execute_op(
             "error": error,
             "format_example": (
                 f'cortex(tool="{tool}", arguments=\'{{"entity_id": "type:slug"}}\')'
+            ),
+        }
+
+    if tool in _SESSION_CLOSE_TOOLS:
+        from ..session_close_validation import reject_removed_session_close_fields
+
+        removed = reject_removed_session_close_fields(parsed)
+        if removed is not None:
+            return removed
+
+    handler = _OPS.get(tool)
+    if handler is None:
+        suggestion = _CORTEX_HALLUCINATED_TOOLS.get(tool)
+        hint = f"Did you mean {suggestion!r}?" if suggestion else None
+        return {
+            "error": f"Unknown cortex tool {tool!r}. Available: {sorted(_OPS)}",
+            **({"hint": hint} if hint else {}),
+            "format_example": (
+                'cortex(tool="entity_get", arguments=\'{"entity_id": "type:slug"}\')'
             ),
         }
 
