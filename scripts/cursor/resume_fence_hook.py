@@ -517,6 +517,7 @@ def _unwrap_dynamic_tool(
     inner_name = str(
         tool_input.get("toolName")
         or tool_input.get("tool_name")
+        or tool_input.get("tool")
         or tool_input.get("name")
         or tool_name
     )

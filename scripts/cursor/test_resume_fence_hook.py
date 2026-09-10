@@ -265,6 +265,39 @@ def test_get_dynamic_tools_denied() -> None:
     assert "GetDynamicTools" in verdict["agent_message"] or "server-primary" in verdict["agent_message"]
 
 
+def test_pre_tool_use_mcp_continuity_resume_allowed() -> None:
+    for fold_state in ("armed", "poured"):
+        verdict = decide(
+            event="preToolUse",
+            payload={
+                "tool_name": "Mcp",
+                "tool_input": {
+                    "tool": "continuity",
+                    "arguments": {"op": "resume", "thread": "10223"},
+                },
+            },
+            marker={**_MARKER, "transcript_id": "tab-90489d56"},
+            fold={"state": fold_state},
+        )
+        assert verdict["permission"] == "allow", fold_state
+
+
+def test_pre_tool_use_mcp_continuity_foreign_thread_denied() -> None:
+    verdict = decide(
+        event="preToolUse",
+        payload={
+            "tool_name": "Mcp",
+            "tool_input": {
+                "tool": "continuity",
+                "arguments": {"op": "resume", "thread": "9796"},
+            },
+        },
+        marker={**_MARKER, "transcript_id": "tab-90489d56"},
+        fold={"state": "poured"},
+    )
+    assert verdict["permission"] == "deny"
+
+
 def test_call_dynamic_tool_continuity_resume_allowed() -> None:
     verdict = decide(
         event="beforeMCPExecution",
