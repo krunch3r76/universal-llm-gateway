@@ -30,17 +30,10 @@ _DEFAULT_BUDGET_BYTES = 512_000
 
 def _find_jsonl_for_uuid(conversation_uuid: str) -> Any | None:
     from cortex_store.transcript_assembly import _transcripts_root
-    from cortex_store.session_close_successor_hop import conversation_uuid_from_jsonl_path
-    from cortex_store.transcript_session_id import _jsonl_paths_by_mtime_desc
+    from cortex_store.transcript_session_id import jsonl_path_for_uuid
 
-    root = _transcripts_root()
-    for jsonl_path in _jsonl_paths_by_mtime_desc(root):
-        try:
-            if conversation_uuid_from_jsonl_path(jsonl_path) == conversation_uuid:
-                return jsonl_path
-        except (OSError, ValueError):
-            continue
-    return None
+    jsonl_path = jsonl_path_for_uuid(_transcripts_root(), conversation_uuid)
+    return jsonl_path if jsonl_path.is_file() else None
 
 
 def _load_live_anchor_transcript(
@@ -230,6 +223,8 @@ def render_tape(
     budget_bytes: int = _DEFAULT_BUDGET_BYTES,
     harvest_stats: dict[str, Any] | None = None,
     scope: str = "last_session",
+    transcript_id: str | None = None,
+    prior_cells: int = 1,
     include_extras: bool = False,
     tools: Tools = "none",
 ) -> dict[str, Any]:
@@ -272,6 +267,8 @@ def render_tape(
         lane_journals=lane_journals,
         files_root=_FILES_ROOT,
         scope=scope,
+        transcript_id=transcript_id,
+        prior_cells=prior_cells,
         budget_bytes=budget_bytes,
         tools=tools,
         include_extras=include_extras,
@@ -315,6 +312,8 @@ def render_tape(
         harvest=harvest_stats,
         mismatch=mismatch,
         scope=scope,
+        transcript_id=transcript_id,
+        prior_cells=prior_cells,
         tools_available=tools_available,
     )
     meta = {

@@ -17,7 +17,11 @@ from ..session_close_successor_hop import (
 )
 from ..transcript_assembly import _transcripts_root
 from ..transcript_lane_touch import binding_for, lane_touches
-from ..transcript_session_id import _jsonl_paths_by_mtime_desc
+from ..transcript_session_id import (
+    _jsonl_paths_by_mtime_desc,
+    derive_session_id_from_jsonl_start,
+    jsonl_path_for_uuid,
+)
 
 logger = get_logger("cortex-api.dispatch_ops.transcript_discover")
 
@@ -64,6 +68,53 @@ def _resolve_explicit_uuids(
     return explicit_uuids_for_lane(thread_id, explicit)
 
 
+def _live_jsonl_turn_count(jsonl_path: Any) -> int:
+    from continuity_tape.extract_jsonl import extract_turns_from_jsonl
+
+    session_id = (
+        derive_session_id_from_jsonl_start(jsonl_path=jsonl_path, agent="cursor") or ""
+    )
+    envelope = extract_turns_from_jsonl(
+        jsonl_path, tools="marker", session_id=session_id
+    )
+    return envelope.meta.turn_count or max(
+        (int(m.get("turn_index") or 0) for m in envelope.messages),
+        default=0,
+    )
+
+
+def _sealed_turn_count(session_id: str) -> int:
+    from ..dispatch_ops._shared import _FILES_ROOT
+    from ..verbatim_succession import load_sealed_payload_for_session
+
+    payload = load_sealed_payload_for_session(session_id, files_root=_FILES_ROOT)
+    return payload.sealed_turns if payload else 0
+
+
+def _iter_candidate_jsonl_paths(
+    *,
+    root: Any,
+    lane_created_at: datetime,
+    explicit_uuids: set[str],
+) -> list[Any]:
+    if explicit_uuids:
+        paths: list[Any] = []
+        for uuid in sorted(explicit_uuids):
+            jsonl_path = jsonl_path_for_uuid(root, uuid)
+            if not jsonl_path.is_file():
+                continue
+            mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=UTC)
+            if mtime >= lane_created_at:
+                paths.append(jsonl_path)
+        return paths
+    out: list[Any] = []
+    for jsonl_path in _jsonl_paths_by_mtime_desc(root):
+        mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=UTC)
+        if mtime >= lane_created_at:
+            out.append(jsonl_path)
+    return out
+
+
 def _discover_open_windows(
     *,
     thread_id: str,
@@ -79,21 +130,59 @@ def _discover_open_windows(
         "no_touch": 0,
         "dropped": 0,
         "segment_unavailable": 0,
+        "already_closed_human": 0,
+        "quiescent": 0,
     }
     explicit_all = explicit_uuids or set()
-    for jsonl_path in _jsonl_paths_by_mtime_desc(root):
+    for jsonl_path in _iter_candidate_jsonl_paths(
+        root=root,
+        lane_created_at=lane_created_at,
+        explicit_uuids=explicit_all,
+    ):
         mtime = datetime.fromtimestamp(jsonl_path.stat().st_mtime, tz=UTC)
-        if mtime < lane_created_at:
-            continue
         uuid = conversation_uuid_from_jsonl_path(jsonl_path)
         rel = str(jsonl_path.relative_to(root))
-        from ..transcript_session_id import derive_session_id_from_jsonl_start
-
         session_id = derive_session_id_from_jsonl_start(
             jsonl_path=jsonl_path, agent="cursor"
         )
-        if session_id and lookup_sealed_journal(session_id) is not None:
-            continue
+        sealed = lookup_sealed_journal(session_id) if session_id else None
+        if sealed is not None:
+            if sealed.closed_by != "succession":
+                excluded_counts["already_closed_human"] += 1
+                excluded.append(
+                    {
+                        "transcript_id": uuid,
+                        "jsonl_path": rel,
+                        "session_id": session_id,
+                        "reason": "already_closed_human",
+                    }
+                )
+                transcript_discover_filtered(
+                    reason="already_closed_human",
+                    thread_id=thread_id,
+                    transcript_id=uuid,
+                )
+                continue
+            live_turns = _live_jsonl_turn_count(jsonl_path)
+            sealed_turns = _sealed_turn_count(str(session_id))
+            if live_turns <= sealed_turns:
+                excluded_counts["quiescent"] += 1
+                excluded.append(
+                    {
+                        "transcript_id": uuid,
+                        "jsonl_path": rel,
+                        "session_id": session_id,
+                        "reason": "quiescent",
+                        "live_turns": live_turns,
+                        "sealed_turns": sealed_turns,
+                    }
+                )
+                transcript_discover_filtered(
+                    reason="quiescent",
+                    thread_id=thread_id,
+                    transcript_id=uuid,
+                )
+                continue
         touches = lane_touches(jsonl_path)
         binding, dominant = binding_for(
             thread_id,
@@ -103,7 +192,7 @@ def _discover_open_windows(
         )
         lane_touch = touches.get(thread_id)
         write_touches = lane_touch.writes if lane_touch else 0
-        row = {
+        row: dict[str, Any] = {
             "transcript_id": uuid,
             "jsonl_path": rel,
             "session_id": session_id,
@@ -113,6 +202,10 @@ def _discover_open_windows(
             "write_touches": write_touches,
             "mtime": mtime.isoformat(),
         }
+        if sealed is not None and sealed.closed_by == "succession":
+            row["extend"] = True
+            row["binding"] = "explicit_cp"
+            binding = "explicit_cp"
         if binding in {"explicit_cp", "dominant_write"}:
             open_windows.append(row)
             continue

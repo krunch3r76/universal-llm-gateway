@@ -170,6 +170,11 @@ def derive_session_id_from_jsonl_start(*, jsonl_path: Path, agent: str) -> str |
     )
 
 
+def jsonl_path_for_uuid(root: Path, conversation_uuid: str) -> Path:
+    """Direct path for Cursor layout ``<uuid>/<uuid>.jsonl``."""
+    return root / conversation_uuid / f"{conversation_uuid}.jsonl"
+
+
 def derive_prior_session_id_from_jsonl_path(
     *, jsonl_path: Path, agent: str
 ) -> str | None:
@@ -216,5 +221,6 @@ __all__ = [
     "_normalize_cursor_timestamp",
     "derive_prior_session_id_from_jsonl_path",
     "derive_session_id_from_jsonl_start",
+    "jsonl_path_for_uuid",
     "session_id_timing_hint",
 ]

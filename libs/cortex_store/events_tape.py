@@ -341,3 +341,22 @@ def agent_bus_tape_harvest_rendered(
     )
     record(ev.signal, **ev.payload)
     return ev
+
+
+@event_factory
+def agent_bus_tape_harvest_failed(
+    *,
+    thread_id: str,
+    reason: str,
+) -> Event:
+    ev = Event(
+        signal="agent_bus.tape.harvest_failed",
+        role="observation",
+        scope="global",
+        payload={
+            "thread_id": thread_id,
+            "reason": reason,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev

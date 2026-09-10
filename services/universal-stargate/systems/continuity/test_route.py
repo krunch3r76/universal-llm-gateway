@@ -30,6 +30,36 @@ def test_checkpoint_request_model_fields() -> None:
     assert accepted.status == "running"
 
 
+def test_tape_read_envelope_carries_cells() -> None:
+    from continuity_tape.messages import ContinuityMessagesEnvelope
+    from systems.continuity.tape_read import build_envelope_from_tape
+
+    tape = {
+        "messages": [{"role": "user", "content": "hi", "turn_index": 1}],
+        "index": [],
+        "cells": [
+            {
+                "cp_ordinal": 1,
+                "transcript_id": "uuid",
+                "turn_lo": 0,
+                "turn_hi": 1,
+                "bus_turn_id": 10,
+            }
+        ],
+        "segments": [{"session_id": "s1", "transcript_id": "uuid"}],
+        "open_line": {"turn_count": 1, "truncated": False},
+        "meta": {"messages_sha256": "abc"},
+    }
+    envelope = build_envelope_from_tape(
+        tape,
+        request={"thread": "10223", "scope": "window", "include_extras": True},
+        caller_agent="cursor",
+    )
+    assert isinstance(envelope, ContinuityMessagesEnvelope)
+    assert len(envelope.cells) == 1
+    assert envelope.meta.checkpoint_turns == [10]
+
+
 @pytest.mark.skip(reason="phase_3_not_landed")
 def test_checkpoint_claude_ai_e2e_deferred() -> None:
     """Reopen when Phase 3 harvest lands."""

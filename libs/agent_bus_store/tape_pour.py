@@ -162,6 +162,48 @@ def _bus_turn_id_for_turn(
     return None
 
 
+def _window_cells(
+    cells: list[dict[str, Any]],
+    *,
+    transcript_id: str,
+    prior_cells: int,
+) -> list[dict[str, Any]]:
+    window = [
+        c for c in cells if str(c.get("transcript_id") or "") == transcript_id
+    ]
+    if not window:
+        return []
+    first_idx = next(
+        i
+        for i, c in enumerate(cells)
+        if str(c.get("transcript_id") or "") == transcript_id
+    )
+    before = cells[:first_idx]
+    prior = before[-prior_cells:] if prior_cells > 0 else []
+    selected_keys = {
+        (
+            int(c.get("cp_ordinal") or 0),
+            str(c.get("transcript_id") or ""),
+            int(c.get("turn_lo") or 0),
+            int(c.get("turn_hi") or 0),
+            c.get("bus_turn_id"),
+        )
+        for c in prior + window
+    }
+    return [
+        c
+        for c in cells
+        if (
+            int(c.get("cp_ordinal") or 0),
+            str(c.get("transcript_id") or ""),
+            int(c.get("turn_lo") or 0),
+            int(c.get("turn_hi") or 0),
+            c.get("bus_turn_id"),
+        )
+        in selected_keys
+    ]
+
+
 def _last_session_cells(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
     last_cp_ordinal: int | None = None
     for cell in reversed(cells):
@@ -234,6 +276,8 @@ def pour_lane_messages(
     lane_journals: list[dict[str, Any]],
     files_root: Any,
     scope: str,
+    transcript_id: str | None = None,
+    prior_cells: int = 1,
     budget_bytes: int,
     tools: Tools,
     include_extras: bool,
@@ -285,7 +329,12 @@ def pour_lane_messages(
                     if turn_lo < turn_index <= turn_hi:
                         messages.append({**msg, "window_whole": False})
     messages.extend(tape_live.anchor_jsonl_messages(thread_id, existing=messages))
-    if scope == "last_session":
+    if scope == "window" and transcript_id:
+        cells = _window_cells(
+            cells, transcript_id=transcript_id, prior_cells=prior_cells
+        )
+        messages = _filter_messages_to_cells(messages, cells)
+    elif scope == "last_session":
         cells = _last_session_cells(cells)
         messages = _filter_messages_to_cells(messages, cells)
     truncated = len(json.dumps(messages).encode("utf-8")) > budget_bytes
@@ -320,6 +369,8 @@ def build_open_line(
     harvest: dict[str, Any] | None,
     mismatch: list[dict[str, Any]],
     scope: str,
+    transcript_id: str | None = None,
+    prior_cells: int = 1,
     tools_available: bool,
 ) -> dict[str, Any]:
     from agent_bus_store import tape_render as tape_meta
@@ -353,7 +404,7 @@ def build_open_line(
             1 for e in excluded if e.get("reason") == "segment_unavailable"
         ),
     }
-    return {
+    open_line: dict[str, Any] = {
         "thread_id": thread_id,
         "scope": scope,
         "segment_count": len(segments),
@@ -372,6 +423,14 @@ def build_open_line(
         "mismatch": mismatch,
         "tools_available": tools_available,
     }
+    if scope == "window" and transcript_id:
+        open_line["window"] = {
+            "transcript_id": transcript_id,
+            "prior_cells": prior_cells,
+            "cell_count": len(cells),
+            "cp_ordinals": [int(c.get("cp_ordinal") or 0) for c in cells],
+        }
+    return open_line
 
 
 def summary_line(open_line: dict[str, Any]) -> str:
@@ -394,6 +453,7 @@ __all__ = [
     "_degrade_overflow_messages",
     "_filter_messages_to_cells",
     "_last_session_cells",
+    "_window_cells",
     "build_open_line",
     "pour_lane_messages",
     "summary_line",

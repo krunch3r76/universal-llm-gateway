@@ -242,6 +242,8 @@ def _tape_dispatch(
     harvest: bool | None = None,
     max_seals: int | None = None,
     scope: str | None = None,
+    transcript_id: str | None = None,
+    prior_cells: int | None = None,
     include_extras: bool | None = None,
     tools: str | None = None,
 ) -> dict[str, Any]:
@@ -258,6 +260,10 @@ def _tape_dispatch(
         params.append(f"max_seals={int(max_seals)}")
     if scope:
         params.append(f"scope={scope}")
+    if transcript_id:
+        params.append(f"transcript_id={transcript_id}")
+    if prior_cells is not None:
+        params.append(f"prior_cells={int(prior_cells)}")
     if include_extras:
         params.append("include_extras=true")
     if tools:

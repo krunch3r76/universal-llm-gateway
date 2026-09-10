@@ -128,6 +128,7 @@ def build_envelope_from_tape(
     return ContinuityMessagesEnvelope(
         messages=messages,
         index=index,
+        cells=cells,
         meta=meta,
         open_line=open_line or None,
     )
@@ -137,6 +138,8 @@ async def fetch_tape_envelope(
     thread: str,
     *,
     scope: str = "full",
+    transcript_id: str | None = None,
+    prior_cells: int = 1,
     include_extras: bool = False,
     tools: str = "none",
     budget_bytes: int = 512_000,
@@ -149,18 +152,23 @@ async def fetch_tape_envelope(
     request = {
         "thread": thread,
         "scope": scope,
+        "transcript_id": transcript_id,
+        "prior_cells": prior_cells,
         "include_extras": include_extras,
         "tools": tools,
         "budget_bytes": budget_bytes,
         "harvest": harvest,
     }
-    params = {
+    params: dict[str, Any] = {
         "scope": scope,
         "include_extras": str(include_extras).lower(),
         "tools": tools,
         "budget_bytes": budget_bytes,
         "harvest": str(harvest).lower(),
+        "prior_cells": prior_cells,
     }
+    if transcript_id:
+        params["transcript_id"] = transcript_id
     url = f"/threads/{thread}/tape"
     bus_url = DEFAULT_AGENT_BUS_URL
     try:

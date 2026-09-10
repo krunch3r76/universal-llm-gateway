@@ -256,6 +256,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         tools: str | None = None,
         budget_bytes: int | None = None,
         harvest: bool | None = None,
+        prior_cells: int | None = None,
         surface: str | None = None,
         from_agent: str | None = None,
         transcript_id: str | None = None,
@@ -351,6 +352,8 @@ def register_continuity_tools(mcp: FastMCP) -> None:
             return _continuity_tape_read(
                 thread=thread,
                 scope=scope or "full",
+                transcript_id=transcript_id,
+                prior_cells=prior_cells,
                 include_extras=bool(include_extras),
                 tools=tools or "none",
                 budget_bytes=budget_bytes,

@@ -32,6 +32,15 @@ class IndexRow(BaseModel):
     bus_turn_id: int | None = None
 
 
+class TapeCell(BaseModel):
+    cp_ordinal: int
+    transcript_id: str
+    turn_lo: int
+    turn_hi: int
+    boundary: str | None = None
+    bus_turn_id: int | None = None
+
+
 class EnvelopeMeta(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -70,6 +79,7 @@ class ContinuityMessagesEnvelope(BaseModel):
     )
     messages: list[dict[str, Any]] = Field(default_factory=list)
     index: list[dict[str, Any]] = Field(default_factory=list)
+    cells: list[dict[str, Any]] = Field(default_factory=list)
     meta: EnvelopeMeta
     open_line: dict[str, Any] | None = None
 
@@ -156,6 +166,7 @@ __all__ = [
     "Tools",
     "ContinuityMessage",
     "IndexRow",
+    "TapeCell",
     "EnvelopeMeta",
     "ContinuityMessagesEnvelope",
     "SEAL_KEYS",

@@ -51,6 +51,8 @@ async def continuity_tape_read(
     payload, status = await fetch_tape_envelope(
         body.thread,
         scope=body.scope,
+        transcript_id=body.transcript_id,
+        prior_cells=body.prior_cells,
         include_extras=body.include_extras,
         tools=body.tools,
         budget_bytes=body.budget_bytes,

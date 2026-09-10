@@ -78,7 +78,7 @@ def register_agent_bus_read_tool(mcp: FastMCP) -> None:
           get          (thread, turn_number)  — turn_number may be int or "latest"
           wait         (thread, after_turn?, wait_seconds?, completion?, from_agent?)
           lane_current (thread) — derived current lane parentage (state=none when unbound)
-          tape           (thread, budget_bytes?, harvest?, max_seals?, scope?, include_extras?, tools?) — continuity dump; messages[] + index[]
+          tape           (thread, budget_bytes?, harvest?, max_seals?, scope?, transcript_id?, prior_cells?, include_extras?, tools?) — continuity dump; messages[] + cells[] + index[] (index = budget-degrade metadata only). scope=window requires transcript_id; tail = open cell (bus_turn_id null).
 
         Note: mark_read=true mutates per-turn read pointers, not thread/turn
         content; it is permitted here as a read-cursor side effect.

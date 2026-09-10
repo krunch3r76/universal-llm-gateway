@@ -71,6 +71,17 @@ def request_lid_close_seal(
     )
 
 
+def _explicit_ids_for_harvest(
+    *,
+    thread_id: str,
+    scope: str,
+    transcript_id: str | None,
+) -> list[str]:
+    if scope == "window" and transcript_id:
+        return [transcript_id]
+    return sorted(explicit_uuids_for_lane(thread_id, set()))
+
+
 def render_tape_with_harvest(
     *,
     thread_id: str,
@@ -78,6 +89,8 @@ def render_tape_with_harvest(
     harvest: bool = False,
     max_seals: int = 8,
     scope: str = "last_session",
+    transcript_id: str | None = None,
+    prior_cells: int = 1,
     include_extras: bool = False,
     tools: str = "none",
     harvest_timeout: float = TAPE_HARVEST_TIMEOUT_S,
@@ -85,7 +98,11 @@ def render_tape_with_harvest(
     """Optionally harvest bindable windows, then render the continuity tape."""
     harvest_stats: dict[str, Any] | None = None
     if harvest:
-        explicit = sorted(explicit_uuids_for_lane(thread_id, set()))
+        explicit = _explicit_ids_for_harvest(
+            thread_id=thread_id,
+            scope=scope,
+            transcript_id=transcript_id,
+        )
         harvest_result = _call_transcript_harvest(
             thread_id=thread_id,
             explicit_ids=explicit,
@@ -93,26 +110,39 @@ def render_tape_with_harvest(
             timeout=harvest_timeout,
         )
         if harvest_result.get("error"):
-            return harvest_result
-        harvest_stats = {
-            "discovered": int(harvest_result.get("discovered") or 0),
-            "sealed": int(harvest_result.get("sealed") or 0),
-            "deferred": int(harvest_result.get("deferred_count") or 0),
-            "refused": int(harvest_result.get("refused") or 0),
-        }
-        from cortex_store.events_tape import agent_bus_tape_harvest_rendered
+            harvest_stats = {
+                "error": harvest_result.get("error"),
+                "reason": harvest_result.get("reason", "harvest_error"),
+            }
+            from cortex_store.events_tape import agent_bus_tape_harvest_failed
 
-        agent_bus_tape_harvest_rendered(
-            thread_id=thread_id,
-            discovered=harvest_stats["discovered"],
-            sealed=harvest_stats["sealed"],
-            deferred=harvest_stats["deferred"],
-        )
+            agent_bus_tape_harvest_failed(
+                thread_id=thread_id,
+                reason=str(harvest_stats["reason"]),
+            )
+        else:
+            harvest_stats = {
+                "discovered": int(harvest_result.get("discovered") or 0),
+                "sealed": int(harvest_result.get("sealed") or 0),
+                "deferred": int(harvest_result.get("deferred_count") or 0),
+                "refused": int(harvest_result.get("refused") or 0),
+                "quiescent": int(harvest_result.get("quiescent") or 0),
+            }
+            from cortex_store.events_tape import agent_bus_tape_harvest_rendered
+
+            agent_bus_tape_harvest_rendered(
+                thread_id=thread_id,
+                discovered=harvest_stats["discovered"],
+                sealed=harvest_stats["sealed"],
+                deferred=harvest_stats["deferred"],
+            )
     return render_tape(
         thread_id=thread_id,
         budget_bytes=budget_bytes,
         harvest_stats=harvest_stats,
         scope=scope,
+        transcript_id=transcript_id,
+        prior_cells=prior_cells,
         include_extras=include_extras,
         tools=tools,  # type: ignore[arg-type]
     )

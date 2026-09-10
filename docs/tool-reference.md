@@ -729,7 +729,7 @@ Continuity consolidation and CHECKPOINT pipeline relays (code MCP `/mcp/code`).
 | `consolidate` | trigger_thread, turn, dispatch_thread_id?, model_ref_overrides? | Async dispatch `consolidate-continuity` after a CLOSEOUT |
 | `replay` | trigger_thread, turn, dry_run?, force?, … | P6 replay path (`force=true`, `dry_run` default true) |
 | `status` | execution_id XOR root_thread | Pipeline tracker result or hub WATERMARK read |
-| `tape_read` | thread, scope?, include_extras?, tools?, budget_bytes?, harvest? | Door 1 sync relay → `POST /api/v1/continuity/tape-read` |
+| `tape_read` | thread, scope?, transcript_id?, prior_cells?, include_extras?, tools?, budget_bytes?, harvest? | Door 1 sync relay → `POST /api/v1/continuity/tape-read`. `scope=window` requires `transcript_id`; returns `cells[]` on the envelope. `index[]` is budget-degrade metadata only — not a cell index. Unsealed tail arrives as the open cell (`bus_turn_id=null`). `close(op=assemble)` is the raw `verbatim_md` maintenance door; handoffs use tape read, not `assemble_transcript`. |
 | `checkpoint` | thread, surface, from_agent?, transcript_id?, jsonl_path?, residue?, pre_consolidate? | Async relay → `POST /api/v1/continuity/checkpoint` (`continuity-checkpoint-v1`). Required: `thread`, `surface` (`cursor` \| `claude_ai`). `surface=claude_ai` → 422 until Phase 3. |
 
 ### Example

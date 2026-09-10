@@ -24,12 +24,23 @@ async def tape_route(
     budget_bytes: int = Query(512_000, ge=1024, le=8_000_000),
     harvest: bool = Query(False),
     max_seals: int = Query(8, ge=0, le=64),
-    scope: Literal["last_session", "full"] = Query(
+    scope: Literal["last_session", "full", "window"] = Query(
         "last_session",
         description=(
             "last_session (default): pour the posting interval between the prior "
-            "CHECKPOINT and the tip CP window. full: entire lane tape."
+            "CHECKPOINT and the tip CP window. full: entire lane tape. "
+            "window: cells for transcript_id plus prior_cells preceding cells."
         ),
+    ),
+    transcript_id: str | None = Query(
+        None,
+        description="Required when scope=window — conversation uuid to select.",
+    ),
+    prior_cells: int = Query(
+        1,
+        ge=0,
+        le=8,
+        description="When scope=window, count of CP cells before the window.",
     ),
     include_extras: bool = Query(
         False,
@@ -41,6 +52,14 @@ async def tape_route(
     ),
 ) -> dict[str, Any]:
     """Render the messages+extras continuity tape for a root lane."""
+    if scope == "window" and not transcript_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "scope=window requires transcript_id",
+                "code": "tape.window_requires_transcript_id",
+            },
+        )
     tags = load_thread_tags(thread_id)
     if classify_thread(tags)["spine"] != "root":
         raise HTTPException(
@@ -61,6 +80,8 @@ async def tape_route(
             include_extras=include_extras,
             tools=tools,
             scope=scope,
+            transcript_id=transcript_id,
+            prior_cells=prior_cells,
         )
     except HTTPException:
         raise

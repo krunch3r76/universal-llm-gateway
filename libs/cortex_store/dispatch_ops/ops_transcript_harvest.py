@@ -66,12 +66,14 @@ def _op_transcript_harvest(
         created_at = datetime.min.replace(tzinfo=UTC)
 
     explicit_all = _resolve_explicit_uuids(str(tid), explicit_transcript_ids)
-    windows, _, _ = _discover_open_windows(
+    windows, _, excluded_counts = _discover_open_windows(
         thread_id=str(tid),
         lane_created_at=created_at,
         explicit_uuids=explicit_all,
     )
     discovered = len(windows)
+    quiescent = int(excluded_counts.get("quiescent") or 0)
+    extended = sum(1 for w in windows if w.get("extend"))
     cap = max(0, int(max_seals))
     ordered = sorted(windows, key=_priority_key)
     to_seal = ordered[:cap]
@@ -113,6 +115,8 @@ def _op_transcript_harvest(
     return {
         "thread_id": str(tid),
         "discovered": discovered,
+        "extended": extended,
+        "quiescent": quiescent,
         "sealed": sealed,
         "deferred": [
             {

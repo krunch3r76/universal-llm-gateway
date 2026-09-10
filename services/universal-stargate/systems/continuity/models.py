@@ -10,7 +10,9 @@ from pydantic import BaseModel, Field
 
 class TapeReadRequest(BaseModel):
     thread: str
-    scope: Literal["last_session", "full"] = "full"
+    scope: Literal["last_session", "full", "window"] = "full"
+    transcript_id: str | None = None
+    prior_cells: int = Field(default=1, ge=0, le=8)
     include_extras: bool = False
     tools: Tools = "none"
     budget_bytes: int = Field(default=512_000, ge=1024, le=8_000_000)

@@ -22,6 +22,8 @@ def _continuity_tape_read(
     *,
     thread: str,
     scope: str = "full",
+    transcript_id: str | None = None,
+    prior_cells: int | None = None,
     include_extras: bool = False,
     tools: str = "none",
     budget_bytes: int | None = None,
@@ -38,6 +40,10 @@ def _continuity_tape_read(
         "tools": tools,
         "harvest": harvest,
     }
+    if transcript_id:
+        body["transcript_id"] = transcript_id
+    if prior_cells is not None:
+        body["prior_cells"] = prior_cells
     if budget_bytes is not None:
         body["budget_bytes"] = budget_bytes
     stargate_url = os.environ.get("STARGATE_URL", STARGATE_URL)

@@ -34,6 +34,7 @@ def test_t10_harvest_caps_seals(mock_explicit, mock_harvest, mock_render) -> Non
         "sealed": 8,
         "deferred": 4,
         "refused": 0,
+        "quiescent": 0,
     }
 
 
@@ -96,3 +97,54 @@ def test_t14_harvest_passes_merged_explicit_to_cortex(
 
     mock_explicit.assert_called_once_with("10223", set())
     assert sorted(mock_harvest.call_args.kwargs["explicit_ids"]) == ["uuid-a", "uuid-b"]
+
+
+@patch("agent_bus_store.tape_harvest.render_tape")
+@patch("agent_bus_store.tape_harvest._call_transcript_harvest")
+@patch("agent_bus_store.tape_harvest.explicit_uuids_for_lane")
+def test_t15_harvest_timeout_still_renders(
+    mock_explicit, mock_harvest, mock_render
+) -> None:
+    mock_explicit.return_value = set()
+    mock_harvest.return_value = {
+        "error": "transcript_harvest timed out after 8.0s",
+        "reason": "harvest_timeout",
+    }
+    mock_render.return_value = {"open_line": {"harvest": {"reason": "harvest_timeout"}}}
+
+    result = render_tape_with_harvest(thread_id="10223", budget_bytes=1000, harvest=True)
+
+    mock_render.assert_called_once()
+    assert mock_render.call_args.kwargs["harvest_stats"] == {
+        "error": "transcript_harvest timed out after 8.0s",
+        "reason": "harvest_timeout",
+    }
+    assert result["open_line"]["harvest"]["reason"] == "harvest_timeout"
+
+
+@patch("agent_bus_store.tape_harvest.render_tape")
+@patch("agent_bus_store.tape_harvest._call_transcript_harvest")
+def test_window_scope_passes_explicit_transcript_id(mock_harvest, mock_render) -> None:
+    mock_harvest.return_value = {
+        "discovered": 1,
+        "sealed": 0,
+        "deferred_count": 0,
+        "refused": 0,
+        "quiescent": 0,
+    }
+    mock_render.return_value = {"open_line": {}}
+    tid = "d556c84f-524e-4e57-b38c-6fdc3eafe8fb"
+
+    render_tape_with_harvest(
+        thread_id="10223",
+        budget_bytes=1000,
+        harvest=True,
+        scope="window",
+        transcript_id=tid,
+        prior_cells=1,
+    )
+
+    assert mock_harvest.call_args.kwargs["explicit_ids"] == [tid]
+    assert mock_render.call_args.kwargs["scope"] == "window"
+    assert mock_render.call_args.kwargs["transcript_id"] == tid
+    assert mock_render.call_args.kwargs["prior_cells"] == 1
