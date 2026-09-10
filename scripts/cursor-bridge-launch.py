@@ -130,8 +130,19 @@ def _ssh_keystroke(argv: list[str], *, holder: str, dry_run: bool) -> dict:
     try:
         keystroke = json.loads(proc.stdout.strip())
     except json.JSONDecodeError:
-        keystroke = {"raw_stdout": proc.stdout[-800:]}
-    return {"ok": True, "holder": holder, "keystroke": keystroke}
+        return {
+            "ok": False,
+            "phase": "keystroke_json",
+            "holder": holder,
+            "stdout": proc.stdout[-800:],
+            "stderr": proc.stderr[-800:],
+        }
+    ok = bool(keystroke.get("ok", True))
+    out: dict = {"ok": ok, "holder": holder, "keystroke": keystroke}
+    if not ok:
+        out["reason"] = keystroke.get("reason", "keystroke_failed")
+        out["phase"] = "keystroke"
+    return out
 
 
 def render_open_message(

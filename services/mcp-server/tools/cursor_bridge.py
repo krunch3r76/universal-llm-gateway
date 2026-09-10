@@ -129,12 +129,18 @@ def _status(*, thread: str | None, last: int) -> dict[str, Any]:
         for t in turns
         if t["subject"] == "REPLY" and t["turn_number"] is not None
     ]
+    tab_ready_turns = [
+        t["turn_number"]
+        for t in turns
+        if t["subject"] == "TAB_READY" and t["turn_number"] is not None
+    ]
     record("mcp.cursor_bridge.status", thread=thread, count=len(turns))
     return {
         "op": "status",
         "thread": thread,
         "turns": turns,
-        "tab_ready": any(t["subject"] == "TAB_READY" for t in turns),
+        "tab_ready": bool(tab_ready_turns),
+        "tab_ready_turn": max(tab_ready_turns) if tab_ready_turns else None,
         "last_reply_turn": max(reply_turns) if reply_turns else None,
     }
 

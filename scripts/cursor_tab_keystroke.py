@@ -36,6 +36,77 @@ _NEW_CHAT = os.environ.get("CURSOR_BRIDGE_NEW_CHAT", "ctrl_n")
 _NEW_CHAT_CHORDS = ("ctrl_n", "ctrl_t", "palette")
 _FOCUS_OPENERS = ("none", "ctrl_k", "ctrl_slash", "ctrl_shift_p")
 _INPUT_FOCUS = ("ctrl_l", "none")
+_FOCUS_VERIFY_CMD = os.environ.get("CURSOR_BRIDGE_FOCUS_VERIFY_CMD", "").strip()
+
+
+def _active_window_title() -> tuple[str | None, str]:
+    """Best-effort focused window title on the graphical host.
+
+    Returns (title_or_none, probe_name). probe_name is ``none`` when no backend ran.
+    """
+    if _FOCUS_VERIFY_CMD:
+        try:
+            proc = subprocess.run(
+                _FOCUS_VERIFY_CMD,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=8,
+                env=os.environ,
+            )
+            if proc.returncode == 0:
+                title = (proc.stdout or "").strip()
+                if title:
+                    return title, "env_cmd"
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        return None, "env_cmd_failed"
+    try:
+        proc = subprocess.run(
+            ["hyprctl", "activewindow", "-j"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            env=os.environ,
+        )
+        if proc.returncode == 0 and proc.stdout.strip():
+            data = json.loads(proc.stdout)
+            title = str(data.get("title") or "").strip()
+            if title:
+                return title, "hyprctl"
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        pass
+    return None, "none"
+
+
+def _verify_focus_title(expected: str) -> dict[str, object]:
+    """Post-keystroke probe: focused window title must contain ``expected``.
+
+    When no probe backend exists (COSMIC default), returns ``focus_verified=None``
+    so the watcher can still enforce the TAB_READY gate without blocking all wakes.
+    """
+    observed, probe = _active_window_title()
+    if probe == "none":
+        return {"focus_verified": None, "focus_probe": probe}
+    if probe.endswith("_failed") or not observed:
+        return {
+            "focus_verified": False,
+            "focus_probe": probe,
+            "reason": "focus_unverified",
+        }
+    if expected not in observed:
+        return {
+            "focus_verified": False,
+            "focus_probe": probe,
+            "reason": "focus_mismatch",
+            "observed_title": observed,
+            "expected_title": expected,
+        }
+    return {
+        "focus_verified": True,
+        "focus_probe": probe,
+        "observed_title": observed,
+    }
 
 
 def _require_display() -> None:
@@ -229,10 +300,32 @@ def paste_message(
             # without it a paste can land in an editor buffer.
             _chord(ui, e.KEY_LEFTCTRL, e.KEY_L)
             time.sleep(0.4)
+        focus_check: dict[str, object] = {}
+        if focus_title and focus_opener != "none":
+            focus_check = _verify_focus_title(focus_title)
+            if focus_check.get("focus_verified") is False:
+                return {
+                    "ok": False,
+                    "op": "paste",
+                    "steps": plan,
+                    "message_len": 0,
+                    **focus_check,
+                }
         _paste_text_enter(ui, message)
     finally:
         ui.close()
-    return {"ok": True, "op": "paste", "steps": plan, "message_len": len(message)}
+    out: dict[str, object] = {
+        "ok": True,
+        "op": "paste",
+        "steps": plan,
+        "message_len": len(message),
+    }
+    if focus_title and focus_opener != "none":
+        out.update(focus_check)
+        if focus_check.get("focus_verified") is None:
+            out["focus_verified"] = None
+            out["focus_probe"] = focus_check.get("focus_probe", "none")
+    return out
 
 
 def _read_message(args: argparse.Namespace) -> str:

@@ -127,6 +127,37 @@ def _parse_kv(body: str) -> dict[str, str]:
     return out
 
 
+def _tab_ready_turn(client: httpx.Client, thread: str) -> int | None:
+    """Latest TAB_READY turn from cursor on this lane, if any."""
+    r = client.get(
+        "http://localhost/turns",
+        params={"thread": thread, "last": 100, "compact": "true"},
+    )
+    r.raise_for_status()
+    ready = [
+        int(t.get("turn_number") or 0)
+        for t in (r.json().get("turns") or [])
+        if str(t.get("subject") or "").startswith("TAB_READY")
+        and str(t.get("from") or "") == _SELF
+    ]
+    return max(ready) if ready else None
+
+
+def _format_ack(res: dict[str, Any], *, prefix: str) -> str:
+    ok = bool(res.get("ok"))
+    parts = [f"{prefix} ok={ok}"]
+    for key in ("reason", "phase", "skipped", "focus_verified", "focus_probe"):
+        val = res.get(key)
+        if val is not None and val != "":
+            parts.append(f"{key}={val}")
+    ks = res.get("keystroke") if isinstance(res.get("keystroke"), dict) else {}
+    for key in ("reason", "focus_verified", "focus_probe", "observed_title"):
+        val = ks.get(key)
+        if val is not None and val != "":
+            parts.append(f"{key}={val}")
+    return " ".join(parts)
+
+
 def _nudge_claude(project_ask_url: str, chat_url: str, text: str) -> dict[str, Any]:
     """Warm followup paste into the claude.ai chat (same route as cse_session followup)."""
     if not project_ask_url or not chat_url:
@@ -177,6 +208,17 @@ class Lane:
     def title(self) -> str:
         return f"{self.thread} {self.slug}" if self.slug else ""
 
+    def _tab_is_ready(self, client: httpx.Client) -> tuple[bool, int | None]:
+        prior = read_state(self.state_path)
+        turn = prior.get("tab_ready_turn")
+        if turn:
+            return True, int(turn)
+        bus_turn = _tab_ready_turn(client, self.thread)
+        if bus_turn:
+            write_state(self.state_path, tab_ready_turn=bus_turn)
+            return True, bus_turn
+        return False, None
+
     def handle(self, client: httpx.Client, turn: dict[str, Any]) -> None:
         n = int(turn["turn_number"])
         subject = str(turn.get("subject") or "").strip().upper()
@@ -200,7 +242,10 @@ class Lane:
             self._ack(
                 client,
                 n,
-                f"open_tab title={self.title!r} ok={res.get('ok')} skipped={res.get('skipped')}",
+                _format_ack(
+                    res,
+                    prefix=f"open_tab title={self.title!r}",
+                ),
             )
             print(
                 f"BRIDGE_OPEN turn={n} → open_tab {res.get('ok')} {res.get('reason', '')}",
@@ -208,6 +253,24 @@ class Lane:
             )
             return
         if subject.startswith("MSG") and sender != _SELF:
+            ready, ready_turn = self._tab_is_ready(client)
+            if not ready:
+                res = {
+                    "ok": False,
+                    "reason": "no_tab_ready",
+                    "phase": "preflight",
+                }
+                write_state(self.state_path, last_wake={"turn": n, **res})
+                self._ack(
+                    client,
+                    n,
+                    _format_ack(res, prefix=f"wake turn={n}"),
+                )
+                print(
+                    f"MSG turn={n} → refused ok=False reason=no_tab_ready",
+                    flush=True,
+                )
+                return
             wake = f"BRIDGE_WAKE thread={self.thread} turn={n}"
             res = self.launch.paste(
                 thread=self.thread,
@@ -217,13 +280,20 @@ class Lane:
                 if _WAKE_FOCUS_OPENER != "none"
                 else None,
             )
-            write_state(self.state_path, last_wake={"turn": n, **res})
+            write_state(
+                self.state_path,
+                last_wake={"turn": n, **res},
+                tab_ready_turn=ready_turn,
+            )
             self._ack(
                 client,
                 n,
-                f"wake turn={n} ok={res.get('ok')} phase={res.get('phase', '')}",
+                _format_ack(res, prefix=f"wake turn={n}"),
             )
-            print(f"MSG turn={n} → wake ok={res.get('ok')}", flush=True)
+            print(
+                f"MSG turn={n} → wake ok={res.get('ok')} reason={res.get('reason', '')}",
+                flush=True,
+            )
             return
         if subject.startswith("TAB_READY") and sender == _SELF:
             write_state(self.state_path, tab_ready_turn=n)
@@ -299,6 +369,9 @@ def main() -> int:
         state_path=state_path,
     )
     client = _bus_client(token)
+    ready_turn = _tab_ready_turn(client, thread)
+    if ready_turn:
+        write_state(state_path, tab_ready_turn=ready_turn)
     after_turn = int(args.after_turn)
     if after_turn < 0:
         after_turn = int(prior.get("after_turn") or -1)
