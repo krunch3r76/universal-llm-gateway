@@ -25,6 +25,7 @@ from typing import Any
 
 import httpx
 import yaml
+from treasury_scout.go_basis import exposure_check_line, go_body, venue_basis
 
 _REPO = Path(__file__).resolve().parents[1]
 _CLAUDEBURST = Path(os.environ.get("CLAUDEBURST_ROOT", "/mnt/torus/projects/claudeburst"))
@@ -279,6 +280,7 @@ def _scout_primary_intent(parsed: dict[str, Any]) -> dict[str, Any] | None:
         "size_usdc": float(size),
         "fundable": True,
         "rung": parsed.get("scale") or "full",
+        "basis": venue_basis(_perps_get, fetched_at=ts),
     }
 
 
@@ -362,11 +364,7 @@ def _summarize_venue() -> str:
             f"  freshness source={freshness.get('source')} age_s={freshness.get('age_s')} "
             f"verified_at={freshness.get('verified_at')}"
         )
-    lines.append(
-        f"  count={positions.get('count')} "
-        f"venue_total_usdc={positions.get('venue_total_exposure_usdc')} "
-        f"exposure_mismatch={positions.get('exposure_mismatch')}"
-    )
+    lines.append(exposure_check_line(positions))
     if not held:
         lines.append("  held: flat")
     for row in held[:8]:
@@ -464,18 +462,7 @@ def _post_go(
     selection: str,
 ) -> dict[str, Any]:
     intent_id = str(intent.get("intent_id") or "")
-    symbol = str(intent.get("symbol") or "")
-    body = (
-        f"TYPE: GO\n"
-        f"source: grok-defer\n"
-        f"selection: {selection}\n"
-        f"intent_id: {intent_id}\n"
-        f"symbol: {symbol}\n"
-        f"side: {intent.get('side')}\n"
-        f"size_usdc: {intent.get('size_usdc')}\n"
-        f"rationale: {rationale}\n"
-        f"fire_path: relay when PERPS_TRADER_FIRE=true"
-    )
+    body = go_body(intent, rationale=rationale, selection=selection)
     return _bus_send(
         client,
         thread=_TRADER_HOUSE,
