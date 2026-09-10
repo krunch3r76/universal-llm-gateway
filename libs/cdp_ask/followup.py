@@ -13,8 +13,6 @@ from typing import Any
 from claude_bundles import cdp_registry
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.project_ask_conversation import send_followup_paste_half
-from claude_bundles.skills_ui_panel import connect_cdp
-
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup_dormant import (
     park_relaunched_host,
@@ -38,6 +36,7 @@ from cdp_ask.followup_reattach import (
     _disconnect_playwright,
     _teardown_attempt,
     ensure_cse_attached,
+    find_page_on_lane,
 )
 from cdp_ask.followup_receipts import (
     apply_receipt_caps,
@@ -62,21 +61,6 @@ _inflight_guard = asyncio.Lock()
 _REATTACH_ELIGIBLE_ERRORS = frozenset(
     {"cse_not_found_on_lane", "lane_not_attached", "attended_dormant"}
 )
-
-
-async def _find_page_on_lane(cdp_url: str, chat_url: str) -> tuple[Any, Any] | None:
-    """Connect to *cdp_url* and return ``(page, playwright)`` when URL matches."""
-    pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
-    target_norm = normalize_cse_url(chat_url)
-    try:
-        for page in ctx.pages:
-            if normalize_cse_url(page.url or "") == target_norm:
-                return page, pw
-        await pw.stop()
-        return None
-    except Exception:
-        await pw.stop()
-        raise
 
 
 async def _acquire_lane(registration_id: str) -> bool:
@@ -269,7 +253,7 @@ async def execute_followup(
 
     pw = None
     try:
-        found = await _find_page_on_lane(target.cdp_url, target.chat_url)
+        found = await find_page_on_lane(target.cdp_url, target.chat_url)
         if found is None:
             resp = fail_followup(
                 "cse_not_found_on_lane",

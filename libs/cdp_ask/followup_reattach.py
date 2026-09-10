@@ -73,6 +73,24 @@ async def _verify_page_url(page: Any, chat_url: str) -> bool:
     return normalize_cse_url(url) == normalize_cse_url(chat_url)
 
 
+async def find_page_on_lane(cdp_url: str, chat_url: str) -> tuple[Any, Any] | None:
+    """Connect to *cdp_url* and return ``(page, playwright)`` when URL matches."""
+    try:
+        pw, _browser, ctx, _page0 = await connect_cdp(cdp_url)
+    except Exception:
+        return None
+    target_norm = normalize_cse_url(chat_url)
+    try:
+        for page in ctx.pages:
+            if normalize_cse_url(page.url or "") == target_norm:
+                return page, pw
+        await pw.stop()
+        return None
+    except Exception:
+        await pw.stop()
+        raise
+
+
 async def _navigate_new_page(
     lane: cdp_registry.Registration, chat_url: str
 ) -> tuple[Any, Any] | None:
@@ -124,6 +142,18 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
         reg = cdp_registry.relaunch_dormant(seat.registration_id, holder=holder)
     except Exception:
         return ReattachOutcome(ok=False, error="dormant_relaunch_failed")
+    found = await find_page_on_lane(reg.cdp_url, chat_url)
+    if found is not None:
+        page, pw = found
+        cdp_registry.bind_session_address(reg.registration_id, chat_url=chat_url)
+        return ReattachOutcome(
+            ok=True,
+            registration_id=reg.registration_id,
+            cdp_url=reg.cdp_url,
+            relaunched=True,
+            page=page,
+            pw=pw,
+        )
     opened = await _navigate_new_page(reg, chat_url)
     if opened is None:
         with contextlib.suppress(Exception):
@@ -170,6 +200,18 @@ async def ensure_cse_attached(
             if lane.registration_id == restrict_to_registration_id
         ]
     for lane in _lane_order(lanes, purpose, chat_url):
+        found = await find_page_on_lane(lane.cdp_url, chat_url)
+        if found is not None:
+            page, pw = found
+            cdp_registry.bind_session_address(lane.registration_id, chat_url=chat_url)
+            return ReattachOutcome(
+                ok=True,
+                registration_id=lane.registration_id,
+                cdp_url=lane.cdp_url,
+                lane_created=False,
+                page=page,
+                pw=pw,
+            )
         opened = await _navigate_new_page(lane, chat_url)
         if opened is None:
             continue

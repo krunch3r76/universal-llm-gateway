@@ -130,6 +130,43 @@ async def test_unattached_without_url_does_not_open() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dormant_seat_does_not_open_on_demand() -> None:
+    """Dormant harvest must not poke Chrome — followup/reattach owns wake."""
+    from claude_bundles.cdp_registry.models import DormantSeat
+
+    store = ExecutionStore()
+    dormant = DormantSeat(
+        registration_id="reg-dormant",
+        chat_url="https://claude.ai/cowork/cse_x",
+        profile_suffix="s",
+        profile=Path("/tmp/p"),
+        holder="h",
+    )
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest.discover_candidates",
+            AsyncMock(return_value=([], None, None)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest.cdp_registry.dormant_for_chat_url",
+            lambda _u: dormant,
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest.harvest_by_opening_url",
+            AsyncMock(),
+        ) as opener,
+        patch("cdp_ask.cse_session_harvest.emit", lambda _event: None),
+    ):
+        result = await execute_harvest(
+            HarvestRequest(chat_url="https://claude.ai/cowork/cse_x"),
+            store,
+        )
+    opener.assert_not_awaited()
+    assert result.outcome == "dormant"
+    assert result.chat_url == "https://claude.ai/cowork/cse_x"
+
+
+@pytest.mark.asyncio
 async def test_unattached_with_url_opens_then_scrapes() -> None:
     store = ExecutionStore()
     opened = HarvestResponse(

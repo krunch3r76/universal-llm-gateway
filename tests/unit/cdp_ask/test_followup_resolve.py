@@ -375,7 +375,7 @@ async def test_deregister_race_before_paste(monkeypatch: pytest.MonkeyPatch) -> 
         AsyncMock(return_value=[CSE_A]),
     )
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane",
+        "cdp_ask.followup.find_page_on_lane",
         AsyncMock(return_value=None),
     )
     monkeypatch.setattr("cdp_ask.followup.emit_followup_event", lambda _e: None)
@@ -401,7 +401,7 @@ async def test_send_unverified_when_verification_fails(
     page = MagicMock()
     page.url = CSE_A
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane",
+        "cdp_ask.followup.find_page_on_lane",
         AsyncMock(return_value=(page, AsyncMock())),
     )
     monkeypatch.setattr(
@@ -451,7 +451,7 @@ async def test_stale_registration_id_execute_followup_proceeds(
     pw = AsyncMock()
     pw.stop = AsyncMock()
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane",
+        "cdp_ask.followup.find_page_on_lane",
         AsyncMock(return_value=(page, pw)),
     )
     monkeypatch.setattr(
@@ -497,7 +497,7 @@ async def test_ok_requires_send_verified(monkeypatch: pytest.MonkeyPatch) -> Non
     pw = AsyncMock()
     pw.stop = AsyncMock()
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane",
+        "cdp_ask.followup.find_page_on_lane",
         AsyncMock(return_value=(page, pw)),
     )
     monkeypatch.setattr(

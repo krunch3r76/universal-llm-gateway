@@ -156,7 +156,7 @@ async def execute_harvest(
         await resolve_harvest_chat_url(req, store)
     ) or ""
     if early is not None:
-        if url and early.outcome in {"not_attached", "dormant"}:
+        if url and early.outcome == "not_attached":
             return _bind_chat_url(
                 await _open_detached(
                     url, req, early.provenance or provenance, registration_id

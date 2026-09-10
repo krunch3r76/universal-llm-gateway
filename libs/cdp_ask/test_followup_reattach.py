@@ -210,7 +210,7 @@ async def test_bound_seat_auto_resumes_without_reattach_opt_in(
     pw = AsyncMock()
     pw.stop = AsyncMock()
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane", AsyncMock(return_value=(page, pw))
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
     )
     monkeypatch.setattr(
         "cdp_ask.followup.send_followup_paste_half",
@@ -244,6 +244,41 @@ async def test_reattach_true_without_chat_url() -> None:
     )
     assert resp.ok is False
     assert resp.error == "reattach_requires_chat_url"
+
+
+@pytest.mark.asyncio
+async def test_ensure_cse_attached_reuses_existing_tab_without_navigate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Operator-reopened CSE tab on a live host must not mint or open a new page."""
+    reg = _reg("reg-1")
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.list_active",
+        lambda: [reg],
+    )
+    bind = MagicMock()
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.cdp_registry.bind_session_address",
+        bind,
+    )
+    navigate = AsyncMock()
+    monkeypatch.setattr("cdp_ask.followup_reattach._navigate_new_page", navigate)
+
+    async def _connect(_cdp_url: str) -> tuple[Any, Any, _FakeCtx, Any]:
+        ctx = _FakeCtx()
+        page = _FakePage()
+        page.url = CSE_A
+        ctx.pages.append(page)
+        return _FakePw(), MagicMock(), ctx, MagicMock()
+
+    monkeypatch.setattr("cdp_ask.followup_reattach.connect_cdp", _connect)
+
+    outcome = await ensure_cse_attached(CSE_A, holder="h", purpose="operator-proxy")
+    assert outcome.ok is True
+    assert outcome.lane_created is False
+    assert outcome.registration_id == "reg-1"
+    navigate.assert_not_awaited()
+    bind.assert_called_once_with("reg-1", chat_url=CSE_A)
 
 
 @pytest.mark.asyncio
@@ -445,7 +480,7 @@ async def test_created_lane_deregistered_when_not_retained(
     pw = AsyncMock()
     pw.stop = AsyncMock()
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane",
+        "cdp_ask.followup.find_page_on_lane",
         AsyncMock(return_value=(page, pw)),
     )
     monkeypatch.setattr(
@@ -498,7 +533,7 @@ async def test_created_lane_retained_when_retain_lane_true(
     pw = AsyncMock()
     pw.stop = AsyncMock()
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane",
+        "cdp_ask.followup.find_page_on_lane",
         AsyncMock(return_value=(page, pw)),
     )
     monkeypatch.setattr(
@@ -548,7 +583,7 @@ async def test_reused_lane_never_deregistered(monkeypatch: pytest.MonkeyPatch) -
     pw = AsyncMock()
     pw.stop = AsyncMock()
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane",
+        "cdp_ask.followup.find_page_on_lane",
         AsyncMock(return_value=(page, pw)),
     )
     monkeypatch.setattr(
@@ -650,7 +685,7 @@ async def test_wake_not_emitted_when_lane_created(
     pw = AsyncMock()
     pw.stop = AsyncMock()
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane",
+        "cdp_ask.followup.find_page_on_lane",
         AsyncMock(return_value=(page, pw)),
     )
     monkeypatch.setattr(
@@ -720,7 +755,7 @@ async def test_retain_lane_keeps_page_open(
     deregister = MagicMock()
     monkeypatch.setattr("cdp_ask.followup.cdp_registry.deregister_lane", deregister)
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane",
+        "cdp_ask.followup.find_page_on_lane",
         AsyncMock(return_value=(MagicMock(url=CSE_A), AsyncMock())),
     )
     monkeypatch.setattr(
@@ -771,7 +806,7 @@ async def test_dom_committed_gate_fails_when_only_dom_paste(
     pw = AsyncMock()
     pw.stop = AsyncMock()
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane",
+        "cdp_ask.followup.find_page_on_lane",
         AsyncMock(return_value=(page, pw)),
     )
     monkeypatch.setattr(
@@ -1009,7 +1044,7 @@ async def test_woken_seat_discharges_wake_debt_and_is_parked_again(
     pw = AsyncMock()
     pw.stop = AsyncMock()
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane", AsyncMock(return_value=(page, pw))
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
     )
     monkeypatch.setattr(
         "cdp_ask.followup.send_followup_paste_half",
@@ -1074,7 +1109,7 @@ async def test_woken_seat_retain_lane_does_not_park(
     pw = AsyncMock()
     pw.stop = AsyncMock()
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane", AsyncMock(return_value=(page, pw))
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
     )
     monkeypatch.setattr(
         "cdp_ask.followup.send_followup_paste_half",
@@ -1137,7 +1172,7 @@ async def test_attached_followup_does_not_park(
     pw = AsyncMock()
     pw.stop = AsyncMock()
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane", AsyncMock(return_value=(page, pw))
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
     )
     monkeypatch.setattr(
         "cdp_ask.followup.send_followup_paste_half",
@@ -1226,7 +1261,7 @@ async def test_identity_omitted_dormant_attendance_wakes_the_seat(
     pw = AsyncMock()
     pw.stop = AsyncMock()
     monkeypatch.setattr(
-        "cdp_ask.followup._find_page_on_lane", AsyncMock(return_value=(page, pw))
+        "cdp_ask.followup.find_page_on_lane", AsyncMock(return_value=(page, pw))
     )
     monkeypatch.setattr(
         "cdp_ask.followup.send_followup_paste_half",

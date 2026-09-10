@@ -97,7 +97,7 @@ async def _harvest_reply_body(
     from claude_bundles import cdp_registry
     from claude_bundles.chat_reply_wait import wait_assistant_reply
 
-    from cdp_ask.followup import _find_page_on_lane
+    from cdp_ask.followup_reattach import find_page_on_lane
 
     reg = None
     for candidate in cdp_registry.list_active():
@@ -109,7 +109,7 @@ async def _harvest_reply_body(
     url = (chat_url or reg.chat_url or "").strip()
     if not url:
         return None
-    found = await _find_page_on_lane(reg.cdp_url, url)
+    found = await find_page_on_lane(reg.cdp_url, url)
     if found is None:
         return None
     page, pw = found
