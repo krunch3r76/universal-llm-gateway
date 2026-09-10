@@ -120,12 +120,14 @@ def _mcp_call_allowed(
             if isinstance(paths, list) and path not in paths:
                 continue
         ids = rule.get("ids")
-        if ids:
-            entity_id = str(
-                tool_input.get("entity_id")
-                or tool_input.get("id")
-                or ""
-            )
+        id_prefix = rule.get("id_prefix")
+        entity_id = str(
+            tool_input.get("entity_id") or tool_input.get("id") or ""
+        )
+        if id_prefix:
+            if not entity_id.startswith(str(id_prefix)):
+                continue
+        elif ids:
             if isinstance(ids, list) and entity_id not in ids:
                 continue
         return True
@@ -285,6 +287,7 @@ def decide(
         if event == "beforeMCPExecution":
             tool_name = str(payload.get("tool_name") or "")
             tool_input = _parse_tool_input(payload.get("tool_input"))
+            tool_name, tool_input = _unwrap_dynamic_tool(tool_name, tool_input)
             return _decide_mcp(
                 fence_id=fence_id,
                 root=root,
@@ -336,13 +339,18 @@ def decide(
                     or ""
                 )
                 return _decide_read(fence_id=fence_id, path=path, readable=readable)
-            if tool_name in {"Mcp", "mcp"} or payload.get("tool_input"):
-                mcp_name = str(tool_input.get("tool_name") or tool_name)
+            if tool_name in {"Mcp", "mcp", "CallDynamicTool", "call_mcp_tool"} or payload.get(
+                "tool_input"
+            ):
+                mcp_name, mcp_input = _unwrap_dynamic_tool(
+                    str(tool_input.get("tool_name") or tool_name),
+                    tool_input,
+                )
                 return _decide_mcp(
                     fence_id=fence_id,
                     root=root,
                     tool_name=mcp_name,
-                    tool_input=tool_input,
+                    tool_input=mcp_input,
                     readable=readable,
                 )
             return {"permission": "allow"}
@@ -462,7 +470,7 @@ def _journal_denied(fence_id: str, journal: dict[str, str]) -> None:
         handle.write(json.dumps(row) + "\n")
 
 
-def _pour_fence(
+def _arm_fence(
     thread: str,
     *,
     transcript_id: str | None,
@@ -473,12 +481,41 @@ def _pour_fence(
         body["transcript_id"] = transcript_id
     try:
         with _client() as client:
-            resp = client.post(f"/threads/{thread}/resume-fence", json=body)
+            resp = client.post(f"/threads/{thread}/resume-fence/arm", json=body)
         if resp.status_code >= 400:
             return None
         return resp.json()
     except httpx.HTTPError:
         return None
+
+
+def _unwrap_dynamic_tool(
+    tool_name: str,
+    tool_input: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    if tool_name not in {"CallDynamicTool", "call_mcp_tool", "Mcp"}:
+        return tool_name, tool_input
+    inner_name = str(
+        tool_input.get("toolName")
+        or tool_input.get("tool_name")
+        or tool_input.get("name")
+        or tool_name
+    )
+    inner_raw = (
+        tool_input.get("arguments")
+        or tool_input.get("args")
+        or tool_input.get("input")
+        or {}
+    )
+    if isinstance(inner_raw, str) and inner_raw.strip():
+        try:
+            inner_raw = json.loads(inner_raw)
+        except json.JSONDecodeError:
+            inner_raw = {}
+    if not isinstance(inner_raw, dict):
+        inner_raw = {}
+    merged = _parse_tool_input({"tool": inner_name, "arguments": inner_raw})
+    return inner_name, merged
 
 
 def handle_event(event: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -491,7 +528,7 @@ def handle_event(event: str, payload: dict[str, Any]) -> dict[str, Any]:
         if match and conversation_id:
             thread = match.group(1)
             if _load_marker(conversation_id) is None:
-                bundle = _pour_fence(
+                bundle = _arm_fence(
                     thread,
                     transcript_id=conversation_id,
                     source="hook_prompt",
@@ -503,7 +540,7 @@ def handle_event(event: str, payload: dict[str, Any]) -> dict[str, Any]:
                         {
                             "fence_id": fence.get("fence_id"),
                             "root": thread,
-                            "state": fence.get("state", "poured"),
+                            "state": fence.get("state", "armed"),
                             "source": "agent_bus",
                             "fetched_at": fence.get("opened_at"),
                             "read_set": bundle.get("read_set"),

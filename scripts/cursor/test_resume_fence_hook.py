@@ -40,6 +40,13 @@ _MARKER = {
                     "ops": ["entity_get"],
                     "ids": ["document:10223-continuity"],
                 },
+                {
+                    "tool": "retrieve",
+                    "id_prefix": "rs_",
+                },
+                {
+                    "tool": "GetDynamicTools",
+                },
             ],
         }
     },
@@ -206,6 +213,58 @@ def test_released_allows_and_deletes_marker() -> None:
     )
     assert verdict["permission"] == "allow"
     assert verdict.get("delete_marker") is True
+
+
+def test_retrieve_rs_id_allowed_foreign_id_denied() -> None:
+    allow = decide(
+        event="beforeMCPExecution",
+        payload={
+            "tool_name": "retrieve",
+            "tool_input": json.dumps({"id": "rs_34c5e0"}),
+        },
+        marker=_MARKER,
+        fold={"state": "poured"},
+    )
+    assert allow["permission"] == "allow"
+    deny = decide(
+        event="beforeMCPExecution",
+        payload={
+            "tool_name": "retrieve",
+            "tool_input": json.dumps({"id": "document:9796-continuity"}),
+        },
+        marker=_MARKER,
+        fold={"state": "poured"},
+    )
+    assert deny["permission"] == "deny"
+
+
+def test_call_dynamic_tool_retrieve_allowed() -> None:
+    verdict = decide(
+        event="beforeMCPExecution",
+        payload={
+            "tool_name": "CallDynamicTool",
+            "tool_input": json.dumps(
+                {
+                    "namespace": "project-0-universal-llm-gateway-vortex-code",
+                    "toolName": "retrieve",
+                    "arguments": {"id": "rs_34c5e0"},
+                }
+            ),
+        },
+        marker=_MARKER,
+        fold={"state": "poured"},
+    )
+    assert verdict["permission"] == "allow"
+
+
+def test_get_dynamic_tools_allowed() -> None:
+    verdict = decide(
+        event="beforeMCPExecution",
+        payload={"tool_name": "GetDynamicTools", "tool_input": {}},
+        marker=_MARKER,
+        fold={"state": "poured"},
+    )
+    assert verdict["permission"] == "allow"
 
 
 def test_malformed_read_set_hook_error() -> None:

@@ -24,6 +24,8 @@ _TERMINAL: frozenset[str] = frozenset({"released", "expired"})
 _OPEN: frozenset[str] = frozenset({"armed", "poured"})
 
 RESUME_FENCE_IDLE_S = int(os.environ.get("RESUME_FENCE_IDLE_S", "1800"))
+RESUME_FENCE_ADOPT_S = int(os.environ.get("RESUME_FENCE_ADOPT_S", "120"))
+_HOOK_ADOPT_SOURCES = frozenset({"hook_prompt", "hook_session_start"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,6 +146,90 @@ def fold_fence(fence_id: str) -> FenceState | None:
     )
 
 
+def _armed_source(fence_id: str) -> str | None:
+    for row in _rows_for_fence(fence_id):
+        if str(row["event"]) != "armed":
+            continue
+        raw = row.get("payload_json")
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        source = payload.get("source")
+        return str(source) if source else None
+    return None
+
+
+def _within_adopt_window(created_at: str | None) -> bool:
+    if not created_at:
+        return False
+    try:
+        created = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)
+    idle_s = int((datetime.now(UTC) - created).total_seconds())
+    return idle_s <= RESUME_FENCE_ADOPT_S
+
+
+def _adoptable_armed_fences(root_thread: str) -> list[str]:
+    """Armed hook fences on *root_thread* inside the adoption window."""
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT fence_id, created_at
+            FROM resume_fence_events
+            WHERE root_thread = ? AND event = 'armed'
+            ORDER BY id DESC
+            LIMIT 200
+            """,
+            (root_thread,),
+        ).fetchall()
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        fid = str(row["fence_id"])
+        if fid in seen:
+            continue
+        seen.add(fid)
+        folded = fold_fence(fid)
+        if folded is None or folded.state != "armed":
+            continue
+        source = _armed_source(fid)
+        if source not in _HOOK_ADOPT_SOURCES:
+            continue
+        if not _within_adopt_window(str(row["created_at"])):
+            continue
+        candidates.append(fid)
+    return candidates
+
+
+def adoption_ambiguous_count(root_thread: str) -> int:
+    """Count adoptable armed hook fences (0, 1, or >1)."""
+    return len(_adoptable_armed_fences(root_thread))
+
+
+def read_set_from_journal(fence_id: str) -> dict[str, Any] | None:
+    """Return ``read_set`` from the latest armed/poured payload, if present."""
+    for row in reversed(_rows_for_fence(fence_id)):
+        if str(row["event"]) not in {"armed", "poured"}:
+            continue
+        raw = row.get("payload_json")
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        read_set = payload.get("read_set")
+        if isinstance(read_set, dict):
+            return read_set
+    return None
+
+
 def find_open_fence(
     *,
     root_thread: str,
@@ -175,6 +261,10 @@ def find_open_fence(
         folded = fold_fence(str(row["fence_id"]))
         if folded and folded.state in _OPEN:
             return folded.fence_id
+    if transcript_id is None:
+        adoptable = _adoptable_armed_fences(root_thread)
+        if len(adoptable) == 1:
+            return adoptable[0]
     return None
 
 
@@ -290,7 +380,9 @@ def release_fence(*, fence_id: str, release_turn: int = 0) -> FenceState | None:
 
 __all__ = [
     "FenceState",
+    "RESUME_FENCE_ADOPT_S",
     "RESUME_FENCE_IDLE_S",
+    "adoption_ambiguous_count",
     "append_fence_event",
     "find_open_fence",
     "find_open_fence_for_agent",
@@ -298,5 +390,6 @@ __all__ = [
     "journal_denied",
     "maybe_expire_idle_fence",
     "mint_fence_id",
+    "read_set_from_journal",
     "release_fence",
 ]

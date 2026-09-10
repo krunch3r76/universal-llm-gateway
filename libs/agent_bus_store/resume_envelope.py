@@ -161,12 +161,16 @@ def _resume_summary_row(
     return None, None, tip_turn
 
 
-def build_resume_envelope(thread_id: str) -> dict[str, Any]:
+def build_resume_envelope(
+    thread_id: str,
+    *,
+    tape_budget_bytes: int = 512_000,
+) -> dict[str, Any]:
     """Last-session verbal pour + projection pointers (no graph/consolidation)."""
     # Read path: render-only. Harvest is explicit via tape?harvest=true (quick-fail).
     tape = render_tape_with_harvest(
         thread_id=thread_id,
-        budget_bytes=512_000,
+        budget_bytes=tape_budget_bytes,
         harvest=False,
         include_extras=False,
         scope="last_session",
@@ -189,6 +193,7 @@ def build_resume_envelope(thread_id: str) -> dict[str, Any]:
         "seal_status": seal_status,
         "tape_verbal": verbal,
         "message_count": len(verbal),
+        "tape_truncated": bool(tape.get("truncated")),
         "open_line": open_line,
         "checkpoint_highlight": checkpoint_highlight,
         "mechanical_projection_uri": _MECHANICAL_PROJECTION_URI.format(

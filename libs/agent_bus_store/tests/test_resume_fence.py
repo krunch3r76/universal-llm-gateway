@@ -8,7 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from agent_bus_store.db import create_thread, create_turn, init_db
-from agent_bus_store.resume_fence import assemble_resume_fence
+from agent_bus_store.resume_fence import arm_resume_fence, assemble_resume_fence
 
 pytestmark = pytest.mark.offline
 
@@ -56,6 +56,19 @@ def root_thread(tmp_path, monkeypatch: pytest.MonkeyPatch):
     yield "10223"
 
 
+def test_arm_resume_fence_journals_armed_only(root_thread) -> None:
+    with (
+        patch(
+            "agent_bus_store.resume_fence.load_continuity_card",
+            return_value=_CARD,
+        ),
+    ):
+        payload = arm_resume_fence("10223", transcript_id="tab-x", source="hook_prompt")
+    assert payload["fence"]["state"] == "armed"
+    assert "tape_verbal" not in json.dumps(payload)
+    assert payload["read_set"]["readable"]["mcp_allow"]
+
+
 def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
     envelope = {
         "scope": "last_session",
@@ -84,6 +97,11 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
 
     assert bundle["tip_checkpoint"]["turn_number"] == 1
     assert bundle["resume_envelope"]["seal_status"] == "sealed"
+    assert "mission" in bundle
+    assert "tape" in bundle
+    mcp_allow = bundle["read_set"]["readable"]["mcp_allow"]
+    continuity = next(r for r in mcp_allow if r["tool"] == "continuity")
+    assert "tape_read" in continuity["ops"]
     assert bundle["read_set"]["readable"]["bus_threads"] == ["10223"]
     citable_threads = bundle["read_set"]["citable"]["bus_threads"]
     assert "10223" in citable_threads

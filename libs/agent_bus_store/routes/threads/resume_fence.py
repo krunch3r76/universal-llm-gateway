@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from ...checkpoint_auto_stamp_wiring import load_thread_tags
 from ...db import get_thread, normalize_thread_id
-from ...resume_fence import assemble_resume_fence
+from ...resume_fence import arm_resume_fence, assemble_resume_fence
 from ...resume_fence_store import (
     fold_fence,
     journal_denied,
@@ -40,16 +40,7 @@ class FenceDeniedCreate(BaseModel):
     fail_closed: bool = Field(default=True)
 
 
-@router.post(
-    "/threads/{thread_id}/resume-fence",
-    openapi_extra=x_mcp("resume_fence", tool="continuity"),
-)
-async def create_resume_fence(
-    thread_id: str,
-    body: ResumeFenceCreate,
-) -> dict[str, Any]:
-    """Arm+pour a resume bundle for a continuity root thread."""
-    thread_id = normalize_thread_id(thread_id)
+def _resume_fence_root_guard(thread_id: str) -> None:
     row = get_thread(thread_id)
     if row is None:
         raise HTTPException(
@@ -66,27 +57,63 @@ async def create_resume_fence(
                 "thread": thread_id,
             },
         )
+
+
+def _resume_fence_error(bundle: dict[str, Any], thread_id: str) -> None:
+    if not bundle.get("error"):
+        return
+    reason = bundle.get("reason", bundle["error"])
+    if reason == "resume_fence.no_tip_checkpoint":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={
+                "error": reason,
+                "reason": reason,
+                "thread": thread_id,
+            },
+        )
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=bundle,
+    )
+
+
+@router.post("/threads/{thread_id}/resume-fence/arm")
+async def arm_thread_resume_fence(
+    thread_id: str,
+    body: ResumeFenceCreate,
+) -> dict[str, Any]:
+    """Arm a resume fence with ``read_set`` only (hook path; no tape render)."""
+    thread_id = normalize_thread_id(thread_id)
+    _resume_fence_root_guard(thread_id)
+    payload = arm_resume_fence(
+        thread_id,
+        transcript_id=body.transcript_id,
+        source=body.source,
+        pool=body.pool,
+    )
+    _resume_fence_error(payload, thread_id)
+    return payload
+
+
+@router.post(
+    "/threads/{thread_id}/resume-fence",
+    openapi_extra=x_mcp("resume_fence", tool="continuity"),
+)
+async def create_resume_fence(
+    thread_id: str,
+    body: ResumeFenceCreate,
+) -> dict[str, Any]:
+    """Pour a resume bundle for a continuity root thread."""
+    thread_id = normalize_thread_id(thread_id)
+    _resume_fence_root_guard(thread_id)
     bundle = assemble_resume_fence(
         thread_id,
         transcript_id=body.transcript_id,
         source=body.source,
         pool=body.pool,
     )
-    if bundle.get("error"):
-        reason = bundle.get("reason", bundle["error"])
-        if reason == "resume_fence.no_tip_checkpoint":
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail={
-                    "error": reason,
-                    "reason": reason,
-                    "thread": thread_id,
-                },
-            )
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=bundle,
-        )
+    _resume_fence_error(bundle, thread_id)
     return bundle
 
 

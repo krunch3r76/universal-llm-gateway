@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -19,9 +20,13 @@ from .house_pools import (
 )
 from .resume_envelope import build_resume_envelope
 from .resume_fence_store import (
+    _armed_source,
+    adoption_ambiguous_count,
     append_fence_event,
     find_open_fence,
+    fold_fence,
     mint_fence_id,
+    read_set_from_journal,
 )
 
 _BUNDLE_VERSION = "resume-bundle-v1"
@@ -41,6 +46,7 @@ _TRANSCRIPT_ID_RE = re.compile(
 )
 _SECTION_CHILD = "### Child lanes"
 _SECTION_CITED = "### Cited lanes"
+RESUME_FENCE_TAPE_BUDGET = int(os.environ.get("RESUME_FENCE_TAPE_BUDGET", "24000"))
 
 
 def _sha256_text(text: str) -> str:
@@ -79,6 +85,18 @@ def _section_lines(body: str, header: str) -> list[str]:
             chunk = chunk.split(marker, 1)[0]
             break
     return [ln.strip() for ln in chunk.splitlines() if ln.strip() and ln.strip() != "_none_"]
+
+
+def _extract_resume_open(card_text: str | None) -> str | None:
+    if not card_text or "## Resume open" not in card_text:
+        return None
+    chunk = card_text.split("## Resume open", 1)[1]
+    for marker in ("## Opportunities", "## Pools", "## Sidecars", "## "):
+        if marker in chunk:
+            chunk = chunk.split(marker, 1)[0]
+            break
+    text = chunk.strip()
+    return text or None
 
 
 def _thread_ids_from_section(lines: list[str]) -> set[str]:
@@ -143,7 +161,7 @@ def _derive_read_set(
     readable_mcp = [
         {
             "tool": "continuity",
-            "ops": ["resume", "status", "resume_release"],
+            "ops": ["resume", "status", "resume_release", "tape_read"],
             "thread": thread_id,
         },
         {
@@ -166,6 +184,13 @@ def _derive_read_set(
             "ops": ["send"],
             "thread": thread_id,
             "requires": "fence_id",
+        },
+        {
+            "tool": "retrieve",
+            "id_prefix": "rs_",
+        },
+        {
+            "tool": "GetDynamicTools",
         },
     ]
 
@@ -203,26 +228,15 @@ def _format_pool_row(row: Any) -> str:
     )
 
 
-def assemble_resume_fence(
+def _load_resume_context(
     thread_id: str,
     *,
-    transcript_id: str | None = None,
-    source: str = "mcp",
-    pool: str | None = None,
-) -> dict[str, Any]:
-    """Build ResumeBundle v1 and journal armed+poured transitions."""
+    pool: str | None,
+) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None]:
     tip = _tip_checkpoint(thread_id)
     if tip is None:
-        return {"error": "no_tip_checkpoint", "reason": "resume_fence.no_tip_checkpoint"}
-
+        return None, None, None
     card_text = load_continuity_card(thread_id)
-    card_uri = continuity_card_uri(thread_id)
-    card_sha = _sha256_text(card_text) if card_text else None
-
-    envelope = build_resume_envelope(thread_id)
-    if envelope.get("error"):
-        return envelope
-
     read_set = _derive_read_set(
         thread_id=thread_id,
         tip_body=str(tip["body"]),
@@ -231,12 +245,26 @@ def assemble_resume_fence(
         card_text=card_text,
         pool=pool,
     )
+    return tip, card_text, read_set
 
-    projection_uri = _PROJECTION_URI.format(thread=thread_id)
-    open_line_match = _OPEN_LINE_RE.search(card_text or "")
-    open_line = open_line_match.group(1).strip() if open_line_match else None
 
+def arm_resume_fence(
+    thread_id: str,
+    *,
+    transcript_id: str | None = None,
+    source: str = "hook_prompt",
+    pool: str | None = None,
+) -> dict[str, Any]:
+    """Arm a fence with ``read_set`` only — no tape render (FIX-8)."""
+    tip, _card_text, read_set = _load_resume_context(thread_id, pool=pool)
+    if tip is None or read_set is None:
+        return {"error": "no_tip_checkpoint", "reason": "resume_fence.no_tip_checkpoint"}
+
+    pools_row = read_set.pop("pools_row")
     fence_id = find_open_fence(root_thread=thread_id, transcript_id=transcript_id)
+    opened_at = datetime.now(UTC).isoformat()
+    state = "armed"
+
     if fence_id is None:
         fence_id = mint_fence_id()
         append_fence_event(
@@ -244,8 +272,89 @@ def assemble_resume_fence(
             root_thread=thread_id,
             transcript_id=transcript_id,
             event="armed",
-            payload={"source": source, "transcript_id": transcript_id},
+            payload={
+                "source": source,
+                "transcript_id": transcript_id,
+                "read_set": read_set,
+            },
         )
+    else:
+        folded = fold_fence(fence_id)
+        if folded is not None:
+            state = folded.state
+            opened_at = folded.last_event_at or opened_at
+            cached = read_set_from_journal(fence_id)
+            if cached is not None:
+                read_set = cached
+
+    return {
+        "fence": {
+            "fence_id": fence_id,
+            "root_thread": thread_id,
+            "transcript_id": transcript_id,
+            "state": state,
+            "opened_at": opened_at,
+        },
+        "read_set": read_set,
+        "pools_row": pools_row,
+    }
+
+
+def assemble_resume_fence(
+    thread_id: str,
+    *,
+    transcript_id: str | None = None,
+    source: str = "mcp",
+    pool: str | None = None,
+) -> dict[str, Any]:
+    """Pour ResumeBundle v1 onto an armed or new fence."""
+    tip, card_text, read_set = _load_resume_context(thread_id, pool=pool)
+    if tip is None or read_set is None:
+        return {"error": "no_tip_checkpoint", "reason": "resume_fence.no_tip_checkpoint"}
+
+    card_uri = continuity_card_uri(thread_id)
+    card_sha = _sha256_text(card_text) if card_text else None
+
+    envelope = build_resume_envelope(
+        thread_id,
+        tape_budget_bytes=RESUME_FENCE_TAPE_BUDGET,
+    )
+    if envelope.get("error"):
+        return envelope
+
+    pools_row = read_set.pop("pools_row")
+    ambiguous = adoption_ambiguous_count(thread_id) if transcript_id is None else 0
+
+    fence_id = find_open_fence(root_thread=thread_id, transcript_id=transcript_id)
+    adopted_from: str | None = None
+    if fence_id is not None:
+        folded = fold_fence(fence_id)
+        if folded is not None and folded.state == "armed":
+            adopted_from = _armed_source(fence_id)
+    elif ambiguous > 1:
+        fence_id = mint_fence_id()
+        append_fence_event(
+            fence_id=fence_id,
+            root_thread=thread_id,
+            transcript_id=transcript_id,
+            event="armed",
+            payload={"source": source, "transcript_id": transcript_id, "read_set": read_set},
+        )
+    else:
+        fence_id = mint_fence_id()
+        append_fence_event(
+            fence_id=fence_id,
+            root_thread=thread_id,
+            transcript_id=transcript_id,
+            event="armed",
+            payload={"source": source, "transcript_id": transcript_id, "read_set": read_set},
+        )
+
+    projection_uri = _PROJECTION_URI.format(thread=thread_id)
+    open_line_match = _OPEN_LINE_RE.search(card_text or "")
+    open_line = open_line_match.group(1).strip() if open_line_match else None
+    verbal = envelope.get("tape_verbal") or []
+    tape_bytes = len(json.dumps(verbal, ensure_ascii=False).encode("utf-8"))
 
     bundle: dict[str, Any] = {
         "bundle_version": _BUNDLE_VERSION,
@@ -257,6 +366,13 @@ def assemble_resume_fence(
             "opened_at": datetime.now(UTC).isoformat(),
             "head_sha": resolve_code_version(),
         },
+        "mission": {
+            "highlight": envelope.get("checkpoint_highlight"),
+            "open_line": open_line,
+            "summary_row": envelope.get("consolidate_summary_row"),
+            "resume_open": _extract_resume_open(card_text),
+            "pools_row": pools_row,
+        },
         "tip_checkpoint": {
             "turn_number": tip["turn_number"],
             "turn_id": tip["id"],
@@ -266,6 +382,18 @@ def assemble_resume_fence(
             "created_at": tip.get("created_at"),
         },
         "resume_envelope": envelope,
+        "tape": {
+            "message_count": envelope.get("message_count", len(verbal)),
+            "truncated": envelope.get("tape_truncated", False),
+            "bytes": tape_bytes,
+            "scope": envelope.get("scope", "last_session"),
+            "read_via": {
+                "tool": "continuity",
+                "op": "tape_read",
+                "thread": thread_id,
+                "scope": "last_session",
+            },
+        },
         "card": {
             "uri": card_uri,
             "sha256": card_sha,
@@ -280,7 +408,7 @@ def assemble_resume_fence(
             "uri": _OPPORTUNITIES_URI.format(thread=thread_id),
             "sha256": None,
         },
-        "pools_row": read_set.pop("pools_row"),
+        "pools_row": pools_row,
         "read_set": read_set,
         "stance": "Use the ulg-for-llms skill.",
         "provenance": {
@@ -294,23 +422,29 @@ def assemble_resume_fence(
 
     bundle_bytes = len(json.dumps(bundle, ensure_ascii=False))
     readable = bundle["read_set"]["readable"]
+    poured_payload: dict[str, Any] = {
+        "bundle_bytes": bundle_bytes,
+        "readable_counts": {
+            "bus_threads": len(readable["bus_threads"]),
+            "cortex_uris": len(readable["cortex_uris"]),
+            "entities": len(readable["entities"]),
+        },
+        "seal_status": envelope.get("seal_status", ""),
+        "read_set": read_set,
+    }
+    if adopted_from:
+        poured_payload["adopted_from"] = adopted_from
+    if ambiguous > 1:
+        poured_payload["adoption_ambiguous"] = ambiguous
+
     append_fence_event(
         fence_id=fence_id,
         root_thread=thread_id,
         transcript_id=transcript_id,
         event="poured",
-        payload={
-            "bundle_bytes": bundle_bytes,
-            "readable_counts": {
-                "bus_threads": len(readable["bus_threads"]),
-                "cortex_uris": len(readable["cortex_uris"]),
-                "entities": len(readable["entities"]),
-            },
-            "seal_status": envelope.get("seal_status", ""),
-            "read_set": read_set,
-        },
+        payload=poured_payload,
     )
     return bundle
 
 
-__all__ = ["assemble_resume_fence"]
+__all__ = ["RESUME_FENCE_TAPE_BUDGET", "arm_resume_fence", "assemble_resume_fence"]
