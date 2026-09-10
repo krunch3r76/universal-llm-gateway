@@ -72,3 +72,12 @@ def test_verify_focus_skipped_when_no_probe() -> None:
         out = keystroke._verify_focus_title("10462 codev")
     assert out["focus_verified"] is None
     assert out["focus_probe"] == "none"
+
+
+@pytest.mark.offline
+def test_paste_refused_when_uinput_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(keystroke, "_UINPUT_ENABLED_RAW", "")
+    monkeypatch.setattr(keystroke, "_require_display", lambda: None)
+    out = keystroke.paste_message("probe", repo="/tmp", focus_title="", focus_opener="none", input_focus="none", dry_run=False)
+    assert out["ok"] is False
+    assert out["reason"] == "uinput_disabled"

@@ -13,6 +13,9 @@ user message is the only thing that makes it read the bus again.
 Invoke on the graphical host (SSH from io):
   WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000 \\
     python3 scripts/cursor_tab_keystroke.py open --message-file F
+
+Safety interlock (2026-09-10, agent-bus:10462): uinput is **off** unless explicitly
+enabled.  Set ``CURSOR_BRIDGE_UINPUT_ENABLED=1`` (or ``true``/``yes``) to re-arm.
 """
 
 from __future__ import annotations
@@ -37,6 +40,24 @@ _NEW_CHAT_CHORDS = ("ctrl_n", "ctrl_t", "palette")
 _FOCUS_OPENERS = ("none", "ctrl_k", "ctrl_slash", "ctrl_shift_p")
 _INPUT_FOCUS = ("ctrl_l", "none")
 _FOCUS_VERIFY_CMD = os.environ.get("CURSOR_BRIDGE_FOCUS_VERIFY_CMD", "").strip()
+_UINPUT_ENABLED_RAW = os.environ.get("CURSOR_BRIDGE_UINPUT_ENABLED", "").strip().lower()
+_UINPUT_TRUTHY = frozenset({"1", "true", "yes"})
+
+
+def _uinput_enabled() -> bool:
+    """Return True only when the operator has explicitly armed uinput."""
+    return _UINPUT_ENABLED_RAW in _UINPUT_TRUTHY
+
+
+def _uinput_refused(op: str, *, steps: list[str] | None = None) -> dict[str, object]:
+    return {
+        "ok": False,
+        "op": op,
+        "reason": "uinput_disabled",
+        "uinput_enabled": False,
+        "steps": steps or [],
+        "message_len": 0,
+    }
 
 
 def _active_window_title() -> tuple[str | None, str]:
@@ -250,6 +271,8 @@ def open_tab(
             "steps": plan,
             "message_len": len(message),
         }
+    if not _uinput_enabled():
+        return _uinput_refused("open", steps=plan)
     _raise_cursor(repo)
     time.sleep(0.9)
     ui = _ui()
@@ -289,6 +312,8 @@ def paste_message(
             "steps": plan,
             "message_len": len(message),
         }
+    if not _uinput_enabled():
+        return _uinput_refused("paste", steps=plan)
     _raise_cursor(repo)
     time.sleep(0.9)
     ui = _ui()
