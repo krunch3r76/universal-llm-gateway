@@ -14,6 +14,7 @@ from ...resume_fence import assemble_resume_fence
 from ...resume_fence_store import (
     fold_fence,
     journal_denied,
+    maybe_expire_idle_fence,
     release_fence,
 )
 from ...thread_classification import classify_thread
@@ -92,7 +93,7 @@ async def create_resume_fence(
 @router.get("/resume-fences/{fence_id}")
 async def get_resume_fence(fence_id: str) -> dict[str, Any]:
     """Return folded fence state for hook lookup."""
-    folded = fold_fence(fence_id)
+    folded = maybe_expire_idle_fence(fence_id)
     if folded is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -128,6 +129,25 @@ async def post_resume_fence_denied(
         reason=body.reason,
     )
     return {"status": "journaled", "fence_id": fence_id}
+
+
+@router.post("/resume-fences/{fence_id}/expire")
+async def post_resume_fence_expire(
+    fence_id: str,
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Journal idle expiry when the hook observes an open fence past the window."""
+    folded = maybe_expire_idle_fence(fence_id)
+    if folded is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "resume_fence.not_found", "fence_id": fence_id},
+        )
+    return {
+        "fence_id": folded.fence_id,
+        "state": folded.state,
+        "last_event_at": folded.last_event_at,
+    }
 
 
 @router.post("/resume-fences/{fence_id}/release")

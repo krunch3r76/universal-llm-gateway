@@ -10,7 +10,7 @@ from .events.resume_fence import emit_resume_fence_citation_refused
 from .resume_fence_store import fold_fence, release_fence
 
 _BUS_CITE_RE = re.compile(r"agent-bus:(\d{3,6})(?:#(\d+))?")
-_CORTEX_URI_RE = re.compile(r"cortex://[^\s)\]>]+")
+_CORTEX_URI_RE = re.compile(r"cortex://[^\s)\]>`]+")
 _ENTITY_RE = re.compile(
     r"\b(?:todo|decision|document|transcript):[^\s)\]>]+",
     re.IGNORECASE,

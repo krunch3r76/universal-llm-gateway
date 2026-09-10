@@ -29,7 +29,7 @@ _PROJECTION_URI = "cortex://notes/system/threads/{thread}-transcript-projection.
 _OPPORTUNITIES_URI = "cortex://notes/system/threads/{thread}-opportunities.md"
 _OPEN_LINE_RE = re.compile(r"(?m)^In one line:\s*(.+)$")
 _BUS_THREAD_RE = re.compile(r"agent-bus:(\d{3,6})(?:#(\d+))?")
-_CORTEX_URI_RE = re.compile(r"cortex://[^\s)\]>]+")
+_CORTEX_URI_RE = re.compile(r"cortex://[^\s)\]>`]+")
 _ENTITY_RE = re.compile(
     r"\b(?:todo|decision|document|transcript):[^\s)\]>]+",
     re.IGNORECASE,

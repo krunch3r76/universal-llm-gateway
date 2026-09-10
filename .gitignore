@@ -224,6 +224,7 @@ libs/cortex_store/migrations/
 !.cursor/skills/**
 !.cursor/commands/
 !.cursor/commands/**
+!.cursor/hooks.json
 
 # Life/legal/tax/psych domain — real matters, not engineering guidance
 .cursor/skills/tax/

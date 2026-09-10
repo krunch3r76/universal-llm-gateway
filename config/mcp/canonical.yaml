@@ -3597,6 +3597,60 @@ tools:
   mandate_safety: write
   cache_priority: on_demand
   introduced: 2026-09-09
+- canonical_name: continuity_resume
+  domain: continuity
+  operation: resume
+  dispatcher_call_shape:
+    tool: continuity
+    dispatch_key: op
+    dispatch_value: resume
+  flat_call_shape:
+    tool: continuity_resume
+    substrate_qualified: user-vortex__continuity_resume
+  fol_descriptor: "Sync relay to POST /threads/{thread}/resume-fence — arm+pour ResumeBundle v1.
+    Required: thread. Optional: transcript_id, pool.\n"
+  json_schema:
+    type: object
+    properties:
+      thread:
+        type: string
+      transcript_id:
+        type: string
+      pool:
+        type: string
+    required:
+    - thread
+  skill_uri: agent_skill:checkpoint-discipline
+  seat_visibility:
+  - mcp
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-09-09
+- canonical_name: continuity_resume_release
+  domain: continuity
+  operation: resume_release
+  dispatcher_call_shape:
+    tool: continuity
+    dispatch_key: op
+    dispatch_value: resume_release
+  flat_call_shape:
+    tool: continuity_resume_release
+    substrate_qualified: user-vortex__continuity_resume_release
+  fol_descriptor: "Explicit fence release via POST /resume-fences/{fence_id}/release.
+    Required: fence_id.\n"
+  json_schema:
+    type: object
+    properties:
+      fence_id:
+        type: string
+    required:
+    - fence_id
+  skill_uri: agent_skill:checkpoint-discipline
+  seat_visibility:
+  - mcp
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: 2026-09-09
 - canonical_name: continuity_status
   domain: continuity
   operation: status

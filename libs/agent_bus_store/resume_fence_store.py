@@ -6,6 +6,7 @@ import json
 import os
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from .db.connection import connect
@@ -245,6 +246,33 @@ def journal_denied(
     )
 
 
+def maybe_expire_idle_fence(fence_id: str) -> FenceState | None:
+    """Fold *fence_id* and journal ``expired`` when idle past ``RESUME_FENCE_IDLE_S``."""
+    folded = fold_fence(fence_id)
+    if folded is None or folded.state not in _OPEN:
+        return folded
+    if not folded.last_event_at:
+        return folded
+    last_raw = str(folded.last_event_at).replace("Z", "+00:00")
+    try:
+        last_at = datetime.fromisoformat(last_raw)
+    except ValueError:
+        return folded
+    if last_at.tzinfo is None:
+        last_at = last_at.replace(tzinfo=UTC)
+    idle_s = int((datetime.now(UTC) - last_at).total_seconds())
+    if idle_s <= RESUME_FENCE_IDLE_S:
+        return folded
+    append_fence_event(
+        fence_id=fence_id,
+        root_thread=folded.root_thread,
+        transcript_id=folded.transcript_id,
+        event="expired",
+        payload={"idle_seconds": idle_s},
+    )
+    return fold_fence(fence_id)
+
+
 def release_fence(*, fence_id: str, release_turn: int = 0) -> FenceState | None:
     """Journal explicit release."""
     folded = fold_fence(fence_id)
@@ -268,6 +296,7 @@ __all__ = [
     "find_open_fence_for_agent",
     "fold_fence",
     "journal_denied",
+    "maybe_expire_idle_fence",
     "mint_fence_id",
     "release_fence",
 ]

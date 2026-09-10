@@ -3,10 +3,20 @@
   "hooks": {
     "sessionStart": [
       {
-        "command": "./scripts/verify-ulg-libs.sh"
+        "command": ".cursor/hooks/seat-write-session-start.sh"
       },
       {
         "command": "python3 scripts/cursor/resume_fence_hook.py --event sessionStart"
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": ".cursor/hooks/seat-write-session-end.sh"
+      }
+    ],
+    "afterFileEdit": [
+      {
+        "command": ".cursor/hooks/register-seat-write.sh"
       }
     ],
     "beforeSubmitPrompt": [

@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +21,15 @@ _MARKER_DIR = Path(
         str(Path.home() / ".agent-bus/resume-fence"),
     )
 )
+_DENIAL_FALLBACK = _MARKER_DIR / "denied-fallback.jsonl"
 _SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
 _MCP_YAML = Path.home() / ".gateway/mcp.yaml"
+_IDLE_S = int(os.environ.get("RESUME_FENCE_IDLE_S", "1800"))
+_UNCOVERED_TOOLS = frozenset({"Grep", "Glob", "SearchConversations"})
+
+
+class _HookDataError(Exception):
+    """Malformed marker/read_set — deny with hook_error telemetry."""
 
 
 def _agent_bus_token() -> str:
@@ -51,14 +59,41 @@ def _client() -> httpx.Client:
 
 def _parse_tool_input(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str) and raw.strip():
+        tool_input = dict(raw)
+    elif isinstance(raw, str) and raw.strip():
         try:
             parsed = json.loads(raw)
-            return parsed if isinstance(parsed, dict) else {}
+            tool_input = parsed if isinstance(parsed, dict) else {}
         except json.JSONDecodeError:
             return {}
-    return {}
+    else:
+        return {}
+
+    args_raw = tool_input.get("arguments")
+    inner: dict[str, Any] | None = None
+    if isinstance(args_raw, str) and args_raw.strip():
+        try:
+            parsed = json.loads(args_raw)
+            inner = parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            inner = None
+    elif isinstance(args_raw, dict):
+        inner = args_raw
+
+    if inner:
+        for key, value in inner.items():
+            if key not in tool_input or tool_input[key] in (None, ""):
+                tool_input[key] = value
+    return tool_input
+
+
+def _scoped_thread_match(rule_thread: Any, tool_input: dict[str, Any]) -> bool:
+    if rule_thread is None or rule_thread == "":
+        return True
+    actual = tool_input.get("thread")
+    if actual is None or actual == "":
+        return False
+    return str(actual) == str(rule_thread)
 
 
 def _mcp_call_allowed(
@@ -67,19 +102,17 @@ def _mcp_call_allowed(
     tool_input: dict[str, Any],
     mcp_allow: list[dict[str, Any]],
 ) -> bool:
-    inner_tool = str(tool_input.get("tool") or tool_name)
-    inner_op = str(tool_input.get("op") or tool_input.get("tool") or "")
+    inner_tool = str(tool_input.get("tool") or "")
+    inner_op = str(tool_input.get("op") or "")
+    op_candidates = {inner_op, inner_tool, tool_name}
     for rule in mcp_allow:
-        if str(rule.get("tool")) != inner_tool and str(rule.get("tool")) != tool_name:
+        rule_tool = str(rule.get("tool") or "")
+        if rule_tool not in {tool_name, inner_tool}:
             continue
         ops = rule.get("ops") or []
-        if ops and inner_op and inner_op not in ops:
+        if ops and not any(str(op) in ops for op in op_candidates if op):
             continue
-        rule_thread = rule.get("thread")
-        if rule_thread and str(tool_input.get("thread") or "") not in {
-            str(rule_thread),
-            tool_input_num(tool_input.get("thread")),
-        }:
+        if not _scoped_thread_match(rule.get("thread"), tool_input):
             continue
         paths = rule.get("paths")
         if paths:
@@ -91,7 +124,7 @@ def _mcp_call_allowed(
             entity_id = str(
                 tool_input.get("entity_id")
                 or tool_input.get("id")
-                or tool_input.get("arguments", {}).get("entity_id", "")
+                or ""
             )
             if isinstance(ids, list) and entity_id not in ids:
                 continue
@@ -99,8 +132,130 @@ def _mcp_call_allowed(
     return False
 
 
-def tool_input_num(value: Any) -> str:
-    return str(value) if value is not None else ""
+def _deny(
+    *,
+    fence_id: str,
+    root: str,
+    agent_message: str,
+    journal: dict[str, str],
+) -> dict[str, Any]:
+    return {
+        "permission": "deny",
+        "agent_message": agent_message,
+        "journal": journal,
+    }
+
+
+def _readable(marker: dict[str, Any]) -> dict[str, Any]:
+    read_set_raw = marker.get("read_set") or {}
+    if not isinstance(read_set_raw, dict):
+        raise _HookDataError("read_set is not a dict")
+    readable = read_set_raw.get("readable") or {}
+    if not isinstance(readable, dict):
+        raise _HookDataError("read_set.readable is not a dict")
+    return readable
+
+
+def _decide_mcp(
+    *,
+    fence_id: str,
+    root: str,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    readable: dict[str, Any],
+) -> dict[str, Any]:
+    mcp_allow = readable.get("mcp_allow") or []
+    if _mcp_call_allowed(
+        tool_name=tool_name,
+        tool_input=tool_input,
+        mcp_allow=mcp_allow,
+    ):
+        return {"permission": "allow"}
+    return _deny(
+        fence_id=fence_id,
+        root=root,
+        agent_message=(
+            f"resume fence {fence_id}: call continuity(op=resume, thread={root}) "
+            "and cite only bundle ids; this call was denied and journaled"
+        ),
+        journal={
+            "surface": "mcp",
+            "tool": tool_name,
+            "op": str(tool_input.get("op") or tool_input.get("tool") or ""),
+            "target": json.dumps(tool_input)[:500],
+            "reason": "not_in_mcp_allow",
+        },
+    )
+
+
+def _decide_shell(
+    *,
+    fence_id: str,
+    readable: dict[str, Any],
+    command: str,
+) -> dict[str, Any]:
+    if readable.get("shell"):
+        return {"permission": "allow"}
+    return _deny(
+        fence_id=fence_id,
+        root="",
+        agent_message=f"resume fence {fence_id}: shell denied during resume turn",
+        journal={
+            "surface": "shell",
+            "tool": "shell",
+            "op": "exec",
+            "target": command[:500],
+            "reason": "shell_false",
+        },
+    )
+
+
+def _decide_read(
+    *,
+    fence_id: str,
+    path: str,
+    readable: dict[str, Any],
+) -> dict[str, Any]:
+    allowed_paths = readable.get("fs_paths") or []
+    cortex_uris = readable.get("cortex_uris") or []
+    if path in allowed_paths or any(uri in path for uri in cortex_uris):
+        return {"permission": "allow"}
+    return _deny(
+        fence_id=fence_id,
+        root="",
+        agent_message=f"resume fence {fence_id}: file read denied — {path}",
+        journal={
+            "surface": "file",
+            "tool": "read_file",
+            "op": "read",
+            "target": path,
+            "reason": "path_not_in_read_set",
+        },
+    )
+
+
+def _decide_uncovered_tool(
+    *,
+    fence_id: str,
+    root: str,
+    tool_name: str,
+    tool_input: dict[str, Any],
+) -> dict[str, Any]:
+    return _deny(
+        fence_id=fence_id,
+        root=root,
+        agent_message=(
+            f"resume fence {fence_id}: {tool_name} denied during resume turn — "
+            f"call continuity(op=resume, thread={root}) first"
+        ),
+        journal={
+            "surface": "tool",
+            "tool": tool_name,
+            "op": str(tool_input.get("op") or ""),
+            "target": json.dumps(tool_input)[:500],
+            "reason": "tool_not_in_read_set",
+        },
+    )
 
 
 def decide(
@@ -125,86 +280,102 @@ def decide(
     root = str(marker.get("root") or marker.get("root_thread") or "")
 
     try:
-        read_set_raw = marker.get("read_set") or {}
-        read_set = read_set_raw if isinstance(read_set_raw, dict) else {}
-        readable = read_set.get("readable") or {}
-        mcp_allow = readable.get("mcp_allow") or []
+        readable = _readable(marker)
+
         if event == "beforeMCPExecution":
             tool_name = str(payload.get("tool_name") or "")
             tool_input = _parse_tool_input(payload.get("tool_input"))
-            if _mcp_call_allowed(
+            return _decide_mcp(
+                fence_id=fence_id,
+                root=root,
                 tool_name=tool_name,
                 tool_input=tool_input,
-                mcp_allow=mcp_allow,
-            ):
-                return {"permission": "allow"}
-            return {
-                "permission": "deny",
-                "agent_message": (
-                    f"resume fence {fence_id}: call continuity(op=resume, thread={root}) "
-                    "and cite only bundle ids; this call was denied and journaled"
-                ),
-                "journal": {
-                    "surface": "mcp",
-                    "tool": tool_name,
-                    "op": str(tool_input.get("op") or tool_input.get("tool") or ""),
-                    "target": json.dumps(tool_input)[:500],
-                    "reason": "not_in_mcp_allow",
-                },
-            }
+                readable=readable,
+            )
 
         if event == "beforeShellExecution":
-            if readable.get("shell"):
-                return {"permission": "allow"}
-            return {
-                "permission": "deny",
-                "agent_message": (
-                    f"resume fence {fence_id}: shell denied during resume turn"
-                ),
-                "journal": {
-                    "surface": "shell",
-                    "tool": "shell",
-                    "op": "exec",
-                    "target": str(payload.get("command") or "")[:500],
-                    "reason": "shell_false",
-                },
-            }
+            command = str(payload.get("command") or "")
+            return _decide_shell(
+                fence_id=fence_id,
+                readable=readable,
+                command=command,
+            )
 
         if event == "beforeReadFile":
             path = str(payload.get("file_path") or payload.get("path") or "")
-            allowed_paths = readable.get("fs_paths") or []
-            cortex_uris = readable.get("cortex_uris") or []
-            if path in allowed_paths or any(uri in path for uri in cortex_uris):
-                return {"permission": "allow"}
-            return {
-                "permission": "deny",
-                "agent_message": (
-                    f"resume fence {fence_id}: file read denied — {path}"
-                ),
-                "journal": {
-                    "surface": "file",
-                    "tool": "read_file",
-                    "op": "read",
-                    "target": path,
-                    "reason": "path_not_in_read_set",
-                },
-            }
+            return _decide_read(fence_id=fence_id, path=path, readable=readable)
+
+        if event == "preToolUse":
+            tool_name = str(payload.get("tool_name") or "")
+            tool_input = _parse_tool_input(
+                payload.get("tool_input") or payload.get("arguments")
+            )
+            if tool_name in _UNCOVERED_TOOLS:
+                return _decide_uncovered_tool(
+                    fence_id=fence_id,
+                    root=root,
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                )
+            if tool_name in {"Shell", "run_terminal_cmd"}:
+                command = str(
+                    tool_input.get("command")
+                    or payload.get("command")
+                    or ""
+                )
+                return _decide_shell(
+                    fence_id=fence_id,
+                    readable=readable,
+                    command=command,
+                )
+            if tool_name in {"Read", "read_file"}:
+                path = str(
+                    tool_input.get("path")
+                    or tool_input.get("file_path")
+                    or payload.get("file_path")
+                    or ""
+                )
+                return _decide_read(fence_id=fence_id, path=path, readable=readable)
+            if tool_name in {"Mcp", "mcp"} or payload.get("tool_input"):
+                mcp_name = str(tool_input.get("tool_name") or tool_name)
+                return _decide_mcp(
+                    fence_id=fence_id,
+                    root=root,
+                    tool_name=mcp_name,
+                    tool_input=tool_input,
+                    readable=readable,
+                )
+            return {"permission": "allow"}
 
         if event == "sessionStart":
             return {}
 
+    except _HookDataError as exc:
+        return _deny(
+            fence_id=fence_id,
+            root=root,
+            agent_message=f"resume fence {fence_id}: hook data error — {exc}",
+            journal={
+                "surface": "hook",
+                "tool": event,
+                "op": "error",
+                "target": str(exc)[:500],
+                "reason": "hook_error",
+            },
+        )
     except Exception:
-        return {
-            "permission": "deny",
-            "agent_message": f"resume fence {fence_id}: fail-closed on hook error",
-            "journal": {
+        return _deny(
+            fence_id=fence_id,
+            root=root,
+            agent_message=f"resume fence {fence_id}: fail-closed on hook error",
+            journal={
                 "surface": "hook",
                 "tool": event,
                 "op": "error",
                 "target": "",
                 "reason": "fail_closed",
             },
-        }
+        )
 
     return {"permission": "allow"}
 
@@ -235,6 +406,38 @@ def _delete_marker(conversation_id: str) -> None:
         path.unlink()
 
 
+def _maybe_expire_local(fold: dict[str, Any] | None, marker: dict[str, Any]) -> dict[str, Any] | None:
+    if not fold:
+        return fold
+    state = str(fold.get("state") or "")
+    if state in {"released", "expired"}:
+        return fold
+    last_at_raw = fold.get("last_event_at")
+    if not last_at_raw:
+        return fold
+    try:
+        last_at = datetime.fromisoformat(str(last_at_raw).replace("Z", "+00:00"))
+    except ValueError:
+        return fold
+    if last_at.tzinfo is None:
+        last_at = last_at.replace(tzinfo=UTC)
+    idle_s = int((datetime.now(UTC) - last_at).total_seconds())
+    if idle_s <= _IDLE_S:
+        return fold
+    fence_id = str(marker.get("fence_id") or fold.get("fence_id") or "")
+    if not fence_id:
+        return fold
+    try:
+        with _client() as client:
+            client.post(
+                f"/resume-fences/{fence_id}/expire",
+                json={"idle_seconds": idle_s},
+            )
+    except httpx.HTTPError:
+        return fold
+    return _fetch_fold(fence_id)
+
+
 def _fetch_fold(fence_id: str) -> dict[str, Any] | None:
     try:
         with _client() as client:
@@ -247,11 +450,16 @@ def _fetch_fold(fence_id: str) -> dict[str, Any] | None:
 
 
 def _journal_denied(fence_id: str, journal: dict[str, str]) -> None:
+    row = {"fence_id": fence_id, **journal, "ts": datetime.now(UTC).isoformat()}
     try:
         with _client() as client:
             client.post(f"/resume-fences/{fence_id}/denied", json=journal)
+        return
     except httpx.HTTPError:
         pass
+    _DENIAL_FALLBACK.parent.mkdir(parents=True, exist_ok=True)
+    with _DENIAL_FALLBACK.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(row) + "\n")
 
 
 def _pour_fence(
@@ -307,6 +515,7 @@ def handle_event(event: str, payload: dict[str, Any]) -> dict[str, Any]:
     fold = None
     if marker and marker.get("fence_id"):
         fold = _fetch_fold(str(marker["fence_id"]))
+        fold = _maybe_expire_local(fold, marker)
 
     verdict = decide(event=event, payload=payload, marker=marker, fold=fold)
     if verdict.get("delete_marker") and conversation_id:
