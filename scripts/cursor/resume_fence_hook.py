@@ -87,6 +87,47 @@ def _parse_tool_input(raw: Any) -> dict[str, Any]:
     return tool_input
 
 
+def _coalesce_tool_payload(
+    tool_input: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge MCP fields Cursor places on the payload root into tool_input (FIX-19)."""
+    merged = dict(tool_input)
+    for key in (
+        "namespace",
+        "toolName",
+        "name",
+        "tool",
+        "arguments",
+        "args",
+        "input",
+    ):
+        val = payload.get(key)
+        if val not in (None, "") and (
+            key not in merged or merged.get(key) in (None, "")
+        ):
+            merged[key] = val
+    nested = payload.get("input")
+    if isinstance(nested, dict):
+        for key, val in nested.items():
+            if val not in (None, "") and (
+                key not in merged or merged.get(key) in (None, "")
+            ):
+                merged[key] = val
+    elif isinstance(nested, str) and nested.strip():
+        try:
+            parsed = json.loads(nested)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            for key, val in parsed.items():
+                if val not in (None, "") and (
+                    key not in merged or merged.get(key) in (None, "")
+                ):
+                    merged[key] = val
+    return merged
+
+
 def _scoped_thread_match(rule_thread: Any, tool_input: dict[str, Any]) -> bool:
     if rule_thread is None or rule_thread == "":
         return True
@@ -302,7 +343,10 @@ def decide(
 
         if event == "beforeMCPExecution":
             tool_name = str(payload.get("tool_name") or "")
-            tool_input = _parse_tool_input(payload.get("tool_input"))
+            tool_input = _parse_tool_input(
+                payload.get("tool_input") or payload.get("arguments")
+            )
+            tool_input = _coalesce_tool_payload(tool_input, payload)
             tool_name, tool_input = _unwrap_dynamic_tool(tool_name, tool_input)
             return _decide_mcp(
                 fence_id=fence_id,
@@ -360,10 +404,8 @@ def decide(
             if tool_name in {"Mcp", "mcp", "CallDynamicTool", "call_mcp_tool"} or payload.get(
                 "tool_input"
             ):
-                mcp_name, mcp_input = _unwrap_dynamic_tool(
-                    str(tool_input.get("tool_name") or tool_name),
-                    tool_input,
-                )
+                tool_input = _coalesce_tool_payload(tool_input, payload)
+                mcp_name, mcp_input = _unwrap_dynamic_tool(tool_name, tool_input)
                 return _decide_mcp(
                     fence_id=fence_id,
                     root=root,
@@ -516,9 +558,9 @@ def _unwrap_dynamic_tool(
         return tool_name, tool_input
     inner_name = str(
         tool_input.get("toolName")
-        or tool_input.get("tool_name")
         or tool_input.get("tool")
         or tool_input.get("name")
+        or tool_input.get("tool_name")
         or tool_name
     )
     inner_raw = (

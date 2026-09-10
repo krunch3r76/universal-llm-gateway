@@ -321,6 +321,58 @@ def test_call_dynamic_tool_continuity_resume_allowed() -> None:
     assert verdict["permission"] == "allow"
 
 
+def test_pre_tool_use_call_dynamic_tool_continuity_resume_allowed() -> None:
+    payload = {
+        "tool_name": "CallDynamicTool",
+        "tool_input": json.dumps(
+            {
+                "namespace": "user-vortex-code",
+                "toolName": "continuity",
+                "arguments": {
+                    "op": "resume",
+                    "thread": "10223",
+                    "transcript_id": "tab-fix19",
+                },
+            }
+        ),
+    }
+    for fold_state in ("armed", "poured"):
+        verdict = decide(
+            event="preToolUse",
+            payload=payload,
+            marker={**_MARKER, "transcript_id": "tab-fix19"},
+            fold={"state": fold_state},
+        )
+        assert verdict["permission"] == "allow", fold_state
+
+
+def test_pre_tool_use_call_dynamic_tool_payload_root_fields_allowed() -> None:
+    """FIX-19: Cursor may send empty tool_input with MCP fields on payload root."""
+    verdict = decide(
+        event="preToolUse",
+        payload={
+            "tool_name": "CallDynamicTool",
+            "tool_input": {},
+            "namespace": "user-vortex-code",
+            "toolName": "continuity",
+            "arguments": {"op": "resume", "thread": "10223"},
+        },
+        marker=_MARKER,
+        fold={"state": "armed"},
+    )
+    assert verdict["permission"] == "allow"
+
+
+def test_pre_tool_use_call_dynamic_tool_empty_payload_denied() -> None:
+    verdict = decide(
+        event="preToolUse",
+        payload={"tool_name": "CallDynamicTool", "tool_input": {}},
+        marker=_MARKER,
+        fold={"state": "armed"},
+    )
+    assert verdict["permission"] == "deny"
+
+
 def test_malformed_read_set_hook_error() -> None:
     bad_marker = {"fence_id": "rf-x", "root": "10223", "read_set": "not-a-dict"}
     verdict = decide(
