@@ -13,12 +13,14 @@ from deploy_identity.code_version import resolve_code_version
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
+from .continuity_card_scratchboards import extract_scratchboard_uris
 from .house_pools import (
     continuity_card_uri,
     load_continuity_card,
     parse_pools,
 )
 from .resume_envelope import build_resume_envelope
+from .resume_fence_mission import build_mission_block, mission_marker_preview
 from .resume_fence_store import (
     _armed_source,
     adoption_ambiguous_count,
@@ -30,7 +32,7 @@ from .resume_fence_store import (
     read_set_from_journal,
 )
 
-_BUNDLE_VERSION = "resume-bundle-v1"
+_BUNDLE_VERSION = "resume-bundle-v2"
 _PROJECTION_URI = "cortex://notes/system/threads/{thread}-transcript-projection.md"
 _OPPORTUNITIES_URI = "cortex://notes/system/threads/{thread}-opportunities.md"
 _OPEN_LINE_RE = re.compile(r"(?m)^In one line:\s*(.+)$")
@@ -88,18 +90,6 @@ def _section_lines(body: str, header: str) -> list[str]:
     return [ln.strip() for ln in chunk.splitlines() if ln.strip() and ln.strip() != "_none_"]
 
 
-def _extract_resume_open(card_text: str | None) -> str | None:
-    if not card_text or "## Resume open" not in card_text:
-        return None
-    chunk = card_text.split("## Resume open", 1)[1]
-    for marker in ("## Opportunities", "## Pools", "## Sidecars", "## "):
-        if marker in chunk:
-            chunk = chunk.split(marker, 1)[0]
-            break
-    text = chunk.strip()
-    return text or None
-
-
 def _thread_ids_from_section(lines: list[str]) -> set[str]:
     found: set[str] = set()
     for line in lines:
@@ -140,6 +130,7 @@ def _derive_read_set(
         set(_CORTEX_URI_RE.findall(tip_body))
         | {card_uri, projection_uri, opportunities_uri}
         | set(_sidecar_uris(card_text or ""))
+        | set(extract_scratchboard_uris(card_text or ""))
     )
     entities = sorted(set(_ENTITY_RE.findall(tip_body)))
     entity_doc = f"document:{thread_id}-continuity"
@@ -263,6 +254,8 @@ def arm_resume_fence(
     opened_at = datetime.now(UTC).isoformat()
     state = "armed"
 
+    mission_preview: dict[str, Any] | None = None
+
     if fence_id is None:
         fence_id = mint_fence_id()
         append_fence_event(
@@ -285,7 +278,23 @@ def arm_resume_fence(
             if cached is not None:
                 read_set = cached
 
-    return {
+    open_line_match = _OPEN_LINE_RE.search(_card_text or "")
+    open_line = open_line_match.group(1).strip() if open_line_match else None
+    mission_preview = mission_marker_preview(
+        build_mission_block(
+            thread_id=thread_id,
+            tip_body=str(tip["body"]),
+            tip_turn=int(tip["turn_number"]),
+            supersedes_turn=tip.get("supersedes_turn"),
+            card_text=_card_text,
+            envelope={},
+            pools_row=pools_row,
+            open_line=open_line,
+            fence_id=fence_id,
+        )
+    )
+
+    payload: dict[str, Any] = {
         "fence": {
             "fence_id": fence_id,
             "root_thread": thread_id,
@@ -305,6 +314,9 @@ def arm_resume_fence(
         "read_set": read_set,
         "pools_row": pools_row,
     }
+    if mission_preview is not None:
+        payload["mission_preview"] = mission_preview
+    return payload
 
 
 def assemble_resume_fence(
@@ -362,6 +374,17 @@ def assemble_resume_fence(
     open_line = open_line_match.group(1).strip() if open_line_match else None
     verbal = envelope.get("tape_verbal") or []
     tape_bytes = len(json.dumps(verbal, ensure_ascii=False).encode("utf-8"))
+    mission = build_mission_block(
+        thread_id=thread_id,
+        tip_body=str(tip["body"]),
+        tip_turn=int(tip["turn_number"]),
+        supersedes_turn=tip.get("supersedes_turn"),
+        card_text=card_text,
+        envelope=envelope,
+        pools_row=pools_row,
+        open_line=open_line,
+        fence_id=fence_id,
+    )
 
     bundle: dict[str, Any] = {
         "bundle_version": _BUNDLE_VERSION,
@@ -373,14 +396,7 @@ def assemble_resume_fence(
             "opened_at": datetime.now(UTC).isoformat(),
             "head_sha": resolve_code_version(),
         },
-        "mission": {
-            "highlight": envelope.get("checkpoint_highlight"),
-            "open_line": open_line,
-            "summary_row": envelope.get("consolidate_summary_row"),
-            "resume_open": _extract_resume_open(card_text),
-            "pools_row": pools_row,
-            "fence_id": fence_id,
-        },
+        "mission": mission,
         "fence_carriage": {
             "fence_id": fence_id,
             "transcript_id": transcript_id,
@@ -414,7 +430,7 @@ def assemble_resume_fence(
         "card": {
             "uri": card_uri,
             "sha256": card_sha,
-            "body": card_text or "",
+            "read_via": {"tool": "fs", "op": "read", "path": card_uri},
         },
         "projection": {
             "uri": projection_uri,
@@ -425,7 +441,6 @@ def assemble_resume_fence(
             "uri": _OPPORTUNITIES_URI.format(thread=thread_id),
             "sha256": None,
         },
-        "pools_row": pools_row,
         "read_set": read_set,
         "stance": "Use the ulg-for-llms skill.",
         "provenance": {
@@ -438,9 +453,13 @@ def assemble_resume_fence(
     }
 
     bundle_bytes = len(json.dumps(bundle, ensure_ascii=False))
+    mission_bytes = len(json.dumps(mission, ensure_ascii=False))
     readable = bundle["read_set"]["readable"]
     poured_payload: dict[str, Any] = {
         "bundle_bytes": bundle_bytes,
+        "mission_bytes": mission_bytes,
+        "card_inlined": False,
+        "bundle_version": _BUNDLE_VERSION,
         "readable_counts": {
             "bus_threads": len(readable["bus_threads"]),
             "cortex_uris": len(readable["cortex_uris"]),

@@ -32,6 +32,9 @@ _CARD = """
 ## Sidecars
 cortex://notes/system/threads/10223-opportunities.md
 
+## Scratchboards
+- cortex://notes/system/scratchboards/10223-test-scratchboard.md
+
 ## Pools
 <!-- pools v1 sha256:abc -->
 | pool | executor | status | must_load | must_read | closeout | forbidden |
@@ -68,6 +71,8 @@ def test_arm_resume_fence_journals_armed_only(root_thread) -> None:
     assert payload["fence"]["state"] == "armed"
     assert payload["fence_carriage"]["fence_id"] == payload["fence"]["fence_id"]
     assert "continuity(op=resume" in payload["fence_carriage"]["first_hop"]
+    assert "mission_preview" in payload
+    assert payload["mission_preview"]["clone_mode"] in {"A", "B"}
     assert "tape_verbal" not in json.dumps(payload)
     mcp_allow = payload["read_set"]["readable"]["mcp_allow"]
     assert not any(r.get("tool") == "GetDynamicTools" for r in mcp_allow)
@@ -101,7 +106,14 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
 
     assert bundle["tip_checkpoint"]["turn_number"] == 1
     assert bundle["resume_envelope"]["seal_status"] == "sealed"
+    assert bundle["bundle_version"] == "resume-bundle-v2"
     assert "mission" in bundle
+    assert bundle["mission"]["fence_id"] == bundle["fence"]["fence_id"]
+    assert bundle["mission"]["lifecycle"]["clone_mode"] in {"A", "B"}
+    assert "handoff" in bundle["mission"]
+    assert "body" not in bundle["card"]
+    assert bundle["card"]["read_via"]["path"] == bundle["card"]["uri"]
+    assert "pools_row" not in bundle
     assert "tape" in bundle
     mcp_allow = bundle["read_set"]["readable"]["mcp_allow"]
     continuity = next(r for r in mcp_allow if r["tool"] == "continuity")
@@ -111,6 +123,10 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
     assert "10223" in citable_threads
     assert "10450" in citable_threads
     assert "9796" not in citable_threads
+    assert (
+        "cortex://notes/system/scratchboards/10223-test-scratchboard.md"
+        in bundle["read_set"]["readable"]["cortex_uris"]
+    )
     blob = json.dumps(bundle).lower()
     assert "grok" not in blob
     assert "9796" not in blob

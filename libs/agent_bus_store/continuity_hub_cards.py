@@ -32,6 +32,9 @@ Use the `ulg-for-llms` skill.
 ## Sidecars
 - _None yet._
 
+## Scratchboards
+- _None yet._
+
 ## House
 document:{root}-continuity
 """

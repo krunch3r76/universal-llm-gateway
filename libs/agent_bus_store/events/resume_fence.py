@@ -36,6 +36,9 @@ def AgentBusResumeFencePoured(  # noqa: N802
     bundle_bytes: int,
     readable_counts: dict[str, Any],
     seal_status: str,
+    mission_bytes: int = 0,
+    card_inlined: bool = True,
+    bundle_version: str = "resume-bundle-v1",
 ) -> Event:
     """Signal: mcp.agentbus.resume.fence.poured"""
     return Event(
@@ -46,6 +49,9 @@ def AgentBusResumeFencePoured(  # noqa: N802
             "bundle_bytes": bundle_bytes,
             "readable_counts": readable_counts,
             "seal_status": seal_status,
+            "mission_bytes": mission_bytes,
+            "card_inlined": card_inlined,
+            "bundle_version": bundle_version,
         },
         role="coordination",
     )
@@ -148,6 +154,9 @@ def emit_resume_fence_poured(
     bundle_bytes: int,
     readable_counts: dict[str, Any],
     seal_status: str,
+    mission_bytes: int = 0,
+    card_inlined: bool = True,
+    bundle_version: str = "resume-bundle-v1",
 ) -> None:
     event = AgentBusResumeFencePoured(
         fence_id=fence_id,
@@ -155,6 +164,9 @@ def emit_resume_fence_poured(
         bundle_bytes=bundle_bytes,
         readable_counts=readable_counts,
         seal_status=seal_status,
+        mission_bytes=mission_bytes,
+        card_inlined=card_inlined,
+        bundle_version=bundle_version,
     )
     _publish(event.signal, event.payload, role=event.role)
 

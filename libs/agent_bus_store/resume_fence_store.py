@@ -80,6 +80,9 @@ def append_fence_event(
             bundle_bytes=int((payload or {}).get("bundle_bytes", 0)),
             readable_counts=(payload or {}).get("readable_counts") or {},
             seal_status=str((payload or {}).get("seal_status", "")),
+            mission_bytes=int((payload or {}).get("mission_bytes", 0)),
+            card_inlined=bool((payload or {}).get("card_inlined", True)),
+            bundle_version=str((payload or {}).get("bundle_version", "resume-bundle-v1")),
         )
     elif event == "denied":
         emit_resume_fence_denied(

@@ -26,6 +26,7 @@ sketchboard, card, or prior-tab prose. Paths are bundle keys.
 | 4 summary_row | `mission.summary_row` · `resume_envelope.summary_row_source` · `.summary_row_as_of_turn` | Settled · live · next. `as_of_turn < tip.turn_number ⇒ label stale`; tip wins |
 | 5 open line | `mission.resume_open` → `mission.open_line` | `open_line: null` is **normal** (card regex miss), not "no mission" — fall to `resume_open`, then row 2. Never fill the gap from a sketchboard |
 | 6 secondary stale | `read_set.citable` ids with turn < tip | Sketchboard · log rows · earlier CPs are secondary: cite by id as `(superseded by #<tip>)`, ¬ paraphrase into Been→Are→Going |
+| 7 handoff | `mission.handoff` · `mission.residue` · `mission.window_anchor` · `mission.bus_tail` · `mission.lifecycle.clone_mode` | `window_anchor` ⇒ Mode B + `scope=window` tape; fold `bus_tail`; `handoff` replaces external mission paste |
 
 Precedence in the fenced tab: this block ≻ `operator-posture` § Pickup step 1 ≻ `checkpoint-discipline` § Resume.
 Named failure: sketchboard `#521` rendered ahead of tip `#525` because `open_line` was null. Rows 1–6, then Been→Are→Going.

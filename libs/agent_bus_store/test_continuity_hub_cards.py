@@ -22,6 +22,9 @@ def test_render_priority_card_has_required_headings(root):
         "## Why this house",
         "## Objective",
         "## Runbooks",
+        "## Rules",
+        "## Sidecars",
+        "## Scratchboards",
         "## House",
     ):
         assert heading in body

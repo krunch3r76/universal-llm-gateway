@@ -555,19 +555,20 @@ def handle_event(event: str, payload: dict[str, Any]) -> dict[str, Any]:
                 if bundle and bundle.get("fence"):
                     fence = bundle["fence"]
                     carriage = bundle.get("fence_carriage") or {}
-                    _save_marker(
-                        conversation_id,
-                        {
-                            "fence_id": fence.get("fence_id"),
-                            "root": thread,
-                            "transcript_id": conversation_id,
-                            "state": fence.get("state", "armed"),
-                            "source": "agent_bus",
-                            "fetched_at": fence.get("opened_at"),
-                            "read_set": bundle.get("read_set"),
-                            "first_hop": carriage.get("first_hop"),
-                        },
-                    )
+                    marker_data: dict[str, Any] = {
+                        "fence_id": fence.get("fence_id"),
+                        "root": thread,
+                        "transcript_id": conversation_id,
+                        "state": fence.get("state", "armed"),
+                        "source": "agent_bus",
+                        "fetched_at": fence.get("opened_at"),
+                        "read_set": bundle.get("read_set"),
+                        "first_hop": carriage.get("first_hop"),
+                    }
+                    preview = bundle.get("mission_preview")
+                    if isinstance(preview, dict):
+                        marker_data["mission_preview"] = preview
+                    _save_marker(conversation_id, marker_data)
         return {"continue": True}
 
     marker = _load_marker(conversation_id) if conversation_id else None
