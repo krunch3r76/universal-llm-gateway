@@ -1,0 +1,104 @@
+---
+name: speech-tape-segment-checkpoint
+description: Load when authoring CHECKPOINT on role:root continuity houses, before fresh-tab resume handoff, or when attended orchestrator dialogue must persist across tabs via speech tape — segment CP cadence distinct from bus-residue CP.
+alwaysApply: false
+rule_category: workflow
+apply_tier: catalog
+trigger_match_terms:
+  - segment checkpoint
+  - speech tape checkpoint
+  - checkpoint handoff
+  - fresh tab handoff
+  - dialogue persistence
+  - myelinate dialogue
+  - turns@cp
+  - window anchor
+---
+# Speech tape — segment CHECKPOINT cadence
+
+Extends `checkpoint-discipline` § Window anchor · § Resume pickup stack layer 2c.
+Doctrine: speech tape persists **verbal dialogue** across tabs by pouring from
+**checkpoint-bounded cells** (`scope=last_session` keeps tip CP ordinal and
+ordinal+1 only). Dialogue on an attended `transcript_id` that never crosses a CP
+boundary is **not** reliably inherited by a fresh-tab `resume` — only the tip CP
+fold, card, and bounded residue are.
+
+**Two orthogonal CP triggers — do not merge:**
+
+| Trigger | What it folds | When |
+|---|---|---|
+| **Bus fold** | BINDs, commits, open line, artifact anchors, `#turn` residue | Residue after tip CP would be lost to the bundle, or open line changes (`FIX-18` class) |
+| **Speech segment seal** | Attended orchestrator **dialogue** into a new cell for tape pour | This rule — below |
+
+`¬` “one CP per dogfood” for bus-only fence AC **does not** waive segment CP when
+the attended tab accumulated judgment dialogue worth handing off.
+
+## Bind — when to post a segment CHECKPOINT
+
+On **`role:root`** houses, attended IDE **orchestrator** tab (pools row: Multitask
+OFF, CHECKPOINT/confer/tab-launch — not WORK implement), post a segment CP **before**
+the operator or seat opens a **fresh tab** `resume <root>` (or hop clone) **when any**
+of:
+
+1. **Handoff intent** — operator will continue the arc on a new tab and expects the
+   successor to know *what was said and decided* on this tab, not only bus tip state.
+2. **Judgment segment closed** — a bind/land/verify/eval/relay leg finished on this
+   tab (e.g. architect BIND harvested, commit landed + dogfood verdict, dispatch
+   closeout relayed). One segment CP per **closed judgment leg**, not per tool call.
+3. **Material dialogue** — since the last CP on **this** `transcript_id`, the attended
+   session gained non-trivial reasoning the operator would treat as lost if the tab
+   closed (multi-turn debug, operator pushback adjudicated, fork ranked).
+4. **Pre-fresh-tab gate (recommended default)** — immediately before minting a fresh
+   work tab for `resume <root>` when this orchestrator tab holds the live arc context.
+
+**Exempt (segment CP not required):**
+
+- Mechanical dogfood where AC is structural only (journal/fence) **and** no judgment
+  dialogue needs inheritance — bus fold CP optional.
+- Child/work/MONITOR lanes (`spine≠root`) — no root tape pour; use CLOSEOUT/sidecar.
+- Mid-implement WORK tab — CLOSEOUT on implement lane, not root segment CP.
+
+## Required shape (segment CP)
+
+Every segment CP on a continuity root **must** include:
+
+1. **`## Anchor`** with attended window (same turn as post):
+   `Window: transcript_id=<this-tab-uuid> · turns@cp=<K>`
+   `K` from `session_close_preflight` / `assemble_transcript` on that JSONL —
+   hand counts forbidden (`checkpoint-discipline` § Window anchor).
+2. **`Highlight`** — one sentence: segment verdict (what closed on this tab).
+3. **Residue** — bus fold only (commits, binds, next leg); **¬** paste full dialogue
+   into CP body — dialogue lives in the tape cell, not the CHECKPOINT prose wall.
+4. **Supersede** prior tip CP when the segment changes Settled/Live/Next for the house.
+
+**Tab title:** `. {id} {slug}` on post (`operator-posture`).
+
+## Fresh-tab resume law (successor tab)
+
+After segment CP on orchestrator tab **T₁** with window **W₁**:
+
+- Fresh tab **T₂** `resume <root>` inherits **tip CP fold + card + last_session tape**
+  from cells bounded at tip — **not** T₁'s full JSONL unless W₁ was sealed into a cell.
+- Successor **¬** claim to be a “clone” of T₁; it is a **reconstituted** seat.
+- If orientation cites stale pre-segment residue while tip CP is current ⇒ missing
+  segment CP on T₁ or `FIX-18` bundle gap — fix cadence, not “Reload Window”.
+
+## Forbidden
+
+| Forbidden | Why |
+|---|---|
+| CP per bus INFO/dispatch admit | Bus residue only; no speech cell |
+| CP without `Window:` on root speech handoff | Tape cannot bind dialogue to a cell |
+| `Window:` pointing at a **different** tab than the one that held the dialogue | Split-brain inheritance (d6900bc0 / d556c84f class) |
+| Linear thread read instead of tip CP + envelope | `checkpoint-discipline` § Resume |
+| Segment CP on WORK implement tab as root substitute | Wrong pool; root CP on orchestrator |
+
+## Relation to consolidation / FIX-18
+
+- **Consolidation** (10303 harvest) folds graph claims — **not** verbatim attended dialogue.
+- **FIX-18** (residue in resume bundle) helps bus orientation — **not** full speech persistence.
+- Until async consolidation replaces high-frequency segment seal, **prefer segment CP**
+  over hoping one tip CP covers a long orchestrator session.
+
+Skill: Use the `checkpoint-discipline` skill · `continuity-thread-shaping` on inbound.
+Related: `resume-fence_ulg` (structural pickup) · `operator-posture_ulg` Rule 3.
