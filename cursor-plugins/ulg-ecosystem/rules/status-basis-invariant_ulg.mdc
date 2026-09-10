@@ -50,6 +50,18 @@ Boundary = process, agent-bus turn, HTTP payload, file on disk, MCP tool respons
   (`tab_ready_stale` refusing a tab that had just answered, 10462#37). Same-seat activity refreshes.
 - **Success-shaped ≠ success:** read the response's own fields before claiming an effect
   (`sidecar_uri: null` on HTTP 200; `notify` 200 with `status: disabled`). Pairs with `provenance-discipline`.
+- **Fail closed on degrade:** when a producer cannot deliver the content its shape promises, return an error
+  naming what is required, or partial content plus an explicit overflow pointer — never a 200-shaped envelope
+  (index, stub, empty codec) a caller can consume as content.
+
+## Worked instances — the check exists and one path skips it
+
+| Surface | Contract present | Path that skipped it | Lesson |
+|---|---|---|---|
+| Trader fire path | `intent.expires_at` (`trader/intent.py:326`), checked in `ems.py:83–90` | `fire.py fire_intent` relays without consulting it | Consumer-side convention fails open on the second path; the check belongs at the order-placing chokepoint (`POST /commands/enter-symbol` → `enter_symbol()`) |
+| Continuity tape pour | response carried `truncated=true`, `payload_bytes=76230 > budget_bytes=30000`, `codec_counts.messages-v1=0` | consumer read the 350-entry index as content | Basis was present; the consumer did not read it. Producer must fail closed (error or partial+overflow URI) instead of a truncated success |
+
+Two independent surfaces, one shape: a contract that exists and is consulted by convention is not a contract.
 - **Genus:** an append-only event ledger is not a continuity root; current state is derived from the authoritative
   source (venue, filesystem, registry) at read, never from the ledger's newest row.
 
