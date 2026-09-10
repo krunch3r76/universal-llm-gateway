@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
+import yaml
 
 from cortex_store.dispatch_ops import execute_op
 from cortex_store.dispatch_ops._shared import (
@@ -14,8 +16,25 @@ from cortex_store.dispatch_ops._shared import (
     owner_type_of,
     service_entity_id,
 )
+
+_REPO = Path(__file__).resolve().parents[2]
+_CANONICAL = _REPO / "config" / "mcp" / "canonical.yaml"
 from cortex_store.dispatch_ops.ops_assertions import _op_frictions
 from cortex_store.dispatch_ops.ops_assertions_write import _op_friction
+
+
+def test_canonical_friction_category_enum_matches_runtime() -> None:
+    """MCP canonical.yaml category enum must match cortex_store _FRICTION_CATEGORIES."""
+    raw = yaml.safe_load(_CANONICAL.read_text())
+    friction = next(
+        item
+        for item in raw.get("tools", [])
+        if item.get("canonical_name") == "cortex_friction"
+    )
+    schema_enum = set(
+        friction["json_schema"]["properties"]["category"]["enum"]
+    )
+    assert schema_enum == set(_FRICTION_CATEGORIES)
 
 
 def test_friction_categories_include_regression() -> None:

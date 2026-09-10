@@ -67,8 +67,11 @@ DO_HOOK="$2"
 DO_MARKERS="$3"
 DRY_RUN="$4"
 
-PLUGIN_HOOK_DIR="${HOME}/.cursor/plugins/local/ulg-ecosystem/scripts/cursor"
+PLUGIN_ROOT="${HOME}/.cursor/plugins/local/ulg-ecosystem"
+PLUGIN_HOOK_DIR="${PLUGIN_ROOT}/scripts/cursor"
+PLUGIN_HOOKS_JSON="${PLUGIN_ROOT}/hooks/hooks.json"
 HOOK_SRC="${ULG_ROOT}/scripts/cursor/resume_fence_hook.py"
+HOOKS_JSON_SRC="${ULG_ROOT}/cursor-plugins/ulg-ecosystem/hooks/hooks.json"
 HOOK_DST="${PLUGIN_HOOK_DIR}/resume_fence_hook.py"
 MARKER_DIR="${HOME}/.agent-bus/resume-fence"
 
@@ -86,12 +89,20 @@ if [[ "$DO_HOOK" == "1" ]]; then
     exit 1
   fi
   run "mkdir -p $(printf '%q' "$PLUGIN_HOOK_DIR")"
+  run "mkdir -p $(printf '%q' "$(dirname "$PLUGIN_HOOKS_JSON")")"
   # NFS home (.cursor) often rejects cp -a permission preservation.
   run "cp -f $(printf '%q' "$HOOK_SRC") $(printf '%q' "$HOOK_DST")"
   run "chmod 755 $(printf '%q' "$HOOK_DST")"
+  if [[ -f "$HOOKS_JSON_SRC" ]]; then
+    run "cp -f $(printf '%q' "$HOOKS_JSON_SRC") $(printf '%q' "$PLUGIN_HOOKS_JSON")"
+  fi
   if [[ "$DRY_RUN" != "1" ]]; then
     test -f "$HOOK_DST" || { echo "ERROR: install failed: $HOOK_DST" >&2; exit 1; }
     echo "hook_installed=$HOOK_DST"
+    if [[ -f "$PLUGIN_HOOKS_JSON" ]]; then
+      echo "plugin_hooks_json=$PLUGIN_HOOKS_JSON"
+      grep -E 'resume_fence|run-resume-fence' "$PLUGIN_HOOKS_JSON" || true
+    fi
     echo "hook_sha=$(sha256sum "$HOOK_DST" | awk '{print $1}')"
     if command -v python3 >/dev/null 2>&1; then
       smoke=$(printf '%s' '{"conversation_id":"smoke","tool_name":"Mcp","tool_input":{"tool":"continuity","arguments":{"op":"resume","thread":"10223"}}}' \

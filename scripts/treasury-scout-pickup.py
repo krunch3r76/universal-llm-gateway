@@ -17,6 +17,8 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,6 +30,7 @@ _REPO = Path(__file__).resolve().parents[1]
 _CLAUDEBURST = Path(os.environ.get("CLAUDEBURST_ROOT", "/mnt/torus/projects/claudeburst"))
 _INTEL = _CLAUDEBURST / "scripts.local" / "output" / "trader" / "intel.json"
 _WAKE_JSON = _CLAUDEBURST / "scripts.local" / "output" / "trader" / "last_wake.json"
+_NOMINATION_STATE = _REPO / "tmp" / "watchers" / "treasury-scout-last-nomination.json"
 _PYTHON = Path(os.environ.get("UNIVERSAL_PYTHON", Path.home() / ".venvs/universal/bin/python"))
 _AGENT_BUS_SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
 _MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
@@ -150,6 +153,55 @@ def _find_closeout_turn(client: httpx.Client, thread: str, turn: int | None) -> 
     raise SystemExit(f"No unread SCOUT_CLOSEOUT from gotgrok on thread {thread}")
 
 
+def _nomination_fingerprint(parsed: dict[str, Any]) -> tuple[Any, ...]:
+    deltas_sig = tuple(
+        sorted(
+            (sym, int(entry.get("delta") or 0))
+            for sym, entry in (parsed.get("deltas") or {}).items()
+            if int(entry.get("delta") or 0) != 0
+        )
+    )
+    return (
+        parsed.get("primary_symbol"),
+        parsed.get("scale") or "",
+        bool(parsed.get("scale_in")),
+        parsed.get("honor_clip"),
+        parsed.get("size_usdc"),
+        bool(parsed.get("hold")),
+        bool(parsed.get("hold_go")),
+        deltas_sig,
+    )
+
+
+def _load_last_nomination() -> tuple[Any, ...] | None:
+    if not _NOMINATION_STATE.is_file():
+        return None
+    try:
+        raw = json.loads(_NOMINATION_STATE.read_text(encoding="utf-8"))
+        fp = raw.get("fingerprint")
+        if isinstance(fp, list):
+            return tuple(fp)
+    except (json.JSONDecodeError, OSError):
+        return None
+    return None
+
+
+def _save_nomination(parsed: dict[str, Any], *, turn: int) -> None:
+    _NOMINATION_STATE.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "turn": turn,
+        "fingerprint": list(_nomination_fingerprint(parsed)),
+        "primary_symbol": parsed.get("primary_symbol"),
+        "scale_in": parsed.get("scale_in"),
+        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    _NOMINATION_STATE.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def _nomination_changed(parsed: dict[str, Any]) -> bool:
+    return _nomination_fingerprint(parsed) != _load_last_nomination()
+
+
 def _write_intel(parsed: dict[str, Any], fetched_at: str) -> None:
     payload: dict[str, Any] = {
         "fetched_at": fetched_at,
@@ -157,6 +209,8 @@ def _write_intel(parsed: dict[str, Any], fetched_at: str) -> None:
         "hold": parsed["hold"],
         "deltas": parsed["deltas"],
     }
+    if parsed.get("primary_symbol"):
+        payload["primary_symbol"] = parsed["primary_symbol"]
     if parsed.get("scale"):
         payload["scale"] = parsed["scale"]
     if parsed.get("scale_in"):
@@ -182,6 +236,52 @@ def _run_wake() -> tuple[int, str]:
     return proc.returncode, out
 
 
+def _wake_gate() -> dict[str, Any]:
+    if not _WAKE_JSON.is_file():
+        return {}
+    snap = json.loads(_WAKE_JSON.read_text(encoding="utf-8"))
+    decision = snap.get("decision") if isinstance(snap.get("decision"), dict) else {}
+    gate = decision.get("gate") if isinstance(decision.get("gate"), dict) else {}
+    if gate:
+        return gate
+    legacy = snap.get("gate")
+    return legacy if isinstance(legacy, dict) else {}
+
+
+def _wake_powder_usdc() -> float:
+    gate = _wake_gate()
+    try:
+        return float(gate.get("powder_usdc") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _scout_primary_intent(parsed: dict[str, Any]) -> dict[str, Any] | None:
+    """Build relay intent from Grok closeout when wake did not mint primary."""
+    sym = str(parsed.get("primary_symbol") or "").strip().upper()
+    if not sym or parsed.get("hold") or parsed.get("hold_go"):
+        return None
+    delta = int(parsed.get("deltas", {}).get(sym, {}).get("delta") or 0)
+    if delta < 1:
+        return None
+    powder = _wake_powder_usdc()
+    size = parsed.get("size_usdc")
+    if size is None and powder > 0:
+        if parsed.get("scale") == "max" or parsed.get("honor_clip") is False:
+            size = powder
+    if size is None or float(size) <= 0:
+        return None
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "intent_id": f"{sym}:{ts}",
+        "symbol": sym,
+        "side": "short",
+        "size_usdc": float(size),
+        "fundable": True,
+        "rung": parsed.get("scale") or "full",
+    }
+
+
 def _fundable_intents() -> list[dict[str, Any]]:
     if not _WAKE_JSON.is_file():
         return []
@@ -195,6 +295,12 @@ def _select_go_intent(parsed: dict[str, Any]) -> tuple[dict[str, Any] | None, st
     if parsed.get("hold") or parsed.get("hold_go"):
         return None, "hold"
 
+    primary_symbol = str(parsed.get("primary_symbol") or "").strip().upper()
+    if primary_symbol:
+        scout_intent = _scout_primary_intent(parsed)
+        if scout_intent is not None:
+            return scout_intent, "grok_scout_primary"
+
     intents = _fundable_intents()
     if not intents:
         return None, "no_fundable_intents"
@@ -205,7 +311,6 @@ def _select_go_intent(parsed: dict[str, Any]) -> tuple[dict[str, Any] | None, st
             if intent.get("intent_id") == primary_intent:
                 return intent, "grok_primary_intent"
 
-    primary_symbol = parsed.get("primary_symbol") or ""
     if primary_symbol:
         for intent in intents:
             if intent.get("symbol") == primary_symbol:
@@ -217,16 +322,78 @@ def _select_go_intent(parsed: dict[str, Any]) -> tuple[dict[str, Any] | None, st
         return (-delta, sym)
 
     ranked = sorted(intents, key=_rank)
-    if ranked[0] and _rank(ranked[0])[0] < 0:
+    if not ranked:
+        return None, "no_fundable_intents"
+    best = ranked[0]
+    best_delta = int(parsed.get("deltas", {}).get(str(best.get("symbol") or ""), {}).get("delta") or 0)
+    if best_delta < 0:
         return None, "best_intent_still_demoted"
-    return ranked[0], "grok_intel_rank"
+    return best, "grok_intel_rank"
+
+
+def _perps_api_base() -> str:
+    host = os.environ.get("CLAUDEBURST_PERPS_HOST", "127.0.0.1").strip() or "127.0.0.1"
+    port = os.environ.get("CLAUDEBURST_PERPS_PORT", "8891").strip() or "8891"
+    return f"http://{host}:{port}"
+
+
+def _perps_get(path: str, *, timeout_s: float = 3.0) -> dict[str, Any]:
+    url = f"{_perps_api_base().rstrip('/')}{path}"
+    req = urllib.request.Request(url, method="GET")
+    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    if not isinstance(data, dict):
+        raise TypeError(f"{path} returned non-object")
+    return data
+
+
+def _summarize_venue() -> str:
+    """Live :8891 snapshot for APPLY — same authority as claudeburst(positions/gates)."""
+
+    lines: list[str] = ["venue (live :8891):"]
+    try:
+        positions = _perps_get("/positions")
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, TypeError, OSError) as exc:
+        return f"venue: unreadable ({exc})"
+    held = positions.get("positions") if isinstance(positions.get("positions"), list) else []
+    freshness = positions.get("data_freshness")
+    if isinstance(freshness, dict):
+        lines.append(
+            f"  freshness source={freshness.get('source')} age_s={freshness.get('age_s')} "
+            f"verified_at={freshness.get('verified_at')}"
+        )
+    lines.append(
+        f"  count={positions.get('count')} "
+        f"venue_total_usdc={positions.get('venue_total_exposure_usdc')} "
+        f"exposure_mismatch={positions.get('exposure_mismatch')}"
+    )
+    if not held:
+        lines.append("  held: flat")
+    for row in held[:8]:
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"  held {row.get('symbol')} {row.get('side')} "
+            f"venue_usdc={row.get('venue_size_usdc', row.get('size_usdc'))} "
+            f"entry={row.get('entry_price')}"
+        )
+    try:
+        gates = _perps_get("/gates")
+        equity = gates.get("equity") if isinstance(gates.get("equity"), dict) else {}
+        lines.append(
+            f"  powder available={equity.get('available_balance')} "
+            f"clip_usdc={gates.get('clip_usdc')}"
+        )
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, TypeError, OSError):
+        lines.append("  gates: unreadable")
+    return "\n".join(lines)
 
 
 def _summarize_wake() -> str:
     if not _WAKE_JSON.is_file():
         return "last_wake.json missing"
     snap = json.loads(_WAKE_JSON.read_text(encoding="utf-8"))
-    gate = snap.get("gate") if isinstance(snap.get("gate"), dict) else {}
+    gate = _wake_gate()
     decision = snap.get("decision") if isinstance(snap.get("decision"), dict) else {}
     intents = decision.get("intents") if isinstance(decision.get("intents"), list) else []
     lines = [
@@ -437,6 +604,34 @@ def main() -> int:
 
     _write_intel(parsed, fetched_at)
     print(f"intel written {_INTEL}", flush=True)
+
+    delta_changed = _nomination_changed(parsed)
+    if not delta_changed:
+        print("GO-on-delta: nomination unchanged — skip wake/GO/FIRE", flush=True)
+        venue = _summarize_venue()
+        apply_body = (
+            f"TYPE: APPLY\n\nPickup turn {turn_no}: nomination unchanged (GO-on-delta).\n\n"
+            f"intel: reconstructed → {_INTEL}\n"
+            f"vm_intel: {parsed['intel_path'] or 'n/a'}\n\n"
+            f"{venue}\n\n"
+            f"GO skipped: go_on_delta_unchanged\n"
+            f"FIRE skipped: go_on_delta_unchanged\n"
+            f"so_what: {parsed['so_what']}"
+        )
+        _mark_cursor_inbox_read(client, args.thread)
+        _bus_send(
+            client,
+            thread=args.thread,
+            to="gotgrok",
+            after_turn=turn_no,
+            subject=f"APPLY — turn {turn_no} delta unchanged",
+            body=apply_body,
+        )
+        _mark_read(client, args.thread, turn_no)
+        _save_nomination(parsed, turn=turn_no)
+        print(f"APPLY posted after_turn={turn_no} (delta unchanged)", flush=True)
+        return 0
+
     code, wake_out = _run_wake()
     print(wake_out, flush=True)
     if code != 0:
@@ -465,10 +660,12 @@ def main() -> int:
         print(f"GO skipped: {selection}", flush=True)
 
     summary = _summarize_wake()
+    venue = _summarize_venue()
     apply_body = (
         f"TYPE: APPLY\n\nPickup turn {turn_no} complete (treasury-scout-pickup.py).\n\n"
         f"intel: reconstructed → {_INTEL}\n"
         f"vm_intel: {parsed['intel_path'] or 'n/a'}\n\n"
+        f"{venue}\n\n"
         f"{summary}\n\n"
         f"{go_line}\n"
         f"{fire_line}\n"
@@ -484,6 +681,7 @@ def main() -> int:
         body=apply_body,
     )
     _mark_read(client, args.thread, turn_no)
+    _save_nomination(parsed, turn=turn_no)
     print(f"APPLY posted after_turn={turn_no} marked_read through {turn_no}", flush=True)
     return 0
 
