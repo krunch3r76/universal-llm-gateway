@@ -1415,6 +1415,8 @@ tools:
         - stale_context
         - doc_drift
         - protocol
+        - regression
+        - feature
       note:
         type: string
       suggestion:
@@ -2187,6 +2189,64 @@ tools:
   mandate_safety: write
   cache_priority: always_loaded
   introduced: 2026-07-29
+- canonical_name: cursor_bridge
+  domain: cursor_bridge
+  operation: open_tab
+  dispatcher_call_shape:
+    tool: cursor_bridge
+    dispatch_key: op
+    dispatch_value: open_tab
+  flat_call_shape:
+    tool: cursor_bridge
+    substrate_qualified: user-vortex__cursor_bridge
+  fol_descriptor: "∀ op ∈ {open_tab, send_msg, status}: exactly one agent-bus REST call, no business
+    logic.\nopen_tab(slug ∧ (thread XOR new_slug)) ⟹ POST /threads/send subject=BRIDGE_OPEN + title
+    '<thread> <slug>'.\nsend_msg(thread ∧ body) ⟹ POST /threads/send subject=MSG. status(thread) ⟹
+    GET /turns + tab_ready + last_reply_turn.\nclaude.ai ↔ Cursor Composer keystroke bridge; an
+    io-side watcher consumes BRIDGE_OPEN/MSG and the in-tab agent posts TAB_READY/REPLY. Mutating.
+    Life+code callable. Spec: cortex://notes/system/specs/cursor-keystroke-bridge-v1.md\n"
+  json_schema:
+    type: object
+    properties:
+      op:
+        type: string
+        enum:
+        - open_tab
+        - send_msg
+        - status
+      thread:
+        type: string
+        description: Existing bridge lane id (open_tab continue path, send_msg, status).
+      new_slug:
+        type: string
+        description: Mint a new bridge lane (open_tab only). Mutually exclusive with thread.
+      slug:
+        type: string
+        description: Short kebab-case Cursor tab name (open_tab). Tab title is '<thread> <slug>'.
+      cowork_url:
+        type: string
+        description: Optional originating claude.ai Cowork URL recorded in BRIDGE_OPEN.
+      body:
+        type: string
+        description: Message body relayed to the tab (send_msg).
+      after_turn:
+        type: integer
+        description: Continue-thread ordering pointer (send_msg).
+      last:
+        type: integer
+        description: Turn window for status (default 10).
+        default: 10
+    required:
+    - op
+  skill_uri: agent_skill:agent_bus
+  seat_visibility:
+  - mcp
+  mandate_safety: write
+  cache_priority: on_demand
+  introduced: '2026-09-10'
+  endpoint_visibility:
+  - life
+  - code
 - canonical_name: operator_request
   domain: operator_request
   operation: request
@@ -5738,6 +5798,38 @@ tools:
   endpoint_visibility:
   - life
   - code
+- canonical_name: claudeburst_relay
+  domain: claudeburst
+  operation: relay
+  dispatcher_call_shape:
+    tool: claudeburst
+    dispatch_key: op
+    dispatch_value: positions
+  flat_call_shape:
+    tool: claudeburst
+    substrate_qualified: user-vortex__claudeburst
+  fol_descriptor: "Read-only ClaudeBurst relay — native perps :8891 JSON (positions, gates,
+    sizing, regime, signals, knobs, …). Inspect data_freshness before acting.
+    gotgrok treasury scout book authority.\n"
+  json_schema:
+    type: object
+    properties:
+      exchange:
+        type: string
+      op:
+        type: string
+      params:
+        type: object
+    required:
+    - exchange
+    - op
+  mandate_safety: read_only
+  seat_visibility:
+  - mcp
+  cache_priority: on_demand
+  introduced: '2026-09-10'
+  endpoint_visibility:
+  - code
 domain_endpoints:
   default:
   - life
@@ -5794,6 +5886,7 @@ surface_primary_domains:
   - agent_bus
   - agent_bus_read
   - cursor_request
+  - cursor_bridge
   - fs
   - rag
   - retrieve
@@ -5815,6 +5908,7 @@ surface_primary_domains:
   - agent_bus
   - agent_bus_read
   - cursor_request
+  - cursor_bridge
   - fs
   - rag
   - retrieve
@@ -5829,6 +5923,7 @@ surface_primary_domains:
   - operator_request
   - cse_session
   - chat_session
+  - claudeburst
 cortex_families:
   defaults:
     read:
