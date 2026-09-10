@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 from agent_bus_store.tape_harvest import render_tape_with_harvest
+from agent_bus_store.tape_degrade import degrade_overflow_messages
 from agent_bus_store.tape_render import (
-    _degrade_overflow_messages,
     _filter_messages_to_cells,
     _last_session_cells,
     render_tape,
@@ -128,13 +128,20 @@ def test_harvest_forwards_include_extras_to_render_tape(mock_render) -> None:
 
 def test_degrade_overflow_puts_rows_in_index_not_messages() -> None:
     messages = [
-        {"role": "user", "content": "a", "session_id": "s1", "transcript_id": "t1", "turn_index": 1},
-        {"role": "user", "content": "b", "session_id": "s1", "transcript_id": "t1", "turn_index": 2},
+        {
+            "role": "user",
+            "content": "x" * 500,
+            "session_id": "s1",
+            "transcript_id": "t1",
+            "turn_index": i,
+        }
+        for i in (1, 2, 3)
     ]
-    kept, index_rows, truncated = _degrade_overflow_messages(
+    kept, index_rows, truncated, _degraded = degrade_overflow_messages(
         messages,
         cells=[],
-        budget_bytes=40,
+        budget_bytes=1200,
+        thread_id="1",
     )
     assert truncated is True
     assert all(msg.get("role") != "index" for msg in kept)
