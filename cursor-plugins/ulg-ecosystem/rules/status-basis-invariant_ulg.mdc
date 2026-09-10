@@ -48,6 +48,14 @@ Boundary = process, agent-bus turn, HTTP payload, file on disk, MCP tool respons
   second path appears (`intent.expires_at` checked in `ems.py`, skipped by `fire.py`).
 - **TTL needs refresh:** any TTL without an activity-refresh rule lies in the other direction
   (`tab_ready_stale` refusing a tab that had just answered, 10462#37). Same-seat activity refreshes.
+- **TTL names its observable and the stream semantics.** Age of the last frame on a push-on-change
+  (replace-on-update) stream is *time since last change*, not staleness — a TTL on it is a false-stale
+  generator (Lighter account WS: idle gaps p99 ~57 min; a 300 s gate on `age_s` refuses every idle hour).
+  Bound periodic observables (`rest_verified_at`, heartbeat) instead, or the stream's own stall backstop.
+- **A summary boolean over a measurable quantity is legitimate when it publishes the predicate it
+  summarises** — `{value, scope, threshold, reason}` — and illegitimate otherwise. `degraded: false` with
+  `scope: account_ws_idle, stall_backstop_s: 7200, reason: ws_connected_idle_within_backstop` is readable from
+  the object; bare `degraded: false` is `ok: true` again.
 - **Success-shaped ≠ success:** read the response's own fields before claiming an effect
   (`sidecar_uri: null` on HTTP 200; `notify` 200 with `status: disabled`). Pairs with `provenance-discipline`.
 - **Fail closed on degrade:** when a producer cannot deliver the content its shape promises, return an error
@@ -60,6 +68,7 @@ Boundary = process, agent-bus turn, HTTP payload, file on disk, MCP tool respons
 |---|---|---|---|
 | Trader fire path | `intent.expires_at` (`trader/intent.py:326`), checked in `ems.py:83–90` | `fire.py fire_intent` relays without consulting it | Consumer-side convention fails open on the second path; the check belongs at the order-placing chokepoint (`POST /commands/enter-symbol` → `enter_symbol()`) |
 | Continuity tape pour | response carried `truncated=true`, `payload_bytes=76230 > budget_bytes=30000`, `codec_counts.messages-v1=0` | consumer read the 350-entry index as content | Basis was present; the consumer did not read it. Producer must fail closed (error or partial+overflow URI) instead of a truncated success |
+| perps `data_freshness.degraded` | 7200 s silent-stall backstop on the account WS (`ws_live_view.py`) | reader saw `degraded: false, age_s: 2889` and inferred a threshold the field never published; a downstream gate applied its own 300 s TTL to the same `age_s` | The boolean was true to its predicate; the object did not carry the predicate. Fix is the invariant applied literally: publish `scope` + `stall_backstop_s`, `reason` never null |
 
 Two independent surfaces, one shape: a contract that exists and is consulted by convention is not a contract.
 - **Genus:** an append-only event ledger is not a continuity root; current state is derived from the authoritative
