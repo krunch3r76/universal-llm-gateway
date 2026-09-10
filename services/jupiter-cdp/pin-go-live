@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Push pins.toml to Jupiter and recycle CDP lane(s) so display/port/profile edits go live.
+#
+# io edits pins.toml locally; systemd lanes run only on Jupiter. NFS may mirror the
+# file, but uncommitted edits and display.conf drop-ins still need an explicit sync
+# and lane restart from this seat.
+#
+# Usage:
+#   pin-go-live [lane ...]     default: every standing lane in pins.toml
+# Env:
+#   JUPITER_SSH   default krunch3r@jupiter
+#   ULG_REPO      default repo root (this script's grandparent)
+#   PIN_GO_LIVE_SKIP_SCP=1     skip scp when the shared checkout is already identical
+set -euo pipefail
+
+REPO="${ULG_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
+SSH="${JUPITER_SSH:-krunch3r@jupiter}"
+PINS="$REPO/services/jupiter-cdp/pins.toml"
+
+if [ ! -f "$PINS" ]; then
+  echo "pin-go-live: missing $PINS" >&2
+  exit 1
+fi
+
+if [ "${PIN_GO_LIVE_SKIP_SCP:-0}" != "1" ]; then
+  scp "$PINS" "$SSH:$PINS"
+fi
+
+if [ "$#" -gt 0 ]; then
+  LANES=("$@")
+else
+  mapfile -t LANES < <(
+    python3 - "$PINS" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as f:
+    lanes = tomllib.load(f).get("lanes", {})
+for name, row in sorted(lanes.items()):
+    if row.get("standing"):
+        print(name)
+PY
+  )
+fi
+
+if [ "${#LANES[@]}" -eq 0 ]; then
+  echo "pin-go-live: no lanes to recycle" >&2
+  exit 1
+fi
+
+REMOTE_INSTALL="$REPO/services/jupiter-cdp/install.sh"
+ssh "$SSH" "ULG_REPO=$REPO bash $REMOTE_INSTALL"
+
+for lane in "${LANES[@]}"; do
+  echo "pin-go-live: restart cdp-lane@${lane} on $SSH"
+  ssh "$SSH" "systemctl --user restart cdp-lane@${lane}.service"
+  ssh "$SSH" "ULG_REPO=$REPO $REPO/services/jupiter-cdp/cdp-lane-ensure $lane"
+done
+
+echo "pin-go-live: done lanes=${LANES[*]}"

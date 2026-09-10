@@ -87,6 +87,10 @@ def main() -> None:
             if lane_name == "fleet":
                 result = fleet_cookie_rehydrate(port)
                 print(f"fleet cookie rehydrate: {result}", file=sys.stderr)
+            print(
+                f"cdp-lane@{lane_name} READY display={display} port={port} profile={profile}",
+                file=sys.stderr,
+            )
             _sd_notify("READY=1")
             break
         if proc.poll() is not None:
