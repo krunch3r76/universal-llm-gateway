@@ -5,7 +5,9 @@ Polls one agent-bus thread and turns lane vocabulary into side effects:
 
   BRIDGE_OPEN  (web-anthropic → cursor)  open a Cursor tab on jupiter via SSH keystroke
   MSG          (web-anthropic → cursor)  wake the tab: paste ``BRIDGE_WAKE thread=T turn=N``
-  TAB_READY    (cursor → web-anthropic)  record; nudge claude.ai that the tab is live
+  TAB_READY    (cursor → web-anthropic)  record lane liveness; nudge claude.ai
+  TAB_ALIVE    (cursor → web-anthropic)  heartbeat — refreshes TAB_READY TTL
+  TAB_GONE     (cursor → web-anthropic)  explicit tab death — clears readiness
   REPLY        (cursor → web-anthropic)  nudge claude.ai (Jupiter followups) to read the inbox
   BRIDGE_ACK   (this watcher)            ignored on read — our own receipts
 
@@ -29,6 +31,7 @@ from typing import Any
 import httpx
 import yaml
 from bus_watch.state import paths_for, read_state, write_state
+from cursor_bridge.lane_ready import assess_lane_readiness
 
 _REPO = Path(__file__).resolve().parents[1]
 _AGENT_BUS_SOCK = os.environ.get(
@@ -127,26 +130,27 @@ def _parse_kv(body: str) -> dict[str, str]:
     return out
 
 
-def _tab_ready_turn(client: httpx.Client, thread: str) -> int | None:
-    """Latest TAB_READY turn from cursor on this lane, if any."""
+def _fetch_lane_turns(client: httpx.Client, thread: str) -> list[dict[str, Any]]:
     r = client.get(
         "http://localhost/turns",
-        params={"thread": thread, "last": 100, "compact": "true"},
+        params={"thread": thread, "last": 100, "compact": "false"},
     )
     r.raise_for_status()
-    ready = [
-        int(t.get("turn_number") or 0)
-        for t in (r.json().get("turns") or [])
-        if str(t.get("subject") or "").startswith("TAB_READY")
-        and str(t.get("from") or "") == _SELF
-    ]
-    return max(ready) if ready else None
+    return list(r.json().get("turns") or [])
 
 
 def _format_ack(res: dict[str, Any], *, prefix: str) -> str:
     ok = bool(res.get("ok"))
     parts = [f"{prefix} ok={ok}"]
-    for key in ("reason", "phase", "skipped", "focus_verified", "focus_probe"):
+    for key in (
+        "reason",
+        "phase",
+        "skipped",
+        "focus_verified",
+        "focus_probe",
+        "tab_ready_age_s",
+        "tab_ready_ttl_s",
+    ):
         val = res.get(key)
         if val is not None and val != "":
             parts.append(f"{key}={val}")
@@ -208,16 +212,8 @@ class Lane:
     def title(self) -> str:
         return f"{self.thread} {self.slug}" if self.slug else ""
 
-    def _tab_is_ready(self, client: httpx.Client) -> tuple[bool, int | None]:
-        prior = read_state(self.state_path)
-        turn = prior.get("tab_ready_turn")
-        if turn:
-            return True, int(turn)
-        bus_turn = _tab_ready_turn(client, self.thread)
-        if bus_turn:
-            write_state(self.state_path, tab_ready_turn=bus_turn)
-            return True, bus_turn
-        return False, None
+    def _assess_tab_ready(self, client: httpx.Client) -> dict[str, Any]:
+        return assess_lane_readiness(_fetch_lane_turns(client, self.thread))
 
     def handle(self, client: httpx.Client, turn: dict[str, Any]) -> None:
         n = int(turn["turn_number"])
@@ -238,6 +234,9 @@ class Lane:
                 slug=self.slug,
                 cowork_url=self.cowork_url,
                 last_open=res,
+                bridge_open_turn=n,
+                tab_ready_turn=None,
+                tab_ready_at=None,
             )
             self._ack(
                 client,
@@ -253,12 +252,14 @@ class Lane:
             )
             return
         if subject.startswith("MSG") and sender != _SELF:
-            ready, ready_turn = self._tab_is_ready(client)
-            if not ready:
+            readiness = self._assess_tab_ready(client)
+            if not readiness["ready"]:
                 res = {
                     "ok": False,
-                    "reason": "no_tab_ready",
+                    "reason": readiness["reason"],
                     "phase": "preflight",
+                    "tab_ready_age_s": readiness.get("tab_ready_age_s"),
+                    "tab_ready_ttl_s": readiness.get("tab_ready_ttl_s"),
                 }
                 write_state(self.state_path, last_wake={"turn": n, **res})
                 self._ack(
@@ -267,7 +268,7 @@ class Lane:
                     _format_ack(res, prefix=f"wake turn={n}"),
                 )
                 print(
-                    f"MSG turn={n} → refused ok=False reason=no_tab_ready",
+                    f"MSG turn={n} → refused ok=False reason={readiness['reason']}",
                     flush=True,
                 )
                 return
@@ -283,7 +284,7 @@ class Lane:
             write_state(
                 self.state_path,
                 last_wake={"turn": n, **res},
-                tab_ready_turn=ready_turn,
+                tab_ready_turn=readiness.get("turn"),
             )
             self._ack(
                 client,
@@ -295,15 +296,33 @@ class Lane:
                 flush=True,
             )
             return
-        if subject.startswith("TAB_READY") and sender == _SELF:
-            write_state(self.state_path, tab_ready_turn=n)
-            res = _nudge_claude(
+        if (
+            subject.startswith("TAB_READY") or subject.startswith("TAB_ALIVE")
+        ) and sender == _SELF:
+            write_state(
+                self.state_path,
+                tab_ready_turn=n,
+                tab_ready_at=str(turn.get("created_at") or ""),
+            )
+            if subject.startswith("TAB_READY"):
+                res = _nudge_claude(
                 self.project_ask_url,
                 self.cowork_url,
                 f"TAB_READY on agent-bus thread {self.thread} (turn {n}) — Cursor tab is live. "
-                f"Send MSG turns with cursor_bridge(op=send_msg) or agent_bus send subject MSG.",
+                    f"Send MSG turns with cursor_bridge(op=send_msg) or agent_bus send subject MSG.",
+                )
+                print(f"TAB_READY turn={n} → nudge {res}", flush=True)
+            else:
+                print(f"TAB_ALIVE turn={n} → heartbeat recorded", flush=True)
+            return
+        if subject.startswith("TAB_GONE") and sender == _SELF:
+            write_state(
+                self.state_path,
+                tab_ready_turn=None,
+                tab_ready_at=None,
+                tab_gone_turn=n,
             )
-            print(f"TAB_READY turn={n} → nudge {res}", flush=True)
+            print(f"TAB_GONE turn={n} → readiness cleared", flush=True)
             return
         if subject.startswith("REPLY") and sender == _SELF:
             res = _nudge_claude(
@@ -369,9 +388,6 @@ def main() -> int:
         state_path=state_path,
     )
     client = _bus_client(token)
-    ready_turn = _tab_ready_turn(client, thread)
-    if ready_turn:
-        write_state(state_path, tab_ready_turn=ready_turn)
     after_turn = int(args.after_turn)
     if after_turn < 0:
         after_turn = int(prior.get("after_turn") or -1)

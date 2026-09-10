@@ -30,6 +30,23 @@ keystroke = _load_module(_KEYSTROKE, "cursor_tab_keystroke_test")
 
 
 @pytest.mark.offline
+def test_format_ack_includes_stale_reason() -> None:
+    text = watcher._format_ack(
+        {
+            "ok": False,
+            "reason": "tab_ready_stale",
+            "phase": "preflight",
+            "tab_ready_age_s": 601.0,
+            "tab_ready_ttl_s": 600,
+        },
+        prefix="wake turn=15",
+    )
+    assert "ok=False" in text
+    assert "reason=tab_ready_stale" in text
+    assert "tab_ready_age_s=601.0" in text
+
+
+@pytest.mark.offline
 def test_format_ack_includes_false_reason() -> None:
     text = watcher._format_ack(
         {"ok": False, "reason": "no_tab_ready", "phase": "preflight"},

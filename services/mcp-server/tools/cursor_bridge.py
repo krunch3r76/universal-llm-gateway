@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
+from cursor_bridge.lane_ready import assess_lane_readiness
 from mcp_events import record
 from mcp_toolprogress import toolprogress_begin, toolprogress_end
 
@@ -106,8 +107,14 @@ def _send_msg(
 def _status(*, thread: str | None, last: int) -> dict[str, Any]:
     if not thread:
         return _param_error("status", "thread_required", "status requires thread")
+    fetch_last = max(last, 100)
     result = _fetch_impl(
-        to=None, thread=thread, last=last, unread=False, mark_read=False, compact=False
+        to=None,
+        thread=thread,
+        last=fetch_last,
+        unread=False,
+        mark_read=False,
+        compact=False,
     )
     if isinstance(result, dict) and "error" in result:
         return result
@@ -124,23 +131,27 @@ def _status(*, thread: str | None, last: int) -> dict[str, Any]:
         for t in raw
         if isinstance(t, dict)
     ]
+    if last > 0 and len(turns) > last:
+        turns = turns[-last:]
     reply_turns = [
         t["turn_number"]
         for t in turns
         if t["subject"] == "REPLY" and t["turn_number"] is not None
     ]
-    tab_ready_turns = [
-        t["turn_number"]
-        for t in turns
-        if t["subject"] == "TAB_READY" and t["turn_number"] is not None
-    ]
+    readiness = assess_lane_readiness(
+        [t for t in raw if isinstance(t, dict)]
+    )
     record("mcp.cursor_bridge.status", thread=thread, count=len(turns))
     return {
         "op": "status",
         "thread": thread,
         "turns": turns,
-        "tab_ready": bool(tab_ready_turns),
-        "tab_ready_turn": max(tab_ready_turns) if tab_ready_turns else None,
+        "tab_ready": readiness["ready"],
+        "tab_ready_turn": readiness.get("turn"),
+        "tab_ready_reason": readiness.get("reason"),
+        "tab_ready_age_s": readiness.get("tab_ready_age_s"),
+        "tab_ready_ttl_s": readiness.get("tab_ready_ttl_s"),
+        "bridge_open_turn": readiness.get("bridge_open_turn"),
         "last_reply_turn": max(reply_turns) if reply_turns else None,
     }
 
@@ -173,8 +184,10 @@ def register_cursor_bridge_tools(mcp: FastMCP) -> None:
             payload + {op, title: "<thread_id> <slug>"}; new_slug also tags the
             lane ``lane:cursor-bridge``.
           send_msg (thread, body, after_turn?) — returns the send payload + {op}.
-          status   (thread, last=10) — {op, thread, turns[turn_number, from, to,
-            subject, created_at, body_preview], tab_ready, last_reply_turn}.
+          status   (thread, last=10) — {op, thread, turns[...], tab_ready,
+            tab_ready_turn, tab_ready_reason, tab_ready_age_s, bridge_open_turn,
+            last_reply_turn}. tab_ready is true only when a lane-scoped TAB_READY
+            or TAB_ALIVE is within TTL after the latest BRIDGE_OPEN/TAB_GONE.
 
         Missing required params return ``{ok: false, error: <code>, detail}``.
         """
