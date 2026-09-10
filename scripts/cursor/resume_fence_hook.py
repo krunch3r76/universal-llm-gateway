@@ -27,6 +27,9 @@ _MCP_YAML = Path.home() / ".gateway/mcp.yaml"
 _IDLE_S = int(os.environ.get("RESUME_FENCE_IDLE_S", "1800"))
 _UNCOVERED_TOOLS = frozenset({"Grep", "Glob", "SearchConversations", "GetDynamicTools"})
 _MCP_WRAPPER_TOOLS = frozenset({"CallDynamicTool", "call_mcp_tool", "Mcp", "mcp"})
+# preToolUse reports MCP tools as ``MCP:<tool_name>`` (cursor.com/docs/hooks);
+# beforeMCPExecution reports the bare name. read_set.mcp_allow rules are bare.
+_MCP_TOOL_PREFIX = "MCP:"
 
 
 class _HookDataError(Exception):
@@ -180,9 +183,12 @@ def _first_hop_message(*, root: str, fence_id: str, transcript_id: str | None) -
     tid_suffix = ""
     if transcript_id:
         tid_suffix = f", transcript_id={transcript_id}"
+    # continuity is an overflow tool on user-vortex-code (canonical.yaml
+    # surface_primary_domains.code omits it) — reachable only via dispatch.
     return (
         f"resume fence {fence_id}: call continuity(op=resume, thread={root}{tid_suffix}) "
-        f"via user-vortex-code (server-primary — no GetDynamicTools); "
+        f'via user-vortex-code dispatch(tool="continuity", arguments=\'{{"op": "resume", '
+        f'"thread": "{root}"}}\') — no GetDynamicTools / tool_search; '
         f"durable send must carry fence_id={fence_id}"
     )
 
@@ -275,7 +281,8 @@ def _decide_mcp_hop(
     """Resolve MCP wrapper/direct tool names and enforce read_set."""
     mcp_allow = readable.get("mcp_allow") or []
     merged = _coalesce_tool_payload(tool_input, payload)
-    mcp_name, mcp_input = _resolve_mcp_tool(tool_name, merged, mcp_allow=mcp_allow)
+    bare_name = tool_name.removeprefix(_MCP_TOOL_PREFIX)
+    mcp_name, mcp_input = _resolve_mcp_tool(bare_name, merged, mcp_allow=mcp_allow)
     # FIX-19b: wrapper shells may carry {} until execution time.
     if mcp_name in _MCP_WRAPPER_TOOLS:
         return {"permission": "allow"}
@@ -296,6 +303,9 @@ def _decide_mcp_hop(
         and not str(mcp_input.get("op") or "")
     ):
         return {"permission": "allow"}
+    if verdict.get("permission") == "deny" and tool_name != bare_name:
+        # Journal the wire name as observed so the firing event stays diagnosable.
+        verdict["journal"]["tool"] = tool_name
     return verdict
 
 

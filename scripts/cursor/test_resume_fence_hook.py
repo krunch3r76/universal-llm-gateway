@@ -401,6 +401,99 @@ def test_pre_tool_use_call_dynamic_tool_empty_payload_deferred() -> None:
     assert mcp["permission"] == "allow"
 
 
+def test_pre_tool_use_mcp_prefixed_continuity_resume_allowed() -> None:
+    """Observed wire (fence rf-fae36ba7): preToolUse names MCP tools ``MCP:<tool>``."""
+    for fold_state in ("armed", "poured"):
+        verdict = decide(
+            event="preToolUse",
+            payload={
+                "tool_name": "MCP:continuity",
+                "tool_input": {"op": "resume", "thread": 10223},
+                "tool_use_id": "abc123",
+            },
+            marker={**_MARKER, "transcript_id": "16d2d0e3"},
+            fold={"state": fold_state},
+        )
+        assert verdict["permission"] == "allow", fold_state
+
+
+def test_pre_tool_use_mcp_dispatch_continuity_resume_allowed_other_ops_denied() -> None:
+    """continuity is overflow on user-vortex-code: real first hop rides dispatch."""
+    dispatch_input = {
+        "tool": "continuity",
+        "arguments": json.dumps({"op": "resume", "thread": "10223"}),
+    }
+    allow = decide(
+        event="preToolUse",
+        payload={"tool_name": "MCP:dispatch", "tool_input": dispatch_input},
+        marker=_MARKER,
+        fold={"state": "armed"},
+    )
+    assert allow["permission"] == "allow"
+    deny_op = decide(
+        event="preToolUse",
+        payload={
+            "tool_name": "MCP:dispatch",
+            "tool_input": {
+                "tool": "continuity",
+                "arguments": json.dumps({"op": "consolidate", "thread": "10223"}),
+            },
+        },
+        marker=_MARKER,
+        fold={"state": "armed"},
+    )
+    assert deny_op["permission"] == "deny"
+    assert 'dispatch(tool="continuity"' in deny_op["agent_message"]
+    deny_tool = decide(
+        event="preToolUse",
+        payload={
+            "tool_name": "MCP:dispatch",
+            "tool_input": {"tool": "sql", "arguments": json.dumps({"query": "select 1"})},
+        },
+        marker=_MARKER,
+        fold={"state": "armed"},
+    )
+    assert deny_tool["permission"] == "deny"
+
+
+def test_pre_tool_use_mcp_prefixed_foreign_thread_denied_journals_wire_name() -> None:
+    verdict = decide(
+        event="preToolUse",
+        payload={
+            "tool_name": "MCP:continuity",
+            "tool_input": {"op": "resume", "thread": 9796},
+        },
+        marker=_MARKER,
+        fold={"state": "armed"},
+    )
+    assert verdict["permission"] == "deny"
+    assert verdict["journal"]["tool"] == "MCP:continuity"
+
+
+def test_pre_tool_use_mcp_prefixed_second_hop_allowed_rename_denied() -> None:
+    allow = decide(
+        event="preToolUse",
+        payload={
+            "tool_name": "MCP:agent_bus_read",
+            "tool_input": {"op": "thread_get", "thread": 10223},
+        },
+        marker=_MARKER,
+        fold={"state": "poured"},
+    )
+    assert allow["permission"] == "allow"
+    deny = decide(
+        event="preToolUse",
+        payload={
+            "tool_name": "MCP:rename_chat",
+            "tool_input": {"title": "10223"},
+        },
+        marker=_MARKER,
+        fold={"state": "poured"},
+    )
+    assert deny["permission"] == "deny"
+    assert deny["journal"]["tool"] == "MCP:rename_chat"
+
+
 def test_malformed_read_set_hook_error() -> None:
     bad_marker = {"fence_id": "rf-x", "root": "10223", "read_set": "not-a-dict"}
     verdict = decide(

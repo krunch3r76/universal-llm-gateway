@@ -7,7 +7,7 @@ alwaysApply: true
 
 When the operator message matches `^resume \d+`:
 
-1. **Sole admitted first ULG hop:** `continuity(op=resume, thread=T)` where `T` is the thread id from the utterance. On the code MCP surface `continuity` is **server-primary** — call it directly (`user-vortex-code` / `CallDynamicTool` with that namespace). **Do not** call `GetDynamicTools` or `tool_search` before resume; the hook denies discovery spirals (FIX-19).
+1. **Sole admitted first ULG hop:** `continuity(op=resume, thread=T)` where `T` is the thread id from the utterance. On `user-vortex-code` it is **overflow**: call `dispatch(tool="continuity", arguments='{"op":"resume","thread":"T"}')` (direct `continuity` ⇒ not found). **No** `GetDynamicTools` / `tool_search` first; the hook denies discovery spirals.
 2. **Do not** `rename_chat`, search indexed chats, or read the repo before the bundle returns. The bundle is inline; if you receive an `rs_*` handle, `retrieve` it exactly once — it pops.
 3. Cite only ids from the returned `read_set.citable`. While the fence is open, durable `agent_bus send` must carry the bundle's `fence_id` (from `fence.fence_id` or `fence_carriage.fence_id`); pass `transcript_id` on `continuity(op=resume)` when the tab id is known (FIX-15).
 
