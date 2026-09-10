@@ -44,9 +44,6 @@ _MARKER = {
                     "tool": "retrieve",
                     "id_prefix": "rs_",
                 },
-                {
-                    "tool": "GetDynamicTools",
-                },
             ],
         }
     },
@@ -257,12 +254,36 @@ def test_call_dynamic_tool_retrieve_allowed() -> None:
     assert verdict["permission"] == "allow"
 
 
-def test_get_dynamic_tools_allowed() -> None:
+def test_get_dynamic_tools_denied() -> None:
     verdict = decide(
         event="beforeMCPExecution",
         payload={"tool_name": "GetDynamicTools", "tool_input": {}},
-        marker=_MARKER,
-        fold={"state": "poured"},
+        marker={**_MARKER, "transcript_id": "tab-abc"},
+        fold={"state": "armed"},
+    )
+    assert verdict["permission"] == "deny"
+    assert "GetDynamicTools" in verdict["agent_message"] or "server-primary" in verdict["agent_message"]
+
+
+def test_call_dynamic_tool_continuity_resume_allowed() -> None:
+    verdict = decide(
+        event="beforeMCPExecution",
+        payload={
+            "tool_name": "CallDynamicTool",
+            "tool_input": json.dumps(
+                {
+                    "namespace": "user-vortex-code",
+                    "toolName": "continuity",
+                    "arguments": {
+                        "op": "resume",
+                        "thread": "10223",
+                        "transcript_id": "tab-abc",
+                    },
+                }
+            ),
+        },
+        marker={**_MARKER, "transcript_id": "tab-abc"},
+        fold={"state": "armed"},
     )
     assert verdict["permission"] == "allow"
 

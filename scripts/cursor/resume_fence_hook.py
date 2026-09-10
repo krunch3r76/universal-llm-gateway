@@ -25,7 +25,7 @@ _DENIAL_FALLBACK = _MARKER_DIR / "denied-fallback.jsonl"
 _SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
 _MCP_YAML = Path.home() / ".gateway/mcp.yaml"
 _IDLE_S = int(os.environ.get("RESUME_FENCE_IDLE_S", "1800"))
-_UNCOVERED_TOOLS = frozenset({"Grep", "Glob", "SearchConversations"})
+_UNCOVERED_TOOLS = frozenset({"Grep", "Glob", "SearchConversations", "GetDynamicTools"})
 
 
 class _HookDataError(Exception):
@@ -134,6 +134,17 @@ def _mcp_call_allowed(
     return False
 
 
+def _first_hop_message(*, root: str, fence_id: str, transcript_id: str | None) -> str:
+    tid_suffix = ""
+    if transcript_id:
+        tid_suffix = f", transcript_id={transcript_id}"
+    return (
+        f"resume fence {fence_id}: call continuity(op=resume, thread={root}{tid_suffix}) "
+        f"via user-vortex-code (server-primary — no GetDynamicTools); "
+        f"durable send must carry fence_id={fence_id}"
+    )
+
+
 def _deny(
     *,
     fence_id: str,
@@ -162,6 +173,7 @@ def _decide_mcp(
     *,
     fence_id: str,
     root: str,
+    transcript_id: str | None,
     tool_name: str,
     tool_input: dict[str, Any],
     readable: dict[str, Any],
@@ -176,9 +188,10 @@ def _decide_mcp(
     return _deny(
         fence_id=fence_id,
         root=root,
-        agent_message=(
-            f"resume fence {fence_id}: call continuity(op=resume, thread={root}) "
-            "and cite only bundle ids; this call was denied and journaled"
+        agent_message=_first_hop_message(
+            root=root,
+            fence_id=fence_id,
+            transcript_id=transcript_id,
         ),
         journal={
             "surface": "mcp",
@@ -240,15 +253,17 @@ def _decide_uncovered_tool(
     *,
     fence_id: str,
     root: str,
+    transcript_id: str | None,
     tool_name: str,
     tool_input: dict[str, Any],
 ) -> dict[str, Any]:
     return _deny(
         fence_id=fence_id,
         root=root,
-        agent_message=(
-            f"resume fence {fence_id}: {tool_name} denied during resume turn — "
-            f"call continuity(op=resume, thread={root}) first"
+        agent_message=_first_hop_message(
+            root=root,
+            fence_id=fence_id,
+            transcript_id=transcript_id,
         ),
         journal={
             "surface": "tool",
@@ -280,6 +295,7 @@ def decide(
 
     fence_id = str(marker.get("fence_id") or "")
     root = str(marker.get("root") or marker.get("root_thread") or "")
+    transcript_id = str(marker.get("transcript_id") or "")
 
     try:
         readable = _readable(marker)
@@ -291,6 +307,7 @@ def decide(
             return _decide_mcp(
                 fence_id=fence_id,
                 root=root,
+                transcript_id=transcript_id or None,
                 tool_name=tool_name,
                 tool_input=tool_input,
                 readable=readable,
@@ -317,6 +334,7 @@ def decide(
                 return _decide_uncovered_tool(
                     fence_id=fence_id,
                     root=root,
+                    transcript_id=transcript_id or None,
                     tool_name=tool_name,
                     tool_input=tool_input,
                 )
@@ -349,6 +367,7 @@ def decide(
                 return _decide_mcp(
                     fence_id=fence_id,
                     root=root,
+                    transcript_id=transcript_id or None,
                     tool_name=mcp_name,
                     tool_input=mcp_input,
                     readable=readable,
@@ -535,15 +554,18 @@ def handle_event(event: str, payload: dict[str, Any]) -> dict[str, Any]:
                 )
                 if bundle and bundle.get("fence"):
                     fence = bundle["fence"]
+                    carriage = bundle.get("fence_carriage") or {}
                     _save_marker(
                         conversation_id,
                         {
                             "fence_id": fence.get("fence_id"),
                             "root": thread,
+                            "transcript_id": conversation_id,
                             "state": fence.get("state", "armed"),
                             "source": "agent_bus",
                             "fetched_at": fence.get("opened_at"),
                             "read_set": bundle.get("read_set"),
+                            "first_hop": carriage.get("first_hop"),
                         },
                     )
         return {"continue": True}
