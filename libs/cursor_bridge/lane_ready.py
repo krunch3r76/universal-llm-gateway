@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -10,6 +12,8 @@ _CURSOR = "cursor"
 _LIFE = "web-anthropic"
 
 TAB_READY_TTL_S = int(os.environ.get("CURSOR_BRIDGE_TAB_READY_TTL_S", "600"))
+TAB_READY_WAIT_S = float(os.environ.get("CURSOR_BRIDGE_TAB_READY_WAIT_S", "120"))
+TAB_READY_POLL_S = float(os.environ.get("CURSOR_BRIDGE_TAB_READY_POLL_S", "4"))
 
 
 def _subject(turn: dict[str, Any]) -> str:
@@ -119,3 +123,38 @@ def assess_lane_readiness(
         "tab_ready_age_s": round(age_s, 1),
         "tab_ready_subject": subj,
     }
+
+
+def wait_for_lane_ready(
+    fetch_turns: Callable[[], list[dict[str, Any]]],
+    *,
+    timeout_s: float | None = None,
+    poll_s: float | None = None,
+    ttl_s: int | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Poll ``assess_lane_readiness`` until ready or timeout.
+
+    Used after BRIDGE_OPEN keystrokes: ``ok=True`` on the ack must mean a
+    lane-scoped TAB_READY/TAB_ALIVE exists within TTL, not merely that chords fired.
+    """
+    timeout = TAB_READY_WAIT_S if timeout_s is None else timeout_s
+    interval = TAB_READY_POLL_S if poll_s is None else poll_s
+    started = time.monotonic()
+    last: dict[str, Any] | None = None
+    while time.monotonic() - started < timeout:
+        turns = fetch_turns()
+        last = assess_lane_readiness(turns, now=now, ttl_s=ttl_s)
+        if last["ready"]:
+            last["waited_s"] = round(time.monotonic() - started, 1)
+            return last
+        time.sleep(interval)
+    turns = fetch_turns()
+    last = assess_lane_readiness(turns, now=now, ttl_s=ttl_s)
+    out = {
+        **last,
+        "ready": False,
+        "reason": "tab_ready_timeout",
+        "waited_s": round(time.monotonic() - started, 1),
+    }
+    return out

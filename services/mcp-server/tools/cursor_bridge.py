@@ -132,11 +132,14 @@ def _status(*, thread: str | None, last: int) -> dict[str, Any]:
         if isinstance(t, dict)
     ]
     if last > 0 and len(turns) > last:
-        turns = turns[-last:]
+        turns = turns[:last]
+    turns = sorted(turns, key=lambda t: int(t.get("turn_number") or 0))
     reply_turns = [
         t["turn_number"]
-        for t in turns
-        if t["subject"] == "REPLY" and t["turn_number"] is not None
+        for t in raw
+        if isinstance(t, dict)
+        and t.get("subject") == "REPLY"
+        and t.get("turn_number") is not None
     ]
     readiness = assess_lane_readiness(
         [t for t in raw if isinstance(t, dict)]

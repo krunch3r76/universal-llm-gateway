@@ -83,9 +83,10 @@ def _open_cooldown_hit(thread: str) -> dict | None:
     if age_s >= _OPEN_COOLDOWN_S:
         return None
     return {
-        "ok": True,
+        "ok": False,
         "skipped": True,
         "reason": "cooldown",
+        "phase": "cooldown",
         "cooldown_s": _OPEN_COOLDOWN_S,
         "age_s": round(age_s, 1),
         "holder": prev.get("holder"),

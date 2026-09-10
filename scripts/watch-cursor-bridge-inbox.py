@@ -31,7 +31,11 @@ from typing import Any
 import httpx
 import yaml
 from bus_watch.state import paths_for, read_state, write_state
-from cursor_bridge.lane_ready import assess_lane_readiness
+from cursor_bridge.lane_ready import (
+    TAB_READY_WAIT_S,
+    assess_lane_readiness,
+    wait_for_lane_ready,
+)
 
 _REPO = Path(__file__).resolve().parents[1]
 _AGENT_BUS_SOCK = os.environ.get(
@@ -148,8 +152,10 @@ def _format_ack(res: dict[str, Any], *, prefix: str) -> str:
         "skipped",
         "focus_verified",
         "focus_probe",
+        "tab_ready_turn",
         "tab_ready_age_s",
         "tab_ready_ttl_s",
+        "waited_s",
     ):
         val = res.get(key)
         if val is not None and val != "":
@@ -215,6 +221,57 @@ class Lane:
     def _assess_tab_ready(self, client: httpx.Client) -> dict[str, Any]:
         return assess_lane_readiness(_fetch_lane_turns(client, self.thread))
 
+    def _wait_for_tab_ready(self, client: httpx.Client) -> dict[str, Any]:
+        return wait_for_lane_ready(
+            lambda: _fetch_lane_turns(client, self.thread),
+            timeout_s=TAB_READY_WAIT_S,
+        )
+
+    def _open_tab_for_bridge(self, client: httpx.Client, *, cowork_url: str) -> dict[str, Any]:
+        """Open or reuse a live tab; ``ok`` means lane-scoped TAB_READY within TTL."""
+        res = self.launch.open_tab(
+            thread=self.thread, slug=self.slug, cowork_url=cowork_url
+        )
+        if res.get("skipped") and res.get("reason") == "cooldown":
+            readiness = self._assess_tab_ready(client)
+            if readiness["ready"]:
+                return {
+                    **res,
+                    "ok": True,
+                    "tab_ready": True,
+                    "tab_ready_turn": readiness.get("turn"),
+                    "reason": "cooldown_tab_ready",
+                    "tab_ready_age_s": readiness.get("tab_ready_age_s"),
+                    "tab_ready_ttl_s": readiness.get("tab_ready_ttl_s"),
+                }
+            res = self.launch.open_tab(
+                thread=self.thread,
+                slug=self.slug,
+                cowork_url=cowork_url,
+                force=True,
+            )
+        if not res.get("ok") or res.get("dry_run"):
+            return res
+        readiness = self._wait_for_tab_ready(client)
+        if readiness["ready"]:
+            return {
+                **res,
+                "ok": True,
+                "tab_ready": True,
+                "tab_ready_turn": readiness.get("turn"),
+                "tab_ready_age_s": readiness.get("tab_ready_age_s"),
+                "tab_ready_ttl_s": readiness.get("tab_ready_ttl_s"),
+                "waited_s": readiness.get("waited_s"),
+            }
+        return {
+            **res,
+            "ok": False,
+            "phase": "tab_ready_wait",
+            "reason": readiness.get("reason", "tab_ready_timeout"),
+            "tab_ready_ttl_s": readiness.get("tab_ready_ttl_s"),
+            "waited_s": readiness.get("waited_s"),
+        }
+
     def handle(self, client: httpx.Client, turn: dict[str, Any]) -> None:
         n = int(turn["turn_number"])
         subject = str(turn.get("subject") or "").strip().upper()
@@ -226,16 +283,15 @@ class Lane:
             kv = _parse_kv(body)
             self.slug = kv.get("slug") or self.slug or f"bridge-{self.thread}"
             self.cowork_url = kv.get("cowork_url") or self.cowork_url
-            res = self.launch.open_tab(
-                thread=self.thread, slug=self.slug, cowork_url=self.cowork_url
-            )
+            res = self._open_tab_for_bridge(client, cowork_url=self.cowork_url)
+            tab_ready_turn = res.get("tab_ready_turn")
             write_state(
                 self.state_path,
                 slug=self.slug,
                 cowork_url=self.cowork_url,
                 last_open=res,
                 bridge_open_turn=n,
-                tab_ready_turn=None,
+                tab_ready_turn=tab_ready_turn,
                 tab_ready_at=None,
             )
             self._ack(
@@ -247,7 +303,8 @@ class Lane:
                 ),
             )
             print(
-                f"BRIDGE_OPEN turn={n} → open_tab {res.get('ok')} {res.get('reason', '')}",
+                f"BRIDGE_OPEN turn={n} → open_tab ok={res.get('ok')} "
+                f"reason={res.get('reason', '')} tab_ready_turn={tab_ready_turn}",
                 flush=True,
             )
             return

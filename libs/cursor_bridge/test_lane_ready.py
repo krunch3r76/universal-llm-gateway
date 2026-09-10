@@ -6,7 +6,11 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from cursor_bridge.lane_ready import assess_lane_readiness, lane_epoch_turn
+from cursor_bridge.lane_ready import (
+    assess_lane_readiness,
+    lane_epoch_turn,
+    wait_for_lane_ready,
+)
 
 
 def _turn(
@@ -73,6 +77,39 @@ def test_tab_gone_invalidates_ready() -> None:
     out = assess_lane_readiness(turns, now=now, ttl_s=600)
     assert out["ready"] is False
     assert out["reason"] == "no_tab_ready"
+
+
+@pytest.mark.offline
+def test_wait_for_lane_ready_succeeds_when_signal_arrives() -> None:
+    now = datetime(2026, 9, 10, 8, 2, 0, tzinfo=UTC)
+    calls = 0
+
+    def fetch() -> list[dict]:
+        nonlocal calls
+        calls += 1
+        if calls < 2:
+            return [_turn(5, "BRIDGE_OPEN", sender="web-anthropic")]
+        return [
+            _turn(5, "BRIDGE_OPEN", sender="web-anthropic"),
+            _turn(7, "TAB_READY", created_at=datetime(2026, 9, 10, 8, 1, 30, tzinfo=UTC)),
+        ]
+
+    out = wait_for_lane_ready(fetch, timeout_s=1.0, poll_s=0.01, now=now, ttl_s=600)
+    assert out["ready"] is True
+    assert out["turn"] == 7
+    assert calls >= 2
+
+
+@pytest.mark.offline
+def test_wait_for_lane_ready_times_out() -> None:
+    now = datetime(2026, 9, 10, 8, 2, 0, tzinfo=UTC)
+
+    def fetch() -> list[dict]:
+        return [_turn(5, "BRIDGE_OPEN", sender="web-anthropic")]
+
+    out = wait_for_lane_ready(fetch, timeout_s=0.05, poll_s=0.01, now=now, ttl_s=600)
+    assert out["ready"] is False
+    assert out["reason"] == "tab_ready_timeout"
 
 
 @pytest.mark.offline
