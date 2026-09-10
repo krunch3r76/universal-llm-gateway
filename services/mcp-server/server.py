@@ -55,6 +55,7 @@ from fs_impl import fs_impl
 from tool_error_enricher import register_tool_error_enricher
 from tool_search import capture_overflow_metadata, register_tool_search_tool
 from tools._agent_tools import JsonArgStr
+from tools.cursor_bridge import register_cursor_bridge_tools
 from tools.filesystem._cross_sandbox import copy_between_sandboxes_impl
 from universal_logging import get_logger
 
@@ -253,6 +254,7 @@ def _build_server(
     primary_tools = set(derive_surface_primary_tools(surface))
     mcp: FastMCP = FastMCP(f"gateway-tools-{surface}")
     register_tools_for_surface(mcp, surface)
+    register_cursor_bridge_tools(mcp)
     _discover_private_tools(mcp, surface=surface)
 
     @mcp.tool(title="Server Health Check")

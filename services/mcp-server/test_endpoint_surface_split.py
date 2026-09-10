@@ -24,6 +24,7 @@ LIFE_PRIMARY = frozenset(
         "agent_bus",
         "agent_bus_read",
         "cursor_request",
+        "cursor_bridge",
         "operator_request",
         "fs",
         "rag",
