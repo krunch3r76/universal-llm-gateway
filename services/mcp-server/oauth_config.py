@@ -193,4 +193,15 @@ def _load_dynamic_redirect_hosts(oauth_block: dict[str, object]) -> list[str]:
         if hosts:
             return hosts
 
-    return ["grok.com", "*.grok.com", "x.ai", "*.x.ai"]
+    # Grok Bot desktop signs in with Cursor; OAuth callbacks may use grok.com or
+    # cursor.com / cursor.sh hosts (verified 2026-09-09 gotgrok needsAuth probe).
+    return [
+        "grok.com",
+        "*.grok.com",
+        "x.ai",
+        "*.x.ai",
+        "cursor.com",
+        "*.cursor.com",
+        "cursor.sh",
+        "*.cursor.sh",
+    ]

@@ -128,3 +128,33 @@ def test_dynamic_registration_rejects_untrusted_redirect_host() -> None:
         _service().register_dynamic_client(
             {"redirect_uris": ["https://attacker.example/callback"]}
         )
+
+
+def test_dynamic_registration_accepts_cursor_redirect_uri() -> None:
+    """Grok Bot (Cursor sign-in) may register cursor.com / cursor.sh callbacks."""
+    svc = OAuthService(
+        config=OAuthServerConfig(
+            issuer="https://mcp.k-1.me",
+            resource_server_url="https://mcp.k-1.me/mcp/code",
+            supported_scopes=["mcp"],
+            dynamic_client_redirect_hosts=[
+                "grok.com",
+                "*.grok.com",
+                "cursor.com",
+                "*.cursor.com",
+                "cursor.sh",
+                "*.cursor.sh",
+            ],
+            clients=[],
+        ),
+        store=OAuthStore(),
+    )
+    registration = svc.register_dynamic_client(
+        {
+            "redirect_uris": ["https://api2.cursor.sh/oauth/callback"],
+            "grant_types": ["authorization_code"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+        }
+    )
+    assert str(registration["client_id"]).startswith("dyn-")
