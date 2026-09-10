@@ -66,8 +66,11 @@ def test_arm_resume_fence_journals_armed_only(root_thread) -> None:
     ):
         payload = arm_resume_fence("10223", transcript_id="tab-x", source="hook_prompt")
     assert payload["fence"]["state"] == "armed"
+    assert payload["fence_carriage"]["fence_id"] == payload["fence"]["fence_id"]
+    assert "continuity(op=resume" in payload["fence_carriage"]["first_hop"]
     assert "tape_verbal" not in json.dumps(payload)
-    assert payload["read_set"]["readable"]["mcp_allow"]
+    mcp_allow = payload["read_set"]["readable"]["mcp_allow"]
+    assert not any(r.get("tool") == "GetDynamicTools" for r in mcp_allow)
 
 
 def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
@@ -112,6 +115,12 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
     assert "grok" not in blob
     assert "9796" not in blob
     assert bundle["fence"]["state"] == "released"
+    assert bundle["fence_carriage"]["fence_id"] == bundle["fence"]["fence_id"]
+    assert bundle["mission"]["fence_id"] == bundle["fence"]["fence_id"]
+    assert not any(
+        r.get("tool") == "GetDynamicTools"
+        for r in bundle["read_set"]["readable"]["mcp_allow"]
+    )
     folded = fold_fence(bundle["fence"]["fence_id"])
     assert folded is not None
     assert folded.state == "released"

@@ -190,9 +190,6 @@ def _derive_read_set(
             "tool": "retrieve",
             "id_prefix": "rs_",
         },
-        {
-            "tool": "GetDynamicTools",
-        },
     ]
 
     pools_row: str | None = None
@@ -296,6 +293,15 @@ def arm_resume_fence(
             "state": state,
             "opened_at": opened_at,
         },
+        "fence_carriage": {
+            "fence_id": fence_id,
+            "transcript_id": transcript_id,
+            "durable_send_requires_fence_id": state in {"armed", "poured"},
+            "first_hop": (
+                f"continuity(op=resume, thread={thread_id}"
+                f"{f', transcript_id={transcript_id}' if transcript_id else ''})"
+            ),
+        },
         "read_set": read_set,
         "pools_row": pools_row,
     }
@@ -373,6 +379,16 @@ def assemble_resume_fence(
             "summary_row": envelope.get("consolidate_summary_row"),
             "resume_open": _extract_resume_open(card_text),
             "pools_row": pools_row,
+            "fence_id": fence_id,
+        },
+        "fence_carriage": {
+            "fence_id": fence_id,
+            "transcript_id": transcript_id,
+            "durable_send_requires_fence_id": False,
+            "first_hop": (
+                f"continuity(op=resume, thread={thread_id}"
+                f"{f', transcript_id={transcript_id}' if transcript_id else ''})"
+            ),
         },
         "tip_checkpoint": {
             "turn_number": tip["turn_number"],
