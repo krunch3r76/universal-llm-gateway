@@ -18,6 +18,24 @@ _ENTITY_RE = re.compile(
 _GIT_SHA_RE = re.compile(r"\b(?:git:)?([0-9a-f]{7,40})\b", re.IGNORECASE)
 
 
+def _release_reason(fence_id: str) -> str | None:
+    from .resume_fence_store import _rows_for_fence
+
+    for row in reversed(_rows_for_fence(fence_id)):
+        if str(row["event"]) != "released":
+            continue
+        raw = row.get("payload_json")
+        if not raw:
+            return None
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        reason = payload.get("release_reason")
+        return str(reason) if reason else None
+    return None
+
+
 def _load_bundle_read_set(fence_id: str) -> dict[str, Any] | None:
     """Re-read manifest from latest poured event payload when cached."""
     from .resume_fence_store import _rows_for_fence
@@ -116,7 +134,15 @@ def check_send_citation_gate(
             "reason": "resume_fence.not_found",
             "fence_id": effective_fence_id,
         }
-    if folded.state not in {"armed", "poured"}:
+    if folded.state == "released":
+        if _release_reason(effective_fence_id) != "pour_terminal":
+            return {
+                "error": "resume_fence.not_open",
+                "reason": "resume_fence.not_open",
+                "fence_id": effective_fence_id,
+                "state": folded.state,
+            }
+    elif folded.state not in {"armed", "poured"}:
         return {
             "error": "resume_fence.not_open",
             "reason": "resume_fence.not_open",

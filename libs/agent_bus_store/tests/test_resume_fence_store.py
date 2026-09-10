@@ -10,6 +10,7 @@ from agent_bus_store.resume_fence_store import (
     find_open_fence,
     fold_fence,
     mint_fence_id,
+    pour_terminal_release,
     release_fence,
 )
 
@@ -71,6 +72,56 @@ def test_find_open_fence_adoption_ambiguous_returns_none(fence_db) -> None:
             payload={"source": "hook_prompt"},
         )
     assert find_open_fence(root_thread="10223", transcript_id=None) is None
+
+
+def test_pour_terminal_release_closes_open_fence(fence_db) -> None:
+    fid = mint_fence_id()
+    append_fence_event(
+        fence_id=fid,
+        root_thread="10223",
+        event="armed",
+        transcript_id="tab-1",
+    )
+    append_fence_event(
+        fence_id=fid,
+        root_thread="10223",
+        event="poured",
+        transcript_id="tab-1",
+        payload={"bundle_bytes": 100},
+    )
+    assert fold_fence(fid).state == "poured"
+    terminal = pour_terminal_release(fence_id=fid)
+    assert terminal is not None
+    assert terminal.state == "released"
+
+
+def test_stale_null_poured_does_not_block_hook_adopt(fence_db) -> None:
+    stale = mint_fence_id()
+    append_fence_event(
+        fence_id=stale,
+        root_thread="10223",
+        event="armed",
+        transcript_id=None,
+        payload={"source": "mcp"},
+    )
+    append_fence_event(
+        fence_id=stale,
+        root_thread="10223",
+        event="poured",
+        transcript_id=None,
+        payload={"bundle_bytes": 50},
+    )
+    hook_fid = mint_fence_id()
+    append_fence_event(
+        fence_id=hook_fid,
+        root_thread="10223",
+        event="armed",
+        transcript_id="tab-hook",
+        payload={"source": "hook_prompt"},
+    )
+    adopted = find_open_fence(root_thread="10223", transcript_id=None)
+    assert adopted == hook_fid
+    assert fold_fence(stale).state == "released"
 
 
 def test_release_idempotent_when_not_open(fence_db) -> None:

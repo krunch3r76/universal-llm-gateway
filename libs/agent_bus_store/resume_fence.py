@@ -26,6 +26,7 @@ from .resume_fence_store import (
     find_open_fence,
     fold_fence,
     mint_fence_id,
+    pour_terminal_release,
     read_set_from_journal,
 )
 
@@ -444,6 +445,9 @@ def assemble_resume_fence(
         event="poured",
         payload=poured_payload,
     )
+    poured_terminal = pour_terminal_release(fence_id=fence_id)
+    if poured_terminal is not None:
+        bundle["fence"]["state"] = poured_terminal.state
     return bundle
 
 

@@ -9,6 +9,7 @@ import pytest
 
 from agent_bus_store.db import create_thread, create_turn, init_db
 from agent_bus_store.resume_fence import arm_resume_fence, assemble_resume_fence
+from agent_bus_store.resume_fence_store import fold_fence
 
 pytestmark = pytest.mark.offline
 
@@ -110,3 +111,7 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
     blob = json.dumps(bundle).lower()
     assert "grok" not in blob
     assert "9796" not in blob
+    assert bundle["fence"]["state"] == "released"
+    folded = fold_fence(bundle["fence"]["fence_id"])
+    assert folded is not None
+    assert folded.state == "released"
