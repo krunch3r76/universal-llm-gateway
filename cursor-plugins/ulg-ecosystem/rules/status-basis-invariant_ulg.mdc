@@ -1,0 +1,60 @@
+---
+description: Status-basis invariant — no bare boolean crosses a boundary; a status carries {value, as_of, source, scope, epoch}. Load when emitting, consuming, or reviewing any ok/ready/mismatch/stale flag, readiness gate, TTL, validity window, freshness envelope, or success response across a process, bus, HTTP, or file boundary.
+alwaysApply: false
+rule_category: engineering
+apply_tier: required_gate
+trigger_match_terms:
+  - bare boolean
+  - status basis
+  - ok=True
+  - tab_ready
+  - exposure_mismatch
+  - stale token
+  - validity contract
+  - TTL
+  - epoch
+  - freshness
+  - as_of
+  - verified_at
+  - success-shaped response
+---
+# Status-basis invariant
+
+**Invariant:** `∀ status s crossing a boundary: s = {value, as_of, source, scope, epoch}` — **no bare boolean
+crosses a boundary.** A consumer given `{ok: true}` cannot tell an `rc` from a delivery receipt; given
+`exposure_mismatch: true` cannot tell mark notional from entry notional; given `TAB_READY` cannot tell which
+epoch. Validity is the time-axis slice of this; observable, scope and units are the others.
+
+Boundary = process, agent-bus turn, HTTP payload, file on disk, MCP tool response. Doctrine:
+`decision:status-basis-invariant`. Evidence: agent-bus:99998 turns 6–7 (six instances, two classes).
+
+## Four axes — a status is judgeable only when all four are present
+
+| Axis | Field | Failure when absent (observed instance) |
+|---|---|---|
+| **Observable** | `source` — *what* was measured (rc, DOM receipt, WS cache, REST, ledger sum) | uinput `rc=0` reported as `ok=True` delivery; paste landed in Chrome (10462#33) |
+| **Scope** | `scope` — over *which* input set (lane vs returned window, per-row vs aggregate) | `tab_ready` true at `last=10`, false at `last=3`, same lane, same minute |
+| **Units** | operands + units carried with any comparison | `exposure_mismatch = |mark_notional − fill_notional| > 1.0` flip-flopping on ticks |
+| **Epoch / as_of** | `as_of` timestamp + `epoch` (the event that invalidates) | dead-tab `TAB_READY` passing the gate; `GO` surviving a manual flatten (9740#88) |
+
+## Rules
+
+- **Emit:** a status object, never a bool. Comparisons carry both operands and their units
+  (`{a, a_unit, b, b_unit, tolerance, as_of}`), not the verdict alone.
+- **Consume:** validity is **derived by the consumer that acts**, from `(epoch event, TTL, verified_at)` — never
+  read from a stored flag. Stored booleans drift by construction (class B); scratchboards are stored flags.
+- **Unskippable:** place the derivation at the single chokepoint that performs the effect (the order-placing
+  function, the paste-performing function), not at each caller. A convention-side check fails open the moment a
+  second path appears (`intent.expires_at` checked in `ems.py`, skipped by `fire.py`).
+- **TTL needs refresh:** any TTL without an activity-refresh rule lies in the other direction
+  (`tab_ready_stale` refusing a tab that had just answered, 10462#37). Same-seat activity refreshes.
+- **Success-shaped ≠ success:** read the response's own fields before claiming an effect
+  (`sidecar_uri: null` on HTTP 200; `notify` 200 with `status: disabled`). Pairs with `provenance-discipline`.
+- **Genus:** an append-only event ledger is not a continuity root; current state is derived from the authoritative
+  source (venue, filesystem, registry) at read, never from the ledger's newest row.
+
+## Anti-patterns
+
+`{ok: True}` from an exit code · a bool computed over a paginated window · a `$` tolerance between quantities in
+different units · a readiness token with no epoch · a `role:root` tag on a machine-written ledger · fixing one
+consumer path and calling the class closed.
