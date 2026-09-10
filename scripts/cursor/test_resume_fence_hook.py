@@ -363,6 +363,17 @@ def test_pre_tool_use_call_dynamic_tool_payload_root_fields_allowed() -> None:
     assert verdict["permission"] == "allow"
 
 
+def test_before_mcp_execution_continuity_direct_empty_args_allowed() -> None:
+    """FIX-19c: tool_name=continuity with {} on beforeMCPExecution defers to runtime."""
+    verdict = decide(
+        event="beforeMCPExecution",
+        payload={"tool_name": "continuity", "tool_input": {}},
+        marker=_MARKER,
+        fold={"state": "armed"},
+    )
+    assert verdict["permission"] == "allow"
+
+
 def test_pre_tool_use_call_dynamic_tool_empty_payload_deferred() -> None:
     """FIX-19b: empty preToolUse defers; beforeMCPExecution enforces."""
     pre = decide(

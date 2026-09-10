@@ -211,6 +211,10 @@ def _readable(marker: dict[str, Any]) -> dict[str, Any]:
     return readable
 
 
+def _mcp_allow_tool_names(mcp_allow: list[dict[str, Any]]) -> set[str]:
+    return {str(rule.get("tool") or "") for rule in mcp_allow if rule.get("tool")}
+
+
 def _decide_mcp(
     *,
     fence_id: str,
@@ -243,6 +247,56 @@ def _decide_mcp(
             "reason": "not_in_mcp_allow",
         },
     )
+
+
+def _resolve_mcp_tool(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    *,
+    mcp_allow: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any]]:
+    if tool_name in _MCP_WRAPPER_TOOLS:
+        return _unwrap_dynamic_tool(tool_name, tool_input)
+    if tool_name in _mcp_allow_tool_names(mcp_allow):
+        return tool_name, tool_input
+    return _unwrap_dynamic_tool(tool_name, tool_input)
+
+
+def _decide_mcp_hop(
+    *,
+    fence_id: str,
+    root: str,
+    transcript_id: str | None,
+    tool_name: str,
+    tool_input: dict[str, Any],
+    payload: dict[str, Any],
+    readable: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve MCP wrapper/direct tool names and enforce read_set."""
+    mcp_allow = readable.get("mcp_allow") or []
+    merged = _coalesce_tool_payload(tool_input, payload)
+    mcp_name, mcp_input = _resolve_mcp_tool(tool_name, merged, mcp_allow=mcp_allow)
+    # FIX-19b: wrapper shells may carry {} until execution time.
+    if mcp_name in _MCP_WRAPPER_TOOLS:
+        return {"permission": "allow"}
+    verdict = _decide_mcp(
+        fence_id=fence_id,
+        root=root,
+        transcript_id=transcript_id,
+        tool_name=mcp_name,
+        tool_input=mcp_input,
+        readable=readable,
+    )
+    # FIX-19c: beforeMCPExecution may register tool_name=continuity with args
+    # only at execution time (preToolUse already allowed the hop).
+    if (
+        verdict.get("permission") == "deny"
+        and mcp_name == "continuity"
+        and verdict.get("journal", {}).get("reason") == "not_in_mcp_allow"
+        and not str(mcp_input.get("op") or "")
+    ):
+        return {"permission": "allow"}
+    return verdict
 
 
 def _decide_shell(
@@ -347,14 +401,13 @@ def decide(
             tool_input = _parse_tool_input(
                 payload.get("tool_input") or payload.get("arguments")
             )
-            tool_input = _coalesce_tool_payload(tool_input, payload)
-            tool_name, tool_input = _unwrap_dynamic_tool(tool_name, tool_input)
-            return _decide_mcp(
+            return _decide_mcp_hop(
                 fence_id=fence_id,
                 root=root,
                 transcript_id=transcript_id or None,
                 tool_name=tool_name,
                 tool_input=tool_input,
+                payload=payload,
                 readable=readable,
             )
 
@@ -403,18 +456,13 @@ def decide(
                 )
                 return _decide_read(fence_id=fence_id, path=path, readable=readable)
             if tool_name in _MCP_WRAPPER_TOOLS or payload.get("tool_input"):
-                tool_input = _coalesce_tool_payload(tool_input, payload)
-                mcp_name, mcp_input = _unwrap_dynamic_tool(tool_name, tool_input)
-                # preToolUse often ships {} for CallDynamicTool; beforeMCPExecution
-                # has the full wire — defer instead of denying continuity (FIX-19b).
-                if mcp_name in _MCP_WRAPPER_TOOLS:
-                    return {"permission": "allow"}
-                return _decide_mcp(
+                return _decide_mcp_hop(
                     fence_id=fence_id,
                     root=root,
                     transcript_id=transcript_id or None,
-                    tool_name=mcp_name,
-                    tool_input=mcp_input,
+                    tool_name=tool_name,
+                    tool_input=tool_input,
+                    payload=payload,
                     readable=readable,
                 )
             return {"permission": "allow"}
