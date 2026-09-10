@@ -74,6 +74,11 @@ Two independent surfaces, one shape: a contract that exists and is consulted by 
 - **Genus:** an append-only event ledger is not a continuity root; current state is derived from the authoritative
   source (venue, filesystem, registry) at read, never from the ledger's newest row.
 
+- **A persistence layer whose tests can write the production path is a class of its own.** The first run of
+  the durable-halt test wrote `{halts: {}}` over the live `data/risk_halts.json` — the safety mechanism would
+  have disarmed itself at the moment it existed to fire. Every persisted-state module ships with an autouse
+  fixture that pins its path to `tmp_path`; a status file the tests can reach is not durable state.
+
 ## Anti-patterns
 
 `{ok: True}` from an exit code · a bool computed over a paginated window · a `$` tolerance between quantities in
