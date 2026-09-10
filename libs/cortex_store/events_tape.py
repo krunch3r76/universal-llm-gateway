@@ -92,7 +92,7 @@ def agent_bus_tape_rendered(
     tools: str = "none",
     include_extras: bool = False,
     index_count: int = 0,
-    codec_counts: dict[str, int] | None = None,
+    segment_codec_counts: dict[str, int] | None = None,
     surfaces: list[str] | None = None,
     tools_available: bool = False,
 ) -> Event:
@@ -109,7 +109,7 @@ def agent_bus_tape_rendered(
             "tools": tools,
             "include_extras": include_extras,
             "index_count": index_count,
-            "codec_counts": codec_counts or {},
+            "segment_codec_counts": segment_codec_counts or {},
             "surfaces": surfaces or [],
             "tools_available": tools_available,
         },

@@ -10,6 +10,7 @@ from fastapi import HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
 
 from ...checkpoint_auto_stamp_wiring import load_thread_tags
+from ...tape_degrade import TapeBudgetExceeded, tape_budget_exceeded_envelope
 from ...tape_harvest import render_tape_with_harvest
 from ...thread_classification import classify_thread
 from . import router
@@ -85,6 +86,11 @@ async def tape_route(
         )
     except HTTPException:
         raise
+    except TapeBudgetExceeded as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=tape_budget_exceeded_envelope(exc),
+        ) from exc
     except KeyError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -145,23 +145,6 @@ def _cells_for_lane(
     return cells
 
 
-def _bus_turn_id_for_turn(
-    cells: list[dict[str, Any]],
-    *,
-    transcript_id: str,
-    turn_index: int,
-) -> int | None:
-    for cell in cells:
-        if str(cell.get("transcript_id") or "") != transcript_id:
-            continue
-        turn_lo = int(cell.get("turn_lo") or 0)
-        turn_hi = int(cell.get("turn_hi") or 0)
-        if turn_lo < turn_index <= turn_hi:
-            bus_turn_id = cell.get("bus_turn_id")
-            return int(bus_turn_id) if bus_turn_id is not None else None
-    return None
-
-
 def _window_cells(
     cells: list[dict[str, Any]],
     *,
@@ -234,40 +217,6 @@ def _filter_messages_to_cells(
     return [msg for msg in messages if any(_message_in_cell(msg, cell) for cell in cells)]
 
 
-def _degrade_overflow_messages(
-    messages: list[dict[str, Any]],
-    *,
-    cells: list[dict[str, Any]],
-    budget_bytes: int,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
-    if len(json.dumps(messages).encode("utf-8")) <= budget_bytes:
-        return messages, [], False
-    kept = list(messages)
-    index_rows: list[dict[str, Any]] = []
-    while len(kept) > 1:
-        dropped = kept.pop(0)
-        sid = str(dropped.get("session_id") or "")
-        turn_index = int(dropped.get("turn_index") or 0)
-        tid = str(dropped.get("transcript_id") or "")
-        index_rows.append(
-            {
-                "transcript_span": f"transcript:{sid}#turn-{turn_index}",
-                "bus_turn_id": _bus_turn_id_for_turn(
-                    cells, transcript_id=tid, turn_index=turn_index
-                ),
-                "session_id": sid,
-                "transcript_id": tid,
-                "turn_index": turn_index,
-            }
-        )
-        if (
-            len(json.dumps({"messages": kept, "index": index_rows}).encode("utf-8"))
-            <= budget_bytes
-        ):
-            return kept, index_rows, True
-    return kept, index_rows, True
-
-
 def pour_lane_messages(
     *,
     thread_id: str,
@@ -288,8 +237,10 @@ def pour_lane_messages(
     bool,
     int,
     bool,
+    dict[str, Any] | None,
 ]:
     from agent_bus_store import tape_render as tape_live
+    from agent_bus_store.tape_degrade import degrade_overflow_messages, payload_bytes
 
     cells = _cells_for_lane(
         thread_id=thread_id, lane_journals=lane_journals, files_root=files_root
@@ -337,11 +288,15 @@ def pour_lane_messages(
     elif scope == "last_session":
         cells = _last_session_cells(cells)
         messages = _filter_messages_to_cells(messages, cells)
-    truncated = len(json.dumps(messages).encode("utf-8")) > budget_bytes
+    truncated = payload_bytes(messages, []) > budget_bytes
     index_rows: list[dict[str, Any]] = []
+    degraded: dict[str, Any] | None = None
     if truncated:
-        messages, index_rows, truncated = _degrade_overflow_messages(
-            messages, cells=cells, budget_bytes=budget_bytes
+        messages, index_rows, truncated, degraded = degrade_overflow_messages(
+            messages,
+            cells=cells,
+            budget_bytes=budget_bytes,
+            thread_id=thread_id,
         )
     tools_available = tape_live.compute_tools_available(
         segments=segments, messages=messages, tools=tools, thread_id=thread_id
@@ -349,10 +304,16 @@ def pour_lane_messages(
     messages = apply_tools_policy(messages, tools=tools)
     if not include_extras:
         messages = strip_extras(messages)
-    payload_bytes = len(
-        json.dumps({"messages": messages, "index": index_rows}).encode("utf-8")
+    payload_bytes_val = payload_bytes(messages, index_rows)
+    return (
+        messages,
+        index_rows,
+        cells,
+        truncated,
+        payload_bytes_val,
+        tools_available,
+        degraded,
     )
-    return messages, index_rows, cells, truncated, payload_bytes, tools_available
 
 
 def build_open_line(
@@ -372,6 +333,7 @@ def build_open_line(
     transcript_id: str | None = None,
     prior_cells: int = 1,
     tools_available: bool,
+    degraded: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from agent_bus_store import tape_render as tape_meta
     last_cp: dict[str, Any] | None = None
@@ -414,7 +376,7 @@ def build_open_line(
         "truncated": truncated,
         "budget_bytes": budget_bytes,
         "payload_bytes": payload_bytes,
-        "codec_counts": tape_meta.codec_counts(segments),
+        "segment_codec_counts": tape_meta.segment_codec_counts(segments),
         "surfaces": ["cursor"],
         "last_cp": last_cp,
         "open_interval": open_interval,
@@ -423,6 +385,8 @@ def build_open_line(
         "mismatch": mismatch,
         "tools_available": tools_available,
     }
+    if truncated and degraded is not None:
+        open_line["degraded"] = degraded
     if scope == "window" and transcript_id:
         open_line["window"] = {
             "transcript_id": transcript_id,
@@ -433,28 +397,11 @@ def build_open_line(
     return open_line
 
 
-def summary_line(open_line: dict[str, Any]) -> str:
-    harvest = open_line.get("harvest")
-    harvest_part = ""
-    if isinstance(harvest, dict):
-        harvest_part = (
-            f" harvest sealed={harvest.get('sealed', 0)}/{harvest.get('discovered', 0)}"
-        )
-    return (
-        f"Tape {open_line['thread_id']}: {open_line['segment_count']} segments, "
-        f"{open_line['message_count']} messages, "
-        f"{open_line['payload_bytes']}B/{open_line['budget_bytes']}B"
-        f"{', truncated' if open_line['truncated'] else ''}{harvest_part}."
-    )
-
-
 __all__ = [
     "_cells_for_lane",
-    "_degrade_overflow_messages",
     "_filter_messages_to_cells",
     "_last_session_cells",
     "_window_cells",
     "build_open_line",
     "pour_lane_messages",
-    "summary_line",
 ]

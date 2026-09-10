@@ -70,7 +70,7 @@ def _checkpoint_turns(cells: list[dict[str, Any]]) -> list[int]:
     return sorted(turns)
 
 
-def _codec_counts(segments: list[dict[str, Any]]) -> dict[str, int]:
+def _segment_codec_counts(segments: list[dict[str, Any]]) -> dict[str, int]:
     counts = {"md-v1": 0, "messages-v1": 0}
     for seg in segments:
         codec = str(seg.get("verbatim_codec") or "md-v1")
@@ -106,6 +106,9 @@ def build_envelope_from_tape(
     cells = tape.get("cells") or []
     meta_block = tape.get("meta") if isinstance(tape.get("meta"), dict) else {}
     sha = str(meta_block.get("messages_sha256") or messages_sha256(messages))
+    degraded = tape.get("degraded")
+    if not isinstance(degraded, dict):
+        degraded = open_line.get("degraded") if isinstance(open_line.get("degraded"), dict) else None
     meta = EnvelopeMeta(
         surface="mixed",
         tools=request.get("tools", "none"),
@@ -117,13 +120,14 @@ def build_envelope_from_tape(
         messages_sha256=sha,
         budget_bytes=int(open_line.get("budget_bytes") or request.get("budget_bytes") or 0),
         payload_bytes=int(open_line.get("payload_bytes") or 0),
-        codec_counts=_codec_counts(segments),
+        segment_codec_counts=_segment_codec_counts(segments),
         surfaces=_surfaces(segments),
         checkpoint_turns=_checkpoint_turns(cells),
         sources=_build_sources(segments),
         request=request,
         door=door,  # type: ignore[arg-type]
         execution_id=execution_id,
+        degraded=degraded,
     )
     return ContinuityMessagesEnvelope(
         messages=messages,
@@ -200,6 +204,8 @@ async def fetch_tape_envelope(
         if isinstance(detail, dict) and "error" not in detail and "detail" in detail:
             inner = detail["detail"]
             if isinstance(inner, dict):
+                if inner.get("error") == "tape_budget_exceeded":
+                    return inner, resp.status_code
                 code = inner.get("code") or inner.get("reason") or f"http_{resp.status_code}"
                 return (
                     {"error": {"code": str(code), "message": str(inner.get("error") or inner)}},

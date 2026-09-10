@@ -422,12 +422,13 @@ def test_b9_degrade_emits_index_lines_with_pointers() -> None:
         }
         for i in range(1, 5)
     ]
-    from agent_bus_store.tape_render import _degrade_overflow_messages
+    from agent_bus_store.tape_degrade import degrade_overflow_messages
 
-    kept, index_rows, truncated = _degrade_overflow_messages(
+    kept, index_rows, truncated, _degraded = degrade_overflow_messages(
         messages,
         cells=cells,
         budget_bytes=1200,
+        thread_id="6341",
     )
     assert truncated is True
     assert len(json.dumps({"messages": kept, "index": index_rows}).encode("utf-8")) <= 1200
@@ -448,12 +449,13 @@ def test_t14_byte_accurate_degrade_under_budget() -> None:
         }
         for i in range(1, 101)
     ]
-    from agent_bus_store.tape_render import _degrade_overflow_messages
+    from agent_bus_store.tape_degrade import degrade_overflow_messages
 
-    kept, index_rows, truncated = _degrade_overflow_messages(
+    kept, index_rows, truncated, _degraded = degrade_overflow_messages(
         messages,
         cells=[],
         budget_bytes=65536,
+        thread_id="6341",
     )
     assert truncated is True
     assert len(json.dumps({"messages": kept, "index": index_rows}).encode("utf-8")) <= 65536

@@ -61,7 +61,8 @@ class EnvelopeMeta(BaseModel):
     streaming: bool | None = None
     budget_bytes: int | None = None
     payload_bytes: int | None = None
-    codec_counts: dict[str, int] | None = None
+    segment_codec_counts: dict[str, int] | None = None
+    degraded: dict[str, Any] | None = None
     surfaces: list[str] | None = None
     checkpoint_turns: list[int] | None = None
     sources: list[dict[str, Any]] | None = None

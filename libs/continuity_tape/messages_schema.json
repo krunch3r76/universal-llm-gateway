@@ -30,7 +30,7 @@
           "default": null,
           "title": "Checkpoint Turns"
         },
-        "codec_counts": {
+        "segment_codec_counts": {
           "anyOf": [
             {
               "additionalProperties": {

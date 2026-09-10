@@ -17,12 +17,10 @@ from .tape_membership import (
 )
 from .tape_pour import (
     _cells_for_lane,
-    _degrade_overflow_messages,
     _filter_messages_to_cells,
     _last_session_cells,
     build_open_line,
     pour_lane_messages,
-    summary_line,
 )
 
 _DEFAULT_BUDGET_BYTES = 512_000
@@ -209,7 +207,7 @@ def compute_tools_available(
     return bool(messages)
 
 
-def codec_counts(segments: list[dict[str, Any]]) -> dict[str, int]:
+def segment_codec_counts(segments: list[dict[str, Any]]) -> dict[str, int]:
     md_v1 = sum(1 for s in segments if s.get("from_sealed", True))
     messages_v1 = sum(1 for s in segments if s.get("verbatim_codec") == "messages-v1")
     if messages_v1 == 0:
@@ -260,6 +258,7 @@ def render_tape(
         truncated,
         payload_bytes,
         tools_available,
+        degraded,
     ) = pour_lane_messages(
         thread_id=thread_id,
         journals=journals,
@@ -294,7 +293,7 @@ def render_tape(
         tools=tools,
         include_extras=include_extras,
         index_count=len(index_rows),
-        codec_counts=codec_counts(segments),
+        segment_codec_counts=segment_codec_counts(segments),
         surfaces=["cursor"],
         tools_available=tools_available,
     )
@@ -315,6 +314,7 @@ def render_tape(
         transcript_id=transcript_id,
         prior_cells=prior_cells,
         tools_available=tools_available,
+        degraded=degraded,
     )
     meta = {
         "messages_sha256": messages_sha256(messages),
@@ -326,7 +326,7 @@ def render_tape(
         "truncated": truncated,
         "surface": "cursor",
     }
-    body = {
+    body: dict[str, Any] = {
         "segments": segments,
         "cells": cells,
         "messages": messages,
@@ -338,7 +338,24 @@ def render_tape(
         "mismatch": mismatch,
         "meta": meta,
     }
+    if truncated and degraded is not None:
+        body["degraded"] = degraded
     return {"open_line": open_line, "summary": summary_line(open_line), **body}
+
+
+def summary_line(open_line: dict[str, Any]) -> str:
+    harvest = open_line.get("harvest")
+    harvest_part = ""
+    if isinstance(harvest, dict):
+        harvest_part = (
+            f" harvest sealed={harvest.get('sealed', 0)}/{harvest.get('discovered', 0)}"
+        )
+    return (
+        f"Tape {open_line['thread_id']}: {open_line['segment_count']} segments, "
+        f"{open_line['message_count']} messages, "
+        f"{open_line['payload_bytes']}B/{open_line['budget_bytes']}B"
+        f"{', truncated' if open_line['truncated'] else ''}{harvest_part}."
+    )
 
 
 __all__ = [
@@ -353,7 +370,8 @@ __all__ = [
     "anchor_jsonl_messages",
     "_load_live_anchor_transcript",
     "_find_jsonl_for_uuid",
-    "_degrade_overflow_messages",
+    "segment_codec_counts",
+    "summary_line",
     "connect",
     "list_checkpoint_turns",
 ]
