@@ -26,6 +26,7 @@ _SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock
 _MCP_YAML = Path.home() / ".gateway/mcp.yaml"
 _IDLE_S = int(os.environ.get("RESUME_FENCE_IDLE_S", "1800"))
 _UNCOVERED_TOOLS = frozenset({"Grep", "Glob", "SearchConversations", "GetDynamicTools"})
+_MCP_WRAPPER_TOOLS = frozenset({"CallDynamicTool", "call_mcp_tool", "Mcp", "mcp"})
 
 
 class _HookDataError(Exception):
@@ -401,11 +402,13 @@ def decide(
                     or ""
                 )
                 return _decide_read(fence_id=fence_id, path=path, readable=readable)
-            if tool_name in {"Mcp", "mcp", "CallDynamicTool", "call_mcp_tool"} or payload.get(
-                "tool_input"
-            ):
+            if tool_name in _MCP_WRAPPER_TOOLS or payload.get("tool_input"):
                 tool_input = _coalesce_tool_payload(tool_input, payload)
                 mcp_name, mcp_input = _unwrap_dynamic_tool(tool_name, tool_input)
+                # preToolUse often ships {} for CallDynamicTool; beforeMCPExecution
+                # has the full wire — defer instead of denying continuity (FIX-19b).
+                if mcp_name in _MCP_WRAPPER_TOOLS:
+                    return {"permission": "allow"}
                 return _decide_mcp(
                     fence_id=fence_id,
                     root=root,
@@ -554,7 +557,7 @@ def _unwrap_dynamic_tool(
     tool_name: str,
     tool_input: dict[str, Any],
 ) -> tuple[str, dict[str, Any]]:
-    if tool_name not in {"CallDynamicTool", "call_mcp_tool", "Mcp"}:
+    if tool_name not in _MCP_WRAPPER_TOOLS:
         return tool_name, tool_input
     inner_name = str(
         tool_input.get("toolName")

@@ -363,14 +363,31 @@ def test_pre_tool_use_call_dynamic_tool_payload_root_fields_allowed() -> None:
     assert verdict["permission"] == "allow"
 
 
-def test_pre_tool_use_call_dynamic_tool_empty_payload_denied() -> None:
-    verdict = decide(
+def test_pre_tool_use_call_dynamic_tool_empty_payload_deferred() -> None:
+    """FIX-19b: empty preToolUse defers; beforeMCPExecution enforces."""
+    pre = decide(
         event="preToolUse",
         payload={"tool_name": "CallDynamicTool", "tool_input": {}},
         marker=_MARKER,
         fold={"state": "armed"},
     )
-    assert verdict["permission"] == "deny"
+    assert pre["permission"] == "allow"
+    mcp = decide(
+        event="beforeMCPExecution",
+        payload={
+            "tool_name": "CallDynamicTool",
+            "tool_input": json.dumps(
+                {
+                    "namespace": "user-vortex-code",
+                    "toolName": "continuity",
+                    "arguments": {"op": "resume", "thread": "10223"},
+                }
+            ),
+        },
+        marker=_MARKER,
+        fold={"state": "armed"},
+    )
+    assert mcp["permission"] == "allow"
 
 
 def test_malformed_read_set_hook_error() -> None:

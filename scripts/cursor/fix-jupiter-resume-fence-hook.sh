@@ -3,14 +3,14 @@
 # clear stale local resume-fence markers. Cursor hooks run on the client host
 # (Jupiter), not on the workspace NFS host (io).
 #
-# Usage (from io or any host with `ssh jupiter`):
+# Usage (from io with `ssh jupiter`, or on Jupiter with --local):
 #   scripts/cursor/fix-jupiter-resume-fence-hook.sh
+#   scripts/cursor/fix-jupiter-resume-fence-hook.sh --local --clear-markers-only
 #   scripts/cursor/fix-jupiter-resume-fence-hook.sh --dry-run
 #   scripts/cursor/fix-jupiter-resume-fence-hook.sh --hook-only
-#   scripts/cursor/fix-jupiter-resume-fence-hook.sh --clear-markers-only
 #
 # Env:
-#   JUPITER_SSH_TARGET  SSH target (default: jupiter). Use io@jupiter if Cursor runs as io.
+#   JUPITER_SSH_TARGET  SSH target (default: jupiter). Use `local` or pass --local on Jupiter.
 #   ULG_ROOT            Repo path on Jupiter (default: /mnt/torus/projects/universal-llm-gateway)
 
 set -euo pipefail
@@ -20,6 +20,7 @@ ULG_ROOT="${ULG_ROOT:-/mnt/torus/projects/universal-llm-gateway}"
 DRY_RUN=0
 DO_HOOK=1
 DO_MARKERS=1
+RUN_LOCAL=0
 
 usage() {
   sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
@@ -28,6 +29,7 @@ usage() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --local) RUN_LOCAL=1 ;;
     --dry-run) DRY_RUN=1 ;;
     --hook-only) DO_MARKERS=0 ;;
     --clear-markers-only) DO_HOOK=0 ;;
@@ -45,8 +47,14 @@ if [[ "$DO_HOOK" -eq 0 && "$DO_MARKERS" -eq 0 ]]; then
   exit 1
 fi
 
+if [[ "$RUN_LOCAL" -eq 1 || "$SSH_TARGET" == "local" ]]; then
+  RUN_LOCAL=1
+  SSH_TARGET="local ($(hostname))"
+fi
+
 echo "=== fix jupiter resume-fence hook ==="
 echo "ssh_target=$SSH_TARGET"
+echo "run_local=$RUN_LOCAL"
 echo "ulg_root=$ULG_ROOT"
 echo "hook=$([[ "$DO_HOOK" -eq 1 ]] && echo yes || echo no)"
 echo "clear_markers=$([[ "$DO_MARKERS" -eq 1 ]] && echo yes || echo no)"
@@ -118,16 +126,25 @@ echo "done host=$(hostname) user=$(whoami)"
 REMOTE
 )
 
+run_remote() {
+  local dry_flag="$1"
+  if [[ "$RUN_LOCAL" -eq 1 ]]; then
+    bash -s -- "$ULG_ROOT" "$DO_HOOK" "$DO_MARKERS" "$dry_flag" <<<"$REMOTE_SCRIPT"
+  else
+    ssh -o BatchMode=yes "$SSH_TARGET" "bash -s" -- "$ULG_ROOT" "$DO_HOOK" "$DO_MARKERS" "$dry_flag" <<<"$REMOTE_SCRIPT"
+  fi
+}
+
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  echo "--- remote plan ---"
-  ssh -o BatchMode=yes "$SSH_TARGET" "bash -s" -- "$ULG_ROOT" "$DO_HOOK" "$DO_MARKERS" "1" <<<"$REMOTE_SCRIPT"
+  echo "--- plan ---"
+  run_remote 1
   echo "---"
-  echo "Re-run without --dry-run to apply on $SSH_TARGET"
+  echo "Re-run without --dry-run to apply"
   echo "Then on Jupiter Cursor: fresh tab -> resume 10223 (hook script is per-invocation; no reload needed)"
   exit 0
 fi
 
-ssh -o BatchMode=yes "$SSH_TARGET" "bash -s" -- "$ULG_ROOT" "$DO_HOOK" "$DO_MARKERS" "0" <<<"$REMOTE_SCRIPT"
+run_remote 0
 
 echo
 echo "DONE on $SSH_TARGET"
