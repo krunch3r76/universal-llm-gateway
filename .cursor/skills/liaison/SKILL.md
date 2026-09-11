@@ -75,6 +75,11 @@ Composer implement dispatches (`contract=implement`, omit `model=`) run **alongs
 | Long-context reasoning inside a work tab | Cursor **Fable 5.1 300k/1M Max** as the tab model (operator authorization 2026-09-10) | `Task(model=claude-fable-5-1-thinking-max)` only from a non-Fable tab — redundant inside one |
 | Headless successor (this tab must end) | CHECKPOINT + fresh tab `resume R`; autonomous fallback `cursor_request(contract=investigate, …)` carrying the tip CP | — |
 
+**Reasoning recon** (operator-endorsed 2026-09-10 22:39 PT, observed on 10479#18): before a judgment bind, the
+liaison sends the *wide read* to `cdp/opus-5` (`CDP: <trigger> — <why>`, tape cell / CP residue + the decision as
+context) and binds on the returned compact. The premium seat (Fable) never spends its window on breadth; it
+spends it on the bind. This is the economy pattern, not an exception to the ladder.
+
 Model walls (operator 2026-09-10): `cdp/fable` usage is **limited** — default CDP seat is `cdp/opus-5`; `cdp/fable`
 only when the operator names it. Never `anthropic/*` API. `cursor/claude-fable-5-1` is a **tab model** (this
 seat, work tabs) — never a `team_dispatch model=`. Same fix failed twice ⇒ stop, `REPEATED_FAILURE`.
