@@ -11,6 +11,7 @@ Modes:
                          lane changed or the heartbeat elapsed; the IDE tab arms
                          it as a monitored background shell (``/loop`` local
                          mechanism) so the sentinel wakes the seat.
+  --loop --spawn-on-wake gear-3 ticker: poll bus, spawn successor on attention
 
 Digest contents: root + child lanes (lineage), per-lane turn/unread counters,
 terminal-class last subjects, unread TOC scoped to those lanes, completed
@@ -38,9 +39,12 @@ from bus_watch.fable_lock import (
 )
 from bus_watch.fable_lock import (
     claim_fable_lock,
+    claim_ticker_lease,
     read_lock,
     refresh_fable_lock,
+    refresh_ticker_lease,
     release_fable_lock,
+    release_ticker_lease,
 )
 from bus_watch.liaison_digest import (
     TICK_OVERHEAD_TOKENS as _TICK_OVERHEAD_TOKENS,
@@ -51,6 +55,7 @@ from bus_watch.liaison_digest import (
     load_state,
     save_state,
 )
+from bus_watch.spawn_on_wake import tick_spawn_on_wake
 
 _SENTINEL = "AGENT_LOOP_TICK_liaison"
 
@@ -87,6 +92,16 @@ def main() -> int:
     p.add_argument("--state-file", default="")
     p.add_argument("--once", action="store_true")
     p.add_argument("--loop", action="store_true")
+    p.add_argument(
+        "--spawn-on-wake",
+        action="store_true",
+        help="gear-3: spawn successor on attention/checkpoint_due (with --loop)",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="evaluate spawn predicate without firing (with --spawn-on-wake)",
+    )
     p.add_argument(
         "--poll", type=int, default=60, help="seconds between bus polls in --loop"
     )
@@ -139,8 +154,14 @@ def main() -> int:
     if args.claim or args.release:
         if not args.holder:
             raise SystemExit("--holder required with --claim/--release")
+        policy = effective_policy({"policy": {}})
         result = (
-            claim_fable_lock(args.holder, hop=args.hop)
+            claim_fable_lock(
+                args.holder,
+                hop=args.hop,
+                max_hop_minutes=float(policy.get("max_hop_minutes") or 60),
+                root_id=str(args.root or "").strip(),
+            )
             if args.claim
             else release_fable_lock(args.holder)
         )
@@ -193,12 +214,22 @@ def main() -> int:
         digest = build_digest(
             root, state, register=register, budget_tokens=args.budget_tokens
         )
+        if args.holder and read_lock().get("holder") == args.holder:
+            policy = digest.get("policy") or {}
+            refresh_fable_lock(
+                args.holder,
+                max_hop_minutes=float(policy.get("max_hop_minutes") or 60),
+                turns_seen=int((digest.get("root") or {}).get("turns") or 0),
+            )
         save_state(state_path, state)
         print(json.dumps(digest, default=str))
         return 0
 
+    if args.spawn_on_wake:
+        return _spawn_loop(args, root, state, state_path, register)
+
     holder = args.holder or f"ide:{root}"
-    claim = claim_fable_lock(holder, hop=False)
+    claim = claim_fable_lock(holder, hop=False, root_id=root)
     if not claim.get("ok"):
         print(
             json.dumps(
@@ -224,13 +255,62 @@ def main() -> int:
         ),
         flush=True,
     )
-    # A killed loop must not leave a live holder behind: SIGTERM → SystemExit →
-    # the finally below releases the lock (stale-window fallback stays for SIGKILL).
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         return _loop(args, root, state, state_path, register, holder, last_emit)
     finally:
         release_fable_lock(holder)
+
+
+def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN202
+    claim = claim_ticker_lease(root)
+    if not claim.get("ok"):
+        print(json.dumps({"loop": "refused", "reason": "ticker_held", "lock": claim.get("lock")}), flush=True)
+        return 3
+    policy = effective_policy(state)
+    poll_s = int(policy.get("poll_seconds") or args.poll)
+    print(
+        json.dumps(
+            {
+                "loop": "spawn_on_wake",
+                "root": root,
+                "poll_s": poll_s,
+                "dry_run": bool(args.dry_run),
+                "policy_ready": policy.get("ready"),
+            }
+        ),
+        flush=True,
+    )
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    try:
+        while True:
+            if not refresh_ticker_lease(root):
+                print(json.dumps({"loop": "ticker_lost", "root": root}), flush=True)
+                return 4
+            try:
+                digest = build_digest(
+                    root, state, register=register, budget_tokens=args.budget_tokens
+                )
+            except (httpx.HTTPError, OSError) as exc:
+                print(json.dumps({"loop": "transport_error", "error": str(exc)[:200]}), flush=True)
+                time.sleep(poll_s)
+                continue
+            spawn_result = tick_spawn_on_wake(
+                digest, state, root, dry_run=args.dry_run
+            )
+            save_state(state_path, state)
+            line = {
+                "spawn": spawn_result,
+                "digest_ts": digest.get("ts"),
+                "attention": digest.get("attention"),
+                "checkpoint_due": (digest.get("budget") or {}).get("checkpoint_due"),
+            }
+            print(json.dumps(line, default=str), flush=True)
+            if args.dry_run:
+                return 0
+            time.sleep(poll_s)
+    finally:
+        release_ticker_lease(root)
 
 
 def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: ANN001, ANN202, PLR0913
@@ -247,7 +327,7 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
             digest = build_digest(
                 root, state, register=register, budget_tokens=args.budget_tokens
             )
-        except (httpx.HTTPError, OSError) as exc:  # transport blip: retry next poll
+        except (httpx.HTTPError, OSError) as exc:
             print(
                 json.dumps({"loop": "transport_error", "error": str(exc)[:200]}),
                 flush=True,
@@ -265,7 +345,6 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
             print(f"{_SENTINEL} {json.dumps(digest, default=str)}", flush=True)
             last_emit = now
         else:
-            # Not emitted: roll the counters back so unemitted polls cost no budget.
             state["ticks"] = int(state["ticks"]) - 1
             state["est_tokens"] = (
                 int(state["est_tokens"])

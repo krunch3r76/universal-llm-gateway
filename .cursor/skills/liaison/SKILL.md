@@ -51,11 +51,12 @@ fetch the bus to "double check".
 ## Single-Fable cap (operator 2026-09-10)
 
 `fable_seats(IDE ∪ cursor-sdk) ≤ 1`, enforced by `tmp/watchers/liaison-fable.lock` via `scripts/liaison-tick.py`:
-`--claim --holder ide:<root>|sdk:<dispatch_id> [--hop]` · `--release --holder …` · the `--loop` claims and
-refreshes it every poll and releases on exit/SIGTERM. Held ⇒ exit 3 — never run a second Fable. An `ide:` claim
-against a live `sdk:` holder writes `preempt_by`; the headless loop parks on its next poll (attended outranks).
-Stale holder (> 30 min silent) is breakable. `lock.hops` counts hops; **cap 8 per night** ⇒ CHECKPOINT + page,
-no successor.
+`--claim --holder ide:<root>|sdk:<dispatch_id> [--hop]` · `--release --holder …`. Model seats refresh the
+declared lease (`expires_at`) on each `--once` tick (`tick_seq` / `turns_seen`); `seat_lock_free` means
+`holder is None ∨ now > expires_at`. The gear-3 **ticker** holds `liaison-ticker.lock` (`ticker:<root>`) —
+it never takes the seat mutex and cannot write `preempt_by`. Attended `--loop` (gear 1/2) still claims the seat
+lock; gear 3 uses `--loop --spawn-on-wake` instead. `lock.hops` is keyed by `night_id`; **cap per night** ⇒
+CHECKPOINT + page, no successor.
 
 Headless successor (the hop target): `team_dispatch(op=generate, seat=cursor-sdk, contract=none, lane="A",
 model=cursor/claude-fable-5-1, cost_intent=deliberate_high_cost, cost_intent_reason=…, packet_path=
@@ -93,7 +94,7 @@ The successor model is **policy, never a constant**. `scripts/liaison-tick.py --
 |---|---|---|---|
 | `1-fable-mvp` (tonight) | `cursor/claude-fable-5-1` + `cost_intent=deliberate_high_cost` | ≤ 5 ticks / 60 min / poll 600 s | MVP proving; window holds |
 | `2-opus-hops` | `cursor/claude-opus-5` (no cost intent); CDP checks stay `cdp/opus-5` | ≤ 6 ticks | next iteration; Fable only in the attended window |
-| `3-wake-on-attention` | `cursor/claude-opus-5`, spawned **only** when a digest has `attention` or `checkpoint_due` (`wake_on_attention_only`) | poll 120 s, no model between events | economy; needs the spawn-on-wake leg (R8) |
+| `3-wake-on-attention` | `cursor/claude-opus-5`, spawned **only** when a digest has actionable `attention` (unread > 0) or `checkpoint_due` | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker.lock`, **not** the seat mutex | **disarmed by default** (`policy.ready=false`); arm with explicit `--set ready=true`. First live night = operator gate (A7) |
 
 Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). `SPEND_CAP`
 (`policy.max_dispatches_per_night`, default 12) is a designed stop, not a gear change — page, don't downshift

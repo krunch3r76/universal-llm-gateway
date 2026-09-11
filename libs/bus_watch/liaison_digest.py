@@ -23,7 +23,12 @@ from typing import Any
 import httpx
 import yaml
 
-from bus_watch.fable_lock import MAX_HOPS_PER_NIGHT, WATCH_DIR, read_lock
+from bus_watch.fable_lock import (
+    MAX_HOPS_PER_NIGHT,
+    WATCH_DIR,
+    current_night_id,
+    read_lock,
+)
 
 _AGENT_BUS_SOCK = os.environ.get(
     "AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock"
@@ -234,6 +239,7 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "max_hops_per_night": MAX_HOPS_PER_NIGHT,
     "max_dispatches_per_night": 12,
     "wake_on_attention_only": False,
+    "spawn_grace_seconds": 900,
     "successor_seat": "cursor-sdk",
     "successor_packet": "tmp/prompts/liaison-successor-10479.md",
     "ready": True,
@@ -250,6 +256,7 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         "successor_cost_intent": None,
         "wake_on_attention_only": True,
         "poll_seconds": 120,
+        "spawn_grace_seconds": 900,
     },
     # claude.ai seat (operator 2026-09-10: expanded usage there; Fable exhausted
     # until Sunday → opus). Successor is a CDP mission session on /mcp/life.
@@ -277,6 +284,8 @@ def effective_policy(state: dict[str, Any]) -> dict[str, Any]:
         "gear": gear,
     }
     merged["successor_is_fable"] = "fable" in str(merged.get("successor_model") or "")
+    if gear == "3-wake-on-attention" and "ready" not in overrides:
+        merged["ready"] = False
     return merged
 
 
@@ -294,8 +303,15 @@ def build_digest(
     changed = fp != state.get("fingerprint")
     ticks = int(state.get("ticks") or 0) + 1
     policy = effective_policy(state)
+    night_id = current_night_id()
+    digest_ts = _utcnow()
+    dispatches = int(
+        (state.get("dispatches_tonight_by_night") or {}).get(night_id)
+        or state.get("dispatches_tonight")
+        or 0
+    )
     digest: dict[str, Any] = {
-        "ts": _utcnow(),
+        "ts": digest_ts,
         "root": {
             "id": root_id,
             "slug": root.get("slug"),
@@ -306,9 +322,7 @@ def build_digest(
         },
         "register": register,
         "lanes": lanes,
-        "attention": [
-            lane for lane in lanes if lane["terminal"] or (lane["unread"] or 0) > 0
-        ],
+        "attention": [lane for lane in lanes if (lane["unread"] or 0) > 0],
         "unread_toc": unread,
         "watchers_complete_unrelayed": _watchers(state, lane_ids),
         "fleet": {"stargate": _health(_STARGATE_HEALTH), "giw": _health(_GIW_HEALTH)},
@@ -320,6 +334,12 @@ def build_digest(
             "source": "policy.max_hops_per_night",
         },
         "policy": policy,
+        "dispatches_tonight": {
+            "value": dispatches,
+            "source": "state.dispatches_tonight_by_night",
+            "as_of": digest_ts,
+        },
+        "night_id": night_id,
         "changed_since_last_tick": changed,
         "fingerprint": fp,
     }
