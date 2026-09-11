@@ -10,7 +10,8 @@ from continuity_tape.events import stargate_continuity_checkpoint_sealed
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._clients import cortex_dispatch, step_output_json
+from ._clients import cdp_ask_harvest, cortex_dispatch, step_output_json
+from .seal_claude_ai import seal_claude_ai
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,10 @@ def _count_turns_from_journal(session_id: str) -> int | None:
     from cortex_store.db import cortex_conn
     from cortex_store.dispatch_ops._shared import _FILES_ROOT
     from cortex_store.transcript_assembly import count_canonical_turn_headings
-    from cortex_store.verbatim_succession import journal_verbatim_bytes, split_verbatim_layer
+    from cortex_store.verbatim_succession import (
+        journal_verbatim_bytes,
+        split_verbatim_layer,
+    )
 
     with cortex_conn() as conn:
         row = conn.execute(
@@ -60,10 +64,50 @@ class ContinuityCheckpointSealHandler(BaseHandler):
         outputs = getattr(context, "outputs", {}) or {}
         resolve_json = step_output_json(outputs, "resolve")
 
+        if surface == "claude_ai":
+            chat_url = resolve_json.get("chat_url") or options.get("chat_url")
+            transcript_id = resolve_json.get("transcript_id") or options.get(
+                "transcript_id"
+            )
+            if not chat_url or not transcript_id:
+                payload = {
+                    "refused": {
+                        "code": "checkpoint.chat_url_required",
+                        "message": "chat_url and transcript_id required for claude_ai seal",
+                    }
+                }
+                return StepOutput(raw=json.dumps(payload), json=payload)
+            payload = await seal_claude_ai(
+                thread=thread,
+                chat_url=str(chat_url),
+                transcript_id=str(transcript_id),
+                from_agent=from_agent,
+                harvest_fn=cdp_ask_harvest,
+                cortex_dispatch_fn=cortex_dispatch,
+            )
+            if payload.get("refused") is None:
+                stargate_continuity_checkpoint_sealed(
+                    execution_id=execution_id,
+                    thread=thread,
+                    surface=surface,
+                    from_agent=from_agent,
+                    transcript_id=str(payload.get("transcript_id") or ""),
+                    turns_at_cp=int(payload.get("turn_count") or 0),
+                    session_id=str(payload.get("session_id") or "") or None,
+                )
+            return StepOutput(raw=json.dumps(payload, default=str), json=payload)
+
         jsonl_path = resolve_json.get("jsonl_path") or options.get("jsonl_path")
-        transcript_id = resolve_json.get("transcript_id") or options.get("transcript_id")
+        transcript_id = resolve_json.get("transcript_id") or options.get(
+            "transcript_id"
+        )
         if not jsonl_path:
-            payload = {"refused": {"code": "transcript_seal.missing_jsonl", "message": "no jsonl_path"}}
+            payload = {
+                "refused": {
+                    "code": "transcript_seal.missing_jsonl",
+                    "message": "no jsonl_path",
+                }
+            }
             return StepOutput(raw=json.dumps(payload), json=payload)
 
         seal_args: dict[str, Any] = {

@@ -21,6 +21,28 @@ def test_compose_body_refused_seal_omits_window() -> None:
     assert "Harvest: refused(transcript_seal.not_lane_window)" in body
 
 
+def test_compose_body_claude_ai_window_anchor() -> None:
+    body = _compose_body(
+        residue="WIP",
+        seal={
+            "transcript_id": "cse_abc123",
+            "turn_count": 1,
+            "session_id": "web-anthropic-test",
+            "messages_sha256": "deadbeef",
+            "chat_url": "https://claude.ai/cowork/cse_abc123",
+            "coverage": "tail_only",
+            "refused": None,
+        },
+        mission="resume",
+        surface="claude_ai",
+    )
+    assert (
+        "Window: chat_url=https://claude.ai/cowork/cse_abc123 · "
+        "transcript_id=cse_abc123 · turns@cp=1 · coverage=tail_only"
+    ) in body
+    assert "surface:claude_ai" in body
+
+
 def test_compose_body_success_anchor() -> None:
     body = _compose_body(
         residue="WIP",

@@ -1,11 +1,14 @@
-"""Resolve transcript jsonl_path for continuity CHECKPOINT (cursor surface)."""
+"""Resolve checkpoint window for continuity CHECKPOINT (cursor + claude_ai)."""
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, override
+from urllib.parse import urlparse
 
+from chat_harvest.models import ClassifyRefuse, classify_chat_url
 from continuity_tape.events import stargate_continuity_checkpoint_admitted
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -14,10 +17,22 @@ from ._clients import cortex_dispatch
 
 logger = logging.getLogger(__name__)
 
+_CSE_TOKEN_RE = re.compile(r"cse_[A-Za-z0-9]+")
+
 
 def _refused(code: str, message: str) -> StepOutput:
     payload = {"refused": {"code": code, "message": message}}
     return StepOutput(raw=json.dumps(payload), json=payload)
+
+
+def _transcript_id_from_chat_url(chat_url: str, classified_id: str = "") -> str | None:
+    match = _CSE_TOKEN_RE.search(chat_url)
+    if match:
+        return match.group(0)
+    if classified_id:
+        return classified_id
+    parts = [p for p in urlparse(chat_url.strip()).path.split("/") if p]
+    return parts[-1] if parts else None
 
 
 class ContinuityCheckpointResolveHandler(BaseHandler):
@@ -41,14 +56,42 @@ class ContinuityCheckpointResolveHandler(BaseHandler):
         )
 
         if surface == "claude_ai":
-            # Phase 3: classify_chat_url(chat_url) reopen criterion
-            return _refused(
-                "checkpoint.surface_not_landed",
-                "claude_ai checkpoint leg blocked until Phase 3 harvest lands",
+            chat_url = options.get("chat_url")
+            if not chat_url:
+                return _refused(
+                    "checkpoint.chat_url_required",
+                    "chat_url is required for claude_ai surface",
+                )
+            classified = classify_chat_url(str(chat_url))
+            classified_id = (
+                classified.conversation_id
+                if not isinstance(classified, ClassifyRefuse)
+                else ""
             )
+            transcript_id = _transcript_id_from_chat_url(str(chat_url), classified_id)
+            if isinstance(classified, ClassifyRefuse) and not transcript_id:
+                return _refused(
+                    "checkpoint.chat_url_unclassified",
+                    f"{classified.code}: {classified.reason}",
+                )
+            if not transcript_id:
+                return _refused(
+                    "checkpoint.chat_url_unclassified",
+                    "could not resolve transcript_id from chat_url",
+                )
+            payload = {
+                "thread": thread,
+                "surface": surface,
+                "from_agent": from_agent,
+                "chat_url": str(chat_url),
+                "transcript_id": transcript_id,
+            }
+            return StepOutput(raw=json.dumps(payload), json=payload)
 
         if surface != "cursor":
-            return _refused("checkpoint.surface_not_landed", f"unsupported surface {surface!r}")
+            return _refused(
+                "checkpoint.surface_not_landed", f"unsupported surface {surface!r}"
+            )
 
         jsonl_path = options.get("jsonl_path")
         transcript_id = options.get("transcript_id")

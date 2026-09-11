@@ -33,6 +33,7 @@ def step_output_json(outputs: dict[str, Any], step_name: str) -> dict[str, Any]:
 
 _HTTP_TIMEOUT_S = 30.0
 _CORTEX_TIMEOUT_S = 20.0
+_CDP_ASK_TIMEOUT_S = 90.0
 
 
 def _bus_headers() -> dict[str, str]:
@@ -42,7 +43,9 @@ def _bus_headers() -> dict[str, str]:
 
 async def cortex_dispatch(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """POST cortex-api ``/dispatch`` and return the JSON body or error dict."""
-    async with make_async_client(DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT_S) as client:
+    async with make_async_client(
+        DEFAULT_CORTEX_URL, timeout=_CORTEX_TIMEOUT_S
+    ) as client:
         try:
             resp = await client.post(
                 "/dispatch",
@@ -63,9 +66,36 @@ async def cortex_dispatch(tool: str, arguments: dict[str, Any]) -> dict[str, Any
     return data if isinstance(data, dict) else {"error": "non_object_response"}
 
 
+async def cdp_ask_harvest(
+    chat_url: str,
+    *,
+    limit: int = 50,
+    source: str = "chat",
+) -> dict[str, Any]:
+    """POST cdp_ask ``/v1/cse-session/harvest`` and return parsed JSON."""
+    base = os.getenv("CDP_ASK_URL", "http://jupiter:8770").rstrip("/")
+    payload = {"chat_url": chat_url, "limit": limit, "source": source}
+    async with make_async_client(base, timeout=_CDP_ASK_TIMEOUT_S) as client:
+        try:
+            resp = await client.post("/v1/cse-session/harvest", json=payload)
+        except Exception as exc:  # noqa: BLE001
+            return {"outcome": "error", "reason": str(exc)}
+    try:
+        data = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        return {"outcome": "error", "reason": f"invalid_json: {exc}"}
+    return (
+        data
+        if isinstance(data, dict)
+        else {"outcome": "error", "reason": "non_object_response"}
+    )
+
+
 async def stargate_post(path: str, body: dict[str, Any]) -> tuple[dict[str, Any], int]:
     """POST a Stargate API route and return ``(payload, status_code)``."""
-    async with make_async_client(DEFAULT_STARGATE_URL, timeout=_HTTP_TIMEOUT_S) as client:
+    async with make_async_client(
+        DEFAULT_STARGATE_URL, timeout=_HTTP_TIMEOUT_S
+    ) as client:
         try:
             resp = await client.post(path, json=body)
         except Exception as exc:  # noqa: BLE001
@@ -73,23 +103,33 @@ async def stargate_post(path: str, body: dict[str, Any]) -> tuple[dict[str, Any]
     try:
         payload = resp.json()
     except Exception:  # noqa: BLE001
-        payload = {"error": {"code": f"http_{resp.status_code}", "message": resp.text[:500]}}
+        payload = {
+            "error": {"code": f"http_{resp.status_code}", "message": resp.text[:500]}
+        }
     if not isinstance(payload, dict):
         payload = {"error": {"code": "invalid_response", "message": str(payload)}}
     return payload, resp.status_code
 
 
-async def bus_get(path: str, *, params: dict[str, Any] | None = None) -> tuple[dict[str, Any], int]:
+async def bus_get(
+    path: str, *, params: dict[str, Any] | None = None
+) -> tuple[dict[str, Any], int]:
     """GET agent-bus REST and return ``(payload, status_code)``."""
-    async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_HTTP_TIMEOUT_S) as client:
+    async with make_async_client(
+        DEFAULT_AGENT_BUS_URL, timeout=_HTTP_TIMEOUT_S
+    ) as client:
         try:
             resp = await client.get(path, params=params or {}, headers=_bus_headers())
         except Exception as exc:  # noqa: BLE001
-            return {"error": {"code": "agent_bus_unreachable", "message": str(exc)}}, 503
+            return {
+                "error": {"code": "agent_bus_unreachable", "message": str(exc)}
+            }, 503
     try:
         payload = resp.json()
     except Exception:  # noqa: BLE001
-        payload = {"error": {"code": f"http_{resp.status_code}", "message": resp.text[:500]}}
+        payload = {
+            "error": {"code": f"http_{resp.status_code}", "message": resp.text[:500]}
+        }
     if not isinstance(payload, dict):
         payload = {"error": {"code": "invalid_response", "message": str(payload)}}
     return payload, resp.status_code
@@ -114,15 +154,23 @@ async def bus_send(
     }
     if after_turn is not None:
         payload["after_turn"] = after_turn
-    async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=_HTTP_TIMEOUT_S) as client:
+    async with make_async_client(
+        DEFAULT_AGENT_BUS_URL, timeout=_HTTP_TIMEOUT_S
+    ) as client:
         try:
-            resp = await client.post("/threads/send", json=payload, headers=_bus_headers())
+            resp = await client.post(
+                "/threads/send", json=payload, headers=_bus_headers()
+            )
         except Exception as exc:  # noqa: BLE001
-            return {"error": {"code": "agent_bus_unreachable", "message": str(exc)}}, 503
+            return {
+                "error": {"code": "agent_bus_unreachable", "message": str(exc)}
+            }, 503
     try:
         data = resp.json()
     except Exception:  # noqa: BLE001
-        data = {"error": {"code": f"http_{resp.status_code}", "message": resp.text[:500]}}
+        data = {
+            "error": {"code": f"http_{resp.status_code}", "message": resp.text[:500]}
+        }
     if not isinstance(data, dict):
         data = {"error": {"code": "invalid_response", "message": str(data)}}
     return data, resp.status_code
@@ -146,9 +194,7 @@ async def bus_wait(
     return await bus_get(path, params=params)
 
 
-async def bus_fetch_turn(
-    *, thread: str, turn_number: int
-) -> dict[str, Any] | None:
+async def bus_fetch_turn(*, thread: str, turn_number: int) -> dict[str, Any] | None:
     """GET ``/turns/by-number`` for a single worker CLOSEOUT body."""
     payload, status = await bus_get(
         "/turns/by-number",
@@ -164,6 +210,7 @@ __all__ = [
     "bus_get",
     "bus_send",
     "bus_wait",
+    "cdp_ask_harvest",
     "cortex_dispatch",
     "stargate_post",
 ]
