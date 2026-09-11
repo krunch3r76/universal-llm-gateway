@@ -105,6 +105,10 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
     register_advisor_tools(mcp)
     register_close_tools(mcp)
     register_skill_suggest_tools(mcp)
+    # Continuity (checkpoint · resume · tape_read · status) is the common
+    # endpoint for claude.ai and Cursor seats: overflow on both mounts (reached
+    # via ``dispatch``), never a claude-manifest primary — life is at the D3 cap.
+    register_continuity_tools(mcp)
 
     if surface == "life":
         register_imprint_tools(mcp)
@@ -125,7 +129,6 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
         register_event_tools(mcp)
         register_pipeline_tools(mcp)
         register_pipeline_consult_tools(mcp)
-        register_continuity_tools(mcp)
         register_frontier_tools(mcp)
         register_panel_dispatch_tools(mcp)
         register_git_integrate_tools(mcp)
