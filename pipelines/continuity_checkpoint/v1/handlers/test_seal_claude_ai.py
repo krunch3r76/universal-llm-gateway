@@ -83,6 +83,59 @@ async def test_seal_claude_ai_happy_path_tail_only() -> None:
     assert close_args["closed_by"] == "succession"
     assert close_args["succession_seal_authority"] is True
     assert close_args["transcript_messages"]["messages"][0]["role"] == "assistant"
+    assert close_args["transcript_messages"]["meta"]["coverage"] == "tail_only"
+
+
+@pytest.mark.asyncio
+async def test_seal_claude_ai_harvest_declared_full_coverage() -> None:
+    harvest = AsyncMock(
+        return_value={
+            "outcome": "harvested",
+            "content_provenance": "cse-dom",
+            "coverage": "full",
+            "turns": [
+                {"author": "user", "text": "User turn text here.", "ordinal": 1},
+                {"author": "assistant", "text": "Assistant reply here.", "ordinal": 2},
+            ],
+            "truncated": False,
+            "cursor": 2,
+        }
+    )
+    dispatch = AsyncMock(
+        return_value={
+            "session_id": "web-anthropic-2026-09-10-120000-abc",
+            "journal_row_id": 7,
+            "turn_count": 2,
+            "content_hash": "sha256:deadbeef",
+            "transcript_entity_id": "transcript:web-anthropic-2026-09-10-120000-abc",
+        }
+    )
+    with (
+        patch(
+            "cortex_store.session_close_successor_hop.lookup_journaled_by_conversation_uuid",
+            return_value=None,
+        ),
+        patch(
+            "handlers.seal_claude_ai._lookup_session_id_for_transcript",
+            return_value=None,
+        ),
+        patch(
+            "cortex_store.dispatch_ops.ops_transcript_seal._stamp_succession_fields",
+            return_value=None,
+        ),
+    ):
+        payload = await seal_claude_ai(
+            thread="10479",
+            chat_url=_CSE_URL,
+            transcript_id=_CSE_ID,
+            from_agent="cursor",
+            harvest_fn=harvest,
+            cortex_dispatch_fn=dispatch,
+        )
+    assert payload["refused"] is None
+    assert payload["coverage"] == "full"
+    close_args = dispatch.await_args.args[1]
+    assert close_args["transcript_messages"]["meta"]["coverage"] == "full"
 
 
 @pytest.mark.asyncio

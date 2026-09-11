@@ -837,6 +837,30 @@ def _validate_web_envelope(
     body: SessionCloseRequest,
     envelope: ContinuityMessagesEnvelope,
 ) -> None:
+    """Reject envelopes without user content except one succession case.
+
+    Human web close requires at least one user turn. Succession with
+    harvest-declared ``meta.coverage == \"full\"`` may seal an assistant-only
+    cell when scroll-back proved full coverage; ``succession_seal_authority`` is
+    wire-settable, so ``coverage`` — not the authority flag — gates bypass.
+    """
+    if (
+        body.closed_by == "succession"
+        and body.succession_seal_authority
+        and envelope.meta.coverage == "full"
+    ):
+        from ..events_tape import session_close_succession_user_turn_bypass
+
+        user_turn_count = sum(1 for m in envelope.messages if m.get("role") == "user")
+        session_close_succession_user_turn_bypass(
+            session_id=body.session_id,
+            closed_by=body.closed_by or "succession",
+            coverage=envelope.meta.coverage,
+            message_count=len(envelope.messages),
+            user_turn_count=user_turn_count,
+        )
+        return
+
     user_with_content = [
         m
         for m in envelope.messages

@@ -250,6 +250,31 @@ def transcript_seal_verbatim_diverged(
 
 
 @event_factory
+def session_close_succession_user_turn_bypass(
+    *,
+    session_id: str,
+    closed_by: str,
+    coverage: str | None,
+    message_count: int,
+    user_turn_count: int = 0,
+) -> Event:
+    ev = Event(
+        signal="cortex.session_close.succession_user_turn_bypass",
+        role="observation",
+        scope="global",
+        payload={
+            "session_id": session_id,
+            "closed_by": closed_by,
+            "coverage": coverage,
+            "message_count": message_count,
+            "user_turn_count": user_turn_count,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
 def transcript_seal_codec_diverged(
     *,
     session_id: str,

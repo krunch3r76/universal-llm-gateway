@@ -112,7 +112,7 @@ async def seal_claude_ai(
         }
 
     content_provenance = harvest.get("content_provenance")
-    coverage = _coverage_from_harvest(harvest, len(deduped))
+    coverage = harvest.get("coverage") or _coverage_from_harvest(harvest, len(deduped))
     messages = [
         {
             "role": _author_to_role(str(turn.get("author") or "")),
@@ -148,6 +148,7 @@ async def seal_claude_ai(
             chat_url=chat_url,
             turn_count=len(messages),
             message_count=len(messages),
+            coverage=coverage,
         ),
     )
     close_args: dict[str, Any] = {

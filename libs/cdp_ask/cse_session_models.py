@@ -103,6 +103,7 @@ class HarvestResponse(BaseModel):
     code: str | None = None
     chat_url: str | None = None
     waited_ms: int | None = None
+    coverage: Literal["full", "tail"] | None = None
 
 
 class PasteRequest(BaseModel):

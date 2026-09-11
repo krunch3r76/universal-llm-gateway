@@ -7,12 +7,14 @@ from unittest.mock import MagicMock
 import pytest
 
 from cdp_ask.cse_session_harvest_scrape import (
+    _dom_to_harvested,
     compute_incomplete_dom,
     enrich_dom,
     is_loading,
     is_shell_title,
     pick_page_for_chat_url,
 )
+from cdp_ask.cse_session_models import HarvestRequest
 
 
 @pytest.mark.parametrize(
@@ -38,10 +40,24 @@ def test_is_loading_spinner_or_shell() -> None:
 
 
 def test_compute_incomplete_dom_requires_loading() -> None:
-    assert compute_incomplete_dom({"turns": [], "streaming": False, "loading": True}) is True
-    assert compute_incomplete_dom({"turns": [], "streaming": False, "loading": False}) is False
-    assert compute_incomplete_dom({"turns": [{"text": "x"}], "streaming": False, "loading": True}) is False
-    assert compute_incomplete_dom({"turns": [], "streaming": True, "loading": True}) is False
+    assert (
+        compute_incomplete_dom({"turns": [], "streaming": False, "loading": True})
+        is True
+    )
+    assert (
+        compute_incomplete_dom({"turns": [], "streaming": False, "loading": False})
+        is False
+    )
+    assert (
+        compute_incomplete_dom(
+            {"turns": [{"text": "x"}], "streaming": False, "loading": True}
+        )
+        is False
+    )
+    assert (
+        compute_incomplete_dom({"turns": [], "streaming": True, "loading": True})
+        is False
+    )
 
 
 def test_enrich_dom_defaults_missing_loading_false() -> None:
@@ -65,6 +81,30 @@ async def test_pick_page_for_chat_url_prefers_matching_cse_tab() -> None:
         fallback=fallback,
     )
     assert picked is match
+
+
+def test_dom_to_harvested_maps_coverage_full() -> None:
+    dom = {
+        "turns": [
+            {
+                "author": "user",
+                "text": "User turn with enough text here.",
+                "ordinal": 1,
+            },
+            {
+                "author": "assistant",
+                "text": "Assistant reply with enough text here.",
+                "ordinal": 2,
+            },
+        ],
+        "truncated": False,
+        "coverage": "full",
+    }
+    resp = _dom_to_harvested(dom, HarvestRequest(), None)
+    assert resp.outcome == "harvested"
+    assert resp.coverage == "full"
+    assert resp.turns[0].author == "user"
+    assert resp.turns[0].source == "cse-dom"
 
 
 @pytest.mark.asyncio

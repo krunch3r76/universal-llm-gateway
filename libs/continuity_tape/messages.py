@@ -69,6 +69,7 @@ class EnvelopeMeta(BaseModel):
     request: dict[str, Any] | None = None
     door: Literal["sync", "pipeline"] | None = None
     execution_id: str | None = None
+    coverage: Literal["full", "tail", "tail_only"] | None = None
 
 
 class ContinuityMessagesEnvelope(BaseModel):
