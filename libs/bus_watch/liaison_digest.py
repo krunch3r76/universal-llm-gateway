@@ -222,6 +222,50 @@ def _fingerprint(root: dict[str, Any], lanes: list[dict[str, Any]]) -> str:
     ).hexdigest()[:16]
 
 
+# Economy gears (operator 2026-09-10): the Fable 1M Max spend window holds through
+# the MVP and maybe one iteration; the successor model is policy, never a constant.
+# Gear 1 = tonight's MVP. Shift with ``liaison-tick.py --set successor_model=…``.
+POLICY_DEFAULTS: dict[str, Any] = {
+    "gear": "1-fable-mvp",
+    "successor_model": "cursor/claude-fable-5-1",
+    "successor_cost_intent": "deliberate_high_cost",
+    "max_ticks_per_hop": 5,
+    "max_hop_minutes": 60,
+    "poll_seconds": 600,
+    "max_hops_per_night": MAX_HOPS_PER_NIGHT,
+    "max_dispatches_per_night": 12,
+    "wake_on_attention_only": False,
+}
+GEAR_PRESETS: dict[str, dict[str, Any]] = {
+    "1-fable-mvp": {},
+    "2-opus-hops": {
+        "successor_model": "cursor/claude-opus-5",
+        "successor_cost_intent": None,
+        "max_ticks_per_hop": 6,
+    },
+    "3-wake-on-attention": {
+        "successor_model": "cursor/claude-opus-5",
+        "successor_cost_intent": None,
+        "wake_on_attention_only": True,
+        "poll_seconds": 120,
+    },
+}
+
+
+def effective_policy(state: dict[str, Any]) -> dict[str, Any]:
+    """Defaults ← gear preset ← explicit ``policy`` overrides stored in state."""
+    overrides = dict(state.get("policy") or {})
+    gear = str(overrides.get("gear") or POLICY_DEFAULTS["gear"])
+    merged = {
+        **POLICY_DEFAULTS,
+        **GEAR_PRESETS.get(gear, {}),
+        **overrides,
+        "gear": gear,
+    }
+    merged["successor_is_fable"] = "fable" in str(merged.get("successor_model") or "")
+    return merged
+
+
 def build_digest(
     root_id: str, state: dict[str, Any], *, register: str, budget_tokens: int
 ) -> dict[str, Any]:
@@ -255,6 +299,7 @@ def build_digest(
         "fleet": {"stargate": _health(_STARGATE_HEALTH), "giw": _health(_GIW_HEALTH)},
         "fable_lock": read_lock(),
         "hop_cap": {"max_hops_per_night": _MAX_HOPS_PER_NIGHT},
+        "policy": effective_policy(state),
         "changed_since_last_tick": changed,
         "fingerprint": fp,
     }
@@ -288,4 +333,12 @@ def build_digest(
     return digest
 
 
-__all__ = ["TICK_OVERHEAD_TOKENS", "build_digest", "load_state", "save_state"]
+__all__ = [
+    "GEAR_PRESETS",
+    "POLICY_DEFAULTS",
+    "TICK_OVERHEAD_TOKENS",
+    "build_digest",
+    "effective_policy",
+    "load_state",
+    "save_state",
+]

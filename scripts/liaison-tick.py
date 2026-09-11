@@ -47,11 +47,20 @@ from bus_watch.liaison_digest import (
 )
 from bus_watch.liaison_digest import (
     build_digest,
+    effective_policy,
     load_state,
     save_state,
 )
 
 _SENTINEL = "AGENT_LOOP_TICK_liaison"
+
+
+def _coerce(raw: str) -> object:
+    """``--set`` values: JSON literal when parseable (numbers, bools, null), else string."""
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return raw
 
 
 def _utcnow() -> str:
@@ -115,6 +124,16 @@ def main() -> int:
         action="store_true",
         help="release the single-Fable lock held by --holder",
     )
+    p.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="set a policy knob (gear, successor_model, max_ticks_per_hop, …); repeatable",
+    )
+    p.add_argument(
+        "--policy", action="store_true", help="print the effective policy and exit"
+    )
     args = p.parse_args()
 
     if args.claim or args.release:
@@ -148,10 +167,26 @@ def main() -> int:
         relayed = set(state.get("relayed_watchers") or [])
         relayed.update(x.strip() for x in args.mark_relayed.split(",") if x.strip())
         state["relayed_watchers"] = sorted(relayed)
-    if args.mark_checkpoint or args.mark_relayed:
+    if args.set:
+        policy = dict(state.get("policy") or {})
+        for item in args.set:
+            key, sep, raw = item.partition("=")
+            if not sep or not key.strip():
+                raise SystemExit(f"--set expects KEY=VALUE, got {item!r}")
+            policy[key.strip()] = _coerce(raw.strip())
+        state["policy"] = policy
+    if args.mark_checkpoint or args.mark_relayed or args.set or args.policy:
         save_state(state_path, state)
         if not (args.once or args.loop):
-            print(json.dumps({"ok": True, "state": str(state_path)}))
+            print(
+                json.dumps(
+                    {
+                        "ok": True,
+                        "state": str(state_path),
+                        "policy": effective_policy(state),
+                    }
+                )
+            )
             return 0
 
     if not args.loop:

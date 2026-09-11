@@ -79,6 +79,21 @@ Model walls (operator 2026-09-10): `cdp/fable` usage is **limited** — default 
 only when the operator names it. Never `anthropic/*` API. `cursor/claude-fable-5-1` is a **tab model** (this
 seat, work tabs) — never a `team_dispatch model=`. Same fix failed twice ⇒ stop, `REPEATED_FAILURE`.
 
+## Economy gears (operator 2026-09-10: the Fable 1M Max spend window is finite)
+
+The successor model is **policy, never a constant**. `scripts/liaison-tick.py --root R --set gear=<name>` (or any
+`--set key=value`) writes the policy; every digest carries `policy`; successors copy `policy.successor_model`.
+
+| Gear | Successor | Cadence | When |
+|---|---|---|---|
+| `1-fable-mvp` (tonight) | `cursor/claude-fable-5-1` + `cost_intent=deliberate_high_cost` | ≤ 5 ticks / 60 min / poll 600 s | MVP proving; window holds |
+| `2-opus-hops` | `cursor/claude-opus-5` (no cost intent); CDP checks stay `cdp/opus-5` | ≤ 6 ticks | next iteration; Fable only in the attended window |
+| `3-wake-on-attention` | `cursor/claude-opus-5`, spawned **only** when a digest has `attention` or `checkpoint_due` (`wake_on_attention_only`) | poll 120 s, no model between events | economy; needs the spawn-on-wake leg (R8) |
+
+Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). `SPEND_CAP`
+(`policy.max_dispatches_per_night`, default 12) is a designed stop, not a gear change — page, don't downshift
+silently. Never let a successor pick a model itself; a refused model is an INFO + stop, never a fallback.
+
 ## Objectives (autonomous queue)
 
 1. Scoreboard rows not DONE. 2. `cortex(todo_candidates)` filtered `implement_ready=true ∧ density_triage=mechanical`.
