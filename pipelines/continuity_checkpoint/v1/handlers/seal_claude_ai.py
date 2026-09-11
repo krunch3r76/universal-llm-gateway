@@ -21,6 +21,32 @@ _SUCCESSION_STUB = (
 _SUMMARY = "Succession harvest seal for claude.ai continuity speech tape."
 
 
+def _messages_with_turn_index(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Map harvested turns to messages-v1 rows carrying ``turn_index``.
+
+    ``render_verbatim_md`` pairs messages into ``## Turn N`` blocks by
+    ``turn_index`` and silently skips rows without one — an envelope built
+    without it renders to a bare header and fails the 200-char structure
+    guard (10479 e2e: "composed transcript is 161 chars"). Each user message
+    opens a turn; assistant messages attach to the open turn; a leading
+    assistant reply (tail-only harvest) opens turn 1 on its own.
+    """
+    messages: list[dict[str, Any]] = []
+    turn_index = 0
+    for turn in turns:
+        role = _author_to_role(str(turn.get("author") or ""))
+        if role == "user" or turn_index == 0:
+            turn_index += 1
+        messages.append(
+            {
+                "role": role,
+                "content": str(turn.get("text") or ""),
+                "turn_index": turn_index,
+            }
+        )
+    return messages
+
+
 def _normalize_turn_text(text: str) -> str:
     t = (text or "").strip()
     if t.startswith(_CLAUDE_RESPONDED_PREFIX):
@@ -113,13 +139,7 @@ async def seal_claude_ai(
 
     content_provenance = harvest.get("content_provenance")
     coverage = harvest.get("coverage") or _coverage_from_harvest(harvest, len(deduped))
-    messages = [
-        {
-            "role": _author_to_role(str(turn.get("author") or "")),
-            "content": str(turn.get("text") or ""),
-        }
-        for turn in deduped
-    ]
+    messages = _messages_with_turn_index(deduped)
 
     from cortex_store.session_close_successor_hop import (
         lookup_journaled_by_conversation_uuid,
