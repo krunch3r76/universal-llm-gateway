@@ -51,12 +51,14 @@ fetch the bus to "double check".
 | Read / recon / ≥3 files | `Task(subagent_type="explore")` in-tab | none |
 | Trivial / local edit (<20 lines, no served path) | in-seat | none — commit path-explicit same turn |
 | Mechanical implement with dense spec (`files_expected` + ACs) | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement\|pure-mechanical, lane="B", source_ref=todo:…, packet_path=…, dispatch_thread_id=R)` | none — Fable-densified packets skip skeptic |
-| Judgment fork | **this seat** (Fable) binds inline | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
-| Independent check | `Task(model=gpt-5.6-sol-medium\|luna-medium)` or `team_dispatch(model=cdp/opus-5)` | one round; disagreement ⇒ `CONSULT_PENDING` stop |
+| Judgment fork | **this seat** binds inline (Fable tab) | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
+| Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5)`** — announce `CDP: <trigger> — <why>`; opus hops (`agent_bus hop`) to stay lean | one round; disagreement ⇒ `CONSULT_PENDING` stop |
+| Long-context reasoning inside a work tab | Cursor **Fable 5.1 300k/1M Max** as the tab model (operator authorization 2026-09-10) | `Task(model=claude-fable-5-1-thinking-max)` only from a non-Fable tab — redundant inside one |
 | Headless successor (this tab must end) | CHECKPOINT + fresh tab `resume R`; autonomous fallback `cursor_request(contract=investigate, …)` carrying the tip CP | — |
 
-Never `anthropic/*` API. `cursor/claude-fable-5-1` only as **this tab's** model (operator-pinned) — never as a
-dispatch `model=`. Same fix failed twice ⇒ stop, `REPEATED_FAILURE`.
+Model walls (operator 2026-09-10): `cdp/fable` usage is **limited** — default CDP seat is `cdp/opus-5`; `cdp/fable`
+only when the operator names it. Never `anthropic/*` API. `cursor/claude-fable-5-1` is a **tab model** (this
+seat, work tabs) — never a `team_dispatch model=`. Same fix failed twice ⇒ stop, `REPEATED_FAILURE`.
 
 ## Objectives (autonomous queue)
 

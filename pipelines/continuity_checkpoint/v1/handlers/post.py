@@ -74,6 +74,11 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         outputs = getattr(context, "outputs", {}) or {}
         seal = step_output_json(outputs, "seal")
         pre = step_output_json(outputs, "pre_consolidate")
+        # The seat's own residue is the mission; pre_consolidate output is the
+        # fallback, the stub is last resort. A refused seal with no authored
+        # residue must not become the thread tip (bus auto-supersedes the prior
+        # CHECKPOINT on any subject starting with "CHECKPOINT").
+        caller_residue = str(options.get("residue") or "").strip()
 
         if not pre:
             pre = {
@@ -86,11 +91,13 @@ class ContinuityCheckpointPostHandler(BaseHandler):
                 "card_patch_applied": False,
             }
 
-        residue = str(pre.get("residue") or "")[:800]
+        residue = (caller_residue or str(pre.get("residue") or ""))[:800]
+        residue_source = "caller" if caller_residue else pre.get("residue_source")
         mission = str(pre.get("mission") or "")
         body = _compose_body(
             residue=residue, seal=seal, mission=mission, surface=surface
         )
+        supersedes_tip = not seal.get("refused") or bool(caller_residue)
 
         tip, _ = await bus_get(
             "/turns/by-number",
@@ -99,7 +106,11 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         after_turn = int(tip.get("turn_number") or 0) if isinstance(tip, dict) else 0
 
         slug = thread[:12]
-        subject = f"CHECKPOINT {slug} {execution_id[:8]}"
+        subject = (
+            f"CHECKPOINT {slug} {execution_id[:8]}"
+            if supersedes_tip
+            else f"INFO — checkpoint {slug} {execution_id[:8]} seal refused"
+        )
         send_resp, send_status = await bus_send(
             thread=thread,
             from_agent=from_agent,
@@ -162,7 +173,8 @@ class ContinuityCheckpointPostHandler(BaseHandler):
             "pre_consolidate": {
                 "executor": pre.get("executor") or "cursor-sdk",
                 "card_patch_applied": bool(pre.get("card_patch_applied")),
-                "residue_source": pre.get("residue_source"),
+                "residue_source": residue_source,
+                "supersedes_tip": supersedes_tip,
             },
             "harvest_entity_id": f"transcript:{session_id}" if session_id else None,
             "seal": {
