@@ -11,14 +11,17 @@ Seat this tab as the house liaison on continuity root `<root>` and arm the tick 
 4. **Goal** — call `CreateGoal` once with the objective from the tip CHECKPOINT `## Objective` (append
    "register=<register>; root=agent-bus:<root>"). This gives Cursor-native persistence across turns.
 5. **Arm the loop** (monitored shell, `block_until_ms: 0`, `notify_on_output` pattern `^AGENT_LOOP_TICK_liaison`,
-   reason `liaison <root> tick`, debounce 15000):
+   reason `liaison <root> tick`, debounce 15000). This tab is the one Fable seat: the loop claims the
+   single-Fable lock as `ide:<root>`; if it prints `"loop": "refused"` a headless successor holds it — it
+   will park within one poll (preempt requested), re-arm after ~60 s:
 
    ```bash
    cd /mnt/torus/projects/universal-llm-gateway && ~/.venvs/universal/bin/python scripts/liaison-tick.py \
-     --root <root> --register <register> --loop --poll 60 --heartbeat ${INTERVAL:-900}
+     --root <root> --register <register> --holder ide:<root> --loop --poll 60 --heartbeat ${INTERVAL:-900}
    ```
 
    Title the shell `Loop liaison <root>: tick`. Record the PID in the scoreboard `## Loop` row.
+   Digest consumers read the **last** stdout line of `--once` (sitecustomize prints validation lines first).
 6. **First tick now** — run § Tick protocol on the `--once` digest from step 3 so the first server tick is
    not cold. End the turn; wakes arrive as `AGENT_LOOP_TICK_liaison` notifications.
 

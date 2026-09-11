@@ -41,8 +41,27 @@ fetch the bus to "double check".
    --after-turn N --from-agent cursor-sdk --no-page` (the tick digest surfaces its completion; no tail needed).
 6. **Checkpoint** — `budget.checkpoint_due` ⇒ segment CHECKPOINT on R (`supersedes_turn=<tip>`, Residue ≤ 800
    chars: Settled · Live · Next · scoreboard sha) then `liaison-tick.py --root R --mark-checkpoint`.
-7. **Stop classes** — `stop_class=CONTEXT_BUDGET` ⇒ CHECKPOINT → page → **PARK** (kill the loop pid, end turn;
-   the successor is a fresh tab `resume R`). Other designed stops: § Stops.
+7. **Hop** (operator shape 2026-09-10: one IDE tab, hop on every checkpoint, successor headless) — after each
+   CHECKPOINT in **autonomous** register: kill the loop pid → `liaison-tick.py --release --holder <me>` →
+   spawn exactly one successor (§ Single-Fable cap) → end the turn. In **attended** register: CHECKPOINT, keep
+   ticking; the operator hops with `resume R` in the same single tab when they choose.
+8. **Stop classes** — `stop_class=CONTEXT_BUDGET` ⇒ CHECKPOINT → hop (autonomous) or page + PARK (attended).
+   Other designed stops: § Stops.
+
+## Single-Fable cap (operator 2026-09-10)
+
+`fable_seats(IDE ∪ cursor-sdk) ≤ 1`, enforced by `tmp/watchers/liaison-fable.lock` via `scripts/liaison-tick.py`:
+`--claim --holder ide:<root>|sdk:<dispatch_id> [--hop]` · `--release --holder …` · the `--loop` claims and
+refreshes it every poll and releases on exit/SIGTERM. Held ⇒ exit 3 — never run a second Fable. An `ide:` claim
+against a live `sdk:` holder writes `preempt_by`; the headless loop parks on its next poll (attended outranks).
+Stale holder (> 30 min silent) is breakable. `lock.hops` counts hops; **cap 8 per night** ⇒ CHECKPOINT + page,
+no successor.
+
+Headless successor (the hop target): `team_dispatch(op=generate, seat=cursor-sdk, contract=none, lane="A",
+model=cursor/claude-fable-5-1, cost_intent=deliberate_high_cost, cost_intent_reason=…, packet_path=
+tmp/prompts/liaison-successor-<R>.md, dispatch_thread_id=R, work_key=agent-bus:<R>, timeout_seconds=5400)` —
+the packet claims the lock with `--hop`, runs ≤ 5 ticks / 60 min, checkpoints, releases, spawns the next.
+Composer implement dispatches (`contract=implement`, omit `model=`) run **alongside** — they are not Fable seats.
 
 ## Dispatch ladder (cost ↓, cycle time ↓)
 
