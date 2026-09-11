@@ -45,7 +45,6 @@ _TICK_OVERHEAD_TOKENS = TICK_OVERHEAD_TOKENS
 _MAX_LANES = 25
 _SUBJECT_CAP = 120
 _WORKER_RE = re.compile(r"Worker thread `(\d+)`")
-_MAX_HOPS_PER_NIGHT = MAX_HOPS_PER_NIGHT
 
 
 def _utcnow() -> str:
@@ -294,6 +293,7 @@ def build_digest(
     fp = _fingerprint(root, lanes)
     changed = fp != state.get("fingerprint")
     ticks = int(state.get("ticks") or 0) + 1
+    policy = effective_policy(state)
     digest: dict[str, Any] = {
         "ts": _utcnow(),
         "root": {
@@ -313,8 +313,13 @@ def build_digest(
         "watchers_complete_unrelayed": _watchers(state, lane_ids),
         "fleet": {"stargate": _health(_STARGATE_HEALTH), "giw": _health(_GIW_HEALTH)},
         "fable_lock": read_lock(),
-        "hop_cap": {"max_hops_per_night": _MAX_HOPS_PER_NIGHT},
-        "policy": effective_policy(state),
+        # A gear preset or --set override raises the cap; this field must move
+        # with it or a seat stops at 8 while policy authorises 16 (row R14).
+        "hop_cap": {
+            "max_hops_per_night": policy["max_hops_per_night"],
+            "source": "policy.max_hops_per_night",
+        },
+        "policy": policy,
         "changed_since_last_tick": changed,
         "fingerprint": fp,
     }
