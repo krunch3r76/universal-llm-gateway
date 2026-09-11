@@ -113,7 +113,7 @@ watcher hygiene, scoreboard grooming — then lengthen the heartbeat (`--heartbe
 | `HOLD_MERGE` | land to master without `auto_land` | leave lane branch, row `LAND OWED`, page at next CP |
 | `CONSULT_PENDING` | independent check disagrees | row pinned, continue other rows |
 | `REPEATED_FAILURE` | same fix failed twice | stop the row, file friction, page |
-| `SPEND_CAP` | dispatch count ≥ 12/night or a dispatch > 2h | pause new dispatches, page |
+| `SPEND_CAP` | dispatch count ≥ `policy.max_dispatches_per_night` (read from the digest at tick time — never a number frozen in prose; R14 / a:33104) or a dispatch > 2h | pause new dispatches, page |
 | `CONTEXT_BUDGET` | digest `stop_class` | CHECKPOINT → page → PARK |
 
 Page: `curl -sS --unix-socket /tmp/universal-protocol/email-bridge.sock -H 'Content-Type: application/json'
