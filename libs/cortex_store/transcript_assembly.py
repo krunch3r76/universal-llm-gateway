@@ -53,18 +53,13 @@ def validate_transcript_turn_grammar(verbatim_md: str) -> TranscriptGrammarError
     """Validate verbatim turn headings match assembly grammar and sequence."""
     indices: list[int] = []
     for line_no, line in enumerate(verbatim_md.splitlines(), start=1):
-        if not line.startswith("## Turn"):
+        # Body text can start with "## Turn …" (operator speech). Only canonical
+        # assembly headings (`## Turn {N} — {topic}`) count; other ## Turn lines
+        # are content, not grammar failures (10469 seal: `## Turn 2 specifically`).
+        match = TURN_HEADING_RE.match(line)
+        if match is None:
             continue
-        if not TURN_HEADING_RE.match(line):
-            return TranscriptGrammarError(
-                reason="transcript.grammar_invalid",
-                detail=(
-                    f"line {line_no}: turn heading must match "
-                    f"'## Turn {{N}} — {{topic}}' (assembly grammar); got {line!r}"
-                ),
-                line_no=line_no,
-            )
-        indices.append(int(TURN_HEADING_RE.match(line).group(1)))  # type: ignore[union-attr]
+        indices.append(int(match.group(1)))
     if not indices:
         return None
     expected = list(range(1, len(indices) + 1))

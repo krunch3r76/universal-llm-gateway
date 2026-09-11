@@ -678,21 +678,25 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
             )
             messages_sha256 = envelope.meta.messages_sha256
 
-        grammar_err = validate_transcript_turn_grammar(verbatim_md)
-        if grammar_err is not None:
-            _structured_422(
-                body,
-                reason=grammar_err.reason,
-                field="transcript_jsonl_path|transcript_messages",
-                received=body.transcript_jsonl_path or "envelope",
-                expected="turn headings matching assembly grammar ## Turn N — topic",
-                examples=["## Turn 1 — first user message topic"],
-                hint=(
-                    "Turn headings must match render output: "
-                    "'## Turn {N} — {topic}' sequential from 1."
-                ),
-                detail=grammar_err.detail,
-            )
+        # messages-v1 is the seal/pour authority. Derived markdown may contain
+        # operator speech that looks like `## Turn N — …`; that must not 422
+        # the JSON envelope (10469 harvest: body `## Turn 2 —` duplicated index).
+        if verbatim_codec != "messages-v1":
+            grammar_err = validate_transcript_turn_grammar(verbatim_md)
+            if grammar_err is not None:
+                _structured_422(
+                    body,
+                    reason=grammar_err.reason,
+                    field="transcript_jsonl_path|transcript_messages",
+                    received=body.transcript_jsonl_path or "envelope",
+                    expected="turn headings matching assembly grammar ## Turn N — topic",
+                    examples=["## Turn 1 — first user message topic"],
+                    hint=(
+                        "Turn headings must match render output: "
+                        "'## Turn {N} — {topic}' sequential from 1."
+                    ),
+                    detail=grammar_err.detail,
+                )
 
         verbatim_bytes = len(verbatim_md.encode("utf-8"))
         composed_md = compose_full_transcript(verbatim_md, body.session_summary_md)
