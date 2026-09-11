@@ -1,18 +1,17 @@
-"""Stargate ``/api/v1/continuity/*`` routes (Phase 0 tape-read · Phase 4b checkpoint)."""
+"""Stargate ``/api/v1/continuity/*`` routes (tape-read · checkpoint)."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
 
+from continuity_tape.messages import ContinuityMessagesEnvelope
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 from systems.proxy.dependencies import get_auth_dependency
-
-from continuity_tape.messages import ContinuityMessagesEnvelope
 
 from .models import CheckpointAccepted, CheckpointRequest, TapeReadRequest
 from .tape_read import fetch_tape_envelope
@@ -46,8 +45,10 @@ async def continuity_tape_read(
     body: TapeReadRequest,
     current_user: dict[str, Any] = Depends(get_auth_dependency),
 ) -> JSONResponse:
-    """Door 1 sync relay — agent-bus tape render wrapped as ``ContinuityMessagesEnvelope``."""
-    caller_agent = str(current_user.get("agent") or current_user.get("sub") or "stargate")
+    """Door 1 sync relay — agent-bus tape as ``ContinuityMessagesEnvelope``."""
+    caller_agent = str(
+        current_user.get("agent") or current_user.get("sub") or "stargate"
+    )
     payload, status = await fetch_tape_envelope(
         body.thread,
         scope=body.scope,
@@ -77,11 +78,11 @@ async def continuity_checkpoint(
     current_user: dict[str, Any] = Depends(get_auth_dependency),
 ) -> JSONResponse:
     """Admit continuity-checkpoint-v1 async pipeline for a root lane CHECKPOINT."""
-    if body.surface == "claude_ai":
+    if body.surface == "claude_ai" and not body.chat_url:
         return _error_response(
             422,
-            "checkpoint.surface_not_landed",
-            "claude_ai checkpoint leg blocked until Phase 3 harvest lands",
+            "checkpoint.chat_url_required",
+            "chat_url is required for claude_ai checkpoint surface",
         )
 
     caller_agent = body.from_agent or str(
@@ -142,7 +143,12 @@ async def continuity_checkpoint(
         try:
             detail = resp.json()
         except ValueError:
-            detail = {"error": {"code": f"http_{resp.status_code}", "message": resp.text[:500]}}
+            detail = {
+                "error": {
+                    "code": f"http_{resp.status_code}",
+                    "message": resp.text[:500],
+                }
+            }
         if isinstance(detail, dict) and "error" in detail:
             return JSONResponse(content=detail, status_code=resp.status_code)
         return _error_response(

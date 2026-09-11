@@ -21,6 +21,7 @@ def _compose_body(
     residue: str,
     seal: dict[str, Any],
     mission: str,
+    surface: str = "cursor",
 ) -> str:
     lines = ["## Residue (authored — cap ~800 chars)", residue.strip(), "", "## Anchor"]
     refused = seal.get("refused")
@@ -31,12 +32,26 @@ def _compose_body(
         turn_count = seal.get("turn_count") or 0
         session_id = seal.get("session_id") or ""
         sha = seal.get("messages_sha256") or ""
-        lines.append(f"Window: transcript_id={transcript_id} · turns@cp={turn_count}")
+        if surface == "claude_ai":
+            chat_url = seal.get("chat_url") or ""
+            coverage = seal.get("coverage") or "tail_only"
+            lines.append(
+                f"Window: chat_url={chat_url} · transcript_id={transcript_id} · "
+                f"turns@cp={turn_count} · coverage={coverage}"
+            )
+            harvest_surface = "claude_ai"
+        else:
+            lines.append(
+                f"Window: transcript_id={transcript_id} · turns@cp={turn_count}"
+            )
+            harvest_surface = "cursor"
         lines.append(
             f"Harvest: transcript:{session_id} · messages_sha256:{sha} · "
-            "codec:messages-v1 · surface:cursor"
+            f"codec:messages-v1 · surface:{harvest_surface}"
         )
-    mission_line = mission.strip() or "Mission: resume continuity house from this CHECKPOINT."
+    mission_line = (
+        mission.strip() or "Mission: resume continuity house from this CHECKPOINT."
+    )
     if not mission_line.startswith("Mission:"):
         mission_line = f"Mission: {mission_line}"
     lines.extend(["", mission_line, CANONICAL_RESUME_FOOTER])
@@ -73,7 +88,9 @@ class ContinuityCheckpointPostHandler(BaseHandler):
 
         residue = str(pre.get("residue") or "")[:800]
         mission = str(pre.get("mission") or "")
-        body = _compose_body(residue=residue, seal=seal, mission=mission)
+        body = _compose_body(
+            residue=residue, seal=seal, mission=mission, surface=surface
+        )
 
         tip, _ = await bus_get(
             "/turns/by-number",
