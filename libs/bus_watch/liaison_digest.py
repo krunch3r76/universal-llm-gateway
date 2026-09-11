@@ -235,6 +235,9 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "max_hops_per_night": MAX_HOPS_PER_NIGHT,
     "max_dispatches_per_night": 12,
     "wake_on_attention_only": False,
+    "successor_seat": "cursor-sdk",
+    "successor_packet": "tmp/prompts/liaison-successor-10479.md",
+    "ready": True,
 }
 GEAR_PRESETS: dict[str, dict[str, Any]] = {
     "1-fable-mvp": {},
@@ -248,6 +251,18 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         "successor_cost_intent": None,
         "wake_on_attention_only": True,
         "poll_seconds": 120,
+    },
+    # claude.ai seat (operator 2026-09-10: expanded usage there; Fable exhausted
+    # until Sunday → opus). Successor is a CDP mission session on /mcp/life.
+    # NOT READY until the life-surface successor packet lands (todo
+    # cse-liaison-seat-claude-ai): the spawn call shape differs (team_dispatch
+    # model=cdp/…, purpose=mission) and the seat has no shell for the tick script.
+    "4-cdp-liaison": {
+        "successor_seat": "cdp",
+        "successor_model": "cdp/opus-5",
+        "successor_cost_intent": None,
+        "successor_packet": "tmp/prompts/liaison-successor-10479-life.md",
+        "ready": False,
     },
 }
 
