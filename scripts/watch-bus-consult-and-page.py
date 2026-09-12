@@ -26,6 +26,7 @@ from urllib.parse import urlencode
 
 import httpx
 import yaml
+from bus_watch.arm_contract import NO_PRODUCER_HELP, require_producer_declaration
 from bus_watch.poll import DEFAULT_MAX_HOURS, DEFAULT_WAIT_SLICE_S, sliced_wait_loop
 from bus_watch.producer_grace import ProducerGrace
 from bus_watch.stall_pop import emit_stall_pop, should_emit_stall_pop
@@ -38,7 +39,9 @@ from bus_watch.verdict import (
 )
 
 _REPO = Path(__file__).resolve().parents[1]
-_AGENT_BUS_SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
+_AGENT_BUS_SOCK = os.environ.get(
+    "AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock"
+)
 _EMAIL_BRIDGE_SOCK = os.environ.get(
     "EMAIL_BRIDGE_SOCK", "/tmp/universal-protocol/email-bridge.sock"
 )
@@ -217,7 +220,12 @@ def main() -> int:
     parser.add_argument(
         "--execution-id",
         default="",
-        help="cdp-generate execution_id to pin producer projection (from team_dispatch payload)",
+        help="dispatch execution_id to pin producer projection (from team_dispatch payload)",
+    )
+    parser.add_argument(
+        "--no-producer",
+        action="store_true",
+        help=NO_PRODUCER_HELP,
     )
     parser.add_argument(
         "--producer-grace-seconds",
@@ -233,6 +241,15 @@ def main() -> int:
     thread_id = str(args.thread).strip()
     from_agent = str(args.from_agent).strip()
     execution_id = str(args.execution_id).strip()
+    arm_error = require_producer_declaration(
+        execution_id, no_producer=bool(args.no_producer)
+    )
+    if arm_error:
+        # Fail at arm time, loudly on both channels: the stall-pop line wakes the
+        # IDE tail, the stderr line reaches a human reading the supervisor output.
+        emit_stall_pop(arm_error)
+        print(f"watch-bus-consult: {arm_error}", file=sys.stderr, flush=True)
+        return 2
     state_path = Path(args.state_file) if str(args.state_file).strip() else None
     token = _token()
     slice_s = max(1.0, float(args.wait_slice_seconds))
@@ -292,7 +309,11 @@ def main() -> int:
         client = _bus_client(token, timeout_s=slice_s)
 
     def on_incomplete(snap: dict[str, Any]) -> dict[str, Any]:
-        nonlocal predicate_unmet_slices, last_turn_count, last_stall_reason, unlinked_warned
+        nonlocal \
+            predicate_unmet_slices, \
+            last_turn_count, \
+            last_stall_reason, \
+            unlinked_warned
         nonlocal last_verdict
         status = snap.get("status")
         turn_count = snap.get("turn_count")
@@ -308,12 +329,15 @@ def main() -> int:
                 turn_count_i = None
 
         if execution_id and producer.get("state") == "unlinked" and not unlinked_warned:
-            print(
-                f"watch-bus-consult: mis-arm — execution_id={execution_id!r} "
-                f"has no dispatch link on thread {thread_id}",
-                file=sys.stderr,
-                flush=True,
+            # A pinned execution with no dispatch link means the substrate never
+            # registered this producer (seen for cdp generate on 10479): the seat
+            # must know now, not at expiry — hence a stall-pop, not only stderr.
+            unlinked_reason = (
+                f"mis-arm — execution_id={execution_id!r} has no dispatch link on "
+                f"thread {thread_id}; producer death is undetectable from this watch"
             )
+            emit_stall_pop(unlinked_reason)
+            print(f"watch-bus-consult: {unlinked_reason}", file=sys.stderr, flush=True)
             unlinked_warned = True
 
         if status == "predicate_unmet":

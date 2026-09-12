@@ -38,7 +38,10 @@ fetch the bus to "double check".
    `reasoning-posture`: pin the question, bind, one determinate step.
 5. **Dispatch** — by the ladder below; every dispatch gets a lane on the root (`dispatch_thread_id=R`) and a
    watcher: `watch-supervise.sh start --label <thread>-<slug> -- scripts/watch-bus-consult-and-page.py --thread T
-   --after-turn N --from-agent cursor-sdk --no-page` (the tick digest surfaces its completion; no tail needed).
+   --after-turn N --from-agent cursor-sdk --execution-id <execution_id> --no-page` (the tick digest surfaces its
+   completion; no tail needed). `--execution-id` comes from the admit payload and is **required** — the poller
+   refuses to arm without it or an explicit `--no-producer` (a:33160: an unpinned watch cannot see the producer die).
+   CDP producers: `cdp.generate.proof` carries `archive_uri`; on `delivery_failed` harvest the archive, not the bus.
 6. **Checkpoint** — `budget.checkpoint_due` ⇒ segment CHECKPOINT on R (`supersedes_turn=<tip>`, Residue ≤ 800
    chars: Settled · Live · Next · scoreboard sha) then `liaison-tick.py --root R --mark-checkpoint`.
 7. **Hop** (operator shape 2026-09-10: one IDE tab, hop on every checkpoint, successor headless) — after each
@@ -93,7 +96,7 @@ dispatches (`contract=implement`, omit `model=`) run **alongside** — they are 
 | Judgment fork | **this seat** binds inline (Fable tab) | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
 | Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5)`** — announce `CDP: <trigger> — <why>`; opus hops (`agent_bus hop`) to stay lean | one round; disagreement ⇒ `CONSULT_PENDING` stop |
 | Long-context reasoning inside a work tab | Cursor **Fable 5.1 300k/1M Max** as the tab model (operator authorization 2026-09-10) | `Task(model=claude-fable-5-1-thinking-max)` only from a non-Fable tab — redundant inside one |
-| Headless successor (this tab must end) | CHECKPOINT + fresh tab `resume R`; autonomous fallback `cursor_request(contract=investigate, …)` carrying the tip CP | — |
+| Headless successor (this tab must end) | CHECKPOINT + fresh tab `resume R`; autonomous: § Headless successor (resume-fence pull) — the successor pulls the tip via `dispatch(tool="continuity")`; `cursor_request` is not a successor path (enqueues cursor-auto) | — |
 
 **Reasoning recon** (operator-endorsed 2026-09-10 22:39 PT, observed on 10479#18): before a judgment bind, the
 liaison sends the *wide read* to `cdp/opus-5` (`CDP: <trigger> — <why>`, tape cell / CP residue + the decision as

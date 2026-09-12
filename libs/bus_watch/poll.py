@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from bus_watch.stall_pop import emit_stall_pop
 from bus_watch.state import write_state
 
 DEFAULT_WAIT_SLICE_S = 20.0
@@ -50,6 +51,14 @@ def sliced_wait_loop(
                 f"watcher expired label={heartbeat_label} elapsed={elapsed_s:.0f}s",
                 flush=True,
             )
+            # Expiry is a terminal outcome the seat must see: without this line the
+            # IDE wake pattern (stall-pop:) never matches and the expiry is silent
+            # (a:33160 — six hours unnoticed on 10479).
+            emit_stall_pop(
+                f"expired label={heartbeat_label} thread={thread_id} "
+                f"after_turn={after_turn} elapsed={elapsed_s:.0f}s — no qualifying "
+                "reply; check the producer's proof/archive before re-arming"
+            )
             if state_file is not None:
                 write_state(state_file, status="expired", elapsed_s=round(elapsed_s, 1))
             return 2
@@ -75,7 +84,9 @@ def sliced_wait_loop(
         incomplete_fields = on_incomplete(snap)
         if state_file is not None:
             fields: dict[str, Any] = {
-                "status": ("predicate_unmet" if status == "predicate_unmet" else "polling"),
+                "status": (
+                    "predicate_unmet" if status == "predicate_unmet" else "polling"
+                ),
                 "last_status": status,
                 "turn_count": snap.get("turn_count"),
                 "thread_status": snap.get("thread_status"),

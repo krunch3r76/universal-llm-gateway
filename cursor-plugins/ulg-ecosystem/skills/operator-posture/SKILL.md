@@ -39,7 +39,7 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
 
    | Leg | Same turn as admit? | Action |
    |---|---|---|
-   | **1 Arm** | yes | `watch-supervise.sh start --label L -- …` (`watch-dispatch-closeout.py` or `watch-bus-consult-and-page.py`; `--no-page`) |
+   | **1 Arm** | yes | `watch-supervise.sh start --label L -- …` (`watch-dispatch-closeout.py` or `watch-bus-consult-and-page.py --execution-id <id>`; `--no-page`) — `--execution-id` from the admit payload is required (or explicit `--no-producer`); the poller refuses a silent arm (a:33160) |
    | **2 Wake** | yes, before turn close | `watch-supervise.sh tail --label L` in background Shell (`block_until_ms: 0`) + `notify_on_output` on `closeout turn=` **or** `consult complete` **or** `stall-pop:` — tail **exits when** `tmp/watchers/<label>.state.json` has `"status":"complete"` (¬ infinite `tail -F`; `--forever` debug-only). **Always leg 2** on every arm — IDE terminal slots are unlimited ghosts; `¬` skip to save a slot (breaks autoadvance). While `status=polling`, the tail **waiting** is correct harness, not hang-tail |
    | **3 Relay** | on wake turn | `agent_bus_read get` qualifying turn → harvest CDP body if needed → translate outcome in chat |
 

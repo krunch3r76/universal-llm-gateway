@@ -176,9 +176,12 @@ cmd_start() {
   echo "tail: scripts/watch-supervise.sh tail --label $safe"
 }
 
+# Terminal = the poller will write nothing more. `expired` and `stopped` must
+# release the tail too; a tail that only exits on `complete` hangs for the rest
+# of the session on an expired watcher (a:33160, 10h hang on 10479-r5-bind-check).
 state_complete() {
   [[ -f "$state_file" ]] || return 1
-  grep -q '"status"[[:space:]]*:[[:space:]]*"complete"' "$state_file" 2>/dev/null
+  grep -Eq '"status"[[:space:]]*:[[:space:]]*"(complete|expired|stopped)"' "$state_file" 2>/dev/null
 }
 
 cmd_tail() {
