@@ -152,7 +152,8 @@ on `sdk_live_line` when `provenance=signal` (reconciled rows abstain).
 ### 3.3 CDP family — live v3 §6 (G5.2 slice 1)
 
 **Handled (live emitters, keyed on `request_id`):** `cdp.generate.admitted` ·
-`cdp.generate.submitted` · `cdp.generate.proof` · `cdp.generate.stalled` ·
+`cdp.generate.submitted` · `cdp.generate.seated` · `cdp.generate.proof` ·
+`cdp.generate.stalled` ·
 `cdp.generate.delivery_failed` · `frontier.poll.hint.issued` (filter
 `reply_from_agent == 'cdp'`).
 

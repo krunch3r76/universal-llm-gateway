@@ -190,6 +190,7 @@ class _ProofCarry:
     content_proof_uri: str | None = None
     content_proof_sha256: str | None = None
     url: str | None = None
+    registration_id: str | None = None
 
     def absorb_status_snapshot(self, snapshot: dict[str, Any]) -> None:
         if "status" not in snapshot:
@@ -197,6 +198,9 @@ class _ProofCarry:
         snap_url = str(snapshot.get("url") or "")
         if _CSE_URL_MARKER in snap_url:
             self.url = snap_url
+        reg = snapshot.get("registration_id")
+        if reg is not None:
+            self.registration_id = str(reg)
         uri = snapshot.get("archive_uri")
         if uri is not None:
             self.archive_uri = uri
@@ -214,8 +218,43 @@ class _ProofCarry:
             "content_proof_sha256": self.content_proof_sha256,
         }
 
+    def carry_extras(self) -> dict[str, str]:
+        """Surface latched CSE URL + registration for terminal proof relay."""
+        extras: dict[str, str] = {}
+        if self.url:
+            extras["chat_url"] = self.url
+        if self.registration_id:
+            extras["registration_id"] = self.registration_id
+        return extras
+
 
 _progress_fingerprint = progress_fingerprint
+
+
+def _maybe_invoke_url_bound(
+    *,
+    proof_carry: _ProofCarry,
+    snapshot: dict[str, Any],
+    execution_id: str,
+    on_url_bound: Callable[[str, str | None, int], None] | None,
+    url_bound_emitted: set[tuple[str, str]],
+    distinct_cse_urls: list[str],
+) -> None:
+    """Fire ``on_url_bound`` once per ``(execution_id, chat_url)`` observation."""
+    if on_url_bound is None:
+        return
+    url = proof_carry.url
+    if not url or _CSE_URL_MARKER not in url:
+        return
+    key = (execution_id, url)
+    if key in url_bound_emitted:
+        return
+    url_bound_emitted.add(key)
+    if url not in distinct_cse_urls:
+        distinct_cse_urls.append(url)
+    reg = proof_carry.registration_id or snapshot.get("registration_id")
+    reg_str = str(reg) if reg is not None else None
+    on_url_bound(url, reg_str, len(distinct_cse_urls))
 
 
 def _terminal_failure(snapshot: dict[str, Any]) -> bool:
@@ -540,6 +579,7 @@ def run_cdp_generate(
     now: Callable[[], float] | None = None,
     ask_client: CdpAskClient | None = None,
     on_submitted: Callable[[str], None] | None = None,
+    on_url_bound: Callable[[str, str | None, int], None] | None = None,
 ) -> CdpGenerateResult:
     """Stage → native CDP submit → poll-to-proof (or stall/fail).
 
@@ -570,6 +610,10 @@ def run_cdp_generate(
     ``execution_id``, and it is the only handle the poll plane accepts — so
     callers that want in-flight discoverability must publish it here rather than
     on return (friction a:26175).
+
+    ``on_url_bound`` receives ``(chat_url, registration_id, seating_ordinal)``
+    on first observation of each distinct CSE URL during this run. Default ``None``
+    preserves pre-change behavior (no seated event).
 
     ``max_wall_s`` measures seconds since the last observed fingerprint progress
     (a ``trace.record`` delta resets the wall origin beside ``last_progress_at``).
@@ -676,6 +720,16 @@ def run_cdp_generate(
     polls = 0
     proof_carry = _ProofCarry()
     proof_carry.absorb_status_snapshot(submitted)
+    url_bound_emitted: set[tuple[str, str]] = set()
+    distinct_cse_urls: list[str] = []
+    _maybe_invoke_url_bound(
+        proof_carry=proof_carry,
+        snapshot=submitted,
+        execution_id=execution_id,
+        on_url_bound=on_url_bound,
+        url_bound_emitted=url_bound_emitted,
+        distinct_cse_urls=distinct_cse_urls,
+    )
 
     while True:
         elapsed = clock() - started
@@ -710,6 +764,7 @@ def run_cdp_generate(
                     "progress_trace": trace.as_dict(
                         now_s=clock() - trace_started, no_progress_s=no_progress_s
                     ),
+                    **proof_carry.carry_extras(),
                 },
                 **proof_carry.as_result_fields(),
             )
@@ -738,14 +793,28 @@ def run_cdp_generate(
                     ok=False, body="", execution_id=execution_id, satellite_execution_id=sat_id,
                     prompt_uri=staged.prompt_uri, picker_model=picker,
                     stall_stage=fields["stall_stage"], error=fields["error"], poll_snapshots=polls,
-                    extras={"abort": abort_info, "since_last_progress_s": since_last_progress_s,
-                            "progress_trace": trace.as_dict(now_s=clock()-trace_started, no_progress_s=no_progress_s),
-                            **fields["extras"]},
+                    extras={
+                        "abort": abort_info,
+                        "since_last_progress_s": since_last_progress_s,
+                        "progress_trace": trace.as_dict(
+                            now_s=clock() - trace_started, no_progress_s=no_progress_s
+                        ),
+                        **fields["extras"],
+                        **proof_carry.carry_extras(),
+                    },
                     **proof_carry.as_result_fields(),
                 )
             continue
 
         proof_carry.absorb_status_snapshot(snapshot)
+        _maybe_invoke_url_bound(
+            proof_carry=proof_carry,
+            snapshot=snapshot,
+            execution_id=execution_id,
+            on_url_bound=on_url_bound,
+            url_bound_emitted=url_bound_emitted,
+            distinct_cse_urls=distinct_cse_urls,
+        )
 
         fp = _progress_fingerprint(snapshot)
         if trace.record(fp, at_s=clock() - trace_started):
@@ -812,6 +881,7 @@ def run_cdp_generate(
                 content_proof_uri=snapshot.get("content_proof_uri"),
                 content_proof_sha256=snapshot.get("content_proof_sha256"),
                 poll_snapshots=polls,
+                extras=proof_carry.carry_extras(),
             )
 
         if _completed_without_proof(snapshot):
@@ -827,7 +897,7 @@ def run_cdp_generate(
                 retain_cse=mission_retain,
             )
             carry_fields = proof_carry.as_result_fields()
-            extras: dict[str, Any] = {"abort": abort_info}
+            extras: dict[str, Any] = {"abort": abort_info, **proof_carry.carry_extras()}
             extras.update(_deliverable_unproven_extras(carry_fields))
             return CdpGenerateResult(
                 ok=False,
@@ -859,7 +929,11 @@ def run_cdp_generate(
                 retain_cse=retain,
                 retain_reason=reason,
             )
-            extras = {"abort": abort_info, **fields["extras"]}
+            extras = {
+                "abort": abort_info,
+                **fields["extras"],
+                **proof_carry.carry_extras(),
+            }
             return CdpGenerateResult(
                 ok=False,
                 body=str(snapshot.get("body") or ""),
@@ -904,6 +978,7 @@ def run_cdp_generate(
                         now_s=clock() - trace_started,
                         no_progress_s=no_progress_s,
                     ),
+                    **proof_carry.carry_extras(),
                 },
                 **proof_carry.as_result_fields(),
             )

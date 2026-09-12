@@ -11,6 +11,7 @@ from universal_event_bus import Event
 
 from systems.frontier_consult.cdp_events import (
     CdpGenerateAdmitted,
+    CdpGenerateSeated,
     CdpGenerateSubmitted,
     publish_cdp_event,
     publish_cdp_kwargs,
@@ -199,6 +200,31 @@ def test_cdp_generate_admitted_with_topic_includes_key() -> None:
         topic="ULG gains glanceable CDP topics",
     )
     assert admitted.payload["topic"] == "ULG gains glanceable CDP topics"
+
+
+def test_cdp_generate_seated_payload() -> None:
+    seated = CdpGenerateSeated(
+        request_id="req-seat",
+        execution_id="exec-seat",
+        satellite_execution_id="sat-seat",
+        registration_id="reg-seat",
+        chat_url="https://claude.ai/cowork/cse_abc",
+        seating_ordinal=1,
+        observed_at="2026-09-12T09:00:00+00:00",
+        terminal=False,
+    )
+    assert seated.signal == "cdp.generate.seated"
+    assert seated.scope == "node"
+    assert seated.payload == {
+        "request_id": "req-seat",
+        "execution_id": "exec-seat",
+        "satellite_execution_id": "sat-seat",
+        "registration_id": "reg-seat",
+        "chat_url": "https://claude.ai/cowork/cse_abc",
+        "seating_ordinal": 1,
+        "observed_at": "2026-09-12T09:00:00+00:00",
+        "terminal": False,
+    }
 
 
 def test_cdp_generate_admitted_without_topic_omits_key() -> None:
