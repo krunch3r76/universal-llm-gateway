@@ -60,7 +60,9 @@ fetch the bus to "double check".
    supersedes hop-after-harvest). The hop opener is **paste-induction** (10479#82): a
    user-turn that steers attention, not a second copy of the skill. `¬` call that
    **hypnosis** until the attention-induction paradigm is defined (10158 / a:33210);
-   hop FOL restatement is not it. Qualifies: live watcher tails · dispatchable NOW ·
+   hop FOL restatement is not it. Qualifies: live watcher tails — **¬** the ticker's
+   closeout watcher on **your own** lane (`--exclude-lane <lane>`; waiting on
+   yourself is not follow-up, and acting on it chains premium seats) · dispatchable NOW ·
    `CONTEXT_BUDGET` with remaining work. **STAY** (write `STAY: <reason>`): empty NOW ·
    quiet tick · hop script refuse · operator park · explicit hold-merge. Autonomous
    LAND OWED without an explicit hold is **land**, not a stay-for-ack. Harvest-complete
