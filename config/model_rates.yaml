@@ -45,6 +45,20 @@ models:
     output_rate_per_m: 6.0
     source: manual_seed
     pinned: true
+  - model_id: cursor/claude-fable-5
+    input_rate_per_m: 10.0
+    cache_write_rate_per_m: 12.50
+    cache_read_rate_per_m: 0.25
+    output_rate_per_m: 50.0
+    source: manual_seed
+    pinned: true
+  - model_id: cursor/claude-fable-5-1
+    input_rate_per_m: 10.0
+    cache_write_rate_per_m: 12.50
+    cache_read_rate_per_m: 0.25
+    output_rate_per_m: 50.0
+    source: manual_seed
+    pinned: true
   - model_id: cursor/claude-opus-5
     input_rate_per_m: 5.0
     cache_write_rate_per_m: 6.25

@@ -241,7 +241,7 @@ guidance that table has no room for — the two are read together.
 | `cdp/opus-5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
 | Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b precedes explicit Other Models (2c) |
 | Silent Terra / Other Models as the next binder | 2c is **explicit pin only**; default after Fable is **`cursor/claude-opus-5`** on cursor-sdk |
-| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` because Fable is wanted | Blocked for cost (both — 5.1 launched 2026-09-01 at same $/M) — use `cdp/fable`. While a:32393 SDK outage is open, Fable 5.1 on cursor-sdk is also **observed hollow at every tested rung** — use § Fable 5.1 SDK outage |
+| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` for judgment/`none`/`implement` because Fable is wanted | Blocked for cost (both — 5.1 launched 2026-09-01 at same $/M) — use `cdp/fable`. **Exception:** standing `workflows.check_review` default (`cursor/claude-fable-5-1`) during the operator Fable window — revert via YAML edit, never silent terra/opus swap. While a:32393 SDK outage is open, Fable 5.1 on cursor-sdk is also **observed hollow at every tested rung** on non-check_review binds — use § Fable 5.1 SDK outage |
 | Rebind Sketch to Fable max/high on cursor-sdk after xhigh hollow | Falsified (a:32403): `medium` and `max` hollow too — rebind **off the Fable SDK surface** |
 | `team_dispatch(model=gpt-5.6-terra)` bare slug on code-lane bind | `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra` — explicit pin only |
 | Spend `cursor/gpt-5.6-sol` on broad open-ended review | `sol` is targeted, low-token, still Other Models — explicit pin only |
@@ -280,7 +280,7 @@ Judgment slots are **CDP-default**; mechanical code-lane check keeps Terra on cu
 |---|---|---|---|---|---|
 | SKEPTIC@BIND (judgment on spec/forks) | eligible, default | explicit pin only (G4-class family check) | **never** — producer-class, barred from ranking | eligible when M2 known pre-dispatch | **dormant on codework** |
 | GATED REVIEW pre-go-live (M3) | eligible, default | explicit pin only | never | — | no |
-| Code-lane diff check (`check_review`) | not this slot | **default** (`cursor/gpt-5.6-terra` per `workflows.check_review.model`) | never | — | no |
+| Code-lane diff check (`check_review`) | not this slot | **default** (`cursor/claude-fable-5-1` per `workflows.check_review.model`) | never | — | no |
 | S1 background arc review (M4) | eligible, default | explicit pin | never | — | no |
 | Non-code adversarial (life/analysis) | eligible | no | no | eligible | per non-code row above |
 
@@ -498,9 +498,9 @@ authors implement-ready at Gate-2; cite `spec_sha256:<hex>`. `density_triage` �
 
 Default `judgment_required` code lane (`decision:autonomous-work-item-spine`):
 
-`recon → settle → densify → check_review (Terra, mechanical) → Composer`
+`recon → settle → densify → check_review (Fable 5.1, mechanical) → Composer`
 
-One merged mechanical check via `workflows.check_review` (`cursor/gpt-5.6-terra`). CDP judgment
+One merged mechanical check via `workflows.check_review` (`cursor/claude-fable-5-1`). CDP judgment
 (M1–M4, batched S1) per `runbook:score-play` (R2, agent-bus:9956). Gate-6 substrate, zoom-out,
 seeding ladder, overhaul, `authority_fork`: L3 annex § spine extensions.
 

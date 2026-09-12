@@ -32,6 +32,7 @@ CHECK_REVIEW_DECISION_CITATION = "decision:code-review-panel-cursor-substrate"
 CHECK_REVIEW_API_ROLES = frozenset({"reviewer", "skeptic"})
 CURSOR_CHECK_REVIEW_MODELS = frozenset(
     {
+        "cursor/claude-fable-5-1",
         "cursor/gpt-5.6-terra",
         "cursor/gpt-5.6-sol",
         "cursor/gpt-5.6-luna",
@@ -233,6 +234,8 @@ def independently_measured(
 def cursor_delivery_from_role(model: str) -> str | None:
     """Map cursor check/review model to gate-readable bus author role."""
     bare = ModelId.parse(model).api_model_id.lower()
+    if bare.startswith("claude-fable"):
+        return "reviewer"
     if bare.startswith("gpt-5.6") or bare == "gpt-5.5":
         return "reviewer"
     if bare.startswith("grok-4.6"):

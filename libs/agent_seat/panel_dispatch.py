@@ -25,7 +25,7 @@ from agent_seat.role_entity_sync import resolve_dispatch_capabilities
 
 DEFAULT_PANEL_MEMBERS: tuple[tuple[str, str | None], ...] = (
     ("skeptic", None),
-    ("reviewer", "cursor/gpt-5.6-terra"),
+    ("reviewer", "cursor/claude-fable-5-1"),
 )
 
 TIEBREAKER_ROLE = "synthesizer"
