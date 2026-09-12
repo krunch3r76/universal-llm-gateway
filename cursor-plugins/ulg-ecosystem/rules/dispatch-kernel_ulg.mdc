@@ -52,7 +52,7 @@ Partial cite ⇒ that section only. Skills/rules say *when*; runbook owns *how*.
 ∀ operator_request:
   explicit override (/path-sim · /layer · root id · belt) ≺ tree
   mutates_durable_state ⇒ conductor session, bound to exactly one todo: work item
-  else (answer · review · judgment, attended) ⇒ in-seat, threadless — reasoning-posture aperture
+  else (answer · review · judgment, attended) ⇒ in-seat, threadless — reasoning-posture aperture; threadless ⇒ ¬mint a work lane for the answer — it does not survive an explicit continuity verb (checkpoint · /orchestrate), which births a role:root (`checkpoint-discipline` § Utterance)
 ```
 
 B legs spawn T0 conductor; materializer refuses non-todo `source_ref`. CHECKPOINT = reconstitution index only.

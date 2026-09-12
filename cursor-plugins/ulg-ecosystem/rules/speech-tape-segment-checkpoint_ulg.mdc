@@ -35,6 +35,8 @@ the attended tab accumulated judgment dialogue worth handing off.
 
 ## Bind — when to post a segment CHECKPOINT
 
+Presupposes a bound `role:root` house. Unbound tab ⇒ `checkpoint-discipline` § Utterance births one first; § Bind triggers 1–3 are that birth's materiality gate.
+
 On **`role:root`** houses, attended IDE **orchestrator** tab (pools row: Multitask
 OFF, CHECKPOINT/confer/tab-launch — not WORK implement), post a segment CP **before**
 the operator or seat opens a **fresh tab** `resume <root>` (or hop clone) **when any**
@@ -90,6 +92,7 @@ After segment CP on orchestrator tab **T₁** with window **W₁**:
 | CP per bus INFO/dispatch admit | Bus residue only; no speech cell |
 | CP without `Window:` on root speech handoff | Tape cannot bind dialogue to a cell |
 | `Window:` pointing at a **different** tab than the one that held the dialogue | Split-brain inheritance (d6900bc0 / d556c84f class) |
+| Bare `checkpoint` on an unbound tab posted to a pre-existing root | Steals a house; split-brain Window (a:33200 specimen) |
 | Linear thread read instead of tip CP + envelope | `checkpoint-discipline` § Resume |
 | Segment CP on WORK implement tab as root substitute | Wrong pool; root CP on orchestrator |
 

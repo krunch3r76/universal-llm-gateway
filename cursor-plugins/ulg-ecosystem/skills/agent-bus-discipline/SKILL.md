@@ -242,7 +242,7 @@ section is the unconditional doc bind fallback.
 
 2. **Done / next / close-arc gate.** Before any claim the arc is done, nothing is next, or the root may close: `md_read` the scoreboard (or charter deliverable section if missing — then mint/update scoreboard) and diff against live Cortex cards. `¬` treat CHECKPOINT, empty Next-pickup, or chat WIP as completion authority. Unverified friction/deferred claims are not actionable until re-verified.
 
-3. **Resume / checkpoint vocabulary.** Use the `checkpoint-discipline` skill (tip recipe, profile operator-facing, tip hygiene). This section does **not** own resume step 0.
+3. **Resume / checkpoint vocabulary.** Use the `checkpoint-discipline` skill (tip recipe, profile operator-facing, tip hygiene, § Utterance). This section does **not** own resume step 0.
 
 The CHECKPOINT RESUME footer self-bootstraps via `checkpoint-discipline` (+ this § R12 for done/close); see that skill for the canonical string.
 

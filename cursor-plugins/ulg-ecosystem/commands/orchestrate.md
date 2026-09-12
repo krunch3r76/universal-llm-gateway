@@ -8,4 +8,5 @@ formal mission and keep its turn schema conformant. Use
 For session-to-root conversion, follow the existing birth gate:
 mint the continuity charter surface, post the birth CHECKPOINT with objective
 and concrete `Next-pickup`, then stamp `role:root`. Session close still records
-provenance; the root carries continuity.
+provenance; the root carries continuity. `/orchestrate` is *a* birth verb, not the only one — bare `checkpoint` on an unbound tab
+births the same way (`checkpoint-discipline` § Utterance).

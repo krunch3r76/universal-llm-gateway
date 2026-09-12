@@ -19,13 +19,15 @@ identified by its handle and parent association, never inferred from spine.
 
 ## Root birth
 
-1. Bind one objective sentence describing the topic being continued.
-2. Mint a continuity document or charter pointer. Include an empty `## Windows` table on that charter surface (scoreboard if chartered, continuity-doc if not). Schema §3.5.
-3. Create the root thread and post a birth CHECKPOINT indexing the document and
-   a concrete `Next-pickup`.
-4. Stamp `role:root`; enroll `charter-runner` only when machine ticks are wanted.
+Triggered by `/orchestrate` **or** bare `checkpoint` on an unbound tab (`checkpoint-discipline` § Utterance — sole SoT). `checkpoint <n>|<slug>` names an existing house — not this gate. `∀ pre-existing thread T: ¬post(CHECKPOINT, T)` on this path.
 
-Do not invert this order. Use `checkpoint-discipline` for the CHECKPOINT schema.
+1. Bind one objective sentence describing the topic being continued.
+2. Create the root thread (`create_thread` may precede the card mint so the card is `{id}`-named).
+3. Mint a continuity document or charter pointer. Include an empty `## Windows` table on that charter surface (scoreboard if chartered, continuity-doc if not). Schema §3.5.
+4. Post a birth CHECKPOINT indexing the document and a concrete `Next-pickup`.
+5. Stamp `role:root`; enroll `charter-runner` only on explicit operator ask — a conversation birth has no gated pickup and would state-close on first tick.
+
+The order that must not invert is **card ≺ birth CHECKPOINT**, not card ≺ thread. Use `checkpoint-discipline` for the CHECKPOINT schema.
 Session close still records transcript, journal, and edges; the root replaces
 the handoff carrier, not provenance.
 

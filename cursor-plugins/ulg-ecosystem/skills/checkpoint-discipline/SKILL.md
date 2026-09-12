@@ -2,7 +2,7 @@
 name: checkpoint-discipline
 description: "Author/resume CHECKPOINTs on standing roots (spine=root): profile pick tick_charter vs orchestrator_continuity, tip supersede + lean resume, role:root stamp, RESUME footer, scoreboard birth."
 skill_category: orchestration
-trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "scoreboard birth", "standing root", "Windows log", "myelinate"]
+trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "scoreboard birth", "standing root", "Windows log", "myelinate", "unbound checkpoint", "bare checkpoint"]
 ---
 
 # Checkpoint Discipline
@@ -13,7 +13,7 @@ trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "or
 
 ## When to load
 
-About to post, supersede, or resume a CHECKPOINT; standing-root continuity; charter-runner enroll; operator `resume`/`checkpoint <thread#>`.
+About to post, supersede, or resume a CHECKPOINT; standing-root continuity; charter-runner enroll; operator `resume` / `checkpoint` (bare ∨ `<n|slug>` — § Utterance).
 
 **Continuity stance (first-class trait — operator 2026-08-25):** `∀ orchestrator_continuity` root: Use the `ulg-for-llms` skill ∧ `## Why this house` on the continuity-doc before Anchor. Birth CHECKPOINT indexes `## Stance` (Use-line + pointer; speech stays on the catch-up file). Resume loads the skill then the preamble, then the index. Footer stays §3.1.1. `tick_charter` skips. Substrate: `root_missing_stance` on birth/bootstrap when either half is missing. `thin_kickoff ∧ starving(why)` is a defect.
 
@@ -26,6 +26,29 @@ empty(Next-pickup) ⇏ arc_complete
 ```
 
 Done/close-arc claims: also load `agent-bus-discipline` § R12.
+
+## Utterance
+
+| Utterance | Action |
+|---|---|
+| `checkpoint <n>` / `checkpoint <slug>` | Existing house — § Resume + operator-posture tab title `. {n} {slug}`. |
+| `checkpoint` / `/checkpoint` ∧ **bound** | Segment CP on that house. |
+| `checkpoint` / `/checkpoint` ∧ **unbound** | Session-to-root birth (`orchestration-lanes` § Root birth) — procedure below. |
+
+`bound(tab)` ⇔ a thread id acquired by an **operator verb in this tab** (`resume <n|slug>` · `checkpoint <n|slug>` · `/agent-bus {n|slug}`) **∨** this tab already posted a CHECKPOINT under this `transcript_id`. Cheapest proxy: (i) tab title `{n} {slug}` or `. {n} {slug}`; (ii) a CP posted from this `transcript_id` this session; (iii) `continuity(op=…)` has a `thread=` the seat can name without guessing. **Not binders:** recency · adjacency · a thread this tab merely read · "the only active root" · a thread id that merely appears in context.
+
+On `checkpoint` with no argument ∧ `¬bound(tab)`:
+
+1. **Materiality gate.** This tab holds dialogue worth inheriting (`speech-tape-segment-checkpoint_ulg` § Bind triggers 1–3). **Not met ⇒ one line and stop.** ¬ mint · ¬ quiz · ¬ write any existing house.
+2. Bind one objective sentence from **this** tab.
+3. `create_thread` → new root id `N`, slug from the objective.
+4. Mint `cortex://notes/system/threads/N-continuity-card.md` with `## Objective`, `## Why this house`, empty `## Windows`. No scoreboard.
+5. Birth CHECKPOINT on `N`: indexes the card, `## Stance`, concrete `Next-pickup`, `## Anchor` → `Window: transcript_id=<this tab's uuid> · turns@cp=<K>` (`K` from the seal). Canonical `— RESUME (any seat, no command):` footer.
+6. Stamp `role:root`. **¬ enroll** `charter-runner` (conversation birth has no gated pickup). Enroll only on explicit operator ask for ticks.
+7. Rename tab → `. {N} {slug}`.
+8. Brief: house `{N} {slug}`, objective, next-pickup. Steps 3–6 fail ⇒ report and stop.
+
+`∀ pre-existing thread T: ¬post(CHECKPOINT, T)`. `/orchestrate` is *a* birth verb, not the only one. Falsifier (a:33200): those three SoTs + bare checkpoint mint a new root and do not write a foreign house.
 
 ## Spine vs enrollment
 
@@ -116,7 +139,7 @@ instrument** shortcut in the commission before parking another episode on accrua
 Watchdog SOT: `scripts/opus-summons-watchdog.py` (`successor_fast` when seq advanced +
 `running_count=0`).
 
-**Vocabulary:** `resume <n>` → this section; `checkpoint <n>` → post per profile + tip hygiene.
+**Vocabulary:** `resume <n>` → this section; `checkpoint <n|slug>` → post per profile + tip hygiene; bare `checkpoint` → § Utterance (bound ⇒ segment CP · unbound ⇒ birth).
 
 ## Window anchor (human continuity speech tape)
 

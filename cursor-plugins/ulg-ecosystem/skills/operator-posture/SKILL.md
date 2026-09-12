@@ -58,7 +58,8 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
    | Trigger | Tab title |
    |---|---|
    | explicit `resume <n>` ∨ `resume <slug>` ∨ `/agent-bus {n}` ∨ `/agent-bus {slug}` [ `--all` ] | `{n} {slug}` |
-   | `checkpoint <n>` ∨ `checkpoint <slug>` ∨ posting a CHECKPOINT to thread | `. {n} {slug}` |
+   | `checkpoint <n>` ∨ `checkpoint <slug>` ∨ posting a CHECKPOINT to an **existing** thread | `. {n} {slug}` |
+   | bare `checkpoint` on an **unbound** tab | `. {new_id} {slug}` **after birth** (`checkpoint-discipline` § Utterance) |
 
    **Resume identity:** numeric id **or** thread `slug` — slug is the common operator form lately (e.g. `resume cdp-failed-cse-envelope`). Slug-shaped input ⇒ resolve to id via `thread_get` / `threads(query=…)` before fetch; tab title is still `{n} {slug}`. Slug from `thread_get.slug` / `_thread_info.slug` (resolve if needed, then rename); truncate ≤200. **Forbidden titles:** bare `{n}` (e.g. `9758`), slug alone, turn `subject`. **Verify:** after rename, slug in the title must match `thread_get.slug`. `rename_chat` unavailable or failed ⇒ state once, continue (no retry loop). That invocation **is** the rename ask — do not wait for a second “rename the tab.” Applies to **any** named thread (root, work, MONITOR, conductor-worker). ¬ inbox `/agent-bus` (no thread id). ¬ `--peek` / `--status`. ¬ pasted-handoff or `session_close` without the resume verb. ¬ Mission/Objective as the title (slug is the tab; Mission stays spoken). Leading `.` on checkpoint tabs distinguishes authoring from resume/read.
 
