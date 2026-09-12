@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from dataclasses import dataclass
 from typing import Any
 
 from cdp_ask.unverifiable import is_unverifiable_stall
@@ -139,57 +140,38 @@ def format_cdp_result_body(
     return "\n".join(lines)
 
 
-async def _mark_cdp_unread_through(
+@dataclass(frozen=True)
+class PostOutcome:
+    """Result of one on-behalf POST /turns attempt."""
+
+    ok: bool
+    http_status: int | None = None
+    detail_preview: str | None = None
+
+
+async def _mark_pointer_turn_read(
     client: Any,
     *,
     thread_id: str,
-    through_turn: int,
+    pointer_turn: int,
     headers: dict[str, str],
 ) -> None:
-    """Mark unread turns for CDP endpoint through ``through_turn``.
-
-    Marks ``web-anthropic`` (canonical) and legacy ``cdp`` (one-cycle compat for
-    in-flight pointers still addressed ``to=cdp``).
-    """
-    through = max(1, int(through_turn))
-    for agent in (CDP_REPLY_FROM, "cdp"):
-        mark = await client.patch(
-            f"/threads/{thread_id}/turns/read-state",
-            json={
-                "through_turn": through,
-                "agent": agent,
-            },
-            headers=headers,
+    """Mark read only the admit pointer turn (exact turn_number)."""
+    turn_number = max(1, int(pointer_turn))
+    mark = await client.patch(
+        f"/threads/{thread_id}/turns/read-state",
+        json={"turn_numbers": [turn_number]},
+        headers=headers,
+    )
+    if mark.status_code >= 300:
+        logger.warning(
+            "cdp mark_read pointer before post: thread=%s turn=%s "
+            "status=%s body=%s",
+            thread_id,
+            turn_number,
+            mark.status_code,
+            mark.text[:200],
         )
-        if mark.status_code >= 300:
-            logger.warning(
-                "cdp mark_read before post: thread=%s agent=%s through=%s "
-                "status=%s body=%s",
-                thread_id,
-                agent,
-                through,
-                mark.status_code,
-                mark.text[:200],
-            )
-
-
-def _unread_latest_from_409(resp: Any) -> int | None:
-    """Extract ``latest_turn_number`` from an unread_turns_exist 409 body."""
-    if getattr(resp, "status_code", None) != 409:
-        return None
-    try:
-        detail = resp.json().get("detail") or {}
-    except Exception:  # noqa: BLE001 — non-JSON 409
-        return None
-    if not isinstance(detail, dict):
-        return None
-    if detail.get("error") != "unread_turns_exist":
-        return None
-    try:
-        latest = int(detail.get("latest_turn_number") or 0)
-    except (TypeError, ValueError):
-        return None
-    return latest if latest > 0 else None
 
 
 async def post_cdp_turn(
@@ -200,18 +182,12 @@ async def post_cdp_turn(
     body: str,
     request_id: str,
     pointer_turn: int = 1,
-) -> bool:
+) -> PostOutcome:
     """Post on-behalf bus turn as ``from=web-anthropic`` (endpoint address).
 
-    Marks unread turns addressed to the CDP endpoint through ``pointer_turn``
-    before posting — the admit pointer is ``to=web-anthropic`` (legacy
-    ``to=cdp`` still marked during one-cycle compat), and agent-bus rejects
-    posts while unread (``unread_turns_exist`` 409).
-
-    Concurrent CDP admits on the same root leave later unread turns; on 409,
-    remake through ``latest_turn_number`` from the error detail and retry once.
-    CDP substrate is carried by ``execution_id`` / ``web-anthropic-cdp``, not
-    a separate bus seat.
+    Marks only the admit pointer turn read, then posts with ``on_behalf: true``
+    so the poster inbox gate is bypassed. CDP substrate is carried by
+    ``execution_id`` / ``web-anthropic-cdp``, not a separate bus seat.
     """
     token = _agent_bus_token()
     allow_unset = os.getenv("ALLOW_UNSET_AGENT_BUS_TOKEN", "").strip().lower() in (
@@ -221,15 +197,15 @@ async def post_cdp_turn(
     )
     if not token and not allow_unset:
         logger.warning("cdp on-behalf post skipped: AGENT_BUS_TOKEN unset")
-        return False
+        return PostOutcome(ok=False, http_status=None, detail_preview="token_unset")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     through = max(1, int(pointer_turn))
     try:
         async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=30.0) as client:
-            await _mark_cdp_unread_through(
+            await _mark_pointer_turn_read(
                 client,
                 thread_id=thread_id,
-                through_turn=through,
+                pointer_turn=through,
                 headers=headers,
             )
             payload: dict[str, Any] = {
@@ -241,35 +217,23 @@ async def post_cdp_turn(
                 "status": "open",
                 "after_turn": 0,
                 "allow_long_body": True,
+                "on_behalf": True,
             }
             resp = await client.post("/turns", json=payload, headers=headers)
             if resp.status_code < 300:
-                return True
-            latest = _unread_latest_from_409(resp)
-            if latest is not None and latest > through:
-                logger.warning(
-                    "cdp on-behalf 409 unread_turns_exist: thread=%s "
-                    "pointer=%s latest=%s — remaking + retry",
-                    thread_id,
-                    through,
-                    latest,
-                )
-                await _mark_cdp_unread_through(
-                    client,
-                    thread_id=thread_id,
-                    through_turn=latest,
-                    headers=headers,
-                )
-                resp = await client.post("/turns", json=payload, headers=headers)
-                if resp.status_code < 300:
-                    return True
+                return PostOutcome(ok=True, http_status=resp.status_code)
+            preview = resp.text[:300]
             logger.warning(
                 "cdp on-behalf post failed: thread=%s status=%s body=%s",
                 thread_id,
                 resp.status_code,
-                resp.text[:300],
+                preview,
             )
-            return False
+            return PostOutcome(
+                ok=False,
+                http_status=resp.status_code,
+                detail_preview=preview,
+            )
     except Exception as exc:  # noqa: BLE001 — delivery best-effort
         logger.warning(
             "cdp on-behalf post transport error: thread=%s err=%s request_id=%s",
@@ -277,7 +241,11 @@ async def post_cdp_turn(
             exc,
             request_id,
         )
-        return False
+        return PostOutcome(
+            ok=False,
+            http_status=None,
+            detail_preview=str(exc)[:300],
+        )
 
 
 _POST_RETRY_SLEEP_S = 0.5

@@ -165,3 +165,29 @@ def test_bulk_through_turn_marks_unread_to_agent(tmp_path) -> None:
         )
         assert resp.status_code == 200
         assert resp.json()["marked_read"] == 1
+
+
+def test_bulk_through_turn_web_anthropic_marks_to_web(tmp_path) -> None:
+    with TestClient(_app(tmp_path)) as client:
+        create = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "bulk-web-alias",
+                "from": "cursor",
+                "to": "web",
+                "subject": "one",
+                "body": "b1",
+            },
+        )
+        thread_id = create.json()["thread"]["id"]
+        resp = client.patch(
+            f"/threads/{thread_id}/turns/read-state",
+            json={"through_turn": 1, "agent": "web-anthropic"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["marked_read"] == 1
+        marked = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=1"
+        ).json()
+        assert marked["to"] == "web"
+        assert marked["read_at"] is not None

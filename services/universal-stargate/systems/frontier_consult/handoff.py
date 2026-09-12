@@ -707,6 +707,7 @@ async def terminate_handoff_dispatch(
     execution_id: str,
     terminal_status: str,
     bus_lifecycle: str | None = None,
+    archive_uri: str | None = None,
 ) -> bool:
     """POST dispatch-terminate for one execution_id; fail-open on transport errors."""
     token = os.getenv("AGENT_BUS_TOKEN", "").strip()
@@ -724,6 +725,8 @@ async def terminate_handoff_dispatch(
     }
     if bus_lifecycle is not None:
         payload["bus_lifecycle"] = bus_lifecycle
+    if archive_uri is not None:
+        payload["archive_uri"] = archive_uri
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with make_async_client(DEFAULT_AGENT_BUS_URL, timeout=10.0) as client:

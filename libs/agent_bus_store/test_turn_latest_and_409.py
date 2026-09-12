@@ -95,3 +95,55 @@ def test_send_stale_after_turn_409_includes_latest(tmp_path) -> None:
         assert detail["error"] == "unread_turns_exist"
         assert detail["latest_turn_number"] == 2
         assert detail["provided_after_turn"] == 1
+
+
+def test_post_on_behalf_bypasses_unread_gate(tmp_path) -> None:
+    with TestClient(_app(tmp_path)) as client:
+        create = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "on-behalf-bypass",
+                "from": "cursor",
+                "to": "web",
+                "subject": "pointer",
+                "body": "b1",
+            },
+        )
+        thread_id = create.json()["thread"]["id"]
+        client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web-anthropic",
+                "subject": "unread-to-endpoint",
+                "body": "blocking",
+            },
+        )
+        blocked = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "web-anthropic",
+                "to": "cursor",
+                "subject": "blocked",
+                "body": "too soon",
+                "after_turn": 0,
+            },
+        )
+        assert blocked.status_code == 409
+
+        ok = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "web-anthropic",
+                "to": "cursor",
+                "subject": "on-behalf ok",
+                "body": "delivered",
+                "after_turn": 0,
+                "on_behalf": True,
+            },
+        )
+        assert ok.status_code == 201, ok.text
+        assert ok.json()["on_behalf"] is True

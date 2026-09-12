@@ -6,7 +6,11 @@ import io
 import re
 from pathlib import Path
 
-from bus_watch.stall_pop import emit_stall_pop, should_emit_stall_pop
+from bus_watch.stall_pop import (
+    emit_stall_pop,
+    format_producer_terminal_reason,
+    should_emit_stall_pop,
+)
 
 
 def test_emit_stall_pop_exact_format() -> None:
@@ -40,6 +44,20 @@ def test_should_emit_stall_pop_debounces_per_episode() -> None:
     )
     assert emit
     assert last == "park_harvest_stall"
+
+
+def test_producer_terminal_stall_pop_includes_archive_uri() -> None:
+    producer = {
+        "state": "terminal",
+        "terminal_status": "failed",
+        "archive_uri": "cortex://notes/system/threads/cdp-harvest.md",
+    }
+    reason = format_producer_terminal_reason(producer)
+    buf = io.StringIO()
+    emit_stall_pop(reason, stream=buf)
+    line = buf.getvalue().strip()
+    assert line.startswith("stall-pop:")
+    assert "archive_uri=cortex://notes/system/threads/cdp-harvest.md" in line
 
 
 def test_bus_watch_no_services_imports() -> None:

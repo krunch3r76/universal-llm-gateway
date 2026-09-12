@@ -18,6 +18,7 @@ from bus_watch.park_harvest import (
     parked_or_none_next_admit,
     successor_owed,
 )
+from bus_watch.stall_pop import format_producer_terminal_reason
 
 
 def live_sdk_on_thread(
@@ -89,7 +90,7 @@ def stall_predicate(
 
     producer_state = (producer or {}).get("state")
     if producer_state == "terminal":
-        return True, "producer_terminal_no_reply"
+        return True, format_producer_terminal_reason(producer)
 
     if status == "predicate_unmet" and predicate_unmet_slices >= 2:
         if producer_state == "in_flight" and not producer_grace_expired:
