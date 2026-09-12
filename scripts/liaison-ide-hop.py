@@ -29,6 +29,7 @@ from bus_watch.ide_hop import (
     fire_ide_hop,
     live_watcher_labels,
     policy_gui_host,
+    tick_register,
 )
 
 
@@ -92,7 +93,11 @@ def main() -> int:
             lbl for lbl in live_watcher_labels(args.root) if lbl not in labels
         )
     message = build_ide_hop_message(
-        args.root, row=args.row, arm_labels=labels, tip_cp_ordinal=args.tip_cp
+        args.root,
+        row=args.row,
+        arm_labels=labels,
+        tip_cp_ordinal=args.tip_cp,
+        register=tick_register(args.root),
     )
     out = fire_ide_hop(
         message,

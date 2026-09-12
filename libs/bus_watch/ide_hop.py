@@ -59,6 +59,12 @@ def policy_gui_host(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
     return str(host) if host else None
 
 
+def tick_register(root_id: str, watch_dir: Path = WATCH_DIR) -> str:
+    """``register`` from the liaison tick state (``attended`` when unset)."""
+    state = read_state(watch_dir / f"liaison-{root_id}.tick.json")
+    return str(state.get("register") or "attended")
+
+
 def policy_focus_title(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
     """``policy.hop_focus_title`` — operator override of the launcher query when the
     derived ``Cursor <repo> [SSH: <host>]`` does not match the live window title."""
@@ -111,8 +117,14 @@ def build_ide_hop_message(
     tip_cp_ordinal: int | None = None,
     workspace: str = "universal-llm-gateway",
     cap: int = MESSAGE_CAP,
+    register: str = "attended",
 ) -> str:
-    """First user message of the successor tab; ``resume <R>`` first so the fence hook fires."""
+    """First user message of the successor tab; ``resume <R>`` first so the fence hook fires.
+
+    ``register`` is read from the tick state by the hop script: an overnight chain must
+    tell the successor it is autonomous (bind forks itself, page only on designed
+    stops, hop itself) in the first line, not leave it to a digest field it may skim.
+    """
     arm_lines = [f"ARM: {TAIL_RECIPE.format(label=label)}" for label in arm_labels] or [
         "ARM: none live — Plan from the digest (`scripts/liaison-tick.py --root R --once`)."
     ]
@@ -120,7 +132,7 @@ def build_ide_hop_message(
     lines = [
         f"resume {root_id}",
         "",
-        f"Liaison IDE hop (attended register){tip}. Use the liaison skill.",
+        f"Liaison IDE hop ({register} register){tip}. Use the liaison skill.",
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
         f"NOW: {row}",
         *arm_lines,
