@@ -72,6 +72,22 @@ def test_take_over_preempts_live_attended_holder(watch_dir: Path) -> None:
     assert fl.claim_fable_lock("ide:tab-b", hop=False, root_id="10479")["ok"] is True
 
 
+def test_release_refused_from_another_process_unless_operator(
+    watch_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An orphaned duplicate loop (same holder, other pid) must not drop the live lease."""
+    assert fl.claim_fable_lock("ide:tab-a", hop=False, root_id="10479")["ok"]
+    other_pid = fl.os.getpid() + 1
+    refused = fl.release_fable_lock("ide:tab-a", pid=other_pid)
+    assert refused["ok"] is False
+    assert refused["reason"] == "not_holder_process"
+    assert fl.read_lock()["holder"] == "ide:tab-a"
+    assert fl.release_fable_lock("ide:tab-a", pid=None)["ok"]  # operator --release
+    assert fl.read_lock().get("holder") is None
+    assert fl.claim_fable_lock("ide:tab-a", hop=False, root_id="10479")["ok"]
+    assert fl.release_fable_lock("ide:tab-a")["ok"]  # own process
+
+
 def test_model_gated_refresh_increments_tick_seq(watch_dir: Path) -> None:
     """AC-9: successive refreshes strictly increase tick_seq."""
     fl.claim_fable_lock("sdk:seat", hop=False, max_hop_minutes=60, root_id="10479")

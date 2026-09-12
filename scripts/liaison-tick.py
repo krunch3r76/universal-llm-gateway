@@ -169,7 +169,7 @@ def main() -> int:
                 take_over=args.take_over,
             )
             if args.claim
-            else release_fable_lock(args.holder)
+            else release_fable_lock(args.holder, pid=None)  # operator override
         )
         print(json.dumps(result))
         return 0 if result.get("ok") else 3

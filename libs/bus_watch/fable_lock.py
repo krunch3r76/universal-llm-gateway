@@ -11,6 +11,7 @@ refresh the declared lease on each tick, and release before a hop.
 from __future__ import annotations
 
 import json
+import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -182,6 +183,7 @@ def claim_fable_lock(
     claimed_at = _utcnow()
     payload = {
         "holder": holder,
+        "holder_pid": os.getpid(),
         "claimed_at": claimed_at,
         "expires_at": _lease_expires_at(claimed_at, max_hop_minutes),
         "hops": hops,
@@ -224,10 +226,21 @@ def refresh_fable_lock(
     return True
 
 
-def release_fable_lock(holder: str) -> dict[str, Any]:
+def release_fable_lock(holder: str, *, pid: int | None = -1) -> dict[str, Any]:
+    """Release the seat; only the claiming process (or an explicit operator override) may.
+
+    Two loops that share a holder string (specimen 2026-09-12 04:11Z: an orphaned
+    duplicate loop exiting) would otherwise release the live loop's lease and kill
+    it on its next refresh. ``pid=-1`` means "this process"; ``pid=None`` is the
+    operator's `--release`, which releases regardless.
+    """
     current = read_lock()
     if current and current.get("holder") not in (holder, None):
         return {"ok": False, "reason": "not_holder", "lock": current}
+    caller = os.getpid() if pid == -1 else pid
+    lock_pid = current.get("holder_pid") if current else None
+    if caller is not None and lock_pid is not None and int(lock_pid) != int(caller):
+        return {"ok": False, "reason": "not_holder_process", "lock": current}
     if current:
         FABLE_LOCK.write_text(
             json.dumps(
