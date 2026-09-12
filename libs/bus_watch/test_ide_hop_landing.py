@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
 
 import pytest
 
-from bus_watch.ide_hop import build_ide_hop_message, remote_launch_command
+from bus_watch.ide_hop import (
+    build_ide_hop_message,
+    live_watcher_labels,
+    remote_launch_command,
+)
 from bus_watch.ide_hop_landing import (
     AGENTS_WINDOW_TITLE,
     focus_title_for,
@@ -88,3 +93,25 @@ def test_landing_requires_a_transcript_newer_than_the_fire(tmp_path: Path) -> No
         )
         == "new-tab"
     )
+
+
+def test_live_watcher_labels_treats_predicate_unmet_as_live(tmp_path: Path) -> None:
+    """CDP consults sit at predicate_unmet until the first qualifying reply (a:33284)."""
+    (tmp_path / "10534-cdp.state.json").write_text(
+        json.dumps({"status": "predicate_unmet", "thread": "10534"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "10534-run.state.json").write_text(
+        json.dumps({"status": "running", "thread": "10534"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "10534-done.state.json").write_text(
+        json.dumps({"status": "complete", "thread": "10534"}),
+        encoding="utf-8",
+    )
+    (tmp_path / "other-root.state.json").write_text(
+        json.dumps({"status": "predicate_unmet", "thread": "10479"}),
+        encoding="utf-8",
+    )
+    labels = live_watcher_labels("10534", watch_dir=tmp_path)
+    assert labels == ["10534-cdp", "10534-run"]

@@ -48,7 +48,9 @@ _REPO = Path(__file__).resolve().parents[2]
 HANDOFF_MSG_DIR = WATCH_DIR / "handoff-messages"
 KEYSTROKE_SCRIPT = "scripts/orchestrator_tab_keystroke.py"
 MESSAGE_CAP = 2048
-LIVE_WATCHER_STATUSES = frozenset({"polling", "running"})
+# predicate_unmet is not terminal — CDP consults sit there until the first
+# qualifying reply (a:33284; hop 15 ARM: none live while G6 was in_flight).
+LIVE_WATCHER_STATUSES = frozenset({"polling", "running", "predicate_unmet"})
 DEFAULT_REMOTE_REPO = os.environ.get("ORCHESTRATOR_REPO", str(_REPO))
 
 
@@ -89,8 +91,10 @@ def live_watcher_labels(root_id: str, watch_dir: Path = WATCH_DIR) -> list[str]:
 
     A label is the state-file stem (what ``watch-supervise.sh tail --label`` takes).
     A poller belongs to the root when its stem carries the root prefix or its
-    ``thread`` is the root itself; terminal statuses are skipped because the tail
-    would exit immediately and the digest already surfaces them as unrelayed.
+    ``thread`` is the root itself; terminal statuses (``complete``, …) are skipped
+    because the tail would exit immediately and the digest already surfaces them
+    as unrelayed. ``predicate_unmet`` stays live: chrome-only CDP envelopes do
+    not satisfy ``proof_reply_from``, so the poller is still waiting.
     """
     labels: list[str] = []
     for path in sorted(watch_dir.glob("*.state.json")):
