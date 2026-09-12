@@ -22,6 +22,7 @@ import argparse
 import json
 import sys
 
+from bus_watch.hop_qualify import hop_qualifies
 from bus_watch.ide_hop import (
     DEFAULT_REMOTE_REPO,
     build_ide_hop_message,
@@ -79,6 +80,11 @@ def main() -> int:
         help="print the transcript id whose first user turn contains TEXT "
         "(among matches, highest tip_cp= wins; pass tip_cp=N when known)",
     )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="hop even when hop_qualifies refuses (operator override)",
+    )
     args = p.parse_args()
 
     if args.find_transcript:
@@ -93,6 +99,20 @@ def main() -> int:
         labels.extend(
             lbl for lbl in live_watcher_labels(args.root) if lbl not in labels
         )
+    qualify = hop_qualifies(row=args.row, arm_labels=labels)
+    if not qualify["ok"] and not args.force:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "phase": "no_autonomous_followup",
+                    "stay": True,
+                    "root": args.root,
+                    **qualify,
+                }
+            )
+        )
+        return 2
     message = build_ide_hop_message(
         args.root,
         row=args.row,

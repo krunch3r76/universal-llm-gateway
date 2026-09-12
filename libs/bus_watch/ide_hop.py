@@ -87,6 +87,34 @@ TAIL_RECIPE = (
 )
 
 
+def _pid_alive(pid: Any) -> bool:
+    try:
+        n = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if n <= 0:
+        return False
+    try:
+        os.kill(n, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _poller_alive(stem: str, state: dict[str, Any], watch_dir: Path) -> bool:
+    """Status is not liveness — a dead ``predicate_unmet`` stall must not ARM a hang-tail."""
+    pid: Any = state.get("pid")
+    pid_path = watch_dir / f"{stem}.pid"
+    if pid_path.is_file():
+        try:
+            text = pid_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            text = ""
+        if text:
+            pid = text
+    return _pid_alive(pid)
+
+
 def live_watcher_labels(root_id: str, watch_dir: Path = WATCH_DIR) -> list[str]:
     """Labels of pollers still running for ``root_id`` — the tails a successor tab must re-arm.
 
@@ -94,8 +122,10 @@ def live_watcher_labels(root_id: str, watch_dir: Path = WATCH_DIR) -> list[str]:
     A poller belongs to the root when its stem carries the root prefix or its
     ``thread`` is the root itself; terminal statuses (``complete``, …) are skipped
     because the tail would exit immediately and the digest already surfaces them
-    as unrelayed. ``predicate_unmet`` stays live: chrome-only CDP envelopes do
-    not satisfy ``proof_reply_from``, so the poller is still waiting.
+    as unrelayed. ``predicate_unmet`` stays live **only while the poller pid is
+    alive**: chrome-only CDP envelopes do not satisfy ``proof_reply_from``, so a
+    running wait is real; a dead stall (specimen ``10479-r4-consult`` 2026-09-11)
+    is not — tailing it hangs until session death (status is not complete/expired).
     """
     labels: list[str] = []
     for path in sorted(watch_dir.glob("*.state.json")):
@@ -109,6 +139,8 @@ def live_watcher_labels(root_id: str, watch_dir: Path = WATCH_DIR) -> list[str]:
         ):
             continue
         stem = path.name.removesuffix(".state.json")
+        if not _poller_alive(stem, state, watch_dir):
+            continue
         if stem.startswith(f"{root_id}-") or str(state.get("thread")) == str(root_id):
             labels.append(stem)
     return labels
@@ -137,14 +169,21 @@ def build_ide_hop_message(
     lines = [
         f"resume {root_id}",
         "",
-        f"Liaison IDE hop ({register} register){tip}. Use the liaison skill.",
-        "Do not stop. Proceed autonomously until a have-to stop. "
-        "Hop after harvest is the rule — harvest-complete is not a stay.",
+        f"Liaison IDE hop ({register} register){tip}. LOAD the liaison skill (do not skim).",
+        "Hop only when autonomous follow-up remains (live watcher, dispatchable NOW, "
+        "or CONTEXT_BUDGET with remaining work). HOLD_MERGE / empty NOW / quiet tick "
+        "→ STAY — do not hop.",
+        "LOAD AND EXECUTE: runbook:bus-consult-watcher (legs 1-3 atomic); "
+        "runbook:liaison-operator-guide when a ruling or how-to moves; "
+        "git-posture § Land on every land (merge, keep both).",
+        "§ Peer-house: isolate; collide ⇒ keep both; cdp/opus-5 → 2nd pool → "
+        "cursor/claude-opus-5; ¬ cursor/claude-fable-5-1; page human only if "
+        "sensitive after that ladder. ¬ hop away unreconciled.",
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
         f"NOW: {row}",
         *arm_lines,
         "Then: harvest every wake -> fold scoreboard -> Plan -> Dispatch (+watcher) -> "
-        f'CHECKPOINT -> `scripts/liaison-ide-hop.py --root {root_id} --row "<NOW>"`.',
+        "CHECKPOINT. Hop only if hop_qualifies; else STAY.",
     ]
     message = "\n".join(lines) + "\n"
     encoded = message.encode("utf-8")

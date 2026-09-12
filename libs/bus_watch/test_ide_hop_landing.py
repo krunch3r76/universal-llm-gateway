@@ -37,8 +37,12 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     assert hop_header_line(message).startswith(
         "Liaison IDE hop (attended register) tip_cp=147"
     )
-    assert "Do not stop. Proceed autonomously until a have-to stop." in message
-    assert "Hop after harvest is the rule" in message
+    assert "Hop only when autonomous follow-up remains" in message
+    assert "STAY" in message
+    assert "LOAD the liaison skill (do not skim)" in message
+    assert "runbook:bus-consult-watcher" in message
+    assert "§ Peer-house" in message
+    assert "Hop after harvest is the rule" not in message
 
 
 def test_remote_launch_command_prefers_verified_focus_over_uri() -> None:
@@ -97,21 +101,41 @@ def test_landing_requires_a_transcript_newer_than_the_fire(tmp_path: Path) -> No
 
 def test_live_watcher_labels_treats_predicate_unmet_as_live(tmp_path: Path) -> None:
     """CDP consults sit at predicate_unmet until the first qualifying reply (a:33284)."""
+    live = os.getpid()
     (tmp_path / "10534-cdp.state.json").write_text(
-        json.dumps({"status": "predicate_unmet", "thread": "10534"}),
+        json.dumps({"status": "predicate_unmet", "thread": "10534", "pid": live}),
         encoding="utf-8",
     )
+    (tmp_path / "10534-cdp.pid").write_text(str(live), encoding="utf-8")
     (tmp_path / "10534-run.state.json").write_text(
-        json.dumps({"status": "running", "thread": "10534"}),
+        json.dumps({"status": "running", "thread": "10534", "pid": live}),
         encoding="utf-8",
     )
+    (tmp_path / "10534-run.pid").write_text(str(live), encoding="utf-8")
     (tmp_path / "10534-done.state.json").write_text(
-        json.dumps({"status": "complete", "thread": "10534"}),
+        json.dumps({"status": "complete", "thread": "10534", "pid": live}),
         encoding="utf-8",
     )
     (tmp_path / "other-root.state.json").write_text(
-        json.dumps({"status": "predicate_unmet", "thread": "10479"}),
+        json.dumps({"status": "predicate_unmet", "thread": "10479", "pid": live}),
         encoding="utf-8",
     )
+    (tmp_path / "other-root.pid").write_text(str(live), encoding="utf-8")
     labels = live_watcher_labels("10534", watch_dir=tmp_path)
     assert labels == ["10534-cdp", "10534-run"]
+
+
+def test_live_watcher_labels_skips_dead_predicate_unmet(tmp_path: Path) -> None:
+    """Dead stall must not ARM a hang-tail (10479-r4-consult, 2026-09-11)."""
+    (tmp_path / "10479-r4-consult.state.json").write_text(
+        json.dumps(
+            {
+                "status": "predicate_unmet",
+                "thread": "10479",
+                "pid": 384667,
+            }
+        ),
+        encoding="utf-8",
+    )
+    labels = live_watcher_labels("10479", watch_dir=tmp_path)
+    assert labels == []
