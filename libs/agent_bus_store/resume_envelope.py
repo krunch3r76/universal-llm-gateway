@@ -11,6 +11,7 @@ from cortex_store.transcript_projection_membership import extract_cp_highlight
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
+from .tape_degrade import TapeBudgetExceeded, tape_budget_exceeded_envelope
 from .tape_harvest import render_tape_with_harvest
 from .tape_render import _find_jsonl_for_uuid
 from .tape_verbal import project_role_content_list
@@ -166,15 +167,27 @@ def build_resume_envelope(
     *,
     tape_budget_bytes: int = 512_000,
 ) -> dict[str, Any]:
-    """Last-session verbal pour + projection pointers (no graph/consolidation)."""
+    """Last-session verbal pour + projection pointers (no graph/consolidation).
+
+    The verbal pour is orientation, not the mission (the tip CHECKPOINT is);
+    a single harvested message wider than the fence budget therefore degrades
+    to a zero-body pour with the overflow pointer instead of failing the whole
+    bundle — the resume fence is the sole admitted first hop for a successor
+    and must never 500 on the size of one prior message (10479, 2026-09-12).
+    """
     # Read path: render-only. Harvest is explicit via tape?harvest=true (quick-fail).
-    tape = render_tape_with_harvest(
-        thread_id=thread_id,
-        budget_bytes=tape_budget_bytes,
-        harvest=False,
-        include_extras=False,
-        scope="last_session",
-    )
+    tape_degraded: dict[str, Any] | None = None
+    try:
+        tape = render_tape_with_harvest(
+            thread_id=thread_id,
+            budget_bytes=tape_budget_bytes,
+            harvest=False,
+            include_extras=False,
+            scope="last_session",
+        )
+    except TapeBudgetExceeded as exc:
+        tape_degraded = tape_budget_exceeded_envelope(exc)
+        tape = {"messages": [], "open_line": {}, "truncated": True}
     if tape.get("error"):
         return {"error": tape["error"], "reason": "tape_render_failed"}
     open_line = tape.get("open_line") if isinstance(tape.get("open_line"), dict) else {}
@@ -194,6 +207,7 @@ def build_resume_envelope(
         "tape_verbal": verbal,
         "message_count": len(verbal),
         "tape_truncated": bool(tape.get("truncated")),
+        "tape_degraded": tape_degraded,
         "open_line": open_line,
         "checkpoint_highlight": checkpoint_highlight,
         "mechanical_projection_uri": _MECHANICAL_PROJECTION_URI.format(

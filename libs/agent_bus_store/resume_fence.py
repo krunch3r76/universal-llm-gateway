@@ -444,6 +444,7 @@ def assemble_resume_fence(
         "tape": {
             "message_count": envelope.get("message_count", len(verbal)),
             "truncated": envelope.get("tape_truncated", False),
+            "degraded": envelope.get("tape_degraded"),
             "bytes": tape_bytes,
             "scope": envelope.get("scope", "last_session"),
             "read_via": {
