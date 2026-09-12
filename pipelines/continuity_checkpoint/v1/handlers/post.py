@@ -92,13 +92,14 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         caller_residue = str(options.get("residue") or "").strip()
 
         if not pre:
+            # Skipped pre_consolidate must not look dispatched (a:33299).
             pre = {
                 "residue": (
                     "TYPE: CHECKPOINT · pipeline · seal refused or pre_consolidate skipped.\n"
                     f"Mission: record checkpoint for {thread}.\n"
                 ),
                 "mission": f"resume {thread}",
-                "executor": "cursor-sdk",
+                "executor": "skipped",
                 "card_patch_applied": False,
             }
 
@@ -182,7 +183,7 @@ class ContinuityCheckpointPostHandler(BaseHandler):
             "status": "posted",
             "bus_turn": bus_turn,
             "pre_consolidate": {
-                "executor": pre.get("executor") or "cursor-sdk",
+                "executor": pre.get("executor") or "skipped",
                 "card_patch_applied": bool(pre.get("card_patch_applied")),
                 "residue_source": residue_source,
                 "supersedes_tip": supersedes_tip,

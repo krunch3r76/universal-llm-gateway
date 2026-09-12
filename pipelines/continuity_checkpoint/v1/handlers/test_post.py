@@ -139,6 +139,7 @@ async def test_post_skipped_seal_is_info_not_checkpoint() -> None:
         patch("handlers.post.bus_send", new=send),
     ):
         out = await handler.execute(_Step(), ctx)
+    assert out.json["pre_consolidate"]["executor"] == "skipped"
     assert out.json["pre_consolidate"]["supersedes_tip"] is False
     assert out.json["seal"]["refused"]["code"] == "checkpoint.window_unresolvable"
     subject = send.await_args.kwargs["subject"]
