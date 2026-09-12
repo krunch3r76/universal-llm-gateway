@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from agent_bus_store.tape_pour import (
     _filter_messages_to_cells,
     _window_cells,

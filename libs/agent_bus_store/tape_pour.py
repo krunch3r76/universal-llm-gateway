@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from continuity_tape.messages import Tools, apply_tools_policy, strip_extras
 from continuity_tape.seal_reader import messages_from_sealed_row
-from cortex_store.verbatim_succession import journal_verbatim_bytes, split_verbatim_layer
+from cortex_store.verbatim_succession import (
+    journal_verbatim_bytes,
+    split_verbatim_layer,
+)
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
