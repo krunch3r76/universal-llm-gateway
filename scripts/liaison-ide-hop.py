@@ -76,7 +76,8 @@ def main() -> int:
     p.add_argument(
         "--find-transcript",
         metavar="TEXT",
-        help="print the transcript id whose first user turn contains TEXT",
+        help="print the transcript id whose first user turn contains TEXT "
+        "(among matches, highest tip_cp= wins; pass tip_cp=N when known)",
     )
     args = p.parse_args()
 

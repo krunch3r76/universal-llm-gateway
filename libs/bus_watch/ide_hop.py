@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import time
@@ -152,29 +153,43 @@ def build_ide_hop_message(
     return message
 
 
+_TIP_CP_RE = re.compile(r"tip_cp=(\d+)")
+
+
+def _tip_cp_in_first_line(first_line: str) -> int:
+    """Hop opener ordinal, or ``-1`` when the first user line has no ``tip_cp=``."""
+    m = _TIP_CP_RE.search(first_line)
+    return int(m.group(1)) if m else -1
+
+
 def find_transcript_id(
     first_user_text: str, transcripts_dir: Path = AGENT_TRANSCRIPTS
 ) -> str | None:
     """Transcript id of the tab whose first user message contains ``first_user_text``.
 
     The seat cannot read its own tab id; the JSONL under agent-transcripts is the
-    only place it appears, and the newest match is the live tab. Needed for
-    ``continuity(op=checkpoint, surface=cursor, transcript_id=...)``.
+    only place it appears. A predecessor hop's jsonl keeps taking mtime updates
+    after the successor lands, so mtime-newest among ``resume <R>`` matches is
+    the old tab (hops 23–24, 2026-09-12). Among matches, prefer the highest
+    ``tip_cp=`` in the first line; mtime is the tie-break. Prefer a unique
+    needle (``tip_cp=N``) when the caller already knows it.
     """
     if not transcripts_dir.is_dir():
         return None
-    candidates = sorted(
-        transcripts_dir.glob("*/*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True
-    )
-    for path in candidates:
+    matches: list[tuple[int, float, str]] = []
+    for path in transcripts_dir.glob("*/*.jsonl"):
         try:
             with path.open(encoding="utf-8") as fh:
                 first_line = fh.readline()
+            mtime = path.stat().st_mtime
         except OSError:
             continue
         if first_user_text in first_line:
-            return path.parent.name
-    return None
+            matches.append((_tip_cp_in_first_line(first_line), mtime, path.parent.name))
+    if not matches:
+        return None
+    matches.sort(key=lambda row: (row[0], row[1]), reverse=True)
+    return matches[0][2]
 
 
 _DISCOVER_URI_SNIPPET = r"""
