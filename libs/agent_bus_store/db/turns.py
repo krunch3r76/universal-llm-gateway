@@ -139,6 +139,7 @@ def insert_turn(
     after_turn: int | None = None,
     supersedes_turn: int | None = None,
     attachments: list[dict[str, Any]] | None = None,
+    on_behalf: bool = False,
 ) -> tuple[int, str, int]:
     """Returns (turn_id, created_at, turn_number).
 
@@ -201,7 +202,7 @@ def insert_turn(
         ).fetchone()
         latest_turn_number = max_row["max_tn"] or 0
 
-        if after_turn is not None:
+        if after_turn is not None and not on_behalf:
             # Mirror get_turns inbox semantics (legacy short to_agent slugs included).
             include_team = from_agent != "kaywan"
             inbox_clause, inbox_params = recipient_in_clause(

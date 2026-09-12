@@ -17,7 +17,7 @@ from systems.frontier_consult.cdp_generate import (
 )
 from systems.frontier_consult.cdp_generate_worker import (
     ONBEHALF_POST_FAILED_STALL,
-    _unread_latest_from_409,
+    PostOutcome,
     cdp_result_subject,
     deliver_cdp_result_turn,
     format_cdp_result_body,
@@ -268,9 +268,9 @@ async def test_deliver_oversized_with_archive_posts_pointer(
     async def fake_sidecar(**kwargs: object) -> None:
         sidecar_calls.append(dict(kwargs))
 
-    async def fake_post(**kwargs: object) -> bool:
+    async def fake_post(**kwargs: object) -> PostOutcome:
         posted_bodies.append(str(kwargs.get("body")))
-        return True
+        return PostOutcome(ok=True, http_status=201)
 
     huge = "x" * 170_000
     result = CdpGenerateResult(
@@ -326,9 +326,9 @@ async def test_deliver_oversized_without_archive_writes_sidecar(
             body_chars=len(str(kwargs.get("content"))),
         )
 
-    async def fake_post(**kwargs: object) -> bool:
+    async def fake_post(**kwargs: object) -> PostOutcome:
         posted_bodies.append(str(kwargs.get("body")))
-        return True
+        return PostOutcome(ok=True, http_status=201)
 
     huge = "y" * 170_000
     result = _ok_result_no_archive(body=huge)
@@ -364,9 +364,9 @@ async def test_deliver_under_limit_inline_unchanged(
     """AC-3 — metadata headers then harvest inline, byte-for-byte."""
     posted_bodies: list[str] = []
 
-    async def fake_post(**kwargs: object) -> bool:
+    async def fake_post(**kwargs: object) -> PostOutcome:
         posted_bodies.append(str(kwargs.get("body")))
-        return True
+        return PostOutcome(ok=True, http_status=201)
 
     monkeypatch.setattr(
         "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
@@ -399,9 +399,9 @@ async def test_deliver_oversized_sidecar_fail_terminal(
         sidecar_calls.append(dict(kwargs))
         return None
 
-    async def fake_post(**kwargs: object) -> bool:
+    async def fake_post(**kwargs: object) -> PostOutcome:
         subjects.append(str(kwargs.get("subject")))
-        return False
+        return PostOutcome(ok=False, http_status=503, detail_preview="sidecar fail")
 
     huge = "z" * 170_000
     result = _ok_result_no_archive(body=huge)
@@ -430,9 +430,10 @@ async def test_deliver_oversized_sidecar_fail_terminal(
 async def test_deliver_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
 
-    async def fake_post(**kwargs: object) -> bool:
+    async def fake_post(**kwargs: object) -> PostOutcome:
         calls.append(str(kwargs.get("subject")))
-        return len(calls) >= 2
+        ok = len(calls) >= 2
+        return PostOutcome(ok=ok, http_status=201 if ok else 409)
 
     monkeypatch.setattr(
         "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
@@ -460,10 +461,21 @@ async def test_deliver_terminal_delivery_failed_when_posts_false(
     subjects: list[str] = []
     bodies: list[str] = []
 
-    async def fake_post(**kwargs: object) -> bool:
+    async def fake_post(**kwargs: object) -> PostOutcome:
         subjects.append(str(kwargs.get("subject")))
         bodies.append(str(kwargs.get("body")))
-        return False
+        return PostOutcome(
+            ok=False,
+            http_status=409,
+            detail_preview='{"detail":{"error":"unread_turns_exist"}}',
+        )
+
+    published: list[dict[str, object]] = []
+
+    def capture_publish(factory: Any, **kwargs: Any) -> bool:
+        if factory.__name__ == "CdpGenerateDeliveryFailed":
+            published.append(dict(kwargs))
+        return True
 
     monkeypatch.setattr(
         "systems.frontier_consult.cdp_generate_worker.post_cdp_turn",
@@ -472,6 +484,10 @@ async def test_deliver_terminal_delivery_failed_when_posts_false(
     monkeypatch.setattr(
         "systems.frontier_consult.cdp_onbehalf_delivery.asyncio.sleep",
         AsyncMock(),
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_events.publish_cdp_kwargs",
+        capture_publish,
     )
     crit = MagicMock()
     monkeypatch.setattr(
@@ -490,10 +506,12 @@ async def test_deliver_terminal_delivery_failed_when_posts_false(
     assert subjects[1].startswith("cdp reply —")
     assert subjects[2].startswith("cdp DELIVERY FAILED —")
     assert ONBEHALF_POST_FAILED_STALL in bodies[2]
-    # R-admit-shaped wait: a from=web-anthropic DELIVERY FAILED turn was attempted so
-    # agent_bus.wait(from_agent=web-anthropic) would terminalize when the bus is up.
     assert "DELIVERY FAILED" in subjects[2]
     crit.assert_called_once()
+    assert len(published) == 1
+    assert published[0]["http_status"] == 409
+    assert published[0]["detail_preview"] is not None
+    assert "unread_turns_exist" in str(published[0]["detail_preview"])
 
 
 def test_format_onbehalf_delivery_failed_includes_stall_stage() -> None:
@@ -665,68 +683,31 @@ async def test_emit_upstream_overload_friction_dedupes(
     assert "service:universal-stargate" in note
 
 
-def test_unread_latest_from_409_extracts_latest() -> None:
-    resp = MagicMock()
-    resp.status_code = 409
-    resp.json.return_value = {
-        "detail": {
-            "error": "unread_turns_exist",
-            "latest_turn_number": 16,
-            "unread_turns": [{"turn_number": 16}],
-        }
-    }
-    assert _unread_latest_from_409(resp) == 16
-
-
-def test_unread_latest_from_409_ignores_other_errors() -> None:
-    resp = MagicMock()
-    resp.status_code = 409
-    resp.json.return_value = {"detail": {"error": "other", "latest_turn_number": 9}}
-    assert _unread_latest_from_409(resp) is None
-    resp.status_code = 500
-    assert _unread_latest_from_409(resp) is None
-
-
 @pytest.mark.asyncio
-async def test_post_cdp_turn_retries_after_unread_409(
+async def test_post_cdp_turn_on_behalf_marks_pointer_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Concurrent second CDP admit leaves endpoint unread past pointer — remake+retry."""
+    """On-behalf posts bypass inbox gate; mark read uses exact pointer turn only."""
     from systems.frontier_consult import cdp_generate_worker as worker
 
     class _Resp:
-        def __init__(self, status_code: int, payload: dict | None = None) -> None:
+        def __init__(self, status_code: int) -> None:
             self.status_code = status_code
-            self._payload = payload or {}
-            self.text = str(payload or "")
+            self.text = "ok"
 
-        def json(self) -> dict:
-            return self._payload
-
-    posts: list[int] = []
-    marks: list[tuple[int, str]] = []
+    marks: list[dict[str, object]] = []
+    posts: list[dict[str, object]] = []
 
     class _Client:
         async def patch(self, path: str, json: dict, headers: dict) -> _Resp:
             del path, headers
-            marks.append((int(json["through_turn"]), str(json["agent"])))
+            marks.append(dict(json))
             return _Resp(200)
 
         async def post(self, path: str, json: dict, headers: dict) -> _Resp:
-            del path, json, headers
-            posts.append(len(posts))
-            if len(posts) == 1:
-                return _Resp(
-                    409,
-                    {
-                        "detail": {
-                            "error": "unread_turns_exist",
-                            "latest_turn_number": 16,
-                            "unread_turns": [{"turn_number": 16}],
-                        }
-                    },
-                )
-            return _Resp(200)
+            del path, headers
+            posts.append(dict(json))
+            return _Resp(201)
 
     class _CM:
         async def __aenter__(self) -> _Client:
@@ -741,7 +722,7 @@ async def test_post_cdp_turn_retries_after_unread_409(
         "make_async_client",
         lambda *a, **k: _CM(),
     )
-    ok = await worker.post_cdp_turn(
+    outcome = await worker.post_cdp_turn(
         thread_id="5737",
         to_agent="cursor",
         subject="cdp reply — abcd",
@@ -749,17 +730,74 @@ async def test_post_cdp_turn_retries_after_unread_409(
         request_id="r1",
         pointer_turn=15,
     )
-    assert ok is True
-    # Dual mark: canonical web-anthropic + legacy cdp per through_turn
-    assert marks == [
-        (15, "web-anthropic"),
-        (15, "cdp"),
-        (16, "web-anthropic"),
-        (16, "cdp"),
-    ]
-    assert len(posts) == 2
-    # On-behalf posts as endpoint address
-    assert worker.CDP_REPLY_FROM == "web-anthropic"
+    assert outcome.ok is True
+    assert outcome.http_status == 201
+    assert marks == [{"turn_numbers": [15]}]
+    assert len(posts) == 1
+    assert posts[0]["on_behalf"] is True
+    assert posts[0]["from"] == "web-anthropic"
+
+
+@pytest.mark.asyncio
+async def test_finalize_ok_harvest_failed_delivery_terminates_with_archive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult import cdp_generate_reconcile as reconcile
+    from systems.frontier_consult.cdp_dispatch_envelope import record_cdp_admit
+
+    terminate_calls: list[dict[str, object]] = []
+
+    record_cdp_admit(
+        execution_id="exec-fail-deliver",
+        thread_id="5583",
+        pointer_turn=2,
+        admit_reason="ok",
+        caller_supplied_thread=True,
+    )
+
+    async def _terminate(**kwargs: object) -> bool:
+        terminate_calls.append(dict(kwargs))
+        return True
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.terminate_handoff_dispatch",
+        _terminate,
+    )
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", lambda *a, **k: True)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=False),
+    )
+    reconcile.upsert_inflight_leg(
+        execution_id="exec-fail-deliver",
+        request_id="req-fail-deliver",
+        thread_id="5583",
+        pointer_turn=2,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/fable",
+        max_wall_s=1800.0,
+    )
+    result = CdpGenerateResult(
+        ok=True,
+        body="harvest",
+        execution_id="exec-fail-deliver",
+        satellite_execution_id="sat-1",
+        prompt_uri="cortex://p.md",
+        picker_model="fable-5",
+        archive_uri="cortex://notes/system/threads/harvest.md",
+    )
+    await reconcile.finalize_cdp_generate(
+        result=result,
+        request_id="req-fail-deliver",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=2,
+        via="worker",
+    )
+    failed = [c for c in terminate_calls if c.get("terminal_status") == "failed"]
+    assert len(failed) == 1
+    assert failed[0]["archive_uri"] == "cortex://notes/system/threads/harvest.md"
 
 
 def test_team_dispatch_generate_body_accepts_purpose() -> None:

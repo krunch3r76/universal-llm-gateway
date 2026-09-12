@@ -194,7 +194,7 @@ async def deliver_cdp_result_turn(
                 request_id=request_id,
                 pointer_turn=pointer_turn,
             )
-            if not final:
+            if not final.ok:
                 logger.critical(
                     "cdp on-behalf DELIVERY FAILED post also failed "
                     "(bus unreachable residual): thread=%s execution_id=%s "
@@ -210,12 +210,14 @@ async def deliver_cdp_result_turn(
                     execution_id=result.execution_id,
                     thread_id=thread_id,
                     stall_stage=ONBEHALF_POST_FAILED_STALL,
+                    http_status=final.http_status,
+                    detail_preview=final.detail_preview,
                 )
-            return final
+            return final.ok
     else:
         body = format_cdp_result_body(result)
 
-    posted = await post_cdp_turn(
+    last_outcome = await post_cdp_turn(
         thread_id=thread_id,
         to_agent=to_agent,
         subject=subject,
@@ -223,10 +225,10 @@ async def deliver_cdp_result_turn(
         request_id=request_id,
         pointer_turn=pointer_turn,
     )
-    if posted:
+    if last_outcome.ok:
         return True
     await asyncio.sleep(_POST_RETRY_SLEEP_S)
-    posted = await post_cdp_turn(
+    last_outcome = await post_cdp_turn(
         thread_id=thread_id,
         to_agent=to_agent,
         subject=subject,
@@ -234,7 +236,7 @@ async def deliver_cdp_result_turn(
         request_id=request_id,
         pointer_turn=pointer_turn,
     )
-    if posted:
+    if last_outcome.ok:
         return True
     fail_subject = f"cdp DELIVERY FAILED — {result.execution_id[:8]}"
     fail_body = format_onbehalf_delivery_failed_body(result)
@@ -246,7 +248,8 @@ async def deliver_cdp_result_turn(
         request_id=request_id,
         pointer_turn=pointer_turn,
     )
-    if not final:
+    last_outcome = final
+    if not final.ok:
         logger.critical(
             "cdp on-behalf DELIVERY FAILED post also failed "
             "(bus unreachable residual): thread=%s execution_id=%s "
@@ -262,5 +265,8 @@ async def deliver_cdp_result_turn(
             execution_id=result.execution_id,
             thread_id=thread_id,
             stall_stage=ONBEHALF_POST_FAILED_STALL,
+            http_status=last_outcome.http_status,
+            detail_preview=last_outcome.detail_preview,
+            archive_uri=result.archive_uri,
         )
-    return final
+    return final.ok

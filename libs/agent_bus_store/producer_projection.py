@@ -50,7 +50,7 @@ def classify_producer_link(
 
     terminal_status = row.get("terminal_status")
     state: ProducerState = "terminal" if terminal_status else "in_flight"
-    return {
+    out: dict[str, Any] = {
         "execution_id": execution_id,
         "pipeline_id": row.get("pipeline_id"),
         "state": state,
@@ -59,6 +59,10 @@ def classify_producer_link(
         "delivery_at": row.get("delivery_at"),
         "source": _SOURCE,
     }
+    archive_uri = row.get("archive_uri")
+    if archive_uri:
+        out["archive_uri"] = archive_uri
+    return out
 
 
 def _parse_link_timestamp(raw: Any) -> datetime | None:

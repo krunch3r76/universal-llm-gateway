@@ -221,16 +221,26 @@ def CdpGenerateDeliveryFailed(  # noqa: N802
     execution_id: str,
     thread_id: str,
     stall_stage: str | None = None,
+    http_status: int | None = None,
+    detail_preview: str | None = None,
+    archive_uri: str | None = None,
 ) -> Event:
     """On-behalf bus delivery failed after harvest or failure body."""
+    payload: dict[str, Any] = {
+        "request_id": request_id,
+        "execution_id": execution_id,
+        "thread_id": thread_id,
+        "stall_stage": stall_stage,
+    }
+    if http_status is not None:
+        payload["http_status"] = http_status
+    if detail_preview is not None:
+        payload["detail_preview"] = detail_preview
+    if archive_uri is not None:
+        payload["archive_uri"] = archive_uri
     return Event(
         signal="cdp.generate.delivery_failed",
-        payload={
-            "request_id": request_id,
-            "execution_id": execution_id,
-            "thread_id": thread_id,
-            "stall_stage": stall_stage,
-        },
+        payload=payload,
         scope="node",
     )
 

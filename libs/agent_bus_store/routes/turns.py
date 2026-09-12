@@ -130,6 +130,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             after_turn=turn.after_turn,
             supersedes_turn=storage_supersedes,
             attachments=att_dicts,
+            on_behalf=turn.on_behalf,
         )
     except UnreadTurnsExist as e:
         raise HTTPException(
@@ -185,6 +186,7 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         superseded_turn_id=echo_turn_id,
         thread_tags=thread_tags,
         supersedes_turn=turn.supersedes_turn or turn.supersedes_turn_id,
+        on_behalf=turn.on_behalf,
     )
 
 

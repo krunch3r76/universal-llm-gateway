@@ -235,7 +235,11 @@ async def finalize_cdp_generate(
     envelope = get_cdp_dispatch_envelope(result.execution_id)
     dispatch_link_terminal: bool | None = None
 
-    async def _terminate_dispatch_link(*, terminal_status: str) -> None:
+    async def _terminate_dispatch_link(
+        *,
+        terminal_status: str,
+        archive_uri: str | None = None,
+    ) -> None:
         nonlocal dispatch_link_terminal
         if envelope is None or envelope.admit_reason != "ok":
             dispatch_link_terminal = None
@@ -251,6 +255,7 @@ async def finalize_cdp_generate(
             execution_id=result.execution_id,
             terminal_status=terminal_status,
             bus_lifecycle=bus_lifecycle,
+            archive_uri=archive_uri,
         )
         dispatch_link_terminal = ok
         record_cdp_dispatch_link_terminal(
@@ -391,6 +396,10 @@ async def finalize_cdp_generate(
             await _terminate_dispatch_link(terminal_status="completed")
             enriched = _enrich_result(result)
         else:
+            await _terminate_dispatch_link(
+                terminal_status="failed",
+                archive_uri=result.archive_uri,
+            )
             enriched = _enrich_result(result)
     else:
         enriched = _enrich_result(result)

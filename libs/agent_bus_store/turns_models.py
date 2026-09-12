@@ -241,6 +241,7 @@ class TurnCreate(BaseModel):
         description="Deprecated alias for row id — prefer supersedes_turn (turn_number).",
     )
     attachments: list[AttachmentCreate] | None = None
+    on_behalf: bool = False
 
 
 class TurnCreated(BaseModel):
@@ -278,6 +279,10 @@ class TurnCreated(BaseModel):
     superseded_turn_id: int | None = Field(
         default=None,
         description="When this turn structurally supersedes another, its row id.",
+    )
+    on_behalf: bool | None = Field(
+        default=None,
+        description="True when the post bypassed the poster inbox unread gate.",
     )
 
 
@@ -569,6 +574,7 @@ class DispatchTerminate(BaseModel):
     terminal_status: Literal["completed", "failed"]
     execution_id: str | None = None
     bus_lifecycle: Literal["persistent", "ephemeral"] | None = None
+    archive_uri: str | None = None
 
 
 class DispatchClaimAndPost(BaseModel):

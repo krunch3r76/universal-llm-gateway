@@ -474,11 +474,13 @@ def terminate_dispatch(
     thread_id: str,
     terminal_status: str,
     execution_id: str | None = None,
+    archive_uri: str | None = None,
 ) -> dict[str, Any] | None:
     """Mark dispatch link(s) terminal — sets terminal_status, terminal_at, delivery_at.
 
     When ``execution_id`` is omitted, updates all non-terminal links for the thread
     (SDK is 1:1). Idempotent: rows already terminal are skipped via the NULL guard.
+    ``archive_uri`` is persisted on failed delivery when harvest proof exists.
     """
     if terminal_status not in ("completed", "failed"):
         raise ValueError(
@@ -496,17 +498,19 @@ def terminate_dispatch(
         if execution_id is not None:
             conn.execute(
                 "UPDATE thread_dispatch_links "
-                "SET terminal_status = ?, terminal_at = ?, delivery_at = ? "
+                "SET terminal_status = ?, terminal_at = ?, delivery_at = ?, "
+                "archive_uri = COALESCE(?, archive_uri) "
                 "WHERE thread_id = ? AND execution_id = ? "
                 "AND terminal_status IS NULL",
-                (terminal_status, ts, ts, thread_id, execution_id),
+                (terminal_status, ts, ts, archive_uri, thread_id, execution_id),
             )
         else:
             conn.execute(
                 "UPDATE thread_dispatch_links "
-                "SET terminal_status = ?, terminal_at = ?, delivery_at = ? "
+                "SET terminal_status = ?, terminal_at = ?, delivery_at = ?, "
+                "archive_uri = COALESCE(?, archive_uri) "
                 "WHERE thread_id = ? AND terminal_status IS NULL",
-                (terminal_status, ts, ts, thread_id),
+                (terminal_status, ts, ts, archive_uri, thread_id),
             )
 
     return get_thread_with_links(thread_id)

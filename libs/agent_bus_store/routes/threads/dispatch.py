@@ -135,6 +135,7 @@ async def dispatch_terminate_route(
         thread_id=thread_id,
         terminal_status=body.terminal_status,
         execution_id=body.execution_id,
+        archive_uri=body.archive_uri,
     )
     if row is None:
         raise HTTPException(
