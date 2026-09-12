@@ -27,7 +27,9 @@ _DEFAULT_REPO = "/mnt/torus/projects/universal-llm-gateway"
 
 def _require_display() -> None:
     if not os.environ.get("WAYLAND_DISPLAY"):
-        raise SystemExit("WAYLAND_DISPLAY unset — run on graphical session (orion-node)")
+        raise SystemExit(
+            "WAYLAND_DISPLAY unset — run on graphical session (orion-node)"
+        )
 
 
 def _wl_copy(text: str) -> None:
@@ -72,19 +74,42 @@ def _raise_cursor_uri(folder_uri: str) -> None:
     )
 
 
+def _focus_by_title(ui: UInput, title_query: str, *, settle_s: float = 0.9) -> None:
+    """Bring the window whose title matches ``title_query`` to the front via the COSMIC launcher.
+
+    COSMIC exposes no focus API to ordinary clients and a native-Wayland Cursor cannot
+    raise itself on ``cursor --folder-uri`` (no activation token; 2026-09-12 04:24Z the
+    URI went to Firefox), so until 2026-09-12 06:00Z every hop typed into whatever
+    window happened to be focused. The launcher (``Super`` → ``System(Launcher)`` in
+    the COSMIC defaults) is privileged: its window plugin lists open toplevels by
+    title and Enter activates the match — the same title-addressed raise the
+    operator does by hand. Needs a ``ui`` because the launcher is driven by keys.
+    """
+    _tap(ui, e.KEY_LEFTMETA, delay=0.08)
+    time.sleep(0.7)
+    _wl_copy(title_query)
+    time.sleep(0.05)
+    _paste(ui)
+    time.sleep(0.6)
+    _tap(ui, e.KEY_ENTER)
+    time.sleep(settle_s)
+
+
 def _ui() -> UInput:
-    cap = {e.EV_KEY: [
-        e.KEY_LEFTCTRL,
-        e.KEY_LEFTSHIFT,
-        e.KEY_LEFTALT,
-        e.KEY_LEFTMETA,
-        e.KEY_ENTER,
-        e.KEY_V,
-        e.KEY_P,
-        e.KEY_N,
-        e.KEY_L,
-        e.KEY_SLASH,
-    ]}
+    cap = {
+        e.EV_KEY: [
+            e.KEY_LEFTCTRL,
+            e.KEY_LEFTSHIFT,
+            e.KEY_LEFTALT,
+            e.KEY_LEFTMETA,
+            e.KEY_ENTER,
+            e.KEY_V,
+            e.KEY_P,
+            e.KEY_N,
+            e.KEY_L,
+            e.KEY_SLASH,
+        ]
+    }
     return UInput(events=cap, name="orchestrator-handoff-kbd", bustype=e.BUS_USB)
 
 
@@ -168,12 +193,14 @@ def launch_new_chat_with_message(
     dry_run: bool = False,
     raise_window: bool = True,
     raise_uri: str | None = None,
+    focus_title: str | None = None,
 ) -> dict[str, object]:
     """Open a new chat in a Cursor window and send ``message``.
 
-    Focus order: ``raise_uri`` (focus the window holding that folder URI — the
-    Remote-SSH-safe raise) ≻ ``raise_window`` (legacy ``cursor -r <repo>``, local
-    workspaces only) ≻ neither (paste into whatever is in front — hop 3 on
+    Focus order: ``focus_title`` (COSMIC launcher, title-addressed — the only raise
+    that works for a native-Wayland Cursor) ≻ ``raise_uri`` (``cursor --folder-uri``,
+    for compositors that honour it) ≻ ``raise_window`` (legacy ``cursor -r <repo>``,
+    local workspaces only) ≻ neither (paste into whatever is in front — hop 3 on
     2026-09-11 landed in Firefox this way; only for an operator who is watching).
     """
     _require_display()
@@ -184,16 +211,19 @@ def launch_new_chat_with_message(
             "palette_query": palette_query,
             "raise_window": raise_window,
             "raise_uri": raise_uri,
+            "focus_title": focus_title,
             "message_preview": message[:120],
         }
-    if raise_uri:
+    if not focus_title and raise_uri:
         _raise_cursor_uri(raise_uri)
         time.sleep(1.5)
-    elif raise_window:
+    elif not focus_title and raise_window:
         _raise_cursor(repo)
         time.sleep(0.9)
     ui = _ui()
     try:
+        if focus_title:
+            _focus_by_title(ui, focus_title)
         _palette_run(ui, palette_query)
         _wl_copy(message)
         time.sleep(0.08)
@@ -202,7 +232,12 @@ def launch_new_chat_with_message(
         _tap(ui, e.KEY_ENTER)
     finally:
         ui.close()
-    return {"ok": True, "palette_query": palette_query, "message_len": len(message)}
+    return {
+        "ok": True,
+        "palette_query": palette_query,
+        "focus_title": focus_title,
+        "message_len": len(message),
+    }
 
 
 def glass_quick_command(
@@ -259,10 +294,16 @@ def select_composer_model(
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
-    lp = sub.add_parser("launch", help="Raise Cursor, new chat via palette, paste message")
+    lp = sub.add_parser(
+        "launch", help="Raise Cursor, new chat via palette, paste message"
+    )
     lp.add_argument("--message", help="First user message (e.g. resume 10223 …)")
-    lp.add_argument("--message-file", help="Read message from file (preferred for multiline)")
-    lp.add_argument("--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO))
+    lp.add_argument(
+        "--message-file", help="Read message from file (preferred for multiline)"
+    )
+    lp.add_argument(
+        "--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO)
+    )
     lp.add_argument(
         "--palette-query",
         default=os.environ.get("ORCHESTRATOR_PALETTE_QUERY", "New Chat"),
@@ -279,9 +320,19 @@ def main() -> int:
         default=None,
         help="Focus the window holding this folder URI first (vscode-remote://ssh-remote%%2B…/repo)",
     )
-    gq = sub.add_parser("glass-cmd", help="Raise Cursor, ctrl-/ (or palette), run query")
+    lp.add_argument(
+        "--focus-title",
+        default=None,
+        help="Focus the window by title through the COSMIC launcher first "
+        "(e.g. 'universal-llm-gateway [SSH: io]'); overrides --raise-uri",
+    )
+    gq = sub.add_parser(
+        "glass-cmd", help="Raise Cursor, ctrl-/ (or palette), run query"
+    )
     gq.add_argument("query", help="Filter text after opening quick command")
-    gq.add_argument("--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO))
+    gq.add_argument(
+        "--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO)
+    )
     gq.add_argument(
         "--opener",
         choices=("ctrl_slash", "ctrl_shift_p"),
@@ -292,7 +343,9 @@ def main() -> int:
         "select-composer",
         help="ctrl-/composer<CR> then ctrl-/Composer 2.5<CR> (Glass model pick probe)",
     )
-    mc.add_argument("--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO))
+    mc.add_argument(
+        "--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO)
+    )
     mc.add_argument(
         "--model-query",
         default=os.environ.get("ORCHESTRATOR_MODEL_QUERY", "Composer 2.5"),
@@ -323,6 +376,7 @@ def main() -> int:
             dry_run=args.dry_run,
             raise_window=not args.no_raise,
             raise_uri=args.raise_uri,
+            focus_title=args.focus_title,
         )
         import json
 

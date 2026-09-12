@@ -35,6 +35,12 @@ from typing import Any
 from durable_io.atomic import durable_write_text
 
 from bus_watch.fable_lock import WATCH_DIR
+from bus_watch.ide_hop_landing import (
+    focus_title_for,
+    hop_header_line,
+    ssh_host_name_from_uri,
+    wait_for_landed_transcript,
+)
 from bus_watch.liaison_digest import effective_policy
 from bus_watch.state import read_state
 
@@ -201,9 +207,20 @@ def remote_launch_command(
     remote_repo: str,
     palette_query: str,
     raise_uri: str | None,
+    focus_title: str | None = None,
 ) -> str:
-    """Build the GUI-host command; ``raise_uri=None`` types into the focused window (``--no-raise``)."""
-    focus = f"--raise-uri {shlex.quote(raise_uri)}" if raise_uri else "--no-raise"
+    """Build the GUI-host command.
+
+    Focus order: ``focus_title`` (COSMIC launcher, title-addressed — the only raise
+    that works for a native-Wayland Cursor) ≻ ``raise_uri`` (``cursor --folder-uri``,
+    kept for compositors that honour it) ≻ neither (types into the focused window).
+    """
+    if focus_title:
+        focus = f"--no-raise --focus-title {shlex.quote(focus_title)}"
+    elif raise_uri:
+        focus = f"--raise-uri {shlex.quote(raise_uri)}"
+    else:
+        focus = "--no-raise"
     return (
         "export WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000; "
         f"python3 {shlex.quote(f'{remote_repo}/{KEYSTROKE_SCRIPT}')} launch "
@@ -223,6 +240,7 @@ def fire_ide_hop(
     palette_query: str = "New Chat",
     dry_run: bool = False,
     no_raise: bool = False,
+    landing_timeout_s: float = 30.0,
 ) -> dict[str, Any]:
     """Write the hop message where the GUI host sees it (NFS) and keystroke it into a new chat.
 
@@ -230,9 +248,13 @@ def fire_ide_hop(
     Cursor window on ``remote_repo`` to raise (no fallback focus): firing at a
     guessed display or a guessed window is the failure this module exists to
     prevent — hops 1–3 on 2026-09-11 landed on an unattended host and in Firefox.
-    ``no_raise`` is the operator-focused variant: he has the Cursor window focused
-    and says so; ``cursor --folder-uri`` is skipped (2026-09-12 04:24Z it handed the
-    remote URI to Firefox instead of focusing the window).
+    The window is focused **by title** through the COSMIC launcher
+    (``<repo> [SSH: <host>]``, host decoded from the discovered Remote-SSH URI);
+    ``cursor --folder-uri`` cannot raise a native-Wayland Cursor (2026-09-12 04:24Z it
+    handed the remote URI to Firefox) and every hop up to 06:00Z that day typed into
+    whatever window was in front. ``no_raise`` skips the focus step for an operator
+    who is on the window and says so. ``ok`` means **landed**: a new agent transcript
+    carrying the hop header appeared after the keystrokes — sent keys are not a hop.
     """
     if not gui_host:
         return {
@@ -252,6 +274,11 @@ def fire_ide_hop(
             "gui_host": gui_host,
             "fix": f"open {remote_repo} in Cursor on {gui_host} (Remote-SSH) before hopping",
         }
+    focus_title = (
+        None
+        if no_raise
+        else focus_title_for(remote_repo, ssh_host_name_from_uri(raise_uri or ""))
+    )
     HANDOFF_MSG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     msg_path = HANDOFF_MSG_DIR / f"liaison-{root_id}-{stamp}.md"
@@ -262,16 +289,19 @@ def fire_ide_hop(
         remote_repo=remote_repo,
         palette_query=palette_query,
         raise_uri=raise_uri,
+        focus_title=focus_title,
     )
     result: dict[str, Any] = {
         "root": root_id,
         "message_path": str(msg_path),
         "gui_host": gui_host,
         "raise_uri": raise_uri,
+        "focus_title": focus_title,
         "remote_cmd": cmd,
     }
     if dry_run:
         return {"ok": True, "dry_run": True, **result}
+    fired_at = time.time()
     try:
         proc = subprocess.run(
             ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", gui_host, cmd],
@@ -294,4 +324,26 @@ def fire_ide_hop(
         keystroke = json.loads(proc.stdout.strip().splitlines()[-1])
     except (json.JSONDecodeError, IndexError):
         keystroke = {"raw_stdout": proc.stdout[-500:]}
-    return {"ok": True, "keystroke": keystroke, **result}
+    landed_id = wait_for_landed_transcript(
+        hop_header_line(message),
+        since_epoch=fired_at,
+        transcripts_dir=AGENT_TRANSCRIPTS,
+        timeout_s=landing_timeout_s,
+    )
+    if landed_id is None:
+        return {
+            "ok": False,
+            "phase": "not_landed",
+            "keystroke": keystroke,
+            "fix": (
+                "no new Cursor chat carries the hop header — the keys went to another "
+                f"window; check the launcher matched {focus_title!r} on {gui_host}"
+            ),
+            **result,
+        }
+    return {
+        "ok": True,
+        "landed_transcript_id": landed_id,
+        "keystroke": keystroke,
+        **result,
+    }
