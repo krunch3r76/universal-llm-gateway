@@ -40,6 +40,7 @@ def stargate_continuity_checkpoint_sealed(
     transcript_id: str,
     turns_at_cp: int,
     session_id: str | None = None,
+    coverage: str | None = None,
 ) -> Event:
     payload: dict[str, object] = {
         "execution_id": execution_id,
@@ -51,6 +52,8 @@ def stargate_continuity_checkpoint_sealed(
     }
     if session_id is not None:
         payload["session_id"] = session_id
+    if coverage:
+        payload["coverage"] = coverage
     ev = Event(
         signal="stargate.continuity.checkpoint.sealed",
         role="observation",

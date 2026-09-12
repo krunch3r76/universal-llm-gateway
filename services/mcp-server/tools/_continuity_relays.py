@@ -90,10 +90,11 @@ def _continuity_checkpoint(
     from continuity_tape.events import mcp_continuity_checkpoint_requested
 
     mcp_continuity_checkpoint_requested(surface=surface, thread=thread)
+    default_from = "web-anthropic" if surface == "claude_ai" else "cursor"
     body: dict[str, Any] = {
         "thread": thread,
         "surface": surface,
-        "from_agent": from_agent or "cursor",
+        "from_agent": from_agent or default_from,
         "pre_consolidate": pre_consolidate,
         "tools": tools,
     }
