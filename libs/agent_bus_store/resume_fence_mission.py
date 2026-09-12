@@ -14,12 +14,20 @@ _SKETCHBOARD_SUFFIX = "-resume-fence-sketchboard.md"
 _INFO_SUBJECT_RE = re.compile(r"\bINFO\b", re.IGNORECASE)
 
 
-def sketchboard_uri(thread_id: str, tip_body: str) -> str:
-    """Resolve sketchboard URI from tip artifact anchors or house default."""
+def _sketchboard_in_tip(tip_body: str) -> str | None:
+    """Return sketchboard URI only when the tip body explicitly names one."""
     for match in re.finditer(r"cortex://[^\s)\]>`]+", tip_body or ""):
         uri = match.group(0)
         if "sketchboard" in uri:
             return uri
+    return None
+
+
+def sketchboard_uri(thread_id: str, tip_body: str) -> str:
+    """Resolve sketchboard URI from tip artifact anchors or house default."""
+    found = _sketchboard_in_tip(tip_body)
+    if found:
+        return found
     return f"cortex://notes/system/threads/{thread_id}{_SKETCHBOARD_SUFFIX}"
 
 
@@ -78,10 +86,12 @@ def build_mission_block(
     pools_row: str | None,
     open_line: str | None,
     fence_id: str,
+    thread_slug: str | None = None,
 ) -> dict[str, Any]:
     """Hoist orientation fields + clone handoff into ``mission`` (FIX-18)."""
     residue = extract_authored_residue(tip_body or "")
     window = _window_anchor(tip_body or "")
+    tip_sketchboard = _sketchboard_in_tip(tip_body or "")
     sketchboard = sketchboard_uri(thread_id, tip_body or "")
     supersedes_num: int | None = None
     if supersedes_turn:
@@ -92,6 +102,22 @@ def build_mission_block(
             ).fetchone()
         if row:
             supersedes_num = int(row["turn_number"])
+
+    steps: list[str] = ["continuity(op=resume) was first hop"]
+    if thread_slug:
+        steps.append(f"rename_chat → `{thread_id} {thread_slug}`")
+    if tip_sketchboard:
+        steps.append(f"read sketchboard {tip_sketchboard}")
+    steps.extend(
+        [
+            "fold bus_tail INFO turns",
+            (
+                "tape: agent_bus_read(scope=window, transcript_id=<window_anchor>, "
+                "prior_cells=1) — not scope=full"
+            ),
+            "orientation: Mission + Been→Are→Going + In one line",
+        ]
+    )
 
     mission: dict[str, Any] = {
         "highlight": envelope.get("checkpoint_highlight"),
@@ -122,20 +148,10 @@ def build_mission_block(
                 "from this bundle — not a byte-identical tab clone."
             ),
             "out_of_scope": [
-                "parallel WIP (canonical.yaml, treasury scripts)",
-                "new FIX implement until oriented",
+                "parallel WIP outside this root's scoreboard",
+                "new implement until oriented",
             ],
-            "steps": [
-                "continuity(op=resume) was first hop",
-                f"rename_chat → `{thread_id} human-continuity-speech-tape-design`",
-                f"read sketchboard {sketchboard}",
-                "fold bus_tail INFO turns",
-                (
-                    "tape: agent_bus_read(scope=window, transcript_id=<window_anchor>, "
-                    "prior_cells=1) — not scope=full"
-                ),
-                "orientation: Mission + Been→Are→Going + In one line",
-            ],
+            "steps": steps,
         },
     }
     return mission

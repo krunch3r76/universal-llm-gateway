@@ -468,7 +468,6 @@ def build_digest(
         pct >= 60.0 and last_cp_tick < ticks - 2
     )
     digest["summary_row"] = state.get("summary_row")
-    digest["open_line"] = state.get("open_line")
     state.update(
         {
             "fingerprint": fp,

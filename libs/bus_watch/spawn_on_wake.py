@@ -54,19 +54,17 @@ def build_successor_message(
     *,
     gear: str,
     row: str,
-    open_line: str | None = None,
     tip_cp_ordinal: int | None = None,
     cap: int = SUCCESSOR_MESSAGE_CAP,
 ) -> str:
     """Inline resume-fence pull recipe for a headless liaison successor."""
-    open_line_val = open_line if open_line is not None else ""
     tip_val = tip_cp_ordinal if tip_cp_ordinal is not None else ""
     message = (
         f"resume {root_id}\n\n"
         "Liaison headless successor — contract: none.\n"
         f'dispatch(tool="continuity", arguments=\'{{"op":"resume","thread":"{root_id}"}}\')\n'
         f"agent_bus_read(thread_get, gear: {gear}, row={row}, "
-        f"open_line={open_line_val}, tip_cp_ordinal={tip_val}, contract: none\n"
+        f"tip_cp_ordinal={tip_val}, contract: none\n"
         "Use the liaison skill. Run one tick; checkpoint; hop.\n"
     )
     encoded = message.encode("utf-8")
@@ -194,7 +192,6 @@ def build_dispatch_body(
         root_id,
         gear=str(ctx.get("gear") or policy.get("gear") or "1-fable-mvp"),
         row=str(ctx.get("row") or ""),
-        open_line=ctx.get("open_line"),
         tip_cp_ordinal=ctx.get("tip_cp_ordinal"),
     )
     body: dict[str, Any] = {
@@ -344,7 +341,6 @@ def successor_context_from_digest(digest: dict[str, Any]) -> dict[str, Any]:
     return {
         "gear": policy.get("gear"),
         "row": digest.get("summary_row") or root.get("last_subject") or "",
-        "open_line": digest.get("open_line"),
         "tip_cp_ordinal": root.get("turns"),
     }
 

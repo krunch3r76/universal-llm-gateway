@@ -12,8 +12,8 @@ from typing import Any
 from deploy_identity.code_version import resolve_code_version
 
 from .checkpoint_windows_render import list_checkpoint_turns
-from .db.connection import connect
 from .continuity_card_scratchboards import extract_scratchboard_uris
+from .db.connection import connect
 from .house_pools import (
     continuity_card_uri,
     load_continuity_card,
@@ -56,6 +56,18 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _thread_slug(thread_id: str) -> str | None:
+    """Resolve thread slug for handoff rename steps (a:33192)."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT slug FROM threads WHERE id = ?",
+            (thread_id,),
+        ).fetchone()
+    if row and row["slug"]:
+        return str(row["slug"])
+    return None
+
+
 def _tip_checkpoint(thread_id: str) -> dict[str, Any] | None:
     cps = list_checkpoint_turns(thread_id=thread_id)
     if not cps:
@@ -87,7 +99,9 @@ def _section_lines(body: str, header: str) -> list[str]:
         if marker in chunk:
             chunk = chunk.split(marker, 1)[0]
             break
-    return [ln.strip() for ln in chunk.splitlines() if ln.strip() and ln.strip() != "_none_"]
+    return [
+        ln.strip() for ln in chunk.splitlines() if ln.strip() and ln.strip() != "_none_"
+    ]
 
 
 def _thread_ids_from_section(lines: list[str]) -> set[str]:
@@ -118,12 +132,8 @@ def _derive_read_set(
     projection_uri = _PROJECTION_URI.format(thread=thread_id)
     opportunities_uri = _OPPORTUNITIES_URI.format(thread=thread_id)
 
-    child_threads = _thread_ids_from_section(
-        _section_lines(tip_body, _SECTION_CHILD)
-    )
-    cited_threads = _thread_ids_from_section(
-        _section_lines(tip_body, _SECTION_CITED)
-    )
+    child_threads = _thread_ids_from_section(_section_lines(tip_body, _SECTION_CHILD))
+    cited_threads = _thread_ids_from_section(_section_lines(tip_body, _SECTION_CITED))
     citable_threads = {thread_id, *child_threads, *cited_threads}
 
     cortex_uris = sorted(
@@ -247,7 +257,10 @@ def arm_resume_fence(
     """Arm a fence with ``read_set`` only — no tape render (FIX-8)."""
     tip, _card_text, read_set = _load_resume_context(thread_id, pool=pool)
     if tip is None or read_set is None:
-        return {"error": "no_tip_checkpoint", "reason": "resume_fence.no_tip_checkpoint"}
+        return {
+            "error": "no_tip_checkpoint",
+            "reason": "resume_fence.no_tip_checkpoint",
+        }
 
     pools_row = read_set.pop("pools_row")
     fence_id = find_open_fence(root_thread=thread_id, transcript_id=transcript_id)
@@ -291,6 +304,7 @@ def arm_resume_fence(
             pools_row=pools_row,
             open_line=open_line,
             fence_id=fence_id,
+            thread_slug=_thread_slug(thread_id),
         )
     )
 
@@ -329,7 +343,10 @@ def assemble_resume_fence(
     """Pour ResumeBundle v1 onto an armed or new fence."""
     tip, card_text, read_set = _load_resume_context(thread_id, pool=pool)
     if tip is None or read_set is None:
-        return {"error": "no_tip_checkpoint", "reason": "resume_fence.no_tip_checkpoint"}
+        return {
+            "error": "no_tip_checkpoint",
+            "reason": "resume_fence.no_tip_checkpoint",
+        }
 
     card_uri = continuity_card_uri(thread_id)
     card_sha = _sha256_text(card_text) if card_text else None
@@ -357,7 +374,11 @@ def assemble_resume_fence(
             root_thread=thread_id,
             transcript_id=transcript_id,
             event="armed",
-            payload={"source": source, "transcript_id": transcript_id, "read_set": read_set},
+            payload={
+                "source": source,
+                "transcript_id": transcript_id,
+                "read_set": read_set,
+            },
         )
     else:
         fence_id = mint_fence_id()
@@ -366,7 +387,11 @@ def assemble_resume_fence(
             root_thread=thread_id,
             transcript_id=transcript_id,
             event="armed",
-            payload={"source": source, "transcript_id": transcript_id, "read_set": read_set},
+            payload={
+                "source": source,
+                "transcript_id": transcript_id,
+                "read_set": read_set,
+            },
         )
 
     projection_uri = _PROJECTION_URI.format(thread=thread_id)
@@ -384,6 +409,7 @@ def assemble_resume_fence(
         pools_row=pools_row,
         open_line=open_line,
         fence_id=fence_id,
+        thread_slug=_thread_slug(thread_id),
     )
 
     bundle: dict[str, Any] = {

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from agent_bus_store.db import create_thread, create_turn, init_db
 from agent_bus_store.resume_fence_mission import (
     build_mission_block,
@@ -85,6 +84,65 @@ def test_build_mission_block_includes_residue_and_window(bus_db) -> None:
     assert "FIX-18" in (mission.get("residue") or "")
     assert mission["handoff"]["todo"] == "todo:continuity-resume-fence"
     assert mission["bus_tail"] == ["10223#1"]
+
+
+def test_handoff_steps_thread_slug_and_out_of_scope(bus_db) -> None:
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body="plain tip without sketchboard uri",
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-slug",
+        thread_slug="liaison-autonomous-night",
+    )
+    steps = mission["handoff"]["steps"]
+    assert "rename_chat → `10223 liaison-autonomous-night`" in steps
+    assert not any("read sketchboard" in step for step in steps)
+    assert mission["handoff"]["out_of_scope"] == [
+        "parallel WIP outside this root's scoreboard",
+        "new implement until oriented",
+    ]
+
+
+def test_handoff_sketchboard_step_only_when_named_in_tip(bus_db) -> None:
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body=_TIP,
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-sketch",
+        thread_slug="continuity",
+    )
+    steps = mission["handoff"]["steps"]
+    assert any(
+        "read sketchboard cortex://notes/system/threads/10223-resume-fence-sketchboard.md"
+        in step
+        for step in steps
+    )
+
+
+def test_handoff_omits_rename_when_slug_missing(bus_db) -> None:
+    mission = build_mission_block(
+        thread_id="10223",
+        tip_body=_TIP,
+        tip_turn=2,
+        supersedes_turn=None,
+        card_text=None,
+        envelope={},
+        pools_row=None,
+        open_line=None,
+        fence_id="rf-noslug",
+        thread_slug=None,
+    )
+    assert not any("rename_chat" in step for step in mission["handoff"]["steps"])
 
 
 def test_mission_marker_preview_is_subset(bus_db) -> None:

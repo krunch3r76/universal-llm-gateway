@@ -104,7 +104,6 @@ def test_dispatch_body_message_not_packet() -> None:
         successor_context={
             "gear": "3-wake-on-attention",
             "row": "Settled · Live · Next",
-            "open_line": "harvest lane 10496",
             "tip_cp_ordinal": 42,
         },
     )
@@ -115,15 +114,16 @@ def test_dispatch_body_message_not_packet() -> None:
     assert "message" in body
     message = body["message"]
     assert len(message.encode("utf-8")) <= SUCCESSOR_MESSAGE_CAP
+    assert "open_line=" not in message
     for token in (
         "resume 10479",
         'dispatch(tool="continuity"',
         "agent_bus_read(thread_get",
         "gear:",
         "row=",
-        "open_line=",
         "tip_cp_ordinal=",
         "contract: none",
+        "Use the liaison skill",
     ):
         assert token in message
     # Per-night key: GIW's remint cap counts admits per work_key (a:33139).
@@ -137,7 +137,6 @@ def test_successor_message_raises_when_over_cap() -> None:
             "10479",
             gear="3-wake-on-attention",
             row="x" * 3000,
-            open_line="y" * 3000,
             tip_cp_ordinal=1,
         )
 

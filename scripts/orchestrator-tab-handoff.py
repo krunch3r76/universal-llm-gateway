@@ -78,7 +78,10 @@ def _read() -> dict[str, Any] | None:
 
 def _write(payload: dict[str, Any]) -> dict[str, Any]:
     _LOCK.parent.mkdir(parents=True, exist_ok=True)
-    payload = {**payload, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    payload = {
+        **payload,
+        "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
     durable_write_text(_LOCK, json.dumps(payload, indent=2, sort_keys=True) + "\n")
     return payload
 
@@ -186,6 +189,22 @@ def ack(holder: str) -> dict[str, Any]:
     return {"ok": True, "lock": payload}
 
 
+def _thread_slug(thread_id: str) -> str | None:
+    """Resolve agent-bus thread slug for tab rename handoff text."""
+    try:
+        from agent_bus_store.db.connection import connect
+    except ImportError:  # pragma: no cover — script without libs on path
+        return None
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT slug FROM threads WHERE id = ?",
+            (thread_id,),
+        ).fetchone()
+    if row and row["slug"]:
+        return str(row["slug"])
+    return None
+
+
 def assert_idle(stale_s: float = _DEFAULT_STALE_S) -> None:
     st = status(stale_s=stale_s)
     if st.get("held"):
@@ -226,6 +245,8 @@ def _build_handoff_message(
 
     qline = f" queue_id=`{queue_id}`" if queue_id else ""
     wc_line = f" work_class=`{wc.value}`" if wc is not None else ""
+    slug = _thread_slug(thread)
+    rename_label = f"{thread} {slug}" if slug else thread
 
     parts = [
         f"resume {thread}\n",
@@ -239,7 +260,7 @@ def _build_handoff_message(
         [
             "2. If the WORK prompt requires it: CLOSEOUT on 10303.",
             f"3. Exactly one CHECKPOINT on {thread}; note turn N. "
-            f"Rename tab `. {thread} human-continuity-speech-tape-design`.",
+            f"Rename tab `. {rename_label}`.",
             f"4. Same turn: `python scripts/orchestrator-tab-handoff.py release "
             f"--holder {holder} --checkpoint-turn N`.",
             f"   (completes queue item `{queue_id}` when set)",
@@ -367,11 +388,17 @@ def main() -> int:
     ak = sub.add_parser("ack")
     ak.add_argument("--holder", required=True)
     sub.add_parser("assert-idle")
-    lp = sub.add_parser("launch", help="Acquire lock + SSH keystroke new tab on orion-node")
+    lp = sub.add_parser(
+        "launch", help="Acquire lock + SSH keystroke new tab on orion-node"
+    )
     lp.add_argument("--intent", required=True)
     lp.add_argument("--thread", default="10223")
     lp.add_argument("--holder", default=None)
-    lp.add_argument("--work-prompt", default=None, help="Path to WORK prompt file (repo-relative ok)")
+    lp.add_argument(
+        "--work-prompt",
+        default=None,
+        help="Path to WORK prompt file (repo-relative ok)",
+    )
     lp.add_argument("--ssh-host", default=_DEFAULT_SSH_HOST)
     lp.add_argument("--remote-repo", default=_DEFAULT_REPO_REMOTE)
     lp.add_argument("--palette-query", default="New Chat")
