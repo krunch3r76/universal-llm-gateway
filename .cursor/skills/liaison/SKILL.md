@@ -49,7 +49,9 @@ fetch the bus to "double check".
    spawn exactly one successor (§ Single-Fable cap) → end the turn. In **attended** register (operator
    2026-09-11 18:05 PT, spend 72→81%): CHECKPOINT, then hop the tab yourself as the turn's last action —
    `scripts/liaison-ide-hop.py --root R --row "<NOW>"` keystrokes `resume R` + `ARM:` lines (live poller
-   labels) into a fresh Cursor chat on the GUI host (`--no-raise`: Remote-SSH window, operator owns focus);
+   labels) into a fresh Cursor chat on the GUI host named by **`policy.gui_host`** (`liaison-tick.py --set
+   gui_host=jupiter`; refuses when unset) after raising the live Remote-SSH window by folder URI (refuses when
+   the host has no Cursor window on the repo — hops 1–3 of 2026-09-11 hit an unattended host, then Firefox);
    the successor tab re-arms those tails, harvests every wake, folds, plans, dispatches, checkpoints, hops.
    Cadence: **Plan → Dispatch → Hop → Arm → Harvest all triggers → repeat**; one tab is live at a time.
 8. **Stop classes** — `stop_class=CONTEXT_BUDGET` ⇒ CHECKPOINT → hop (autonomous) or page + PARK (attended).
