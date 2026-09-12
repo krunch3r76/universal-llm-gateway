@@ -572,11 +572,12 @@ def register_frontier_tools(mcp: FastMCP) -> None:
           Manual seats (``claude-web``, ``claude-cursor``) are rejected with 422
           ``web_seat_not_generate_target``. The SDK auto seat ``cursor-sdk`` (``seat=``) is
           admitted on ``op=generate`` (``auto_dispatchable`` substrate=sdk). Use API roles with optional
-          ``model=`` override for provider-specific consults.           Check/review default remains ``cursor/gpt-5.6-terra``
-          (``route_policy.yaml workflows.check_review``;
+          ``model=`` override for provider-specific consults. Check/review default is
+          ``route_policy.yaml workflows.check_review.model`` (``cursor/claude-fable-5-1``
+          during the operator Fable window; revert is a YAML edit, never a silent swap —
           ``decision:code-review-panel-cursor-substrate``); ``role=reviewer`` omit-model
           coerces to ``seat=cursor-sdk``. Explicit ``model=openai/*`` keeps API. CDP remains
-          judgment / path-sim R-admit. Supported cursor-sdk option for the same work is
+          judgment / path-sim R-admit. Explicit-pin cursor-sdk option for the same work is
           ``seat=cursor-sdk`` + ``model=cursor/gpt-5.6-*`` or ``cursor/grok-4.6`` —
           poll ``reply_from_agent`` (reviewer/skeptic), not ``cursor-sdk``.
         - ``op="to_thread"``: admits dispatch; Stargate posts the role's
