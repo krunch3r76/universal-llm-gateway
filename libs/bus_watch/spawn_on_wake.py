@@ -205,7 +205,10 @@ def build_dispatch_body(
         "model": policy.get("successor_model"),
         "message": message,
         "dispatch_thread_id": root_id,
-        "work_key": work_key or f"agent-bus:{root_id}",
+        # Per-night work identity: GIW's remint cap counts admits per work_key, so a
+        # root-wide key runs out after one night (a:33139 — hop 9 refused at seq 9 >
+        # cap 8). Keying by night_id resets the sequence with the night, not by hand.
+        "work_key": work_key or f"agent-bus:{root_id}:night-{current_night_id()}",
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
         "tags": ["liaison-headless"],

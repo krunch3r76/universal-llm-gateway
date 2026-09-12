@@ -247,7 +247,10 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "spawn_grace_seconds": 900,
     "successor_seat": "cursor-sdk",
     "budget_max_age_s": 300,
-    "ready": True,
+    # Gear 3 is disarmed until the operator sets `--set ready=true` for a first live
+    # night (A7 gate). A True default would let any `--loop --spawn-on-wake` start
+    # spawn premium successors on the first digest with attention.
+    "ready": False,
 }
 GEAR_PRESETS: dict[str, dict[str, Any]] = {
     "1-fable-mvp": {},

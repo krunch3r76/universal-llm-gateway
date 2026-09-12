@@ -6,6 +6,7 @@ import time
 
 import pytest
 
+from bus_watch.fable_lock import current_night_id
 from bus_watch.liaison_digest import _fingerprint
 from bus_watch.spawn_on_wake import (
     SUCCESSOR_MESSAGE_CAP,
@@ -125,7 +126,8 @@ def test_dispatch_body_message_not_packet() -> None:
         "contract: none",
     ):
         assert token in message
-    assert body["work_key"] == "agent-bus:10479"
+    # Per-night key: GIW's remint cap counts admits per work_key (a:33139).
+    assert body["work_key"] == f"agent-bus:10479:night-{current_night_id()}"
     assert body["timeout_seconds"] == 5400
 
 
