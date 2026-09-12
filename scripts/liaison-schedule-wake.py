@@ -1,0 +1,193 @@
+#!/usr/bin/env python3
+"""Schedule a recurring liaison WAKE doorbell via GIW ``/api/v1/triggers``.
+
+Uses ``recur_every_s`` (default 14400 s = 4 h) — not cron ``0 */4 * * *``;
+each fire re-arms from the prior terminal seam, so wall-clock drift is expected.
+
+Cowork ``create_trigger`` is not used; this posts to the same store as MCP
+``trigger(op=schedule)``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from typing import Any
+
+import httpx
+from bus_watch.doorbell import render_doorbell
+from implement_admission.closeout_helpers import cortex_files_root
+
+_DEFAULT_WORKER_URL = "http://127.0.0.1:8091"
+_API_PREFIX = "/api/v1/triggers"
+_DEFAULT_RECUR_S = 14400
+_ACTIVE_STATUSES = frozenset({"scheduled", "fired"})
+
+
+def _worker_base_url() -> str:
+    explicit = os.environ.get("GIT_INTEGRATION_WORKER_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    stargate = os.environ.get("STARGATE_URL", "").strip()
+    if stargate:
+        return stargate.rstrip("/")
+    return _DEFAULT_WORKER_URL
+
+
+def _bearer_headers() -> dict[str, str]:
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    if not token:
+        return {}
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _relay(
+    method: str,
+    path: str,
+    *,
+    json_body: dict[str, Any] | None = None,
+    params: dict[str, Any] | None = None,
+    timeout_s: float = 30.0,
+) -> dict[str, Any]:
+    url = f"{_worker_base_url()}{_API_PREFIX}{path}"
+    with httpx.Client(timeout=timeout_s) as client:
+        resp = client.request(
+            method,
+            url,
+            json=json_body,
+            params=params,
+            headers=_bearer_headers(),
+        )
+        if resp.content:
+            body = resp.json()
+        else:
+            body = {"ok": True}
+        if resp.status_code >= 400:
+            if isinstance(body, dict):
+                body.setdefault("status_code", resp.status_code)
+            return body
+        return body
+
+
+def _doorbell_uri(root: str) -> str:
+    return f"cortex://notes/system/threads/{root}-liaison-wake-doorbell.md"
+
+
+def _ensure_doorbell_file(
+    root: str,
+    slug: str,
+    *,
+    ring: str | None,
+) -> str:
+    uri = _doorbell_uri(root)
+    rel = uri.removeprefix("cortex://").lstrip("/")
+    path = (cortex_files_root() / rel).resolve()
+    root_resolved = cortex_files_root().resolve()
+    try:
+        path.relative_to(root_resolved)
+    except ValueError as exc:
+        raise ValueError(f"doorbell path escapes CORTEX_FILES_ROOT: {uri}") from exc
+    if path.is_file():
+        return uri
+    text = render_doorbell(root, slug, ring=ring)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return uri
+
+
+def _find_active_liaison_wake(root: str) -> dict[str, Any] | None:
+    so_what = f"liaison-wake-{root}"
+    listed = _relay("GET", "", params={"limit": 200})
+    if "error" in listed:
+        return None
+    for row in listed.get("triggers") or []:
+        if row.get("so_what") != so_what:
+            continue
+        if row.get("status") in _ACTIVE_STATUSES:
+            return row
+    return None
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument(
+        "--root", required=True, help="Continuity root thread id (e.g. 10479)"
+    )
+    p.add_argument(
+        "--slug",
+        default="liaison-wake",
+        help="Doorbell slug passed to render_doorbell (default: liaison-wake)",
+    )
+    p.add_argument(
+        "--ring", default=None, help="Echo thread for ORIENTED (default: root)"
+    )
+    p.add_argument(
+        "--delay-s",
+        type=float,
+        default=None,
+        help="Seconds until first fire (default: immediate-ish 5 s if unset)",
+    )
+    p.add_argument(
+        "--recur-s",
+        type=int,
+        default=_DEFAULT_RECUR_S,
+        help=f"recur_every_s for GIW store (default: {_DEFAULT_RECUR_S})",
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Schedule even when an active liaison-wake row exists for this root",
+    )
+    args = p.parse_args(argv)
+
+    root = str(args.root).strip()
+    if not root:
+        print("error: --root required", file=sys.stderr)
+        return 2
+
+    existing = _find_active_liaison_wake(root)
+    if existing and not args.force:
+        print(
+            json.dumps(
+                {
+                    "skipped": True,
+                    "reason": "active_liaison_wake_exists",
+                    "trigger_id": existing.get("id"),
+                    "status": existing.get("status"),
+                    "so_what": existing.get("so_what"),
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    prompt_uri = _ensure_doorbell_file(root, args.slug, ring=args.ring)
+    delay_s = args.delay_s if args.delay_s is not None else 5.0
+    body = {
+        "created_by": "life-seat",
+        "delay_s": delay_s,
+        "prompt_uri": prompt_uri,
+        "purpose": "ask",
+        "model": "opus-5",
+        "arc": f"agent-bus:{root}",
+        "so_what": f"liaison-wake-{root}",
+        "recur_every_s": args.recur_s,
+    }
+    result = _relay("POST", "", json_body=body)
+    if "error" in result or result.get("status_code", 0) >= 400:
+        print(json.dumps(result, indent=2), file=sys.stderr)
+        return 1
+
+    trigger_id = result.get("id") or result.get("trigger_id")
+    fire_at = result.get("fire_at")
+    print(json.dumps({"trigger_id": trigger_id, "fire_at": fire_at}, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

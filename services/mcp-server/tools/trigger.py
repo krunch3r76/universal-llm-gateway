@@ -69,6 +69,42 @@ def _relay(
         return {"error": f"trigger relay unreachable: {exc}"}
 
 
+def _schedule_body(
+    *,
+    created_by: str = "life-seat",
+    fire_at: str | None = None,
+    delay_s: float | None = None,
+    prompt_uri: str | None = None,
+    prompt_text: str | None = None,
+    purpose: str = "operator-proxy",
+    model: str = "opus-5",
+    arc: str | None = None,
+    so_what: str | None = None,
+    recur_every_s: int | None = None,
+    require_act_receipt: int | None = None,
+    charter_root: str | None = None,
+) -> dict[str, Any]:
+    """Build POST /api/v1/triggers JSON body; omit unset optional fields."""
+    return {
+        k: v
+        for k, v in {
+            "created_by": created_by,
+            "fire_at": fire_at,
+            "delay_s": delay_s,
+            "prompt_uri": prompt_uri,
+            "prompt_text": prompt_text,
+            "purpose": purpose,
+            "model": model,
+            "arc": arc,
+            "so_what": so_what,
+            "recur_every_s": recur_every_s,
+            "require_act_receipt": require_act_receipt,
+            "charter_root": charter_root,
+        }.items()
+        if v is not None and v != ""
+    }
+
+
 def register_trigger_tool(mcp: FastMCP) -> None:
     """Register trigger schedule relay on *mcp*."""
 
@@ -85,6 +121,9 @@ def register_trigger_tool(mcp: FastMCP) -> None:
         model: str = "opus-5",
         arc: str | None = None,
         so_what: str | None = None,
+        recur_every_s: int | None = None,
+        require_act_receipt: int | None = None,
+        charter_root: str | None = None,
         limit: int = 100,
     ) -> dict[str, Any]:
         """Schedule, list, get, or cancel ULG-hosted operator-proxy triggers.
@@ -99,21 +138,20 @@ def register_trigger_tool(mcp: FastMCP) -> None:
           cancel — DELETE / cancel a scheduled trigger
         """
         if op == "schedule":
-            body = {
-                k: v
-                for k, v in {
-                    "created_by": created_by,
-                    "fire_at": fire_at,
-                    "delay_s": delay_s,
-                    "prompt_uri": prompt_uri,
-                    "prompt_text": prompt_text,
-                    "purpose": purpose,
-                    "model": model,
-                    "arc": arc,
-                    "so_what": so_what,
-                }.items()
-                if v is not None and v != ""
-            }
+            body = _schedule_body(
+                created_by=created_by,
+                fire_at=fire_at,
+                delay_s=delay_s,
+                prompt_uri=prompt_uri,
+                prompt_text=prompt_text,
+                purpose=purpose,
+                model=model,
+                arc=arc,
+                so_what=so_what,
+                recur_every_s=recur_every_s,
+                require_act_receipt=require_act_receipt,
+                charter_root=charter_root,
+            )
             result = _relay("POST", "", json_body=body)
             record("mcp.trigger.schedule", ok="error" not in result)
             return result
