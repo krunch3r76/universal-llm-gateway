@@ -247,6 +247,11 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "spawn_grace_seconds": 900,
     "successor_seat": "cursor-sdk",
     "budget_max_age_s": 300,
+    # Attended IDE hop target: the graphical host whose focused Cursor window is the
+    # operator's. None ⇒ `liaison-ide-hop.py` refuses to fire — a wrong default put
+    # hop 1/2 on an unattended window (2026-09-11 18:20 PT); set with
+    # `--set gui_host=<ssh host>`.
+    "gui_host": None,
     # Gear 3 is disarmed until the operator sets `--set ready=true` for a first live
     # night (A7 gate). A True default would let any `--loop --spawn-on-wake` start
     # spawn premium successors on the first digest with attention.

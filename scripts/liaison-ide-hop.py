@@ -23,12 +23,12 @@ import json
 import sys
 
 from bus_watch.ide_hop import (
-    DEFAULT_GUI_HOST,
     DEFAULT_REMOTE_REPO,
     build_ide_hop_message,
     find_transcript_id,
     fire_ide_hop,
     live_watcher_labels,
+    policy_gui_host,
 )
 
 
@@ -55,7 +55,11 @@ def main() -> int:
         default=None,
         help="tip CHECKPOINT ordinal, for the message header",
     )
-    p.add_argument("--gui-host", default=DEFAULT_GUI_HOST)
+    p.add_argument(
+        "--gui-host",
+        default=None,
+        help="override policy.gui_host for this hop only (default: liaison-tick.py --set gui_host=…)",
+    )
     p.add_argument("--remote-repo", default=DEFAULT_REMOTE_REPO)
     p.add_argument("--palette-query", default="New Chat")
     p.add_argument(
@@ -88,7 +92,7 @@ def main() -> int:
     out = fire_ide_hop(
         message,
         root_id=args.root,
-        gui_host=args.gui_host,
+        gui_host=args.gui_host or policy_gui_host(args.root),
         remote_repo=args.remote_repo,
         palette_query=args.palette_query,
         dry_run=args.dry_run,

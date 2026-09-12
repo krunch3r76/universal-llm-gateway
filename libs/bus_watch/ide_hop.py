@@ -15,6 +15,11 @@ window (GUI on the graphical host, cursor-server on the hub). ``cursor -r
 <repo>`` on the GUI host would open the NFS path as a *local* workspace
 instead of raising the remote window, so the launch pastes into the Cursor
 window that already has focus and the attended operator owns that focus.
+
+The GUI host is **policy** (``liaison-tick.py --set gui_host=<ssh host>``), never
+a constant: the operator may sit at any of several graphical hosts, each with a
+Remote-SSH window into the hub, and a wrong default lands the hop — and the next
+turn of premium spend — on a window nobody is watching (hops 1–2, 2026-09-11).
 """
 
 from __future__ import annotations
@@ -30,14 +35,24 @@ from typing import Any
 from durable_io.atomic import durable_write_text
 
 from bus_watch.fable_lock import WATCH_DIR
+from bus_watch.liaison_digest import effective_policy
+from bus_watch.state import read_state
 
 _REPO = Path(__file__).resolve().parents[2]
 HANDOFF_MSG_DIR = WATCH_DIR / "handoff-messages"
 KEYSTROKE_SCRIPT = "scripts/orchestrator_tab_keystroke.py"
 MESSAGE_CAP = 2048
 LIVE_WATCHER_STATUSES = frozenset({"polling", "running"})
-DEFAULT_GUI_HOST = os.environ.get("ORCHESTRATOR_SSH_HOST", "orion-node")
 DEFAULT_REMOTE_REPO = os.environ.get("ORCHESTRATOR_REPO", str(_REPO))
+
+
+def policy_gui_host(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
+    """``policy.gui_host`` from the liaison tick state; None when the operator never set it."""
+    state = read_state(watch_dir / f"liaison-{root_id}.tick.json")
+    host = effective_policy(state).get("gui_host")
+    return str(host) if host else None
+
+
 AGENT_TRANSCRIPTS = (
     Path.home()
     / ".cursor/projects/mnt-torus-projects-universal-llm-gateway/agent-transcripts"
@@ -146,12 +161,23 @@ def fire_ide_hop(
     message: str,
     *,
     root_id: str,
-    gui_host: str = DEFAULT_GUI_HOST,
+    gui_host: str | None,
     remote_repo: str = DEFAULT_REMOTE_REPO,
     palette_query: str = "New Chat",
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Write the hop message where the GUI host sees it (NFS) and keystroke it into a new chat."""
+    """Write the hop message where the GUI host sees it (NFS) and keystroke it into a new chat.
+
+    Refuses when ``gui_host`` is unset — no fallback host: firing at a guessed
+    display is the failure this module exists to prevent.
+    """
+    if not gui_host:
+        return {
+            "ok": False,
+            "phase": "gui_host_unset",
+            "root": root_id,
+            "fix": f"scripts/liaison-tick.py --root {root_id} --set gui_host=<ssh host>",
+        }
     HANDOFF_MSG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     msg_path = HANDOFF_MSG_DIR / f"liaison-{root_id}-{stamp}.md"
