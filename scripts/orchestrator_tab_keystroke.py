@@ -120,6 +120,9 @@ def _ui() -> UInput:
             e.KEY_LEFTALT,
             e.KEY_LEFTMETA,
             e.KEY_ENTER,
+            e.KEY_ESC,
+            e.KEY_A,
+            e.KEY_BACKSPACE,
             e.KEY_V,
             e.KEY_P,
             e.KEY_N,
@@ -202,6 +205,19 @@ def _palette_run(ui: UInput, query: str) -> None:
     time.sleep(0.45)
 
 
+def _clear_composer(ui: UInput) -> None:
+    """Drop leftover palette filter text. Specimen: hops landed as ``New Chatresume <R>``."""
+    _chord(ui, e.KEY_LEFTCTRL, e.KEY_A)
+    time.sleep(0.05)
+    _tap(ui, e.KEY_BACKSPACE)
+    time.sleep(0.05)
+
+
+def _submit_composer(ui: UInput) -> None:
+    """Agents composer: Enter is newline. Ctrl+Enter sends (2026-09-12 paste-without-send)."""
+    _chord(ui, e.KEY_LEFTCTRL, e.KEY_ENTER)
+
+
 def launch_new_chat_with_message(
     message: str,
     *,
@@ -213,7 +229,7 @@ def launch_new_chat_with_message(
     focus_title: str | None = None,
     focus_app_id: str = "cursor",
 ) -> dict[str, object]:
-    """Open a new chat in a Cursor window and send ``message``.
+    """Open a new chat, clear leaked palette text, paste ``message``, Ctrl+Enter send.
 
     Focus order: ``focus_title`` (+ ``focus_app_id``: compositor ``activate`` on the
     one matching toplevel, verified before any key is sent — the only raise that works
@@ -245,11 +261,15 @@ def launch_new_chat_with_message(
     ui = _ui()
     try:
         _palette_run(ui, palette_query)
+        time.sleep(0.8)
+        _tap(ui, e.KEY_ESC)
+        time.sleep(0.1)
+        _clear_composer(ui)
         _wl_copy(message)
         time.sleep(0.08)
         _paste(ui)
-        time.sleep(0.15)
-        _tap(ui, e.KEY_ENTER)
+        time.sleep(0.25)
+        _submit_composer(ui)
     finally:
         ui.close()
     return {

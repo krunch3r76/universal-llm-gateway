@@ -357,8 +357,10 @@ def fire_ide_hop(
             "phase": "not_landed",
             "keystroke": keystroke,
             "fix": (
-                "no new Cursor chat carries the hop header — the keys went to another "
-                f"window; check the launcher matched {focus_title!r} on {gui_host}"
+                "no new Cursor chat carries the hop header — composer unsent "
+                "(Agents Enter is newline; hop now Ctrl+Enter + clears leaked "
+                f"'New Chat') or keys hit another window; focus was {focus_title!r} "
+                f"on {gui_host}"
             ),
             **result,
         }
