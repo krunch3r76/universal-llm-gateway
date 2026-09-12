@@ -147,12 +147,50 @@ def publish_if_enabled(
     require_change: bool = False,
     client: httpx.Client | None = None,
 ) -> bool:
-    """Publish when ``post_digest`` policy is on; optional digest-change gate."""
+    """Publish when ``post_digest`` policy is on; optional digest-change gate.
+
+    Our own DIGEST turn bumps the root's turn count, so the next tick would read as
+    "changed" and publish again every poll. ``_only_own_turn`` recognises that echo:
+    the root's newest turn is the digest we posted and the lanes/attention we
+    published from are unchanged — nothing happened, so nothing is published.
+    """
     if require_change and not digest.get("changed_since_last_tick"):
         return False
     if not effective_policy(state).get("post_digest"):
         return False
-    return publish_digest(root_id, digest, state, client=client) is not None
+    if _only_own_turn(digest, state):
+        return False
+    published = publish_digest(root_id, digest, state, client=client)
+    if published is not None:
+        state["digest_lanes_fp"] = _lanes_fingerprint(digest)
+    return published is not None
+
+
+def _lanes_fingerprint(digest: dict[str, Any]) -> str:
+    """Hash of what a reader would act on: lanes, attention, checkpoint_due, watchers."""
+    key = {
+        "lanes": [
+            (
+                lane.get("id"),
+                lane.get("turns"),
+                lane.get("status"),
+                lane.get("lifecycle"),
+            )
+            for lane in (digest.get("lanes") or [])
+        ],
+        "attention": digest.get("attention"),
+        "checkpoint_due": digest.get("checkpoint_due"),
+        "watchers": digest.get("watchers_complete_unrelayed"),
+    }
+    return json.dumps(key, sort_keys=True, default=str)
+
+
+def _only_own_turn(digest: dict[str, Any], state: dict[str, Any]) -> bool:
+    root_turns = (digest.get("root") or {}).get("turns")
+    prior = state.get("digest_turn_number")
+    if prior is None or root_turns != prior:
+        return False
+    return _lanes_fingerprint(digest) == state.get("digest_lanes_fp")
 
 
 __all__ = [

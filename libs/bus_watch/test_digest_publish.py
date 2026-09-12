@@ -7,7 +7,12 @@ from unittest.mock import MagicMock
 
 import httpx
 
-from bus_watch.digest_publish import project_digest, publish_digest, render_body
+from bus_watch.digest_publish import (
+    project_digest,
+    publish_digest,
+    publish_if_enabled,
+    render_body,
+)
 from bus_watch.liaison_digest import effective_policy
 
 
@@ -130,6 +135,31 @@ def test_publish_http_error_returns_none_state_unchanged() -> None:
     before = dict(state)
     assert publish_digest("10479", _full_digest(), state, client=client) is None
     assert state == before
+
+
+def test_publish_if_enabled_skips_echo_of_own_digest_turn() -> None:
+    """Our DIGEST bumps root.turns; with lanes unchanged the next tick must not republish."""
+    client = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 201
+    resp.json.return_value = {"turn": {"turn_number": 11, "id": 1001}}
+    client.post.return_value = resp
+    state = {"policy": {"gear": "3-wake-on-attention"}}
+    first = _full_digest(changed_since_last_tick=True)
+    assert publish_if_enabled("10479", first, state, client=client) is True
+    assert state["digest_turn_number"] == 11
+    # Next tick: root.turns == our turn, everything a reader acts on is unchanged.
+    echo = _full_digest(changed_since_last_tick=True)
+    echo["root"] = {**echo["root"], "turns": 11, "last_subject": "DIGEST 10479 …"}
+    assert publish_if_enabled("10479", echo, state, client=client) is False
+    assert client.post.call_count == 1
+    # A real lane change on top of the echo publishes again.
+    moved = _full_digest(changed_since_last_tick=True)
+    moved["root"] = {**moved["root"], "turns": 11}
+    moved["lanes"][1] = {**moved["lanes"][1], "turns": 7}
+    resp.json.return_value = {"turn": {"turn_number": 12, "id": 1002}}
+    assert publish_if_enabled("10479", moved, state, client=client) is True
+    assert client.post.call_count == 2
 
 
 def test_post_digest_policy_gear_three_and_default() -> None:

@@ -61,6 +61,7 @@ _SENTINEL = "AGENT_LOOP_TICK_liaison"
 
 
 def _coerce(raw: str) -> object:
+    """``--set`` values: JSON literal when parseable (numbers, bools, null), else string."""
     try:
         return json.loads(raw)
     except ValueError:
@@ -327,6 +328,7 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
 
 
 def _log_steer(changed: list[str]) -> None:
+    """One line per absorbed operator edit so the tab sees the steer land."""
     if changed:
         print(
             json.dumps({"loop": "operator_edit_absorbed", "keys": changed}), flush=True
