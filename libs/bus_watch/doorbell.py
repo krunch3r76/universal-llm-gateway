@@ -29,6 +29,11 @@ def render_doorbell(
     extra_addresses: tuple[str, ...] = (),
     cap: int = DOORBELL_CAP,
 ) -> str:
+    """Static doorbell text for ``root``; echoes go to ``ring`` (the root when None).
+
+    Identical for equal arguments (F2 M5) and capped so extra ``md_read`` addresses
+    cannot grow the paste into a dump; over ``cap`` raises ``ValueError``.
+    """
     echo = ring if ring else root
     address_parts = [
         f"agent_bus_read(fetch, thread={root}, last=3, compact=true)",
