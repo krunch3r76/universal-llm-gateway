@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from bus_watch.digest_budget import build_budget_block
 from bus_watch.liaison_digest import (
     GEAR_PRESETS,
-    build_budget_block,
     build_digest,
     effective_policy,
+    is_life_root,
 )
 
 
@@ -137,7 +138,7 @@ def test_budget_block_sdk_stream_context_budget() -> None:
 @patch("bus_watch.liaison_digest._get")
 @patch("bus_watch.liaison_digest._bus")
 @patch("bus_watch.liaison_digest.read_lock", return_value={"holder": None})
-@patch("bus_watch.liaison_digest._read_sdk_usage_live", return_value=None)
+@patch("bus_watch.digest_budget._read_sdk_usage_live", return_value=None)
 def test_budget_estimate_attention_item(
     _usage: object,
     _lock: object,
@@ -161,3 +162,84 @@ def test_budget_estimate_attention_item(
     assert "budget_estimate" in kinds
     assert digest["budget"]["source"] == "digest.estimate"
     assert digest["budget"]["stop_class"] is None
+
+
+def test_liaison_digest_sloc_cap() -> None:
+    """AC-3: liaison_digest.py stays within the 300 SLOC assembly cap."""
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent / "liaison_digest.py"
+    sloc = sum(
+        1
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    assert sloc <= 300
+
+
+@patch("bus_watch.liaison_digest._watchers", return_value=[])
+@patch("bus_watch.liaison_digest._health", return_value="ok")
+@patch("bus_watch.liaison_digest._unread_toc", return_value=[])
+@patch("bus_watch.liaison_digest._child_lanes", return_value=[])
+@patch("bus_watch.liaison_digest._get")
+@patch("bus_watch.liaison_digest._bus")
+@patch("bus_watch.liaison_digest.read_lock", return_value={"holder": None})
+@patch("bus_watch.digest_budget._read_sdk_usage_live", return_value=None)
+def test_code_root_digest_omits_life_key(
+    _usage: object,
+    _lock: object,
+    mock_bus: object,
+    mock_get: object,
+    _child: object,
+    _toc: object,
+    _health: object,
+    _watchers: object,
+) -> None:
+    """AC-4: 10479-shaped liaison root has no life key."""
+    mock_get.return_value = {
+        "id": "10479",
+        "turn_count": 10,
+        "status": "active",
+        "tags": ["lane:liaison"],
+        "last_subject": "CHECKPOINT",
+    }
+    mock_bus.return_value.__enter__.return_value = object()
+    state: dict = {"policy": {}}
+    digest = build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    assert "life" not in digest
+    assert is_life_root(mock_get.return_value) is False
+
+
+@patch("bus_watch.liaison_digest._watchers", return_value=[])
+@patch("bus_watch.liaison_digest._health", return_value="ok")
+@patch("bus_watch.liaison_digest._unread_toc", return_value=[])
+@patch("bus_watch.liaison_digest._child_lanes", return_value=[])
+@patch("bus_watch.liaison_digest._get")
+@patch("bus_watch.liaison_digest._bus")
+@patch("bus_watch.liaison_digest.read_lock", return_value={"holder": None})
+@patch("bus_watch.digest_budget._read_sdk_usage_live", return_value=None)
+def test_life_root_digest_attaches_life_block(
+    _usage: object,
+    _lock: object,
+    mock_bus: object,
+    mock_get: object,
+    _child: object,
+    _toc: object,
+    _health: object,
+    _watchers: object,
+) -> None:
+    """AC-4: lane:life root carries projected life block with F3-default gates."""
+    mock_get.return_value = {
+        "id": "10500",
+        "turn_count": 3,
+        "status": "active",
+        "tags": ["lane:life"],
+        "last_subject": "CHECKPOINT",
+    }
+    mock_bus.return_value.__enter__.return_value = object()
+    state: dict = {"policy": {}}
+    digest = build_digest("10500", state, register="autonomous", budget_tokens=700000)
+    assert is_life_root(mock_get.return_value) is True
+    assert "life" in digest
+    assert digest["life"]["now"] is None
+    assert "gates" in digest["life"]

@@ -85,6 +85,23 @@ def test_projection_drops_unlisted_keys_and_filters_terminal() -> None:
     assert proj["budget"] == {"stop_class": None}
 
 
+def test_projection_includes_life_when_present() -> None:
+    life = {
+        "as_of": "2026-09-11T12:00:00Z",
+        "now": None,
+        "gates": {"gates": [], "lifts": [], "last_steer": None},
+        "stops": [],
+        "knobs": {"let_drive_ttl_days": 7},
+    }
+    proj = project_digest(_full_digest(life=life))
+    assert proj["life"] == life
+
+
+def test_projection_omits_life_for_code_root_digest() -> None:
+    proj = project_digest(_full_digest())
+    assert "life" not in proj
+
+
 def test_render_body_fits_cap_with_many_lanes() -> None:
     lanes = [
         {
