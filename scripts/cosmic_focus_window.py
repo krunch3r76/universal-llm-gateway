@@ -187,19 +187,33 @@ def toplevels(wire: Wire) -> list[dict[str, Any]]:
     ]
 
 
-def read_states(wire: Wire) -> None:
-    """Attach ``activated`` to every handle by opening its COSMIC counterpart (state events)."""
+def read_states(
+    wire: Wire, *, target: int | None = None, timeout_s: float = 3.0
+) -> None:
+    """Attach ``activated`` to every handle by opening its COSMIC counterpart (state events).
+
+    cosmic-comp fills a new handle on its next refresh, not inside the request, and a
+    focus change after ``activate`` arrives as a later ``state`` event — so poll short
+    roundtrips until ``target`` reports activated (or any state arrives when no target).
+    """
+    # one COSMIC handle per toplevel: the compositor reports state on the first one only
     for hid in list(wire.handles):
+        if hid in wire.cosmic_of.values():
+            continue
         cosmic_id = wire.alloc()
         wire.cosmic_of[cosmic_id] = hid
         wire.send(_TL_INFO, 1, struct.pack("<II", cosmic_id, hid))
-    # cosmic-comp fills a new handle on its next refresh, not inside the request; the
-    # first sync returns before any state event, so poll a few short roundtrips.
-    for _ in range(8):
+    deadline = time.monotonic() + timeout_s
+    while True:
         wire.roundtrip(wire.alloc())
-        if any("activated" in props for props in wire.handles.values()):
+        if target is not None:
+            if wire.handles.get(target, {}).get("activated"):
+                return
+        elif any("activated" in props for props in wire.handles.values()):
             return
-        time.sleep(0.1)
+        if time.monotonic() >= deadline:
+            return
+        time.sleep(0.15)
 
 
 def select(
@@ -219,6 +233,7 @@ def select(
 def activate(wire: Wire, handle: int) -> None:
     # zcosmic_toplevel_info_v1.get_cosmic_toplevel(cosmic_toplevel new_id, foreign_toplevel object)
     cosmic_id = wire.alloc()
+    wire.cosmic_of[cosmic_id] = handle  # its state events are the activation proof
     wire.send(_TL_INFO, 1, struct.pack("<II", cosmic_id, handle))
     # zcosmic_toplevel_manager_v1.activate(toplevel, seat)
     wire.send(_TL_MGR, 2, struct.pack("<II", cosmic_id, _SEAT))
@@ -272,7 +287,7 @@ def main() -> int:
         )
         return 2
     activate(wire, matches[0]["handle"])
-    read_states(wire)
+    read_states(wire, target=matches[0]["handle"])
     focused = bool(wire.handles[matches[0]["handle"]].get("activated"))
     ok = focused and not wire.errors
     print(
