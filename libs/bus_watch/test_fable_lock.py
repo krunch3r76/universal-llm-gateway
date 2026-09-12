@@ -35,7 +35,9 @@ def test_ticker_cannot_write_preempt_by(watch_dir: Path) -> None:
     assert lock.get("holder") == "sdk:live"
 
 
-def test_declared_lease_45min_not_free(watch_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_declared_lease_45min_not_free(
+    watch_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """AC-8: healthy hop at 45 min is not seat_lock_free."""
     t0 = 1_000_000.0
     monkeypatch.setattr(time, "time", lambda: t0)
@@ -43,8 +45,31 @@ def test_declared_lease_45min_not_free(watch_dir: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr(time, "time", lambda: t0 + 45 * 60)
     lock = fl.read_lock()
     assert fl.seat_lock_free(lock, max_hop_minutes=60) is False
-    other = fl.claim_fable_lock("sdk:other", hop=False, max_hop_minutes=60, root_id="10479")
+    other = fl.claim_fable_lock(
+        "sdk:other", hop=False, max_hop_minutes=60, root_id="10479"
+    )
     assert other["ok"] is False
+
+
+def test_second_attended_tab_is_held_without_take_over(watch_dir: Path) -> None:
+    """Two attended tabs on one root: the second is refused, not co-holding (2026-09-11 specimen)."""
+    assert fl.claim_fable_lock("ide:tab-a", hop=False, root_id="10479")["ok"]
+    second = fl.claim_fable_lock("ide:tab-b", hop=False, root_id="10479")
+    assert second["ok"] is False
+    assert second["reason"] == "held"
+    assert fl.read_lock().get("preempt_by") is None
+
+
+def test_take_over_preempts_live_attended_holder(watch_dir: Path) -> None:
+    """Operator's word (resume on another workstation) requests preempt; claim succeeds after release."""
+    assert fl.claim_fable_lock("ide:tab-a", hop=False, root_id="10479")["ok"]
+    requested = fl.claim_fable_lock(
+        "ide:tab-b", hop=False, root_id="10479", take_over=True
+    )
+    assert requested["reason"] == "held_preempt_requested"
+    assert fl.read_lock().get("preempt_by") == "ide:tab-b"
+    assert fl.release_fable_lock("ide:tab-a")["ok"]
+    assert fl.claim_fable_lock("ide:tab-b", hop=False, root_id="10479")["ok"] is True
 
 
 def test_model_gated_refresh_increments_tick_seq(watch_dir: Path) -> None:
@@ -63,7 +88,9 @@ def test_no_utime_refresh_path() -> None:
     assert "utime" not in source
 
 
-def test_night_id_reset_on_mismatch(watch_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_night_id_reset_on_mismatch(
+    watch_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """AC-10: new night_id resets hops without deleting lock file."""
     emitted: list[str] = []
     monkeypatch.setattr(

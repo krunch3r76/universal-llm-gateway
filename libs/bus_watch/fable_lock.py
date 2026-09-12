@@ -153,14 +153,25 @@ def claim_fable_lock(
     max_hop_minutes: float = 60.0,
     night_id: str | None = None,
     root_id: str = "",
+    take_over: bool = False,
 ) -> dict[str, Any]:
-    """Claim the single-Fable lock for ``holder``; refuse while a live other holder exists."""
+    """Claim the single-liaison-seat lock for ``holder``; refuse while a live other holder exists.
+
+    An attended ``ide:`` claim always preempts a headless ``sdk:`` holder. Against a
+    live ``ide:`` holder it preempts only with ``take_over`` — the operator's own word
+    (``resume <root>`` on another workstation), never a second ``/liaison`` opened by
+    accident (specimen 2026-09-11: two tabs co-held one root). The preempted loop sees
+    ``preempt_by``, exits and releases; the claimer retries within one poll.
+    """
     night = night_id or current_night_id()
     current = read_lock()
     current, _ = _reconcile_night(current, night, root_id=root_id)
     live = bool(current.get("holder")) and not seat_lock_free(current, max_hop_minutes=max_hop_minutes)
     if live and current.get("holder") != holder:
-        if holder.startswith("ide:") and str(current.get("holder")).startswith("sdk:"):
+        live_holder = str(current.get("holder"))
+        attended = holder.startswith("ide:")
+        may_preempt = attended and (live_holder.startswith("sdk:") or take_over)
+        if may_preempt:
             current["preempt_by"] = holder
             FABLE_LOCK.write_text(json.dumps(current, indent=2), encoding="utf-8")
             return {"ok": False, "reason": "held_preempt_requested", "lock": current}

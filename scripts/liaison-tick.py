@@ -142,6 +142,14 @@ def main() -> int:
         help="release the single-Fable lock held by --holder",
     )
     p.add_argument(
+        "--take-over",
+        action="store_true",
+        help=(
+            "with --claim or --loop from an attended ide: holder: preempt a live ide: "
+            "holder too (operator's word — resume <root> on another workstation)"
+        ),
+    )
+    p.add_argument(
         "--set",
         action="append",
         default=[],
@@ -163,6 +171,7 @@ def main() -> int:
                 hop=args.hop,
                 max_hop_minutes=float(policy.get("max_hop_minutes") or 60),
                 root_id=str(args.root or "").strip(),
+                take_over=args.take_over,
             )
             if args.claim
             else release_fable_lock(args.holder)
@@ -231,7 +240,7 @@ def main() -> int:
         return _spawn_loop(args, root, state, state_path, register)
 
     holder = args.holder or f"ide:{root}"
-    claim = claim_fable_lock(holder, hop=False, root_id=root)
+    claim = claim_fable_lock(holder, hop=False, root_id=root, take_over=args.take_over)
     if not claim.get("ok"):
         print(
             json.dumps(
