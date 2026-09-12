@@ -28,7 +28,7 @@ def _publish_log_records(caplog: pytest.LogCaptureFixture) -> list[Any]:
         (
             "proxy_uninitialized",
             lambda monkeypatch: monkeypatch.setattr(
-                "systems.proxy.dependencies.get_proxy",
+                "systems.frontier_consult.cdp_event_publish._resolve_get_proxy",
                 lambda: (_ for _ in ()).throw(
                     RuntimeError(
                         "Proxy not initialized. Call init_proxy() during app startup."
@@ -39,7 +39,7 @@ def _publish_log_records(caplog: pytest.LogCaptureFixture) -> list[Any]:
         (
             "bus_none",
             lambda monkeypatch: monkeypatch.setattr(
-                "systems.proxy.dependencies.get_proxy",
+                "systems.frontier_consult.cdp_event_publish._resolve_get_proxy",
                 lambda: MagicMock(event_bus=None),
             ),
         ),
@@ -80,7 +80,7 @@ def test_publish_exception_no_raise(
     mock_bus = MagicMock()
     mock_bus.publish_from_sync = _raise_on_publish
     monkeypatch.setattr(
-        "systems.proxy.dependencies.get_proxy",
+        "systems.frontier_consult.cdp_event_publish._resolve_get_proxy",
         lambda: MagicMock(event_bus=mock_bus),
     )
     publish_cdp_event(
@@ -148,7 +148,7 @@ def test_healthy_emit_capture(
     mock_bus = MagicMock()
     mock_bus.publish_from_sync = captured.append
     monkeypatch.setattr(
-        "systems.proxy.dependencies.get_proxy",
+        "systems.frontier_consult.cdp_event_publish._resolve_get_proxy",
         lambda: MagicMock(event_bus=mock_bus),
     )
 
@@ -247,7 +247,7 @@ def test_healthy_emit_with_topic_capture(
     mock_bus = MagicMock()
     mock_bus.publish_from_sync = captured.append
     monkeypatch.setattr(
-        "systems.proxy.dependencies.get_proxy",
+        "systems.frontier_consult.cdp_event_publish._resolve_get_proxy",
         lambda: MagicMock(event_bus=mock_bus),
     )
 

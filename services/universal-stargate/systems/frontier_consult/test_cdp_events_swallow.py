@@ -85,10 +85,13 @@ def test_horizon_unverifiable_retries_until_publish_succeeds(monkeypatch) -> Non
     def _fail_twice_then_ok(event) -> bool:
         attempts.append(event.signal)
         if len(attempts) <= 2:
-            raise RuntimeError("bus down")
+            return False
         return True
 
-    monkeypatch.setattr(cdp_events, "publish_cdp_event", _fail_twice_then_ok)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_event_publish.publish_cdp_event",
+        _fail_twice_then_ok,
+    )
     kwargs = dict(
         request_id="r",
         execution_id="exec-retry",

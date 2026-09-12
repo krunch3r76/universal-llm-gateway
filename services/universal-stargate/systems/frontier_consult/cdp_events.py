@@ -20,26 +20,8 @@ def publish_cdp_event(event: Event) -> bool:
 
 
 def publish_cdp_kwargs(factory: Any, **kwargs: Any) -> bool:
-    """Build + publish via this module's ``publish_cdp_event`` (test-patchable)."""
-    kwarg_names = ",".join(sorted(kwargs))
-    try:
-        delivered = publish_cdp_event(factory(**kwargs))
-        if delivered is False:
-            return False
-        return True
-    except Exception as exc:  # noqa: BLE001
-        from universal_logging import get_logger
-
-        get_logger(__name__).debug(
-            "cdp.event.publish outcome=factory_exception "
-            f"signal={getattr(factory, '__name__', 'cdp.generate.?')} "
-            f"exc_type={type(exc).__name__} kwarg_names={kwarg_names}"
-        )
-        cdp_event_publish._warn_swallowed(
-            getattr(factory, "__name__", "cdp.generate.?"),
-            f"{type(exc).__name__}: {exc}",
-        )
-        return False
+    """Delegate to ``cdp_event_publish`` (patchable via this module in tests)."""
+    return cdp_event_publish.publish_cdp_kwargs(factory, **kwargs)
 
 __all__ = [
     "CdpGenerateAdmitted",

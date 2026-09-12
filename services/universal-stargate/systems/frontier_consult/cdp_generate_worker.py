@@ -379,6 +379,13 @@ async def run_cdp_worker(
     leg_satellite_id: list[str | None] = [None]
 
     def _on_submitted(satellite_execution_id: str) -> None:
+        logger.debug(
+            "cdp.generate.submitted.callback request_id=%s execution_id=%s "
+            "satellite_execution_id=%s",
+            request_id,
+            execution_id,
+            satellite_execution_id,
+        )
         leg_satellite_id[0] = satellite_execution_id
 
         def _publish() -> None:
