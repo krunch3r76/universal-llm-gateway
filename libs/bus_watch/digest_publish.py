@@ -150,7 +150,7 @@ def publish_if_enabled(
     """Publish when ``post_digest`` policy is on; optional digest-change gate.
 
     Our own DIGEST turn bumps the root's turn count, so the next tick would read as
-    "changed" and publish again every poll. ``_only_own_turn`` recognises that echo:
+    "changed" and publish again every poll. ``is_own_digest_echo`` recognises that echo:
     the root's newest turn is the digest we posted and the lanes/attention we
     published from are unchanged — nothing happened, so nothing is published.
     """
@@ -158,7 +158,7 @@ def publish_if_enabled(
         return False
     if not effective_policy(state).get("post_digest"):
         return False
-    if _only_own_turn(digest, state):
+    if is_own_digest_echo(digest, state):
         return False
     published = publish_digest(root_id, digest, state, client=client)
     if published is not None:
@@ -193,7 +193,13 @@ def _lanes_fingerprint(digest: dict[str, Any]) -> str:
     return json.dumps(key, sort_keys=True, default=str)
 
 
-def _only_own_turn(digest: dict[str, Any], state: dict[str, Any]) -> bool:
+def is_own_digest_echo(digest: dict[str, Any], state: dict[str, Any]) -> bool:
+    """True when the only thing that changed since the last tick is our own DIGEST turn.
+
+    Shared by the publisher (no republish) and the attended loop's wake condition
+    (no sentinel for our own echo — each publish would otherwise cost the IDE seat
+    a wake turn one poll later).
+    """
     root_turns = (digest.get("root") or {}).get("turns")
     prior = state.get("digest_turn_number")
     if prior is None or root_turns != prior:
@@ -202,6 +208,7 @@ def _only_own_turn(digest: dict[str, Any], state: dict[str, Any]) -> bool:
 
 
 __all__ = [
+    "is_own_digest_echo",
     "project_digest",
     "publish_digest",
     "publish_if_enabled",

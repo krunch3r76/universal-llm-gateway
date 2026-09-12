@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 
 import httpx
-from bus_watch.digest_publish import publish_if_enabled
+from bus_watch.digest_publish import is_own_digest_echo, publish_if_enabled
 from bus_watch.fable_lock import (
     WATCH_DIR as _WATCH_DIR,
 )
@@ -359,7 +359,10 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
             continue
         now = time.monotonic()
         due = (
-            digest["changed_since_last_tick"]
+            (
+                digest["changed_since_last_tick"]
+                and not is_own_digest_echo(digest, state)
+            )
             or (now - last_emit) >= args.heartbeat
             or (digest.get("budget") or {}).get("stop_class")
         )
