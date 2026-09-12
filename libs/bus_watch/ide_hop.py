@@ -133,6 +133,8 @@ def build_ide_hop_message(
         f"resume {root_id}",
         "",
         f"Liaison IDE hop ({register} register){tip}. Use the liaison skill.",
+        "Do not stop. Proceed autonomously until a have-to stop. "
+        "Hop after harvest is the rule — harvest-complete is not a stay.",
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
         f"NOW: {row}",
         *arm_lines,

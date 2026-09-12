@@ -32,6 +32,8 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     assert hop_header_line(message).startswith(
         "Liaison IDE hop (attended register) tip_cp=147"
     )
+    assert "Do not stop. Proceed autonomously until a have-to stop." in message
+    assert "Hop after harvest is the rule" in message
 
 
 def test_remote_launch_command_prefers_verified_focus_over_uri() -> None:

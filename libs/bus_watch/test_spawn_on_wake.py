@@ -124,6 +124,8 @@ def test_dispatch_body_message_not_packet() -> None:
         "tip_cp_ordinal=",
         "contract: none",
         "Use the liaison skill",
+        "Do not stop",
+        "Hop after harvest is the rule",
     ):
         assert token in message
     # Per-night key: GIW's remint cap counts admits per work_key (a:33139).

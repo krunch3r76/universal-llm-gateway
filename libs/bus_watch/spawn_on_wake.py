@@ -65,7 +65,9 @@ def build_successor_message(
         f'dispatch(tool="continuity", arguments=\'{{"op":"resume","thread":"{root_id}"}}\')\n'
         f"agent_bus_read(thread_get, gear: {gear}, row={row}, "
         f"tip_cp_ordinal={tip_val}, contract: none\n"
-        "Use the liaison skill. Run one tick; checkpoint; hop.\n"
+        "Use the liaison skill. Do not stop. Proceed autonomously until a have-to stop. "
+        "Hop after harvest is the rule — harvest-complete is not a stay. "
+        "Run the tick; checkpoint; hop.\n"
     )
     encoded = message.encode("utf-8")
     if len(encoded) > cap:

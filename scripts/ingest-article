@@ -5,8 +5,10 @@ Runs on the host (not inside a container) because it needs outbound internet
 access for arXiv downloads. After downloading, it calls the RAG service's
 POST /article endpoint (via Stargate passthrough) to register the metadata.
 
-The file watcher will index the PDF automatically on the next RAG restart
-or watch cycle. Pass --index to trigger immediate indexing via POST /index.
+Dest is ``<checkout>/docs/research`` for the tree that contains this script
+(hub or Lane B worktree). Hardcoding the hub mount made Lane B closeouts
+``checks_failed`` with empty ``files_*`` while the PDF sat on hub (10546).
+The RAG watcher indexes hub; land or ingest on hub before ``--index``.
 
 Usage:
     # Minimal — auto-derives filename from arXiv ID
@@ -40,7 +42,8 @@ from pathlib import Path
 
 import httpx
 
-RESEARCH_ROOT = Path("/mnt/torus/projects/universal-llm-gateway/docs/research")
+_REPO = Path(__file__).resolve().parents[1]
+RESEARCH_ROOT = _REPO / "docs/research"
 DEFAULT_STARGATE = "http://localhost:9999"
 ARTICLE_PATH = "/api/v1/rag/article"
 INDEX_PATH = "/api/v1/rag/index"

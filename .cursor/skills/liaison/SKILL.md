@@ -53,18 +53,19 @@ fetch the bus to "double check".
    harvest the archive, not the bus.
 6. **Checkpoint** — `budget.checkpoint_due` ⇒ segment CHECKPOINT on R (`supersedes_turn=<tip>`, Residue ≤ 800
    chars: Settled · Live · Next · scoreboard sha) then `liaison-tick.py --root R --mark-checkpoint`.
-7. **Hop** — hops run until they **have to** or **should** stop (operator 2026-09-11 22:59 PT). They do
-   **not** stop because `liaison-fable.lock.hops` equals 8. That counter is **fleet-wide** (one lock file,
-   all roots; born 10479). This root's cap is `policy.max_hops_per_night` on `liaison-<R>.tick.json`
-   (10479 and 10534: **999**). Count this-root hops from `tmp/watchers/handoff-messages/liaison-<R>-*.md`
-   / tape cells. Digest `hop_cap.lock_hops_scope=fleet` is not a stop. **Have-to stay:** hop script refuse
-   · operator park · `CONTEXT_BUDGET` on this tab. **Should stay:** operator in live dialogue on this tab ·
-   this tab must harvest an in-flight watcher · quiet / no NOW. **Should hop:** CHECKPOINT landed ∧ this
-   tab is spent ∧ hop machinery can fire ∧ no stay clause. Autonomous hop-qualifying CP: kill the loop →
-   `--release` → one successor. Attended: `scripts/liaison-ide-hop.py --root R --row "<NOW>"` as the last
-   action **only when hopping** (`policy.gui_host` required; refuses when unset / no Cursor window — hops
-   1–3 of 2026-09-11 hit an unattended host). When staying, write `STAY: <reason>` — do not bake a hop
-   command that fights the stay. One tab is live at a time.
+7. **Hop** — hops run until they **have to** stop. They do **not** stop because `lock.hops`
+   equals 8. Hops on this root live on `liaison-fable-<root>.lock` (`hop_cap.lock_hops_scope=root`).
+   This-root cap is `policy.max_hops_per_night`. **Hop after harvest is the rule** (operator
+   2026-09-12): harvest → fold → CHECKPOINT → hop; harvest-complete is not a stay; the successor
+   proceeds autonomously until a have-to stop. The hop opener says so in the first lines after
+   `resume <R>`. **Have-to stay:** hop script refuse · operator park · `CONTEXT_BUDGET` on this
+   tab. In-flight watcher ⇒ harvest it, then hop — do not sit. Quiet / empty NOW is not a stay.
+   Attended: `scripts/liaison-ide-hop.py --root R --row "<NOW>"` as the last action **only when
+   hopping** (`policy.gui_host` required; hop focuses the Cursor Agents window through the
+   compositor; `ok` means a new transcript landed with the hop header — keys-sent is not enough.
+   Refuses when unset / no Cursor window — hops 1–3 of 2026-09-11 hit an unattended host).
+   Autonomous hop-qualifying CP: kill the loop → `--release` → one successor. When staying, write
+   `STAY: <reason>`. One tab is live at a time.
 8. **Stop classes** — `stop_class=CONTEXT_BUDGET` ⇒ CHECKPOINT → hop (autonomous) or page + PARK (attended).
    Other designed stops: § Stops.
 
