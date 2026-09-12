@@ -125,6 +125,30 @@ def test_live_watcher_labels_treats_predicate_unmet_as_live(tmp_path: Path) -> N
     assert labels == ["10534-cdp", "10534-run"]
 
 
+def test_live_watcher_labels_excludes_own_lane(tmp_path: Path) -> None:
+    """A seat must not read the watcher on its own closeout as follow-up.
+
+    Specimen 10534-ticker-opus-10579-closeout (2026-09-12): the ticker arms a
+    closeout watcher on the lane it spawns, so the successor sitting in lane
+    10579 saw a live tail, would hop, and would spawn a seat with the same
+    watcher — an unbounded premium chain.
+    """
+    live = os.getpid()
+    for stem, thread in (("10534-own-lane", "10579"), ("10534-peer", "10534")):
+        (tmp_path / f"{stem}.state.json").write_text(
+            json.dumps({"status": "polling", "thread": thread, "pid": live}),
+            encoding="utf-8",
+        )
+        (tmp_path / f"{stem}.pid").write_text(str(live), encoding="utf-8")
+    assert live_watcher_labels("10534", watch_dir=tmp_path) == [
+        "10534-own-lane",
+        "10534-peer",
+    ]
+    assert live_watcher_labels(
+        "10534", watch_dir=tmp_path, exclude_threads=["10579"]
+    ) == ["10534-peer"]
+
+
 def test_live_watcher_labels_skips_dead_predicate_unmet(tmp_path: Path) -> None:
     """Dead stall must not ARM a hang-tail (10479-r4-consult, 2026-09-11)."""
     (tmp_path / "10479-r4-consult.state.json").write_text(

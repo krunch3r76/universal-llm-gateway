@@ -85,6 +85,14 @@ def main() -> int:
         action="store_true",
         help="hop even when hop_qualifies refuses (operator override)",
     )
+    p.add_argument(
+        "--exclude-lane",
+        action="append",
+        default=[],
+        metavar="THREAD",
+        help="ignore watchers on THREAD — pass the calling seat's own dispatch "
+        "lane so its pending closeout does not count as follow-up (repeatable)",
+    )
     args = p.parse_args()
 
     if args.find_transcript:
@@ -97,7 +105,11 @@ def main() -> int:
     labels = list(args.arm)
     if not args.no_auto_arm:
         labels.extend(
-            lbl for lbl in live_watcher_labels(args.root) if lbl not in labels
+            lbl
+            for lbl in live_watcher_labels(
+                args.root, exclude_threads=args.exclude_lane
+            )
+            if lbl not in labels
         )
     qualify = hop_qualifies(row=args.row, arm_labels=labels)
     if not qualify["ok"] and not args.force:

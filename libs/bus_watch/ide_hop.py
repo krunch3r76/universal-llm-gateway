@@ -30,6 +30,7 @@ import re
 import shlex
 import subprocess
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -115,7 +116,11 @@ def _poller_alive(stem: str, state: dict[str, Any], watch_dir: Path) -> bool:
     return _pid_alive(pid)
 
 
-def live_watcher_labels(root_id: str, watch_dir: Path = WATCH_DIR) -> list[str]:
+def live_watcher_labels(
+    root_id: str,
+    watch_dir: Path = WATCH_DIR,
+    exclude_threads: Iterable[str] = (),
+) -> list[str]:
     """Labels of pollers still running for ``root_id`` — the tails a successor tab must re-arm.
 
     A label is the state-file stem (what ``watch-supervise.sh tail --label`` takes).
@@ -126,7 +131,15 @@ def live_watcher_labels(root_id: str, watch_dir: Path = WATCH_DIR) -> list[str]:
     alive**: chrome-only CDP envelopes do not satisfy ``proof_reply_from``, so a
     running wait is real; a dead stall (specimen ``10479-r4-consult`` 2026-09-11)
     is not — tailing it hangs until session death (status is not complete/expired).
+
+    ``exclude_threads`` drops pollers watching the calling seat's **own** lane.
+    The ticker arms a closeout watcher on the lane it spawns, so a headless
+    successor that counts it reads its own pending closeout as follow-up, hops,
+    and spawns a seat whose lane gets the same watcher — an unbounded premium
+    chain (specimen ``10534-ticker-opus-10579-closeout`` 2026-09-12, seen from
+    inside lane 10579). Waiting on yourself is never a reason to hop.
     """
+    excluded = {str(t) for t in exclude_threads if str(t).strip()}
     labels: list[str] = []
     for path in sorted(watch_dir.glob("*.state.json")):
         try:
@@ -139,6 +152,8 @@ def live_watcher_labels(root_id: str, watch_dir: Path = WATCH_DIR) -> list[str]:
         ):
             continue
         stem = path.name.removesuffix(".state.json")
+        if str(state.get("thread")) in excluded:
+            continue
         if not _poller_alive(stem, state, watch_dir):
             continue
         if stem.startswith(f"{root_id}-") or str(state.get("thread")) == str(root_id):

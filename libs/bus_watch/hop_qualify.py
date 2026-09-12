@@ -27,6 +27,10 @@ def hop_qualifies(
     Qualifies: live watcher tails, CONTEXT_BUDGET with a non-hold NOW, or a
     NOW that is not HOLD_MERGE / LAND OWED / OPERATOR_GATE / empty / quiet.
     ``--force`` on the hop script is the operator override, not this function.
+
+    ``arm_labels`` must already exclude pollers on the caller's own lane
+    (``ide_hop.live_watcher_labels(exclude_threads=…)``); a seat waiting on its
+    own closeout would otherwise qualify forever.
     """
     labels = [str(x) for x in (arm_labels or []) if str(x).strip()]
     if labels:
