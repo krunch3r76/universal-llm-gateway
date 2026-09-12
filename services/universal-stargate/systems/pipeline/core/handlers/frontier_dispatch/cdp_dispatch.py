@@ -158,6 +158,10 @@ def build_cdp_step_output(
         json_payload["content_proof_uri"] = result.content_proof_uri
     if result.content_proof_sha256:
         json_payload["content_proof_sha256"] = result.content_proof_sha256
+    if result.extras.get("chat_url"):
+        json_payload["chat_url"] = result.extras["chat_url"]
+    if result.extras.get("registration_id"):
+        json_payload["registration_id"] = result.extras["registration_id"]
     harvest_provenance = result.extras.get("harvest_provenance")
     if harvest_provenance:
         json_payload["harvest_provenance"] = harvest_provenance

@@ -167,6 +167,7 @@ SDK_LIFECYCLE_SIGNALS = (
 # --- cdp family (VERIFIED live — v3 §6) ------------------------------------
 CDP_ADMITTED = "cdp.generate.admitted"
 CDP_SUBMITTED = "cdp.generate.submitted"
+CDP_SEATED = "cdp.generate.seated"
 CDP_PROOF = "cdp.generate.proof"
 CDP_STALLED = "cdp.generate.stalled"
 CDP_DELIVERY_FAILED = "cdp.generate.delivery_failed"
@@ -255,6 +256,7 @@ SDK_FAMILY = tuple(SDK_EMITTER_BY_SIGNAL) + SDK_LIFECYCLE_SIGNALS
 CDP_FAMILY = (
     CDP_ADMITTED,
     CDP_SUBMITTED,
+    CDP_SEATED,
     CDP_PROOF,
     CDP_STALLED,
     CDP_DELIVERY_FAILED,

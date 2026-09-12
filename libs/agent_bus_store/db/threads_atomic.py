@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from universal_logging import get_logger
+
 from .connection import connect, now
 from .lane_associations import associate_lane, get_current_lane
 from .lifecycle import TERMINAL_STATES, _transition_lifecycle_state
@@ -15,6 +17,8 @@ from .threads import (
     normalize_thread_id,
     set_thread_tags,
 )
+
+logger = get_logger(__name__)
 
 
 class PendingShellContention(Exception):  # noqa: N818
@@ -469,18 +473,50 @@ def admit_dispatch(
     return get_thread_with_links(thread_id)
 
 
+def update_dispatch_link_chat_url(
+    *,
+    thread_id: str,
+    execution_id: str,
+    chat_url: str,
+    now_ts: str | None = None,
+) -> int:
+    """Persist CSE chat URL on a dispatch link row (seating projection).
+
+    Keys ``(thread_id, execution_id)``. Does not touch terminal columns.
+    Returns rowcount; logs ``dispatch_link_chat_url_miss`` when zero.
+    """
+    ts = now_ts or now()
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE thread_dispatch_links "
+            "SET chat_url = ?, chat_url_bound_at = ? "
+            "WHERE thread_id = ? AND execution_id = ?",
+            (chat_url, ts, thread_id, execution_id),
+        )
+        rowcount = cur.rowcount
+    if rowcount == 0:
+        logger.warning(
+            "dispatch_link_chat_url_miss thread_id=%s execution_id=%s",
+            thread_id,
+            execution_id,
+        )
+    return rowcount
+
+
 def terminate_dispatch(
     *,
     thread_id: str,
     terminal_status: str,
     execution_id: str | None = None,
     archive_uri: str | None = None,
+    chat_url: str | None = None,
 ) -> dict[str, Any] | None:
     """Mark dispatch link(s) terminal — sets terminal_status, terminal_at, delivery_at.
 
     When ``execution_id`` is omitted, updates all non-terminal links for the thread
     (SDK is 1:1). Idempotent: rows already terminal are skipped via the NULL guard.
     ``archive_uri`` is persisted on failed delivery when harvest proof exists.
+    ``chat_url`` refreshes the link projection at terminal when provided.
     """
     if terminal_status not in ("completed", "failed"):
         raise ValueError(
@@ -496,22 +532,51 @@ def terminate_dispatch(
             return None
 
         if execution_id is not None:
-            conn.execute(
-                "UPDATE thread_dispatch_links "
-                "SET terminal_status = ?, terminal_at = ?, delivery_at = ?, "
-                "archive_uri = COALESCE(?, archive_uri) "
-                "WHERE thread_id = ? AND execution_id = ? "
-                "AND terminal_status IS NULL",
-                (terminal_status, ts, ts, archive_uri, thread_id, execution_id),
-            )
+            if chat_url is not None:
+                conn.execute(
+                    "UPDATE thread_dispatch_links "
+                    "SET terminal_status = ?, terminal_at = ?, delivery_at = ?, "
+                    "archive_uri = COALESCE(?, archive_uri), "
+                    "chat_url = COALESCE(?, chat_url) "
+                    "WHERE thread_id = ? AND execution_id = ? "
+                    "AND terminal_status IS NULL",
+                    (
+                        terminal_status,
+                        ts,
+                        ts,
+                        archive_uri,
+                        chat_url,
+                        thread_id,
+                        execution_id,
+                    ),
+                )
+            else:
+                conn.execute(
+                    "UPDATE thread_dispatch_links "
+                    "SET terminal_status = ?, terminal_at = ?, delivery_at = ?, "
+                    "archive_uri = COALESCE(?, archive_uri) "
+                    "WHERE thread_id = ? AND execution_id = ? "
+                    "AND terminal_status IS NULL",
+                    (terminal_status, ts, ts, archive_uri, thread_id, execution_id),
+                )
         else:
-            conn.execute(
-                "UPDATE thread_dispatch_links "
-                "SET terminal_status = ?, terminal_at = ?, delivery_at = ?, "
-                "archive_uri = COALESCE(?, archive_uri) "
-                "WHERE thread_id = ? AND terminal_status IS NULL",
-                (terminal_status, ts, ts, archive_uri, thread_id),
-            )
+            if chat_url is not None:
+                conn.execute(
+                    "UPDATE thread_dispatch_links "
+                    "SET terminal_status = ?, terminal_at = ?, delivery_at = ?, "
+                    "archive_uri = COALESCE(?, archive_uri), "
+                    "chat_url = COALESCE(?, chat_url) "
+                    "WHERE thread_id = ? AND terminal_status IS NULL",
+                    (terminal_status, ts, ts, archive_uri, chat_url, thread_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE thread_dispatch_links "
+                    "SET terminal_status = ?, terminal_at = ?, delivery_at = ?, "
+                    "archive_uri = COALESCE(?, archive_uri) "
+                    "WHERE thread_id = ? AND terminal_status IS NULL",
+                    (terminal_status, ts, ts, archive_uri, thread_id),
+                )
 
     return get_thread_with_links(thread_id)
 

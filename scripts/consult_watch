@@ -29,6 +29,7 @@ PIPELINE_START_SIGNAL = "pipeline.started"
 PIPELINE_END_SIGNALS = {"pipeline.completed", "pipeline.failed", "pipeline.cancelled"}
 PIPELINE_STEP_START = "pipeline.step.started"
 PIPELINE_STEP_END = {"pipeline.step.completed", "pipeline.step.failed", "pipeline.step.skipped"}
+CDP_DISPLAY_SIGNALS = frozenset({"cdp.generate.seated", "cdp.generate.stalled"})
 
 
 def _is_cloud_model(model_id: str) -> bool:
@@ -69,6 +70,16 @@ class ActiveRequest:
 
 
 @dataclass(slots=True, kw_only=True)
+class ActiveCdpGenerate:
+    execution_id: str
+    request_id: str | None = None
+    chat_url: str | None = None
+    registration_id: str | None = None
+    last_signal: str = "cdp.generate.seated"
+    updated_at: datetime | None = None
+
+
+@dataclass(slots=True, kw_only=True)
 class ActivePipeline:
     execution_id: str
     pipeline_id: str
@@ -85,6 +96,7 @@ class ConsultWatchState:
     def __init__(self) -> None:
         self.active_requests: dict[str, ActiveRequest] = {}
         self.active_pipelines: dict[str, ActivePipeline] = {}
+        self.active_cdp: dict[str, ActiveCdpGenerate] = {}
         self.total_events: int = 0
         self.last_event_ts: datetime | None = None
 
@@ -97,6 +109,7 @@ class ConsultWatchState:
 
         self._ingest_request(signal, payload, event_ts)
         self._ingest_pipeline(signal, payload, event_ts)
+        self._ingest_cdp_display(signal, payload, event_ts)
 
     def _ingest_request(
         self,
@@ -174,6 +187,34 @@ class ConsultWatchState:
                 if active.current_step == step_name:
                     active.current_step = None
 
+    def _ingest_cdp_display(
+        self,
+        signal: str,
+        payload: dict[str, Any],
+        event_ts: datetime,
+    ) -> None:
+        if signal not in CDP_DISPLAY_SIGNALS:
+            return
+        execution_id = payload.get("execution_id")
+        if not isinstance(execution_id, str) or not execution_id:
+            return
+        existing = self.active_cdp.get(execution_id)
+        chat_url = payload.get("chat_url")
+        registration_id = payload.get("registration_id")
+        request_id = payload.get("request_id")
+        self.active_cdp[execution_id] = ActiveCdpGenerate(
+            execution_id=execution_id,
+            request_id=str(request_id) if request_id else (existing.request_id if existing else None),
+            chat_url=str(chat_url) if chat_url else (existing.chat_url if existing else None),
+            registration_id=(
+                str(registration_id)
+                if registration_id
+                else (existing.registration_id if existing else None)
+            ),
+            last_signal=signal,
+            updated_at=event_ts,
+        )
+
 
 def _format_requests(now: datetime, requests: dict[str, ActiveRequest]) -> list[str]:
     lines = ["Active requests:"]
@@ -192,7 +233,11 @@ def _format_requests(now: datetime, requests: dict[str, ActiveRequest]) -> list[
     return lines
 
 
-def _format_pipelines(now: datetime, pipelines: dict[str, ActivePipeline]) -> list[str]:
+def _format_pipelines(
+    now: datetime,
+    pipelines: dict[str, ActivePipeline],
+    cdp_legs: dict[str, ActiveCdpGenerate],
+) -> list[str]:
     lines = ["Active pipelines:"]
     if not pipelines:
         lines.append("  (none)")
@@ -205,10 +250,27 @@ def _format_pipelines(now: datetime, pipelines: dict[str, ActivePipeline]) -> li
         model_summary = ", ".join(models) if models else "-"
         cloud_summary = ", ".join(cloud_models) if cloud_models else "(none)"
         current_step = pipeline.current_step or "-"
+        cdp_row = cdp_legs.get(pipeline.execution_id)
+        cse = cdp_row.chat_url if cdp_row and cdp_row.chat_url else "-"
         lines.append(
             "  - "
             f"{pipeline.execution_id} | {pipeline.pipeline_id} | step={current_step} | "
-            f"elapsed={elapsed} | models={model_summary} | cloud={cloud_summary}"
+            f"elapsed={elapsed} | models={model_summary} | cloud={cloud_summary} | cse={cse}"
+        )
+    return lines
+
+
+def _format_cdp(now: datetime, legs: dict[str, ActiveCdpGenerate]) -> list[str]:
+    lines = ["CDP generate (display/liveness):"]
+    if not legs:
+        lines.append("  (none)")
+        return lines
+    for leg in sorted(legs.values(), key=lambda r: r.updated_at or now):
+        cse = leg.chat_url or "-"
+        reg = leg.registration_id or "-"
+        lines.append(
+            "  - "
+            f"{leg.execution_id} | signal={leg.last_signal} | cse={cse} | reg={reg}"
         )
     return lines
 
@@ -227,7 +289,9 @@ def _render(state: ConsultWatchState, events_path: Path) -> str:
     lines.append("")
     lines.extend(_format_requests(now, state.active_requests))
     lines.append("")
-    lines.extend(_format_pipelines(now, state.active_pipelines))
+    lines.extend(_format_pipelines(now, state.active_pipelines, state.active_cdp))
+    lines.append("")
+    lines.extend(_format_cdp(now, state.active_cdp))
     lines.append("")
     lines.append("Tip: press Ctrl+C to exit.")
     return "\n".join(lines)

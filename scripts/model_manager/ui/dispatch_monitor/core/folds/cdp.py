@@ -1,10 +1,10 @@
 """CdpFold -- folds live ``cdp.generate.*`` and CDP ``frontier.poll.hint.issued`` rows.
 
 Authority: v3 §6 handler table (G5.2 slice 1). ``request_id`` is the sole leg key
-present on every ``cdp.generate.*`` payload. The G3 leg is a black box between
-``admitted`` and terminal — no mid-flight **lifecycle** progress exists on the
-wire (§6.2). Observation signals in ``CDP_OBSERVATION_SIGNALS`` are declared and
-ignored at the Model gate; they must not set or hold ``terminal_ms``.
+present on every ``cdp.generate.*`` payload. Between ``admitted`` and terminal,
+``cdp.generate.seated`` is the sole non-terminal mid-flight rung (CSE URL stamp).
+Observation signals in ``CDP_OBSERVATION_SIGNALS`` are declared and ignored at
+the Model gate; they must not set or hold ``terminal_ms``.
 """
 
 from __future__ import annotations
@@ -95,6 +95,7 @@ class CdpFold:
             signals.POLL_HINT_ISSUED: self._on_poll_hint,
             signals.CDP_ADMITTED: self._on_admitted,
             signals.CDP_SUBMITTED: self._on_submitted,
+            signals.CDP_SEATED: self._on_seated,
             signals.CDP_PROOF: self._on_proof,
             signals.CDP_STALLED: self._on_stalled,
             signals.CDP_DELIVERY_FAILED: self._on_delivery_failed,
@@ -177,6 +178,24 @@ class CdpFold:
         sat = record.payload.get("satellite_execution_id")
         if sat:
             row.satellite_execution_id = str(sat)
+
+    def _on_seated(self, record: EventRecord) -> None:
+        """Non-terminal CSE URL observation — never sets ``terminal_ms``."""
+        row = self._state(record)
+        if row is None:
+            return
+        payload = record.payload
+        url = payload.get("chat_url")
+        if url:
+            row.chat_url = normalize_chat_url(str(url))
+        reg = payload.get("registration_id")
+        if reg:
+            row.registration_id = str(reg)
+        sat = payload.get("satellite_execution_id")
+        if sat and row.satellite_execution_id is None:
+            row.satellite_execution_id = str(sat)
+        if row.terminal_ms is None:
+            row.state = "seated"
 
     def _on_proof(self, record: EventRecord) -> None:
         """Terminal success with harvest proof (v3 §6). Idempotent: first terminal wins."""

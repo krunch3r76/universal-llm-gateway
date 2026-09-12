@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from cdp_ask.unverifiable import is_unverifiable_stall
@@ -21,6 +22,7 @@ from universal_logging import get_logger
 
 from .cdp_events import (
     CdpGenerateAdmitted,
+    CdpGenerateSeated,
     CdpGenerateSubmitted,
     publish_cdp_kwargs,
 )
@@ -374,7 +376,11 @@ async def run_cdp_worker(
     wall = float(max_wall_s) if max_wall_s is not None else DEFAULT_MAX_WALL_S
     loop = asyncio.get_running_loop()
 
+    leg_satellite_id: list[str | None] = [None]
+
     def _on_submitted(satellite_execution_id: str) -> None:
+        leg_satellite_id[0] = satellite_execution_id
+
         def _publish() -> None:
             attach_satellite_execution_id(
                 execution_id=execution_id,
@@ -386,6 +392,33 @@ async def run_cdp_worker(
                 execution_id=execution_id,
                 satellite_execution_id=satellite_execution_id,
                 model=model_id,
+            )
+
+        loop.call_soon_threadsafe(_publish)
+
+    def _on_url_bound(
+        chat_url: str,
+        registration_id: str | None,
+        seating_ordinal: int,
+    ) -> None:
+        def _publish() -> None:
+            from agent_bus_store.db.threads_atomic import update_dispatch_link_chat_url
+
+            publish_cdp_kwargs(
+                CdpGenerateSeated,
+                request_id=request_id,
+                execution_id=execution_id,
+                satellite_execution_id=leg_satellite_id[0],
+                registration_id=registration_id,
+                chat_url=chat_url,
+                seating_ordinal=seating_ordinal,
+                observed_at=datetime.now(UTC).isoformat(),
+                terminal=False,
+            )
+            update_dispatch_link_chat_url(
+                thread_id=thread_id,
+                execution_id=execution_id,
+                chat_url=chat_url,
             )
 
         loop.call_soon_threadsafe(_publish)
@@ -405,6 +438,7 @@ async def run_cdp_worker(
             parent_thread=parent_thread,
             project_uuid=project_uuid,
             on_submitted=_on_submitted,
+            on_url_bound=_on_url_bound,
         )
     except asyncio.CancelledError:
         leg_satellite: str | None = None
