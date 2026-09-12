@@ -33,20 +33,14 @@ def build_life_block(
     knobs = life_knobs(policy, as_of=as_of)
     as_of_iso = knobs["wake_cron"]["as_of"]
     now = project_now(goals, as_of=as_of)
-    gates_eval = project_gates(
+    # F3-default rows stay in the block: the DIGEST is the woken seat's whole
+    # read, so the always-on gate classes must be visible there, not implied.
+    gates = project_gates(
         consents,
         now=as_of,
         let_drive_ttl_days=int(knobs["let_drive_ttl_days"]["value"]),
     )
-    gates = {
-        **gates_eval,
-        "gates": [
-            row
-            for row in gates_eval.get("gates") or []
-            if row.get("source") != "F3-default"
-        ],
-    }
-    stop_facts = {**facts, "gates": gates_eval, "goals": goals}
+    stop_facts = {**facts, "gates": gates, "goals": goals}
     stops = evaluate_stops(stop_facts, knobs, now=as_of)
     return {
         "as_of": as_of_iso,

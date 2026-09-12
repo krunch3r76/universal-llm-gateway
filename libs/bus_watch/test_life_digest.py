@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from bus_watch.consent_projection import is_gated
+from bus_watch.consent_projection import DEFAULT_GATE_CLASSES, is_gated
 from bus_watch.life_digest import (
     LIFE_BLOCK_CAP,
     MAX_STOP_ROWS,
@@ -24,7 +24,10 @@ def test_empty_inputs() -> None:
     block = build_life_block(goals=[], consents=[], facts={}, policy={}, as_of=AS_OF)
     assert block["now"] is None
     assert block["stops"] == []
-    assert block["gates"]["gates"] == []
+    # F3 posture: the five default gate classes are present even with no consents.
+    assert {g["class"] for g in block["gates"]["gates"]} == set(DEFAULT_GATE_CLASSES)
+    assert all(g["source"] == "F3-default" for g in block["gates"]["gates"])
+    assert block["gates"]["lifts"] == []
     assert set(block["knobs"]) == set(LIFE_KNOB_DEFAULTS)
     for knob in block["knobs"].values():
         assert knob["source"] == "default"
