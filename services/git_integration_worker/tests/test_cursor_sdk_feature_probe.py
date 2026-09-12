@@ -18,9 +18,13 @@ from services.git_integration_worker.cursor_sdk_feature_probe import (
 
 
 def _init_git_repo(path: Path) -> None:
-    subprocess.run(["git", "init", "-b", "main"], cwd=path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-b", "main"], cwd=path, check=True, capture_output=True
+    )
     (path / "README.md").write_text("x\n", encoding="utf-8")
-    subprocess.run(["git", "add", "README.md"], cwd=path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "add", "README.md"], cwd=path, check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "commit", "-m", "init"],
         cwd=path,
@@ -54,6 +58,17 @@ def test_probe_git_available_from_result_git() -> None:
     probe = probe_run_git_info(path_label=LOCAL_BRIDGE_PATH_LABEL, result=result)
     assert probe.git_available is True
     assert probe.sample_branch == "main"
+
+
+def test_negative_probe_is_not_cached() -> None:
+    first = probe_run_git_info(path_label=LOCAL_BRIDGE_PATH_LABEL, result=None)
+    assert first.git_available is False
+
+    branch = type("Branch", (), {"repo_url": "r", "branch": "main", "pr_url": None})()
+    result = type("Result", (), {"git": type("Git", (), {"branches": (branch,)})()})()
+    second = probe_run_git_info(path_label=LOCAL_BRIDGE_PATH_LABEL, result=result)
+    assert second.git_available is True
+    assert second.sample_branch == "main"
 
 
 def test_probe_caches_by_path_label() -> None:

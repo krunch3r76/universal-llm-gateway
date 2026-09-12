@@ -34,7 +34,7 @@ _MEASURE_ALIAS_MAP = {
 }
 
 _WORK_DEVIATION_MARKERS = frozenset({"land:lane_b_unlanded"})
-_CAPTURE_DEVIATION_PREFIXES = ("capture:", "divergence:", "degraded:sdk_git")
+_CAPTURE_DEVIATION_PREFIXES = ("capture:", "divergence:")
 
 
 def normalize_measurement_token(measurement: str) -> str:
@@ -102,9 +102,7 @@ def classify_status_incomplete_class(
     if capture_status in ("partial", "unavailable"):
         return "capture"
     if any(
-        d.startswith(prefix)
-        for d in devs
-        for prefix in _CAPTURE_DEVIATION_PREFIXES
+        d.startswith(prefix) for d in devs for prefix in _CAPTURE_DEVIATION_PREFIXES
     ):
         return "capture"
     if work_outcome == WorkOutcome.UNVERIFIED:
@@ -112,7 +110,9 @@ def classify_status_incomplete_class(
     return "capture"
 
 
-def incomplete_class_from_wrapper(payload: dict[str, object]) -> StatusIncompleteClass | None:
+def incomplete_class_from_wrapper(
+    payload: dict[str, object],
+) -> StatusIncompleteClass | None:
     """Read stamped class from ImplementCloseout JSON when present."""
     raw = payload.get("status_incomplete_class")
     if raw in ("work", "capture", "consult"):
@@ -177,10 +177,7 @@ def annotate_status_claim_discrepancy(
         return None
     claim_display = claim.strip().lower()
     measure_display = (measurement or "").strip().lower()
-    return (
-        f"status_claim@§2 {claim_display} "
-        f"while status@infra {measure_display}"
-    )
+    return f"status_claim@§2 {claim_display} while status@infra {measure_display}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,9 +199,7 @@ def _deviations_qualify_next_step(
     if any(marker in devs for marker in _WORK_DEVIATION_MARKERS):
         return True
     if any(
-        d.startswith(prefix)
-        for d in devs
-        for prefix in _CAPTURE_DEVIATION_PREFIXES
+        d.startswith(prefix) for d in devs for prefix in _CAPTURE_DEVIATION_PREFIXES
     ):
         return True
     return False
@@ -226,7 +221,10 @@ def resolve_status_disagreement_authority(
     incomplete_class = measurement_incomplete_class(measurement)
     if _deviations_qualify_next_step(deviations, incomplete_class):
         next_step: NextStepAuthority = "deviations_qualified_measure"
-    elif incomplete_class is None and normalize_measurement_token(measurement) == "partial":
+    elif (
+        incomplete_class is None
+        and normalize_measurement_token(measurement) == "partial"
+    ):
         next_step = "bare_measure"
     else:
         next_step = "bare_claim"

@@ -88,7 +88,9 @@ def test_specimen_contaminated_agreement_fires() -> None:
     )
     assert marker == "status_claim@§2 partial while status@infra complete"
     merged = merge_plane_register_markers(marker)
-    assert merged == "plane-register: status_claim@§2 partial while status@infra complete"
+    assert (
+        merged == "plane-register: status_claim@§2 partial while status@infra complete"
+    )
     assert merge_plane_discrepancy_markers(marker) is None
 
 
@@ -98,9 +100,7 @@ def test_specimen_independent_disagreement_fires() -> None:
         claim="complete",
         measurement="partial:capture",
     )
-    assert marker == (
-        "status_claim@§2 complete while status@infra partial:capture"
-    )
+    assert marker == ("status_claim@§2 complete while status@infra partial:capture")
     assert merge_plane_discrepancy_markers(marker) is None
     assert merge_plane_legend_markers(marker) == (
         "plane-legend: status_claim@§2 complete while status@infra partial:capture"
@@ -112,6 +112,22 @@ def test_absent_claim_emits_no_status_marker() -> None:
     assert annotate_status_claim_discrepancy(claim=None, measurement="partial") is None
     assert annotate_status_claim_discrepancy(claim="", measurement="partial") is None
     assert annotate_status_claim_discrepancy(claim="   ", measurement="partial") is None
+
+
+def test_sdk_git_probe_absent_alone_is_not_capture_class() -> None:
+    """Annotate-only probe token must not drive partial:capture when capture is complete."""
+    # SHIPPED+PARTIAL+capture-complete falls through to default capture; COMPLETE
+    # is the honest cell when work shipped and capture measured complete (a:30054).
+    assert (
+        classify_status_incomplete_class(
+            status=CloseoutStatus.COMPLETE,
+            work_outcome=WorkOutcome.SHIPPED,
+            capture_status="complete",
+            escalation_harvest="none",
+            deviations=["degraded:sdk_git_probe_absent"],
+        )
+        is None
+    )
 
 
 def test_specimen_capture_driven_complete_x_partial_auto_889de52ed385_shape() -> None:
@@ -377,7 +393,10 @@ checkpoint_claim: committed deadbeef paths=1
     assert payload["work_outcome"] == "shipped"
     assert payload["status_authority_disagreement"]["machine_status"] == "complete"
     assert payload["status_authority_disagreement"]["authored_status"] == "partial"
-    assert payload["status_authority_disagreement"]["authoritative"] == "machine_measurement"
+    assert (
+        payload["status_authority_disagreement"]["authoritative"]
+        == "machine_measurement"
+    )
 
 
 def test_extract_status_claim_from_table_and_legacy_status() -> None:
@@ -444,7 +463,9 @@ def _sidecar_with_structured_work_json() -> str:
     )
 
 
-def test_select_closeout_relay_parent_stub_reads_structured_closeout_full_work() -> None:
+def test_select_closeout_relay_parent_stub_reads_structured_closeout_full_work() -> (
+    None
+):
     """6655#2652 live shape — parent ``body_relocated`` stub + sidecar work JSON."""
     from services.git_integration_worker.cursor_auto.closeout_relay import (
         select_closeout_relay_payload,
@@ -460,7 +481,9 @@ def test_select_closeout_relay_parent_stub_reads_structured_closeout_full_work()
     assert payload.status == "partial:work"
 
 
-def test_resolve_measurement_status_complete_wrapper_does_not_mask_sidecar_work() -> None:
+def test_resolve_measurement_status_complete_wrapper_does_not_mask_sidecar_work() -> (
+    None
+):
     """D2 — measuring complete wrapper must not mask durable structured work-class."""
     complete_wrapper = json.dumps(
         {

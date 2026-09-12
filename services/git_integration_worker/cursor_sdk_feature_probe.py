@@ -54,6 +54,9 @@ def probe_run_git_info(
 
     First call is fail-closed: without a ``RunResult.git`` shape on ``result`` or
     ``client_factory()``, ``git_available`` is False.
+
+    Only positive probes are cached: a miss must not freeze fail-closed for the
+    GIW process when a later dispatch supplies ``RunResult.git`` (a:30054).
     """
     cached = _PROBE_CACHE.get(path_label)
     if cached is not None:
@@ -73,7 +76,8 @@ def probe_run_git_info(
         sample_branch=sample_branch,
         probed_at=time.time(),
     )
-    _PROBE_CACHE[path_label] = probe
+    if probe.git_available:
+        _PROBE_CACHE[path_label] = probe
     return probe
 
 
