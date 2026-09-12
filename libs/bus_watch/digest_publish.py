@@ -52,6 +52,9 @@ def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
     }
     if omitted:
         out["lanes_omitted"] = omitted
+    life = digest.get("life")
+    if isinstance(life, dict):
+        out["life"] = life
     return out
 
 
@@ -60,9 +63,12 @@ def render_body(projection: dict[str, Any], *, cap: int = _BODY_CAP) -> str | No
     all_lanes = list(projection.get("lanes") or [])
     base_omitted = int(projection.get("lanes_omitted") or 0)
     n = len(all_lanes)
+    drop_life = False
     while True:
         proj = dict(projection)
         proj["lanes"] = all_lanes[:n]
+        if drop_life:
+            proj.pop("life", None)
         extra = len(all_lanes) - n
         if base_omitted + extra:
             proj["lanes_omitted"] = base_omitted + extra
@@ -72,6 +78,9 @@ def render_body(projection: dict[str, Any], *, cap: int = _BODY_CAP) -> str | No
         if len(body.encode("utf-8")) <= cap:
             return body
         if n == 0:
+            if not drop_life and isinstance(projection.get("life"), dict):
+                drop_life = True
+                continue
             return None
         n -= 1
 
