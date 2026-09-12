@@ -17,7 +17,8 @@ Seat this tab as the house liaison on continuity root `<root>` and arm the tick 
    `"loop": "refused"` with `reason=held_preempt_requested` ⇒ a headless successor holds it and will park
    within one poll — re-arm after ~60 s; `reason=held` ⇒ another **attended tab** holds the seat — stay a
    worker tab (own legs and turns; no loop, no scoreboard Rows fold, no CHECKPOINT on the root) unless the
-   operator says take over:
+   operator's word moves the seat here: a fresh-tab `resume <root>` (other workstation) or "take over" ⇒ add
+   `--take-over` to the command below, then re-arm after the live loop releases (~60 s):
 
    ```bash
    cd /mnt/torus/projects/universal-llm-gateway && ~/.venvs/universal/bin/python scripts/liaison-tick.py \

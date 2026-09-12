@@ -23,6 +23,12 @@ this skill is the **IDE house seat** on a continuity root.
 Flip: `scripts/liaison-tick.py --root R --register autonomous|attended` (state-file field). The operator's
 return ("I'm back") flips to attended; the operator's departure ("running overnight") flips to autonomous.
 
+**Operator guide (living).** "How do I use …" / "what changed" / a new ruling or phase move ⇒ execute
+`runbook:liaison-operator-guide` (`cortex://notes/runbooks/liaison-operator-guide.md`): read the root's
+`…/<root>-operator-guide.md`, answer from it in plain language, patch it the same turn. Default liaison pattern
+per operator ruling 10479#105: claude.ai scheduled wake (phase-3 of `plan:life-orchestrator-navigator`, root-
+agnostic `liaison_digest(root)`); the attended IDE tab is the override; gear-3 headless successor is fallback.
+
 ## Tick protocol (one wake = one digest)
 
 Wake source: `AGENT_LOOP_TICK_liaison <json>` from the monitored background shell
@@ -81,8 +87,10 @@ Fable-specific here: gear `1-fable-mvp` (headless Fable successors) and the lock
 `--release --holder …`. **Holder identity is the tab, not the root** — two attended tabs that both claim
 `ide:<root>` silently co-hold (same string ⇒ re-claim succeeds); with `ide:<transcript_id>` the second tab is
 `refused` (`reason=held`) and runs as a **worker tab**: its own legs and turns, no loop, no Rows fold, no
-CHECKPOINT on the root. Take the seat over only with the operator's word or after the holder's lease
-expired (`--release --holder <live>` then claim). Model seats refresh the
+CHECKPOINT on the root. Taking the seat from a live attended holder needs the operator's word: `resume <root>`
+typed in a fresh tab **is** that word (multi-workstation alternate) ⇒ claim with `--take-over` — the live loop
+sees `preempt_by`, exits, releases; retry within one poll (commit edb46bab). A `/liaison` without the word is
+`held` and stays a worker tab. Headless `sdk:` holders are preempted by any `ide:` claim. Model seats refresh the
 declared lease (`expires_at`) on each `--once` tick (`tick_seq` / `turns_seen`); `seat_lock_free` means
 `holder is None ∨ now > expires_at`. The gear-3 **ticker** holds `liaison-ticker.lock` (`ticker:<root>`) —
 it never takes the seat mutex and cannot write `preempt_by`. Attended `--loop` (gear 1/2) still claims the seat
