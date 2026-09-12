@@ -546,7 +546,10 @@ def test_format_cdp_result_body_completed_without_proof_honest() -> None:
         prompt_uri="cortex://notes/system/threads/r-prompt.md",
         picker_model="fable-5",
         stall_stage="completed_without_proof",
-        error="chat harvest lacks attested_model (archive_uri alone insufficient — AC-S1-b)",
+        error=(
+            "chat harvest lacks attested_model "
+            "(archive_uri alone insufficient — AC-S1-b)"
+        ),
         archive_uri="cortex://notes/system/threads/cdp-ask-archive-new.md",
         extras={
             "deliverable_present_unproven": True,

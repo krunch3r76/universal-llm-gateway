@@ -738,7 +738,8 @@ async def terminate_handoff_dispatch(
             return resp.status_code in (200, 201)
     except httpx.HTTPError as exc:
         logger.error(
-            "handoff dispatch-terminate transport error: request_id=%s thread=%s error=%s",
+            "handoff dispatch-terminate transport error: "
+            "request_id=%s thread=%s error=%s",
             request_id,
             thread_id,
             exc,

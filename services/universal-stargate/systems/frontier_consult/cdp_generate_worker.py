@@ -72,7 +72,8 @@ def format_cdp_result_body(
     """Render on-behalf turn body from adapter result."""
     extras = result.extras or {}
     thread_id = thread_id or extras.get("thread_id")
-    pointer_turn = pointer_turn if pointer_turn is not None else extras.get("pointer_turn")
+    if pointer_turn is None:
+        pointer_turn = extras.get("pointer_turn")
     dispatch_link = dispatch_link or extras.get("dispatch_link")
     if result.ok:
         lines = [

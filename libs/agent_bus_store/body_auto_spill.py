@@ -20,9 +20,9 @@ from cortex_store.dispatch_ops._thread_sidecar import (
 
 from .body_briefing_advisory import BriefingAdvisory, briefing_advisory
 from .checkpoint_charter_lint import orchestration_charter_advisory
-from .checkpoint_stance_lint import orchestration_stance_advisory
 from .checkpoint_projection import CheckpointBodyTooLargeError
 from .checkpoint_projection_wiring import maybe_project_checkpoint_body
+from .checkpoint_stance_lint import orchestration_stance_advisory
 from .turns_models import (
     MAX_LONG_TURN_BODY_CHARS,
     MAX_SIDECAR_CONTENT_CHARS,
