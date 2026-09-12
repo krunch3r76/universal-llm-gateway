@@ -105,3 +105,44 @@ async def test_post_emits_terminal_result() -> None:
     assert out.json["status"] == "posted"
     assert out.json["pre_consolidate"]["executor"] == "cursor-sdk"
     assert out.json["harvest_entity_id"] == "transcript:cursor-test"
+    assert out.json["pre_consolidate"]["supersedes_tip"] is True
+
+
+@pytest.mark.asyncio
+async def test_post_skipped_seal_is_info_not_checkpoint() -> None:
+    ctx = _Ctx()
+    ctx.options = {
+        "thread": "10534",
+        "surface": "cursor",
+        "from_agent": "cursor",
+        "residue": "caller residue must not hollow-tip",
+    }
+    ctx.outputs = {
+        "resolve": {
+            "json": {
+                "refused": {
+                    "code": "checkpoint.window_unresolvable",
+                    "message": "not a root",
+                }
+            }
+        },
+        "seal": {},
+        "pre_consolidate": {"json": {}},
+    }
+    send = AsyncMock(return_value=({"turn_number": 2}, 201))
+    handler = ContinuityCheckpointPostHandler()
+    with (
+        patch(
+            "handlers.post.bus_get",
+            new=AsyncMock(return_value=({"turn_number": 1}, 200)),
+        ),
+        patch("handlers.post.bus_send", new=send),
+    ):
+        out = await handler.execute(_Step(), ctx)
+    assert out.json["pre_consolidate"]["supersedes_tip"] is False
+    assert out.json["seal"]["refused"]["code"] == "checkpoint.window_unresolvable"
+    subject = send.await_args.kwargs["subject"]
+    assert subject.startswith("INFO —")
+    body = send.await_args.kwargs["body"]
+    assert "Harvest: refused(checkpoint.window_unresolvable)" in body
+    assert "Window:" not in body

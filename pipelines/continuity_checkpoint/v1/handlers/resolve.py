@@ -10,10 +10,10 @@ from urllib.parse import urlparse
 
 from chat_harvest.models import ClassifyRefuse, classify_chat_url
 from continuity_tape.events import stargate_continuity_checkpoint_admitted
+from cortex_store.transcript_assembly import _transcripts_root
+from cortex_store.transcript_session_id import jsonl_path_for_uuid
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
-
-from ._clients import cortex_dispatch
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def _transcript_id_from_chat_url(chat_url: str, classified_id: str = "") -> str 
 
 
 class ContinuityCheckpointResolveHandler(BaseHandler):
-    """Resolve jsonl_path via explicit path, transcript_id, or discover."""
+    """Resolve jsonl_path via explicit path or transcript_id (no discover default)."""
 
     step_type = "continuity_checkpoint_resolve_v1"
 
@@ -106,52 +106,31 @@ class ContinuityCheckpointResolveHandler(BaseHandler):
             }
             return StepOutput(raw=json.dumps(payload), json=payload)
 
-        discover_args: dict[str, Any] = {"thread": thread}
-        if transcript_id:
-            discover_args["explicit_transcript_ids"] = [str(transcript_id)]
-
-        discover = await cortex_dispatch("transcript_discover", discover_args)
-        if discover.get("error"):
+        # a:33211 — discover dominant_write / leftover explicit_cp is how a
+        # foreign hop tab's JSONL sealed onto another house. Bind the caller's
+        # id, or refuse. New tabs are often absent from open_windows.
+        if not transcript_id:
             return _refused(
-                str(discover.get("code") or "checkpoint.window_unresolvable"),
-                str(discover.get("error")),
+                "checkpoint.transcript_id_required",
+                "cursor checkpoint requires transcript_id (or jsonl_path)",
             )
 
-        windows = discover.get("open_windows") or []
-        explicit = [w for w in windows if w.get("binding") == "explicit_cp"]
-        dominant = [w for w in windows if w.get("binding") == "dominant_write"]
-
-        if transcript_id:
-            match = [w for w in windows if w.get("transcript_id") == transcript_id]
-            if not match:
-                return _refused(
-                    "checkpoint.window_unresolvable",
-                    f"transcript_id {transcript_id!r} not in discover open_windows",
-                )
-            chosen = match[0]
-        elif len(explicit) == 1:
-            chosen = explicit[0]
-        elif len(dominant) == 1:
-            chosen = dominant[0]
-        elif len(dominant) >= 2:
+        root = _transcripts_root()
+        path = jsonl_path_for_uuid(root, str(transcript_id))
+        if not path.is_file():
             return _refused(
                 "checkpoint.window_unresolvable",
-                f"{len(dominant)} dominant_write candidates; pass transcript_id",
+                f"transcript_id {transcript_id!r} has no JSONL",
             )
-        elif len(windows) == 1:
-            chosen = windows[0]
-        else:
-            return _refused(
-                "checkpoint.window_unresolvable",
-                "no resolvable open window for checkpoint",
-            )
-
+        try:
+            rel = str(path.relative_to(root))
+        except ValueError:
+            rel = str(path)
         payload = {
             "thread": thread,
             "surface": surface,
             "from_agent": from_agent,
-            "jsonl_path": chosen.get("jsonl_path"),
-            "transcript_id": chosen.get("transcript_id"),
-            "session_id_hint": chosen.get("session_id"),
+            "jsonl_path": rel,
+            "transcript_id": str(transcript_id),
         }
         return StepOutput(raw=json.dumps(payload), json=payload)

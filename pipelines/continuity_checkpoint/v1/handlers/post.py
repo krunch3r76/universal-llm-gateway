@@ -73,11 +73,22 @@ class ContinuityCheckpointPostHandler(BaseHandler):
 
         outputs = getattr(context, "outputs", {}) or {}
         seal = step_output_json(outputs, "seal")
+        resolve = step_output_json(outputs, "resolve")
         pre = step_output_json(outputs, "pre_consolidate")
-        # The seat's own residue is the mission; pre_consolidate output is the
-        # fallback, the stub is last resort. A refused seal with no authored
-        # residue must not become the thread tip (bus auto-supersedes the prior
-        # CHECKPOINT on any subject starting with "CHECKPOINT").
+        # Seal is skipped when resolve refuses; an empty seal plus caller
+        # residue used to post a hollow CHECKPOINT tip (Window: transcript_id=
+        # · turns@cp=0). Never let residue promote a refused/skipped seal.
+        if resolve.get("refused") and not seal.get("refused"):
+            seal = {"refused": resolve["refused"]}
+        elif not seal.get("refused") and not (
+            seal.get("transcript_id") or seal.get("chat_url")
+        ):
+            seal = {
+                "refused": {
+                    "code": "checkpoint.seal_skipped",
+                    "message": "seal produced no window (step skipped or hollow)",
+                }
+            }
         caller_residue = str(options.get("residue") or "").strip()
 
         if not pre:
@@ -97,7 +108,7 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         body = _compose_body(
             residue=residue, seal=seal, mission=mission, surface=surface
         )
-        supersedes_tip = not seal.get("refused") or bool(caller_residue)
+        supersedes_tip = not bool(seal.get("refused"))
 
         tip, _ = await bus_get(
             "/turns/by-number",

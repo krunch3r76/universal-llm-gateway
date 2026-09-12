@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
-
 import pytest
 
 from .resolve import ContinuityCheckpointResolveHandler
@@ -72,23 +70,32 @@ async def test_claude_ai_resolve_unclassified_url() -> None:
 
 
 @pytest.mark.asyncio
-async def test_discover_single_dominant_write() -> None:
+async def test_omit_transcript_id_refuses() -> None:
     ctx = _Ctx()
     ctx.options = {"thread": "10223", "surface": "cursor", "from_agent": "cursor"}
     handler = ContinuityCheckpointResolveHandler()
-    with patch(
-        "handlers.resolve.cortex_dispatch",
-        new=AsyncMock(
-            return_value={
-                "open_windows": [
-                    {
-                        "transcript_id": "uuid-1",
-                        "jsonl_path": "rel/path.jsonl",
-                        "binding": "dominant_write",
-                    }
-                ]
-            }
-        ),
-    ):
-        out = await handler.execute(_Step(), ctx)
-    assert out.json["jsonl_path"] == "rel/path.jsonl"
+    out = await handler.execute(_Step(), ctx)
+    assert out.json["refused"]["code"] == "checkpoint.transcript_id_required"
+
+
+@pytest.mark.asyncio
+async def test_transcript_id_binds_jsonl_without_discover(
+    tmp_path, monkeypatch
+) -> None:
+    tid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    jsonl = tmp_path / tid / f"{tid}.jsonl"
+    jsonl.parent.mkdir()
+    jsonl.write_text("{}\n")
+    monkeypatch.setenv("CURSOR_AGENT_TRANSCRIPTS_ROOT", str(tmp_path))
+    ctx = _Ctx()
+    ctx.options = {
+        "thread": "10534",
+        "surface": "cursor",
+        "from_agent": "cursor",
+        "transcript_id": tid,
+    }
+    handler = ContinuityCheckpointResolveHandler()
+    out = await handler.execute(_Step(), ctx)
+    assert out.json.get("refused") is None
+    assert out.json["jsonl_path"] == f"{tid}/{tid}.jsonl"
+    assert out.json["transcript_id"] == tid
