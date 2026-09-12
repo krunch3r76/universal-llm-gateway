@@ -46,21 +46,25 @@ fetch the bus to "double check".
 4. **Decide** — pick the scoreboard `NOW` row; if empty, pull the next objective (see § Objectives).
    `reasoning-posture`: pin the question, bind, one determinate step.
 5. **Dispatch** — by the ladder below; every dispatch gets a lane on the root (`dispatch_thread_id=R`) and an
-   **in-session watcher** per **`runbook:bus-consult-watcher`** (atomic legs 1–3 — arm, wake, relay; `--execution-id`
-   from admit payload required). CDP producers: `cdp.generate.proof` carries `archive_uri`; on `delivery_failed`
+   **in-session watcher** per **`runbook:bus-consult-watcher`** (atomic legs 1–3 — arm, wake, relay).
+   cursor-sdk closeout: **exactly one** of `--dispatch-id` or `--execution-id` (script exits if both; prefer
+   `--dispatch-id`). CDP consult: `--execution-id` from admit. CDP producers: `cdp.generate.proof` carries
+   `archive_uri`; on `delivery_failed`
    harvest the archive, not the bus.
 6. **Checkpoint** — `budget.checkpoint_due` ⇒ segment CHECKPOINT on R (`supersedes_turn=<tip>`, Residue ≤ 800
    chars: Settled · Live · Next · scoreboard sha) then `liaison-tick.py --root R --mark-checkpoint`.
-7. **Hop** (operator shape 2026-09-10: one IDE tab, hop on every checkpoint, successor headless) — after each
-   CHECKPOINT in **autonomous** register: kill the loop pid → `liaison-tick.py --release --holder <me>` →
-   spawn exactly one successor (§ Single-Fable cap) → end the turn. In **attended** register (operator
-   2026-09-11 18:05 PT, spend 72→81%): CHECKPOINT, then hop the tab yourself as the turn's last action —
-   `scripts/liaison-ide-hop.py --root R --row "<NOW>"` keystrokes `resume R` + `ARM:` lines (live poller
-   labels) into a fresh Cursor chat on the GUI host named by **`policy.gui_host`** (`liaison-tick.py --set
-   gui_host=jupiter`; refuses when unset) after raising the live Remote-SSH window by folder URI (refuses when
-   the host has no Cursor window on the repo — hops 1–3 of 2026-09-11 hit an unattended host, then Firefox);
-   the successor tab re-arms those tails, harvests every wake, folds, plans, dispatches, checkpoints, hops.
-   Cadence: **Plan → Dispatch → Hop → Arm → Harvest all triggers → repeat**; one tab is live at a time.
+7. **Hop** — hops run until they **have to** or **should** stop (operator 2026-09-11 22:59 PT). They do
+   **not** stop because `liaison-fable.lock.hops` equals 8. That counter is **fleet-wide** (one lock file,
+   all roots; born 10479). This root's cap is `policy.max_hops_per_night` on `liaison-<R>.tick.json`
+   (10479 and 10534: **999**). Count this-root hops from `tmp/watchers/handoff-messages/liaison-<R>-*.md`
+   / tape cells. Digest `hop_cap.lock_hops_scope=fleet` is not a stop. **Have-to stay:** hop script refuse
+   · operator park · `CONTEXT_BUDGET` on this tab. **Should stay:** operator in live dialogue on this tab ·
+   this tab must harvest an in-flight watcher · quiet / no NOW. **Should hop:** CHECKPOINT landed ∧ this
+   tab is spent ∧ hop machinery can fire ∧ no stay clause. Autonomous hop-qualifying CP: kill the loop →
+   `--release` → one successor. Attended: `scripts/liaison-ide-hop.py --root R --row "<NOW>"` as the last
+   action **only when hopping** (`policy.gui_host` required; refuses when unset / no Cursor window — hops
+   1–3 of 2026-09-11 hit an unattended host). When staying, write `STAY: <reason>` — do not bake a hop
+   command that fights the stay. One tab is live at a time.
 8. **Stop classes** — `stop_class=CONTEXT_BUDGET` ⇒ CHECKPOINT → hop (autonomous) or page + PARK (attended).
    Other designed stops: § Stops.
 
@@ -73,7 +77,7 @@ seat's own, not the house's:
 | Tab model class | Serves as liaison? | What must change |
 |---|---|---|
 | Opus-class (`claude-opus-5`, Fable when affordable) | yes — binds judgment forks inline | nothing |
-| Below Opus (Grok 4.6, Sonnet, Composer, GPT-5.6) | yes for harvest → fold → dispatch → CP → hop | presence-discipline P1–P4 are **explicit obligations**; every judgment bind goes to `cdp/opus-5` first (§ Reasoning recon) and the seat binds on the returned compact; premium binds the plan names still go to `cdp/fable` |
+| Below Opus (Grok 4.6, Sonnet, Composer, GPT-5.6) | yes for harvest → fold → dispatch → CP → hop | presence-discipline P1–P4 are **explicit obligations**; every judgment bind goes to `cdp/opus-5` first (§ Reasoning recon) unless the criterion is already closed on a **named assertion + Explore locus** — then name the CDP skip as the rejected alternative and bind; premium binds the plan names still go to `cdp/fable` |
 
 Observed 2026-09-11 (Cursor Projects window, Grok tab on this root): `/liaison` seated, Goal set, judgment
 routed to `cdp/opus-5-high` — the ladder carried the reasoning. Fable stays the right seat on **claude.ai**
@@ -103,8 +107,8 @@ an orphan exiting no longer drops the live lease. Model seats refresh the
 declared lease (`expires_at`) on each `--once` tick (`tick_seq` / `turns_seen`); `seat_lock_free` means
 `holder is None ∨ now > expires_at`. The gear-3 **ticker** holds `liaison-ticker.lock` (`ticker:<root>`) —
 it never takes the seat mutex and cannot write `preempt_by`. Attended `--loop` (gear 1/2) still claims the seat
-lock; gear 3 uses `--loop --spawn-on-wake` instead. `lock.hops` is keyed by `night_id`; **cap per night** ⇒
-CHECKPOINT + page, no successor.
+lock; gear 3 uses `--loop --spawn-on-wake` instead. `lock.hops` is keyed by `night_id` on a **fleet-wide**
+file; **this-root cap** is `policy.max_hops_per_night`. Fleet `lock.hops==8` is not a designed stop.
 
 ## Headless successor (resume-fence pull)
 

@@ -88,6 +88,8 @@ def test_hop_cap_tracks_policy_override() -> None:
             "10479", digest_state, register="autonomous", budget_tokens=700000
         )
     assert digest["hop_cap"]["max_hops_per_night"] == 16
+    assert digest["hop_cap"]["lock_hops_scope"] == "fleet"
+    assert "lock_hops" in digest["hop_cap"]
     assert GEAR_PRESETS["2-opus-hops"]["successor_model"] == "cursor/claude-opus-5"
 
 

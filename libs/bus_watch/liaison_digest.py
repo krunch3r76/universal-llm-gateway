@@ -363,6 +363,7 @@ def build_digest(
     policy = effective_policy(state)
     night_id = current_night_id()
     digest_ts = _utcnow()
+    lock_now = read_lock()
     dispatches = int(
         (state.get("dispatches_tonight_by_night") or {}).get(night_id)
         or state.get("dispatches_tonight")
@@ -384,12 +385,17 @@ def build_digest(
         "unread_toc": unread,
         "watchers_complete_unrelayed": _watchers(state, lane_ids),
         "fleet": {"stargate": _health(_STARGATE_HEALTH), "giw": _health(_GIW_HEALTH)},
-        "fable_lock": read_lock(),
+        "fable_lock": lock_now,
         # A gear preset or --set override raises the cap; this field must move
         # with it or a seat stops at 8 while policy authorises 16 (row R14).
+        # lock.hops is fleet-wide (one liaison-fable.lock, all roots). Seats must
+        # not treat lock_hops == 8 as this root's designed stop (10534 2026-09-12).
         "hop_cap": {
             "max_hops_per_night": policy["max_hops_per_night"],
             "source": "policy.max_hops_per_night",
+            "lock_hops": int(lock_now.get("hops") or 0),
+            "lock_hops_scope": "fleet",
+            "lock_night_id": lock_now.get("night_id"),
         },
         "policy": policy,
         "dispatches_tonight": {
