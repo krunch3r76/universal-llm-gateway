@@ -58,6 +58,30 @@ def test_predicate_refuses_hop_cap(monkeypatch) -> None:  # noqa: ANN001
     assert ev["clauses"]["hops_under_cap"] is False
 
 
+def test_budget_estimate_alone_is_not_spawn_signal() -> None:
+    ev = evaluate_spawn_predicate(
+        _digest(attention=[{"kind": "budget_estimate", "pct": 0.1}]),
+        {},
+        lock={"holder": None},
+    )
+    assert ev["clauses"]["spawn_signal"] is False
+    assert ev["spawn"] is False
+
+
+def test_unread_lane_still_spawn_signal_beside_budget_estimate() -> None:
+    ev = evaluate_spawn_predicate(
+        _digest(
+            attention=[
+                {"kind": "budget_estimate", "pct": 0.1},
+                {"id": "1", "unread": 1},
+            ]
+        ),
+        {},
+        lock={"holder": None},
+    )
+    assert ev["clauses"]["spawn_signal"] is True
+
+
 def test_predicate_refuses_not_ready() -> None:
     digest = _digest(attention=[{"id": "1"}])
     digest["policy"]["ready"] = False
@@ -123,14 +147,32 @@ def test_dispatch_body_message_not_packet() -> None:
         "row=",
         "tip_cp_ordinal=",
         "contract: none",
-        "Use the liaison skill",
-        "Do not stop",
-        "Hop after harvest is the rule",
+        "LOAD the liaison skill",
+        "Hop only when autonomous follow-up remains",
+        "STAY",
+        "runbook:bus-consult-watcher",
+        "§ Peer-house",
     ):
         assert token in message
     # Per-night key: GIW's remint cap counts admits per work_key (a:33139).
     assert body["work_key"] == f"agent-bus:10479:night-{current_night_id()}"
     assert body["timeout_seconds"] == 5400
+    assert "tags" not in body
+
+
+def test_wire_submit_body_maps_message_and_drops_tags() -> None:
+    from bus_watch.spawn_on_wake import _wire_submit_body
+
+    wired = _wire_submit_body(
+        {
+            "op": "generate",
+            "message": "resume 10534",
+            "tags": ["liaison-headless"],
+        }
+    )
+    assert wired["prompt"] == "resume 10534"
+    assert "message" not in wired
+    assert "tags" not in wired
 
 
 def test_successor_message_raises_when_over_cap() -> None:

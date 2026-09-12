@@ -22,6 +22,10 @@ def test_fable_lock_path() -> None:
     assert fl.fable_lock_path("10534").name == "liaison-fable-10534.lock"
 
 
+def test_ticker_lock_path() -> None:
+    assert fl.ticker_lock_path("10534").name == "liaison-ticker-10534.lock"
+
+
 def test_ticker_lease_does_not_block_successor(watch_dir: Path) -> None:
     """AC-2: ticker lease held; sdk successor can claim seat mutex."""
     assert fl.claim_ticker_lease("10479")["ok"]
@@ -165,6 +169,23 @@ def test_two_roots_both_hold_live_seats(watch_dir: Path) -> None:
     assert result.get("reason") != "held"
     assert fl.read_lock("10479")["holder"] == "sdk:10479"
     assert fl.read_lock("10534")["holder"] == "sdk:10534"
+
+
+def test_two_roots_both_hold_ticker_leases(watch_dir: Path) -> None:
+    assert fl.claim_ticker_lease("10479")["ok"]
+    result = fl.claim_ticker_lease("10534")
+    assert result["ok"] is True
+    assert fl.read_ticker_lock("10479")["holder"] == "ticker:10479"
+    assert fl.read_ticker_lock("10534")["holder"] == "ticker:10534"
+
+
+def test_legacy_global_ticker_file_does_not_block_other_root(watch_dir: Path) -> None:
+    (watch_dir / "liaison-ticker.lock").write_text(
+        json.dumps({"holder": "ticker:10479", "root": "10479"}),
+        encoding="utf-8",
+    )
+    assert fl.claim_ticker_lease("10534")["ok"] is True
+    assert fl.read_ticker_lock("10534")["holder"] == "ticker:10534"
 
 
 def test_missing_per_root_file_does_not_inherit_legacy_hops(

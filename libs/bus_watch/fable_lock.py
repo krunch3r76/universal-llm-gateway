@@ -17,7 +17,7 @@ from bus_watch.events import emit_night_id_reset
 _REPO = Path(__file__).resolve().parents[2]
 WATCH_DIR = _REPO / "tmp" / "watchers"
 FABLE_LOCK = WATCH_DIR / "liaison-fable.lock"  # legacy constant; never read or written
-TICKER_LOCK = WATCH_DIR / "liaison-ticker.lock"
+TICKER_LOCK = WATCH_DIR / "liaison-ticker.lock"  # legacy; live ticker uses ticker_lock_path
 LOCK_STALE_S = 1800.0
 LEASE_SLACK_S = 1800
 MAX_HOPS_PER_NIGHT = 8
@@ -36,6 +36,10 @@ def _validate_root_id(root_id: str) -> str:
 
 def fable_lock_path(root_id: str) -> Path:
     return WATCH_DIR / f"liaison-fable-{_validate_root_id(root_id)}.lock"
+
+
+def ticker_lock_path(root_id: str) -> Path:
+    return WATCH_DIR / f"liaison-ticker-{_validate_root_id(root_id)}.lock"
 
 
 def current_night_id() -> str:
@@ -117,10 +121,11 @@ def read_lock(root_id: str) -> dict[str, Any]:
     return data
 
 
-def read_ticker_lock() -> dict[str, Any]:
+def read_ticker_lock(root: str) -> dict[str, Any]:
+    path = ticker_lock_path(root)
     try:
-        data = json.loads(TICKER_LOCK.read_text(encoding="utf-8"))
-        data["age_s"] = round(time.time() - TICKER_LOCK.stat().st_mtime, 1)
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["age_s"] = round(time.time() - path.stat().st_mtime, 1)
     except (OSError, ValueError):
         return {}
     return data
@@ -281,37 +286,38 @@ def release_fable_lock(
 
 def claim_ticker_lease(root: str) -> dict[str, Any]:
     holder = f"ticker:{root}"
-    current = read_ticker_lock()
+    path = ticker_lock_path(root)
+    current = read_ticker_lock(root)
     live = bool(current.get("holder")) and (current.get("age_s") or 0) < LOCK_STALE_S
     if live and current.get("holder") != holder:
         return {"ok": False, "reason": "held", "lock": current}
     payload = {"holder": holder, "claimed_at": _utcnow(), "root": root}
     WATCH_DIR.mkdir(parents=True, exist_ok=True)
-    TICKER_LOCK.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return {"ok": True, "lock": {**payload, "age_s": 0.0}}
 
 
 def refresh_ticker_lease(root: str) -> bool:
-    current = read_ticker_lock()
+    current = read_ticker_lock(root)
     if current.get("holder") != f"ticker:{root}":
         return False
     payload = {**current, "refreshed_at": _utcnow()}
     payload.pop("age_s", None)
-    TICKER_LOCK.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    ticker_lock_path(root).write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return True
 
 
 def release_ticker_lease(root: str) -> dict[str, Any]:
-    current = read_ticker_lock()
+    current = read_ticker_lock(root)
     holder = f"ticker:{root}"
     if current and current.get("holder") not in (holder, None):
         return {"ok": False, "reason": "not_holder", "lock": current}
     if current:
-        TICKER_LOCK.write_text(
+        ticker_lock_path(root).write_text(
             json.dumps({"holder": None, "released_at": _utcnow(), "root": root}),
             encoding="utf-8",
         )
-    return {"ok": True, "lock": read_ticker_lock()}
+    return {"ok": True, "lock": read_ticker_lock(root)}
 
 
 __all__ = [
@@ -331,4 +337,5 @@ __all__ = [
     "release_fable_lock",
     "release_ticker_lease",
     "seat_lock_free",
+    "ticker_lock_path",
 ]

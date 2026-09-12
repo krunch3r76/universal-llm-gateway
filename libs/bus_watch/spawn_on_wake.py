@@ -65,9 +65,12 @@ def build_successor_message(
         f'dispatch(tool="continuity", arguments=\'{{"op":"resume","thread":"{root_id}"}}\')\n'
         f"agent_bus_read(thread_get, gear: {gear}, row={row}, "
         f"tip_cp_ordinal={tip_val}, contract: none\n"
-        "Use the liaison skill. Do not stop. Proceed autonomously until a have-to stop. "
-        "Hop after harvest is the rule — harvest-complete is not a stay. "
-        "Run the tick; checkpoint; hop.\n"
+        "LOAD the liaison skill (do not skim). Hop only when autonomous follow-up remains; "
+        "HOLD_MERGE / empty NOW / quiet tick → STAY. "
+        "LOAD AND EXECUTE runbook:bus-consult-watcher (legs 1-3); "
+        "§ Peer-house: keep both; cdp/opus-5 → 2nd pool → cursor/claude-opus-5; "
+        "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled. "
+        "Run the tick; checkpoint; hop only if hop_qualifies.\n"
     )
     encoded = message.encode("utf-8")
     if len(encoded) > cap:
@@ -84,6 +87,16 @@ def spawn_fingerprint(root: dict[str, Any], lanes: list[dict[str, Any]]) -> str:
     return hashlib.sha256(
         json.dumps(key, sort_keys=True, default=str).encode()
     ).hexdigest()[:16]
+
+
+def _actionable_attention(attention: Any) -> list[Any]:
+    """DIGEST may carry ``kind=budget_estimate`` always; that is not a wake."""
+    items = attention if isinstance(attention, list) else []
+    return [
+        item
+        for item in items
+        if not (isinstance(item, dict) and item.get("kind") == "budget_estimate")
+    ]
 
 
 def pending_spawn_terminal(
@@ -139,7 +152,9 @@ def evaluate_spawn_predicate(
     budget_spawn, budget_reason = _context_budget_spawn_allowed(
         digest, lock=lock, policy=policy, now=ts
     )
-    spawn_signal = bool(attention) or checkpoint_due or budget_spawn
+    spawn_signal = (
+        bool(_actionable_attention(attention)) or checkpoint_due or budget_spawn
+    )
     grace = float(policy.get("spawn_grace_seconds") or 900)
     last_spawn_at = float(state.get("last_spawn_at") or 0.0)
     last_fp = state.get("last_spawn_fingerprint")
@@ -216,7 +231,6 @@ def build_dispatch_body(
         "work_key": work_key or f"agent-bus:{root_id}:night-{current_night_id()}",
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
-        "tags": ["liaison-headless"],
         **(
             {"cost_intent": policy["successor_cost_intent"]}
             if policy.get("successor_cost_intent")
@@ -280,10 +294,11 @@ def maybe_forfeit_expired_lease(
 
 
 def _wire_submit_body(body: dict[str, Any]) -> dict[str, Any]:
-    """Map local ``message`` to Stargate ``prompt`` for team dispatch wire."""
+    """Map local ``message`` to Stargate ``prompt``; drop generate-forbidden tags."""
     wired = dict(body)
     if wired.get("message") and not wired.get("prompt"):
         wired["prompt"] = wired.pop("message")
+    wired.pop("tags", None)
     return wired
 
 
