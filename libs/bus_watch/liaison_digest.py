@@ -240,6 +240,7 @@ POLICY_DEFAULTS: dict[str, Any] = {
     # night (A7 gate). A True default would let any `--loop --spawn-on-wake` start
     # spawn premium successors on the first digest with attention.
     "ready": False,
+    "post_digest": False,
 }
 GEAR_PRESETS: dict[str, dict[str, Any]] = {
     "1-fable-mvp": {},
@@ -254,6 +255,7 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         "wake_on_attention_only": True,
         "poll_seconds": 120,
         "spawn_grace_seconds": 900,
+        "post_digest": True,
     },
     # claude.ai seat (operator 2026-09-10: expanded usage there; Fable exhausted
     # until Sunday → opus). Successor is a CDP mission session on /mcp/life.

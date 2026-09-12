@@ -80,6 +80,8 @@ routed to `cdp/opus-5-high` — the ladder carried the reasoning. Fable stays th
 (`cdp/fable`) where the window is the product; in the IDE it is one option, not a requirement. What remains
 Fable-specific here: gear `1-fable-mvp` (headless Fable successors) and the lock filename.
 
+Woken claude.ai liaisons read the house through the latest `DIGEST <root>` turn (`agent_bus_read(fetch, thread=<root>, last=3, compact=true)`, subject starts with `DIGEST`) published by the host tick loop when `policy.post_digest` is true (gear 3 default).
+
 ## Single-liaison-seat cap (operator 2026-09-10; generalized from "single-Fable")
 
 `liaison_seats(IDE ∪ cursor-sdk) ≤ 1` per root, enforced by `tmp/watchers/liaison-fable.lock` via

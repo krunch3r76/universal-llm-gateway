@@ -34,6 +34,7 @@ import time
 from pathlib import Path
 
 import httpx
+from bus_watch.digest_publish import publish_if_enabled
 from bus_watch.fable_lock import (
     WATCH_DIR as _WATCH_DIR,
 )
@@ -60,7 +61,6 @@ _SENTINEL = "AGENT_LOOP_TICK_liaison"
 
 
 def _coerce(raw: str) -> object:
-    """``--set`` values: JSON literal when parseable (numbers, bools, null), else string."""
     try:
         return json.loads(raw)
     except ValueError:
@@ -123,10 +123,7 @@ def main() -> int:
     p.add_argument(
         "--holder",
         default="",
-        help=(
-            "liaison seat identity (ide:<transcript_id> | sdk:<dispatch_id>); "
-            "default ide:<root> is single-tab only — two attended tabs sharing it co-hold the seat"
-        ),
+        help="liaison seat (ide:<transcript_id>|sdk:<dispatch_id>); default ide:<root> co-holds across tabs",
     )
     p.add_argument(
         "--claim",
@@ -144,10 +141,7 @@ def main() -> int:
     p.add_argument(
         "--take-over",
         action="store_true",
-        help=(
-            "with --claim or --loop from an attended ide: holder: preempt a live ide: "
-            "holder too (operator's word — resume <root> on another workstation)"
-        ),
+        help="with --claim/--loop: preempt live ide: holder (operator resume <root> on another host)",
     )
     p.add_argument(
         "--set",
@@ -316,6 +310,7 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
                 time.sleep(poll_s)
                 continue
             spawn_result = tick_spawn_on_wake(digest, state, root, dry_run=args.dry_run)
+            publish_if_enabled(root, digest, state, require_change=True)
             save_state(state_path, state)
             line = {
                 "spawn": spawn_result,
@@ -332,7 +327,6 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
 
 
 def _log_steer(changed: list[str]) -> None:
-    """One line per absorbed operator edit so the tab sees the steer land."""
     if changed:
         print(
             json.dumps({"loop": "operator_edit_absorbed", "keys": changed}), flush=True
@@ -369,6 +363,7 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
         )
         if due:
             save_state(state_path, state)
+            publish_if_enabled(root, digest, state) and save_state(state_path, state)
             print(f"{_SENTINEL} {json.dumps(digest, default=str)}", flush=True)
             last_emit = now
         else:
