@@ -58,9 +58,11 @@ def test_code_primary_tools_match_surface_binding(main_server_state: dict) -> No
 
 
 def test_code_primary_tools_count(main_server_state: dict) -> None:
-    """D-T2: code surface exposes 19 primary tools; cap ≤ 24 (D3/P10)."""
+    """D-T2: code primary count tracks derive; cap ≤ 24 (D3/P10)."""
     primary = main_server_state["primary_tools"]
-    assert len(primary) == 19
+    # Magic 19 drifted (a:33073: live 21). Do not hand-maintain — consult-routing
+    # § Surface gate; sibling test already equality-checks surface_primary.
+    assert len(primary) == len(main_server_state["surface_primary"])
     assert len(primary) <= 24
     assert "skill_suggest" not in primary
 
