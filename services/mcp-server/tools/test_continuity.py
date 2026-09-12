@@ -7,10 +7,13 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-
 from agent_bus_store.continuity_watermark import SEEDED_BY
+
 from tools import continuity
-from tools.continuity import _continuity_status_watermark
+from tools.continuity import (
+    _continuity_status_watermark,
+    coerce_checkpoint_pre_consolidate,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -66,7 +69,9 @@ def test_replay_dry_run_defaults_true_and_force_defaults_true(continuity_fn) -> 
 
     with (
         patch.object(continuity, "_prepare_consolidate", side_effect=_fake_prepare),
-        patch.object(continuity, "_continuity_async_dispatch", side_effect=_fake_dispatch),
+        patch.object(
+            continuity, "_continuity_async_dispatch", side_effect=_fake_dispatch
+        ),
     ):
         result = continuity_fn(op="replay", trigger_thread="10303", turn=112)
 
@@ -135,7 +140,9 @@ def test_invalid_root_returns_no_root_house_422(continuity_fn) -> None:
 
 def test_status_execution_id_delegates_to_pipeline_result(continuity_fn) -> None:
     tracker = {"execution_id": "exec-1", "status": "running"}
-    with patch.object(continuity, "_pipeline_result", return_value=tracker) as mock_result:
+    with patch.object(
+        continuity, "_pipeline_result", return_value=tracker
+    ) as mock_result:
         result = continuity_fn(op="status", execution_id="exec-1", wait_seconds=2.0)
 
     assert result == tracker
@@ -252,10 +259,19 @@ def test_checkpoint_missing_required(continuity_fn) -> None:
     assert result["error"]["code"] == "missing_required"
 
 
+def test_coerce_checkpoint_pre_consolidate() -> None:
+    assert coerce_checkpoint_pre_consolidate("cursor", None) is False
+    assert coerce_checkpoint_pre_consolidate("claude_ai", None) is True
+    assert coerce_checkpoint_pre_consolidate("cursor", True) is True
+    assert coerce_checkpoint_pre_consolidate("claude_ai", False) is False
+
+
 def test_checkpoint_relay(continuity_fn) -> None:
+    posted: dict[str, Any] = {}
     with patch(
         "tools._continuity_relays.make_sync_client",
     ) as mock_client:
+
         class _Resp:
             status_code = 202
 
@@ -271,8 +287,8 @@ def test_checkpoint_relay(continuity_fn) -> None:
                 return False
 
             def post(self, url, json=None):
-                assert url == "/api/v1/continuity/checkpoint"
-                assert json["surface"] == "cursor"
+                posted["url"] = url
+                posted["body"] = json
                 return _Resp()
 
         mock_client.return_value = _Client()
@@ -283,6 +299,83 @@ def test_checkpoint_relay(continuity_fn) -> None:
             from_agent="cursor",
         )
     assert result["execution_id"] == "exec-cp-1"
+    assert posted["url"] == "/api/v1/continuity/checkpoint"
+    assert posted["body"]["surface"] == "cursor"
+    assert posted["body"]["pre_consolidate"] is False
+
+
+def test_checkpoint_claude_ai_omitted_pre_consolidate_defaults_true(
+    continuity_fn,
+) -> None:
+    posted: dict[str, Any] = {}
+    with patch(
+        "tools._continuity_relays.make_sync_client",
+    ) as mock_client:
+
+        class _Resp:
+            status_code = 202
+
+            @staticmethod
+            def json():
+                return {"execution_id": "exec-cp-2", "status": "running"}
+
+        class _Client:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def post(self, url, json=None):
+                posted["body"] = json
+                return _Resp()
+
+        mock_client.return_value = _Client()
+        result = continuity_fn(
+            op="checkpoint",
+            thread="10223",
+            surface="claude_ai",
+            chat_url="https://claude.ai/chat/x",
+            from_agent="web-anthropic",
+        )
+    assert result["execution_id"] == "exec-cp-2"
+    assert posted["body"]["pre_consolidate"] is True
+
+
+def test_checkpoint_cursor_explicit_pre_consolidate_true(continuity_fn) -> None:
+    posted: dict[str, Any] = {}
+    with patch(
+        "tools._continuity_relays.make_sync_client",
+    ) as mock_client:
+
+        class _Resp:
+            status_code = 202
+
+            @staticmethod
+            def json():
+                return {"execution_id": "exec-cp-3", "status": "running"}
+
+        class _Client:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def post(self, url, json=None):
+                posted["body"] = json
+                return _Resp()
+
+        mock_client.return_value = _Client()
+        result = continuity_fn(
+            op="checkpoint",
+            thread="10223",
+            surface="cursor",
+            from_agent="cursor",
+            pre_consolidate=True,
+        )
+    assert result["execution_id"] == "exec-cp-3"
+    assert posted["body"]["pre_consolidate"] is True
 
 
 def test_status_watermark_ignores_unseeded_rows() -> None:

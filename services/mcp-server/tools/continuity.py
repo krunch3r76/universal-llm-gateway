@@ -40,6 +40,19 @@ logger = get_logger(__name__)
 _DISPATCH_TIMEOUT = 15.0
 
 
+def coerce_checkpoint_pre_consolidate(
+    surface: str, pre_consolidate: bool | None
+) -> bool:
+    """Default omitted ``pre_consolidate`` so IDE hops do not dual-succeed.
+
+    ``surface=cursor`` omit → False (a:33285 / a:33297). ``claude_ai`` omit
+    stays True. Explicit values always win.
+    """
+    if pre_consolidate is not None:
+        return bool(pre_consolidate)
+    return surface != "cursor"
+
+
 def _no_root_house_error(trigger_thread: str) -> dict[str, Any]:
     return {
         "error": {
@@ -153,7 +166,9 @@ def _continuity_async_dispatch(
         )
         return data
     except httpx.ConnectError as exc:
-        record("mcp.continuity.async.failed", pipeline=PIPELINE_ID, error="connect_error")
+        record(
+            "mcp.continuity.async.failed", pipeline=PIPELINE_ID, error="connect_error"
+        )
         return annotate_unreachable_error(
             code="stargate_unreachable",
             message=f"Stargate not reachable: {exc}",
@@ -288,7 +303,10 @@ def register_continuity_tools(mcp: FastMCP) -> None:
 
         - ``checkpoint`` — async relay to
           ``POST /api/v1/continuity/checkpoint``. Required: ``thread``,
-          ``surface`` (``cursor`` or ``claude_ai``).
+          ``surface`` (``cursor`` or ``claude_ai``). Omitted
+          ``pre_consolidate`` is false on ``cursor`` so an IDE hop is not
+          paired with a ``contract=none`` worker (a:33285); ``claude_ai``
+          still defaults true.
 
         - ``resume`` — sync relay to
           ``POST /threads/{thread}/resume-fence``. Required: ``thread``.
@@ -337,7 +355,9 @@ def register_continuity_tools(mcp: FastMCP) -> None:
                 jsonl_path=jsonl_path,
                 chat_url=chat_url,
                 residue=residue,
-                pre_consolidate=True if pre_consolidate is None else pre_consolidate,
+                pre_consolidate=coerce_checkpoint_pre_consolidate(
+                    surface, pre_consolidate
+                ),
                 tools=tools or "none",
             )
 
