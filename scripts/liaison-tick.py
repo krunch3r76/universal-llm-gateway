@@ -52,10 +52,9 @@ from bus_watch.liaison_digest import (
 from bus_watch.liaison_digest import (
     build_digest,
     effective_policy,
-    load_state,
-    save_state,
 )
 from bus_watch.spawn_on_wake import tick_spawn_on_wake
+from bus_watch.tick_state import absorb_operator_edits, load_state, save_state
 
 _SENTINEL = "AGENT_LOOP_TICK_liaison"
 
@@ -292,6 +291,7 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
             if not refresh_ticker_lease(root):
                 print(json.dumps({"loop": "ticker_lost", "root": root}), flush=True)
                 return 4
+            _log_steer(absorb_operator_edits(state, state_path))
             try:
                 digest = build_digest(
                     root, state, register=register, budget_tokens=args.budget_tokens
@@ -319,6 +319,14 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
         release_ticker_lease(root)
 
 
+def _log_steer(changed: list[str]) -> None:
+    """One line per absorbed operator edit so the tab sees the steer land."""
+    if changed:
+        print(
+            json.dumps({"loop": "operator_edit_absorbed", "keys": changed}), flush=True
+        )
+
+
 def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: ANN001, ANN202, PLR0913
     while True:
         if not refresh_fable_lock(holder) or read_lock().get("preempt_by"):
@@ -329,6 +337,7 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
                 flush=True,
             )
             return 4
+        _log_steer(absorb_operator_edits(state, state_path))
         try:
             digest = build_digest(
                 root, state, register=register, budget_tokens=args.budget_tokens

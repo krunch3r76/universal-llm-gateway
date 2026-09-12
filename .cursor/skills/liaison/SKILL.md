@@ -125,9 +125,10 @@ The successor model is **policy, never a constant**. `scripts/liaison-tick.py --
 | `2-opus-hops` | `cursor/claude-opus-5` (no cost intent); CDP checks stay `cdp/opus-5` | ≤ 6 ticks | next iteration; Fable only in the attended window |
 | `3-wake-on-attention` | `cursor/claude-opus-5`, spawned **only** when a digest has actionable `attention` (unread > 0) or `checkpoint_due` | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker.lock`, **not** the seat mutex | **disarmed by default** (`policy.ready=false`); arm with explicit `--set ready=true`. First live night = operator gate (A7) |
 
-Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). **A gear
-preset resets the other knobs** (`max_hops_per_night`, `ready`, `poll_seconds`, …) — set `gear=` first, then
-re-apply overrides in a second `--set`, and quote the printed policy (observed 2026-09-12 03:04Z). `SPEND_CAP`
+Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). A live
+`--loop` absorbs `--set` / `--mark-*` edits from another shell on its next poll (`libs/bus_watch/tick_state.py`
+`absorb_operator_edits`, logged as `operator_edit_absorbed`); before 2026-09-12 the loop's in-memory state
+clobbered them within one poll — verify a steer by re-reading `--policy` after the next tick. `SPEND_CAP`
 (`policy.max_dispatches_per_night`, default 12) is a designed stop, not a gear change — page, don't downshift
 silently. Never let a successor pick a model itself; a refused model is an INFO + stop, never a fallback.
 
