@@ -32,13 +32,13 @@ def test_ssh_host_from_bare_authority_and_non_remote() -> None:
     assert ssh_host_name_from_uri("") is None
 
 
-def test_focus_title_names_repo_and_ssh_marker() -> None:
+def test_focus_title_leads_with_app_then_repo_and_ssh_marker() -> None:
     assert (
         focus_title_for("/mnt/torus/projects/universal-llm-gateway", "io")
-        == "universal-llm-gateway [SSH: io]"
+        == "Cursor universal-llm-gateway [SSH: io]"
     )
     assert focus_title_for("/mnt/torus/projects/universal-llm-gateway", None) == (
-        "universal-llm-gateway"
+        "Cursor universal-llm-gateway"
     )
 
 
@@ -55,9 +55,9 @@ def test_remote_launch_command_prefers_focus_title_over_uri() -> None:
         remote_repo="/repo",
         palette_query="New Chat",
         raise_uri="vscode-remote://ssh-remote+io/repo",
-        focus_title="universal-llm-gateway [SSH: io]",
+        focus_title="Cursor universal-llm-gateway [SSH: io]",
     )
-    assert "--no-raise --focus-title 'universal-llm-gateway [SSH: io]'" in cmd
+    assert "--no-raise --focus-title 'Cursor universal-llm-gateway [SSH: io]'" in cmd
     assert "--raise-uri" not in cmd
     without = remote_launch_command(
         "/repo/m.md",

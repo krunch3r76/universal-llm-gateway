@@ -59,6 +59,14 @@ def policy_gui_host(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
     return str(host) if host else None
 
 
+def policy_focus_title(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
+    """``policy.hop_focus_title`` — operator override of the launcher query when the
+    derived ``Cursor <repo> [SSH: <host>]`` does not match the live window title."""
+    state = read_state(watch_dir / f"liaison-{root_id}.tick.json")
+    title = effective_policy(state).get("hop_focus_title")
+    return str(title) if title else None
+
+
 AGENT_TRANSCRIPTS = (
     Path.home()
     / ".cursor/projects/mnt-torus-projects-universal-llm-gateway/agent-transcripts"
@@ -277,7 +285,8 @@ def fire_ide_hop(
     focus_title = (
         None
         if no_raise
-        else focus_title_for(remote_repo, ssh_host_name_from_uri(raise_uri or ""))
+        else policy_focus_title(root_id)
+        or focus_title_for(remote_repo, ssh_host_name_from_uri(raise_uri or ""))
     )
     HANDOFF_MSG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())

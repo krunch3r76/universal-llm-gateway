@@ -47,12 +47,16 @@ def ssh_host_name_from_uri(folder_uri: str) -> str | None:
 def focus_title_for(remote_repo: str, host_name: str | None) -> str:
     """Launcher query that matches only the Remote-SSH Cursor window on ``remote_repo``.
 
-    Cursor titles a remote window ``<editor> — <repo> [SSH: <host>] — Cursor``; the
-    repo name plus the SSH marker never matches an application entry, so Enter in
-    the launcher focuses the window instead of launching a second Cursor.
+    Cursor titles a remote window ``<editor> — <repo> [SSH: <host>] — Cursor``. The
+    app name leads the query because the repo name alone is not unique among open
+    windows: 2026-09-12 06:09Z the launcher fuzzy-matched a UMLet window whose title
+    carried a diagram path under the repo, and the hop typed into UMLet. Only the
+    Cursor window carries all three tokens (app, repo, SSH marker).
     """
     repo_name = Path(remote_repo).name
-    return f"{repo_name} [SSH: {host_name}]" if host_name else repo_name
+    return (
+        f"Cursor {repo_name} [SSH: {host_name}]" if host_name else f"Cursor {repo_name}"
+    )
 
 
 def hop_header_line(message: str) -> str:
