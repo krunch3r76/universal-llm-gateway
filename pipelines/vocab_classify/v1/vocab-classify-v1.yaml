@@ -9,7 +9,10 @@
 # Local mode: scripts/rag/classify_vocabulary.py posts mode=local with
 # model_ref_overrides.classify = domain_discovery (qwen3-14b-40960). Live
 # effective_context_per_slot for that id is currently 8192 — bundle truncates
-# terms/chunks and max_tokens stays small enough to leave generation headroom.
+# terms/chunks so the *prompt* fits. Do not set generation_parameters.max_tokens
+# (unspecified → model default; None when no constraint applies). A guessed
+# 2048 output cap truncated frontier JSON (0c825672, 2/5 MapPartialFailure).
+# Local slot remainder is the inference layer's job, not a pipeline guess.
 schema_version: 6
 id: vocab-classify-v1
 version: "2.0"
@@ -58,8 +61,6 @@ steps:
     prompt_ref: vocab_classify.v1.classify_scope
     generation_parameters:
       temperature: 0.2
-      # Classification JSON is small; 32k left no generation space under 8k slots.
-      max_tokens: 2048
       response_format:
         type: json_object
         schema:
