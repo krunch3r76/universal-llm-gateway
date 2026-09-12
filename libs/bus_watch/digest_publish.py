@@ -167,7 +167,11 @@ def publish_if_enabled(
 
 
 def _lanes_fingerprint(digest: dict[str, Any]) -> str:
-    """Hash of what a reader would act on: lanes, attention, checkpoint_due, watchers."""
+    """Hash of what a reader would act on: lanes, attention, checkpoint_due, watchers.
+
+    Attention items are reduced to their identity (lane id or kind): the budget
+    estimate carries token counts that move every tick and would defeat the guard.
+    """
     key = {
         "lanes": [
             (
@@ -178,7 +182,11 @@ def _lanes_fingerprint(digest: dict[str, Any]) -> str:
             )
             for lane in (digest.get("lanes") or [])
         ],
-        "attention": digest.get("attention"),
+        "attention": sorted(
+            str(item.get("id") or item.get("kind") or "")
+            for item in (digest.get("attention") or [])
+            if isinstance(item, dict)
+        ),
         "checkpoint_due": digest.get("checkpoint_due"),
         "watchers": digest.get("watchers_complete_unrelayed"),
     }
