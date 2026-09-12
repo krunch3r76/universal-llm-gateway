@@ -11,13 +11,17 @@ Seat this tab as the house liaison on continuity root `<root>` and arm the tick 
 4. **Goal** — call `CreateGoal` once with the objective from the tip CHECKPOINT `## Objective` (append
    "register=<register>; root=agent-bus:<root>"). This gives Cursor-native persistence across turns.
 5. **Arm the loop** (monitored shell, `block_until_ms: 0`, `notify_on_output` pattern `^AGENT_LOOP_TICK_liaison`,
-   reason `liaison <root> tick`, debounce 15000). This tab is the one Fable seat: the loop claims the
-   single-Fable lock as `ide:<root>`; if it prints `"loop": "refused"` a headless successor holds it — it
-   will park within one poll (preempt requested), re-arm after ~60 s:
+   reason `liaison <root> tick`, debounce 15000). Any tab model may seat the liaison (skill § Seat model).
+   This tab becomes the one liaison seat: the loop claims the seat lock as `ide:<transcript_id>` — resolve it
+   with `scripts/liaison-ide-hop.py --find-transcript "/liaison <root>"` (the tab's first user message).
+   `"loop": "refused"` with `reason=held_preempt_requested` ⇒ a headless successor holds it and will park
+   within one poll — re-arm after ~60 s; `reason=held` ⇒ another **attended tab** holds the seat — stay a
+   worker tab (own legs and turns; no loop, no scoreboard Rows fold, no CHECKPOINT on the root) unless the
+   operator says take over:
 
    ```bash
    cd /mnt/torus/projects/universal-llm-gateway && ~/.venvs/universal/bin/python scripts/liaison-tick.py \
-     --root <root> --register <register> --holder ide:<root> --loop --poll 60 --heartbeat ${INTERVAL:-900}
+     --root <root> --register <register> --holder ide:<transcript_id> --loop --poll 60 --heartbeat ${INTERVAL:-900}
    ```
 
    Title the shell `Loop liaison <root>: tick`. Record the PID in the scoreboard `## Loop` row.

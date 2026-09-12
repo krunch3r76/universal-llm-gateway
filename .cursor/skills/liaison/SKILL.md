@@ -58,10 +58,31 @@ fetch the bus to "double check".
 8. **Stop classes** — `stop_class=CONTEXT_BUDGET` ⇒ CHECKPOINT → hop (autonomous) or page + PARK (attended).
    Other designed stops: § Stops.
 
-## Single-Fable cap (operator 2026-09-10)
+## Seat model (operator 2026-09-11 20:37 PT: "Fable on IDE may not always be practical")
 
-`fable_seats(IDE ∪ cursor-sdk) ≤ 1`, enforced by `tmp/watchers/liaison-fable.lock` via `scripts/liaison-tick.py`:
-`--claim --holder ide:<root>|sdk:<dispatch_id> [--hop]` · `--release --holder …`. Model seats refresh the
+The liaison mechanics are **model-agnostic** — nothing in the tick loop, digest, resume fence, CHECKPOINT,
+hop, or lock reads the tab model. Pick the IDE tab model in the picker; the discipline that changes is the
+seat's own, not the house's:
+
+| Tab model class | Serves as liaison? | What must change |
+|---|---|---|
+| Opus-class (`claude-opus-5`, Fable when affordable) | yes — binds judgment forks inline | nothing |
+| Below Opus (Grok 4.6, Sonnet, Composer, GPT-5.6) | yes for harvest → fold → dispatch → CP → hop | presence-discipline P1–P4 are **explicit obligations**; every judgment bind goes to `cdp/opus-5` first (§ Reasoning recon) and the seat binds on the returned compact; premium binds the plan names still go to `cdp/fable` |
+
+Observed 2026-09-11 (Cursor Projects window, Grok tab on this root): `/liaison` seated, Goal set, judgment
+routed to `cdp/opus-5-high` — the ladder carried the reasoning. Fable stays the right seat on **claude.ai**
+(`cdp/fable`) where the window is the product; in the IDE it is one option, not a requirement. What remains
+Fable-specific here: gear `1-fable-mvp` (headless Fable successors) and the lock filename.
+
+## Single-liaison-seat cap (operator 2026-09-10; generalized from "single-Fable")
+
+`liaison_seats(IDE ∪ cursor-sdk) ≤ 1` per root, enforced by `tmp/watchers/liaison-fable.lock` via
+`scripts/liaison-tick.py`: `--claim --holder ide:<transcript_id>|sdk:<dispatch_id> [--hop]` ·
+`--release --holder …`. **Holder identity is the tab, not the root** — two attended tabs that both claim
+`ide:<root>` silently co-hold (same string ⇒ re-claim succeeds); with `ide:<transcript_id>` the second tab is
+`refused` (`reason=held`) and runs as a **worker tab**: its own legs and turns, no loop, no Rows fold, no
+CHECKPOINT on the root. Take the seat over only with the operator's word or after the holder's lease
+expired (`--release --holder <live>` then claim). Model seats refresh the
 declared lease (`expires_at`) on each `--once` tick (`tick_seq` / `turns_seen`); `seat_lock_free` means
 `holder is None ∨ now > expires_at`. The gear-3 **ticker** holds `liaison-ticker.lock` (`ticker:<root>`) —
 it never takes the seat mutex and cannot write `preempt_by`. Attended `--loop` (gear 1/2) still claims the seat
@@ -100,9 +121,9 @@ dispatches (`contract=implement`, omit `model=`) run **alongside** — they are 
 | Read / recon / ≥3 files | `Task(subagent_type="explore")` in-tab | none |
 | Trivial / local edit (<20 lines, no served path) | in-seat | none — commit path-explicit same turn |
 | Mechanical implement with dense spec (`files_expected` + ACs) | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement\|pure-mechanical, lane="B", source_ref=todo:…, packet_path=…, dispatch_thread_id=R)` | none — Fable-densified packets skip skeptic |
-| Judgment fork | **this seat** binds inline (Fable tab) | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
+| Judgment fork | **this seat** binds inline when Opus-class; below Opus, § Reasoning recon first (`cdp/opus-5` wide read → bind on the compact) | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
 | Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5)`** — announce `CDP: <trigger> — <why>`; opus hops (`agent_bus hop`) to stay lean | one round; disagreement ⇒ `CONSULT_PENDING` stop |
-| Long-context reasoning inside a work tab | Cursor **Fable 5.1 300k/1M Max** as the tab model (operator authorization 2026-09-10) | `Task(model=claude-fable-5-1-thinking-max)` only from a non-Fable tab — redundant inside one |
+| Long-context reasoning inside a work tab | Cursor **Fable 5.1 300k/1M Max** as the tab model when affordable (operator authorization 2026-09-10; optional — § Seat model) | `Task(model=claude-fable-5-1-thinking-max)` only from a non-Fable tab — redundant inside one |
 | Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>"` (keystroke hop, fresh tab, ~40k-token orient vs 12–31M per headless hop); autonomous: § Headless successor (resume-fence pull) — the successor pulls the tip via `dispatch(tool="continuity")`; `cursor_request` is not a successor path (enqueues cursor-auto) | — |
 
 **Reasoning recon** (operator-endorsed 2026-09-10 22:39 PT, observed on 10479#18): before a judgment bind, the

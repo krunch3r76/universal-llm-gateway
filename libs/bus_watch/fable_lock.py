@@ -1,9 +1,11 @@
-"""Single-Fable lock — operator invariant (2026-09-10): at most ONE Fable 5.1 seat
-runs across Cursor IDE tabs and cursor-sdk dispatches.
+"""Single-liaison-seat lock — operator invariant (2026-09-10, generalized 2026-09-11):
+at most ONE liaison seat per root runs across Cursor IDE tabs and cursor-sdk
+dispatches, whatever the tab model.
 
-The liaison tick loop holds a **ticker lease** (``ticker:<root>``), not the seat
-mutex. Model seats claim ``ide:<root>`` or ``sdk:<dispatch_id>``, refresh the
-declared lease on each ``--once`` tick, and release before a hop.
+The gear-3 ticker holds a **ticker lease** (``ticker:<root>``), not the seat
+mutex. Model seats claim ``ide:<transcript_id>`` or ``sdk:<dispatch_id>`` (the
+identity is the tab, not the root — two tabs sharing ``ide:<root>`` would co-hold),
+refresh the declared lease on each tick, and release before a hop.
 """
 
 from __future__ import annotations

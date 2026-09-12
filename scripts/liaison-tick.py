@@ -123,7 +123,10 @@ def main() -> int:
     p.add_argument(
         "--holder",
         default="",
-        help="Fable seat identity (ide:<transcript> | sdk:<dispatch_id>)",
+        help=(
+            "liaison seat identity (ide:<transcript_id> | sdk:<dispatch_id>); "
+            "default ide:<root> is single-tab only — two attended tabs sharing it co-hold the seat"
+        ),
     )
     p.add_argument(
         "--claim",
