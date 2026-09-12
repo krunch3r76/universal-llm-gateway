@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -11,7 +10,6 @@ from agent_seat.session_id import derive_session_id_from_timestamp
 from continuity_tape.messages import ContinuityMessagesEnvelope, EnvelopeMeta
 
 _AGENT = "web-anthropic"
-_CSE_TOKEN_RE = re.compile(r"cse_[A-Za-z0-9]+")
 _CLAUDE_RESPONDED_PREFIX = "Claude responded:"
 _SUCCESSION_STUB = (
     "## Session Summary\n\n"
@@ -165,7 +163,7 @@ async def seal_claude_ai(
 
     content_provenance = harvest.get("content_provenance")
     coverage = _resolve_coverage(harvest, len(deduped))
-    truncated = bool(harvest.get("truncated")) and coverage == "tail"
+    truncated = bool(harvest.get("truncated"))
     messages = _messages_with_turn_index(deduped)
 
     from cortex_store.session_close_successor_hop import (
@@ -187,7 +185,6 @@ async def seal_claude_ai(
             "already_closed": True,
             "refused": None,
             "chat_url": chat_url,
-            "coverage": coverage,
             "content_provenance": content_provenance,
         }
 
@@ -235,7 +232,6 @@ async def seal_claude_ai(
             "already_closed": True,
             "refused": None,
             "chat_url": chat_url,
-            "coverage": coverage,
             "content_provenance": content_provenance,
         }
 

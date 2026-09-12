@@ -230,7 +230,95 @@ async def test_seal_claude_ai_already_journaled_returns_seal_fingerprint() -> No
     assert payload["already_closed"] is True
     assert payload["messages_sha256"] == "sha256:abc123"
     assert payload["verbatim_codec"] == "messages-v1"
+    assert "coverage" not in payload
     dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_seal_claude_ai_already_journaled_omits_harvest_coverage() -> None:
+    harvest = AsyncMock(
+        return_value={
+            "outcome": "harvested",
+            "coverage": "full",
+            "turns": [
+                {"author": "user", "text": "Question.", "ordinal": 1},
+                {"author": "assistant", "text": "Answer.", "ordinal": 2},
+            ],
+            "truncated": False,
+            "cursor": 2,
+        }
+    )
+    dispatch = AsyncMock()
+    human_closed = SimpleNamespace(session_id="web-anthropic-prior-session")
+    with (
+        patch(
+            "cortex_store.session_close_successor_hop.lookup_journaled_by_conversation_uuid",
+            return_value=human_closed,
+        ),
+        patch(
+            "handlers.seal_claude_ai._lookup_journal_seal_meta",
+            return_value=("sha256:abc123", "messages-v1"),
+        ),
+    ):
+        payload = await seal_claude_ai(
+            thread="10479",
+            chat_url=_CSE_URL,
+            transcript_id=_CSE_ID,
+            from_agent="cursor",
+            harvest_fn=harvest,
+            cortex_dispatch_fn=dispatch,
+        )
+    assert payload["refused"] is None
+    assert payload["already_closed"] is True
+    assert "coverage" not in payload
+    dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_seal_claude_ai_session_close_already_closed_omits_coverage() -> None:
+    harvest = AsyncMock(
+        return_value={
+            "outcome": "harvested",
+            "coverage": "full",
+            "turns": [
+                {"author": "user", "text": "Question.", "ordinal": 1},
+                {"author": "assistant", "text": "Answer.", "ordinal": 2},
+            ],
+            "truncated": False,
+            "cursor": 2,
+        }
+    )
+    dispatch = AsyncMock(
+        return_value={
+            "already_closed": True,
+            "session_id": "web-anthropic-prior-session",
+            "turn_count": 2,
+            "content_hash": "sha256:deadbeef",
+        }
+    )
+    with (
+        patch(
+            "cortex_store.session_close_successor_hop.lookup_journaled_by_conversation_uuid",
+            return_value=None,
+        ),
+        patch(
+            "handlers.seal_claude_ai._lookup_session_id_for_transcript",
+            return_value="web-anthropic-prior-session",
+        ),
+    ):
+        payload = await seal_claude_ai(
+            thread="10479",
+            chat_url=_CSE_URL,
+            transcript_id=_CSE_ID,
+            from_agent="cursor",
+            harvest_fn=harvest,
+            cortex_dispatch_fn=dispatch,
+        )
+    assert payload["refused"] is None
+    assert payload["already_closed"] is True
+    assert payload["messages_sha256"] == "sha256:deadbeef"
+    assert payload["verbatim_codec"] == "messages-v1"
+    assert "coverage" not in payload
 
 
 @pytest.mark.asyncio
