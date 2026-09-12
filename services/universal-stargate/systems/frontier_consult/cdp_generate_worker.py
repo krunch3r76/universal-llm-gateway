@@ -166,8 +166,7 @@ async def _mark_pointer_turn_read(
     )
     if mark.status_code >= 300:
         logger.warning(
-            "cdp mark_read pointer before post: thread=%s turn=%s "
-            "status=%s body=%s",
+            "cdp mark_read pointer before post: thread=%s turn=%s status=%s body=%s",
             thread_id,
             turn_number,
             mark.status_code,
