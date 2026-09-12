@@ -43,7 +43,7 @@ After frontier architecture verdict: ¬ web-Opus full dense spec with inlined `s
 | Architecture | Fable / wide CDP | Target shape, rivals, migration | File matrix, phase ACs |
 | Frame | Opus CDP (minimal `skills=`) | Grok instruction brief ≤~120L | Spec body, workspaces reads |
 | Densify | Grok `cursor-sdk` `none` | `cortex://…/specs/{slug}.md` | Re-litigate architecture |
-| Check | GPT terra/Sol `cursor-sdk` | Merged consistency pass | — |
+| Check | Fable 5.1 `cursor-sdk` (`workflows.check_review`; terra/Sol explicit pin only) | Merged consistency pass | — |
 | Implement | Composer `cursor-sdk` `implement` | Phase-scoped edits | Redesign kernel |
 
 Opus frame output: `cortex://…/{slug}/opus-grok-instructions.md`. Grok densify: `sidecar_ref` = brief;
@@ -61,9 +61,10 @@ reference-annex packet-class row *ULG service home / placement / extract / hosti
 ## Autonomous work-item spine — extensions
 
 **Gate-6 substrate (a24082):** code-lane live-source / `workspaces://` citations ⇒
-`team_dispatch(op=generate, seat=cursor-sdk, model=cursor/gpt-5.6-terra|sol|luna,
-contract=none, …)`; poll `reply_from_agent` from admit. API `role=reviewer` + terra only when
-**all** reading pre-staged inline (`code-on-api`). Access-only REVISE ≠ Gate-6 close.
+standing default `workflows.check_review.model` (`cursor/claude-fable-5-1` during Fable window)
+or explicit `cursor/gpt-5.6-terra|sol|luna` pin; poll `reply_from_agent` from admit. API
+`role=reviewer` + terra only when **all** reading pre-staged inline (`code-on-api`). Access-only
+REVISE ≠ Gate-6 close.
 
 **Steps 1–2 zoom-out (C2):** recon/investigate packets MUST carry touch-point inventory + class/sibling
 grep + `## Secondary findings` (or `None observed.`). Template:

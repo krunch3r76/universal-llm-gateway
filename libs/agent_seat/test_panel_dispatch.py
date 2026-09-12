@@ -35,7 +35,7 @@ def test_resolve_panel_members_default_two_roles() -> None:
     members = resolve_panel_members()
     roles = [m.role for m in members]
     assert roles == ["skeptic", "reviewer"]
-    assert members[1].model == "cursor/gpt-5.6-terra"
+    assert members[1].model == "cursor/claude-fable-5-1"
 
 
 def test_resolve_panel_members_optional_synthesizer() -> None:

@@ -8,24 +8,25 @@ from agent_seat.panel_dispatch import (
     DEFAULT_PANEL_MEMBERS,
     PanelMemberSpec,
     build_team_dispatch_body,
-    provider_family_label,
+    effective_model_for_member,
+    panel_identity_labels,
     resolve_panel_members,
 )
 
 pytestmark = pytest.mark.offline
 
 
-def test_default_panel_reviewer_is_cursor_terra() -> None:
-    assert ("reviewer", "cursor/gpt-5.6-terra") in DEFAULT_PANEL_MEMBERS
+def test_default_panel_reviewer_is_cursor_fable() -> None:
+    assert ("reviewer", "cursor/claude-fable-5-1") in DEFAULT_PANEL_MEMBERS
 
 
 def test_build_body_uses_seat_for_cursor_reviewer() -> None:
     body = build_team_dispatch_body(
-        spec=PanelMemberSpec(role="reviewer", model="cursor/gpt-5.6-terra"),
+        spec=PanelMemberSpec(role="reviewer", model="cursor/claude-fable-5-1"),
         dispatch_thread_id="t1",
     )
     assert body["seat"] == "cursor-sdk"
-    assert body["model"] == "cursor/gpt-5.6-terra"
+    assert body["model"] == "cursor/claude-fable-5-1"
     assert body["lane"] == "A"
     assert "role" not in body
 
@@ -33,7 +34,7 @@ def test_build_body_uses_seat_for_cursor_reviewer() -> None:
 def test_cursor_reviewer_omits_reasoning_effort() -> None:
     """BIND_B: panel fan-out must not forward effort onto cursor-sdk members."""
     body = build_team_dispatch_body(
-        spec=PanelMemberSpec(role="reviewer", model="cursor/gpt-5.6-terra"),
+        spec=PanelMemberSpec(role="reviewer", model="cursor/claude-fable-5-1"),
         dispatch_thread_id="t1",
         reasoning_effort="high",
     )
@@ -56,18 +57,12 @@ def test_build_body_keeps_role_for_api_skeptic() -> None:
     assert "seat" not in body
 
 
-def test_provider_family_label_for_cursor_gpt() -> None:
-    assert provider_family_label("cursor/gpt-5.6-terra") == "GPT"
-    assert provider_family_label("xai/grok-4.6") == "Grok"
-
-
-def test_default_panel_has_two_families() -> None:
+def test_default_panel_has_two_distinct_identities() -> None:
     members = resolve_panel_members()
-    labels = {provider_family_label(m.model or "") for m in members if m.model}
-    # skeptic uses role default (xai) when model is None — resolve via effective
-    from agent_seat.panel_dispatch import effective_model_for_member
-
-    labels = {provider_family_label(effective_model_for_member(m)) for m in members}
-    assert "GPT" in labels
-    assert "Grok" in labels
+    member_models = {
+        m.role: effective_model_for_member(m) for m in members
+    }
+    labels = panel_identity_labels(member_models)
+    assert any(label.startswith("claude-fable-5-1@") for label in labels)
+    assert any(label.startswith("grok-4.6@") for label in labels)
     assert len(labels) >= 2

@@ -15,7 +15,7 @@ Do **not** use for implement/bound-mechanical dispatch by default: producing Pha
 
 `substantive_reasoning_or_design_consult ∧ cross_cutting ⇒ recommended_review=cross-family-reconcile:default-on` unless explicit structured opt-out.
 
-Default adversary = cross-family reviewer, default `openai/gpt-5.6-terra` (role default), rotatable. `openai/gpt-5.5` is **operator-gated** — not standing default. Material engineering lead decisions escalate to `panel_dispatch` / ≥2-family panel (Grok skeptic + Terra reviewer). **Writing / correspondence** uses Terra+Gemini, not default panel_dispatch — see `consult-routing` § Writing consult substrate.
+Default adversary = cross-family reviewer, default `openai/gpt-5.6-terra` (API role default), rotatable. Code-lane standing check/panel reviewer = `cursor/claude-fable-5-1` via `workflows.check_review` / `panel_dispatch` defaults (Fable 5.1 window). `openai/gpt-5.5` is **operator-gated** — not standing default. Material engineering lead decisions escalate to `panel_dispatch` / ≥2-identity panel (Grok skeptic + Fable reviewer). **Writing / correspondence** uses Terra+Gemini, not default panel_dispatch — see `consult-routing` § Writing consult substrate.
 
 Required default-on output item: `<negative_space>`.
 
@@ -34,7 +34,7 @@ For consensus panel work, align with `panel_dispatch` / `team_dispatch` defaults
 | Role | Default family | Requirement |
 |---|---|---|
 | skeptic | Grok via `resolve_agent_model("skeptic")` — **engineering panels only** | emit `decisive_falsifier` |
-| reviewer | GPT / `openai/gpt-5.6-terra` (role default); `gpt-5.5` only with operator auth | independent second family |
+| reviewer | Code-lane: `cursor/claude-fable-5-1` (`workflows.check_review` / panel default); API/life: `openai/gpt-5.6-terra` (role default); `gpt-5.5` only with operator auth | independent second identity |
 | synthesizer | Gemini | optional tiebreaker; **primary second family for writing** (with Terra reviewer) |
 
 Lead adjudication after panel is **NON-offloadable**. Menu D assert uses `build_panel_assert_attributes` + `lead_adjudication_artifact`.

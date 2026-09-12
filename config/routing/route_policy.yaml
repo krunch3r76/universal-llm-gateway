@@ -100,9 +100,9 @@ workflows:
     # Code-lane standing check/review default (decision:code-review-panel-cursor-substrate).
     # role=reviewer omit-model coerces to seat=cursor-sdk + this model. Explicit
     # model=openai/* keeps API (life / checkout-free). CDP remains judgment /
-    # path-sim R-admit — not this slot.
+    # path-sim R-admit — not this slot. Fable 5.1 window: operator YAML edit to revert.
     seat: cursor-sdk
-    model: cursor/gpt-5.6-terra
+    model: cursor/claude-fable-5-1
     contracts: []
 
 # Per-model policy keyed by bare cursor id (CURSOR_MODEL_CAPABILITIES key).
