@@ -86,7 +86,7 @@ fi
 # table. Warn is non-fatal; hard-fail is fatal. --quiet must not hide WARN.
 CENSUS_SCRIPT="$SOURCE_REPO/scripts/cursor/alwaysapply_rules_census.py"
 [[ -f "$CENSUS_SCRIPT" ]] || CENSUS_SCRIPT="$ULG_ROOT/scripts/cursor/alwaysapply_rules_census.py"
-if ! "$PYTHON" "$CENSUS_SCRIPT" --quiet --check; then
+if ! "$PYTHON" "$CENSUS_SCRIPT" --quiet --check 9000; then
   die "alwaysApply token budget exceeded — thin kernels before install (resident/seats/per-file)"
 fi
 

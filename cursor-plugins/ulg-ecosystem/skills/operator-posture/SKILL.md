@@ -37,11 +37,7 @@ Stripping persona ≠ neutral-tool voice. Keep conviction and urgency pointed at
 
    **Three-leg contract (atomic — ¬ claim “watcher armed” until legs 1–2 complete):**
 
-   | Leg | Same turn as admit? | Action |
-   |---|---|---|
-   | **1 Arm** | yes | `watch-supervise.sh start --label L -- …` (`watch-dispatch-closeout.py` or `watch-bus-consult-and-page.py --execution-id <id>`; `--no-page`) — `--execution-id` from the admit payload is required (or explicit `--no-producer`); the poller refuses a silent arm (a:33160) |
-   | **2 Wake** | yes, before turn close | `watch-supervise.sh tail --label L` in background Shell (`block_until_ms: 0`) + `notify_on_output` on `closeout turn=` **or** `consult complete` **or** `stall-pop:` — tail **exits when** `tmp/watchers/<label>.state.json` has `"status":"complete"` (¬ infinite `tail -F`; `--forever` debug-only). **Always leg 2** on every arm — IDE terminal slots are unlimited ghosts; `¬` skip to save a slot (breaks autoadvance). While `status=polling`, the tail **waiting** is correct harness, not hang-tail |
-   | **3 Relay** | on wake turn | `agent_bus_read get` qualifying turn → harvest CDP body if needed → translate outcome in chat |
+   Watcher: Use `runbook:bus-consult-watcher` (arm with --execution-id from the admit; tail; relay) — never restate here.
 
    Then **exit**. Cheap = legs 1–2 + lean heartbeat (`loop` skill event path). Costly = holding this turn on `wait`, or short-cadence full-agent `/loop`. Complements a:31104. ¬ a:31024 always-on liaison. **Liaison HARD STOP (a:32226):** stronger-model gate stall / empty FAILED / no harvest ⇒ stop past that gate; resume only after CDP harvest or operator rebind (`conductor` skill).
 
@@ -125,7 +121,7 @@ Falsifiers:
 - **Permission-seeking on clear work:** pausing to ask approval when the spec is sufficient and work is self-verifiable. Drive to done; surface real blocks.
 - **Model seat as human operator:** treating `cursor-sdk` / `cursor-auto` (or their closeouts) as human-operator gates — asking operator to “approve the dispatch,” waiting for a human push before an agent seat can act, or addressing **What I need from you** to a model. Correct: those seats are models; human gates stay human-only (glossary).
 - **Sycophantic capitulation:** opening with agreement when the operator's statement contradicts visible evidence, then confabulating coherence. When context contradicts the statement, say so plainly and hold position. Never open with “Right —” before checking whether agreement is warranted. Accuracy under mild social pressure is expected.
-- **Watcher arm-only (a:32280):** `watch-supervise.sh start` without same-turn background `tail` + `notify_on_output` — poller runs; session never wakes; operator sees silence while `state.json` says `complete`.
+- **Watcher arm-only (a:32280):** arm-only per `runbook:bus-consult-watcher` (leg 1 without same-turn background `tail` + `notify_on_output`) — poller runs; session never wakes; operator sees silence while `state.json` says `complete`.
 - **Watcher tail-skipped (2026-09-07):** arm-only to "save an IDE terminal" — slots are unlimited ghosts; skipping leg 2 stalls autoadvance. Always background tail same turn as start.
 - **Watcher hold-turn:** blocking on `wait`/`Await`/foreground `tail | grep` instead of leg 2 background tail + exit — violates cheap-wake; lost on summarization.
 - **Watcher hang-tail:** `watch-supervise.sh tail` with `--forever`, raw `tail -F` on watcher logs, or a tail that outlives `state.json status=complete` — **not** a tail still waiting while `status=polling` (that is correct). Fix: default tail (exit-on-complete); relay leg 3 on wake.
