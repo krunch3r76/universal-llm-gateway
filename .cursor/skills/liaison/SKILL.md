@@ -93,8 +93,11 @@ CHECKPOINT on the root. Taking the seat from a live attended holder needs the op
 typed in a fresh tab **is** that word (multi-workstation alternate) ⇒ claim with `--take-over` — the live loop
 sees `preempt_by`, exits, releases; retry within one poll (commit edb46bab). A `/liaison` without the word is
 `held` and stays a worker tab. Headless `sdk:` holders are preempted by any `ide:` claim. **Stopping a loop:**
-`pkill -f 'liaison-tick.py --root <R> --loop'` then `pgrep -fc` = 0 — the IDE Shell PID is the pipeline wrapper,
+`pkill -f 'liaison-tick[.]py --root <R> --loop'` then `pgrep -fc` = 0 — the IDE Shell PID is the pipeline wrapper,
 not the python; killing it orphans the loop (specimen 04:11Z: two loops ping-ponged DIGEST turns every 30 s).
+The `[.]` matters: `pkill -f` matches the *whole* command line of every process, including the bash wrapper
+running your own `pkill` — a literal pattern kills the seat's shell first and the rest of the command never runs
+(specimen hop 13, 04:44Z: silent empty output; the loop did die and released the lock via `holder_pid`).
 The lock records `holder_pid`; only the claiming process (or `--release`, the operator override) can release, so
 an orphan exiting no longer drops the live lease. Model seats refresh the
 declared lease (`expires_at`) on each `--once` tick (`tick_seq` / `turns_seen`); `seat_lock_free` means
