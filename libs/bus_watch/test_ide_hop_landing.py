@@ -1,4 +1,4 @@
-"""Title-addressed focus + landing proof for the attended IDE hop (hop 16, 2026-09-12 06:00Z)."""
+"""Focus target + landing proof for the attended IDE hop (hop 16, 2026-09-12 06:00–06:20Z)."""
 
 from __future__ import annotations
 
@@ -10,35 +10,20 @@ import pytest
 
 from bus_watch.ide_hop import build_ide_hop_message, remote_launch_command
 from bus_watch.ide_hop_landing import (
+    AGENTS_WINDOW_TITLE,
     focus_title_for,
     hop_header_line,
-    ssh_host_name_from_uri,
     wait_for_landed_transcript,
 )
 
 pytestmark = pytest.mark.offline
 
-_HEX_IO = "7b22686f73744e616d65223a22696f227d"  # {"hostName":"io"}
 
-
-def test_ssh_host_from_hex_authority() -> None:
-    uri = f"vscode-remote://ssh-remote%2B{_HEX_IO}/mnt/torus/projects/universal-llm-gateway"
-    assert ssh_host_name_from_uri(uri) == "io"
-
-
-def test_ssh_host_from_bare_authority_and_non_remote() -> None:
-    assert ssh_host_name_from_uri("vscode-remote://ssh-remote+io/mnt/x") == "io"
-    assert ssh_host_name_from_uri("file:///mnt/x") is None
-    assert ssh_host_name_from_uri("") is None
-
-
-def test_focus_title_leads_with_app_then_repo_and_ssh_marker() -> None:
+def test_focus_title_defaults_to_the_agents_window_and_honours_policy() -> None:
+    assert focus_title_for() == AGENTS_WINDOW_TITLE == "Cursor Agents"
     assert (
-        focus_title_for("/mnt/torus/projects/universal-llm-gateway", "io")
-        == "Cursor universal-llm-gateway [SSH: io]"
-    )
-    assert focus_title_for("/mnt/torus/projects/universal-llm-gateway", None) == (
-        "Cursor universal-llm-gateway"
+        focus_title_for("universal-llm-gateway [SSH: io]")
+        == "universal-llm-gateway [SSH: io]"
     )
 
 
@@ -49,15 +34,15 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     )
 
 
-def test_remote_launch_command_prefers_focus_title_over_uri() -> None:
+def test_remote_launch_command_prefers_verified_focus_over_uri() -> None:
     cmd = remote_launch_command(
         "/repo/tmp/watchers/handoff-messages/m.md",
         remote_repo="/repo",
         palette_query="New Chat",
         raise_uri="vscode-remote://ssh-remote+io/repo",
-        focus_title="Cursor universal-llm-gateway [SSH: io]",
+        focus_title="Cursor Agents",
     )
-    assert "--no-raise --focus-title 'Cursor universal-llm-gateway [SSH: io]'" in cmd
+    assert "--no-raise --focus-title 'Cursor Agents' --focus-app-id cursor" in cmd
     assert "--raise-uri" not in cmd
     without = remote_launch_command(
         "/repo/m.md",

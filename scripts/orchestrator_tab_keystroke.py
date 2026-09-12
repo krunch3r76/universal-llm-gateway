@@ -12,6 +12,7 @@ Not imported — invoked via SSH on the graphical host:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -74,25 +75,41 @@ def _raise_cursor_uri(folder_uri: str) -> None:
     )
 
 
-def _focus_by_title(ui: UInput, title_query: str, *, settle_s: float = 0.9) -> None:
-    """Bring the window whose title matches ``title_query`` to the front via the COSMIC launcher.
+def _focus_window(title_substr: str, app_id: str, *, settle_s: float = 0.6) -> dict:
+    """Focus the toplevel matching ``app_id`` + ``title_substr`` through the compositor.
 
-    COSMIC exposes no focus API to ordinary clients and a native-Wayland Cursor cannot
-    raise itself on ``cursor --folder-uri`` (no activation token; 2026-09-12 04:24Z the
-    URI went to Firefox), so until 2026-09-12 06:00Z every hop typed into whatever
-    window happened to be focused. The launcher (``Super`` → ``System(Launcher)`` in
-    the COSMIC defaults) is privileged: its window plugin lists open toplevels by
-    title and Enter activates the match — the same title-addressed raise the
-    operator does by hand. Needs a ``ui`` because the launcher is driven by keys.
+    Native-Wayland Cursor cannot raise itself on ``cursor --folder-uri`` (no activation
+    token; 2026-09-12 04:24Z the URI went to Firefox) and the COSMIC launcher driven by
+    keys fuzzy-matched UMLet, then launched a second IDE window (06:09Z / 06:11Z) — so
+    every hop typed into whatever window happened to be focused. cosmic-comp does offer
+    ``zcosmic_toplevel_manager_v1.activate`` to ordinary clients; ``cosmic_focus_window.py``
+    lists toplevels, activates exactly one match and reports ``focused`` from the
+    handle's state. Anything but ``focused: true`` aborts before a single key is sent.
     """
-    _tap(ui, e.KEY_LEFTMETA, delay=0.08)
-    time.sleep(0.7)
-    _wl_copy(title_query)
-    time.sleep(0.05)
-    _paste(ui)
-    time.sleep(0.6)
-    _tap(ui, e.KEY_ENTER)
+    helper = Path(__file__).with_name("cosmic_focus_window.py")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(helper),
+            "activate",
+            "--app-id",
+            app_id,
+            "--title-substr",
+            title_substr,
+        ],
+        env=os.environ,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    try:
+        verdict = json.loads(proc.stdout.strip().splitlines()[-1])
+    except (json.JSONDecodeError, IndexError):
+        verdict = {"ok": False, "raw": proc.stdout[-400:] + proc.stderr[-400:]}
+    if not verdict.get("ok"):
+        raise SystemExit(json.dumps({"ok": False, "phase": "focus", **verdict}))
     time.sleep(settle_s)
+    return verdict
 
 
 def _ui() -> UInput:
@@ -194,14 +211,16 @@ def launch_new_chat_with_message(
     raise_window: bool = True,
     raise_uri: str | None = None,
     focus_title: str | None = None,
+    focus_app_id: str = "cursor",
 ) -> dict[str, object]:
     """Open a new chat in a Cursor window and send ``message``.
 
-    Focus order: ``focus_title`` (COSMIC launcher, title-addressed — the only raise
-    that works for a native-Wayland Cursor) ≻ ``raise_uri`` (``cursor --folder-uri``,
-    for compositors that honour it) ≻ ``raise_window`` (legacy ``cursor -r <repo>``,
-    local workspaces only) ≻ neither (paste into whatever is in front — hop 3 on
-    2026-09-11 landed in Firefox this way; only for an operator who is watching).
+    Focus order: ``focus_title`` (+ ``focus_app_id``: compositor ``activate`` on the
+    one matching toplevel, verified before any key is sent — the only raise that works
+    for a native-Wayland Cursor) ≻ ``raise_uri`` (``cursor --folder-uri``, for
+    compositors that honour it) ≻ ``raise_window`` (legacy ``cursor -r <repo>``, local
+    workspaces only) ≻ neither (paste into whatever is in front — hop 3 on 2026-09-11
+    landed in Firefox this way; only for an operator who is watching).
     """
     _require_display()
     if dry_run:
@@ -214,16 +233,17 @@ def launch_new_chat_with_message(
             "focus_title": focus_title,
             "message_preview": message[:120],
         }
-    if not focus_title and raise_uri:
+    focused: dict = {}
+    if focus_title:
+        focused = _focus_window(focus_title, focus_app_id)
+    elif raise_uri:
         _raise_cursor_uri(raise_uri)
         time.sleep(1.5)
-    elif not focus_title and raise_window:
+    elif raise_window:
         _raise_cursor(repo)
         time.sleep(0.9)
     ui = _ui()
     try:
-        if focus_title:
-            _focus_by_title(ui, focus_title)
         _palette_run(ui, palette_query)
         _wl_copy(message)
         time.sleep(0.08)
@@ -236,6 +256,7 @@ def launch_new_chat_with_message(
         "ok": True,
         "palette_query": palette_query,
         "focus_title": focus_title,
+        "focused": focused.get("activated"),
         "message_len": len(message),
     }
 
@@ -323,8 +344,13 @@ def main() -> int:
     lp.add_argument(
         "--focus-title",
         default=None,
-        help="Focus the window by title through the COSMIC launcher first "
-        "(e.g. 'universal-llm-gateway [SSH: io]'); overrides --raise-uri",
+        help="Focus the toplevel whose title contains this (compositor activate, "
+        "verified) before typing — e.g. 'Cursor Agents'; overrides --raise-uri",
+    )
+    lp.add_argument(
+        "--focus-app-id",
+        default="cursor",
+        help="app_id substring the focused toplevel must carry (default: cursor)",
     )
     gq = sub.add_parser(
         "glass-cmd", help="Raise Cursor, ctrl-/ (or palette), run query"
@@ -377,6 +403,7 @@ def main() -> int:
             raise_window=not args.no_raise,
             raise_uri=args.raise_uri,
             focus_title=args.focus_title,
+            focus_app_id=args.focus_app_id,
         )
         import json
 

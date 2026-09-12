@@ -36,9 +36,9 @@ from durable_io.atomic import durable_write_text
 
 from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.ide_hop_landing import (
+    AGENTS_WINDOW_APP_ID,
     focus_title_for,
     hop_header_line,
-    ssh_host_name_from_uri,
     wait_for_landed_transcript,
 )
 from bus_watch.liaison_digest import effective_policy
@@ -219,12 +219,16 @@ def remote_launch_command(
 ) -> str:
     """Build the GUI-host command.
 
-    Focus order: ``focus_title`` (COSMIC launcher, title-addressed — the only raise
-    that works for a native-Wayland Cursor) ≻ ``raise_uri`` (``cursor --folder-uri``,
-    kept for compositors that honour it) ≻ neither (types into the focused window).
+    Focus order: ``focus_title`` (compositor ``activate`` on the one toplevel matching
+    app_id + title, verified before any key — the only raise that works for a
+    native-Wayland Cursor) ≻ ``raise_uri`` (``cursor --folder-uri``, kept for
+    compositors that honour it) ≻ neither (types into the focused window).
     """
     if focus_title:
-        focus = f"--no-raise --focus-title {shlex.quote(focus_title)}"
+        focus = (
+            f"--no-raise --focus-title {shlex.quote(focus_title)} "
+            f"--focus-app-id {shlex.quote(AGENTS_WINDOW_APP_ID)}"
+        )
     elif raise_uri:
         focus = f"--raise-uri {shlex.quote(raise_uri)}"
     else:
@@ -256,13 +260,14 @@ def fire_ide_hop(
     Cursor window on ``remote_repo`` to raise (no fallback focus): firing at a
     guessed display or a guessed window is the failure this module exists to
     prevent — hops 1–3 on 2026-09-11 landed on an unattended host and in Firefox.
-    The window is focused **by title** through the COSMIC launcher
-    (``<repo> [SSH: <host>]``, host decoded from the discovered Remote-SSH URI);
-    ``cursor --folder-uri`` cannot raise a native-Wayland Cursor (2026-09-12 04:24Z it
-    handed the remote URI to Firefox) and every hop up to 06:00Z that day typed into
-    whatever window was in front. ``no_raise`` skips the focus step for an operator
-    who is on the window and says so. ``ok`` means **landed**: a new agent transcript
-    carrying the hop header appeared after the keystrokes — sent keys are not a hop.
+    The agents window (``app_id=cursor``, title ``Cursor Agents`` — what the compositor
+    reports, no repo or SSH text) is focused through ``zcosmic_toplevel_manager_v1``
+    and verified activated before any key is sent; ``cursor --folder-uri`` cannot
+    raise a native-Wayland Cursor (2026-09-12 04:24Z it handed the remote URI to
+    Firefox) and every hop up to 06:11Z that day typed into whatever window was in
+    front. ``no_raise`` skips the focus step for an operator who is on the window and
+    says so. ``ok`` means **landed**: a new agent transcript carrying the hop header
+    appeared after the keystrokes — sent keys are not a hop.
     """
     if not gui_host:
         return {
@@ -282,12 +287,7 @@ def fire_ide_hop(
             "gui_host": gui_host,
             "fix": f"open {remote_repo} in Cursor on {gui_host} (Remote-SSH) before hopping",
         }
-    focus_title = (
-        None
-        if no_raise
-        else policy_focus_title(root_id)
-        or focus_title_for(remote_repo, ssh_host_name_from_uri(raise_uri or ""))
-    )
+    focus_title = None if no_raise else focus_title_for(policy_focus_title(root_id))
     HANDOFF_MSG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     msg_path = HANDOFF_MSG_DIR / f"liaison-{root_id}-{stamp}.md"
