@@ -46,8 +46,12 @@ fetch the bus to "double check".
    chars: Settled · Live · Next · scoreboard sha) then `liaison-tick.py --root R --mark-checkpoint`.
 7. **Hop** (operator shape 2026-09-10: one IDE tab, hop on every checkpoint, successor headless) — after each
    CHECKPOINT in **autonomous** register: kill the loop pid → `liaison-tick.py --release --holder <me>` →
-   spawn exactly one successor (§ Single-Fable cap) → end the turn. In **attended** register: CHECKPOINT, keep
-   ticking; the operator hops with `resume R` in the same single tab when they choose.
+   spawn exactly one successor (§ Single-Fable cap) → end the turn. In **attended** register (operator
+   2026-09-11 18:05 PT, spend 72→81%): CHECKPOINT, then hop the tab yourself as the turn's last action —
+   `scripts/liaison-ide-hop.py --root R --row "<NOW>"` keystrokes `resume R` + `ARM:` lines (live poller
+   labels) into a fresh Cursor chat on the GUI host (`--no-raise`: Remote-SSH window, operator owns focus);
+   the successor tab re-arms those tails, harvests every wake, folds, plans, dispatches, checkpoints, hops.
+   Cadence: **Plan → Dispatch → Hop → Arm → Harvest all triggers → repeat**; one tab is live at a time.
 8. **Stop classes** — `stop_class=CONTEXT_BUDGET` ⇒ CHECKPOINT → hop (autonomous) or page + PARK (attended).
    Other designed stops: § Stops.
 
@@ -96,7 +100,7 @@ dispatches (`contract=implement`, omit `model=`) run **alongside** — they are 
 | Judgment fork | **this seat** binds inline (Fable tab) | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
 | Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5)`** — announce `CDP: <trigger> — <why>`; opus hops (`agent_bus hop`) to stay lean | one round; disagreement ⇒ `CONSULT_PENDING` stop |
 | Long-context reasoning inside a work tab | Cursor **Fable 5.1 300k/1M Max** as the tab model (operator authorization 2026-09-10) | `Task(model=claude-fable-5-1-thinking-max)` only from a non-Fable tab — redundant inside one |
-| Headless successor (this tab must end) | CHECKPOINT + fresh tab `resume R`; autonomous: § Headless successor (resume-fence pull) — the successor pulls the tip via `dispatch(tool="continuity")`; `cursor_request` is not a successor path (enqueues cursor-auto) | — |
+| Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>"` (keystroke hop, fresh tab, ~40k-token orient vs 12–31M per headless hop); autonomous: § Headless successor (resume-fence pull) — the successor pulls the tip via `dispatch(tool="continuity")`; `cursor_request` is not a successor path (enqueues cursor-auto) | — |
 
 **Reasoning recon** (operator-endorsed 2026-09-10 22:39 PT, observed on 10479#18): before a judgment bind, the
 liaison sends the *wide read* to `cdp/opus-5` (`CDP: <trigger> — <why>`, tape cell / CP residue + the decision as

@@ -18,7 +18,8 @@ import sys
 import time
 from pathlib import Path
 
-from evdev import UInput, ecodes as e
+from evdev import UInput
+from evdev import ecodes as e
 
 _REPO = Path(__file__).resolve().parents[1]
 _DEFAULT_REPO = "/mnt/torus/projects/universal-llm-gateway"
@@ -146,17 +147,27 @@ def launch_new_chat_with_message(
     repo: str,
     palette_query: str = "New Chat",
     dry_run: bool = False,
+    raise_window: bool = True,
 ) -> dict[str, object]:
+    """Open a new chat in the focused Cursor window and send ``message``.
+
+    ``raise_window=False`` skips ``cursor -r <repo>``: when the IDE window is a
+    Remote-SSH window, that command opens the NFS path as a *local* workspace
+    instead of raising the remote one, so the caller (attended operator) owns
+    focus and the keystrokes land in whatever Cursor window is in front.
+    """
     _require_display()
     if dry_run:
         return {
             "dry_run": True,
             "repo": repo,
             "palette_query": palette_query,
+            "raise_window": raise_window,
             "message_preview": message[:120],
         }
-    _raise_cursor(repo)
-    time.sleep(0.9)
+    if raise_window:
+        _raise_cursor(repo)
+        time.sleep(0.9)
     ui = _ui()
     try:
         _palette_run(ui, palette_query)
@@ -234,6 +245,11 @@ def main() -> int:
         help="Command palette filter for new chat (default: New Chat)",
     )
     lp.add_argument("--dry-run", action="store_true")
+    lp.add_argument(
+        "--no-raise",
+        action="store_true",
+        help="Do not run `cursor -r <repo>` first (Remote-SSH window: paste into the focused one)",
+    )
     gq = sub.add_parser("glass-cmd", help="Raise Cursor, ctrl-/ (or palette), run query")
     gq.add_argument("query", help="Filter text after opening quick command")
     gq.add_argument("--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO))
@@ -276,6 +292,7 @@ def main() -> int:
             repo=args.repo,
             palette_query=args.palette_query,
             dry_run=args.dry_run,
+            raise_window=not args.no_raise,
         )
         import json
 
