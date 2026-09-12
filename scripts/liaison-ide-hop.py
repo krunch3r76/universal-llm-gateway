@@ -63,6 +63,11 @@ def main() -> int:
     p.add_argument("--remote-repo", default=DEFAULT_REMOTE_REPO)
     p.add_argument("--palette-query", default="New Chat")
     p.add_argument(
+        "--no-raise",
+        action="store_true",
+        help="type into the window the operator has focused; skip cursor --folder-uri",
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="write the message, print the remote command, no keys",
@@ -96,6 +101,7 @@ def main() -> int:
         remote_repo=args.remote_repo,
         palette_query=args.palette_query,
         dry_run=args.dry_run,
+        no_raise=args.no_raise,
     )
     out["arm_labels"] = labels
     out["message"] = message

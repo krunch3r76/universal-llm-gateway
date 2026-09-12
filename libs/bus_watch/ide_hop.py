@@ -196,15 +196,21 @@ def discover_folder_uri(gui_host: str, *, remote_repo: str) -> str | None:
 
 
 def remote_launch_command(
-    remote_msg_path: str, *, remote_repo: str, palette_query: str, raise_uri: str
+    remote_msg_path: str,
+    *,
+    remote_repo: str,
+    palette_query: str,
+    raise_uri: str | None,
 ) -> str:
+    """Build the GUI-host command; ``raise_uri=None`` types into the focused window (``--no-raise``)."""
+    focus = f"--raise-uri {shlex.quote(raise_uri)}" if raise_uri else "--no-raise"
     return (
         "export WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000; "
         f"python3 {shlex.quote(f'{remote_repo}/{KEYSTROKE_SCRIPT}')} launch "
         f"--message-file {shlex.quote(remote_msg_path)} "
         f"--repo {shlex.quote(remote_repo)} "
         f"--palette-query {shlex.quote(palette_query)} "
-        f"--raise-uri {shlex.quote(raise_uri)}"
+        f"{focus}"
     )
 
 
@@ -216,6 +222,7 @@ def fire_ide_hop(
     remote_repo: str = DEFAULT_REMOTE_REPO,
     palette_query: str = "New Chat",
     dry_run: bool = False,
+    no_raise: bool = False,
 ) -> dict[str, Any]:
     """Write the hop message where the GUI host sees it (NFS) and keystroke it into a new chat.
 
@@ -223,6 +230,9 @@ def fire_ide_hop(
     Cursor window on ``remote_repo`` to raise (no fallback focus): firing at a
     guessed display or a guessed window is the failure this module exists to
     prevent — hops 1–3 on 2026-09-11 landed on an unattended host and in Firefox.
+    ``no_raise`` is the operator-focused variant: he has the Cursor window focused
+    and says so; ``cursor --folder-uri`` is skipped (2026-09-12 04:24Z it handed the
+    remote URI to Firefox instead of focusing the window).
     """
     if not gui_host:
         return {
@@ -231,8 +241,10 @@ def fire_ide_hop(
             "root": root_id,
             "fix": f"scripts/liaison-tick.py --root {root_id} --set gui_host=<ssh host>",
         }
-    raise_uri = discover_folder_uri(gui_host, remote_repo=remote_repo)
-    if not raise_uri:
+    raise_uri = (
+        None if no_raise else discover_folder_uri(gui_host, remote_repo=remote_repo)
+    )
+    if not raise_uri and not no_raise:
         return {
             "ok": False,
             "phase": "no_cursor_window_for_repo",
