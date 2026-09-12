@@ -17,7 +17,7 @@ this skill is the **IDE house seat** on a continuity root.
 
 | Register | Forks | Pages the human | Merges to master |
 |---|---|---|---|
-| **attended** | recommend-and-proceed on routine; ask on material forks | on designed stops | after operator ack |
+| **attended** | proceed on every fork with the best-known default (plan / packet target ≻ ladder default); the operator steers post-hoc — never park on a spend or model re-confirm the plan already named (operator 2026-09-11 20:00 PT: "the orchestrator runs without gating on me — I steer as needed") | on designed stops | after operator ack |
 | **autonomous** | bind every fork itself (steelman → bind → act); operator absent | only on `OPERATOR_GATE` / `SPEND_CAP` / `REPEATED_FAILURE` / `CONTEXT_BUDGET` | Lane-B land allowed when the todo's `auto_land: true`; else `HOLD_MERGE` |
 
 Flip: `scripts/liaison-tick.py --root R --register autonomous|attended` (state-file field). The operator's
@@ -125,7 +125,9 @@ The successor model is **policy, never a constant**. `scripts/liaison-tick.py --
 | `2-opus-hops` | `cursor/claude-opus-5` (no cost intent); CDP checks stay `cdp/opus-5` | ≤ 6 ticks | next iteration; Fable only in the attended window |
 | `3-wake-on-attention` | `cursor/claude-opus-5`, spawned **only** when a digest has actionable `attention` (unread > 0) or `checkpoint_due` | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker.lock`, **not** the seat mutex | **disarmed by default** (`policy.ready=false`); arm with explicit `--set ready=true`. First live night = operator gate (A7) |
 
-Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). `SPEND_CAP`
+Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). **A gear
+preset resets the other knobs** (`max_hops_per_night`, `ready`, `poll_seconds`, …) — set `gear=` first, then
+re-apply overrides in a second `--set`, and quote the printed policy (observed 2026-09-12 03:04Z). `SPEND_CAP`
 (`policy.max_dispatches_per_night`, default 12) is a designed stop, not a gear change — page, don't downshift
 silently. Never let a successor pick a model itself; a refused model is an INFO + stop, never a fallback.
 
