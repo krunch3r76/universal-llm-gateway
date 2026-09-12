@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from agent_bus_store.tape_pour import _filter_messages_to_cells, _window_cells
+from agent_bus_store.tape_pour import (
+    _filter_messages_to_cells,
+    _window_cells,
+    _window_segments,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -54,6 +58,33 @@ def test_window_cells_prior_cells_zero() -> None:
 def test_window_cells_empty_when_transcript_missing() -> None:
     cells = [_cell(111, _OTHER, 0, 100, 507)]
     assert _window_cells(cells, transcript_id=_TID, prior_cells=1) == []
+
+
+def _segment(transcript_id: str, turn_count: int = 10) -> dict:
+    return {"transcript_id": transcript_id, "turn_count": turn_count}
+
+
+def test_window_segments_one_cell_one_segment() -> None:
+    segments = [_segment(_OTHER, 8), _segment(_TID, 48)]
+    cells = [_cell(112, _TID, 0, 48, None)]
+    filtered = _window_segments(segments, cells)
+    assert len(filtered) == 1
+    assert filtered[0]["transcript_id"] == _TID
+
+
+def test_window_segments_prior_cells_keeps_both_transcripts() -> None:
+    segments = [_segment(_OTHER, 8), _segment(_TID, 48)]
+    cells = [
+        _cell(111, _OTHER, 0, 100, 507),
+        _cell(112, _TID, 0, 48, None),
+    ]
+    filtered = _window_segments(segments, cells)
+    assert {s["transcript_id"] for s in filtered} == {_OTHER, _TID}
+
+
+def test_window_segments_empty_cells() -> None:
+    segments = [_segment(_OTHER, 8), _segment(_TID, 48)]
+    assert _window_segments(segments, []) == []
 
 
 def test_filter_messages_to_cells_respects_turn_bounds() -> None:

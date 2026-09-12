@@ -187,6 +187,19 @@ def _window_cells(
     ]
 
 
+def _window_segments(
+    segments: list[dict[str, Any]],
+    cells: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    # Window read must not list lane segments absent from post-filter cells.
+    cell_tids = {str(c.get("transcript_id") or "") for c in cells}
+    return [
+        s
+        for s in segments
+        if str(s.get("transcript_id") or "") in cell_tids
+    ]
+
+
 def _last_session_cells(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
     last_cp_ordinal: int | None = None
     for cell in reversed(cells):

@@ -19,6 +19,7 @@ from .tape_pour import (
     _cells_for_lane,
     _filter_messages_to_cells,
     _last_session_cells,
+    _window_segments,
     build_open_line,
     pour_lane_messages,
 )
@@ -272,6 +273,8 @@ def render_tape(
         tools=tools,
         include_extras=include_extras,
     )
+    if scope == "window" and transcript_id:
+        segments = _window_segments(segments, cells)
     from cortex_store.events_tape import (
         agent_bus_tape_rendered,
         agent_bus_tape_segment_unavailable,
