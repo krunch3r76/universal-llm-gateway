@@ -5,25 +5,28 @@ Meter (pinned): chars/4 on decoded UTF-8 (``len(text) // 4``). Byte-based
 counts of these symbol-dense files run ~2% higher (e.g. dispatch-kernel
 1343 vs 1315). Do not publish a second meter.
 
-Two planes, two verdicts (assertion 31758 reopen / binds A+B):
+Three planes, three verdicts:
 
-* **Resident** (plugin + hub + parent): G0 8K raw target / 10K hard ceiling.
+* **Resident** (plugin + hub + parent): G0 8K raw target / 10K install hard;
+  plan gate **9000** via ``--check 9000``.
+* **Seat-effective** (cursor-sdk dispatch HOME after overlay prune+graft):
+  same **9000** hard when ``--check 9000`` is set. Imports prune lists from
+  ``cursor_seat_overlay`` — never copy path literals.
 * **Seats** (``cursor-plugins/ulg-ecosystem-seats/cursor-sdk/rules``): own
-  budget (3K target / 4K hard). Not a member of the 8K/10K sum — its
-  resident prime is ~81K/step (a:31759); an 8K number is meaningless there.
+  budget (3K target / 4K hard). Not a member of the resident sum.
 
-``--check`` (no value) runs both planes plus the per-file 1100 ceiling on
-the resident plane. ``dispatch-kernel_ulg.mdc`` is exemption-recorded
-(six-source merge cluster; trim follow-up is a:31760), so the breach is
-WARN, not silent and not fail-closed. ``--quiet`` never hides WARN/FAIL.
+``--check`` (no value) runs resident + seat-effective + seats + per-file 1100
+ceiling on the resident plane. ``_PER_FILE_EXEMPTIONS`` must stay empty
+(phase-2 bind). ``--quiet`` never hides WARN/FAIL.
 
 Cursor's injection key is only the ``alwaysApply`` frontmatter flag; neither
-``apply_tier`` nor ``trigger_match_terms`` demotes a file.
+``apply_tier`` nor ``trigger_match_terms`` demotes a file unless
+``alwaysApply: false``.
 
 Run:
     ~/.venvs/universal/bin/python scripts/cursor/alwaysapply_rules_census.py
-    ~/.venvs/universal/bin/python scripts/cursor/alwaysapply_rules_census.py --check
-    ~/.venvs/universal/bin/python scripts/cursor/alwaysapply_rules_census.py --quiet --check
+    ~/.venvs/universal/bin/python scripts/cursor/alwaysapply_rules_census.py --check 9000
+    ~/.venvs/universal/bin/python scripts/cursor/alwaysapply_rules_census.py --quiet --check 9000
     ~/.venvs/universal/bin/python scripts/cursor/alwaysapply_rules_census.py --root /path/to/rules --tree adhoc
 """
 
@@ -37,6 +40,14 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[2]
 
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
+from services.git_integration_worker.cursor_seat_overlay import (  # noqa: E402
+    LEAD_ONLY_PLUGIN_PATHS,
+    PRUNED_PLUGIN_PATHS,
+)
+
 _DEFAULT_ROOTS: tuple[tuple[str, Path], ...] = (
     ("plugin", _REPO / "cursor-plugins" / "ulg-ecosystem" / "rules"),
     ("hub", _REPO / ".cursor" / "rules"),
@@ -44,20 +55,21 @@ _DEFAULT_ROOTS: tuple[tuple[str, Path], ...] = (
 )
 _SEATS_ROOT = _REPO / "cursor-plugins" / "ulg-ecosystem-seats" / "cursor-sdk" / "rules"
 
-# Resident = G0 (a:31711). Seats = this-reopen bind: ~470 tok headroom to
-# target, parallel to resident 7550→8000, without borrowing the 8K/10K sum.
 _RESIDENT_TARGET = 8000
 _RESIDENT_HARD = 10000
 _SEATS_TARGET = 3000
 _SEATS_HARD = 4000
-# Merged-kernel ceiling (a:31748). Applies to the resident plane only —
-# seat variants are larger than IDE originals by G6 design (a:31759).
+_SEAT_EFFECTIVE_TARGET = 8000
+_SEAT_EFFECTIVE_HARD = 9000
 _PER_FILE_CEILING = 1100
-_PER_FILE_EXEMPTIONS: dict[str, str] = {
-    "dispatch-kernel_ulg.mdc": (
-        "six-source merge cluster; recorded breach; trim follow-up a:31760"
-    ),
-}
+_PER_FILE_EXEMPTIONS: dict[str, str] = {}
+
+_PLUGIN_RULES_ROOT = Path("rules")
+_REMOVED_PLUGIN_RULES: frozenset[Path] = frozenset(
+    p
+    for p in (*PRUNED_PLUGIN_PATHS, *LEAD_ONLY_PLUGIN_PATHS)
+    if p.parts[:1] == (_PLUGIN_RULES_ROOT.name,)
+)
 
 _FRONTMATTER = re.compile(r"^---\n(.*?)\n---\n?", re.DOTALL)
 _ALWAYS_APPLY = re.compile(
@@ -137,6 +149,21 @@ def _always_tokens(files: list[RuleFile]) -> int:
     return sum(f.tokens for f in files if f.always_apply)
 
 
+def seat_effective_tokens(resident: list[RuleFile], seats: list[RuleFile]) -> int:
+    """Dispatch HOME: hub + parent + plugin minus pruned/lead-only rules + seat graft."""
+    total = 0
+    for f in resident:
+        if not f.always_apply:
+            continue
+        if f.tree == "plugin":
+            relpath = _PLUGIN_RULES_ROOT / f.name
+            if relpath in _REMOVED_PLUGIN_RULES:
+                continue
+        total += f.tokens
+    total += _always_tokens(seats)
+    return total
+
+
 def render_report(files: list[RuleFile], seats: list[RuleFile] | None = None) -> str:
     always = _always(files)
     lines = [
@@ -171,10 +198,16 @@ def render_report(files: list[RuleFile], seats: list[RuleFile] | None = None) ->
         )
     if seats is not None:
         s_always = _always(seats)
+        eff = seat_effective_tokens(files, seats)
         lines.extend(
             [
                 "",
-                "## Seats plane (cursor-sdk overlay)",
+                "## Seat-effective plane (cursor-sdk dispatch HOME)",
+                "",
+                f"- pruned plugin rules (from overlay): n={len(_REMOVED_PLUGIN_RULES)}",
+                f"- seat-effective tokens (chars/4): **{eff}**",
+                "",
+                "## Seats plane (cursor-sdk overlay graft)",
                 "",
                 f"- files total: {len(seats)}",
                 f"- alwaysApply:true: {len(s_always)}",
@@ -217,7 +250,8 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         type=int,
         default=None,
         metavar="HARD",
-        help="Admission gate. Default: two-plane + per-file. HARD overrides resident hard.",
+        help="Admission gate. Default: resident+seat-effective+seats+per-file. "
+        "HARD overrides resident/seat-effective hard (e.g. 9000).",
     )
     parser.add_argument(
         "--target",
@@ -272,7 +306,7 @@ def _emit_plane(name: str, tokens: int, target: int, hard: int) -> str:
 
 
 def _emit_per_file(files: list[RuleFile], ceiling: int) -> str:
-    """Resident-plane per-file check. Exempt files WARN (visible, not silent)."""
+    """Resident-plane per-file check. No exemptions — breach is FAIL."""
     worst = "PASS"
     over = 0
     for f in sorted((x for x in files if x.always_apply), key=lambda x: x.name):
@@ -318,13 +352,23 @@ def _run_policy(
     if not seats_root.is_dir():
         print(f"FAIL: seats tree missing: {seats_root}", file=sys.stderr)
         return 1
-    hard = _RESIDENT_HARD if args.check == -1 else args.check
+    if args.check == -1:
+        hard = _RESIDENT_HARD
+        seat_hard = _SEAT_EFFECTIVE_HARD
+    else:
+        hard = args.check
+        seat_hard = args.check
     target = _RESIDENT_TARGET if args.target is None else args.target
+    seat_target = (
+        _SEAT_EFFECTIVE_TARGET if args.target is None else min(args.target, hard)
+    )
     s_target = _SEATS_TARGET if args.seats_target is None else args.seats_target
     s_hard = _SEATS_HARD if args.seats_hard is None else args.seats_hard
     ceiling = _PER_FILE_CEILING if args.per_file is None else args.per_file
+    eff = seat_effective_tokens(resident, seats)
     statuses = (
         _emit_plane("resident", _always_tokens(resident), target, hard),
+        _emit_plane("seat-effective", eff, seat_target, seat_hard),
         _emit_plane("seats", _always_tokens(seats), s_target, s_hard),
         _emit_per_file(resident, ceiling),
     )

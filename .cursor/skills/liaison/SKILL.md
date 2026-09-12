@@ -10,6 +10,9 @@ and never implements what a live dispatch owns (`in-flight-work-guard`). Consoli
 operator called *coordinator*; Cortex: `agent_skill:conductor` #31004 (liaison register), #30549 (conductor =
 session to a designed stop), `decision:conductor-attended-vs-unattended-routing`.
 
+**Not the same as** `runbook:liaison-seat-on-a-lane` — that runbook is voice/web liaison on a **foreign lane**;
+this skill is the **IDE house seat** on a continuity root.
+
 ## Registers
 
 | Register | Forks | Pages the human | Merges to master |
@@ -36,12 +39,10 @@ fetch the bus to "double check".
    running process needs `manage(sync_restart)` — the liaison fires it (`restart-drain-discipline`).
 4. **Decide** — pick the scoreboard `NOW` row; if empty, pull the next objective (see § Objectives).
    `reasoning-posture`: pin the question, bind, one determinate step.
-5. **Dispatch** — by the ladder below; every dispatch gets a lane on the root (`dispatch_thread_id=R`) and a
-   watcher: `watch-supervise.sh start --label <thread>-<slug> -- scripts/watch-bus-consult-and-page.py --thread T
-   --after-turn N --from-agent cursor-sdk --execution-id <execution_id> --no-page` (the tick digest surfaces its
-   completion; no tail needed). `--execution-id` comes from the admit payload and is **required** — the poller
-   refuses to arm without it or an explicit `--no-producer` (a:33160: an unpinned watch cannot see the producer die).
-   CDP producers: `cdp.generate.proof` carries `archive_uri`; on `delivery_failed` harvest the archive, not the bus.
+5. **Dispatch** — by the ladder below; every dispatch gets a lane on the root (`dispatch_thread_id=R`) and an
+   **in-session watcher** per **`runbook:bus-consult-watcher`** (atomic legs 1–3 — arm, wake, relay; `--execution-id`
+   from admit payload required). CDP producers: `cdp.generate.proof` carries `archive_uri`; on `delivery_failed`
+   harvest the archive, not the bus.
 6. **Checkpoint** — `budget.checkpoint_due` ⇒ segment CHECKPOINT on R (`supersedes_turn=<tip>`, Residue ≤ 800
    chars: Settled · Live · Next · scoreboard sha) then `liaison-tick.py --root R --mark-checkpoint`.
 7. **Hop** (operator shape 2026-09-10: one IDE tab, hop on every checkpoint, successor headless) — after each

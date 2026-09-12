@@ -1,6 +1,6 @@
 ---
-description: Checkout kernel — sole shared master, lane= on cursor-sdk generate, commit/deploy/live vocabulary, land is merge never copy, never delete or revert unattributed paths, personal helpers stay in ignored nested-git trees. Playbook is the git-posture skill.
-alwaysApply: true
+description: Checkout kernel — load on git checkout/land/lane= decisions, shared master hygiene, or deleting/reverting unattributed paths. Lane= on cursor-sdk generate; commit/deploy/live vocabulary; land is merge never copy; personal helpers in ignored nested-git trees. Playbook is the git-posture skill.
+alwaysApply: false
 rule_category: engineering
 apply_tier: required_gate
 ---

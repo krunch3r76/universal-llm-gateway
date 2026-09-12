@@ -14,12 +14,10 @@ stay in-seat only for trivial/local touches or latency-sensitive tight-loop debu
 
 `loci_unknown ∨ ≥3_files ∨ 2nd_speculative_grep ⇒ Task(subagent_type="explore")` (parallel when ≥2
 independent questions). Explore ≡ Cursor subagent; in-seat Grep/Read is not Explore. Omit `model=`.
-Sparse work item (`density_triage` unset or `recon_pending`) ⇒ recon front-half — the conductor's S2 — before any
-**implement** dispatch (`require_implement_ready` guards the implement leg, not the conductor spawn; spawning onto
-`recon_pending` is the intended path). Exempt: `mechanical`/`trivial`, or a dense spec with `files_expected` +
-`acceptance_criteria`. **Todo stage attrs (`density_triage`, `implement_ready`) are a write-once spawn seed; after
-spawn the scoreboard fold is current state — never route off the attr while G1–G3 are open.** A bugfix on pattern P
-sweeps the service for P before it is complete (`[quality:bug-class-sweep]`).
+Sparse work item (`density_triage` unset or `recon_pending`) ⇒ recon front-half before **implement**
+(`require_implement_ready` guards implement, not conductor spawn). Exempt: `mechanical`/`trivial`, or dense
+spec with `files_expected` + `acceptance_criteria`. Todo stage attrs are spawn seeds only — scoreboard fold
+is current state while G1–G3 open. Bugfix on pattern P ⇒ service sweep (`[quality:bug-class-sweep]`).
 
 ## Ladder + binder order
 
@@ -27,65 +25,38 @@ sweeps the service for P before it is complete (`[quality:bug-class-sweep]`).
 |---|---|---|
 | Mechanical implement | `team_dispatch(op=generate, seat=cursor-sdk)` → Composer (omit `model=`) | autonomous |
 | Investigate residual · conductor drive | Composer (omit `model=`, `contract=conductor\|investigate`) — returns `OPEN FORK:` lines, never binds | autonomous |
-| Greater reasoning / independent check | **`cdp/fable`** width · **`cdp/opus-5`** bind/review — `team_dispatch(model=…)` announce one line `CDP: <trigger> — <why>`, then proceed | autonomous on trigger |
-| Premium live checkout | `cursor/claude-opus-5` — inform-then-proceed (wait only if premium spend is paused) | announce |
+| Greater reasoning / independent check | **`cdp/fable`** width · **`cdp/opus-5`** bind/review — announce `CDP: <trigger> — <why>`, then proceed | autonomous on trigger |
+| Premium live checkout | `cursor/claude-opus-5` — inform-then-proceed (wait only if premium spend paused) | announce |
 
-CDP trigger (any): architecture-suitability live · ≥2 co-primary hypotheses unranked · invariant-touching /
-cross-agent bind · recurrence ≥2 · external check needed. Anti-trigger: mechanical · single-subsystem · loci known.
-
-`seat_unsure ⇒ consult(independent_binder)`; `binder_unsure ⇒ human` (rare — true operator-only gates).
-Binder order: `cdp/opus-5` (non-Anthropic producer) → **`cdp/fable`** (producer is Opus, or Opus unsure) →
-`cursor/gpt-5.6-terra|sol` **only on explicit Other-Models pin**.
-`cursor/claude-opus-5` is step 1, not ladder-top. CDP operator seat stuck ⇒ `cursor-auto` → nested
-`cursor-sdk` (Composer `contract=none` limb / `cursor/claude-opus-5` explicit premium), never a Cowork Ask to the human.
+Binder order: `cdp/opus-5` → **`cdp/fable`** → `cursor/gpt-5.6-terra|sol` **explicit pin only**.
+`cursor/claude-opus-5` is step 1, not ladder-top. `seat_unsure ⇒ consult(independent_binder)`;
+`binder_unsure ⇒ human`. CDP operator stuck ⇒ `cursor-auto` → nested `cursor-sdk`, never Cowork Ask.
 
 ## Hard walls
 
-- `anthropic/*` API **PROHIBITED**; `cursor/claude-fable-5{,-1}` blocked (cost, incl. Fable 5.1 launch 2026-09-01 — same headline $/M) — Fable is `cdp/fable` only.
-- Non-primary cursor model bind (`Task model=` or `team_dispatch model=cursor/*` not named as workflow-primary
-  by a standing rule/skill) ⇒ **operator-gated**: propose slug + why, wait. Named exceptions fire with an announce.
-- `judgment_closed ∧ mechanical_remainder ⇒ split`: reasoning model **binds** (`none`), nested
-  `seat=cursor-sdk` **implements** (`implement` | `pure-mechanical`, `nest_under` the live lease holder). The
-  conductor obeys this inside its score; on `cursor-auto` the redirect is substrate (`decision:autonomous-dispatch-bounds`).
-- Before **any** `team_dispatch` (incl. `role=cursor-implement`): consult-routing gate is binding; second advisor
-  on a fork ⇒ name the peer in each packet; `busy_status` shows `agent_bus`+`stargate`+`git_integration_worker` up.
-- Same fix failed twice ⇒ stop; consult with the failure context — never a third variant.
-- `operator_names(dispatch_param) ∧ ¬admits(param) ⇒ report(failure) ∧ wait` — model, effort/tier, or any other
-  explicitly named value that fails to admit gets reported, not silently substituted for a different value while
-  proceeding. That substitution **is** fallback logic (standing user rule: prefer no fallback logic; prompt first
-  when it matters) — it is not a judgment call this seat gets to make unasked, even for a "just an effort knob"
-  substitution (incident: `agent-bus:9638`, Fable Max → High swap, 2026-09-01).
+- `anthropic/*` **PROHIBITED**; `cursor/claude-fable-5{,-1}` blocked — Fable is `cdp/fable` only.
+- Non-primary `cursor/*` bind ⇒ **operator-gated** unless a standing rule/skill names the default.
+- `judgment_closed ∧ mechanical_remainder ⇒ split`: bind (`none`) → nested `cursor-sdk` implement (`nest_under` lease holder).
+- Before **any** `team_dispatch`: consult-routing gate; `busy_status` shows `agent_bus`+`stargate`+`git_integration_worker` up.
+- Same fix failed twice ⇒ stop; consult — never a third variant.
+- `operator_names(param) ∧ ¬admits(param) ⇒ report(failure) ∧ wait`.
 
 ## Runbook binding
 
 **Invariant:** `cite(runbook:<id>) ⇒ load(cited_section*) ∧ execute(seat-bound_steps)` before turn end.
-Resident on IDE and cursor-sdk — unified hook when skills/rules only name the SoT.
-
-When a rule, skill, packet, or script names `runbook:<id>` (or `cortex://notes/runbooks/<slug>.md`):
-1. **Resolve + read** — fetch SoT (`fs` / `cortex`); partial cite (`§N`, "arm recipe") ⇒ that section only, in this turn.
-2. **Execute** — every step binding this seat; skip human-only legs on headless seats.
-3. **¬** cite-from-memory, partial arm, or claim armed/done before the read + bound steps.
-
-Skills/rules say *when*; runbook body owns *how*. Citing without load/execute = liaison failure (arm-without-relay class).
+Partial cite ⇒ that section only. Skills/rules say *when*; runbook owns *how*. Cite-from-memory = arm-without-relay.
 
 ## Front door
 
 ```
 ∀ operator_request:
   explicit override (/path-sim · /layer · root id · belt) ≺ tree
-  mutates_durable_state (code · graph · docs · services) ⇒ conductor session, bound to exactly one todo: work item
-  else (answer · review · judgment, attended)          ⇒ in-seat, threadless — reasoning-posture + hypothesize-simulate aperture
+  mutates_durable_state ⇒ conductor session, bound to exactly one todo: work item
+  else (answer · review · judgment, attended) ⇒ in-seat, threadless — reasoning-posture aperture
 ```
 
-Both B legs (B-arc | B-mech) spawn a T0 conductor; the materializer refuses a non-todo `source_ref` and a
-conductor-less `source_ref` ship is rejected. The conductor mints its own thread + sparse score; its CHECKPOINT is a
-reconstitution index, never completion authority. Charter-tick enrollment is not a terminal for new work.
-`seat=cursor-auto ⇒ silent SOP, ¬ prompt operator for routing/ack`; IDE lead MAY ask ack on material forks,
-default recommend-and-proceed. True operator-only ⇒ `status:needs-attended` + one recommended answer.
-
-**Task subagent parity:** mutating Task prompts ⇒ parent injects alwaysApply kernel (`task-subagent-parity_ulg` · `subagent-strategy` § Task subagent parity) — subagents start cold.
-
-Procedure + tables: skills `conductor` · `consult-routing` · `subagent-strategy` · `cheap-recon-before-escalation` ·
-`cdp-operator-proxy` · `advisor-timing` · `path-sim` · `cursor-model-economics`. Doctrine:
-`decision:operator-request-front-door` · `decision:gate-independence-not-human-ness` ·
-`decision:cursor-non-primary-model-operator-gate` · `decision:operator-proxy-seat-posture` · `anthropic-dispatch-authorization_ws.mdc`.
+B legs spawn T0 conductor; materializer refuses non-todo `source_ref`. CHECKPOINT = reconstitution index only.
+`seat=cursor-auto ⇒ silent SOP`; true operator-only ⇒ `status:needs-attended` + one recommended answer.
+Mutating Task prompts ⇒ inject kernel (`task-subagent-parity_ulg`). Ladder detail: Use the `consult-routing` skill.
+Doctrine: `decision:operator-request-front-door` · `decision:gate-independence-not-human-ness` ·
+`decision:cursor-non-primary-model-operator-gate` · `anthropic-dispatch-authorization_ws.mdc`.

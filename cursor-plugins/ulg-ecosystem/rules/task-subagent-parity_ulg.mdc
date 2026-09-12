@@ -1,6 +1,6 @@
 ---
-description: Task subagent parity — parent MUST inject alwaysApply kernel into Task prompts that mutate external state (orders, reviews, bus, cortex). Load before write-capable Task launches.
-alwaysApply: true
+description: Task subagent parity — load before launching Task(subagent_type=generalPurpose|shell|…) when the deliverable mutates orders, vendor APIs, reviews, agent_bus, cortex, or operator-facing outbound text. Parent MUST inject alwaysApply kernel into mutating Task prompts.
+alwaysApply: false
 rule_category: workflow
 apply_tier: required_gate
 ---

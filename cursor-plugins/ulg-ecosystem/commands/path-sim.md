@@ -22,7 +22,7 @@ Path-sim — frontier question/solution-space search with **off-seat Q→A→R�
 | Post-ship critique (standalone / non-path-sim work item) | `/work-item-review` — also **auto-fired** after path-sim Stage-B (skill § R positions) |
 | Attended web densify | **`web-consult`** — not this lane |
 | In-seat L1/L2 tables only (no fix arc) | Operator must say so explicitly — not the default for frictions |
-| **Unattended full arc on the charter tick** | Same `/path-sim` entry + **`autonomous`** token (below) → lead sets todo attr **`attendance=autonomous`**, enrolls root with tag `charter-runner` **and** `enroll_charter_runner=true` (dual-key — tag alone is 422) → skill § Autonomous charter procession. No env-var arming: `CHARTER_ADMISSION_MODE` is retired, and the kernel resolves attendance per root from the todo attr (or an `attendance:autonomous` root tag). Attended is the default (omit the token). **Consult stops** (`CONSULT_PENDING`, depth-1) ride this attendance axis — skill cites design-doc stop vocabulary; tick enforces. ¬ prose-paste a charter brief; the token is the short form. |
+| **Unattended full arc on the charter tick** | Same `/path-sim` entry + **`autonomous`** token (below) → lead sets todo attr **`attendance=autonomous`**, enrolls root with tag `charter-runner` **and** `enroll_charter_runner=true` (dual-key — tag alone is 422) → skill § Autonomous charter procession. Attendance resolves per root from the todo attr (or an `attendance:autonomous` root tag). Attended is the default (omit the token). **Consult stops** (`CONSULT_PENDING`, depth-1) ride this attendance axis — skill cites design-doc stop vocabulary; tick enforces. ¬ prose-paste a charter brief; the token is the short form. |
 | **Hang todo on tick / enroll `charter-runner` root** | Skill § **Tick enrollment — initial CHECKPOINT** — copy-paste template (byte-identical RESUME); mint scoreboard first. ¬ defer to agent-bus-discipline at enroll time. |
 
 ## Invocation
@@ -39,7 +39,7 @@ Path-sim — frontier question/solution-space search with **off-seat Q→A→R�
 ```
 
 Aliases for the autonomous token (same effect): `attendance=autonomous`, `--attendance=autonomous`.
-Lead on autonomous: set durable todo attr `attendance=autonomous` (transient flag alone dies at the first window boundary) + enroll the root with `tags` including `charter-runner` **and** `enroll_charter_runner=true` (reserved enrollment dual-key — free-form tag alone returns 422 `reserved_enrollment_tag`; workers/reviews must use `charter-window` / `root:` / `window:` instead) — then stop; tick drives windows. The todo attr **is** the arming step (`resolve_attendance` reads it per root each tick); there is no runner-wide `CHARTER_ADMISSION_MODE` to confirm and no restart needed to change attendance. ¬ invent a long operator brief.
+Lead on autonomous: set durable todo attr `attendance=autonomous` (transient flag alone dies at the first window boundary) + enroll the root with `tags` including `charter-runner` **and** `enroll_charter_runner=true` (reserved enrollment dual-key — free-form tag alone returns 422 `reserved_enrollment_tag`; workers/reviews must use `charter-window` / `root:` / `window:` instead) — then stop; tick drives windows. The todo attr **is** the arming step (`resolve_attendance` reads it per root each tick). ¬ invent a long operator brief.
 
 ## Lead obligations (binding)
 

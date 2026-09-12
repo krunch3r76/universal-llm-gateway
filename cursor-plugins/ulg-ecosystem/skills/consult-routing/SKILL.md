@@ -224,6 +224,17 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 
 **Anti-pattern:** re-spend frontier reasoning (Sol / Opus / Fable) to *implement* amendments a prior consult already densified — that is non-primary for the mechanical class.
 
+## Dispatch kernel — relocated prose
+
+Moved from `dispatch-kernel_ulg.mdc` (phase-2 B5) — read with the rule's ladder + hard-walls tables.
+
+**CDP trigger (any):** architecture-suitability live · ≥2 co-primary hypotheses unranked · invariant-touching /
+cross-agent bind · recurrence ≥2 · external check needed. **Anti-trigger:** mechanical · single-subsystem · loci known.
+
+**Operator-named dispatch params:** model, effort/tier, or any explicitly named value that fails to admit gets
+reported, not silently substituted while proceeding. That substitution **is** fallback logic — not a judgment
+call the seat makes unasked (incident: `agent-bus:9638`, Fable Max → High swap, 2026-09-01).
+
 ## Judgment escalation ladder — anti-patterns
 
 Ladder + binder order live on `dispatch-kernel_ulg.mdc`. This table is the operational

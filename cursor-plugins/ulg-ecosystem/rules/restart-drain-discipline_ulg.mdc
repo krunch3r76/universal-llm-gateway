@@ -46,6 +46,5 @@ forbidden-row-5 bar (`live` proven is the close condition either way; this is or
 Proof line: services · claim class (`live | live@sha | not_live | drain_pending`) · `restart_intent_id` or
 process start UTC · path probe. Satellites recycle via their repo's deploy script; proof is the same.
 
-Recovery expectations after `mcp`/`cdp_ask` recycle (IDE retry on `-32099`; CSE continuity hop for chip
-refresh; `cse_session(op=followup)` by `chat_url`): the `manage` deferral envelope + `runbook:restart-drain`.
-Doctrine: `decision:go-live-proof-loop` · `services_ws.mdc` § Scripts · `git-posture` (live vs live@sha).
+Recovery after `mcp`/`cdp_ask` recycle: `manage` deferral envelope + **`runbook:restart-drain`**. Doctrine:
+`decision:go-live-proof-loop` · `services_ws.mdc` § Scripts · `git-posture` (live vs live@sha).

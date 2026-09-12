@@ -4,10 +4,11 @@
 purpose=review)` with the session arc + touched files staged to `cortex://`.
 Optional — defer when the harvest would block the next attended move; fire in
 the background when the seat is conductor / unattended (latency ≠ skip).
-Does not restore silent Terra G4. Command default below (`web-claude` handoff)
+Does not restore silent Terra G4. Command default below (`web-anthropic` handoff)
 remains valid; prefer CDP generate when you are choosing.
 
-Session review across three dispatchers — **`web-claude` (default)**,
+Session review across three dispatchers — **`web-anthropic` (default)** (`claude-web` /
+`web-claude` are legacy aliases per `agent-identity-signoff.mdc`),
 sync `frontier-mcp` (model-token path), or async grok-build (`--grok`). Covers two
 dimensions simultaneously:
 
@@ -22,8 +23,8 @@ conversation** — what files were actually worked on and why — not from
 scope source. Use `/diff-review` when you want a git-status/diff-driven code
 review without session context.
 
-**web-claude** (default): async multi-turn via `team_dispatch(op="handoff")` →
-`claude-web`; full MCP toolset. Best for session critique (Cortex/RAG grounding,
+**web-anthropic** (default): async multi-turn via `team_dispatch(op="handoff")` →
+`web-anthropic` (alias `claude-web`); full MCP toolset. Best for session critique (Cortex/RAG grounding,
 multi-turn dialectic). Packet on disk; Stargate posts a short bus pointer.
 
 **cursor-claude**: same handoff primitive → `claude-cursor` (dedicated Cursor IDE

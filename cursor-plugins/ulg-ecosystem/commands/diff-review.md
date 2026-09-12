@@ -32,8 +32,8 @@ Override scope is also supported: if the user supplies a file/path and/or
 `since <git-ref>`, review that explicit selection even if the change has
 already been committed and no longer appears in `git status`.
 
-Default mode uses **`web-claude`**: `team_dispatch(op="handoff")` → `claude-web`.
-Claude Web uses its full MCP toolset and supports multi-turn dialectic until
+Default mode uses **`web-anthropic`**: `team_dispatch(op="handoff")` → `web-anthropic`
+(`claude-web` / `web-claude` are legacy aliases). Uses its full MCP toolset and supports multi-turn dialectic until
 convergence. Packet on disk; Stargate posts a short bus pointer.
 
 **`claude-cursor`**: same handoff primitive → dedicated Cursor IDE thread.
@@ -72,7 +72,7 @@ Other dispatch modes:
 ```
 
 `model` — optional model family, `gpt-5.x` shorthand, or full model ID.
-Default (omitted): `web-claude`.
+Default (omitted): `web-anthropic` (`claude-web` / `web-claude` alias).
 
 `path` — optional file or directory path to review. If present, it overrides
 the default `git status` file discovery and narrows the review to that path.
