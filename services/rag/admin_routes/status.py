@@ -22,9 +22,8 @@ from services.rag.admin_routes._extraction_export import (
     register_extraction_export_route,
 )
 from services.rag.admin_routes._helpers import (
-    _build_source_status_item,
+    _collect_source_status_items,
     _coverage_sources,
-    _resolve_source_status_paths,
 )
 from services.rag.models import (
     CoverageResponse,
@@ -271,15 +270,13 @@ def register_status_routes(
                 detail="Provide at least one of: sources, arxiv_ids, filenames",
             )
 
-        resolved_paths = _resolve_source_status_paths(
+        queue_depth: int = prop_idx.get_extraction_queue_count()
+        items = _collect_source_status_items(
             prop_idx,
             sources=sources,
             arxiv_ids=arxiv_ids,
             filenames=filenames,
         )
-
-        queue_depth: int = prop_idx.get_extraction_queue_count()
-        items = [_build_source_status_item(path, prop_idx) for path in resolved_paths]
         stale_corpus_hints_count: int = prop_idx.count_scopes_with_stale_corpus_hints()
         return SourceStatusResponse(
             sources=items,

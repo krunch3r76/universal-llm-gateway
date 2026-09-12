@@ -100,6 +100,11 @@ class _PropertyIndexPart09:
                     (pattern, pattern),
                 ).fetchall():
                     add(_row_str(row[0]))
+                for row in conn.execute(
+                    "SELECT source FROM indexed_sources WHERE source LIKE ?",
+                    (pattern,),
+                ).fetchall():
+                    add(_row_str(row[0]))
 
         return resolved
 

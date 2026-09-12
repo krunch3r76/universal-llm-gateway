@@ -66,18 +66,58 @@ def _build_source_status_item(source_path: str, prop_idx: PropertyIndex):
     )
 
 
-def _resolve_source_status_paths(
+def _build_registered_source_status_item(source_path: str):
+    from services.rag.models import SourceStatusItem
+
+    return SourceStatusItem(
+        source_path=source_path,
+        pipeline_stage="registered",
+        queue_state=None,
+        queue_position=None,
+        queue_attempts=0,
+        last_error=None,
+        indexed_at=None,
+        contextualized_chunks=0,
+        file_exists=False,
+        article=None,
+    )
+
+
+def _collect_source_status_items(
     prop_idx: PropertyIndex,
     *,
     sources: list[str] | None,
     arxiv_ids: list[str] | None,
     filenames: list[str] | None,
-) -> list[str]:
-    return prop_idx.resolve_source_paths(
-        source_paths=sources,
-        arxiv_ids=arxiv_ids,
-        filenames=filenames,
-    )
+) -> list:
+    items = []
+    seen_paths: set[str] = set()
+
+    def add_resolved(path: str) -> None:
+        if path not in seen_paths:
+            seen_paths.add(path)
+            items.append(_build_source_status_item(path, prop_idx))
+
+    for source_path in sources or []:
+        add_resolved(source_path)
+
+    for arxiv_id in arxiv_ids or []:
+        paths = prop_idx.resolve_source_paths(arxiv_ids=[arxiv_id])
+        if paths:
+            for path in paths:
+                add_resolved(path)
+        else:
+            items.append(_build_registered_source_status_item(arxiv_id.strip()))
+
+    for filename in filenames or []:
+        paths = prop_idx.resolve_source_paths(filenames=[filename])
+        if paths:
+            for path in paths:
+                add_resolved(path)
+        else:
+            items.append(_build_registered_source_status_item(filename))
+
+    return items
 
 
 def _get_pipeline_stage(
