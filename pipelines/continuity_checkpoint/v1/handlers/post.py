@@ -31,10 +31,11 @@ def _compose_body(
         transcript_id = seal.get("transcript_id") or ""
         turn_count = seal.get("turn_count") or 0
         session_id = seal.get("session_id") or ""
-        sha = seal.get("messages_sha256") or ""
+        sha = seal.get("messages_sha256")
+        sha_token = sha if sha else "absent"
         if surface == "claude_ai":
             chat_url = seal.get("chat_url") or ""
-            coverage = seal.get("coverage") or "tail_only"
+            coverage = seal.get("coverage") or "tail"
             lines.append(
                 f"Window: chat_url={chat_url} · transcript_id={transcript_id} · "
                 f"turns@cp={turn_count} · coverage={coverage}"
@@ -46,7 +47,7 @@ def _compose_body(
             )
             harvest_surface = "cursor"
         lines.append(
-            f"Harvest: transcript:{session_id} · messages_sha256:{sha} · "
+            f"Harvest: transcript:{session_id} · messages_sha256:{sha_token} · "
             f"codec:messages-v1 · surface:{harvest_surface}"
         )
     mission_line = (

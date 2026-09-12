@@ -76,13 +76,39 @@ def _author_to_role(author: str) -> str:
 
 def _coverage_from_harvest(harvest: dict[str, Any], turn_count: int) -> str:
     if turn_count <= 2:
-        return "tail_only"
+        return "tail"
     if harvest.get("truncated"):
-        return "tail_only"
+        return "tail"
     cursor = harvest.get("cursor")
     if cursor is not None and turn_count <= int(cursor):
-        return "tail_only"
+        return "tail"
     return "full"
+
+
+def _resolve_coverage(harvest: dict[str, Any], turn_count: int) -> str:
+    """Map harvest metadata to ``full`` or ``tail`` (truncation downgrades declared full)."""
+    declared = harvest.get("coverage")
+    if declared == "full" and harvest.get("truncated"):
+        return "tail"
+    if declared in {"full", "tail"}:
+        return str(declared)
+    return _coverage_from_harvest(harvest, turn_count)
+
+
+def _lookup_journal_seal_meta(session_id: str) -> tuple[str | None, str]:
+    from cortex_store.db import cortex_conn
+
+    with cortex_conn() as conn:
+        row = conn.execute(
+            "SELECT verbatim_sha256, verbatim_codec FROM session_journals "
+            "WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    if not row:
+        return None, "messages-v1"
+    sha = row["verbatim_sha256"]
+    codec = row["verbatim_codec"] or "messages-v1"
+    return (str(sha) if sha else None, str(codec))
 
 
 def _lookup_session_id_for_transcript(transcript_id: str) -> str | None:
@@ -138,7 +164,8 @@ async def seal_claude_ai(
         }
 
     content_provenance = harvest.get("content_provenance")
-    coverage = harvest.get("coverage") or _coverage_from_harvest(harvest, len(deduped))
+    coverage = _resolve_coverage(harvest, len(deduped))
+    truncated = bool(harvest.get("truncated")) and coverage == "tail"
     messages = _messages_with_turn_index(deduped)
 
     from cortex_store.session_close_successor_hop import (
@@ -148,10 +175,15 @@ async def seal_claude_ai(
     human_closed = lookup_journaled_by_conversation_uuid(transcript_id)
     if human_closed is not None:
         turn_count = len(messages)
+        messages_sha256, verbatim_codec = _lookup_journal_seal_meta(
+            human_closed.session_id
+        )
         return {
             "session_id": human_closed.session_id,
             "transcript_id": transcript_id,
             "turn_count": turn_count,
+            "messages_sha256": messages_sha256,
+            "verbatim_codec": verbatim_codec,
             "already_closed": True,
             "refused": None,
             "chat_url": chat_url,
@@ -169,6 +201,7 @@ async def seal_claude_ai(
             turn_count=len(messages),
             message_count=len(messages),
             coverage=coverage,
+            truncated=truncated,
         ),
     )
     close_args: dict[str, Any] = {

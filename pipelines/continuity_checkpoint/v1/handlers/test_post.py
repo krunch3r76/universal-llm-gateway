@@ -30,7 +30,7 @@ def test_compose_body_claude_ai_window_anchor() -> None:
             "session_id": "web-anthropic-test",
             "messages_sha256": "deadbeef",
             "chat_url": "https://claude.ai/cowork/cse_abc123",
-            "coverage": "tail_only",
+            "coverage": "tail",
             "refused": None,
         },
         mission="resume",
@@ -38,9 +38,29 @@ def test_compose_body_claude_ai_window_anchor() -> None:
     )
     assert (
         "Window: chat_url=https://claude.ai/cowork/cse_abc123 · "
-        "transcript_id=cse_abc123 · turns@cp=1 · coverage=tail_only"
+        "transcript_id=cse_abc123 · turns@cp=1 · coverage=tail"
     ) in body
+    assert "messages_sha256:deadbeef" in body
     assert "surface:claude_ai" in body
+
+
+def test_compose_body_claude_ai_tail_absent_hash() -> None:
+    body = _compose_body(
+        residue="WIP",
+        seal={
+            "transcript_id": "cse_abc123",
+            "turn_count": 1,
+            "session_id": "web-anthropic-test",
+            "chat_url": "https://claude.ai/cowork/cse_abc123",
+            "coverage": "tail",
+            "refused": None,
+        },
+        mission="resume",
+        surface="claude_ai",
+    )
+    assert "coverage=tail" in body
+    assert "messages_sha256:absent" in body
+    assert "messages_sha256: ·" not in body
 
 
 def test_compose_body_success_anchor() -> None:

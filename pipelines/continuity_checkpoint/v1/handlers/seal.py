@@ -94,6 +94,7 @@ class ContinuityCheckpointSealHandler(BaseHandler):
                     transcript_id=str(payload.get("transcript_id") or ""),
                     turns_at_cp=int(payload.get("turn_count") or 0),
                     session_id=str(payload.get("session_id") or "") or None,
+                    coverage=str(payload.get("coverage") or ""),
                 )
             return StepOutput(raw=json.dumps(payload, default=str), json=payload)
 
