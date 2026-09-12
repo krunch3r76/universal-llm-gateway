@@ -145,15 +145,66 @@ def find_transcript_id(
     return None
 
 
+_DISCOVER_URI_SNIPPET = r"""
+import glob, json, os, sys
+repo = sys.argv[1]
+best = (0.0, None)
+for f in glob.glob(os.path.expanduser("~/.config/Cursor/User/workspaceStorage/*/workspace.json")):
+    try:
+        j = json.load(open(f))
+    except Exception:
+        continue
+    uri = j.get("folder") or j.get("workspace") or ""
+    if not uri.endswith(repo):
+        continue
+    db = os.path.join(os.path.dirname(f), "state.vscdb")
+    mt = os.path.getmtime(db) if os.path.exists(db) else 0.0
+    if mt > best[0]:
+        best = (mt, uri)
+print(best[1] or "")
+"""
+
+
+def discover_folder_uri(gui_host: str, *, remote_repo: str) -> str | None:
+    """Folder URI of the GUI host's most recently used Cursor window on ``remote_repo``.
+
+    Several encodings of one Remote-SSH authority accumulate in ``workspaceStorage``
+    (``ssh-remote+io`` vs the hex host-config form); the entry whose ``state.vscdb``
+    was written last is the live window. ``--folder-uri`` with a stale encoding
+    opens a duplicate remote window instead of focusing the live one, so the URI
+    is observed on the host, never guessed.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=20",
+                gui_host,
+                f"python3 -c {shlex.quote(_DISCOVER_URI_SNIPPET)} {shlex.quote(remote_repo)}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=45,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    return lines[-1] if lines else None
+
+
 def remote_launch_command(
-    remote_msg_path: str, *, remote_repo: str, palette_query: str
+    remote_msg_path: str, *, remote_repo: str, palette_query: str, raise_uri: str
 ) -> str:
     return (
         "export WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000; "
         f"python3 {shlex.quote(f'{remote_repo}/{KEYSTROKE_SCRIPT}')} launch "
         f"--message-file {shlex.quote(remote_msg_path)} "
         f"--repo {shlex.quote(remote_repo)} "
-        f"--palette-query {shlex.quote(palette_query)} --no-raise"
+        f"--palette-query {shlex.quote(palette_query)} "
+        f"--raise-uri {shlex.quote(raise_uri)}"
     )
 
 
@@ -168,8 +219,10 @@ def fire_ide_hop(
 ) -> dict[str, Any]:
     """Write the hop message where the GUI host sees it (NFS) and keystroke it into a new chat.
 
-    Refuses when ``gui_host`` is unset — no fallback host: firing at a guessed
-    display is the failure this module exists to prevent.
+    Refuses when ``gui_host`` is unset (no fallback host) and when the host has no
+    Cursor window on ``remote_repo`` to raise (no fallback focus): firing at a
+    guessed display or a guessed window is the failure this module exists to
+    prevent — hops 1–3 on 2026-09-11 landed on an unattended host and in Firefox.
     """
     if not gui_host:
         return {
@@ -178,18 +231,31 @@ def fire_ide_hop(
             "root": root_id,
             "fix": f"scripts/liaison-tick.py --root {root_id} --set gui_host=<ssh host>",
         }
+    raise_uri = discover_folder_uri(gui_host, remote_repo=remote_repo)
+    if not raise_uri:
+        return {
+            "ok": False,
+            "phase": "no_cursor_window_for_repo",
+            "root": root_id,
+            "gui_host": gui_host,
+            "fix": f"open {remote_repo} in Cursor on {gui_host} (Remote-SSH) before hopping",
+        }
     HANDOFF_MSG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     msg_path = HANDOFF_MSG_DIR / f"liaison-{root_id}-{stamp}.md"
     durable_write_text(msg_path, message)
     remote_msg = f"{remote_repo}/{msg_path.relative_to(_REPO)}"
     cmd = remote_launch_command(
-        remote_msg, remote_repo=remote_repo, palette_query=palette_query
+        remote_msg,
+        remote_repo=remote_repo,
+        palette_query=palette_query,
+        raise_uri=raise_uri,
     )
     result: dict[str, Any] = {
         "root": root_id,
         "message_path": str(msg_path),
         "gui_host": gui_host,
+        "raise_uri": raise_uri,
         "remote_cmd": cmd,
     }
     if dry_run:

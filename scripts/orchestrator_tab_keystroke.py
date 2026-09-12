@@ -53,6 +53,25 @@ def _raise_cursor(repo: str) -> None:
     )
 
 
+def _raise_cursor_uri(folder_uri: str) -> None:
+    """Focus the window that already has ``folder_uri`` open.
+
+    Opening a folder URI that is open in some window focuses that window instead
+    of creating one — the only compositor-independent raise available for a
+    Remote-SSH window (``cursor -r <path>`` would open the path as a *local*
+    workspace, and COSMIC exposes no focus API). URI shape:
+    ``vscode-remote://ssh-remote%2B<authority>/<repo>`` from the GUI host's
+    ``~/.config/Cursor/User/workspaceStorage/*/workspace.json``.
+    """
+    subprocess.run(
+        ["cursor", "--folder-uri", folder_uri],
+        env=os.environ,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        timeout=15,
+    )
+
+
 def _ui() -> UInput:
     cap = {e.EV_KEY: [
         e.KEY_LEFTCTRL,
@@ -148,13 +167,14 @@ def launch_new_chat_with_message(
     palette_query: str = "New Chat",
     dry_run: bool = False,
     raise_window: bool = True,
+    raise_uri: str | None = None,
 ) -> dict[str, object]:
-    """Open a new chat in the focused Cursor window and send ``message``.
+    """Open a new chat in a Cursor window and send ``message``.
 
-    ``raise_window=False`` skips ``cursor -r <repo>``: when the IDE window is a
-    Remote-SSH window, that command opens the NFS path as a *local* workspace
-    instead of raising the remote one, so the caller (attended operator) owns
-    focus and the keystrokes land in whatever Cursor window is in front.
+    Focus order: ``raise_uri`` (focus the window holding that folder URI — the
+    Remote-SSH-safe raise) ≻ ``raise_window`` (legacy ``cursor -r <repo>``, local
+    workspaces only) ≻ neither (paste into whatever is in front — hop 3 on
+    2026-09-11 landed in Firefox this way; only for an operator who is watching).
     """
     _require_display()
     if dry_run:
@@ -163,9 +183,13 @@ def launch_new_chat_with_message(
             "repo": repo,
             "palette_query": palette_query,
             "raise_window": raise_window,
+            "raise_uri": raise_uri,
             "message_preview": message[:120],
         }
-    if raise_window:
+    if raise_uri:
+        _raise_cursor_uri(raise_uri)
+        time.sleep(1.5)
+    elif raise_window:
         _raise_cursor(repo)
         time.sleep(0.9)
     ui = _ui()
@@ -248,7 +272,12 @@ def main() -> int:
     lp.add_argument(
         "--no-raise",
         action="store_true",
-        help="Do not run `cursor -r <repo>` first (Remote-SSH window: paste into the focused one)",
+        help="Do not run `cursor -r <repo>` first (paste into whatever window is focused)",
+    )
+    lp.add_argument(
+        "--raise-uri",
+        default=None,
+        help="Focus the window holding this folder URI first (vscode-remote://ssh-remote%%2B…/repo)",
     )
     gq = sub.add_parser("glass-cmd", help="Raise Cursor, ctrl-/ (or palette), run query")
     gq.add_argument("query", help="Filter text after opening quick command")
@@ -293,6 +322,7 @@ def main() -> int:
             palette_query=args.palette_query,
             dry_run=args.dry_run,
             raise_window=not args.no_raise,
+            raise_uri=args.raise_uri,
         )
         import json
 
