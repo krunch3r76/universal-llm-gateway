@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Any
 
 # Keys only the operator's one-shot commands write; the loop never derives them.
-OPERATOR_KEYS: tuple[str, ...] = ("policy", "relayed_watchers", "last_cp_tick")
+# ``register`` joined 2026-09-12 07:10Z: the gear-3 ticker clobbered an attended→autonomous
+# flip (--register) on its next save because the flip was not an absorbed key.
+OPERATOR_KEYS: tuple[str, ...] = ("policy", "relayed_watchers", "last_cp_tick", "register")
 
 
 def load_state(path: Path) -> dict[str, Any]:
