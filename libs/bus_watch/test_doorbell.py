@@ -17,7 +17,7 @@ def _default_render() -> str:
 @pytest.mark.offline
 def test_default_render_contains_required_fragments() -> None:
     text = _default_render()
-    assert "agent_bus_read(fetch, thread=10479, last=3, compact=true)" in text
+    assert "agent_bus_read(fetch, thread=10479, last=10, compact=true)" in text
     assert "agent-bus:10532 (echo)" in text
     assert 'subject="ORIENTED 10479"' in text
     assert "Use the liaison skill." in text

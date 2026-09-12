@@ -32,11 +32,13 @@ def render_doorbell(
     """Static doorbell text for ``root``; echoes go to ``ring`` (the root when None).
 
     Identical for equal arguments (F2 M5) and capped so extra ``md_read`` addresses
-    cannot grow the paste into a dump; over ``cap`` raises ``ValueError``.
+    cannot grow the paste into a dump; over ``cap`` raises ``ValueError``. The DIGEST
+    fetch window is 10 turns, not 3: root housekeeping (admits, INFO, CP pointers)
+    outran a 3-turn window by six turns on 2026-09-12 (agent-bus:10479#139).
     """
     echo = ring if ring else root
     address_parts = [
-        f"agent_bus_read(fetch, thread={root}, last=3, compact=true)",
+        f"agent_bus_read(fetch, thread={root}, last=10, compact=true)",
         f"agent-bus:{echo} (echo)",
     ]
     address_parts.extend(_render_address(addr) for addr in extra_addresses)
