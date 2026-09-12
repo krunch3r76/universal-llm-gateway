@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from bus_watch.liaison_digest import GEAR_PRESETS, build_digest, effective_policy
+from bus_watch.liaison_digest import (
+    GEAR_PRESETS,
+    build_budget_block,
+    build_digest,
+    effective_policy,
+)
 
 
 def _lane(lid: str, *, unread: int = 0, terminal: bool = False) -> dict:
@@ -52,7 +57,7 @@ def test_attention_excludes_terminal_without_unread(
     mock_child.return_value = lanes
     state: dict = {"policy": {}}
     digest = build_digest("10479", state, register="autonomous", budget_tokens=700000)
-    ids = [lane["id"] for lane in digest["attention"]]
+    ids = [lane["id"] for lane in digest["attention"] if "id" in lane]
     assert "10493" not in ids
     assert "10496" in ids
 
@@ -84,3 +89,73 @@ def test_hop_cap_tracks_policy_override() -> None:
         )
     assert digest["hop_cap"]["max_hops_per_night"] == 16
     assert GEAR_PRESETS["2-opus-hops"]["successor_model"] == "cursor/claude-opus-5"
+
+
+def test_budget_block_estimate_source() -> None:
+    budget = build_budget_block(
+        used_tokens=1000,
+        window_limit_tokens=700000,
+        model="cursor/claude-opus-5",
+        source="digest.estimate",
+        scope="liaison_seat",
+        epoch="fp-abc",
+        as_of="2026-09-11T00:00:00Z",
+    )
+    assert set(budget.keys()) == {
+        "used_tokens",
+        "window_limit_tokens",
+        "model",
+        "as_of",
+        "source",
+        "scope",
+        "epoch",
+        "stop_class",
+    }
+    assert budget["source"] == "digest.estimate"
+    assert budget["stop_class"] is None
+
+
+def test_budget_block_sdk_stream_context_budget() -> None:
+    budget = build_budget_block(
+        used_tokens=600000,
+        window_limit_tokens=700000,
+        model="cursor/claude-fable-5-1",
+        source="giw.sdk_stream",
+        scope="liaison_seat",
+        epoch="dispatch-1",
+        as_of="2026-09-11T00:00:00Z",
+    )
+    assert budget["stop_class"] == "CONTEXT_BUDGET"
+
+
+@patch("bus_watch.liaison_digest._watchers", return_value=[])
+@patch("bus_watch.liaison_digest._health", return_value="ok")
+@patch("bus_watch.liaison_digest._unread_toc", return_value=[])
+@patch("bus_watch.liaison_digest._child_lanes", return_value=[])
+@patch("bus_watch.liaison_digest._get")
+@patch("bus_watch.liaison_digest._bus")
+@patch("bus_watch.liaison_digest.read_lock", return_value={"holder": None})
+@patch("bus_watch.liaison_digest._read_sdk_usage_live", return_value=None)
+def test_budget_estimate_attention_item(
+    _usage: object,
+    _lock: object,
+    mock_bus: object,
+    mock_get: object,
+    _child: object,
+    _toc: object,
+    _health: object,
+    _watchers: object,
+) -> None:
+    mock_get.return_value = {
+        "id": "10479",
+        "turn_count": 10,
+        "status": "active",
+        "last_subject": "CHECKPOINT",
+    }
+    mock_bus.return_value.__enter__.return_value = object()
+    state: dict = {"policy": {}, "budget_epoch": "epoch-1"}
+    digest = build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    kinds = [item.get("kind") for item in digest["attention"]]
+    assert "budget_estimate" in kinds
+    assert digest["budget"]["source"] == "digest.estimate"
+    assert digest["budget"]["stop_class"] is None

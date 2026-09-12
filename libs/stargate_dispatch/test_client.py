@@ -28,11 +28,11 @@ def test_posts_team_dispatch_fields(mock_post: MagicMock) -> None:
         "contract": "none",
         "lane": "A",
         "model": "cursor/claude-opus-5",
-        "packet_path": "tmp/prompts/liaison-successor-10479.md",
+        "prompt": "resume 10479 — liaison headless successor",
         "dispatch_thread_id": "10479",
         "work_key": "agent-bus:10479",
         "timeout_seconds": 5400,
-        "tags": ["liaison-successor"],
+        "tags": ["liaison-headless"],
         "extra_ignored": "drop",
     }
     payload, status = submit_team_dispatch(body, base_url="http://localhost:9999")

@@ -325,6 +325,8 @@ def _outer_idle_budget_s(*, contract: str) -> float:
     if contract.lower() in _JUDGMENT_IDLE_CONTRACTS:
         return max(base, _JUDGMENT_IDLE_BUDGET_S)
     return base
+
+
 # Bounded slice for the idle-since-progress outer wait loop. Overshoot on
 # timeout fire is at most one slice; ~60 wakeups per 30-min idle window.
 _SDK_IDLE_WAIT_SLICE_S = 30.0
@@ -499,7 +501,9 @@ def _emit_enriched_queued(
         topic=association["topic"],
         nest_under=association["nest_under"],
         packet_kind=association["packet_kind"],
-        model_knobs_requested=_stamp_model_knobs_requested(cached.model_id, req.model_knobs),
+        model_knobs_requested=_stamp_model_knobs_requested(
+            cached.model_id, req.model_knobs
+        ),
         queued_on=f"write_lease:{lease_key}",
     )
 
@@ -759,12 +763,13 @@ class _LiveToolCallCounter:
     reset site for the outer watchdog.
     """
 
-    __slots__ = ("_last_progress_at", "_n", "_now_fn")
+    __slots__ = ("_last_progress_at", "_n", "_now_fn", "_usage_live")
 
     def __init__(self, *, now_fn: Callable[[], float] | None = None) -> None:
         self._now_fn = now_fn or time.monotonic
         self._n = 0
         self._last_progress_at = self._now_fn()
+        self._usage_live: dict[str, Any] | None = None
 
     def bump(self, observation: object = None) -> None:
         self._n += 1
@@ -775,8 +780,15 @@ class _LiveToolCallCounter:
         """Advance idle clock on successful stream tool calls."""
         self.bump(observation)
 
+    def note_usage(self, usage_live: dict[str, Any] | None) -> None:
+        if usage_live:
+            self._usage_live = usage_live
+
     def value(self) -> int:
         return self._n
+
+    def usage_live(self) -> dict[str, Any] | None:
+        return self._usage_live
 
     def last_progress_at(self) -> float:
         return self._last_progress_at
@@ -829,6 +841,7 @@ def _start_heartbeat(
     resolved_model: str,
     execution_id: str | None = None,
     tool_call_count_fn: Callable[[], int] | None = None,
+    usage_live_fn: Callable[[], dict[str, Any] | None] | None = None,
 ) -> tuple[Thread, _ThreadEvent]:
     stop = _ThreadEvent()
     started = time.monotonic()
@@ -848,6 +861,7 @@ def _start_heartbeat(
                         tool_call_count_fn() if tool_call_count_fn is not None else 0
                     ),
                     execution_id=execution_id,
+                    usage_live=usage_live_fn() if usage_live_fn is not None else None,
                 )
                 CursorDispatchLedger.instance().bump_heartbeat(dispatch_id=dispatch_id)
             except Exception as exc:  # heartbeat must never kill the dispatch
@@ -860,6 +874,35 @@ def _start_heartbeat(
     t = Thread(target=_loop, name=f"sdk-hb-{dispatch_id}", daemon=True)
     t.start()
     return t, stop
+
+
+def _usage_live_from_raw(
+    raw_usage: Mapping[str, Any] | None,
+    *,
+    dispatch_id: str,
+    resolved_model: str,
+    window_limit_tokens: int,
+) -> dict[str, Any] | None:
+    from datetime import UTC, datetime
+
+    from services.git_integration_worker.cursor_sdk_usage_normalize import (
+        latest_turn_used_tokens,
+    )
+
+    if raw_usage is None:
+        return None
+    used = latest_turn_used_tokens((raw_usage,))
+    if used is None:
+        return None
+    as_of = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return {
+        "used_tokens": used,
+        "window_limit_tokens": window_limit_tokens,
+        "model": resolved_model,
+        "as_of": as_of,
+        "epoch": dispatch_id,
+        "source": "giw.sdk_stream",
+    }
 
 
 def _run_sdk_sync(
@@ -985,6 +1028,9 @@ def _run_sdk_sync(
             live_counter = _LiveToolCallCounter()
         outer_idle_s = _outer_idle_budget_s(contract=ctx.handoff_contract or "none")
 
+        budget_window = int(os.environ.get("LIAISON_BUDGET_TOKENS", "700000"))
+        run_started = time.monotonic()
+
         def _on_tool_call(observation: object = None) -> None:
             live_counter.note_progress(observation)
             touch_bridge_read_deadline(
@@ -993,14 +1039,45 @@ def _run_sdk_sync(
                 margin_s=BRIDGE_READ_IDLE_MARGIN_S,
             )
 
+        def _on_usage(raw_usage: Mapping[str, Any] | None = None) -> None:
+            try:
+                usage_live = _usage_live_from_raw(
+                    raw_usage,
+                    dispatch_id=ctx.dispatch_id,
+                    resolved_model=resolved_model,
+                    window_limit_tokens=budget_window,
+                )
+                if usage_live is None:
+                    return
+                live_counter.note_usage(usage_live)
+                CursorDispatchLedger.instance().merge_record_json(
+                    dispatch_id=ctx.dispatch_id,
+                    patch={"usage_live": usage_live},
+                )
+                emit_sdk_worker_progress(
+                    dispatch_id=ctx.dispatch_id,
+                    thread_id=ctx.thread_id,
+                    resolved_model=resolved_model,
+                    elapsed_s=round(time.monotonic() - run_started, 1),
+                    tool_call_count=live_counter.value(),
+                    execution_id=execution_id,
+                    usage_live=usage_live,
+                )
+            except Exception:  # noqa: BLE001 — telemetry callback must not break capture
+                logger.debug(
+                    "on_usage callback failed: dispatch_id=%s",
+                    ctx.dispatch_id,
+                    exc_info=True,
+                )
+
         hb_thread, hb_stop = _start_heartbeat(
             dispatch_id=ctx.dispatch_id,
             thread_id=ctx.thread_id,
             resolved_model=resolved_model,
             execution_id=execution_id,
             tool_call_count_fn=live_counter.value,
+            usage_live_fn=live_counter.usage_live,
         )
-        run_started = time.monotonic()
         agent = None
         run = None
         stream_capture = None
@@ -1065,6 +1142,7 @@ def _run_sdk_sync(
                 resolved_model=resolved_model,
                 execution_id=execution_id,
                 on_tool_call=_on_tool_call,
+                on_usage=_on_usage,
             )
             result = run.wait()
             usage_record = finalize_dispatch_usage(
@@ -1182,9 +1260,7 @@ def _run_sdk_sync(
             # Friction 23050: wrap any mid-flight abort (APITimeoutError /
             # bridge ReadTimeout / dying SDK) with partial forensics so the
             # failure envelope does not destroy all knowledge of the run.
-            raise SdkRunAbortedError(
-                str(exc), forensics=_abort_forensics(exc)
-            ) from exc
+            raise SdkRunAbortedError(str(exc), forensics=_abort_forensics(exc)) from exc
         finally:
             hb_stop.set()
             hb_thread.join(timeout=5.0)
@@ -1317,11 +1393,11 @@ async def _start_promoted_dispatch(
         source_repo=cfg.source_repo,
         cfg=cfg,
     )
-    from services.git_integration_worker.cursor_sdk_mode import sdk_mode_from_record_json
-
-    promoted_mode = (
-        sdk_mode_from_record_json(promoted.record_json) or "agent"
+    from services.git_integration_worker.cursor_sdk_mode import (
+        sdk_mode_from_record_json,
     )
+
+    promoted_mode = sdk_mode_from_record_json(promoted.record_json) or "agent"
     ctx = SdkDispatchContext(
         dispatch_id=req.dispatch_id,
         thread_id=req.thread_id,
@@ -1863,9 +1939,7 @@ async def _deliver_sdk_closeout(
         if closeout_qualifies_for_resume_retain(
             closeout_body=delivery.body,
         ):
-            await asyncio.to_thread(
-                persist_resume_retain, dispatch_id=req.dispatch_id
-            )
+            await asyncio.to_thread(persist_resume_retain, dispatch_id=req.dispatch_id)
         return
 
     logger.error(
@@ -2071,9 +2145,10 @@ async def _run_sdk_dispatch_gated(
     # 599 on slow dirty-checkout baselines).
     # cursor-auto maps operator implement → handoff_contract pure-mechanical
     # (wire_map.resolve_handoff_contract); both need admit_head for lane git_refs.
-    if ctx.handoff_contract in ("implement", "pure-mechanical") or not _effective_read_only(
-        req, ctx.handoff_contract
-    ):
+    if ctx.handoff_contract in (
+        "implement",
+        "pure-mechanical",
+    ) or not _effective_read_only(req, ctx.handoff_contract):
         baseline_map = await asyncio.to_thread(
             capture_wt_baseline_with_hashes,
             ctx.workspace_root,
@@ -2833,9 +2908,7 @@ async def admit_cursor_dispatch(
             detail_summary=sdk_mode_refusal,
             invalid_fields=["sdk_mode", "handoff_contract"],
         )
-    effective_read_only = enforce_plan_read_only(
-        resolved_sdk_mode, effective_read_only
-    )
+    effective_read_only = enforce_plan_read_only(resolved_sdk_mode, effective_read_only)
     if effective_read_only and wire_lane_explicit(req) == "B":
         return _reject_pre_admission(
             req,
@@ -2858,9 +2931,7 @@ async def admit_cursor_dispatch(
     packet_kind = (
         extract_packet_kind_from_packet(packet_text) if packet_text else None
     ) or (contract if contract in ("conductor", "sketch") else None)
-    packet_work_key = (
-        extract_work_key_from_packet(packet_text) if packet_text else None
-    )
+    packet_work_key = extract_work_key_from_packet(packet_text) if packet_text else None
     from services.git_integration_worker.cursor_sdk_work_key_gate import (
         compute_write_class,
         derive_work_identity,
@@ -3388,7 +3459,8 @@ async def admit_cursor_dispatch(
 
     if packet_kind == "conductor":
         conductor_patch: dict[str, object] = {
-            "contract": "conductor", "work_key": candidate_work_key,
+            "contract": "conductor",
+            "work_key": candidate_work_key,
         }
         identity_ref = candidate_work_key or candidate_source_ref or req.source_ref
         if identity_ref:
@@ -3430,9 +3502,7 @@ async def admit_cursor_dispatch(
                 state_root=store_root,
                 thread_id=req.thread_id,
                 execution_id=req.execution_id,
-                parent_terminal_status=getattr(
-                    parent_row, "terminal_status", None
-                )
+                parent_terminal_status=getattr(parent_row, "terminal_status", None)
                 or parent_row.status,
             )
 
@@ -3601,9 +3671,7 @@ async def park_cursor_dispatch(
     "/park-for-restart",
     summary="Park every live dispatch for a manage restart intent (idempotent sweep).",
 )
-async def park_for_restart_sweep_route(
-    req: ParkForRestartRequest, request: Request
-):
+async def park_for_restart_sweep_route(req: ParkForRestartRequest, request: Request):
     """202 ``{requested, refused, already_parked, live_after}`` for the intent."""
     status_code, body = await _park_for_restart(
         intent_id=req.intent_id,
@@ -3613,6 +3681,27 @@ async def park_for_restart_sweep_route(
         controller=_controller(request),
     )
     return JSONResponse(status_code=status_code, content=body)
+
+
+@router.get("/dispatch-usage-live")
+async def cursor_dispatch_usage_live(
+    dispatch_id: str = Query(..., min_length=1),
+) -> dict[str, Any]:
+    """Return the latest stream ``usage_live`` blob for liaison budget backstop."""
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None:
+        return {"usage_live": None}
+    try:
+        data = json.loads(row["record_json"] or "{}")
+    except json.JSONDecodeError:
+        data = {}
+    usage_live = data.get("usage_live") if isinstance(data, dict) else None
+    return {"usage_live": usage_live}
 
 
 @router.get(

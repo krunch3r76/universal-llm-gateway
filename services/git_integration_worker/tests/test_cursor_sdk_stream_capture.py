@@ -9,6 +9,7 @@ survive into the observation. See addendum note
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -20,6 +21,7 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
     aggregate_stream_usage,
     finalize_request_id_capture,
     finalize_stream_capture_usage,
+    latest_turn_used_tokens,
     normalize_usage_map,
     observe_run_stream,
 )
@@ -121,7 +123,9 @@ def test_token_delta_on_interaction_update_events_path(
     _capture_emitted: list[Any],
 ) -> None:
     run = _FakeRunWithEvents(
-        events_list=[_FakeStreamEvent(interaction_update=_FakeTokenDeltaMessage(tokens=99))]
+        events_list=[
+            _FakeStreamEvent(interaction_update=_FakeTokenDeltaMessage(tokens=99))
+        ]
     )
     result = observe_run_stream(
         run, dispatch_id="d1", thread_id="t1", resolved_model="composer-2.5"
@@ -495,7 +499,9 @@ def test_finalize_prefers_post_wait_and_marks_reconciled_delta() -> None:
     assert finalized.usage_capture_status == "reconciled_delta"
 
 
-def test_finalize_prefers_captured_when_post_wait_has_total_over_stream_partial() -> None:
+def test_finalize_prefers_captured_when_post_wait_has_total_over_stream_partial() -> (
+    None
+):
     """R finding #3 — authoritative post-wait with total is not understated as partial."""
     capture = StreamCapture(
         tool_calls=(),
@@ -639,6 +645,102 @@ def test_finalize_request_id_absent_when_both_miss() -> None:
     )
     assert finalized.sdk_request_id is None
     assert finalized.request_id_source is None
+
+
+def test_on_usage_called_once_per_usage_event() -> None:
+    run = _FakeRunWithEvents(
+        events_list=[
+            _FakeStreamEvent(
+                sdk_message=_FakeUsageMessage(
+                    usage={"prompt_tokens": 200000, "completion_tokens": 1}
+                )
+            ),
+            _FakeStreamEvent(
+                sdk_message=_FakeUsageMessage(
+                    usage={"prompt_tokens": 210000, "completion_tokens": 1}
+                )
+            ),
+        ]
+    )
+    seen: list[Mapping[str, Any] | None] = []
+
+    def _on_usage(raw: Mapping[str, Any] | None) -> None:
+        seen.append(raw)
+
+    observe_run_stream(
+        run,
+        dispatch_id="d-usage",
+        thread_id="t-usage",
+        resolved_model="composer-2.5",
+        on_usage=_on_usage,
+    )
+    assert len(seen) == 2
+
+
+def test_on_usage_callback_error_swallowed(
+    _capture_emitted: list[Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _FakeRunWithEvents(
+        events_list=[
+            _FakeStreamEvent(
+                sdk_message=_FakeUsageMessage(
+                    usage={"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+                )
+            ),
+        ]
+    )
+
+    def _boom(_raw: Mapping[str, Any] | None) -> None:
+        raise RuntimeError("usage sink down")
+
+    result = observe_run_stream(
+        run,
+        dispatch_id="d-usage-err",
+        thread_id="t-usage-err",
+        resolved_model="composer-2.5",
+        on_usage=_boom,
+    )
+    assert result.usage_capture_status == "captured"
+
+
+def test_on_usage_sink_write_via_callback(_capture_emitted: list[Any]) -> None:
+    sink: list[dict[str, Any]] = []
+    run = _FakeRunWithEvents(
+        events_list=[
+            _FakeStreamEvent(
+                sdk_message=_FakeUsageMessage(
+                    usage={"input_tokens": 42, "output_tokens": 8, "total_tokens": 50}
+                )
+            ),
+        ]
+    )
+
+    def _on_usage(raw: Mapping[str, Any] | None) -> None:
+        if raw is not None:
+            sink.append(dict(raw))
+
+    observe_run_stream(
+        run,
+        dispatch_id="d-sink",
+        thread_id="t-sink",
+        resolved_model="composer-2.5",
+        on_usage=_on_usage,
+    )
+    assert sink
+    assert sink[0]["input_tokens"] == 42
+
+
+def test_latest_turn_used_tokens_not_summed() -> None:
+    turns = (
+        {"prompt_tokens": 200000, "completion_tokens": 1},
+        {"prompt_tokens": 210000, "completion_tokens": 1},
+    )
+    assert latest_turn_used_tokens(turns) == 210000
+    usage, status = aggregate_stream_usage(turn_usages=turns, token_delta_sum=0)
+    assert usage is not None
+    assert usage["input_tokens"] == 410000
+    assert status == "captured"
 
 
 def test_request_id_from_sdk_error() -> None:

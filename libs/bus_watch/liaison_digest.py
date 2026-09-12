@@ -38,6 +38,11 @@ _STARGATE_HEALTH = os.environ.get(
     "LIAISON_STARGATE_HEALTH", "http://localhost:9999/health"
 )
 _GIW_HEALTH = os.environ.get("LIAISON_GIW_HEALTH", "http://127.0.0.1:8091/health")
+_GIW_USAGE_LIVE = os.environ.get(
+    "LIAISON_GIW_USAGE_LIVE", "http://127.0.0.1:8091/api/v1/cursor/dispatch-usage-live"
+)
+_BUDGET_SCOPE = "liaison_seat"
+_BUDGET_RATIO_THRESHOLD = 0.80
 _WATCH_DIR = WATCH_DIR
 _TERMINAL_RE = re.compile(
     r"CLOSEOUT|status:done|status:failed|status:needs-attended|SCORE_RESURFACE|"
@@ -241,7 +246,7 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "wake_on_attention_only": False,
     "spawn_grace_seconds": 900,
     "successor_seat": "cursor-sdk",
-    "successor_packet": "tmp/prompts/liaison-successor-10479.md",
+    "budget_max_age_s": 300,
     "ready": True,
 }
 GEAR_PRESETS: dict[str, dict[str, Any]] = {
@@ -267,10 +272,69 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         "successor_seat": "cdp",
         "successor_model": "cdp/opus-5",
         "successor_cost_intent": None,
-        "successor_packet": "tmp/prompts/liaison-successor-10479-life.md",
         "ready": False,
     },
 }
+
+
+def _holder_dispatch_id(holder: str | None) -> str | None:
+    text = str(holder or "")
+    if text.startswith("sdk:"):
+        return text.split(":", 1)[1] or None
+    return None
+
+
+def _read_sdk_usage_live(dispatch_id: str) -> dict[str, Any] | None:
+    """Fetch live stream usage for the holder dispatch from GIW."""
+    try:
+        response = httpx.get(
+            _GIW_USAGE_LIVE,
+            params={"dispatch_id": dispatch_id},
+            timeout=3.0,
+        )
+    except httpx.HTTPError:
+        return None
+    if response.status_code >= 400:
+        return None
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    usage_live = payload.get("usage_live")
+    if not isinstance(usage_live, dict):
+        return None
+    return usage_live
+
+
+def build_budget_block(
+    *,
+    used_tokens: int,
+    window_limit_tokens: int,
+    model: str,
+    source: str,
+    scope: str,
+    epoch: str,
+    as_of: str,
+) -> dict[str, Any]:
+    """Status-basis budget envelope for the liaison digest."""
+    ratio = used_tokens / max(window_limit_tokens, 1)
+    stop_class = (
+        "CONTEXT_BUDGET"
+        if source == "giw.sdk_stream" and ratio >= _BUDGET_RATIO_THRESHOLD
+        else None
+    )
+    return {
+        "used_tokens": used_tokens,
+        "window_limit_tokens": window_limit_tokens,
+        "model": model,
+        "as_of": as_of,
+        "source": source,
+        "scope": scope,
+        "epoch": epoch,
+        "stop_class": stop_class,
+    }
 
 
 def effective_policy(state: dict[str, Any]) -> dict[str, Any]:
@@ -350,18 +414,53 @@ def build_digest(
     )
     pct = round(100.0 * est / max(budget_tokens, 1), 1)
     last_cp_tick = int(state.get("last_cp_tick") or 0)
-    stop_class = "CONTEXT_BUDGET" if pct >= 80.0 else None
-    digest["budget"] = {
-        "ticks": ticks,
-        "est_tokens": est,
-        "budget_tokens": budget_tokens,
-        "pct": pct,
-        "basis": "estimate: 3000 tokens/tick overhead + digest_bytes/4; seat-reported usage wins",
-        "checkpoint_due": (ticks - last_cp_tick) >= 6
-        or pct >= 60.0
-        and last_cp_tick < ticks - 2,
-        "stop_class": stop_class,
-    }
+    model = str(policy.get("successor_model") or "")
+    lock = digest.get("fable_lock") or read_lock()
+    holder_dispatch = _holder_dispatch_id(str(lock.get("holder") or ""))
+    usage_live = _read_sdk_usage_live(holder_dispatch) if holder_dispatch else None
+    if usage_live:
+        used_tokens = int(usage_live.get("used_tokens") or 0)
+        budget = build_budget_block(
+            used_tokens=used_tokens,
+            window_limit_tokens=int(
+                usage_live.get("window_limit_tokens") or budget_tokens
+            ),
+            model=str(usage_live.get("model") or model),
+            source="giw.sdk_stream",
+            scope=_BUDGET_SCOPE,
+            epoch=str(usage_live.get("epoch") or holder_dispatch or ""),
+            as_of=str(usage_live.get("as_of") or digest_ts),
+        )
+    else:
+        budget = build_budget_block(
+            used_tokens=est,
+            window_limit_tokens=budget_tokens,
+            model=model,
+            source="digest.estimate",
+            scope=_BUDGET_SCOPE,
+            epoch=str(state.get("budget_epoch") or fp),
+            as_of=digest_ts,
+        )
+        attention = [
+            item
+            for item in (digest.get("attention") or [])
+            if item.get("kind") != "budget_estimate"
+        ]
+        attention.append(
+            {
+                "kind": "budget_estimate",
+                "used_tokens": est,
+                "window_limit_tokens": budget_tokens,
+                "pct": pct,
+            }
+        )
+        digest["attention"] = attention
+    digest["budget"] = budget
+    digest["checkpoint_due"] = (ticks - last_cp_tick) >= 6 or (
+        pct >= 60.0 and last_cp_tick < ticks - 2
+    )
+    digest["summary_row"] = state.get("summary_row")
+    digest["open_line"] = state.get("open_line")
     state.update(
         {
             "fingerprint": fp,
@@ -377,6 +476,7 @@ __all__ = [
     "GEAR_PRESETS",
     "POLICY_DEFAULTS",
     "TICK_OVERHEAD_TOKENS",
+    "build_budget_block",
     "build_digest",
     "effective_policy",
     "load_state",

@@ -265,7 +265,12 @@ def main() -> int:
 def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN202
     claim = claim_ticker_lease(root)
     if not claim.get("ok"):
-        print(json.dumps({"loop": "refused", "reason": "ticker_held", "lock": claim.get("lock")}), flush=True)
+        print(
+            json.dumps(
+                {"loop": "refused", "reason": "ticker_held", "lock": claim.get("lock")}
+            ),
+            flush=True,
+        )
         return 3
     policy = effective_policy(state)
     poll_s = int(policy.get("poll_seconds") or args.poll)
@@ -292,18 +297,19 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
                     root, state, register=register, budget_tokens=args.budget_tokens
                 )
             except (httpx.HTTPError, OSError) as exc:
-                print(json.dumps({"loop": "transport_error", "error": str(exc)[:200]}), flush=True)
+                print(
+                    json.dumps({"loop": "transport_error", "error": str(exc)[:200]}),
+                    flush=True,
+                )
                 time.sleep(poll_s)
                 continue
-            spawn_result = tick_spawn_on_wake(
-                digest, state, root, dry_run=args.dry_run
-            )
+            spawn_result = tick_spawn_on_wake(digest, state, root, dry_run=args.dry_run)
             save_state(state_path, state)
             line = {
                 "spawn": spawn_result,
                 "digest_ts": digest.get("ts"),
                 "attention": digest.get("attention"),
-                "checkpoint_due": (digest.get("budget") or {}).get("checkpoint_due"),
+                "checkpoint_due": digest.get("checkpoint_due"),
             }
             print(json.dumps(line, default=str), flush=True)
             if args.dry_run:
@@ -338,7 +344,7 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
         due = (
             digest["changed_since_last_tick"]
             or (now - last_emit) >= args.heartbeat
-            or digest["budget"]["stop_class"]
+            or (digest.get("budget") or {}).get("stop_class")
         )
         if due:
             save_state(state_path, state)

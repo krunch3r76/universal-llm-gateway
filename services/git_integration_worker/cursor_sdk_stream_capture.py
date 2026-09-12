@@ -35,6 +35,7 @@ from services.git_integration_worker.cursor_sdk_usage_normalize import (
     UsageCaptureStatus,
     aggregate_stream_usage,
     coerce_non_negative_int,
+    latest_turn_used_tokens,
     normalize_usage_map,
     public_usage,
     usage_payload_from_object,
@@ -46,6 +47,7 @@ __all__ = [
     "ToolCallObservation",
     "UsageCaptureStatus",
     "aggregate_stream_usage",
+    "latest_turn_used_tokens",
     "finalize_request_id_capture",
     "finalize_stream_capture_usage",
     "normalize_usage_map",
@@ -150,7 +152,9 @@ def FrontierSdkWorkerToolCall(  # noqa: N802
     if result_retention_window_s is not None:
         payload["result_retention_window_s"] = result_retention_window_s
     if result_retention_expires_at_unix_ms is not None:
-        payload["result_retention_expires_at_unix_ms"] = result_retention_expires_at_unix_ms
+        payload["result_retention_expires_at_unix_ms"] = (
+            result_retention_expires_at_unix_ms
+        )
     if result_body is not None:
         payload["result_body"] = result_body
     return Event(
@@ -247,17 +251,26 @@ def _record_usage_message(
     *,
     turn_usages: list[Mapping[str, Any] | None],
     token_delta_sum: list[int],
+    on_usage: Callable[[Mapping[str, Any] | None], None] | None = None,
 ) -> None:
     msg_type = getattr(message, "type", "")
     if msg_type == "usage":
-        turn_usages.append(usage_payload_from_object(getattr(message, "usage", None)))
+        payload = usage_payload_from_object(getattr(message, "usage", None))
+        turn_usages.append(payload)
+        if on_usage is not None:
+            on_usage(payload)
         return
     if msg_type == "turn-ended":
         usage = getattr(message, "usage", None)
         if isinstance(usage, Mapping):
             turn_usages.append(usage)
+            if on_usage is not None:
+                on_usage(usage)
         else:
-            turn_usages.append(usage_payload_from_object(usage))
+            payload = usage_payload_from_object(usage)
+            turn_usages.append(payload)
+            if on_usage is not None:
+                on_usage(payload)
         return
     if msg_type == "token-delta":
         tokens = coerce_non_negative_int(getattr(message, "tokens", None))
@@ -289,6 +302,7 @@ def observe_run_stream(
     resolved_model: str,
     execution_id: str | None = None,
     on_tool_call: Callable[[ToolCallObservation], None] | None = None,
+    on_usage: Callable[[Mapping[str, Any] | None], None] | None = None,
 ) -> StreamCapture:
     """Drain run events, emitting one ``frontier.sdk.worker.toolcall`` event
     per tool call (on terminal status, or flushed at end-of-stream if the call
@@ -298,6 +312,9 @@ def observe_run_stream(
     ``on_tool_call`` (optional, friction 23050) is invoked once per emitted
     observation so callers can maintain a live progress counter (heartbeat)
     without waiting for the drained capture; callback errors are swallowed.
+
+    ``on_usage`` (optional) is invoked once per usage / turn-ended usage
+    payload so callers can publish ``usage_live`` on the same heartbeat sink.
     """
     latest: dict[str, Any] = {}
     emitted: dict[str, ToolCallObservation] = {}
@@ -364,6 +381,7 @@ def observe_run_stream(
                         interaction,
                         turn_usages=turn_usages,
                         token_delta_sum=token_delta_sum,
+                        on_usage=on_usage,
                     )
                 sdk_message = getattr(event, "sdk_message", None)
                 if sdk_message is not None:
@@ -376,6 +394,7 @@ def observe_run_stream(
                             sdk_message,
                             turn_usages=turn_usages,
                             token_delta_sum=token_delta_sum,
+                            on_usage=on_usage,
                         )
                     else:
                         _process_tool_call_message(
@@ -384,7 +403,10 @@ def observe_run_stream(
         else:
             for message in run.stream():
                 _record_usage_message(
-                    message, turn_usages=turn_usages, token_delta_sum=token_delta_sum
+                    message,
+                    turn_usages=turn_usages,
+                    token_delta_sum=token_delta_sum,
+                    on_usage=on_usage,
                 )
                 _process_tool_call_message(message, latest=latest, emit_fn=_emit)
     except Exception as exc:  # noqa: BLE001 — stream capture must never break the dispatch

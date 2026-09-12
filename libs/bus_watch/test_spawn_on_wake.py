@@ -4,22 +4,27 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from bus_watch.liaison_digest import _fingerprint
 from bus_watch.spawn_on_wake import (
+    SUCCESSOR_MESSAGE_CAP,
     build_dispatch_body,
+    build_successor_message,
     evaluate_spawn_predicate,
     spawn_fingerprint,
 )
 
 
-def _digest(*, attention=None, checkpoint_due=False, turns=10):  # noqa: ANN001
+def _digest(*, attention=None, checkpoint_due=False, turns=10, budget=None):  # noqa: ANN001
     lanes = [{"id": "10496", "turns": 3, "status": "active", "lifecycle": "admitted"}]
     root = {"id": "10479", "turn_count": turns, "status": "active"}
     return {
         "root": root,
         "lanes": lanes,
         "attention": attention or [],
-        "budget": {"checkpoint_due": checkpoint_due},
+        "checkpoint_due": checkpoint_due,
+        "budget": budget or {"checkpoint_due": checkpoint_due},
         "policy": {
             "ready": True,
             "max_hops_per_night": 8,
@@ -27,6 +32,8 @@ def _digest(*, attention=None, checkpoint_due=False, turns=10):  # noqa: ANN001
             "spawn_grace_seconds": 900,
             "max_hop_minutes": 60,
             "wake_on_attention_only": True,
+            "gear": "3-wake-on-attention",
+            "budget_max_age_s": 300,
         },
     }
 
@@ -59,7 +66,9 @@ def test_predicate_refuses_not_ready() -> None:
 
 def test_predicate_refuses_pending_spawn() -> None:
     state = {"pending_spawn": {"execution_id": "e1", "thread_id": "t1"}}
-    ev = evaluate_spawn_predicate(_digest(attention=[{"id": "1"}]), state, lock={"holder": None})
+    ev = evaluate_spawn_predicate(
+        _digest(attention=[{"id": "1"}]), state, lock={"holder": None}
+    )
     assert ev["clauses"]["pending_spawn_terminal"] is False
 
 
@@ -83,18 +92,52 @@ def test_grace_and_fingerprint_clauses() -> None:
     assert ev["clauses"]["grace_elapsed"] is False
 
 
-def test_dispatch_body_shape() -> None:
+def test_dispatch_body_message_not_packet() -> None:
     body = build_dispatch_body(
         "10479",
         {
             "successor_model": "cursor/claude-opus-5",
-            "successor_packet": "tmp/prompts/liaison-successor-10479.md",
             "max_hop_minutes": 60,
+            "gear": "3-wake-on-attention",
+        },
+        successor_context={
+            "gear": "3-wake-on-attention",
+            "row": "Settled · Live · Next",
+            "open_line": "harvest lane 10496",
+            "tip_cp_ordinal": 42,
         },
     )
     assert body["op"] == "generate"
+    assert body["contract"] == "none"
+    assert body["contract"] not in {"implement", "pure-mechanical"}
+    assert "packet_path" not in body
+    assert "message" in body
+    message = body["message"]
+    assert len(message.encode("utf-8")) <= SUCCESSOR_MESSAGE_CAP
+    for token in (
+        "resume 10479",
+        'dispatch(tool="continuity"',
+        "agent_bus_read(thread_get",
+        "gear:",
+        "row=",
+        "open_line=",
+        "tip_cp_ordinal=",
+        "contract: none",
+    ):
+        assert token in message
     assert body["work_key"] == "agent-bus:10479"
     assert body["timeout_seconds"] == 5400
+
+
+def test_successor_message_raises_when_over_cap() -> None:
+    with pytest.raises(ValueError, match="exceeds"):
+        build_successor_message(
+            "10479",
+            gear="3-wake-on-attention",
+            row="x" * 3000,
+            open_line="y" * 3000,
+            tip_cp_ordinal=1,
+        )
 
 
 def test_work_key_in_flight_refusal_recorded() -> None:
@@ -112,3 +155,49 @@ def test_work_key_in_flight_refusal_recorded() -> None:
     )
     assert result["status_code"] == 409
     assert result.get("quiet_refusal") is True
+
+
+def test_context_budget_fresh_spawn() -> None:
+    now = time.time()
+    digest = _digest(
+        budget={
+            "stop_class": "CONTEXT_BUDGET",
+            "as_of": "2099-01-01T00:00:00Z",
+            "epoch": "dispatch-live",
+        },
+    )
+    lock = {"holder": "sdk:dispatch-live"}
+    ev = evaluate_spawn_predicate(digest, {}, lock=lock, now=now)
+    assert ev["spawn"] is True
+    assert ev["context_budget"]["fresh"] is True
+
+
+def test_context_budget_stale_no_spawn() -> None:
+    stale = time.time() - 600
+    digest = _digest(
+        budget={
+            "stop_class": "CONTEXT_BUDGET",
+            "as_of": "2020-01-01T00:00:00Z",
+            "epoch": "dispatch-live",
+        },
+    )
+    lock = {"holder": "sdk:dispatch-live"}
+    ev = evaluate_spawn_predicate(digest, {}, lock=lock, now=stale)
+    assert ev["spawn"] is False
+    assert ev["context_budget"]["fresh"] is False
+    assert ev["context_budget"]["reason"] == "budget_stale"
+
+
+def test_context_budget_epoch_mismatch_no_spawn() -> None:
+    digest = _digest(
+        budget={
+            "stop_class": "CONTEXT_BUDGET",
+            "as_of": "2099-01-01T00:00:00Z",
+            "epoch": "dispatch-other",
+        },
+    )
+    lock = {"holder": "sdk:dispatch-live"}
+    ev = evaluate_spawn_predicate(digest, {}, lock=lock, now=time.time())
+    assert ev["spawn"] is False
+    assert ev["context_budget"]["fresh"] is False
+    assert ev["context_budget"]["reason"] == "epoch_mismatch"

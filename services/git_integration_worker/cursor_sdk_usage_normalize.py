@@ -164,6 +164,23 @@ def sum_normalized_usages(items: tuple[dict[str, Any], ...]) -> dict[str, Any]:
     return aggregated
 
 
+def latest_turn_used_tokens(
+    turn_usages: tuple[Mapping[str, Any] | None, ...],
+) -> int | None:
+    """Return the latest turn's input/total tokens — never sum across turns."""
+    for raw in reversed(turn_usages):
+        if not raw:
+            continue
+        normalized, mappable = normalize_usage_map(raw)
+        if not mappable or normalized is None:
+            continue
+        for key in ("input_tokens", "prompt_tokens", "total_tokens"):
+            value = coerce_non_negative_int(normalized.get(key))
+            if value is not None:
+                return value
+    return None
+
+
 def aggregate_stream_usage(
     *,
     turn_usages: tuple[Mapping[str, Any] | None, ...],

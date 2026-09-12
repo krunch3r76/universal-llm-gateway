@@ -58,11 +58,30 @@ it never takes the seat mutex and cannot write `preempt_by`. Attended `--loop` (
 lock; gear 3 uses `--loop --spawn-on-wake` instead. `lock.hops` is keyed by `night_id`; **cap per night** ⇒
 CHECKPOINT + page, no successor.
 
-Headless successor (the hop target): `team_dispatch(op=generate, seat=cursor-sdk, contract=none, lane="A",
-model=cursor/claude-fable-5-1, cost_intent=deliberate_high_cost, cost_intent_reason=…, packet_path=
-tmp/prompts/liaison-successor-<R>.md, dispatch_thread_id=R, work_key=agent-bus:<R>, timeout_seconds=5400)` —
-the packet claims the lock with `--hop`, runs ≤ 5 ticks / 60 min, checkpoints, releases, spawns the next.
-Composer implement dispatches (`contract=implement`, omit `model=`) run **alongside** — they are not Fable seats.
+## Headless successor (resume-fence pull)
+
+The hop target is a **message dispatch**, not a packet file — `contract=none` always:
+
+```
+team_dispatch(
+  op=generate,
+  seat=cursor-sdk,
+  contract=none,
+  lane="A",
+  model=<policy.successor_model>,
+  prompt=<build_successor_message>,
+  dispatch_thread_id=<R>,
+  work_key=agent-bus:<R>,
+  timeout_seconds=<max_hop_minutes*60+1800>,
+)
+```
+
+`build_successor_message` (via `libs/bus_watch/spawn_on_wake.py`) emits ≤2048 bytes containing verbatim:
+`resume <R>`, `dispatch(tool="continuity"`, `agent_bus_read(thread_get`, `gear:`, `row=`, `open_line=`,
+`tip_cp_ordinal=`, `contract: none`. Gear-3 ticker (`scripts/liaison-tick.py --loop --spawn-on-wake`) fires
+this body when `attention`, `checkpoint_due`, or a fresh `CONTEXT_BUDGET` stop applies. The successor claims
+the lock with `--hop`, runs ≤ 5 ticks / 60 min, checkpoints, releases, spawns the next. Composer implement
+dispatches (`contract=implement`, omit `model=`) run **alongside** — they are not Fable seats.
 
 ## Dispatch ladder (cost ↓, cycle time ↓)
 

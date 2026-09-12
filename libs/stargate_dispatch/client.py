@@ -18,6 +18,8 @@ _ALLOWED_FIELDS = frozenset(
         "lane",
         "model",
         "packet_path",
+        "prompt",
+        "message",
         "dispatch_thread_id",
         "work_key",
         "timeout_seconds",
