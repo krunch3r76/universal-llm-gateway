@@ -1,11 +1,6 @@
-"""Single-liaison-seat lock — operator invariant (2026-09-10, generalized 2026-09-11):
-at most ONE liaison seat per root runs across Cursor IDE tabs and cursor-sdk
-dispatches, whatever the tab model.
+"""One liaison seat mutex per continuity root (``liaison-fable-<root>.lock``).
 
-The gear-3 ticker holds a **ticker lease** (``ticker:<root>``), not the seat
-mutex. Model seats claim ``ide:<transcript_id>`` or ``sdk:<dispatch_id>`` (the
-identity is the tab, not the root — two tabs sharing ``ide:<root>`` would co-hold),
-refresh the declared lease on each tick, and release before a hop.
+Gear-3 ticker holds ``ticker:<root>`` separately; seat holders are ``ide:`` or ``sdk:`` tab identities.
 """
 
 from __future__ import annotations
@@ -21,7 +16,7 @@ from bus_watch.events import emit_night_id_reset
 
 _REPO = Path(__file__).resolve().parents[2]
 WATCH_DIR = _REPO / "tmp" / "watchers"
-FABLE_LOCK = WATCH_DIR / "liaison-fable.lock"
+FABLE_LOCK = WATCH_DIR / "liaison-fable.lock"  # legacy constant; never read or written
 TICKER_LOCK = WATCH_DIR / "liaison-ticker.lock"
 LOCK_STALE_S = 1800.0
 LEASE_SLACK_S = 1800
@@ -30,6 +25,17 @@ MAX_HOPS_PER_NIGHT = 8
 
 def _utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _validate_root_id(root_id: str) -> str:
+    rid = str(root_id or "").strip()
+    if not rid or "/" in rid or "\\" in rid or rid.startswith("."):
+        raise ValueError(f"invalid root_id: {root_id!r}")
+    return rid
+
+
+def fable_lock_path(root_id: str) -> Path:
+    return WATCH_DIR / f"liaison-fable-{_validate_root_id(root_id)}.lock"
 
 
 def current_night_id() -> str:
@@ -49,7 +55,9 @@ def _parse_iso_ts(value: str | None) -> float | None:
 def _lease_expires_at(
     claimed_at: str, max_hop_minutes: float, *, from_ts: float | None = None
 ) -> str:
-    base = from_ts if from_ts is not None else (_parse_iso_ts(claimed_at) or time.time())
+    base = (
+        from_ts if from_ts is not None else (_parse_iso_ts(claimed_at) or time.time())
+    )
     expires = base + (max_hop_minutes * 60.0) + LEASE_SLACK_S
     return (
         datetime.fromtimestamp(expires, tz=UTC)
@@ -58,56 +66,63 @@ def _lease_expires_at(
     )
 
 
-def _derived_expires_at(lock: dict[str, Any], max_hop_minutes: float = 60.0) -> float | None:
+def _derived_expires_at(
+    lock: dict[str, Any],
+    max_hop_minutes: float = 60.0,
+    *,
+    lock_path: Path | None = None,
+) -> float | None:
     raw = lock.get("expires_at")
     if raw:
         return _parse_iso_ts(str(raw))
     claimed = lock.get("claimed_at")
     if claimed:
         return _parse_iso_ts(_lease_expires_at(str(claimed), max_hop_minutes))
+    path = lock_path
+    if path is None and lock.get("root"):
+        path = fable_lock_path(str(lock["root"]))
+    if path is None:
+        return None
     try:
-        return FABLE_LOCK.stat().st_mtime + LOCK_STALE_S
+        return path.stat().st_mtime + LOCK_STALE_S
     except OSError:
         return None
 
 
-def seat_lock_free(lock: dict[str, Any] | None = None, *, max_hop_minutes: float = 60.0) -> bool:
+def seat_lock_free(
+    lock: dict[str, Any] | None = None,
+    *,
+    max_hop_minutes: float = 60.0,
+    root_id: str = "",
+) -> bool:
     """True when no live holder occupies the seat mutex."""
-    data = lock if lock is not None else read_lock()
+    data = lock if lock is not None else read_lock(root_id)
     holder = data.get("holder")
     if not holder:
         return True
-    expires = _derived_expires_at(data, max_hop_minutes)
+    path = fable_lock_path(root_id) if root_id else None
+    expires = _derived_expires_at(data, max_hop_minutes, lock_path=path)
     if expires is None:
         return True
     return time.time() > expires
 
 
-def _lock_age_s() -> float | None:
+def read_lock(root_id: str) -> dict[str, Any]:
+    path = fable_lock_path(root_id)
     try:
-        return round(time.time() - FABLE_LOCK.stat().st_mtime, 1)
-    except OSError:
-        return None
-
-
-def read_lock() -> dict[str, Any]:
-    try:
-        data = json.loads(FABLE_LOCK.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["age_s"] = round(time.time() - path.stat().st_mtime, 1)
     except (OSError, ValueError):
         return {}
-    data["age_s"] = _lock_age_s()
     return data
 
 
 def read_ticker_lock() -> dict[str, Any]:
     try:
         data = json.loads(TICKER_LOCK.read_text(encoding="utf-8"))
+        data["age_s"] = round(time.time() - TICKER_LOCK.stat().st_mtime, 1)
     except (OSError, ValueError):
         return {}
-    try:
-        data["age_s"] = round(time.time() - TICKER_LOCK.stat().st_mtime, 1)
-    except OSError:
-        data["age_s"] = None
     return data
 
 
@@ -156,25 +171,22 @@ def claim_fable_lock(
     root_id: str = "",
     take_over: bool = False,
 ) -> dict[str, Any]:
-    """Claim the single-liaison-seat lock for ``holder``; refuse while a live other holder exists.
-
-    An attended ``ide:`` claim always preempts a headless ``sdk:`` holder. Against a
-    live ``ide:`` holder it preempts only with ``take_over`` — the operator's own word
-    (``resume <root>`` on another workstation), never a second ``/liaison`` opened by
-    accident (specimen 2026-09-11: two tabs co-held one root). The preempted loop sees
-    ``preempt_by``, exits and releases; the claimer retries within one poll.
-    """
+    """Claim seat for ``holder``; ``ide:`` preempts ``sdk:``; ``take_over`` preempts live ``ide:``."""
+    rid = _validate_root_id(root_id)
+    path = fable_lock_path(rid)
     night = night_id or current_night_id()
-    current = read_lock()
-    current, _ = _reconcile_night(current, night, root_id=root_id)
-    live = bool(current.get("holder")) and not seat_lock_free(current, max_hop_minutes=max_hop_minutes)
+    current = read_lock(rid)
+    current, _ = _reconcile_night(current, night, root_id=rid)
+    live = bool(current.get("holder")) and not seat_lock_free(
+        current, max_hop_minutes=max_hop_minutes, root_id=rid
+    )
     if live and current.get("holder") != holder:
         live_holder = str(current.get("holder"))
         attended = holder.startswith("ide:")
         may_preempt = attended and (live_holder.startswith("sdk:") or take_over)
         if may_preempt:
             current["preempt_by"] = holder
-            FABLE_LOCK.write_text(json.dumps(current, indent=2), encoding="utf-8")
+            path.write_text(json.dumps(current, indent=2), encoding="utf-8")
             return {"ok": False, "reason": "held_preempt_requested", "lock": current}
         return {"ok": False, "reason": "held", "lock": current}
     hops = _hops_for_night(current, night) + (1 if hop else 0)
@@ -192,9 +204,10 @@ def claim_fable_lock(
         "tick_seq": int(current.get("tick_seq") or 0),
         "turns_seen": current.get("turns_seen"),
         "born_at": current.get("born_at") or claimed_at,
+        "root": rid,
     }
     WATCH_DIR.mkdir(parents=True, exist_ok=True)
-    FABLE_LOCK.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return {
         "ok": True,
         "lock": {**payload, "age_s": 0.0},
@@ -205,11 +218,14 @@ def claim_fable_lock(
 def refresh_fable_lock(
     holder: str,
     *,
+    root_id: str = "",
     max_hop_minutes: float = 60.0,
     turns_seen: int | None = None,
 ) -> bool:
     """Model-gated lease refresh — extends ``expires_at``, bumps ``tick_seq``."""
-    current = read_lock()
+    rid = _validate_root_id(root_id)
+    path = fable_lock_path(rid)
+    current = read_lock(rid)
     if current.get("holder") != holder:
         return False
     tick_seq = int(current.get("tick_seq") or 0) + 1
@@ -219,22 +235,26 @@ def refresh_fable_lock(
         "claimed_at": current.get("claimed_at") or now,
         "expires_at": _lease_expires_at(now, max_hop_minutes, from_ts=time.time()),
         "tick_seq": tick_seq,
-        "turns_seen": turns_seen if turns_seen is not None else current.get("turns_seen"),
+        "turns_seen": turns_seen
+        if turns_seen is not None
+        else current.get("turns_seen"),
+        "root": rid,
     }
     payload.pop("age_s", None)
-    FABLE_LOCK.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return True
 
 
-def release_fable_lock(holder: str, *, pid: int | None = -1) -> dict[str, Any]:
-    """Release the seat; only the claiming process (or an explicit operator override) may.
-
-    Two loops that share a holder string (specimen 2026-09-12 04:11Z: an orphaned
-    duplicate loop exiting) would otherwise release the live loop's lease and kill
-    it on its next refresh. ``pid=-1`` means "this process"; ``pid=None`` is the
-    operator's `--release`, which releases regardless.
-    """
-    current = read_lock()
+def release_fable_lock(
+    holder: str,
+    *,
+    root_id: str = "",
+    pid: int | None = -1,
+) -> dict[str, Any]:
+    """Release seat; ``pid=-1`` is this process, ``pid=None`` is operator ``--release``."""
+    rid = _validate_root_id(root_id)
+    path = fable_lock_path(rid)
+    current = read_lock(rid)
     if current and current.get("holder") not in (holder, None):
         return {"ok": False, "reason": "not_holder", "lock": current}
     caller = os.getpid() if pid == -1 else pid
@@ -242,7 +262,7 @@ def release_fable_lock(holder: str, *, pid: int | None = -1) -> dict[str, Any]:
     if caller is not None and lock_pid is not None and int(lock_pid) != int(caller):
         return {"ok": False, "reason": "not_holder_process", "lock": current}
     if current:
-        FABLE_LOCK.write_text(
+        path.write_text(
             json.dumps(
                 {
                     "holder": None,
@@ -251,15 +271,15 @@ def release_fable_lock(holder: str, *, pid: int | None = -1) -> dict[str, Any]:
                     "hops_by_night": current.get("hops_by_night") or {},
                     "night_id": current.get("night_id"),
                     "born_at": current.get("born_at"),
+                    "root": rid,
                 }
             ),
             encoding="utf-8",
         )
-    return {"ok": True, "lock": read_lock()}
+    return {"ok": True, "lock": read_lock(rid)}
 
 
 def claim_ticker_lease(root: str) -> dict[str, Any]:
-    """Claim the plain-Python ticker lease for ``root``."""
     holder = f"ticker:{root}"
     current = read_ticker_lock()
     live = bool(current.get("holder")) and (current.get("age_s") or 0) < LOCK_STALE_S
@@ -303,6 +323,7 @@ __all__ = [
     "claim_fable_lock",
     "claim_ticker_lease",
     "current_night_id",
+    "fable_lock_path",
     "read_lock",
     "read_ticker_lock",
     "refresh_fable_lock",

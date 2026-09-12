@@ -88,7 +88,7 @@ Woken claude.ai liaisons read the house through the latest `DIGEST <root>` turn 
 
 ## Single-liaison-seat cap (operator 2026-09-10; generalized from "single-Fable")
 
-`liaison_seats(IDE ∪ cursor-sdk) ≤ 1` per root, enforced by `tmp/watchers/liaison-fable.lock` via
+`liaison_seats(IDE ∪ cursor-sdk) ≤ 1` per root, enforced by `tmp/watchers/liaison-fable-<root>.lock` via
 `scripts/liaison-tick.py`: `--claim --holder ide:<transcript_id>|sdk:<dispatch_id> [--hop]` ·
 `--release --holder …`. **Holder identity is the tab, not the root** — two attended tabs that both claim
 `ide:<root>` silently co-hold (same string ⇒ re-claim succeeds); with `ide:<transcript_id>` the second tab is
@@ -107,8 +107,10 @@ an orphan exiting no longer drops the live lease. Model seats refresh the
 declared lease (`expires_at`) on each `--once` tick (`tick_seq` / `turns_seen`); `seat_lock_free` means
 `holder is None ∨ now > expires_at`. The gear-3 **ticker** holds `liaison-ticker.lock` (`ticker:<root>`) —
 it never takes the seat mutex and cannot write `preempt_by`. Attended `--loop` (gear 1/2) still claims the seat
-lock; gear 3 uses `--loop --spawn-on-wake` instead. `lock.hops` is keyed by `night_id` on a **fleet-wide**
-file; **this-root cap** is `policy.max_hops_per_night`. Fleet `lock.hops==8` is not a designed stop.
+lock; gear 3 uses `--loop --spawn-on-wake` instead. `lock.hops` is keyed by `night_id` on
+**this root's** `liaison-fable-<root>.lock` (`hop_cap.lock_hops_scope=root`); the legacy fleet file
+`liaison-fable.lock` is unread leftover. **This-root cap** is `policy.max_hops_per_night`. Per-root
+`lock.hops==8` is not a designed stop.
 
 ## Headless successor (resume-fence pull)
 

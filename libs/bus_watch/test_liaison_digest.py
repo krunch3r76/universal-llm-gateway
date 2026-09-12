@@ -28,7 +28,7 @@ def _lane(lid: str, *, unread: int = 0, terminal: bool = False) -> dict:
     }
 
 
-@patch("bus_watch.liaison_digest._watchers", return_value=[])
+@patch("bus_watch.liaison_digest.collect_watchers", return_value=[])
 @patch("bus_watch.liaison_digest._health", return_value="ok")
 @patch("bus_watch.liaison_digest._unread_toc", return_value=[])
 @patch("bus_watch.liaison_digest._child_lanes")
@@ -40,7 +40,7 @@ def test_attention_excludes_terminal_without_unread(
     mock_child: MagicMock,
     _toc: MagicMock,
     _health: MagicMock,
-    _watchers: MagicMock,
+    _watchers: MagicMock,  # collect_watchers
 ) -> None:
     """AC-1: harvested CLOSEOUT lanes do not appear in attention; unread lanes do."""
     lanes = [
@@ -73,7 +73,7 @@ def test_hop_cap_tracks_policy_override() -> None:
     state = {"policy": {"max_hops_per_night": 16}}
     digest_state = dict(state)
     with (
-        patch("bus_watch.liaison_digest._watchers", return_value=[]),
+        patch("bus_watch.liaison_digest.collect_watchers", return_value=[]),
         patch("bus_watch.liaison_digest._health", return_value="ok"),
         patch("bus_watch.liaison_digest._unread_toc", return_value=[]),
         patch("bus_watch.liaison_digest._child_lanes", return_value=[]),
@@ -88,7 +88,7 @@ def test_hop_cap_tracks_policy_override() -> None:
             "10479", digest_state, register="autonomous", budget_tokens=700000
         )
     assert digest["hop_cap"]["max_hops_per_night"] == 16
-    assert digest["hop_cap"]["lock_hops_scope"] == "fleet"
+    assert digest["hop_cap"]["lock_hops_scope"] == "root"
     assert "lock_hops" in digest["hop_cap"]
     assert GEAR_PRESETS["2-opus-hops"]["successor_model"] == "cursor/claude-opus-5"
 
@@ -130,7 +130,7 @@ def test_budget_block_sdk_stream_context_budget() -> None:
     assert budget["stop_class"] == "CONTEXT_BUDGET"
 
 
-@patch("bus_watch.liaison_digest._watchers", return_value=[])
+@patch("bus_watch.liaison_digest.collect_watchers", return_value=[])
 @patch("bus_watch.liaison_digest._health", return_value="ok")
 @patch("bus_watch.liaison_digest._unread_toc", return_value=[])
 @patch("bus_watch.liaison_digest._child_lanes", return_value=[])
@@ -161,3 +161,34 @@ def test_budget_estimate_attention_item(
     assert "budget_estimate" in kinds
     assert digest["budget"]["source"] == "digest.estimate"
     assert digest["budget"]["stop_class"] is None
+
+
+def test_watchers_exclude_foreign_root_with_fresh_mtime(tmp_path) -> None:  # noqa: ANN001
+    """Foreign-root complete watcher with fresh mtime must not appear on this house."""
+    import os
+    import time
+
+    from bus_watch.liaison_watchers import collect_watchers
+
+    root_id = "10534"
+    other = "10479"
+    state = {"born_epoch": time.time() - 3600, "relayed_watchers": []}
+    lane_ids = {root_id}
+
+    foreign_path = tmp_path / f"{other}-watcher.state.json"
+    foreign_path.write_text(
+        '{"thread": "99999", "status": "complete", "label": "foreign"}',
+        encoding="utf-8",
+    )
+    os.utime(foreign_path, (time.time(), time.time()))
+
+    own_path = tmp_path / f"{root_id}-child.state.json"
+    own_path.write_text(
+        f'{{"thread": "{root_id}", "status": "complete"}}',
+        encoding="utf-8",
+    )
+
+    result = collect_watchers(state, lane_ids, root_id, tmp_path)
+    names = [w["file"] for w in result]
+    assert foreign_path.name not in names
+    assert own_path.name in names

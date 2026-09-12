@@ -29,6 +29,7 @@ from bus_watch.fable_lock import (
     current_night_id,
     read_lock,
 )
+from bus_watch.liaison_watchers import collect_watchers
 
 _AGENT_BUS_SOCK = os.environ.get(
     "AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock"
@@ -172,29 +173,6 @@ def _unread_toc(client: httpx.Client, lane_ids: set[str]) -> list[dict[str, Any]
                 }
             )
     return out
-
-
-def _watchers(state: dict[str, Any], lane_ids: set[str]) -> list[dict[str, Any]]:
-    """Completed watcher state files in scope (lane match or newer than liaison birth)."""
-    relayed = set(state.get("relayed_watchers") or [])
-    born = float(state.get("born_epoch") or 0.0)
-    out = []
-    for path in sorted(_WATCH_DIR.glob("*.state.json")):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            mtime = path.stat().st_mtime
-        except (OSError, ValueError):
-            continue
-        in_scope = str(data.get("thread") or "") in lane_ids or mtime >= born
-        if data.get("status") == "complete" and path.name not in relayed and in_scope:
-            out.append(
-                {
-                    "file": path.name,
-                    "thread": data.get("thread"),
-                    "label": data.get("label"),
-                }
-            )
-    return out[:10]
 
 
 def _health(url: str) -> str:
@@ -363,7 +341,7 @@ def build_digest(
     policy = effective_policy(state)
     night_id = current_night_id()
     digest_ts = _utcnow()
-    lock_now = read_lock()
+    lock_now = read_lock(root_id)
     dispatches = int(
         (state.get("dispatches_tonight_by_night") or {}).get(night_id)
         or state.get("dispatches_tonight")
@@ -383,18 +361,20 @@ def build_digest(
         "lanes": lanes,
         "attention": [lane for lane in lanes if (lane["unread"] or 0) > 0],
         "unread_toc": unread,
-        "watchers_complete_unrelayed": _watchers(state, lane_ids),
+        "watchers_complete_unrelayed": collect_watchers(
+            state, lane_ids, root_id, _WATCH_DIR
+        ),
         "fleet": {"stargate": _health(_STARGATE_HEALTH), "giw": _health(_GIW_HEALTH)},
         "fable_lock": lock_now,
         # A gear preset or --set override raises the cap; this field must move
         # with it or a seat stops at 8 while policy authorises 16 (row R14).
-        # lock.hops is fleet-wide (one liaison-fable.lock, all roots). Seats must
-        # not treat lock_hops == 8 as this root's designed stop (10534 2026-09-12).
+        # lock.hops live on liaison-fable-<root>.lock; seats must not treat
+        # lock_hops == 8 as this root's designed stop (10534 2026-09-12).
         "hop_cap": {
             "max_hops_per_night": policy["max_hops_per_night"],
             "source": "policy.max_hops_per_night",
             "lock_hops": int(lock_now.get("hops") or 0),
-            "lock_hops_scope": "fleet",
+            "lock_hops_scope": "root",
             "lock_night_id": lock_now.get("night_id"),
         },
         "policy": policy,
@@ -415,7 +395,7 @@ def build_digest(
     pct = round(100.0 * est / max(budget_tokens, 1), 1)
     last_cp_tick = int(state.get("last_cp_tick") or 0)
     model = str(policy.get("successor_model") or "")
-    lock = digest.get("fable_lock") or read_lock()
+    lock = digest.get("fable_lock") or read_lock(root_id)
     holder_dispatch = _holder_dispatch_id(str(lock.get("holder") or ""))
     usage_live = _read_sdk_usage_live(holder_dispatch) if holder_dispatch else None
     if usage_live:

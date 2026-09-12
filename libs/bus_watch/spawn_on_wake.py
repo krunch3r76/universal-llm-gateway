@@ -126,7 +126,9 @@ def evaluate_spawn_predicate(
     """Return spawn decision with per-clause reasons."""
     policy = digest.get("policy") or {}
     max_hop_minutes = float(policy.get("max_hop_minutes") or 60)
-    lock = lock if lock is not None else read_lock()
+    if lock is None:
+        root_id = str((digest.get("root") or {}).get("id") or "").strip()
+        lock = read_lock(root_id) if root_id else {}
     ts = now if now is not None else time.time()
     night_id = current_night_id()
     attention = digest.get("attention") or []
@@ -152,7 +154,11 @@ def evaluate_spawn_predicate(
     ) == str(budget.get("epoch") or "")
     clauses = {
         "spawn_signal": spawn_signal,
-        "seat_lock_free": seat_lock_free(lock, max_hop_minutes=max_hop_minutes)
+        "seat_lock_free": seat_lock_free(
+            lock,
+            max_hop_minutes=max_hop_minutes,
+            root_id=str((digest.get("root") or {}).get("id") or "").strip(),
+        )
         or budget_replaces_holder,
         "pending_spawn_terminal": pending_spawn_terminal(pending),
         "hops_under_cap": hops < int(policy.get("max_hops_per_night") or 8),
@@ -250,8 +256,8 @@ def maybe_forfeit_expired_lease(
     lock: dict[str, Any] | None = None,
     last_holder_turn: int | None = None,
 ) -> bool:
-    lock = lock if lock is not None else read_lock()
-    if seat_lock_free(lock):
+    lock = lock if lock is not None else read_lock(root_id)
+    if seat_lock_free(lock, root_id=root_id):
         return False
     holder = str(lock.get("holder") or "")
     if not holder:
@@ -357,7 +363,7 @@ def tick_spawn_on_wake(
     policy = digest.get("policy") or {}
     if not policy.get("wake_on_attention_only"):
         return {"action": "disabled"}
-    lock = read_lock()
+    lock = read_lock(root_id)
     maybe_forfeit_expired_lease(
         root_id,
         lock=lock,

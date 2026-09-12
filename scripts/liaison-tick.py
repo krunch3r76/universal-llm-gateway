@@ -159,17 +159,22 @@ def main() -> int:
     if args.claim or args.release:
         if not args.holder:
             raise SystemExit("--holder required with --claim/--release")
+        root_for_lock = str(args.root or os.environ.get("LIAISON_ROOT", "")).strip()
+        if not root_for_lock:
+            raise SystemExit("--root (or LIAISON_ROOT) required with --claim/--release")
         policy = effective_policy({"policy": {}})
         result = (
             claim_fable_lock(
                 args.holder,
                 hop=args.hop,
                 max_hop_minutes=float(policy.get("max_hop_minutes") or 60),
-                root_id=str(args.root or "").strip(),
+                root_id=root_for_lock,
                 take_over=args.take_over,
             )
             if args.claim
-            else release_fable_lock(args.holder, pid=None)  # operator override
+            else release_fable_lock(
+                args.holder, pid=None, root_id=root_for_lock
+            )  # operator override
         )
         print(json.dumps(result))
         return 0 if result.get("ok") else 3
@@ -220,10 +225,11 @@ def main() -> int:
         digest = build_digest(
             root, state, register=register, budget_tokens=args.budget_tokens
         )
-        if args.holder and read_lock().get("holder") == args.holder:
+        if args.holder and read_lock(root).get("holder") == args.holder:
             policy = digest.get("policy") or {}
             refresh_fable_lock(
                 args.holder,
+                root_id=root,
                 max_hop_minutes=float(policy.get("max_hop_minutes") or 60),
                 turns_seen=int((digest.get("root") or {}).get("turns") or 0),
             )
@@ -265,7 +271,7 @@ def main() -> int:
     try:
         return _loop(args, root, state, state_path, register, holder, last_emit)
     finally:
-        release_fable_lock(holder)
+        release_fable_lock(holder, root_id=root)
 
 
 def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN202
@@ -337,10 +343,12 @@ def _log_steer(changed: list[str]) -> None:
 
 def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: ANN001, ANN202, PLR0913
     while True:
-        if not refresh_fable_lock(holder) or read_lock().get("preempt_by"):
+        if not refresh_fable_lock(holder, root_id=root) or read_lock(root).get(
+            "preempt_by"
+        ):
             print(
                 json.dumps(
-                    {"loop": "preempted", "holder": holder, "lock": read_lock()}
+                    {"loop": "preempted", "holder": holder, "lock": read_lock(root)}
                 ),
                 flush=True,
             )
