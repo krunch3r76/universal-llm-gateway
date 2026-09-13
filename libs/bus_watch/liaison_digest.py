@@ -34,7 +34,11 @@ from bus_watch.digest_budget import (
     health_probe,
 )
 from bus_watch.fable_lock import WATCH_DIR, current_night_id, read_lock
-from bus_watch.ide_budget import IDE_BUDGET_SOURCE, measure_ide_tab
+from bus_watch.ide_budget import (
+    IDE_BUDGET_SOURCE,
+    ide_holder_transcript,
+    measure_ide_tab,
+)
 from bus_watch.induction import build_wake_induction
 from bus_watch.liaison_watchers import collect_watchers
 from bus_watch.life_digest import build_life_block, project_life_block
@@ -236,10 +240,14 @@ def build_digest(
             epoch=str(usage_live.get("epoch") or holder_dispatch or ""),
             as_of=str(usage_live.get("as_of") or digest_ts),
         )
-    elif ide := _measure_ide_tab(root_id, lock, policy):
+    elif (register != "autonomous" or ide_holder_transcript(lock)) and (
+        ide := _measure_ide_tab(root_id, lock, policy)
+    ):
         # Attended seat: the tab transcript is the only window reading the hub
         # has; without it an IDE liaison never sees CONTEXT_BUDGET (10534 tab,
-        # 852 tool calls on a 256k model, 2026-09-12).
+        # 852 tool calls on a 256k model, 2026-09-12). Once the house is under
+        # (autonomous, no ``ide:`` holder) the retired tab's 99 % reading is not
+        # the seat's window and must not tell a headless successor to PARK.
         pct = round(100.0 * ide["used_tokens"] / max(ide["window_limit_tokens"], 1), 1)
         budget = build_budget_block(
             used_tokens=ide["used_tokens"],

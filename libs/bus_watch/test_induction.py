@@ -58,12 +58,55 @@ def test_induction_names_context_budget_and_checkpoint() -> None:
                 "used_tokens": 220_000,
                 "window_limit_tokens": 256_000,
                 "source": "ide.transcript",
+                "transcript_id": "f0fbd8f2-305a-48e8-8c61-1004ecfff015",
             },
             checkpoint_due=True,
         )
     )
-    assert "CONTEXT_BUDGET 86% (ide.transcript) → CHECKPOINT, then hop or PARK" in text
+    # The address is the command (10534 #167 named the fix and parked instead).
+    assert (
+        "CONTEXT_BUDGET 86% (ide.transcript) → CHECKPOINT, then liaison-tick.py "
+        "--root 10479 --go-under --holder ide:f0fbd8f2-305a-48e8-8c61-1004ecfff015"
+    ) in text
     assert "CHECKPOINT due" in text
+    assert text.rstrip().endswith("PARK is not a step while NOW or unread remain.")
+    assert len(text.encode()) <= 700
+
+
+def test_induction_budget_stop_survives_cap_over_standing_binds() -> None:
+    digest = _digest(
+        budget={
+            "stop_class": "CONTEXT_BUDGET",
+            "used_tokens": 254_874,
+            "window_limit_tokens": 256_000,
+            "source": "ide.transcript",
+            "transcript_id": "f0fbd8f2-305a-48e8-8c61-1004ecfff015",
+        },
+        attention=[
+            {"id": str(n), "unread": 2, "last_subject": "cursor-sdk CLOSEOUT " * 3}
+            for n in range(10590, 10596)
+        ],
+    )
+    digest["policy"]["induction_binds"] = ["a long standing bind " * 8, "another " * 20]
+    text = build_wake_induction(digest)
+    assert len(text.encode()) <= 700
+    assert "--go-under --holder ide:f0fbd8f2-305a-48e8-8c61-1004ecfff015" in text
+    assert "Standing: register=" in text and "a long standing bind" not in text
+
+
+def test_induction_headless_budget_keeps_release_step() -> None:
+    text = build_wake_induction(
+        _digest(
+            budget={
+                "stop_class": "CONTEXT_BUDGET",
+                "used_tokens": 600_000,
+                "window_limit_tokens": 700_000,
+                "source": "giw.sdk_stream",
+            }
+        )
+    )
+    assert "(giw.sdk_stream) → CHECKPOINT, release the seat; the ticker spawns" in text
+    assert "--go-under" not in text
 
 
 def test_induction_empty_now_is_not_a_stop() -> None:

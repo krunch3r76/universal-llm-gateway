@@ -281,32 +281,101 @@ def test_context_budget_epoch_mismatch_no_spawn() -> None:
     assert ev["context_budget"]["reason"] == "epoch_mismatch"
 
 
-def test_closed_unread_is_not_spawn_signal() -> None:
-    ev = evaluate_spawn_predicate(
-        _digest(
-            attention=[
-                {
-                    "id": "10579",
-                    "unread": 2,
-                    "status": "closed",
-                    "lifecycle": "completed",
-                }
-            ]
-        ),
-        {},
+_CLOSED_WORK = {
+    "id": "10593",
+    "unread": 2,
+    "turns": 2,
+    "status": "closed",
+    "lifecycle": "completed",
+    "last_subject": "cursor-sdk CLOSEOUT 2dee4a448315-c155f848 contract=implement",
+}
+_CLOSED_SUCCESSOR = {
+    "id": "10583",
+    "unread": 5,
+    "turns": 6,
+    "status": "closed",
+    "lifecycle": "completed",
+    "last_subject": "cursor-sdk CLOSEOUT e8c9bc509ca0 contract=none caller=liaison-ticker",
+}
+
+
+def test_closed_unread_work_lane_wakes_once() -> None:
+    """A worker's closeout is the wake (10534 #167: 'closeout≠wake', four unread
+    closeouts, ticker held); the same closeout at the same turn count never wakes twice."""
+    first = evaluate_spawn_predicate(
+        _digest(attention=[_CLOSED_WORK]), {}, lock={"holder": None}
+    )
+    assert first["clauses"]["spawn_signal"] is True
+    served = evaluate_spawn_predicate(
+        _digest(attention=[_CLOSED_WORK]),
+        {"served_closeouts": {"10593": 2}},
         lock={"holder": None},
     )
-    assert ev["clauses"]["spawn_signal"] is False
-    assert ev["spawn"] is False
+    assert served["clauses"]["spawn_signal"] is False
+    reopened = evaluate_spawn_predicate(
+        _digest(attention=[{**_CLOSED_WORK, "turns": 3}]),
+        {"served_closeouts": {"10593": 2}},
+        lock={"holder": None},
+    )
+    assert reopened["clauses"]["spawn_signal"] is True
+
+
+def test_successor_closeout_never_wakes_next_successor() -> None:
+    by_mark = evaluate_spawn_predicate(
+        _digest(attention=[_CLOSED_SUCCESSOR]), {}, lock={"holder": None}
+    )
+    assert by_mark["clauses"]["spawn_signal"] is False
+    plain = {**_CLOSED_WORK, "id": "10600", "last_subject": "CLOSEOUT"}
+    by_record = evaluate_spawn_predicate(
+        _digest(attention=[plain]),
+        {"successor_threads": ["10600"]},
+        lock={"holder": None},
+    )
+    assert by_record["clauses"]["spawn_signal"] is False
+    read = evaluate_spawn_predicate(
+        _digest(attention=[{**_CLOSED_WORK, "unread": 0}]), {}, lock={"holder": None}
+    )
+    assert read["clauses"]["spawn_signal"] is False
+
+
+def test_handoff_wakes_once_per_seq() -> None:
+    state = {"handoff": {"seq": 1, "requested_at": "2026-09-13T06:30:00Z"}}
+    armed = evaluate_spawn_predicate(_digest(), state, lock={"holder": None})
+    assert armed["clauses"]["spawn_signal"] is True
+    assert armed["handoff"]["seq"] == 1
+    latched = evaluate_spawn_predicate(
+        _digest(), {**state, "handoff_spawned_seq": 1}, lock={"holder": None}
+    )
+    assert latched["clauses"]["spawn_signal"] is False
+    assert "handoff" not in latched
+
+
+def test_idle_ide_holder_forfeits_only_when_autonomous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_pending.ide_holder_idle_s", lambda *_a, **_k: 3600.0
+    )
+    lock = {
+        "holder": "ide:ccd52168-8bf7-4080-bc05-75fe45af1507",
+        "claimed_at": "2099-01-01T00:00:00Z",
+        "expires_at": "2099-01-01T01:30:00Z",
+    }
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["register"] = "attended"
+    held = evaluate_spawn_predicate(digest, {}, lock=lock)
+    assert held["clauses"]["seat_lock_free"] is False
+    digest["register"] = "autonomous"
+    forfeit = evaluate_spawn_predicate(digest, {}, lock=lock)
+    assert forfeit["clauses"]["seat_lock_free"] is True
+    assert forfeit["idle_ide_forfeit"]["holder"] == lock["holder"]
+    digest["policy"]["ide_idle_forfeit_s"] = 7200
+    kept = evaluate_spawn_predicate(digest, {}, lock=lock)
+    assert kept["clauses"]["seat_lock_free"] is False
 
 
 def test_checkpoint_due_wakes_once_per_cp_tick() -> None:
-    digest = _digest(
-        attention=[
-            {"id": "10579", "unread": 2, "status": "closed", "lifecycle": "completed"}
-        ],
-        checkpoint_due=True,
-    )
+    digest = _digest(attention=[_CLOSED_SUCCESSOR], checkpoint_due=True)
     first = evaluate_spawn_predicate(digest, {}, lock={"holder": None})
     assert first["clauses"]["spawn_signal"] is True
     latched = evaluate_spawn_predicate(

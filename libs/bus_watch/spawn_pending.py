@@ -1,9 +1,15 @@
 """Pending-spawn mutex and wake filters for gear-3 liaison.
 
 ``tick_spawn_on_wake`` and ``evaluate_spawn_predicate`` call this module so a
-finished worker cannot hold the house forever and a closed unread lane cannot
-look like new attention. The digest already lists those lanes; the predicate
+finished worker cannot hold the house forever and the same closeout cannot wake
+successor after successor. The digest already lists those lanes; the predicate
 must read lifecycle/status instead of treating any ``pending_spawn`` dict as live.
+
+Wake sources the ticker honours: an unread live lane; a finished *work* lane's
+closeout, once (``served_closeouts``); a ``go under`` handoff, once
+(``handoff`` / ``handoff_spawned_seq``); ``checkpoint_due``, once per CP epoch.
+A successor's own closeout never wakes the next successor — that loop is the
+mill that minted four unasked Opus liaisons on 10534 (2026-09-12).
 """
 
 from __future__ import annotations
@@ -12,7 +18,13 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from bus_watch.ide_budget import ide_holder_idle_s
+
 _TERMINAL_LIFECYCLES = frozenset({"completed", "failed", "cancelled", "closed"})
+_SUCCESSOR_SUBJECT_MARK = "caller=liaison-ticker"
+_SERVED_KEEP = 200
+_SUCCESSOR_THREADS_KEEP = 50
+IDE_IDLE_FORFEIT_S = 1200.0
 
 
 def _parse_iso_ts(value: str | None) -> float | None:
@@ -36,19 +48,98 @@ def row_is_terminal(row: dict[str, Any]) -> bool:
     return str(row.get("lifecycle") or "").lower() in _TERMINAL_LIFECYCLES
 
 
-def actionable_attention(attention: Any) -> list[Any]:
-    """Wake items: unread live lanes. Budget estimates and closed workers are not."""
+def _is_successor_lane(item: dict[str, Any], successors: set[str]) -> bool:
+    """A lane the ticker spawned: recorded thread id, or the wire's caller mark
+    on the closeout subject when the admit payload carried no thread id."""
+    if str(item.get("id") or "") in successors:
+        return True
+    return _SUCCESSOR_SUBJECT_MARK in str(item.get("last_subject") or "")
+
+
+def actionable_attention(
+    attention: Any, *, state: dict[str, Any] | None = None
+) -> list[Any]:
+    """Wake items: unread live lanes, plus each finished *work* lane's closeout once.
+
+    A closeout is the moment the house needs a seat (harvest → fold → decide →
+    dispatch), so a terminal lane with unread turns wakes — once per turn count
+    (``state.served_closeouts``) and never for a successor the ticker itself
+    spawned (``state.successor_threads`` / ``caller=liaison-ticker``). Budget
+    estimates are never attention.
+    """
+    st = state or {}
+    served = st.get("served_closeouts") or {}
+    successors = {str(x) for x in (st.get("successor_threads") or [])}
     items = attention if isinstance(attention, list) else []
     out: list[Any] = []
     for item in items:
-        if not isinstance(item, dict):
-            continue
-        if item.get("kind") == "budget_estimate":
+        if not isinstance(item, dict) or item.get("kind") == "budget_estimate":
             continue
         if row_is_terminal(item):
-            continue
+            if int(item.get("unread") or 0) <= 0 or _is_successor_lane(
+                item, successors
+            ):
+                continue
+            if str(served.get(str(item.get("id")))) == str(item.get("turns")):
+                continue
         out.append(item)
     return out
+
+
+def handoff_wake(state: dict[str, Any]) -> bool:
+    """``go under`` arms exactly one wake: ``handoff.seq`` not yet spawned for."""
+    seq = int((state.get("handoff") or {}).get("seq") or 0)
+    return seq > 0 and seq != int(state.get("handoff_spawned_seq") or 0)
+
+
+def idle_ide_forfeit(
+    lock: dict[str, Any],
+    *,
+    register: str,
+    policy: dict[str, Any],
+    idle_of: Callable[[dict[str, Any]], float | None] | None = None,
+) -> dict[str, Any] | None:
+    """An ``ide:`` seat whose tab stopped writing while the house is autonomous.
+
+    The lease itself is honoured while the operator steers (attended register);
+    under ``autonomous`` a silent tab is a stopped liaison (10479, 2026-09-13:
+    ``ide:ccd52168…`` claimed at 06:13Z, ``tick_seq=0``, ticker held 90 min on
+    ``seat_lock_free``). Returns ``{holder, idle_s}`` when the ticker may release
+    it and spawn; ``None`` otherwise (including unmeasurable legacy ``ide:<root>``).
+    """
+    holder = str(lock.get("holder") or "")
+    if register != "autonomous" or not holder.startswith("ide:"):
+        return None
+    idle_s = (idle_of or ide_holder_idle_s)(lock)
+    limit = float(policy.get("ide_idle_forfeit_s") or IDE_IDLE_FORFEIT_S)
+    if idle_s is None or idle_s <= limit:
+        return None
+    return {"holder": holder, "idle_s": round(idle_s)}
+
+
+def record_spawn_service(state: dict[str, Any], attention: Any) -> None:
+    """After a successful fire: latch the handoff, mark the closeouts this
+    successor was spawned for, and remember the successor's own lane."""
+    handoff = state.get("handoff") or {}
+    if handoff.get("seq"):
+        state["handoff_spawned_seq"] = int(handoff["seq"])
+    served = dict(state.get("served_closeouts") or {})
+    for item in attention if isinstance(attention, list) else []:
+        if (
+            isinstance(item, dict)
+            and row_is_terminal(item)
+            and item.get("id") is not None
+        ):
+            served[str(item["id"])] = item.get("turns")
+    state["served_closeouts"] = dict(list(served.items())[-_SERVED_KEEP:])
+    thread_id = str((state.get("pending_spawn") or {}).get("thread_id") or "").strip()
+    if thread_id:
+        kept = [
+            str(x)
+            for x in (state.get("successor_threads") or [])
+            if str(x) != thread_id
+        ]
+        state["successor_threads"] = (kept + [thread_id])[-_SUCCESSOR_THREADS_KEEP:]
 
 
 def pending_spawn_terminal(
@@ -117,9 +208,13 @@ def checkpoint_due_wake(state: dict[str, Any], checkpoint_due: bool) -> bool:
 
 
 __all__ = [
+    "IDE_IDLE_FORFEIT_S",
     "actionable_attention",
     "checkpoint_due_wake",
     "digest_pending_is_terminal",
+    "handoff_wake",
+    "idle_ide_forfeit",
     "pending_spawn_terminal",
+    "record_spawn_service",
     "row_is_terminal",
 ]

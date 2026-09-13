@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import subprocess
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -13,22 +11,23 @@ from typing import Any
 
 from stargate_dispatch.client import submit_team_dispatch
 
-from bus_watch.events import emit_lease_forfeited
 from bus_watch.fable_lock import (
     current_night_id,
     read_lock,
+    release_fable_lock,
     seat_lock_free,
 )
+from bus_watch.liaison_pager import maybe_forfeit_expired_lease, page_liaison
 from bus_watch.spawn_pending import (
     actionable_attention,
     checkpoint_due_wake,
     digest_pending_is_terminal,
+    handoff_wake,
+    idle_ide_forfeit,
     pending_spawn_terminal,
+    record_spawn_service,
 )
 
-_EMAIL_BRIDGE_SOCK = os.environ.get(
-    "EMAIL_BRIDGE_SOCK", "/tmp/universal-protocol/email-bridge.sock"
-)
 _WORK_KEY_IN_FLIGHT = "CURSOR_SOURCE_REF_IN_FLIGHT"
 SUCCESSOR_MESSAGE_CAP = 2048
 _CONTEXT_BUDGET_RATIO = 0.80
@@ -146,10 +145,13 @@ def evaluate_spawn_predicate(
         digest, lock=lock, policy=policy, now=ts
     )
     spawn_signal = (
-        bool(actionable_attention(attention))
+        bool(actionable_attention(attention, state=state))
         or checkpoint_due_wake(state, checkpoint_due)
+        or handoff_wake(state)
         or budget_spawn
     )
+    register = str(digest.get("register") or state.get("register") or "")
+    idle_forfeit = idle_ide_forfeit(lock, register=register, policy=policy)
     grace = float(policy.get("spawn_grace_seconds") or 900)
     last_spawn_at = float(state.get("last_spawn_at") or 0.0)
     last_fp = state.get("last_spawn_fingerprint")
@@ -172,7 +174,8 @@ def evaluate_spawn_predicate(
             max_hop_minutes=max_hop_minutes,
             root_id=str((digest.get("root") or {}).get("id") or "").strip(),
         )
-        or budget_replaces_holder,
+        or budget_replaces_holder
+        or idle_forfeit is not None,
         "pending_spawn_terminal": pending_spawn_terminal(pending, is_terminal=checker),
         "hops_under_cap": hops < int(policy.get("max_hops_per_night") or 8),
         "dispatches_under_cap": dispatches
@@ -198,6 +201,10 @@ def evaluate_spawn_predicate(
             "fresh": budget_spawn,
             "reason": budget_reason,
         }
+    if idle_forfeit:
+        result["idle_ide_forfeit"] = idle_forfeit
+    if handoff_wake(state):
+        result["handoff"] = state.get("handoff")
     return result
 
 
@@ -238,61 +245,6 @@ def build_dispatch_body(
         ),
     }
     return body
-
-
-def page_liaison(root_id: str, subject: str, body: str) -> dict[str, Any]:
-    """Fire the email-bridge pager; returns ok=False when the socket is absent."""
-    if not os.path.exists(_EMAIL_BRIDGE_SOCK):
-        return {"ok": False, "reason": "pager_unavailable"}
-    payload = json.dumps(
-        {"subject": subject, "body": body, "tag": "liaison"},
-        ensure_ascii=False,
-    )
-    proc = subprocess.run(
-        [
-            "curl",
-            "-sS",
-            "--unix-socket",
-            _EMAIL_BRIDGE_SOCK,
-            "-H",
-            "Content-Type: application/json",
-            "-d",
-            payload,
-            "http://localhost/pager/notify",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return {"ok": proc.returncode == 0, "stdout": proc.stdout[:200]}
-
-
-def maybe_forfeit_expired_lease(
-    root_id: str,
-    *,
-    lock: dict[str, Any] | None = None,
-    last_holder_turn: int | None = None,
-) -> bool:
-    """Emit lease-forfeit and page when the seat lock is expired; True if forfeited."""
-    lock = lock if lock is not None else read_lock(root_id)
-    if seat_lock_free(lock, root_id=root_id):
-        return False
-    holder = str(lock.get("holder") or "")
-    if not holder:
-        return False
-    emit_lease_forfeited(
-        root_id=root_id,
-        holder=holder,
-        expires_at=str(lock.get("expires_at") or ""),
-        last_holder_turn=last_holder_turn,
-    )
-    page_liaison(
-        root_id,
-        f"liaison {root_id} — lease forfeit",
-        f"Holder {holder} lease expired at {lock.get('expires_at')}; "
-        f"last holder turn={last_holder_turn}.",
-    )
-    return True
 
 
 def _wire_submit_body(body: dict[str, Any]) -> dict[str, Any]:
@@ -413,6 +365,10 @@ def tick_spawn_on_wake(
         }
     if not evaluation["spawn"]:
         return {"action": "hold", "evaluation": evaluation, "body": body}
+    if forfeit := evaluation.get("idle_ide_forfeit"):
+        # The stopped tab's lease goes before the successor is minted, so the
+        # successor's ``--claim`` is not refused by a seat nobody is sitting in.
+        release_fable_lock(forfeit["holder"], pid=None, root_id=root_id)
     state["last_spawn_fingerprint"] = evaluation["spawn_fingerprint"]
     fired = fire_spawn(
         root_id,
@@ -423,6 +379,8 @@ def tick_spawn_on_wake(
         successor_context=successor_context,
     )
     status = int(fired.get("status_code") or 0)
-    if 0 < status < 400 and digest.get("checkpoint_due"):
-        state["checkpoint_due_spawned_tick"] = int(state.get("last_cp_tick") or 0)
+    if 0 < status < 400:
+        if digest.get("checkpoint_due"):
+            state["checkpoint_due_spawned_tick"] = int(state.get("last_cp_tick") or 0)
+        record_spawn_service(state, digest.get("attention"))
     return {"action": "spawned", "evaluation": evaluation, "fire": fired}

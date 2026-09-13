@@ -25,7 +25,22 @@ _ONE_STEP = (
     "One step: harvest → fold → decide; quote evidence; end turn. "
     "Judgment bind ⇒ cdp/opus-5 first when below Opus."
 )
+_UNDER_STEP = (
+    "One step: CHECKPOINT (residue ≤ 800), run the go-under command above, "
+    "paste its UNDER line, end turn. PARK is not a step while NOW or unread remain."
+)
 _QUIET_STEP = "Quiet tick: one line, end turn. Do not fetch the bus to double-check."
+
+
+def go_under_command(root_id: Any, transcript_id: Any) -> str:
+    """The one verb an attended tab runs to hand the house to the ticker."""
+    holder = f" --holder ide:{transcript_id}" if transcript_id else ""
+    return f"liaison-tick.py --root {root_id} --go-under{holder}"
+
+
+def _tab_at_budget(digest: dict[str, Any]) -> bool:
+    budget = digest.get("budget") or {}
+    return bool(budget.get("stop_class")) and budget.get("source") == "ide.transcript"
 
 
 def _events(digest: dict[str, Any]) -> list[str]:
@@ -35,9 +50,19 @@ def _events(digest: dict[str, Any]) -> list[str]:
     if budget.get("stop_class"):
         used = int(budget.get("used_tokens") or 0)
         limit = max(int(budget.get("window_limit_tokens") or 1), 1)
+        # The address is the command, not the verb's name: on 10534 the tab
+        # wrote "restore cursor-sdk successor hop" into its CP and parked.
+        step = (
+            "→ CHECKPOINT, then "
+            + go_under_command(
+                (digest.get("root") or {}).get("id"), budget.get("transcript_id")
+            )
+            if _tab_at_budget(digest)
+            else "→ CHECKPOINT, release the seat; the ticker spawns the successor"
+        )
         items.append(
             f"{budget['stop_class']} {round(100 * used / limit)}% "
-            f"({budget.get('source')}) → CHECKPOINT, then hop or PARK"
+            f"({budget.get('source')}) {step}"
         )
     if digest.get("checkpoint_due"):
         items.append("CHECKPOINT due (segment CP, supersedes tip)")
@@ -88,17 +113,29 @@ def build_wake_induction(digest: dict[str, Any], *, cap: int = INDUCTION_CAP) ->
         else "NOW: (empty — pull the next objective per liaison skill § Objectives; "
         "empty NOW is not a stop)"
     )
-    loaded = ["liaison skill", *_listed(policy, "induction_loaded")]
+    loaded = list(
+        dict.fromkeys(["liaison skill", *_listed(policy, "induction_loaded")])
+    )
     lines.append("Loaded already (do not re-read): " + " · ".join(loaded))
     standing = [
         f"register={digest.get('register')}",
         *_listed(policy, "induction_binds"),
     ]
     lines.append("Standing: " + " · ".join(standing))
-    lines.append(_ONE_STEP if events else _QUIET_STEP)
+    if _tab_at_budget(digest):
+        lines.append(_UNDER_STEP)
+    else:
+        lines.append(_ONE_STEP if events else _QUIET_STEP)
+    return _fit(lines, cap)
+
+
+def _fit(lines: list[str], cap: int) -> str:
+    """Trim to ``cap`` bytes: the "+N more" line, then lane events, then the
+    standing binds. The designed-stop line (``Event: CONTEXT_BUDGET …``) carries
+    the go-under command and is never dropped — a one-step that says "the
+    command above" with the command trimmed away is the 10534 park again."""
     text = "\n".join(lines)
     while len(text.encode("utf-8")) > cap and len(lines) > 3:
-        # Drop the lowest-value line first: extra events, then standing binds.
         drop_at = next(
             (i for i, ln in enumerate(lines) if ln.startswith("Event: +")), None
         )
@@ -108,12 +145,21 @@ def build_wake_induction(digest: dict[str, Any], *, cap: int = INDUCTION_CAP) ->
                     i
                     for i in range(len(lines) - 2, 0, -1)
                     if lines[i].startswith("Event:")
+                    and not lines[i].startswith("Event: CONTEXT_BUDGET")
                 ),
-                len(lines) - 2,
+                None,
             )
-        lines.pop(drop_at)
+        if drop_at is not None:
+            lines.pop(drop_at)
+        else:
+            standing_at = next(
+                (i for i, ln in enumerate(lines) if ln.startswith("Standing: ")), None
+            )
+            if standing_at is None or " · " not in lines[standing_at]:
+                break
+            lines[standing_at] = lines[standing_at].split(" · ", 1)[0]
         text = "\n".join(lines)
     return text
 
 
-__all__ = ["INDUCTION_CAP", "build_wake_induction"]
+__all__ = ["INDUCTION_CAP", "build_wake_induction", "go_under_command"]

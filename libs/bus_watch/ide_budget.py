@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -152,11 +153,32 @@ def measure_ide_tab(
     }
 
 
+def ide_holder_idle_s(
+    lock: dict[str, Any],
+    *,
+    transcripts_dir: Path = AGENT_TRANSCRIPTS,
+    now: float | None = None,
+) -> float | None:
+    """Seconds since the ``ide:<transcript_id>`` holder's tab last wrote its
+    transcript — the only liveness the hub can read for an attended seat.
+    ``None`` when the holder is not a measurable tab."""
+    transcript_id = ide_holder_transcript(lock)
+    if not transcript_id:
+        return None
+    path = transcripts_dir / transcript_id / f"{transcript_id}.jsonl"
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    return max(0.0, (now if now is not None else time.time()) - mtime)
+
+
 __all__ = [
     "AGENT_TRANSCRIPTS",
     "IDE_BUDGET_SOURCE",
     "estimate_tokens",
     "first_line_matches",
+    "ide_holder_idle_s",
     "ide_holder_transcript",
     "measure_ide_tab",
     "measure_transcript",

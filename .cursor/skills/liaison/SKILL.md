@@ -24,16 +24,19 @@ Flip: `scripts/liaison-tick.py --root R --register autonomous|attended` (state-f
 return ("I'm back") flips to attended; the operator's departure ("running overnight") flips to autonomous.
 
 **`go under`** (aliases `run headless` · `hand off to cursor-sdk` · `go under <root>`; operator 2026-09-12
-21:50 PT) = hand this house to the gear-3 ticker and leave the tab. Deterministic sequence, any tab model:
-1. segment CHECKPOINT if turns since the tip (`--mark-checkpoint`);
-2. `liaison-tick.py --root R --register autonomous --set ready=true` (+ `--set successor_model=<slug>` when
-   `--policy` shows `successor_model_source != override` — the ticker refuses to pick one);
-3. stop this tab's `--loop` if armed, then `--release --holder ide:<transcript_id>` so `seat_lock_free`
-   passes (the ticker never preempts an `ide:` holder);
-4. reply one line — `UNDER → liaison-ticker-<R> · successor_model=<slug> · spawns on attention / CP-due ·
-   take back: resume <R>` — and end the turn. No hop, no dispatch after the release.
+21:50 PT) = hand this house to the gear-3 ticker and leave the tab. **One verb, owned by the harness**
+(`libs/bus_watch/go_under.py`; 10534 2026-09-13 06:11Z parked at 99.6 % with the four-step prose unrun):
+1. segment CHECKPOINT (residue ≤ 800) — the seat authors it; `--mark-checkpoint` may ride on step 2;
+2. `liaison-tick.py --root R --go-under --holder ide:<transcript_id>` — flips `register=autonomous` (which
+   arms the ticker: `ready` follows the register), drops a stale `ready=false`, releases the `ide:` seat,
+   SIGTERMs this root's attended `--loop`s, starts a ticker if none holds `liaison-ticker-<R>.lock`, and
+   arms **one** handoff wake (`state.handoff.seq`) so the next poll spawns the successor whether or not any
+   lane is unread. Refuses only `successor_model_unset` (`--set successor_model=<slug>` first);
+3. paste the printed `UNDER → …` line and end the turn. No hop, no dispatch after the verb.
+**When:** the `CONTEXT_BUDGET` event on an attended tab carries this exact command in the induction — run
+it; PARK is not a step while `NOW` or unread lanes remain. Also the exit for "running overnight".
 Surface again: `resume <R>` in any tab (an `ide:` claim preempts the `sdk:` holder) or "I'm back" ⇒
-`--register attended`; `ready` stays as set unless the operator says `--set ready=false`.
+`--register attended` (disarms the ticker unless `--set ready=true` is explicit).
 
 **Operator guide (living).** "How do I use …" / "what changed" / a new ruling or phase move ⇒ **LOAD AND
 EXECUTE** `runbook:liaison-operator-guide` (`cortex://notes/runbooks/liaison-operator-guide.md`) — `cite(runbook)
@@ -96,8 +99,8 @@ transport; `cse_session(op=followup)` is the claude.ai transport — both are op
    not a closeout; answer `RETIRED → <landed_transcript_id>` in one line and never harvest
    (10479 hops 1→2, 2026-09-13 03:04Z: two tabs harvested 10584, CP #198 + #201, MCP
    recycled under the successor's read).
-8. **Stop classes** — `CONTEXT_BUDGET` hops only if remaining autonomous work; else
-   CHECKPOINT → PARK. Other designed stops: § Stops.
+8. **Stop classes** — `CONTEXT_BUDGET` on an attended tab: CHECKPOINT → `--go-under` (§ Registers);
+   PARK only when `NOW` is empty and nothing is unread. Other designed stops: § Stops.
 
 ## Seat model (operator 2026-09-11 20:37 PT: "Fable on IDE may not always be practical")
 
@@ -136,7 +139,10 @@ declared lease (`expires_at`) on each `--once` tick (`tick_seq` / `turns_seen`);
 `holder is None ∨ now > expires_at`. The gear-3 **ticker** holds `liaison-ticker-<root>.lock` (`ticker:<root>`) —
 it never takes the seat mutex and cannot write `preempt_by`. The legacy fleet file
 `liaison-ticker.lock` is unread leftover (same posture as `liaison-fable.lock`). Attended `--loop` (gear 1/2) still claims the seat
-lock; gear 3 uses `--loop --spawn-on-wake` instead. `lock.hops` is keyed by `night_id` on
+lock; gear 3 uses `--loop --spawn-on-wake` instead. **Idle forfeit** (`spawn_pending.idle_ide_forfeit`): under
+`register=autonomous` an `ide:<transcript_id>` holder whose tab transcript has been silent longer than
+`policy.ide_idle_forfeit_s` (default 1200 s) is a stopped liaison — the ticker releases that lease and spawns
+(10479 2026-09-13: `ide:ccd52168…` claimed 06:13Z, `tick_seq=0`, ticker held 90 min). Attended register never forfeits. `lock.hops` is keyed by `night_id` on
 **this root's** `liaison-fable-<root>.lock` (`hop_cap.lock_hops_scope=root`); the legacy fleet file
 `liaison-fable.lock` is unread leftover. **This-root cap** is `policy.max_hops_per_night`. Per-root
 `lock.hops==8` is not a designed stop.
@@ -176,7 +182,11 @@ team_dispatch(
 `build_successor_message` (via `libs/bus_watch/spawn_on_wake.py`) emits ≤2048 bytes containing verbatim:
 `resume <R>`, `dispatch(tool="continuity"`, `agent_bus_read(thread_get`, `gear:`, `row=`,
 `tip_cp_ordinal=`, `contract: none`. Gear-3 ticker (`scripts/liaison-tick.py --loop --spawn-on-wake`) fires
-this body when `attention`, `checkpoint_due`, or a fresh `CONTEXT_BUDGET` stop applies. The successor claims
+this body on: an unread **live** lane · a finished **work** lane's closeout, once per turn count
+(`state.served_closeouts`; a successor's own closeout never wakes the next — `caller=liaison-ticker` /
+`state.successor_threads`) · a `--go-under` handoff, once (`handoff.seq`) · `checkpoint_due`, once per CP epoch ·
+a fresh `CONTEXT_BUDGET` from the `sdk:` holder's own stream. Hold reasons are the per-clause booleans on the
+ticker's stdout line (`tmp/watchers/liaison-ticker-<R>.log` when started by `--go-under`). The successor claims
 the lock with `--hop`, runs ≤ 5 ticks / 60 min, checkpoints, releases, spawns the next. Composer implement
 dispatches (`contract=implement`, omit `model=`) run **alongside** — they are not Fable seats.
 
@@ -210,7 +220,7 @@ The successor model is **policy, never a constant**. `scripts/liaison-tick.py --
 |---|---|---|---|
 | `1-fable-mvp` | `cursor/claude-fable-5-1` + `cost_intent=deliberate_high_cost` | ≤ 5 ticks / 60 min / poll 600 s | **do not select** — Cursor Fable credit window closed (2026-09-12); use gear 2/3 |
 | `2-opus-hops` | `cursor/claude-opus-5` (no cost intent); CDP checks stay `cdp/opus-5` | ≤ 6 ticks | next iteration; Fable only in the attended window |
-| `3-wake-on-attention` | **`policy.successor_model` only** — the preset carries no model; `--set successor_model=<slug>` is required or the ticker holds with `successor_model_bound=false` (10534 2026-09-12: the old Opus preset minted four unasked Opus liaisons at 12–24M tokens each). Spawned **only** when a digest has actionable `attention` (unread > 0, not a lone `kind=budget_estimate`) or `checkpoint_due` | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **disarmed by default** (`policy.ready=false`); arm with explicit `--set ready=true`. First live night = operator gate (A7) |
+| `3-wake-on-attention` | **`policy.successor_model` only** — the preset carries no model; `--set successor_model=<slug>` is required or the ticker holds with `successor_model_bound=false` (10534 2026-09-12: the old Opus preset minted four unasked Opus liaisons at 12–24M tokens each). Spawned on the wake sources in § Headless successor (live unread · work closeout once · handoff once · `checkpoint_due` once) | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **armed by the register**: `register=autonomous` ⇒ `policy.ready=true` (`ready_source=register`); attended ⇒ disarmed. Explicit `--set ready=false` disarms an autonomous house until `--go-under` drops it (10479 2026-09-13 sat autonomous + `ready=false` all night — the A7 gate was the operator's first-night word, not a standing hold) |
 
 Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). A live
 `--loop` absorbs `--set` / `--mark-*` edits from another shell on its next poll (`libs/bus_watch/tick_state.py`
@@ -234,7 +244,7 @@ watcher hygiene, scoreboard grooming — then lengthen the heartbeat (`--heartbe
 | `CONSULT_PENDING` | independent check disagrees | row pinned, continue other rows |
 | `REPEATED_FAILURE` | same fix failed twice | stop the row, file friction, page |
 | `SPEND_CAP` | dispatch count ≥ `policy.max_dispatches_per_night` (read from the digest at tick time — never a number frozen in prose; R14 / a:33104) or a dispatch > 2h | pause new dispatches, page |
-| `CONTEXT_BUDGET` | digest `budget.stop_class` — `source=giw.sdk_stream` for a headless holder, **`source=ide.transcript` for an attended tab** (the tab's own JSONL: prose bytes/4 + `ide_tokens_per_tool_call` per call vs `policy.ide_window_tokens`, default 256k; the estimate carries `transcript_id` · `tool_calls` · `holder_basis`). `checkpoint_due` flips at 60 % of the same window. Before 2026-09-13 an IDE tab had no stop at all (10534 tab: 852 tool calls, 11 h, compacted repeatedly, commission lost) | CHECKPOINT → hop only if autonomous follow-up remains; else PARK. Operator on a larger tab model: `--set ide_window_tokens=<n>` |
+| `CONTEXT_BUDGET` | digest `budget.stop_class` — `source=giw.sdk_stream` for a headless holder, **`source=ide.transcript` for an attended tab** (the tab's own JSONL: prose bytes/4 + `ide_tokens_per_tool_call` per call vs `policy.ide_window_tokens`, default 256k; the estimate carries `transcript_id` · `tool_calls` · `holder_basis`). `checkpoint_due` flips at 60 % of the same window. Before 2026-09-13 an IDE tab had no stop at all (10534 tab: 852 tool calls, 11 h, compacted repeatedly, commission lost). Once the house is under (autonomous, no `ide:` holder) the retired tab's reading is dropped from the digest so a headless successor never parks on it | attended tab: CHECKPOINT → **`--go-under`** (the induction `Event:` line is the exact command); headless: CHECKPOINT → release, the ticker spawns. PARK only with empty `NOW` and nothing unread. Operator on a larger tab model: `--set ide_window_tokens=<n>` |
 
 Page: `curl -sS --unix-socket /tmp/universal-protocol/email-bridge.sock -H 'Content-Type: application/json'
 -d '{"subject":"liaison R — <stop>","body":"<one paragraph + tip CP turn>","tag":"liaison"}' http://localhost/pager/notify`.

@@ -231,5 +231,12 @@ def effective_policy(state: dict[str, Any]) -> dict[str, Any]:
         merged["successor_model_source"] = "default"
     merged["successor_is_fable"] = "fable" in str(merged.get("successor_model") or "")
     if gear == "3-wake-on-attention" and "ready" not in overrides:
-        merged["ready"] = False
+        # Autonomy is the register. 10479 sat ``register=autonomous`` with the
+        # preset's ``ready=False`` for a night while the operator expected hops
+        # (2026-09-13); an autonomous house is armed unless the operator disarms
+        # it explicitly (``--set ready=false``), and ``go under`` drops that override.
+        merged["ready"] = str(state.get("register") or "") == "autonomous"
+        merged["ready_source"] = "register"
+    else:
+        merged["ready_source"] = "override" if "ready" in overrides else "default"
     return merged

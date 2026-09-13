@@ -12,6 +12,7 @@ Modes:
                          it as a monitored background shell (``/loop`` local
                          mechanism) so the sentinel wakes the seat.
   --loop --spawn-on-wake gear-3 ticker: poll bus, spawn successor on attention
+  --go-under             hand the house to the ticker (one verb; see bus_watch.go_under)
 
 Digest contents: root + child lanes (lineage), per-lane turn/unread counters,
 terminal-class last subjects, unread TOC scoped to those lanes, completed
@@ -47,6 +48,7 @@ from bus_watch.fable_lock import (
     release_fable_lock,
     release_ticker_lease,
 )
+from bus_watch.go_under import go_under
 from bus_watch.liaison_digest import (
     TICK_OVERHEAD_TOKENS as _TICK_OVERHEAD_TOKENS,
 )
@@ -154,6 +156,13 @@ def main() -> int:
     p.add_argument(
         "--policy", action="store_true", help="print the effective policy and exit"
     )
+    p.add_argument(
+        "--go-under",
+        action="store_true",
+        help="hand this house to the gear-3 ticker: register autonomous, drop a stale "
+        "ready=false, release the ide: seat (--holder), stop attended loops, ensure a "
+        "ticker, arm one handoff wake; prints the UNDER line to paste",
+    )
     args = p.parse_args()
 
     if args.claim or args.release:
@@ -207,6 +216,11 @@ def main() -> int:
                 raise SystemExit(f"--set expects KEY=VALUE, got {item!r}")
             policy[key.strip()] = _coerce(raw.strip())
         state["policy"] = policy
+    if args.go_under:
+        result = go_under(root, state, state_path=state_path, holder=args.holder)
+        print(json.dumps(result, default=str))
+        print(result["under_line"], flush=True)
+        return 0 if result.get("ok") else 3
     if args.mark_checkpoint or args.mark_relayed or args.set or args.policy:
         save_state(state_path, state)
         if not (args.once or args.loop):
