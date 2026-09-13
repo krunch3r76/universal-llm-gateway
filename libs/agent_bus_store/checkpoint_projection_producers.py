@@ -29,9 +29,7 @@ class ProducerDispatchRow:
 
 def transcript_projection_registry_uri(root_thread: str) -> str:
     """Canonical registry sidecar for checkpoint derived-zone pointers."""
-    return (
-        f"cortex://notes/system/threads/{root_thread}-transcript-projection.md"
-    )
+    return f"cortex://notes/system/threads/{root_thread}-transcript-projection.md"
 
 
 def _parse_ts(raw: str | None) -> datetime | None:
@@ -54,8 +52,10 @@ def _producer_state(link: LineageDispatchLink) -> str:
 
 
 def _terminal_visible(link: LineageDispatchLink, *, now: datetime) -> bool:
-    ref = _parse_ts(link.delivery_at) or _parse_ts(link.terminal_at) or _parse_ts(
-        link.linked_at
+    ref = (
+        _parse_ts(link.delivery_at)
+        or _parse_ts(link.terminal_at)
+        or _parse_ts(link.linked_at)
     )
     if ref is None:
         return False
@@ -170,6 +170,7 @@ def render_producers_section(
         registry = transcript_projection_registry_uri(root_thread)
         parts.append(
             f"producers: {in_flight} in_flight · registry: {registry}"
+            " · basis: link.terminal_status=null ∧ linked_at≤24h (¬liveness)"
         )
         return parts
     ordered = _sort_producer_rows_for_display(rows)

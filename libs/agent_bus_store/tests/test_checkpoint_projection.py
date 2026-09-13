@@ -18,10 +18,8 @@ from agent_bus_store.checkpoint_projection import (
     extract_authored_residue,
     project_checkpoint_body,
 )
-from agent_bus_store.checkpoint_projection_producers import (
-    CHECKPOINT_MAX_PRODUCER_ROWS,
-    ProducerDispatchRow,
-)
+from agent_bus_store.checkpoint_projection_lanes import CHECKPOINT_MAX_CHILD_ROWS
+from agent_bus_store.checkpoint_projection_producers import ProducerDispatchRow
 from agent_bus_store.checkpoint_projection_wiring import maybe_project_checkpoint_body
 from agent_bus_store.turns_models import MAX_TURN_BODY_CHARS
 
@@ -97,7 +95,10 @@ def test_registry_rendering() -> None:
     assert "### Child lanes" in body
     assert "### Cited lanes" in body
     assert "agent-bus:6357 · unassociated · active · turn 12" in body
-    assert "agent-bus:6341" not in body.split("### Cited lanes")[1].split("### Artifact")[0]
+    assert (
+        "agent-bus:6341"
+        not in body.split("### Cited lanes")[1].split("### Artifact")[0]
+    )
     assert CANONICAL_RESUME_FOOTER in body
 
 
@@ -106,9 +107,7 @@ def test_root_id_not_rendered_as_own_child() -> None:
     body = project_checkpoint_body(
         root_thread="6341",
         residue=residue,
-        resolvers=_resolvers(
-            children=(ChildThreadRow("6341", "active", 3),)
-        ),
+        resolvers=_resolvers(children=(ChildThreadRow("6341", "active", 3),)),
     )
     assert "### Child lanes" in body
     assert "_none substantiated_" in body
@@ -150,9 +149,7 @@ def test_grandchild_not_child_of_root() -> None:
         ),
     )
     assert "agent-bus:7188 · sub_mission · active · turn 12" in body
-    assert (
-        "agent-bus:7197 · spillover of agent-bus:7188 · active · turn 4" in body
-    )
+    assert "agent-bus:7197 · spillover of agent-bus:7188 · active · turn 4" in body
     assert body.index("### Child lanes") < body.index("### In-flight producers")
     assert body.index("### In-flight producers") < body.index("### Cited lanes")
 
@@ -180,9 +177,7 @@ def test_snippet_and_staleness_flags() -> None:
 
 
 def test_closed_child_compression_rule() -> None:
-    children = tuple(
-        ChildThreadRow(str(7000 + i), "closed", i + 1) for i in range(120)
-    )
+    children = tuple(ChildThreadRow(str(7000 + i), "closed", i + 1) for i in range(120))
     residue = "Settled: large house fold.\n" + ("z" * 2200)
     body = project_checkpoint_body(
         root_thread="6341",
@@ -239,9 +234,7 @@ def test_backtick_wrapped_uri_yields_artifact_sha() -> None:
     body = project_checkpoint_body(
         root_thread="6341",
         residue=residue,
-        resolvers=_resolvers(
-            anchors={uri: ArtifactAnchor(uri=uri, sha256="deadbeef")}
-        ),
+        resolvers=_resolvers(anchors={uri: ArtifactAnchor(uri=uri, sha256="deadbeef")}),
     )
     assert f"{uri} · sha256:deadbeef" in body
     assert "**UNPROJECTED**" not in body
@@ -335,9 +328,7 @@ def test_artifact_anchor_rendering() -> None:
     body = project_checkpoint_body(
         root_thread="6341",
         residue=residue,
-        resolvers=_resolvers(
-            anchors={uri: ArtifactAnchor(uri=uri, sha256="abc123")}
-        ),
+        resolvers=_resolvers(anchors={uri: ArtifactAnchor(uri=uri, sha256="abc123")}),
     )
     assert f"{uri} · sha256:abc123" in body
 
@@ -483,9 +474,7 @@ def test_child_registry_uses_live_lineage_primitive(tmp_path, monkeypatch) -> No
         )
         assert checkpoint.status_code == 201, checkpoint.text
 
-        posted = client.get(
-            f"/turns/by-number?thread={parent_id}&turn_number=2"
-        ).json()
+        posted = client.get(f"/turns/by-number?thread={parent_id}&turn_number=2").json()
         body = posted["body"]
 
     assert "### Child lanes" in body
@@ -556,9 +545,7 @@ def test_child_registry_survives_dispatch_link_io_failure(
         )
         assert checkpoint.status_code == 201, checkpoint.text
 
-        posted = client.get(
-            f"/turns/by-number?thread={parent_id}&turn_number=2"
-        ).json()
+        posted = client.get(f"/turns/by-number?thread={parent_id}&turn_number=2").json()
         body = posted["body"]
 
     assert "### Child lanes" in body
@@ -643,9 +630,7 @@ def test_send_new_slug_checkpoint_projection_route(tmp_path, monkeypatch) -> Non
         )
         assert resp.status_code == 201, resp.text
         thread_id = resp.json()["thread"]["id"]
-        turn = client.get(
-            f"/turns/by-number?thread={thread_id}&turn_number=1"
-        ).json()
+        turn = client.get(f"/turns/by-number?thread={thread_id}&turn_number=1").json()
         body = turn["body"]
     assert "### Child lanes" in body
     assert "_none substantiated_" in body
@@ -748,9 +733,7 @@ def test_send_non_checkpoint_unchanged(tmp_path, monkeypatch) -> None:
             },
         )
         assert resp.status_code == 201, resp.text
-        turn = client.get(
-            f"/turns/by-number?thread={thread_id}&turn_number=2"
-        ).json()
+        turn = client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").json()
         assert turn["body"] == plain
 
 
@@ -768,9 +751,7 @@ def test_with_turn_checkpoint_projection_route(tmp_path, monkeypatch) -> None:
         )
         assert resp.status_code == 201, resp.text
         thread_id = resp.json()["thread"]["id"]
-        turn = client.get(
-            f"/turns/by-number?thread={thread_id}&turn_number=1"
-        ).json()
+        turn = client.get(f"/turns/by-number?thread={thread_id}&turn_number=1").json()
         body = turn["body"]
     assert "### Child lanes" in body
     assert "_none substantiated_" in body
@@ -921,9 +902,7 @@ def test_producer_registry_renders_open_dispatch_link(tmp_path, monkeypatch) -> 
         )
         assert checkpoint.status_code == 201, checkpoint.text
 
-        posted = client.get(
-            f"/turns/by-number?thread={thread_id}&turn_number=2"
-        ).json()
+        posted = client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").json()
         body = posted["body"]
 
     assert "### In-flight producers" in body
@@ -1037,9 +1016,7 @@ def test_stale_in_flight_excluded_from_cp_projection() -> None:
         delivery_at=None,
     )
     links = (fresh, stale)
-    wait_rows = filter_visible_producer_links(
-        links, lane_thread_id="10223", now=now
-    )
+    wait_rows = filter_visible_producer_links(links, lane_thread_id="10223", now=now)
     cp_rows = filter_cp_projection_producer_links(
         links, lane_thread_id="10223", now=now
     )
@@ -1049,7 +1026,8 @@ def test_stale_in_flight_excluded_from_cp_projection() -> None:
 
 
 def test_maybe_project_checkpoint_refreshes_transcript_projection(
-    tmp_path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from agent_bus_store.db import create_thread, init_db
 
@@ -1097,8 +1075,58 @@ def test_producer_section_summary_count_only() -> None:
     assert len(body) <= MAX_TURN_BODY_CHARS
 
 
+def test_summary_caps_active_children_at_eight() -> None:
+    """181 active child lanes must not exceed MAX_TURN_BODY_CHARS (friction a:33437)."""
+    children = tuple(
+        ChildThreadRow(
+            str(10600 + i),
+            "active",
+            2,
+            lane_role="sub_mission",
+            parent_thread_id="10479",
+        )
+        for i in range(181)
+    )
+    residue = "x" * 800
+    body = project_checkpoint_body(
+        root_thread="10479",
+        residue=residue,
+        resolvers=_resolvers(children=children),
+    )
+    child_section = body.split("### In-flight producers")[0]
+    child_rows = [
+        line for line in child_section.splitlines() if line.startswith("- agent-bus:")
+    ]
+    assert len(body) <= MAX_TURN_BODY_CHARS
+    assert len(child_rows) == CHECKPOINT_MAX_CHILD_ROWS
+    assert (
+        f"_+173 more active · cap: "
+        f"checkpoint_projection_lanes.CHECKPOINT_MAX_CHILD_ROWS="
+        f"{CHECKPOINT_MAX_CHILD_ROWS}_"
+    ) in body
+    assert "agent-bus:10780 · sub_mission · active · turn 2" in body
+    assert "child_lanes: 181 active · 0 closed · registry:" in body
+
+
+def test_producers_summary_names_basis() -> None:
+    row = ProducerDispatchRow(
+        lane_thread_id="10479",
+        execution_id="d6a93d64-18a9-4779-8238-89d6af49e415",
+        model_or_seat="cursor-sdk",
+        state="in_flight",
+        linked_at="2026-09-08T02:15:00Z",
+    )
+    body = project_checkpoint_body(
+        root_thread="10479",
+        residue="Settled.",
+        resolvers=_resolvers(producers=(row,)),
+    )
+    assert "basis: link.terminal_status=null ∧ linked_at≤24h (¬liveness)" in body
+
+
 def test_maybe_project_checkpoint_emits_producers_projected_event(
-    tmp_path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from agent_bus_store.db import create_thread, init_db
 
@@ -1122,7 +1150,4 @@ def test_maybe_project_checkpoint_emits_producers_projected_event(
         subject="CHECKPOINT — event test",
         body="Settled.",
     )
-    assert emitted == [
-        {"thread": thread_id, "producer_count": 0, "execution_ids": []}
-    ]
-
+    assert emitted == [{"thread": thread_id, "producer_count": 0, "execution_ids": []}]
