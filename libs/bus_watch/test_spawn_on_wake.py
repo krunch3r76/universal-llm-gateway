@@ -479,3 +479,50 @@ def test_stale_pending_without_lane_is_terminal() -> None:
         now=datetime.fromisoformat("2026-09-12T20:00:00+00:00").timestamp(),
     )
     assert ev["clauses"]["pending_spawn_terminal"] is True
+
+
+def test_remint_cap_refusal_is_a_wall_for_the_night(monkeypatch) -> None:  # noqa: ANN001
+    """10479 2026-09-13: 169 refused spawns in six hours. One REMINT_CAP 409 latches
+    the night, pages once, and the predicate holds until the night rolls."""
+    from bus_watch import spawn_on_wake
+
+    pages: list[tuple] = []
+    monkeypatch.setattr(spawn_on_wake, "page_liaison", lambda *a: pages.append(a))
+    refusal = (
+        {
+            "error": {
+                "code": "CURSOR_WORK_KEY_REMINT_CAP",
+                "message": "work_key 'agent-bus:10479:night-x' remint seq 9 exceeds cap 8",
+            }
+        },
+        409,
+    )
+    state: dict = {}
+    policy = {"gear": "3-wake-on-attention", "successor_model": "cursor/grok-4.6"}
+    first = fire_spawn("10479", policy, state, submit=lambda body: refusal)
+    assert first["quiet_refusal"] is True
+    assert first["remint_cap_wall"]["night_id"] == current_night_id()
+    assert len(pages) == 1
+    second = fire_spawn("10479", policy, state, submit=lambda body: refusal)
+    assert "remint_cap_wall" not in second and len(pages) == 1
+    ev = evaluate_spawn_predicate(
+        _digest(attention=[{"id": "1", "unread": 1}]), state, lock={}
+    )
+    assert ev["clauses"]["remint_cap_clear"] is False and ev["spawn"] is False
+    rolled = {"remint_cap_wall": {"night_id": "1999-01-01"}}
+    assert evaluate_spawn_predicate(_digest(), rolled, lock={})["clauses"][
+        "remint_cap_clear"
+    ]
+
+
+def test_abandoned_lane_does_not_wake() -> None:
+    from bus_watch.spawn_pending import actionable_attention
+
+    orphan = {
+        "id": "10955",
+        "unread": 2,
+        "status": "active",
+        "lifecycle": "abandoned",
+        "last_subject": "Dispatch orphaned — worker terminated before completion",
+    }
+    assert actionable_attention([orphan], state={}) == []

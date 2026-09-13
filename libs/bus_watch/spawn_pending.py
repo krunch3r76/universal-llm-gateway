@@ -23,7 +23,13 @@ from typing import Any
 from bus_watch.friction_rows import latch_rows
 from bus_watch.ide_budget import ide_holder_idle_s
 
-_TERMINAL_LIFECYCLES = frozenset({"completed", "failed", "cancelled", "closed"})
+# ``abandoned`` = GIW orphaned the worker before it ran ("Dispatch orphaned —
+# worker terminated before completion"); such a lane is finished, and treating it
+# as live unread fed the 10479 remint-cap mill (2026-09-13, 169 refused spawns).
+_TERMINAL_LIFECYCLES = frozenset(
+    {"completed", "failed", "cancelled", "closed", "abandoned"}
+)
+_REMINT_CAP_CODE = "CURSOR_WORK_KEY_REMINT_CAP"
 _SUCCESSOR_SUBJECT_MARK = "caller=liaison-ticker"
 _SERVED_KEEP = 200
 _SUCCESSOR_THREADS_KEEP = 50
@@ -87,6 +93,38 @@ def actionable_attention(
                 continue
         out.append(item)
     return out
+
+
+def remint_cap_wall(state: dict[str, Any], night_id: str) -> bool:
+    """True while GIW has refused this night's work_key with ``REMINT_CAP``.
+
+    The wire's per-work_key cap is a hard wall for the rest of the night — every
+    retry is another 409 plus an admitted turn and an orphaned lane on the root.
+    The ticker holds until the night (and the work_key) rolls, instead of
+    polling the wall every 120 s (10479, 08:42Z–14:28Z 2026-09-13).
+    """
+    wall = state.get("remint_cap_wall") or {}
+    return str(wall.get("night_id") or "") == night_id
+
+
+def record_remint_cap(
+    state: dict[str, Any], payload: Any, *, night_id: str, at: str
+) -> dict[str, Any] | None:
+    """Latch a ``REMINT_CAP`` refusal for ``night_id``; returns the wall record
+    the first time it is seen tonight, else ``None`` (no repeat page)."""
+    err = payload.get("error") if isinstance(payload, dict) else None
+    code = err.get("code") if isinstance(err, dict) else None
+    if code != _REMINT_CAP_CODE:
+        return None
+    if remint_cap_wall(state, night_id):
+        return None
+    wall = {
+        "night_id": night_id,
+        "at": at,
+        "message": str(err.get("message") or "")[:200],
+    }
+    state["remint_cap_wall"] = wall
+    return wall
 
 
 def handoff_wake(state: dict[str, Any]) -> bool:

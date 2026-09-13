@@ -31,16 +31,36 @@ _GATE_MODE_DEFAULT = "observe"
 def gate_mode() -> str:
     """``observe`` (default) or ``enforce`` — Gates 1/3/4 observe emits and continues."""
     raw = (
-        os.environ.get("CURSOR_SDK_WORK_KEY_GATE_MODE") or _GATE_MODE_DEFAULT
-    ).strip().lower()
+        (os.environ.get("CURSOR_SDK_WORK_KEY_GATE_MODE") or _GATE_MODE_DEFAULT)
+        .strip()
+        .lower()
+    )
     return raw if raw in ("observe", "enforce") else _GATE_MODE_DEFAULT
 
 
+_WORK_KEY_SEQ_CAP_DEFAULT = 1_000_000
+
+
 def work_key_seq_cap() -> int:
+    """Root remints allowed per work_key in 24 h.
+
+    Effectively uncapped by default (operator ruling, 10479 2026-09-13: "no cap,
+    arbitrarily high"). The old default of 8 walled the gear-3 liaison ticker at
+    remint seq 9 for six hours — 169 refused spawns, one orphaned lane each —
+    while ``policy.max_hops_per_night`` said 999. ``CURSOR_SDK_WORK_KEY_SEQ_CAP``
+    remains an explicit operator/test override.
+    """
     try:
-        return max(1, int(os.environ.get("CURSOR_SDK_WORK_KEY_SEQ_CAP", "8")))
+        return max(
+            1,
+            int(
+                os.environ.get(
+                    "CURSOR_SDK_WORK_KEY_SEQ_CAP", str(_WORK_KEY_SEQ_CAP_DEFAULT)
+                )
+            ),
+        )
     except ValueError:
-        return 8
+        return _WORK_KEY_SEQ_CAP_DEFAULT
 
 
 def validate_work_key_scheme(work_key: str) -> bool:
@@ -75,7 +95,9 @@ def is_root_row(
     return resume_of is None and nest_under is None and hop_from is None
 
 
-def lineage_carriers_from_record(record_json: str | None) -> tuple[str | None, str | None]:
+def lineage_carriers_from_record(
+    record_json: str | None,
+) -> tuple[str | None, str | None]:
     """Read ``nest_under`` / ``hop_from`` from persisted ``record_json``."""
     if not record_json:
         return None, None

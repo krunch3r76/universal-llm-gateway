@@ -27,7 +27,9 @@ from bus_watch.spawn_pending import (
     handoff_wake,
     idle_ide_forfeit,
     pending_spawn_terminal,
+    record_remint_cap,
     record_spawn_service,
+    remint_cap_wall,
 )
 
 _WORK_KEY_IN_FLIGHT = "CURSOR_SOURCE_REF_IN_FLIGHT"
@@ -188,6 +190,7 @@ def evaluate_spawn_predicate(
         "successor_model_bound": _successor_model_bound(policy),
         "fingerprint_changed": fp != last_fp,
         "grace_elapsed": (ts - last_spawn_at) > grace,
+        "remint_cap_clear": not remint_cap_wall(state, night_id),
     }
     spawn = all(clauses.values())
     result: dict[str, Any] = {
@@ -291,6 +294,15 @@ def fire_spawn(
         code = err.get("code") if isinstance(err, dict) else None
         if code == _WORK_KEY_IN_FLIGHT or status == 409:
             result["quiet_refusal"] = True
+        if wall := record_remint_cap(state, payload, night_id=night_id, at=_utcnow()):
+            # A designed stop, not a transient: hold for the night and page once.
+            result["remint_cap_wall"] = wall
+            page_liaison(
+                root_id,
+                f"liaison {root_id} — REMINT_CAP wall {night_id}",
+                f"GIW refused the night's work_key: {wall['message']} "
+                "Ticker holds until the night rolls.",
+            )
         return result
     execution_id = str(payload.get("execution_id") or "").strip()
     thread_id = str(payload.get("thread_id") or payload.get("thread") or "").strip()
