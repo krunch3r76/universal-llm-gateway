@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shlex
 import subprocess
 import time
@@ -37,6 +36,7 @@ from typing import Any
 from durable_io.atomic import durable_write_text
 
 from bus_watch.fable_lock import WATCH_DIR
+from bus_watch.ide_budget import AGENT_TRANSCRIPTS, first_line_matches
 from bus_watch.ide_hop_landing import (
     AGENTS_WINDOW_APP_ID,
     focus_title_for,
@@ -76,11 +76,6 @@ def policy_focus_title(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
     title = effective_policy(state).get("hop_focus_title")
     return str(title) if title else None
 
-
-AGENT_TRANSCRIPTS = (
-    Path.home()
-    / ".cursor/projects/mnt-torus-projects-universal-llm-gateway/agent-transcripts"
-)
 
 TAIL_RECIPE = (
     "watch-supervise.sh tail --label {label}  (background Shell, block_until_ms 0, "
@@ -207,39 +202,18 @@ def build_ide_hop_message(
     return message
 
 
-_TIP_CP_RE = re.compile(r"tip_cp=(\d+)")
-
-
-def _tip_cp_in_first_line(first_line: str) -> int:
-    """Hop opener ordinal, or ``-1`` when the first user line has no ``tip_cp=``."""
-    m = _TIP_CP_RE.search(first_line)
-    return int(m.group(1)) if m else -1
-
-
 def find_transcript_id(
     first_user_text: str, transcripts_dir: Path = AGENT_TRANSCRIPTS
 ) -> str | None:
     """Transcript id of the tab whose first user message contains ``first_user_text``.
 
-    The seat cannot read its own tab id; the JSONL under agent-transcripts is the
-    only place it appears. A predecessor hop's jsonl keeps taking mtime updates
-    after the successor lands, so mtime-newest among ``resume <R>`` matches is
-    the old tab (hops 23–24, 2026-09-12). Among matches, prefer the highest
-    ``tip_cp=`` in the first line; mtime is the tie-break. Prefer a unique
-    needle (``tip_cp=N``) when the caller already knows it.
+    A predecessor hop's jsonl keeps taking mtime updates after the successor
+    lands, so mtime-newest among ``resume <R>`` matches is the old tab (hops
+    23–24, 2026-09-12). Among matches, prefer the highest ``tip_cp=`` in the
+    first line; mtime is the tie-break. Prefer a unique needle (``tip_cp=N``)
+    when the caller already knows it. Scan shared with ``ide_budget``.
     """
-    if not transcripts_dir.is_dir():
-        return None
-    matches: list[tuple[int, float, str]] = []
-    for path in transcripts_dir.glob("*/*.jsonl"):
-        try:
-            with path.open(encoding="utf-8") as fh:
-                first_line = fh.readline()
-            mtime = path.stat().st_mtime
-        except OSError:
-            continue
-        if first_user_text in first_line:
-            matches.append((_tip_cp_in_first_line(first_line), mtime, path.parent.name))
+    matches = first_line_matches(first_user_text, transcripts_dir)
     if not matches:
         return None
     matches.sort(key=lambda row: (row[0], row[1]), reverse=True)

@@ -39,6 +39,31 @@ def ide_holder_transcript(lock: dict[str, Any]) -> str | None:
     return candidate if _UUID_RE.match(candidate) else None
 
 
+def first_line_matches(
+    needle: str, transcripts_dir: Path = AGENT_TRANSCRIPTS
+) -> list[tuple[int, float, str]]:
+    """``(tip_cp, mtime, transcript_id)`` for every tab whose first user line
+    contains ``needle``; ``tip_cp`` is ``-1`` when the opener carries none.
+
+    The seat cannot read its own tab id; the JSONL under agent-transcripts is
+    the only place it appears. Callers order the rows for their own question
+    (budget: mtime-newest; hop checkpoint: highest ``tip_cp``)."""
+    if not transcripts_dir.is_dir():
+        return []
+    rows: list[tuple[int, float, str]] = []
+    for path in transcripts_dir.glob("*/*.jsonl"):
+        try:
+            with path.open(encoding="utf-8") as fh:
+                first_line = fh.readline()
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if needle in first_line:
+            m = _TIP_CP_RE.search(first_line)
+            rows.append((int(m.group(1)) if m else -1, mtime, path.parent.name))
+    return rows
+
+
 def newest_resume_transcript(
     root_id: str, transcripts_dir: Path = AGENT_TRANSCRIPTS
 ) -> str | None:
@@ -49,20 +74,8 @@ def newest_resume_transcript(
     which tab to checkpoint against). Falls back to this when the seat lock has
     no ``ide:<transcript_id>`` holder, e.g. an attended tab that never claimed.
     """
-    if not transcripts_dir.is_dir():
-        return None
-    needle = f"resume {root_id}"
-    best: tuple[float, str] | None = None
-    for path in transcripts_dir.glob("*/*.jsonl"):
-        try:
-            with path.open(encoding="utf-8") as fh:
-                first_line = fh.readline()
-            mtime = path.stat().st_mtime
-        except OSError:
-            continue
-        if needle in first_line and (best is None or mtime > best[0]):
-            best = (mtime, path.parent.name)
-    return best[1] if best else None
+    rows = first_line_matches(f"resume {root_id}", transcripts_dir)
+    return max(rows, key=lambda row: row[1])[2] if rows else None
 
 
 def measure_transcript(path: Path) -> dict[str, Any]:
@@ -143,6 +156,7 @@ __all__ = [
     "AGENT_TRANSCRIPTS",
     "IDE_BUDGET_SOURCE",
     "estimate_tokens",
+    "first_line_matches",
     "ide_holder_transcript",
     "measure_ide_tab",
     "measure_transcript",
