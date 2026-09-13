@@ -15,6 +15,7 @@ from typing import Any
 
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
 from universal_event_bus import Event, event_factory
+
 from scripts.mcp_bridge_steer_inject import (
     append_spool_entry,
     read_delivery_ack,
