@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -39,6 +40,8 @@ def test_default_probes_registers_cdp_ask_when_url_configured(
     probes = _default_probes()
     assert isinstance(probes["stargate"], HttpActiveWorkProbe)
     assert isinstance(probes["git_integration_worker"], HttpActiveWorkProbe)
+    assert isinstance(probes["agent_bus"], HttpActiveWorkProbe)
+    assert probes["agent_bus"]._path == "/api/v1/git/active-work"
     assert isinstance(probes["cdp_ask"], HttpActiveWorkProbe)
     assert probes["cdp_ask"]._path == "/v1/project-ask/drain-state"
 
@@ -54,6 +57,7 @@ def test_default_probes_omits_cdp_ask_when_unconfigured(
     assert "cdp_ask" not in probes
     assert "stargate" in probes
     assert "git_integration_worker" in probes
+    assert isinstance(probes["agent_bus"], HttpActiveWorkProbe)
 
 
 def test_evaluate_defers_cdp_ask_when_probe_busy() -> None:
@@ -76,6 +80,57 @@ def test_evaluate_defers_cdp_ask_when_probe_busy() -> None:
     assert outcome.state == "busy"
     assert outcome.service == "cdp_ask"
     assert outcome.active_work["execution_ids"] == ["exec-1"]
+
+
+def test_agent_bus_probe_busy_when_giw_active_work_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.raise_for_status = MagicMock()
+    resp.json = MagicMock(
+        return_value={"busy": True, "dispatch_ids": ["disp-closeout"]}
+    )
+
+    class _Client:
+        async def __aenter__(self) -> Any:
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            return None
+
+        async def get(self, path: str) -> Any:
+            assert path == "/api/v1/git/active-work"
+            return resp
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.restart_drain.make_async_client",
+        lambda *_a, **_k: _Client(),
+    )
+    probe = HttpActiveWorkProbe(
+        "http://127.0.0.1:8091", "/api/v1/git/active-work"
+    )
+    work = _run(probe.snapshot())
+    assert work.busy is True
+    assert work.detail["dispatch_ids"] == ["disp-closeout"]
+
+
+def test_evaluate_defers_agent_bus_when_giw_active_work_busy() -> None:
+    gate = RestartDrainGate(
+        probes={
+            "agent_bus": _StaticBusyProbe(
+                ActiveWork(
+                    busy=True,
+                    detail={"busy": True, "dispatch_ids": ["disp-closeout"]},
+                )
+            )
+        }
+    )
+    outcome = _run(gate.evaluate("agent_bus", force=False))
+    assert outcome is not None
+    assert outcome.state == "busy"
+    assert outcome.service == "agent_bus"
+    assert outcome.active_work["dispatch_ids"] == ["disp-closeout"]
 
 
 def test_evaluate_proceeds_when_force_true_despite_busy() -> None:

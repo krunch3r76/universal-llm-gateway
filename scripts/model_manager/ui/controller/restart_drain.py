@@ -149,6 +149,9 @@ def _default_probes() -> dict[str, BusyProbe]:
         "git_integration_worker": HttpActiveWorkProbe(
             GIT_INTEGRATION_WORKER_URL, "/api/v1/git/active-work"
         ),
+        "agent_bus": HttpActiveWorkProbe(
+            GIT_INTEGRATION_WORKER_URL, "/api/v1/git/active-work"
+        ),
         "mcp": build_mcp_busy_probe(),
     }
     cfg = cdp_ask_url_config()

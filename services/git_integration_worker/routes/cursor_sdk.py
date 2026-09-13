@@ -27,6 +27,9 @@ from services.git_integration_worker.admission import (
     Draining503,
     WorkAdmissionController,
 )
+from services.git_integration_worker.cursor_auto.terminal_post_outcome import (
+    terminal_post_retryable,
+)
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
@@ -401,6 +404,8 @@ _DEAD_RUN_GRACE_S = float(
 )
 # Retry-After hint (seconds) on the 503 returned while draining.
 _DRAIN_RETRY_AFTER_S = int(os.environ.get("GIT_WORKER_DRAIN_RETRY_AFTER", "5"))
+# Backoff between retryable closeout bus.reply attempts (after initial post).
+_CLOSEOUT_BUS_REPLY_BACKOFF_S = (2.0, 5.0)
 
 # Deadline for taking the FIFO capacity slot inside a gated dispatch. Reaching
 # _run_sdk_dispatch_gated means the ledger already named this dispatch the write
@@ -1840,14 +1845,27 @@ async def _deliver_sdk_closeout(
     }
 
     closeout_contract = (req.handoff_contract or "consult").lower()
-    bus_result = await bus.reply(
-        thread_id=req.thread_id,
-        to_agent=reply_to,
-        from_agent="cursor-sdk",
-        subject=build_sdk_closeout_subject(req, contract=closeout_contract),
-        body=delivery.body,
-        allow_long_body=True,
-    )
+    closeout_reply_kwargs = {
+        "thread_id": req.thread_id,
+        "to_agent": reply_to,
+        "from_agent": "cursor-sdk",
+        "subject": build_sdk_closeout_subject(req, contract=closeout_contract),
+        "body": delivery.body,
+        "allow_long_body": True,
+    }
+    bus_result = await bus.reply(**closeout_reply_kwargs)
+    for backoff_s in _CLOSEOUT_BUS_REPLY_BACKOFF_S:
+        if bus_result.status_code < 400:
+            break
+        if not terminal_post_retryable(bus_result.status_code):
+            break
+        logger.warning(
+            "cursor bus reply failed (retryable): status=%s — retry in %.0fs",
+            bus_result.status_code,
+            backoff_s,
+        )
+        await asyncio.sleep(backoff_s)
+        bus_result = await bus.reply(**closeout_reply_kwargs)
 
     if bus_result.status_code < 400:
         contract = (req.handoff_contract or "consult").lower()

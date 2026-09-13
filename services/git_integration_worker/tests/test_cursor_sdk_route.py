@@ -808,9 +808,7 @@ async def test_dispatch_implement_pin_satisfied_cortex_uri_first(
 
     payload = json.loads(bus.reply.await_args.kwargs["body"])
     cortex_uri = f"cortex://{rel}"
-    sidecar_ref = (
-        "workspaces://universal-llm-gateway/tmp/reviews/closeouts/disp-pin.md"
-    )
+    sidecar_ref = "workspaces://universal-llm-gateway/tmp/reviews/closeouts/disp-pin.md"
     assert payload["evidence_uris"]["artifact_paths"][0] == cortex_uri
     assert payload["evidence_uris"]["artifact_paths"][-1] == sidecar_ref
     sidecar = source_repo / "tmp/reviews/closeouts/disp-pin.md"
@@ -1209,9 +1207,7 @@ def test_run_sdk_sync_injects_venv_env(
     repo_venv = _fake_repo_venv(tmp_path)
     dispatch_home = tmp_path / "dispatch-home"
     dispatch_home.mkdir()
-    monkeypatch.setattr(
-        route_mod, "resolve_repo_venv", lambda **_: repo_venv
-    )
+    monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_: repo_venv)
 
     prev_home = os.environ.get("HOME")
     prev_venv = os.environ.get("VIRTUAL_ENV")
@@ -1317,9 +1313,7 @@ def test_dispatch_path_prepend_pins_cursor_agent_before_grok(
     repo_venv = _fake_repo_venv(tmp_path)
     dispatch_home = tmp_path / "dispatch-home"
     dispatch_home.mkdir()
-    monkeypatch.setattr(
-        route_mod, "resolve_repo_venv", lambda **_: repo_venv
-    )
+    monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_: repo_venv)
     monkeypatch.setenv("HOME", str(operator_home))
     monkeypatch.setenv(
         "PATH",
@@ -1542,6 +1536,7 @@ async def test_idle_deadline_wait_rearms_on_completed_toolcall() -> None:
 
     def now_fn() -> float:
         return clock["t"]
+
     idle_budget = 100.0
     counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
     worker_future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -1591,6 +1586,7 @@ async def test_idle_deadline_wait_fires_without_completed_progress() -> None:
 
     def now_fn() -> float:
         return clock["t"]
+
     idle_budget = 60.0
     counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
 
@@ -1633,6 +1629,7 @@ async def test_idle_deadline_wait_ignores_non_completed_bumps() -> None:
 
     def now_fn() -> float:
         return clock["t"]
+
     idle_budget = 60.0
     counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
     seeded_at = counter.last_progress_at()
@@ -1735,6 +1732,7 @@ def test_live_tool_call_counter_success_filter() -> None:
 
     def now_fn() -> float:
         return clock["t"]
+
     counter = route_mod._LiveToolCallCounter(now_fn=now_fn)
     seeded = counter.last_progress_at()
 
@@ -1793,9 +1791,7 @@ async def test_dispatch_idle_timeout_payload_fields(
         lambda **kwargs: orphan_events.append(dict(kwargs)),
     )
     monkeypatch.setattr(route_mod, "mark_dispatch_orphaned", lambda **_: None)
-    monkeypatch.setattr(
-        route_mod, "abort_orphaned_bridge", lambda **_: False
-    )
+    monkeypatch.setattr(route_mod, "abort_orphaned_bridge", lambda **_: False)
     monkeypatch.setattr(route_mod, "_terminate_link", AsyncMock())
     monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", AsyncMock())
 
@@ -1947,6 +1943,57 @@ async def test_closeout_no_trigger_on_delivery_failure(
     )
 
     _stub_closeout_trigger.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_closeout_retries_retryable_bus_failure_before_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    _stub_closeout_trigger: AsyncMock,
+) -> None:
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    source_repo = tmp_path / "repo"
+    source_repo.mkdir()
+    req = CursorDispatchRequest(
+        thread_id="1867",
+        model="cursor/composer-2.5",
+        dispatch_id="disp-retry",
+        execution_id="exec-retry",
+        message="hello",
+    )
+    bus = AsyncMock()
+    bus.reply = AsyncMock(
+        side_effect=[
+            MagicMock(status_code=599, body={"error": "transport"}),
+            MagicMock(status_code=200, body={"turn_number": 3}),
+        ]
+    )
+    bus.terminate_dispatch = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr(route_mod.asyncio, "sleep", sleep_mock)
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_completed", lambda **_k: None)
+
+    def _ok_outcome(**_kwargs: object) -> SdkRunOutcome:
+        return _sdk_outcome()
+
+    monkeypatch.setattr(route_mod, "_run_sdk_sync", _ok_outcome)
+
+    await route_mod._run_sdk_dispatch_gated(
+        req=req,
+        ctx=_ctx(
+            source_repo,
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
+        bus=bus,
+        controller=_make_controller(),
+    )
+
+    assert bus.reply.await_count == 2
+    sleep_mock.assert_awaited_once_with(2.0)
+    _stub_closeout_trigger.assert_awaited_once()
 
 
 def _seed_running_row(req: CursorDispatchRequest, *, contract: str = "consult") -> None:
@@ -2211,9 +2258,7 @@ def test_read_only_implement_conflict_422(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_plan_implement_conflict_422(
-    _mock_task: MagicMock, client: TestClient
-) -> None:
+def test_plan_implement_conflict_422(_mock_task: MagicMock, client: TestClient) -> None:
     """AC-2: sdk_mode=plan + implement contract rejected at worker."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
@@ -2232,9 +2277,7 @@ def test_plan_implement_conflict_422(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_plan_read_only_admits(
-    _mock_task: MagicMock, client: TestClient
-) -> None:
+def test_plan_read_only_admits(_mock_task: MagicMock, client: TestClient) -> None:
     """AC-3: plan mode admits as read-only consult."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
@@ -2275,9 +2318,7 @@ def test_plan_without_read_only_forces_read_only_admit(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_conductor_composer_admits(
-    _mock_task: MagicMock, client: TestClient
-) -> None:
+def test_conductor_composer_admits(_mock_task: MagicMock, client: TestClient) -> None:
     """AC3: conductor packet + explicit Composer admits."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
@@ -2361,9 +2402,7 @@ def test_conductor_explicit_grok_pin_admits(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_implement_composer_admits(
-    _mock_task: MagicMock, client: TestClient
-) -> None:
+def test_implement_composer_admits(_mock_task: MagicMock, client: TestClient) -> None:
     """AC4: implement + Composer without conductor packet_kind admits."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
@@ -2439,7 +2478,9 @@ def test_admit_implement_capture_failure_skips_wt_baseline(
     """AC13: admit path leaves wt_baseline NULL when capture_wt_baseline returns None."""
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
-    monkeypatch.setattr(route_mod, "capture_wt_baseline_with_hashes", lambda _repo: None)
+    monkeypatch.setattr(
+        route_mod, "capture_wt_baseline_with_hashes", lambda _repo: None
+    )
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
@@ -2463,7 +2504,9 @@ def test_admit_pure_mechanical_capture_scheduled_like_implement(
     """pure-mechanical admit uses the same async drive path as implement (not sync baseline)."""
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
-    monkeypatch.setattr(route_mod, "capture_wt_baseline_with_hashes", lambda _repo: None)
+    monkeypatch.setattr(
+        route_mod, "capture_wt_baseline_with_hashes", lambda _repo: None
+    )
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
@@ -2785,7 +2828,9 @@ async def test_promoted_implement_capture_failure_skips_wt_baseline(
     def _track_set(*, dispatch_id: str, wt_baseline: str) -> None:
         set_calls.append(wt_baseline)
 
-    monkeypatch.setattr(route_mod, "capture_wt_baseline_with_hashes", lambda _repo: None)
+    monkeypatch.setattr(
+        route_mod, "capture_wt_baseline_with_hashes", lambda _repo: None
+    )
     monkeypatch.setattr(ledger, "set_wt_baseline", _track_set)
 
     await route_mod._start_promoted_dispatch(
@@ -2911,8 +2956,7 @@ async def test_closeout_failure_is_retryable_and_non_lossy(
     assert env["code"] == "CURSOR_SDK_CLOSEOUT"
     assert env["retryable"] is True
     assert env["data"]["sidecar_ref"] == (
-        "workspaces://universal-llm-gateway/tmp/reviews/closeouts/"
-        "disp-closeout-fail.md"
+        "workspaces://universal-llm-gateway/tmp/reviews/closeouts/disp-closeout-fail.md"
     )
 
 
@@ -2929,9 +2973,7 @@ def test_run_sdk_sync_folds_stream_paths_and_artifacts(
     repo_venv = _fake_repo_venv(tmp_path)
     dispatch_home = tmp_path / "dispatch-home"
     dispatch_home.mkdir()
-    monkeypatch.setattr(
-        route_mod, "resolve_repo_venv", lambda **_: repo_venv
-    )
+    monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_: repo_venv)
 
     stream_capture = StreamCapture(
         tool_calls=(
@@ -2993,7 +3035,9 @@ def test_run_sdk_sync_folds_stream_paths_and_artifacts(
     monkeypatch.setattr(
         route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
     )
-    monkeypatch.setattr(route_mod, "observe_run_stream", lambda *_a, **_k: stream_capture)
+    monkeypatch.setattr(
+        route_mod, "observe_run_stream", lambda *_a, **_k: stream_capture
+    )
 
     outcome = route_mod._run_sdk_sync(
         ctx=_ctx(
@@ -3091,9 +3135,7 @@ def test_run_sdk_sync_local_bridge_post_wait_request_id(
     repo_venv = _fake_repo_venv(tmp_path)
     dispatch_home = tmp_path / "dispatch-home"
     dispatch_home.mkdir()
-    monkeypatch.setattr(
-        route_mod, "resolve_repo_venv", lambda **_: repo_venv
-    )
+    monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_: repo_venv)
 
     stream_capture = StreamCapture(tool_calls=())
 
@@ -3151,7 +3193,9 @@ def test_run_sdk_sync_local_bridge_post_wait_request_id(
     monkeypatch.setattr(
         route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
     )
-    monkeypatch.setattr(route_mod, "observe_run_stream", lambda *_a, **_k: stream_capture)
+    monkeypatch.setattr(
+        route_mod, "observe_run_stream", lambda *_a, **_k: stream_capture
+    )
 
     outcome = route_mod._run_sdk_sync(
         ctx=_ctx(
@@ -3255,7 +3299,17 @@ def test_finalize_request_id_wire_point_receives_run_and_result(
             return iter([])
 
         def wait(self):
-            return type("Result", (), {"status": "finished", "duration_ms": 1, "result": "ok", "request_id": "res-wire", "git": None})()
+            return type(
+                "Result",
+                (),
+                {
+                    "status": "finished",
+                    "duration_ms": 1,
+                    "result": "ok",
+                    "request_id": "res-wire",
+                    "git": None,
+                },
+            )()
 
         def conversation(self):
             return [object()]
@@ -3277,10 +3331,16 @@ def test_finalize_request_id_wire_point_receives_run_and_result(
     )
     monkeypatch.setattr(route_mod, "validate_dispatch_context", lambda *_a, **_k: {})
     monkeypatch.setattr(route_mod, "resolve_cursor", lambda _m: MagicMock(model_id="m"))
-    monkeypatch.setattr(route_mod, "build_model_selection", lambda _c, _o: MagicMock(params=[]))
-    monkeypatch.setattr(route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True))
+    monkeypatch.setattr(
+        route_mod, "build_model_selection", lambda _c, _o: MagicMock(params=[])
+    )
+    monkeypatch.setattr(
+        route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True)
+    )
     monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _fake_launch_bridge)
-    monkeypatch.setattr(route_mod, "_start_heartbeat", lambda **_k: (MagicMock(), MagicMock()))
+    monkeypatch.setattr(
+        route_mod, "_start_heartbeat", lambda **_k: (MagicMock(), MagicMock())
+    )
     monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_k: Path("/tmp/venv"))
     monkeypatch.setattr(route_mod, "validate_repo_venv", lambda _v: None)
 
@@ -4204,4 +4264,3 @@ async def test_spaced_tool_calls_never_trigger_idle_kill_leg_f() -> None:
     assert clock["t"] > idle_budget
     assert counter.value() == 3
     await worker_task
-
