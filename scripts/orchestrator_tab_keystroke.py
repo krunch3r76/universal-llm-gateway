@@ -56,25 +56,6 @@ def _raise_cursor(repo: str) -> None:
     )
 
 
-def _raise_cursor_uri(folder_uri: str) -> None:
-    """Focus the window that already has ``folder_uri`` open.
-
-    Opening a folder URI that is open in some window focuses that window instead
-    of creating one — the only compositor-independent raise available for a
-    Remote-SSH window (``cursor -r <path>`` would open the path as a *local*
-    workspace, and COSMIC exposes no focus API). URI shape:
-    ``vscode-remote://ssh-remote%2B<authority>/<repo>`` from the GUI host's
-    ``~/.config/Cursor/User/workspaceStorage/*/workspace.json``.
-    """
-    subprocess.run(
-        ["cursor", "--folder-uri", folder_uri],
-        env=os.environ,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=15,
-    )
-
-
 def _focus_window(title_substr: str, app_id: str, *, settle_s: float = 0.6) -> dict:
     """Focus the toplevel matching ``app_id`` + ``title_substr`` through the compositor.
 
@@ -239,14 +220,14 @@ def launch_new_chat_with_message(
     repo: str,
     dry_run: bool = False,
     raise_window: bool = True,
-    raise_uri: str | None = None,
     focus_title: str | None = None,
     focus_app_id: str = "cursor",
 ) -> dict[str, object]:
     """Focus Agents, Ctrl+n (same-window tab), paste ``message``, Ctrl+Enter.
 
     Ctrl+Shift+N is a new Cursor window — not a tab. Release Shift first.
-    Focus still precedes keys so we do not type into Firefox.
+    Compositor activate on ``focus_title`` precedes keys so we do not type into
+    Firefox. ``--folder-uri`` / ``vscode-remote://`` is refused at the CLI.
     """
     _require_display()
     if dry_run:
@@ -255,16 +236,12 @@ def launch_new_chat_with_message(
             "repo": repo,
             "steps": ["ctrl_n", "paste", "ctrl_enter"],
             "raise_window": raise_window,
-            "raise_uri": raise_uri,
             "focus_title": focus_title,
             "message_preview": message[:120],
         }
     focused: dict = {}
     if focus_title:
         focused = _focus_window(focus_title, focus_app_id)
-    elif raise_uri:
-        _raise_cursor_uri(raise_uri)
-        time.sleep(1.5)
     elif raise_window:
         _raise_cursor(repo)
         time.sleep(0.9)
@@ -360,13 +337,13 @@ def main() -> int:
     lp.add_argument(
         "--raise-uri",
         default=None,
-        help="Focus the window holding this folder URI first (vscode-remote://ssh-remote%%2B…/repo)",
+        help="Refused. vscode-remote:// is owned by Firefox; use --focus-title.",
     )
     lp.add_argument(
         "--focus-title",
         default=None,
         help="Focus the toplevel whose title contains this (compositor activate, "
-        "verified) before typing — e.g. 'Cursor Agents'; overrides --raise-uri",
+        "verified) before typing — e.g. 'Cursor Agents'",
     )
     lp.add_argument(
         "--focus-app-id",
@@ -416,12 +393,23 @@ def main() -> int:
             message = args.message.strip()
         else:
             raise SystemExit("launch requires --message or --message-file")
+        if args.raise_uri:
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "phase": "raise_uri_refused",
+                        "fix": "use --focus-title (compositor activate); "
+                        "vscode-remote:// / --folder-uri goes to Firefox",
+                    }
+                )
+            )
+            return 2
         out = launch_new_chat_with_message(
             message,
             repo=args.repo,
             dry_run=args.dry_run,
             raise_window=not args.no_raise,
-            raise_uri=args.raise_uri,
             focus_title=args.focus_title,
             focus_app_id=args.focus_app_id,
         )

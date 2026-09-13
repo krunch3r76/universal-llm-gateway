@@ -70,8 +70,10 @@ def tick_register(root_id: str, watch_dir: Path = WATCH_DIR) -> str:
 
 
 def policy_focus_title(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
-    """``policy.hop_focus_title`` — operator override of the launcher query when the
-    derived ``Cursor <repo> [SSH: <host>]`` does not match the live window title."""
+    """``policy.hop_focus_title`` — operator override of the compositor title substring.
+
+    Default is ``Cursor Agents``. Override only when the live toplevel title differs.
+    """
     state = read_state(watch_dir / f"liaison-{root_id}.tick.json")
     title = effective_policy(state).get("hop_focus_title")
     return str(title) if title else None
@@ -220,78 +222,29 @@ def find_transcript_id(
     return matches[0][2]
 
 
-_DISCOVER_URI_SNIPPET = r"""
-import glob, json, os, sys
-repo = sys.argv[1]
-best = (0.0, None)
-for f in glob.glob(os.path.expanduser("~/.config/Cursor/User/workspaceStorage/*/workspace.json")):
-    try:
-        j = json.load(open(f))
-    except Exception:
-        continue
-    uri = j.get("folder") or j.get("workspace") or ""
-    if not uri.endswith(repo):
-        continue
-    db = os.path.join(os.path.dirname(f), "state.vscdb")
-    mt = os.path.getmtime(db) if os.path.exists(db) else 0.0
-    if mt > best[0]:
-        best = (mt, uri)
-print(best[1] or "")
-"""
-
-
-def discover_folder_uri(gui_host: str, *, remote_repo: str) -> str | None:
-    """Folder URI of the GUI host's most recently used Cursor window on ``remote_repo``.
-
-    Several encodings of one Remote-SSH authority accumulate in ``workspaceStorage``
-    (``ssh-remote+io`` vs the hex host-config form); the entry whose ``state.vscdb``
-    was written last is the live window. ``--folder-uri`` with a stale encoding
-    opens a duplicate remote window instead of focusing the live one, so the URI
-    is observed on the host, never guessed.
-    """
-    try:
-        proc = subprocess.run(
-            [
-                "ssh",
-                "-o",
-                "BatchMode=yes",
-                "-o",
-                "ConnectTimeout=20",
-                gui_host,
-                f"python3 -c {shlex.quote(_DISCOVER_URI_SNIPPET)} {shlex.quote(remote_repo)}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=45,
-        )
-    except subprocess.TimeoutExpired:
-        return None
-    lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
-    return lines[-1] if lines else None
-
-
 def remote_launch_command(
     remote_msg_path: str,
     *,
     remote_repo: str,
-    raise_uri: str | None,
     focus_title: str | None = None,
+    no_raise: bool = False,
 ) -> str:
     """Build the GUI-host command.
 
     Keys on the host are Ctrl+n (same-window tab, not Ctrl+Shift+N) → paste →
-    Ctrl+Enter. Focus order: ``focus_title``
-    (compositor ``activate``) ≻ ``raise_uri`` ≻ neither (types into the focused window).
+    Ctrl+Enter. Raise is compositor ``activate`` on ``focus_title`` (default
+    ``Cursor Agents``). ``no_raise`` types into the already-focused window when
+    the operator said so. ``--raise-uri`` / ``vscode-remote://`` is not a hop
+    raise — Firefox owns that scheme (10588 Fire 2).
     """
-    if focus_title:
+    if no_raise:
+        focus = "--no-raise"
+    else:
+        title = focus_title or focus_title_for()
         focus = (
-            f"--no-raise --focus-title {shlex.quote(focus_title)} "
+            f"--no-raise --focus-title {shlex.quote(title)} "
             f"--focus-app-id {shlex.quote(AGENTS_WINDOW_APP_ID)}"
         )
-    elif raise_uri:
-        focus = f"--raise-uri {shlex.quote(raise_uri)}"
-    else:
-        focus = "--no-raise"
     return (
         "export WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000; "
         f"python3 {shlex.quote(f'{remote_repo}/{KEYSTROKE_SCRIPT}')} launch "
@@ -313,18 +266,13 @@ def fire_ide_hop(
 ) -> dict[str, Any]:
     """Write the hop message where the GUI host sees it (NFS) and keystroke it into a new chat.
 
-    Refuses when ``gui_host`` is unset (no fallback host) and when the host has no
-    Cursor window on ``remote_repo`` to raise (no fallback focus): firing at a
-    guessed display or a guessed window is the failure this module exists to
-    prevent — hops 1–3 on 2026-09-11 landed on an unattended host and in Firefox.
-    The agents window (``app_id=cursor``, title ``Cursor Agents`` — what the compositor
-    reports, no repo or SSH text) is focused through ``zcosmic_toplevel_manager_v1``
-    and verified activated before any key is sent; ``cursor --folder-uri`` cannot
-    raise a native-Wayland Cursor (2026-09-12 04:24Z it handed the remote URI to
-    Firefox) and every hop up to 06:11Z that day typed into whatever window was in
-    front. ``no_raise`` skips the focus step for an operator who is on the window and
-    says so. ``ok`` means **landed**: a new agent transcript carrying the hop header
-    appeared after the keystrokes — sent keys are not a hop.
+    Refuses when ``gui_host`` is unset (no fallback host). The agents window
+    (``app_id=cursor``, title ``Cursor Agents``) is focused through
+    ``zcosmic_toplevel_manager_v1`` and verified activated before any key is
+    sent. ``cursor --folder-uri`` / ``vscode-remote://`` is not used — Firefox
+    owns that scheme (10588). ``no_raise`` skips activate only when the operator
+    is on the window and says so. ``ok`` means **landed**: a new agent transcript
+    carrying the hop header appeared after the keystrokes — sent keys are not a hop.
     """
     if not gui_host:
         return {
@@ -332,17 +280,6 @@ def fire_ide_hop(
             "phase": "gui_host_unset",
             "root": root_id,
             "fix": f"scripts/liaison-tick.py --root {root_id} --set gui_host=<ssh host>",
-        }
-    raise_uri = (
-        None if no_raise else discover_folder_uri(gui_host, remote_repo=remote_repo)
-    )
-    if not raise_uri and not no_raise:
-        return {
-            "ok": False,
-            "phase": "no_cursor_window_for_repo",
-            "root": root_id,
-            "gui_host": gui_host,
-            "fix": f"open {remote_repo} in Cursor on {gui_host} (Remote-SSH) before hopping",
         }
     focus_title = None if no_raise else focus_title_for(policy_focus_title(root_id))
     HANDOFF_MSG_DIR.mkdir(parents=True, exist_ok=True)
@@ -353,14 +290,14 @@ def fire_ide_hop(
     cmd = remote_launch_command(
         remote_msg,
         remote_repo=remote_repo,
-        raise_uri=raise_uri,
         focus_title=focus_title,
+        no_raise=no_raise,
     )
     result: dict[str, Any] = {
         "root": root_id,
         "message_path": str(msg_path),
         "gui_host": gui_host,
-        "raise_uri": raise_uri,
+        "raise_uri": None,
         "focus_title": focus_title,
         "remote_cmd": cmd,
     }

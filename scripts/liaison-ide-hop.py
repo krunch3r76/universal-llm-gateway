@@ -66,7 +66,7 @@ def main() -> int:
     p.add_argument(
         "--no-raise",
         action="store_true",
-        help="type into the window the operator has focused; skip cursor --folder-uri",
+        help="type into the window the operator has focused; skip compositor activate",
     )
     p.add_argument(
         "--dry-run",

@@ -45,22 +45,21 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     assert "Hop after harvest is the rule" not in message
 
 
-def test_remote_launch_command_prefers_verified_focus_over_uri() -> None:
+def test_remote_launch_command_locks_compositor_activate() -> None:
     cmd = remote_launch_command(
         "/repo/tmp/watchers/handoff-messages/m.md",
         remote_repo="/repo",
-        raise_uri="vscode-remote://ssh-remote+io/repo",
         focus_title="Cursor Agents",
     )
     assert "--no-raise --focus-title 'Cursor Agents' --focus-app-id cursor" in cmd
     assert "--raise-uri" not in cmd
     assert "--palette-query" not in cmd
-    without = remote_launch_command(
-        "/repo/m.md",
-        remote_repo="/repo",
-        raise_uri="vscode-remote://x",
-    )
-    assert "--raise-uri" in without and "--focus-title" not in without
+    defaulted = remote_launch_command("/repo/m.md", remote_repo="/repo")
+    assert "--focus-title 'Cursor Agents'" in defaulted
+    assert "--raise-uri" not in defaulted
+    operator = remote_launch_command("/repo/m.md", remote_repo="/repo", no_raise=True)
+    assert "--no-raise" in operator
+    assert "--focus-title" not in operator
 
 
 def _write_transcript(root: Path, tid: str, first_line: str, mtime: float) -> None:
