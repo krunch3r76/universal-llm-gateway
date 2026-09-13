@@ -34,6 +34,8 @@ from bus_watch.digest_budget import (
     health_probe,
 )
 from bus_watch.fable_lock import WATCH_DIR, current_night_id, read_lock
+from bus_watch.ide_budget import IDE_BUDGET_SOURCE, measure_ide_tab
+from bus_watch.induction import build_wake_induction
 from bus_watch.liaison_watchers import collect_watchers
 from bus_watch.life_digest import build_life_block, project_life_block
 
@@ -55,6 +57,8 @@ _SUBJECT_CAP = 120
 _WORKER_RE = re.compile(r"Worker thread `(\d+)`")
 _health = health_probe
 _fingerprint = digest_fingerprint
+# Module alias so hermetic tests can patch the tab lookup (it reads ~/.cursor).
+_measure_ide_tab = measure_ide_tab
 
 
 def _lane_row(t: dict[str, Any]) -> dict[str, Any]:
@@ -232,6 +236,25 @@ def build_digest(
             epoch=str(usage_live.get("epoch") or holder_dispatch or ""),
             as_of=str(usage_live.get("as_of") or digest_ts),
         )
+    elif ide := _measure_ide_tab(root_id, lock, policy):
+        # Attended seat: the tab transcript is the only window reading the hub
+        # has; without it an IDE liaison never sees CONTEXT_BUDGET (10534 tab,
+        # 852 tool calls on a 256k model, 2026-09-12).
+        pct = round(100.0 * ide["used_tokens"] / max(ide["window_limit_tokens"], 1), 1)
+        budget = build_budget_block(
+            used_tokens=ide["used_tokens"],
+            window_limit_tokens=ide["window_limit_tokens"],
+            model=str(policy.get("ide_model") or "ide-tab"),
+            source=IDE_BUDGET_SOURCE,
+            scope=_BUDGET_SCOPE,
+            epoch=ide["transcript_id"],
+            as_of=digest_ts,
+            transcript_id=ide["transcript_id"],
+            holder_basis=ide["holder_basis"],
+            tool_calls=ide["tool_calls"],
+            transcript_bytes=ide["bytes"],
+            tokens_per_tool_call=ide["tokens_per_tool_call"],
+        )
     else:
         budget = build_budget_block(
             used_tokens=est,
@@ -242,6 +265,7 @@ def build_digest(
             epoch=str(state.get("budget_epoch") or fp),
             as_of=digest_ts,
         )
+    if budget["source"] != "giw.sdk_stream":
         attention = [
             item
             for item in (digest.get("attention") or [])
@@ -250,9 +274,10 @@ def build_digest(
         attention.append(
             {
                 "kind": "budget_estimate",
-                "used_tokens": est,
-                "window_limit_tokens": budget_tokens,
+                "used_tokens": budget["used_tokens"],
+                "window_limit_tokens": budget["window_limit_tokens"],
                 "pct": pct,
+                "source": budget["source"],
             }
         )
         digest["attention"] = attention
@@ -271,6 +296,9 @@ def build_digest(
         pct >= 60.0 and last_cp_tick < ticks - 2
     )
     digest["summary_row"] = state.get("summary_row")
+    # Planted address for the woken seat (10479 #82/#118/#120): read before the
+    # JSON, carried on the DIGEST turn and by any paste transport.
+    digest["induction"] = build_wake_induction(digest)
     state.update(
         {
             "fingerprint": fp,

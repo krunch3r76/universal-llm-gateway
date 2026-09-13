@@ -41,6 +41,11 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "gui_host": None,
     "ready": False,
     "post_digest": False,
+    # Attended-tab window class. The operator picks the tab model in the picker,
+    # so the harness cannot read it; 256k is the Grok 4.6 class the houses ran on.
+    "ide_window_tokens": 256_000,
+    # Tool results are not stored in the tab transcript; this stands in for them.
+    "ide_tokens_per_tool_call": 1500,
 }
 GEAR_PRESETS: dict[str, dict[str, Any]] = {
     "1-fable-mvp": {},
@@ -50,7 +55,10 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         "max_ticks_per_hop": 6,
     },
     "3-wake-on-attention": {
-        "successor_model": "cursor/claude-opus-5",
+        # No implicit premium successor: the ticker spawns only a model the
+        # operator bound with --set successor_model=… (10534 2026-09-12 minted
+        # four unasked Opus liaisons at 12–24M tokens each on this preset).
+        "successor_model": None,
         "successor_cost_intent": None,
         "wake_on_attention_only": True,
         "poll_seconds": 120,
@@ -168,12 +176,19 @@ def build_budget_block(
     scope: str,
     epoch: str,
     as_of: str,
+    **basis: Any,
 ) -> dict[str, Any]:
-    """Status-basis budget envelope for the liaison digest."""
+    """Status-basis budget envelope for the liaison digest.
+
+    ``stop_class`` is raised only for sources that measure one seat's window —
+    the GIW stream for a headless holder or the tab transcript for an IDE seat —
+    never for the cumulative ``digest.estimate``. Extra ``basis`` fields
+    (transcript id, tool calls, …) ride along so a reader can audit the number.
+    """
     ratio = used_tokens / max(window_limit_tokens, 1)
     stop_class = (
         "CONTEXT_BUDGET"
-        if source == "giw.sdk_stream" and ratio >= _BUDGET_RATIO_THRESHOLD
+        if source in _SEAT_SCOPED_SOURCES and ratio >= _BUDGET_RATIO_THRESHOLD
         else None
     )
     return {
@@ -185,19 +200,35 @@ def build_budget_block(
         "scope": scope,
         "epoch": epoch,
         "stop_class": stop_class,
+        **basis,
     }
+
+
+_SEAT_SCOPED_SOURCES = frozenset({"giw.sdk_stream", "ide.transcript"})
 
 
 def effective_policy(state: dict[str, Any]) -> dict[str, Any]:
-    """Defaults ← gear preset ← explicit ``policy`` overrides stored in state."""
+    """Defaults ← gear preset ← explicit ``policy`` overrides stored in state.
+
+    ``successor_model_source`` records which layer bound the successor model
+    (``override`` · ``gear_preset`` · ``default``) so the spawn predicate can
+    refuse a model nobody chose.
+    """
     overrides = dict(state.get("policy") or {})
     gear = str(overrides.get("gear") or POLICY_DEFAULTS["gear"])
+    preset = GEAR_PRESETS.get(gear, {})
     merged = {
         **POLICY_DEFAULTS,
-        **GEAR_PRESETS.get(gear, {}),
+        **preset,
         **overrides,
         "gear": gear,
     }
+    if "successor_model" in overrides:
+        merged["successor_model_source"] = "override"
+    elif "successor_model" in preset:
+        merged["successor_model_source"] = "gear_preset"
+    else:
+        merged["successor_model_source"] = "default"
     merged["successor_is_fable"] = "fable" in str(merged.get("successor_model") or "")
     if gear == "3-wake-on-attention" and "ready" not in overrides:
         merged["ready"] = False

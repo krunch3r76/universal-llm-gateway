@@ -366,15 +366,24 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
             time.sleep(args.poll)
             continue
         now = time.monotonic()
+        budget = digest.get("budget") or {}
+        # CONTEXT_BUDGET wakes the seat once per window epoch (tab transcript or
+        # sdk stream); re-waking every poll would spam the tab it is telling to
+        # checkpoint and hop.
+        budget_stop_new = bool(budget.get("stop_class")) and state.get(
+            "budget_stop_emitted_epoch"
+        ) != budget.get("epoch")
         due = (
             (
                 digest["changed_since_last_tick"]
                 and not is_own_digest_echo(digest, state)
             )
             or (now - last_emit) >= args.heartbeat
-            or (digest.get("budget") or {}).get("stop_class")
+            or budget_stop_new
         )
         if due:
+            if budget_stop_new:
+                state["budget_stop_emitted_epoch"] = budget.get("epoch")
             save_state(state_path, state)
             publish_if_enabled(root, digest, state) and save_state(state_path, state)
             print(f"{_SENTINEL} {json.dumps(digest, default=str)}", flush=True)

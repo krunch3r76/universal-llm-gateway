@@ -184,6 +184,24 @@ state_complete() {
   grep -Eq '"status"[[:space:]]*:[[:space:]]*"(complete|expired|stopped)"' "$state_file" 2>/dev/null
 }
 
+supersede_sibling_tails() {
+  # One tailer per label ("one tab live"): a successor tab re-arming this label
+  # retires the predecessor tab's tail, so a closeout wakes one seat, not two.
+  # Specimen 10479 hops 1→2 (2026-09-13 03:04Z): both tabs harvested 10584,
+  # posted CP #198 and #201, and MCP was recycled under the successor's read.
+  # --forever debug tails are left alone.
+  local self=$$ parent=$PPID pid
+  while read -r pid; do
+    [[ -z "$pid" || "$pid" == "$self" || "$pid" == "$parent" ]] && continue
+    if tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q -- '--forever'; then
+      continue
+    fi
+    if kill "$pid" 2>/dev/null; then
+      echo "superseded sibling tail pid=$pid label=$label" >&2
+    fi
+  done < <(pgrep -f -- "watch-supervise.sh tail --label ${label}( |$)" 2>/dev/null)
+}
+
 cmd_tail() {
   if [[ ! -f "$log_file" ]]; then
     echo "no log yet: $log_file" >&2
@@ -192,6 +210,7 @@ cmd_tail() {
   if [[ "$tail_forever" -eq 1 ]]; then
     exec tail -n +1 -F "$log_file"
   fi
+  supersede_sibling_tails
   # Session wake: stream log until poller marks complete, then release the terminal.
   if state_complete; then
     cat "$log_file"

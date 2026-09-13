@@ -34,7 +34,14 @@ agnostic `liaison_digest(root)`); the attended IDE tab is the override; gear-3 h
 
 Wake source: `AGENT_LOOP_TICK_liaison <json>` from the monitored background shell
 `scripts/liaison-tick.py --root R --loop` (armed by `/liaison`). The JSON is the whole read; do **not**
-fetch the bus to "double check".
+fetch the bus to "double check". Read `digest.induction` **first** — the planted address for this wake
+(`WAKE <root>` · `Event:` stops/watchers/lanes · `NOW:` · `Loaded already (do not re-read)` · `Standing:` ·
+one step; ≤ 700 bytes, `libs/bus_watch/induction.py`, operator bind 10479 #82/#118/#120). It is also the
+first key of every `DIGEST <root>` bus turn, so a woken claude.ai liaison reads the same address. Bind NOW
+for the next wake with `liaison-tick.py --root R --set now_row="<row>"`; standing operator binds go in
+`--set induction_binds='["hopper paused (10479#210)"]'`, already-loaded skills in `induction_loaded`.
+Keystroke paste of this block into the live tab (same uinput path as the hop, no Ctrl+n) is the IDE
+transport; `cse_session(op=followup)` is the claude.ai transport — both are open work, not yet wired.
 
 1. **Quiet tick** — `changed_since_last_tick=false ∧ attention=[] ∧ ¬checkpoint_due` ⇒ one line, end turn.
 2. **Harvest** — ∀ lane ∈ `attention`: `terminal=true` ⇒ `agent_bus_read(get, thread, "latest")` (one turn);
@@ -72,6 +79,11 @@ fetch the bus to "double check".
    `policy.max_hops_per_night` on `liaison-fable-<root>.lock`. Attended hop is the last
    action **only when hopping** (`policy.gui_host` required; `ok` = landed transcript).
    Autonomous hop-qualifying CP: kill the loop → `--release` → one successor. One tab live.
+   **`ok` retires this tab**: `watch-supervise.sh tail` is one-tailer-per-label — the
+   successor's re-arm kills the predecessor's tail — so a later wake here is a dead tail,
+   not a closeout; answer `RETIRED → <landed_transcript_id>` in one line and never harvest
+   (10479 hops 1→2, 2026-09-13 03:04Z: two tabs harvested 10584, CP #198 + #201, MCP
+   recycled under the successor's read).
 8. **Stop classes** — `CONTEXT_BUDGET` hops only if remaining autonomous work; else
    CHECKPOINT → PARK. Other designed stops: § Stops.
 
@@ -186,7 +198,7 @@ The successor model is **policy, never a constant**. `scripts/liaison-tick.py --
 |---|---|---|---|
 | `1-fable-mvp` | `cursor/claude-fable-5-1` + `cost_intent=deliberate_high_cost` | ≤ 5 ticks / 60 min / poll 600 s | **do not select** — Cursor Fable credit window closed (2026-09-12); use gear 2/3 |
 | `2-opus-hops` | `cursor/claude-opus-5` (no cost intent); CDP checks stay `cdp/opus-5` | ≤ 6 ticks | next iteration; Fable only in the attended window |
-| `3-wake-on-attention` | `cursor/claude-opus-5`, spawned **only** when a digest has actionable `attention` (unread > 0, not a lone `kind=budget_estimate`) or `checkpoint_due` | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **disarmed by default** (`policy.ready=false`); arm with explicit `--set ready=true`. First live night = operator gate (A7) |
+| `3-wake-on-attention` | **`policy.successor_model` only** — the preset carries no model; `--set successor_model=<slug>` is required or the ticker holds with `successor_model_bound=false` (10534 2026-09-12: the old Opus preset minted four unasked Opus liaisons at 12–24M tokens each). Spawned **only** when a digest has actionable `attention` (unread > 0, not a lone `kind=budget_estimate`) or `checkpoint_due` | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **disarmed by default** (`policy.ready=false`); arm with explicit `--set ready=true`. First live night = operator gate (A7) |
 
 Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). A live
 `--loop` absorbs `--set` / `--mark-*` edits from another shell on its next poll (`libs/bus_watch/tick_state.py`
@@ -210,7 +222,7 @@ watcher hygiene, scoreboard grooming — then lengthen the heartbeat (`--heartbe
 | `CONSULT_PENDING` | independent check disagrees | row pinned, continue other rows |
 | `REPEATED_FAILURE` | same fix failed twice | stop the row, file friction, page |
 | `SPEND_CAP` | dispatch count ≥ `policy.max_dispatches_per_night` (read from the digest at tick time — never a number frozen in prose; R14 / a:33104) or a dispatch > 2h | pause new dispatches, page |
-| `CONTEXT_BUDGET` | digest `stop_class` | CHECKPOINT → hop only if autonomous follow-up remains; else PARK |
+| `CONTEXT_BUDGET` | digest `budget.stop_class` — `source=giw.sdk_stream` for a headless holder, **`source=ide.transcript` for an attended tab** (the tab's own JSONL: prose bytes/4 + `ide_tokens_per_tool_call` per call vs `policy.ide_window_tokens`, default 256k; the estimate carries `transcript_id` · `tool_calls` · `holder_basis`). `checkpoint_due` flips at 60 % of the same window. Before 2026-09-13 an IDE tab had no stop at all (10534 tab: 852 tool calls, 11 h, compacted repeatedly, commission lost) | CHECKPOINT → hop only if autonomous follow-up remains; else PARK. Operator on a larger tab model: `--set ide_window_tokens=<n>` |
 
 Page: `curl -sS --unix-socket /tmp/universal-protocol/email-bridge.sock -H 'Content-Type: application/json'
 -d '{"subject":"liaison R — <stop>","body":"<one paragraph + tip CP turn>","tag":"liaison"}' http://localhost/pager/notify`.

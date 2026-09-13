@@ -31,6 +31,9 @@ def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
     policy = digest.get("policy") or {}
     budget = digest.get("budget") or {}
     out: dict[str, Any] = {
+        # First key on purpose: the planted address a woken seat reads before
+        # the counters (10479 #120 — plant the address in what the seat reads).
+        "induction": digest.get("induction"),
         "ts": digest.get("ts"),
         "root": {
             "id": root.get("id"),
@@ -46,9 +49,15 @@ def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
         "policy": {
             "gear": policy.get("gear"),
             "successor_model": policy.get("successor_model"),
+            "successor_model_source": policy.get("successor_model_source"),
             "post_digest": policy.get("post_digest"),
         },
-        "budget": {"stop_class": budget.get("stop_class")},
+        "budget": {
+            "stop_class": budget.get("stop_class"),
+            "source": budget.get("source"),
+            "used_tokens": budget.get("used_tokens"),
+            "window_limit_tokens": budget.get("window_limit_tokens"),
+        },
     }
     if omitted:
         out["lanes_omitted"] = omitted

@@ -80,9 +80,16 @@ def test_projection_drops_unlisted_keys_and_filters_terminal() -> None:
     assert proj["policy"] == {
         "gear": "3-wake-on-attention",
         "successor_model": "cursor/claude-opus-5",
+        "successor_model_source": None,
         "post_digest": True,
     }
-    assert proj["budget"] == {"stop_class": None}
+    assert proj["budget"] == {
+        "stop_class": None,
+        "source": None,
+        "used_tokens": 1000,
+        "window_limit_tokens": None,
+    }
+    assert next(iter(proj)) == "induction"
 
 
 def test_projection_includes_life_when_present() -> None:

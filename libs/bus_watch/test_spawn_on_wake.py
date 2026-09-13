@@ -14,6 +14,7 @@ from bus_watch.spawn_on_wake import (
     build_dispatch_body,
     build_successor_message,
     evaluate_spawn_predicate,
+    fire_spawn,
     spawn_fingerprint,
     tick_spawn_on_wake,
 )
@@ -37,8 +38,38 @@ def _digest(*, attention=None, checkpoint_due=False, turns=10, budget=None):  # 
             "wake_on_attention_only": True,
             "gear": "3-wake-on-attention",
             "budget_max_age_s": 300,
+            "successor_model": "cursor/grok-4.6",
         },
     }
+
+
+def test_predicate_refuses_preset_sourced_successor_model() -> None:
+    """A gear preset naming a premium model is not an operator choice (10534 2026-09-12)."""
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["policy"]["successor_model"] = "cursor/claude-opus-5"
+    digest["policy"]["successor_model_source"] = "gear_preset"
+    ev = evaluate_spawn_predicate(digest, {}, lock={})
+    assert ev["clauses"]["successor_model_bound"] is False
+    assert ev["spawn"] is False
+
+
+def test_predicate_refuses_unset_successor_model() -> None:
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["policy"]["successor_model"] = None
+    ev = evaluate_spawn_predicate(digest, {}, lock={})
+    assert ev["clauses"]["successor_model_bound"] is False
+
+
+def test_fire_spawn_refuses_unset_model_without_posting() -> None:
+    posted: list[dict] = []
+    result = fire_spawn(
+        "10534",
+        {"gear": "3-wake-on-attention", "max_hop_minutes": 60},
+        {},
+        submit=lambda body: posted.append(body) or ({}, 200),
+    )
+    assert result["refused"] == "successor_model_unset"
+    assert posted == []
 
 
 def test_predicate_refuses_live_seat_lock() -> None:

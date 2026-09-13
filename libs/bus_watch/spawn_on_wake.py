@@ -115,6 +115,14 @@ def _context_budget_spawn_allowed(
     return True, None
 
 
+def _successor_model_bound(policy: dict[str, Any]) -> bool:
+    """True when a successor model is set and, if its layer is stamped, bound by
+    an operator override rather than inherited from a gear preset."""
+    if not policy.get("successor_model"):
+        return False
+    return policy.get("successor_model_source", "override") == "override"
+
+
 def evaluate_spawn_predicate(
     digest: dict[str, Any],
     state: dict[str, Any],
@@ -165,13 +173,14 @@ def evaluate_spawn_predicate(
             root_id=str((digest.get("root") or {}).get("id") or "").strip(),
         )
         or budget_replaces_holder,
-        "pending_spawn_terminal": pending_spawn_terminal(
-            pending, is_terminal=checker
-        ),
+        "pending_spawn_terminal": pending_spawn_terminal(pending, is_terminal=checker),
         "hops_under_cap": hops < int(policy.get("max_hops_per_night") or 8),
         "dispatches_under_cap": dispatches
         < int(policy.get("max_dispatches_per_night") or 12),
         "policy_ready": bool(policy.get("ready")),
+        # A preset default is not a choice: only an operator-bound successor
+        # model spawns (10534 2026-09-12 — four unasked Opus liaisons).
+        "successor_model_bound": _successor_model_bound(policy),
         "fingerprint_changed": fp != last_fp,
         "grace_elapsed": (ts - last_spawn_at) > grace,
     }
@@ -306,6 +315,9 @@ def fire_spawn(
 ) -> dict[str, Any]:
     """POST one successor generate and record pending_spawn plus tonight's counters."""
     body = build_dispatch_body(root_id, policy, successor_context=successor_context)
+    if not body.get("model"):
+        # Never let the wire pick a model: an unset successor is a hold, not a default.
+        return {"status_code": 0, "refused": "successor_model_unset", "body": body}
     evaluation = evaluate_spawn_predicate(
         {"policy": policy, "attention": [], "budget": {}, "root": {}, "lanes": []},
         state,
@@ -390,9 +402,7 @@ def tick_spawn_on_wake(
     if pending := state.get("pending_spawn"):
         if checker(pending):
             state.pop("pending_spawn", None)
-    evaluation = evaluate_spawn_predicate(
-        digest, state, lock=lock, is_terminal=checker
-    )
+    evaluation = evaluate_spawn_predicate(digest, state, lock=lock, is_terminal=checker)
     successor_context = successor_context_from_digest(digest)
     body = build_dispatch_body(root_id, policy, successor_context=successor_context)
     if dry_run:

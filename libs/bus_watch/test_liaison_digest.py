@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from bus_watch.digest_budget import build_budget_block
 from bus_watch.liaison_digest import (
     GEAR_PRESETS,
@@ -11,6 +13,13 @@ from bus_watch.liaison_digest import (
     effective_policy,
     is_life_root,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_ide_tab():
+    """The IDE budget reads ~/.cursor transcripts; keep these digests hermetic."""
+    with patch("bus_watch.liaison_digest._measure_ide_tab", return_value=None):
+        yield
 
 
 def _lane(lid: str, *, unread: int = 0, terminal: bool = False) -> dict:
