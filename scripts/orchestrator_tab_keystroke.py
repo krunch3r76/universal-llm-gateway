@@ -214,6 +214,50 @@ def _submit_composer(ui: UInput) -> None:
     _chord(ui, e.KEY_LEFTCTRL, e.KEY_ENTER)
 
 
+def followup_existing_chat_with_message(
+    message: str,
+    *,
+    repo: str,
+    dry_run: bool = False,
+    raise_window: bool = True,
+    focus_title: str | None = None,
+    focus_app_id: str = "cursor",
+) -> dict[str, object]:
+    """Focus the lock-holder Agents window, paste ``message``, Ctrl+Enter — no Ctrl+n."""
+    _require_display()
+    if dry_run:
+        return {
+            "dry_run": True,
+            "repo": repo,
+            "steps": ["paste", "ctrl_enter"],
+            "raise_window": raise_window,
+            "focus_title": focus_title,
+            "message_preview": message[:120],
+        }
+    focused: dict = {}
+    if focus_title:
+        focused = _focus_window(focus_title, focus_app_id)
+    elif raise_window:
+        _raise_cursor(repo)
+        time.sleep(0.9)
+    ui = _ui()
+    try:
+        _wl_copy(message)
+        time.sleep(0.08)
+        _paste(ui)
+        time.sleep(0.25)
+        _submit_composer(ui)
+    finally:
+        ui.close()
+    return {
+        "ok": True,
+        "steps": ["paste", "ctrl_enter"],
+        "focus_title": focus_title,
+        "focused": focused.get("activated"),
+        "message_len": len(message),
+    }
+
+
 def launch_new_chat_with_message(
     message: str,
     *,
@@ -350,6 +394,33 @@ def main() -> int:
         default="cursor",
         help="app_id substring the focused toplevel must carry (default: cursor)",
     )
+    fp = sub.add_parser(
+        "followup",
+        help="Focus Cursor, paste into the live composer, Ctrl+Enter (no new tab)",
+    )
+    fp.add_argument("--message", help="Follow-up user message (e.g. WAKE induction block)")
+    fp.add_argument(
+        "--message-file", help="Read message from file (preferred for multiline)"
+    )
+    fp.add_argument(
+        "--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO)
+    )
+    fp.add_argument("--dry-run", action="store_true")
+    fp.add_argument(
+        "--no-raise",
+        action="store_true",
+        help="Do not run `cursor -r <repo>` first (paste into whatever window is focused)",
+    )
+    fp.add_argument(
+        "--focus-title",
+        default=None,
+        help="Focus the toplevel whose title contains this before typing",
+    )
+    fp.add_argument(
+        "--focus-app-id",
+        default="cursor",
+        help="app_id substring the focused toplevel must carry (default: cursor)",
+    )
     gq = sub.add_parser(
         "glass-cmd", help="Raise Cursor, ctrl-/ (or palette), run query"
     )
@@ -406,6 +477,25 @@ def main() -> int:
             )
             return 2
         out = launch_new_chat_with_message(
+            message,
+            repo=args.repo,
+            dry_run=args.dry_run,
+            raise_window=not args.no_raise,
+            focus_title=args.focus_title,
+            focus_app_id=args.focus_app_id,
+        )
+        import json
+
+        print(json.dumps(out, indent=2))
+        return 0
+    if args.cmd == "followup":
+        if args.message_file:
+            message = Path(args.message_file).read_text(encoding="utf-8").strip()
+        elif args.message:
+            message = args.message.strip()
+        else:
+            raise SystemExit("followup requires --message or --message-file")
+        out = followup_existing_chat_with_message(
             message,
             repo=args.repo,
             dry_run=args.dry_run,
