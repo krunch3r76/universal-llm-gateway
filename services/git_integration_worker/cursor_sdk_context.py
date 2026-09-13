@@ -42,6 +42,8 @@ _MCP_BRIDGE_RELPATH = Path("scripts/mcp-fastmcp-remote-bridge.py")
 _FASTMCP_REMOTE_CMD = "fastmcp-remote"
 _SETTING_SOURCES: tuple[str, ...] = ("all",)
 ULG_MCP_CONTRACT_ENV = "ULG_MCP_CONTRACT"
+CURSOR_SDK_DISPATCH_ID_ENV = "CURSOR_SDK_DISPATCH_ID"
+ULG_STEER_SPOOL_DIR_ENV = "ULG_STEER_SPOOL_DIR"
 _CONTRACT_MCP_FILTER: frozenset[str] = frozenset({"implement", "pure-mechanical"})
 _MCP_YAML_REL = Path(".gateway") / "mcp.yaml"
 _CURSOR_XDG_AUTH = Path(".config") / "cursor" / "auth.json"
@@ -293,11 +295,18 @@ def build_local_agent_options(
     )
 
 
+def steer_spool_dir() -> Path:
+    """Per-dispatch steer spool root (bridge reads via ``ULG_STEER_SPOOL_DIR``)."""
+    data_dir = Path(os.environ.get("DATA_DIR", str(Path.home() / ".gateway"))).expanduser()
+    return data_dir / "steer-spool"
+
+
 def build_mcp_servers(
     source_repo: Path,
     *,
     real_home: Path | str | None = None,
     handoff_contract: str | None = None,
+    substrate_ctx: SubstrateDispatchContext | None = None,
 ) -> dict[str, StdioMcpServerConfig]:
     """Stdio vortex MCP via ``fastmcp-remote`` bridge (see module docstring).
 
@@ -311,6 +320,9 @@ def build_mcp_servers(
     contract = (handoff_contract or "").strip().lower()
     if contract in _CONTRACT_MCP_FILTER:
         env[ULG_MCP_CONTRACT_ENV] = contract
+    if substrate_ctx is not None:
+        env[CURSOR_SDK_DISPATCH_ID_ENV] = substrate_ctx.dispatch_id
+        env[ULG_STEER_SPOOL_DIR_ENV] = str(steer_spool_dir())
     names = (_VORTEX_MCP_SERVER, *_VORTEX_MCP_ALIAS_SERVERS)
     return {
         name: StdioMcpServerConfig(
@@ -352,5 +364,6 @@ def build_agent_options(
             source_repo,
             real_home=real_home,
             handoff_contract=handoff_contract,
+            substrate_ctx=substrate_ctx,
         ),
     )

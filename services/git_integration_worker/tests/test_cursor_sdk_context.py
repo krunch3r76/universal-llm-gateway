@@ -10,6 +10,8 @@ from cursor_sdk.types import ModelSelection
 from services.git_integration_worker.config import _DIFF_SCOPED_GATE_SCRIPT, load_config
 from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
 from services.git_integration_worker.cursor_sdk_context import (
+    CURSOR_SDK_DISPATCH_ID_ENV,
+    ULG_STEER_SPOOL_DIR_ENV,
     CursorSdkParityError,
     build_agent_options,
     build_local_agent_options,
@@ -17,6 +19,9 @@ from services.git_integration_worker.cursor_sdk_context import (
     resolve_fastmcp_remote_cmd,
     resolve_mcp_token,
     validate_dispatch_context,
+)
+from services.git_integration_worker.cursor_sdk_substrate_tools import (
+    SubstrateDispatchContext,
 )
 
 
@@ -351,3 +356,34 @@ def test_mcp_servers_omit_contract_env_when_unset(tmp_path: Path) -> None:
     repo = _stub_repo(tmp_path)
     env = build_mcp_servers(repo)["user-vortex"].env or {}
     assert "ULG_MCP_CONTRACT" not in env
+
+
+def test_mcp_servers_stamp_steer_env_from_substrate_ctx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    repo = _stub_repo(tmp_path)
+    ctx = SubstrateDispatchContext(dispatch_id="disp-steer", thread_id="10479")
+    env = build_mcp_servers(repo, substrate_ctx=ctx)["user-vortex"].env or {}
+    assert env.get(CURSOR_SDK_DISPATCH_ID_ENV) == "disp-steer"
+    assert env.get(ULG_STEER_SPOOL_DIR_ENV) == str(tmp_path / "steer-spool")
+
+
+def test_build_agent_options_passes_substrate_to_mcp_servers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MCP_TOKEN", "tok")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    repo = _stub_repo(tmp_path)
+    dispatch_ws = tmp_path / "dispatch"
+    dispatch_ws.mkdir()
+    ctx = SubstrateDispatchContext(dispatch_id="disp-agent", thread_id="10479")
+    opts = build_agent_options(
+        repo,
+        dispatch_ws,
+        ModelSelection(id="composer-2.5"),
+        workspace_root=repo,
+        substrate_ctx=ctx,
+    )
+    env = opts.mcp_servers["user-vortex"].env or {}
+    assert env.get(CURSOR_SDK_DISPATCH_ID_ENV) == "disp-agent"

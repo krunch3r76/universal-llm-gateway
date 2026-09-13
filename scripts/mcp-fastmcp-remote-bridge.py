@@ -5,9 +5,8 @@ Replaces the deprecated custom ``mcp-stdio-proxy.py`` for cursor-sdk dispatches.
 Upstream FastMCP handles streamable-HTTP proxying; this launcher resolves
 auth/URL, emits startup telemetry, and execs ``fastmcp-remote``.
 
-When ``ULG_MCP_CONTRACT`` is ``implement`` or ``pure-mechanical``, spawns
-``fastmcp-remote`` as a child and filters ``tools/list`` primary names instead
-of execve (G5 lead-kit surface scoping).
+Always spawns ``fastmcp-remote`` as a child and proxies stdio through the
+middlebox (steer inject + optional ``tools/list`` contract filter).
 """
 
 from __future__ import annotations
@@ -109,10 +108,6 @@ def _fastmcp_argv(*, bridge_cmd: str, mcp_url: str) -> list[str]:
     ]
 
 
-def _run_execve(*, bridge_cmd: str, mcp_url: str, env: dict[str, str]) -> None:
-    os.execve(bridge_cmd, _fastmcp_argv(bridge_cmd=bridge_cmd, mcp_url=mcp_url), env)
-
-
 def main() -> None:
     try:
         resolve_mcp_bridge(_REPO_ROOT)
@@ -153,20 +148,18 @@ def main() -> None:
     env = os.environ.copy()
     env["MCP_TOKEN"] = token
 
+    allow: frozenset[str] | None = None
     if should_filter_stdio(env):
         contract = (env.get("ULG_MCP_CONTRACT") or "").strip().lower()
         allow = resolve_contract_allow_list(contract)
-        _emit_startup(mcp_url=mcp_url, bridge_cmd=bridge_cmd, filtered=True)
-        rc = run_filtered_stdio_proxy(
-            child_cmd=bridge_cmd,
-            child_args=_fastmcp_argv(bridge_cmd=bridge_cmd, mcp_url=mcp_url)[1:],
-            child_env=env,
-            allow=allow,
-        )
-        raise SystemExit(rc)
-
-    _emit_startup(mcp_url=mcp_url, bridge_cmd=bridge_cmd, filtered=False)
-    _run_execve(bridge_cmd=bridge_cmd, mcp_url=mcp_url, env=env)
+    _emit_startup(mcp_url=mcp_url, bridge_cmd=bridge_cmd, filtered=allow is not None)
+    rc = run_filtered_stdio_proxy(
+        child_cmd=bridge_cmd,
+        child_args=_fastmcp_argv(bridge_cmd=bridge_cmd, mcp_url=mcp_url)[1:],
+        child_env=env,
+        allow=allow,
+    )
+    raise SystemExit(rc)
 
 
 if __name__ == "__main__":

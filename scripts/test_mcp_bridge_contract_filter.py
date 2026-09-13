@@ -67,9 +67,10 @@ def test_framing_roundtrip() -> None:
     assert read_framed_message(buf) == payload
 
 
-def test_bridge_main_uses_execve_when_unfiltered() -> None:
+def test_bridge_main_always_proxies_no_execve() -> None:
     bridge_path = REPO_ROOT / "scripts" / "mcp-fastmcp-remote-bridge.py"
-    tree = ast.parse(bridge_path.read_text(encoding="utf-8"))
+    source = bridge_path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
     execve_calls = [
         node
         for node in ast.walk(tree)
@@ -77,13 +78,13 @@ def test_bridge_main_uses_execve_when_unfiltered() -> None:
         and isinstance(node.func, ast.Attribute)
         and node.func.attr == "execve"
     ]
-    assert execve_calls, "expected os.execve on unfiltered path"
+    assert not execve_calls, "execve path removed — all contracts must proxy"
     main_fn = next(
         node
         for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "main"
     )
-    main_src = ast.get_source_segment(bridge_path.read_text(encoding="utf-8"), main_fn) or ""
+    main_src = ast.get_source_segment(source, main_fn) or ""
     assert "should_filter_stdio" in main_src
     assert "run_filtered_stdio_proxy" in main_src
 

@@ -1,9 +1,10 @@
-"""Contract-scoped ``tools/list`` filtering for cursor-sdk stdio MCP bridge.
+"""Stdio MCP middlebox — contract ``tools/list`` filter + steer inject.
 
-When ``ULG_MCP_CONTRACT`` is ``implement`` or ``pure-mechanical``, the stdio
-bridge proxies ``fastmcp-remote`` and trims primary tool names to the
-``contract_primary_domains`` allow-list from ``canonical.yaml``. Unset env
-preserves the legacy ``os.execve`` path (zero behavior change).
+Every nest crosses this bidirectional JSON-RPC proxy (``fastmcp-remote`` child).
+When ``ULG_MCP_CONTRACT`` is ``implement`` or ``pure-mechanical``, upstream
+``tools/list`` responses are trimmed to ``contract_primary_domains``. Steer
+directives append as a second ``result.content`` block on ``tools/call``
+responses only (``mcp_bridge_steer_inject``).
 """
 
 from __future__ import annotations
@@ -21,6 +22,13 @@ if str(_MCP_SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(_MCP_SERVER_DIR))
 
 from endpoint_surface import derive_contract_primary_tools  # noqa: E402
+
+from scripts.mcp_bridge_steer_inject import (  # noqa: E402
+    CURSOR_SDK_DISPATCH_ID_ENV,
+    append_directive,
+    claim_pending,
+    mark_delivered,
+)
 
 ULG_MCP_CONTRACT_ENV = "ULG_MCP_CONTRACT"
 FILTERED_CONTRACTS: frozenset[str] = frozenset({"implement", "pure-mechanical"})
@@ -113,11 +121,46 @@ def write_framed_message(stream: BinaryIO, payload: dict[str, Any]) -> None:
     stream.flush()
 
 
+def _is_tools_call_result(
+    message: dict[str, Any],
+    pending_methods: dict[Any, str],
+) -> bool:
+    msg_id = message.get("id")
+    if msg_id is None or "method" in message:
+        return False
+    if pending_methods.get(msg_id) != "tools/call":
+        return False
+    if message.get("error"):
+        return False
+    result = message.get("result")
+    if not isinstance(result, dict):
+        return False
+    if result.get("isError") is True:
+        return False
+    content = result.get("content")
+    return isinstance(content, list) and bool(content)
+
+
+def _maybe_inject_steer(message: dict[str, Any], pending_methods: dict[Any, str]) -> dict[str, Any]:
+    if not _is_tools_call_result(message, pending_methods):
+        return message
+    dispatch_id = os.environ.get(CURSOR_SDK_DISPATCH_ID_ENV, "").strip()
+    if not dispatch_id:
+        return message
+    pending = claim_pending(dispatch_id)
+    if pending is None:
+        return message
+    message = append_directive(message, pending)
+    mark_delivered(pending)
+    return message
+
+
 def _copy_upstream(
     upstream: BinaryIO,
     downstream: BinaryIO,
     *,
     allow: frozenset[str] | None,
+    pending_methods: dict[Any, str],
 ) -> None:
     while True:
         message = read_framed_message(upstream)
@@ -125,14 +168,24 @@ def _copy_upstream(
             break
         if allow is not None:
             message = filter_tools_list_payload(message, allow)
+        message = _maybe_inject_steer(message, pending_methods)
         write_framed_message(downstream, message)
 
 
-def _copy_downstream(downstream: BinaryIO, upstream: BinaryIO) -> None:
+def _copy_downstream(
+    downstream: BinaryIO,
+    upstream: BinaryIO,
+    *,
+    pending_methods: dict[Any, str],
+) -> None:
     while True:
         message = read_framed_message(upstream)
         if message is None:
             break
+        msg_id = message.get("id")
+        method = message.get("method")
+        if msg_id is not None and isinstance(method, str):
+            pending_methods[msg_id] = method
         write_framed_message(downstream, message)
 
 
@@ -141,9 +194,9 @@ def run_filtered_stdio_proxy(
     child_cmd: str,
     child_args: list[str],
     child_env: dict[str, str],
-    allow: frozenset[str],
+    allow: frozenset[str] | None,
 ) -> int:
-    """Spawn *child_cmd* and bidirectionally proxy stdio with tools/list filter."""
+    """Spawn *child_cmd* and bidirectionally proxy stdio with optional list filter."""
     proc = subprocess.Popen(
         [child_cmd, *child_args],
         stdin=subprocess.PIPE,
@@ -155,11 +208,17 @@ def run_filtered_stdio_proxy(
     assert proc.stdout is not None
     import threading
 
+    pending_methods: dict[Any, str] = {}
     upstream_err: list[BaseException] = []
 
     def _upstream_worker() -> None:
         try:
-            _copy_upstream(proc.stdout, sys.stdout.buffer, allow=allow)
+            _copy_upstream(
+                proc.stdout,
+                sys.stdout.buffer,
+                allow=allow,
+                pending_methods=pending_methods,
+            )
         except BaseException as exc:  # noqa: BLE001
             upstream_err.append(exc)
         finally:
@@ -171,7 +230,11 @@ def run_filtered_stdio_proxy(
     thread = threading.Thread(target=_upstream_worker, name="mcp-bridge-upstream")
     thread.start()
     try:
-        _copy_downstream(proc.stdin, sys.stdin.buffer)
+        _copy_downstream(
+            proc.stdin,
+            sys.stdin.buffer,
+            pending_methods=pending_methods,
+        )
     finally:
         try:
             proc.stdin.close()
