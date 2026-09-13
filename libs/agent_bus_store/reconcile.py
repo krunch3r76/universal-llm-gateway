@@ -15,7 +15,7 @@ from typing import Any
 from .cursor_sdk_dispatch_turn import sdk_terminal_closeout_turn
 from .db.connection import connect, now
 from .db.lifecycle import _transition_lifecycle_state
-from .db.threads_atomic import terminate_dispatch
+from .db.threads_atomic import close_thread, terminate_dispatch
 from .db.turns import get_turns, insert_turn
 from .events.lifecycle import emit_dispatch_orphaned
 from .sdk_liveness import _HEARTBEAT_STALE_S, LivenessVerdict, evaluate_link_liveness
@@ -271,11 +271,19 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
     target_state = "abandoned" if lifecycle == "admitted" else "failed"
     with connect() as conn:
         row = conn.execute(
-            "SELECT bus_lifecycle_state FROM threads WHERE id = ?", (thread_id,)
+            "SELECT bus_lifecycle_state, status FROM threads WHERE id = ?",
+            (thread_id,),
         ).fetchone()
-        if row is None or row["bus_lifecycle_state"] != "active":
-            return True
-        _transition_lifecycle_state(conn, thread_id, target_state, "watchdog_reap")
+        if row is not None and row["bus_lifecycle_state"] == "active":
+            _transition_lifecycle_state(conn, thread_id, target_state, "watchdog_reap")
+
+    if row is not None and row["status"] != "closed":
+        close_thread(
+            thread_id,
+            summary=f"Dispatch orphaned — {reason}",
+            mark_all_read=False,
+            lifecycle_trigger="watchdog_reap",
+        )
 
     return True
 
