@@ -57,7 +57,12 @@ from bus_watch.liaison_digest import (
     effective_policy,
 )
 from bus_watch.spawn_on_wake import tick_spawn_on_wake
-from bus_watch.tick_state import absorb_operator_edits, load_state, save_state
+from bus_watch.tick_state import (
+    absorb_operator_edits,
+    load_state,
+    save_state,
+    update_state,
+)
 
 _SENTINEL = "AGENT_LOOP_TICK_liaison"
 
@@ -68,6 +73,16 @@ def _coerce(raw: str) -> object:
         return json.loads(raw)
     except ValueError:
         return raw
+
+
+def _parse_set_items(items: list[str]) -> dict[str, object]:
+    out: dict[str, object] = {}
+    for item in items:
+        key, sep, raw = item.partition("=")
+        if not sep or not key.strip():
+            raise SystemExit(f"--set expects KEY=VALUE, got {item!r}")
+        out[key.strip()] = _coerce(raw.strip())
+    return out
 
 
 def _utcnow() -> str:
@@ -196,33 +211,33 @@ def main() -> int:
         if args.state_file
         else _WATCH_DIR / f"liaison-{root}.tick.json"
     )
-    state = load_state(state_path)
-    register = args.register or str(state.get("register") or "attended")
-    state["register"] = register
-    state.setdefault("born_epoch", time.time())
-    state.setdefault("born_at", _utcnow())
+    set_items = _parse_set_items(args.set or [])
 
-    if args.mark_checkpoint:
-        state["last_cp_tick"] = int(state.get("ticks") or 0)
-    if args.mark_relayed:
-        relayed = set(state.get("relayed_watchers") or [])
-        relayed.update(x.strip() for x in args.mark_relayed.split(",") if x.strip())
-        state["relayed_watchers"] = sorted(relayed)
-    if args.set:
-        policy = dict(state.get("policy") or {})
-        for item in args.set:
-            key, sep, raw = item.partition("=")
-            if not sep or not key.strip():
-                raise SystemExit(f"--set expects KEY=VALUE, got {item!r}")
-            policy[key.strip()] = _coerce(raw.strip())
-        state["policy"] = policy
+    def _operator_edits(fresh: dict) -> None:
+        # Applied to the file as it is at write time (tick_state.update_state):
+        # a one-shot must never persist a snapshot over a ticker's later save.
+        fresh["register"] = args.register or str(fresh.get("register") or "attended")
+        fresh.setdefault("born_epoch", time.time())
+        fresh.setdefault("born_at", _utcnow())
+        if args.mark_checkpoint:
+            fresh["last_cp_tick"] = int(fresh.get("ticks") or 0)
+        if args.mark_relayed:
+            relayed = set(fresh.get("relayed_watchers") or [])
+            relayed.update(x.strip() for x in args.mark_relayed.split(",") if x.strip())
+            fresh["relayed_watchers"] = sorted(relayed)
+        if set_items:
+            fresh["policy"] = {**(fresh.get("policy") or {}), **set_items}
+
+    state = load_state(state_path)
+    _operator_edits(state)
+    register = state["register"]
     if args.go_under:
         result = go_under(root, state, state_path=state_path, holder=args.holder)
         print(json.dumps(result, default=str))
         print(result["under_line"], flush=True)
         return 0 if result.get("ok") else 3
-    if args.mark_checkpoint or args.mark_relayed or args.set or args.policy:
-        save_state(state_path, state)
+    if args.mark_checkpoint or args.mark_relayed or set_items or args.policy:
+        state = update_state(state_path, _operator_edits)
         if not (args.once or args.loop):
             print(
                 json.dumps(

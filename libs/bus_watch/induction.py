@@ -25,6 +25,13 @@ _ONE_STEP = (
     "One step: harvest → fold → decide; quote evidence; end turn. "
     "Judgment bind ⇒ cdp/opus-5 first when below Opus."
 )
+# 10479 tab 12e32c8b (2026-09-13 06:56Z) wrote "Next: R12 recon" and STAYed at
+# 0.7 % of its window: a NOW row is the leg to dispatch this tick, not a note.
+_NOW_STEP = (
+    "One step: harvest → fold → dispatch NOW's first leg (Explore recon · "
+    "cdp/opus-5 first for any bind · cursor-sdk implement); STAY only when NOW is "
+    "empty; end turn."
+)
 _UNDER_STEP = (
     "One step: CHECKPOINT (residue ≤ 800), run the go-under command above, "
     "paste its UNDER line, end turn. PARK is not a step while NOW or unread remain."
@@ -124,6 +131,8 @@ def build_wake_induction(digest: dict[str, Any], *, cap: int = INDUCTION_CAP) ->
     lines.append("Standing: " + " · ".join(standing))
     if _tab_at_budget(digest):
         lines.append(_UNDER_STEP)
+    elif events and now_row:
+        lines.append(_NOW_STEP)
     else:
         lines.append(_ONE_STEP if events else _QUIET_STEP)
     return _fit(lines, cap)

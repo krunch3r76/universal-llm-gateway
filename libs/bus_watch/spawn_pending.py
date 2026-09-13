@@ -117,6 +117,33 @@ def idle_ide_forfeit(
     return {"holder": holder, "idle_s": round(idle_s)}
 
 
+def dead_sdk_holder(
+    lock: dict[str, Any], *, finished_execution_id: str | None, rows: Any
+) -> str | None:
+    """An ``sdk:`` seat whose dispatch is over.
+
+    Dead when the pending spawn that just went terminal is the holder (the
+    successor claims ``sdk:<execution_id>`` or a prefix of it), or when a
+    finished lane's closeout subject names the holder's id. 10599 (2026-09-13)
+    closed without ``--release`` and its lease would have held the house for 90
+    minutes; the operator's tab had to ``--release`` it by hand.
+    """
+    holder = str(lock.get("holder") or "")
+    ident = holder.split(":", 1)[1] if holder.startswith("sdk:") else ""
+    if len(ident) < 8:
+        return None
+    if finished_execution_id and finished_execution_id.startswith(ident):
+        return holder
+    for row in rows if isinstance(rows, list) else []:
+        if (
+            isinstance(row, dict)
+            and row_is_terminal(row)
+            and ident in str(row.get("last_subject") or "")
+        ):
+            return holder
+    return None
+
+
 def record_spawn_service(state: dict[str, Any], attention: Any) -> None:
     """After a successful fire: latch the handoff, mark the closeouts this
     successor was spawned for, and remember the successor's own lane."""
@@ -211,6 +238,7 @@ __all__ = [
     "IDE_IDLE_FORFEIT_S",
     "actionable_attention",
     "checkpoint_due_wake",
+    "dead_sdk_holder",
     "digest_pending_is_terminal",
     "handoff_wake",
     "idle_ide_forfeit",

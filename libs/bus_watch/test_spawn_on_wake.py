@@ -374,6 +374,50 @@ def test_idle_ide_holder_forfeits_only_when_autonomous(
     assert kept["clauses"]["seat_lock_free"] is False
 
 
+def test_ticker_reaps_dead_sdk_holder_before_evaluating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """10599 closed without --release; its sdk: lease must not hold the house."""
+    locks = iter(
+        [
+            {
+                "holder": "sdk:a1ae2160-caa7-4571-a248-d8f1a545bc7e",
+                "claimed_at": "2099-01-01T00:00:00Z",
+                "expires_at": "2099-01-01T01:30:00Z",
+            },
+            {"holder": None},
+        ]
+    )
+    released: list[str] = []
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.read_lock", lambda *_a, **_k: next(locks)
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.release_fable_lock",
+        lambda holder, **_k: released.append(holder) or {"ok": True},
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.maybe_forfeit_expired_lease", lambda *_a, **_k: False
+    )
+    state = {
+        "pending_spawn": {
+            "execution_id": "a1ae2160-caa7-4571-a248-d8f1a545bc7e",
+            "thread_id": "10599",
+        }
+    }
+    out = tick_spawn_on_wake(
+        _digest(attention=[{"id": "10589", "unread": 1}]),
+        state,
+        "10479",
+        dry_run=True,
+        is_terminal=lambda _p: True,
+    )
+    assert released == ["sdk:a1ae2160-caa7-4571-a248-d8f1a545bc7e"]
+    assert "pending_spawn" not in state
+    assert out["evaluation"]["reaped_sdk_holder"] == released[0]
+    assert out["evaluation"]["clauses"]["seat_lock_free"] is True
+
+
 def test_checkpoint_due_wakes_once_per_cp_tick() -> None:
     digest = _digest(attention=[_CLOSED_SUCCESSOR], checkpoint_due=True)
     first = evaluate_spawn_predicate(digest, {}, lock={"holder": None})

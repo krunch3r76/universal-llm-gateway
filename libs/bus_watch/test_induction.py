@@ -94,6 +94,14 @@ def test_induction_budget_stop_survives_cap_over_standing_binds() -> None:
     assert "Standing: register=" in text and "a long standing bind" not in text
 
 
+def test_induction_now_row_is_a_dispatch_not_a_note() -> None:
+    text = build_wake_induction(
+        _digest(attention=[{"id": "10589", "unread": 1, "last_subject": "R11 G3"}])
+    )
+    assert text.rstrip().endswith("STAY only when NOW is empty; end turn.")
+    assert "cdp/opus-5 first" in text
+
+
 def test_induction_headless_budget_keeps_release_step() -> None:
     text = build_wake_induction(
         _digest(

@@ -21,6 +21,7 @@ from bus_watch.liaison_pager import maybe_forfeit_expired_lease, page_liaison
 from bus_watch.spawn_pending import (
     actionable_attention,
     checkpoint_due_wake,
+    dead_sdk_holder,
     digest_pending_is_terminal,
     handoff_wake,
     idle_ide_forfeit,
@@ -351,10 +352,22 @@ def tick_spawn_on_wake(
         last_holder_turn=(digest.get("root") or {}).get("turns"),
     )
     checker = is_terminal or digest_pending_is_terminal(digest)
+    finished_execution_id = None
     if pending := state.get("pending_spawn"):
         if checker(pending):
+            finished_execution_id = str(pending.get("execution_id") or "")
             state.pop("pending_spawn", None)
+    reaped = dead_sdk_holder(
+        lock,
+        finished_execution_id=finished_execution_id,
+        rows=[*(digest.get("lanes") or []), *(digest.get("attention") or [])],
+    )
+    if reaped:
+        release_fable_lock(reaped, pid=None, root_id=root_id)
+        lock = read_lock(root_id)
     evaluation = evaluate_spawn_predicate(digest, state, lock=lock, is_terminal=checker)
+    if reaped:
+        evaluation["reaped_sdk_holder"] = reaped
     successor_context = successor_context_from_digest(digest)
     body = build_dispatch_body(root_id, policy, successor_context=successor_context)
     if dry_run:

@@ -20,7 +20,7 @@ from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.ide_followup import fire_ide_followup
 from bus_watch.ide_hop import DEFAULT_REMOTE_REPO, policy_gui_host
 from bus_watch.liaison_digest import build_digest
-from bus_watch.tick_state import load_state, save_state
+from bus_watch.tick_state import load_state, update_state
 
 
 def main() -> int:
@@ -101,8 +101,12 @@ def main() -> int:
     if not out.get("ok"):
         return 2
     if args.fire and fp:
-        state["last_induction_fingerprint"] = fp
-        save_state(state_path, state)
+        # The GUI hop above can block for minutes; write against the file as it
+        # is now, never the snapshot from before the wait (see update_state).
+        update_state(
+            state_path,
+            lambda fresh: fresh.__setitem__("last_induction_fingerprint", fp),
+        )
     return 0
 
 

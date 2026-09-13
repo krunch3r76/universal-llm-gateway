@@ -13,6 +13,7 @@ before each tick so the loop's write carries them forward.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,23 @@ def save_state(path: Path, state: dict[str, Any]) -> None:
     tmp.replace(path)
 
 
+def update_state(
+    path: Path, mutate: Callable[[dict[str, Any]], None]
+) -> dict[str, Any]:
+    """Read-modify-write against the file as it is *now*; returns the new state.
+
+    Every one-shot writer must go through here instead of saving the snapshot
+    it loaded earlier. ``liaison-induce.py --fire`` blocks on the GUI hop for
+    minutes and then saved its snapshot: 10479 2026-09-13 06:52Z re-planted
+    ``policy.ready=false`` that ``--go-under`` had dropped 18 minutes before,
+    and the ticker absorbed it as an operator steer.
+    """
+    current = load_state(path)
+    mutate(current)
+    save_state(path, current)
+    return current
+
+
 def absorb_operator_edits(state: dict[str, Any], path: Path) -> list[str]:
     """Copy operator-owned keys from disk into the loop's in-memory ``state``.
 
@@ -60,4 +78,10 @@ def absorb_operator_edits(state: dict[str, Any], path: Path) -> list[str]:
     return changed
 
 
-__all__ = ["OPERATOR_KEYS", "absorb_operator_edits", "load_state", "save_state"]
+__all__ = [
+    "OPERATOR_KEYS",
+    "absorb_operator_edits",
+    "load_state",
+    "save_state",
+    "update_state",
+]
