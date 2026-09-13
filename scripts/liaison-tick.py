@@ -354,6 +354,7 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
                 print(json.dumps({"loop": "ticker_lost", "root": root}), flush=True)
                 return 4
             _log_steer(absorb_operator_edits(state, state_path))
+            register = str(state.get("register") or register)
             try:
                 digest = build_digest(
                     root, state, register=register, budget_tokens=args.budget_tokens
@@ -403,6 +404,7 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
             )
             return 4
         _log_steer(absorb_operator_edits(state, state_path))
+        register = str(state.get("register") or register)
         try:
             digest = build_digest(
                 root, state, register=register, budget_tokens=args.budget_tokens

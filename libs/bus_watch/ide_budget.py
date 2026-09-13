@@ -153,6 +153,36 @@ def measure_ide_tab(
     }
 
 
+def ide_transcript_probe_resolved(
+    lock: dict[str, Any],
+    *,
+    transcripts_dir: Path = AGENT_TRANSCRIPTS,
+) -> bool:
+    """Whether the seat lock's ``ide:<transcript_id>`` maps to a live JSONL probe.
+
+    Returns ``False`` when the holder is not a measurable tab, the expected file
+    is missing, or the file looks stale relative to lock activity (10479 a:33450:
+    ticker read a dead JSONL — ``tool_calls=1`` while the tab had passed 120).
+    Unresolved probes must not drive idle forfeit."""
+    transcript_id = ide_holder_transcript(lock)
+    if not transcript_id:
+        return False
+    path = transcripts_dir / transcript_id / f"{transcript_id}.jsonl"
+    if not path.is_file():
+        return False
+    turns_seen = lock.get("turns_seen")
+    if turns_seen is None:
+        return True
+    if int(turns_seen) <= 0:
+        return True
+    measure = measure_transcript(path)
+    tool_calls = int(measure.get("tool_calls") or 0)
+    user_turns = int(measure.get("user_turns") or 0)
+    if tool_calls <= 1 and user_turns <= 2:
+        return False
+    return True
+
+
 def ide_holder_idle_s(
     lock: dict[str, Any],
     *,
@@ -162,9 +192,10 @@ def ide_holder_idle_s(
     """Seconds since the ``ide:<transcript_id>`` holder's tab last wrote its
     transcript — the only liveness the hub can read for an attended seat.
     ``None`` when the holder is not a measurable tab."""
-    transcript_id = ide_holder_transcript(lock)
-    if not transcript_id:
+    if not ide_transcript_probe_resolved(lock, transcripts_dir=transcripts_dir):
         return None
+    transcript_id = ide_holder_transcript(lock)
+    assert transcript_id is not None
     path = transcripts_dir / transcript_id / f"{transcript_id}.jsonl"
     try:
         mtime = path.stat().st_mtime
@@ -180,6 +211,7 @@ __all__ = [
     "first_line_matches",
     "ide_holder_idle_s",
     "ide_holder_transcript",
+    "ide_transcript_probe_resolved",
     "measure_ide_tab",
     "measure_transcript",
     "newest_resume_transcript",

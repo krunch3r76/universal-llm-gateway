@@ -8,11 +8,14 @@ from pathlib import Path
 from bus_watch.digest_budget import GEAR_PRESETS, build_budget_block, effective_policy
 from bus_watch.ide_budget import (
     IDE_BUDGET_SOURCE,
+    ide_holder_idle_s,
     ide_holder_transcript,
+    ide_transcript_probe_resolved,
     measure_ide_tab,
     measure_transcript,
     newest_resume_transcript,
 )
+from bus_watch.spawn_pending import idle_ide_forfeit
 
 _TID = "f19ca60c-27d7-43b0-bf7e-4e7d29a9eb03"
 _OLD = "06e4b108-1ca1-4593-a172-37b0a40f39e4"
@@ -130,6 +133,55 @@ def test_digest_estimate_never_raises_stop_class() -> None:
         as_of="2026-09-13T04:00:00Z",
     )
     assert budget["stop_class"] is None
+
+
+def test_stale_transcript_probe_blocks_idle_forfeit(tmp_path: Path) -> None:
+    """a:33450 — lock shows activity but JSONL is tiny/stale ⇒ no forfeit."""
+    _write_transcript(
+        tmp_path,
+        _TID,
+        first_user="resume 10479",
+        tool_calls=1,
+        mtime=1.0,
+    )
+    lock = {
+        "holder": f"ide:{_TID}",
+        "turns_seen": 120,
+        "claimed_at": "2026-09-13T16:41:00Z",
+    }
+    assert ide_transcript_probe_resolved(lock, transcripts_dir=tmp_path) is False
+    assert ide_holder_idle_s(lock, transcripts_dir=tmp_path, now=5000.0) is None
+    assert (
+        idle_ide_forfeit(
+            lock,
+            register="autonomous",
+            policy={"ide_idle_forfeit_s": 1200},
+            idle_of=lambda *_a, **_k: 3600.0,
+            transcripts_dir=tmp_path,
+        )
+        is None
+    )
+
+
+def test_live_transcript_probe_allows_idle_forfeit(tmp_path: Path) -> None:
+    _write_transcript(
+        tmp_path,
+        _TID,
+        first_user="resume 10479",
+        tool_calls=50,
+        mtime=1.0,
+    )
+    lock = {"holder": f"ide:{_TID}", "turns_seen": 120}
+    assert ide_transcript_probe_resolved(lock, transcripts_dir=tmp_path) is True
+    idle = idle_ide_forfeit(
+        lock,
+        register="autonomous",
+        policy={"ide_idle_forfeit_s": 1200},
+        idle_of=lambda *_a, **_k: 3600.0,
+        transcripts_dir=tmp_path,
+    )
+    assert idle is not None
+    assert idle["holder"] == lock["holder"]
 
 
 def test_gear_three_has_no_implicit_successor_model() -> None:

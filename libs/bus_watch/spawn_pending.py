@@ -18,10 +18,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from bus_watch.friction_rows import latch_rows
-from bus_watch.ide_budget import ide_holder_idle_s
+from bus_watch.ide_budget import (
+    AGENT_TRANSCRIPTS,
+    ide_holder_idle_s,
+    ide_transcript_probe_resolved,
+)
 
 # ``abandoned`` = GIW orphaned the worker before it ran ("Dispatch orphaned —
 # worker terminated before completion"); such a lane is finished, and treating it
@@ -139,6 +144,7 @@ def idle_ide_forfeit(
     register: str,
     policy: dict[str, Any],
     idle_of: Callable[[dict[str, Any]], float | None] | None = None,
+    transcripts_dir: Path | None = None,
 ) -> dict[str, Any] | None:
     """An ``ide:`` seat whose tab stopped writing while the house is autonomous.
 
@@ -151,7 +157,14 @@ def idle_ide_forfeit(
     holder = str(lock.get("holder") or "")
     if register != "autonomous" or not holder.startswith("ide:"):
         return None
-    idle_s = (idle_of or ide_holder_idle_s)(lock)
+    root = transcripts_dir or AGENT_TRANSCRIPTS
+    if not ide_transcript_probe_resolved(lock, transcripts_dir=root):
+        return None
+
+    def _default_idle(seat_lock: dict[str, Any]) -> float | None:
+        return ide_holder_idle_s(seat_lock, transcripts_dir=root)
+
+    idle_s = (idle_of or _default_idle)(lock)
     limit = float(policy.get("ide_idle_forfeit_s") or IDE_IDLE_FORFEIT_S)
     if idle_s is None or idle_s <= limit:
         return None

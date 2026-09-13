@@ -356,6 +356,9 @@ def test_idle_ide_holder_forfeits_only_when_autonomous(
     monkeypatch.setattr(
         "bus_watch.spawn_pending.ide_holder_idle_s", lambda *_a, **_k: 3600.0
     )
+    monkeypatch.setattr(
+        "bus_watch.spawn_pending.ide_transcript_probe_resolved", lambda *_a, **_k: True
+    )
     lock = {
         "holder": "ide:ccd52168-8bf7-4080-bc05-75fe45af1507",
         "claimed_at": "2099-01-01T00:00:00Z",
