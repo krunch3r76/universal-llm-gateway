@@ -52,7 +52,7 @@ _GIW_HEALTH = os.environ.get("LIAISON_GIW_HEALTH", "http://127.0.0.1:8091/health
 _WATCH_DIR = WATCH_DIR
 _TERMINAL_RE = re.compile(
     r"CLOSEOUT|status:done|status:failed|status:needs-attended|SCORE_RESURFACE|"
-    r"stall-pop|PARKED|FAILED|CHECKPOINT|BRIDGE_ACK",
+    r"stall-pop|PARKED|FAILED|CHECKPOINT|BRIDGE_ACK|Dispatch orphaned",
     re.I,
 )
 # Per-tick fixed overhead the seat spends reading the digest and deciding.

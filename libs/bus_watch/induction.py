@@ -79,15 +79,18 @@ def _events(digest: dict[str, Any]) -> list[str]:
     for watcher in digest.get("watchers_complete_unrelayed") or []:
         label = watcher.get("label") or watcher.get("file")
         items.append(f"watcher {label} complete → harvest, --mark-relayed")
+    lanes: list[str] = []
     for lane in digest.get("attention") or []:
         if lane.get("kind") == "budget_estimate" or "id" not in lane:
             continue
         if lane.get("kind") == "friction":
+            # The promoted friction is the score row this wake was spawned for;
+            # it must survive the _EVENT_ITEMS cut ahead of unread lane noise.
             items.append(_friction_event(lane))
             continue
         subject = str(lane.get("last_subject") or "")[:_SUBJECT_CHARS]
-        items.append(f"{lane['id']} unread={lane.get('unread')} «{subject}»")
-    return items
+        lanes.append(f"{lane['id']} unread={lane.get('unread')} «{subject}»")
+    return items + lanes
 
 
 def _listed(policy: dict[str, Any], key: str) -> list[str]:
