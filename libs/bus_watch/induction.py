@@ -18,6 +18,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from bus_watch.friction_rows import event_line as _friction_event
+from bus_watch.friction_rows import now_row as _friction_now
+
 INDUCTION_CAP = 700
 _EVENT_ITEMS = 3
 _SUBJECT_CHARS = 56
@@ -79,6 +82,9 @@ def _events(digest: dict[str, Any]) -> list[str]:
     for lane in digest.get("attention") or []:
         if lane.get("kind") == "budget_estimate" or "id" not in lane:
             continue
+        if lane.get("kind") == "friction":
+            items.append(_friction_event(lane))
+            continue
         subject = str(lane.get("last_subject") or "")[:_SUBJECT_CHARS]
         items.append(f"{lane['id']} unread={lane.get('unread')} «{subject}»")
     return items
@@ -103,11 +109,18 @@ def build_wake_induction(digest: dict[str, Any], *, cap: int = INDUCTION_CAP) ->
     policy = digest.get("policy") or {}
     root_id = root.get("id")
     # ``policy.now_row`` is the seat's own bind (``liaison-tick.py --set now_row=…``
-    # after each Decide step); ``summary_row`` is the older state field.
-    now_row = str(digest.get("summary_row") or policy.get("now_row") or "").strip()
+    # after each Decide step); ``summary_row`` is the older state field. With no
+    # seat bind, an undispositioned friction is the NOW row: the score is not
+    # empty while a charter-owned friction waits (todo:liaison-friction-score-rows).
+    friction_now = _friction_now(digest)
+    now_row = (
+        str(digest.get("summary_row") or policy.get("now_row") or "").strip()
+        or friction_now
+    )
     events = _events(digest)
+    forcing = bool(events or friction_now)
     head = f"WAKE {root_id} · turns={root.get('turns')} · {digest.get('ts')}"
-    if not events and not digest.get("changed_since_last_tick"):
+    if not forcing and not digest.get("changed_since_last_tick"):
         head = head.replace("WAKE", "QUIET", 1)
     lines = [head]
     for item in events[:_EVENT_ITEMS]:
@@ -131,10 +144,10 @@ def build_wake_induction(digest: dict[str, Any], *, cap: int = INDUCTION_CAP) ->
     lines.append("Standing: " + " · ".join(standing))
     if _tab_at_budget(digest):
         lines.append(_UNDER_STEP)
-    elif events and now_row:
+    elif forcing and now_row:
         lines.append(_NOW_STEP)
     else:
-        lines.append(_ONE_STEP if events else _QUIET_STEP)
+        lines.append(_ONE_STEP if forcing else _QUIET_STEP)
     return _fit(lines, cap)
 
 

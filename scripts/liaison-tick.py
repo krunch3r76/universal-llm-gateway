@@ -48,6 +48,7 @@ from bus_watch.fable_lock import (
     release_fable_lock,
     release_ticker_lease,
 )
+from bus_watch.friction_rows import mark_friction, parse_mark
 from bus_watch.go_under import go_under
 from bus_watch.liaison_digest import (
     TICK_OVERHEAD_TOKENS as _TICK_OVERHEAD_TOKENS,
@@ -139,6 +140,13 @@ def main() -> int:
         help="comma-separated watcher state file names now relayed",
     )
     p.add_argument(
+        "--mark-friction",
+        default="",
+        metavar="a:<id>:<disposition>",
+        help="bind a friction score row: direct-first | todo-minted | declined "
+        "(then friction_close on the assertion)",
+    )
+    p.add_argument(
         "--holder",
         default="",
         help="liaison seat (ide:<transcript_id>|sdk:<dispatch_id>); default ide:<root> co-holds across tabs",
@@ -212,6 +220,10 @@ def main() -> int:
         else _WATCH_DIR / f"liaison-{root}.tick.json"
     )
     set_items = _parse_set_items(args.set or [])
+    try:
+        friction_mark = parse_mark(args.mark_friction) if args.mark_friction else None
+    except ValueError as exc:
+        p.error(str(exc))
 
     def _operator_edits(fresh: dict) -> None:
         # Applied to the file as it is at write time (tick_state.update_state):
@@ -225,6 +237,8 @@ def main() -> int:
             relayed = set(fresh.get("relayed_watchers") or [])
             relayed.update(x.strip() for x in args.mark_relayed.split(",") if x.strip())
             fresh["relayed_watchers"] = sorted(relayed)
+        if friction_mark:
+            mark_friction(fresh, *friction_mark, at=_utcnow())
         if set_items:
             fresh["policy"] = {**(fresh.get("policy") or {}), **set_items}
 
@@ -236,7 +250,13 @@ def main() -> int:
         print(json.dumps(result, default=str))
         print(result["under_line"], flush=True)
         return 0 if result.get("ok") else 3
-    if args.mark_checkpoint or args.mark_relayed or set_items or args.policy:
+    if (
+        args.mark_checkpoint
+        or args.mark_relayed
+        or friction_mark
+        or set_items
+        or args.policy
+    ):
         state = update_state(state_path, _operator_edits)
         if not (args.once or args.loop):
             print(

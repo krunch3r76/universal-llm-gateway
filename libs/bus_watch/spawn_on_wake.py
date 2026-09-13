@@ -17,6 +17,7 @@ from bus_watch.fable_lock import (
     release_fable_lock,
     seat_lock_free,
 )
+from bus_watch.friction_rows import now_row as friction_now_row
 from bus_watch.liaison_pager import maybe_forfeit_expired_lease, page_liaison
 from bus_watch.spawn_pending import (
     actionable_attention,
@@ -317,12 +318,16 @@ def fire_spawn(
 
 
 def successor_context_from_digest(digest: dict[str, Any]) -> dict[str, Any]:
-    """Extract message bind fields from a digest snapshot."""
+    """Extract message bind fields from a digest snapshot; with no seat-bound
+    row, a forcing friction is the row the successor is spawned for."""
     policy = digest.get("policy") or {}
     root = digest.get("root") or {}
     return {
         "gear": policy.get("gear"),
-        "row": digest.get("summary_row") or root.get("last_subject") or "",
+        "row": digest.get("summary_row")
+        or friction_now_row(digest)
+        or root.get("last_subject")
+        or "",
         "tip_cp_ordinal": root.get("turns"),
     }
 

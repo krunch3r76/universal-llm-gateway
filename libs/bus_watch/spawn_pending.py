@@ -7,7 +7,9 @@ must read lifecycle/status instead of treating any ``pending_spawn`` dict as liv
 
 Wake sources the ticker honours: an unread live lane; a finished *work* lane's
 closeout, once (``served_closeouts``); a ``go under`` handoff, once
-(``handoff`` / ``handoff_spawned_seq``); ``checkpoint_due``, once per CP epoch.
+(``handoff`` / ``handoff_spawned_seq``); ``checkpoint_due``, once per CP epoch;
+an undispositioned friction on a charter-owned service, once per assertion id
+(``friction_rows_seen``, see ``bus_watch.friction_rows``).
 A successor's own closeout never wakes the next successor — that loop is the
 mill that minted four unasked Opus liaisons on 10534 (2026-09-12).
 """
@@ -18,6 +20,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from bus_watch.friction_rows import latch_rows
 from bus_watch.ide_budget import ide_holder_idle_s
 
 _TERMINAL_LIFECYCLES = frozenset({"completed", "failed", "cancelled", "closed"})
@@ -145,8 +148,10 @@ def dead_sdk_holder(
 
 
 def record_spawn_service(state: dict[str, Any], attention: Any) -> None:
-    """After a successful fire: latch the handoff, mark the closeouts this
-    successor was spawned for, and remember the successor's own lane."""
+    """After a successful fire: latch the handoff, mark the closeouts and the
+    friction rows this successor was spawned for, and remember the successor's
+    own lane."""
+    latch_rows(state, attention, at=datetime.now(UTC).isoformat(timespec="seconds"))
     handoff = state.get("handoff") or {}
     if handoff.get("seq"):
         state["handoff_spawned_seq"] = int(handoff["seq"])

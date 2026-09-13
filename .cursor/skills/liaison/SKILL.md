@@ -62,13 +62,15 @@ transport; `cse_session(op=followup)` is the claude.ai transport — both are op
 2. **Harvest** — ∀ lane ∈ `attention`: `terminal=true` ⇒ `agent_bus_read(get, thread, "latest")` (one turn);
    read the CLOSEOUT/SCORE_RESURFACE, quote its evidence, `mark_read`. Non-terminal unread ⇒ latest turn only.
    `watchers_complete_unrelayed` ⇒ read the state file's `thread`, harvest, then
-   `liaison-tick.py --root R --mark-relayed <file>`.
+   `liaison-tick.py --root R --mark-relayed <file>`. `kind=friction` items and `digest.frictions` ⇒ § Friction
+   score rows (one `assertion_get` deepen at most; the row already carries category · note · state).
 3. **Fold** — update the scoreboard (`fs md_replace` on the cortex scoreboard URI in the tip CHECKPOINT): row
    status ← observed (quote sha / pytest line / execution_id). Landed ≠ live: a slice whose paths serve a
    running process needs `manage(sync_restart)` — **LOAD** `restart-drain-discipline` (`needed(restart) ⇒
    fire(restart)`; busy never skips).
-4. **Decide** — pick the scoreboard `NOW` row; if empty, pull the next objective (see § Objectives).
-   `reasoning-posture`: pin the question, bind, one determinate step.
+4. **Decide** — pick the scoreboard `NOW` row; with no seat bind the induction's NOW **is** the newest
+   undispositioned friction (§ Friction score rows) — not empty; if truly empty, pull the next objective
+   (see § Objectives). `reasoning-posture`: pin the question, bind, one determinate step.
 5. **Dispatch** — by the ladder below; every dispatch gets a lane on the root (`dispatch_thread_id=R`) and an
    **in-session watcher**: **LOAD AND EXECUTE** `runbook:bus-consult-watcher` (all legs 1–3 — arm, wake,
    relay — before turn end; start-only / skipped tail / hold-turn = mis-arm).
@@ -185,6 +187,8 @@ team_dispatch(
 this body on: an unread **live** lane · a finished **work** lane's closeout, once per turn count
 (`state.served_closeouts`; a successor's own closeout never wakes the next — `caller=liaison-ticker` /
 `state.successor_threads`) · a `--go-under` handoff, once (`handoff.seq`) · `checkpoint_due`, once per CP epoch ·
+an undispositioned friction on a charter-owned service, once per assertion id (`state.friction_rows_seen`, ≤
+`policy.friction_dispatch_cap` per night; § Friction score rows) ·
 a fresh `CONTEXT_BUDGET` from the `sdk:` holder's own stream. Hold reasons are the per-clause booleans on the
 ticker's stdout line (`tmp/watchers/liaison-ticker-<R>.log` when started by `--go-under`). The successor claims
 the lock with `--hop`, runs ≤ 5 ticks / 60 min, checkpoints, releases, spawns the next. Composer implement
@@ -232,8 +236,27 @@ silently. Never let a successor pick a model itself; a refused model is an INFO 
 ## Objectives (autonomous queue)
 
 1. Scoreboard rows not DONE. 2. `cortex(todo_candidates)` filtered `implement_ready=true ∧ density_triage=mechanical`.
-3. Frictions tagged `type:bug` on services this house owns. 4. Nothing ⇒ gardening: ruff on touched dirs, stale
-watcher hygiene, scoreboard grooming — then lengthen the heartbeat (`--heartbeat 3600`), never busy-loop.
+3. Friction score rows (§ below — they arrive in the digest; no query). 4. Nothing ⇒ gardening: ruff on touched
+dirs, stale watcher hygiene, scoreboard grooming — then lengthen the heartbeat (`--heartbeat 3600`), never busy-loop.
+
+## Friction score rows (operator 2026-09-13, 10595: "proactively address frictions … a mutable score by a conductor")
+
+`todo:liaison-friction-score-rows` · `libs/bus_watch/friction_rows.py`. Open `friction()` assertions on the
+house's **charter-owned** services are score rows: they enter the digest, need a disposition, and leave when
+closed on the assertion. Same driver as everything else — no second loop.
+
+| Leg | Mechanic |
+|---|---|
+| Charter | `--set owned_services=agent-bus,cortex` (bare slug ⇒ `service:`; `agent_skill:` / `ai_agent:` allowed). **Declared, never inferred** — empty ⇒ nothing enters. Frictions on non-owned services never enter |
+| Harvest | `digest.frictions` (≤ 12, newest first: `id=a:<n>` · `owner` · `category` · `note` · `state` · `forcing`) + `digest.friction_summary` (`open` · `forcing` · `promoted` · `dispatch_cap` · `dispatched_tonight` · `error`). Read path: Cortex UDS `assertions` on the owner, non-superseded bracketed claims, 100-row window; `[feature]` asks and `[resolved:…]` closure rows are not rows |
+| NOW | no seat bind (`summary_row` / `policy.now_row` empty) ⇒ the newest `forcing` row **is** NOW (`Friction a:<n> [cat] owner «note» → disposition …`), so STAY-on-empty-NOW cannot fire while a charter friction waits. A seat bind outranks it; the row stays an `Event:` |
+| Disposition | `direct-first` (fix it now; in-seat ≤20 lines or a cursor-sdk implement lane) · `todo-minted` (`work-item-seed-path` S4a mint; no liaison-authored plan) · `declined` (wontfix, reason). Record: `liaison-tick.py --root R --mark-friction a:<n>:<disposition>` (operator key `friction_dispositions`; a live loop absorbs it next poll) |
+| Close-back | **on the assertion**: `cortex(tool="friction_close", assertion_id=<n>, resolution_kind=todo:<slug> \| wontfix \| commit:<sha>)` — `todo-minted` / `declined` the same turn; `direct-first` when the fix lands. Superseded ⇒ the row leaves on the next harvest. A `todo-minted`/`declined` row still open = `state=close_pending` — you forgot the close |
+| Ticker | the newest forcing ∧ unlatched row is promoted into `attention` (`kind=friction`) — **one per tick**, none once `policy.friction_dispatch_cap` (default 3) spawns are latched tonight; a successful spawn latches it in `state.friction_rows_seen` — **one spawn per assertion id**, a re-opened friction carries a new id. Latched-but-open rows remain NOW for the seat that woke |
+| REPEATED_FAILURE | a **second** `direct-first` mark on the same row ⇒ `state=repeated_failure`: NOW reads "consult, then todo-minted \| declined; never a third variant" (`cdp/opus-5` first below Opus) |
+
+Not owned: spawn predicates (`spawn_on_wake.py` unchanged), pipelines, seat locks. The IDE hop takes the friction
+NOW verbatim as `--row`; a headless successor gets it as `row=`.
 
 ## Stops (designed, not "continue?")
 

@@ -21,13 +21,16 @@ from typing import Any
 # ``register`` joined 2026-09-12 07:10Z: the gear-3 ticker clobbered an attended→autonomous
 # flip (--register) on its next save because the flip was not an absorbed key.
 # ``handoff`` (``--go-under``) must reach a ticker already polling, or the verb
-# arms nothing until the ticker restarts.
+# arms nothing until the ticker restarts. ``friction_dispositions``
+# (``--mark-friction``) is the seat's bind on a friction score row; the ticker
+# only reads it (``bus_watch.friction_rows``).
 OPERATOR_KEYS: tuple[str, ...] = (
     "policy",
     "relayed_watchers",
     "last_cp_tick",
     "register",
     "handoff",
+    "friction_dispositions",
 )
 
 

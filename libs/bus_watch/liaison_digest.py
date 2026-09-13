@@ -3,8 +3,9 @@
 Assembles what a continuity-root liaison seat needs to decide a tick without
 reading any thread linearly: root counters, child + admit-linked worker lanes,
 terminal-class subjects, the unread TOC scoped to those lanes, completed
-watcher state files not yet relayed, fleet health, the single-Fable lock, and a
-context-budget governor whose numbers carry their basis (an estimate — the
+watcher state files not yet relayed, open frictions on the charter-owned
+services (``bus_watch.friction_rows``), fleet health, the single-Fable lock, and
+a context-budget governor whose numbers carry their basis (an estimate — the
 seat's own usage reading wins).
 
 Bus access mirrors scripts/watch-cursor-bridge-inbox.py (UDS + AGENT_BUS_TOKEN).
@@ -34,6 +35,7 @@ from bus_watch.digest_budget import (
     health_probe,
 )
 from bus_watch.fable_lock import WATCH_DIR, current_night_id, read_lock
+from bus_watch.friction_rows import fold_fingerprint, harvest_frictions
 from bus_watch.ide_budget import (
     IDE_BUDGET_SOURCE,
     ide_holder_transcript,
@@ -164,11 +166,12 @@ def build_digest(
         lane_ids = {root_id, *(lane["id"] for lane in lanes)}
         unread = _unread_toc(client, lane_ids)
 
-    fp = digest_fingerprint(root, lanes)
-    changed = fp != state.get("fingerprint")
-    ticks = int(state.get("ticks") or 0) + 1
     policy = effective_policy(state)
     night_id = current_night_id()
+    frictions = harvest_frictions(state, policy, night_id=night_id)
+    fp = fold_fingerprint(digest_fingerprint(root, lanes), frictions["rows"])
+    changed = fp != state.get("fingerprint")
+    ticks = int(state.get("ticks") or 0) + 1
     digest_ts = _utcnow()
     lock_now = read_lock(root_id)
     dispatches = int(
@@ -188,8 +191,11 @@ def build_digest(
         },
         "register": register,
         "lanes": lanes,
-        "attention": [lane for lane in lanes if (lane["unread"] or 0) > 0],
+        "attention": [lane for lane in lanes if (lane["unread"] or 0) > 0]
+        + frictions["attention"],
         "unread_toc": unread,
+        "frictions": frictions["rows"],
+        "friction_summary": frictions["summary"],
         "watchers_complete_unrelayed": collect_watchers(
             state, lane_ids, root_id, _WATCH_DIR
         ),
