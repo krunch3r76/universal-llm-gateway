@@ -23,6 +23,18 @@ this skill is the **IDE house seat** on a continuity root.
 Flip: `scripts/liaison-tick.py --root R --register autonomous|attended` (state-file field). The operator's
 return ("I'm back") flips to attended; the operator's departure ("running overnight") flips to autonomous.
 
+**`go under`** (aliases `run headless` · `hand off to cursor-sdk` · `go under <root>`; operator 2026-09-12
+21:50 PT) = hand this house to the gear-3 ticker and leave the tab. Deterministic sequence, any tab model:
+1. segment CHECKPOINT if turns since the tip (`--mark-checkpoint`);
+2. `liaison-tick.py --root R --register autonomous --set ready=true` (+ `--set successor_model=<slug>` when
+   `--policy` shows `successor_model_source != override` — the ticker refuses to pick one);
+3. stop this tab's `--loop` if armed, then `--release --holder ide:<transcript_id>` so `seat_lock_free`
+   passes (the ticker never preempts an `ide:` holder);
+4. reply one line — `UNDER → liaison-ticker-<R> · successor_model=<slug> · spawns on attention / CP-due ·
+   take back: resume <R>` — and end the turn. No hop, no dispatch after the release.
+Surface again: `resume <R>` in any tab (an `ide:` claim preempts the `sdk:` holder) or "I'm back" ⇒
+`--register attended`; `ready` stays as set unless the operator says `--set ready=false`.
+
 **Operator guide (living).** "How do I use …" / "what changed" / a new ruling or phase move ⇒ **LOAD AND
 EXECUTE** `runbook:liaison-operator-guide` (`cortex://notes/runbooks/liaison-operator-guide.md`) — `cite(runbook)
 ⇒ load(cited_section*) ∧ execute(seat-bound_steps)` this turn: read the root's `…/<root>-operator-guide.md`,

@@ -48,8 +48,10 @@ def test_model_capability_frozen_round_trip() -> None:
         default_variant=cap.default_variant,
         fixed_params=cap.fixed_params,
         instruction_profile=cap.instruction_profile,
+        context_window_tokens=cap.context_window_tokens,
     )
     assert round_trip == cap
+    assert cap.context_window_tokens == 200_000
     with pytest.raises(AttributeError):
         cap.instruction_profile = "reasoner"  # type: ignore[misc]
 

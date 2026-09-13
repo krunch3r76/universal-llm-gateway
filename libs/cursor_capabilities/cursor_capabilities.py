@@ -46,6 +46,10 @@ class ModelCapability:
     default_variant: Mapping[str, str]
     fixed_params: Mapping[str, str] = field(default_factory=dict)
     instruction_profile: str = "mechanical"
+    # Context window of the served model, when operator-verified. Drives the
+    # headless CONTEXT_BUDGET stop (GIW usage_live.window_limit_tokens); ``None``
+    # falls back to LIAISON_BUDGET_TOKENS rather than inventing a number.
+    context_window_tokens: int | None = None
 
 
 def _knob_card_entry(spec: KnobSpec) -> dict[str, Any]:
@@ -129,6 +133,8 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         default_variant={"fast": "true"},
         instruction_profile="mechanical",
+        # Operator-verified 2026-09-12 21:50 PT.
+        context_window_tokens=200_000,
     ),
     "claude-opus-5": ModelCapability(
         knobs={
@@ -272,6 +278,8 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
             "fast": "false",
         },
         instruction_profile="reasoner",
+        # Operator-stated 2026-09-12 (the 10534 tab saturated and compacted on it).
+        context_window_tokens=256_000,
     ),
     "gemini-3.5-flash": ModelCapability(
         knobs={},
@@ -351,6 +359,17 @@ def default_variant(model_id: str) -> Mapping[str, str]:
     if cap is None:
         return {}
     return cap.default_variant
+
+
+def context_window_tokens(model: str) -> int | None:
+    """Verified context window for a bare or ``cursor/``-prefixed id; ``None`` when
+    the card carries none or the id is not a Cursor model."""
+    try:
+        bare = canonical_cursor_bare_id(model)
+    except ValueError:
+        return None
+    cap = CURSOR_MODEL_CAPABILITIES.get(bare)
+    return cap.context_window_tokens if cap else None
 
 
 def effort_knob_name(model_id: str) -> str | None:

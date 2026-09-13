@@ -1026,7 +1026,14 @@ def _run_sdk_sync(
             live_counter = _LiveToolCallCounter()
         outer_idle_s = _outer_idle_budget_s(contract=ctx.handoff_contract or "none")
 
-        budget_window = int(os.environ.get("LIAISON_BUDGET_TOKENS", "700000"))
+        # The model card's verified window governs the headless CONTEXT_BUDGET
+        # stop; the env cap only stands in when the card carries none (a flat
+        # 700k never fired for a 200k Composer or 256k Grok successor).
+        from cursor_capabilities import context_window_tokens
+
+        budget_window = context_window_tokens(resolved_model) or int(
+            os.environ.get("LIAISON_BUDGET_TOKENS", "700000")
+        )
         run_started = time.monotonic()
 
         def _on_tool_call(observation: object = None) -> None:
