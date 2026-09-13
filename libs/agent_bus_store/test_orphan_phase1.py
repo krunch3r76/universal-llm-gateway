@@ -255,7 +255,7 @@ def test_instant_failed_typeerror_class_reconcile_backfill(bus_db) -> None:
         subject="cursor-sdk dispatch disp-type FAILED",
         body=(
             '{"code":"CURSOR_SDK_DISPATCH","message":'
-            '"\'Timeout\' object cannot be interpreted as an integer"}'
+            "\"'Timeout' object cannot be interpreted as an integer\"}"
         ),
     )
     detail_before = get_thread_with_links(thread_id)
@@ -557,6 +557,12 @@ def test_allow_orphan_second_strike_reaps(bus_db) -> None:
 
     assert len(_orphan_turns(thread_id)) == 1
     assert emitted[0]["reason"] == "probe_status_null"
+    orphan_turn = _orphan_turns(thread_id)[0]
+    assert orphan_turn.get("read_at") is None
+    detail = get_thread_with_links(thread_id)
+    assert detail is not None
+    assert detail["status"] == "closed"
+    assert detail["bus_lifecycle_state"] in ("abandoned", "failed")
     with connect() as conn:
         row = conn.execute(
             "SELECT terminal_status, liveness_probe_deferred_reason "
