@@ -3,6 +3,8 @@
 
 Uses ``recur_every_s`` (default 14400 s = 4 h) — not cron ``0 */4 * * *``;
 each fire re-arms from the prior terminal seam, so wall-clock drift is expected.
+GIW refuses recur without ``predicate=fleet_idle`` (``recur_every_s_invalid``);
+this CLI always sends that predicate when recur is set.
 
 Cowork ``create_trigger`` is not used; this posts to the same store as MCP
 ``trigger(op=schedule)``.
@@ -14,9 +16,11 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 import httpx
+import yaml
 from bus_watch.doorbell import render_doorbell
 from implement_admission.closeout_helpers import cortex_files_root
 
@@ -24,6 +28,14 @@ _DEFAULT_WORKER_URL = "http://127.0.0.1:8091"
 _API_PREFIX = "/api/v1/triggers"
 _DEFAULT_RECUR_S = 14400
 _ACTIVE_STATUSES = frozenset({"scheduled", "fired"})
+_MCP_YAML = Path.home() / ".gateway" / "mcp.yaml"
+# GIW validate_predicate_schedule: recur_every_s without fleet_idle → 422
+# recur_every_s_invalid. Args match trigger_service tests' _FLEET_ARGS.
+_FLEET_IDLE_ARGS = {
+    "require_tick_empty": True,
+    "require_dispatch_idle": True,
+    "grace_s": 0,
+}
 
 
 def _worker_base_url() -> str:
@@ -38,6 +50,9 @@ def _worker_base_url() -> str:
 
 def _bearer_headers() -> dict[str, str]:
     token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    if not token and _MCP_YAML.is_file():
+        cfg = yaml.safe_load(_MCP_YAML.read_text(encoding="utf-8")) or {}
+        token = str(cfg.get("AGENT_BUS_TOKEN") or "").strip()
     if not token:
         return {}
     return {"Authorization": f"Bearer {token}"}
@@ -168,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
 
     prompt_uri = _ensure_doorbell_file(root, args.slug, ring=args.ring)
     delay_s = args.delay_s if args.delay_s is not None else 5.0
-    body = {
+    body: dict[str, Any] = {
         "created_by": "life-seat",
         "delay_s": delay_s,
         "prompt_uri": prompt_uri,
@@ -178,6 +193,9 @@ def main(argv: list[str] | None = None) -> int:
         "so_what": f"liaison-wake-{root}",
         "recur_every_s": args.recur_s,
     }
+    if args.recur_s:
+        body["predicate"] = "fleet_idle"
+        body["predicate_args"] = dict(_FLEET_IDLE_ARGS)
     result = _relay("POST", "", json_body=body)
     if "error" in result or result.get("status_code", 0) >= 400:
         print(json.dumps(result, indent=2), file=sys.stderr)
@@ -185,7 +203,17 @@ def main(argv: list[str] | None = None) -> int:
 
     trigger_id = result.get("id") or result.get("trigger_id")
     fire_at = result.get("fire_at")
-    print(json.dumps({"trigger_id": trigger_id, "fire_at": fire_at}, indent=2))
+    print(
+        json.dumps(
+            {
+                "trigger_id": trigger_id,
+                "fire_at": fire_at,
+                "recur_every_s": args.recur_s,
+                "predicate": body.get("predicate"),
+            },
+            indent=2,
+        )
+    )
     return 0
 
 

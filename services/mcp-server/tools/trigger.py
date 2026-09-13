@@ -13,6 +13,12 @@ if TYPE_CHECKING:
 
 _DEFAULT_WORKER_URL = "http://127.0.0.1:8091"
 _API_PREFIX = "/api/v1/triggers"
+# GIW validate_predicate_schedule: recur_every_s without fleet_idle → 422
+_FLEET_IDLE_ARGS = {
+    "require_tick_empty": True,
+    "require_dispatch_idle": True,
+    "grace_s": 0,
+}
 
 
 def _worker_base_url() -> str:
@@ -81,10 +87,17 @@ def _schedule_body(
     arc: str | None = None,
     so_what: str | None = None,
     recur_every_s: int | None = None,
+    predicate: str | None = None,
+    predicate_args: dict[str, Any] | None = None,
     require_act_receipt: int | None = None,
     charter_root: str | None = None,
 ) -> dict[str, Any]:
     """Build POST /api/v1/triggers JSON body; omit unset optional fields."""
+    resolved_predicate = predicate
+    resolved_predicate_args = predicate_args
+    if recur_every_s is not None and resolved_predicate is None:
+        resolved_predicate = "fleet_idle"
+        resolved_predicate_args = dict(_FLEET_IDLE_ARGS)
     return {
         k: v
         for k, v in {
@@ -98,6 +111,8 @@ def _schedule_body(
             "arc": arc,
             "so_what": so_what,
             "recur_every_s": recur_every_s,
+            "predicate": resolved_predicate,
+            "predicate_args": resolved_predicate_args,
             "require_act_receipt": require_act_receipt,
             "charter_root": charter_root,
         }.items()
@@ -122,6 +137,8 @@ def register_trigger_tool(mcp: FastMCP) -> None:
         arc: str | None = None,
         so_what: str | None = None,
         recur_every_s: int | None = None,
+        predicate: str | None = None,
+        predicate_args: dict[str, Any] | None = None,
         require_act_receipt: int | None = None,
         charter_root: str | None = None,
         limit: int = 100,
@@ -149,6 +166,8 @@ def register_trigger_tool(mcp: FastMCP) -> None:
                 arc=arc,
                 so_what=so_what,
                 recur_every_s=recur_every_s,
+                predicate=predicate,
+                predicate_args=predicate_args,
                 require_act_receipt=require_act_receipt,
                 charter_root=charter_root,
             )

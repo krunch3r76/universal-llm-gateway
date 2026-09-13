@@ -26,21 +26,29 @@ def test_relay_posts_schedule_with_bearer(monkeypatch) -> None:
     assert call_kwargs["json"]["prompt_text"] == "x"
 
 
-def test_schedule_body_includes_recur_every_s_when_set() -> None:
+def test_schedule_body_includes_fleet_idle_predicate_when_recur_set() -> None:
     body = _schedule_body(
         delay_s=30,
         prompt_uri="cortex://notes/system/threads/x.md",
         recur_every_s=14400,
     )
     assert body["recur_every_s"] == 14400
+    assert body["predicate"] == "fleet_idle"
+    assert body["predicate_args"] == {
+        "require_tick_empty": True,
+        "require_dispatch_idle": True,
+        "grace_s": 0,
+    }
 
 
-def test_schedule_body_omits_recur_every_s_when_unset() -> None:
+def test_schedule_body_omits_recur_and_predicate_when_one_shot() -> None:
     body = _schedule_body(
         delay_s=30,
         prompt_uri="cortex://notes/system/threads/x.md",
     )
     assert "recur_every_s" not in body
+    assert "predicate" not in body
+    assert "predicate_args" not in body
 
 
 def test_schedule_body_includes_optional_relay_fields_when_set() -> None:
