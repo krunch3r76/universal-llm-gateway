@@ -5,8 +5,8 @@ The four-step prose sequence (register autonomous · ``ready`` · release the
 the tab's model read ``ready`` as an operator gate, wrote "restore cursor-sdk
 successor hop" into its CHECKPOINT and parked at 99.6 % of its window with four
 unread closeouts. Here the harness owns the sequence, so the guarantee is
-structural: after this call the house is ``autonomous`` (which arms the ticker —
-``digest_budget.effective_policy``), a stale ``ready`` disarm is gone, the
+structural: after this call the house is ``autonomous`` and ``policy.ready`` is
+true (the ticker is the driver — an IDE-hop chain keeps ``ready=false``), the
 ``ide:`` seat is free, no attended ``--loop`` is left waking the old tab, a
 ticker lease is live, and the next ticker poll carries one handoff wake
 (``spawn_pending.handoff_wake``). The CHECKPOINT stays with the seat — it
@@ -145,7 +145,8 @@ def go_under(
     previous = str(state.get("register") or "attended")
     state["register"] = "autonomous"
     policy = dict(state.get("policy") or {})
-    dropped_ready = {"was": policy.pop("ready")} if "ready" in policy else None
+    ready_before = policy.get("ready")
+    policy["ready"] = True  # go under = choose the ticker as the driver
     state["policy"] = policy
     seq = int((state.get("handoff") or {}).get("seq") or 0) + 1
     state["handoff"] = {
@@ -160,7 +161,7 @@ def go_under(
         "root": root,
         "register": {"from": previous, "to": "autonomous"},
         "handoff_seq": seq,
-        "dropped_ready_override": dropped_ready,
+        "ready": {"before": ready_before, "after": True},
         "state": str(state_path),
     }
     lock = read_lock(root)

@@ -77,22 +77,23 @@ def test_gear_three_disarmed_by_default() -> None:
     policy = effective_policy({"policy": {"gear": "3-wake-on-attention"}})
     assert policy["wake_on_attention_only"] is True
     assert policy["ready"] is False
-    assert policy["ready_source"] == "register"
+    assert policy["ready_source"] == "default"
 
 
-def test_gear3_ready_follows_register_unless_overridden() -> None:
-    """Autonomy is the register (10479 sat autonomous with ready=false all night)."""
-    armed = effective_policy(
+def test_gear3_register_never_arms_the_ticker() -> None:
+    """An IDE-hop chain runs autonomous with the ticker policy-only; only an
+    explicit ready (operator or --go-under) arms it."""
+    autonomous = effective_policy(
         {"register": "autonomous", "policy": {"gear": "3-wake-on-attention"}}
     )
-    assert armed["ready"] is True and armed["ready_source"] == "register"
-    disarmed = effective_policy(
+    assert autonomous["ready"] is False and autonomous["ready_source"] == "default"
+    armed = effective_policy(
         {
             "register": "autonomous",
-            "policy": {"gear": "3-wake-on-attention", "ready": False},
+            "policy": {"gear": "3-wake-on-attention", "ready": True},
         }
     )
-    assert disarmed["ready"] is False and disarmed["ready_source"] == "override"
+    assert armed["ready"] is True and armed["ready_source"] == "override"
 
 
 def test_hop_cap_tracks_policy_override() -> None:

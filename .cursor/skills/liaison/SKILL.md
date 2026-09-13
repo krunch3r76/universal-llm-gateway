@@ -27,8 +27,8 @@ return ("I'm back") flips to attended; the operator's departure ("running overni
 21:50 PT) = hand this house to the gear-3 ticker and leave the tab. **One verb, owned by the harness**
 (`libs/bus_watch/go_under.py`; 10534 2026-09-13 06:11Z parked at 99.6 % with the four-step prose unrun):
 1. segment CHECKPOINT (residue ≤ 800) — the seat authors it; `--mark-checkpoint` may ride on step 2;
-2. `liaison-tick.py --root R --go-under --holder ide:<transcript_id>` — flips `register=autonomous` (which
-   arms the ticker: `ready` follows the register), drops a stale `ready=false`, releases the `ide:` seat,
+2. `liaison-tick.py --root R --go-under --holder ide:<transcript_id>` — flips `register=autonomous`, sets
+   `policy.ready=true` (the ticker becomes the driver; an IDE-hop chain keeps `ready=false`), releases the `ide:` seat,
    SIGTERMs this root's attended `--loop`s, starts a ticker if none holds `liaison-ticker-<R>.lock`, and
    arms **one** handoff wake (`state.handoff.seq`) so the next poll spawns the successor whether or not any
    lane is unread. Refuses only `successor_model_unset` (`--set successor_model=<slug>` first);
@@ -36,7 +36,7 @@ return ("I'm back") flips to attended; the operator's departure ("running overni
 **When:** the `CONTEXT_BUDGET` event on an attended tab carries this exact command in the induction — run
 it; PARK is not a step while `NOW` or unread lanes remain. Also the exit for "running overnight".
 Surface again: `resume <R>` in any tab (an `ide:` claim preempts the `sdk:` holder) or "I'm back" ⇒
-`--register attended` (disarms the ticker unless `--set ready=true` is explicit).
+`--register attended`; `ready` stays as set until `--set ready=false`.
 
 **Operator guide (living).** "How do I use …" / "what changed" / a new ruling or phase move ⇒ **LOAD AND
 EXECUTE** `runbook:liaison-operator-guide` (`cortex://notes/runbooks/liaison-operator-guide.md`) — `cite(runbook)
@@ -220,7 +220,7 @@ The successor model is **policy, never a constant**. `scripts/liaison-tick.py --
 |---|---|---|---|
 | `1-fable-mvp` | `cursor/claude-fable-5-1` + `cost_intent=deliberate_high_cost` | ≤ 5 ticks / 60 min / poll 600 s | **do not select** — Cursor Fable credit window closed (2026-09-12); use gear 2/3 |
 | `2-opus-hops` | `cursor/claude-opus-5` (no cost intent); CDP checks stay `cdp/opus-5` | ≤ 6 ticks | next iteration; Fable only in the attended window |
-| `3-wake-on-attention` | **`policy.successor_model` only** — the preset carries no model; `--set successor_model=<slug>` is required or the ticker holds with `successor_model_bound=false` (10534 2026-09-12: the old Opus preset minted four unasked Opus liaisons at 12–24M tokens each). Spawned on the wake sources in § Headless successor (live unread · work closeout once · handoff once · `checkpoint_due` once) | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **armed by the register**: `register=autonomous` ⇒ `policy.ready=true` (`ready_source=register`); attended ⇒ disarmed. Explicit `--set ready=false` disarms an autonomous house until `--go-under` drops it (10479 2026-09-13 sat autonomous + `ready=false` all night — the A7 gate was the operator's first-night word, not a standing hold) |
+| `3-wake-on-attention` | **`policy.successor_model` only** — the preset carries no model; `--set successor_model=<slug>` is required or the ticker holds with `successor_model_bound=false` (10534 2026-09-12: the old Opus preset minted four unasked Opus liaisons at 12–24M tokens each). Spawned on the wake sources in § Headless successor (live unread · work closeout once · handoff once · `checkpoint_due` once) | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **armed only by explicit `ready`** (`--set ready=true` or `--go-under`; `ready_source=override`). The register never arms it: an IDE-hop chain runs `register=autonomous` with the ticker policy-only, and a register-armed ticker put a second driver on 10479 (2026-09-13). One driver per house: IDE chain ⇒ `ready=false`; ticker ⇒ `--go-under` |
 
 Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). A live
 `--loop` absorbs `--set` / `--mark-*` edits from another shell on its next poll (`libs/bus_watch/tick_state.py`

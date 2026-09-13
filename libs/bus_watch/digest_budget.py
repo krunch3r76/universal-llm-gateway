@@ -231,12 +231,10 @@ def effective_policy(state: dict[str, Any]) -> dict[str, Any]:
         merged["successor_model_source"] = "default"
     merged["successor_is_fable"] = "fable" in str(merged.get("successor_model") or "")
     if gear == "3-wake-on-attention" and "ready" not in overrides:
-        # Autonomy is the register. 10479 sat ``register=autonomous`` with the
-        # preset's ``ready=False`` for a night while the operator expected hops
-        # (2026-09-13); an autonomous house is armed unless the operator disarms
-        # it explicitly (``--set ready=false``), and ``go under`` drops that override.
-        merged["ready"] = str(state.get("register") or "") == "autonomous"
-        merged["ready_source"] = "register"
-    else:
-        merged["ready_source"] = "override" if "ready" in overrides else "default"
+        # ``ready`` is the explicit ticker arm (A7). The register cannot arm it:
+        # an IDE-hop chain also runs ``register=autonomous`` with the ticker
+        # deliberately policy-only (10479 all night 2026-09-13; a register-armed
+        # ticker put a second driver on that house). ``--go-under`` sets it.
+        merged["ready"] = False
+    merged["ready_source"] = "override" if "ready" in overrides else "default"
     return merged

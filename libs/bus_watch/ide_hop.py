@@ -182,7 +182,12 @@ def build_ide_hop_message(
         f"resume {root_id}",
         "",
         f"Liaison IDE hop ({register} register){tip}. LOAD the liaison skill (do not skim).",
-        "Hop only when autonomous follow-up remains (live watcher, dispatchable NOW, "
+        # STAY governs the hop only. Tab 12e32c8b (10479, 2026-09-13 06:56Z) read
+        # it as "do not dispatch" and parked at 0.7 % with NOW=R12 undone.
+        "NOW non-empty ⇒ dispatch its first leg from this tab (Explore recon · "
+        "cdp/opus-5 first for any bind · cursor-sdk implement) before any STAY "
+        "verdict. STAY = no hop, never = no dispatch.",
+        "Hop only when autonomous follow-up remains (live watcher, dispatched NOW, "
         "or CONTEXT_BUDGET with remaining work). HOLD_MERGE / empty NOW / quiet tick "
         "→ STAY — do not hop.",
         "LOAD AND EXECUTE: runbook:bus-consult-watcher (legs 1-3 atomic); "

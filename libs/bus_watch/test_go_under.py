@@ -41,8 +41,8 @@ def test_go_under_arms_and_frees_the_seat(tmp_path: Path, monkeypatch) -> None: 
     )
     assert result["ok"] is True and result["armed"] is True
     assert state["register"] == "autonomous"
-    assert "ready" not in state["policy"]
-    assert result["dropped_ready_override"] == {"was": False}
+    assert state["policy"]["ready"] is True
+    assert result["ready"] == {"before": False, "after": True}
     assert (
         state["handoff"]["seq"] == 1 and state["handoff"]["from_register"] == "attended"
     )
