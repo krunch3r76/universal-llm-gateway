@@ -15,6 +15,7 @@ carrying the hop header appears; sent keys are not a delivered hop.
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -73,10 +74,66 @@ def wait_for_landed_transcript(
         time.sleep(poll_s)
 
 
+def induction_head_line(message: str) -> str:
+    """First line of the induction block — landing marker in the holder transcript."""
+    return message.strip().splitlines()[0] if message.strip() else ""
+
+
+def transcript_byte_size(transcript_id: str, transcripts_dir: Path) -> int:
+    """Current byte length of the holder transcript JSONL, or 0 when absent."""
+    path = transcripts_dir / transcript_id / f"{transcript_id}.jsonl"
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def wait_for_induction_landed(
+    transcript_id: str,
+    marker: str,
+    *,
+    since_bytes: int,
+    transcripts_dir: Path,
+    timeout_s: float = 30.0,
+    poll_s: float = 2.0,
+) -> bool:
+    """True when the holder transcript gains a user row carrying ``marker`` after ``since_bytes``."""
+    if not marker:
+        return False
+    path = transcripts_dir / transcript_id / f"{transcript_id}.jsonl"
+    deadline = time.monotonic() + timeout_s
+    while True:
+        if path.is_file():
+            try:
+                with path.open(encoding="utf-8") as fh:
+                    fh.seek(since_bytes)
+                    for line in fh:
+                        try:
+                            row = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if row.get("role") != "user":
+                            continue
+                        content = (row.get("message") or {}).get("content") or []
+                        text = " ".join(
+                            str(block.get("text") or "") for block in content
+                        )
+                        if marker in text:
+                            return True
+            except OSError:
+                pass
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll_s)
+
+
 __all__ = [
     "AGENTS_WINDOW_APP_ID",
     "AGENTS_WINDOW_TITLE",
     "focus_title_for",
     "hop_header_line",
+    "induction_head_line",
+    "transcript_byte_size",
+    "wait_for_induction_landed",
     "wait_for_landed_transcript",
 ]
