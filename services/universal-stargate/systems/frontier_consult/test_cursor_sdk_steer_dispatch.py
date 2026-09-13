@@ -322,7 +322,9 @@ async def test_steer_routes_key_on_dispatch_id_not_execution_id() -> None:
     class _Client:
         async def post(self, path: str, json: dict[str, Any]) -> _FakeHttpxResponse:
             paths.append(path)
-            return _FakeHttpxResponse(202, {"dispatch_id": "disp-key", "steer": "inject"})
+            return _FakeHttpxResponse(
+                202, {"dispatch_id": "disp-key", "steer": "inject"}
+            )
 
         async def __aenter__(self) -> _Client:
             return self
