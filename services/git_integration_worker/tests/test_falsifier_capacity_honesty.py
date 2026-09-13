@@ -40,6 +40,8 @@ from services.git_integration_worker.routes.cursor_sdk import (
 @pytest.fixture(autouse=True)
 def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CURSOR_SDK_DISPATCH_CONCURRENCY", "1")
+    monkeypatch.setenv("CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY", "1")
     CursorDispatchLedger._instance = None
     set_lane_b_regime(active=False)
     yield
@@ -48,14 +50,19 @@ def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _req(**overrides: object) -> CursorDispatchRequest:
+    dispatch_id = str(overrides.get("dispatch_id", "disp-1"))
     base = {
         "thread_id": "t1",
         "model": "cursor/composer-2.5",
-        "dispatch_id": "disp-1",
-        "execution_id": "exec-disp-1",
-        "message": "hello",
+        "dispatch_id": dispatch_id,
+        "execution_id": f"exec-{dispatch_id}",
+        "message": f"hello-{dispatch_id}",
     }
     base.update(overrides)
+    if "execution_id" not in overrides:
+        base["execution_id"] = f"exec-{base['dispatch_id']}"
+    if "message" not in overrides:
+        base["message"] = f"hello-{base['dispatch_id']}"
     return CursorDispatchRequest(**base)
 
 
@@ -164,10 +171,17 @@ def test_f2_read_only_consult_runs_while_write_holder_active() -> None:
 
 
 def test_f4_consult_defaults_read_only_and_explicit_opt_in_writes() -> None:
-    """F4: omitted consult is read-only; explicit false participates in lease."""
+    """F4: omitted consult/none/implement read_only defaults; explicit false opts in."""
     consult_default = _req(dispatch_id="c-default")
     assert not _caller_explicitly_set_read_only(consult_default)
     assert _effective_read_only(consult_default, "consult") is True
+
+    none_default = _req(dispatch_id="n-default")
+    assert not _caller_explicitly_set_read_only(none_default)
+    assert _effective_read_only(none_default, "none") is True
+
+    implement_default = _req(dispatch_id="i-default")
+    assert _effective_read_only(implement_default, "implement") is False
 
     consult_explicit = CursorDispatchRequest.model_validate(
         {
@@ -175,12 +189,25 @@ def test_f4_consult_defaults_read_only_and_explicit_opt_in_writes() -> None:
             "model": "cursor/composer-2.5",
             "dispatch_id": "c-explicit",
             "execution_id": "exec-c-explicit",
-            "message": "hello",
+            "message": "hello-c-explicit",
             "read_only": False,
         }
     )
     assert _caller_explicitly_set_read_only(consult_explicit)
     assert _effective_read_only(consult_explicit, "consult") is False
+
+    none_explicit = CursorDispatchRequest.model_validate(
+        {
+            "thread_id": "t1",
+            "model": "cursor/composer-2.5",
+            "dispatch_id": "n-explicit",
+            "execution_id": "exec-n-explicit",
+            "message": "hello-n-explicit",
+            "read_only": False,
+        }
+    )
+    assert _caller_explicitly_set_read_only(none_explicit)
+    assert _effective_read_only(none_explicit, "none") is False
 
     ledger = CursorDispatchLedger.instance()
     repo = "/repo"
@@ -197,12 +224,64 @@ def test_f4_consult_defaults_read_only_and_explicit_opt_in_writes() -> None:
     assert queued is not None
     assert queued.status == "queued"
 
+    queued_none = _admit(
+        ledger,
+        none_explicit,
+        source_repo=repo,
+        lease_key=key,
+        contract="none",
+        read_only=False,
+    )
+    assert queued_none is not None
+    assert queued_none.status == "queued"
+
     with _connect() as conn:
         bad = conn.execute(
             "SELECT COUNT(*) AS n FROM cursor_sdk_dispatches "
             "WHERE COALESCE(read_only,0)=1 AND status IN ('admitted','running')"
         ).fetchone()
     assert int(bad["n"]) == 0
+
+
+def test_f4_none_concurrent_omitted_lane_lease_exempt() -> None:
+    """F4: two omitted-lane contract=none admits do not hold Lane-A write lease."""
+    ledger = CursorDispatchLedger.instance()
+    repo = "/repo"
+    key = lane_a_lease_key(Path(repo))
+    gate_before = sdk_dispatch_gate_stats()
+    none1 = _req(dispatch_id="none-1")
+    none2 = _req(dispatch_id="none-2", thread_id="none-2-thread")
+    assert _effective_read_only(none1, "none") is True
+    assert _effective_read_only(none2, "none") is True
+    assert (
+        _admit(
+            ledger,
+            none1,
+            source_repo=repo,
+            lease_key=key,
+            contract="none",
+            read_only=True,
+        )
+        is None
+    )
+    assert (
+        _admit(
+            ledger,
+            none2,
+            source_repo=repo,
+            lease_key=key,
+            contract="none",
+            read_only=True,
+        )
+        is None
+    )
+    gate = sdk_dispatch_gate_stats()
+    assert gate["live_writers"] == gate_before["live_writers"]
+    assert gate["live_writers"] == 0
+    assert gate["active_by_lane"]["A"] == 0
+    assert gate["write_capacity_detail"]["lane_a"]["slots"] == (
+        gate_before["write_capacity_detail"]["lane_a"]["slots"]
+    )
 
 
 def test_f4_implement_read_only_conflict_still_rejected() -> None:
@@ -306,3 +385,48 @@ def test_read_only_closeout_repo_diff_violation_and_control() -> None:
     assert token in deviations
     assert capture_status == "partial"
     assert emitted == [("d-ro", "t-ro", token)]
+
+
+def test_none_contract_repo_write_graded_read_only_violation() -> None:
+    """AC-2: contract=none repo write uses read_only_repo_diff_violation like consult."""
+    none_req = _req(dispatch_id="none-ro-violation")
+    assert _effective_read_only(none_req, "none") is True
+
+    change_set = ChangeSet(created=("bar.py",), modified=(), deleted=())
+    read_only = _effective_read_only(none_req, "none")
+    token = read_only_repo_diff_violation(
+        read_only=read_only,
+        change_set=change_set,
+        source_repo=Path("/repo"),
+    )
+    assert token is not None
+    assert token.startswith("divergence:repo_diff_paths_unattributed:")
+
+    emitted: list[tuple[str, str, str]] = []
+    with patch(
+        "services.git_integration_worker.cursor_sdk_events.emit_sdk_capture_divergence_observed",
+        side_effect=lambda **kwargs: emitted.append(
+            (kwargs["dispatch_id"], kwargs["thread_id"], kwargs["deviation"])
+        ),
+    ):
+        capture_status, divergence_reason, deviations, _manifest = (
+            resolve_closeout_capture_fields(
+                deliverables_expected=False,
+                baseline=None,
+                files_expected=[],
+                degraded_reason=None,
+                change_set=change_set,
+                divergent_rels=(),
+                source_repo=Path("/repo"),
+                cortex_root=Path("/tmp/cortex"),
+                read_only=read_only,
+                dispatch_id="none-ro-violation",
+                thread_id=none_req.thread_id,
+            )
+        )
+    assert divergence_reason == token
+    assert token in deviations
+    assert capture_status == "partial"
+    assert emitted == [
+        ("none-ro-violation", none_req.thread_id, token),
+    ]

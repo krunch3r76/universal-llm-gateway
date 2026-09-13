@@ -20,10 +20,8 @@ def _effective_read_only(req: CursorDispatchRequest, contract: str) -> bool:
         return req.read_only
     if contract == "implement":
         return False
-    if contract == "consult":
+    if contract in ("consult", "none"):
         return True
-    if contract == "none":
-        return False
     return False
 
 
