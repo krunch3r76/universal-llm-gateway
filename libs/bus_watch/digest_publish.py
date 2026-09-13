@@ -13,9 +13,30 @@ from typing import Any
 import httpx
 
 from bus_watch.liaison_digest import _bus, effective_policy
+from bus_watch.spawn_pending import row_is_terminal
 
 _BODY_CAP = 4096
 _LANE_CAP = 12
+
+
+def _lane_rank(row: dict[str, Any]) -> int:
+    if row.get("nag"):
+        return 3
+    unread = (row.get("unread") or 0) > 0
+    if row_is_terminal(row):
+        return 2 if unread else 1
+    return 0 if unread else 1
+
+
+def _attn_rank(item: dict[str, Any]) -> int:
+    if item.get("kind") in ("friction", "budget_estimate"):
+        return -1
+    lc = str(item.get("lifecycle") or "").lower()
+    if lc in ("abandoned", "failed"):
+        return 2
+    if row_is_terminal(item):
+        return 1
+    return 0
 
 
 def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
@@ -26,7 +47,11 @@ def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
         for lane in lanes_in
         if (lane.get("unread") or 0) > 0 or not lane.get("terminal")
     ]
+    filtered.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
+    filtered.sort(key=_lane_rank)
     lanes, omitted = filtered[:_LANE_CAP], max(0, len(filtered) - _LANE_CAP)
+    attention = list(digest.get("attention") or [])
+    attention.sort(key=_attn_rank)
     root = digest.get("root") or {}
     policy = digest.get("policy") or {}
     budget = digest.get("budget") or {}
@@ -42,7 +67,7 @@ def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
             "unread": root.get("unread"),
             "last_subject": root.get("last_subject"),
         },
-        "attention": digest.get("attention"),
+        "attention": attention,
         "checkpoint_due": digest.get("checkpoint_due"),
         "lanes": lanes,
         "watchers": digest.get("watchers_complete_unrelayed"),
@@ -68,30 +93,60 @@ def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
 
 
 def render_body(projection: dict[str, Any], *, cap: int = _BODY_CAP) -> str | None:
-    """Compact JSON body; shrink ``lanes`` until the UTF-8 byte length fits ``cap``."""
-    all_lanes = list(projection.get("lanes") or [])
-    base_omitted = int(projection.get("lanes_omitted") or 0)
-    n = len(all_lanes)
-    drop_life = False
-    while True:
+    """Compact JSON body; shrink by class until UTF-8 length fits ``cap``.
+
+    Returns ``None`` only when the floor (induction, root, protected attention
+    kinds, omitted counts, policy, budget) alone exceeds ``cap`` — 27 full lane
+    attention rows once froze publish at ``_BODY_CAP`` (a:33433).
+    """
+    lanes = list(projection.get("lanes") or [])
+    attention = list(projection.get("attention") or [])
+    watchers = list(projection.get("watchers") or [])
+    base_lanes_omitted = int(projection.get("lanes_omitted") or 0)
+    protected_attn = sum(1 for item in attention if _attn_rank(item) < 0)
+    n_lanes, n_attn = len(lanes), len(attention)
+    drop_life = drop_watchers = False
+
+    def _assemble() -> str:
         proj = dict(projection)
-        proj["lanes"] = all_lanes[:n]
-        if drop_life:
-            proj.pop("life", None)
-        extra = len(all_lanes) - n
-        if base_omitted + extra:
-            proj["lanes_omitted"] = base_omitted + extra
+        proj["lanes"] = lanes[:n_lanes]
+        proj["attention"] = attention[:n_attn]
+        lanes_omitted = base_lanes_omitted + len(lanes) - n_lanes
+        attn_omitted = len(attention) - n_attn
+        if lanes_omitted:
+            proj["lanes_omitted"] = lanes_omitted
         elif "lanes_omitted" in proj:
             del proj["lanes_omitted"]
-        body = json.dumps(proj, separators=(",", ":"), default=str)
+        if attn_omitted:
+            proj["attention_omitted"] = attn_omitted
+        elif "attention_omitted" in proj:
+            del proj["attention_omitted"]
+        if drop_life:
+            proj.pop("life", None)
+        if drop_watchers:
+            proj.pop("watchers", None)
+            if watchers:
+                proj["watchers_omitted"] = len(watchers)
+        proj["caps"] = {"body_bytes": cap, "source": "digest_publish._BODY_CAP"}
+        return json.dumps(proj, separators=(",", ":"), default=str)
+
+    while True:
+        body = _assemble()
         if len(body.encode("utf-8")) <= cap:
             return body
-        if n == 0:
-            if not drop_life and isinstance(projection.get("life"), dict):
-                drop_life = True
-                continue
-            return None
-        n -= 1
+        if n_lanes > 0:
+            n_lanes -= 1
+            continue
+        if n_attn > protected_attn:
+            n_attn -= 1
+            continue
+        if not drop_life and isinstance(projection.get("life"), dict):
+            drop_life = True
+            continue
+        if not drop_watchers and watchers:
+            drop_watchers = True
+            continue
+        return None
 
 
 def _publish_failed(error: str) -> None:

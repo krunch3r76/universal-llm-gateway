@@ -55,6 +55,8 @@ _TERMINAL_RE = re.compile(
     r"stall-pop|PARKED|FAILED|CHECKPOINT|BRIDGE_ACK|Dispatch orphaned",
     re.I,
 )
+_NAG_RE = re.compile(r"^branch-debt\b", re.I)
+_NAG_SENDERS = frozenset({"git-integration-worker"})
 # Per-tick fixed overhead the seat spends reading the digest and deciding.
 TICK_OVERHEAD_TOKENS = 3000
 _TICK_OVERHEAD_TOKENS = TICK_OVERHEAD_TOKENS
@@ -80,6 +82,8 @@ def _lane_row(t: dict[str, Any]) -> dict[str, Any]:
         "last_from": t.get("last_turn_from"),
         "last_subject": subject,
         "terminal": bool(_TERMINAL_RE.search(subject)),
+        "nag": bool(_NAG_RE.search(subject))
+        and t.get("last_turn_from") in _NAG_SENDERS,
         "updated_at": t.get("updated_at"),
     }
 
@@ -96,8 +100,10 @@ def _linked_worker_ids(client: httpx.Client, root: str) -> set[str]:
 
 def _child_lanes(client: httpx.Client, root: str) -> list[dict[str, Any]]:
     """Children, grandchildren, and admit-linked workers of ``root``; bounded."""
-    listing = _get(client, "/threads", status="all", last=400) or {}
-    rows = listing.get("threads") or []
+    # fmt: off
+    act, unr = _get(client, "/threads", status="active", limit=400) or {}, _get(client, "/threads", has_unread=True, limit=100) or {}
+    rows = list({str(t["id"]): t for s in (act, unr) for t in (s.get("threads") or [])}.values())
+    # fmt: on
     by_id = {str(t.get("id")): t for t in rows}
     by_parent: dict[str, list[dict[str, Any]]] = {}
     for t in rows:
@@ -126,6 +132,7 @@ def _child_lanes(client: httpx.Client, root: str) -> list[dict[str, Any]]:
                 {**_lane_row(row), "lane_role": row.get("lane_role") or "linked_worker"}
             )
     out.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
+    out.sort(key=lambda r: bool(r.get("nag")))
     return out[:_MAX_LANES]
 
 
@@ -191,8 +198,16 @@ def build_digest(
         },
         "register": register,
         "lanes": lanes,
-        "attention": [lane for lane in lanes if (lane["unread"] or 0) > 0]
+        # fmt: off
+        "attention": [
+            lane for lane in lanes if (lane["unread"] or 0) > 0 and not lane.get("nag")
+        ]
         + frictions["attention"],
+        "attention_nag_excluded": {
+            "count": sum(1 for lane in lanes if lane.get("nag")),
+            "source": "liaison_digest._NAG_RE",
+        },
+        # fmt: on
         "unread_toc": unread,
         "frictions": frictions["rows"],
         "friction_summary": frictions["summary"],
@@ -280,20 +295,10 @@ def build_digest(
             as_of=digest_ts,
         )
     if budget["source"] != "giw.sdk_stream":
-        attention = [
-            item
-            for item in (digest.get("attention") or [])
-            if item.get("kind") != "budget_estimate"
-        ]
-        attention.append(
-            {
-                "kind": "budget_estimate",
-                "used_tokens": budget["used_tokens"],
-                "window_limit_tokens": budget["window_limit_tokens"],
-                "pct": pct,
-                "source": budget["source"],
-            }
-        )
+        # fmt: off
+        attention = [i for i in (digest.get("attention") or []) if i.get("kind") != "budget_estimate"]
+        attention.append({"kind": "budget_estimate", "used_tokens": budget["used_tokens"], "window_limit_tokens": budget["window_limit_tokens"], "pct": pct, "source": budget["source"]})
+        # fmt: on
         digest["attention"] = attention
     digest["budget"] = budget
     if is_life_root(root):
