@@ -49,16 +49,15 @@ def test_remote_launch_command_prefers_verified_focus_over_uri() -> None:
     cmd = remote_launch_command(
         "/repo/tmp/watchers/handoff-messages/m.md",
         remote_repo="/repo",
-        palette_query="New Chat",
         raise_uri="vscode-remote://ssh-remote+io/repo",
         focus_title="Cursor Agents",
     )
     assert "--no-raise --focus-title 'Cursor Agents' --focus-app-id cursor" in cmd
     assert "--raise-uri" not in cmd
+    assert "--palette-query" not in cmd
     without = remote_launch_command(
         "/repo/m.md",
         remote_repo="/repo",
-        palette_query="New Chat",
         raise_uri="vscode-remote://x",
     )
     assert "--raise-uri" in without and "--focus-title" not in without

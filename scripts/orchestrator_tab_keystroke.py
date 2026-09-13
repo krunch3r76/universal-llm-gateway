@@ -113,24 +113,36 @@ def _focus_window(title_substr: str, app_id: str, *, settle_s: float = 0.6) -> d
 
 
 def _ui() -> UInput:
-    cap = {
-        e.EV_KEY: [
-            e.KEY_LEFTCTRL,
-            e.KEY_LEFTSHIFT,
-            e.KEY_LEFTALT,
-            e.KEY_LEFTMETA,
-            e.KEY_ENTER,
-            e.KEY_ESC,
-            e.KEY_A,
-            e.KEY_BACKSPACE,
-            e.KEY_V,
-            e.KEY_P,
-            e.KEY_N,
-            e.KEY_L,
-            e.KEY_SLASH,
-        ]
-    }
-    return UInput(events=cap, name="orchestrator-handoff-kbd", bustype=e.BUS_USB)
+    """Open a virtual keyboard that udev tags ID_INPUT_KEYBOARD.
+
+    udev's input_id sets that property only when key bits 1–31 are all set
+    (ESC, digits, Q–S — systemd ``FLAGS_SET(bitmask_key[0], 0xFFFFFFFE)``).
+    The old 13-key set only earned ID_INPUT_KEY. libinput then will not
+    attach the device as the seat keyboard — hops report write-ok and
+    COSMIC activate-ok while Cursor Agents never sees a key (jupiter
+    2026-09-13 probe: /dev/input/event23, KEY_A, 3s grace, empty composer).
+    """
+    keys = list(range(e.KEY_ESC, e.KEY_S + 1))
+    for extra in (
+        e.KEY_D,
+        e.KEY_V,
+        e.KEY_N,
+        e.KEY_P,
+        e.KEY_L,
+        e.KEY_SLASH,
+        e.KEY_LEFTSHIFT,
+        e.KEY_RIGHTSHIFT,
+        e.KEY_RIGHTCTRL,
+        e.KEY_LEFTALT,
+        e.KEY_LEFTMETA,
+    ):
+        if extra not in keys:
+            keys.append(extra)
+    ui = UInput(
+        events={e.EV_KEY: keys}, name="orchestrator-handoff-kbd", bustype=e.BUS_USB
+    )
+    time.sleep(0.5)
+    return ui
 
 
 def _syn(ui: UInput) -> None:
@@ -195,26 +207,29 @@ def _quick_command(ui: UInput, query: str, *, opener: str = "ctrl_slash") -> Non
     time.sleep(0.45)
 
 
-def _palette_run(ui: UInput, query: str) -> None:
-    _wl_copy(query)
+def _release_modifiers(ui: UInput) -> None:
+    """Drop Shift before Ctrl+N. Ctrl+Shift+N is a new window; Ctrl+n is a tab."""
+    for key in (
+        e.KEY_LEFTSHIFT,
+        e.KEY_RIGHTSHIFT,
+        e.KEY_LEFTCTRL,
+        e.KEY_RIGHTCTRL,
+        e.KEY_LEFTALT,
+        e.KEY_LEFTMETA,
+    ):
+        _key_up(ui, key)
+
+
+def _new_chat(ui: UInput) -> None:
+    """Same-window Agents tab: Ctrl+n (no Shift). Ctrl+Shift+N opens a new window."""
+    _release_modifiers(ui)
     time.sleep(0.05)
-    _command_palette(ui)
-    _paste(ui)
-    time.sleep(0.25)
-    _tap(ui, e.KEY_ENTER)
+    _chord(ui, e.KEY_LEFTCTRL, e.KEY_N)
     time.sleep(0.45)
 
 
-def _clear_composer(ui: UInput) -> None:
-    """Drop leftover palette filter text. Specimen: hops landed as ``New Chatresume <R>``."""
-    _chord(ui, e.KEY_LEFTCTRL, e.KEY_A)
-    time.sleep(0.05)
-    _tap(ui, e.KEY_BACKSPACE)
-    time.sleep(0.05)
-
-
 def _submit_composer(ui: UInput) -> None:
-    """Agents composer: Enter is newline. Ctrl+Enter sends (2026-09-12 paste-without-send)."""
+    """Agents composer: Enter is newline. Ctrl+Enter sends."""
     _chord(ui, e.KEY_LEFTCTRL, e.KEY_ENTER)
 
 
@@ -222,28 +237,23 @@ def launch_new_chat_with_message(
     message: str,
     *,
     repo: str,
-    palette_query: str = "New Chat",
     dry_run: bool = False,
     raise_window: bool = True,
     raise_uri: str | None = None,
     focus_title: str | None = None,
     focus_app_id: str = "cursor",
 ) -> dict[str, object]:
-    """Open a new chat, clear leaked palette text, paste ``message``, Ctrl+Enter send.
+    """Focus Agents, Ctrl+n (same-window tab), paste ``message``, Ctrl+Enter.
 
-    Focus order: ``focus_title`` (+ ``focus_app_id``: compositor ``activate`` on the
-    one matching toplevel, verified before any key is sent — the only raise that works
-    for a native-Wayland Cursor) ≻ ``raise_uri`` (``cursor --folder-uri``, for
-    compositors that honour it) ≻ ``raise_window`` (legacy ``cursor -r <repo>``, local
-    workspaces only) ≻ neither (paste into whatever is in front — hop 3 on 2026-09-11
-    landed in Firefox this way; only for an operator who is watching).
+    Ctrl+Shift+N is a new Cursor window — not a tab. Release Shift first.
+    Focus still precedes keys so we do not type into Firefox.
     """
     _require_display()
     if dry_run:
         return {
             "dry_run": True,
             "repo": repo,
-            "palette_query": palette_query,
+            "steps": ["ctrl_n", "paste", "ctrl_enter"],
             "raise_window": raise_window,
             "raise_uri": raise_uri,
             "focus_title": focus_title,
@@ -260,11 +270,7 @@ def launch_new_chat_with_message(
         time.sleep(0.9)
     ui = _ui()
     try:
-        _palette_run(ui, palette_query)
-        time.sleep(0.8)
-        _tap(ui, e.KEY_ESC)
-        time.sleep(0.1)
-        _clear_composer(ui)
+        _new_chat(ui)
         _wl_copy(message)
         time.sleep(0.08)
         _paste(ui)
@@ -274,7 +280,7 @@ def launch_new_chat_with_message(
         ui.close()
     return {
         "ok": True,
-        "palette_query": palette_query,
+        "steps": ["ctrl_n", "paste", "ctrl_enter"],
         "focus_title": focus_title,
         "focused": focused.get("activated"),
         "message_len": len(message),
@@ -336,7 +342,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
     lp = sub.add_parser(
-        "launch", help="Raise Cursor, new chat via palette, paste message"
+        "launch", help="Focus Cursor, Ctrl+n (same-window tab), paste, Ctrl+Enter"
     )
     lp.add_argument("--message", help="First user message (e.g. resume 10223 …)")
     lp.add_argument(
@@ -344,11 +350,6 @@ def main() -> int:
     )
     lp.add_argument(
         "--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO)
-    )
-    lp.add_argument(
-        "--palette-query",
-        default=os.environ.get("ORCHESTRATOR_PALETTE_QUERY", "New Chat"),
-        help="Command palette filter for new chat (default: New Chat)",
     )
     lp.add_argument("--dry-run", action="store_true")
     lp.add_argument(
@@ -418,7 +419,6 @@ def main() -> int:
         out = launch_new_chat_with_message(
             message,
             repo=args.repo,
-            palette_query=args.palette_query,
             dry_run=args.dry_run,
             raise_window=not args.no_raise,
             raise_uri=args.raise_uri,

@@ -300,16 +300,14 @@ def remote_launch_command(
     remote_msg_path: str,
     *,
     remote_repo: str,
-    palette_query: str,
     raise_uri: str | None,
     focus_title: str | None = None,
 ) -> str:
     """Build the GUI-host command.
 
-    Focus order: ``focus_title`` (compositor ``activate`` on the one toplevel matching
-    app_id + title, verified before any key — the only raise that works for a
-    native-Wayland Cursor) ≻ ``raise_uri`` (``cursor --folder-uri``, kept for
-    compositors that honour it) ≻ neither (types into the focused window).
+    Keys on the host are Ctrl+n (same-window tab, not Ctrl+Shift+N) → paste →
+    Ctrl+Enter. Focus order: ``focus_title``
+    (compositor ``activate``) ≻ ``raise_uri`` ≻ neither (types into the focused window).
     """
     if focus_title:
         focus = (
@@ -325,7 +323,6 @@ def remote_launch_command(
         f"python3 {shlex.quote(f'{remote_repo}/{KEYSTROKE_SCRIPT}')} launch "
         f"--message-file {shlex.quote(remote_msg_path)} "
         f"--repo {shlex.quote(remote_repo)} "
-        f"--palette-query {shlex.quote(palette_query)} "
         f"{focus}"
     )
 
@@ -336,7 +333,6 @@ def fire_ide_hop(
     root_id: str,
     gui_host: str | None,
     remote_repo: str = DEFAULT_REMOTE_REPO,
-    palette_query: str = "New Chat",
     dry_run: bool = False,
     no_raise: bool = False,
     landing_timeout_s: float = 30.0,
@@ -383,7 +379,6 @@ def fire_ide_hop(
     cmd = remote_launch_command(
         remote_msg,
         remote_repo=remote_repo,
-        palette_query=palette_query,
         raise_uri=raise_uri,
         focus_title=focus_title,
     )
@@ -432,10 +427,9 @@ def fire_ide_hop(
             "phase": "not_landed",
             "keystroke": keystroke,
             "fix": (
-                "no new Cursor chat carries the hop header — composer unsent "
-                "(Agents Enter is newline; hop now Ctrl+Enter + clears leaked "
-                f"'New Chat') or keys hit another window; focus was {focus_title!r} "
-                f"on {gui_host}"
+                "no new Cursor chat carries the hop header — Ctrl+N / paste / "
+                f"Ctrl+Enter did not submit, or keys hit another window; "
+                f"focus was {focus_title!r} on {gui_host}"
             ),
             **result,
         }

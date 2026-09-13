@@ -63,7 +63,6 @@ def main() -> int:
         help="override policy.gui_host for this hop only (default: liaison-tick.py --set gui_host=…)",
     )
     p.add_argument("--remote-repo", default=DEFAULT_REMOTE_REPO)
-    p.add_argument("--palette-query", default="New Chat")
     p.add_argument(
         "--no-raise",
         action="store_true",
@@ -106,9 +105,7 @@ def main() -> int:
     if not args.no_auto_arm:
         labels.extend(
             lbl
-            for lbl in live_watcher_labels(
-                args.root, exclude_threads=args.exclude_lane
-            )
+            for lbl in live_watcher_labels(args.root, exclude_threads=args.exclude_lane)
             if lbl not in labels
         )
     qualify = hop_qualifies(row=args.row, arm_labels=labels)
@@ -137,7 +134,6 @@ def main() -> int:
         root_id=args.root,
         gui_host=args.gui_host or policy_gui_host(args.root),
         remote_repo=args.remote_repo,
-        palette_query=args.palette_query,
         dry_run=args.dry_run,
         no_raise=args.no_raise,
     )

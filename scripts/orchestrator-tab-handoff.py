@@ -278,7 +278,6 @@ def launch_tab(
     work_prompt: str | None = None,
     ssh_host: str = _DEFAULT_SSH_HOST,
     remote_repo: str = _DEFAULT_REPO_REMOTE,
-    palette_query: str = "New Chat",
     dry_run: bool = False,
     stale_s: float = _DEFAULT_STALE_S,
     queue_id: str | None = None,
@@ -321,8 +320,7 @@ def launch_tab(
         f"export WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000; "
         f"python3 {shlex.quote(remote_script)} launch "
         f"--message-file {shlex.quote(remote_msg)} "
-        f"--repo {shlex.quote(remote_repo)} "
-        f"--palette-query {shlex.quote(palette_query)}"
+        f"--repo {shlex.quote(remote_repo)}"
     )
     if dry_run:
         return {
@@ -401,7 +399,6 @@ def main() -> int:
     )
     lp.add_argument("--ssh-host", default=_DEFAULT_SSH_HOST)
     lp.add_argument("--remote-repo", default=_DEFAULT_REPO_REMOTE)
-    lp.add_argument("--palette-query", default="New Chat")
     lp.add_argument("--dry-run", action="store_true")
     lp.add_argument("--queue-id", default=None, help="Registrar queue item id")
 
@@ -439,7 +436,6 @@ def main() -> int:
             work_prompt=args.work_prompt,
             ssh_host=args.ssh_host,
             remote_repo=args.remote_repo,
-            palette_query=args.palette_query,
             dry_run=args.dry_run,
             queue_id=args.queue_id,
         )
