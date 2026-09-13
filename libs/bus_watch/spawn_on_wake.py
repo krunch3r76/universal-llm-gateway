@@ -19,6 +19,12 @@ from bus_watch.fable_lock import (
     read_lock,
     seat_lock_free,
 )
+from bus_watch.spawn_pending import (
+    actionable_attention,
+    checkpoint_due_wake,
+    digest_pending_is_terminal,
+    pending_spawn_terminal,
+)
 
 _EMAIL_BRIDGE_SOCK = os.environ.get(
     "EMAIL_BRIDGE_SOCK", "/tmp/universal-protocol/email-bridge.sock"
@@ -89,28 +95,6 @@ def spawn_fingerprint(root: dict[str, Any], lanes: list[dict[str, Any]]) -> str:
     ).hexdigest()[:16]
 
 
-def _actionable_attention(attention: Any) -> list[Any]:
-    """DIGEST may carry ``kind=budget_estimate`` always; that is not a wake."""
-    items = attention if isinstance(attention, list) else []
-    return [
-        item
-        for item in items
-        if not (isinstance(item, dict) and item.get("kind") == "budget_estimate")
-    ]
-
-
-def pending_spawn_terminal(
-    pending: dict[str, Any] | None,
-    *,
-    is_terminal: Callable[[dict[str, Any]], bool] | None = None,
-) -> bool:
-    if not pending:
-        return True
-    if is_terminal is None:
-        return False
-    return is_terminal(pending)
-
-
 def _context_budget_spawn_allowed(
     digest: dict[str, Any],
     *,
@@ -137,6 +121,7 @@ def evaluate_spawn_predicate(
     *,
     lock: dict[str, Any] | None = None,
     now: float | None = None,
+    is_terminal: Callable[[dict[str, Any]], bool] | None = None,
 ) -> dict[str, Any]:
     """Return spawn decision with per-clause reasons."""
     policy = digest.get("policy") or {}
@@ -153,7 +138,9 @@ def evaluate_spawn_predicate(
         digest, lock=lock, policy=policy, now=ts
     )
     spawn_signal = (
-        bool(_actionable_attention(attention)) or checkpoint_due or budget_spawn
+        bool(actionable_attention(attention))
+        or checkpoint_due_wake(state, checkpoint_due)
+        or budget_spawn
     )
     grace = float(policy.get("spawn_grace_seconds") or 900)
     last_spawn_at = float(state.get("last_spawn_at") or 0.0)
@@ -166,6 +153,7 @@ def evaluate_spawn_predicate(
         or 0
     )
     pending = state.get("pending_spawn")
+    checker = is_terminal or digest_pending_is_terminal(digest, now=ts)
     budget_replaces_holder = budget_spawn and _holder_dispatch_id(
         str(lock.get("holder") or "")
     ) == str(budget.get("epoch") or "")
@@ -177,7 +165,9 @@ def evaluate_spawn_predicate(
             root_id=str((digest.get("root") or {}).get("id") or "").strip(),
         )
         or budget_replaces_holder,
-        "pending_spawn_terminal": pending_spawn_terminal(pending),
+        "pending_spawn_terminal": pending_spawn_terminal(
+            pending, is_terminal=checker
+        ),
         "hops_under_cap": hops < int(policy.get("max_hops_per_night") or 8),
         "dispatches_under_cap": dispatches
         < int(policy.get("max_dispatches_per_night") or 12),
@@ -209,6 +199,7 @@ def build_dispatch_body(
     work_key: str | None = None,
     successor_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Assemble the generate payload: successor model, night work_key, resume message."""
     max_hop = int(policy.get("max_hop_minutes") or 60)
     ctx = dict(successor_context or {})
     message = build_successor_message(
@@ -241,6 +232,7 @@ def build_dispatch_body(
 
 
 def page_liaison(root_id: str, subject: str, body: str) -> dict[str, Any]:
+    """Fire the email-bridge pager; returns ok=False when the socket is absent."""
     if not os.path.exists(_EMAIL_BRIDGE_SOCK):
         return {"ok": False, "reason": "pager_unavailable"}
     payload = json.dumps(
@@ -272,6 +264,7 @@ def maybe_forfeit_expired_lease(
     lock: dict[str, Any] | None = None,
     last_holder_turn: int | None = None,
 ) -> bool:
+    """Emit lease-forfeit and page when the seat lock is expired; True if forfeited."""
     lock = lock if lock is not None else read_lock(root_id)
     if seat_lock_free(lock, root_id=root_id):
         return False
@@ -311,6 +304,7 @@ def fire_spawn(
     submit: Callable[..., tuple[dict[str, Any], int]] | None = None,
     successor_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """POST one successor generate and record pending_spawn plus tonight's counters."""
     body = build_dispatch_body(root_id, policy, successor_context=successor_context)
     evaluation = evaluate_spawn_predicate(
         {"policy": policy, "attention": [], "budget": {}, "root": {}, "lanes": []},
@@ -377,6 +371,12 @@ def tick_spawn_on_wake(
     submit: Callable[..., tuple[dict[str, Any], int]] | None = None,
     is_terminal: Callable[[dict[str, Any]], bool] | None = None,
 ) -> dict[str, Any]:
+    """One gear-3 poll: drop a finished pending mutex, then spawn or hold.
+
+    Default ``is_terminal`` reads digest lanes so ``liaison-tick --loop`` cannot
+    forget the callback (10534 held four hours after 10579 completed). Mutates
+    ``state`` (pops pending, records checkpoint-due latch and spawn counters).
+    """
     policy = digest.get("policy") or {}
     if not policy.get("wake_on_attention_only"):
         return {"action": "disabled"}
@@ -386,11 +386,13 @@ def tick_spawn_on_wake(
         lock=lock,
         last_holder_turn=(digest.get("root") or {}).get("turns"),
     )
-    evaluation = evaluate_spawn_predicate(digest, state, lock=lock)
+    checker = is_terminal or digest_pending_is_terminal(digest)
     if pending := state.get("pending_spawn"):
-        if is_terminal and is_terminal(pending):
+        if checker(pending):
             state.pop("pending_spawn", None)
-            evaluation = evaluate_spawn_predicate(digest, state, lock=lock)
+    evaluation = evaluate_spawn_predicate(
+        digest, state, lock=lock, is_terminal=checker
+    )
     successor_context = successor_context_from_digest(digest)
     body = build_dispatch_body(root_id, policy, successor_context=successor_context)
     if dry_run:
@@ -410,4 +412,7 @@ def tick_spawn_on_wake(
         submit=submit,
         successor_context=successor_context,
     )
+    status = int(fired.get("status_code") or 0)
+    if 0 < status < 400 and digest.get("checkpoint_due"):
+        state["checkpoint_due_spawned_tick"] = int(state.get("last_cp_tick") or 0)
     return {"action": "spawned", "evaluation": evaluation, "fire": fired}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 
 import pytest
 
@@ -14,6 +15,7 @@ from bus_watch.spawn_on_wake import (
     build_successor_message,
     evaluate_spawn_predicate,
     spawn_fingerprint,
+    tick_spawn_on_wake,
 )
 
 
@@ -246,3 +248,90 @@ def test_context_budget_epoch_mismatch_no_spawn() -> None:
     assert ev["spawn"] is False
     assert ev["context_budget"]["fresh"] is False
     assert ev["context_budget"]["reason"] == "epoch_mismatch"
+
+
+def test_closed_unread_is_not_spawn_signal() -> None:
+    ev = evaluate_spawn_predicate(
+        _digest(
+            attention=[
+                {
+                    "id": "10579",
+                    "unread": 2,
+                    "status": "closed",
+                    "lifecycle": "completed",
+                }
+            ]
+        ),
+        {},
+        lock={"holder": None},
+    )
+    assert ev["clauses"]["spawn_signal"] is False
+    assert ev["spawn"] is False
+
+
+def test_checkpoint_due_wakes_once_per_cp_tick() -> None:
+    digest = _digest(
+        attention=[
+            {"id": "10579", "unread": 2, "status": "closed", "lifecycle": "completed"}
+        ],
+        checkpoint_due=True,
+    )
+    first = evaluate_spawn_predicate(digest, {}, lock={"holder": None})
+    assert first["clauses"]["spawn_signal"] is True
+    latched = evaluate_spawn_predicate(
+        digest,
+        {"last_cp_tick": 72, "checkpoint_due_spawned_tick": 72},
+        lock={"holder": None},
+    )
+    assert latched["clauses"]["spawn_signal"] is False
+
+
+def test_pending_clears_when_digest_shows_closed_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.read_lock", lambda *_a, **_k: {"holder": None}
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_on_wake.maybe_forfeit_expired_lease", lambda *_a, **_k: False
+    )
+    digest = _digest(attention=[], checkpoint_due=False)
+    digest["lanes"] = [
+        {
+            "id": "10579",
+            "turns": 10,
+            "status": "closed",
+            "lifecycle": "completed",
+            "unread": 2,
+        }
+    ]
+    digest["attention"] = [
+        {"id": "10579", "unread": 2, "status": "closed", "lifecycle": "completed"}
+    ]
+    state = {
+        "pending_spawn": {
+            "execution_id": "b60067e7",
+            "thread_id": "10579",
+            "spawned_at": "2026-09-12T16:54:26Z",
+        }
+    }
+    result = tick_spawn_on_wake(digest, state, "10534", dry_run=True)
+    assert "pending_spawn" not in state
+    assert result["evaluation"]["clauses"]["pending_spawn_terminal"] is True
+    assert result["action"] == "hold"
+
+
+def test_stale_pending_without_lane_is_terminal() -> None:
+    digest = _digest(attention=[{"id": "1"}])
+    pending = {
+        "execution_id": "e1",
+        "thread_id": "10579",
+        "spawned_at": "2026-09-12T10:00:00Z",
+    }
+    ev = evaluate_spawn_predicate(
+        digest,
+        {"pending_spawn": pending},
+        lock={"holder": None},
+        now=datetime.fromisoformat("2026-09-12T20:00:00+00:00").timestamp(),
+    )
+    assert ev["clauses"]["pending_spawn_terminal"] is True
