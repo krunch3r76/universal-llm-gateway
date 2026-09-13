@@ -87,37 +87,30 @@ def filter_tools_list_payload(
 
 
 def read_framed_message(stream: BinaryIO) -> dict[str, Any] | None:
-    """Read one MCP stdio Content-Length framed JSON message."""
-    header = b""
+    """Read one MCP stdio message.
+
+    MCP stdio transport is newline-delimited JSON (one object per line), not
+    LSP ``Content-Length`` framing — Cursor and ``fastmcp-remote`` both speak
+    NDJSON, so a header-based reader blocks forever and the handshake never
+    completes. Blank lines are skipped; EOF returns ``None``.
+    """
     while True:
-        chunk = stream.read(1)
-        if not chunk:
+        line = stream.readline()
+        if not line:
             return None
-        header += chunk
-        if header.endswith(b"\r\n\r\n"):
-            break
-    content_length = 0
-    for line in header.decode("ascii", errors="replace").split("\r\n"):
-        if line.lower().startswith("content-length:"):
-            content_length = int(line.split(":", 1)[1].strip())
-            break
-    if content_length <= 0:
-        return None
-    body = stream.read(content_length)
-    if len(body) < content_length:
-        return None
-    parsed = json.loads(body.decode("utf-8"))
-    if not isinstance(parsed, dict):
-        raise ValueError("MCP frame body must be a JSON object")
-    return parsed
+        if not line.strip():
+            continue
+        parsed = json.loads(line.decode("utf-8"))
+        if not isinstance(parsed, dict):
+            raise ValueError("MCP stdio message must be a JSON object")
+        return parsed
 
 
 def write_framed_message(stream: BinaryIO, payload: dict[str, Any]) -> None:
-    """Write one MCP stdio Content-Length framed JSON message."""
+    """Write one MCP stdio message as a single NDJSON line."""
     body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    header = f"Content-Length: {len(body)}\r\n\r\n".encode("ascii")
-    stream.write(header)
     stream.write(body)
+    stream.write(b"\n")
     stream.flush()
 
 
