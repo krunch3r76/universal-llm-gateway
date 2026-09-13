@@ -191,6 +191,114 @@ def test_publish_if_enabled_skips_echo_of_own_digest_turn() -> None:
     assert client.post.call_count == 2
 
 
+def test_render_body_wide_attention_keeps_induction() -> None:
+    """27 attention rows (22 abandoned + 4 live + friction + budget) must fit cap."""
+    induction = "WAKE " + ("x" * 594)
+    abandoned = [
+        {
+            "id": str(i),
+            "slug": f"lane-{i}",
+            "status": "active",
+            "lifecycle": "abandoned",
+            "lane_role": "sub_mission",
+            "turns": 5,
+            "unread": 1,
+            "last_from": "cursor-sdk",
+            "last_subject": "y" * 120,
+            "terminal": False,
+            "nag": False,
+            "updated_at": f"2026-09-13T{i:02d}:00:00Z",
+        }
+        for i in range(22)
+    ]
+    live = [
+        {
+            "id": str(100 + i),
+            "slug": f"live-{i}",
+            "status": "active",
+            "lifecycle": "admitted",
+            "lane_role": "sub_mission",
+            "turns": 3,
+            "unread": 1,
+            "last_from": "cursor-sdk",
+            "last_subject": "open work",
+            "terminal": False,
+            "nag": False,
+            "updated_at": f"2026-09-13T{20 + i:02d}:00:00Z",
+        }
+        for i in range(4)
+    ]
+    attention = (
+        abandoned
+        + live
+        + [
+            {"kind": "friction", "id": "f1"},
+            {"kind": "budget_estimate", "used_tokens": 100, "pct": 1.0},
+        ]
+    )
+    digest = _full_digest(
+        lanes=abandoned + live, attention=attention, induction=induction
+    )
+    proj = project_digest(digest)
+    body = render_body(proj)
+    assert body is not None
+    assert len(body.encode("utf-8")) <= 4096
+    parsed = json.loads(body)
+    assert parsed["induction"] == induction
+    assert parsed.get("attention_omitted", 0) >= 1
+    surviving_abandoned = [
+        item
+        for item in parsed["attention"]
+        if isinstance(item, dict) and item.get("lifecycle") == "abandoned"
+    ]
+    surviving_live = [
+        item
+        for item in parsed["attention"]
+        if isinstance(item, dict) and item.get("lifecycle") == "admitted"
+    ]
+    if len(surviving_live) < 4:
+        assert not surviving_abandoned
+
+
+def test_render_body_nag_lanes_drop_first() -> None:
+    """Nag lanes (rank 3) are dropped before live unread lanes (rank 0)."""
+    nag = {
+        "id": "nag-1",
+        "unread": 2,
+        "terminal": False,
+        "nag": True,
+        "last_subject": "branch-debt aged",
+        "updated_at": "2026-09-13T12:00:00Z",
+    }
+    live = {
+        "id": "live-1",
+        "unread": 1,
+        "terminal": False,
+        "nag": False,
+        "last_subject": "open",
+        "updated_at": "2026-09-13T11:00:00Z",
+    }
+    lanes = [live, nag] + [
+        {
+            "id": f"fill-{i}",
+            "unread": 0,
+            "terminal": False,
+            "nag": False,
+            "last_subject": "z" * 200,
+            "updated_at": f"2026-09-13T0{i}:00:00Z",
+        }
+        for i in range(20)
+    ]
+    proj = project_digest(_full_digest(lanes=lanes))
+    body = render_body(proj, cap=800)
+    assert body is not None
+    parsed = json.loads(body)
+    lane_ids = [lane["id"] for lane in parsed["lanes"]]
+    assert "nag-1" not in lane_ids or parsed.get("lanes_omitted", 0) >= 1
+    if "live-1" in lane_ids:
+        assert "nag-1" not in lane_ids
+
+
 def test_post_digest_policy_gear_three_and_default() -> None:
     assert (
         effective_policy({"policy": {"gear": "3-wake-on-attention"}})["post_digest"]

@@ -9,6 +9,7 @@ import pytest
 from bus_watch.digest_budget import build_budget_block
 from bus_watch.liaison_digest import (
     GEAR_PRESETS,
+    _child_lanes,
     build_digest,
     effective_policy,
     is_life_root,
@@ -35,6 +36,102 @@ def _lane(lid: str, *, unread: int = 0, terminal: bool = False) -> dict:
         "last_subject": "CLOSEOUT" if terminal else "open",
         "terminal": terminal,
         "updated_at": "2026-09-11T00:00:00Z",
+    }
+
+
+@patch("bus_watch.liaison_digest._get")
+def test_child_lanes_merged_listing_excludes_status_all(mock_get: MagicMock) -> None:
+    """GET /threads rejects status=all (422); merge active + has_unread instead."""
+    root = "10479"
+    calls: list[dict] = []
+
+    def fake_get(_client: object, path: str, **params: object) -> dict:
+        calls.append(dict(params))
+        if path == "/threads" and params.get("status") == "active":
+            return {
+                "threads": [
+                    {
+                        "id": "100",
+                        "parent_thread": root,
+                        "last_subject": "open work",
+                        "unread_count": 1,
+                        "last_turn_from": "cursor-sdk",
+                        "updated_at": "2026-09-13T10:00:00Z",
+                    }
+                ]
+            }
+        if path == "/threads" and params.get("has_unread"):
+            return {
+                "threads": [
+                    {
+                        "id": "101",
+                        "parent_thread": root,
+                        "last_subject": "branch-debt aged: cursor-sdk/lane-10480",
+                        "unread_count": 2,
+                        "last_turn_from": "git-integration-worker",
+                        "updated_at": "2026-09-13T09:00:00Z",
+                    }
+                ]
+            }
+        if path == "/turns":
+            return {"turns": []}
+        return {}
+
+    mock_get.side_effect = fake_get
+    lanes = _child_lanes(MagicMock(), root)
+    assert not any(c.get("status") == "all" for c in calls)
+    assert any(c.get("status") == "active" for c in calls)
+    assert any(c.get("has_unread") is True for c in calls)
+    nag = next(lane for lane in lanes if lane["id"] == "101")
+    live = next(lane for lane in lanes if lane["id"] == "100")
+    assert nag["nag"] is True
+    assert live["nag"] is False
+    assert lanes[-1]["id"] == "101"
+
+
+@patch("bus_watch.liaison_digest.collect_watchers", return_value=[])
+@patch("bus_watch.liaison_digest._health", return_value="ok")
+@patch("bus_watch.liaison_digest._unread_toc", return_value=[])
+@patch("bus_watch.liaison_digest._child_lanes")
+@patch("bus_watch.liaison_digest._get")
+@patch("bus_watch.liaison_digest._bus")
+def test_attention_excludes_nag_lanes(
+    mock_bus: MagicMock,
+    mock_get: MagicMock,
+    mock_child: MagicMock,
+    _toc: MagicMock,
+    _health: MagicMock,
+    _watchers: MagicMock,
+) -> None:
+    """branch-debt nag lanes stay in lanes (last) but never enter attention."""
+    nag = {
+        "id": "101",
+        "slug": "nag",
+        "status": "active",
+        "lifecycle": "admitted",
+        "lane_role": "sub_mission",
+        "turns": 1,
+        "unread": 2,
+        "last_from": "git-integration-worker",
+        "last_subject": "branch-debt aged: cursor-sdk/lane-10480",
+        "terminal": False,
+        "nag": True,
+        "updated_at": "2026-09-13T09:00:00Z",
+    }
+    live = _lane("100", unread=1, terminal=False)
+    live["nag"] = False
+    mock_bus.return_value.__enter__.return_value = MagicMock()
+    mock_get.return_value = {"id": "10479", "turn_count": 10, "status": "active"}
+    mock_child.return_value = [live, nag]
+    state: dict = {"policy": {}}
+    digest = build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    attn_ids = [lane["id"] for lane in digest["attention"] if "id" in lane]
+    assert "101" not in attn_ids
+    assert "100" in attn_ids
+    assert digest["lanes"][-1]["id"] == "101"
+    assert digest["attention_nag_excluded"] == {
+        "count": 1,
+        "source": "liaison_digest._NAG_RE",
     }
 
 
