@@ -154,6 +154,17 @@ class ParkForRestartRequest(BaseModel):
     drain_epoch: int | None = None
 
 
+class InjectDispatchRequest(BaseModel):
+    """Body for ``POST /dispatch/{dispatch_id}/inject`` — steer inject rung-1."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    directive: str
+    reason: str
+    actor: str = "steer-inject"
+    ttl_s: int | None = None
+
+
 class CursorDispatchResponse(BaseModel):
     """Admission acknowledgement returned before background SDK run."""
 

@@ -400,16 +400,16 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "Target cursor-sdk dispatch_id when op='steer' "
-                    "(park_for_restart relay to GIW)."
+                    "(park_for_restart or inject relay to GIW)."
                 ),
             ),
         ] = None,
         steer: Annotated[
-            Literal["park_for_restart"] | None,
+            Literal["park_for_restart", "inject"] | None,
             Field(
                 description=(
-                    "Steer verb when op='steer'. v1: park_for_restart parks one "
-                    "live dispatch via GIW POST /dispatch/{id}/park."
+                    "Steer verb when op='steer'. park_for_restart parks one live "
+                    "dispatch; inject deposits a mid-hop directive without cancel."
                 ),
             ),
         ] = None,
@@ -418,19 +418,38 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "Human-readable steer reason when op='steer' (required for "
-                    "park_for_restart)."
+                    "park_for_restart and inject)."
+                ),
+            ),
+        ] = None,
+        directive: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Steer directive text when op='steer' and steer='inject' "
+                    "(required for inject)."
+                ),
+            ),
+        ] = None,
+        ttl_s: Annotated[
+            int | None,
+            Field(
+                description=(
+                    "Optional spool TTL seconds when steer='inject' (default 300)."
                 ),
             ),
         ] = None,
     ) -> dict[str, Any]:
         """Team-seat dispatch with explicit op discrimination.
 
-        **``op="steer"``** — seat-initiated GIW park relay (R5). Requires
-        ``dispatch_id``, ``steer="park_for_restart"``, and ``reason``. Optional
-        ``actor`` (defaults server-side). Propagates GIW refusal envelopes
-        (404/409/422/503) fail-closed. Does not arm poll_hint — the parked
-        dispatch's inherited ``execution_id`` stays in-flight until the resume
-        child's terminal CLOSEOUT (AC-SR-12).
+        **``op="steer"``** — seat-initiated GIW steer relay. Requires
+        ``dispatch_id``, ``steer`` (``park_for_restart`` | ``inject``), and
+        ``reason``. ``directive`` is required when ``steer="inject"``. Optional
+        ``actor`` (defaults server-side) and ``ttl_s`` (inject only). Propagates
+        GIW refusal envelopes (404/409/422/503) fail-closed. ``inject`` returns
+        202 + pending handle without ``park_kind``; ``park_for_restart`` does not
+        arm poll_hint — inherited ``execution_id`` stays in-flight until resume
+        child CLOSEOUT (AC-SR-12).
 
         **``op="handoff"``** — manual seats; select ``seat``:
 
@@ -710,12 +729,13 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             return prompt_input_err
 
         if op == "steer":
-            if steer != "park_for_restart":
+            if steer not in ("park_for_restart", "inject"):
                 return {
                     "error": {
                         "code": "validation_error",
                         "message": (
-                            "steer must be 'park_for_restart' when op='steer'"
+                            "steer must be 'park_for_restart' or 'inject' "
+                            "when op='steer'"
                         ),
                     },
                     "field": "steer",
@@ -736,12 +756,27 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     },
                     "field": "reason",
                 }
+            if steer == "inject" and not (directive and directive.strip()):
+                return {
+                    "error": {
+                        "code": "validation_error",
+                        "message": (
+                            "directive is required when op='steer' and "
+                            "steer='inject'"
+                        ),
+                    },
+                    "field": "directive",
+                }
             steer_body: dict[str, Any] = {
                 "op": "steer",
                 "dispatch_id": dispatch_id,
                 "steer": steer,
                 "reason": reason,
             }
+            if steer == "inject":
+                steer_body["directive"] = directive
+                if ttl_s is not None:
+                    steer_body["ttl_s"] = ttl_s
             if caller_agent is not None:
                 steer_body["actor"] = caller_agent
             record("mcp.team.steer.called")

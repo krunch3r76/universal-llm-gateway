@@ -250,6 +250,9 @@ from services.git_integration_worker.cursor_sdk_satellite_workspace import (
 from services.git_integration_worker.cursor_sdk_skills_mount import (
     stage_dispatch_skills,
 )
+from services.git_integration_worker.cursor_sdk_steer_inject_http import (
+    inject_one_dispatch,
+)
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     StreamCapture,
     finalize_request_id_capture,
@@ -299,6 +302,7 @@ from services.git_integration_worker.models.cursor_api import (
     BranchDischargeRequest,
     CursorDispatchRequest,
     CursorDispatchResponse,
+    InjectDispatchRequest,
     LaneWorktreeReleaseRequest,
     ParkDispatchRequest,
     ParkForRestartRequest,
@@ -3668,6 +3672,35 @@ async def park_cursor_dispatch(
         actor=req.actor,
         reason=req.reason,
         controller=_controller(request),
+    )
+    return JSONResponse(status_code=status_code, content=body)
+
+
+@router.post(
+    "/dispatch/{dispatch_id}/inject",
+    summary="Inject a steer directive on a live dispatch (rung-1, no cancel).",
+)
+async def inject_cursor_dispatch(
+    dispatch_id: str, req: InjectDispatchRequest, request: Request
+):
+    """202 + pending handle / 404 unknown / 409 not-live / 422 malformed."""
+    if not req.directive.strip():
+        return JSONResponse(
+            status_code=422,
+            content=error_envelope(
+                code="CURSOR_INJECT_DIRECTIVE_REQUIRED",
+                message="directive is required",
+                source="git_integration_worker",
+                retryable=False,
+                data={"dispatch_id": dispatch_id},
+            ),
+        )
+    status_code, body = await inject_one_dispatch(
+        dispatch_id=dispatch_id,
+        directive=req.directive,
+        reason=req.reason,
+        actor=req.actor,
+        ttl_s=req.ttl_s,
     )
     return JSONResponse(status_code=status_code, content=body)
 

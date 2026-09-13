@@ -9,7 +9,10 @@ import httpx
 import pytest
 from fastapi import Response
 
-from systems.frontier_consult.cursor_sdk_steer_dispatch import steer_park_for_restart
+from systems.frontier_consult.cursor_sdk_steer_dispatch import (
+    steer_inject_directive,
+    steer_park_for_restart,
+)
 from systems.frontier_consult.route import TeamDispatchSteerBody, team_dispatch
 
 
@@ -163,3 +166,183 @@ async def test_steer_park_transport_error_fail_closed() -> None:
     assert ok is False
     assert detail["failure_layer"] == "transport"
     assert detail["code"] == "CURSOR_WORKER_UNREACHABLE"
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_steer_inject_posts_giw_inject_route() -> None:
+    captured: dict[str, Any] = {}
+
+    class _Client:
+        async def post(self, path: str, json: dict[str, Any]) -> _FakeHttpxResponse:
+            captured["path"] = path
+            captured["json"] = json
+            return _FakeHttpxResponse(
+                202,
+                {
+                    "dispatch_id": "disp-inject-1",
+                    "execution_id": "exec-inject-1",
+                    "steer": "inject",
+                    "inject_state": "pending",
+                    "entry_id": "e1",
+                    "authority_turn_id": "42",
+                },
+            )
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+    with patch(
+        "systems.frontier_consult.cursor_sdk_steer_dispatch.make_async_client",
+        return_value=_Client(),
+    ), patch(
+        "systems.frontier_consult.cursor_sdk_steer_dispatch.worker_base_url",
+        return_value="http://giw.test",
+    ):
+        ok, detail = await steer_inject_directive(
+            request_id="req-inject",
+            dispatch_id="disp-inject-1",
+            directive="check logs",
+            reason="operator steer",
+            actor="cursor",
+            ttl_s=120,
+        )
+
+    assert ok is True
+    assert captured["path"] == "/api/v1/cursor/dispatch/disp-inject-1/inject"
+    assert captured["json"] == {
+        "directive": "check logs",
+        "reason": "operator steer",
+        "actor": "cursor",
+        "ttl_s": 120,
+    }
+    assert detail["steer"] == "inject"
+    assert detail["inject_state"] == "pending"
+    assert "park_kind" not in detail
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_steer_inject_propagates_giw_refusal() -> None:
+    class _Client:
+        async def post(self, path: str, json: dict[str, Any]) -> _FakeHttpxResponse:
+            return _FakeHttpxResponse(
+                404,
+                {
+                    "code": "CURSOR_INJECT_NOT_FOUND",
+                    "message": "inject refused: NOT_FOUND",
+                    "source": "git_integration_worker",
+                    "retryable": False,
+                    "data": {"dispatch_id": "disp-missing"},
+                },
+            )
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+    with patch(
+        "systems.frontier_consult.cursor_sdk_steer_dispatch.make_async_client",
+        return_value=_Client(),
+    ), patch(
+        "systems.frontier_consult.cursor_sdk_steer_dispatch.worker_base_url",
+        return_value="http://giw.test",
+    ):
+        ok, detail = await steer_inject_directive(
+            request_id="req-refuse-inject",
+            dispatch_id="disp-missing",
+            directive="nudge",
+            reason="test",
+        )
+
+    assert ok is False
+    assert detail["http_status"] == 404
+    assert detail["code"] == "CURSOR_INJECT_NOT_FOUND"
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_team_dispatch_steer_inject_route_returns_giw_body() -> None:
+    body = TeamDispatchSteerBody(
+        op="steer",
+        dispatch_id="disp-route-inject",
+        steer="inject",
+        reason="mid-hop nudge",
+        directive="verify Stargate route",
+        actor="cursor",
+    )
+    with patch(
+        "systems.frontier_consult.route.steer_inject_directive",
+        new=AsyncMock(
+            return_value=(
+                True,
+                {
+                    "status_code": 202,
+                    "dispatch_id": "disp-route-inject",
+                    "execution_id": "exec-route-inject",
+                    "inject_state": "pending",
+                },
+            )
+        ),
+    ) as steer_mock:
+        result = await team_dispatch(body, Response())
+
+    steer_mock.assert_awaited_once()
+    assert result == {
+        "status_code": 202,
+        "dispatch_id": "disp-route-inject",
+        "execution_id": "exec-route-inject",
+        "inject_state": "pending",
+    }
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_team_dispatch_steer_inject_missing_directive_422() -> None:
+    with pytest.raises(ValueError, match="directive is required"):
+        TeamDispatchSteerBody(
+            op="steer",
+            dispatch_id="disp-x",
+            steer="inject",
+            reason="missing directive",
+        )
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_steer_routes_key_on_dispatch_id_not_execution_id() -> None:
+    """AC4 — relay paths use dispatch_id only."""
+    paths: list[str] = []
+
+    class _Client:
+        async def post(self, path: str, json: dict[str, Any]) -> _FakeHttpxResponse:
+            paths.append(path)
+            return _FakeHttpxResponse(202, {"dispatch_id": "disp-key", "steer": "inject"})
+
+        async def __aenter__(self) -> _Client:
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            return None
+
+    with patch(
+        "systems.frontier_consult.cursor_sdk_steer_dispatch.make_async_client",
+        return_value=_Client(),
+    ), patch(
+        "systems.frontier_consult.cursor_sdk_steer_dispatch.worker_base_url",
+        return_value="http://giw.test",
+    ):
+        await steer_inject_directive(
+            request_id="req-key",
+            dispatch_id="disp-key",
+            directive="nudge",
+            reason="ac4",
+        )
+
+    assert paths == ["/api/v1/cursor/dispatch/disp-key/inject"]
+    assert all("/execution/" not in p for p in paths)

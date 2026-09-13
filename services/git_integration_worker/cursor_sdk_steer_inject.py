@@ -290,3 +290,102 @@ def expire_undelivered(
             ttl_s=ttl_s,
         )
     )
+
+
+def _fetch_thread_turns(thread_id: str) -> list[dict[str, Any]] | None:
+    """Sync GET /turns?thread=<id>; None on transport/parse failure."""
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=15.0) as client:
+            resp = client.get(
+                "/turns",
+                params={"thread": thread_id},
+                headers=headers,
+            )
+        if resp.status_code >= 400:
+            return None
+        payload = resp.json()
+        if not isinstance(payload, dict):
+            return None
+        turns = payload.get("turns")
+        if not isinstance(turns, list):
+            return None
+        return [t for t in turns if isinstance(t, dict)]
+    except (ValueError, TypeError, OSError):
+        return None
+
+
+def _spool_known_authority_ids(
+    dispatch_id: str,
+    *,
+    spool_dir: Path,
+) -> set[str]:
+    """Authority turn ids already pending or delivered in the spool."""
+    path = spool_path(spool_dir, dispatch_id)
+    if not path.is_file():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return set()
+    known: set[str] = set()
+    for bucket in ("pending", "delivered"):
+        for raw in data.get(bucket) or []:
+            if isinstance(raw, dict) and raw.get("authority_turn_id"):
+                known.add(str(raw["authority_turn_id"]))
+    return known
+
+
+def recover_undelivered_steer_from_thread(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    spool_dir: Path | None = None,
+    ttl_s: int = DEFAULT_TTL_S,
+) -> list[SteerDepositResult]:
+    """Re-spool undelivered STEER authority turns when bridge recovery is needed."""
+    turns = _fetch_thread_turns(thread_id)
+    if not turns:
+        return []
+    root = spool_dir or steer_spool_dir()
+    known = _spool_known_authority_ids(dispatch_id, spool_dir=root)
+    recovered: list[SteerDepositResult] = []
+    for turn in turns:
+        if str(turn.get("subject") or "") != _STEER_SUBJECT:
+            continue
+        raw_body = turn.get("body") or ""
+        try:
+            body = json.loads(raw_body) if isinstance(raw_body, str) else {}
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(body, dict):
+            continue
+        if str(body.get("dispatch_id") or "") != dispatch_id:
+            continue
+        authority_turn_id = str(turn.get("turn_number") or turn.get("id") or "")
+        if not authority_turn_id or authority_turn_id in known:
+            continue
+        directive = str(body.get("directive") or "").strip()
+        if not directive:
+            continue
+        entry_id = os.urandom(8).hex()
+        append_spool_entry(
+            dispatch_id,
+            authority_turn_id=authority_turn_id,
+            directive=directive,
+            ttl_s=ttl_s,
+            spool_dir=root,
+            entry_id=entry_id,
+        )
+        uri = str(spool_path(root, dispatch_id))
+        known.add(authority_turn_id)
+        recovered.append(
+            SteerDepositResult(
+                dispatch_id=dispatch_id,
+                entry_id=entry_id,
+                authority_turn_id=authority_turn_id,
+                spool_path=uri,
+            )
+        )
+    return recovered

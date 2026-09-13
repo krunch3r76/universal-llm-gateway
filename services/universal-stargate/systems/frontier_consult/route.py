@@ -43,7 +43,7 @@ from .cdp_generate import (
 )
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
-from .cursor_sdk_steer_dispatch import steer_park_for_restart
+from .cursor_sdk_steer_dispatch import steer_inject_directive, steer_park_for_restart
 from .densify_triage import DensityTriage
 from .deploy_state_gate import require_deploy_state
 from .dispatch_thread_context import (
@@ -300,15 +300,23 @@ class TeamDispatchGenerateBody(_DispatchCommon):
 
 
 class TeamDispatchSteerBody(BaseModel):
-    """``team_dispatch`` with ``op="steer"`` — thin GIW park relay (R5)."""
+    """``team_dispatch`` with ``op="steer"`` — thin GIW park/inject relay."""
 
     model_config = {"extra": "forbid"}
 
     op: Literal["steer"]
     dispatch_id: str
-    steer: Literal["park_for_restart"]
+    steer: Literal["park_for_restart", "inject"]
     reason: str
     actor: str | None = None
+    directive: str | None = None
+    ttl_s: int | None = None
+
+    @model_validator(mode="after")
+    def _validate_steer_fields(self) -> Self:
+        if self.steer == "inject" and not (self.directive and self.directive.strip()):
+            raise ValueError("directive is required when steer='inject'")
+        return self
 
 
 class TeamDispatchToThreadBody(_DispatchCommon):
@@ -564,7 +572,34 @@ async def team_dispatch(
     except FrontierEndpointError as exc:
         return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
     if body.op == "steer":
-        if body.steer != "park_for_restart":
+        if body.steer == "park_for_restart":
+            ok, detail = await steer_park_for_restart(
+                request_id=request_id,
+                dispatch_id=body.dispatch_id,
+                reason=body.reason,
+                actor=body.actor,
+            )
+        elif body.steer == "inject":
+            if not body.directive or not body.directive.strip():
+                return JSONResponse(
+                    status_code=422,
+                    content=FrontierEndpointError(
+                        request_id=request_id,
+                        field="directive",
+                        reason="directive is required when steer='inject'",
+                        status_code=422,
+                        code="directive_required",
+                    ).to_dict(),
+                )
+            ok, detail = await steer_inject_directive(
+                request_id=request_id,
+                dispatch_id=body.dispatch_id,
+                directive=body.directive,
+                reason=body.reason,
+                actor=body.actor,
+                ttl_s=body.ttl_s,
+            )
+        else:
             return JSONResponse(
                 status_code=422,
                 content=FrontierEndpointError(
@@ -575,12 +610,6 @@ async def team_dispatch(
                     code="steer_unsupported",
                 ).to_dict(),
             )
-        ok, detail = await steer_park_for_restart(
-            request_id=request_id,
-            dispatch_id=body.dispatch_id,
-            reason=body.reason,
-            actor=body.actor,
-        )
         if not ok:
             status_code = int(
                 detail.get("status_code") or detail.get("http_status") or 502
