@@ -45,6 +45,7 @@ On `checkpoint` with no argument ∧ `¬bound(tab)`:
 4. Mint `cortex://notes/system/threads/N-continuity-card.md` with `## Objective`, `## Why this house`, empty `## Windows`. No scoreboard.
 5. Birth CHECKPOINT on `N`: indexes the card, `## Stance`, concrete `Next-pickup`, `## Anchor` → `Window: transcript_id=<this tab's uuid> · turns@cp=<K>` (`K` from the seal). Canonical `— RESUME (any seat, no command):` footer.
 6. Stamp `role:root`. **¬ enroll** `charter-runner` (conversation birth has no gated pickup). Enroll only on explicit operator ask for ticks.
+6b. **Graph wire (hygiene, not optional — operator 2026-09-13, `decision:bus-thread-project-tagging` a:33438):** `entity_create thread:N` (type `thread`, `source_uri` = the card) and `relationship_create` to every house this tab operated on / continues / was commissioned by (`elaborates` · `related_to`+`role` · `references` · `sibling_of`), plus pointer turns on those buses. A house nobody can traverse to is a tab that merely moved.
 7. Rename tab → `. {N} {slug}`.
 8. Brief: house `{N} {slug}`, objective, next-pickup. Steps 3–6 fail ⇒ report and stop.
 
