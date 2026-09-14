@@ -232,6 +232,97 @@ def test_successor_message_raises_when_over_cap() -> None:
         )
 
 
+def _default_successor() -> str:
+    return build_successor_message(
+        "10479",
+        gear="3-wake-on-attention",
+        row="Settled · Live · Next",
+        tip_cp_ordinal=42,
+    )
+
+
+def test_successor_message_is_doorbell_shaped() -> None:
+    text = _default_successor()
+    lines = text.splitlines()
+    assert lines[0] == "resume 10479"
+    assert lines[1] == ""
+    for prefix in (
+        "WAKE —",
+        "duty:",
+        "disclosure:",
+        "objective:",
+        "addresses:",
+        "frame:",
+        "echo:",
+    ):
+        assert sum(1 for ln in text.splitlines() if ln.startswith(prefix)) == 1
+    assert text.count("Use the liaison skill.") == 1
+
+
+def test_successor_message_ring_and_extra_addresses() -> None:
+    text = build_successor_message(
+        "10479",
+        gear="3-wake-on-attention",
+        row="Settled · Live · Next",
+        tip_cp_ordinal=42,
+        ring="10532",
+        extra_addresses=(
+            "cortex://notes/system/threads/10479-charter-scoreboard.md#Loop",
+        ),
+    )
+    assert "thread=10532" in text
+    assert 'subject="ORIENTED 10479"' in text
+    assert "agent-bus:10532 (echo)" in text
+    assert "agent-bus:10479 (echo)" not in text
+    assert (
+        "fs(op=md_read, path=cortex://notes/system/threads/10479-charter-scoreboard.md, section=Loop)"
+        in text
+    )
+
+
+def test_successor_message_forbidden_content_absent() -> None:
+    text = _default_successor()
+    lower = text.lower()
+    assert "you are" not in lower
+    assert not any(line.startswith("NOW") for line in text.splitlines())
+    for banned in ("reasoning-posture", "ulg-for-llms", "hypothesize-simulate"):
+        assert banned not in text
+
+
+def test_successor_message_determinism_and_headroom() -> None:
+    first = _default_successor()
+    second = _default_successor()
+    assert first == second
+    encoded_len = len(first.encode("utf-8"))
+    assert encoded_len <= SUCCESSOR_MESSAGE_CAP - 200
+
+
+def test_dispatch_body_threads_ring_and_extras() -> None:
+    body = build_dispatch_body(
+        "10479",
+        {
+            "successor_model": "cursor/claude-opus-5",
+            "max_hop_minutes": 60,
+            "gear": "3-wake-on-attention",
+            "wake_ring": "10532",
+            "successor_extra_addresses": [
+                "cortex://notes/system/threads/10479-charter-scoreboard.md#Loop"
+            ],
+        },
+        successor_context={
+            "gear": "3-wake-on-attention",
+            "row": "Settled · Live · Next",
+            "tip_cp_ordinal": 42,
+        },
+    )
+    message = body["message"]
+    assert "agent-bus:10532 (echo)" in message
+    assert (
+        "fs(op=md_read, path=cortex://notes/system/threads/10479-charter-scoreboard.md, section=Loop)"
+        in message
+    )
+
+
 def test_work_key_in_flight_refusal_recorded() -> None:
     from bus_watch.spawn_on_wake import fire_spawn
 

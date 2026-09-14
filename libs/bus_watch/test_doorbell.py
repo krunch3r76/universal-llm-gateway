@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from bus_watch.doorbell import DOORBELL_CAP, render_doorbell
+from bus_watch.doorbell import DOORBELL_CAP, render_address, render_doorbell
 
 _DEFAULT_ARGS = ("10479", "liaison-autonomous-night")
 _DEFAULT_KW = {"ring": "10532"}
@@ -110,3 +110,20 @@ def test_line_count_and_trailing_newline() -> None:
         assert text.endswith("\n")
         assert text.count("\n") == 8 + len(skills)
         assert len(text.splitlines()) == 8 + len(skills)
+
+
+@pytest.mark.offline
+def test_render_address_public() -> None:
+    assert render_address("a.md#S") == "fs(op=md_read, path=a.md, section=S)"
+    assert render_address("a.md") == "fs(op=md_read, path=a.md)"
+
+
+@pytest.mark.offline
+def test_fired_by_overrides_scheduled_frame() -> None:
+    text = render_doorbell(
+        *_DEFAULT_ARGS,
+        ring="10532",
+        fired_by="cdp generate on agent-bus:11165",
+    )
+    assert "fired by cdp generate on agent-bus:11165" in text
+    assert "scheduled task liaison-wake-10479" not in text

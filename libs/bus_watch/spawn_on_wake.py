@@ -11,6 +11,7 @@ from typing import Any
 
 from stargate_dispatch.client import submit_team_dispatch
 
+from bus_watch.doorbell import render_successor_wake
 from bus_watch.fable_lock import (
     current_night_id,
     read_lock,
@@ -64,27 +65,20 @@ def build_successor_message(
     gear: str,
     row: str,
     tip_cp_ordinal: int | None = None,
+    ring: str | None = None,
+    extra_addresses: tuple[str, ...] = (),
     cap: int = SUCCESSOR_MESSAGE_CAP,
 ) -> str:
     """Inline resume-fence pull recipe for a headless liaison successor."""
-    tip_val = tip_cp_ordinal if tip_cp_ordinal is not None else ""
-    message = (
-        f"resume {root_id}\n\n"
-        "Liaison headless successor — contract: none.\n"
-        f'dispatch(tool="continuity", arguments=\'{{"op":"resume","thread":"{root_id}"}}\')\n'
-        f"agent_bus_read(thread_get, gear: {gear}, row={row}, "
-        f"tip_cp_ordinal={tip_val}, contract: none\n"
-        "LOAD the liaison skill (do not skim). Hop only when autonomous follow-up remains; "
-        "HOLD_MERGE / empty NOW / quiet tick → STAY. "
-        "LOAD AND EXECUTE runbook:bus-consult-watcher (legs 1-3); "
-        "§ Peer-house: keep both; cdp/opus-5 → 2nd pool → cursor/claude-opus-5; "
-        "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled. "
-        "Run the tick; checkpoint; hop only if hop_qualifies.\n"
+    return render_successor_wake(
+        root_id,
+        gear=gear,
+        row=row,
+        tip_cp_ordinal=tip_cp_ordinal,
+        ring=ring,
+        extra_addresses=tuple(extra_addresses),
+        cap=cap,
     )
-    encoded = message.encode("utf-8")
-    if len(encoded) > cap:
-        raise ValueError(f"successor message exceeds {cap} bytes ({len(encoded)})")
-    return message
 
 
 def spawn_fingerprint(root: dict[str, Any], lanes: list[dict[str, Any]]) -> str:
@@ -232,11 +226,14 @@ def build_dispatch_body(
     """Assemble the generate payload: successor model, night work_key, resume message."""
     max_hop = int(policy.get("max_hop_minutes") or 60)
     ctx = dict(successor_context or {})
+    extras = ctx.get("extra_addresses") or policy.get("successor_extra_addresses") or ()
     message = build_successor_message(
         root_id,
         gear=str(ctx.get("gear") or policy.get("gear") or "1-fable-mvp"),
         row=str(ctx.get("row") or ""),
         tip_cp_ordinal=ctx.get("tip_cp_ordinal"),
+        ring=ctx.get("ring") or policy.get("wake_ring"),
+        extra_addresses=tuple(extras),
     )
     body: dict[str, Any] = {
         "op": "generate",
@@ -353,6 +350,7 @@ def successor_context_from_digest(digest: dict[str, Any]) -> dict[str, Any]:
         or root.get("last_subject")
         or "",
         "tip_cp_ordinal": root.get("turns"),
+        "ring": policy.get("wake_ring"),
     }
 
 
