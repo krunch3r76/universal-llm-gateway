@@ -126,6 +126,16 @@ def _successor_model_bound(policy: dict[str, Any]) -> bool:
     return policy.get("successor_model_source", "override") == "override"
 
 
+def _under_dispatch_cap(dispatches: int, policy: dict[str, Any]) -> bool:
+    """True while the night's dispatch count is below an opt-in ceiling.
+
+    The ceiling is opt-in: a non-positive or absent ``max_dispatches_per_night``
+    means the house spawns without a nightly dispatch limit.
+    """
+    cap = int(policy.get("max_dispatches_per_night") or 0)
+    return cap <= 0 or dispatches < cap
+
+
 def evaluate_spawn_predicate(
     digest: dict[str, Any],
     state: dict[str, Any],
@@ -182,8 +192,7 @@ def evaluate_spawn_predicate(
         or idle_forfeit is not None,
         "pending_spawn_terminal": pending_spawn_terminal(pending, is_terminal=checker),
         "hops_under_cap": hops < int(policy.get("max_hops_per_night") or 8),
-        "dispatches_under_cap": dispatches
-        < int(policy.get("max_dispatches_per_night") or 12),
+        "dispatches_under_cap": _under_dispatch_cap(dispatches, policy),
         "policy_ready": bool(policy.get("ready")),
         # A preset default is not a choice: only an operator-bound successor
         # model spawns (10534 2026-09-12 — four unasked Opus liaisons).

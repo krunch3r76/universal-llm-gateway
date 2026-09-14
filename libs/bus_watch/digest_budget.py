@@ -33,7 +33,8 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "max_hop_minutes": 60,
     "poll_seconds": 600,
     "max_hops_per_night": MAX_HOPS_PER_NIGHT,
-    "max_dispatches_per_night": 12,
+    # Opt-in ceiling: non-positive means no dispatch cap (operator 2026-09-13).
+    "max_dispatches_per_night": 0,
     "wake_on_attention_only": False,
     "spawn_grace_seconds": 900,
     "successor_seat": "cursor-sdk",

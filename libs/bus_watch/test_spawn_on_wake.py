@@ -60,6 +60,20 @@ def test_predicate_refuses_unset_successor_model() -> None:
     assert ev["clauses"]["successor_model_bound"] is False
 
 
+def test_dispatch_cap_is_opt_in() -> None:
+    """Non-positive max_dispatches_per_night means no nightly ceiling (operator 2026-09-13)."""
+    night = current_night_id()
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["policy"]["max_dispatches_per_night"] = 0
+    state = {"dispatches_tonight_by_night": {night: 9999}}
+    ev = evaluate_spawn_predicate(digest, state, lock={})
+    assert ev["clauses"]["dispatches_under_cap"] is True
+
+    digest["policy"]["max_dispatches_per_night"] = 12
+    capped = evaluate_spawn_predicate(digest, state, lock={})
+    assert capped["clauses"]["dispatches_under_cap"] is False
+
+
 def test_fire_spawn_refuses_unset_model_without_posting() -> None:
     posted: list[dict] = []
     result = fire_spawn(

@@ -230,8 +230,9 @@ Shift = one command; takes effect at the **next** hop (a running successor keeps
 `--loop` absorbs `--set` / `--mark-*` edits from another shell on its next poll (`libs/bus_watch/tick_state.py`
 `absorb_operator_edits`, logged as `operator_edit_absorbed`); before 2026-09-12 the loop's in-memory state
 clobbered them within one poll — verify a steer by re-reading `--policy` after the next tick. `SPEND_CAP`
-(`policy.max_dispatches_per_night`, default 12) is a designed stop, not a gear change — page, don't downshift
-silently. Never let a successor pick a model itself; a refused model is an INFO + stop, never a fallback.
+(`policy.max_dispatches_per_night`) is **off by default** (operator 2026-09-13: "remove dispatch cap
+permanently") — the ceiling is opt-in, and non-positive or absent means no nightly limit. When an operator
+sets a positive cap it is a designed stop, not a gear change — page, don't downshift silently. Never let a successor pick a model itself; a refused model is an INFO + stop, never a fallback.
 
 ## Objectives (autonomous queue)
 
@@ -266,7 +267,7 @@ NOW verbatim as `--row`; a headless successor gets it as `row=`.
 | `HOLD_MERGE` | operator **explicitly** asked to hold the merge | leave lane branch, row `LAND OWED`, page; ¬ hop. Silence / missing `auto_land` is **not** a hold |
 | `CONSULT_PENDING` | independent check disagrees | row pinned, continue other rows |
 | `REPEATED_FAILURE` | same fix failed twice | stop the row, file friction, page |
-| `SPEND_CAP` | dispatch count ≥ `policy.max_dispatches_per_night` (read from the digest at tick time — never a number frozen in prose; R14 / a:33104) or a dispatch > 2h | pause new dispatches, page |
+| `SPEND_CAP` | **only when an operator set a positive `policy.max_dispatches_per_night`** — off by default (2026-09-13). Then: dispatch count ≥ cap (read from the digest at tick time — never a number frozen in prose; R14 / a:33104) or a dispatch > 2h | pause new dispatches, page |
 | `CONTEXT_BUDGET` | digest `budget.stop_class` — `source=giw.sdk_stream` for a headless holder, **`source=ide.transcript` for an attended tab** (the tab's own JSONL: prose bytes/4 + `ide_tokens_per_tool_call` per call vs `policy.ide_window_tokens`, default 256k; the estimate carries `transcript_id` · `tool_calls` · `holder_basis`). `checkpoint_due` flips at 60 % of the same window. Before 2026-09-13 an IDE tab had no stop at all (10534 tab: 852 tool calls, 11 h, compacted repeatedly, commission lost). Once the house is under (autonomous, no `ide:` holder) the retired tab's reading is dropped from the digest so a headless successor never parks on it | attended tab: CHECKPOINT → **`--go-under`** (the induction `Event:` line is the exact command); headless: CHECKPOINT → release, the ticker spawns. PARK only with empty `NOW` and nothing unread. Operator on a larger tab model: `--set ide_window_tokens=<n>` |
 
 Page: `curl -sS --unix-socket /tmp/universal-protocol/email-bridge.sock -H 'Content-Type: application/json'
