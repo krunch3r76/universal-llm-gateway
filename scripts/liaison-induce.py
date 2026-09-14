@@ -20,6 +20,7 @@ import os
 import sys
 import time
 
+from bus_watch import navigator_lease_reap
 from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.ide_followup import fire_ide_followup
 from bus_watch.ide_hop import DEFAULT_REMOTE_REPO, policy_gui_host
@@ -70,6 +71,11 @@ def main() -> int:
 
     state_path = WATCH_DIR / f"liaison-{root}.tick.json"
     state = load_state(state_path)
+    # Reap before the gate is read: nothing else releases the navigator lease
+    # on success, so without this the wake is capped at one per TTL (a:33724).
+    # Runs ahead of the fingerprint short-circuit so an unchanged digest still
+    # clears a finished lease.
+    reaped = navigator_lease_reap.reap_navigator_lease(root, dry_run=args.dry_run)
     register = str(state.get("register") or "attended")
     digest = build_digest(
         root, state, register=register, budget_tokens=args.budget_tokens
@@ -111,6 +117,9 @@ def main() -> int:
             "skip_reason": fired.get("refused") or evaluation.get("skip_reason"),
             "doorbell_bytes": evaluation.get("doorbell_bytes"),
             "would_fire": fired.get("would_fire"),
+            # Why a held lease was kept, so `navigator_in_flight` can be read
+            # rather than guessed at.
+            "lease_reap": reaped,
         }
         if args.dry_run:
             out["doorbell"] = evaluation.get("doorbell") or fired.get("doorbell")
