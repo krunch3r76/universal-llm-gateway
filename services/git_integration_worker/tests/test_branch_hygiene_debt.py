@@ -819,6 +819,148 @@ def test_discard_inherits_when_second_auto_job_is_queued(
     reset_queue_for_tests(durable=False)
 
 
+# --- unarchivable tips (a:33609) ---------------------------------------------
+
+
+def _gc_unreachable_commit(repo: Path, sha: str) -> None:
+    _git("reflog", "expire", "--expire=now", "--all", cwd=repo)
+    _git("gc", "--prune=now", cwd=repo)
+    gone = subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "-e", f"{sha}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert gone.returncode != 0, "commit should be unreachable after gc"
+
+
+def test_discharge_unreachable_tip_skips_archive_and_retires_debt(
+    repo: Path,
+) -> None:
+    branch = "cursor-sdk/lane-unreachable"
+    tip = _branch_with_change(repo, branch=branch, path="gone.py", content="gone\n")
+    open_branch_debt(
+        branch_name=branch,
+        thread_id="unreachable",
+        dispatch_id="d-unreachable",
+        tip_sha=tip,
+        files=["gone.py"],
+    )
+    _git("branch", "-D", branch, cwd=repo)
+    _gc_unreachable_commit(repo, tip)
+
+    result = discharge_discard(
+        repo=repo,
+        branch_name=branch,
+        reason="tip garbage-collected",
+    )
+    assert result.discharged
+    assert result.archive_tag is None
+    assert result.archive_skipped_reason == "tip_unreachable"
+    debt = get_branch_debt(branch_name=branch)
+    assert debt is not None
+    assert not debt.open
+    assert debt.discharge_verb == "discard"
+
+
+def test_discharge_refuses_when_archive_fails_but_tip_is_reachable(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    branch = "cursor-sdk/lane-reachable-archive-fail"
+    tip = _branch_with_change(repo, branch=branch, path="keep.py", content="keep\n")
+    open_branch_debt(
+        branch_name=branch,
+        thread_id="reachable-fail",
+        dispatch_id="d-reachable-fail",
+        tip_sha=tip,
+        files=["keep.py"],
+    )
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_discharge.archive_branch",
+        lambda **kwargs: None,
+    )
+
+    result = discharge_discard(
+        repo=repo,
+        branch_name=branch,
+        reason="should refuse",
+    )
+    assert not result.discharged
+    assert (
+        result.refused_reason == "archive failed — refusing to delete an unarchived tip"
+    )
+    assert result.archive_skipped_reason is None
+    debt = get_branch_debt(branch_name=branch)
+    assert debt is not None and debt.open
+    assert branch in _branches(repo)
+
+
+def test_discharge_missing_branch_ref_treated_as_already_deleted(
+    repo: Path,
+) -> None:
+    branch = "cursor-sdk/lane-missing-ref"
+    tip = _branch_with_change(
+        repo, branch=branch, path="missing.py", content="missing\n"
+    )
+    open_branch_debt(
+        branch_name=branch,
+        thread_id="missing-ref",
+        dispatch_id="d-missing-ref",
+        tip_sha=tip,
+        files=["missing.py"],
+    )
+    _git("branch", "-D", branch, cwd=repo)
+    _gc_unreachable_commit(repo, tip)
+
+    result = discharge_discard(
+        repo=repo,
+        branch_name=branch,
+        reason="ref already gone",
+    )
+    assert result.discharged
+    assert branch not in _branches(repo)
+
+
+def test_commit_exists_patchability_sentinel(
+    repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Discharge must call commit_exists through the reconcile module binding."""
+    branch = "cursor-sdk/lane-patch-sentinel"
+    tip = _branch_with_change(
+        repo, branch=branch, path="sentinel.py", content="sentinel\n"
+    )
+    open_branch_debt(
+        branch_name=branch,
+        thread_id="patch-sentinel",
+        dispatch_id="d-patch-sentinel",
+        tip_sha=tip,
+        files=["sentinel.py"],
+    )
+
+    def _always_unreachable(repo_path: Path, sha: str) -> bool:
+        assert sha == tip
+        return False
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_discharge."
+        "cursor_sdk_branch_debt_reconcile.commit_exists",
+        _always_unreachable,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_discharge.archive_branch",
+        lambda **kwargs: None,
+    )
+
+    result = discharge_discard(
+        repo=repo,
+        branch_name=branch,
+        reason="patch sentinel",
+    )
+    assert result.discharged
+    assert result.archive_skipped_reason == "tip_unreachable"
+
+
 # --- test isolation guard ----------------------------------------------------
 
 

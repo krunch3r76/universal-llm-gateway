@@ -18,7 +18,10 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
-from services.git_integration_worker import cursor_sdk_branch_divergence
+from services.git_integration_worker import (
+    cursor_sdk_branch_debt_reconcile,
+    cursor_sdk_branch_divergence,
+)
 from services.git_integration_worker.cursor_sdk_branch_archive import (
     archive_branch,
     branch_checked_out_at,
@@ -91,6 +94,7 @@ class DischargeResult:
     verb: str
     tip_sha: str | None = None
     archive_tag: str | None = None
+    archive_skipped_reason: str | None = None
     refused_reason: str | None = None
     probe: LandProbe | None = None
     inherited: bool = False
@@ -216,6 +220,8 @@ def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
 
 
 def _delete_branch(repo: Path, branch_name: str) -> tuple[bool, str | None]:
+    if not _branch_ref_exists(repo, branch_name):
+        return True, None
     pinned = branch_checked_out_at(repo=repo, branch_name=branch_name)
     if pinned is not None:
         return False, f"branch checked out at {pinned}"
@@ -296,14 +302,24 @@ def _finish(
             )
 
     archive_tag = archive_branch(repo=root, branch_name=branch_name)
+    archive_skipped_reason: str | None = None
     if archive_tag is None:
-        return DischargeResult(
-            discharged=False,
-            branch=branch_name,
-            verb=verb,
-            tip_sha=tip_sha,
-            refused_reason="archive failed — refusing to delete an unarchived tip",
-        )
+        probe_sha = tip_sha
+        if not probe_sha:
+            debt_for_probe = get_branch_debt(branch_name=branch_name)
+            if debt_for_probe is not None:
+                probe_sha = debt_for_probe.tip_sha
+        if cursor_sdk_branch_debt_reconcile.commit_exists(root, probe_sha or ""):
+            return DischargeResult(
+                discharged=False,
+                branch=branch_name,
+                verb=verb,
+                tip_sha=tip_sha or probe_sha,
+                refused_reason=(
+                    "archive failed — refusing to delete an unarchived tip"
+                ),
+            )
+        archive_skipped_reason = "tip_unreachable"
 
     deleted, error = _delete_branch(root, branch_name)
     if not deleted:
@@ -340,6 +356,7 @@ def _finish(
         verb=verb,
         tip_sha=tip_sha,
         archive_tag=archive_tag,
+        archive_skipped_reason=archive_skipped_reason,
     )
 
 
@@ -388,6 +405,7 @@ def discharge_landed(
         verb=result.verb,
         tip_sha=result.tip_sha,
         archive_tag=result.archive_tag,
+        archive_skipped_reason=result.archive_skipped_reason,
         refused_reason=result.refused_reason,
         probe=probe,
         inherited=result.inherited,

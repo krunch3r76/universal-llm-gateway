@@ -90,10 +90,15 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def _ref_exists(repo: Path, branch_name: str) -> bool:
-    return _git(repo, "rev-parse", "--verify", f"refs/heads/{branch_name}").returncode == 0
+    return (
+        _git(repo, "rev-parse", "--verify", f"refs/heads/{branch_name}").returncode == 0
+    )
 
 
-def _commit_exists(repo: Path, sha: str) -> bool:
+def commit_exists(repo: Path, sha: str) -> bool:
+    """Return whether *sha* resolves to a reachable commit object."""
+    if not sha:
+        return False
     return _git(repo, "cat-file", "-e", f"{sha}^{{commit}}").returncode == 0
 
 
@@ -131,7 +136,7 @@ def _classify(*, repo: Path, debt: BranchDebt) -> DebtVerdict:
             detail=f"ref gone; tip preserved at {tag_name}",
         )
 
-    if debt.tip_sha and _commit_exists(repo, debt.tip_sha):
+    if debt.tip_sha and commit_exists(repo, debt.tip_sha):
         return DebtVerdict(
             branch=branch,
             verdict=VERDICT_RECOVERED,
@@ -271,7 +276,5 @@ def reconcile_open_branch_debts(
             for debt, row in zip(debts, verdicts, strict=True)
         ]
     report = ReconcileReport(verdicts=verdicts, applied=apply)
-    logger.info(
-        "branch debt reconcile apply=%s summary=%s", apply, report.summary()
-    )
+    logger.info("branch debt reconcile apply=%s summary=%s", apply, report.summary())
     return report
