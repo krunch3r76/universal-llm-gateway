@@ -1,4 +1,4 @@
-"""continuity_checkpoint v1 handlers — resolve, seal, tape, pre_consolidate, post."""
+"""continuity_checkpoint v1 handlers — resolve, seal, tape, pre_consolidate, score, post."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from .post import ContinuityCheckpointPostHandler
 from .pre_consolidate import ContinuityCheckpointPreConsolidateHandler
 from .resolve import ContinuityCheckpointResolveHandler
+from .score import ContinuityCheckpointScoreHandler
 from .seal import ContinuityCheckpointSealHandler
 
 if TYPE_CHECKING:
@@ -49,6 +50,11 @@ def register_handlers(router: DomainRouter) -> None:
     )
     router.register_domain_handler_class(
         "continuity_checkpoint",
+        "continuity_checkpoint_score_v1",
+        ContinuityCheckpointScoreHandler,
+    )
+    router.register_domain_handler_class(
+        "continuity_checkpoint",
         "continuity_checkpoint_post_v1",
         ContinuityCheckpointPostHandler,
     )
@@ -63,6 +69,7 @@ __all__ = [
     "ContinuityCheckpointPostHandler",
     "ContinuityCheckpointPreConsolidateHandler",
     "ContinuityCheckpointResolveHandler",
+    "ContinuityCheckpointScoreHandler",
     "ContinuityCheckpointSealHandler",
     "register_handlers",
 ]

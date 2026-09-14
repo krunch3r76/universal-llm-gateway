@@ -43,6 +43,13 @@ steps:
       - step: seal
         fields: [json]
 
+  - name: score
+    type: continuity_checkpoint_score_v1
+    condition: "options.get('scoreboard_tip')"
+    reads_from:
+      - step: pre_consolidate
+        fields: [json]
+
   - name: post
     type: continuity_checkpoint_post_v1
     reads_from:
@@ -51,4 +58,6 @@ steps:
       - step: seal
         fields: [json]
       - step: pre_consolidate
+        fields: [json]
+      - step: score
         fields: [json]

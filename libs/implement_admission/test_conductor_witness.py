@@ -9,8 +9,8 @@ from typing import Any
 import pytest
 
 from implement_admission.conductor_materialize import materialize_conductor
+from implement_admission.conductor_score_io import _parse_journal
 from implement_admission.conductor_score_journal import (
-    _parse_journal,
     load_journal,
     read_tip,
     walk_journal_to_tip,

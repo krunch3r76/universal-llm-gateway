@@ -76,6 +76,7 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         seal = step_output_json(outputs, "seal")
         resolve = step_output_json(outputs, "resolve")
         pre = step_output_json(outputs, "pre_consolidate")
+        score = step_output_json(outputs, "score")
         # Seal is skipped when resolve refuses; an empty seal plus caller
         # residue used to post a hollow CHECKPOINT tip (Window: transcript_id=
         # · turns@cp=0). Never let residue promote a refused/skipped seal.
@@ -110,6 +111,12 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         body = _compose_body(
             residue=residue, seal=seal, mission=mission, surface=surface
         )
+        if score.get("tip_sha"):
+            body = body.replace(
+                "## Anchor",
+                f"## Anchor\nScoreboard: {score.get('tip_uri')} · sha256:{score['tip_sha']}",
+                1,
+            )
         supersedes_tip = not bool(seal.get("refused"))
 
         tip, _ = await bus_get(
@@ -194,6 +201,11 @@ class ContinuityCheckpointPostHandler(BaseHandler):
                 "turn_count": seal.get("turn_count"),
                 "already_closed": seal.get("already_closed"),
                 "refused": seal.get("refused"),
+            },
+            "scoreboard": {
+                "tip_sha": score.get("tip_sha"),
+                "tip_uri": score.get("tip_uri"),
+                "skipped": score.get("skipped", True),
             },
         }
         return StepOutput(raw=json.dumps(result, default=str), json=result)

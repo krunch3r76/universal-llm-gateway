@@ -246,3 +246,66 @@ def test_ac_p2_5_journal_stops_block_reason(tmp_path: Path) -> None:
     last = fold_records[-1]
     assert "G4" in last.get("rows", ())
     assert "[stops: ROW_PINNED]" in str(last.get("delta"))
+
+
+def _charter_body(*, status: str = "OPEN") -> str:
+    return "\n".join(
+        [
+            "# 10479 — charter scoreboard",
+            "",
+            "## Rows",
+            "",
+            "| # | row | work_key | status | evidence | next |",
+            "|---|---|---|---|---|---|",
+            f"| R1 | harvest | agent-bus:10479 | {status} | | |",
+        ]
+    )
+
+
+def test_charter_locus_round_trip_recovers_from_journal(tmp_path: Path) -> None:
+    from implement_admission.conductor_score_io import (
+        birth_scoreboard_at,
+        forward_mutate_tip_at,
+        read_tip_at,
+    )
+    from implement_admission.conductor_score_locus import charter_locus
+
+    locus = charter_locus("10479", files_root=tmp_path)
+    birth_scoreboard_at(locus, scoreboard_body=_charter_body())
+    next_body = _charter_body(status="**DONE — LANDED + LIVE**")
+    mutated = forward_mutate_tip_at(
+        locus,
+        next_body=next_body,
+        seat="cursor",
+        dispatch_id="d1",
+        reason="checkpoint",
+        rows=(),
+        delta="seat fold",
+    )
+    assert mutated.rejected_reason is None
+    locus.tip_path.unlink()
+    recovered = read_tip_at(locus)
+    assert recovered is not None
+    assert recovered[1] == mutated.tip_sha
+    assert "**DONE — LANDED + LIVE**" in recovered[0]
+
+
+def test_charter_locus_does_not_reject_bolded_status(tmp_path: Path) -> None:
+    from implement_admission.conductor_score_io import (
+        birth_scoreboard_at,
+        forward_mutate_tip_at,
+    )
+    from implement_admission.conductor_score_locus import charter_locus
+
+    locus = charter_locus("10479", files_root=tmp_path)
+    birth_scoreboard_at(locus, scoreboard_body=_charter_body(status="DONE"))
+    result = forward_mutate_tip_at(
+        locus,
+        next_body=_charter_body(status="**DONE — LANDED + LIVE**"),
+        seat="cursor",
+        dispatch_id="d1",
+        reason="checkpoint",
+        rows=(),
+        delta="emphasis",
+    )
+    assert result.rejected_reason is None
