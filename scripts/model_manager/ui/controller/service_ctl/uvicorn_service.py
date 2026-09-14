@@ -78,6 +78,7 @@ async def _start_uvicorn_service(
     pid_file: Path,
     lock_file: Path,
     service_name: str,
+    scope_name: str,
     socket_path: Path | None,
     tcp_config: tuple[str, int] | None,
     log_dir: Path,
@@ -152,6 +153,7 @@ async def _start_uvicorn_service(
             cwd=root,
             env=env,
             log_file=log_file,
+            scope_name=scope_name,
         )
 
         def _ready() -> bool:

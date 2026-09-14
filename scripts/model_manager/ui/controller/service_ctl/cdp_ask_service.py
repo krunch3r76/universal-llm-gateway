@@ -97,6 +97,7 @@ async def start_cdp_ask(
         cwd=root,
         env=env,
         log_file=log_file,
+        scope_name=_SERVICE_NAME,
     )
 
     probe_host = "127.0.0.1" if host == "0.0.0.0" else host

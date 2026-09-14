@@ -91,6 +91,7 @@ async def start_git_integration_worker(
         pid_file=_PID_FILE,
         lock_file=_LOCK_FILE,
         service_name="git-integration-worker",
+        scope_name="git-integration-worker",
         socket_path=None,
         tcp_config=_tcp_config(),
         log_dir=_LOG_DIR,

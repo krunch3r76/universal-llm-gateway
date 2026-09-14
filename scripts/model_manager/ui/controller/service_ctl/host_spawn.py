@@ -9,11 +9,18 @@ started with ``start_new_session=True``. That is the mechanism behind
 Long-lived host services must therefore be spawned with ``subprocess.Popen`` so
 asyncio never owns a transport. Session detachment (``start_new_session=True``)
 remains for terminal/SIGHUP hygiene.
+
+When a user systemd manager is available, services may be wrapped in a transient
+scope (``systemd-run --user --scope``) so each process gets its own cgroup
+instead of inheriting the manage tmux pane scope.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import re
+import shutil
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -24,6 +31,92 @@ from .startup_probe import (
     StartupOutcome,
 )
 
+logger = logging.getLogger(__name__)
+
+_SYSTEMD_RUN = "systemd-run"
+_SYSTEMCTL = "systemctl"
+_SCOPE_UNIT_PREFIX = "ulg-"
+
+_systemd_scope_wrapping_available: bool | None = None
+_systemd_unavailable_reason_cached: str | None = None
+
+
+def sanitise_scope_name(name: str) -> str:
+    """Map a service identity string to a valid systemd unit name fragment."""
+    cleaned = re.sub(r"[^a-zA-Z0-9_.-]+", "-", name.strip())
+    cleaned = re.sub(r"-+", "-", cleaned).strip("-_.")
+    if not cleaned:
+        msg = f"scope_name {name!r} sanitizes to empty systemd unit fragment"
+        raise ValueError(msg)
+    return cleaned
+
+
+def _probe_user_systemd_manager() -> tuple[bool, str]:
+    if shutil.which(_SYSTEMD_RUN) is None:
+        return False, "systemd-run not found in PATH"
+    if shutil.which(_SYSTEMCTL) is None:
+        return False, "systemctl not found in PATH"
+    try:
+        result = subprocess.run(
+            [_SYSTEMCTL, "--user", "show", "--property=ActiveState", "--value"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f"user systemd manager probe failed: {exc}"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        return False, (
+            f"user systemd manager not reachable ({detail or 'systemctl exit nonzero'})"
+        )
+    state = result.stdout.strip()
+    if not state:
+        return False, "user systemd manager returned empty ActiveState"
+    return True, f"user systemd manager ActiveState={state!r}"
+
+
+def is_systemd_scope_wrapping_available() -> bool:
+    """Return whether transient user scopes can wrap host spawns."""
+    global _systemd_scope_wrapping_available, _systemd_unavailable_reason_cached
+    if _systemd_scope_wrapping_available is not None:
+        return _systemd_scope_wrapping_available
+    available, reason = _probe_user_systemd_manager()
+    _systemd_scope_wrapping_available = available
+    if not available:
+        _systemd_unavailable_reason_cached = reason
+    return available
+
+
+def _systemd_unavailable_reason() -> str:
+    if _systemd_unavailable_reason_cached is not None:
+        return _systemd_unavailable_reason_cached
+    available, reason = _probe_user_systemd_manager()
+    return reason if not available else "systemd scope wrapping disabled"
+
+
+def build_scope_wrapped_argv(
+    args: Sequence[str],
+    *,
+    scope_name: str,
+    memory_max: str | None = None,
+) -> list[str]:
+    """Prefix *args* with ``systemd-run --user --scope`` when wrapping applies."""
+    unit = f"{_SCOPE_UNIT_PREFIX}{sanitise_scope_name(scope_name)}"
+    wrapped: list[str] = [
+        _SYSTEMD_RUN,
+        "--user",
+        "--scope",
+        "--collect",
+        f"--unit={unit}",
+    ]
+    if memory_max is not None:
+        wrapped.extend(["-p", f"MemoryMax={memory_max}"])
+    wrapped.append("--")
+    wrapped.extend(args)
+    return wrapped
+
 
 def spawn_detached_host_process(
     args: Sequence[str],
@@ -31,17 +124,40 @@ def spawn_detached_host_process(
     cwd: str | Path,
     env: Mapping[str, str],
     log_file: Path,
+    scope_name: str | None = None,
+    memory_max: str | None = None,
 ) -> subprocess.Popen[bytes]:
     """Spawn a long-lived host service that outlives the manage TUI process.
 
     Opens ``log_file`` for the child's stdout/stderr, then closes the parent
     handle after ``Popen`` returns (the child keeps its inherited FD).
+
+    When ``scope_name`` is set and user systemd scope wrapping is available,
+    the argv is prefixed with ``systemd-run --user --scope --collect`` so the
+    child lands in its own transient cgroup. On unavailable wrapping, the
+    original argv is used and a warning is logged — spawn never fails solely
+    because scope wrapping is unavailable.
     """
+    spawn_args: list[str] = list(args)
+    if scope_name is not None:
+        if is_systemd_scope_wrapping_available():
+            spawn_args = build_scope_wrapped_argv(
+                args,
+                scope_name=scope_name,
+                memory_max=memory_max,
+            )
+        else:
+            logger.warning(
+                "systemd scope wrapping unavailable for %s (%s); "
+                "spawning without scope",
+                scope_name,
+                _systemd_unavailable_reason(),
+            )
     log_file.parent.mkdir(parents=True, exist_ok=True)
     log_fh = log_file.open("wb")
     try:
         return subprocess.Popen(
-            list(args),
+            spawn_args,
             stdin=subprocess.DEVNULL,
             stdout=log_fh,
             stderr=subprocess.STDOUT,

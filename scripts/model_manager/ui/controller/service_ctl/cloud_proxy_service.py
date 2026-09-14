@@ -71,6 +71,7 @@ async def start_cloud_proxy(
         pid_file=pid_file,
         lock_file=_CLOUD_PROXY_LOCK_FILE,
         service_name="Cloud Proxy",
+        scope_name="cloud-proxy",
         socket_path=socket_path,
         tcp_config=tcp_config,
         log_dir=Path("/tmp/logs/universal-cloud-proxy"),
