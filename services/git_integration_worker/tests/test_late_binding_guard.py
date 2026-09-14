@@ -38,6 +38,7 @@ LATE_BOUND_FUNCTIONS: frozenset[tuple[str, str]] = frozenset(
         ("cursor_sdk_orphan", "live_bridge_occupancy"),
         ("cursor_sdk_orphan", "owned_live_bridge_occupancy"),
         ("cursor_sdk_orphan", "sweep_unowned_bridges"),
+        ("cursor_sdk_orphan", "sweep_stale_terminal_bridges"),
         ("cursor_sdk_branch_divergence", "measure_divergence"),
         ("cursor_sdk_branch_debt_reconcile", "commit_exists"),
     }
