@@ -210,6 +210,11 @@ def _dispatch_worktree_paths(dispatch_id: str) -> set[str]:
             row["terminal_at"],
             _TERMINAL_CLAIM_GRACE_S,
         )
+        from services.git_integration_worker import cursor_sdk_orphan
+
+        reap = cursor_sdk_orphan.reap_orphan_bridge_os(dispatch_id)
+        if reap.bridge_aborted or reap.kill_failed:
+            cursor_sdk_orphan.reset_live_bridge_occupancy_cache()
         return paths
     if row is not None:
         for key in (row["lease_key"], row["source_repo"]):

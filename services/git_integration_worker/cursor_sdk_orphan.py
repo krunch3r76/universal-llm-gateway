@@ -371,6 +371,36 @@ def sweep_unowned_bridges(
     return BridgeSweepResult(scanned=scanned, killed=killed, kill_failed=kill_failed)
 
 
+def sweep_stale_terminal_bridges() -> BridgeSweepResult:
+    """Kill live bridges whose dispatch is terminal past ``_TERMINAL_CLAIM_GRACE_S``.
+
+    ``sweep_unowned_bridges`` keys off process age (default 30min), so a bridge
+    that went terminal five minutes ago but was launched recently survives the
+    age gate indefinitely while its worktree claim has already dropped (a:33741).
+    This path shares the grace predicate with ``cursor_sdk_worktree_live_guard``
+    so the OS process is reaped when the claim does.
+    """
+    from services.git_integration_worker import cursor_sdk_worktree_live_guard as guard
+
+    scanned = 0
+    killed: list[int] = []
+    kill_failed: list[int] = []
+    for bridge in live_bridge_occupancy(fresh=True):
+        if not bridge.dispatch_id:
+            continue
+        if not guard._dispatch_claim_stale(bridge.dispatch_id):
+            continue
+        scanned += 1
+        result = reap_orphan_bridge_os(bridge.dispatch_id)
+        if result.bridge_aborted:
+            killed.append(bridge.pid)
+        if result.kill_failed:
+            kill_failed.append(bridge.pid)
+    if killed or kill_failed:
+        reset_live_bridge_occupancy_cache()
+    return BridgeSweepResult(scanned=scanned, killed=killed, kill_failed=kill_failed)
+
+
 def active_bridge_dispatch_ids() -> list[str]:
     """Return dispatch ids with a live in-process bridge client registry entry."""
     with _lock:
