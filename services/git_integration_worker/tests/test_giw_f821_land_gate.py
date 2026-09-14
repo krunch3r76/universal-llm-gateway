@@ -10,14 +10,13 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from git_integrate.git_cas import diff_sha256
 from git_integrate.integrate import integrate_op
 from git_integrate.schema import RC_GATE_FAILED
 
 from services.git_integration_worker.config import (
-    GIW_SUBTREE_F821_REL,
     _DIFF_SCOPED_GATE_SCRIPT,
+    GIW_SUBTREE_F821_REL,
 )
 from services.git_integration_worker.cursor_sdk_lane_b_commit import salvage_commit
 from services.git_integration_worker.giw_f821_gate import (

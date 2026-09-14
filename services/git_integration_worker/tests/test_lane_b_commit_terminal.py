@@ -11,6 +11,7 @@ import pytest
 
 from services.git_integration_worker.config import WorkerConfig
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_home import dispatch_git_identity
 from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
@@ -18,7 +19,6 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     changed_paths,
     prepare_closeout_delivery,
 )
-from services.git_integration_worker.cursor_home import dispatch_git_identity
 from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     SalvageResult,
     branch_state,
@@ -441,7 +441,7 @@ def test_prune_retains_dirty_empty_branch_when_salvage_does_not_commit(
     (wt / "at_risk.py").write_text("only copy\n", encoding="utf-8")
 
     with patch(
-        "services.git_integration_worker.cursor_sdk_worktree_prune.salvage_commit",
+        "services.git_integration_worker.cursor_sdk_worktree_release.salvage_commit",
         return_value=SalvageResult(committed=False, head_sha=None, refused=False),
     ):
         result = prune_dispatch_worktree(
