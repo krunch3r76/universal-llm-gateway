@@ -131,7 +131,8 @@ def test_classify_malformed_heartbeat_defers() -> None:
     assert reason == "heartbeat_indeterminate"
 
 
-def test_classify_execution_id_mismatch_allows_orphan() -> None:
+def test_classify_execution_id_mismatch_allows_orphan_for_live_status() -> None:
+    """Live holder replaced: mismatched execution_id on a running probe still orphans."""
     probe = ProbeResult(
         payload={
             "status": "running",
@@ -144,6 +145,25 @@ def test_classify_execution_id_mismatch_allows_orphan() -> None:
     verdict, reason, _ = classify_probe(probe, link_execution_id="exec-1")
     assert verdict is LivenessVerdict.ALLOW_ORPHAN
     assert reason == "execution_id_mismatch"
+
+
+def test_classify_completed_mismatch_backfills_not_orphan() -> None:
+    """Thread 11151 specimen: completed dispatch must backfill even when probe execution_id differs."""
+    probe = ProbeResult(
+        payload={
+            "status": "completed",
+            "execution_id": "95ea933313c3-fa54b3b0",
+            "dispatch_id": "95ea933313c3-fa54b3b0",
+        },
+        http_status=200,
+        error=None,
+    )
+    verdict, reason, terminal = classify_probe(
+        probe, link_execution_id="3dc393d9"
+    )
+    assert verdict is LivenessVerdict.TERMINAL_BACKFILL
+    assert reason == "probe_terminal"
+    assert terminal == "completed"
 
 
 def test_classify_completed_backfills_without_orphan() -> None:

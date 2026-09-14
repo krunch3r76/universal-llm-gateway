@@ -108,14 +108,6 @@ def classify_probe(
     if not isinstance(status, str):
         return LivenessVerdict.DEFER, "probe_status_malformed", None
 
-    probe_execution_id = payload.get("execution_id")
-    if (
-        link_execution_id
-        and probe_execution_id
-        and str(probe_execution_id) != str(link_execution_id)
-    ):
-        return LivenessVerdict.ALLOW_ORPHAN, "execution_id_mismatch", None
-
     bus_terminal = _WORKER_TERMINAL_TO_BUS.get(status)
     if bus_terminal is not None:
         return LivenessVerdict.TERMINAL_BACKFILL, "probe_terminal", bus_terminal
@@ -123,7 +115,16 @@ def classify_probe(
     if status not in _LIVE_STATUSES:
         return LivenessVerdict.DEFER, f"probe_status_unknown_{status}", None
 
+    probe_execution_id = payload.get("execution_id")
+    execution_id_mismatch = (
+        link_execution_id
+        and probe_execution_id
+        and str(probe_execution_id) != str(link_execution_id)
+    )
+
     if status == "parked_waiting":
+        if execution_id_mismatch:
+            return LivenessVerdict.ALLOW_ORPHAN, "execution_id_mismatch", None
         # Parent heartbeat can go stale while the nested child is the live
         # holder. GIW live_holders does not require a fresh parent heartbeat.
         return LivenessVerdict.SKIP_LIVE, "worker_live", None
@@ -133,6 +134,8 @@ def classify_probe(
         return LivenessVerdict.DEFER, "heartbeat_indeterminate", None
     if freshness == "stale":
         return LivenessVerdict.ALLOW_ORPHAN, "heartbeat_stale", None
+    if execution_id_mismatch:
+        return LivenessVerdict.ALLOW_ORPHAN, "execution_id_mismatch", None
     return LivenessVerdict.SKIP_LIVE, "worker_live", None
 
 
