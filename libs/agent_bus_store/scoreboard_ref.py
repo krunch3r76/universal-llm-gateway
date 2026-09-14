@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from implement_admission.conductor_score_journal import scoreboard_tip_uri
+from implement_admission.conductor_score_locus import charter_locus
 
 _SCOREBOARD_LINE_RE = re.compile(
     r"^Scoreboard:\s*(.+)$",
@@ -80,18 +81,40 @@ def _parse_scoreboard_line(body: str) -> str | None:
     return match.group(1).strip() if match else None
 
 
-def _uri_from_scoreboard_line(line: str, *, tags: list[str]) -> str | None:
+def _guess_scoreboard_uri(slug: str, *, files_root: Path | None) -> str | None:
+    """Return the first existing scoreboard URI for *slug*, or None when neither candidate exists."""
+    root = _files_root(files_root)
+    charter = charter_locus(slug, files_root=root)
+    if charter.tip_path.is_file():
+        return charter.tip_uri
+    conductor_uri = scoreboard_tip_uri(slug)
+    conductor_path = root / conductor_uri.removeprefix("cortex://")
+    if conductor_path.is_file():
+        return conductor_uri
+    return None
+
+
+def _uri_from_scoreboard_line(
+    line: str,
+    *,
+    tags: list[str],
+    files_root: Path | None,
+) -> str | None:
     for token in re.split(r"\s*[·|]\s*", line):
         piece = token.strip()
         if piece.startswith("cortex://") and piece.endswith("-scoreboard.md"):
             return piece.split()[0]
         if _SLUG_RE.match(piece):
-            return scoreboard_tip_uri(piece)
+            guessed = _guess_scoreboard_uri(piece, files_root=files_root)
+            if guessed is not None:
+                return guessed
     for tag in tags:
         if tag.startswith("scoreboard:"):
             slug = tag.removeprefix("scoreboard:").strip()
             if slug:
-                return scoreboard_tip_uri(slug)
+                guessed = _guess_scoreboard_uri(slug, files_root=files_root)
+                if guessed is not None:
+                    return guessed
     return None
 
 
@@ -119,7 +142,7 @@ def resolve_scoreboard_ref(
     if uri is None:
         line = _parse_scoreboard_line(tip_body)
         if line:
-            uri = _uri_from_scoreboard_line(line, tags=tags)
+            uri = _uri_from_scoreboard_line(line, tags=tags, files_root=files_root)
 
     if uri is None:
         uri = _whole_body_uri(tip_body)
@@ -129,8 +152,9 @@ def resolve_scoreboard_ref(
             if tag.startswith("scoreboard:"):
                 slug = tag.removeprefix("scoreboard:").strip()
                 if slug:
-                    uri = scoreboard_tip_uri(slug)
-                    break
+                    uri = _guess_scoreboard_uri(slug, files_root=files_root)
+                    if uri is not None:
+                        break
 
     if uri is None:
         return None
