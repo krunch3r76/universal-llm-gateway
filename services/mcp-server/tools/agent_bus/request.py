@@ -16,6 +16,7 @@ from agent_bus_store.disposition import append_bus_lifecycle_tags
 from mcp_events import record
 
 from .._agent_bus_author import resolve_dispatch_from_agent
+from .lane_associations import refuse_lane_bind_incomplete_pair
 from .lane_provenance import observe_unparented_birth
 from .park_hint import build_poll_hint as _build_poll_hint
 from .park_hint import is_chat_delivery_capable
@@ -458,6 +459,12 @@ def _request_dispatch(
     checkout_lane, lane_err = resolve_checkout_lane(lane, from_agent=from_agent)
     if lane_err is not None:
         return lane_err
+    lane_bind_refusal = refuse_lane_bind_incomplete_pair(
+        parent_thread=parent_thread,
+        lane_role=lane_role,
+    )
+    if lane_bind_refusal is not None:
+        return lane_bind_refusal
     observe_unparented_birth(
         new_slug=new_slug,
         parent_thread=parent_thread,

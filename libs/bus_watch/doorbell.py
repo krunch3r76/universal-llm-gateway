@@ -56,7 +56,7 @@ def render_doorbell(
         [
             f"frame: fired by scheduled task liaison-wake-{root}; seat web-anthropic; prior wake = last ORIENTED turn on agent-bus:{echo}.",
             f'echo: agent_bus(send, thread={echo}, subject="ORIENTED {root}", body="ORIENTED / digest: <DIGEST subject> — attention <n>, checkpoint_due <bool> / objective: <root.last_subject> / chat: <url> / tools: <count>")',
-            f"commission: cursor_request(thread={root}, …) — only when attention names work; a quiet digest ⇒ echo and stop.",
+            f"commission: cursor_request(new_slug=r15-wake-<slug>, parent_thread={root}, lane_role=sub_mission, …) — if attention mint; quiet echo; ¬thread={root}.",
         ]
     )
     message = "\n".join(lines) + "\n"

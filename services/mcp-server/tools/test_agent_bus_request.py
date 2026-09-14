@@ -877,6 +877,41 @@ def test_request_registration_only_does_not_bind_cse():
     bind.assert_not_called()
 
 
+def test_request_half_pair_parent_only_rejects_before_send() -> None:
+    """Half-pair lane bind must 422 at MCP intake with no thread row created."""
+    with patch("tools.agent_bus.request._send_dispatch") as send_mock:
+        result = _request_dispatch(
+            new_slug="half-pair-parent",
+            thread=None,
+            to="cursor",
+            subject="DIRECTIVE",
+            body="TYPE: DIRECTIVE",
+            from_agent="web-anthropic",
+            parent_thread="10479",
+            lane_role=None,
+        )
+    assert result["reason"] == "lane_bind_incomplete"
+    assert result["provided"] == ["parent_thread"]
+    send_mock.assert_not_called()
+
+
+def test_request_half_pair_role_only_rejects_before_send() -> None:
+    with patch("tools.agent_bus.request._send_dispatch") as send_mock:
+        result = _request_dispatch(
+            new_slug="half-pair-role",
+            thread=None,
+            to="cursor",
+            subject="DIRECTIVE",
+            body="TYPE: DIRECTIVE",
+            from_agent="web-anthropic",
+            parent_thread=None,
+            lane_role="sub_mission",
+        )
+    assert result["reason"] == "lane_bind_incomplete"
+    assert result["provided"] == ["lane_role"]
+    send_mock.assert_not_called()
+
+
 def test_request_cursor_author_does_not_bind_cse():
     send_payload = {
         "send_path": "new_thread",

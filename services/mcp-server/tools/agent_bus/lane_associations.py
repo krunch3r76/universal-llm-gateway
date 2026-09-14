@@ -19,6 +19,35 @@ def _normalize_thread(value: str | int | None) -> str:
     return str(value).strip()
 
 
+def refuse_lane_bind_incomplete_pair(
+    *,
+    parent_thread: str | None,
+    lane_role: str | None,
+    event_prefix: str = "mcp.agentbus",
+) -> dict[str, Any] | None:
+    """Return a 422 envelope when exactly one of parent_thread / lane_role is set."""
+    has_parent = bool((parent_thread or "").strip())
+    has_role = bool((lane_role or "").strip())
+    if (has_parent and has_role) or (not has_parent and not has_role):
+        return None
+    record(f"{event_prefix}.request.rejected", reason="lane_bind_incomplete")
+    return {
+        "error": (
+            "parent_thread and lane_role must both be supplied or both omitted"
+        ),
+        "reason": "lane_bind_incomplete",
+        "code": "lane_bind_incomplete",
+        "provided": [
+            name
+            for name, val in (
+                ("parent_thread", has_parent),
+                ("lane_role", has_role),
+            )
+            if val
+        ],
+    }
+
+
 def _lane_bind_impl(
     *,
     thread_id: str,

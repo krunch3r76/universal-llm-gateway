@@ -25,6 +25,10 @@ def test_default_render_contains_required_fragments() -> None:
     assert "scheduled task liaison-wake-10479" in text
     assert "agent-bus:10532" in text
     assert "agent-bus:10479 (echo)" not in text
+    assert "parent_thread=10479" in text
+    assert "lane_role=sub_mission" in text
+    assert "new_slug=r15-wake-<slug>" in text
+    assert "cursor_request(thread=10479" not in text
 
 
 @pytest.mark.offline

@@ -20,6 +20,8 @@ EMPTY_SCOPE_FIX_HINT = (
     "Add an actionable scope line and re-issue: `scope: <files or tool-op>` "
     "(repo work) OR `tool_op: <tool>.<op>` + `effects_expected: <observable "
     "result>` (tier-M tool ask), plus `files_expected:` and `vision:`. "
+    "`SCOPE:` / `FILES EXPECTED` prose caps are not scope tokens; add "
+    "line-start `scope: <path>` and `files_expected:` (underscore). "
     f"Template: {TIER_M_TEMPLATE_REF}."
 )
 

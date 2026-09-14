@@ -7,14 +7,13 @@ import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from claim_register import CLAIM_REGISTER_UNKNOWN
 
 from services.git_integration_worker.cursor_auto.admit_gates import blocking_admit_gate
 from services.git_integration_worker.cursor_auto.directive import (
     empty_directive_missed_tokens,
     has_actionable_scope,
 )
-from claim_register import CLAIM_REGISTER_UNKNOWN
-
 from services.git_integration_worker.cursor_auto.fix_hints import (
     EMPTY_SCOPE_FIX_HINT,
     VISION_MISSING_FIX_HINT,
@@ -114,6 +113,8 @@ def test_empty_scope_blocked_payload_carries_fix_hint() -> None:
     assert payload["fix_hint"]["register"] == CLAIM_REGISTER_UNKNOWN
     assert payload["fix_hint"]["value"] == EMPTY_SCOPE_FIX_HINT
     assert "tool_op" in payload["fix_hint"]["value"]
+    assert "SCOPE:" in payload["fix_hint"]["value"]
+    assert "files_expected:" in payload["fix_hint"]["value"]
 
 
 def test_vision_missing_blocked_payload_carries_fix_hint() -> None:
