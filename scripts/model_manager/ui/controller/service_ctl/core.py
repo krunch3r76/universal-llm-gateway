@@ -43,6 +43,7 @@ from ..service_config import (
     ensure_socket_dir,
     ensure_stargate_config,
     is_cdp_ask_local_host,
+    load_agent_bus_config,
     load_env_file,
 )
 from ..shutdown_gate import ManageShutdownGate
@@ -641,6 +642,11 @@ class ServiceController:
         env = build_service_env(self._root)
         env["STARGATE_CONFIG"] = str(config_path)
         env["STARGATE_MODE"] = "master"
+        # Host process: the agent_bus_store default is the in-container /data
+        # path, so the continuity-checkpoint tail cannot reach the bus without
+        # this. Same injection cortex-api performs for the same store.
+        ab_cfg = load_agent_bus_config()
+        env["AGENT_BUS_DB_PATH"] = str(Path(ab_cfg.db_path).expanduser())
 
         log_path = Path("/tmp/logs/universal-stargate/tui-startup.log")
         try:

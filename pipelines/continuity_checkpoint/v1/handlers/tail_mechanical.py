@@ -175,6 +175,19 @@ def _tip_checkpoint_body_sync(thread: str) -> str:
     return body
 
 
+def _safe_tip_checkpoint_body(thread: str) -> tuple[str, str | None]:
+    """Tip body plus a skip reason — the store is unreachable from some hosts.
+
+    Returns ("", reason) rather than raising: losing the tip-body resolution
+    hint must degrade the fold to a skip, never fail the caller's CHECKPOINT.
+    """
+    try:
+        return _tip_checkpoint_body_sync(thread), None
+    except Exception as exc:  # noqa: BLE001 — checkpoint must not fail
+        logger.warning("tail_mechanical tip read failed thread=%s err=%s", thread, exc)
+        return "", f"tip_body_unavailable: {exc}"[:200]
+
+
 class ContinuityCheckpointTailMechanicalHandler(BaseHandler):
     """Resolve scoreboard family; fold conductor boards; validate charter boards."""
 
@@ -186,18 +199,27 @@ class ContinuityCheckpointTailMechanicalHandler(BaseHandler):
         options["execution_id"] = str(context.execution_id or "")
         thread = str(options.get("thread") or context.dispatch_thread_id or "")
         tags = list(options.get("tags") or [])
-        tip_body = await asyncio.to_thread(_tip_checkpoint_body_sync, thread)
+        tip_body, tip_error = await asyncio.to_thread(
+            _safe_tip_checkpoint_body, thread
+        )
         files_root = None
         root_env = options.get("files_root")
         if root_env:
             files_root = Path(str(root_env))
-        payload = run_tail_mechanical(
-            thread=thread,
-            options=options,
-            tip_body=tip_body,
-            thread_tags=tags,
-            files_root=files_root,
-        )
+        # This step is advisory: no failure inside it may sink the CHECKPOINT.
+        try:
+            payload = run_tail_mechanical(
+                thread=thread,
+                options=options,
+                tip_body=tip_body,
+                thread_tags=tags,
+                files_root=files_root,
+            )
+        except Exception as exc:  # noqa: BLE001 — checkpoint must not fail
+            logger.warning("tail_mechanical failed thread=%s err=%s", thread, exc)
+            payload = {"folded": False, "reason": "tail_error", "error": str(exc)[:200]}
+        if tip_error:
+            payload["tip_error"] = tip_error
         return StepOutput(raw=json.dumps(payload, default=str), json=payload)
 
 
