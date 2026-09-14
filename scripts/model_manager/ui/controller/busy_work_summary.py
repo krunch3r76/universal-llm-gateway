@@ -18,14 +18,17 @@ def format_active_work_summary(active_work: dict[str, Any] | None) -> str:
         return f"probe_error={active_work['error']}"
 
     count = _active_count(active_work)
-    holder = _holder_clause(active_work)
+    holder = _holder_clause(active_work) or _busy_status_holder_clause(active_work)
+    busy = _sdk_busy_status_clause(active_work)
     ops = _ops_clause(active_work)
     parts: list[str] = []
-    if count is not None:
+    if busy:
+        parts.append(busy)
+    elif count is not None:
         parts.append(f"active_count={count}")
     if holder:
         parts.append(holder)
-    elif ops:
+    elif ops and not busy:
         parts.append(ops)
     orphan = _lane_b_orphan_clause(active_work)
     if orphan:
@@ -42,6 +45,59 @@ def _active_count(work: dict[str, Any]) -> int | None:
         if isinstance(val, int):
             return val
     return None
+
+
+def _busy_status_holder_clause(work: dict[str, Any]) -> str:
+    gate = work.get("cursor_sdk_gate")
+    if not isinstance(gate, dict):
+        return ""
+    busy = gate.get("busy_status")
+    if not isinstance(busy, dict):
+        return ""
+    holder = busy.get("active_holder")
+    if not isinstance(holder, dict) or not holder.get("dispatch_id"):
+        return ""
+    return _holder_clause(
+        {
+            "write_lease": {
+                "holder_dispatch_id": holder.get("dispatch_id"),
+                "holder_resolved_model": holder.get("model"),
+                "holder_subject_preview": holder.get("subject_preview"),
+                "holder_status": holder.get("status"),
+            }
+        }
+    )
+
+
+def _sdk_busy_status_clause(work: dict[str, Any]) -> str:
+    """Prefer discriminated cursor_sdk_gate.busy_status over runner counts."""
+    gate = work.get("cursor_sdk_gate")
+    if not isinstance(gate, dict):
+        return ""
+    busy = gate.get("busy_status")
+    if not isinstance(busy, dict):
+        return ""
+    bits: list[str] = []
+    queue_depth = busy.get("queue_depth")
+    if isinstance(queue_depth, int) and queue_depth > 0:
+        bits.append(f"queue_depth={queue_depth}")
+    capacity = busy.get("capacity_by_lane")
+    if isinstance(capacity, dict):
+        lane_bits: list[str] = []
+        for lane_key in ("lane_a", "lane_b"):
+            lane = capacity.get(lane_key)
+            if not isinstance(lane, dict):
+                continue
+            slots = lane.get("slots")
+            active = lane.get("active")
+            queued = lane.get("queued")
+            if isinstance(slots, int):
+                lane_bits.append(
+                    f"{lane_key}=slots:{slots}/active:{active}/queued:{queued}"
+                )
+        if lane_bits:
+            bits.append("capacity[" + ", ".join(lane_bits) + "]")
+    return "; ".join(bits)
 
 
 def _holder_clause(work: dict[str, Any]) -> str:

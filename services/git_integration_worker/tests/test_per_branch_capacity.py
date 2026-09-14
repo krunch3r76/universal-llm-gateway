@@ -94,6 +94,7 @@ def _seed_live_worktree(
         branch_name=f"cursor-sdk/lane-t-live-{idx}",
         branch_point="abc123",
         thread_id=f"t-live-{idx}",
+        source_repo=tmp_path / "source",
     )
     req = _req(
         dispatch_id=dispatch_id,
@@ -152,8 +153,8 @@ def test_ac3_regime_off_limit_one(monkeypatch: pytest.MonkeyPatch) -> None:
     assert int(stats["standard"]["limit"]) == 1
 
 
-def test_ac4_busy_status_honesty() -> None:
-    """AC4: advertised standard.limit equals the configured ceiling under regime-ON."""
+def test_ac4_busy_status_honesty(tmp_path: Path) -> None:
+    """AC4: capacity limits + discriminated busy_status holder/queue vocabulary."""
     from services.git_integration_worker.cursor_sdk_worktree_registry import (
         isolated_write_ceiling,
     )
@@ -167,6 +168,57 @@ def test_ac4_busy_status_honesty() -> None:
     detail = stats["write_capacity_detail"]
     assert isinstance(detail, dict)
     assert int(detail["lane_b"]["slots"]) == ceiling
+
+    repo = str(tmp_path / "source")
+    key = str(tmp_path / "worktrees" / "shared")
+    Path(key).mkdir(parents=True)
+    ledger = CursorDispatchLedger.instance()
+
+    _admit(
+        ledger,
+        _req(
+            dispatch_id="holder",
+            thread_id="t-holder",
+            message="hold-subject preview",
+        ),
+        source_repo=repo,
+        lease_key=key,
+    )
+    queued = _admit(
+        ledger,
+        _req(
+            dispatch_id="waiter",
+            thread_id="t-waiter",
+            message="queued-subject preview",
+        ),
+        source_repo=repo,
+        lease_key=key,
+    )
+    assert queued is not None
+    assert queued.status == "queued"
+
+    after = sdk_dispatch_gate_stats()
+    busy = after["busy_status"]
+    assert isinstance(busy, dict)
+    holder = busy["active_holder"]
+    assert isinstance(holder, dict)
+    assert holder["dispatch_id"] == "holder"
+    assert holder["thread_id"] == "t-holder"
+    assert holder["model"] == "composer-2.5"
+    assert holder["subject_preview"] == "hold-subject preview"
+    assert busy["queue_depth"] == 1
+    assert len(busy["queued_dispatches"]) == 1
+    assert busy["queued_dispatches"][0]["dispatch_id"] == "waiter"
+    assert busy["queued_dispatches"][0]["thread_id"] == "t-waiter"
+    assert busy["queued_dispatches"][0]["queue_position"] == 1
+
+    capacity = busy["capacity_by_lane"]
+    assert isinstance(capacity, dict)
+    assert capacity["lane_a"]["slots"] == 1
+    assert capacity["lane_b"]["slots"] == ceiling
+    assert capacity["lane_b"]["active"] >= 1
+    assert capacity["lane_b"]["queued"] >= 1
+    assert after["queued_by_lane"]["B"] >= 1
 
 
 def test_ac5_live_load_does_not_clamp_limit(

@@ -16,7 +16,7 @@ import json
 import os
 import uuid
 from collections.abc import Callable
-from typing import Literal
+from typing import Any, Literal
 
 from universal_concurrency import (
     CrossLaneTransferError,
@@ -356,6 +356,97 @@ def _active_by_lane() -> dict[str, int]:
     return active_by_lane_counts([dict(row) for row in rows])
 
 
+def _queued_by_lane() -> dict[str, int]:
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        rows = conn.execute(
+            "SELECT record_json, lease_key, source_repo FROM cursor_sdk_dispatches "
+            "WHERE COALESCE(read_only,0)=0 AND status='queued'"
+        ).fetchall()
+    return active_by_lane_counts([dict(row) for row in rows])
+
+
+def _capacity_by_lane(
+    *,
+    write_capacity_detail: dict[str, dict[str, int]],
+    active_by_lane: dict[str, int],
+    queued_by_lane: dict[str, int],
+) -> dict[str, dict[str, int]]:
+    return {
+        "lane_a": {
+            "slots": int(write_capacity_detail["lane_a"]["slots"]),
+            "active": int(active_by_lane.get("A", 0)),
+            "queued": int(queued_by_lane.get("A", 0)),
+        },
+        "lane_b": {
+            "slots": int(write_capacity_detail["lane_b"]["slots"]),
+            "active": int(active_by_lane.get("B", 0)),
+            "queued": int(queued_by_lane.get("B", 0)),
+        },
+    }
+
+
+def _active_holder_from_lease(lease: dict[str, Any]) -> dict[str, Any] | None:
+    dispatch_id = lease.get("holder_dispatch_id")
+    if not dispatch_id:
+        return None
+    return {
+        "dispatch_id": dispatch_id,
+        "thread_id": lease.get("holder_thread_id"),
+        "model": lease.get("holder_resolved_model"),
+        "subject_preview": lease.get("holder_subject_preview"),
+        "status": lease.get("holder_status"),
+    }
+
+
+def sdk_busy_status_envelope(
+    *,
+    source_repo: str | None = None,
+    write_capacity_detail: dict[str, dict[str, int]] | None = None,
+    active_by_lane: dict[str, int] | None = None,
+    queued_by_lane: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """Discriminated busy_status for manage MCP — holder/queue, not runner counts.
+
+    Serial write-lease occupancy is the restart-defer truth surface: one active
+    holder plus an explicit queue, not an undifferentiated active gate count.
+    """
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+    from services.git_integration_worker.cursor_sdk_lane_regime import (
+        lane_b_regime_active,
+    )
+
+    lease = CursorDispatchLedger.instance().lease_snapshot(source_repo=source_repo)
+    queued_dispatches = [
+        {
+            "dispatch_id": row["dispatch_id"],
+            "thread_id": row.get("thread_id"),
+            "queue_position": row.get("queue_position"),
+            "lease_key": row.get("lease_key"),
+        }
+        for row in lease.get("queued") or []
+        if isinstance(row, dict)
+    ]
+    envelope: dict[str, Any] = {
+        "active_holder": _active_holder_from_lease(lease),
+        "active_holders": list(lease.get("active_holders") or []),
+        "queue_depth": int(lease.get("queue_depth") or 0),
+        "queued_dispatches": queued_dispatches,
+    }
+    if lane_b_regime_active() and write_capacity_detail is not None:
+        envelope["capacity_by_lane"] = _capacity_by_lane(
+            write_capacity_detail=write_capacity_detail,
+            active_by_lane=active_by_lane or _active_by_lane(),
+            queued_by_lane=queued_by_lane or _queued_by_lane(),
+        )
+    return envelope
+
+
 def _file_i1_clamp_friction(
     *,
     configured_ceiling: int,
@@ -513,17 +604,27 @@ def sdk_dispatch_gate_stats(
         return standard
     if lane == "operator":
         return operator
+    live_by_lane = _active_by_lane()
+    queued_by_lane = _queued_by_lane()
     capacity = _write_capacity_fields(
         standard=standard,
         operator=operator,
-        live_by_lane=_active_by_lane(),
+        live_by_lane=live_by_lane,
     )
+    write_capacity_detail = capacity["write_capacity_detail"]
+    assert isinstance(write_capacity_detail, dict)
     return {
         "active": int(standard["active"]) + int(operator["active"]),
         "queued": int(standard["queued"]) + int(operator["queued"]),
         "limit": int(standard["limit"]) + int(operator["limit"]),
         **capacity,
-        "active_by_lane": _active_by_lane(),
+        "active_by_lane": live_by_lane,
+        "queued_by_lane": queued_by_lane,
+        "busy_status": sdk_busy_status_envelope(
+            write_capacity_detail=write_capacity_detail,
+            active_by_lane=live_by_lane,
+            queued_by_lane=queued_by_lane,
+        ),
         "standard": standard,
         "operator": operator,
     }
