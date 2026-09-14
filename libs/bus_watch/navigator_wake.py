@@ -12,16 +12,10 @@ Clause 1 — navigator_single_flight (binder text, verbatim):
     work_key=navigator:<root>:<night>. A second emit under the same
     work_key is a defect, not a retry.
 
-1c  NOT ENFORCED AT ADMISSION. The wake is submitted via
-    submit_team_dispatch, whose _ALLOWED_FIELDS omits parent_thread. The
-    submit therefore arrives unbound, skips seat_cap, and lands on
-    evaluate_new_admission, which is a stub. Navigator concurrency is
-    bounded ONLY by 1a and 1b.
-
-1d  1c is void-on-silence. When parent_thread reaches the cdp_ask submit
-    body, 1c is replaced by: the navigator generate MUST carry
-    parent_thread=<root>. 1a/1b remain as defence-in-depth and are not
-    retired.
+1c  The navigator generate MUST carry parent_thread=<root>. seat_cap
+    enforces per-lane admission for bound callers; the global ceiling
+    (evaluate_new_admission) remains advisory until implemented.
+    1a/1b remain as defence-in-depth and are not retired.
 """
 
 from __future__ import annotations
@@ -248,6 +242,7 @@ def evaluate_navigator_wake(
         # omits ``commission:`` entirely while this clause stays True.
         "navigator_commission_cap": True,
         "navigator_model_bound": _navigator_model_bound(policy),
+        "navigator_lane_bound": bool(root_id),
         "register_not_attended": register != "attended",
     }
     fire = all(clauses.values())
@@ -258,6 +253,8 @@ def evaluate_navigator_wake(
         skip_reason = "grace_not_elapsed"
     elif not clauses["navigator_model_bound"]:
         skip_reason = "navigator_model_unbound"
+    elif not clauses["navigator_lane_bound"]:
+        skip_reason = "navigator_lane_unbound"
     elif not clauses["register_not_attended"]:
         skip_reason = "register_attended"
     doorbell = render_navigator_doorbell(
@@ -301,10 +298,18 @@ def fire_navigator_wake(
         "model": policy.get("navigator_model"),
         "prompt": doorbell,
         "dispatch_thread_id": root_id,
+        "parent_thread": root_id,
         "work_key": work_key,
         "timeout_seconds": int(wake_timeout),
         "caller_agent": "liaison-ticker",
     }
+    evaluation["clauses"]["navigator_lane_bound"] = bool(body.get("parent_thread"))
+    if not evaluation["clauses"]["navigator_lane_bound"]:
+        return {
+            "ok": False,
+            "refused": "navigator_lane_unbound",
+            "evaluation": evaluation,
+        }
     if dry_run:
         return {
             "ok": True,

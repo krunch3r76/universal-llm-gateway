@@ -817,6 +817,20 @@ def test_team_dispatch_generate_body_accepts_purpose() -> None:
     assert body.purpose == "operator-proxy"
 
 
+def test_team_dispatch_generate_body_accepts_parent_thread() -> None:
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        contract="none",
+        dispatch_thread_id="6451",
+        model="cdp/opus-5-high",
+        prompt="navigator doorbell",
+        parent_thread="10479",
+    )
+    assert body.parent_thread == "10479"
+
+
 def test_team_dispatch_generate_body_purpose_optional() -> None:
     from systems.frontier_consult.route import TeamDispatchGenerateBody
 
@@ -1071,6 +1085,85 @@ def test_mission_provenance_ignores_ask_purpose(
     )
 
     assert published == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_cdp_generate_forwards_parent_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """team_dispatch parent_thread reaches run_cdp_worker unchanged (T1 wire)."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from systems.frontier_consult import cdp_generate as mod
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    monkeypatch.setattr(
+        mod,
+        "_stage_inputs",
+        lambda **kw: MagicMock(
+            prompt_uri="cortex://notes/system/ephemeral/prompt.md", staged=True
+        ),
+    )
+    monkeypatch.setattr(mod, "post_pointer_turn", AsyncMock(return_value=2))
+    monkeypatch.setattr(
+        mod,
+        "admit_handoff_dispatch",
+        AsyncMock(return_value=MagicMock(reason="ok")),
+    )
+    monkeypatch.setattr(mod, "upsert_inflight_leg", lambda **kw: None)
+    monkeypatch.setattr(mod, "emit_poll_hint_from_handoff", lambda **kw: None)
+    monkeypatch.setattr(
+        mod,
+        "build_handoff_result",
+        lambda **kw: {
+            "handoff_status": "ok",
+            "poll_hint": {"thread_id": "1", "from_agent": "web-anthropic"},
+        },
+    )
+    monkeypatch.setattr(mod, "resolve_poll_wait_seconds", lambda **kw: 5)
+
+    captured: list[dict[str, object]] = []
+    pending: list[object] = []
+
+    async def _fake_worker(**kwargs: object) -> None:
+        captured.append(dict(kwargs))
+
+    class _FakeTask:
+        def add_done_callback(self, _cb: object) -> None:
+            return None
+
+        def cancelled(self) -> bool:
+            return False
+
+        def exception(self) -> None:
+            return None
+
+    def _capture_task(coro: object, **kwargs: object) -> _FakeTask:
+        pending.append(coro)
+        return _FakeTask()
+
+    monkeypatch.setattr(mod, "run_cdp_worker", _fake_worker)
+    monkeypatch.setattr(mod.asyncio, "create_task", _capture_task)
+
+    body = TeamDispatchGenerateBody(
+        op="generate",
+        contract="none",
+        dispatch_thread_id="11165",
+        model="cdp/opus-5-high",
+        prompt="navigator doorbell",
+        parent_thread="10479",
+    )
+    response = MagicMock()
+    response.status_code = 202
+    await mod.dispatch_cdp_generate(
+        request_id="req-parent-thread",
+        body=body,
+        response=response,
+    )
+    assert pending
+    await pending[0]
+    assert captured
+    assert captured[0]["parent_thread"] == "10479"
 
 
 @pytest.mark.asyncio

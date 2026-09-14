@@ -50,11 +50,12 @@ def _state(**over: Any) -> dict[str, Any]:
 
 
 @pytest.mark.offline
-def test_clause1c_still_true() -> None:
-    """DESIGNED TO FAIL when parent_thread is added to the wire — rewrite clause 1 per 1d."""
+def test_clause1d_in_force() -> None:
+    """1c→1d transition (T1 parent_thread wire, lane-11192, 2026-09-14)."""
     from stargate_dispatch.client import _ALLOWED_FIELDS
 
-    assert "parent_thread" not in _ALLOWED_FIELDS
+    assert "parent_thread" in _ALLOWED_FIELDS
+    assert "purpose" not in _ALLOWED_FIELDS
 
 
 @pytest.mark.offline
@@ -128,6 +129,20 @@ def test_navigator_model_bound_rejects_gear_preset() -> None:
         digest, _state(), register="autonomous", now=10_000.0
     )
     assert evaluation["clauses"]["navigator_model_bound"] is False
+
+
+@pytest.mark.offline
+def test_fire_navigator_body_carries_parent_thread(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("bus_watch.navigator_wake.WATCH_DIR", tmp_path)
+    result = fire_navigator_wake(
+        "10479",
+        _digest(),
+        _state(),
+        register="autonomous",
+        dry_run=True,
+    )
+    assert result["body"]["parent_thread"] == "10479"
+    assert result["evaluation"]["clauses"]["navigator_lane_bound"] is True
 
 
 @pytest.mark.offline

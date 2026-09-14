@@ -365,6 +365,16 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 ),
             ),
         ] = None,
+        parent_thread: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Bus private-request parent lane (hop/side parent) on "
+                    "model=cdp/… generate. Binds cdp_ask per-lane seat_cap "
+                    "admission; distinct from SDK nest_under."
+                ),
+            ),
+        ] = None,
         work_key: Annotated[
             str | None,
             Field(
@@ -761,8 +771,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                     "error": {
                         "code": "validation_error",
                         "message": (
-                            "directive is required when op='steer' and "
-                            "steer='inject'"
+                            "directive is required when op='steer' and steer='inject'"
                         ),
                     },
                     "field": "directive",
@@ -1104,6 +1113,8 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 body["workspace"] = workspace
             if purpose is not None:
                 body["purpose"] = purpose
+            if parent_thread is not None:
+                body["parent_thread"] = parent_thread
             if work_key is not None:
                 body["work_key"] = work_key
             if force:

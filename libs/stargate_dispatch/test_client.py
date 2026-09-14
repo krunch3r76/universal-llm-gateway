@@ -42,3 +42,34 @@ def test_posts_team_dispatch_fields(mock_post: MagicMock) -> None:
     assert sent["work_key"] == "agent-bus:10479"
     assert "extra_ignored" not in sent
     assert mock_post.call_args.args[0].endswith("/api/v1/team/dispatch")
+
+
+@patch("stargate_dispatch.client.httpx.post")
+def test_parent_thread_forwarded_to_stargate(mock_post: MagicMock) -> None:
+    mock_resp = MagicMock()
+    mock_resp.status_code = 202
+    mock_resp.json.return_value = {"execution_id": "exec-nav", "thread_id": "11165"}
+    mock_post.return_value = mock_resp
+    body = {
+        "op": "generate",
+        "seat": "cdp",
+        "contract": "none",
+        "model": "cdp/opus-5-high",
+        "prompt": "doorbell",
+        "dispatch_thread_id": "10479",
+        "parent_thread": "10479",
+        "work_key": "navigator:10479:2026-09-14",
+        "purpose": "ask",
+    }
+    _, status = submit_team_dispatch(body, base_url="http://localhost:9999")
+    assert status == 202
+    sent = mock_post.call_args.kwargs["json"]
+    assert sent["parent_thread"] == "10479"
+    assert "purpose" not in sent
+
+
+def test_allowed_fields_parent_thread_not_purpose() -> None:
+    from stargate_dispatch.client import _ALLOWED_FIELDS
+
+    assert "parent_thread" in _ALLOWED_FIELDS
+    assert "purpose" not in _ALLOWED_FIELDS

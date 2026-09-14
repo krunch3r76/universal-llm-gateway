@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from team_dispatch_vocab import TEAM_DISPATCH_CONTRACTS
 from typing import Any
 from unittest.mock import patch
+
+from team_dispatch_vocab import TEAM_DISPATCH_CONTRACTS
 
 from tools.frontier import register_frontier_tools
 
@@ -150,7 +151,14 @@ def test_team_dispatch_messages_removed_from_signature() -> None:
 def test_team_dispatch_contract_enum_excludes_consult() -> None:
     """Public contract enum is the six team_dispatch values, not agent_bus consult."""
     assert "consult" not in TEAM_DISPATCH_CONTRACTS
-    assert TEAM_DISPATCH_CONTRACTS >= {"none", "pure-mechanical", "implement", "sketch", "conductor", "wrap"}
+    assert TEAM_DISPATCH_CONTRACTS >= {
+        "none",
+        "pure-mechanical",
+        "implement",
+        "sketch",
+        "conductor",
+        "wrap",
+    }
 
 
 def test_team_dispatch_handoff_relays_to_handoff_endpoint() -> None:
@@ -879,6 +887,48 @@ def test_team_dispatch_generate_forwards_nest_under() -> None:
 
     assert len(relay_calls) == 1
     assert relay_calls[0]["body"]["nest_under"] == "parent-dispatch-id"
+
+
+def test_team_dispatch_parent_thread_param_present() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    sig = inspect.signature(recorder.functions["team_dispatch"])
+    assert "parent_thread" in sig.parameters
+
+
+def test_team_dispatch_generate_forwards_parent_thread() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "exec-nav", "thread_id": "11165"}
+
+    def _fake_record(event: str, **kwargs: Any) -> None:
+        return None
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record", side_effect=_fake_record),
+    ):
+        asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                seat="cdp",
+                contract="none",
+                dispatch_thread_id="11165",
+                model="cdp/opus-5-high",
+                prompt="navigator doorbell",
+                parent_thread="10479",
+            )
+        )
+
+    assert len(relay_calls) == 1
+    assert relay_calls[0]["body"]["parent_thread"] == "10479"
 
 
 def test_team_dispatch_nest_under_rejects_non_sdk_seat() -> None:
