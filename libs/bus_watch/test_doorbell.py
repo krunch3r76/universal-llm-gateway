@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from bus_watch.doorbell import DOORBELL_CAP, render_address, render_doorbell
+from bus_watch.doorbell import (
+    DOORBELL_CAP,
+    basis_floor_bytes,
+    render_address,
+    render_doorbell,
+)
 
 _DEFAULT_ARGS = ("10479", "liaison-autonomous-night")
 _DEFAULT_KW = {"ring": "10532"}
@@ -98,8 +103,9 @@ def test_seating_render_sheds_placeholders_not_addresses() -> None:
         ring="10532",
         extra_addresses=extras,
         fired_by="cdp generate on agent-bus:11165, not a scheduled task",
+        cap=1024,
     )
-    assert len(text.encode("utf-8")) <= DOORBELL_CAP
+    assert len(text.encode("utf-8")) <= 1024
     assert "section=Loop" in text
     assert "Use the liaison skill." in text
     assert "Use the reasoning-posture skill." in text
@@ -121,7 +127,7 @@ def test_cap_enforced_and_overridable() -> None:
     long_extras = tuple(
         f"cortex://notes/system/threads/file-{idx}.md" for idx in range(40)
     )
-    with pytest.raises(ValueError, match="1024"):
+    with pytest.raises(ValueError, match="1400"):
         render_doorbell(*_DEFAULT_ARGS, ring="10532", extra_addresses=long_extras)
     render_doorbell(
         *_DEFAULT_ARGS,
@@ -178,6 +184,55 @@ def test_commission_shed_is_atomic_under_cap() -> None:
     assert "commission:" not in text
     assert "if attention mint" not in text
     assert "parent_thread=10479" not in text
+
+
+@pytest.mark.offline
+def test_default_render_byte_identical_921() -> None:
+    text = _default_render()
+    assert len(text.encode("utf-8")) == 921
+
+
+@pytest.mark.offline
+def test_basis_floor_guard_under_cap() -> None:
+    floor = basis_floor_bytes(
+        "10479",
+        "claude-ai-navigator-seat",
+        attention_row_ids=("10586",),
+        as_of="2026-09-14T07:00:00Z",
+        digest_source="a" * 16,
+        scope_lanes=("10532",),
+        fingerprint="b" * 16,
+    )
+    assert floor <= DOORBELL_CAP - 128
+
+
+@pytest.mark.offline
+def test_quintuple_render_fits_cap_without_shedding() -> None:
+    text = render_doorbell(
+        "10479",
+        "claude-ai-navigator-seat",
+        ring="10532",
+        fired_by="cdp generate via liaison-ticker",
+        include_commission=True,
+        attention_row_ids=("10586",),
+        as_of="2026-09-14T07:00:00Z",
+        digest_source="abc123def4567890",
+        scope_lanes=("10532",),
+        fingerprint="abc123def4567890",
+    )
+    encoded = len(text.encode("utf-8"))
+    assert encoded <= DOORBELL_CAP
+    assert "value=10586" in text
+    assert "epoch=abc123def4567890" in text
+    assert "STALE" in text
+    assert "tools: <count>" not in text
+
+
+@pytest.mark.offline
+def test_include_commission_keyword_omits_line() -> None:
+    text = render_doorbell(*_DEFAULT_ARGS, **_DEFAULT_KW, include_commission=False)
+    assert "commission:" not in text
+    assert "if attention mint" not in text
 
 
 @pytest.mark.offline

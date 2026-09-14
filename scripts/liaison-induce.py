@@ -7,6 +7,9 @@
 Builds the same digest as ``liaison-tick.py --once``, takes ``induction``, and
 pastes it into the live Cursor composer (focus → paste → Ctrl+Enter, no hop).
 Never fires more than once per digest ``fingerprint`` (M5).
+
+When ``register`` is not ``attended``, the CDP navigator transport renders the
+static doorbell and submits via ``submit_team_dispatch`` instead.
 """
 
 from __future__ import annotations
@@ -15,11 +18,13 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.ide_followup import fire_ide_followup
 from bus_watch.ide_hop import DEFAULT_REMOTE_REPO, policy_gui_host
 from bus_watch.liaison_digest import build_digest
+from bus_watch.navigator_wake import fire_navigator_wake
 from bus_watch.tick_state import load_state, update_state
 
 
@@ -87,6 +92,51 @@ def main() -> int:
         print(json.dumps(out, indent=2))
         return 2
 
+    transport = "ide" if register == "attended" else "navigator"
+    if transport == "navigator":
+        fired = fire_navigator_wake(
+            root,
+            digest,
+            state,
+            register=register,
+            dry_run=args.dry_run,
+        )
+        evaluation = fired.get("evaluation") or {}
+        out = {
+            "ok": True if args.dry_run else bool(fired.get("ok")),
+            "transport": transport,
+            "root": root,
+            "fingerprint": fp,
+            "clauses": evaluation.get("clauses"),
+            "skip_reason": fired.get("refused") or evaluation.get("skip_reason"),
+            "doorbell_bytes": evaluation.get("doorbell_bytes"),
+            "would_fire": fired.get("would_fire"),
+        }
+        if args.dry_run:
+            out["doorbell"] = evaluation.get("doorbell") or fired.get("doorbell")
+            out["body"] = fired.get("body")
+        if fired.get("payload"):
+            out["payload"] = fired["payload"]
+        print(json.dumps(out, indent=2))
+        if not out.get("ok"):
+            return 2
+        if args.fire and fp and fired.get("ok"):
+
+            def _mark_induction(fresh: dict) -> None:
+                fresh["last_induction_fingerprint"] = fp
+                fresh["last_induction_at"] = time.time()
+                if "navigator_commissions_by_night" in state:
+                    fresh["navigator_commissions_by_night"] = state[
+                        "navigator_commissions_by_night"
+                    ]
+                if "navigator_commissions_tonight" in state:
+                    fresh["navigator_commissions_tonight"] = state[
+                        "navigator_commissions_tonight"
+                    ]
+
+            update_state(state_path, _mark_induction)
+        return 0
+
     out = fire_ide_followup(
         induction,
         root_id=root,
@@ -95,6 +145,7 @@ def main() -> int:
         dry_run=args.dry_run,
         no_raise=args.no_raise,
     )
+    out["transport"] = transport
     out["fingerprint"] = fp
     out["induction"] = induction
     print(json.dumps(out, indent=2))
@@ -103,10 +154,11 @@ def main() -> int:
     if args.fire and fp:
         # The GUI hop above can block for minutes; write against the file as it
         # is now, never the snapshot from before the wait (see update_state).
-        update_state(
-            state_path,
-            lambda fresh: fresh.__setitem__("last_induction_fingerprint", fp),
-        )
+        def _mark_ide_induction(fresh: dict) -> None:
+            fresh["last_induction_fingerprint"] = fp
+            fresh["last_induction_at"] = time.time()
+
+        update_state(state_path, _mark_ide_induction)
     return 0
 
 

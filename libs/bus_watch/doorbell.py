@@ -3,11 +3,16 @@
 The paste is the doorbell (F2): addresses + episodic frame only; payload stays
 on the bus/graph. Amendment A1 digest delivery; memos 10479#118 (plant an
 address, never a dump) and #120 (direct ``Use the <slug> skill`` lines).
+
+``DOORBELL_CAP`` is 1400 bytes: basis floor is ~1132 B once the status quintuple
+is carried; the ``commission:`` line costs exactly 203 B (measured); 1400 leaves
+268 B of ladder headroom. The binder's rule is "the basis is never shed to fit a
+cap; the cap moves."
 """
 
 from __future__ import annotations
 
-DOORBELL_CAP = 1024
+DOORBELL_CAP = 1400
 DEFAULT_SKILLS = ("liaison", "reasoning-posture")
 
 SUCCESSOR_WAKE_CAP = 2048
@@ -16,19 +21,22 @@ SUCCESSOR_WAKE_CAP = 2048
 # equal arguments (F2 M5), so shedding removes fields, never reorders them.
 # ``digest:`` carries the tip the wake is scored on and ``chat:`` is the CSE
 # handle the seat reports back — only the other two are sheddable.
+_DIGEST_PLACEHOLDER = "digest: <DIGEST subject> — attention <n>, checkpoint_due <bool>"
 _ECHO_FIELDS = (
-    "digest: <DIGEST subject> — attention <n>, checkpoint_due <bool>",
+    _DIGEST_PLACEHOLDER,
     "objective: <root.last_subject>",
     "chat: <url>",
     "tools: <count>",
 )
 _SHEDDABLE_ECHO_FIELDS = ("tools: <count>", "objective: <root.last_subject>")
 _COMMISSION_HINT = "if attention mint; quiet echo; "
+_STALE_CONTRACT = "re-fetch DIGEST; on epoch mismatch echo STALE and stop"
 
 __all__ = [
     "DEFAULT_SKILLS",
     "DOORBELL_CAP",
     "SUCCESSOR_WAKE_CAP",
+    "basis_floor_bytes",
     "render_address",
     "render_doorbell",
     "render_successor_wake",
@@ -46,6 +54,63 @@ def render_address(uri: str) -> str:
 _render_address = render_address
 
 
+def _digest_echo_quintuple(
+    *,
+    attention_row_ids: tuple[str, ...],
+    as_of: str,
+    digest_source: str,
+    scope_root: str,
+    scope_lanes: tuple[str, ...],
+    fingerprint: str,
+) -> str:
+    ids = ",".join(attention_row_ids) if attention_row_ids else "(none)"
+    lanes = ",".join(scope_lanes) if scope_lanes else ""
+    scope = f"{scope_root}+{lanes}" if lanes else scope_root
+    return (
+        f"digest: value={ids} as_of={as_of} source={digest_source} "
+        f"scope={scope} epoch={fingerprint} — {_STALE_CONTRACT}"
+    )
+
+
+def _quintuple_requested(
+    *,
+    attention_row_ids: tuple[str, ...] | None,
+    as_of: str | None,
+    digest_source: str | None,
+    scope_lanes: tuple[str, ...] | None,
+    fingerprint: str | None,
+) -> bool:
+    return all(
+        v is not None
+        for v in (attention_row_ids, as_of, digest_source, scope_lanes, fingerprint)
+    )
+
+
+def basis_floor_bytes(
+    root: str,
+    slug: str,
+    *,
+    attention_row_ids: tuple[str, ...] = (),
+    as_of: str = "2026-09-14T07:00:00Z",
+    digest_source: str = "a" * 16,
+    scope_lanes: tuple[str, ...] = (),
+    fingerprint: str = "b" * 16,
+) -> int:
+    """Byte length of a render with the full status quintuple and no sheddables."""
+    text = render_doorbell(
+        root,
+        slug,
+        ring=root,
+        include_commission=False,
+        attention_row_ids=attention_row_ids,
+        as_of=as_of,
+        digest_source=digest_source,
+        scope_lanes=scope_lanes,
+        fingerprint=fingerprint,
+    )
+    return len(text.encode("utf-8"))
+
+
 def render_doorbell(
     root: str,
     slug: str,
@@ -55,6 +120,12 @@ def render_doorbell(
     extra_addresses: tuple[str, ...] = (),
     fired_by: str | None = None,
     cap: int = DOORBELL_CAP,
+    include_commission: bool = True,
+    attention_row_ids: tuple[str, ...] | None = None,
+    as_of: str | None = None,
+    digest_source: str | None = None,
+    scope_lanes: tuple[str, ...] | None = None,
+    fingerprint: str | None = None,
 ) -> str:
     """Static doorbell text for ``root``; echoes go to ``ring`` (the root when None).
 
@@ -79,8 +150,26 @@ def render_doorbell(
     # Default keeps the scheduled-task frame (R15). CDP/live seating passes fired_by
     # so the episodic frame stays true (10158 M2) instead of a false ritual label.
     fire = fired_by if fired_by is not None else f"scheduled task liaison-wake-{root}"
-    echo_fields = list(_ECHO_FIELDS)
-    include_commission = True
+    quintuple = _quintuple_requested(
+        attention_row_ids=attention_row_ids,
+        as_of=as_of,
+        digest_source=digest_source,
+        scope_lanes=scope_lanes,
+        fingerprint=fingerprint,
+    )
+    if quintuple:
+        digest_line = _digest_echo_quintuple(
+            attention_row_ids=attention_row_ids or (),
+            as_of=str(as_of),
+            digest_source=str(digest_source),
+            scope_root=root,
+            scope_lanes=scope_lanes or (),
+            fingerprint=str(fingerprint),
+        )
+        echo_fields = [digest_line, "chat: <url>"]
+    else:
+        echo_fields = list(_ECHO_FIELDS)
+    show_commission = include_commission
 
     def compose() -> str:
         body = "ORIENTED / " + " / ".join(echo_fields)
@@ -98,7 +187,7 @@ def render_doorbell(
                 f'echo: agent_bus(send, thread={echo}, subject="ORIENTED {root}", body="{body}")',
             ]
         )
-        if include_commission:
+        if show_commission:
             lines.append(
                 f"commission: cursor_request(new_slug=r15-wake-<slug>, parent_thread={root}, lane_role=sub_mission, …) — {_COMMISSION_HINT}¬thread={root}."
             )
@@ -106,13 +195,15 @@ def render_doorbell(
 
     def shed() -> bool:
         """Drop the least load-bearing fragment; False when only the ritual is left."""
-        nonlocal include_commission
+        nonlocal show_commission
+        if quintuple:
+            return False
         for field in _SHEDDABLE_ECHO_FIELDS:
             if field in echo_fields:
                 echo_fields.remove(field)
                 return True
-        if include_commission:
-            include_commission = False
+        if show_commission:
+            show_commission = False
             return True
         return False
 
