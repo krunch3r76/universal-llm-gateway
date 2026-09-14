@@ -12,11 +12,13 @@ import pytest
 
 from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.navigator_wake import (
+    DIGEST_SOURCE_EXPR,
     acquire_navigator_lease,
     evaluate_navigator_wake,
     fire_navigator_wake,
     navigator_lock_path,
     read_navigator_lock,
+    render_navigator_doorbell,
 )
 
 
@@ -272,3 +274,43 @@ def test_liaison_induce_reports_ide_transport(
     payload = json.loads(capsys.readouterr().out)
     assert rc == 0
     assert payload["transport"] == "ide"
+
+
+def test_digest_echo_source_is_independent_of_epoch() -> None:
+    """`source` must name the producing expression, not repeat the fingerprint.
+
+    Regression for the R20 residual: `render_navigator_doorbell` passed the
+    digest fingerprint as BOTH `digest_source` and `fingerprint`, so the status
+    quintuple advertised five fields while carrying four independent ones. A
+    reader could not tell where the echoed value came from.
+    """
+    digest = _digest()
+    fp = digest["fingerprint"]
+    text = render_navigator_doorbell(digest, root_id="10479", include_commission=False)
+
+    assert f"source={DIGEST_SOURCE_EXPR}" in text
+    assert f"epoch={fp}" in text
+    assert f"source={fp}" not in text
+    assert DIGEST_SOURCE_EXPR != fp
+
+
+def test_digest_echo_source_names_the_attention_filter() -> None:
+    """The source expression must disclose the kinds excluded from the value.
+
+    `_attention_row_ids` drops `budget_estimate` and `friction` rows, so a bare
+    `digest.attention[].id` would overstate what the echoed value covers.
+    """
+    digest = _digest(
+        attention=[
+            {"id": "10586", "unread": 1},
+            {"id": "99999", "kind": "friction"},
+            {"id": "99998", "kind": "budget_estimate"},
+        ]
+    )
+    text = render_navigator_doorbell(digest, root_id="10479", include_commission=False)
+
+    assert "value=10586" in text
+    assert "99999" not in text
+    assert "99998" not in text
+    for kind in ("budget_estimate", "friction"):
+        assert kind in DIGEST_SOURCE_EXPR

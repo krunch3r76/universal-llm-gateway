@@ -161,10 +161,20 @@ def _under_commission_cap(count: int, policy: dict[str, Any]) -> bool:
     return count < cap
 
 
+_ATTENTION_EXCLUDED_KINDS = ("budget_estimate", "friction")
+
+# The producing expression for the doorbell's digest echo, in the digest's own
+# dotted-path convention (cf. `state.dispatches_tonight_by_night`,
+# `policy.max_hops_per_night`). `source` must name WHERE the value came from;
+# the fingerprint belongs in `epoch`. Passing the fingerprint for both made the
+# quintuple carry four independent fields while presenting as five.
+DIGEST_SOURCE_EXPR = "digest.attention[].id excl:" + ",".join(_ATTENTION_EXCLUDED_KINDS)
+
+
 def _attention_row_ids(digest: dict[str, Any]) -> tuple[str, ...]:
     ids: list[str] = []
     for row in digest.get("attention") or []:
-        if row.get("kind") in ("budget_estimate", "friction"):
+        if row.get("kind") in _ATTENTION_EXCLUDED_KINDS:
             continue
         rid = row.get("id")
         if rid is not None:
@@ -208,7 +218,7 @@ def render_navigator_doorbell(
         include_commission=include_commission,
         attention_row_ids=_attention_row_ids(digest),
         as_of=str(digest.get("ts") or ""),
-        digest_source=fp,
+        digest_source=DIGEST_SOURCE_EXPR,
         scope_lanes=_scope_lanes(digest),
         fingerprint=fp,
     )
@@ -363,6 +373,7 @@ def fire_navigator_wake(
 
 
 __all__ = [
+    "DIGEST_SOURCE_EXPR",
     "acquire_navigator_lease",
     "evaluate_navigator_wake",
     "fire_navigator_wake",
