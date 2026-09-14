@@ -27,6 +27,7 @@ from ..service_config import (
     load_agent_bus_config,
     load_mcp_config,
 )
+from .host_spawn import spawn_detached_host_process
 from .uvicorn_service import _start_uvicorn_service, _stop_uvicorn_service
 
 _logger = get_logger(__name__)
@@ -67,6 +68,7 @@ _CORTEX_SOCKET = Path(
     os.environ.get("CORTEX_API_SOCK", "/tmp/universal-protocol/cortex-api.sock")
 )
 _CORTEX_LOG_DIR = Path("/tmp/logs/cortex-api")
+_CORTEX_HTTP_LOG_DIR = Path("/tmp/logs/cortex-api-http")
 # Browser-facing HTTP for /control-tower. Port 8200 is often cloud-proxy or
 # other docker services on this host; cortex-api itself stays on UDS for MCP.
 _CORTEX_HTTP_PID_FILE = GATEWAY_DIR / "cortex-api-http.pid"
@@ -144,7 +146,12 @@ def _start_http_forwarder(root: Path, extra_env: dict[str, str]) -> str | None:
     env["PYTHONPATH"] = (
         f"{libs_path}:{env['PYTHONPATH']}" if env.get("PYTHONPATH") else libs_path
     )
-    proc = subprocess.Popen(
+    # Routed through the shared choke point rather than a bare Popen so this
+    # forwarder lands in its own cgroup like every other host service. Spawning
+    # it directly is why it stayed in the tmux pane scope after the a:33656
+    # isolation pass — it was the one long-lived service that never went
+    # through spawn_detached_host_process.
+    proc = spawn_detached_host_process(
         [
             python,
             "-m",
@@ -155,12 +162,10 @@ def _start_http_forwarder(root: Path, extra_env: dict[str, str]) -> str | None:
             "--port",
             str(port),
         ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        cwd=str(root),
+        cwd=root,
         env=env,
-        start_new_session=True,
+        log_file=_CORTEX_HTTP_LOG_DIR / "cortex-api-http.log",
+        scope_name="cortex-api-http",
     )
     GATEWAY_DIR.mkdir(parents=True, exist_ok=True)
     _CORTEX_HTTP_PID_FILE.write_text(f"{proc.pid}\n")
