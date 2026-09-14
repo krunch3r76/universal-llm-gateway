@@ -1616,11 +1616,18 @@ async def bridge_sweeper(app: FastAPI) -> None:
     that directly (``test_cursor_sdk_restart_orphan``), which would let a unit
     test kill bridge processes on the host.
     """
-    del app
+    from services.git_integration_worker.cursor_sdk_orphan import sweep_min_age_s
+
     while True:
         await asyncio.sleep(_BRIDGE_SWEEP_S)
         try:
-            result = await asyncio.to_thread(sweep_unowned_bridges)
+            controller = getattr(app.state, "admission_controller", None)
+            draining = controller.is_draining() if controller is not None else False
+            min_age = sweep_min_age_s(restart_intent_pending=draining)
+            result = await asyncio.to_thread(
+                sweep_unowned_bridges,
+                min_age_s=min_age,
+            )
         except Exception as exc:  # sweeper must never kill the worker
             logger.warning("bridge sweeper failed: %s", exc)
             continue

@@ -58,6 +58,14 @@ _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 # Grace before an unowned bridge is collectable. Wide enough to clear the
 # pre-arm handshake window, where a bridge is live before its row is running.
 _SWEEP_MIN_AGE_S = float(os.getenv("GIT_WORKER_BRIDGE_SWEEP_MIN_AGE_S", "1800"))
+# While a restart/drain intent is armed, unowned bridges must not hold the
+# worker hostage for the full default grace (friction a:33561).
+_SWEEP_MIN_AGE_DRAIN_S = float(
+    os.getenv("GIT_WORKER_BRIDGE_SWEEP_MIN_AGE_DRAIN_S", "60")
+)
+# Repeated drain checks must not re-scan the full process table every ~2s
+# (friction a:33561).
+_OCCUPANCY_SCAN_TTL_S = float(os.getenv("GIT_WORKER_BRIDGE_OCCUPANCY_TTL_S", "3.0"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,19 +112,61 @@ class BridgeOccupancy:
     dispatch_id: str | None
 
 
-def live_bridge_occupancy() -> list[BridgeOccupancy]:
+_occupancy_cache: tuple[float, list[BridgeOccupancy]] | None = None
+
+
+def reset_live_bridge_occupancy_cache() -> None:
+    """Drop the cached occupancy roster (tests, and after a deliberate kill)."""
+    global _occupancy_cache
+    _occupancy_cache = None
+
+
+def _collapse_bridge_process_groups(
+    entries: list[tuple[int, int | None, str | None, str | None]],
+) -> list[BridgeOccupancy]:
+    """Keep one ``BridgeOccupancy`` per bridge process group (wrapper + node child).
+
+    When ``spawn`` launches a bridge, the outer ``sh`` wrapper and its ``node``
+    child both match bridge identity. Counting both inflated occupancy and
+    blocked restart/drain completion (friction a:33561). Prefer the outermost
+    process — its death takes the pair down.
+    """
+    bridge_pids = {pid for pid, _, _, _ in entries}
+    collapsed: list[BridgeOccupancy] = []
+    for pid, ppid, cwd, dispatch_id in entries:
+        if ppid is not None and ppid in bridge_pids:
+            continue
+        collapsed.append(BridgeOccupancy(pid=pid, cwd=cwd, dispatch_id=dispatch_id))
+    return collapsed
+
+
+def live_bridge_occupancy(*, fresh: bool = False) -> list[BridgeOccupancy]:
     """Enumerate live cursor-sdk bridges with their cwd and dispatch stamp.
 
     Read-only counterpart to ``reap_orphan_bridge_os``: same identity test, no
     kill. Best-effort and never raises — a process that vanishes or denies
     inspection mid-scan is skipped, so callers must treat the result as a lower
     bound on occupancy and fail closed on what it does report.
+
+    Results are cached briefly (``_OCCUPANCY_SCAN_TTL_S``) so repeated drain
+    checks do not re-scan the full process table. Pass ``fresh=True`` to bypass.
     """
-    found: list[BridgeOccupancy] = []
+    global _occupancy_cache
+    now = time.monotonic()
+    if not fresh:
+        cached = _occupancy_cache
+        if cached is not None and now - cached[0] < _OCCUPANCY_SCAN_TTL_S:
+            return cached[1]
+
+    raw: list[tuple[int, int | None, str | None, str | None]] = []
     for proc in psutil.process_iter(["pid"]):
         try:
             if not is_cursor_sdk_bridge_process(proc):
                 continue
+            try:
+                ppid = proc.ppid()
+            except (psutil.AccessDenied, OSError):
+                ppid = None
             try:
                 cwd = proc.cwd()
             except (psutil.AccessDenied, OSError):
@@ -127,7 +177,9 @@ def live_bridge_occupancy() -> list[BridgeOccupancy]:
                 dispatch_id = None
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
-        found.append(BridgeOccupancy(pid=proc.pid, cwd=cwd, dispatch_id=dispatch_id))
+        raw.append((proc.pid, ppid, cwd, dispatch_id))
+    found = _collapse_bridge_process_groups(raw)
+    _occupancy_cache = (now, found)
     return found
 
 
@@ -198,6 +250,36 @@ def _default_status_lookup(dispatch_id: str) -> dict[str, Any] | None:
     return CursorDispatchLedger.instance().dispatch_status_by_id(
         dispatch_id=dispatch_id
     )
+
+
+def sweep_min_age_s(*, restart_intent_pending: bool = False) -> float:
+    """Return the unowned-bridge age threshold for the current restart posture."""
+    if restart_intent_pending:
+        return _SWEEP_MIN_AGE_DRAIN_S
+    return _SWEEP_MIN_AGE_S
+
+
+def bridge_is_owned(
+    dispatch_id: str | None,
+    status_lookup: Callable[[str], dict[str, Any] | None] | None = None,
+) -> bool:
+    """Return whether a live bridge is owned by a non-terminal dispatch."""
+    lookup = status_lookup or _default_status_lookup
+    return _bridge_is_owned(dispatch_id, lookup)
+
+
+def owned_live_bridge_occupancy(
+    *,
+    fresh: bool = False,
+    status_lookup: Callable[[str], dict[str, Any] | None] | None = None,
+) -> list[BridgeOccupancy]:
+    """Live bridges that still block restart/drain (owned, non-terminal)."""
+    lookup = status_lookup or _default_status_lookup
+    return [
+        row
+        for row in live_bridge_occupancy(fresh=fresh)
+        if _bridge_is_owned(row.dispatch_id, lookup)
+    ]
 
 
 def _bridge_is_owned(
