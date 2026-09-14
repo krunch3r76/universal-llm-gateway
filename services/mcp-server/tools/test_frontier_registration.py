@@ -881,6 +881,48 @@ def test_team_dispatch_generate_forwards_nest_under() -> None:
     assert relay_calls[0]["body"]["nest_under"] == "parent-dispatch-id"
 
 
+def test_team_dispatch_parent_thread_param_present() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    sig = inspect.signature(recorder.functions["team_dispatch"])
+    assert "parent_thread" in sig.parameters
+
+
+def test_team_dispatch_generate_forwards_parent_thread() -> None:
+    recorder = _ToolNameRecorder()
+    register_frontier_tools(recorder)
+    team_dispatch_fn = recorder.functions["team_dispatch"]
+    relay_calls: list[dict[str, Any]] = []
+
+    async def _fake_relay(
+        *, endpoint: str, body: dict[str, Any], record_prefix: str
+    ) -> dict[str, Any]:
+        relay_calls.append({"endpoint": endpoint, "body": body})
+        return {"execution_id": "exec-nav", "thread_id": "11165"}
+
+    def _fake_record(event: str, **kwargs: Any) -> None:
+        return None
+
+    with (
+        patch("tools.frontier._relay", side_effect=_fake_relay),
+        patch("tools.frontier.record", side_effect=_fake_record),
+    ):
+        asyncio.run(
+            team_dispatch_fn(
+                op="generate",
+                seat="cdp",
+                contract="none",
+                dispatch_thread_id="11165",
+                model="cdp/opus-5-high",
+                prompt="navigator doorbell",
+                parent_thread="10479",
+            )
+        )
+
+    assert len(relay_calls) == 1
+    assert relay_calls[0]["body"]["parent_thread"] == "10479"
+
+
 def test_team_dispatch_nest_under_rejects_non_sdk_seat() -> None:
     recorder = _ToolNameRecorder()
     register_frontier_tools(recorder)

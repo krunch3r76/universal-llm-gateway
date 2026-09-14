@@ -33,6 +33,7 @@ _ALLOWED_FIELDS = frozenset(
         "force_reason",
         "role",
         "system",
+        "parent_thread",
     }
 )
 

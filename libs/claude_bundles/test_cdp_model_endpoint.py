@@ -169,7 +169,8 @@ def test_stage_cdp_prompt_with_skills_rejects_path_sim(
         skills=["reasoning-posture", "consult-posture"],
     )
     on_disk = (
-        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-judgment-ok/prompt.md"
+        tmp_path
+        / "notes/system/ephemeral/cdp-endpoint/exec-skills-judgment-ok/prompt.md"
     )
     text = on_disk.read_text(encoding="utf-8")
     assert text.startswith("/ulg-for-llms\n/reasoning-posture\n/consult-posture\n")
@@ -192,7 +193,9 @@ def test_stage_cdp_prompt_with_skills_inlines_cursor_only(
         prompt_text="## Task\n",
         skills=["investigation-economy", "reasoning-posture"],
     )
-    on_disk = tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
+    on_disk = (
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
+    )
     text = on_disk.read_text(encoding="utf-8")
     assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
     assert '<skill slug="investigation-economy"' in text
@@ -249,7 +252,8 @@ def test_stage_cdp_bare_cortex_uri_is_rewritten_with_rails(
     src.write_text("## bare ask\nno rails here\n", encoding="utf-8")
 
     staged = stage_cdp_prompt_with_skills(
-        execution_id="exec-bare", prompt_uri="cortex://notes/system/specs/bare.md",
+        execution_id="exec-bare",
+        prompt_uri="cortex://notes/system/specs/bare.md",
         skills=None,
     )
 
@@ -407,6 +411,50 @@ def test_run_cdp_generate_proof_before_complete(
     assert submit_bodies[0]["harvest_source"] == "output-file"
     assert submit_bodies[0]["expected_size"] == "large"
     assert submit_bodies[0]["download_output"] is True
+
+
+def test_run_cdp_generate_parent_thread_on_submit_request(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """team_dispatch parent_thread reaches SubmitProjectAskRequest unchanged."""
+    from cdp_ask.models import SubmitProjectAskRequest
+
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-nav")
+    captured: list[SubmitProjectAskRequest] = []
+
+    class _FakeAsk:
+        def submit(
+            self, submit_req: SubmitProjectAskRequest, **kwargs: Any
+        ) -> dict[str, Any]:
+            captured.append(submit_req)
+            return {
+                "execution_id": "sat-nav",
+                "status": "running",
+                "completion_phase": "running",
+                "body_len": 0,
+            }
+
+        def poll(self, execution_id: str, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "execution_id": execution_id,
+                "status": "complete",
+                "completion_phase": "content_proof",
+                "content_proof_uri": "cortex://notes/system/threads/proof.md",
+                "body": "done",
+                "body_len": 4,
+            }
+
+    run_cdp_generate(
+        execution_id="dispatch-nav",
+        model_id="cdp/opus-5-high",
+        prompt_text="navigator doorbell",
+        parent_thread="10479",
+        poll_interval_s=0,
+        ask_client=_FakeAsk(),  # type: ignore[arg-type]
+        sleep=lambda _s: None,
+    )
+    assert captured
+    assert captured[0].parent_thread == "10479"
 
 
 def test_run_cdp_generate_stall_wall_clock(
@@ -619,9 +667,7 @@ def test_run_cdp_generate_wall_clock_preserves_archive_uri(
 def test_has_proof_archiving_phase_not_failed() -> None:
     """Archiving + content_proof_uri counts; failed phase must not (B4)."""
     proof_uri = "cortex://notes/system/threads/proof-arch.md"
-    assert _has_proof(
-        {"completion_phase": "archiving", "content_proof_uri": proof_uri}
-    )
+    assert _has_proof({"completion_phase": "archiving", "content_proof_uri": proof_uri})
     assert not _has_proof(
         {"completion_phase": "failed", "content_proof_uri": proof_uri}
     )
@@ -629,10 +675,7 @@ def test_has_proof_archiving_phase_not_failed() -> None:
 
 def test_has_proof_rejects_083e6e4a_echo_archive() -> None:
     """AC-S1-b negative: prompt-echo archive with attested_model None is not proof."""
-    echo_body = (
-        "You said: /reasoning-posture\n\n"
-        "/reasoning-posture\n"
-    )
+    echo_body = "You said: /reasoning-posture\n\n/reasoning-posture\n"
     snap = {
         "status": "completed",
         "completion_phase": "terminal",
@@ -696,7 +739,9 @@ def test_has_proof_rejects_specimen_unresolved_card() -> None:
         ),
         "attested_model": "Model: Fable 5 High",
         "harvest_provenance": "chat",
-        "artifact_cards": [{"title": "Bind sidecar reasoning posture merge", "kind": "MD"}],
+        "artifact_cards": [
+            {"title": "Bind sidecar reasoning posture merge", "kind": "MD"}
+        ],
         "artifact_cards_unresolved": True,
     }
     assert has_proof(snap) is False
@@ -713,7 +758,9 @@ def test_has_proof_accepts_specimen_when_cards_resolved() -> None:
         ),
         "attested_model": "Model: Fable 5 High",
         "harvest_provenance": "artifact-card",
-        "artifact_cards": [{"title": "Bind sidecar reasoning posture merge", "kind": "MD"}],
+        "artifact_cards": [
+            {"title": "Bind sidecar reasoning posture merge", "kind": "MD"}
+        ],
         "artifact_cards_unresolved": False,
     }
     assert has_proof(snap) is True
@@ -947,9 +994,7 @@ def test_is_overload_only_harvest_matches_archive_fixture() -> None:
     assert _is_overload_only_harvest(_OVERLOAD_ONLY_BODY) is True
     assert _is_overload_only_harvest("legitimate short answer") is False
     assert (
-        _is_overload_only_harvest(
-            "Done. API Error: 529 was transient during the run."
-        )
+        _is_overload_only_harvest("Done. API Error: 529 was transient during the run.")
         is False
     )
     assert (
@@ -1626,8 +1671,7 @@ def test_stage_cdp_prompt_twice_yields_single_manifest_block(
         skills=["reasoning-posture", "consult-posture"],
     )
     on_disk = (
-        tmp_path
-        / "notes/system/ephemeral/cdp-endpoint/exec-double-stage/prompt.md"
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-double-stage/prompt.md"
     )
     once_text = on_disk.read_text(encoding="utf-8")
     # Simulate worker re-entry that still rewrites (defense-in-depth peel).
