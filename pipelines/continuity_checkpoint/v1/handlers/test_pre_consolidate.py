@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import json
-
-from ._card_patch import _format_opportunity_row, parse_worker_json, validate_worker_payload
+from ._card_patch import (
+    _format_opportunity_row,
+    parse_worker_json,
+    validate_worker_payload,
+)
 from .pre_consolidate import _is_sdk_closeout_turn
 
 pytestmark = pytest.mark.offline

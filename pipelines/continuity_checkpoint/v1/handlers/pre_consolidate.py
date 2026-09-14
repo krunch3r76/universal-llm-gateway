@@ -112,7 +112,7 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
 
         tip_residue = ""
         tip, _status = await bus_get(
-            f"/turns/by-number",
+            "/turns/by-number",
             params={"thread": thread, "turn_number": "latest"},
         )
         if isinstance(tip, dict):
