@@ -1,0 +1,14 @@
+[Unit]
+Description=Liaison ticker watchdog timer (root 10479)
+
+[Timer]
+# Tick cadence is ~160s and the staleness limit is 600s, so a 2min sweep bounds
+# detection at roughly 12min worst case — inside the ~14min blind window that
+# motivated this. Persistent=true so a missed sweep fires after a host restart.
+OnBootSec=2min
+OnUnitActiveSec=2min
+Persistent=true
+Unit=liaison-ticker-watchdog.service
+
+[Install]
+WantedBy=timers.target
