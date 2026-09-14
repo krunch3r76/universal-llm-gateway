@@ -96,6 +96,45 @@ def _systemd_unavailable_reason() -> str:
     return reason if not available else "systemd scope wrapping disabled"
 
 
+def scope_unit_name(scope_name: str) -> str:
+    """Full transient unit name (with ``.scope``) for *scope_name*."""
+    return f"{_SCOPE_UNIT_PREFIX}{sanitise_scope_name(scope_name)}.scope"
+
+
+def scope_unit_is_active(unit: str) -> bool:
+    """Whether *unit* currently holds live processes."""
+    try:
+        result = subprocess.run(
+            [_SYSTEMCTL, "--user", "is-active", unit],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.stdout.strip() == "active"
+
+
+def clear_stale_scope_unit(unit: str) -> None:
+    """Release a leftover unit name so a restart can reuse it.
+
+    ``--collect`` only reaps a scope once its own processes exit, so a unit
+    left in ``failed`` state by an abnormal exit keeps owning the name. Naming
+    an existing unit makes ``systemd-run`` exit non-zero, which would surface
+    as the service failing to start rather than as a wrapping problem.
+    """
+    try:
+        subprocess.run(
+            [_SYSTEMCTL, "--user", "reset-failed", unit],
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("could not reset stale scope %s: %s", unit, exc)
+
+
 def build_scope_wrapped_argv(
     args: Sequence[str],
     *,
@@ -141,11 +180,24 @@ def spawn_detached_host_process(
     spawn_args: list[str] = list(args)
     if scope_name is not None:
         if is_systemd_scope_wrapping_available():
-            spawn_args = build_scope_wrapped_argv(
-                args,
-                scope_name=scope_name,
-                memory_max=memory_max,
-            )
+            unit = scope_unit_name(scope_name)
+            if scope_unit_is_active(unit):
+                # Naming a live unit makes systemd-run exit non-zero, which
+                # would read as "the service failed to start". Spawning
+                # unwrapped is exactly the pre-scope behaviour, so a lingering
+                # predecessor costs isolation for this start, never the start.
+                logger.warning(
+                    "scope %s still active; spawning %s without scope",
+                    unit,
+                    scope_name,
+                )
+            else:
+                clear_stale_scope_unit(unit)
+                spawn_args = build_scope_wrapped_argv(
+                    args,
+                    scope_name=scope_name,
+                    memory_max=memory_max,
+                )
         else:
             logger.warning(
                 "systemd scope wrapping unavailable for %s (%s); "
