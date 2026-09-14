@@ -58,7 +58,13 @@ def _probe_user_systemd_manager() -> tuple[bool, str]:
         return False, "systemctl not found in PATH"
     try:
         result = subprocess.run(
-            [_SYSTEMCTL, "--user", "show", "--property=ActiveState", "--value"],
+            # The manager's own Version, NOT ActiveState: `show -p ActiveState`
+            # with no unit prints an empty string and exits 0, which read as
+            # "unreachable" and silently disabled wrapping everywhere. Version
+            # answers reachability directly and is never empty when the manager
+            # responds. is-system-running was rejected: it reports "degraded"
+            # on an otherwise healthy manager that can still create scopes.
+            [_SYSTEMCTL, "--user", "show", "--property=Version", "--value"],
             capture_output=True,
             text=True,
             timeout=5,
@@ -71,10 +77,10 @@ def _probe_user_systemd_manager() -> tuple[bool, str]:
         return False, (
             f"user systemd manager not reachable ({detail or 'systemctl exit nonzero'})"
         )
-    state = result.stdout.strip()
-    if not state:
-        return False, "user systemd manager returned empty ActiveState"
-    return True, f"user systemd manager ActiveState={state!r}"
+    version = result.stdout.strip()
+    if not version:
+        return False, "user systemd manager returned no version"
+    return True, f"user systemd manager version={version!r}"
 
 
 def is_systemd_scope_wrapping_available() -> bool:

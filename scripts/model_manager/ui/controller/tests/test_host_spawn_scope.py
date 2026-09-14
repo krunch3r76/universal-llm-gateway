@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from unittest import mock
 
@@ -256,3 +257,70 @@ def test_scope_unit_name_is_sanitised_and_suffixed() -> None:
     assert host_spawn.scope_unit_name("git integration worker") == (
         "ulg-git-integration-worker.scope"
     )
+
+
+def _fake_completed(stdout: str, returncode: int = 0) -> mock.Mock:
+    result = mock.Mock()
+    result.stdout = stdout
+    result.stderr = ""
+    result.returncode = returncode
+    return result
+
+
+@pytest.mark.offline
+def test_probe_rejects_empty_manager_response() -> None:
+    """An empty probe response must not read as 'reachable'."""
+    with mock.patch.object(
+        host_spawn.subprocess, "run", return_value=_fake_completed("")
+    ):
+        available, reason = host_spawn._probe_user_systemd_manager()
+    assert available is False
+    assert "version" in reason
+
+
+@pytest.mark.offline
+def test_probe_accepts_a_version_response() -> None:
+    """A reachable manager answers its Version, which is never empty.
+
+    Regression: the probe originally asked for ActiveState with no unit, which
+    prints an empty string and exits 0 on a perfectly healthy manager. That
+    read as 'unreachable', so every spawn silently fell back to unwrapped and
+    the whole feature was inert on a host where it worked fine.
+    """
+    with mock.patch.object(
+        host_spawn.subprocess, "run", return_value=_fake_completed("255.4-1ubuntu8")
+    ):
+        available, _reason = host_spawn._probe_user_systemd_manager()
+    assert available is True
+
+
+@pytest.mark.offline
+def test_probe_does_not_ask_for_activestate() -> None:
+    """Pin the argv: `show -p ActiveState` with no unit is empty-and-exit-0."""
+    with mock.patch.object(
+        host_spawn.subprocess, "run", return_value=_fake_completed("255.4")
+    ) as run_mock:
+        host_spawn._probe_user_systemd_manager()
+    argv = run_mock.call_args.args[0]
+    assert "--property=ActiveState" not in argv
+    assert "--property=Version" in argv
+
+
+@pytest.mark.skipif(
+    shutil.which("systemctl") is None, reason="no systemctl on this host"
+)
+def test_wrapping_is_actually_available_on_a_systemd_host() -> None:
+    """The feature must not be inert where it is supposed to work.
+
+    Every other test mocks is_systemd_scope_wrapping_available, so a broken
+    probe stays invisible: the suite is green while no service is ever wrapped.
+    This calls the real probe.
+    """
+    host_spawn._systemd_scope_wrapping_available = None
+    host_spawn._systemd_unavailable_reason_cached = None
+    try:
+        available, reason = host_spawn._probe_user_systemd_manager()
+    finally:
+        host_spawn._systemd_scope_wrapping_available = None
+        host_spawn._systemd_unavailable_reason_cached = None
+    assert available is True, f"scope wrapping inert on a systemd host: {reason}"
