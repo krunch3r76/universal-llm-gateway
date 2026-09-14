@@ -48,6 +48,15 @@ _SERVICE_NAME = "Event service"
 # (a:33648). 64 MiB per reader keeps the whole pool near 2GB.
 _SQLITE_CACHE_KIB = "65536"
 
+# Backstop for the cache bound above, sized from measurement rather than a guess:
+# steady state is ~1.5GB at 26-28 threads, and a full-table GROUP BY across
+# millions of rows moves it by nothing (1588 -> 1528MB), where the same query
+# class cost +11GB before the bound. Historical thread ceiling ~29 projects to
+# ~2GB. 6G is therefore ~4x steady state, generous enough that legitimate work
+# never trips it, while capping a runaway at under a tenth of the 63GB host --
+# which is the whole point, since a breach now kills only this scope.
+_MEMORY_MAX = "6G"
+
 _DEFAULT_DB = "~/.events/events.db"
 _DEFAULT_INGEST_SOCK = os.environ.get(
     "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
@@ -161,6 +170,7 @@ async def start_event_service(
             env=env,
             log_file=log_file,
             scope_name=_MODULE_NAME,
+            memory_max=_MEMORY_MAX,
         )
 
         def _ready() -> bool:
