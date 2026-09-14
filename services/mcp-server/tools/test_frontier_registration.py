@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from team_dispatch_vocab import TEAM_DISPATCH_CONTRACTS
 from typing import Any
 from unittest.mock import patch
+
+from team_dispatch_vocab import TEAM_DISPATCH_CONTRACTS
 
 from tools.frontier import register_frontier_tools
 
@@ -150,7 +151,14 @@ def test_team_dispatch_messages_removed_from_signature() -> None:
 def test_team_dispatch_contract_enum_excludes_consult() -> None:
     """Public contract enum is the six team_dispatch values, not agent_bus consult."""
     assert "consult" not in TEAM_DISPATCH_CONTRACTS
-    assert TEAM_DISPATCH_CONTRACTS >= {"none", "pure-mechanical", "implement", "sketch", "conductor", "wrap"}
+    assert TEAM_DISPATCH_CONTRACTS >= {
+        "none",
+        "pure-mechanical",
+        "implement",
+        "sketch",
+        "conductor",
+        "wrap",
+    }
 
 
 def test_team_dispatch_handoff_relays_to_handoff_endpoint() -> None:
