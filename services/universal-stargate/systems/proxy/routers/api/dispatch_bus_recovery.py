@@ -15,7 +15,10 @@ import time
 from typing import Any
 
 import httpx
-from agent_bus_store.cursor_sdk_dispatch_turn import sdk_terminal_closeout_turn
+from agent_bus_store.cursor_sdk_dispatch_turn import (
+    infer_cursor_sdk_terminal_status,
+    sdk_terminal_closeout_turn,
+)
 from transport_utils import make_async_client
 from universal_logging import get_logger
 
@@ -24,10 +27,6 @@ logger = get_logger(__name__)
 _HTTP_TIMEOUT_S = 10.0
 _WAIT_CHUNK_SECONDS = 60.0
 _CURSOR_SDK_REPLY_SEAT = "cursor-sdk"
-
-
-def _infer_terminal_status(subject: str) -> str:
-    return "failed" if "FAILED" in subject else "completed"
 
 
 def _build_recovered_record(
@@ -258,7 +257,9 @@ async def recover_execution_from_bus_thread(
                     status="running",
                     completed_at=None,
                 )
-            status = _infer_terminal_status(str(closeout.get("subject") or ""))
+            status = infer_cursor_sdk_terminal_status(
+                str(closeout.get("subject") or "")
+            )
             return _build_recovered_record(
                 execution_id=execution_id,
                 pipeline_id=pipeline_id,

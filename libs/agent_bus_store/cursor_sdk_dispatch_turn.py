@@ -29,6 +29,16 @@ def is_cursor_sdk_dispatch_terminal_subject(subject: str) -> bool:
     return True
 
 
+def infer_cursor_sdk_terminal_status(subject: str) -> str:
+    """Map a terminal closeout subject to a link status.
+
+    Only FAILED is signalled in the subject line; every other terminal form
+    (CLOSEOUT, partial, unverified) settles the link as completed, because the
+    link tracks whether the dispatch *finished*, not whether its work passed.
+    """
+    return "failed" if "FAILED" in subject else "completed"
+
+
 def sdk_terminal_closeout_turn(turns: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Return the newest cursor-sdk terminal closeout turn, skipping PARKED/RESUMED."""
     for turn in turns:

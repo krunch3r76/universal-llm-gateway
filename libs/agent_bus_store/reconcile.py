@@ -12,7 +12,10 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-from .cursor_sdk_dispatch_turn import sdk_terminal_closeout_turn
+from .cursor_sdk_dispatch_turn import (
+    infer_cursor_sdk_terminal_status,
+    sdk_terminal_closeout_turn,
+)
 from .db.connection import connect, now
 from .db.lifecycle import _transition_lifecycle_state
 from .db.threads_atomic import close_thread, terminate_dispatch
@@ -41,10 +44,6 @@ def _sdk_terminal_turn(thread_id: str) -> dict[str, Any] | None:
     """Return the latest cursor-sdk terminal closeout turn, if any."""
     turns = get_turns(thread=thread_id, last=50)
     return sdk_terminal_closeout_turn(turns)
-
-
-def _infer_terminal_status(subject: str) -> str:
-    return "failed" if "FAILED" in subject else "completed"
 
 
 def _pending_orphan_reason(reason: str) -> str:
@@ -162,7 +161,7 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
 
     sdk_turn = _sdk_terminal_turn(thread_id)
     if sdk_turn is not None:
-        status = _infer_terminal_status(str(sdk_turn.get("subject") or ""))
+        status = infer_cursor_sdk_terminal_status(str(sdk_turn.get("subject") or ""))
         terminate_dispatch(
             thread_id=thread_id,
             terminal_status=status,
