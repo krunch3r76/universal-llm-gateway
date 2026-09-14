@@ -18,6 +18,7 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
+from services.git_integration_worker import cursor_sdk_branch_divergence
 from services.git_integration_worker.cursor_sdk_branch_archive import (
     archive_branch,
     branch_checked_out_at,
@@ -32,7 +33,6 @@ from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
 )
 from services.git_integration_worker.cursor_sdk_branch_divergence import (
     BranchDivergence,
-    measure_divergence,
 )
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_discharged,
@@ -156,7 +156,9 @@ def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
     because an unverifiable land claim is exactly what this gate exists to catch.
     """
     root = repo.resolve()
-    divergence = measure_divergence(repo=root, branch_name=branch_name)
+    divergence = cursor_sdk_branch_divergence.measure_divergence(
+        repo=root, branch_name=branch_name
+    )
     if not _branch_ref_exists(root, branch_name):
         return LandProbe(
             landed=False,
