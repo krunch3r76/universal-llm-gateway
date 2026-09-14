@@ -15,6 +15,40 @@ from ._clients import bus_get, bus_send, step_output_json
 
 logger = logging.getLogger(__name__)
 
+_MECHANICAL_PREFIX = "TYPE: CHECKPOINT · pipeline · seal facts"
+
+
+def _extract_residue_block(body: str) -> str | None:
+    """Return populated ## Residue body text when present on a prior tip."""
+    if not body:
+        return None
+    try:
+        from markdown_sections import read_section
+    except ImportError:
+        return None
+    for header in (
+        "Residue (authored — cap ~800 chars)",
+        "Residue (authored",
+        "Residue",
+    ):
+        try:
+            text = read_section(body, header).strip()
+        except Exception:  # noqa: BLE001
+            continue
+        if text and _MECHANICAL_PREFIX not in text:
+            return text
+    return None
+
+
+def _carry_forward_residue(*, prior_body: str, prior_turn: int) -> str | None:
+    block = _extract_residue_block(prior_body)
+    if not block:
+        return None
+    marker = (
+        f"(carried forward from turn {prior_turn} — pipeline produced no residue)"
+    )
+    return f"{block.rstrip()}\n{marker}"
+
 
 def _compose_body(
     *,
@@ -77,6 +111,7 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         resolve = step_output_json(outputs, "resolve")
         pre = step_output_json(outputs, "pre_consolidate")
         score = step_output_json(outputs, "score")
+        tail = step_output_json(outputs, "tail_mechanical")
         # Seal is skipped when resolve refuses; an empty seal plus caller
         # residue used to post a hollow CHECKPOINT tip (Window: transcript_id=
         # · turns@cp=0). Never let residue promote a refused/skipped seal.
@@ -105,25 +140,43 @@ class ContinuityCheckpointPostHandler(BaseHandler):
                 "card_patch_applied": False,
             }
 
-        residue = (caller_residue or str(pre.get("residue") or ""))[:800]
         residue_source = "caller" if caller_residue else pre.get("residue_source")
         mission = str(pre.get("mission") or "")
-        body = _compose_body(
-            residue=residue, seal=seal, mission=mission, surface=surface
-        )
-        if score.get("tip_sha"):
-            body = body.replace(
-                "## Anchor",
-                f"## Anchor\nScoreboard: {score.get('tip_uri')} · sha256:{score['tip_sha']}",
-                1,
-            )
-        supersedes_tip = not bool(seal.get("refused"))
 
         tip, _ = await bus_get(
             "/turns/by-number",
             params={"thread": thread, "turn_number": "latest"},
         )
         after_turn = int(tip.get("turn_number") or 0) if isinstance(tip, dict) else 0
+        prior_body = str(tip.get("body") or "") if isinstance(tip, dict) else ""
+
+        if caller_residue:
+            residue = caller_residue[:800]
+        elif residue_source is None:
+            carried = _carry_forward_residue(
+                prior_body=prior_body, prior_turn=after_turn
+            )
+            if carried:
+                residue = carried[:800]
+                residue_source = "carried_forward"
+            else:
+                residue = str(pre.get("residue") or "")[:800]
+        else:
+            residue = str(pre.get("residue") or "")[:800]
+
+        body = _compose_body(
+            residue=residue, seal=seal, mission=mission, surface=surface
+        )
+        scoreboard_pin = tail.get("scoreboard_pin")
+        if not scoreboard_pin and score.get("tip_sha"):
+            scoreboard_pin = (
+                f"Scoreboard: {score.get('tip_uri')} · sha256:{score['tip_sha']}"
+            )
+        if scoreboard_pin:
+            body = body.replace("## Anchor", f"## Anchor\n{scoreboard_pin}", 1)
+            for row_line in tail.get("fold_row_lines") or ():
+                body = f"{body.rstrip()}\n{row_line}\n"
+        supersedes_tip = not bool(seal.get("refused"))
 
         slug = thread[:12]
         subject = (
@@ -203,10 +256,13 @@ class ContinuityCheckpointPostHandler(BaseHandler):
                 "refused": seal.get("refused"),
             },
             "scoreboard": {
-                "tip_sha": score.get("tip_sha"),
-                "tip_uri": score.get("tip_uri"),
-                "skipped": score.get("skipped", True),
-                "fold": score.get("fold"),
+                "tip_sha": tail.get("scoreboard_sha256") or score.get("tip_sha"),
+                "tip_uri": tail.get("scoreboard_uri") or score.get("tip_uri"),
+                "skipped": not bool(tail.get("folded")),
+                "fold": tail or score.get("fold"),
+                "family": tail.get("family"),
+                "card_written": tail.get("card_written"),
             },
+            "tail_mechanical": tail,
         }
         return StepOutput(raw=json.dumps(result, default=str), json=result)

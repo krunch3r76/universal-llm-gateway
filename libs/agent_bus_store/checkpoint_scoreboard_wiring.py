@@ -1,4 +1,8 @@
-"""CHECKPOINT scoreboard coherence gate (AMEND-R D5)."""
+"""CHECKPOINT scoreboard coherence gate (AMEND-R D5).
+
+URI resolution delegates to ``scoreboard_ref.resolve_scoreboard_ref``; fold writes
+are gated by ``family`` in ``tail_mechanical`` (conductor only — charter validate-only).
+"""
 
 from __future__ import annotations
 
@@ -35,8 +39,17 @@ def _gate_mode() -> str:
     return mode if mode in {"observe", "enforce"} else "observe"
 
 
+def _strip_status_markdown(raw: str) -> str:
+    """Remove seat qualifiers and bold wrappers before status classification (B4-1)."""
+    text = raw.strip()
+    if text.startswith("**") and text.endswith("**"):
+        text = text[2:-2].strip()
+    text = re.sub(r"\([^)]*\)", "", text).strip()
+    return text.upper()
+
+
 def _status_class(raw: str) -> str:
-    token = raw.strip().upper()
+    token = _strip_status_markdown(raw)
     if token in _DONE_CLASS:
         return "DONE"
     if token in _OPEN_CLASS:
@@ -76,19 +89,17 @@ def _resolve_scoreboard_uri(
     *,
     thread: str,
     tags: list[str],
+    tip_body: str = "",
 ) -> str | None:
-    for token in re.split(r"\s*[·|]\s*", scoreboard_line):
-        piece = token.strip()
-        if piece.startswith("cortex://") and piece.endswith("-scoreboard.md"):
-            return piece
-        if _SLUG_RE.match(piece):
-            return f"cortex://notes/system/scoreboards/{piece}-scoreboard.md"
-    for tag in tags:
-        if tag.startswith("scoreboard:"):
-            slug = tag.removeprefix("scoreboard:").strip()
-            if slug:
-                return f"cortex://notes/system/scoreboards/{slug}-scoreboard.md"
-    return None
+    """Thin delegate to ``resolve_scoreboard_ref`` (phase B — family at fold boundary)."""
+    from agent_bus_store.scoreboard_ref import resolve_scoreboard_ref
+
+    body = tip_body
+    if scoreboard_line and "Scoreboard:" not in body:
+        prefix = f"Scoreboard: {scoreboard_line}\n"
+        body = f"{prefix}{body}" if body else prefix
+    ref = resolve_scoreboard_ref(options={}, tip_body=body, thread_tags=tags)
+    return ref.uri if ref else None
 
 
 def _read_scoreboard_body(uri: str) -> tuple[str, str] | None:
@@ -153,7 +164,12 @@ def assert_scoreboard_coherent(
     if not scoreboard_line:
         return None
 
-    uri = _resolve_scoreboard_uri(scoreboard_line, thread=thread, tags=tags or [])
+    uri = _resolve_scoreboard_uri(
+        scoreboard_line or "",
+        thread=thread,
+        tags=tags or [],
+        tip_body=body,
+    )
     if uri is None:
         _record("agent_bus.checkpoint.scoreboard_unresolved", thread=thread)
         if _gate_mode() == "enforce":

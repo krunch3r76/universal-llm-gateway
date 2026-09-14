@@ -11,6 +11,7 @@ from .pre_consolidate import ContinuityCheckpointPreConsolidateHandler
 from .resolve import ContinuityCheckpointResolveHandler
 from .score import ContinuityCheckpointScoreHandler
 from .seal import ContinuityCheckpointSealHandler
+from .tail_mechanical import ContinuityCheckpointTailMechanicalHandler
 
 if TYPE_CHECKING:
     from systems.pipeline.core.domain_router import DomainRouter
@@ -55,6 +56,11 @@ def register_handlers(router: DomainRouter) -> None:
     )
     router.register_domain_handler_class(
         "continuity_checkpoint",
+        "continuity_checkpoint_tail_mechanical_v1",
+        ContinuityCheckpointTailMechanicalHandler,
+    )
+    router.register_domain_handler_class(
+        "continuity_checkpoint",
         "continuity_checkpoint_post_v1",
         ContinuityCheckpointPostHandler,
     )
@@ -71,5 +77,6 @@ __all__ = [
     "ContinuityCheckpointResolveHandler",
     "ContinuityCheckpointScoreHandler",
     "ContinuityCheckpointSealHandler",
+    "ContinuityCheckpointTailMechanicalHandler",
     "register_handlers",
 ]

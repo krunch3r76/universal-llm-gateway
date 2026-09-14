@@ -50,6 +50,12 @@ steps:
       - step: pre_consolidate
         fields: [json]
 
+  - name: tail_mechanical
+    type: continuity_checkpoint_tail_mechanical_v1
+    reads_from:
+      - step: pre_consolidate
+        fields: [json]
+
   - name: post
     type: continuity_checkpoint_post_v1
     reads_from:
@@ -60,4 +66,6 @@ steps:
       - step: pre_consolidate
         fields: [json]
       - step: score
+        fields: [json]
+      - step: tail_mechanical
         fields: [json]

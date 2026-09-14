@@ -97,7 +97,7 @@ def validate_worker_payload(data: dict[str, Any]) -> tuple[bool, str]:
     return True, "ok"
 
 
-def _card_path(thread: str) -> Path | None:
+def card_path(thread: str) -> Path | None:
     root_env = os.environ.get("CORTEX_FILES_ROOT")
     if not root_env:
         try:
@@ -132,18 +132,18 @@ def apply_card_patch(
 ) -> tuple[bool, str, str]:
     """Patch ## Resume open and append opportunities rows. Returns applied, uri, reason."""
     card_uri = f"cortex://notes/system/threads/{thread}-continuity.md"
-    card_path = _card_path(thread)
-    if card_path is None or not card_path.is_file():
+    path = card_path(thread)
+    if path is None or not path.is_file():
         return False, card_uri, "files_root_unreachable"
-    text = card_path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
     try:
         updated, _ = replace_section(text, "Resume open", resume_open.strip() + "\n")
     except Exception:  # noqa: BLE001
         return False, card_uri, "resume_open_patch_failed"
-    card_path.write_text(updated, encoding="utf-8")
+    path.write_text(updated, encoding="utf-8")
 
     if opportunities_rows:
-        opp_path = card_path.parent / f"{thread}-opportunities.md"
+        opp_path = path.parent / f"{thread}-opportunities.md"
         if opp_path.is_file():
             opp_text = opp_path.read_text(encoding="utf-8")
             try:
@@ -161,4 +161,68 @@ def apply_card_patch(
     return True, card_uri, "ok"
 
 
-__all__ = ["apply_card_patch", "parse_worker_json", "validate_worker_payload"]
+def derive_settled_live_next(
+    row_status: dict[str, str],
+    rows: tuple[str, ...],
+) -> dict[str, str]:
+    """Fold-derived Settled/Live/Next for continuity card (phase B §4.6)."""
+    settled_ids: list[str] = []
+    for row_id in rows:
+        if row_status.get(row_id) == "DONE":
+            settled_ids.append(row_id)
+        else:
+            break
+    live = next((row_id for row_id in rows if row_status.get(row_id) != "DONE"), "")
+    if not live and rows:
+        live = rows[-1]
+    live_idx = rows.index(live) if live in rows else max(len(rows) - 1, 0)
+    nxt = rows[live_idx + 1] if live_idx + 1 < len(rows) else ""
+    return {
+        "settled": ", ".join(settled_ids) if settled_ids else "none",
+        "live": live or "none",
+        "next": nxt or "none",
+    }
+
+
+_SETTLED_RE = re.compile(r"(?m)^\*\*Settled:\*\*.*$")
+_LIVE_RE = re.compile(r"(?m)^\*\*Live:\*\*.*$")
+_NEXT_RE = re.compile(r"(?m)^\*\*Next:\*\*.*$")
+
+
+def apply_fold_summary_to_card(
+    *,
+    thread: str,
+    settled: str,
+    live: str,
+    next_row: str,
+) -> tuple[bool, str, str]:
+    """Patch **Settled/Live/Next** lines on the continuity card from a fold."""
+    card_uri = f"cortex://notes/system/threads/{thread}-continuity.md"
+    path = card_path(thread)
+    if path is None or not path.is_file():
+        return False, card_uri, "files_root_unreachable"
+    text = path.read_text(encoding="utf-8")
+    block = (
+        f"**Settled:** {settled}\n"
+        f"**Live:** {live}\n"
+        f"**Next:** {next_row}\n"
+    )
+    if _SETTLED_RE.search(text):
+        text = _SETTLED_RE.sub(f"**Settled:** {settled}", text, count=1)
+        text = _LIVE_RE.sub(f"**Live:** {live}", text, count=1)
+        text = _NEXT_RE.sub(f"**Next:** {next_row}", text, count=1)
+    else:
+        text = text.rstrip() + "\n\n" + block
+    path.write_text(text, encoding="utf-8")
+    return True, card_uri, "ok"
+
+
+__all__ = [
+    "apply_card_patch",
+    "apply_fold_summary_to_card",
+    "card_path",
+    "derive_settled_live_next",
+    "parse_worker_json",
+    "validate_worker_payload",
+]
+

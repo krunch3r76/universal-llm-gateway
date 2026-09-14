@@ -144,6 +144,31 @@ def stargate_continuity_checkpoint_failed(
 
 
 @event_factory
+def stargate_continuity_checkpoint_tail_folded(
+    *,
+    execution_id: str,
+    thread: str,
+    family: str,
+    slug: str,
+    journal_applied: bool,
+) -> Event:
+    ev = Event(
+        signal="stargate.continuity.checkpoint.tail_folded",
+        role="observation",
+        scope="global",
+        payload={
+            "execution_id": execution_id,
+            "thread": thread,
+            "family": family,
+            "slug": slug,
+            "journal_applied": journal_applied,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
 def mcp_continuity_checkpoint_requested(
     *,
     surface: str,
@@ -166,4 +191,5 @@ __all__ = [
     "stargate_continuity_checkpoint_failed",
     "stargate_continuity_checkpoint_posted",
     "stargate_continuity_checkpoint_sealed",
+    "stargate_continuity_checkpoint_tail_folded",
 ]

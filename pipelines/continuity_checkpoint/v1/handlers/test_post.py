@@ -6,9 +6,29 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from .post import ContinuityCheckpointPostHandler, _compose_body
+from .post import (
+    ContinuityCheckpointPostHandler,
+    _carry_forward_residue,
+    _compose_body,
+)
 
 pytestmark = pytest.mark.offline
+
+
+def test_c2_carry_forward_residue_from_prior_tip() -> None:
+    prior = (
+        "## Residue (authored — cap ~800 chars)\n"
+        "Settled: prior arc work shipped.\n"
+        "Next: verify fold.\n"
+    )
+    carried = _carry_forward_residue(prior_body=prior, prior_turn=12)
+    assert carried is not None
+    assert "Settled: prior arc work shipped." in carried
+    assert "(carried forward from turn 12 — pipeline produced no residue)" in carried
+
+
+def test_c2_no_prior_residue_returns_none() -> None:
+    assert _carry_forward_residue(prior_body="## Anchor\nno residue\n", prior_turn=1) is None
 
 
 def test_compose_body_refused_seal_omits_window() -> None:

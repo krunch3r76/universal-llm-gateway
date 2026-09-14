@@ -7,9 +7,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from agent_bus_store.checkpoint_scoreboard_wiring import (
+    _gate_mode,
+    _resolve_scoreboard_uri,
+    _status_class,
+    assert_scoreboard_coherent,
+)
 from fastapi import HTTPException
-
-from agent_bus_store.checkpoint_scoreboard_wiring import assert_scoreboard_coherent
 
 pytestmark = pytest.mark.offline
 
@@ -132,3 +136,35 @@ def test_t24_observe_mode_advisory(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert advisory is not None
     assert advisory["advisory"] == "checkpoint.scoreboard_drift"
     assert advisory["mode"] == "observe"
+
+
+def test_b4_status_class_strips_qualifier_and_bold() -> None:
+    assert _status_class("DONE(harvest)") == "DONE"
+    assert _status_class("**BLOCKED(dispatch)**") == "OPEN"
+    assert _status_class("RETRACTED") == "RETRACTED"
+
+
+def test_b4_gate_mode_defaults_observe() -> None:
+    import os
+
+    env = os.environ.pop("AGENT_BUS_SCOREBOARD_GATE_MODE", None)
+    try:
+        assert _gate_mode() == "observe"
+    finally:
+        if env is not None:
+            os.environ["AGENT_BUS_SCOREBOARD_GATE_MODE"] = env
+
+
+def test_b1_whole_body_uri_resolves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    uri = "cortex://notes/system/threads/10479-charter-scoreboard.md"
+    path = tmp_path / uri.removeprefix("cortex://")
+    path.parent.mkdir(parents=True)
+    path.write_text(_SCOREBOARD_BODY, encoding="utf-8")
+    resolved = _resolve_scoreboard_uri(
+        "",
+        thread="10479",
+        tags=[],
+        tip_body=f"WIP — board at {uri} · G6 CLEAR\n",
+    )
+    assert resolved == uri
