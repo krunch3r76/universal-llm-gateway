@@ -188,6 +188,23 @@ def _safe_tip_checkpoint_body(thread: str) -> tuple[str, str | None]:
         return "", f"tip_body_unavailable: {exc}"[:200]
 
 
+def _safe_thread_tags(thread: str) -> list[str]:
+    """Thread tags from the store — the relay does not forward them in options.
+
+    Without this the scoreboard: tag precedence steps are unreachable in
+    production, leaving tip-body and explicit option as the only paths.
+    """
+    try:
+        from agent_bus_store.db.connection import connect
+        from agent_bus_store.db.threads import _load_thread_tags
+
+        with connect() as conn:
+            return _load_thread_tags(conn, [thread]).get(thread, [])
+    except Exception as exc:  # noqa: BLE001 — checkpoint must not fail
+        logger.warning("tail_mechanical tag read failed thread=%s err=%s", thread, exc)
+        return []
+
+
 class ContinuityCheckpointTailMechanicalHandler(BaseHandler):
     """Resolve scoreboard family; fold conductor boards; validate charter boards."""
 
@@ -199,6 +216,8 @@ class ContinuityCheckpointTailMechanicalHandler(BaseHandler):
         options["execution_id"] = str(context.execution_id or "")
         thread = str(options.get("thread") or context.dispatch_thread_id or "")
         tags = list(options.get("tags") or [])
+        if not tags:
+            tags = await asyncio.to_thread(_safe_thread_tags, thread)
         tip_body, tip_error = await asyncio.to_thread(
             _safe_tip_checkpoint_body, thread
         )
