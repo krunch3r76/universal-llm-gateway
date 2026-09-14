@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 from implement_admission.conductor_score_journal import load_journal, read_tip
 from implement_admission.conductor_score_table import cell
-from implement_admission.conductor_witness_types import FoldResult, row_status_in_tip
+from implement_admission.conductor_witness_types import FoldResult
 
 from .conftest import (
     DISTINCT_MODE,
@@ -64,8 +64,10 @@ def test_unresolved_emits_skipped_reason() -> None:
     assert emit.call_args.args[1]["reason"] == "scoreboard_unresolved"
 
 
-def test_conductor_fold_journals_once(tmp_path: Path, cortex_files_root: Path) -> None:
-    """X-1 / B1-3 — conductor fold journals once; Status not Mode moves; post-fold pin sha."""
+def test_conductor_projection_does_not_journal(
+    tmp_path: Path, cortex_files_root: Path
+) -> None:
+    """X-1 / B1-3 — conductor projection reports status but writes nothing; pin = on-disk sha."""
     slug = "tail-mechanical-fold"
     uri = conductor_board(tmp_path, slug)
     thread = "7777"
@@ -86,24 +88,26 @@ def test_conductor_fold_journals_once(tmp_path: Path, cortex_files_root: Path) -
             files_root=tmp_path,
         )
 
-    journal = load_journal(slug, files_root=tmp_path)
-    assert len(journal) == before + 1
-    witness_folds = [record for record in journal if record.get("reason") == "witness_fold"]
-    assert len(witness_folds) == 1
+    # Projection only: the tail must not journal or touch the tip. The witness
+    # rewrites operator-recorded DONE to CLAIMED, and CHECKPOINT fires far more
+    # often than a conductor hop, so nothing here may write.
+    assert len(load_journal(slug, files_root=tmp_path)) == before
 
-    folded_body, on_disk_sha = read_tip(slug, files_root=tmp_path)
-    assert witness_folds[0]["tip_sha"] == on_disk_sha
-    assert row_status_in_tip(folded_body, "G1") == "DONE"
+    disk_body, on_disk_sha = read_tip(slug, files_root=tmp_path)
+    assert on_disk_sha == pre_fold_sha
     g1_line = next(
-        line for line in folded_body.splitlines() if line.lstrip().startswith("| G1 |")
+        line for line in disk_body.splitlines() if line.lstrip().startswith("| G1 |")
     )
     assert cell(g1_line, 3) == DISTINCT_MODE
 
     assert out.get("family") == "conductor"
-    assert out.get("folded") is True
+    assert out.get("folded") is False
+    assert out.get("reason") == "projection_only"
+    assert out.get("journal_applied") is False
+    # The projection is still reported, it is simply not persisted.
+    assert (out.get("row_status") or {}).get("G1") == "DONE"
     post_sha = out.get("scoreboard_sha256")
     assert post_sha == on_disk_sha
-    assert post_sha != pre_fold_sha
     assert out["scoreboard_pin"].startswith(f"Scoreboard: {uri} · sha256:{post_sha[:8]}")
     assert len(out.get("fold_row_lines") or []) == 1
     assert (out.get("fold_row_lines") or [""])[0].lstrip().startswith("| G1 |")
@@ -200,4 +204,5 @@ def test_journal_rejected_never_raises(mock_fold: object, tmp_path: Path) -> Non
         files_root=tmp_path,
     )
     assert out["folded"] is False
-    assert out["reason"] == "journal_rejected"
+    # journal_applied=False is the expected projection-only outcome, not a rejection.
+    assert out["reason"] == "projection_only"

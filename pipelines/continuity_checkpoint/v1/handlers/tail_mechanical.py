@@ -101,11 +101,14 @@ def run_tail_mechanical(
             cortex=DefaultWitnessCortex(),
             repo=_REPO,
         )
+        # Projection only. The witness fold rewrites operator-recorded DONE
+        # gates to CLAIMED; CHECKPOINT fires far more often and on more roots
+        # than a conductor hop, so the tail reads and reports, never writes.
         fold = fold_scoreboard(
             slug,
             deps=deps,
             files_root=files_root,
-            write_journal=True,
+            write_journal=False,
         )
     except Exception as exc:  # noqa: BLE001 — checkpoint must not fail
         logger.warning("tail_mechanical fold failed slug=%s err=%s", slug, exc)
@@ -121,17 +124,10 @@ def run_tail_mechanical(
             "scoreboard_uri": ref.uri,
         }
 
-    if fold.journal_applied is False and fold.folded_body != fold.raw_body:
-        return {
-            "folded": False,
-            "family": "conductor",
-            "reason": "journal_rejected",
-            "scoreboard_uri": ref.uri,
-            "scoreboard_sha256": fold.tip_sha,
-            "scoreboard_pin": pin,
-        }
-
-    tip_sha = fold.tip_sha or tip_sha256(fold.folded_body)
+    # Projection-only: an unapplied journal is the expected outcome here, so it
+    # is not a rejection. fold.tip_sha describes the projected body, which was
+    # never written — a pin must name what a reader will actually find on disk.
+    tip_sha = tip_sha256(fold.raw_body)
     pin = _format_scoreboard_pin(ref.uri, tip_sha)
     summary = derive_settled_live_next(fold.row_status, tuple(fold.row_status.keys()))
     card_written, _card_uri, card_reason = apply_fold_summary_to_card(
@@ -152,9 +148,9 @@ def run_tail_mechanical(
         journal_applied=bool(fold.journal_applied),
     )
     return {
-        "folded": True,
+        "folded": False,
         "family": "conductor",
-        "reason": "witness_fold" if fold.journal_applied else "fold_idempotent",
+        "reason": "projection_only",
         "scoreboard_uri": ref.uri,
         "scoreboard_sha256": tip_sha,
         "scoreboard_pin": pin,
