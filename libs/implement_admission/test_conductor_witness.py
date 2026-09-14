@@ -21,6 +21,7 @@ from implement_admission.conductor_witness import (
     row_witnesses,
 )
 from implement_admission.conductor_witness_defaults import score_resurface_in_turns
+from implement_admission.conductor_witness_types import row_status_in_tip
 
 pytestmark = pytest.mark.offline
 
@@ -594,9 +595,164 @@ def test_nested_implement_injection_witnesses_g5(tmp_path: Path) -> None:
     assert g5.detail == dispatch_id
 
 
+def _g1_witness_deps(repo: Path) -> FoldDeps:
+    rel = {
+        "id": 42,
+        "source_id": _SOURCE_REF,
+        "target_id": "document:entity-private-id-architecture",
+        "type_id": "derived_from",
+    }
+    return FoldDeps(
+        cortex=_StubCortex(relationships=[rel]),
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=repo,
+    )
+
+
+@pytest.mark.offline
+def test_b0_witnessed_g1_folds_status_preserves_mode(tmp_path: Path) -> None:
+    """B0-1 — witnessed G1 writes Status, not Mode (5-column sparse-born board).
+
+    Regression pin: pre-fix ``_render_folded_body`` at ``621adef9`` (HEAD before
+    ``acfd4de7``) wrote cell index 3 (Mode) on this fixture; ``row_status_in_tip``
+    then read OPEN while Mode showed DONE.
+    """
+    files_root = tmp_path / "cortex"
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    tip = (
+        "# Scoreboard\n\n## Gated deliverables\n\n"
+        "| ID | Deliverable | Mode | Status | Stops |\n|---|---|---|---|---|\n"
+        "| G1 | Architecture | — | OPEN | |\n"
+    )
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(tip, encoding="utf-8")
+    fold = fold_scoreboard(
+        _SLUG,
+        deps=_g1_witness_deps(tmp_path / "repo"),
+        files_root=files_root,
+        write_journal=False,
+    )
+    assert fold is not None
+    row = "| G1 | Architecture | — | DONE | |"
+    assert row in fold.folded_body
+    assert row_status_in_tip(fold.folded_body, "G1") == "DONE"
+    mode_cell = [p.strip() for p in row.split("|")][3]
+    assert mode_cell == "—"
+
+
+@pytest.mark.offline
+def test_b0_witnessed_g1_canonical_referent_header(tmp_path: Path) -> None:
+    """B0-1 — 7445-style header: Status column write preserves Canonical referent."""
+    files_root = tmp_path / "cortex"
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    referent = "cortex://notes/system/specs/example.md"
+    tip = (
+        "# Scoreboard\n\n## Gated deliverables\n\n"
+        "| ID | Deliverable | Canonical referent | Status | Gate / Evidence |\n"
+        "|---|---|---|---|---|\n"
+        f"| G1 | Architecture | {referent} | OPEN | |\n"
+    )
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(tip, encoding="utf-8")
+    fold = fold_scoreboard(
+        _SLUG,
+        deps=_g1_witness_deps(tmp_path / "repo"),
+        files_root=files_root,
+        write_journal=False,
+    )
+    assert fold is not None
+    assert row_status_in_tip(fold.folded_body, "G1") == "DONE"
+    g1_line = next(
+        line for line in fold.folded_body.splitlines() if line.lstrip().startswith("| G1 |")
+    )
+    parts = [p.strip() for p in g1_line.split("|")]
+    assert parts[3] == referent
+    assert parts[4] == "DONE"
+
+
+@pytest.mark.offline
+def test_b0_witnessed_g1_legacy_four_column_header(tmp_path: Path) -> None:
+    """B0-1 — legacy 4-column header still folds witnessed G1 to DONE."""
+    files_root = tmp_path / "cortex"
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    tip = (
+        "# Scoreboard\n\n## Gated deliverables\n\n"
+        "| ID | Deliverable | Status | Stops |\n|---|---|---|---|\n"
+        "| G1 | Architecture | OPEN | |\n"
+    )
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(tip, encoding="utf-8")
+    fold = fold_scoreboard(
+        _SLUG,
+        deps=_g1_witness_deps(tmp_path / "repo"),
+        files_root=files_root,
+        write_journal=False,
+    )
+    assert fold is not None
+    assert "| G1 | Architecture | DONE | |" in fold.folded_body
+    assert row_status_in_tip(fold.folded_body, "G1") == "DONE"
+
+
+@pytest.mark.offline
+def test_b0_no_status_header_table_unchanged(tmp_path: Path) -> None:
+    """B0-2 — table without Status header is returned unchanged; no journal."""
+    files_root = tmp_path / "cortex"
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    tip = (
+        "# Scoreboard\n\n## Gated deliverables\n\n"
+        "| ID | Deliverable | Canonical referent | Gate / Evidence |\n"
+        "|---|---|---|---|\n"
+        "| G1 | Architecture | — | pending |\n"
+    )
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(tip, encoding="utf-8")
+    before = len(load_journal(_SLUG, files_root=files_root))
+    fold = fold_scoreboard(
+        _SLUG,
+        deps=_g1_witness_deps(tmp_path / "repo"),
+        files_root=files_root,
+        write_journal=True,
+    )
+    assert fold is not None
+    assert fold.folded_body == fold.raw_body
+    assert fold.journal_applied is False
+    assert len(load_journal(_SLUG, files_root=files_root)) == before
+
+
+@pytest.mark.offline
+def test_b0_consecutive_folds_one_journal_record(tmp_path: Path) -> None:
+    """B0-4 — unchanged witnesses: second fold is idempotent; one journal record total."""
+    files_root = tmp_path / "cortex"
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    tip = (
+        "# Scoreboard\n\n## Gated deliverables\n\n"
+        "| ID | Deliverable | Mode | Status | Stops |\n|---|---|---|---|---|\n"
+        "| G1 | Architecture | — | OPEN | |\n"
+    )
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(tip, encoding="utf-8")
+    deps = _g1_witness_deps(tmp_path / "repo")
+    first = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=True)
+    assert first is not None
+    assert first.journal_applied is True
+    after_first = len(load_journal(_SLUG, files_root=files_root))
+    assert after_first >= 1
+    second = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=True)
+    assert second is not None
+    assert second.folded_body == second.raw_body
+    assert second.journal_applied is False
+    assert len(load_journal(_SLUG, files_root=files_root)) == after_first
+
+
 @pytest.mark.offline
 def test_b0_five_column_tip_folds_status_and_reads_stops(tmp_path: Path) -> None:
-    """B0 (a:33504) — sparse-born boards fold the Status cell and keep Mode intact."""
+    """B0 (a:33504) — sparse-born boards fold the Status cell and keep Mode intact.
+
+    Regression pin: pre-fix ``_render_folded_body`` at ``621adef9`` clobbered Mode
+    on this fixture (see ``test_b0_witnessed_g1_folds_status_preserves_mode``).
+    """
     files_root = tmp_path / "cortex"
     scoreboards = files_root / "notes/system/scoreboards"
     scoreboards.mkdir(parents=True)
