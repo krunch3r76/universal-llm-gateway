@@ -11,10 +11,6 @@ from typing import Any
 from claude_bundles.lane_a_closeout_checkpoint import (
     validate_lane_a_closeout_checkpoint,
 )
-from systems.frontier_consult.story_wire import (
-    build_association_envelope,
-    safe_emit_observation,
-)
 
 from services.git_integration_worker.config import load_config
 from services.git_integration_worker.cursor_auto.caller_auditable import (
@@ -160,7 +156,9 @@ async def relay_confer_outcome(
             relay, fallback=TERMINAL_REASON_CONFER_RELAY_FAILED
         )
     queue.mark_done(job.job_id, failed=failed, terminal_reason=term_reason)
-    journal_status = _journal_terminal_status(payload_status=payload.status, failed=failed)
+    journal_status = _journal_terminal_status(
+        payload_status=payload.status, failed=failed
+    )
     disposition = "fence_violation" if fence_violation else "conferred"
     append_journal_entry(
         thread_id=job.thread_id,
@@ -219,6 +217,17 @@ async def _emit_closeout_relayed_observation(
     execution_id: str,
     closeout_status: str,
 ) -> None:
+    # Local import: `systems.*` lives under services/universal-stargate, not on
+    # this process's PYTHONPATH (Environment=PYTHONPATH=…/libs in the systemd
+    # unit) — a top-level import here crash-loops the whole worker at startup
+    # even though this observation-emit path is optional. Every other systems.*
+    # dependency in this package (cursor_sdk_association.py,
+    # cursor_sdk_delivery_audit.py) is already deferred the same way.
+    from systems.frontier_consult.story_wire import (
+        build_association_envelope,
+        safe_emit_observation,
+    )
+
     def _emit() -> None:
         envelope = build_association_envelope(
             purpose_body=job.body,
@@ -479,7 +488,9 @@ async def relay_closeout_outcome(
         thread_id=job.thread_id,
         dispatch_id=dispatch_id,
         contract=job.contract,
-        terminal_status=_journal_terminal_status(payload_status=payload.status, failed=failed),
+        terminal_status=_journal_terminal_status(
+            payload_status=payload.status, failed=failed
+        ),
         disposition=outcome_disposition_for_stamp(
             str(contract_info["disposition_hint"]),
             m1_satisfied=m1_nested_relay(
