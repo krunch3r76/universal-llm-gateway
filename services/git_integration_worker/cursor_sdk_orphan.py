@@ -362,6 +362,12 @@ def sweep_unowned_bridges(
                 proc.pid,
                 exc,
             )
+    if killed or kill_failed:
+        # The roster we just changed is the one the restart gate reads. Leaving
+        # the TTL cache warm would let a swept bridge keep blocking for another
+        # tick — the sweeper and the gate disagreeing about the same process is
+        # the exact defect a:33561 is about.
+        reset_live_bridge_occupancy_cache()
     return BridgeSweepResult(scanned=scanned, killed=killed, kill_failed=kill_failed)
 
 

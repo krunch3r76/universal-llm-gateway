@@ -277,3 +277,75 @@ def test_sweep_kills_unowned_bridge_at_drain_age_threshold(
     default_age = sweep_min_age_s(restart_intent_pending=False)
     assert sweep_unowned_bridges(min_age_s=default_age).killed == []
     assert proc2.killed is False
+
+
+class _FakeSweepProc:
+    """psutil.Process stand-in for the sweep path (needs age + kill)."""
+
+    def __init__(self, pid: int, *, dispatch_id: str | None, age_s: float) -> None:
+        self.pid = pid
+        self._env = (
+            {} if dispatch_id is None else {"CURSOR_SDK_DISPATCH_ID": dispatch_id}
+        )
+        self._age_s = age_s
+        self.killed = False
+
+    def create_time(self) -> float:
+        return time.time() - self._age_s
+
+    def environ(self) -> dict[str, str]:
+        return self._env
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0
+
+
+def test_sweep_invalidates_occupancy_cache_so_gate_sees_the_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A swept bridge must not keep blocking the gate from the TTL cache.
+
+    The sweeper and the restart gate read the same roster. If the sweep kills a
+    bridge but leaves the occupancy cache warm, the gate keeps counting the
+    dead process until the TTL expires and defers another cycle — the sweeper
+    and the gate disagreeing about one process, which is precisely the defect
+    class a:33561 is about.
+    """
+    proc = _FakeSweepProc(pid=4242, dispatch_id=None, age_s=9999.0)
+    monkeypatch.setattr(orphan_mod.psutil, "process_iter", lambda attrs=None: [proc])
+    monkeypatch.setattr(orphan_mod, "is_cursor_sdk_bridge_process", lambda _proc: True)
+
+    orphan_mod._occupancy_cache = (
+        time.monotonic(),
+        [orphan_mod.BridgeOccupancy(pid=4242, cwd="/repo", dispatch_id=None)],
+    )
+
+    result = orphan_mod.sweep_unowned_bridges(min_age_s=0.0)
+
+    assert result.killed == [4242]
+    assert proc.killed is True
+    assert orphan_mod._occupancy_cache is None
+
+
+def test_sweep_that_kills_nothing_leaves_the_cache_warm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A no-op sweep must not throw away a valid cached roster.
+
+    Invalidating on every sweep would reintroduce the full process-table scan
+    that fix 3a exists to avoid.
+    """
+    monkeypatch.setattr(orphan_mod.psutil, "process_iter", lambda attrs=None: [])
+    cached = (
+        time.monotonic(),
+        [orphan_mod.BridgeOccupancy(pid=99, cwd="/repo", dispatch_id="d1")],
+    )
+    orphan_mod._occupancy_cache = cached
+
+    result = orphan_mod.sweep_unowned_bridges(min_age_s=0.0)
+
+    assert result.killed == [] and result.kill_failed == []
+    assert orphan_mod._occupancy_cache == cached
