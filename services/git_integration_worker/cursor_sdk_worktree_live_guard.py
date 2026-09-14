@@ -23,7 +23,9 @@ deleting costs a live dispatch.
 
 from __future__ import annotations
 
+import sqlite3
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,6 +37,18 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _LIVE_LEDGER_STATUSES = ("admitted", "running", "queued", "parked_waiting")
+
+# How long a bridge may keep claiming its worktree after its own dispatch went
+# terminal. Not zero: a bridge flushes on the way out, and reaping mid-flush
+# costs the write (the whole point of this module). Not unbounded either: a
+# process that never exits then strands its branch forever, because the tree is
+# never reaped and ``discharge_landed`` refuses with ``live_bridge`` on every
+# retry (a:33686 — lane-11231 held ~50min past closeout at 0% CPU by pid
+# 223045, fully landed and permanently undischargeable).
+#
+# 5min is ~10x the observed shutdown-flush window and ~0.1x the observed leak,
+# so it separates the two without discriminating on a margin.
+_TERMINAL_CLAIM_GRACE_S = 300.0
 
 # One sweep asks the guard from four places (active set, reap loop, reconcile,
 # and once per prune candidate). A full ``process_iter`` with cmdline+exe reads
@@ -112,8 +126,41 @@ def containing_worktree_under_root(
     return str(root / rel.parts[0])
 
 
+def _terminal_claim_expired(row: sqlite3.Row, *, now: datetime | None = None) -> bool:
+    """Has this dispatch been terminal long enough that its claim is stale?
+
+    False for anything still live, and false whenever the answer is unknown —
+    an unparseable or missing ``terminal_at`` means we cannot prove the grace
+    elapsed, and this module fails closed by construction.
+    """
+    if row["status"] in _LIVE_LEDGER_STATUSES:
+        return False
+    raw = row["terminal_at"]
+    if not raw:
+        return False
+    try:
+        terminal_at = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if terminal_at.tzinfo is None:
+        terminal_at = terminal_at.replace(tzinfo=UTC)
+    elapsed = ((now or datetime.now(UTC)) - terminal_at).total_seconds()
+    return elapsed > _TERMINAL_CLAIM_GRACE_S
+
+
 def _dispatch_worktree_paths(dispatch_id: str) -> set[str]:
-    """Paths a dispatch id claims: its ledger lease key and its lane registry row."""
+    """Paths a dispatch id claims: its ledger lease key and its lane registry row.
+
+    A live dispatch claims unconditionally. A dispatch that went terminal keeps
+    its claim only for ``_TERMINAL_CLAIM_GRACE_S`` so an exiting bridge can
+    finish flushing; past that the process is an orphan and the claim is stale,
+    because otherwise the branch is stranded forever (a:33686).
+
+    Releasing here is not the same as deleting: this only withdraws the
+    *dispatch-derived* claim. ``worktree_held_by_live_bridge`` also matches a
+    bridge's own ``cwd``, so a process genuinely standing in the tree keeps its
+    protection regardless of what its ledger row says.
+    """
     from services.git_integration_worker.cursor_sdk_worktree_registry import (
         lookup_dispatch_worktree,
     )
@@ -122,8 +169,8 @@ def _dispatch_worktree_paths(dispatch_id: str) -> set[str]:
     try:
         with ledger_connection() as conn:
             row = conn.execute(
-                "SELECT lease_key, source_repo FROM cursor_sdk_dispatches "
-                "WHERE dispatch_id=?",
+                "SELECT lease_key, source_repo, status, terminal_at "
+                "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                 (dispatch_id,),
             ).fetchone()
     except Exception as exc:  # noqa: BLE001 — an unreadable ledger must not unguard
@@ -133,6 +180,21 @@ def _dispatch_worktree_paths(dispatch_id: str) -> set[str]:
             exc,
         )
         row = None
+    if row is not None and _terminal_claim_expired(row):
+        # Known terminal AND past the flush grace — the only case safe to drop.
+        # An absent row, an unreadable ledger, or a terminal_at we cannot parse
+        # all fall through and still claim: "I could not tell" must never reap
+        # a tree out from under running work.
+        logger.warning(
+            "orphan bridge: dispatch_id=%s went terminal (status=%s) at %s, "
+            "past the %.0fs grace, but its process is still alive; releasing "
+            "its stale worktree claim",
+            dispatch_id,
+            row["status"],
+            row["terminal_at"],
+            _TERMINAL_CLAIM_GRACE_S,
+        )
+        return paths
     if row is not None:
         for key in (row["lease_key"], row["source_repo"]):
             if key:
