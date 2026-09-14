@@ -12,6 +12,19 @@ DEFAULT_SKILLS = ("liaison", "reasoning-posture")
 
 SUCCESSOR_WAKE_CAP = 2048
 
+# Echo-body placeholders in ritual order; the paste stays byte-identical for
+# equal arguments (F2 M5), so shedding removes fields, never reorders them.
+# ``digest:`` carries the tip the wake is scored on and ``chat:`` is the CSE
+# handle the seat reports back — only the other two are sheddable.
+_ECHO_FIELDS = (
+    "digest: <DIGEST subject> — attention <n>, checkpoint_due <bool>",
+    "objective: <root.last_subject>",
+    "chat: <url>",
+    "tools: <count>",
+)
+_SHEDDABLE_ECHO_FIELDS = ("tools: <count>", "objective: <root.last_subject>")
+_COMMISSION_HINT = "if attention mint; quiet echo; "
+
 __all__ = [
     "DEFAULT_SKILLS",
     "DOORBELL_CAP",
@@ -46,9 +59,13 @@ def render_doorbell(
     """Static doorbell text for ``root``; echoes go to ``ring`` (the root when None).
 
     Identical for equal arguments (F2 M5) and capped so extra ``md_read`` addresses
-    cannot grow the paste into a dump; over ``cap`` raises ``ValueError``. The DIGEST
-    fetch window is 10 turns, not 3: root housekeeping (admits, INFO, CP pointers)
-    outran a 3-turn window by six turns on 2026-09-12 (agent-bus:10479#139).
+    cannot grow the paste into a dump. A planted address outranks a placeholder: over
+    ``cap`` the renderer sheds the optional echo fields and then the commission hint
+    before raising ``ValueError``, so seating a live wake with one extra address is a
+    render, not a hand-paste. Addresses, ``Use the <slug> skill`` lines, and the frame
+    are never shed — a doorbell without its address is not a doorbell (10479#118). The
+    DIGEST fetch window is 10 turns, not 3: root housekeeping (admits, INFO, CP
+    pointers) outran a 3-turn window by six turns on 2026-09-12 (agent-bus:10479#139).
     """
     echo = ring if ring else root
     address_parts = [
@@ -60,23 +77,43 @@ def render_doorbell(
     # Default keeps the scheduled-task frame (R15). CDP/live seating passes fired_by
     # so the episodic frame stays true (10158 M2) instead of a false ritual label.
     fire = fired_by if fired_by is not None else f"scheduled task liaison-wake-{root}"
+    echo_fields = list(_ECHO_FIELDS)
+    hint = _COMMISSION_HINT
 
-    lines = [
-        f"WAKE — liaison, house agent-bus:{root} {slug}",
-        "duty: read the latest DIGEST; act only on its attention; page only on designed stops.",
-        "disclosure: orientation ritual; one echo before the first move.",
-        f'objective: latest DIGEST {root} turn (subject starts "DIGEST {root}").',
-        f"addresses: {addresses}",
-    ]
-    lines.extend(f"Use the {skill} skill." for skill in skills)
-    lines.extend(
-        [
-            f"frame: fired by {fire}; seat web-anthropic; prior wake = last ORIENTED turn on agent-bus:{echo}.",
-            f'echo: agent_bus(send, thread={echo}, subject="ORIENTED {root}", body="ORIENTED / digest: <DIGEST subject> — attention <n>, checkpoint_due <bool> / objective: <root.last_subject> / chat: <url> / tools: <count>")',
-            f"commission: cursor_request(new_slug=r15-wake-<slug>, parent_thread={root}, lane_role=sub_mission, …) — if attention mint; quiet echo; ¬thread={root}.",
+    def compose() -> str:
+        body = "ORIENTED / " + " / ".join(echo_fields)
+        lines = [
+            f"WAKE — liaison, house agent-bus:{root} {slug}",
+            "duty: read the latest DIGEST; act only on its attention; page only on designed stops.",
+            "disclosure: orientation ritual; one echo before the first move.",
+            f'objective: latest DIGEST {root} turn (subject starts "DIGEST {root}").',
+            f"addresses: {addresses}",
         ]
-    )
-    message = "\n".join(lines) + "\n"
+        lines.extend(f"Use the {skill} skill." for skill in skills)
+        lines.extend(
+            [
+                f"frame: fired by {fire}; seat web-anthropic; prior wake = last ORIENTED turn on agent-bus:{echo}.",
+                f'echo: agent_bus(send, thread={echo}, subject="ORIENTED {root}", body="{body}")',
+                f"commission: cursor_request(new_slug=r15-wake-<slug>, parent_thread={root}, lane_role=sub_mission, …) — {hint}¬thread={root}.",
+            ]
+        )
+        return "\n".join(lines) + "\n"
+
+    def shed() -> bool:
+        """Drop the least load-bearing fragment; False when only the ritual is left."""
+        nonlocal hint
+        for field in _SHEDDABLE_ECHO_FIELDS:
+            if field in echo_fields:
+                echo_fields.remove(field)
+                return True
+        if hint:
+            hint = ""
+            return True
+        return False
+
+    message = compose()
+    while len(message.encode("utf-8")) > cap and shed():
+        message = compose()
     encoded = message.encode("utf-8")
     if len(encoded) > cap:
         raise ValueError(f"doorbell exceeds {cap} bytes ({len(encoded)})")

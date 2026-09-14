@@ -89,6 +89,34 @@ def test_extra_addresses_render_md_read() -> None:
 
 
 @pytest.mark.offline
+def test_seating_render_sheds_placeholders_not_addresses() -> None:
+    """One planted address must render, not force a hand-paste (10479 CDP seating)."""
+    extras = ("cortex://notes/system/threads/10479-charter-scoreboard.md#Loop",)
+    text = render_doorbell(
+        "10479",
+        "claude-ai-navigator-seat",
+        ring="10532",
+        extra_addresses=extras,
+        fired_by="cdp generate on agent-bus:11165, not a scheduled task",
+    )
+    assert len(text.encode("utf-8")) <= DOORBELL_CAP
+    assert "section=Loop" in text
+    assert "Use the liaison skill." in text
+    assert "Use the reasoning-posture skill." in text
+    assert "digest: <DIGEST subject>" in text
+    assert "chat: <url>" in text
+    assert "tools: <count>" not in text
+
+
+@pytest.mark.offline
+def test_shedding_leaves_the_default_render_untouched() -> None:
+    text = _default_render()
+    assert "tools: <count>" in text
+    assert "objective: <root.last_subject>" in text
+    assert "if attention mint; quiet echo;" in text
+
+
+@pytest.mark.offline
 def test_cap_enforced_and_overridable() -> None:
     long_extras = tuple(
         f"cortex://notes/system/threads/file-{idx}.md" for idx in range(40)
