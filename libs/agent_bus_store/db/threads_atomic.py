@@ -161,6 +161,13 @@ def create_thread_with_turn(
     )
     thread_detail = get_thread_with_links(thread_id)
     assert thread_detail is not None
+    from ..cortex_thread_entity import ensure_thread_entity
+
+    ensure_thread_entity(
+        thread_id,
+        slug,
+        list(thread_detail.get("tags") or gated_tags),
+    )
     return thread_detail, turn_id, ts, turn_number
 
 

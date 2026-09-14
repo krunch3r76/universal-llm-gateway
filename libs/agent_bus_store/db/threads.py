@@ -222,7 +222,16 @@ def add_tags(
         )
         add_thread_tags(conn, thread_id, gated)
         conn.execute("UPDATE threads SET updated_at = ? WHERE id = ?", (ts, thread_id))
-    return get_thread(thread_id)
+    detail = get_thread(thread_id)
+    if detail is not None:
+        from ..cortex_thread_entity import ensure_thread_entity
+
+        ensure_thread_entity(
+            thread_id,
+            str(detail.get("slug") or ""),
+            list(detail.get("tags") or []),
+        )
+    return detail
 
 
 def remove_tags(thread_id: str, tags: list[str]) -> dict[str, Any] | None:
@@ -500,6 +509,9 @@ def create_thread(
     thread_detail = get_thread_with_links(thread_id)
     if thread_detail is None:
         raise RuntimeError(f"Failed to fetch newly created thread {thread_id}")
+    from ..cortex_thread_entity import ensure_thread_entity
+
+    ensure_thread_entity(thread_id, slug, gated_tags)
     return thread_detail
 
 
@@ -619,6 +631,14 @@ def update_thread(
         new_tags=list(detail.get("tags") or prior_tags),
         status=str(detail.get("status") or ""),
     )
+    if tags is not None:
+        from ..cortex_thread_entity import ensure_thread_entity
+
+        ensure_thread_entity(
+            thread_id,
+            str(detail.get("slug") or ""),
+            list(detail.get("tags") or []),
+        )
     return detail
 
 
