@@ -7,6 +7,10 @@ Type=simple
 User=io
 ExecStart=/home/io/.venvs/universal/bin/python -m services.git_integration_worker.main
 WorkingDirectory=/mnt/torus/projects/universal-llm-gateway
+# Same feed manage injects via service_config.build_service_env. A systemctl
+# restart of this unit (728310ff) otherwise starts a healthy GIW that cannot
+# Agent.create — missing_api_key, hops 11127–11129.
+EnvironmentFile=-%h/.gateway/secrets.env
 Environment=PYTHONPATH=/mnt/torus/projects/universal-llm-gateway/libs:/mnt/torus/projects/universal-llm-gateway/services/universal-stargate
 Environment=VIRTUAL_ENV=/home/io/.venvs/universal
 Environment=GIT_INTEGRATION_WORKER_HOST=127.0.0.1
