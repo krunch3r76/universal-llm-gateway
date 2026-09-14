@@ -24,6 +24,16 @@ from typing import Any
 # arms nothing until the ticker restarts. ``friction_dispositions``
 # (``--mark-friction``) is the seat's bind on a friction score row; the ticker
 # only reads it (``bus_watch.friction_rows``).
+# The ``last_induction_*`` / ``navigator_commissions_*`` group joined
+# 2026-09-14 13:30Z. ``liaison-induce.py --fire`` is a one-shot the loop never
+# derives from, so the loop's next save dropped the navigator's own throttle
+# state within one poll (~160s). That silently disarms
+# ``navigator_grace_elapsed``: with ``last_induction_at`` gone the grace always
+# reads elapsed, leaving single-flight as the only brake, so a periodic sweep
+# re-fires a cdp wake the moment the previous one completes instead of honouring
+# ``navigator_grace_seconds`` (900). Caught when the navigator clock was
+# installed and the state file still read ``last_induction_at: None`` directly
+# after a fire that had returned a live execution_id.
 OPERATOR_KEYS: tuple[str, ...] = (
     "policy",
     "relayed_watchers",
@@ -31,6 +41,10 @@ OPERATOR_KEYS: tuple[str, ...] = (
     "register",
     "handoff",
     "friction_dispositions",
+    "last_induction_at",
+    "last_induction_fingerprint",
+    "navigator_commissions_by_night",
+    "navigator_commissions_tonight",
 )
 
 
