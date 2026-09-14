@@ -20,15 +20,15 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from services.git_integration_worker import (
+    cursor_sdk_restart_bridge_gate as bridge_gate,
+)
 from services.git_integration_worker.cursor_sdk_orphan import (
     abort_orphaned_bridge,
     active_bridge_dispatch_ids,
 )
 from services.git_integration_worker.cursor_sdk_park_events import (
     emit_sdk_park_bridge_abort_escalated,
-)
-from services.git_integration_worker.cursor_sdk_restart_bridge_gate import (
-    count_live_operator_bridges,
 )
 
 logger = get_logger(__name__)
@@ -60,7 +60,7 @@ async def converge_bridges_after_park(
 
     Returns the number of lingering parked bridges that had to be aborted.
     """
-    counter = count_bridges or count_live_operator_bridges
+    counter = count_bridges or bridge_gate.count_live_operator_bridges
     budget = (
         idle_budget_s if idle_budget_s is not None else bridge_close_idle_budget_s()
     )

@@ -11,7 +11,6 @@ from typing import Any
 
 import pytest
 
-from services.git_integration_worker import admission as admission_mod
 from services.git_integration_worker import cursor_sdk_orphan as orphan_mod
 from services.git_integration_worker import cursor_sdk_restart_bridge_gate as gate_mod
 from services.git_integration_worker import git_worker_drain_events as drain_events
@@ -351,8 +350,11 @@ def test_drain_completion_gate_exception_does_not_wedge_or_emit_completed(
     def _gate_import_error(**_kwargs: object) -> bool:
         raise ImportError("stale module graph")
 
+    # Patch the gate module, not admission: admission reaches the gate through the
+    # module object so the call stays late-bound and monkeypatchable (a from-import
+    # here froze the reference and silently disabled the real restart-deferral gate).
     monkeypatch.setattr(
-        admission_mod,
+        gate_mod,
         "defer_restart_for_live_bridges",
         _gate_import_error,
     )

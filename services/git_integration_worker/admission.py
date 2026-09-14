@@ -28,11 +28,11 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from services.git_integration_worker import (
+    cursor_sdk_restart_bridge_gate as bridge_gate,
+)
 from services.git_integration_worker import git_worker_drain_events as drain_events
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
-from services.git_integration_worker.cursor_sdk_restart_bridge_gate import (
-    defer_restart_for_live_bridges,
-)
 from services.git_integration_worker.drain_progress import OccupancyProgressTracker
 
 logger = get_logger(__name__)
@@ -440,7 +440,7 @@ class WorkAdmissionController:
         if self.active_count() != 0:
             return
         try:
-            if defer_restart_for_live_bridges(
+            if bridge_gate.defer_restart_for_live_bridges(
                 force=True,
                 intent_id=self._intent_id,
             ):
