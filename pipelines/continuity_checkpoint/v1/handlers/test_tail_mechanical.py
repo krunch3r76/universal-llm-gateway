@@ -14,6 +14,8 @@ from implement_admission.conductor_witness_types import FoldResult
 from .conftest import (
     DISTINCT_MODE,
     charter_board,
+    charter_board_g_ladder,
+    charter_board_none,
     conductor_board,
     continuity_card,
     g1_witness_deps,
@@ -25,10 +27,13 @@ pytestmark = pytest.mark.offline
 _G_ROW_CLAIM_RE = re.compile(r"G\d+ (DONE|OPEN|CLAIMED)")
 
 
-def test_charter_validate_only_no_mutation(tmp_path: Path) -> None:
-    """B1-4 — charter family: file unchanged, no conductor scoreboard, no G-row claims."""
+def test_charter_r_ledger_projection_no_mutation(
+    tmp_path: Path, cortex_files_root: Path
+) -> None:
+    """B1-4 — charter R-ledger: file unchanged, projects status, no conductor path."""
     thread = "10479"
     uri = charter_board(tmp_path, thread)
+    continuity_card(tmp_path, thread)
     before = scoreboard_sha_on_disk(uri, files_root=tmp_path)
     out = run_tail_mechanical(
         thread=thread,
@@ -41,12 +46,55 @@ def test_charter_validate_only_no_mutation(tmp_path: Path) -> None:
     assert after == before
     assert out["folded"] is False
     assert out["family"] == "charter"
-    assert out["reason"] == "validate_only"
+    assert out["reason"] == "projection_only"
+    assert out["genre"] == "r_ledger"
+    assert out["row_status"] == {"R1": "OPEN"}
     assert out["scoreboard_pin"].startswith("Scoreboard:")
     scoreboards = tmp_path / "notes/system/scoreboards"
     assert not scoreboards.exists() or not any(scoreboards.iterdir())
     assert not _G_ROW_CLAIM_RE.search(str(out))
-    assert not out.get("fold_row_lines")
+    assert len(out.get("fold_row_lines") or []) == 1
+
+
+def test_charter_g_ladder_projection_writes_card(
+    tmp_path: Path, cortex_files_root: Path
+) -> None:
+    """Charter G-ladder genre projects Settled/Live/Next without witness fold."""
+    thread = "10220"
+    uri = charter_board_g_ladder(tmp_path, thread)
+    card = continuity_card(tmp_path, thread)
+    out = run_tail_mechanical(
+        thread=thread,
+        options={},
+        tip_body=f"Scoreboard: {uri}\n",
+        thread_tags=[f"scoreboard:{thread}"],
+        files_root=tmp_path,
+    )
+    assert out["reason"] == "projection_only"
+    assert out["genre"] == "g_ladder"
+    assert out["row_status"] == {"G1": "DONE", "G2": "OPEN"}
+    assert out["card_written"] is True
+    text = card.read_text(encoding="utf-8")
+    assert "**Settled:** G1" in text
+    assert "**Live:** G2" in text
+
+
+def test_charter_none_genre_validate_only(
+    tmp_path: Path, cortex_files_root: Path
+) -> None:
+    """Charter tips with no G/R rows stay validate-only."""
+    thread = "10092"
+    uri = charter_board_none(tmp_path, thread)
+    out = run_tail_mechanical(
+        thread=thread,
+        options={},
+        tip_body=f"Scoreboard: {uri}\n",
+        thread_tags=[],
+        files_root=tmp_path,
+    )
+    assert out["reason"] == "validate_only"
+    assert out["genre"] == "none"
+    assert out["card_written"] is False
 
 
 def test_unresolved_emits_skipped_reason() -> None:
@@ -113,10 +161,12 @@ def test_conductor_projection_does_not_journal(
     assert (out.get("fold_row_lines") or [""])[0].lstrip().startswith("| G1 |")
 
 
-def test_charter_card_not_written(tmp_path: Path) -> None:
-    """B2-2 — charter family does not derive Settled/Live/Next onto the card."""
+def test_charter_none_card_not_written(
+    tmp_path: Path, cortex_files_root: Path
+) -> None:
+    """B2-2 — charter none-genre does not derive Settled/Live/Next onto the card."""
     thread = "7445"
-    uri = charter_board(tmp_path, thread)
+    uri = charter_board_none(tmp_path, thread)
     card = continuity_card(tmp_path, thread)
     out = run_tail_mechanical(
         thread=thread,

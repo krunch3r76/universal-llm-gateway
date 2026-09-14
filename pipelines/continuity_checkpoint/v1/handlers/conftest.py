@@ -68,9 +68,49 @@ def charter_board(files_root: Path, thread: str) -> str:
     path = files_root / uri.removeprefix("cortex://")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        "# Charter\n\n## Rows\n\n| R1 | item | todo:a | OPEN | |\n",
+        "\n".join(
+            [
+                "# Charter",
+                "",
+                "## Rows",
+                "",
+                "| # | row | work_key | status |",
+                "|---|---|---|---|",
+                "| R1 | item | todo:a | OPEN |",
+            ]
+        ),
         encoding="utf-8",
     )
+    return uri
+
+
+def charter_board_g_ladder(files_root: Path, thread: str) -> str:
+    uri = f"cortex://notes/system/threads/{thread}-charter-scoreboard.md"
+    path = files_root / uri.removeprefix("cortex://")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "# Charter",
+                "",
+                "## Gated lane",
+                "",
+                "| ID | Deliverable | Mode | Status | Stops |",
+                "|---|---|---|---|---|",
+                "| G1 | Architecture | plan | DONE | |",
+                "| G2 | Implement | agent | OPEN | |",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return uri
+
+
+def charter_board_none(files_root: Path, thread: str) -> str:
+    uri = f"cortex://notes/system/threads/{thread}-charter-scoreboard.md"
+    path = files_root / uri.removeprefix("cortex://")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# Charter\n\n## Next pickup\n\n- follow-up item\n", encoding="utf-8")
     return uri
 
 

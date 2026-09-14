@@ -16,6 +16,14 @@ from implement_admission.conductor_witness_defaults import (
     DefaultWitnessCortex,
     fold_deps_for_admit,
 )
+from implement_admission.scoreboard_genre import (
+    detect_genre,
+    ordered_row_ids,
+    project_row_status,
+)
+from implement_admission.scoreboard_genre import (
+    fold_row_lines as genre_fold_row_lines,
+)
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
@@ -30,17 +38,104 @@ def _format_scoreboard_pin(uri: str, sha256: str | None) -> str:
 
 
 def _fold_row_lines(fold_body: str) -> list[str]:
-    lines: list[str] = []
-    in_gated = False
-    for line in (fold_body or "").splitlines():
-        if line.startswith("## Gated deliverables"):
-            in_gated = True
-            continue
-        if line.startswith("## "):
-            in_gated = False
-        if in_gated and line.lstrip().startswith("| G"):
-            lines.append(line.strip())
-    return lines
+    return genre_fold_row_lines(fold_body)
+
+
+def _scoreboard_files_root(files_root: Path | None) -> Path:
+    if files_root is not None:
+        return files_root
+    import os
+
+    root_env = os.environ.get("CORTEX_FILES_ROOT")
+    if root_env:
+        return Path(root_env)
+    return _REPO
+
+
+def _read_scoreboard_body(uri: str, *, files_root: Path | None) -> str | None:
+    if not uri.startswith("cortex://"):
+        return None
+    path = _scoreboard_files_root(files_root) / uri.removeprefix("cortex://")
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def _project_charter_board(
+    *,
+    thread: str,
+    ref_uri: str,
+    ref_sha: str,
+    pin: str,
+    body: str,
+    options: dict[str, Any],
+) -> dict[str, Any]:
+    """Genre-detected read-only projection for charter-family tips."""
+    genre = detect_genre(body)
+    if genre == "none":
+        return {
+            "folded": False,
+            "family": "charter",
+            "reason": "validate_only",
+            "genre": genre,
+            "scoreboard_uri": ref_uri,
+            "scoreboard_sha256": ref_sha,
+            "scoreboard_pin": pin,
+            "card_written": False,
+            "card_reason": "card_derivation_unavailable",
+        }
+
+    row_status = project_row_status(body)
+    rows = ordered_row_ids(body)
+    if not rows:
+        return {
+            "folded": False,
+            "family": "charter",
+            "reason": "validate_only",
+            "genre": genre,
+            "scoreboard_uri": ref_uri,
+            "scoreboard_sha256": ref_sha,
+            "scoreboard_pin": pin,
+            "card_written": False,
+            "card_reason": "card_derivation_unavailable",
+        }
+
+    summary = derive_settled_live_next(row_status, rows)
+    card_written, _card_uri, card_reason = apply_fold_summary_to_card(
+        thread=thread,
+        settled=summary["settled"],
+        live=summary["live"],
+        next_row=summary["next"],
+    )
+    from continuity_tape.events_checkpoint import (
+        stargate_continuity_checkpoint_tail_folded,
+    )
+
+    stargate_continuity_checkpoint_tail_folded(
+        execution_id=str(options.get("execution_id") or ""),
+        thread=thread,
+        family="charter",
+        slug=ref_uri.rsplit("/", 1)[-1].removesuffix("-scoreboard.md"),
+        journal_applied=False,
+    )
+    live_row = summary["live"]
+    entry_gate = live_row if live_row != "none" else (rows[-1] if rows else "")
+    return {
+        "folded": False,
+        "family": "charter",
+        "reason": "projection_only",
+        "genre": genre,
+        "scoreboard_uri": ref_uri,
+        "scoreboard_sha256": ref_sha,
+        "scoreboard_pin": pin,
+        "fold_row_lines": genre_fold_row_lines(body),
+        "row_status": row_status,
+        "entry_gate": entry_gate,
+        "journal_applied": False,
+        "card_written": card_written,
+        "card_reason": card_reason if card_written else "card_derivation_unavailable",
+        "settled_live_next": summary,
+    }
 
 
 def _skipped_payload(*, reason: str, family: str | None = None) -> dict[str, Any]:
@@ -79,16 +174,20 @@ def run_tail_mechanical(
                 **_skipped_payload(reason="scoreboard_unreadable", family="charter"),
                 "scoreboard_uri": ref.uri,
             }
-        return {
-            "folded": False,
-            "family": "charter",
-            "reason": "validate_only",
-            "scoreboard_uri": ref.uri,
-            "scoreboard_sha256": ref.sha256,
-            "scoreboard_pin": pin,
-            "card_written": False,
-            "card_reason": "card_derivation_unavailable",
-        }
+        body = _read_scoreboard_body(ref.uri, files_root=files_root)
+        if body is None:
+            return {
+                **_skipped_payload(reason="scoreboard_unreadable", family="charter"),
+                "scoreboard_uri": ref.uri,
+            }
+        return _project_charter_board(
+            thread=thread,
+            ref_uri=ref.uri,
+            ref_sha=ref.sha256,
+            pin=pin,
+            body=body,
+            options=options,
+        )
 
     slug = ref.slug
     if not slug:
