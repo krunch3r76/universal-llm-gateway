@@ -151,6 +151,7 @@ async def start_event_service(
             cwd=root,
             env=env,
             log_file=log_file,
+            scope_name=_MODULE_NAME,
         )
 
         def _ready() -> bool:

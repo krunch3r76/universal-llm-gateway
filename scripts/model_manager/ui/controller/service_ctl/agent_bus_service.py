@@ -74,6 +74,7 @@ async def start_agent_bus(
         pid_file=_AGENT_BUS_PID_FILE,
         lock_file=_AGENT_BUS_LOCK_FILE,
         service_name="Agent Bus",
+        scope_name="agent-bus",
         socket_path=_AGENT_BUS_SOCKET,
         tcp_config=None,
         log_dir=_AGENT_BUS_LOG_DIR,

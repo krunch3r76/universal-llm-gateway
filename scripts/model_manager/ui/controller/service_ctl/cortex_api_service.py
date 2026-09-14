@@ -238,6 +238,7 @@ async def start_cortex_api(
         pid_file=_CORTEX_PID_FILE,
         lock_file=_CORTEX_LOCK_FILE,
         service_name="Cortex API",
+        scope_name="cortex-api",
         socket_path=_CORTEX_SOCKET,
         tcp_config=None,
         log_dir=_CORTEX_LOG_DIR,

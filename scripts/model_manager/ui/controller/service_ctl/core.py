@@ -666,6 +666,7 @@ class ServiceController:
                 cwd=self._root,
                 env=env,
                 log_file=log_path,
+                scope_name="stargate",
             )
         except OSError as e:
             logger.error("Failed to start Stargate subprocess: %s", e)

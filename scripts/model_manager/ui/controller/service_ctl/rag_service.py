@@ -38,6 +38,7 @@ async def start_rag(
         pid_file=pid_file,
         lock_file=_RAG_LOCK_FILE,
         service_name="RAG service",
+        scope_name="rag",
         socket_path=socket_path,
         tcp_config=tcp_config,
         log_dir=Path("/tmp/logs/universal-rag"),
