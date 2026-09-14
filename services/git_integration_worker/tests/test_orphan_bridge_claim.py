@@ -178,7 +178,10 @@ def test_terminal_cwd_branch_releases_past_grace(tmp_path: Path) -> None:
 
     occ = [BridgeOccupancy(pid=1, cwd=str(lane_tree), dispatch_id=_DISPATCH)]
 
-    with mock.patch.object(guard, "_dispatch_worktree_paths", return_value=set()):
+    with (
+        mock.patch.object(guard, "_dispatch_worktree_paths", return_value=set()),
+        mock.patch.object(guard, "_dispatch_claim_stale", return_value=True),
+    ):
         result = guard.worktree_held_by_live_bridge(
             worktree_path=lane_tree,
             worktree_root=worktree_root,

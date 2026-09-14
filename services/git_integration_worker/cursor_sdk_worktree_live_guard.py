@@ -47,7 +47,8 @@ _LIVE_LEDGER_STATUSES = ("admitted", "running", "queued", "parked_waiting")
 # 223045, fully landed and permanently undischargeable).
 #
 # 5min is ~10x the observed shutdown-flush window and ~0.1x the observed leak,
-# so it separates the two without discriminating on a margin.
+# so it separates the two without discriminating on a margin. Bounds both claim
+# signals, dispatch-derived and cwd, on the same predicate.
 _TERMINAL_CLAIM_GRACE_S = 300.0
 
 # One sweep asks the guard from four places (active set, reap loop, reconcile,
@@ -148,27 +149,10 @@ def _terminal_claim_expired(row: sqlite3.Row, *, now: datetime | None = None) ->
     return elapsed > _TERMINAL_CLAIM_GRACE_S
 
 
-def _dispatch_worktree_paths(dispatch_id: str) -> set[str]:
-    """Paths a dispatch id claims: its ledger lease key and its lane registry row.
-
-    A live dispatch claims unconditionally. A dispatch that went terminal keeps
-    its claim only for ``_TERMINAL_CLAIM_GRACE_S`` so an exiting bridge can
-    finish flushing; past that the process is an orphan and the claim is stale,
-    because otherwise the branch is stranded forever (a:33686).
-
-    Releasing here is not the same as deleting: this only withdraws the
-    *dispatch-derived* claim. ``worktree_held_by_live_bridge`` also matches a
-    bridge's own ``cwd``, so a process genuinely standing in the tree keeps its
-    protection regardless of what its ledger row says.
-    """
-    from services.git_integration_worker.cursor_sdk_worktree_registry import (
-        lookup_dispatch_worktree,
-    )
-
-    paths: set[str] = set()
+def _dispatch_ledger_row(dispatch_id: str) -> sqlite3.Row | None:
     try:
         with ledger_connection() as conn:
-            row = conn.execute(
+            return conn.execute(
                 "SELECT lease_key, source_repo, status, terminal_at "
                 "FROM cursor_sdk_dispatches WHERE dispatch_id=?",
                 (dispatch_id,),
@@ -179,7 +163,39 @@ def _dispatch_worktree_paths(dispatch_id: str) -> set[str]:
             dispatch_id,
             exc,
         )
-        row = None
+        return None
+
+
+def _dispatch_claim_stale(dispatch_id: str) -> bool:
+    """True only when the dispatch is KNOWN terminal and past ``_TERMINAL_CLAIM_GRACE_S``.
+
+    False for a live row, an absent row, an unreadable ledger, or a
+    ``terminal_at`` we cannot parse: the cwd claim must survive every
+    "I could not tell", because cwd is the last signal a bridge with a
+    missing row still has (the shutdown-flush race this module exists for).
+    """
+    row = _dispatch_ledger_row(dispatch_id)
+    return row is not None and _terminal_claim_expired(row)
+
+
+def _dispatch_worktree_paths(dispatch_id: str) -> set[str]:
+    """Paths a dispatch id claims: its ledger lease key and its lane registry row.
+
+    A live dispatch claims unconditionally. A dispatch that went terminal keeps
+    its claim only for ``_TERMINAL_CLAIM_GRACE_S`` so an exiting bridge can
+    finish flushing; past that the process is an orphan and the claim is stale,
+    because otherwise the branch is stranded forever (a:33686).
+
+    The cwd claim is withdrawn on the same predicate via ``_dispatch_claim_stale``;
+    a bridge with no dispatch stamp, no row, or an unreadable row still holds
+    through its cwd.
+    """
+    from services.git_integration_worker.cursor_sdk_worktree_registry import (
+        lookup_dispatch_worktree,
+    )
+
+    paths: set[str] = set()
+    row = _dispatch_ledger_row(dispatch_id)
     if row is not None and _terminal_claim_expired(row):
         # Known terminal AND past the flush grace — the only case safe to drop.
         # An absent row, an unreadable ledger, or a terminal_at we cannot parse
@@ -224,12 +240,14 @@ def live_bridge_worktree_paths(
     that its ``CURSOR_SDK_DISPATCH_ID`` resolves to through ledger lease key or
     lane registry row. The env stamp catches a bridge that has chdir'd away
     from its lane; the cwd catches a bridge whose ledger row has already gone
-    terminal or was never written.
+    terminal within the grace, or was never written; a row known terminal past
+    the grace withdraws the cwd claim as well (a:33686).
     """
     bridges = occupancy if occupancy is not None else _occupancy_snapshot()
     held: set[str] = set()
     for bridge in bridges:
-        if bridge.cwd:
+        stale = bool(bridge.dispatch_id) and _dispatch_claim_stale(bridge.dispatch_id)
+        if bridge.cwd and not stale:
             path = containing_worktree_under_root(
                 path=bridge.cwd, worktree_root=worktree_root
             )
@@ -302,7 +320,8 @@ def worktree_held_by_live_bridge(
     bridges = occupancy if occupancy is not None else _occupancy_snapshot()
     for bridge in bridges:
         claims = set()
-        if bridge.cwd:
+        stale = bool(bridge.dispatch_id) and _dispatch_claim_stale(bridge.dispatch_id)
+        if bridge.cwd and not stale:
             claims.add(bridge.cwd)
         if bridge.dispatch_id:
             claims |= _dispatch_worktree_paths(bridge.dispatch_id)
