@@ -3856,6 +3856,7 @@ async def cursor_branch_discharge(
         "verb": result.verb,
         "tip_sha": result.tip_sha,
         "archive_tag": result.archive_tag,
+        "archive_skipped_reason": result.archive_skipped_reason,
         "refused_reason": result.refused_reason,
     }
     if result.probe is not None:
