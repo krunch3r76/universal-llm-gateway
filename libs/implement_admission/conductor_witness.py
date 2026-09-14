@@ -11,6 +11,12 @@ from implement_admission.conductor_score_journal import (
     resolve_scoreboard_rows,
     tip_sha256,
 )
+from implement_admission.conductor_score_table import (
+    STATUS_HEADER,
+    header_indices,
+    row_id_in,
+    set_cell,
+)
 from implement_admission.conductor_witness_defaults import (
     DefaultWitnessCortex,
     DefaultWitnessGit,
@@ -100,25 +106,24 @@ def _render_folded_body(
     row_status: dict[str, str],
     rows: tuple[str, ...],
 ) -> str:
-    lines = body.splitlines()
+    column = header_indices(body).get(STATUS_HEADER)
+    if column is None:
+        # No Status column to write: a table we cannot address is left alone
+        # rather than written at the legacy 4-column position (B0-2).
+        return body
+    wanted = {row_id.upper(): row_id for row_id in rows}
     out: list[str] = []
     in_gated = False
-    for line in lines:
+    for line in body.splitlines():
         if line.startswith("## Gated deliverables"):
             in_gated = True
         elif line.startswith("## "):
             in_gated = False
         if in_gated:
-            for row_id in rows:
-                prefix = f"| {row_id} |"
-                if line.startswith(prefix) or line.startswith(f"| {row_id.lower()} |"):
-                    status = row_status.get(row_id)
-                    if status:
-                        parts = line.split("|")
-                        if len(parts) >= 4:
-                            parts[3] = f" {status} "
-                            line = "|".join(parts)
-                    break
+            row_id = wanted.get(row_id_in(line) or "")
+            status = row_status.get(row_id) if row_id else None
+            if status:
+                line = set_cell(line, column, status)
         out.append(line)
     return "\n".join(out) + ("\n" if body.endswith("\n") else "")
 

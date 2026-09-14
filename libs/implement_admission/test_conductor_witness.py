@@ -592,3 +592,31 @@ def test_nested_implement_injection_witnesses_g5(tmp_path: Path) -> None:
     assert g5 is not None
     assert g5.source == "ledger:nested_implement"
     assert g5.detail == dispatch_id
+
+
+@pytest.mark.offline
+def test_b0_five_column_tip_folds_status_and_reads_stops(tmp_path: Path) -> None:
+    """B0 (a:33504) — sparse-born boards fold the Status cell and keep Mode intact."""
+    files_root = tmp_path / "cortex"
+    scoreboards = files_root / "notes/system/scoreboards"
+    scoreboards.mkdir(parents=True)
+    tip = (
+        "# Scoreboard\n\n## Gated deliverables\n\n"
+        "| ID | Deliverable | Mode | Status | Stops |\n|---|---|---|---|---|\n"
+        "| G3 | Densify | plan | OPEN | |\n"
+        "| G4 | Skeptic | — | OPEN | ROW_PINNED |\n"
+        "| G5 | Implement | agent | OPEN | |\n"
+    )
+    (scoreboards / f"{_SLUG}-scoreboard.md").write_text(tip, encoding="utf-8")
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=tmp_path / "repo",
+    )
+    fold = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=False)
+    assert fold is not None
+    assert fold.row_status["G3"] == "OPEN"
+    assert fold.blocked_rows.get("G4") == "ROW_PINNED"
+    assert "| G5 | Implement | agent | OPEN | |" in fold.folded_body

@@ -8,19 +8,19 @@ from pathlib import Path
 
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.conductor_score_journal import (
-    _SCOREBOARD_ROW_ID,
     G_ROWS,
     is_g_ladder_rows,
     load_journal,
 )
+from implement_admission.conductor_score_table import SCOREBOARD_ROW_ID
 from implement_admission.conductor_witness_types import (
     FoldDeps,
     Witness,
     WitnessCortex,
     stops_block_reason,
 )
-from implement_admission.plan_implement_handoff import plan_implement_handoff_eligible
 from implement_admission.evidence_verify import resolve_artifact_path
+from implement_admission.plan_implement_handoff import plan_implement_handoff_eligible
 
 _ARTIFACT_URI_RE = re.compile(
     r"^\|\s*(?P<id>[^|`\n]+?)\s*\|\s*(?:`(?P<cortex>cortex://[^`]+)`"
@@ -46,7 +46,7 @@ _CITED_SHA_RE = re.compile(
     re.IGNORECASE,
 )
 _ROW_URI_RE = re.compile(
-    rf"^\|\s*(?P<rid>{_SCOREBOARD_ROW_ID})\s*\|.*?(?P<uri>cortex://[^\s|`]+)",
+    rf"^\|\s*(?P<rid>{SCOREBOARD_ROW_ID})\s*\|.*?(?P<uri>cortex://[^\s|`]+)",
     re.MULTILINE | re.IGNORECASE,
 )
 _WITNESS_KIND_BIND = "BIND"

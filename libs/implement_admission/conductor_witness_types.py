@@ -7,16 +7,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from implement_admission.conductor_score_journal import _SCOREBOARD_ROW_ID
+from implement_admission.conductor_score_table import (
+    cell,
+    row_id_in,
+    status_index,
+    status_token,
+    stops_index,
+)
 
-_ROW_STATUS_RE = re.compile(
-    rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|\s*(?P<status>[A-Za-z_()]+)",
-    re.MULTILINE,
-)
-_G_DONE_CLAIM_RE = re.compile(
-    rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|\s*DONE\b",
-    re.IGNORECASE | re.MULTILINE,
-)
 STOPS_BLOCK_TOKENS: frozenset[str] = frozenset(
     {"ROW_PINNED", "CONSULT_PENDING", "HOLD_MERGE", "OPERATOR_GATE"}
 )
@@ -110,38 +108,39 @@ class FoldResult:
 
 def row_status_in_tip(body: str, gid: str) -> str | None:
     """Return the Status cell for one G-row in a scoreboard tip."""
-    for match in _ROW_STATUS_RE.finditer(body):
-        if match.group(1).upper() == gid.upper():
-            return match.group("status").strip().upper()
+    column = status_index(body)
+    for line in (body or "").splitlines():
+        if row_id_in(line) == gid.upper():
+            return status_token(cell(line, column))
     return None
 
 
 def done_rows_claimed_in_closeout(body: str) -> frozenset[str]:
     """Return G-row ids the closeout prose marks DONE."""
-    return frozenset(_G_DONE_CLAIM_RE.findall(body or ""))
+    column = status_index(body)
+    claimed = set()
+    for line in (body or "").splitlines():
+        row_id = row_id_in(line)
+        if row_id and status_token(cell(line, column)) == "DONE":
+            claimed.add(row_id)
+    return frozenset(claimed)
 
 
 def stops_block_reason(tip_body: str, row_id: str) -> str | None:
     """Return a Stops-column block token for one scoreboard row, if present.
 
-    Parses ``parts[4]`` (the Stops cell) of a markdown table row. A block is an
-    exact whole-word token from ``STOPS_BLOCK_TOKENS`` (case-sensitive). Prose
-    without a token is not a block.
+    A block is an exact whole-word token from ``STOPS_BLOCK_TOKENS``
+    (case-sensitive). Prose without a token is not a block.
     """
+    column = stops_index(tip_body)
     for line in (tip_body or "").splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("|"):
+        if row_id_in(line) != row_id.upper():
             continue
-        parts = line.split("|")
-        if len(parts) < 5:
-            continue
-        if parts[1].strip().upper() != row_id.upper():
-            continue
-        cell = parts[4].strip()
-        if not cell:
+        stops = cell(line, column)
+        if not stops:
             return None
         for token in STOPS_BLOCK_TOKENS:
-            if re.search(rf"(?<![A-Za-z0-9_]){re.escape(token)}(?![A-Za-z0-9_])", cell):
+            if re.search(rf"(?<![A-Za-z0-9_]){re.escape(token)}(?![A-Za-z0-9_])", stops):
                 return token
         return None
     return None

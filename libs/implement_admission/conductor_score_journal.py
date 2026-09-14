@@ -21,18 +21,17 @@ from implement_admission.conductor_score_io import (
     tip_sha256,
 )
 from implement_admission.conductor_score_locus import ScoreboardLocus, work_item_locus
+from implement_admission.conductor_score_table import SCOREBOARD_ROW_ID
 
 if TYPE_CHECKING:
     from implement_admission.conductor_witness import FoldDeps
 
-# G-ladder ids (G1–G7) or per-finding row ids (R1, R2, …) minted from acceptance_criteria.
-_SCOREBOARD_ROW_ID = r"(?:G[1-7]|R\d+)"
 _CLOSED_ROW_RE = re.compile(
-    rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|(?:[^|]*\|)?\s*DONE\b",
+    rf"^\|\s*({SCOREBOARD_ROW_ID})\s*\|[^|]*\|(?:[^|]*\|)?\s*DONE\b",
     re.IGNORECASE | re.MULTILINE,
 )
 _ROW_STATUS_RE = re.compile(
-    rf"^\|\s*({_SCOREBOARD_ROW_ID})\s*\|[^|]*\|(?:[^|]*\|)?\s*(?P<status>[A-Za-z_()]+)",
+    rf"^\|\s*({SCOREBOARD_ROW_ID})\s*\|[^|]*\|(?:[^|]*\|)?\s*(?P<status>[A-Za-z_()]+)",
     re.MULTILINE,
 )
 STATUS_VOCABULARY: frozenset[str] = frozenset(
