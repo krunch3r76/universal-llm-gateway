@@ -16,11 +16,13 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest import mock
 
 import pytest
 
 from services.git_integration_worker import cursor_sdk_worktree_live_guard as guard
+from services.git_integration_worker.cursor_sdk_orphan import BridgeOccupancy
 
 _DISPATCH = "58b654ca6b5c-23f04777"
 _LEASE = "/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-11231"
@@ -158,4 +160,34 @@ def test_live_status_set_matches_the_ledger_filter() -> None:
         "running",
         "queued",
         "parked_waiting",
+    )
+
+
+@pytest.mark.offline
+def test_terminal_cwd_branch_releases_past_grace(tmp_path: Path) -> None:
+    """Falsifier for a:33686 — cwd-derived claim must expire like dispatch-path.
+
+    When the ledger row is terminal and past ``_TERMINAL_CLAIM_GRACE_S``, the
+    dispatch-path branch drops its claim. The cwd branch does not today, which
+    strands branches indefinitely (lane-11231). Mock ``_dispatch_worktree_paths``
+    empty so only the cwd signal is under test.
+    """
+    worktree_root = tmp_path / "worktrees"
+    lane_tree = worktree_root / "universal-llm-gateway" / "lane-11243"
+    lane_tree.mkdir(parents=True)
+
+    occ = [BridgeOccupancy(pid=1, cwd=str(lane_tree), dispatch_id=_DISPATCH)]
+
+    with (
+        mock.patch.object(guard, "_dispatch_worktree_paths", return_value=set()),
+        mock.patch.object(guard, "_dispatch_claim_stale", return_value=True),
+    ):
+        result = guard.worktree_held_by_live_bridge(
+            worktree_path=lane_tree,
+            worktree_root=worktree_root,
+            occupancy=occ,
+        )
+
+    assert result is None, (
+        "a terminal dispatch past grace must not hold via cwd alone"
     )
