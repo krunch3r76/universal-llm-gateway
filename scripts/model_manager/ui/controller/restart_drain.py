@@ -35,6 +35,11 @@ from transport_utils import make_async_client
 from universal_concurrency import FifoCapacityGate
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_sdk_restart_bridge_gate import (
+    defer_restart_for_live_bridges,
+    live_bridge_blocks_restart,
+)
+
 from .git_worker_activation_verify import mint_activation_validation
 from .restart_intent_consumer import blocking_drain_result, drain_deferred_result
 from .restart_window_ctl import open_service_window
@@ -220,11 +225,6 @@ class RestartDrainGate:
         try:
             if force:
                 if service == "git_integration_worker" and not supervised_drain:
-                    from services.git_integration_worker.cursor_sdk_restart_bridge_gate import (
-                        defer_restart_for_live_bridges,
-                        live_bridge_blocks_restart,
-                    )
-
                     if live_bridge_blocks_restart(force=True):
                         defer_restart_for_live_bridges(force=True)
                         return DrainOutcome(

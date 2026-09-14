@@ -30,6 +30,9 @@ from universal_logging import get_logger
 
 from services.git_integration_worker import git_worker_drain_events as drain_events
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_sdk_restart_bridge_gate import (
+    defer_restart_for_live_bridges,
+)
 from services.git_integration_worker.drain_progress import OccupancyProgressTracker
 
 logger = get_logger(__name__)
@@ -436,14 +439,25 @@ class WorkAdmissionController:
             return
         if self.active_count() != 0:
             return
-        from services.git_integration_worker.cursor_sdk_restart_bridge_gate import (
-            defer_restart_for_live_bridges,
-        )
-
-        if defer_restart_for_live_bridges(
-            force=True,
-            intent_id=self._intent_id,
-        ):
+        try:
+            if defer_restart_for_live_bridges(
+                force=True,
+                intent_id=self._intent_id,
+            ):
+                return
+        except Exception as exc:
+            logger.exception(
+                "drain completion bridge-gate check failed: intent_id=%s epoch=%s",
+                self._intent_id,
+                self._drain_epoch,
+            )
+            drain_events.emit_drain_completion_gate_failed(
+                intent_id=self._intent_id,
+                drain_epoch=self._drain_epoch,
+                worker_id=self.worker_id,
+                pid=self.pid,
+                error_type=type(exc).__name__,
+            )
             return
         self._completed_epochs.add(self._drain_epoch)
         self._progress.note_completed(time.monotonic())

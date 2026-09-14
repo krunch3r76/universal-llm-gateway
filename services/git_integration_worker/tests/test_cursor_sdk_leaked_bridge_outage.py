@@ -11,8 +11,12 @@ from typing import Any
 
 import pytest
 
+from services.git_integration_worker import admission as admission_mod
 from services.git_integration_worker import cursor_sdk_orphan as orphan_mod
 from services.git_integration_worker import cursor_sdk_restart_bridge_gate as gate_mod
+from services.git_integration_worker import git_worker_drain_events as drain_events
+from services.git_integration_worker.admission import WorkAdmissionController
+from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_orphan import (
     live_bridge_occupancy,
     owned_live_bridge_occupancy,
@@ -328,6 +332,49 @@ def test_sweep_invalidates_occupancy_cache_so_gate_sees_the_kill(
     assert result.killed == [4242]
     assert proc.killed is True
     assert orphan_mod._occupancy_cache is None
+
+
+def test_drain_completion_gate_exception_does_not_wedge_or_emit_completed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix 2: bridge-gate ImportError must not 500, emit completed, or clear drain."""
+    completed: list[dict] = []
+    gate_failed: list[dict] = []
+    monkeypatch.setattr(
+        drain_events, "emit_drain_completed", lambda **k: completed.append(k)
+    )
+    monkeypatch.setattr(
+        drain_events,
+        "emit_drain_completion_gate_failed",
+        lambda **k: gate_failed.append(k),
+    )
+    def _gate_import_error(**_kwargs: object) -> bool:
+        raise ImportError("stale module graph")
+
+    monkeypatch.setattr(
+        admission_mod,
+        "defer_restart_for_live_bridges",
+        _gate_import_error,
+    )
+
+    controller = WorkAdmissionController(
+        ledger=CursorDispatchLedger.instance(),
+        worker_id="test-worker",
+        pid=9999,
+        worker_started_at="2026-09-14T00:00:00Z",
+    )
+    controller._draining = True
+    controller._drain_epoch = 7
+    controller._intent_id = "intent-gate"
+
+    controller._maybe_emit_drain_completed()
+
+    assert completed == []
+    assert len(gate_failed) == 1
+    assert gate_failed[0]["drain_epoch"] == 7
+    assert gate_failed[0]["error_type"] == "ImportError"
+    assert controller.is_draining() is True
+    assert 7 not in controller._completed_epochs
 
 
 def test_sweep_that_kills_nothing_leaves_the_cache_warm(

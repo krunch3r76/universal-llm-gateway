@@ -202,3 +202,50 @@ def emit_drain_belt_exit(*, reason: str) -> None:
     """GIW self-exit under the R2′ belt (join-invariant second disjunct)."""
     _emit(GitWorkerDrainBeltExit(reason=reason))
     logger.critical("git-worker drain belt exit: reason=%s", reason)
+
+
+@event_factory
+def GitWorkerDrainCompletionGateFailed(  # noqa: N802
+    intent_id: str | None,
+    drain_epoch: int,
+    worker_id: str,
+    pid: int,
+    error_type: str,
+) -> Event:
+    return Event(
+        signal="git_worker.drain.completion_gate.failed",
+        payload={
+            "intent_id": intent_id or "",
+            "drain_epoch": drain_epoch,
+            "worker_id": worker_id,
+            "pid": pid,
+            "error_type": error_type,
+        },
+        scope="node",
+    )
+
+
+def emit_drain_completion_gate_failed(
+    *,
+    intent_id: str | None,
+    drain_epoch: int,
+    worker_id: str,
+    pid: int,
+    error_type: str,
+) -> None:
+    """Bridge-gate check raised during drain completion — drain stays latched."""
+    _emit(
+        GitWorkerDrainCompletionGateFailed(
+            intent_id=intent_id,
+            drain_epoch=drain_epoch,
+            worker_id=worker_id,
+            pid=pid,
+            error_type=error_type,
+        )
+    )
+    logger.warning(
+        "git-worker drain completion gate failed: intent_id=%s epoch=%d error=%s",
+        intent_id,
+        drain_epoch,
+        error_type,
+    )
