@@ -3859,10 +3859,22 @@ async def cursor_branch_discharge(
         "refused_reason": result.refused_reason,
     }
     if result.probe is not None:
+        divergence = None
+        if result.probe.divergence is not None:
+            div = result.probe.divergence
+            divergence = {
+                "behind_by": div.behind_by,
+                "ahead_by": div.ahead_by,
+                "files_changed": div.files_changed,
+                "insertions": div.insertions,
+                "deletions": div.deletions,
+                "measured": div.measured,
+            }
         payload["probe"] = {
             "landed": result.probe.landed,
             "differing_paths": result.probe.differing_paths,
             "missing_paths": result.probe.missing_paths,
+            "divergence": divergence,
         }
     if not result.discharged:
         return JSONResponse(status_code=409, content=payload)  # type: ignore[return-value]

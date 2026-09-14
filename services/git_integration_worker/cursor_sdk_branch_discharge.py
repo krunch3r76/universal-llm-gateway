@@ -30,6 +30,10 @@ from services.git_integration_worker.cursor_sdk_branch_debt import (
 from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
     remove_land_required_tag,
 )
+from services.git_integration_worker.cursor_sdk_branch_divergence import (
+    BranchDivergence,
+    measure_divergence,
+)
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_discharged,
 )
@@ -48,6 +52,7 @@ class LandProbe:
     landed: bool
     differing_paths: list[str] = field(default_factory=list)
     missing_paths: list[str] = field(default_factory=list)
+    divergence: BranchDivergence | None = None
 
     def describe(self) -> str:
         """One-line reason naming the paths that block a landed claim."""
@@ -56,7 +61,25 @@ class LandProbe:
             parts.append(f"absent from master: {', '.join(self.missing_paths)}")
         if self.differing_paths:
             parts.append(f"content differs: {', '.join(self.differing_paths)}")
-        return "; ".join(parts) or "landed"
+        if not parts:
+            if (
+                self.divergence is not None
+                and self.divergence.measured
+                and self.divergence.behind_by > 0
+            ):
+                return (
+                    f"landed (but behind master by {self.divergence.behind_by} commits "
+                    "— hand-port, do not merge)"
+                )
+            return "landed"
+        result = "; ".join(parts)
+        if (
+            self.divergence is not None
+            and self.divergence.measured
+            and self.divergence.behind_by > 0
+        ):
+            result = f"{result}; {self.divergence.describe()}"
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,23 +156,32 @@ def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
     because an unverifiable land claim is exactly what this gate exists to catch.
     """
     root = repo.resolve()
+    divergence = measure_divergence(repo=root, branch_name=branch_name)
     if not _branch_ref_exists(root, branch_name):
         return LandProbe(
-            landed=False, differing_paths=[f"{branch_name} (ref missing)"]
+            landed=False,
+            differing_paths=[f"{branch_name} (ref missing)"],
+            divergence=divergence,
         )
     base = _git(root, "merge-base", "master", branch_name)
     if base.returncode != 0:
         return LandProbe(
-            landed=False, differing_paths=[f"{branch_name} (no merge-base)"]
+            landed=False,
+            differing_paths=[f"{branch_name} (no merge-base)"],
+            divergence=divergence,
         )
     merge_base = base.stdout.strip()
 
     changed = _git(root, "diff", "--name-only", f"{merge_base}..{branch_name}")
     if changed.returncode != 0:
-        return LandProbe(landed=False, differing_paths=[f"{branch_name} (diff failed)"])
+        return LandProbe(
+            landed=False,
+            differing_paths=[f"{branch_name} (diff failed)"],
+            divergence=divergence,
+        )
     paths = [line.strip() for line in changed.stdout.splitlines() if line.strip()]
     if not paths:
-        return LandProbe(landed=True)
+        return LandProbe(landed=True, divergence=divergence)
 
     differing: list[str] = []
     missing: list[str] = []
@@ -177,6 +209,7 @@ def probe_landed(*, repo: Path, branch_name: str) -> LandProbe:
         landed=not differing and not missing,
         differing_paths=differing,
         missing_paths=missing,
+        divergence=divergence,
     )
 
 
@@ -217,9 +250,13 @@ def _finish(
     tip_sha = rev.stdout.strip() if rev.returncode == 0 else None
 
     record = _record_for_branch(source_repo=root, branch_name=branch_name)
-    if record is not None and record.thread_id and thread_has_inheritor(
-        record.thread_id,
-        completing_dispatch_id=completing_dispatch_id,
+    if (
+        record is not None
+        and record.thread_id
+        and thread_has_inheritor(
+            record.thread_id,
+            completing_dispatch_id=completing_dispatch_id,
+        )
     ):
         return DischargeResult(
             discharged=False,
@@ -231,7 +268,9 @@ def _finish(
         )
 
     if record is not None and record.thread_id:
-        dispatch_id = completing_dispatch_id or record.last_dispatch_id or record.thread_id
+        dispatch_id = (
+            completing_dispatch_id or record.last_dispatch_id or record.thread_id
+        )
         release_pin(
             source_repo=root,
             thread_id=record.thread_id,
