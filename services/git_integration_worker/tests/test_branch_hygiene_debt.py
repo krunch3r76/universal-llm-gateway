@@ -296,7 +296,8 @@ def test_probe_accepts_a_superset_on_master(repo: Path) -> None:
     _land_on_master(repo, path="e.py", content="a = 1\nb = 2\nc = 3\n")
     probe = probe_landed(repo=repo, branch_name="cursor-sdk/lane-7170")
     assert probe.landed
-    assert probe.describe() == "landed"
+    assert probe.divergence is not None and probe.divergence.behind_by > 0
+    assert "do not merge" in probe.describe()
 
 
 def test_probe_reports_ref_missing_not_no_merge_base(repo: Path) -> None:
@@ -304,6 +305,55 @@ def test_probe_reports_ref_missing_not_no_merge_base(repo: Path) -> None:
     assert not probe.landed
     assert probe.differing_paths == ["cursor-sdk/lane-missing (ref missing)"]
     assert "(no merge-base)" not in probe.describe()
+
+
+def test_probe_warns_when_landed_but_master_moved_far_ahead(repo: Path) -> None:
+    """a:33621 — landed footprint can hide a merge that reverts master's later work."""
+    branch = "cursor-sdk/lane-10394"
+    _branch_with_change(repo, branch=branch, path="landed.py", content="ok = 1\n")
+    _land_on_master(repo, path="landed.py", content="ok = 1\nextra = 2\n")
+    for i in range(5):
+        (repo / f"master_only_{i}.py").write_text(f"x = {i}\n", encoding="utf-8")
+        _git("add", f"master_only_{i}.py", cwd=repo)
+        _git("commit", "-m", f"master evolution {i}", cwd=repo)
+
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is True
+    assert probe.divergence is not None
+    assert probe.divergence.measured is True
+    assert probe.divergence.behind_by > 0
+    describe = probe.describe()
+    assert "do not merge" in describe
+    assert "hand-port" in describe
+    assert f"behind master by {probe.divergence.behind_by} commits" in describe
+
+
+def test_probe_level_with_master_has_no_merge_warning(repo: Path) -> None:
+    branch = "cursor-sdk/lane-level"
+    _branch_with_change(repo, branch=branch, path="sync.py", content="sync = 1\n")
+    _git("merge", branch, cwd=repo)
+    probe = probe_landed(repo=repo, branch_name=branch)
+    assert probe.landed is True
+    assert probe.divergence is not None
+    assert probe.divergence.measured is True
+    assert probe.divergence.behind_by == 0
+    assert probe.describe() == "landed"
+    assert "do not merge" not in probe.describe()
+
+
+def test_divergence_unmeasured_for_missing_branch_does_not_break_probe(
+    repo: Path,
+) -> None:
+    probe = probe_landed(repo=repo, branch_name="cursor-sdk/lane-bogus")
+    assert not probe.landed
+    assert probe.divergence is not None
+    assert probe.divergence.measured is False
+    assert probe.divergence.describe() == "divergence unmeasured"
+    result = discharge_landed(repo=repo, branch_name="cursor-sdk/lane-bogus")
+    assert not result.discharged
+    assert result.probe is not None
+    assert result.probe.divergence is not None
+    assert result.probe.divergence.measured is False
 
 
 def test_checked_out_blocks_orphan_branch_delete(repo: Path, tmp_path: Path) -> None:
