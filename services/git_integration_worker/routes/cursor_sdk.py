@@ -197,7 +197,6 @@ from services.git_integration_worker.cursor_sdk_orphan import (
     mark_dispatch_orphaned,
     reap_orphan_bridge_os,
     register_active_client,
-    sweep_unowned_bridges,
 )
 from services.git_integration_worker.cursor_sdk_packet import (
     extract_packet_kind_from_packet,
@@ -1625,8 +1624,7 @@ async def bridge_sweeper(app: FastAPI) -> None:
             draining = controller.is_draining() if controller is not None else False
             min_age = sweep_min_age_s(restart_intent_pending=draining)
             result = await asyncio.to_thread(
-                sweep_unowned_bridges,
-                min_age_s=min_age,
+                            min_age_s=min_age,
             )
         except Exception as exc:  # sweeper must never kill the worker
             logger.warning("bridge sweeper failed: %s", exc)

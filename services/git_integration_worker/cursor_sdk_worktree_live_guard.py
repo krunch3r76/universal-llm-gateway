@@ -53,16 +53,14 @@ def reset_occupancy_cache() -> None:
 
 
 def _occupancy_snapshot() -> list[BridgeOccupancy]:
-    from services.git_integration_worker.cursor_sdk_orphan import (
-        live_bridge_occupancy,
-    )
+    from services.git_integration_worker import cursor_sdk_orphan
 
     global _occupancy_cache
     now = time.monotonic()
     cached = _occupancy_cache
     if cached is not None and now - cached[0] < _OCCUPANCY_TTL_S:
         return cached[1]
-    bridges = live_bridge_occupancy()
+    bridges = cursor_sdk_orphan.live_bridge_occupancy()
     _occupancy_cache = (now, bridges)
     return bridges
 

@@ -8,13 +8,11 @@ from pathlib import Path
 
 from universal_logging import get_logger
 
+from services.git_integration_worker import cursor_sdk_orphan
 from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_restart_deferred_live_bridge,
 )
-from services.git_integration_worker.cursor_sdk_orphan import (
-    active_bridge_count,
-    owned_live_bridge_occupancy,
-)
+from services.git_integration_worker.cursor_sdk_orphan import active_bridge_count
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
     worktree_held_by_live_bridge,
 )
@@ -37,7 +35,7 @@ def reset_defer_log_throttle() -> None:
 def count_live_operator_bridges() -> int:
     """Count live **owned** bridges via registry and OS occupancy scan."""
     inproc = active_bridge_count()
-    owned = owned_live_bridge_occupancy()
+    owned = cursor_sdk_orphan.owned_live_bridge_occupancy()
     held_paths: set[str] = set()
     for row in list_registered_worktrees_with_status():
         wt_raw = row["worktree_path"] if "worktree_path" in row.keys() else None
