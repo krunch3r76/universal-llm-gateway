@@ -82,6 +82,7 @@ def test_projection_drops_unlisted_keys_and_filters_terminal() -> None:
         "successor_model": "cursor/claude-opus-5",
         "successor_model_source": None,
         "post_digest": True,
+        "induction_binds": None,
     }
     assert proj["budget"] == {
         "stop_class": None,
@@ -107,6 +108,25 @@ def test_projection_includes_life_when_present() -> None:
 def test_projection_omits_life_for_code_root_digest() -> None:
     proj = project_digest(_full_digest())
     assert "life" not in proj
+
+
+def test_projection_includes_induction_binds_in_policy() -> None:
+    """Regression for a:33719 — navigator reads published policy, not state file."""
+    binds = ["hopper paused (10479#210)", "cap 999 lane=B"]
+    digest = _full_digest(
+        policy={
+            "gear": "3-wake-on-attention",
+            "successor_model": "cursor/claude-opus-5",
+            "post_digest": True,
+            "induction_binds": binds,
+        }
+    )
+    proj = project_digest(digest)
+    assert proj["policy"]["induction_binds"] == binds
+    body = render_body(proj)
+    assert body is not None
+    parsed = json.loads(body)
+    assert parsed["policy"]["induction_binds"] == binds
 
 
 def test_render_body_fits_cap_with_many_lanes() -> None:

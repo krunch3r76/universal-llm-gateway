@@ -8,11 +8,13 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from .board_relations import sdk_relation_tags
 from .dtos import (
     AttentionItem,
     CdpLegRow,
     CharterRootRow,
     HealthProjection,
+    RelationEdge,
     SdkDispatchRow,
 )
 from .sdk_posture import (
@@ -267,6 +269,7 @@ def sdk_live_line(
     live: list[SdkDispatchRow] | None = None,
     posture: SdkMultiPosture | None = None,
     width: int = 120,
+    relations: tuple[RelationEdge, ...] | None = None,
 ) -> str:
     peers = live if live is not None else [row]
     multi = posture if posture is not None else classify_sdk_live(peers)
@@ -303,6 +306,7 @@ def sdk_live_line(
     optional: list[str] = []
     if pointer:
         optional.append(pointer)
+    optional.extend(sdk_relation_tags(row, relations))
     if mission:
         optional.append(mission)
     if identity:

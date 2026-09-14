@@ -76,6 +76,10 @@ def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
             "successor_model": policy.get("successor_model"),
             "successor_model_source": policy.get("successor_model_source"),
             "post_digest": policy.get("post_digest"),
+            # Standing operator binds (liaison-tick --set induction_binds=…); the
+            # navigator reads the published DIGEST policy object, not the full
+            # state file — omitting this key made writes silently decorative (a:33719).
+            "induction_binds": policy.get("induction_binds"),
         },
         "budget": {
             "stop_class": budget.get("stop_class"),
