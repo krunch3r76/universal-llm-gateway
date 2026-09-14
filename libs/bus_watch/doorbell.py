@@ -12,10 +12,13 @@ cap; the cap moves."
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 DOORBELL_CAP = 1400
 DEFAULT_SKILLS = ("liaison", "reasoning-posture")
 
 SUCCESSOR_WAKE_CAP = 2048
+_SUCCESSOR_ROW_TRUNC_MARKER = "..."
 
 # Echo-body placeholders in ritual order; the paste stays byte-identical for
 # equal arguments (F2 M5), so shedding removes fields, never reorders them.
@@ -40,6 +43,7 @@ __all__ = [
     "render_address",
     "render_doorbell",
     "render_successor_wake",
+    "successor_wake_unshed_byte_length",
 ]
 
 
@@ -216,7 +220,7 @@ def render_doorbell(
     return message
 
 
-def render_successor_wake(
+def _compose_successor_wake(
     root_id: str,
     *,
     gear: str,
@@ -224,19 +228,13 @@ def render_successor_wake(
     tip_cp_ordinal: int | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
-    cap: int = SUCCESSOR_WAKE_CAP,
 ) -> str:
-    """Doorbell-shaped successor paste. Line 1 stays ``resume {root}`` (GIW fence).
-
-    Same ritual as ``render_doorbell`` (duty / disclosure / objective / addresses /
-    Use-line / frame / echo). No recall language — echo is a graph-read, not
-    hypnotic memory (suggestion_orientation: fpsyg.2025.1433762).
-    """
+    """Compose successor paste without cap shedding (for validation and render)."""
     echo = ring if ring else root_id
     tip_val = tip_cp_ordinal if tip_cp_ordinal is not None else ""
     extras = "".join(f"; {render_address(addr)}" for addr in extra_addresses)
     resume_args = f'{{"op":"resume","thread":"{root_id}"}}'
-    message = (
+    return (
         f"resume {root_id}\n\n"
         f"WAKE — liaison headless successor, house agent-bus:{root_id} — contract: none.\n"
         "duty: run the tick; checkpoint; hop only if hop_qualifies. "
@@ -256,7 +254,114 @@ def render_successor_wake(
         'body="ORIENTED / tip: <CHECKPOINT subject> cp_ordinal=<n> / row: <row> / seat: cursor-sdk") '
         "before the first mutating move.\n"
     )
-    encoded = message.encode("utf-8")
-    if len(encoded) > cap:
-        raise ValueError(f"successor message exceeds {cap} bytes ({len(encoded)})")
+
+
+def successor_wake_unshed_byte_length(
+    root_id: str,
+    *,
+    gear: str,
+    row: str,
+    tip_cp_ordinal: int | None = None,
+    ring: str | None = None,
+    extra_addresses: tuple[str, ...] = (),
+) -> int:
+    """Byte length of the successor paste before cap shedding (``--set`` validation)."""
+    return len(
+        _compose_successor_wake(
+            root_id,
+            gear=gear,
+            row=row,
+            tip_cp_ordinal=tip_cp_ordinal,
+            ring=ring,
+            extra_addresses=extra_addresses,
+        ).encode("utf-8")
+    )
+
+
+def _truncate_row_for_cap(
+    *,
+    compose: Callable[[str], str],
+    row: str,
+    cap: int,
+    marker: str = _SUCCESSOR_ROW_TRUNC_MARKER,
+) -> str:
+    """Shorten ``row`` (suffix marker) until ``compose(row)`` fits ``cap`` bytes."""
+    if len(compose(row).encode("utf-8")) <= cap:
+        return row
+    row_bytes = row.encode("utf-8")
+    lo, hi = 0, len(row_bytes)
+    best = marker if row else row
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        prefix = row_bytes[:mid].decode("utf-8", errors="ignore")
+        candidate = (prefix + marker) if prefix else marker
+        if len(compose(candidate).encode("utf-8")) <= cap:
+            best = candidate
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
+def render_successor_wake(
+    root_id: str,
+    *,
+    gear: str,
+    row: str,
+    tip_cp_ordinal: int | None = None,
+    ring: str | None = None,
+    extra_addresses: tuple[str, ...] = (),
+    cap: int = SUCCESSOR_WAKE_CAP,
+) -> str:
+    """Doorbell-shaped successor paste. Line 1 stays ``resume {root}`` (GIW fence).
+
+    Same ritual as ``render_doorbell`` (duty / disclosure / objective / addresses /
+    Use-line / frame / echo). No recall language — echo is a graph-read, not
+    hypnotic memory (suggestion_orientation: fpsyg.2025.1433762).
+
+    Over ``cap`` the renderer sheds the free-form ``row`` prose (``now_row`` bind)
+    with a visible truncation marker, then optional planted ``extra_addresses`` from
+    the tail — addresses, ids, root, and instruction lines are never shed.
+    """
+    planted = list(extra_addresses)
+
+    def compose(*, row_text: str, addresses: tuple[str, ...]) -> str:
+        return _compose_successor_wake(
+            root_id,
+            gear=gear,
+            row=row_text,
+            tip_cp_ordinal=tip_cp_ordinal,
+            ring=ring,
+            extra_addresses=addresses,
+        )
+
+    row_text = row
+    message = compose(row_text=row_text, addresses=tuple(planted))
+    if len(message.encode("utf-8")) <= cap:
+        return message
+
+    def shed() -> bool:
+        """Drop the least load-bearing fragment; False when only the ritual is left."""
+        nonlocal row_text, planted
+        if row_text and _SUCCESSOR_ROW_TRUNC_MARKER not in row_text:
+            row_text = _truncate_row_for_cap(
+                compose=lambda r: compose(row_text=r, addresses=tuple(planted)),
+                row=row_text,
+                cap=cap,
+            )
+            return True
+        if planted:
+            planted.pop()
+            return True
+        return False
+
+    while len(message.encode("utf-8")) > cap and shed():
+        message = compose(row_text=row_text, addresses=tuple(planted))
+    if len(message.encode("utf-8")) > cap:
+        row_text = _truncate_row_for_cap(
+            compose=lambda r: compose(row_text=r, addresses=()),
+            row=row_text,
+            cap=cap,
+        )
+        message = compose(row_text=row_text, addresses=())
     return message

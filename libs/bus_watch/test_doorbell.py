@@ -6,9 +6,12 @@ import pytest
 
 from bus_watch.doorbell import (
     DOORBELL_CAP,
+    SUCCESSOR_WAKE_CAP,
     basis_floor_bytes,
     render_address,
     render_doorbell,
+    render_successor_wake,
+    successor_wake_unshed_byte_length,
 )
 
 _DEFAULT_ARGS = ("10479", "liaison-autonomous-night")
@@ -250,3 +253,73 @@ def test_commission_guard_present_whenever_commission_line_is() -> None:
             assert "if attention mint" in text
         else:
             assert "if attention mint" not in text
+
+
+_SUCCESSOR_KW = {
+    "gear": "3-wake-on-attention",
+    "row": "Settled · Live · Next",
+    "tip_cp_ordinal": 42,
+}
+
+
+def _default_successor_render() -> str:
+    return render_successor_wake("10479", **_SUCCESSOR_KW)
+
+
+@pytest.mark.offline
+def test_successor_wake_sheds_overlong_row_without_raising() -> None:
+    """Regression for a:33659 — verbose now_row must not crash-loop the ticker."""
+    long_row = "R" + (" verbose policy bind " * 80)
+    unshed = successor_wake_unshed_byte_length("10479", gear="3-wake-on-attention", row=long_row)
+    assert unshed > SUCCESSOR_WAKE_CAP
+    text = render_successor_wake(
+        "10479",
+        gear="3-wake-on-attention",
+        row=long_row,
+        tip_cp_ordinal=1,
+    )
+    assert len(text.encode("utf-8")) <= SUCCESSOR_WAKE_CAP
+
+
+@pytest.mark.offline
+def test_successor_wake_fitting_input_byte_identical() -> None:
+    first = _default_successor_render()
+    second = _default_successor_render()
+    assert first == second
+    assert len(first.encode("utf-8")) == 1146
+
+
+@pytest.mark.offline
+def test_successor_wake_truncation_marker_only_when_shed() -> None:
+    fitting = _default_successor_render()
+    assert "..." not in fitting
+    long_row = "x" * 3000
+    shed = render_successor_wake(
+        "10479",
+        gear="3-wake-on-attention",
+        row=long_row,
+        tip_cp_ordinal=1,
+    )
+    assert "..." in shed
+    assert f"row={long_row}" not in shed
+
+
+@pytest.mark.offline
+def test_successor_wake_load_bearing_fields_survive_maximal_shedding() -> None:
+    long_row = "y" * 5000
+    text = render_successor_wake(
+        "10479",
+        gear="3-wake-on-attention",
+        row=long_row,
+        tip_cp_ordinal=99,
+        ring="10532",
+    )
+    assert "resume 10479" in text
+    assert 'dispatch(tool="continuity", arguments=\'{"op":"resume","thread":"10479"}\')' in text
+    assert "agent_bus_read(thread_get, thread=10479)" in text
+    assert "agent-bus:10532 (echo)" in text
+    assert "tip_cp_ordinal=99" in text
+    assert "gear: 3-wake-on-attention" in text
+    assert "Use the liaison skill." in text
+    assert "runbook:bus-consult-watcher" in text
+    assert "seat cursor-sdk" in text
