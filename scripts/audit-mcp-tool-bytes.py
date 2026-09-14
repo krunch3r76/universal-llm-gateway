@@ -14,9 +14,11 @@ Outputs:
   - Pareto: top 5 tools and their share of total
   - Determinism verdict
   - Optional --json dump of the full per-tool record set
+  - Optional --per-seat split (life/code wire bytes + event frequency join)
 
 Usage:
   python scripts/audit-mcp-tool-bytes.py [--json out.json] [--include-overflow]
+  python scripts/audit-mcp-tool-bytes.py --per-seat [--frequency-join]
 
 Run from the universal-llm-gateway venv with PYTHONPATH including
 services/mcp-server (the repo's sitecustomize.py wires libs/ but the
@@ -39,6 +41,7 @@ MCP_SERVER_DIR = REPO_ROOT / "services" / "mcp-server"
 
 def _bootstrap_path() -> None:
     """Inject mcp-server source into sys.path so its flat imports resolve."""
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
     sys.path.insert(0, str(MCP_SERVER_DIR))
     os.environ.setdefault("MCP_AUTH_TOKEN", "audit-noop")
     os.environ.setdefault("MCP_OAUTH_DISABLED", "1")
@@ -80,16 +83,18 @@ def _measure(record: dict[str, Any]) -> dict[str, int]:
     }
 
 
-def _collect(include_overflow: bool) -> list[dict[str, Any]]:
-    from server import _PRIMARY_TOOLS, _build_server
+def _collect(include_overflow: bool, *, surface: str = "code") -> list[dict[str, Any]]:
+    from endpoint_surface import derive_surface_primary_tools
+    from server import _build_server
 
-    mcp, _, _ = _build_server()
+    mcp, _, _ = _build_server(surface=surface)
+    primary_tools = derive_surface_primary_tools(surface)
     tools = asyncio.run(mcp.list_tools())
 
     rows: list[dict[str, Any]] = []
     for t in tools:
         rec = _serialize_tool(t)
-        is_primary = rec.get("name") in _PRIMARY_TOOLS
+        is_primary = rec.get("name") in primary_tools
         if not is_primary and not include_overflow:
             continue
         sizes = _measure(rec)
@@ -97,12 +102,30 @@ def _collect(include_overflow: bool) -> list[dict[str, Any]]:
             {
                 "name": rec.get("name"),
                 "primary": is_primary,
+                "surface": surface,
                 **sizes,
                 "description": rec.get("description"),
                 "inputSchema": rec.get("inputSchema"),
             }
         )
     return rows
+
+
+def _collect_all_surfaces() -> dict[str, list[dict[str, Any]]]:
+    return {surface: _collect(False, surface=surface) for surface in ("life", "code")}
+
+
+def _print_per_seat_totals(seat_rows: dict[str, list[dict[str, Any]]]) -> None:
+    from audit_mcp_tool_bytes_seat import SEAT_LABEL
+
+    print("\nPer-seat primary catalog totals (tools/list wire bytes):")
+    for surface in ("life", "code"):
+        rows = seat_rows[surface]
+        total = sum(r["total_b"] for r in rows)
+        print(
+            f"  {SEAT_LABEL[surface]:<20} surface={surface:<4} "
+            f"tools={len(rows):>2}  total={total:>6} bytes ({total / 1024:.1f} KiB)"
+        )
 
 
 def _determinism_check(include_overflow: bool) -> tuple[bool, int]:
@@ -157,6 +180,26 @@ def _print_table(rows: list[dict[str, Any]]) -> None:
         )
 
 
+def _print_frequency_table(
+    ranked: list[dict[str, Any]], *, retention_oldest: str | None, retention_newest: str | None
+) -> None:
+    print(
+        f"\nRanked bytes_per_call (retention {retention_oldest} .. {retention_newest}):"
+    )
+    print(f"{'tool':<22} {'seat':<18} {'wire':>7} {'calls':>8} {'b/call':>10} {'freq':<12}")
+    print("-" * 82)
+    for row in ranked:
+        bpc = (
+            f"{row['bytes_per_call']:.1f}"
+            if row["bytes_per_call"] is not None
+            else "inf"
+        )
+        print(
+            f"{row['tool']:<22} {row['seat']:<18} {row['wire_bytes']:>7} "
+            f"{row['calls_observed']:>8} {bpc:>10} {row['frequency_status']:<12}"
+        )
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--json", type=Path, help="dump full records to JSON")
@@ -164,6 +207,16 @@ def main() -> None:
         "--include-overflow",
         action="store_true",
         help="also measure non-primary (dispatch-routed) tools",
+    )
+    p.add_argument(
+        "--per-seat",
+        action="store_true",
+        help="measure life and code primary catalogs separately",
+    )
+    p.add_argument(
+        "--frequency-join",
+        action="store_true",
+        help="with --per-seat, join Event Service mcp.request.completed counts",
     )
     args = p.parse_args()
 
@@ -176,9 +229,22 @@ def main() -> None:
         f"\nDeterminism: {'OK (byte-identical across renders)' if deterministic else f'DRIFT — {drift} bytes differ between two renders'}"
     )
 
+    if args.per_seat:
+        seat_rows = _collect_all_surfaces()
+        _print_per_seat_totals(seat_rows)
+        if args.frequency_join:
+            from audit_mcp_tool_bytes_seat import build_ranked_rows, fetch_call_counts
+
+            oldest, newest, counts = fetch_call_counts()
+            ranked = build_ranked_rows(seat_rows, counts)
+            _print_frequency_table(ranked, retention_oldest=oldest, retention_newest=newest)
+
     if args.json:
+        payload: Any = rows
+        if args.per_seat:
+            payload = {"code_default": rows, "per_seat": _collect_all_surfaces()}
         args.json.write_text(
-            json.dumps(rows, indent=2, ensure_ascii=False, default=str)
+            json.dumps(payload, indent=2, ensure_ascii=False, default=str)
         )
         print(f"\nWrote per-tool records to {args.json}")
 
