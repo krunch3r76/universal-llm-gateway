@@ -255,12 +255,14 @@ async def emit_manage_restart_draining(
     elapsed_s: float,
     active_count: int,
     active_ops: list[dict[str, Any]],
+    probe_ok: bool = True,
 ) -> None:
     """Periodic drain-progress heartbeat — observability-first (§3.2 step 5).
 
     Carries the live active-ops snapshot so a wedged/slow drain is visible and
     actionable well before any deadline; the deadline is a last resort, never the
-    mechanism.
+    mechanism. ``probe_ok=False`` means the drain-state probe failed — do not
+    treat ``active_count=0`` as a healthy idle worker.
     """
     await _emit(
         "manage.restart.draining",
@@ -270,6 +272,38 @@ async def emit_manage_restart_draining(
             "elapsed_s": round(elapsed_s, 1),
             "active_count": active_count,
             "active_ops": active_ops,
+            "probe_ok": probe_ok,
+        },
+    )
+
+
+async def emit_manage_restart_probe_unreachable(
+    *,
+    intent_id: str,
+    service: str,
+    elapsed_s: float,
+    consecutive_failures: int,
+    stuck_ops: list[dict[str, Any]],
+    action: str | None = None,
+    drain_epoch: int | None = None,
+    worker_id: str | None = None,
+) -> None:
+    """Alert-only: drain-state probe unreachable for a sustained window.
+
+    The supervisor keeps awaiting — killing is not constraint-safe when the
+    worker bridge cannot be read.
+    """
+    await _emit(
+        "manage.restart.probe_unreachable",
+        {
+            "intent_id": intent_id,
+            "service": service,
+            "action": action,
+            "drain_epoch": drain_epoch,
+            "worker_id": worker_id,
+            "elapsed_s": round(elapsed_s, 1),
+            "consecutive_failures": consecutive_failures,
+            "stuck_ops": stuck_ops,
         },
     )
 

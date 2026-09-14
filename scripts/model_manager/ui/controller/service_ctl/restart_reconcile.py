@@ -10,6 +10,7 @@ from charter_runner_store.propagation_validation import (
 )
 
 from ..git_worker_activation_verify import resume_activation_verify
+from ..giw_recycle import recycle_deadline_s, recycle_idle_s
 from ..restart_drain import resume_drain_supervision
 from ..restart_intent_states import (
     STATUS_DRAINED_RESTARTING,
@@ -42,9 +43,17 @@ async def reconcile_pending_restart_intents(controller: ServiceController) -> No
                 continue
             if intent.status not in (STATUS_PENDING_DRAIN, STATUS_DRAINED_RESTARTING):
                 continue
-            supervisor = controller.build_git_worker_drain_supervisor(
-                kill=controller.git_worker_kill_for(intent.action)
-            )
+            if intent.action == "recycle_giw":
+                supervisor = controller.build_git_worker_drain_supervisor(
+                    kill=controller.git_worker_kill_for(intent.action),
+                    idle_escalate_s=recycle_idle_s(),
+                    deadline_s=recycle_deadline_s(),
+                    park_first=True,
+                )
+            else:
+                supervisor = controller.build_git_worker_drain_supervisor(
+                    kill=controller.git_worker_kill_for(intent.action)
+                )
             await resume_drain_supervision(
                 controller._restart_gate,
                 intent.service,

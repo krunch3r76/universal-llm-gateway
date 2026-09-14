@@ -70,6 +70,10 @@ _SUBSCRIBE_URL = "http://localhost/v1/subscribe"
 _DEFAULT_DEADLINE_S = 604800.0  # 7 days
 _DEFAULT_RECONCILE_INTERVAL_S = 2.0
 _DEFAULT_PROGRESS_INTERVAL_S = 30.0
+# Sustained drain-state probe failure before alert-only unreachable signal.
+_PROBE_UNREACHABLE_WINDOW_S = 120.0
+# Consecutive reconcile polls confirming a different worker generation.
+_GENERATION_GONE_CONFIRM_WINDOW_S = 6.0
 
 # Injected transport callable types.
 BeginDrainCaller = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -86,6 +90,7 @@ _AWAIT_CONVERGED = "converged"
 _AWAIT_TIMEOUT = "timeout"
 _AWAIT_CANCELLED = "cancelled"
 _AWAIT_IDLE = "idle"
+_AWAIT_GENERATION_GONE = "generation_gone"
 
 # Park refusals a restart cannot clear by waiting: recycle falls through to kill.
 _PARK_HARD_REFUSALS = frozenset({"CANCEL_FAILED", "NEST_CHAIN", "STATE_ROOT_MISSING"})
@@ -140,6 +145,7 @@ class GitWorkerDrainSupervisor:
     _idle_token: tuple[frozenset[str], tuple[tuple[str, str], ...], bool] | None = None
     _park_idle_attempts: int = 0
     _last_park_summary: dict[str, Any] | None = None
+    _last_probe_snapshot: dict[str, Any] | None = None
 
     async def supervise(self, intent: Intent) -> None:
         """Drive one intent from begin-drain to SIGTERM (or alert-only timeout).
@@ -154,6 +160,7 @@ class GitWorkerDrainSupervisor:
         self._idle_token = None
         self._park_idle_attempts = 0
         self._last_park_summary = None
+        self._last_probe_snapshot = None
         t0 = time.monotonic()
         deadline = t0 + self.deadline_s
         timeout_alerted = False
@@ -181,6 +188,10 @@ class GitWorkerDrainSupervisor:
                     if await self._park_first_on_idle(intent):
                         continue
                     await self._on_idle(intent, t0)
+                    return
+                if outcome == _AWAIT_GENERATION_GONE:
+                    snapshot = await self._safe_drain_state()
+                    await self._resolve_non_kill(intent, snapshot)
                     return
                 break
             if self._intent_cancelled(intent):
@@ -364,6 +375,15 @@ class GitWorkerDrainSupervisor:
         optional idle-on-no-progress (recycle mode). Timeout stays alert-only.
         """
         last_progress = start
+        probe_fail_streak = 0
+        probe_unreachable_alerted = False
+        generation_gone_streak = 0
+        probe_unreachable_threshold = _polls_for_window(
+            _PROBE_UNREACHABLE_WINDOW_S, self.reconcile_interval_s
+        )
+        generation_gone_threshold = _polls_for_window(
+            _GENERATION_GONE_CONFIRM_WINDOW_S, self.reconcile_interval_s
+        )
         try:
             agen: AsyncIterator[dict[str, Any]] | None = self.subscribe_events(
                 intent.last_seen_event_seq
@@ -382,10 +402,33 @@ class GitWorkerDrainSupervisor:
                     await self._emit_progress(intent, now - start)
                     last_progress = now
                 snapshot = await self._safe_drain_state()
-                if snapshot is not None and self._drain_state_matches(snapshot, intent):
-                    return _AWAIT_CONVERGED
-                if snapshot is not None and await self._idle_gate_tripped(snapshot, now, start):
-                    return _AWAIT_IDLE
+                if snapshot is not None:
+                    self._last_probe_snapshot = snapshot
+                    probe_fail_streak = 0
+                    probe_unreachable_alerted = False
+                    if self._generation_gone(snapshot, intent):
+                        generation_gone_streak += 1
+                        if generation_gone_streak >= generation_gone_threshold:
+                            return _AWAIT_GENERATION_GONE
+                    else:
+                        generation_gone_streak = 0
+                    if self._drain_state_matches(snapshot, intent):
+                        return _AWAIT_CONVERGED
+                    if await self._idle_gate_tripped(snapshot, now, start):
+                        return _AWAIT_IDLE
+                else:
+                    generation_gone_streak = 0
+                    probe_fail_streak += 1
+                    if (
+                        not probe_unreachable_alerted
+                        and probe_fail_streak >= probe_unreachable_threshold
+                    ):
+                        await self._emit_probe_unreachable(
+                            intent,
+                            elapsed_s=now - start,
+                            consecutive_failures=probe_fail_streak,
+                        )
+                        probe_unreachable_alerted = True
                 if agen is None:
                     await asyncio.sleep(self.reconcile_interval_s)
                     continue
@@ -650,15 +693,51 @@ class GitWorkerDrainSupervisor:
             logger.debug("drain-state probe failed", exc_info=True)
             return None
 
+    async def _emit_probe_unreachable(
+        self,
+        intent: Intent,
+        *,
+        elapsed_s: float,
+        consecutive_failures: int,
+    ) -> None:
+        stuck_source = self._last_probe_snapshot or {}
+        await events.emit_manage_restart_probe_unreachable(
+            intent_id=intent.intent_id,
+            service=intent.service,
+            action=intent.action,
+            drain_epoch=intent.drain_epoch,
+            worker_id=intent.worker_id,
+            elapsed_s=elapsed_s,
+            consecutive_failures=consecutive_failures,
+            stuck_ops=self._stuck_ops(stuck_source),
+        )
+        logger.warning(
+            "drain-state probe unreachable (alert-only; keep-await): "
+            "intent_id=%s consecutive_failures=%s elapsed_s=%.1f",
+            intent.intent_id,
+            consecutive_failures,
+            elapsed_s,
+        )
+
     async def _emit_progress(self, intent: Intent, elapsed_s: float) -> None:
-        snapshot = await self._safe_drain_state() or {}
+        snapshot = await self._safe_drain_state()
+        probe_ok = snapshot is not None
+        if probe_ok:
+            self._last_probe_snapshot = snapshot
+        snap = snapshot or {}
         await events.emit_manage_restart_draining(
             intent_id=intent.intent_id,
             service=intent.service,
             elapsed_s=elapsed_s,
-            active_count=int(snapshot.get("active_count", 0) or 0),
-            active_ops=snapshot.get("active_ops", []) or [],
+            active_count=int(snap.get("active_count", 0) or 0),
+            active_ops=snap.get("active_ops", []) or [],
+            probe_ok=probe_ok,
         )
+
+
+def _polls_for_window(window_s: float, interval_s: float) -> int:
+    """Minimum consecutive reconcile polls to cover ``window_s``."""
+    return max(1, int(window_s / max(interval_s, 0.001)))
 
 
 def build_git_worker_drain_supervisor(
