@@ -1,0 +1,103 @@
+"""Successor message and dispatch payload assembly."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from bus_watch.doorbell import render_successor_wake
+from bus_watch.fable_lock import current_night_id
+from bus_watch.friction_rows import now_row as friction_now_row
+
+SUCCESSOR_MESSAGE_CAP = 2048
+
+
+def build_successor_message(
+    root_id: str,
+    *,
+    gear: str,
+    row: str,
+    tip_cp_ordinal: int | None = None,
+    ring: str | None = None,
+    extra_addresses: tuple[str, ...] = (),
+    cap: int = SUCCESSOR_MESSAGE_CAP,
+) -> str:
+    """Inline resume-fence pull recipe for a headless liaison successor."""
+    return render_successor_wake(
+        root_id,
+        gear=gear,
+        row=row,
+        tip_cp_ordinal=tip_cp_ordinal,
+        ring=ring,
+        extra_addresses=tuple(extra_addresses),
+        cap=cap,
+    )
+
+
+def build_dispatch_body(
+    root_id: str,
+    policy: dict[str, Any],
+    *,
+    work_key: str | None = None,
+    successor_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Assemble the generate payload: successor model, night work_key, resume message."""
+    max_hop = int(policy.get("max_hop_minutes") or 60)
+    ctx = dict(successor_context or {})
+    extras = ctx.get("extra_addresses") or policy.get("successor_extra_addresses") or ()
+    message = build_successor_message(
+        root_id,
+        gear=str(ctx.get("gear") or policy.get("gear") or "1-fable-mvp"),
+        row=str(ctx.get("row") or ""),
+        tip_cp_ordinal=ctx.get("tip_cp_ordinal"),
+        ring=ctx.get("ring") or policy.get("wake_ring"),
+        extra_addresses=tuple(extras),
+    )
+    body: dict[str, Any] = {
+        "op": "generate",
+        "seat": policy.get("successor_seat") or "cursor-sdk",
+        "contract": "none",
+        "lane": "A",
+        "model": policy.get("successor_model"),
+        "message": message,
+        "dispatch_thread_id": root_id,
+        # Per-night work identity: GIW's remint cap counts admits per work_key, so a
+        # root-wide key runs out after one night (a:33139 — hop 9 refused at seq 9 >
+        # cap 8). Keying by night_id resets the sequence with the night, not by hand.
+        "work_key": work_key or f"agent-bus:{root_id}:night-{current_night_id()}",
+        "timeout_seconds": max_hop * 60 + 1800,
+        "caller_agent": "liaison-ticker",
+        **(
+            {"cost_intent": policy["successor_cost_intent"]}
+            if policy.get("successor_cost_intent")
+            else {}
+        ),
+    }
+    return body
+
+
+def _wire_submit_body(body: dict[str, Any]) -> dict[str, Any]:
+    """Map local ``message`` to Stargate ``prompt``; drop generate-forbidden tags."""
+    wired = dict(body)
+    if wired.get("message") and not wired.get("prompt"):
+        wired["prompt"] = wired.pop("message")
+    wired.pop("tags", None)
+    return wired
+
+
+def successor_context_from_digest(digest: dict[str, Any]) -> dict[str, Any]:
+    """Extract message bind fields from a digest snapshot; with no seat-bound
+    row, a forcing friction is the row the successor is spawned for."""
+    policy = digest.get("policy") or {}
+    root = digest.get("root") or {}
+    return {
+        "gear": policy.get("gear"),
+        # Same precedence as the induction NOW: seat bind, then policy bind,
+        # then the newest undispositioned friction.
+        "row": digest.get("summary_row")
+        or str(policy.get("now_row") or "").strip()
+        or friction_now_row(digest)
+        or root.get("last_subject")
+        or "",
+        "tip_cp_ordinal": root.get("turns"),
+        "ring": policy.get("wake_ring"),
+    }

@@ -99,7 +99,7 @@ def test_predicate_refuses_live_seat_lock() -> None:
 
 def test_predicate_refuses_hop_cap(monkeypatch) -> None:  # noqa: ANN001
     night = "2026-09-11"
-    monkeypatch.setattr("bus_watch.spawn_on_wake.current_night_id", lambda: night)
+    monkeypatch.setattr("bus_watch.spawn_wake.predicate.current_night_id", lambda: night)
     lock = {"holder": None, "hops_by_night": {night: 8}, "hops": 8, "night_id": night}
     ev = evaluate_spawn_predicate(_digest(attention=[{"id": "1"}]), {}, lock=lock)
     assert ev["clauses"]["hops_under_cap"] is False
@@ -498,14 +498,14 @@ def test_ticker_reaps_dead_sdk_holder_before_evaluating(
     )
     released: list[str] = []
     monkeypatch.setattr(
-        "bus_watch.spawn_on_wake.read_lock", lambda *_a, **_k: next(locks)
+        "bus_watch.spawn_wake.fire.read_lock", lambda *_a, **_k: next(locks)
     )
     monkeypatch.setattr(
-        "bus_watch.spawn_on_wake.release_fable_lock",
+        "bus_watch.spawn_wake.fire.release_fable_lock",
         lambda holder, **_k: released.append(holder) or {"ok": True},
     )
     monkeypatch.setattr(
-        "bus_watch.spawn_on_wake.maybe_forfeit_expired_lease", lambda *_a, **_k: False
+        "bus_watch.spawn_wake.fire.maybe_forfeit_expired_lease", lambda *_a, **_k: False
     )
     state = {
         "pending_spawn": {
@@ -542,10 +542,10 @@ def test_pending_clears_when_digest_shows_closed_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "bus_watch.spawn_on_wake.read_lock", lambda *_a, **_k: {"holder": None}
+        "bus_watch.spawn_wake.fire.read_lock", lambda *_a, **_k: {"holder": None}
     )
     monkeypatch.setattr(
-        "bus_watch.spawn_on_wake.maybe_forfeit_expired_lease", lambda *_a, **_k: False
+        "bus_watch.spawn_wake.fire.maybe_forfeit_expired_lease", lambda *_a, **_k: False
     )
     digest = _digest(attention=[], checkpoint_due=False)
     digest["lanes"] = [
@@ -592,10 +592,10 @@ def test_stale_pending_without_lane_is_terminal() -> None:
 def test_remint_cap_refusal_is_a_wall_for_the_night(monkeypatch) -> None:  # noqa: ANN001
     """10479 2026-09-13: 169 refused spawns in six hours. One REMINT_CAP 409 latches
     the night, pages once, and the predicate holds until the night rolls."""
-    from bus_watch import spawn_on_wake
+    from bus_watch.spawn_wake import fire as spawn_fire
 
     pages: list[tuple] = []
-    monkeypatch.setattr(spawn_on_wake, "page_liaison", lambda *a: pages.append(a))
+    monkeypatch.setattr(spawn_fire, "page_liaison", lambda *a: pages.append(a))
     refusal = (
         {
             "error": {
