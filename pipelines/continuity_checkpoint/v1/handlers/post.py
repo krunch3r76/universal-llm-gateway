@@ -206,6 +206,7 @@ class ContinuityCheckpointPostHandler(BaseHandler):
                 "tip_sha": score.get("tip_sha"),
                 "tip_uri": score.get("tip_uri"),
                 "skipped": score.get("skipped", True),
+                "fold": score.get("fold"),
             },
         }
         return StepOutput(raw=json.dumps(result, default=str), json=result)

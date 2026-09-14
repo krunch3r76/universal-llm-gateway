@@ -45,7 +45,7 @@ steps:
 
   - name: score
     type: continuity_checkpoint_score_v1
-    condition: "options.get('scoreboard_tip')"
+    condition: "options.get('scoreboard_tip') or options.get('scoreboard_slug')"
     reads_from:
       - step: pre_consolidate
         fields: [json]
