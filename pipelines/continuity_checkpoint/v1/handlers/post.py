@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, override
 
 from agent_bus_store.checkpoint_projection import CANONICAL_RESUME_FOOTER
@@ -16,6 +17,8 @@ from ._clients import bus_get, bus_send, step_output_json
 logger = logging.getLogger(__name__)
 
 _MECHANICAL_PREFIX = "TYPE: CHECKPOINT · pipeline · seal facts"
+_SCOREBOARD_LINE = re.compile(r"^Scoreboard:\s*\S.*$", re.MULTILINE)
+_CARRIED_SUFFIX = " · carried"
 
 
 def _extract_residue_block(body: str) -> str | None:
@@ -38,6 +41,20 @@ def _extract_residue_block(body: str) -> str | None:
         if text and _MECHANICAL_PREFIX not in text:
             return text
     return None
+
+
+def _carry_forward_scoreboard_pin(prior_body: str) -> str | None:
+    """Reuse prior tip Scoreboard line when tail produced no live pin."""
+    if not prior_body:
+        return None
+    match = _SCOREBOARD_LINE.search(prior_body)
+    if not match:
+        return None
+    line = match.group(0).strip()
+    # Idempotent across consecutive tail misses — marker stacks at most once.
+    if line.endswith(_CARRIED_SUFFIX):
+        return line
+    return f"{line}{_CARRIED_SUFFIX}"
 
 
 def _carry_forward_residue(*, prior_body: str, prior_turn: int) -> str | None:
@@ -168,14 +185,19 @@ class ContinuityCheckpointPostHandler(BaseHandler):
             residue=residue, seal=seal, mission=mission, surface=surface
         )
         scoreboard_pin = tail.get("scoreboard_pin")
+        live_tail_pin = bool(scoreboard_pin)
         if not scoreboard_pin and score.get("tip_sha"):
             scoreboard_pin = (
                 f"Scoreboard: {score.get('tip_uri')} · sha256:{score['tip_sha']}"
             )
+        if not scoreboard_pin:
+            scoreboard_pin = _carry_forward_scoreboard_pin(prior_body)
         if scoreboard_pin:
             body = body.replace("## Anchor", f"## Anchor\n{scoreboard_pin}", 1)
-            for row_line in tail.get("fold_row_lines") or ():
-                body = f"{body.rstrip()}\n{row_line}\n"
+            # G-rows come only from a live tail fold — not score synthesis or carry-forward.
+            if live_tail_pin:
+                for row_line in tail.get("fold_row_lines") or ():
+                    body = f"{body.rstrip()}\n{row_line}\n"
         supersedes_tip = not bool(seal.get("refused"))
 
         slug = thread[:12]
