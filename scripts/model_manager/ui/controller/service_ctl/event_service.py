@@ -40,6 +40,14 @@ _LOG_DIR = Path("/tmp/logs/event-service")
 _LOG_FILENAME = "event-service.log"
 _SERVICE_NAME = "Event service"
 
+# event_store applies PRAGMA cache_size PER CONNECTION and hands every reader
+# thread its own connection (store.py:44/122 + threading.local at :79). Its own
+# default is 1 GiB, so the ceiling is 1 GiB x thread count -- ~29 threads
+# measured, against 19.6-20.6GB RssAnon observed and a live 10.8 -> 13.8GB climb
+# in five minutes. That is the amplifier behind the 2026-09-14 host OOM
+# (a:33648). 64 MiB per reader keeps the whole pool near 2GB.
+_SQLITE_CACHE_KIB = "65536"
+
 _DEFAULT_DB = "~/.events/events.db"
 _DEFAULT_INGEST_SOCK = os.environ.get(
     "EVENTS_INGEST_SOCK", "/tmp/universal-protocol/events.sock"
@@ -121,6 +129,7 @@ async def start_event_service(
         env["PYTHONPATH"] = (
             f"{libs_path}:{existing_pythonpath}" if existing_pythonpath else libs_path
         )
+        env.setdefault("EVENTS_SQLITE_CACHE_KIB", _SQLITE_CACHE_KIB)
         apply_host_service_logging_env(
             env, log_dir=_LOG_DIR, log_filename=_LOG_FILENAME
         )
