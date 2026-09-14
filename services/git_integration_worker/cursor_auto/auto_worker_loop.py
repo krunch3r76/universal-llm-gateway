@@ -25,6 +25,14 @@ _HANDLER_ID = "cursor-auto-primary"
 _WORKER_INTERVAL_S = 0.5
 _CONCURRENT_POLL_INTERVAL_S = 0.5
 _ORPHAN_INTERVAL_S = 15.0
+_BACKOFF_CEILING_S = 30.0
+
+
+def _failure_sleep_s(fail_streak: int, base_interval_s: float) -> float:
+    """Exponential backoff after consecutive loop failures (healthy path unchanged)."""
+    if fail_streak <= 0:
+        return base_interval_s
+    return min(_BACKOFF_CEILING_S, base_interval_s * (2 ** (fail_streak - 1)))
 
 
 def drain_blocks_new_auto_claims(controller: Any | None) -> bool:
@@ -86,6 +94,7 @@ async def auto_worker_loop(app: Any) -> None:
                 )
             await asyncio.sleep(min(5.0, _WORKER_INTERVAL_S * 4))
 
+    fail_streak = 0
     try:
         while True:
             try:
@@ -95,6 +104,7 @@ async def auto_worker_loop(app: Any) -> None:
                     if drain_belt_fires(controller):
                         request_giw_belt_exit(reason="draining_amber_stalled")
                     controller.recheck_drain_idle()
+                    fail_streak = 0
                     await asyncio.sleep(_WORKER_INTERVAL_S)
                     continue
                 job = get_queue().claim_next()
@@ -139,11 +149,15 @@ async def auto_worker_loop(app: Any) -> None:
                             )
                         if controller is not None:
                             controller.recheck_drain_idle()
+                fail_streak = 0
             except Exception:
                 # Never let one iteration end the lane (hop_cadence_loop pattern).
                 # CancelledError still propagates, so lifespan shutdown is intact.
                 logger.exception("cursor-auto worker loop iteration failed")
-            await asyncio.sleep(_WORKER_INTERVAL_S)
+                fail_streak += 1
+            await asyncio.sleep(
+                _failure_sleep_s(fail_streak, _WORKER_INTERVAL_S),
+            )
     finally:
         registry.unregister(_HANDLER_ID)
         logger.info("cursor-auto worker loop stopped")
@@ -156,6 +170,7 @@ async def auto_concurrent_worker_loop(app: Any) -> None:
     nested-scope / write-lease work stays on the serial loop.
     """
     queue = get_queue()
+    fail_streak = 0
     while True:
         try:
             controller = getattr(app.state, "admission_controller", None)
@@ -163,6 +178,7 @@ async def auto_concurrent_worker_loop(app: Any) -> None:
                 if drain_belt_fires(controller):
                     request_giw_belt_exit(reason="draining_amber_stalled")
                 controller.recheck_drain_idle()
+                fail_streak = 0
                 await asyncio.sleep(_CONCURRENT_POLL_INTERVAL_S)
                 continue
             job = queue.claim_next_concurrent()
@@ -202,9 +218,13 @@ async def auto_concurrent_worker_loop(app: Any) -> None:
                     )
                 else:
                     asyncio.create_task(_run())
+            fail_streak = 0
         except Exception:
             logger.exception("cursor-auto concurrent worker loop iteration failed")
-        await asyncio.sleep(_CONCURRENT_POLL_INTERVAL_S)
+            fail_streak += 1
+        await asyncio.sleep(
+            _failure_sleep_s(fail_streak, _CONCURRENT_POLL_INTERVAL_S),
+        )
 
 
 async def orphan_scanner_loop(app: Any) -> None:

@@ -114,3 +114,58 @@ async def test_loop_survives_dead_heartbeat_writer() -> None:
         live = await _run_loop_briefly(app, registry)
 
     assert live, "dead heartbeat writer deregistered the handler"
+
+
+def test_failure_sleep_s_doubles_to_ceiling() -> None:
+    """Fix 3: consecutive failures back off exponentially up to 30s."""
+    assert mod._failure_sleep_s(0, 0.5) == 0.5
+    assert mod._failure_sleep_s(1, 0.5) == 0.5
+    assert mod._failure_sleep_s(2, 0.5) == 1.0
+    assert mod._failure_sleep_s(3, 0.5) == 2.0
+    assert mod._failure_sleep_s(7, 0.5) == 30.0
+    assert mod._failure_sleep_s(99, 0.5) == 30.0
+
+
+@pytest.mark.asyncio
+async def test_loop_backoff_grows_on_failures_and_resets_on_success() -> None:
+    """Fix 3: failing iterations sleep longer; a success restores base interval."""
+    registry = AutoLivenessRegistry()
+    app = SimpleNamespace(state=SimpleNamespace(admission_controller=None))
+    calls = {"n": 0}
+    backoff_calls: list[tuple[int, float]] = []
+
+    def _boom() -> None:
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise RuntimeError("transient fault")
+        return None
+
+    done = asyncio.Event()
+    real_failure_sleep = mod._failure_sleep_s
+
+    def _record_backoff(fail_streak: int, base_interval_s: float) -> float:
+        backoff_calls.append((fail_streak, base_interval_s))
+        if len(backoff_calls) >= 3:
+            done.set()
+        return real_failure_sleep(fail_streak, base_interval_s)
+
+    queue = SimpleNamespace(claim_next=_boom)
+
+    with (
+        patch.object(mod, "get_registry", return_value=registry),
+        patch.object(mod, "get_queue", return_value=queue),
+        patch.object(mod, "_WORKER_INTERVAL_S", 0.5),
+        patch.object(mod, "_failure_sleep_s", side_effect=_record_backoff),
+    ):
+        task = asyncio.create_task(mod.auto_worker_loop(app))
+        await asyncio.wait_for(done.wait(), timeout=2.0)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    assert len(backoff_calls) >= 3
+    assert backoff_calls[0] == (1, 0.5)
+    assert backoff_calls[1] == (2, 0.5)
+    assert backoff_calls[2] == (0, 0.5)
