@@ -173,7 +173,8 @@ def build_resume_envelope(
     a single harvested message wider than the fence budget therefore degrades
     to a zero-body pour with the overflow pointer instead of failing the whole
     bundle — the resume fence is the sole admitted first hop for a successor
-    and must never 500 on the size of one prior message (10479, 2026-09-12).
+    and must never 500 on the size of one prior message (10479, 2026-09-12)
+    or on a mid-codepoint ``verbatim_bytes`` slice (10479, 2026-09-13).
     """
     # Read path: render-only. Harvest is explicit via tape?harvest=true (quick-fail).
     tape_degraded: dict[str, Any] | None = None
@@ -187,6 +188,13 @@ def build_resume_envelope(
         )
     except TapeBudgetExceeded as exc:
         tape_degraded = tape_budget_exceeded_envelope(exc)
+        tape = {"messages": [], "open_line": {}, "truncated": True}
+    except UnicodeDecodeError as exc:
+        tape_degraded = {
+            "error": "tape_utf8_truncated",
+            "kind": "unicode_decode",
+            "reason": str(exc),
+        }
         tape = {"messages": [], "open_line": {}, "truncated": True}
     if tape.get("error"):
         return {"error": tape["error"], "reason": "tape_render_failed"}

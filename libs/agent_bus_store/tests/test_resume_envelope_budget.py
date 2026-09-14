@@ -45,6 +45,25 @@ def test_envelope_degrades_to_zero_bodies_on_budget_overflow() -> None:
     assert envelope["scope"] == "last_session"
 
 
+def test_envelope_degrades_on_utf8_slice_error() -> None:
+    with (
+        patch.object(
+            env_mod,
+            "render_tape_with_harvest",
+            side_effect=UnicodeDecodeError("utf-8", b"\xe2", 0, 1, "unexpected end"),
+        ),
+        patch.object(
+            env_mod, "_tip_checkpoint_body", return_value=(232, "## Residue\nx")
+        ),
+        patch.object(env_mod, "_read_l3_summary_row", return_value=(None, None)),
+    ):
+        envelope = env_mod.build_resume_envelope("10479")
+
+    assert "error" not in envelope
+    assert envelope["tape_verbal"] == []
+    assert envelope["tape_degraded"]["error"] == "tape_utf8_truncated"
+
+
 def test_envelope_reports_no_degradation_on_normal_pour() -> None:
     tape = {
         "messages": [],

@@ -36,11 +36,22 @@ def split_verbatim_layer(
     *,
     verbatim_bytes: int | None = None,
 ) -> str:
-    """Return the verbatim prefix of a composed transcript file."""
+    """Return the verbatim prefix of a composed transcript file.
+
+    ``verbatim_bytes`` is a UTF-8 byte offset. A stale journal count that
+    lands inside a multi-byte character must not raise — resume-fence pours
+    this prefix on the first hop (10479 2026-09-13: UnicodeDecodeError 500).
+    """
     if verbatim_bytes is not None and verbatim_bytes >= 0:
         raw = full_md.encode("utf-8")
         if verbatim_bytes <= len(raw):
-            return raw[:verbatim_bytes].decode("utf-8")
+            cut = verbatim_bytes
+            while cut > 0:
+                try:
+                    return raw[:cut].decode("utf-8")
+                except UnicodeDecodeError:
+                    cut -= 1
+            return ""
     idx = full_md.find(STRUCTURAL_MARKER)
     if idx == -1:
         return full_md
