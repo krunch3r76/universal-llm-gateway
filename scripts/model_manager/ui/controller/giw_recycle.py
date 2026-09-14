@@ -37,6 +37,11 @@ def recycle_idle_s() -> float:
     return value if value > 0 else _DEFAULT_IDLE_S
 
 
+def recycle_deadline_s() -> float:
+    """Return the alert-only deadline for recycle-mode drain supervision."""
+    return _RECYCLE_DEADLINE_S
+
+
 def occupant_progress_fresh(
     drain_snap: dict[str, Any] | None,
     liveness_snap: dict[str, Any] | None,
@@ -124,6 +129,7 @@ async def recycle_giw(ctl: ServiceController, params: dict[str, Any], service: s
 
 __all__ = [
     "occupant_progress_fresh",
+    "recycle_deadline_s",
     "recycle_giw",
     "recycle_idle_s",
     "refuse_foreign_service",

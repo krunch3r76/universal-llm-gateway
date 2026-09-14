@@ -905,3 +905,191 @@ def test_recycle_park_first_before_idle_kill(
     assert kill.calls == 1
     escalated = [p for s, p in events_log if s == "manage.recycle.escalated"]
     assert escalated and escalated[-1].get("park_attempted") is True
+
+
+# ------------------------------------------------ remedy E (probe / generation / reconcile)
+
+
+class _ProbeFailingWorker(_Worker):
+    """Fail drain-state probes after the begin-drain epoch read."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._probe_calls = 0
+
+    async def drain_state(self) -> dict[str, Any]:
+        self._probe_calls += 1
+        if self._probe_calls == 1:
+            return _snap(draining=False, epoch=0, active=1)
+        raise RuntimeError("worker unreachable")
+
+
+class _AlwaysProbeFailingWorker(_Worker):
+    async def drain_state(self) -> dict[str, Any]:
+        raise RuntimeError("worker unreachable")
+
+
+def test_probe_failure_streak_emits_unreachable_once_without_kill(
+    tmp_path: Any,
+    events_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E1: sustained probe failure alerts once; no converge, idle, or kill."""
+    import scripts.model_manager.ui.controller.git_worker_drain_supervisor as sup_mod
+
+    monkeypatch.setattr(sup_mod, "_PROBE_UNREACHABLE_WINDOW_S", 0.03)
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    begin = _snap(draining=True, epoch=1, active=1)
+    worker = _ProbeFailingWorker(drain_states=[begin], begin_snap=begin)
+    kill = _Kill()
+    sup = _supervisor(
+        store,
+        worker,
+        _Feed([]),
+        kill,
+        deadline_s=5.0,
+        idle_escalate_s=0.05,
+    )
+    sup.progress_interval_s = 999.0
+
+    def _unreachable_seen() -> bool:
+        return any(s == "manage.restart.probe_unreachable" for s, _ in events_log)
+
+    _run(_supervise_until(sup, intent, done=_unreachable_seen, hold_s=2.0))
+
+    unreachable = [p for s, p in events_log if s == "manage.restart.probe_unreachable"]
+    assert len(unreachable) == 1
+    assert unreachable[0]["intent_id"] == intent.intent_id
+    assert unreachable[0]["consecutive_failures"] >= 3
+    assert kill.calls == 0
+    signals = [s for s, _ in events_log]
+    assert "manage.recycle.escalated" not in signals
+    assert "manage.restart.completed" not in signals
+
+
+def test_progress_probe_ok_distinguishes_failure_from_idle(
+    tmp_path: Any,
+    events_log: list[tuple[str, dict[str, Any]]],
+) -> None:
+    """E2: probe_ok=false on failure; probe_ok=true with active_count=0 when idle."""
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    begin = _snap(draining=True, epoch=1, active=0)
+    failing = _AlwaysProbeFailingWorker(drain_states=[begin], begin_snap=begin)
+    idle = _snap(draining=True, epoch=1, active=0)
+    healthy = _Worker(drain_states=[idle], begin_snap=idle)
+    kill = _Kill()
+    sup_fail = _supervisor(store, failing, _Feed([]), kill, deadline_s=5.0)
+    sup_ok = _supervisor(store, healthy, _Feed([]), kill, deadline_s=5.0)
+
+    async def _emit_both() -> None:
+        await sup_fail._emit_progress(intent, 1.0)
+        await sup_ok._emit_progress(intent, 1.0)
+
+    _run(_emit_both())
+    fail_payloads = [p for s, p in events_log if s == "manage.restart.draining"]
+    assert len(fail_payloads) == 2
+    assert fail_payloads[0]["probe_ok"] is False
+    assert fail_payloads[1]["probe_ok"] is True
+    assert fail_payloads[1]["active_count"] == 0
+
+
+def test_generation_gone_in_await_exits_via_non_kill_resolver(
+    tmp_path: Any,
+    events_log: list[tuple[str, dict[str, Any]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E3: sustained generation-gone polls complete without SIGTERM."""
+    import scripts.model_manager.ui.controller.git_worker_drain_supervisor as sup_mod
+
+    monkeypatch.setattr(sup_mod, "_GENERATION_GONE_CONFIRM_WINDOW_S", 0.03)
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    gone = _snap(
+        draining=False, epoch=2, worker_id="w2", started="t2", active=0
+    )
+    worker = _Worker(
+        drain_states=[_snap(draining=False, epoch=0, active=1), gone],
+        begin_snap=_snap(draining=True, epoch=1, active=1),
+    )
+    kill = _Kill()
+    sup = _supervisor(store, worker, _Feed([]), kill, deadline_s=5.0)
+    sup.progress_interval_s = 999.0
+
+    _run(sup.supervise(intent))
+
+    assert kill.calls == 0
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status in {
+        STATUS_COMPLETED,
+        STATUS_ACTIVATION_UNVERIFIED,
+        STATUS_VERIFYING_ACTIVATION,
+    }
+    signals = [s for s, _ in events_log]
+    assert "manage.recycle.escalated" not in signals
+
+
+def test_reconcile_rebuilds_recycle_supervisor_with_idle_and_deadline(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E4: boot reconcile passes recycle idle escalation and deadline."""
+    from types import SimpleNamespace
+
+    from scripts.model_manager.ui.controller.service_ctl.restart_reconcile import (
+        reconcile_pending_restart_intents,
+    )
+
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="recycle_giw", deadline_at="d", reason="r"
+    )
+    store.set_drain_epoch(
+        intent.intent_id, drain_epoch=1, worker_id="w1", worker_started_at="t1"
+    )
+    captured: list[dict[str, Any]] = []
+
+    def _build(**kwargs: Any) -> object:
+        captured.append(kwargs)
+        return object()
+
+    async def _resume(_gate: Any, _service: str, *, supervisor: Any, intent: Any) -> None:
+        assert supervisor is not None
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.service_ctl.restart_reconcile.resume_drain_supervision",
+        _resume,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.service_ctl.restart_reconcile.reconcile_pending_validations_at_boot",
+        lambda **_kw: None,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.service_ctl.restart_reconcile.recycle_idle_s",
+        lambda: 42.0,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.service_ctl.restart_reconcile.recycle_deadline_s",
+        lambda: 99.0,
+    )
+
+    controller = SimpleNamespace(
+        _restart_intent_store=store,
+        _restart_gate=object(),
+        build_git_worker_drain_supervisor=_build,
+        git_worker_kill_for=lambda action: f"kill:{action}",
+    )
+    _run(reconcile_pending_restart_intents(controller))
+
+    assert captured
+    assert captured[0]["idle_escalate_s"] == 42.0
+    assert captured[0]["deadline_s"] == 99.0
+    assert captured[0]["park_first"] is True
+    assert captured[0]["kill"] == "kill:recycle_giw"
