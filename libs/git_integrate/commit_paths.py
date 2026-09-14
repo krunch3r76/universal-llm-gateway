@@ -123,7 +123,11 @@ def commit_paths_numstat(worktree_path: str, paths: list[str]) -> str:
 
 
 async def commit_paths(
-    worktree_path: str, paths: list[str], message: str
+    worktree_path: str,
+    paths: list[str],
+    message: str,
+    *,
+    git_env: dict[str, str] | None = None,
 ) -> CommitResult:
     """Stage and commit ONLY the named paths on the current branch.
 
@@ -140,6 +144,7 @@ async def commit_paths(
     commit_proc = await _run_command(
         ["git", "-C", worktree_path, "commit", "-m", message, "--", *paths],
         timeout=_GIT_TIMEOUT,
+        env=git_env,
     )
     if commit_proc.returncode != 0:
         combined = commit_proc.stdout + commit_proc.stderr

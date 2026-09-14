@@ -53,6 +53,8 @@ def salvage_restart_survivor_worktree(
     salvage = salvage_commit(
         record.worktree_path,
         message=f"cursor-sdk: restart salvage {dispatch_id}",
+        dispatch_id=dispatch_id,
+        thread_id=record.thread_id,
     )
     return PruneResult(
         pruned=False,

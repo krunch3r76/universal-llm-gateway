@@ -19,6 +19,7 @@ from git_integrate.git_cas import (
     merge_master_into,
     reset_hard_to,
 )
+from git_integrate.git_identity import integrate_git_env_vars
 from git_integrate.schema import RC_CLEAN_TREE
 
 
@@ -198,6 +199,30 @@ async def test_advance_master_never_touches_live_working_tree(
         if p.is_file() and not p.name.startswith(".")
     }
     assert files_before == files_after
+
+
+@pytest.mark.asyncio
+async def test_commit_arc_stamps_integrate_git_identity(
+    tmp_path: Path, source_repo: Path
+) -> None:
+    wt = tmp_path / "worktrees" / "identity-arc"
+    wt.parent.mkdir(parents=True, exist_ok=True)
+    _git("worktree", "add", "-b", "arc/identity-arc", str(wt), "master", cwd=source_repo)
+    (wt / "new.py").write_text("# new\n")
+    git_env = integrate_git_env_vars("my-arc", seat="git-integrate")
+
+    result = await commit_arc(str(wt), "commit with identity", git_env=git_env)
+    assert result.committed
+
+    show = subprocess.run(
+        ["git", "-C", str(wt), "log", "-1", "--format=%an|%ae"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    name, email = show.stdout.strip().split("|", 1)
+    assert name == "git-integrate/my-arc"
+    assert email == "my-arc@dispatch.git-integration-worker"
 
 
 @pytest.mark.asyncio

@@ -103,6 +103,39 @@ def test_open_arc_not_swept(repo: Path, patch_ledger: SeatWriteLedger) -> None:
     assert "wip.py" in status.stdout
 
 
+def test_sweeper_commit_stamps_seat_arc_identity(
+    repo: Path, patch_ledger: SeatWriteLedger
+) -> None:
+    arc_id = "arc-9"
+    seat_id = "foo"
+    patch_ledger.open_arc(arc_id=arc_id, seat_id=seat_id, source_repo=str(repo))
+    target = repo / "swept.py"
+    target.write_text("swept\n", encoding="utf-8")
+    patch_ledger.register_paths(
+        arc_id=arc_id,
+        seat_id=seat_id,
+        source_repo=str(repo),
+        paths=("swept.py",),
+    )
+    patch_ledger.close_arc(arc_id=arc_id)
+    _backdate_touch(patch_ledger, arc_id=arc_id, path="swept.py", seconds_ago=400)
+
+    result = _run(sweep_lane_b_writes(repo, quiescence_s=300))
+
+    assert result.paths_committed == 1
+    show = subprocess.run(
+        ["git", "-C", str(repo), "log", "-1", "--format=%an|%ae"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    name, email = show.stdout.strip().split("|", 1)
+    assert name == f"{seat_id}/{arc_id}"
+    assert email == f"{arc_id}@dispatch.git-integration-worker"
+    assert "krunch3r" not in name.lower()
+    assert "krunch3r" not in email.lower()
+
+
 def test_closed_quiescent_arc_is_swept(
     repo: Path, patch_ledger: SeatWriteLedger
 ) -> None:

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from universal_logging import get_logger
+
+from services.git_integration_worker.cursor_home import dispatch_git_env_vars
 
 logger = get_logger(__name__)
 
@@ -88,7 +91,13 @@ def _rev_parse(repo_or_wt: Path, ref: str) -> str | None:
     return sha or None
 
 
-def salvage_commit(worktree_path: Path, *, message: str) -> SalvageResult:
+def salvage_commit(
+    worktree_path: Path,
+    *,
+    message: str,
+    dispatch_id: str,
+    thread_id: str | None = None,
+) -> SalvageResult:
     """Commit all dirty paths in the worktree; no-op when clean.
 
     A clean tree and a git-refused commit both yield ``committed=False``; callers
@@ -136,12 +145,14 @@ def salvage_commit(worktree_path: Path, *, message: str) -> SalvageResult:
             error=_truncate(err),
         )
 
+    git_env = {**os.environ, **dispatch_git_env_vars(dispatch_id, thread_id=thread_id)}
     commit = subprocess.run(
         ["git", "-C", str(wt), "commit", "-m", message],
         capture_output=True,
         text=True,
         timeout=_GIT_TIMEOUT_S,
         check=False,
+        env=git_env,
     )
     if commit.returncode != 0:
         err = commit.stderr.strip() or commit.stdout.strip()
@@ -168,7 +179,11 @@ def commit_on_terminal(
     """Durability commit at terminal after porcelain capture (Lane-B only)."""
     _ = branch_name
     message = f"cursor-sdk: lane-b terminal {dispatch_id}"
-    return salvage_commit(worktree_path, message=message)
+    return salvage_commit(
+        worktree_path,
+        message=message,
+        dispatch_id=dispatch_id,
+    )
 
 
 def branch_state(

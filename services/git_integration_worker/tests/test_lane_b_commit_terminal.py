@@ -18,6 +18,7 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     changed_paths,
     prepare_closeout_delivery,
 )
+from services.git_integration_worker.cursor_home import dispatch_git_identity
 from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     SalvageResult,
     branch_state,
@@ -385,13 +386,13 @@ def test_salvage_reports_refusal_distinctly_from_clean_tree(
         worktree_root=worktree_root,
         dispatch_id=dispatch_id,
     )
-    clean = salvage_commit(wt, message="clean")
+    clean = salvage_commit(wt, message="clean", dispatch_id=dispatch_id)
     assert not clean.committed
     assert not clean.refused
 
     _install_refusing_hook(source_repo)
     (wt / "at_risk.py").write_text("only copy\n", encoding="utf-8")
-    refused = salvage_commit(wt, message="dirty")
+    refused = salvage_commit(wt, message="dirty", dispatch_id=dispatch_id)
     assert not refused.committed
     assert refused.refused
     assert "hook-refused-marker" in (refused.error or "")
@@ -551,6 +552,47 @@ def test_zero_commit_branch_is_empty_not_merged(
     assert state.is_empty
     assert not state.merged_into_master
     assert state.safe_to_delete
+
+
+def test_salvage_commit_stamps_dispatch_git_identity(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Salvage commits carry dispatch_id in author email, not default gitconfig."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "d123"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    (wt / "identity.py").write_text("x=1\n", encoding="utf-8")
+    result = salvage_commit(
+        wt,
+        message="identity test",
+        dispatch_id=dispatch_id,
+        thread_id="11259",
+    )
+    assert result.committed
+    show = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(wt),
+            "log",
+            "-1",
+            "--format=%an|%ae",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    name, email = show.stdout.strip().split("|", 1)
+    expected_name, expected_email = dispatch_git_identity(
+        dispatch_id, thread_id="11259"
+    )
+    assert email == expected_email
+    assert email == f"{dispatch_id}@dispatch.git-integration-worker"
+    assert name == expected_name
 
 
 def test_lane_b_commit_refusal_blocks_shipped_grade(

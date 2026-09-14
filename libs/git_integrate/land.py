@@ -15,6 +15,7 @@ from git_integrate.events import (
     emit_git_land_requested,
 )
 from git_integrate.git_cas import commit_arc, diff_sha256, is_dirty
+from git_integrate.git_identity import integrate_git_env_vars
 from git_integrate.ops_common import (
     envelope,
     integrate_retry_loop,
@@ -92,7 +93,8 @@ async def land_op(
     committed = False
     commit_sha = ""
     if dirty:
-        cr = await commit_arc(worktree_path, commit_message)
+        git_env = integrate_git_env_vars(arc, seat="git-integrate")
+        cr = await commit_arc(worktree_path, commit_message, git_env=git_env)
         if cr.reason_code == RC_COMMIT_FAILED:
             emit_git_integrate_rejected(
                 integration_id=integration_id,
