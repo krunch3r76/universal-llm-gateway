@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from git_integrate.commit_paths import commit_paths
+from git_integrate.git_identity import integrate_git_env_vars
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_sdk_closeout import capture_wt_baseline
@@ -121,7 +122,10 @@ async def sweep_lane_b_writes(
             logger.warning("lane_b_sweep: cannot resolve branch repo=%s", repo)
             continue
         message = f"lane-b: {batch.arc_id} seat={batch.seat_id} paths={len(paths)}"
-        result = await commit_paths(str(repo), list(paths), message)
+        git_env = integrate_git_env_vars(batch.arc_id, seat=batch.seat_id)
+        result = await commit_paths(
+            str(repo), list(paths), message, git_env=git_env
+        )
         if result.committed and result.commit_sha:
             committed.append((result.commit_sha, batch.arc_id, len(paths)))
             ledger.clear_swept_paths(arc_id=batch.arc_id, paths=paths)

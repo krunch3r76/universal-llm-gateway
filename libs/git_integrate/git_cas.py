@@ -191,7 +191,12 @@ def land_diff_numstat(worktree_path: str) -> str:
         return ""
 
 
-async def commit_arc(worktree_path: str, message: str) -> CommitResult:
+async def commit_arc(
+    worktree_path: str,
+    message: str,
+    *,
+    git_env: dict[str, str] | None = None,
+) -> CommitResult:
     """Deterministically commit all staged/unstaged changes in the arc worktree."""
     add_proc = await _run_command(
         ["git", "-C", worktree_path, "add", "-A"],
@@ -206,6 +211,7 @@ async def commit_arc(worktree_path: str, message: str) -> CommitResult:
     commit_proc = await _run_command(
         ["git", "-C", worktree_path, "commit", "-m", message],
         timeout=_GIT_TIMEOUT,
+        env=git_env,
     )
     if commit_proc.returncode != 0:
         combined = commit_proc.stdout + commit_proc.stderr
@@ -337,7 +343,11 @@ async def fetch_master(worktree_path: str) -> None:
     )
 
 
-async def merge_master_into(worktree_path: str) -> MergeResult:
+async def merge_master_into(
+    worktree_path: str,
+    *,
+    git_env: dict[str, str] | None = None,
+) -> MergeResult:
     """Merge refs/heads/master into the arc branch (no-edit, no fast-forward).
 
     Returns MergeResult(conflict=True) for any non-zero exit (conflict or
@@ -354,6 +364,7 @@ async def merge_master_into(worktree_path: str) -> MergeResult:
             "--no-ff",
         ],
         timeout=_GIT_TIMEOUT,
+        env=git_env,
     )
     if proc.returncode != 0:
         return MergeResult(conflict=True)
@@ -421,15 +432,18 @@ async def _run_command(
     cmd: list[str],
     cwd: str | None = None,
     timeout: float = _GIT_TIMEOUT,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a subprocess with SIGTERM→SIGKILL timeout.
 
     ∀ network-touching or potentially-blocking git ops: explicit timeout
     prevents a misconfigured repo from hanging the worker indefinitely.
     """
+    proc_env = {**os.environ, **env} if env else None
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         cwd=cwd,
+        env=proc_env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,

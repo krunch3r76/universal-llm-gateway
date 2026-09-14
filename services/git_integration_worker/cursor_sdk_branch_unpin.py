@@ -138,6 +138,8 @@ def unpin_registered_lane_worktree(
         salvage = salvage_commit(
             registered,
             message=f"cursor-sdk: discharge salvage {branch_name}",
+            dispatch_id=record.last_dispatch_id,
+            thread_id=record.thread_id,
         )
         if salvage.refused:
             return UnpinResult(

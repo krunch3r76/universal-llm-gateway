@@ -21,6 +21,7 @@ from git_integrate.git_cas import (
     merge_master_into,
     reset_hard_to,
 )
+from git_integrate.git_identity import integrate_git_env_vars
 from git_integrate.schema import (
     RC_CAS_EXHAUSTED,
     RC_GATE_FAILED,
@@ -102,7 +103,8 @@ async def integrate_retry_loop(
         await fetch_master(worktree_path)
         arc_tip_before = await current_sha(worktree_path, "HEAD")
 
-        merged = await merge_master_into(worktree_path)
+        git_env = integrate_git_env_vars(arc, seat="git-integrate")
+        merged = await merge_master_into(worktree_path, git_env=git_env)
         if merged.conflict:
             await abort_merge(worktree_path)
             emit_git_integrate_rejected(

@@ -128,7 +128,7 @@ def test_salvage_commit_refuses_when_giw_subtree_has_f821(
     _git("commit", "-m", "seed", cwd=repo)
     (giw / "broken.py").write_text("y = another_missing\n", encoding="utf-8")
 
-    result = salvage_commit(repo, message="should refuse")
+    result = salvage_commit(repo, message="should refuse", dispatch_id="f821-test")
     assert result.committed is False
     assert result.refused is True
     assert result.error is not None

@@ -341,6 +341,8 @@ def release_lane_worktree(
         salvage = salvage_commit(
             wt_path,
             message=f"cursor-sdk: release salvage {resolved_dispatch or reason}",
+            dispatch_id=resolved_dispatch or record.last_dispatch_id,
+            thread_id=resolved_thread,
         )
         salvaged = salvage.committed
         if salvage.refused:
