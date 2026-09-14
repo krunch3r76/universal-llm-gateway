@@ -162,6 +162,12 @@ def build_park_harvest_arm_recipe(
     )
     after_turn = turn_i if turn_i is not None else 0
     scoreboard_uri = str(rec.get("scoreboard_uri") or rec.get("scoreboard") or "")
+    # Without one of these the poller is producer-less and cannot stall-pop, so a
+    # dead CDP leg reads as "still waiting" forever (a:33486).
+    producer_exec = str(rec.get("cdp_execution_id") or rec.get("execution_id") or "")
+    producer_arg = (
+        f"--execution-id {producer_exec}" if producer_exec else "--no-producer"
+    )
     lines = [
         "park-harvest: arm watcher for CDP reply arrival (Phase A).",
         "Leg 1 — detached poller:",
@@ -169,6 +175,7 @@ def build_park_harvest_arm_recipe(
         "  scripts/watch-bus-consult-and-page.py \\",
         f"  --thread {thread_id} --after-turn {after_turn} \\",
         "  --from-agent web-anthropic --no-page \\",
+        f"  {producer_arg} \\",
     ]
     if scoreboard_uri:
         lines.append(f"  --scoreboard-uri {scoreboard_uri} \\")

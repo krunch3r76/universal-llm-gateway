@@ -267,6 +267,8 @@ def test_build_park_harvest_arm_recipe_includes_supervise_start() -> None:
         closeout_turn=12,
     )
     assert "scripts/watch-supervise.sh start" in body
+    # a:33486 — a producer-less poller cannot stall-pop, so one of these is required.
+    assert ("--execution-id " in body) or ("--no-producer" in body)
     assert "scripts/watch-bus-consult-and-page.py" in body
     assert "--thread 9638" in body
     assert "--after-turn 12" in body
