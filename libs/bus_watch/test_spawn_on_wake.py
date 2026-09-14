@@ -222,14 +222,15 @@ def test_wire_submit_body_maps_message_and_drops_tags() -> None:
     assert "tags" not in wired
 
 
-def test_successor_message_raises_when_over_cap() -> None:
-    with pytest.raises(ValueError, match="exceeds"):
-        build_successor_message(
-            "10479",
-            gear="3-wake-on-attention",
-            row="x" * 3000,
-            tip_cp_ordinal=1,
-        )
+def test_successor_message_sheds_when_over_cap() -> None:
+    text = build_successor_message(
+        "10479",
+        gear="3-wake-on-attention",
+        row="x" * 3000,
+        tip_cp_ordinal=1,
+    )
+    assert len(text.encode("utf-8")) <= 2048
+    assert "..." in text
 
 
 def _default_successor() -> str:

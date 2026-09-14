@@ -34,6 +34,7 @@ import sys
 import time
 from pathlib import Path
 
+import bus_watch.doorbell as doorbell_module
 import httpx
 from bus_watch.digest_publish import is_own_digest_echo, publish_if_enabled
 from bus_watch.fable_lock import (
@@ -67,6 +68,10 @@ from bus_watch.tick_state import (
 
 _SENTINEL = "AGENT_LOOP_TICK_liaison"
 
+_SUCCESSOR_POLICY_KEYS = frozenset(
+    {"now_row", "gear", "wake_ring", "successor_extra_addresses"}
+)
+
 
 def _coerce(raw: str) -> object:
     """``--set`` values: JSON literal when parseable (numbers, bools, null), else string."""
@@ -90,6 +95,47 @@ def _utcnow() -> str:
     from datetime import UTC, datetime
 
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _successor_extra_addresses(raw: object) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if isinstance(raw, (list, tuple)):
+        return tuple(str(x) for x in raw)
+    return (str(raw),)
+
+
+def _validate_successor_policy_set(
+    root: str, state: dict, set_items: dict[str, object]
+) -> None:
+    """Refuse ``--set`` when the unshed successor paste would exceed the cap."""
+    if not _SUCCESSOR_POLICY_KEYS.intersection(set_items):
+        return
+    policy = {**(state.get("policy") or {}), **set_items}
+    gear = str(policy.get("gear") or "1-fable-mvp")
+    row = str(policy.get("now_row") or "").strip()
+    ring_raw = policy.get("wake_ring")
+    ring = str(ring_raw).strip() if ring_raw else None
+    extras = _successor_extra_addresses(policy.get("successor_extra_addresses"))
+    byte_len = doorbell_module.successor_wake_unshed_byte_length(
+        root,
+        gear=gear,
+        row=row,
+        ring=ring,
+        extra_addresses=extras,
+    )
+    cap = doorbell_module.SUCCESSOR_WAKE_CAP
+    if byte_len <= cap:
+        return
+    for key in ("now_row", "gear", "wake_ring", "successor_extra_addresses"):
+        if key in set_items:
+            raise SystemExit(
+                f"refusing: {key} would make the successor wake "
+                f"{byte_len} bytes (cap {cap})"
+            )
+    raise SystemExit(
+        f"refusing: successor wake would be {byte_len} bytes (cap {cap})"
+    )
 
 
 def main() -> int:
@@ -225,6 +271,10 @@ def main() -> int:
     except ValueError as exc:
         p.error(str(exc))
 
+    state = load_state(state_path)
+    if set_items:
+        _validate_successor_policy_set(root, state, set_items)
+
     def _operator_edits(fresh: dict) -> None:
         # Applied to the file as it is at write time (tick_state.update_state):
         # a one-shot must never persist a snapshot over a ticker's later save.
@@ -242,7 +292,6 @@ def main() -> int:
         if set_items:
             fresh["policy"] = {**(fresh.get("policy") or {}), **set_items}
 
-    state = load_state(state_path)
     _operator_edits(state)
     register = state["register"]
     if args.go_under:
