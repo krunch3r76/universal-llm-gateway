@@ -60,10 +60,12 @@ def render_doorbell(
 
     Identical for equal arguments (F2 M5) and capped so extra ``md_read`` addresses
     cannot grow the paste into a dump. A planted address outranks a placeholder: over
-    ``cap`` the renderer sheds the optional echo fields and then the commission hint
-    before raising ``ValueError``, so seating a live wake with one extra address is a
-    render, not a hand-paste. Addresses, ``Use the <slug> skill`` lines, and the frame
-    are never shed — a doorbell without its address is not a doorbell (10479#118). The
+    ``cap`` the renderer sheds the optional echo fields and then the whole
+    ``commission:`` line before raising ``ValueError``, so seating a live wake with
+    one extra address is a render, not a hand-paste. The commission guard is never
+    shed while the line remains — either the line is complete or absent (10479#881).
+    Addresses, ``Use the <slug> skill`` lines, and the frame are never shed — a
+    doorbell without its address is not a doorbell (10479#118). The
     DIGEST fetch window is 10 turns, not 3: root housekeeping (admits, INFO, CP
     pointers) outran a 3-turn window by six turns on 2026-09-12 (agent-bus:10479#139).
     """
@@ -78,7 +80,7 @@ def render_doorbell(
     # so the episodic frame stays true (10158 M2) instead of a false ritual label.
     fire = fired_by if fired_by is not None else f"scheduled task liaison-wake-{root}"
     echo_fields = list(_ECHO_FIELDS)
-    hint = _COMMISSION_HINT
+    include_commission = True
 
     def compose() -> str:
         body = "ORIENTED / " + " / ".join(echo_fields)
@@ -94,20 +96,23 @@ def render_doorbell(
             [
                 f"frame: fired by {fire}; seat web-anthropic; prior wake = last ORIENTED turn on agent-bus:{echo}.",
                 f'echo: agent_bus(send, thread={echo}, subject="ORIENTED {root}", body="{body}")',
-                f"commission: cursor_request(new_slug=r15-wake-<slug>, parent_thread={root}, lane_role=sub_mission, …) — {hint}¬thread={root}.",
             ]
         )
+        if include_commission:
+            lines.append(
+                f"commission: cursor_request(new_slug=r15-wake-<slug>, parent_thread={root}, lane_role=sub_mission, …) — {_COMMISSION_HINT}¬thread={root}."
+            )
         return "\n".join(lines) + "\n"
 
     def shed() -> bool:
         """Drop the least load-bearing fragment; False when only the ritual is left."""
-        nonlocal hint
+        nonlocal include_commission
         for field in _SHEDDABLE_ECHO_FIELDS:
             if field in echo_fields:
                 echo_fields.remove(field)
                 return True
-        if hint:
-            hint = ""
+        if include_commission:
+            include_commission = False
             return True
         return False
 

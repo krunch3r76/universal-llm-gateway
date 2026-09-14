@@ -155,3 +155,43 @@ def test_fired_by_overrides_scheduled_frame() -> None:
     )
     assert "fired by cdp generate on agent-bus:11165" in text
     assert "scheduled task liaison-wake-10479" not in text
+
+
+_SEATING_KW = {
+    "ring": "10532",
+    "extra_addresses": (
+        "cortex://notes/system/threads/10479-charter-scoreboard.md#Loop",
+    ),
+    "fired_by": "cdp generate on agent-bus:11165, not a scheduled task",
+}
+
+
+@pytest.mark.offline
+def test_commission_shed_is_atomic_under_cap() -> None:
+    """Cap pressure must drop the whole commission line, not its guard alone."""
+    text = render_doorbell(
+        "10479",
+        "claude-ai-navigator-seat",
+        **_SEATING_KW,
+        cap=954,
+    )
+    assert "commission:" not in text
+    assert "if attention mint" not in text
+    assert "parent_thread=10479" not in text
+
+
+@pytest.mark.offline
+def test_commission_guard_present_whenever_commission_line_is() -> None:
+    """The conditional guard and commission line are inseparable."""
+    caps = (8192, DOORBELL_CAP, 954, 955, 1000)
+    for cap in caps:
+        text = render_doorbell(
+            "10479",
+            "claude-ai-navigator-seat",
+            **_SEATING_KW,
+            cap=cap,
+        )
+        if "commission:" in text:
+            assert "if attention mint" in text
+        else:
+            assert "if attention mint" not in text
