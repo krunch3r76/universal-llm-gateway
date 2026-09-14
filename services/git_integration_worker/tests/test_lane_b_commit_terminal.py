@@ -19,6 +19,7 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     changed_paths,
     prepare_closeout_delivery,
 )
+from services.git_integration_worker.cursor_home import dispatch_git_identity
 from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     SalvageResult,
     branch_state,
