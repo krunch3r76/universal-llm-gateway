@@ -41,6 +41,9 @@ _DEPENDENCY_EDGE_TYPES = (
 _ENTITY_ID_PATTERN = re.compile(
     r"(?<![\w-])([a-z][a-z_]*:[a-z0-9][a-z0-9_-]*)\b", re.IGNORECASE
 )
+# Hyphenated bus addresses are not type:slug (friction 23548). Map the numeric
+# house form onto the entity the decision minted: thread:{id} (a:33394 / R19).
+_AGENT_BUS_NUMERIC = re.compile(r"(?<![\w-])agent-bus:(\d+)\b", re.IGNORECASE)
 
 
 # ── C1: Impact Analysis ──────────────────────────────────────────────────
@@ -261,5 +264,11 @@ def check_contradictions(
 
 
 def extract_entity_ids(text: str) -> set[str]:
-    """Extract entity ID patterns (type:slug) from free text."""
-    return set(_ENTITY_ID_PATTERN.findall(text))
+    """Extract entity ID patterns (type:slug) from free text.
+
+    ``agent-bus:{digits}`` is not a Cortex type (hyphen). Canonicalize to
+    ``thread:{digits}`` so journal/assert pipelines reach the house entity.
+    """
+    found = set(_ENTITY_ID_PATTERN.findall(text))
+    found.update(f"thread:{n}" for n in _AGENT_BUS_NUMERIC.findall(text))
+    return found
