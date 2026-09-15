@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from claude_bundles.cdp_registry.models import Registration
 
 from services.git_integration_worker.cursor_auto.cse_pager_resolve import (
+    _registration_listable,
     pager_key_for_job,
     refresh_pager_identity,
     resolve_live_cse_address,
@@ -207,3 +208,72 @@ def test_refresh_pager_identity_preserves_cadence_fields(
     assert saved["chat_url"] == "https://claude.ai/cowork/cse_new"
     assert saved["registration_id"] == "reg-new"
     mock_stamp.assert_called_once()
+
+
+@patch(
+    "services.git_integration_worker.cursor_auto.cse_pager_resolve.registration_resolvable_via_provenance"
+)
+@patch(
+    "services.git_integration_worker.cursor_auto.cse_pager_resolve.chat_url_for_registration"
+)
+@patch("services.git_integration_worker.cursor_auto.cse_pager_resolve.list_active")
+def test_registration_listable_via_remote_provenance_only(
+    mock_list_active, mock_chat_url, mock_remote
+):
+    mock_list_active.return_value = []
+    mock_chat_url.return_value = None
+    mock_remote.return_value = True
+    assert _registration_listable("reg-remote-only") is True
+
+
+@patch(
+    "services.git_integration_worker.cursor_auto.cse_pager_resolve.registration_resolvable_via_provenance"
+)
+@patch(
+    "services.git_integration_worker.cursor_auto.cse_pager_resolve.chat_url_for_registration"
+)
+@patch("services.git_integration_worker.cursor_auto.cse_pager_resolve.list_active")
+def test_registration_not_listable_when_neither_local_nor_remote(
+    mock_list_active, mock_chat_url, mock_remote
+):
+    mock_list_active.return_value = []
+    mock_chat_url.return_value = None
+    mock_remote.return_value = False
+    assert _registration_listable("reg-unknown") is False
+
+
+@patch(
+    "services.git_integration_worker.cursor_auto.cse_pager_resolve.registration_resolvable_via_provenance"
+)
+@patch(
+    "services.git_integration_worker.cursor_auto.cse_pager_resolve.chat_url_for_registration"
+)
+@patch("services.git_integration_worker.cursor_auto.cse_pager_resolve.list_active")
+@patch("services.git_integration_worker.cursor_auto.cse_pager_resolve.load_watches")
+def test_stale_watch_with_foreign_provenance_identity_not_listable(
+    mock_watches, mock_list_active, mock_chat_url, mock_remote
+):
+    mock_watches.return_value = {
+        "6655": {
+            "registration_id": "reg-stale",
+            "chat_url": "https://claude.ai/cowork/cse_stale",
+        }
+    }
+    mock_list_active.return_value = []
+    mock_chat_url.return_value = None
+    mock_remote.return_value = False
+
+    with (
+        patch(
+            "cdp_ask.operator_seat_resolve.read_cdp_lane_snapshot",
+            return_value={"seat_rows": []},
+        ),
+        patch("cdp_ask.operator_seat_resolve.list_active", return_value=[]),
+        patch("cdp_ask.operator_seat_resolve.load_active", return_value={}),
+        patch(
+            "services.git_integration_worker.cursor_auto.cse_pager_resolve.load_sessions",
+            return_value={},
+        ),
+    ):
+        result = resolve_live_cse_address(_job())
+    assert result == {"chat_url": None, "registration_id": None, "source": ""}
