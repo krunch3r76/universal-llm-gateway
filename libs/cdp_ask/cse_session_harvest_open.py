@@ -38,9 +38,18 @@ async def _teardown_opened(outcome, response: HarvestResponse | None = None) -> 
     await _teardown_attempt(outcome.page, outcome.pw)
 
 
-def _with_opened(provenance: dict[str, Any] | None) -> dict[str, Any]:
+def _with_opened(
+    provenance: dict[str, Any] | None,
+    *,
+    cdp_url: str | None = None,
+    registration_id: str | None = None,
+) -> dict[str, Any]:
     merged = dict(provenance or {})
     merged["opened_on_demand"] = True
+    if cdp_url:
+        merged["cdp_url"] = cdp_url
+    if registration_id:
+        merged["registration_id"] = registration_id
     return merged
 
 
@@ -56,18 +65,23 @@ async def harvest_by_opening_url(
         holder=HARVEST_HOLDER,
         allow_mint=True,
     )
+    opened_prov = _with_opened(
+        provenance,
+        cdp_url=outcome.cdp_url,
+        registration_id=outcome.registration_id,
+    )
     if not outcome.ok or outcome.page is None:
         return HarvestResponse(
             outcome="not_attached",
             reason=outcome.error or "open_failed",
-            provenance=_with_opened(provenance),
+            provenance=opened_prov,
         )
     response: HarvestResponse | None = None
     try:
         response = await harvest_page(
             outcome.page,
             req,
-            provenance=_with_opened(provenance),
+            provenance=opened_prov,
         )
         return response
     finally:

@@ -84,6 +84,7 @@ class HarvestRequest(BaseModel):
     metadata_only: bool = False
     marker: str | None = None
     successor_birth_id: str | None = None
+    reattach: bool = False
 
 
 class HarvestResponse(BaseModel):

@@ -40,7 +40,15 @@ async def test_open_failed_stays_not_attached() -> None:
 @pytest.mark.asyncio
 async def test_open_success_scrapes_then_tears_down() -> None:
     page = MagicMock()
-    opened = ReattachOutcome(ok=True, page=page, pw=MagicMock(), relaunched=True)
+    opened = ReattachOutcome(
+        ok=True,
+        page=page,
+        pw=MagicMock(),
+        relaunched=True,
+        cdp_url="http://127.0.0.1:9222",
+        registration_id="reg-dormant",
+    )
+
     async def _page(_page, _req, provenance=None):
         return HarvestResponse(outcome="harvested", provenance=provenance)
 
@@ -64,7 +72,10 @@ async def test_open_success_scrapes_then_tears_down() -> None:
     harvest_page.assert_awaited_once()
     teardown.assert_awaited_once()
     assert result.outcome == "harvested"
-    assert result.provenance and result.provenance.get("opened_on_demand") is True
+    assert result.provenance
+    assert result.provenance.get("opened_on_demand") is True
+    assert result.provenance.get("cdp_url") == "http://127.0.0.1:9222"
+    assert result.provenance.get("registration_id") == "reg-dormant"
 
 
 @pytest.mark.asyncio
@@ -168,7 +179,9 @@ async def test_skip_park_keeps_registration_for_lane_order() -> None:
     harvest_page = AsyncMock(
         return_value=HarvestResponse(outcome="incomplete_dom", reason="loading")
     )
-    lane = __import__("claude_bundles.cdp_registry", fromlist=["cdp_registry"]).Registration(
+    lane = __import__(
+        "claude_bundles.cdp_registry", fromlist=["cdp_registry"]
+    ).Registration(
         registration_id=reg_id,
         port=9222,
         profile_suffix="x",

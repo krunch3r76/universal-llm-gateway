@@ -241,7 +241,11 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
     @app.post("/v1/cse-session/harvest")
     async def cse_session_harvest(req: HarvestRequest) -> dict[str, object]:
-        """Bounded read-only harvest — no submit, followup, abort, or Chrome relaunch."""
+        """Bounded read-only harvest — no submit or followup.
+
+        Default harvest does not wake dormant seats; pass ``reattach=true`` to
+        relaunch a parked Cowork CSE, scrape, then park it again.
+        """
         verify_harvest_root()
         result = await execute_harvest(req, execution_store)
         return result.model_dump(exclude_none=True)

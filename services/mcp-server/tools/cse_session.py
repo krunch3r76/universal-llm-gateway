@@ -25,9 +25,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
 
     @mcp.tool(title="CSE Session")
     def cse_session(
-        op: Literal[
-            "provenance", "harvest", "paste", "followup", "resolve_attended"
-        ],
+        op: Literal["provenance", "harvest", "paste", "followup", "resolve_attended"],
         chat_url: str | None = None,
         registration_id: str | None = None,
         execution_id: str | None = None,
@@ -53,7 +51,9 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
         parent_thread: str | None = None,
         superseded_registration_id: str | None = None,
         idempotency_key: str | None = None,
-        min_receipt: Literal["dom_paste", "dom_committed", "human_visible"] = "dom_paste",
+        min_receipt: Literal[
+            "dom_paste", "dom_committed", "human_visible"
+        ] = "dom_paste",
     ) -> dict[str, Any]:
         """CSE provenance, harvest, hop-pair paste, warm followup, attended resolve.
 
@@ -102,6 +102,7 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                     "metadata_only": metadata_only,
                     "marker": marker,
                     "successor_birth_id": successor_birth_id,
+                    "reattach": reattach,
                 }.items()
                 if v is not None and v != ""
             }

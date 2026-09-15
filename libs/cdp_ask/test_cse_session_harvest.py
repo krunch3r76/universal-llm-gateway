@@ -11,7 +11,7 @@ from claude_bundles.cowork_output_download import HarvestBody
 from pydantic import ValidationError
 
 from cdp_ask.cse_session_harvest import HARVEST_HARD_CAP, execute_harvest, harvest_page
-from cdp_ask.cse_session_models import HarvestRequest, HarvestResponse
+from cdp_ask.cse_session_models import CseSessionTurn, HarvestRequest, HarvestResponse
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup_envelope import FollowupCandidate
 
@@ -130,8 +130,8 @@ async def test_unattached_without_url_does_not_open() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dormant_seat_does_not_open_on_demand() -> None:
-    """Dormant harvest must not poke Chrome — followup/reattach owns wake."""
+async def test_dormant_seat_without_reattach_does_not_open() -> None:
+    """Default harvest on a dormant seat stays read-only — no Chrome wake."""
     from claude_bundles.cdp_registry.models import DormantSeat
 
     store = ExecutionStore()
@@ -152,6 +152,10 @@ async def test_dormant_seat_does_not_open_on_demand() -> None:
             lambda _u: dormant,
         ),
         patch(
+            "cdp_ask.cse_session_harvest.cdp_registry.list_active",
+            lambda: [],
+        ),
+        patch(
             "cdp_ask.cse_session_harvest.harvest_by_opening_url",
             AsyncMock(),
         ) as opener,
@@ -164,6 +168,67 @@ async def test_dormant_seat_does_not_open_on_demand() -> None:
     opener.assert_not_awaited()
     assert result.outcome == "dormant"
     assert result.chat_url == "https://claude.ai/cowork/cse_x"
+
+
+@pytest.mark.asyncio
+async def test_dormant_seat_reattach_opens_then_scrapes() -> None:
+    """Opt-in reattach wakes a dormant seat, harvests, and returns observed cdp_url."""
+    from claude_bundles.cdp_registry.models import DormantSeat
+
+    store = ExecutionStore()
+    chat = "https://claude.ai/cowork/cse_x"
+    dormant = DormantSeat(
+        registration_id="reg-dormant",
+        chat_url=chat,
+        profile_suffix="s",
+        profile=Path("/tmp/p"),
+        holder="h",
+    )
+    opened = HarvestResponse(
+        outcome="harvested",
+        turns=[
+            CseSessionTurn(
+                author="assistant",
+                text="harvested reply body long enough.",
+                source="cse-dom",
+                ordinal=1,
+            )
+        ],
+        provenance={
+            "evidence_class": "observed",
+            "cdp_url": "http://127.0.0.1:9222",
+            "opened_on_demand": True,
+        },
+    )
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest.discover_candidates",
+            AsyncMock(return_value=([], None, None)),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest.cdp_registry.dormant_for_chat_url",
+            lambda _u: dormant,
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest.cdp_registry.list_active",
+            lambda: [],
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest.harvest_by_opening_url",
+            AsyncMock(return_value=opened),
+        ) as opener,
+        patch("cdp_ask.cse_session_harvest.emit", lambda _event: None),
+    ):
+        result = await execute_harvest(
+            HarvestRequest(chat_url=chat, reattach=True),
+            store,
+        )
+    opener.assert_awaited_once()
+    assert result.outcome == "harvested"
+    assert len(result.turns) == 1
+    assert result.provenance
+    assert result.provenance.get("evidence_class") == "observed"
+    assert result.provenance.get("cdp_url") == "http://127.0.0.1:9222"
 
 
 @pytest.mark.asyncio
@@ -277,9 +342,7 @@ async def test_open_on_demand_loading_then_overlay_title_harvests(
                 "aria_busy": False,
             },
             {
-                "turns": [
-                    {"author": "assistant", "text": "late reply", "ordinal": 1}
-                ],
+                "turns": [{"author": "assistant", "text": "late reply", "ordinal": 1}],
                 "streaming": False,
                 "stop": False,
                 "tool_pause": False,

@@ -44,10 +44,17 @@ async def _resolve_target(
     )
     candidates, _path, _exec = await discover_candidates(followup_req, store)
     if len(candidates) > 1:
-        return None, None, None, HarvestResponse(
-            outcome="conflict",
-            reason="ambiguous_identity",
-            provenance={"candidates": [c.as_info().model_dump() for c in candidates]},
+        return (
+            None,
+            None,
+            None,
+            HarvestResponse(
+                outcome="conflict",
+                reason="ambiguous_identity",
+                provenance={
+                    "candidates": [c.as_info().model_dump() for c in candidates]
+                },
+            ),
         )
     if not candidates:
         chat = (req.chat_url or "").strip()
@@ -59,13 +66,20 @@ async def _resolve_target(
                     registration_id=dormant.registration_id,
                     host_listable=is_row_present,
                 )
+                if req.reattach:
+                    return dormant.registration_id, dormant.chat_url, prov, None
                 return (
                     dormant.registration_id,
                     dormant.chat_url,
                     prov,
                     HarvestResponse(outcome="dormant", provenance=prov),
                 )
-        return None, None, None, HarvestResponse(outcome="not_attached", reason="no_target")
+        return (
+            None,
+            None,
+            None,
+            HarvestResponse(outcome="not_attached", reason="no_target"),
+        )
     chosen = candidates[0]
     return chosen.registration_id, chosen.chat_url, chosen.provenance, None
 
@@ -152,9 +166,11 @@ async def execute_harvest(
     registration_id, chat_url, provenance, early = await _resolve_target(req, store)
     if refused := _refuse_product_chat_url(chat_url or ""):
         return _emit(registration_id, refused)
-    url = (chat_url or req.chat_url or "").strip() or (
-        await resolve_harvest_chat_url(req, store)
-    ) or ""
+    url = (
+        (chat_url or req.chat_url or "").strip()
+        or (await resolve_harvest_chat_url(req, store))
+        or ""
+    )
     if early is not None:
         if url and early.outcome == "not_attached":
             return _bind_chat_url(
@@ -166,7 +182,11 @@ async def execute_harvest(
         return _bind_chat_url(_emit(registration_id, early), url)
 
     lane = next(
-        (row for row in cdp_registry.list_active() if row.registration_id == registration_id),
+        (
+            row
+            for row in cdp_registry.list_active()
+            if row.registration_id == registration_id
+        ),
         None,
     )
     if lane is None:
