@@ -6,6 +6,7 @@ from typing import Any
 
 from chat_harvest.models import ClassifyRefuse, classify_chat_url
 from claude_bundles import cdp_registry
+from claude_bundles.cse_identity_drift import evaluate_harvest_identity
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.skills_ui_panel import connect_cdp
@@ -22,6 +23,7 @@ from cdp_ask.cse_session_harvest_scrape import (
     pick_page_for_chat_url,
 )
 from cdp_ask.cse_session_models import (
+    HarvestIdentity,
     HarvestRequest,
     HarvestResponse,
 )
@@ -92,6 +94,42 @@ def _bind_chat_url(response: HarvestResponse, chat_url: str) -> HarvestResponse:
     return response
 
 
+def _registration_id_from_provenance(
+    provenance: dict[str, Any] | None,
+    fallback: str | None,
+) -> str | None:
+    prov = provenance if isinstance(provenance, dict) else {}
+    current = str(prov.get("registration_id") or fallback or "").strip()
+    return current or None
+
+
+def _apply_harvest_identity(
+    response: HarvestResponse,
+    *,
+    requested_registration_id: str | None,
+    requested_chat_url: str | None,
+    observed_chat_url: str | None,
+    current_registration_id: str | None,
+) -> HarvestResponse:
+    identity_data = evaluate_harvest_identity(
+        requested_chat_url=requested_chat_url,
+        requested_registration_id=requested_registration_id,
+        observed_chat_url=observed_chat_url,
+        current_registration_id=current_registration_id,
+    )
+    response.identity = HarvestIdentity.model_validate(identity_data)
+    if response.identity.identity_check == "foreign_transcript":
+        return HarvestResponse(
+            outcome="conflict",
+            reason="foreign_transcript",
+            turns=[],
+            provenance=response.provenance,
+            chat_url=response.chat_url,
+            identity=response.identity,
+        )
+    return response
+
+
 def _emit(registration_id: str | None, response: HarvestResponse) -> HarvestResponse:
     if response.ack_class == "typed_ack":
         emit(
@@ -100,6 +138,9 @@ def _emit(registration_id: str | None, response: HarvestResponse) -> HarvestResp
                 ack_class=response.ack_class,
             )
         )
+    identity_check = (
+        response.identity.identity_check if response.identity is not None else None
+    )
     emit(
         mcp_cse_session_harvested(
             registration_id=registration_id,
@@ -108,6 +149,7 @@ def _emit(registration_id: str | None, response: HarvestResponse) -> HarvestResp
             turn_count=len(response.turns),
             reason=response.reason,
             waited_ms=response.waited_ms,
+            identity_check=identity_check,
         )
     )
     return response
@@ -117,16 +159,38 @@ async def harvest_page(
     page: Any,
     req: HarvestRequest,
     provenance: dict[str, Any] | None,
+    *,
+    requested_registration_id: str | None = None,
+    requested_chat_url: str | None = None,
 ) -> HarvestResponse:
     """Scrape an already-open CSE page (attached lane or just-opened URL)."""
+    current_reg = _registration_id_from_provenance(provenance, requested_registration_id)
     if req.metadata_only:
-        return HarvestResponse(
+        response = HarvestResponse(
             outcome="harvested",
             provenance=provenance,
             content_provenance="metadata_only",
         )
+        return _apply_harvest_identity(
+            response,
+            requested_registration_id=requested_registration_id,
+            requested_chat_url=requested_chat_url,
+            observed_chat_url=None,
+            current_registration_id=current_reg,
+        )
     limit = min(int(req.limit), HARVEST_HARD_CAP)
-    return await harvest_with_loading_wait(page, req, provenance, limit=limit)
+    response = await harvest_with_loading_wait(page, req, provenance, limit=limit)
+    page_url = str(getattr(page, "url", None) or "").strip() or None
+    return _apply_harvest_identity(
+        response,
+        requested_registration_id=requested_registration_id,
+        requested_chat_url=requested_chat_url,
+        observed_chat_url=page_url,
+        current_registration_id=_registration_id_from_provenance(
+            response.provenance,
+            current_reg,
+        ),
+    )
 
 
 async def _open_detached(
@@ -134,8 +198,18 @@ async def _open_detached(
     req: HarvestRequest,
     provenance: dict[str, Any] | None,
     registration_id: str | None,
+    *,
+    requested_registration_id: str | None = None,
+    requested_chat_url: str | None = None,
 ) -> HarvestResponse:
-    response = await harvest_by_opening_url(chat_url, req, provenance, harvest_page)
+    response = await harvest_by_opening_url(
+        chat_url,
+        req,
+        provenance,
+        harvest_page,
+        requested_registration_id=requested_registration_id,
+        requested_chat_url=requested_chat_url or chat_url,
+    )
     return _emit(registration_id, response)
 
 
@@ -161,6 +235,7 @@ async def execute_harvest(
     store: ExecutionStore,
 ) -> HarvestResponse:
     """Harvest turns from a live lane, or open chat_url and scrape it."""
+    requested_registration_id = (req.registration_id or "").strip() or None
     if refused := _refuse_product_chat_url(req.chat_url or ""):
         return _emit(None, refused)
     registration_id, chat_url, provenance, early = await _resolve_target(req, store)
@@ -171,11 +246,20 @@ async def execute_harvest(
         or (await resolve_harvest_chat_url(req, store))
         or ""
     )
+    requested_chat_url = url or None
+    identity_kwargs = {
+        "requested_registration_id": requested_registration_id,
+        "requested_chat_url": requested_chat_url,
+    }
     if early is not None:
         if url and early.outcome == "not_attached":
             return _bind_chat_url(
                 await _open_detached(
-                    url, req, early.provenance or provenance, registration_id
+                    url,
+                    req,
+                    early.provenance or provenance,
+                    registration_id,
+                    **identity_kwargs,
                 ),
                 url,
             )
@@ -192,7 +276,13 @@ async def execute_harvest(
     if lane is None:
         if url:
             return _bind_chat_url(
-                await _open_detached(url, req, provenance, registration_id),
+                await _open_detached(
+                    url,
+                    req,
+                    provenance,
+                    registration_id,
+                    **identity_kwargs,
+                ),
                 url,
             )
         return _bind_chat_url(
@@ -208,7 +298,12 @@ async def execute_harvest(
         if url:
             page = await pick_page_for_chat_url(ctx, url, fallback=page)
         try:
-            response = await harvest_page(page, req, provenance)
+            response = await harvest_page(
+                page,
+                req,
+                provenance,
+                **identity_kwargs,
+            )
         finally:
             await pw.stop()
     except Exception as exc:

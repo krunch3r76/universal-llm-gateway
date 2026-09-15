@@ -23,6 +23,12 @@ HarvestSource = Literal["chat", "output-file", "auto"]
 TurnSource = Literal["cse-dom", "output-file", "archive", "bus-fallback"]
 PasteEnvelope = Literal["free", "stand_down", "page"]
 MinReceipt = Literal["dom_paste", "dom_committed", "human_visible"]
+IdentityCheck = Literal[
+    "match",
+    "registration_drift",
+    "foreign_transcript",
+    "unverified",
+]
 
 
 class CseSessionTurn(BaseModel):
@@ -72,6 +78,16 @@ class ProvenanceResponse(BaseModel):
     same_lane: bool | None = None
 
 
+class HarvestIdentity(BaseModel):
+    """Echo of requested vs observed CSE identity after a harvest scrape."""
+
+    requested_chat_url: str | None = None
+    requested_registration_id: str | None = None
+    observed_chat_url: str | None = None
+    current_registration_id: str | None = None
+    identity_check: IdentityCheck
+
+
 class HarvestRequest(BaseModel):
     """Bounded harvest — no paste or submit. Opens chat_url when no lane is live."""
 
@@ -105,6 +121,7 @@ class HarvestResponse(BaseModel):
     chat_url: str | None = None
     waited_ms: int | None = None
     coverage: Literal["full", "tail"] | None = None
+    identity: HarvestIdentity | None = None
 
 
 class PasteRequest(BaseModel):

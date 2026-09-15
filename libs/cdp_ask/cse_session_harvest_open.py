@@ -58,6 +58,9 @@ async def harvest_by_opening_url(
     req: HarvestRequest,
     provenance: dict[str, Any] | None,
     harvest_page,
+    *,
+    requested_registration_id: str | None = None,
+    requested_chat_url: str | None = None,
 ) -> HarvestResponse:
     """Goto *chat_url* on a registry host, harvest, then park or drop the tab."""
     outcome = await ensure_cse_attached(
@@ -82,6 +85,8 @@ async def harvest_by_opening_url(
             outcome.page,
             req,
             provenance=opened_prov,
+            requested_registration_id=requested_registration_id,
+            requested_chat_url=requested_chat_url or chat_url,
         )
         return response
     finally:

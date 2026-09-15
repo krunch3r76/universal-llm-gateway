@@ -26,27 +26,27 @@ def _null_identity() -> dict[str, str | None]:
     return {"chat_url": None, "registration_id": None, "source": None}
 
 
-def _started_at_float(raw: Any) -> float:
+def _seat_bound_at_float(raw: Any) -> float:
     try:
         return float(raw) if raw is not None else 0.0
     except (TypeError, ValueError):
         return 0.0
 
 
-def _mission_kind(raw: Any) -> str:
-    return str(raw or "root").strip().lower() or "root"
-
-
 def _select_registration_id(
-    candidates: list[tuple[str, str, float]],
-) -> str | None:
-    """Pick one registration: sole hop wins; else newest ``started_at``."""
+    candidates: list[tuple[str, float]],
+) -> tuple[str | None, str | None]:
+    """Pick the incumbent seat-open row for a lane by max ``seat_bound_at``."""
     if not candidates:
-        return None
-    hop_rows = [row for row in candidates if row[1] == "hop"]
-    if len(hop_rows) == 1:
-        return hop_rows[0][0]
-    return max(candidates, key=lambda row: row[2])[0]
+        return None, None
+    if len(candidates) == 1:
+        return candidates[0][0], None
+    winner = max(candidates, key=lambda row: row[1])
+    reason = (
+        f"multiple seat-open rows on lane; selected max seat_bound_at "
+        f"({winner[1]}) for {winner[0]}"
+    )
+    return winner[0], reason
 
 
 def _chat_url_for_registration(registration_id: str) -> str | None:
@@ -103,9 +103,9 @@ def _candidates_from_seat_rows(
     seat_rows: list[Any],
     parent_thread: str,
     purposes: frozenset[str],
-) -> list[tuple[str, str, float]]:
+) -> list[tuple[str, float]]:
     parent = parent_thread.strip()
-    out: list[tuple[str, str, float]] = []
+    out: list[tuple[str, float]] = []
     for row in seat_rows:
         if not isinstance(row, dict):
             continue
@@ -117,13 +117,7 @@ def _candidates_from_seat_rows(
         reg_id = str(row.get("registration_id") or "").strip()
         if not reg_id:
             continue
-        out.append(
-            (
-                reg_id,
-                _mission_kind(row.get("mission_kind")),
-                _started_at_float(row.get("started_at")),
-            )
-        )
+        out.append((reg_id, _seat_bound_at_float(row.get("seat_bound_at"))))
     return out
 
 
@@ -145,17 +139,11 @@ def _resolve_from_http(
     if not isinstance(seat_rows, list):
         return _null_identity()
     candidates = _candidates_from_seat_rows(seat_rows, parent_thread, purposes)
-    reg_id = _select_registration_id(candidates)
+    reg_id, _reason = _select_registration_id(candidates)
     if not reg_id:
         return _null_identity()
-    row_chat = None
-    for row in seat_rows:
-        if isinstance(row, dict) and str(row.get("registration_id") or "").strip() == reg_id:
-            row_chat = str(row.get("chat_url") or "").strip() or None
-            break
     chat_url = (
-        row_chat
-        or _chat_url_from_provenance(reg_id, timeout_s=timeout_s, client=client)
+        _chat_url_from_provenance(reg_id, timeout_s=timeout_s, client=client)
         or _chat_url_for_registration(reg_id)
     )
     return {"chat_url": chat_url, "registration_id": reg_id, "source": "http"}
@@ -167,7 +155,7 @@ def _resolve_from_local(
 ) -> dict[str, str | None]:
     parent = parent_thread.strip()
     active = load_active()
-    candidates: list[tuple[str, str, float]] = []
+    candidates: list[tuple[str, float]] = []
     for reg in list_active():
         purpose = (reg.purpose or "").strip()
         if purpose not in purposes:
@@ -178,11 +166,10 @@ def _resolve_from_local(
         candidates.append(
             (
                 reg.registration_id,
-                _mission_kind(reg.mission_kind),
-                _started_at_float(raw.get("started_at")),
+                _seat_bound_at_float(raw.get("seat_bound_at")),
             )
         )
-    reg_id = _select_registration_id(candidates)
+    reg_id, _reason = _select_registration_id(candidates)
     if not reg_id:
         return _null_identity()
     chat_url = _chat_url_for_registration(reg_id)

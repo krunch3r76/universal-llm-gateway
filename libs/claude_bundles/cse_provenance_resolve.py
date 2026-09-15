@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import Any
 
 from claude_bundles import cdp_registry_store as store
+from claude_bundles.cse_identity_drift import registration_drift_fields
 from claude_bundles.cse_provenance import (
     HostListablePredicate,
     LaneLineageReader,
@@ -255,8 +256,7 @@ def resolve(
             "state": "conflict",
             "chat_url": target,
             "reason": "registration_not_current_binding",
-            "requested_registration_id": registration_id,
-            "current_registration_id": current.registration_id,
+            **registration_drift_fields(registration_id, current.registration_id),
             "candidate_count": candidate_count,
             "candidates": _candidates_for_url(target, episodes, host_listable),
         }

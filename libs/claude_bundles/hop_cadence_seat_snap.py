@@ -220,6 +220,8 @@ def seat_row_from_registry_record(
         "source": SEAT_SOURCE,
         "seat": True,
         "host_status": host_status,
+        "seat_lane": record.get("seat_lane"),
+        "seat_bound_at": record.get("seat_bound_at"),
     }
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -14,7 +14,7 @@ from cdp_ask.cse_session_harvest_identity import (
     resolve_harvest_chat_url,
     satellite_id_from_inflight,
 )
-from cdp_ask.cse_session_models import HarvestRequest
+from cdp_ask.cse_session_models import CseSessionTurn, HarvestRequest, HarvestResponse
 from cdp_ask.execution_store import ExecutionStore
 
 
@@ -184,3 +184,95 @@ async def test_stargate_id_opens_via_inflight_then_provenance(
         ExecutionStore(),
     )
     assert url == "https://claude.ai/cowork/cse_fromProv"
+
+
+@pytest.mark.asyncio
+async def test_metadata_only_harvest_identity_unverified() -> None:
+    from cdp_ask.cse_session_harvest import harvest_page
+
+    page = MagicMock()
+    page.url = "https://claude.ai/cowork/cse_meta"
+    result = await harvest_page(
+        page,
+        HarvestRequest(registration_id="req-reg", metadata_only=True),
+        provenance={"registration_id": "minted-reg"},
+        requested_registration_id="req-reg",
+        requested_chat_url="https://claude.ai/cowork/cse_meta",
+    )
+    assert result.identity is not None
+    assert result.identity.identity_check == "unverified"
+
+
+@pytest.mark.asyncio
+async def test_harvest_foreign_transcript_conflict() -> None:
+    from cdp_ask.cse_session_harvest import harvest_page
+
+    page = MagicMock()
+    page.url = "https://claude.ai/cowork/cse_observed"
+    with patch(
+        "cdp_ask.cse_session_harvest.harvest_with_loading_wait",
+        AsyncMock(
+            return_value=HarvestResponse(
+                outcome="harvested",
+                turns=[
+                    CseSessionTurn(
+                        author="assistant",
+                        text="wrong seat content long enough.",
+                        source="cse-dom",
+                    )
+                ],
+                provenance={"registration_id": "minted-reg"},
+            )
+        ),
+    ):
+        result = await harvest_page(
+            page,
+            HarvestRequest(registration_id="req-reg"),
+            provenance={"registration_id": "minted-reg"},
+            requested_registration_id="req-reg",
+            requested_chat_url="https://claude.ai/cowork/cse_requested",
+        )
+    assert result.outcome == "conflict"
+    assert result.reason == "foreign_transcript"
+    assert result.turns == []
+    assert result.identity is not None
+    assert result.identity.identity_check == "foreign_transcript"
+
+
+@pytest.mark.asyncio
+async def test_harvest_registration_drift_after_reattach_mint() -> None:
+    from cdp_ask.cse_session_harvest import harvest_page
+
+    cse = "https://claude.ai/cowork/cse_same"
+    page = MagicMock()
+    page.url = cse
+    with patch(
+        "cdp_ask.cse_session_harvest.harvest_with_loading_wait",
+        AsyncMock(
+            return_value=HarvestResponse(
+                outcome="harvested",
+                turns=[
+                    CseSessionTurn(
+                        author="assistant",
+                        text="harvested body long enough.",
+                        source="cse-dom",
+                    )
+                ],
+                provenance={"registration_id": "minted-reg", "opened_on_demand": True},
+            )
+        ),
+    ):
+        result = await harvest_page(
+            page,
+            HarvestRequest(registration_id="req-reg"),
+            provenance={"registration_id": "minted-reg", "opened_on_demand": True},
+            requested_registration_id="req-reg",
+            requested_chat_url=cse,
+        )
+    assert result.outcome == "harvested"
+    assert len(result.turns) == 1
+    assert result.identity is not None
+    assert result.identity.identity_check == "registration_drift"
+    assert result.identity.requested_registration_id == "req-reg"
+    assert result.identity.current_registration_id == "minted-reg"
+    assert result.identity.requested_registration_id != result.identity.current_registration_id

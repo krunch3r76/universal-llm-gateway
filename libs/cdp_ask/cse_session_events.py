@@ -63,6 +63,7 @@ def mcp_cse_session_harvested(
     turn_count: int = 0,
     reason: str | None = None,
     waited_ms: int | None = None,
+    identity_check: str | None = None,
 ) -> Event:
     """Emit when harvest completes or reports an incomplete outcome."""
     return Event(
@@ -76,6 +77,7 @@ def mcp_cse_session_harvested(
             "turn_count": turn_count,
             "reason": reason,
             "waited_ms": waited_ms,
+            "identity_check": identity_check,
         },
     )
 

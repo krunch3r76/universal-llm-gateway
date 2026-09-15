@@ -2,42 +2,113 @@
 
 from __future__ import annotations
 
+import inspect
 from unittest.mock import MagicMock, patch
 
 import pytest
+from claude_bundles.cdp_registry.models import seat_open
+from claude_bundles.cdp_registry.session_address import apply_driving_seat_bind
+from claude_bundles.hop_cadence_seat_snap import (
+    seat_row_from_registry_record,
+    seat_rows_from_registry_records,
+)
 
 from cdp_ask.client import CdpAskClientError
 from cdp_ask.operator_seat_resolve import (
+    _candidates_from_seat_rows,
     _chat_url_from_provenance,
+    _select_registration_id,
     resolve_operator_seat,
 )
 
 pytestmark = pytest.mark.offline
 
+_RESOLVER_READ_FIELDS = frozenset(
+    {"registration_id", "parent_thread", "purpose", "seat_bound_at"}
+)
 
-def _dormant_snap(*, parent_thread: str = "10479") -> dict:
-    return {
-        "seat_rows": [
-            {
-                "registration_id": "reg-dormant",
-                "parent_thread": parent_thread,
-                "purpose": "mission",
-                "seat_state": "dormant",
-                "mission_kind": "root",
-                "started_at": 100.0,
-                "chat_url": "https://claude.ai/chat/dormant",
-            }
-        ]
+
+def _registry_record(**overrides: object) -> dict:
+    base = {
+        "registration_id": "reg-dormant",
+        "status": "dormant",
+        "purpose": "operator-proxy",
+        "parent_thread": "10479",
+        "seat_lane": "10479",
+        "seat_bound_at": 100.0,
+        "execution_id": "",
     }
+    base.update(overrides)
+    return base
+
+
+def test_seat_row_carries_every_field_the_resolver_reads() -> None:
+    projected = seat_row_from_registry_record(_registry_record())
+    assert projected is not None
+    assert _RESOLVER_READ_FIELDS <= set(projected.keys())
+    for field in _RESOLVER_READ_FIELDS:
+        assert projected[field] is not None or field == "execution_id"
+
+
+def test_seat_row_projection_field_set() -> None:
+    projected = seat_row_from_registry_record(_registry_record())
+    assert projected is not None
+    assert set(projected.keys()) == {
+        "registration_id",
+        "execution_id",
+        "parent_thread",
+        "purpose",
+        "seat_state",
+        "stream_state",
+        "source",
+        "seat",
+        "host_status",
+        "seat_lane",
+        "seat_bound_at",
+    }
+    assert "chat_url" not in projected
+    assert "cdp_url" not in projected
+    assert "port" not in projected
+
+
+def test_hop_row_is_never_seat_open() -> None:
+    active = {
+        "reg-hop": _registry_record(
+            mission_kind="hop",
+            seat_lane=None,
+            seat_bound_at=None,
+        )
+    }
+    bound, _released = apply_driving_seat_bind(active, "reg-hop")
+    assert bound is None
+    row = active["reg-hop"]
+    assert seat_open(row) is False
+    assert seat_row_from_registry_record(row) is None
+
+
+def test_select_registration_id_picks_max_seat_bound_at_with_reason() -> None:
+    reg_id, reason = _select_registration_id(
+        [
+            ("reg-old", 10.0),
+            ("reg-new", 500.0),
+        ]
+    )
+    assert reg_id == "reg-new"
+    assert reason is not None
+    assert "seat_bound_at" in reason
+    assert "reg-new" in reason
 
 
 def test_resolve_dormant_seat_row_via_http() -> None:
-    def _snap() -> dict:
-        return _dormant_snap()
-
-    out = resolve_operator_seat("10479", get_lane_snapshot=_snap)
+    seat_rows = seat_rows_from_registry_records([_registry_record()])
+    snap = {"seat_rows": seat_rows}
+    with patch(
+        "cdp_ask.operator_seat_resolve._chat_url_from_provenance",
+        return_value="https://claude.ai/cowork/cse_dormant",
+    ):
+        out = resolve_operator_seat("10479", get_lane_snapshot=lambda: snap)
     assert out["registration_id"] == "reg-dormant"
-    assert out["chat_url"] == "https://claude.ai/chat/dormant"
+    assert out["chat_url"] == "https://claude.ai/cowork/cse_dormant"
     assert out["source"] == "http"
 
 
@@ -63,40 +134,36 @@ def test_http_malformed_json_falls_back_without_raise() -> None:
 
 
 def test_purpose_mismatch_not_resolved() -> None:
-    snap = _dormant_snap()
-    snap["seat_rows"][0]["purpose"] = "ask"
+    record = _registry_record(purpose="ask")
+    snap = {"seat_rows": seat_rows_from_registry_records([record])}
     out = resolve_operator_seat("10479", get_lane_snapshot=lambda: snap)
     assert out["registration_id"] is None
 
 
 def test_parent_thread_mismatch_not_resolved() -> None:
-    out = resolve_operator_seat("9999", get_lane_snapshot=lambda: _dormant_snap())
+    record = _registry_record(parent_thread="9999", seat_lane="9999")
+    snap = {"seat_rows": seat_rows_from_registry_records([record])}
+    out = resolve_operator_seat("10479", get_lane_snapshot=lambda: snap)
     assert out["registration_id"] is None
 
 
-def test_hop_tie_break_wins_over_newer_root() -> None:
-    snap = {
-        "seat_rows": [
-            {
-                "registration_id": "reg-root",
-                "parent_thread": "10479",
-                "purpose": "operator-proxy",
-                "mission_kind": "root",
-                "started_at": 500.0,
-            },
-            {
-                "registration_id": "reg-hop",
-                "parent_thread": "10479",
-                "purpose": "operator-proxy",
-                "mission_kind": "hop",
-                "started_at": 100.0,
-                "chat_url": "https://claude.ai/chat/hop",
-            },
-        ]
-    }
-    out = resolve_operator_seat("10479", get_lane_snapshot=lambda: snap)
-    assert out["registration_id"] == "reg-hop"
-    assert out["source"] == "http"
+def test_two_seat_open_rows_selects_newest_bound_at() -> None:
+    records = [
+        _registry_record(
+            registration_id="reg-old",
+            seat_bound_at=100.0,
+        ),
+        _registry_record(
+            registration_id="reg-new",
+            seat_bound_at=500.0,
+        ),
+    ]
+    seat_rows = seat_rows_from_registry_records(records)
+    candidates = _candidates_from_seat_rows(seat_rows, "10479", frozenset({"operator-proxy"}))
+    reg_id, reason = _select_registration_id(candidates)
+    assert reg_id == "reg-new"
+    assert reason is not None
+    assert "500.0" in reason
 
 
 def test_local_fallback_when_http_empty() -> None:
@@ -104,7 +171,6 @@ def test_local_fallback_when_http_empty() -> None:
     reg.registration_id = "reg-local"
     reg.parent_thread = "10479"
     reg.purpose = "operator-proxy"
-    reg.mission_kind = "root"
 
     with (
         patch(
@@ -113,7 +179,7 @@ def test_local_fallback_when_http_empty() -> None:
         ),
         patch(
             "cdp_ask.operator_seat_resolve.load_active",
-            return_value={"reg-local": {"started_at": 42.0}},
+            return_value={"reg-local": {"seat_bound_at": 42.0}},
         ),
         patch(
             "cdp_ask.operator_seat_resolve.chat_url_for_registration",
@@ -128,29 +194,15 @@ def test_local_fallback_when_http_empty() -> None:
     assert out["source"] == "local"
 
 
-def _snap_no_chat_url(*, parent_thread: str = "10479") -> dict:
-    return {
-        "seat_rows": [
-            {
-                "registration_id": "reg-remote",
-                "parent_thread": parent_thread,
-                "purpose": "mission",
-                "seat_state": "dormant",
-                "mission_kind": "root",
-                "started_at": 100.0,
-            }
-        ]
-    }
-
-
 def test_http_path_enriches_chat_url_from_provenance() -> None:
+    seat_rows = seat_rows_from_registry_records([_registry_record(registration_id="reg-remote")])
     with patch(
         "cdp_ask.operator_seat_resolve._chat_url_from_provenance",
         return_value="https://claude.ai/chat/provenance",
     ):
         out = resolve_operator_seat(
             "10479",
-            get_lane_snapshot=lambda: _snap_no_chat_url(),
+            get_lane_snapshot=lambda: {"seat_rows": seat_rows},
         )
     assert out == {
         "chat_url": "https://claude.ai/chat/provenance",
@@ -199,6 +251,7 @@ def test_provenance_identity_mismatch_yields_no_chat_url() -> None:
 
 
 def test_http_provenance_failure_falls_back_to_null_chat_url() -> None:
+    seat_rows = seat_rows_from_registry_records([_registry_record(registration_id="reg-remote")])
     with (
         patch(
             "cdp_ask.operator_seat_resolve._chat_url_from_provenance",
@@ -211,8 +264,18 @@ def test_http_provenance_failure_falls_back_to_null_chat_url() -> None:
     ):
         out = resolve_operator_seat(
             "10479",
-            get_lane_snapshot=lambda: _snap_no_chat_url(),
+            get_lane_snapshot=lambda: {"seat_rows": seat_rows},
         )
     assert out["registration_id"] == "reg-remote"
     assert out["chat_url"] is None
     assert out["source"] == "http"
+
+
+def test_resolver_read_set_has_no_defaults_in_projection() -> None:
+    source = inspect.getsource(_candidates_from_seat_rows)
+    projected = seat_row_from_registry_record(_registry_record(seat_bound_at=123.0))
+    assert projected is not None
+    for field in _RESOLVER_READ_FIELDS:
+        assert field in source
+        if field == "seat_bound_at":
+            assert projected[field] == 123.0

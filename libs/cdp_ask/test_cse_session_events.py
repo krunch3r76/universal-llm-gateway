@@ -60,3 +60,14 @@ def test_harvest_and_ack_events_distinct() -> None:
     assert harvested.signal != acked.signal
     assert harvested.payload["reason"] == "settled_empty"
     assert harvested.payload["waited_ms"] == 500
+
+
+def test_harvest_event_carries_identity_check() -> None:
+    harvested = mcp_cse_session_harvested(
+        registration_id="reg-1",
+        outcome="harvested",
+        ack_class="ordinary_content",
+        turn_count=2,
+        identity_check="registration_drift",
+    )
+    assert harvested.payload["identity_check"] == "registration_drift"
