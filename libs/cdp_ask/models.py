@@ -360,6 +360,20 @@ class FollowupProjectAskRequest(BaseModel):
     timeout_s: int = 60
     reattach: bool = False
     retain_lane: bool = False
+    mission_kind: str | None = Field(
+        default=None,
+        description=(
+            "Chrome-host mission taxonomy: root | hop | side | parallel. "
+            "Carried on the reattach path, which may mint a lane."
+        ),
+    )
+    parent_thread: str | None = Field(
+        default=None,
+        description=(
+            "Bus private-request lane for parent mission (e.g. hop parent). "
+            "Carried on the reattach path, which may mint a lane."
+        ),
+    )
     min_receipt: FollowupMinReceipt = Field(
         default="dom_paste",
         description=(
