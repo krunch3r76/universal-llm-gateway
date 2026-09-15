@@ -100,8 +100,22 @@ def _listed(policy: dict[str, Any], key: str) -> list[str]:
     return [str(x).strip() for x in (raw or []) if str(x).strip()]
 
 
+def _skill_slug(label: str) -> str:
+    """Reduce an ``induction_loaded`` prose label to the bare activation slug.
+
+    The field carries reader-facing labels ("liaison skill", "git-posture
+    § Land"), but claude.ai mounts a body only on an exact ``Use the <slug>
+    skill`` match — "Use the liaison skill skill" mounts nothing.
+    """
+    slug = str(label or "").split(" § ", 1)[0].strip().strip("`")
+    if slug.lower().endswith(" skill"):
+        slug = slug[: -len(" skill")].rstrip()
+    return slug
+
+
 def _use_skill_lines(loaded: list[str]) -> list[str]:
-    return [f"Use the {slug} skill" for slug in loaded]
+    slugs = [s for s in (_skill_slug(label) for label in loaded) if s]
+    return [f"Use the {slug} skill" for slug in dict.fromkeys(slugs)]
 
 
 def build_wake_induction(

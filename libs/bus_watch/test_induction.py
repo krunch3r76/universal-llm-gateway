@@ -162,9 +162,24 @@ def test_induction_cse_surface_use_lines() -> None:
     text = build_wake_induction(_digest())
     cse = build_wake_induction(_digest(), surface="cse")
     assert "Use the liaison skill" in cse
-    assert "Use the git-posture § Land skill" in cse
+    assert "Use the git-posture skill" in cse
     assert "Loaded already (do not re-read)" not in cse
     assert cse != text
+
+
+def test_induction_cse_use_lines_are_bare_slugs() -> None:
+    """claude.ai mounts a body only on an exact slug — a label leaks and mounts nothing."""
+    cse = build_wake_induction(
+        _digest(
+            policy={"induction_loaded": ["liaison skill", "git-posture § Land", "`fs`"]}
+        ),
+        surface="cse",
+    )
+    assert "Use the liaison skill skill" not in cse
+    assert " § " not in cse
+    assert "Use the fs skill" in cse
+    # "liaison skill" prepended by the builder and listed in policy is one slug.
+    assert cse.count("Use the liaison skill") == 1
 
 
 def test_induction_cse_always_includes_liaison_skill() -> None:
