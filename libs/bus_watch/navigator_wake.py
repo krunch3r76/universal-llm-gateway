@@ -32,6 +32,7 @@ from durable_io.atomic import durable_write_text, path_flock
 from stargate_dispatch.client import submit_team_dispatch
 
 from bus_watch.doorbell import render_doorbell
+from bus_watch.doorbell_skills import dispatch_skills_for_surface
 from bus_watch.fable_lock import WATCH_DIR, current_night_id
 
 _NAVIGATOR_LEASE_PREFIX = "navigator-"
@@ -220,6 +221,7 @@ def render_navigator_doorbell(
         root_id,
         slug,
         ring=str(ring) if ring else None,
+        surface="cdp",
         extra_addresses=extras,
         fired_by=str(fired_by),
         include_commission=include_commission,
@@ -320,6 +322,9 @@ def fire_navigator_wake(
         "timeout_seconds": int(wake_timeout),
         "caller_agent": "liaison-ticker",
     }
+    staged_skills = dispatch_skills_for_surface("cdp")
+    if staged_skills:
+        body["skills"] = staged_skills
     evaluation["clauses"]["navigator_lane_bound"] = bool(body.get("parent_thread"))
     if not evaluation["clauses"]["navigator_lane_bound"]:
         return {
