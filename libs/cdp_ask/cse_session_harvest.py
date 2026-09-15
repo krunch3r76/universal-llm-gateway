@@ -243,7 +243,6 @@ async def _refuse_unresolved_lineage(
         return None
     if provenance.get("lineage_state") != "unresolved":
         return None
-    registration_id = str(provenance.get("registration_id") or "").strip() or None
     return HarvestResponse(
         outcome="refused",
         reason="lineage_unresolved",

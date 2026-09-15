@@ -11,13 +11,12 @@ from cdp_ask.cse_session_harvest_identity import (
     chat_url_from_archives,
     chat_url_from_provenance,
     cse_url_from_token,
-    resolve_execution_provenance,
     resolve_harvest_chat_url,
     satellite_id_from_inflight,
 )
-from cdp_ask.followup_envelope import FollowupCandidate
 from cdp_ask.cse_session_models import CseSessionTurn, HarvestRequest, HarvestResponse
 from cdp_ask.execution_store import ExecutionStore
+from cdp_ask.followup_envelope import FollowupCandidate
 
 
 def test_cse_token_and_url_normalize() -> None:

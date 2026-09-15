@@ -6,11 +6,11 @@ import os
 import re
 import sqlite3
 from pathlib import Path
-
 from typing import Any
 
 from claude_bundles import cdp_registry
-from claude_bundles.cse_provenance import read_episodes, resolve as resolve_provenance
+from claude_bundles.cse_provenance import read_episodes
+from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.cse_url import normalize_cse_url
 
