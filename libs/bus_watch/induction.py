@@ -100,13 +100,37 @@ def _listed(policy: dict[str, Any], key: str) -> list[str]:
     return [str(x).strip() for x in (raw or []) if str(x).strip()]
 
 
-def build_wake_induction(digest: dict[str, Any], *, cap: int = INDUCTION_CAP) -> str:
+def _skill_slug(label: str) -> str:
+    """Reduce an ``induction_loaded`` prose label to the bare activation slug.
+
+    The field carries reader-facing labels ("liaison skill", "git-posture
+    § Land"), but claude.ai mounts a body only on an exact ``Use the <slug>
+    skill`` match — "Use the liaison skill skill" mounts nothing.
+    """
+    slug = str(label or "").split(" § ", 1)[0].strip().strip("`")
+    if slug.lower().endswith(" skill"):
+        slug = slug[: -len(" skill")].rstrip()
+    return slug
+
+
+def _use_skill_lines(loaded: list[str]) -> list[str]:
+    slugs = [s for s in (_skill_slug(label) for label in loaded) if s]
+    return [f"Use the {slug} skill" for slug in dict.fromkeys(slugs)]
+
+
+def build_wake_induction(
+    digest: dict[str, Any], *, cap: int = INDUCTION_CAP, surface: str = "ide"
+) -> str:
     """Render the wake as a short planted-address block (≤ ``cap`` bytes).
 
     M1 plant addresses, not assertions · M2 episodic frame ("Event:") · M4 no
     costume · M5 front-load, never accumulate. ``policy.induction_loaded`` lists
     what the seat already holds and must not re-read; ``policy.induction_binds``
     carries standing operator binds (e.g. "hopper paused (10479#210)").
+
+    ``surface='cse'`` emits one ``Use the <slug> skill`` line per loaded skill
+    (claude.ai activation); ``surface='ide'`` keeps the legacy single
+    ``Loaded already (do not re-read)`` line.
     """
     root = digest.get("root") or {}
     policy = digest.get("policy") or {}
@@ -139,7 +163,10 @@ def build_wake_induction(digest: dict[str, Any], *, cap: int = INDUCTION_CAP) ->
     loaded = list(
         dict.fromkeys(["liaison skill", *_listed(policy, "induction_loaded")])
     )
-    lines.append("Loaded already (do not re-read): " + " · ".join(loaded))
+    if surface == "cse":
+        lines.extend(_use_skill_lines(loaded))
+    else:
+        lines.append("Loaded already (do not re-read): " + " · ".join(loaded))
     standing = [
         f"register={digest.get('register')}",
         *_listed(policy, "induction_binds"),
@@ -151,7 +178,8 @@ def build_wake_induction(digest: dict[str, Any], *, cap: int = INDUCTION_CAP) ->
         lines.append(_NOW_STEP)
     else:
         lines.append(_ONE_STEP if forcing else _QUIET_STEP)
-    return _fit(lines, cap)
+    fit = _fit_cse if surface == "cse" else _fit
+    return fit(lines, cap)
 
 
 def _fit(lines: list[str], cap: int) -> str:
@@ -183,6 +211,48 @@ def _fit(lines: list[str], cap: int) -> str:
             if standing_at is None or " · " not in lines[standing_at]:
                 break
             lines[standing_at] = lines[standing_at].split(" · ", 1)[0]
+        text = "\n".join(lines)
+    return text
+
+
+def _fit_cse(lines: list[str], cap: int) -> str:
+    """Trim to ``cap`` bytes; drop ``Use the … skill`` lines only after events and standing."""
+    text = "\n".join(lines)
+    while len(text.encode("utf-8")) > cap and len(lines) > 3:
+        drop_at = next(
+            (i for i, ln in enumerate(lines) if ln.startswith("Event: +")), None
+        )
+        if drop_at is None:
+            drop_at = next(
+                (
+                    i
+                    for i in range(len(lines) - 2, 0, -1)
+                    if lines[i].startswith("Event:")
+                    and not lines[i].startswith("Event: CONTEXT_BUDGET")
+                ),
+                None,
+            )
+        if drop_at is not None:
+            lines.pop(drop_at)
+        else:
+            standing_at = next(
+                (i for i, ln in enumerate(lines) if ln.startswith("Standing: ")), None
+            )
+            if standing_at is not None and " · " in lines[standing_at]:
+                lines[standing_at] = lines[standing_at].split(" · ", 1)[0]
+            else:
+                use_at = next(
+                    (
+                        i
+                        for i in range(len(lines) - 1, -1, -1)
+                        if lines[i].startswith("Use the ")
+                        and lines[i].endswith(" skill")
+                    ),
+                    None,
+                )
+                if use_at is None:
+                    break
+                lines.pop(use_at)
         text = "\n".join(lines)
     return text
 

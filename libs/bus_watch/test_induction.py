@@ -147,3 +147,59 @@ def test_induction_respects_cap() -> None:
     assert len(text.encode("utf-8")) <= 400
     assert text.startswith("WAKE 10479")
     assert "NOW:" in text
+
+
+def test_induction_ide_surface_unchanged() -> None:
+    digest = _digest()
+    default_text = build_wake_induction(digest)
+    ide_text = build_wake_induction(digest, surface="ide")
+    assert default_text == ide_text
+    assert "Loaded already (do not re-read):" in default_text
+    assert "Use the liaison skill" not in default_text
+
+
+def test_induction_cse_surface_use_lines() -> None:
+    text = build_wake_induction(_digest())
+    cse = build_wake_induction(_digest(), surface="cse")
+    assert "Use the liaison skill" in cse
+    assert "Use the git-posture skill" in cse
+    assert "Loaded already (do not re-read)" not in cse
+    assert cse != text
+
+
+def test_induction_cse_use_lines_are_bare_slugs() -> None:
+    """claude.ai mounts a body only on an exact slug — a label leaks and mounts nothing."""
+    cse = build_wake_induction(
+        _digest(
+            policy={"induction_loaded": ["liaison skill", "git-posture § Land", "`fs`"]}
+        ),
+        surface="cse",
+    )
+    assert "Use the liaison skill skill" not in cse
+    assert " § " not in cse
+    assert "Use the fs skill" in cse
+    # "liaison skill" prepended by the builder and listed in policy is one slug.
+    assert cse.count("Use the liaison skill") == 1
+
+
+def test_induction_cse_always_includes_liaison_skill() -> None:
+    cse = build_wake_induction(_digest(policy={}), surface="cse")
+    assert "Use the liaison skill" in cse
+    assert cse.count("Use the ") >= 1
+
+
+def test_induction_cse_cap_trims_use_lines_last() -> None:
+    digest = _digest(
+        policy={
+            "induction_binds": ["a long standing bind " * 8, "another " * 20],
+            "induction_loaded": ["git-posture § Land", "checkpoint-discipline"],
+        },
+        attention=[
+            {"id": str(n), "unread": 2, "last_subject": "cursor-sdk CLOSEOUT " * 3}
+            for n in range(10590, 10596)
+        ],
+    )
+    text = build_wake_induction(digest, surface="cse", cap=700)
+    assert len(text.encode("utf-8")) <= 700
+    assert "Standing: register=" in text
+    assert "Use the liaison skill" in text

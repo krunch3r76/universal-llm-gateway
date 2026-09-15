@@ -21,9 +21,11 @@ import sys
 import time
 
 from bus_watch import navigator_lease_reap
+from bus_watch.cse_followup import fire_cse_followup
 from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.ide_followup import fire_ide_followup
 from bus_watch.ide_hop import DEFAULT_REMOTE_REPO, policy_gui_host
+from bus_watch.induction import build_wake_induction
 from bus_watch.liaison_digest import build_digest
 from bus_watch.navigator_wake import fire_navigator_wake
 from bus_watch.tick_state import load_state, update_state
@@ -60,6 +62,12 @@ def main() -> int:
         action="store_true",
         help="type into the window the operator has focused; skip compositor activate",
     )
+    p.add_argument(
+        "--transport",
+        choices=["ide", "navigator", "cse"],
+        default=None,
+        help="induction delivery arm (default: attended→ide, cse register→cse, else navigator)",
+    )
     args = p.parse_args()
     root = str(args.root).strip()
     if not root:
@@ -92,13 +100,52 @@ def main() -> int:
         print(json.dumps(out, indent=2))
         return 2
 
+    if args.transport:
+        transport = args.transport
+    elif register == "cse":
+        transport = "cse"
+    elif register == "attended":
+        transport = "ide"
+    else:
+        transport = "navigator"
+
     induction = str(digest.get("induction") or "")
+    if transport == "cse":
+        induction = build_wake_induction(digest, surface="cse")
     if not induction:
         out = {"ok": False, "phase": "no_induction", "root": root}
         print(json.dumps(out, indent=2))
         return 2
 
-    transport = "ide" if register == "attended" else "navigator"
+    if transport == "cse":
+        fired = fire_cse_followup(induction, root, dry_run=args.dry_run)
+        out = {
+            "ok": True if args.dry_run else bool(fired.get("ok")),
+            "transport": transport,
+            "root": root,
+            "fingerprint": fp,
+            "induction": induction,
+            "url": fired.get("url"),
+            "registration_id": fired.get("registration_id"),
+            "send_verified": fired.get("send_verified"),
+            "lease_reap": reaped,
+        }
+        if fired.get("error"):
+            out["error"] = fired["error"]
+        if args.dry_run and fired.get("body"):
+            out["body"] = fired["body"]
+        print(json.dumps(out, indent=2))
+        if not out.get("ok"):
+            return 2
+        if args.fire and fp and fired.get("ok"):
+
+            def _mark_cse_induction(fresh: dict) -> None:
+                fresh["last_induction_fingerprint"] = fp
+                fresh["last_induction_at"] = time.time()
+
+            update_state(state_path, _mark_cse_induction)
+        return 0
+
     if transport == "navigator":
         fired = fire_navigator_wake(
             root,
