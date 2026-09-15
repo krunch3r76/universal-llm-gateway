@@ -21,7 +21,7 @@ async def test_steer_cancel_discard_posts_mode_discard() -> None:
             return {"dispatch_id": "disp-disc-1", "park_state": "park_requested"}
 
     class _Client:
-        async def __aenter__(self) -> "_Client":
+        async def __aenter__(self) -> _Client:
             return self
 
         async def __aexit__(self, *_args: object) -> None:
