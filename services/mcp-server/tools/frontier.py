@@ -450,287 +450,44 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             ),
         ] = None,
     ) -> dict[str, Any]:
-        """Team-seat dispatch with explicit op discrimination.
+        """Team-seat dispatch — sole MCP dispatch door to Stargate. Async relay; returns `{execution_id, pipeline, started_at, status}`. Poll via `agent_bus(tool="wait", …)` from `poll_hint` (`pipeline(op="result")` metadata fallback only). Role-less one-shots: `pipeline(op="async", pipeline_id="chat-dispatch", …)` — ¬this tool.
 
-        **``op="steer"``** — seat-initiated GIW steer relay. Requires
-        ``dispatch_id``, ``steer`` (``park_for_restart`` | ``inject``), and
-        ``reason``. ``directive`` is required when ``steer="inject"``. Optional
-        ``actor`` (defaults server-side) and ``ttl_s`` (inject only). Propagates
-        GIW refusal envelopes (404/409/422/503) fail-closed. ``inject`` returns
-        202 + pending handle without ``park_kind``; ``park_for_restart`` does not
-        arm poll_hint — inherited ``execution_id`` stays in-flight until resume
-        child CLOSEOUT (AC-SR-12).
+**Ops:** `generate` | `to_thread` | `handoff` | `steer`.
 
-        **``op="handoff"``** — manual seats; select ``seat``:
+**Global (generate/to_thread):** exactly one of `role`|`seat` · `contract` REQUIRED (no derivation) · `dispatch_thread_id` required (exempt `contract=wrap`) · at most one explicit of `packet_path`|`prompt`|`sidecar_ref` (else latest gated bus turn on `dispatch_thread_id`) · `messages[]` ¬a param · `transcript_id` provenance-only (¬forwarded to role).
 
-        - ``seat="web-anthropic"`` → operator pushes bus message
-        - ``seat="cursor"`` → open IDE thread
-        - Legacy aliases ``claude-web`` / ``claude-cursor`` still resolve
+---
 
-        **Contract (authority grant) — handoff only:** for ``op="handoff"`` the
-        ``contract`` param is OPTIONAL and, when supplied, is the
-        highest-priority explicit override. When omitted, Stargate derives the
-        handoff contract (handoff admission path only):
-        explicit param → ``source_ref`` dispatch_lane → packet front-matter
-        ``contract:`` → role ``default_contract`` → default ``consult``.
-        The derived value may be ``consult`` — a handoff-only contract that is
-        NOT a passable ``contract`` argument (the param enum is
-        ``none | pure-mechanical | implement``) and is NOT a valid
-        generate/to_thread contract. A packet with acceptance criteria in
-        ``<task_guidance>`` but no contract signal resolves to
-        ``handoff_contract_ambiguous`` (422) — never silent consult admission.
-        Generate/to_thread contract rules are in the ``op="generate"`` /
-        ``op="to_thread"`` section below.
+**`op=steer`:** requires `dispatch_id`, `steer`∈{`park_for_restart`,`inject`}, `reason`; `directive` required iff `steer=inject`; optional `ttl_s` (inject default **300**). Propagates GIW 404/409/422/503 fail-closed. `inject`→202 pending (no `park_kind`); `park_for_restart` ¬`poll_hint` — inherited `execution_id` in-flight until resume child CLOSEOUT.
 
-        **``source_ref``** — scheme-prefixed entity/pointer ref only:
-        ``todo:`` / ``plan:`` / ``plan_phase:`` / ``plan:{slug}/phase-N`` /
-        ``agent-bus:`` / ``packet:``. Bare filesystem paths are rejected
-        (``source_ref_unparseable``). **Filesystem packets go via
-        ``packet_path``, not ``source_ref``.**
+**`op=handoff`:** manual seats — `seat`∈{`web-anthropic`,`cursor`} (legacy `claude-web`|`claude-cursor`). Requires `subject` + (`seat`|`role`) + (`packet_path`|`source_ref`). `contract` optional → derived: param → `source_ref` dispatch_lane → packet `contract:` → role `default_contract` → `consult`. Derived `consult` is handoff-only — ¬passable `contract` param (param enum `none`|`pure-mechanical`|`implement`). Packet AC without contract signal → **422 `handoff_contract_ambiguous`**. `packet_path` = repo-relative from checkout root (strip leading `universal-llm-gateway/`). `source_ref` schemes: `todo:`|`plan:`|`plan_phase:`|`plan:{slug}/phase-N`|`agent-bus:`|`packet:` — bare FS paths → **`source_ref_unparseable`**; filesystem packets via `packet_path` only. Six-block packet shape — See `agent_skill:handoff-packet-authoring`. `pointer_body` handoff-only. Poll `agent_bus(wait)`. `executor_override` (+codes/reason) implement-only advisory on manual seats.
 
-        **``packet_path``** — repo-relative path from the gateway checkout root
-        (``/mnt/torus/projects/universal-llm-gateway``): e.g.
-        ``tmp/reviews/my-packet.md``. Do **not** prefix with
-        ``universal-llm-gateway/`` (that prefix is for ``fs(sandbox=workspaces)``).
-        A leading ``universal-llm-gateway/`` is stripped before resolution.
+**`op=generate`:** `contract`∈{`none`,`pure-mechanical`,`implement`,`wrap`} (`implement`|`wrap` generate-only). `split_thread=true` or non-reusable dispatch thread → fresh result thread; `reuse_thread` overrides explicitly. `role=reviewer` omit-model → coerced `seat=cursor-sdk` (check_review default from `route_policy.yaml`). `contract=wrap` (cursor-sdk): `source_ref` required, `packet_path` forbidden, `dispatch_thread_id` exempt; rejects `density_triage`|`review_opt_out_reason_code`|`auto_review_child`; HTTP 200 + `packet_path` + provenance, no SDK worker. `seat=cursor-sdk`: `packet_path` honored on `none`|`pure-mechanical`|`implement`; `source_ref` on `implement`|`wrap` or `contract=conductor` — See `agent_skill:conductor`. `subject` accepted but **IGNORED** (warning `subject_ignored_on_generate`); use `to_thread` to set subject. `pointer_body` → validation_error. `thread` must be absent. Manual web seats → **422 `web_seat_not_generate_target`**. `seat=cursor-sdk` admitted on generate. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`. On-behalf delivery — ¬ instruct model to self-post on thread when `mcp=true`. Returns `{execution_id, capabilities, knob_resolution, …}`.
 
-        **Packet shape:** six required XML blocks — ``<scope>``,
-        ``<invariants>``, ``<task_guidance>``, ``<corpus>``,
-        ``<mcp_capabilities>`` (MCP seats), ``<output_format>``. Author per
-        ``.cursor/skills/handoff-packet-authoring/SKILL.md``.
+**`op=to_thread`:** `contract`∈{`none`,`pure-mechanical`}. `thread` required. `subject` optional (default `"{role} reply — execution {short_id}"`). On-behalf reply to `thread`.
 
-        The ``{platform}-{contract}`` shorthand slugs remain accepted and encode
-        (seat, contract) — roster in the module docstring above.
+Omitted `contract` on generate/to_thread → **`validation_error`**. Legacy `consult` contract **DROPPED** — ¬aliased to `none`.
 
-        Requires ``subject``, at least one of ``seat`` | ``role``, and at least
-        one of ``packet_path`` | ``source_ref``. Returns
-        ``{thread_id, resolved_model, to_agent, recommended_executor,
-        recommended_review, …}``.
+---
 
-        **Executor override (implement only):** optional
-        ``executor_override`` + ``executor_override_reason_code`` +
-        ``executor_override_reason`` (request or packet front-matter). Silence
-        → server default ``recommended_executor=composer``. Structured
-        opt-out codes: ``pure_cortex_doc_edit`` (with ``web-inline``),
-        ``capability_gap`` / ``protocol_heavy`` (non-Composer tier), or
-        ``design_judgment_remaining`` (re-scope warning, coerced to composer).
-        Advisory on manual seats; IDE picker binds the actual executor tier.
+**cursor-sdk gates (generate/to_thread):**
 
-        **``op="generate"`` / ``op="to_thread"``** — API functional roles via
-        ``role`` (regenerate roster via ``scripts/gen-mcp-dispatch-role-docs``):
+| param | rule |
+|---|---|
+| `nest_under` | sdk-only → **422 `nest_under_sdk_only`**; LIFO depth 10; 11th → **422 `CURSOR_NEST_DEPTH_EXCEEDED`** (`retryable=false`) |
+| `resume_of` | sdk-only → **422 `resume_of_sdk_only`**; requires `reuse_thread=<parent worker thread>`; **XOR `nest_under`** |
+| `lane` | sdk-only → **422 `lane_sdk_only`**; top-level `A`|`B` required unless `nest_under`|`resume_of` inherits; else **422 `lane_required`**; `contract=wrap` exempt; `lane=B` without worktree → **422 `CURSOR_LANE_B_WORKTREE_MISSING`** |
+| `workspace` | sdk-only → **422 `workspace_sdk_only`**; allowlisted satellite; omit = hub |
+| `reasoning_effort` | non-empty on cursor-sdk → **422 `reasoning_effort_not_supported`** (use `model_knobs`); empty → omit |
+| `work_key` | D4 grammar `todo:`|`plan:`|`agent-bus:`|`packet:`|`friction:`|`decision:`; required write-class / Lane B |
 
-        generate/to_thread roles: reviewer, synthesizer, artisan, skeptic; auto seats: cursor-sdk
+**Skills (`generate`):** `list[str]`; rejected on handoff. cursor-sdk: unresolved slug → **422 `skills_cursor_unresolvable`**; MCP-predicated on non-MCP → **422 `skills_mcp_predicated`**; CDP `path-sim` → **422 `cdp_skills_path_sim_rejected`**. `purpose` on `model=cdp/…` default `ask`; `operator-proxy`|`mission` for chip inject — ignored non-CDP.
 
-        exactly one of ``role`` or ``seat`` is required for generate/to_thread. Each role carries a default
-        provider model used when ``model`` is omitted on those ops.
+**Tool surface:** `mcp` None = per-model default; `False` = inline-only MCP-class. `server_tools` None = all card built-ins; `False` suppress (provider-neutral no-op). xAI: no client MCP. Anthropic: remote connector default when MCP on. `knob_resolution` reports reasoning knob outcome; no default parity claim.
 
-        **No role? Different tool.** A role-LESS direct model one-shot does
-        not go through team_dispatch — it is first-class on the pipeline
-        surface: ``pipeline(op="async", pipeline_id="chat-dispatch",
-        pipeline_options={"model": ...}, messages=[...])`` (any frontier
-        chat model via its native endpoint; renamed from
-        ``frontier-dispatch``).
+**Other params:** `force=true` bypasses Gates 2–4 only; requires `force_reason`; never Gate 1 / write-lease FIFO. `density_triage`∈{`mechanical`,`judgment_required`,`recon_pending`,`cross_cutting`,`dispatch_surface`,`admission_path`,`trivial`}. `review_opt_out_reason_code`∈{`routine_single_subsystem`,`suggestion_only_first_pass`,`cost_exceeds_false_negative_risk`}. `spawn_review_provenance=generate_review_child`. `cost_intent=deliberate_high_cost`. `parent_thread` CDP per-lane cap (distinct from SDK `nest_under`). `dispatch_thread_id` distinct from `thread` (to_thread delivery) and `transcript_id`.
 
-        **Contract (REQUIRED — generate/to_thread):** ``contract`` is REQUIRED
-        on ``op="generate"`` and ``op="to_thread"``; there is NO derivation on
-        these paths.         ``op="generate"`` accepts
-        ``none | pure-mechanical | implement | wrap`` (``implement`` and
-        ``wrap`` are generate-only — the ``cursor-sdk`` packet lane); ``contract=wrap`` is
-        also generate-only on ``seat=cursor-sdk`` — server-side gate-then-
-        materialize via ``prepare_implement_packet``, returns HTTP 200 with
-        ``packet_path`` + provenance (no SDK worker); requires ``source_ref``,
-        forbids ``packet_path``, exempts ``dispatch_thread_id``; rejects
-        gating-misleading knobs (``density_triage``, ``review_opt_out_reason_code``,
-        ``auto_review_child``). For ``seat=cursor-sdk`` generate,
-        ``packet_path`` is honored across ``none``, ``pure-mechanical``,
-        and ``implement``; ``source_ref`` is implement/wrap, or
-        ```` with ``contract=conductor`` (conductor
-        spawn — See agent_skill:conductor).
-        When no ``packet_path`` is supplied, prompt context is read from the
-        latest turn on ``dispatch_thread_id`` (bus-turn fallback). Prefer
-        ``prompt=`` or ``sidecar_ref=`` (cortex:// or workspaces path) to
-        supply the brief on the admit call so it cannot desync from the latest
-        bus turn (friction 24391). Exactly one of ``packet_path``, ``prompt``,
-        or ``sidecar_ref`` may be explicit; otherwise the role-gated latest bus
-        turn is fallback. ``op="to_thread"`` accepts ``none |
-        pure-mechanical``. An omitted ``contract`` is
-        rejected with ``validation_error`` "contract is required for
-        op='generate'/'to_thread'". The legacy ``consult`` contract is DROPPED
-        (operator ruling 2026-06-12, ``decision:team-dispatch-messages-fold``) —
-        it is NOT aliased to ``none``; migrate explicitly.
-
-        Three ops:
-        - ``op="generate"``: admits dispatch and returns ``{execution_id,
-          capabilities, knob_resolution, ...}``. ``capabilities`` echoes
-          effective ``inline_only``, ``mcp_connector_active``, ``tool_surface``,
-          and ``resolved_model`` for the admitted role. ``mcp_connector_active``
-          is True iff Stargate activated a provider-side MCP connector for this
-          dispatch; it is not a general indicator of executor tool access — use
-          ``tool_surface`` for that. Returns ``knob_resolution`` for reasoning
-          knob transparency: ``value_kind``, ``reasoning_native``, ``status``,
-          ``parity`` (``not_claimed`` unless otherwise stated), and ``notes``.
-          For API roles, ``op="generate"`` defaults to single-thread Q/R: when
-          ``dispatch_thread_id`` is a numeric open thread already carrying the
-          prompt (``turn_count>=1``), the pointer and the on-behalf reply land on
-          that same thread and ``poll_hint`` targets it with the correct
-          ``after_turn``; a fresh result thread is minted only when the dispatch
-          thread is not reusable or ``split_thread=true`` is passed;
-          ``reuse_thread`` still overrides explicitly. Stargate posts the role
-          reply on its behalf (system-on-behalf delivery); poll via
-          ``agent_bus(tool="wait", ...)`` from ``poll_hint``
-          (``pipeline(op="result")`` is metadata fallback). The
-          Without an explicit ``prompt`` / ``sidecar_ref`` / ``packet_path``,
-          the role-gated ``dispatch_thread_id`` latest turn becomes the prompt:
-          do NOT instruct the model to "reply on this thread" — with
-          ``mcp=true`` that triggers a redundant model self-post on top of
-          on-behalf delivery (friction #17396).
-          If reasoning effort matters, inspect ``knob_resolution.status/parity/notes``;
-          do not infer cross-provider parity.
-          ``thread`` must be absent when using this op. For cursor-sdk,
-          ``reuse_thread`` reuses a ``create_thread(lifecycle_state=pending)``
-          shell so dispatch pointer and closeout land on one thread;
-          ``dispatch_thread_id`` stays the arc coordination thread when it
-          differs. ``subject`` is accepted but IGNORED — it is not
-          persisted (the result-thread subject is auto-derived); the response
-          carries a ``subject_ignored_on_generate`` warning. Use ``op="to_thread"``
-          to actually set a thread subject (friction 19803).
-          ``pointer_body`` is handoff-only and rejects with a validation
-          error on ``op="generate"``/``op="to_thread"``. Use ``prompt`` or
-          ``sidecar_ref`` for atomic brief+admit; the dispatch-thread latest
-          turn is fallback only (friction 23301; previously silently dropped).
-          Manual seats (``claude-web``, ``claude-cursor``) are rejected with 422
-          ``web_seat_not_generate_target``. The SDK auto seat ``cursor-sdk`` (``seat=``) is
-          admitted on ``op=generate`` (``auto_dispatchable`` substrate=sdk). Use API roles with optional
-          ``model=`` override for provider-specific consults. Check/review default is
-          ``route_policy.yaml workflows.check_review.model`` (``cursor/claude-fable-5-1``
-          during the operator Fable window; revert is a YAML edit, never a silent swap —
-          ``decision:code-review-panel-cursor-substrate``); ``role=reviewer`` omit-model
-          coerces to ``seat=cursor-sdk``. Explicit ``model=openai/*`` keeps API. CDP remains
-          judgment / path-sim R-admit. Explicit-pin cursor-sdk option for the same work is
-          ``seat=cursor-sdk`` + ``model=cursor/gpt-5.6-*`` or ``cursor/grok-4.6`` —
-          poll ``reply_from_agent`` (reviewer/skeptic), not ``cursor-sdk``.
-        - ``op="to_thread"``: admits dispatch; Stargate posts the role's
-          reply to ``thread`` on its behalf after the dispatch completes
-          (system-on-behalf delivery). Tracker terminal status reflects
-          the POST outcome. ``thread`` is required. ``subject`` is
-          optional (defaults to ``"{role} reply — execution {short_id}"``).
-        - ``op="handoff"``: ``seat`` selects the destination; contract is derived server-side (the shorthand slugs still encode (seat, contract)).
-          Returns
-          ``{thread_id, subject, to_agent, resolved_model, push_reminder,
-          recommended_executor, recommended_executor_source,
-          recommended_review, result_handle, handoff_status, poll_hint}``. Poll via
-          ``agent_bus(tool="wait", …)`` from ``poll_hint`` — not
-          ``pipeline(op="result")``.
-
-        Tool surface (defaults derived from the effective model; ``mcp`` overrides
-        MCP-class tools only — client-side loop and remote connector, not
-        provider server-side built-ins):
-        - xAI multi-agent models — no client-side MCP tools.
-        - Anthropic models — remote MCP connector by default when MCP-class tools
-          are enabled; pass ``mcp=False`` for a one-shot inline generation (no
-          client-side loop and no remote MCP connector).
-        - Other MCP-capable providers — in-process tool loop unless ``mcp=False``.
-        - ``mcp``: ``None`` (default) keeps the per-model default (tools-on for
-          tool-capable families); ``False`` forces inline-only for MCP-class tools;
-          inline-only families (e.g. gemini) stay clamped to no-tools regardless.
-        - ``server_tools``: ``bool|None`` — omit for default ALL card-derived
-          provider built-ins; ``False`` suppresses card-derived built-ins.
-          Provider-neutral no-op where a provider has none (OQ-b ruling).
-        - ``skills``: unified skills input path; capability-selected delivery;
-          ``list[str]``; unsupported on ``op="handoff"`` (see validation above).
-          On roleless CDP generate (``model=cdp/<picker>``): Claude slugs
-          (``shared_sync``) are prepended as leading ``/<slug>\\n`` manifest
-          lines (not typed); the satellite attaches each via composer
-          **+ → Skills → pick**. Non-Claude skills are inlined at the top of
-          the sealed prompt. Staging always merges ``reasoning-posture`` into
-          effective skills (including when ``skills`` is omitted on
-          none — ``decision:reasoning-frontier-skill-pair``).
-          Cursor-sdk generate (any ``team_dispatch`` caller, not Auto-only):
-          GIW ``resolve_prompt_preamble`` auto-invokes
-          ``Use the reasoning-posture skill`` on non-mechanical contracts
-          (``none`` / ``consult``); ``implement`` / ``pure-mechanical``
-          and quick (``answer`` / ``execute`` / ``propagate``) skip.
-          ``skills=`` **is** mounted on cursor-sdk: Stargate resolves each slug
-          to a filesystem body at admit (422 ``skills_cursor_unresolvable``
-          naming an unknown or body-less slug), GIW stages it into the dispatch
-          HOME under ``.cursor/skills/`` where ``setting_sources="all"`` finds
-          it, and the preamble emits the matching ``Use the <slug> skill`` line.
-          Slugs already carried by the plugin census are left in place, not
-          copied. Outcome per slug on ``frontier.sdk.worker.skills.mounted``.
-          Handoff consult / none: enrich inserts the same Use-line
-          into ``<invariants>``; implement skips.
-          MCP-predicated skills on a non-MCP dispatch reject 422
-          ``skills_mcp_predicated`` naming the offenders; scope-default
-          predicated skills are skipped with an event, never rejected.
-          On roleless CDP generate (``model=cdp/<picker>``): code-MCP /
-          ``cursor_only`` skills (e.g. ``operator-proxy-substrate``) are inlined
-          in ``<skills_inline>`` XML — only ``shared_sync`` Claude slugs become
-          leading ``/<slug>\\n`` manifest lines for + → Skills attach.
-          ``path-sim`` is the one denied slug: it rejects 422
-          ``cdp_skills_path_sim_rejected`` (a:27430). Cascade Q/R legs seal
-          path-sim into the prompt URI rather than listing it in ``skills=``.
-          Attach is best-effort: a slug not in the Customize list or a missing
-          + control is skipped silently; inline bodies in the prompt carry
-          delivery (friction a:26986).
-        - ``purpose``: CDP registry/mission tag on ``model=cdp/…`` generate
-          (default ``ask`` when omitted). Set ``operator-proxy`` or ``mission``
-          for operator-proxy skill-chip + seat-map inject; ignored on non-CDP
-          models.
-
-        ``dispatch_thread_id`` — required compaction key and caller-owned
-        thread persistence on the ``team-dispatch`` pipeline (generate/to_thread
-        only) — **required** and validated at intake: an empty value is
-        rejected with a descriptive 422 naming the field rather than failing
-        late in the pipeline. **Exempt for ``contract=wrap``** on
-        ``op=generate`` — wrap materializes from ``source_ref`` only and never
-        reads the dispatch thread. Prompt context for other generate/to_thread
-        contracts without ``packet_path`` is read from the latest turn body on
-        this agent-bus thread; for ``seat=cursor-sdk`` generate with
-        ``packet_path``, the packet is the instruction channel (bus turn
-        ignored when both are present). ``messages[]`` is not a
-        team_dispatch parameter. Distinct from ``thread`` (agent-bus
-        delivery on ``op="to_thread"``) and ``transcript_id`` (provenance only).
-
-        ``transcript_id`` — caller's session ID for provenance attribution only.
-        It is recorded in the execution record alongside ``caller_agent`` so
-        dispatches can be traced back to the originating session. It is NOT
-        forwarded to the dispatched role's context — the receiving model never
-        sees it.
-
-        ``reasoning_effort`` — requested reasoning knob; actual resolution is
-        reported in ``knob_resolution``. No parity claim by default. NOTE:
-        non-empty ``reasoning_effort`` on ``seat="cursor-sdk"`` is rejected with
-        HTTP/tool 422 ``reasoning_effort_not_supported`` (use ``model_knobs``);
-        empty string is normalized to omit before relay.
-
-        ``model_knobs`` — cursor-sdk model-variant knobs (``op="generate"``,
-        ``seat="cursor-sdk"``) aligned against the resolved Cursor model's
-        capability descriptor (``libs/cursor_capabilities``). E.g. on
-        ``model="cursor/claude-opus-5"`` pass
-        ``model_knobs={"effort": "low", "thinking": "false"}``. Unsupported or
-        invalid knob values are dropped with a ``knob_dropped`` warning; the
-        per-knob outcome is echoed in ``knob_resolution``. Ignored on API roles.
-
-        ``nest_under`` — optional parent ``dispatch_id`` for product-path nesting
-        under a live cursor-sdk write-lease holder. **cursor-sdk-seat-only**
-        (``seat="cursor-sdk"`` generate/to_thread); other seats → 422
-        ``nest_under_sdk_only``. LIFO park stack hard-caps at **depth 10**
-        (11th nest → 422 ``CURSOR_NEST_DEPTH_EXCEEDED``, ``retryable=false``).
-
-        ``resume_of`` — terminal parent ``dispatch_id`` for SDK agent-plane
-        resume (same agent continues). **Requires** ``reuse_thread=<parent worker
-        thread>``. XOR ``nest_under``. **cursor-sdk-seat-only**; other seats →
-        422 ``resume_of_sdk_only``.
-
-        ``lane`` — required checkout-isolation lane (``"A"`` | ``"B"``) for
-        top-level ``seat="cursor-sdk"`` generate/to_thread. **Distinct from**
-        ``dispatch_lane`` (path-sim / todo routing). **cursor-sdk-seat-only**;
-        other seats → 422 ``lane_sdk_only``. Omit only when ``nest_under`` or
-        ``resume_of`` inherits parent isolation; otherwise 422 ``lane_required``.
-        ``contract=wrap`` is exempt (no GIW checkout). ``lane="B"`` requires a
-        materialized worktree (minted or inherited); otherwise GIW returns 422
-        ``CURSOR_LANE_B_WORKTREE_MISSING`` — it does not relabel the admit as
-        Lane A. See ``agent_skill:consult-routing``.
+Depth: `agent_skill:dispatch-workflow` · `agent_skill:consult-routing` · `agent_skill:handoff-packet-authoring` · `agent_skill:conductor`.
         """
         prompt_input_err = validate_inline_prompt_inputs(
             op, contract, packet_path, source_ref, prompt, sidecar_ref

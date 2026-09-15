@@ -126,151 +126,41 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         cse_registration_id: str | None = None,
         cse_chat_url: str | None = None,
     ) -> Any:
-        """Sanctioned unattended cursor-auto request lane (agent_bus request only).
+        """Sanctioned unattended cursor-auto lane — `agent_bus` `request` only; `to=cursor` fixed (¬caller param). Exactly one of `new_slug`|`thread` required.
 
-        Posts a directive to the Cursor Auto handler. Recipient ``to`` is always
-        ``cursor`` — it is not a caller parameter. Exactly one of ``new_slug``
-        (new thread) or ``thread`` (continue) is required.
+Returns `{thread, turn, handler_status, poll_hint}` — poll terminal via `poll_hint`, ¬client loop. Author: prefer `from_agent=`; surface autofill life→`web-anthropic`, code→`cursor`. Optional `cse_registration_id`|`cse_chat_url` (same as `agent_bus.request`).
 
-        **Standing seat posture (FOL)**
+**Contract:** `contract`∈{`answer`,`confer`,`ask`,`investigate`,`implement`,`verify`,`execute`,`propagate`,`seed`,`recon`} — unknown → **422** before turn write; `consult` aliases `confer`.
 
-        ∀ clear DIRECTIVE: front-door Q1/Q2 bind silently ∧ execute — ¬ route/ack poll.
-        ∀ confer/explicit ask: advise with codebase judgment — ¬ invent front-door fork.
-        ∀ operator-only gate: terminal status:needs-attended + one recommended answer.
-        SOT: decision:operator-request-front-door.
+**`desired_effort`:** omit/`auto` → judgment contracts `xhigh`, mechanical `medium`; explicit rung honored.
 
-        **Life coding aperture (BINDING)**
+**`lane`:** optional GIW checkout `A`|`B`; omit = `select_lane` defaults. Distinct from `lane_role`. **`workspace`:** optional satellite (`SATELLITES.txt`); omit = hub. **`parent_thread`+`lane_role`:** both required when either supplied.
 
-        Coding interest or how-question → ``contract=ask`` first (omit
-        ``desired_model`` / ``escalation`` / ``workspace`` unless satellite).
-        ``desired_effort``: omit or ``auto`` ⇒ per-contract default (judgment
-        contracts ``xhigh``, mechanical ``medium``); explicit rung always honored.
-        Cortex/RAG ≠ checkout. ¬ sequential ``fs``/``rag`` as the unknown-loci
-        hunter — that hop is ``cursor_request(ask|recon)``. After Auto CLOSEOUT
-        (or a named neighborhood): oriented reads OK (anchors, siblings,
-        ``docs/architecture/``, cursor rules/skills). Index:
-        ``document:life-coding-playbook`` (body ``cortex://notes/playbooks/life-coding.md``).
-        In-seat ``answer`` executes nothing — re-issue ``ask``, not ``confer``.
+**Admit gates:** `contract`∈{`implement`,`investigate`} ⇒ DIRECTIVE body MUST include `vision:` else **`vision_field_missing`** at admit (pre-model). `require_attended` (wire or body OR) ⇒ terminal **`status:needs-attended`** + one recommended answer.
 
-        Claude.ai: scheduling_trigger? = option; Authorize_prompt ⇒ operator_approves
-        (⊃ schedule). Expect click — ¬ bypass.
+**`contract=implement` admit:** `handoff=pure-mechanical` unless body has line-start `RULING` / `RULING AC` (optional `AC<n> —` prefix) — mid-sentence `RULING` ¬ sufficient. SOT: `agent_skill:directive-authoring-standard`.
 
-        NEW_CDP_WINDOW(web-anthropic): life seat **cannot** call ``team_dispatch`` —
-        commission **cursor-auto** via ``cursor_request`` (same tool as every DIRECTIVE).
-        Cursor-auto fires ``team_dispatch(model=cdp/opus-5, purpose=operator-proxy|mission,
-        dispatch_thread_id=<SAME private request lane>)`` with your ``handoff_prompt``.
-        Triggers: episode/mission continuity pickup · Customize skill body went live ·
-        stale context reset · predecessor ``MISSION_CLOSEOUT`` named next operator window.
-        **¬** mint a second private ``request`` lane. **¬** warm ``cse_session(followup)``
-        when chips/MCP/context need refresh — follow-up does not reload Customize skills.
-        CLOSEOUT must quote ``execution_id`` + ``poll_hint`` (or honest transport halt).
-        Predecessor stream may end only after successor launch is confirmed (inv 30).
+**Mission negotiation (`contract=confer` only):** TYPE:DIRECTIVE + closed `negotiation_phase`∈{`proposal`,`counter`,`agree`,`ratify`} + `negotiation_id`, `revision`, `in_reply_to_turn`, `proposal_hash`, mission fields, `idle_deadline` in **body** only; Auto replies TYPE:DISPOSITION + closed `negotiation.*` vocab.
 
-        COMMISSION_CONDUCTOR(web-anthropic): multi-step mission to an autonomous
-        cursor-sdk conductor is an ordinary ``investigate`` + ``lane="B"`` request —
-        packet shape + nest/tier table: ``agent_skill:conductor``.
+**Standing seat posture:** ∀ clear DIRECTIVE: front-door Q1/Q2 bind silently ∧ execute — ¬route/ack poll. ∀ confer/explicit ask: advise with codebase judgment. ∀ operator-only gate: `status:needs-attended`. SOT: `decision:operator-request-front-door`.
 
-        Sync: plugin_install ∧ per-slug Customize sync ∈ Auto capabilities — offer/fire,
-        ¬ defer to IDE lead. Bulk census = slow ⇒ named slugs only. IDE restart ⇒ operator.
+**Life coding aperture:** coding interest → `contract=ask` first (omit `desired_model`/`escalation`/`workspace` unless satellite). ¬ sequential `fs`/`rag` as unknown-loci hunter — use `cursor_request(ask|recon)`. In-seat `answer` executes nothing — re-issue `ask`. Index: `document:life-coding-playbook`.
 
-        Deploy / live (BINDING — decision:checkout-disk-is-executable):
-        sync_restart / host / gateway / MCP load the live shared checkout on disk —
-        committed or not. landed≠live = process ¬restarted, never ¬committed.
-        Commit is git workflow only, not the edited→running gate. A live@<sha>
-        claim is stronger: commit deployment paths before restart, then prove
-        code_ref_satisfied + identity movement and disclose dirty paths. ¬ frame
-        served≠HEAD after dirty-checkout restart as illicit live-ahead-of-HEAD.
+**CDP window (web-anthropic):** life ¬`team_dispatch` — commission cursor-auto via this tool; Auto fires `team_dispatch(model=cdp/opus-5, …)` on **same** private request lane. ¬ mint second private request lane. ¬ `cse_session(followup)` for Customize skill refresh. CLOSEOUT quotes `execution_id` + `poll_hint`.
 
-        **Contract vocabulary**
+**Conductor commission:** `investigate` + `lane=B` — packet/nest table: `agent_skill:conductor`.
 
-        ``contract`` ∈ answer | confer | ask | investigate | implement | verify | execute |
-        propagate | seed | recon. Unknown ⇒ 422 before turn write. ``consult`` aliases confer.
+**Deploy/live:** `landed≠live` = process ¬restarted, never ¬committed; `live@<sha>` needs commit-before-restart + `code_ref_satisfied` + dirty disclosure. SOT: `decision:checkout-disk-is-executable`.
 
-        **Mission negotiation (body-level, ``contract=confer`` only)**
+**Codework lanes:** slash commands = attended IDE wrappers only; headless loads skill from DIRECTIVE. `contract=seed` → `work-item-seed-path`; todo codework → `implement`|`investigate`|`verify` + `abstraction-layering` at highest open G1–G6.
 
-        Pre-birth async negotiation uses the existing ``TYPE: DIRECTIVE`` envelope with
-        a closed ``negotiation_phase: proposal|counter|agree|ratify`` field plus
-        ``negotiation_id``, ``revision``, ``in_reply_to_turn``, ``proposal_hash``, mission
-        payload fields, and ``idle_deadline``. Auto replies with ``TYPE: DISPOSITION``
-        and a closed ``negotiation.*`` vocabulary. No new MCP wire token is introduced;
-        negotiation fields ride in ``body`` only. Ordinary DIRECTIVEs without
-        ``negotiation_phase`` are unchanged.
+**CLOSEOUT shape (by contract):** answer→disposition:answered; confer→recommendation; ask→≤12 lines + file:line; investigate→findings; implement→changes+AC; verify→verdict; execute→tier-M payload; propagate→ledger+restart; seed→todo slug; recon→recon_core.
 
-        ``lane``: optional GIW checkout-isolation ``A`` | ``B``. Omit for
-        current ``select_lane`` defaults. Distinct from ``lane_role``.
-        ``workspace``: optional satellite repo name (``SATELLITES.txt``); omit for hub.
+**Second read (advisory):** implement|investigate|verify may append `## SECOND READ` by `cursor/claude-opus-5` — OBSERVATION only, ¬gate authority. Knobs: `CURSOR_AUTO_REFLEX_ENABLED`, `_BUDGET`, `_SAMPLE_EVERY`, `_MODEL`, `_EFFORT`, `_TIMEOUT_S`.
 
-        **Admit body gate (implement / investigate)**
+Claude.ai: scheduling_trigger = option; Authorize_prompt ⇒ operator approves (⊃ schedule).
 
-        ``contract`` ∈ {implement, investigate} ⇒ DIRECTIVE body MUST include a
-        ``vision:`` line or Auto blocks at admit (``vision_field_missing``) before
-        a model runs. ``vision: mechanical — <reason>`` suffices for tool ops.
-        See agent_skill:cdp-operator-proxy.
-
-        **Judgment marker (implement admit)**
-
-        ``contract=implement`` admits ``handoff=pure-mechanical`` unless the body
-        carries an admit-visible marker: line-start ``RULING`` / ``RULING AC``
-        (optional ``AC<n> — `` prefix, optional bullet / heading / bold).
-        Mid-sentence ``RULING`` does not raise. A judgment AC written any other
-        way skips the reasoning-posture preamble AND redirects a pinned reasoning
-        model onto Composer. Coverage on agent-bus:9470: 1 of 13 implement
-        bodies raise today. Convention SOT: agent_skill:directive-authoring-standard.
-
-        **Codework lanes — IDE command wraps skill (BINDING)**
-
-        Slash commands are attended-IDE wrappers only. cursor-sdk / cursor-auto /
-        charter dispatches **never** invoke ``/commands`` — they load the skill slug
-        from the DIRECTIVE body or episode BRIEFING.
-
-        | IDE command | Headless skill (machinery SOT) |
-        |---|---|
-        | ``/work-item-seed`` | ``work-item-seed-path`` |
-        | ``/layer`` | ``abstraction-layering`` |
-
-        Mint path: wire ``contract=seed`` (or body ``Use the work-item-seed-path
-        skill``). Codework on an existing todo: ``implement`` | ``investigate`` |
-        ``verify`` + body ``Use the abstraction-layering skill`` at highest open
-        G1–G6 gate — same lane as ``/layer``, not a separate wire token.
-
-        **Expected return shape (per contract)**
-
-        | contract | CLOSEOUT carries |
-        | answer | disposition:answered + inline relay |
-        | confer | codebase-grounded recommendation |
-        | ask | how-it-works in ≤12 lines + file:line anchors |
-        | investigate | findings / nested dispatch summary |
-        | implement | file changes + AC evidence (codework: ``abstraction-layering`` lane) |
-        | verify | verification verdict + evidence (codework: ``abstraction-layering`` G6) |
-        | execute | one tier-M op raw payload (body: tool_op + effects_expected) |
-        | propagate | propagation ledger + drain-gated restart status |
-        | seed | todo slug + consult URI (if any) + ``abstraction-layering`` entry gate |
-        | recon | recon_core findings (+ optional recon_extra) |
-
-        **Second read (advisory — may appear on any nested-contract CLOSEOUT)**
-
-        On implement | investigate | verify, Auto may append a ``## SECOND READ``
-        block: a bounded read-only pass by ``cursor/claude-opus-5`` over the
-        executor's own §2 closeout, answering evidence / likeliest-error /
-        what's-missing. It is stamped ``second_read(by=…, ref=…, trigger=…)``
-        and is an OBSERVATION, never a ratification — it does not raise or lower
-        the envelope ``status:`` and carries no gate authority. Absent block ⇒
-        no trigger fired or budget spent, ¬ a clean bill of health.
-
-        Triggers: executor failed · partial/blocked status · ac_verdict miss ·
-        non-empty open forks · sensitive paths (libs/, .cursor/, cursor-plugins/,
-        config/*.yaml) on write contracts · sparse DIRECTIVE density · every Nth
-        job. Per-thread budget caps spend. Knobs: ``CURSOR_AUTO_REFLEX_ENABLED``,
-        ``_BUDGET``, ``_SAMPLE_EVERY``, ``_MODEL``, ``_EFFORT``, ``_TIMEOUT_S``.
-
-        Returns ``{thread, turn, handler_status, poll_hint}``. Poll terminal status
-        via returned ``poll_hint`` — not a client loop.
-
-        Author: prefer ``from_agent=``; surface autofill on ``/mcp/life`` or
-        ``/mcp/code`` when omitted (``web-anthropic`` or ``cursor`` respectively).
-        ``cse_registration_id`` / ``cse_chat_url`` are optional CSE stamps
-        (same kwargs as ``agent_bus.request``). Omitted empty-wire still binds
-        when census N=1.
+Depth: `agent_skill:cdp-operator-proxy` · `agent_skill:life-coding-playbook` · `agent_skill:conductor` · `agent_skill:directive-authoring-standard`.
         """
         t_prog, prog_timer = toolprogress_begin("cursor_request")
         err: str | None = None
