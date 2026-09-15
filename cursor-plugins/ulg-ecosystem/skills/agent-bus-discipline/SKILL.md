@@ -64,6 +64,18 @@ Human-authored closeouts may coincidentally include `closeout` in the subject; t
 
 **Park → resume chain (steer-restart, AC-SR-12):** `team_dispatch(op="steer", steer="park_for_restart", dispatch_id=…, reason=…)` relays to GIW `POST /dispatch/{id}/park` (Stargate thin relay — ¬ bus poller authority). The parent PARKED turn is **non-terminal** for `poll_hint` / execution tracking: keep polling the same `execution_id` until the **resume child's** terminal CLOSEOUT (`resume_of` inherits `execution_id`). Substrate-initiated park posts `PARKED_TRANSPORT wake=giw_restart:{intent_id}` (conductor designed stop); seat-initiated steer uses the same GIW route without a restart intent.
 
+**Park is resume, not kill.** `park_for_restart` cancels the bridge run and marks the row terminal `cancelled` + `park_*`, then GIW auto-admits a `resume_of` child (PARK-RESUME preamble + unchanged packet). It **continues** the dispatch — it does not void mistaken admits.
+
+**Mistaken-admit discard (operator cancel, not park):**
+
+| GIW row state | `DELETE /api/v1/cursor/dispatch/{dispatch_id}` |
+|---|---|
+| `queued` / `admitted` (idle — no live bridge task) | 200, `outcome=cancelled` — use this when the operator names kill on a not-yet-running admit |
+| `running` / `parked_waiting`, or `admitted` with live task | 409 `not_cancellable_running` — **terminal refusal**, not a steer fallback; ¬ `park_for_restart` when the operator named kill |
+| After 409 or while bridge live | No idle-discard path; accept the eventual partial/terminal closeout |
+
+A failed operator DELETE is **not** permission to park. `park_for_restart` arms resume and will burn tokens finishing work the operator already rejected. Routing table: `dispatch-workflow` §0b.
+
 ### Watcher mis-arm imprint (binding)
 
 When a bus-consult / dispatch-closeout arm misfires:
