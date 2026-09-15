@@ -14,8 +14,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from bus_watch.doorbell_skills import doorbell_skills
+
 DOORBELL_CAP = 1400
-DEFAULT_SKILLS = ("liaison", "reasoning-posture")
 
 SUCCESSOR_WAKE_CAP = 2048
 _SUCCESSOR_ROW_TRUNC_MARKER = "..."
@@ -43,7 +44,6 @@ _COMMISSION_HINT = (
 _STALE_CONTRACT = "re-fetch DIGEST; on epoch mismatch echo STALE and stop"
 
 __all__ = [
-    "DEFAULT_SKILLS",
     "DOORBELL_CAP",
     "SUCCESSOR_WAKE_CAP",
     "basis_floor_bytes",
@@ -127,7 +127,8 @@ def render_doorbell(
     slug: str,
     *,
     ring: str | None = None,
-    skills: tuple[str, ...] = DEFAULT_SKILLS,
+    surface: str = "ide",
+    skills: tuple[str, ...] | None = None,
     extra_addresses: tuple[str, ...] = (),
     fired_by: str | None = None,
     cap: int = DOORBELL_CAP,
@@ -150,7 +151,11 @@ def render_doorbell(
     doorbell without its address is not a doorbell (10479#118). The
     DIGEST fetch window is 10 turns, not 3: root housekeeping (admits, INFO, CP
     pointers) outran a 3-turn window by six turns on 2026-09-12 (agent-bus:10479#139).
+
+    ``surface`` selects the default Use-line slugs via ``doorbell_skills`` when
+    ``skills`` is omitted; explicit ``skills`` preserves byte-identical output.
     """
+    skill_slugs = skills if skills is not None else doorbell_skills(surface)
     echo = ring if ring else root
     address_parts = [
         f"agent_bus_read(fetch, thread={root}, last=10, compact=true)",
@@ -191,7 +196,7 @@ def render_doorbell(
             f'objective: latest DIGEST {root} turn (subject starts "DIGEST {root}").',
             f"addresses: {addresses}",
         ]
-        lines.extend(f"Use the {skill} skill." for skill in skills)
+        lines.extend(f"Use the {skill} skill." for skill in skill_slugs)
         lines.extend(
             [
                 f"frame: fired by {fire}; seat web-anthropic; prior wake = last ORIENTED turn on agent-bus:{echo}.",
@@ -227,6 +232,10 @@ def render_doorbell(
     return message
 
 
+def _successor_liaison_slug() -> str:
+    return doorbell_skills("cursor-sdk")[0]
+
+
 def _compose_successor_wake(
     root_id: str,
     *,
@@ -251,7 +260,8 @@ def _compose_successor_wake(
         f"(tip_cp_ordinal={tip_val}); row={row}; gear: {gear}.\n"
         f"addresses: dispatch(tool=\"continuity\", arguments='{resume_args}'); "
         f"agent_bus_read(thread_get, thread={root_id}); agent-bus:{echo} (echo){extras}\n"
-        "Use the liaison skill. LOAD the liaison skill body; do not skim.\n"
+        f"Use the {_successor_liaison_slug()} skill. "
+        f"LOAD the {_successor_liaison_slug()} skill body; do not skim.\n"
         "LOAD AND EXECUTE runbook:bus-consult-watcher (legs 1-3).\n"
         f"frame: spawned by liaison-ticker gear {gear}; seat cursor-sdk; "
         f"predecessor = prior lease holder on agent-bus:{root_id}. "

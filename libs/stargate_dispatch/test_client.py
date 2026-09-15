@@ -72,4 +72,5 @@ def test_allowed_fields_parent_thread_not_purpose() -> None:
     from stargate_dispatch.client import _ALLOWED_FIELDS
 
     assert "parent_thread" in _ALLOWED_FIELDS
+    assert "skills" in _ALLOWED_FIELDS
     assert "purpose" not in _ALLOWED_FIELDS

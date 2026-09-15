@@ -35,6 +35,7 @@ from typing import Any
 
 from durable_io.atomic import durable_write_text
 
+from bus_watch.doorbell_skills import primary_liaison_slug
 from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.ide_budget import AGENT_TRANSCRIPTS, first_line_matches
 from bus_watch.ide_hop_landing import (
@@ -181,7 +182,8 @@ def build_ide_hop_message(
     lines = [
         f"resume {root_id}",
         "",
-        f"Liaison IDE hop ({register} register){tip}. LOAD the liaison skill (do not skim).",
+        f"Liaison IDE hop ({register} register){tip}. "
+        f"LOAD the {primary_liaison_slug('ide')} skill (do not skim).",
         # STAY governs the hop only. Tab 12e32c8b (10479, 2026-09-13 06:56Z) read
         # it as "do not dispatch" and parked at 0.7 % with NOW=R12 undone.
         "NOW non-empty ⇒ dispatch its first leg from this tab (Explore recon · "

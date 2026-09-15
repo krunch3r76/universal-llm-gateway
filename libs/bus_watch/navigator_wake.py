@@ -31,7 +31,11 @@ from typing import Any
 from durable_io.atomic import durable_write_text, path_flock
 from stargate_dispatch.client import submit_team_dispatch
 
-from bus_watch.doorbell import DEFAULT_SKILLS, render_doorbell
+from bus_watch.doorbell import render_doorbell
+from bus_watch.doorbell_skills import (
+    navigator_doorbell_skills_from_policy,
+    navigator_skills_from_policy,
+)
 from bus_watch.fable_lock import WATCH_DIR, current_night_id
 
 _NAVIGATOR_LEASE_PREFIX = "navigator-"
@@ -216,17 +220,12 @@ def render_navigator_doorbell(
     extras = tuple(policy.get("navigator_extra_addresses") or ())
     fired_by = policy.get("navigator_fired_by") or "cdp generate via liaison-ticker"
     fp = str(digest.get("fingerprint") or "")
-    skills_raw = policy.get("navigator_skills")
-    skills = (
-        tuple(str(s) for s in skills_raw if str(s).strip())
-        if isinstance(skills_raw, (list, tuple))
-        else DEFAULT_SKILLS
-    )
     return render_doorbell(
         root_id,
         slug,
         ring=str(ring) if ring else None,
-        skills=skills,
+        surface="cdp",
+        skills=navigator_doorbell_skills_from_policy(policy),
         extra_addresses=extras,
         fired_by=str(fired_by),
         include_commission=include_commission,
@@ -315,25 +314,21 @@ def fire_navigator_wake(
     wake_timeout = _wake_timeout_seconds(policy)
     grace = float(policy.get("navigator_grace_seconds") or 900)
     ttl = wake_timeout + grace
-    skills_raw = policy.get("navigator_skills")
-    nav_skills = (
-        [str(s) for s in skills_raw if str(s).strip()]
-        if isinstance(skills_raw, (list, tuple))
-        else list(DEFAULT_SKILLS)
-    )
+    nav_skills = navigator_skills_from_policy(policy)
     body = {
         "op": "generate",
         "seat": "cdp",
         "contract": "none",
         "model": policy.get("navigator_model"),
         "prompt": doorbell,
-        "skills": nav_skills,
         "dispatch_thread_id": root_id,
         "parent_thread": root_id,
         "work_key": work_key,
         "timeout_seconds": int(wake_timeout),
         "caller_agent": "liaison-ticker",
     }
+    if nav_skills:
+        body["skills"] = nav_skills
     evaluation["clauses"]["navigator_lane_bound"] = bool(body.get("parent_thread"))
     if not evaluation["clauses"]["navigator_lane_bound"]:
         return {

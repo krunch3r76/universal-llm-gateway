@@ -194,6 +194,24 @@ def test_fire_navigator_body_carries_parent_thread(tmp_path: Path, monkeypatch) 
 
 
 @pytest.mark.offline
+def test_fire_navigator_body_carries_surface_derived_skills(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("bus_watch.navigator_wake.WATCH_DIR", tmp_path)
+    result = fire_navigator_wake(
+        "10479",
+        _digest(),
+        _state(),
+        register="autonomous",
+        dry_run=True,
+    )
+    assert result["body"]["skills"] == ["liaison", "reasoning-posture"]
+    doorbell = result["evaluation"]["doorbell"]
+    assert "Use the liaison skill." in doorbell
+    assert "Use the reasoning-posture skill." in doorbell
+
+
+@pytest.mark.offline
 def test_fire_navigator_dry_run_submits_nothing(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("bus_watch.navigator_wake.WATCH_DIR", tmp_path)
 
