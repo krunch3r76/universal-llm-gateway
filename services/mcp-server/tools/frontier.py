@@ -410,16 +410,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             Field(
                 description=(
                     "Target cursor-sdk dispatch_id when op='steer' "
-                    "(park_for_restart or inject relay to GIW)."
+                    "(park_for_restart, cancel_discard, or inject relay to GIW)."
                 ),
             ),
         ] = None,
         steer: Annotated[
-            Literal["park_for_restart", "inject"] | None,
+            Literal["park_for_restart", "cancel_discard", "inject"] | None,
             Field(
                 description=(
                     "Steer verb when op='steer'. park_for_restart parks one live "
-                    "dispatch; inject deposits a mid-hop directive without cancel."
+                    "dispatch for resume; cancel_discard kills without resume; "
+                    "inject deposits a mid-hop directive without cancel."
                 ),
             ),
         ] = None,
@@ -458,7 +459,7 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
 ---
 
-**`op=steer`:** requires `dispatch_id`, `steer`∈{`park_for_restart`,`inject`}, `reason`; `directive` required iff `steer=inject`; optional `ttl_s` (inject default **300**). Propagates GIW 404/409/422/503 fail-closed. `inject`→202 pending (no `park_kind`); `park_for_restart` ¬`poll_hint` — inherited `execution_id` in-flight until resume child CLOSEOUT.
+**`op=steer`:** requires `dispatch_id`, `steer`∈{`park_for_restart`,`cancel_discard`,`inject`}, `reason`; `directive` required iff `steer=inject`; optional `ttl_s` (inject default **300**). Propagates GIW 404/409/422/503 fail-closed. `inject`→202 pending (no `park_kind`); `park_for_restart` ¬`poll_hint` — inherited `execution_id` in-flight until resume child CLOSEOUT; `cancel_discard` terminates link (terminal `poll_hint`).
 
 **`op=handoff`:** manual seats — `seat`∈{`web-anthropic`,`cursor`} (legacy `claude-web`|`claude-cursor`). Requires `subject` + (`seat`|`role`) + (`packet_path`|`source_ref`). `contract` optional → derived: param → `source_ref` dispatch_lane → packet `contract:` → role `default_contract` → `consult`. Derived `consult` is handoff-only — ¬passable `contract` param (param enum `none`|`pure-mechanical`|`implement`). Packet AC without contract signal → **422 `handoff_contract_ambiguous`**. `packet_path` = repo-relative from checkout root (strip leading `universal-llm-gateway/`). `source_ref` schemes: `todo:`|`plan:`|`plan_phase:`|`plan:{slug}/phase-N`|`agent-bus:`|`packet:` — bare FS paths → **`source_ref_unparseable`**; filesystem packets via `packet_path` only. Six-block packet shape — See `agent_skill:handoff-packet-authoring`. `pointer_body` handoff-only. Poll `agent_bus(wait)`. `executor_override` (+codes/reason) implement-only advisory on manual seats.
 
@@ -496,13 +497,13 @@ Depth: `agent_skill:dispatch-workflow` · `agent_skill:consult-routing` · `agen
             return prompt_input_err
 
         if op == "steer":
-            if steer not in ("park_for_restart", "inject"):
+            if steer not in ("park_for_restart", "cancel_discard", "inject"):
                 return {
                     "error": {
                         "code": "validation_error",
                         "message": (
-                            "steer must be 'park_for_restart' or 'inject' "
-                            "when op='steer'"
+                            "steer must be 'park_for_restart', 'cancel_discard', "
+                            "or 'inject' when op='steer'"
                         ),
                     },
                     "field": "steer",

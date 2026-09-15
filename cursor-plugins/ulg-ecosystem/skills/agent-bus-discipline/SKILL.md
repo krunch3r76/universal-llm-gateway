@@ -66,13 +66,13 @@ Human-authored closeouts may coincidentally include `closeout` in the subject; t
 
 **Park is resume, not kill.** `park_for_restart` cancels the bridge run and marks the row terminal `cancelled` + `park_*`, then GIW auto-admits a `resume_of` child (PARK-RESUME preamble + unchanged packet). It **continues** the dispatch — it does not void mistaken admits.
 
-**Mistaken-admit discard (operator cancel, not park):**
+**Mistaken-admit discard (kill without resume):**
 
-| GIW row state | `DELETE /api/v1/cursor/dispatch/{dispatch_id}` |
+| GIW row state | `team_dispatch(op="steer", steer="cancel_discard", …)` |
 |---|---|
-| `queued` / `admitted` (idle — no live bridge task) | 200, `outcome=cancelled` — use this when the operator names kill on a not-yet-running admit |
-| `running` / `parked_waiting`, or `admitted` with live task | 409 `not_cancellable_running` — **terminal refusal**, not a steer fallback; ¬ `park_for_restart` when the operator named kill |
-| After 409 or while bridge live | No idle-discard path; accept the eventual partial/terminal closeout |
+| Any row state (idle, live bridge, open park row) | 200/202 → terminal `cancelled` + `park_kind=cancel_discard`; partial harvest preserved; link terminated; no resume child |
+| Legacy idle-only | `DELETE /api/v1/cursor/dispatch/{dispatch_id}` → 200 `outcome=cancelled` — prefer `cancel_discard` for one verb |
+| Running via DELETE | 409 `not_cancellable_running` — DELETE not widened; use `cancel_discard` |
 
 A failed operator DELETE is **not** permission to park. `park_for_restart` arms resume and will burn tokens finishing work the operator already rejected. Routing table: `dispatch-workflow` §0b.
 

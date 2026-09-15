@@ -140,7 +140,7 @@ class ParkDispatchRequest(BaseModel):
     actor: str
     intent_id: str | None = None
     drain_epoch: int | None = None
-    mode: Literal["cancel"] = "cancel"
+    mode: Literal["cancel", "discard"] = "cancel"
 
 
 class ParkForRestartRequest(BaseModel):

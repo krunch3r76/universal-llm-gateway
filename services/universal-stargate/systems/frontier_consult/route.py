@@ -43,7 +43,11 @@ from .cdp_generate import (
 )
 from .closeout_reply import parse_closeout_payload, run_implement_closeout_pipeline
 from .contract_derivation import derive_contract
-from .cursor_sdk_steer_dispatch import steer_inject_directive, steer_park_for_restart
+from .cursor_sdk_steer_dispatch import (
+    steer_cancel_discard,
+    steer_inject_directive,
+    steer_park_for_restart,
+)
 from .densify_triage import DensityTriage
 from .deploy_state_gate import require_deploy_state
 from .dispatch_thread_context import (
@@ -306,7 +310,7 @@ class TeamDispatchSteerBody(BaseModel):
 
     op: Literal["steer"]
     dispatch_id: str
-    steer: Literal["park_for_restart", "inject"]
+    steer: Literal["park_for_restart", "cancel_discard", "inject"]
     reason: str
     actor: str | None = None
     directive: str | None = None
@@ -574,6 +578,13 @@ async def team_dispatch(
     if body.op == "steer":
         if body.steer == "park_for_restart":
             ok, detail = await steer_park_for_restart(
+                request_id=request_id,
+                dispatch_id=body.dispatch_id,
+                reason=body.reason,
+                actor=body.actor,
+            )
+        elif body.steer == "cancel_discard":
+            ok, detail = await steer_cancel_discard(
                 request_id=request_id,
                 dispatch_id=body.dispatch_id,
                 reason=body.reason,

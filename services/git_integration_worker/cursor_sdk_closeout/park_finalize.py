@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -53,18 +54,26 @@ from services.git_integration_worker.cursor_sdk_conductor_conflict import (
 )
 from services.git_integration_worker.cursor_sdk_events import terminal_emitted
 from services.git_integration_worker.cursor_sdk_park_events import (
+    emit_sdk_park_discarded,
     emit_sdk_park_parked,
 )
 from services.git_integration_worker.cursor_sdk_park_for_restart import (
     ParkMark,
     clear_park_mark,
 )
-from services.git_integration_worker.cursor_sdk_park_ledger import mark_parked
+from services.git_integration_worker.cursor_sdk_park_ledger import (
+    PARK_KIND_DISCARD,
+    mark_parked,
+)
+from services.git_integration_worker.cursor_sdk_worktree_prune import (
+    maybe_prune_worktree_on_terminal,
+)
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
 logger = get_logger(__name__)
 
 PARKED_EMIT_TAG = "CURSOR_SDK_PARKED"
+DISCARDED_EMIT_TAG = "CURSOR_SDK_DISCARDED"
 
 
 def _tool_summary(
@@ -136,6 +145,225 @@ def build_parked_body(
     lines.append(json.dumps(payload, indent=2, sort_keys=True))
     lines.append("```")
     return "\n".join(lines)
+
+
+def build_discarded_body(
+    *,
+    dispatch_id: str,
+    actor: str,
+    reason: str,
+    park: dict[str, Any],
+    sidecar_uri: str | None,
+    tool_call_count: int,
+) -> str:
+    """DISCARDED turn body: JSON envelope naming dispatch_id, actor, reason."""
+    payload = {
+        "status": "discarded",
+        "dispatch_id": dispatch_id,
+        "actor": actor,
+        "reason": reason,
+        "park": park,
+        "sidecar_ref": sidecar_uri,
+        "tool_call_count": tool_call_count,
+    }
+    lines = ["```json", json.dumps(payload, indent=2, sort_keys=True), "```"]
+    return "\n".join(lines)
+
+
+async def _finalize_discarded_common(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str | None,
+    reply_to: str,
+    source_repo: Path,
+    bus: CursorBusClient,
+    controller: Any,
+    mark: ParkMark | None,
+    actor: str,
+    reason: str,
+    method: str,
+    requested_at: str,
+    intent_id: str | None,
+    drain_epoch: int | None,
+    outcome: SdkRunOutcome | None,
+    exc: BaseException | None,
+    clear_mark: bool,
+) -> None:
+    """Shared discard terminal path for live and idle rows."""
+    from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
+        mark_lane_b_disposition_for_dispatch,
+    )
+    from services.git_integration_worker.routes.cursor_sdk import (
+        _mark_terminal_and_promote,
+        _terminate_link,
+    )
+
+    tool_call_count, last_tools = _tool_summary(outcome, exc)
+    harvest = await asyncio.to_thread(
+        emit_partial_harvest_on_park,
+        dispatch_id,
+        thread_id=thread_id,
+        intent_id=intent_id,
+        method=method,
+        tool_call_count=tool_call_count,
+        last_tools=last_tools,
+    )
+    sidecar_uri = harvest.get("sidecar_uri")
+    park_row = await asyncio.to_thread(
+        mark_parked,
+        dispatch_id=dispatch_id,
+        intent_id=intent_id,
+        drain_epoch=drain_epoch,
+        actor=actor,
+        reason=reason,
+        requested_at=requested_at,
+        method=method,
+        tool_call_count=tool_call_count,
+        last_tool_calls=last_tools,
+        sidecar_uri=sidecar_uri,
+        park_kind=PARK_KIND_DISCARD,
+    )
+    park = park_row.park if park_row is not None else {}
+    body = build_discarded_body(
+        dispatch_id=dispatch_id,
+        actor=actor,
+        reason=reason,
+        park=park,
+        sidecar_uri=sidecar_uri,
+        tool_call_count=tool_call_count,
+    )
+    bus_result = await bus.reply(
+        thread_id=thread_id,
+        to_agent=reply_to,
+        from_agent="cursor-sdk",
+        subject=f"cursor-sdk dispatch {dispatch_id} DISCARDED",
+        body=body,
+    )
+    if bus_result.status_code >= 400:
+        logger.error(
+            "cursor-sdk DISCARDED turn post failed dispatch_id=%s status=%s body=%s",
+            dispatch_id,
+            bus_result.status_code,
+            bus_result.body,
+        )
+    emit_sdk_park_discarded(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        method=method,
+        tool_call_count=tool_call_count,
+        sidecar_uri=sidecar_uri,
+        actor=actor,
+    )
+    if not terminal_emitted(dispatch_id):
+        emit_sdk_worker_cancelled(
+            dispatch_id=dispatch_id,
+            method=method,
+            reason=f"cancel_discard:{actor}",
+            thread_id=thread_id,
+            terminal_status="cancelled",
+        )
+    await _terminate_link(
+        bus,
+        thread_id=thread_id,
+        terminal_status="cancelled",
+        execution_id=execution_id,
+    )
+    await asyncio.to_thread(
+        mark_lane_b_disposition_for_dispatch,
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+        reason=f"cancel_discard:{actor}",
+    )
+    await asyncio.to_thread(
+        maybe_prune_worktree_on_terminal,
+        dispatch_id=dispatch_id,
+        source_repo=source_repo,
+    )
+    logger.warning(
+        "cursor-sdk dispatch discarded dispatch_id=%s method=%s tool_calls=%s sidecar=%s",
+        dispatch_id,
+        method,
+        tool_call_count,
+        sidecar_uri,
+    )
+    try:
+        await _mark_terminal_and_promote(
+            dispatch_id=dispatch_id,
+            terminal_status="cancelled",
+            controller=controller,
+            emit_tag=DISCARDED_EMIT_TAG,
+        )
+    finally:
+        if clear_mark and mark is not None:
+            clear_park_mark(dispatch_id)
+
+
+async def finalize_discarded(
+    *,
+    req: CursorDispatchRequest,
+    source_repo: Path,
+    bus: CursorBusClient,
+    reply_to: str,
+    controller: Any,
+    mark: ParkMark,
+    outcome: SdkRunOutcome | None,
+    exc: BaseException | None,
+) -> None:
+    """Terminal path for a discard-cancelled live run."""
+    await _finalize_discarded_common(
+        dispatch_id=req.dispatch_id,
+        thread_id=req.thread_id,
+        execution_id=req.execution_id,
+        reply_to=reply_to,
+        source_repo=source_repo,
+        bus=bus,
+        controller=controller,
+        mark=mark,
+        actor=mark.actor,
+        reason=mark.reason,
+        method=mark.method,
+        requested_at=mark.requested_at,
+        intent_id=mark.intent_id,
+        drain_epoch=mark.drain_epoch,
+        outcome=outcome,
+        exc=exc,
+        clear_mark=True,
+    )
+
+
+async def finalize_discard_idle(
+    *,
+    dispatch_id: str,
+    thread_id: str,
+    execution_id: str | None,
+    reply_to: str,
+    source_repo: Path,
+    bus: CursorBusClient,
+    controller: Any,
+    actor: str,
+    reason: str,
+) -> None:
+    """Synchronous discard for idle or already-parked rows (no bridge cancel)."""
+    await _finalize_discarded_common(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        execution_id=execution_id,
+        reply_to=reply_to,
+        source_repo=source_repo,
+        bus=bus,
+        controller=controller,
+        mark=None,
+        actor=actor,
+        reason=reason,
+        method="idle_discard",
+        requested_at=datetime.now(UTC).isoformat(),
+        intent_id=None,
+        drain_epoch=None,
+        outcome=None,
+        exc=None,
+        clear_mark=False,
+    )
 
 
 async def finalize_parked(
@@ -261,8 +489,12 @@ async def finalize_parked(
 
 
 __all__ = [
+    "DISCARDED_EMIT_TAG",
     "PARKED_EMIT_TAG",
+    "build_discarded_body",
     "build_parked_body",
+    "finalize_discard_idle",
+    "finalize_discarded",
     "finalize_parked",
     "parked_wake_line",
 ]

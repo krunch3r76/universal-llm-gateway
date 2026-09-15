@@ -24,7 +24,7 @@ import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from universal_logging import get_logger
 
@@ -33,6 +33,7 @@ from services.git_integration_worker.cursor_sdk_cancel_events import (
 )
 from services.git_integration_worker.cursor_sdk_orphan import abort_orphaned_bridge
 from services.git_integration_worker.cursor_sdk_park_events import (
+    emit_sdk_park_discard_requested,
     emit_sdk_park_refused,
     emit_sdk_park_requested,
 )
@@ -63,6 +64,7 @@ class ParkMark:
     requested_at: str
     method: str
     marked_at: float
+    mode: Literal["cancel", "discard"] = "cancel"
 
     def as_dict(self) -> dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if k != "marked_at"}
@@ -98,20 +100,27 @@ class ParkSignalResult:
     method: str | None = None
     error: str | None = None
     sdk_agent_id_present: bool = False
+    idle_discard: bool = False
+    mode: Literal["cancel", "discard"] = "cancel"
 
     @property
     def requested(self) -> bool:
-        return self.refusal is None
+        return self.refusal is None and not self.idle_discard
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "dispatch_id": self.dispatch_id,
             "thread_id": self.thread_id,
             "park_state": (
-                "park_requested"
-                if self.requested
-                else ("already_parked" if self.already_parked else "refused")
+                "discard_requested"
+                if self.idle_discard
+                else (
+                    "park_requested"
+                    if self.requested
+                    else ("already_parked" if self.already_parked else "refused")
+                )
             ),
+            "mode": self.mode,
             "refusal": self.refusal.value if self.refusal else None,
             "method": self.method,
             "error": self.error,
@@ -154,15 +163,17 @@ def signal_park(
     drain_epoch: int | None,
     actor: str,
     reason: str,
+    mode: Literal["cancel", "discard"] = "cancel",
 ) -> ParkSignalResult:
     """Preflight, mark, and cancel the live run for *dispatch_id*.
 
     Blocking (bridge ``CancelRun`` unary). Cancel ladder: ``run.cancel()`` →
     on a raised refusal ``abort_orphaned_bridge`` (method ``bridge_abort``) →
-    ``CANCEL_FAILED`` when both fail (mark cleared, row untouched). Never
-    stamps a Lane-B disposition: the tree stays pinned for the resume child.
+    ``CANCEL_FAILED`` when both fail (mark cleared, row untouched). Park
+    (``mode=cancel``) never stamps a Lane-B disposition; discard
+    (``mode=discard``) finalizes with disposition + prune instead of resume.
     """
-    pre = preflight_park(dispatch_id, intent_id=intent_id)
+    pre = preflight_park(dispatch_id, intent_id=intent_id, mode=mode)
     thread_id = (
         str(pre.row.get("thread_id")) if pre.row and pre.row.get("thread_id") else None
     )
@@ -189,6 +200,21 @@ def signal_park(
         )
     record = live_run_for_dispatch(dispatch_id)
     if record is None:
+        if mode == "discard":
+            emit_sdk_park_discard_requested(
+                dispatch_id=dispatch_id,
+                thread_id=thread_id,
+                actor=actor,
+                idle=True,
+            )
+            return ParkSignalResult(
+                dispatch_id=dispatch_id,
+                thread_id=thread_id,
+                refusal=None,
+                idle_discard=True,
+                mode=mode,
+                sdk_agent_id_present=agent_present,
+            )
         return _refuse(
             dispatch_id=dispatch_id,
             thread_id=thread_id,
@@ -209,12 +235,21 @@ def signal_park(
             sdk_agent_id_present=True,
         )
     requested_at = _now()
-    emit_sdk_park_requested(
-        dispatch_id=dispatch_id,
-        thread_id=thread_id,
-        intent_id=intent_id,
-        actor=actor,
-    )
+    if mode == "discard":
+        emit_sdk_park_discard_requested(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            actor=actor,
+            idle=False,
+        )
+    else:
+        emit_sdk_park_requested(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            intent_id=intent_id,
+            actor=actor,
+            mode=mode,
+        )
     error: str | None = None
     try:
         record.run.cancel()
@@ -238,6 +273,11 @@ def signal_park(
                 error=error,
                 sdk_agent_id_present=True,
             )
+    cancel_reason = (
+        f"cancel_discard:{actor}"
+        if mode == "discard"
+        else (f"park_for_restart:{intent_id}" if intent_id else "park_for_restart")
+    )
     mark = ParkMark(
         dispatch_id=dispatch_id,
         thread_id=thread_id,
@@ -247,6 +287,7 @@ def signal_park(
         reason=reason,
         requested_at=requested_at,
         method=method,
+        mode=mode,
         marked_at=time.monotonic(),
     )
     with _lock:
@@ -254,7 +295,7 @@ def signal_park(
     emit_sdk_worker_cancelled(
         dispatch_id=dispatch_id,
         method=method,
-        reason=f"park_for_restart:{intent_id}" if intent_id else "park_for_restart",
+        reason=cancel_reason,
         thread_id=thread_id,
         error=error,
     )
@@ -271,6 +312,7 @@ def signal_park(
         refusal=None,
         method=method,
         error=error,
+        mode=mode,
         sdk_agent_id_present=True,
     )
 

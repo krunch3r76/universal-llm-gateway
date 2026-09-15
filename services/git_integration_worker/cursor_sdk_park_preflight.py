@@ -19,6 +19,9 @@ from typing import Any
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
+from services.git_integration_worker.cursor_sdk_park_ledger import (
+    PARK_KIND_DISCARD,
+)
 from services.git_integration_worker.cursor_sdk_supersede import (
     is_dispatch_live,
     is_dispatch_superseded,
@@ -131,14 +134,31 @@ def _lane_b_unpinned(row: dict[str, Any]) -> bool:
     )
 
 
-def preflight_park(dispatch_id: str, *, intent_id: str | None = None) -> ParkPreflight:
+def preflight_park(
+    dispatch_id: str,
+    *,
+    intent_id: str | None = None,
+    mode: str = "cancel",
+) -> ParkPreflight:
     """Decide the D3 refusal for *dispatch_id* without touching any state."""
+    discard = mode == "discard"
     row = load_park_candidate_row(dispatch_id)
     if row is None:
         return ParkPreflight(refusal=ParkRefusal.NOT_FOUND, row=None)
     status = str(row.get("status") or "")
     if status in _TERMINAL_ROW_STATUSES:
-        parked = bool(row.get("park_kind"))
+        park_kind = row.get("park_kind")
+        if discard:
+            if park_kind == PARK_KIND_DISCARD:
+                return ParkPreflight(
+                    refusal=ParkRefusal.ALREADY_TERMINAL,
+                    row=row,
+                    already_parked=True,
+                    detail=f"row status={status!r} park_kind={park_kind!r}",
+                )
+            if park_kind and row.get("park_resumed_by") is None:
+                return ParkPreflight(refusal=None, row=row)
+        parked = bool(park_kind)
         same_intent = intent_id is None or row.get("park_intent_id") == intent_id
         return ParkPreflight(
             refusal=ParkRefusal.ALREADY_TERMINAL,
@@ -147,6 +167,12 @@ def preflight_park(dispatch_id: str, *, intent_id: str | None = None) -> ParkPre
             detail=f"row status={status!r}",
         )
     if not is_dispatch_live(dispatch_id=dispatch_id):
+        if discard:
+            return ParkPreflight(
+                refusal=None,
+                row=row,
+                detail="idle row — discard proceeds without bridge cancel",
+            )
         return ParkPreflight(
             refusal=ParkRefusal.NOT_LIVE_HERE,
             row=row,
@@ -154,29 +180,34 @@ def preflight_park(dispatch_id: str, *, intent_id: str | None = None) -> ParkPre
         )
     if is_dispatch_superseded(dispatch_id=dispatch_id):
         return ParkPreflight(refusal=ParkRefusal.SUPERSEDE_IN_FLIGHT, row=row)
-    if status == "parked_waiting" or row.get("park_child_dispatch_id"):
-        return ParkPreflight(refusal=ParkRefusal.NEST_CHAIN, row=row, detail=status)
-    if row.get("_nest_parent_status") == "parked_waiting":
-        return ParkPreflight(
-            refusal=ParkRefusal.NEST_CHAIN,
-            row=row,
-            detail="live child of a parked_waiting parent",
+    if not discard:
+        if status == "parked_waiting" or row.get("park_child_dispatch_id"):
+            return ParkPreflight(refusal=ParkRefusal.NEST_CHAIN, row=row, detail=status)
+        if row.get("_nest_parent_status") == "parked_waiting":
+            return ParkPreflight(
+                refusal=ParkRefusal.NEST_CHAIN,
+                row=row,
+                detail="live child of a parked_waiting parent",
+            )
+        if not row.get("sdk_agent_id"):
+            return ParkPreflight(
+                refusal=ParkRefusal.NOT_RESUMABLE_YET,
+                row=row,
+                detail="sdk_agent_id not yet recorded",
+            )
+        from services.git_integration_worker.cursor_sdk_resume import (
+            resolve_sdk_store_dir,
         )
-    if not row.get("sdk_agent_id"):
-        return ParkPreflight(
-            refusal=ParkRefusal.NOT_RESUMABLE_YET,
-            row=row,
-            detail="sdk_agent_id not yet recorded",
-        )
-    from services.git_integration_worker.cursor_sdk_resume import resolve_sdk_store_dir
 
-    if (
-        resolve_sdk_store_dir(parent_id=dispatch_id, state_root=row.get("state_root"))
-        is None
-    ):
-        return ParkPreflight(refusal=ParkRefusal.STATE_ROOT_MISSING, row=row)
-    if _lane_b_unpinned(row):
-        return ParkPreflight(refusal=ParkRefusal.LANE_B_UNPINNED, row=row)
+        if (
+            resolve_sdk_store_dir(
+                parent_id=dispatch_id, state_root=row.get("state_root")
+            )
+            is None
+        ):
+            return ParkPreflight(refusal=ParkRefusal.STATE_ROOT_MISSING, row=row)
+        if _lane_b_unpinned(row):
+            return ParkPreflight(refusal=ParkRefusal.LANE_B_UNPINNED, row=row)
     return ParkPreflight(refusal=None, row=row)
 
 

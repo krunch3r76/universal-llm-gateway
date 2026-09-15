@@ -28,6 +28,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 )
 
 PARK_KIND_RESTART = "park_for_restart"
+PARK_KIND_DISCARD = "cancel_discard"
 _DEFAULT_AUTO_RESUME_TTL_S = 86400
 _RECORD_KEY = "park"
 
@@ -144,12 +145,14 @@ def mark_parked(
     last_tool_calls: list[dict[str, str]],
     sidecar_uri: str | None,
     preamble_version: int = 1,
+    park_kind: str = PARK_KIND_RESTART,
 ) -> ParkRow | None:
     """Transition a running row to terminal ``cancelled`` + park columns atomically.
 
-    Also stamps ``record_json.resume_retain`` so the Lane-B tree and dispatch
-    HOME survive prune until the resume-retain TTL — the same key designed
-    stops use. Returns the projection, or ``None`` when the row is gone.
+    Also stamps ``record_json.resume_retain`` for ``park_for_restart`` so the
+    Lane-B tree and dispatch HOME survive prune until the resume-retain TTL.
+    Discard rows use ``park_kind=cancel_discard`` and omit ``resume_retain``.
+    Returns the projection, or ``None`` when the row is gone.
     """
     parked_at = _now()
     expires_at = (_now_dt() + timedelta(seconds=park_auto_resume_ttl_s())).isoformat()
@@ -178,7 +181,8 @@ def mark_parked(
             "resume_attempts": 0,
             "resume_refusals": [],
         }
-        data["resume_retain"] = True
+        if park_kind == PARK_KIND_RESTART:
+            data["resume_retain"] = True
         conn.execute(
             "UPDATE cursor_sdk_dispatches SET status='cancelled', "
             "terminal_status='cancelled', terminal_at=?, park_kind=?, "
@@ -186,7 +190,7 @@ def mark_parked(
             "WHERE dispatch_id=?",
             (
                 parked_at,
-                PARK_KIND_RESTART,
+                park_kind,
                 intent_id,
                 parked_at,
                 expires_at,
@@ -338,6 +342,7 @@ def park_projection(row: ParkRow | None) -> dict[str, Any] | None:
 
 
 __all__ = [
+    "PARK_KIND_DISCARD",
     "PARK_KIND_RESTART",
     "ParkRow",
     "bump_resume_attempt",

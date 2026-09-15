@@ -44,6 +44,44 @@ def SdkParkRequested(  # noqa: N802
 
 
 @event_factory
+def SdkParkDiscardRequested(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str | None,
+    actor: str,
+    idle: bool,
+) -> Event:
+    """A dispatch was asked to discard (kill without resume)."""
+    payload = _optional(
+        {"dispatch_id": dispatch_id, "actor": actor, "idle": idle},
+        thread_id=thread_id,
+    )
+    return Event(signal="sdk.park.discard.requested", payload=payload, scope="node")
+
+
+@event_factory
+def SdkParkDiscarded(  # noqa: N802
+    dispatch_id: str,
+    thread_id: str | None,
+    method: str,
+    tool_call_count: int,
+    sidecar_uri: str | None,
+    actor: str,
+) -> Event:
+    """The row reached terminal ``cancelled`` with ``park_kind=cancel_discard``."""
+    payload = _optional(
+        {
+            "dispatch_id": dispatch_id,
+            "method": method,
+            "tool_call_count": tool_call_count,
+            "actor": actor,
+        },
+        thread_id=thread_id,
+        sidecar_uri=sidecar_uri,
+    )
+    return Event(signal="sdk.park.discarded", payload=payload, scope="node")
+
+
+@event_factory
 def SdkParkParked(  # noqa: N802
     dispatch_id: str,
     thread_id: str | None,
@@ -170,6 +208,44 @@ def SdkParkExpired(  # noqa: N802
         parked_at=parked_at,
     )
     return Event(signal="sdk.park.expired", payload=payload, scope="node")
+
+
+def emit_sdk_park_discard_requested(
+    *,
+    dispatch_id: str,
+    thread_id: str | None,
+    actor: str,
+    idle: bool,
+) -> None:
+    emit_frontier_event(
+        SdkParkDiscardRequested(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            actor=actor,
+            idle=idle,
+        )
+    )
+
+
+def emit_sdk_park_discarded(
+    *,
+    dispatch_id: str,
+    thread_id: str | None,
+    method: str,
+    tool_call_count: int,
+    sidecar_uri: str | None,
+    actor: str,
+) -> None:
+    emit_frontier_event(
+        SdkParkDiscarded(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            method=method,
+            tool_call_count=tool_call_count,
+            sidecar_uri=sidecar_uri,
+            actor=actor,
+        )
+    )
 
 
 def emit_sdk_park_requested(
@@ -303,6 +379,8 @@ def emit_sdk_park_expired(
 
 __all__ = [
     "SdkParkBridgeAbortEscalated",
+    "SdkParkDiscardRequested",
+    "SdkParkDiscarded",
     "SdkParkExpired",
     "SdkParkParked",
     "SdkParkRefused",
@@ -311,6 +389,8 @@ __all__ = [
     "SdkParkResumeRefused",
     "SdkParkSweep",
     "emit_sdk_park_bridge_abort_escalated",
+    "emit_sdk_park_discard_requested",
+    "emit_sdk_park_discarded",
     "emit_sdk_park_expired",
     "emit_sdk_park_parked",
     "emit_sdk_park_refused",

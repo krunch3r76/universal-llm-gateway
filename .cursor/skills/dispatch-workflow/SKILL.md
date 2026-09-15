@@ -97,13 +97,13 @@ Handoff statuses: `awaiting_first_reply`, `complete`, telemetry/future states `a
 
 | Row state | Reachable path |
 |---|---|
-| Idle (`queued` / `admitted`, no live bridge task) | `DELETE /api/v1/cursor/dispatch/{dispatch_id}` (GIW operator cancel) → `outcome=cancelled` |
-| Running (bridge live, or `parked_waiting`) | Same DELETE → **409 `not_cancellable_running`** — terminal refusal while the bridge is live; **¬** steer `park_for_restart` as fallback |
-| After 409 or while running | Accept the eventual partial/terminal closeout; no idle-discard path exists until the bridge ends |
+| Any (`queued` / `admitted` / `running` / open park row) | `team_dispatch(op="steer", steer="cancel_discard", dispatch_id=…, reason=…)` → GIW `POST /dispatch/{id}/park` with `mode="discard"`; terminal `cancelled` + `park_kind=cancel_discard`, no resume child, link terminated |
+| Idle only (legacy) | `DELETE /api/v1/cursor/dispatch/{dispatch_id}` (GIW operator cancel) → `outcome=cancelled`; prefer `cancel_discard` for one verb across all row states |
+| Running via DELETE | **409 `not_cancellable_running`** — DELETE is not widened; use `cancel_discard` instead |
 
 **¬ steer park when the operator named kill.** `park_for_restart` arms resume; using it as a discard proxy burns tokens on work the operator already rejected.
 
-Park → resume chain detail: `agent-bus-discipline` § Park → resume chain. Open product bind: `steer=cancel_discard` (kill without resume) — not on the steer enum; judgment bind escalates separately.
+Park → resume chain detail: `agent-bus-discipline` § Park → resume chain. Steer enum: `park_for_restart` | `cancel_discard` | `inject`.
 
 ## 1. Model string
 
@@ -201,7 +201,7 @@ CODE_EXTRA call names below are **code-surface vocabulary** (see Surface gate).
 | Workflow lane case studies | `cortex://notes/system/specs/dispatch-workflow-case-studies.md` |
 | Unattended code execution (cursor-sdk) | `consult-routing` § General execution lane + `cursor-sdk-instruction-standard` |
 | Plan vs agent on cursor-sdk | `consult-routing` § cursor-sdk `sdk_mode` · `docs/agent-guides/cursor-sdk-conversation-mode.md` |
-| Steer verbs (`park_for_restart`, `inject`) and park/resume | `agent-bus-discipline` § Park → resume chain |
+| Steer verbs (`park_for_restart`, `cancel_discard`, `inject`) and park/resume | `agent-bus-discipline` § Park → resume chain |
 
 ## Minimal operating summary
 

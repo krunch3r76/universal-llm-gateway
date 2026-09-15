@@ -14,6 +14,11 @@ from typing import Any
 
 from universal_protocol import error_envelope
 
+from services.git_integration_worker.cursor_bus import CursorBusClient
+from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_sdk_closeout.park_finalize import (
+    finalize_discard_idle,
+)
 from services.git_integration_worker.cursor_sdk_park_converge import (
     converge_bridges_after_park,
 )
@@ -35,6 +40,8 @@ _SOURCE = "git_integration_worker"
 
 def park_dispatch_response(result: ParkSignalResult) -> tuple[int, dict[str, Any]]:
     """Map one ``signal_park`` outcome to ``(status_code, body)``."""
+    if result.idle_discard:
+        return 200, result.as_dict()
     if result.requested:
         return 202, result.as_dict()
     assert result.refusal is not None
@@ -50,6 +57,19 @@ def park_dispatch_response(result: ParkSignalResult) -> tuple[int, dict[str, Any
     )
 
 
+def _load_dispatch_row(dispatch_id: str) -> dict[str, Any] | None:
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT thread_id, execution_id, caller_agent FROM cursor_sdk_dispatches "
+            "WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return {k: row[k] for k in row.keys()}
+
+
 async def park_one_dispatch(
     *,
     dispatch_id: str,
@@ -58,8 +78,10 @@ async def park_one_dispatch(
     actor: str,
     reason: str,
     controller: Any,
+    mode: str = "cancel",
+    source_repo: Any = None,
 ) -> tuple[int, dict[str, Any]]:
-    """Park a single live dispatch; on success start bridge-close convergence."""
+    """Park or discard a dispatch; on live success start bridge-close convergence."""
     result = await asyncio.to_thread(
         signal_park,
         dispatch_id,
@@ -67,7 +89,33 @@ async def park_one_dispatch(
         drain_epoch=drain_epoch,
         actor=actor,
         reason=reason,
+        mode=mode,  # type: ignore[arg-type]
     )
+    if result.idle_discard:
+        row = await asyncio.to_thread(_load_dispatch_row, dispatch_id)
+        if row is None:
+            return 404, error_envelope(
+                code="not_found",
+                message=f"dispatch_id {dispatch_id!r} not found",
+                source=_SOURCE,
+                retryable=False,
+                data={"dispatch_id": dispatch_id},
+            )
+        thread_id = str(row.get("thread_id") or "")
+        reply_to = str(row.get("caller_agent") or "cursor")
+        bus = CursorBusClient()
+        await finalize_discard_idle(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            execution_id=row.get("execution_id"),
+            reply_to=reply_to,
+            source_repo=source_repo,
+            bus=bus,
+            controller=controller,
+            actor=actor,
+            reason=reason,
+        )
+        return park_dispatch_response(result)
     if result.requested:
         controller.create_tracked_task(
             converge_bridges_after_park(

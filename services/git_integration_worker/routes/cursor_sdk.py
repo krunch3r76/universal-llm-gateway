@@ -95,6 +95,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     merge_conductor_closeout_hop_authority,
 )
 from services.git_integration_worker.cursor_sdk_closeout.park_finalize import (
+    finalize_discarded,
     finalize_parked,
 )
 from services.git_integration_worker.cursor_sdk_closeout_subject import (
@@ -2246,16 +2247,30 @@ async def _run_sdk_dispatch_gated(
             park_outcome = worker_task.result()
         except BaseException as exc:  # noqa: BLE001 — a cancelled stream may raise
             park_exc = exc
-        await finalize_parked(
-            req=req,
-            source_repo=ctx.hub,
-            bus=bus,
-            reply_to=reply_to,
-            controller=controller,
-            mark=park_mark(req.dispatch_id),  # type: ignore[arg-type]
-            outcome=park_outcome,
-            exc=park_exc,
-        )
+        mark = park_mark(req.dispatch_id)
+        assert mark is not None
+        if mark.mode == "discard":
+            await finalize_discarded(
+                req=req,
+                source_repo=ctx.hub,
+                bus=bus,
+                reply_to=reply_to,
+                controller=controller,
+                mark=mark,
+                outcome=park_outcome,
+                exc=park_exc,
+            )
+        else:
+            await finalize_parked(
+                req=req,
+                source_repo=ctx.hub,
+                bus=bus,
+                reply_to=reply_to,
+                controller=controller,
+                mark=mark,
+                outcome=park_outcome,
+                exc=park_exc,
+            )
         return
 
     if timed_out:
@@ -3708,6 +3723,8 @@ async def park_cursor_dispatch(
         actor=req.actor,
         reason=req.reason,
         controller=_controller(request),
+        mode=req.mode,
+        source_repo=_config(request).source_repo,
     )
     return JSONResponse(status_code=status_code, content=body)
 
