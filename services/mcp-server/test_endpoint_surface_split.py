@@ -40,13 +40,13 @@ LIFE_PRIMARY = frozenset(
         "cse_session",
         "chat_session",
         "recycle_giw",
+        "pipeline",
     }
 )
 CODE_EXTRA = frozenset(
     {
         "manage",
         "observability",
-        "pipeline",
         "team_dispatch",
         "panel_dispatch",
     }

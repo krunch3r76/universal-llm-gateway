@@ -109,6 +109,10 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
     # endpoint for claude.ai and Cursor seats: overflow on both mounts (reached
     # via ``dispatch``), never a claude-manifest primary — life is at the D3 cap.
     register_continuity_tools(mcp)
+    # Pipelines are callable endpoints, so one facade grants every registered
+    # pipeline to a surface — dual-mount rather than code-only. ``pipeline_consult``
+    # stays code-only (frontier spend) per _CODE_ONLY_OVERFLOW_TOOLS.
+    register_pipeline_tools(mcp)
 
     if surface == "life":
         register_imprint_tools(mcp)
@@ -127,7 +131,6 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
         register_project_tools(mcp)
         register_sqlite_tools(mcp)
         register_event_tools(mcp)
-        register_pipeline_tools(mcp)
         register_pipeline_consult_tools(mcp)
         register_frontier_tools(mcp)
         register_panel_dispatch_tools(mcp)

@@ -69,6 +69,7 @@ LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
         "cse_session",
         "chat_session",
         "recycle_giw",
+        "pipeline",
     }
 )
 
@@ -80,7 +81,6 @@ LIFE_SURFACE_FORBIDDEN_TOOLS: frozenset[str] = frozenset(
         "manage",
         "observability",
         "panel_dispatch",
-        "pipeline",
     }
 )
 

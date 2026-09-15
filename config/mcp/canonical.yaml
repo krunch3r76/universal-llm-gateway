@@ -5840,6 +5840,7 @@ domain_endpoints:
     observability:
     - code
     pipeline:
+    - life
     - code
     team_dispatch:
     - code
@@ -5902,6 +5903,7 @@ surface_primary_domains:
   - cse_session
   - chat_session
   - recycle_giw
+  - pipeline
   code:
   - cortex
   - cortex_brief
