@@ -49,7 +49,7 @@ async def test_open_success_scrapes_then_tears_down() -> None:
         registration_id="reg-dormant",
     )
 
-    async def _page(_page, _req, provenance=None):
+    async def _page(_page, _req, provenance=None, **_identity):
         return HarvestResponse(outcome="harvested", provenance=provenance)
 
     harvest_page = AsyncMock(side_effect=_page)
