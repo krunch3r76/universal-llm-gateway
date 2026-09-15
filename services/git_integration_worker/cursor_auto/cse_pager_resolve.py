@@ -9,7 +9,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from cdp_ask.operator_seat_resolve import resolve_operator_seat
+from cdp_ask.operator_seat_resolve import (
+    registration_resolvable_via_provenance,
+    resolve_operator_seat,
+)
 from claude_bundles.cdp_registry.session_address import (
     chat_url_for_registration,
     list_active,
@@ -56,7 +59,9 @@ def _registration_listable(registration_id: str | None) -> bool:
     for reg in list_active():
         if reg.registration_id == rid:
             return True
-    return bool((chat_url_for_registration(rid) or "").strip())
+    if (chat_url_for_registration(rid) or "").strip():
+        return True
+    return registration_resolvable_via_provenance(rid)
 
 
 def _url_for_registration(registration_id: str | None) -> str | None:

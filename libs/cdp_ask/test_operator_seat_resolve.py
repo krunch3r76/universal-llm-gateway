@@ -7,7 +7,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from cdp_ask.client import CdpAskClientError
-from cdp_ask.operator_seat_resolve import resolve_operator_seat
+from cdp_ask.operator_seat_resolve import (
+    _chat_url_from_provenance,
+    resolve_operator_seat,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -123,3 +126,93 @@ def test_local_fallback_when_http_empty() -> None:
         )
     assert out["registration_id"] == "reg-local"
     assert out["source"] == "local"
+
+
+def _snap_no_chat_url(*, parent_thread: str = "10479") -> dict:
+    return {
+        "seat_rows": [
+            {
+                "registration_id": "reg-remote",
+                "parent_thread": parent_thread,
+                "purpose": "mission",
+                "seat_state": "dormant",
+                "mission_kind": "root",
+                "started_at": 100.0,
+            }
+        ]
+    }
+
+
+def test_http_path_enriches_chat_url_from_provenance() -> None:
+    with patch(
+        "cdp_ask.operator_seat_resolve._chat_url_from_provenance",
+        return_value="https://claude.ai/chat/provenance",
+    ):
+        out = resolve_operator_seat(
+            "10479",
+            get_lane_snapshot=lambda: _snap_no_chat_url(),
+        )
+    assert out == {
+        "chat_url": "https://claude.ai/chat/provenance",
+        "registration_id": "reg-remote",
+        "source": "http",
+    }
+
+
+@pytest.mark.parametrize(
+    ("side_effect", "return_value"),
+    [
+        (CdpAskClientError("404", status_code=404), None),
+        (CdpAskClientError("unreachable"), None),
+        (None, None),
+        (None, {"registration_id": "reg-remote"}),
+        (None, "not-a-dict"),
+    ],
+)
+def test_provenance_misses_degrade_without_raise(
+    side_effect: Exception | None,
+    return_value: object,
+) -> None:
+    mock_client = MagicMock()
+    if side_effect is not None:
+        mock_client._request.side_effect = side_effect
+    else:
+        mock_client._request.return_value = return_value
+    with patch(
+        "cdp_ask.operator_seat_resolve.CdpAskClient",
+        return_value=mock_client,
+    ):
+        assert _chat_url_from_provenance("reg-remote") is None
+
+
+def test_provenance_identity_mismatch_yields_no_chat_url() -> None:
+    mock_client = MagicMock()
+    mock_client._request.return_value = {
+        "registration_id": "foreign-reg",
+        "chat_url": "https://claude.ai/chat/foreign",
+    }
+    with patch(
+        "cdp_ask.operator_seat_resolve.CdpAskClient",
+        return_value=mock_client,
+    ):
+        assert _chat_url_from_provenance("reg-requested") is None
+
+
+def test_http_provenance_failure_falls_back_to_null_chat_url() -> None:
+    with (
+        patch(
+            "cdp_ask.operator_seat_resolve._chat_url_from_provenance",
+            return_value=None,
+        ),
+        patch(
+            "cdp_ask.operator_seat_resolve.chat_url_for_registration",
+            return_value=None,
+        ),
+    ):
+        out = resolve_operator_seat(
+            "10479",
+            get_lane_snapshot=lambda: _snap_no_chat_url(),
+        )
+    assert out["registration_id"] == "reg-remote"
+    assert out["chat_url"] is None
+    assert out["source"] == "http"
