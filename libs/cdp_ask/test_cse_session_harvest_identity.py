@@ -11,9 +11,11 @@ from cdp_ask.cse_session_harvest_identity import (
     chat_url_from_archives,
     chat_url_from_provenance,
     cse_url_from_token,
+    resolve_execution_provenance,
     resolve_harvest_chat_url,
     satellite_id_from_inflight,
 )
+from cdp_ask.followup_envelope import FollowupCandidate
 from cdp_ask.cse_session_models import CseSessionTurn, HarvestRequest, HarvestResponse
 from cdp_ask.execution_store import ExecutionStore
 
@@ -75,6 +77,76 @@ async def test_execution_id_opens_via_archive(tmp_path: Path) -> None:
             store,
         )
     assert url == "https://claude.ai/cowork/cse_015Wj9BxzFrBhp6D5jPoQW7D"
+
+
+@pytest.mark.asyncio
+async def test_harvest_refuses_unresolved_lineage_before_foreign_scrape() -> None:
+    """a:34029 — unresolved lineage must refuse before any CSE scrape."""
+    from cdp_ask.cse_session_harvest import execute_harvest
+
+    execution_id = "4a1070a2-94b9-4f7e-9fd4-1b6efad5b7cf"
+    foreign_cse = "https://claude.ai/cowork/cse_01LE8ddPWjPg3Z2KP6jnvguS"
+    unresolved_prov = {
+        "state": "current",
+        "lineage_state": "unresolved",
+        "reason": "hygiene_drain",
+        "chat_url": "https://claude.ai/cowork/cse_requestedMission",
+        "registration_id": "reg-unresolved",
+        "execution_id": execution_id,
+        "correlation_id": execution_id,
+    }
+    store = ExecutionStore()
+    with (
+        patch(
+            "cdp_ask.cse_session_harvest.resolve_execution_provenance",
+            AsyncMock(return_value=unresolved_prov),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest.discover_candidates",
+            AsyncMock(
+                return_value=(
+                    [
+                        FollowupCandidate(
+                            registration_id="reg-live",
+                            chat_url=foreign_cse,
+                            holder="h",
+                            purpose="ask",
+                            cdp_url="http://127.0.0.1:9222",
+                        )
+                    ],
+                    "execution_id",
+                    execution_id,
+                )
+            ),
+        ),
+        patch(
+            "cdp_ask.cse_session_harvest.connect_cdp",
+            AsyncMock(),
+        ) as connect,
+        patch(
+            "cdp_ask.cse_session_harvest.harvest_by_opening_url",
+            AsyncMock(),
+        ) as opener,
+        patch(
+            "cdp_ask.cse_session_harvest.harvest_page",
+            AsyncMock(),
+        ) as harvest_page,
+        patch("cdp_ask.cse_session_harvest.emit", lambda _event: None),
+    ):
+        result = await execute_harvest(
+            HarvestRequest(execution_id=execution_id),
+            store,
+        )
+    connect.assert_not_called()
+    opener.assert_not_awaited()
+    harvest_page.assert_not_awaited()
+    assert result.outcome == "refused"
+    assert result.reason == "lineage_unresolved"
+    assert result.provenance is not None
+    assert result.provenance["execution_id"] == execution_id
+    assert result.provenance["registration_id"] == "reg-unresolved"
+    assert result.provenance["lineage_state"] == "unresolved"
+    assert result.turns == []
 
 
 @pytest.mark.asyncio

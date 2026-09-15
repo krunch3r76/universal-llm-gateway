@@ -16,7 +16,10 @@ from cdp_ask.cse_session_events import (
     mcp_cse_session_acknowledged,
     mcp_cse_session_harvested,
 )
-from cdp_ask.cse_session_harvest_identity import resolve_harvest_chat_url
+from cdp_ask.cse_session_harvest_identity import (
+    resolve_execution_provenance,
+    resolve_harvest_chat_url,
+)
 from cdp_ask.cse_session_harvest_open import harvest_by_opening_url
 from cdp_ask.cse_session_harvest_scrape import (
     harvest_with_loading_wait,
@@ -230,12 +233,36 @@ def _refuse_product_chat_url(chat_url: str) -> HarvestResponse | None:
     )
 
 
+async def _refuse_unresolved_lineage(
+    execution_id: str,
+    store: ExecutionStore,
+) -> HarvestResponse | None:
+    """Refuse harvest when the requested execution's lineage cannot be proven."""
+    provenance = await resolve_execution_provenance(execution_id, store)
+    if provenance is None:
+        return None
+    if provenance.get("lineage_state") != "unresolved":
+        return None
+    registration_id = str(provenance.get("registration_id") or "").strip() or None
+    return HarvestResponse(
+        outcome="refused",
+        reason="lineage_unresolved",
+        provenance=provenance,
+        chat_url=provenance.get("chat_url"),
+    )
+
+
 async def execute_harvest(
     req: HarvestRequest,
     store: ExecutionStore,
 ) -> HarvestResponse:
     """Harvest turns from a live lane, or open chat_url and scrape it."""
     requested_registration_id = (req.registration_id or "").strip() or None
+    execution_id = (req.execution_id or "").strip() or None
+    if execution_id:
+        if refused := await _refuse_unresolved_lineage(execution_id, store):
+            reg = str((refused.provenance or {}).get("registration_id") or "").strip()
+            return _emit(reg or None, refused)
     if refused := _refuse_product_chat_url(req.chat_url or ""):
         return _emit(None, refused)
     registration_id, chat_url, provenance, early = await _resolve_target(req, store)

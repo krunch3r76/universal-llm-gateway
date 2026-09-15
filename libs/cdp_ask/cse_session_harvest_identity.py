@@ -7,7 +7,11 @@ import re
 import sqlite3
 from pathlib import Path
 
+from typing import Any
+
 from claude_bundles import cdp_registry
+from claude_bundles.cse_provenance import read_episodes, resolve as resolve_provenance
+from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.cse_url import normalize_cse_url
 
 from cdp_ask.cse_session_models import HarvestRequest
@@ -110,6 +114,62 @@ def satellite_id_from_inflight(stargate_execution_id: str) -> str | None:
         return None
     sat = (row[0] or "").strip()
     return sat or None
+
+
+async def resolve_execution_provenance(
+    execution_id: str,
+    store: ExecutionStore,
+) -> dict[str, Any] | None:
+    """Resolve provenance for a satellite or Stargate execution id when evidence exists."""
+    token = (execution_id or "").strip()
+    if not token:
+        return None
+
+    registration_id: str | None = None
+    chat_url: str | None = None
+
+    rec = await store.get(token)
+    if rec is not None and rec.registration_id:
+        registration_id = rec.registration_id
+        bound = cdp_registry.chat_url_for_registration(registration_id)
+        if bound:
+            chat_url = normalize_cse_url(bound)
+
+    for episode in reversed(read_episodes()):
+        if episode.correlation_id == token:
+            if not chat_url:
+                chat_url = episode.chat_url
+            if not registration_id:
+                registration_id = episode.registration_id
+            break
+
+    if not chat_url and not registration_id:
+        satellite = satellite_id_from_inflight(token)
+        if satellite:
+            nested = await resolve_execution_provenance(satellite, store)
+            if nested is not None:
+                nested = dict(nested)
+                nested["execution_id"] = token
+                return nested
+
+    if not chat_url and not registration_id:
+        archived = chat_url_from_archives(token)
+        if archived:
+            chat_url = archived
+
+    if not chat_url and not registration_id:
+        return None
+
+    prov = resolve_provenance(
+        chat_url=chat_url,
+        registration_id=registration_id,
+        host_listable=is_row_present,
+    )
+    payload = dict(prov)
+    payload["execution_id"] = token
+    if registration_id and not payload.get("registration_id"):
+        payload["registration_id"] = registration_id
+    return payload
 
 
 async def resolve_harvest_chat_url(
