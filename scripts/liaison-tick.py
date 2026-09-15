@@ -58,6 +58,7 @@ from bus_watch.liaison_digest import (
     build_digest,
     effective_policy,
 )
+from bus_watch.liaison_stops import apply_policy_set
 from bus_watch.spawn_on_wake import tick_spawn_on_wake
 from bus_watch.tick_state import (
     absorb_operator_edits,
@@ -133,9 +134,7 @@ def _validate_successor_policy_set(
                 f"refusing: {key} would make the successor wake "
                 f"{byte_len} bytes (cap {cap})"
             )
-    raise SystemExit(
-        f"refusing: successor wake would be {byte_len} bytes (cap {cap})"
-    )
+    raise SystemExit(f"refusing: successor wake would be {byte_len} bytes (cap {cap})")
 
 
 def main() -> int:
@@ -290,7 +289,9 @@ def main() -> int:
         if friction_mark:
             mark_friction(fresh, *friction_mark, at=_utcnow())
         if set_items:
-            fresh["policy"] = {**(fresh.get("policy") or {}), **set_items}
+            fresh["policy"] = apply_policy_set(
+                fresh.get("policy") or {}, set_items, as_of=_utcnow()
+            )
 
     _operator_edits(state)
     register = state["register"]

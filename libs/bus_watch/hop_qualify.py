@@ -4,16 +4,21 @@ Operator 2026-09-12 07:26 PT: hop only when something needs autonomous
 follow-up. Empty NOW and quiet ticks are STAY. A HOLD_MERGE *row* still
 refuses the hop (do not mill LAND OWED) — autonomous land is mandated
 unless the operator explicitly asked to hold (2026-09-12 07:33 PT); the
-seat lands in-tab, it does not hop. ``OPERATOR_GATE`` in the NOW string
-is a hop-stay so the successor does not mill a parked row — it is **not**
-a human page. The seat rewrites NOW to the next objective and continues.
+seat lands in-tab, it does not hop.
+
+Operator 2026-09-15 (a:34092): ``OPERATOR_GATE`` is a typed stop with
+``source=operator`` in policy — not a substring of ``now_row``. A seat
+writing gate prose into ``now_row`` does not arm or block; only
+``liaison-tick.py --set operator_gate=…`` arms it (page + park that row).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-HOLD_MARKERS = ("HOLD_MERGE", "LAND OWED", "OPERATOR_GATE")
+from bus_watch.liaison_stops import operator_gate_armed
+
+HOLD_MARKERS = ("HOLD_MERGE", "LAND OWED")
 
 
 def hop_qualifies(
@@ -21,11 +26,14 @@ def hop_qualifies(
     row: str,
     arm_labels: list[str] | None = None,
     context_budget: bool = False,
+    policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return ``{ok, reason}``. Fail closed: refuse unless follow-up is named.
 
     Qualifies: live watcher tails, CONTEXT_BUDGET with a non-hold NOW, or a
-    NOW that is not HOLD_MERGE / LAND OWED / OPERATOR_GATE / empty / quiet.
+    NOW that is not HOLD_MERGE / LAND OWED / empty / quiet. An operator-sourced
+    ``policy.operator_gate`` (``source=operator``, ``value=true``) refuses with
+    ``reason=operator_gate`` — seat-authored gate text in ``row`` is ignored.
     ``--force`` on the hop script is the operator override, not this function.
 
     ``arm_labels`` must already exclude pollers on the caller's own lane
@@ -35,12 +43,12 @@ def hop_qualifies(
     labels = [str(x) for x in (arm_labels or []) if str(x).strip()]
     if labels:
         return {"ok": True, "reason": "live_watcher"}
+    if operator_gate_armed(policy or {}):
+        return {"ok": False, "reason": "operator_gate"}
     text = (row or "").strip()
     if not text:
         return {"ok": False, "reason": "empty_now"}
     upper = text.upper()
-    if "OPERATOR_GATE" in upper:
-        return {"ok": False, "reason": "operator_gate"}
     if any(marker in upper for marker in HOLD_MARKERS):
         return {"ok": False, "reason": "hold_merge"}
     if context_budget:

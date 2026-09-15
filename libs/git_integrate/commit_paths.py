@@ -70,7 +70,9 @@ def commit_paths_fingerprint(worktree_path: str, paths: list[str]) -> str:
             text=True,
             timeout=_GIT_TIMEOUT,
         )
-        if diff.returncode != 0:
+        if diff.returncode != 0 or not diff.stdout:
+            # Empty stdout is a clean tree — hashing it yields e3b0c442… which
+            # is truthy and made friction_close treat every clean path as dirty.
             return ""
         return hashlib.sha256(diff.stdout.encode()).hexdigest()
     except (OSError, subprocess.TimeoutExpired):

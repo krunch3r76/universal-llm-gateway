@@ -64,6 +64,21 @@ def test_fingerprint_matches_sha256_of_land_diff_text_dirty(arc_worktree: Path) 
     assert hashlib.sha256(body.encode()).hexdigest() == land_fingerprint(wt)
 
 
+def test_commit_paths_fingerprint_clean_is_empty(source_repo: Path) -> None:
+    from git_integrate.commit_paths import commit_paths_fingerprint
+
+    assert commit_paths_fingerprint(str(source_repo), ["README.md"]) == ""
+
+
+def test_commit_paths_fingerprint_dirty_is_nonempty(source_repo: Path) -> None:
+    from git_integrate.commit_paths import commit_paths_fingerprint
+
+    (source_repo / "README.md").write_text("changed\n")
+    fp = commit_paths_fingerprint(str(source_repo), ["README.md"])
+    assert fp
+    assert fp != hashlib.sha256(b"").hexdigest()
+
+
 def test_land_diff_numstat_empty_when_no_changes(
     source_repo: Path, tmp_path: Path
 ) -> None:

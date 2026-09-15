@@ -22,6 +22,8 @@ import argparse
 import json
 import sys
 
+from bus_watch.digest_budget import effective_policy
+from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.hop_qualify import hop_qualifies
 from bus_watch.ide_hop import (
     DEFAULT_REMOTE_REPO,
@@ -32,6 +34,7 @@ from bus_watch.ide_hop import (
     policy_gui_host,
     tick_register,
 )
+from bus_watch.tick_state import load_state
 
 
 def main() -> int:
@@ -108,7 +111,9 @@ def main() -> int:
             for lbl in live_watcher_labels(args.root, exclude_threads=args.exclude_lane)
             if lbl not in labels
         )
-    qualify = hop_qualifies(row=args.row, arm_labels=labels)
+    state_path = WATCH_DIR / f"liaison-{args.root}.tick.json"
+    policy = effective_policy(load_state(state_path))
+    qualify = hop_qualifies(row=args.row, arm_labels=labels, policy=policy)
     if not qualify["ok"] and not args.force:
         print(
             json.dumps(

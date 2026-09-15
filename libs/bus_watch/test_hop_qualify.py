@@ -10,9 +10,7 @@ pytestmark = pytest.mark.offline
 
 
 def test_hold_merge_is_stay() -> None:
-    q = hop_qualifies(
-        row="HOLD_MERGE 10561 6eb762bf + 10567 bb1ca6bd; 3b parked"
-    )
+    q = hop_qualifies(row="HOLD_MERGE 10561 6eb762bf + 10567 bb1ca6bd; 3b parked")
     assert q == {"ok": False, "reason": "hold_merge"}
 
 
@@ -34,8 +32,20 @@ def test_live_watcher_qualifies_even_on_hold_merge() -> None:
     assert q == {"ok": True, "reason": "live_watcher"}
 
 
-def test_operator_gate_is_stay() -> None:
+def test_operator_gate_text_in_row_does_not_block_hop() -> None:
     q = hop_qualifies(row="R15 3c wake parked OPERATOR_GATE")
+    assert q == {"ok": True, "reason": "dispatchable_now"}
+
+
+def test_operator_sourced_gate_blocks_hop() -> None:
+    policy = {
+        "operator_gate": {
+            "value": True,
+            "source": "operator",
+            "as_of": "2026-09-15T12:00:00Z",
+        }
+    }
+    q = hop_qualifies(row="R15 3c wake parked OPERATOR_GATE", policy=policy)
     assert q == {"ok": False, "reason": "operator_gate"}
 
 
