@@ -44,6 +44,7 @@ def _op_friction_close(
     session_id: str | None = None,
     evidence: str | None = None,
     resolution_note: str | None = None,
+    changed_paths: list[str] | None = None,
     **_: object,
 ) -> dict[str, Any]:
     """Close an open friction by superseding it with a confirmed resolution row."""
@@ -70,6 +71,7 @@ def _op_friction_close(
         session_id=session_id or "friction-close",
         evidence=evidence,
         resolution_note=resolution_note,
+        changed_paths=changed_paths,
     )
 
 

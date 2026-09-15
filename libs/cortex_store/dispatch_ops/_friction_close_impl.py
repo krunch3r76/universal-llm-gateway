@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from datetime import UTC, datetime
 from typing import Any
 
+from deploy_identity.code_ref_relation import resolve_commit_sha
+from git_integrate.commit_paths import commit_paths_fingerprint
 from universal_logging import get_logger
+from universal_workspace import get_workspace_root
 
 from ..guidance_entity import GUIDANCE_ID_PREFIXES, entity_slug_from_id
 from ..routes.assertions import _supersede_assertion_impl
@@ -15,7 +19,7 @@ from .ops_assertions_update import _op_assertion_get
 
 logger = get_logger("cortex-api.dispatch_ops.assertions")
 
-_RESOLUTION_KIND_EXACT = frozenset({"superseded", "wontfix"})
+_RESOLUTION_KIND_EXACT = frozenset({"superseded", "wontfix", "uncommitted"})
 # arc 3924: rule:/skill: join agent_skill: as valid resolution kinds after the
 # rules/skills corpus migration (workflow: retained for pre-migration back-compat).
 _RESOLUTION_KIND_PREFIXES = ("agent_skill:", "rule:", "skill:", "workflow:", "todo:", "commit:")
@@ -28,9 +32,16 @@ _RESOLUTION_KIND_CATALOG: tuple[tuple[str, str], ...] = (
     ("workflow:{slug}", "closed by adopting or updating a workflow"),
     ("todo:{slug}", "promote friction into a recon-pending todo"),
     ("commit:{sha}", "closed by code fix landed at git commit"),
+    ("uncommitted", "closed by direct-first fix not yet committed"),
     ("superseded", "superseded by a newer assertion or friction"),
     ("wontfix", "acknowledged; will not fix"),
 )
+
+_REPO_PATH_RE = re.compile(
+    r"\b(?:libs|services|scripts|systems|pipelines|cursor-plugins)/"
+    r"[A-Za-z0-9_./-]+\.(?:py|md|yaml|yml|sh|json|mdc)\b"
+)
+_CATEGORY_PREFIX_RE = re.compile(r"^\[[^\]]+\]\s*")
 
 
 def format_resolution_kind_catalog() -> str:
@@ -63,6 +74,106 @@ def validate_resolution_kind(resolution_kind: str) -> str | None:
             )
         return None
     return format_resolution_kind_unknown_reason(resolution_kind)
+
+
+def _extract_repo_paths(text: str) -> list[str]:
+    """Pull repo-relative paths from free text (resolution_note, evidence)."""
+    seen: set[str] = set()
+    paths: list[str] = []
+    for match in _REPO_PATH_RE.finditer(text):
+        path = match.group(0)
+        if path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _symptom_excerpt(friction_claim: str, *, max_len: int = 240) -> str:
+    """First identifying sentence from the open friction, category tag stripped."""
+    text = _CATEGORY_PREFIX_RE.sub("", friction_claim.strip())
+    if not text:
+        return friction_claim.strip()[:max_len]
+    sentence = re.search(r"^(.+?[.!?])(?:\s|$)", text)
+    excerpt = sentence.group(1) if sentence else text
+    if len(excerpt) > max_len:
+        return f"{excerpt[: max_len - 3]}..."
+    return excerpt
+
+
+def _build_close_claim(
+    assertion_id: int,
+    resolution_kind: str,
+    friction_claim: str,
+    resolution_note: str | None,
+) -> str:
+    """Close claim carries symptom + fix so residue projection stays identifiable."""
+    symptom = _symptom_excerpt(friction_claim)
+    fix = (resolution_note or "").strip() or "see evidence"
+    return (
+        f"[resolved:{resolution_kind}] Friction #{assertion_id} closed. "
+        f"Symptom: {symptom} Fix: {fix}"
+    )
+
+
+def _commit_touches_paths(repo: str, sha: str, paths: list[str]) -> bool:
+    """True when ``sha`` modified every named path (git diff-tree name-only)."""
+    proc = subprocess.run(
+        ["git", "-C", repo, "diff-tree", "--no-commit-id", "--name-only", "-r", sha],
+        capture_output=True,
+        text=True,
+        timeout=5.0,
+    )
+    if proc.returncode != 0:
+        return False
+    touched = set(proc.stdout.strip().splitlines())
+    for path in paths:
+        if path in touched:
+            continue
+        if not any(t == path or t.endswith(f"/{path}") for t in touched):
+            return False
+    return True
+
+
+def _validate_commit_resolution(
+    resolution_kind: str,
+    *,
+    changed_paths: list[str] | None,
+    resolution_note: str | None,
+) -> str | None:
+    """Reject commit: when paths are uncommitted or absent from the named SHA."""
+    if not resolution_kind.startswith("commit:"):
+        return None
+    sha_slug = resolution_kind.removeprefix("commit:")
+    paths = list(changed_paths or []) or _extract_repo_paths(resolution_note or "")
+    if not paths:
+        return (
+            f"friction_close {resolution_kind!r} requires changed_paths or repo "
+            "paths in resolution_note — cannot verify landing without paths."
+        )
+    try:
+        repo = str(get_workspace_root())
+    except RuntimeError:
+        return "friction_close commit: — workspace root unavailable for git verify"
+    if resolve_commit_sha(sha_slug) is None:
+        return f"friction_close commit:{sha_slug} — git cannot resolve SHA"
+    if commit_paths_fingerprint(repo, paths):
+        preview = ", ".join(paths[:3])
+        if len(paths) > 3:
+            preview = f"{preview}, ..."
+        return (
+            f"friction_close {resolution_kind!r}: named paths have uncommitted "
+            f"changes ({preview}) — use resolution_kind='uncommitted' until "
+            "the fix is committed."
+        )
+    resolved = resolve_commit_sha(sha_slug)
+    assert resolved is not None
+    if not _commit_touches_paths(repo, resolved, paths):
+        return (
+            f"friction_close {resolution_kind!r}: commit does not touch "
+            f"{paths!r} — use resolution_kind='uncommitted' or the commit "
+            "that actually contains the fix."
+        )
+    return None
 
 
 def _promote_friction_to_todo(
@@ -129,10 +240,19 @@ def close_friction_assertion(
     session_id: str = "friction-close",
     evidence: str | None = None,
     resolution_note: str | None = None,
+    changed_paths: list[str] | None = None,
 ) -> dict[str, Any]:
     kind_err = validate_resolution_kind(resolution_kind)
     if kind_err:
         return {"error": kind_err}
+
+    commit_err = _validate_commit_resolution(
+        resolution_kind,
+        changed_paths=changed_paths,
+        resolution_note=resolution_note,
+    )
+    if commit_err:
+        return {"error": commit_err}
 
     existing = _op_assertion_get(assertion_id=assertion_id)
     if "error" in existing:
@@ -174,9 +294,13 @@ def close_friction_assertion(
                 "resolution_kind": resolution_kind,
             }
 
-    claim = f"[resolved:{resolution_kind}] Friction #{assertion_id} closed."
-    if resolution_note:
-        claim = f"{claim} {resolution_note.strip()}"
+    friction_claim = str(existing.get("claim") or "")
+    claim = _build_close_claim(
+        assertion_id,
+        resolution_kind,
+        friction_claim,
+        resolution_note,
+    )
 
     resolved_evidence = evidence or (
         f"friction_close(assertion_id={assertion_id}, "
@@ -195,6 +319,8 @@ def close_friction_assertion(
         "session_id": session_id,
         "agent": agent,
         "seeded_by": agent,
+        "revision_type": "restatement",
+        "attributes": {"revision_type": "restatement"},
     }
 
     try:

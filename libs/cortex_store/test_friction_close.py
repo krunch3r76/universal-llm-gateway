@@ -7,6 +7,8 @@ import sqlite3
 import pytest
 
 from cortex_store.dispatch_ops._friction_close_impl import (
+    _build_close_claim,
+    _validate_commit_resolution,
     close_friction_assertion,
     format_resolution_kind_catalog,
     validate_resolution_kind,
@@ -104,6 +106,46 @@ def conn(migrated_conn: sqlite3.Connection) -> sqlite3.Connection:
     return migrated_conn
 
 
+def test_validate_resolution_kind_accepts_uncommitted() -> None:
+    assert validate_resolution_kind("uncommitted") is None
+
+
+def test_build_close_claim_carries_symptom_and_fix() -> None:
+    claim = _build_close_claim(
+        33951,
+        "uncommitted",
+        "[regression] navigator_single_flight lease appears breached on house 10479.",
+        "path_flock on navigator lease RMW",
+    )
+    assert "[resolved:uncommitted]" in claim
+    assert "Symptom: navigator_single_flight lease appears breached" in claim
+    assert "Fix: path_flock on navigator lease RMW" in claim
+
+
+def test_validate_commit_resolution_rejects_uncommitted_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl.get_workspace_root",
+        lambda: "/repo",
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl.resolve_commit_sha",
+        lambda _sha: "a" * 40,
+    )
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl.commit_paths_fingerprint",
+        lambda _repo, _paths: "deadbeef",
+    )
+    err = _validate_commit_resolution(
+        "commit:38a1cd35",
+        changed_paths=["libs/bus_watch/navigator_wake.py"],
+        resolution_note=None,
+    )
+    assert err is not None
+    assert "uncommitted" in err
+
+
 def test_validate_resolution_kind_accepts_workflow_slug() -> None:
     assert validate_resolution_kind("workflow:bug-fix") is None
 
@@ -140,6 +182,10 @@ def test_friction_close_accepts_commit_resolution_kind(
     friction_id = _insert_friction(conn)
     _patch_db(monkeypatch, conn)
     _patch_supersede(monkeypatch, conn)
+    monkeypatch.setattr(
+        "cortex_store.dispatch_ops._friction_close_impl._validate_commit_resolution",
+        lambda *_a, **_k: None,
+    )
 
     result = _op_friction_close(
         assertion_id=friction_id,
@@ -162,7 +208,9 @@ def test_friction_close_accepts_commit_resolution_kind(
     fulfillment = conn.execute(
         "SELECT claim FROM assertions WHERE id = ?", (fulfillment_id,)
     ).fetchone()
-    assert "[resolved:commit:0173071]" in dict(fulfillment)["claim"]
+    claim_text = dict(fulfillment)["claim"]
+    assert "[resolved:commit:0173071]" in claim_text
+    assert "Symptom:" in claim_text
 
 
 def test_friction_close_supersedes_open_friction(
