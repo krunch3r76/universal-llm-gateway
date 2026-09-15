@@ -16,6 +16,7 @@ carry it now; a keystroke follow-up paste into the live IDE tab and
 
 from __future__ import annotations
 
+import shlex
 from typing import Any
 
 from bus_watch.friction_rows import event_line as _friction_event
@@ -35,17 +36,23 @@ _NOW_STEP = (
     "cdp/opus-5 first for any bind · cursor-sdk implement); STAY only when NOW is "
     "empty; end turn."
 )
-_UNDER_STEP = (
-    "One step: CHECKPOINT (residue ≤ 800), run the go-under command above, "
-    "paste its UNDER line, end turn. PARK is not a step while NOW or unread remain."
+_HOP_STEP = (
+    "One step: CHECKPOINT (residue ≤ 800), run the ide-hop command above, "
+    "end turn. ¬ go-under mid-arc — go-under is overnight/departure only."
 )
 _QUIET_STEP = "Quiet tick: one line, end turn. Do not fetch the bus to double-check."
 
 
 def go_under_command(root_id: Any, transcript_id: Any) -> str:
-    """The one verb an attended tab runs to hand the house to the ticker."""
+    """Hand the house to the gear-3 ticker (overnight/departure only — not CONTEXT_BUDGET)."""
     holder = f" --holder ide:{transcript_id}" if transcript_id else ""
     return f"liaison-tick.py --root {root_id} --go-under{holder}"
+
+
+def ide_hop_command(root_id: Any, now_row: str) -> str:
+    """Fresh-tab successor for attended CONTEXT_BUDGET with remaining work."""
+    row = str(now_row or "").strip() or "harvest fold decide"
+    return f"liaison-ide-hop.py --root {root_id} --row {shlex.quote(row)}"
 
 
 def _tab_at_budget(digest: dict[str, Any]) -> bool:
@@ -61,11 +68,11 @@ def _events(digest: dict[str, Any]) -> list[str]:
         used = int(budget.get("used_tokens") or 0)
         limit = max(int(budget.get("window_limit_tokens") or 1), 1)
         # The address is the command, not the verb's name: on 10534 the tab
-        # wrote "restore cursor-sdk successor hop" into its CP and parked.
+        # wrote prose into its CP and parked; mid-arc attended budget ⇒ ide-hop.
         step = (
             "→ CHECKPOINT, then "
-            + go_under_command(
-                (digest.get("root") or {}).get("id"), budget.get("transcript_id")
+            + ide_hop_command(
+                (digest.get("root") or {}).get("id"), _resolve_now_row(digest)
             )
             if _tab_at_budget(digest)
             else "→ CHECKPOINT, release the seat; the ticker spawns the successor"
@@ -192,7 +199,7 @@ def build_wake_induction(
     ]
     lines.append("Standing: " + " · ".join(standing))
     if _tab_at_budget(digest):
-        lines.append(_UNDER_STEP)
+        lines.append(_HOP_STEP)
     elif forcing and now_row:
         lines.append(_NOW_STEP)
     else:
@@ -204,7 +211,7 @@ def build_wake_induction(
 def _fit(lines: list[str], cap: int) -> str:
     """Trim to ``cap`` bytes: the "+N more" line, then lane events, then the
     standing binds. The designed-stop line (``Event: CONTEXT_BUDGET …``) carries
-    the go-under command and is never dropped — a one-step that says "the
+    the ide-hop command and is never dropped — a one-step that says "the
     command above" with the command trimmed away is the 10534 park again."""
     text = "\n".join(lines)
     while len(text.encode("utf-8")) > cap and len(lines) > 3:
@@ -276,4 +283,9 @@ def _fit_cse(lines: list[str], cap: int) -> str:
     return text
 
 
-__all__ = ["INDUCTION_CAP", "build_wake_induction", "go_under_command"]
+__all__ = [
+    "INDUCTION_CAP",
+    "build_wake_induction",
+    "go_under_command",
+    "ide_hop_command",
+]

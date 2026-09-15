@@ -63,13 +63,13 @@ def test_induction_names_context_budget_and_checkpoint() -> None:
             checkpoint_due=True,
         )
     )
-    # The address is the command (10534 #167 named the fix and parked instead).
+    # The address is the ide-hop command (10534 #167 named prose and parked instead).
     assert (
-        "CONTEXT_BUDGET 86% (ide.transcript) → CHECKPOINT, then liaison-tick.py "
-        "--root 10479 --go-under --holder ide:f0fbd8f2-305a-48e8-8c61-1004ecfff015"
+        "CONTEXT_BUDGET 86% (ide.transcript) → CHECKPOINT, then liaison-ide-hop.py "
+        "--root 10479 --row"
     ) in text
     assert "CHECKPOINT due" in text
-    assert text.rstrip().endswith("PARK is not a step while NOW or unread remain.")
+    assert text.rstrip().endswith("go-under is overnight/departure only.")
     assert len(text.encode()) <= 700
 
 
@@ -90,7 +90,7 @@ def test_induction_budget_stop_survives_cap_over_standing_binds() -> None:
     digest["policy"]["induction_binds"] = ["a long standing bind " * 8, "another " * 20]
     text = build_wake_induction(digest)
     assert len(text.encode()) <= 700
-    assert "--go-under --holder ide:f0fbd8f2-305a-48e8-8c61-1004ecfff015" in text
+    assert "liaison-ide-hop.py --root 10479 --row" in text
     assert "Standing: register=" in text and "a long standing bind" not in text
 
 

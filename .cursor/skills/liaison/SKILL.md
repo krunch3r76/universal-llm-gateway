@@ -33,10 +33,15 @@ return ("I'm back") flips to attended; the operator's departure ("running overni
    arms **one** handoff wake (`state.handoff.seq`) so the next poll spawns the successor whether or not any
    lane is unread. Refuses only `successor_model_unset` (`--set successor_model=<slug>` first);
 3. paste the printed `UNDER → …` line and end the turn. No hop, no dispatch after the verb.
-**When:** the `CONTEXT_BUDGET` event on an attended tab carries this exact command in the induction — run
-it; PARK is not a step while `NOW` or unread lanes remain. Also the exit for "running overnight".
-Surface again: `resume <R>` in any tab (an `ide:` claim preempts the `sdk:` holder) or "I'm back" ⇒
-`--register attended`; `ready` stays as set until `--set ready=false`.
+**When:** operator departure ("running overnight" · "hand off to ticker") — **not** attended
+`CONTEXT_BUDGET` mid-arc (that path is § Tick step 7 **ide-hop**). PARK is not a step while `NOW` or
+unread lanes remain.
+
+**Come up from under** (operator "I'm back" · resume hopping in IDE): (1) SIGTERM this root's
+`liaison-tick.py --loop --spawn-on-wake` ticker; (2) `liaison-tick.py --root R --register attended
+--set ready=false`; (3) drop any `induction_binds` row that forbids IDE hop; (4) `resume R` in the
+attended tab — the `ide:` claim preempts any lingering `sdk:` holder. One driver: IDE-hop chain ⇒
+`ready=false`; ticker ⇒ `--go-under` only when the operator names overnight/departure.
 
 **Operator guide (living).** "How do I use …" / "what changed" / a new ruling or phase move ⇒ **LOAD AND
 EXECUTE** `runbook:liaison-operator-guide` (`cortex://notes/runbooks/liaison-operator-guide.md`) — `cite(runbook)
@@ -58,6 +63,16 @@ for the next wake with `liaison-tick.py --root R --set now_row="<row>"`; standin
 Keystroke paste of this block into the live tab (same uinput path as the hop, no Ctrl+n) is the IDE
 transport; `cse_session(op=followup)` is the claude.ai transport — both are open work, not yet wired.
 
+**Goal (standing authorization — operator 2026-09-15, a:34037):** Every resume, `/liaison` arm, or hop
+pickup **must verify** a Cursor goal exists before harvest. Empty Goals panel ⇒ `CreateGoal` immediately with
+the house objective from tip CHECKPOINT Residue (`SETTLED`/`LIVE`/`NEXT`) + `register=<register>` +
+`root=agent-bus:<R>`. The native CreateGoal descriptor's "explicitly requested" wall is **waived** on liaison
+seat claim — this skill is the standing request. `UpdateGoal(status=complete)` only when the house objective
+is fully met (arc close), **never** on hop or mid-wait. Re-check after every CHECKPOINT if the panel went empty
+(hop successor, tab refresh).
+
+0. **Goal check** — before step 1: if no active goal ∨ objective stale vs tip NOW ⇒ `CreateGoal` (above).
+   `/liaison` command step 4 is the same bind for cold start.
 1. **Quiet tick** — `changed_since_last_tick=false ∧ attention=[] ∧ ¬checkpoint_due` ⇒ one line, end turn.
 2. **Harvest** — ∀ lane ∈ `attention`: `terminal=true` ⇒ `agent_bus_read(get, thread, "latest")` (one turn);
    read the CLOSEOUT/SCORE_RESURFACE, quote its evidence, `mark_read`. Non-terminal unread ⇒ latest turn only.
@@ -101,8 +116,12 @@ transport; `cse_session(op=followup)` is the claude.ai transport — both are op
    not a closeout; answer `RETIRED → <landed_transcript_id>` in one line and never harvest
    (10479 hops 1→2, 2026-09-13 03:04Z: two tabs harvested 10584, CP #198 + #201, MCP
    recycled under the successor's read).
-8. **Stop classes** — `CONTEXT_BUDGET` on an attended tab: CHECKPOINT → `--go-under` (§ Registers);
-   PARK only when `NOW` is empty and nothing is unread. Other designed stops: § Stops.
+8. **Stop classes** — `CONTEXT_BUDGET` on an attended tab with remaining work (live watcher ·
+   dispatchable NOW): CHECKPOINT → **`liaison-ide-hop.py`** (§ Dispatch ladder Successor row) — fresh
+   tab ~40k orient; **`--go-under` is wrong here** (ticker path is slower/heavier). `CONTEXT_BUDGET`
+   with empty NOW and nothing unread: CHECKPOINT → STAY or PARK. **`--go-under`** only on operator
+   overnight/departure (§ Registers). Headless `sdk:` holder at budget: CHECKPOINT → release, ticker
+   spawns. Other designed stops: § Stops.
 
 ## Seat model (operator 2026-09-11 20:37 PT: "Fable on IDE may not always be practical")
 
@@ -268,7 +287,7 @@ NOW verbatim as `--row`; a headless successor gets it as `row=`.
 | `CONSULT_PENDING` | independent check disagrees | row pinned, continue other rows |
 | `REPEATED_FAILURE` | same fix failed twice | stop the row, file friction, page |
 | `SPEND_CAP` | **only when an operator set a positive `policy.max_dispatches_per_night`** — off by default (2026-09-13). Then: dispatch count ≥ cap (read from the digest at tick time — never a number frozen in prose; R14 / a:33104) or a dispatch > 2h | pause new dispatches, page |
-| `CONTEXT_BUDGET` | digest `budget.stop_class` — `source=giw.sdk_stream` for a headless holder, **`source=ide.transcript` for an attended tab** (the tab's own JSONL: prose bytes/4 + `ide_tokens_per_tool_call` per call vs `policy.ide_window_tokens`, default 256k; the estimate carries `transcript_id` · `tool_calls` · `holder_basis`). `checkpoint_due` flips at 60 % of the same window. Before 2026-09-13 an IDE tab had no stop at all (10534 tab: 852 tool calls, 11 h, compacted repeatedly, commission lost). Once the house is under (autonomous, no `ide:` holder) the retired tab's reading is dropped from the digest so a headless successor never parks on it | attended tab: CHECKPOINT → **`--go-under`** (the induction `Event:` line is the exact command); headless: CHECKPOINT → release, the ticker spawns. PARK only with empty `NOW` and nothing unread. Operator on a larger tab model: `--set ide_window_tokens=<n>` |
+| `CONTEXT_BUDGET` | digest `budget.stop_class` — `source=giw.sdk_stream` for a headless holder, **`source=ide.transcript` for an attended tab** (the tab's own JSONL: prose bytes/4 + `ide_tokens_per_tool_call` per call vs `policy.ide_window_tokens`, default 256k; the estimate carries `transcript_id` · `tool_calls` · `holder_basis`). `checkpoint_due` flips at 60 % of the same window. Before 2026-09-13 an IDE tab had no stop at all (10534 tab: 852 tool calls, 11 h, compacted repeatedly, commission lost). Once the house is under (autonomous, no `ide:` holder) the retired tab's reading is dropped from the digest so a headless successor never parks on it | attended tab **with remaining work**: CHECKPOINT → **`liaison-ide-hop.py --root R --row "<NOW>"`** (induction plants the command); attended tab empty NOW: STAY/PARK; **`--go-under`** only operator overnight/departure (§ Registers); headless `sdk:`: CHECKPOINT → release, ticker spawns. Operator on a larger tab model: `--set ide_window_tokens=<n>` |
 
 Page: `curl -sS --unix-socket /tmp/universal-protocol/email-bridge.sock -H 'Content-Type: application/json'
 -d '{"subject":"liaison R — <stop>","body":"<one paragraph + tip CP turn>","tag":"liaison"}' http://localhost/pager/notify`.
