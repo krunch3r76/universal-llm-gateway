@@ -312,6 +312,40 @@ def remote_toplevels(gui_host: str) -> list[dict[str, Any]] | str:
     ]
 
 
+def session_unreachable(gui_host: str) -> dict[str, Any] | None:
+    """Refusal payload when the GUI session cannot receive keys; ``None`` when it can.
+
+    A COSMIC lock screen is invisible to every cheap probe: ``loginctl`` reports
+    ``LockedHint=no`` (jupiter session 4, 2026-09-15 05:20Z) and the lock surface
+    is not a toplevel, so the window list looks normal and ``activate`` on a
+    title match still returns a handle. The one observable that does move is
+    activation itself — an unlocked desktop always has exactly one activated
+    toplevel, and a locked one has none, because the lock surface holds focus.
+
+    Refusing here matters beyond a wasted hop: with the session locked, the
+    2026-09-15 05:12Z hop typed its whole 1946-byte message and Ctrl+Enter into
+    the lock screen's password field, which is both a failed hop and somewhere a
+    handoff message must never go.
+
+    A probe that cannot reach the host is not a refusal — SSH failure is handled
+    downstream with its own phase, so an unreadable list returns ``None``.
+    """
+    toplevels = remote_toplevels(gui_host)
+    if not isinstance(toplevels, list) or not toplevels:
+        return None
+    if any(row.get("activated") for row in toplevels):
+        return None
+    return {
+        "toplevels": toplevels,
+        "fix": (
+            f"no activated toplevel on {gui_host} — the session is locked or has "
+            "no focused window, so keys would go to the lock screen (and a paste "
+            "into its password field reads as a failed login). Unlock the desktop, "
+            "then re-fire; the hop message is already written and re-fire is idempotent."
+        ),
+    }
+
+
 def fire_ide_hop(
     message: str,
     *,
@@ -361,6 +395,9 @@ def fire_ide_hop(
     }
     if dry_run:
         return {"ok": True, "dry_run": True, **result}
+    locked = session_unreachable(gui_host)
+    if locked is not None:
+        return {"ok": False, "phase": "session_locked", **locked, **result}
     fired_at = time.time()
     try:
         proc = subprocess.run(
