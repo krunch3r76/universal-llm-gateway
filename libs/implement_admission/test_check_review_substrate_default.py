@@ -20,17 +20,18 @@ from implement_admission.workflow_registry import (
 pytestmark = pytest.mark.offline
 
 
-def test_standing_default_is_cursor_fable() -> None:
+def test_standing_default_is_cursor_muse_spark() -> None:
     policy = load_route_policy()
-    assert load_check_review_default_model(policy) == "cursor/claude-fable-5-1"
+    assert load_check_review_default_model(policy) == "cursor/muse-spark-1.3"
     assert CHECK_REVIEW_DECISION_CITATION in "decision:code-review-panel-cursor-substrate"
     entry = policy["workflows"][CHECK_REVIEW_WORKFLOW]
-    assert entry["model"] == "cursor/claude-fable-5-1"
+    assert entry["model"] == "cursor/muse-spark-1.3"
     assert entry["seat"] == "cursor-sdk"
     assert "cursor/gpt-5.6-terra" not in entry["model"]
 
 
 def test_cursor_check_review_allowlist_includes_fable_and_keeps_terra() -> None:
+    assert "cursor/muse-spark-1.3" in CURSOR_CHECK_REVIEW_MODELS
     assert "cursor/claude-fable-5-1" in CURSOR_CHECK_REVIEW_MODELS
     assert "cursor/gpt-5.6-terra" in CURSOR_CHECK_REVIEW_MODELS
     assert "cursor/gpt-5.6-sol" in CURSOR_CHECK_REVIEW_MODELS
@@ -43,7 +44,7 @@ def test_route_policy_conformance() -> None:
 
 def test_resolve_reviewer_omit_uses_cursor_default() -> None:
     resolution = resolve_check_review_model("reviewer", None)
-    assert resolution.resolved_model == "cursor/claude-fable-5-1"
+    assert resolution.resolved_model == "cursor/muse-spark-1.3"
     assert resolution.substrate == "cursor-sdk"
     assert resolution.delivery_from_role == "reviewer"
 
@@ -55,7 +56,7 @@ def test_coerce_omit_reviewer_to_cursor_seat() -> None:
     assert coerced is True
     assert role is None
     assert seat == "cursor-sdk"
-    assert model == "cursor/claude-fable-5-1"
+    assert model == "cursor/muse-spark-1.3"
 
 
 def test_coerce_skips_when_explicit_openai() -> None:

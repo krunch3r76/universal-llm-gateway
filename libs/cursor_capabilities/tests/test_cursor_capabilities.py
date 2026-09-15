@@ -36,7 +36,7 @@ def test_model_capability_default_instruction_profile_is_mechanical() -> None:
 
 
 def test_governed_rows_carry_instruction_profile_classifications() -> None:
-    assert len(CURSOR_MODEL_CAPABILITIES) == 17
+    assert len(CURSOR_MODEL_CAPABILITIES) == 18
     for model_id, expected in _GOVERNED_INSTRUCTION_PROFILES.items():
         assert CURSOR_MODEL_CAPABILITIES[model_id].instruction_profile == expected
 
