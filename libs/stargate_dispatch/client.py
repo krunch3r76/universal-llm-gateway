@@ -34,6 +34,7 @@ _ALLOWED_FIELDS = frozenset(
         "role",
         "system",
         "parent_thread",
+        "skills",
     }
 )
 

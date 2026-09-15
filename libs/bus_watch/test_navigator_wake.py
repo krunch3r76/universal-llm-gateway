@@ -161,6 +161,25 @@ def test_navigator_model_bound_rejects_gear_preset() -> None:
 
 
 @pytest.mark.offline
+def test_fire_navigator_doorbell_and_body_carry_skill_activation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """11367#7: --fire navigator path must deliver Use-lines and skills= wire."""
+    monkeypatch.setattr("bus_watch.navigator_wake.WATCH_DIR", tmp_path)
+    result = fire_navigator_wake(
+        "10479",
+        _digest(),
+        _state(),
+        register="autonomous",
+        dry_run=True,
+    )
+    doorbell = result["evaluation"]["doorbell"]
+    assert "Use the liaison skill." in doorbell
+    assert "Use the reasoning-posture skill." in doorbell
+    assert result["body"]["skills"] == ["liaison", "reasoning-posture"]
+
+
+@pytest.mark.offline
 def test_fire_navigator_body_carries_parent_thread(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr("bus_watch.navigator_wake.WATCH_DIR", tmp_path)
     result = fire_navigator_wake(
