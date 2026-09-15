@@ -158,6 +158,35 @@ async def test_seal_raises_on_injected_undeclared_bare_numeric(
         seal(snap, decl)
 
 
+@pytest.mark.asyncio
+async def test_active_work_snapshot_seals_with_seat_bound_at_in_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """seat_rows may carry seat_bound_at; identity lists are transcript, not claims."""
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry_store.load_active",
+        lambda: {
+            "reg-seat": {
+                "registration_id": "reg-seat",
+                "status": "dormant",
+                "seat_lane": "10479",
+                "seat_closed_at": None,
+                "seat_bound_at": 1_729_000_000.0,
+                "parent_thread": "10479",
+                "purpose": "operator-proxy",
+            }
+        },
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_orphans.probe_live_ports",
+        lambda port_range=None: [],
+    )
+    store = ExecutionStore()
+    snap = await store.active_work_snapshot()
+    assert len(snap["seat_rows"]) == 1
+    assert snap["seat_rows"][0]["seat_bound_at"] == 1_729_000_000.0
+
+
 def test_live_cse_count_qualified_scalar_preserves_unknown() -> None:
     from admission_common.qualified_scalar import AuthorityClass, QualifiedScalar
 

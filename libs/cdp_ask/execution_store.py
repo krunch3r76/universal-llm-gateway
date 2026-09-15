@@ -215,6 +215,22 @@ class ExecutionStore:
             seat = []
         payload = attach_seated_rows(payload, seated)
         payload = attach_seat_rows(payload, seat)
+        # Registry seat-axis rows carry seat_bound_at and other numeric metadata;
+        # transcript zones keep them out of the seal walk (UnqualifiedScalarError).
+        decl.transcript("rows", reason="pending/running execution store rows verbatim")
+        decl.transcript(
+            "execution_ids", reason="active execution id list verbatim"
+        )
+        decl.transcript(
+            "execution_streams",
+            reason="execution-id to stream status index verbatim",
+        )
+        decl.transcript(
+            "seated_rows", reason="registry listable seat identity verbatim"
+        )
+        decl.transcript(
+            "seat_rows", reason="registry seat-open axis verbatim"
+        )
         attach_x_display_capacity(payload, decl)
         return seal(payload, decl)
 
