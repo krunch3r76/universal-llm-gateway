@@ -100,9 +100,19 @@ def test_stale_watch_skipped_when_reg_not_listable(
     }.get(rid)
     mock_sessions.return_value = {}
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.cse_pager_resolve.load_active_rows",
-        return_value={"reg-live": {"started_at": 200.0, "purpose": "operator-proxy"}},
+    with (
+        patch(
+            "cdp_ask.operator_seat_resolve.read_cdp_lane_snapshot",
+            return_value={"seat_rows": []},
+        ),
+        patch(
+            "cdp_ask.operator_seat_resolve.list_active",
+            mock_list_active,
+        ),
+        patch(
+            "cdp_ask.operator_seat_resolve.load_active",
+            return_value={"reg-live": {"started_at": 200.0, "purpose": "operator-proxy"}},
+        ),
     ):
         job = _job()
         result = resolve_live_cse_address(job)
@@ -150,12 +160,22 @@ def test_registry_prefers_unique_hop_kind(
         "reg-root": "https://claude.ai/cowork/cse_root",
     }.get(rid)
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.cse_pager_resolve.load_active_rows",
-        return_value={
-            "reg-root": {"started_at": 500.0},
-            "reg-hop": {"started_at": 100.0},
-        },
+    with (
+        patch(
+            "cdp_ask.operator_seat_resolve.read_cdp_lane_snapshot",
+            return_value={"seat_rows": []},
+        ),
+        patch(
+            "cdp_ask.operator_seat_resolve.list_active",
+            mock_list_active,
+        ),
+        patch(
+            "cdp_ask.operator_seat_resolve.load_active",
+            return_value={
+                "reg-root": {"started_at": 500.0},
+                "reg-hop": {"started_at": 100.0},
+            },
+        ),
     ):
         result = resolve_live_cse_address(_job())
     assert result["source"] == "registry"

@@ -29,21 +29,32 @@ def _mock_reg(
 
 
 def test_resolve_cse_identity_by_parent_thread() -> None:
-    reg = _mock_reg()
-    with (
-        patch("bus_watch.cse_followup.list_active", return_value=[reg]),
-        patch(
-            "bus_watch.cse_followup.load_active",
-            return_value={reg.registration_id: {"started_at": 100.0}},
-        ),
-        patch(
-            "bus_watch.cse_followup.chat_url_for_registration",
-            return_value="https://claude.ai/chat/abc",
-        ),
+    with patch(
+        "bus_watch.cse_followup.resolve_operator_seat",
+        return_value={
+            "chat_url": "https://claude.ai/chat/abc",
+            "registration_id": "reg-10479",
+            "source": "local",
+        },
     ):
         out = resolve_cse_identity("10479")
     assert out["registration_id"] == "reg-10479"
     assert out["url"] == "https://claude.ai/chat/abc"
+    assert out["source"] == "local"
+
+
+def test_resolve_cse_identity_delegates_http_source() -> None:
+    with patch(
+        "bus_watch.cse_followup.resolve_operator_seat",
+        return_value={
+            "chat_url": "https://claude.ai/chat/dormant",
+            "registration_id": "reg-dormant",
+            "source": "http",
+        },
+    ):
+        out = resolve_cse_identity("10479")
+    assert out["source"] == "http"
+    assert out["registration_id"] == "reg-dormant"
 
 
 def test_fire_cse_followup_dry_run() -> None:
@@ -113,11 +124,17 @@ def test_fire_cse_followup_posts_followups() -> None:
 def test_fire_cse_followup_no_identity() -> None:
     with patch(
         "bus_watch.cse_followup.resolve_cse_identity",
-        return_value={"chat_url": None, "registration_id": None, "url": None},
+        return_value={
+            "chat_url": None,
+            "registration_id": None,
+            "url": None,
+            "source": "local",
+        },
     ):
         out = fire_cse_followup("WAKE 10479", "10479")
     assert out["ok"] is False
     assert out["error"] == "no_identity"
+    assert out["source"] == "local"
 
 
 def test_fire_cse_followup_transport_error_never_raises() -> None:
