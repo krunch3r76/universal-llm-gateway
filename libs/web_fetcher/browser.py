@@ -54,6 +54,11 @@ def _same_host(left: str, right: str) -> bool:
     return urlparse(left).hostname == urlparse(right).hostname
 
 
+def _is_pdf_bytes(body: bytes) -> bool:
+    """Return True when *body* begins with a PDF magic header."""
+    return len(body) >= 4 and body[:4] == b"%PDF"
+
+
 async def download_with_browser(
     url: str,
     *,
@@ -92,8 +97,28 @@ async def download_with_browser(
             page = await ctx.new_page()
 
             try:
+                # Inline PDFs render in Chrome's viewer and never fire a download event;
+                # capture navigation response bytes before waiting on expect_download.
+                resp = await page.goto(url, timeout=timeout_ms, wait_until="commit")
+                if resp is not None:
+                    body = await resp.body()
+                    if _is_pdf_bytes(body):
+                        save_path.write_bytes(body)
+                        size = len(body)
+                        logger.info(
+                            "Captured inline PDF %s → %s (%d bytes)",
+                            url,
+                            save_path,
+                            size,
+                        )
+                        return {
+                            "saved_to": str(save_path),
+                            "size": size,
+                            "url": resp.url,
+                        }
+
                 async with page.expect_download(timeout=timeout_ms) as dl_info:
-                    await page.goto(url, timeout=timeout_ms, wait_until="commit")
+                    await page.reload(timeout=timeout_ms, wait_until="commit")
 
                 download = await dl_info.value
                 await download.save_as(str(save_path))
@@ -102,20 +127,28 @@ async def download_with_browser(
                 return {"saved_to": str(save_path), "size": size, "url": download.url}
 
             except Exception:
-                # Fallback: some sites serve PDFs as inline navigation (no download event).
-                logger.info("No download event for %s — capturing response bytes", url)
-                resp = await page.goto(
-                    url, timeout=timeout_ms, wait_until="networkidle"
+                # Last resort: API fetch shares CDP context cookies, bypasses viewer shell.
+                logger.info(
+                    "Download event failed for %s — trying context.request.get",
+                    url,
                 )
-                if resp is None:
-                    raise RuntimeError(f"No response navigating to {url}")
-                body = await resp.body()
+                api_resp = await ctx.request.get(url, timeout=timeout_ms)
+                if not api_resp.ok:
+                    raise RuntimeError(
+                        f"Download failed for {url}: HTTP {api_resp.status}"
+                    )
+                body = await api_resp.body()
+                if not _is_pdf_bytes(body):
+                    raise RuntimeError(
+                        f"Download failed for {url}: response is not a PDF "
+                        f"({len(body)} bytes)"
+                    )
                 save_path.write_bytes(body)
                 size = len(body)
                 logger.info(
-                    "Captured response %s → %s (%d bytes)", url, save_path, size
+                    "API fetched PDF %s → %s (%d bytes)", url, save_path, size
                 )
-                return {"saved_to": str(save_path), "size": size, "url": page.url}
+                return {"saved_to": str(save_path), "size": size, "url": url}
         finally:
             if not page.is_closed():
                 await page.close()
