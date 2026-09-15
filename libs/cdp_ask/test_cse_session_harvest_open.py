@@ -74,7 +74,7 @@ async def test_open_success_scrapes_then_tears_down() -> None:
     assert result.outcome == "harvested"
     assert result.provenance
     assert result.provenance.get("opened_on_demand") is True
-    assert result.provenance.get("cdp_url") == "http://127.0.0.1:9222"
+    assert "cdp_url" not in result.provenance
     assert result.provenance.get("registration_id") == "reg-dormant"
 
 

@@ -41,13 +41,10 @@ async def _teardown_opened(outcome, response: HarvestResponse | None = None) -> 
 def _with_opened(
     provenance: dict[str, Any] | None,
     *,
-    cdp_url: str | None = None,
     registration_id: str | None = None,
 ) -> dict[str, Any]:
     merged = dict(provenance or {})
     merged["opened_on_demand"] = True
-    if cdp_url:
-        merged["cdp_url"] = cdp_url
     if registration_id:
         merged["registration_id"] = registration_id
     return merged
@@ -70,7 +67,6 @@ async def harvest_by_opening_url(
     )
     opened_prov = _with_opened(
         provenance,
-        cdp_url=outcome.cdp_url,
         registration_id=outcome.registration_id,
     )
     if not outcome.ok or outcome.page is None:

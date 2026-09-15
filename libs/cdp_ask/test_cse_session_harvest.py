@@ -172,7 +172,7 @@ async def test_dormant_seat_without_reattach_does_not_open() -> None:
 
 @pytest.mark.asyncio
 async def test_dormant_seat_reattach_opens_then_scrapes() -> None:
-    """Opt-in reattach wakes a dormant seat, harvests, and returns observed cdp_url."""
+    """Opt-in reattach wakes a dormant seat and harvests without leaking cdp_url."""
     from claude_bundles.cdp_registry.models import DormantSeat
 
     store = ExecutionStore()
@@ -196,7 +196,6 @@ async def test_dormant_seat_reattach_opens_then_scrapes() -> None:
         ],
         provenance={
             "evidence_class": "observed",
-            "cdp_url": "http://127.0.0.1:9222",
             "opened_on_demand": True,
         },
     )
@@ -228,7 +227,7 @@ async def test_dormant_seat_reattach_opens_then_scrapes() -> None:
     assert len(result.turns) == 1
     assert result.provenance
     assert result.provenance.get("evidence_class") == "observed"
-    assert result.provenance.get("cdp_url") == "http://127.0.0.1:9222"
+    assert "cdp_url" not in result.provenance
 
 
 @pytest.mark.asyncio
