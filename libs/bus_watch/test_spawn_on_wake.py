@@ -624,6 +624,65 @@ def test_remint_cap_refusal_is_a_wall_for_the_night(monkeypatch) -> None:  # noq
     ]
 
 
+def test_successor_wake_shell_seat_names_seat_and_emits_watcher() -> None:
+    text = build_successor_message(
+        "10479",
+        gear="3-wake-on-attention",
+        row="Settled · Live · Next",
+        seat="cursor-sdk",
+        tip_cp_ordinal=42,
+    )
+    assert "seat cursor-sdk" in text
+    assert "seat: cursor-sdk" in text
+    assert "runbook:bus-consult-watcher" in text
+
+
+def test_successor_wake_cdp_seat_names_seat_and_omits_watcher() -> None:
+    text = build_successor_message(
+        "10479",
+        gear="4-cdp-liaison",
+        row="Settled · Live · Next",
+        seat="cdp",
+        tip_cp_ordinal=42,
+    )
+    assert "seat cdp" in text
+    assert "seat: cdp" in text
+    assert "runbook:bus-consult-watcher" not in text
+
+
+def test_successor_wake_web_anthropic_seat_names_seat_and_omits_watcher() -> None:
+    text = build_successor_message(
+        "10479",
+        gear="3-wake-on-attention",
+        row="Settled · Live · Next",
+        seat="web-anthropic",
+        tip_cp_ordinal=42,
+    )
+    assert "seat web-anthropic" in text
+    assert "seat: web-anthropic" in text
+    assert "runbook:bus-consult-watcher" not in text
+
+
+def test_dispatch_body_passes_resolved_seat_into_message() -> None:
+    body = build_dispatch_body(
+        "10479",
+        {
+            "successor_model": "cdp/opus-5",
+            "successor_seat": "cdp",
+            "max_hop_minutes": 60,
+            "gear": "4-cdp-liaison",
+        },
+        successor_context={
+            "gear": "4-cdp-liaison",
+            "row": "Settled · Live · Next",
+            "tip_cp_ordinal": 42,
+        },
+    )
+    assert body["seat"] == "cdp"
+    assert "seat cdp" in body["message"]
+    assert "runbook:bus-consult-watcher" not in body["message"]
+
+
 def test_abandoned_lane_does_not_wake() -> None:
     from bus_watch.spawn_pending import actionable_attention
 
