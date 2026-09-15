@@ -43,7 +43,9 @@ def test_induction_plants_addresses_not_a_skill_copy() -> None:
     assert text.startswith("WAKE 10479 · turns=214")
     assert "Event: 10586 unread=1" in text
     assert "watcher 10479-10586-r9-none complete" in text
-    assert "NOW: tip #214 on agent-bus:10479 · R9 Lane A serialization" in text
+    assert (
+        "NOW: tip #214 on agent-bus:10479 · «CHECKPOINT 10479 54b93098»" in text
+    )
     assert "do not re-read): liaison skill · git-posture § Land" in text
     assert "register=autonomous · hopper paused (10479#210)" in text
     assert "cdp/opus-5 first" in text

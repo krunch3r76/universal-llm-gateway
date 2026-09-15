@@ -317,7 +317,8 @@ def build_digest(
     digest["summary_row"] = state.get("summary_row")
     # Planted address for the woken seat (10479 #82/#118/#120): read before the
     # JSON, carried on the DIGEST turn and by any paste transport.
-    digest["induction"] = build_wake_induction(digest)
+    induction_surface = "cse" if register == "cse" else "ide"
+    digest["induction"] = build_wake_induction(digest, surface=induction_surface)
     state.update(
         {
             "fingerprint": fp,

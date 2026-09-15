@@ -72,7 +72,7 @@ def _events(digest: dict[str, Any]) -> list[str]:
         step = (
             "→ CHECKPOINT, then "
             + ide_hop_command(
-                (digest.get("root") or {}).get("id"), _resolve_now_row(digest)
+                (digest.get("root") or {}).get("id"), _resolve_now_row(digest)[0]
             )
             if _tab_at_budget(digest)
             else "→ CHECKPOINT, release the seat; the ticker spawns the successor"
@@ -125,22 +125,40 @@ def _use_skill_lines(loaded: list[str]) -> list[str]:
     return [f"Use the {slug} skill" for slug in dict.fromkeys(slugs)]
 
 
-def _resolve_now_row(digest: dict[str, Any]) -> str:
-    """Seat bind ≻ legacy summary_row ≻ forcing friction (11367#7 / a:34028)."""
+def _resolve_now_row(digest: dict[str, Any]) -> tuple[str, str]:
+    """Seat bind ≻ forcing friction ≻ legacy summary_row (11367#7 / a:34028).
+
+    Friction outranks ``summary_row`` so a stale tick bind cannot mask an
+    undispositioned row; ``summary_row`` prose is never echoed verbatim on
+    the NOW line (see ``_format_now_line``).
+    """
     policy = digest.get("policy") or {}
+    policy_bind = str(policy.get("now_row") or "").strip()
+    if policy_bind:
+        return policy_bind, "policy"
     friction_now = _friction_now(digest)
-    return (
-        str(policy.get("now_row") or "").strip()
-        or str(digest.get("summary_row") or "").strip()
-        or friction_now
-    )
+    if friction_now:
+        return friction_now, "friction"
+    summary = str(digest.get("summary_row") or "").strip()
+    if summary:
+        return summary, "summary_row"
+    return "", "empty"
 
 
-def _format_now_line(digest: dict[str, Any], now_row: str) -> str:
-    """Pointers not prose — tip turn + root address, body capped (cdp-seat-wake §7)."""
+def _format_now_line(digest: dict[str, Any], now_row: str, *, source: str) -> str:
+    """Pointers not prose — tip turn + handoff, not stale summary_row (§7)."""
+    if source == "friction":
+        return str(now_row or "").strip()
     root = digest.get("root") or {}
     root_id = root.get("id")
     tip = root.get("turns")
+    if source == "summary_row":
+        if tip is not None and root_id:
+            handoff = str(root.get("last_subject") or "").strip()
+            if handoff:
+                return f"tip #{tip} on agent-bus:{root_id} · «{handoff[:_SUBJECT_CHARS]}»"
+            return f"tip #{tip} on agent-bus:{root_id}"
+        return ""
     body = str(now_row or "").strip()
     if len(body) > 120:
         body = body[:117].rstrip() + "…"
@@ -169,7 +187,7 @@ def build_wake_induction(
     # ``policy.now_row`` is the live seat bind (``liaison-tick.py --set now_row=…``);
     # ``summary_row`` is legacy tick state and must not outrank a fresh bind (11367#7).
     friction_now = _friction_now(digest)
-    now_row = _resolve_now_row(digest)
+    now_row, now_source = _resolve_now_row(digest)
     events = _events(digest)
     forcing = bool(events or friction_now)
     head = f"WAKE {root_id} · turns={root.get('turns')} · {digest.get('ts')}"
@@ -181,7 +199,7 @@ def build_wake_induction(
     if len(events) > _EVENT_ITEMS:
         lines.append(f"Event: +{len(events) - _EVENT_ITEMS} more in the digest")
     lines.append(
-        f"NOW: {_format_now_line(digest, now_row)}"
+        f"NOW: {_format_now_line(digest, now_row, source=now_source)}"
         if now_row
         else "NOW: (empty — pull the next objective per liaison skill § Objectives; "
         "empty NOW is not a stop)"
