@@ -14,7 +14,9 @@ import pytest
 from scripts.model_manager.ui.controller.restart_drain import (
     ActiveWork,
     RestartDrainGate,
+    run_gated,
     run_gated_drain_supervised,
+    run_gated_self_holder_drain_supervised,
 )
 from scripts.model_manager.ui.controller.restart_intent_store import (
     STATUS_PENDING_DRAIN,
@@ -24,6 +26,28 @@ from scripts.model_manager.ui.controller.restart_intent_store import (
 pytestmark = pytest.mark.offline
 
 _SERVICE = "git_integration_worker"
+_AGENT_BUS = "agent_bus"
+_SELF_DISPATCH = "auto-lane11411-self"
+_FOREIGN_DISPATCH = "auto-lane11411-foreign"
+
+
+def _self_holder_active_work(dispatch_id: str = _SELF_DISPATCH) -> dict[str, object]:
+    return {
+        "busy": True,
+        "active_count": 1,
+        "write_lease": {
+            "holder_dispatch_id": dispatch_id,
+            "queue_depth": 0,
+        },
+        "cursor_sdk_gate": {
+            "active": 1,
+            "limit": 1,
+            "busy_status": {
+                "active_holder": {"dispatch_id": dispatch_id},
+                "queue_depth": 0,
+            },
+        },
+    }
 
 
 def _run(coro: Any) -> Any:
@@ -59,9 +83,7 @@ def events_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any
     async def _fake_emit(signal: str, payload: dict[str, Any], **_kw: Any) -> None:
         log.append((signal, payload))
 
-    monkeypatch.setattr(
-        "scripts.model_manager.observation_event._emit", _fake_emit
-    )
+    monkeypatch.setattr("scripts.model_manager.observation_event._emit", _fake_emit)
     return log
 
 
@@ -112,6 +134,108 @@ def test_busy_sync_restart_arms_durable_drain(
     assert live.intent_id == intent_id
     assert live.status == STATUS_PENDING_DRAIN
     assert len(supervisor.intents) == 1
+
+
+def test_self_holder_busy_mints_restart_intent(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """Sole self-holder busy must mint restart_intent_id (agent_bus path)."""
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents-self.db")
+    gate = RestartDrainGate(
+        probes={
+            _AGENT_BUS: _StaticBusyProbe(
+                ActiveWork(busy=True, detail=_self_holder_active_work())
+            )
+        }
+    )
+    supervisor = _RecordingSupervisor()
+
+    async def _arm() -> dict[str, Any]:
+        result = await run_gated_self_holder_drain_supervised(
+            gate,
+            "sync_restart",
+            _AGENT_BUS,
+            store=store,
+            supervisor=supervisor,
+            reason="test self-holder arm",
+            caller_dispatch_id=_SELF_DISPATCH,
+        )
+        supervisor._block.set()
+        await asyncio.sleep(0)
+        return result
+
+    result = _run(_arm())
+    assert result["status"] == "deferred"
+    assert result["state"] == "draining"
+    intent_id = result["restart_intent_id"]
+    assert intent_id
+    assert "-" in intent_id
+    live = store.active_for_service(_AGENT_BUS)
+    assert live is not None
+    assert live.intent_id == intent_id
+    assert live.status == STATUS_PENDING_DRAIN
+    assert len(supervisor.intents) == 1
+
+
+def test_foreign_holder_busy_still_soft_defer_without_intent(tmp_path: Any) -> None:
+    """Foreign holder busy must stay state=busy with no restart_intent_id."""
+    store = RestartIntentStore(db_path=tmp_path / "restart-intents-foreign.db")
+    gate = RestartDrainGate(
+        probes={
+            _AGENT_BUS: _StaticBusyProbe(
+                ActiveWork(
+                    busy=True,
+                    detail=_self_holder_active_work(_FOREIGN_DISPATCH),
+                )
+            )
+        }
+    )
+    supervisor = _RecordingSupervisor()
+
+    async def _arm() -> dict[str, Any]:
+        return await run_gated_self_holder_drain_supervised(
+            gate,
+            "sync_restart",
+            _AGENT_BUS,
+            store=store,
+            supervisor=supervisor,
+            reason="test foreign holder",
+            caller_dispatch_id=_SELF_DISPATCH,
+        )
+
+    result = _run(_arm())
+    assert result["status"] == "deferred"
+    assert result["state"] == "busy"
+    assert "restart_intent_id" not in result
+    assert store.active_for_service(_AGENT_BUS) is None
+    assert not supervisor.intents
+
+
+def test_run_gated_foreign_holder_busy_without_caller_id(tmp_path: Any) -> None:
+    """Generic run_gated busy path unchanged when caller_dispatch_id is absent."""
+    gate = RestartDrainGate(
+        probes={
+            _AGENT_BUS: _StaticBusyProbe(
+                ActiveWork(busy=True, detail=_self_holder_active_work())
+            )
+        }
+    )
+
+    async def _lifecycle() -> str:
+        return "should not run"
+
+    result = _run(
+        run_gated(
+            gate,
+            "sync_restart",
+            _AGENT_BUS,
+            force=False,
+            lifecycle=_lifecycle,
+        )
+    )
+    assert result["status"] == "deferred"
+    assert result["state"] == "busy"
+    assert "restart_intent_id" not in result
 
 
 def test_busy_soft_defer_path_gone_for_force_false_evaluate(

@@ -13,6 +13,7 @@ Single entry point reduces agent context overhead.
 from __future__ import annotations
 
 import json
+import os
 import socket
 from typing import TYPE_CHECKING, Any
 
@@ -230,6 +231,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
         reenroll: bool = False,
         intent_id: str = "",
         park_live: bool = False,
+        caller_dispatch_id: str = "",
     ) -> dict[str, Any]:
         """Service lifecycle — start, stop, restart, sync_restart, rebuild, health, wait_healthy.
 
@@ -240,6 +242,10 @@ def register_manage_tools(mcp: FastMCP) -> None:
         park_live: for git_integration_worker stop/restart/sync_restart — park live
                    cursor-sdk dispatches at drain start instead of keep-await/kill
                    (steer-restart v1; default False)
+        caller_dispatch_id: cursor-sdk dispatch id for self-holder busy-skip drain
+                   (defaults to CURSOR_SDK_DISPATCH_ID env when set). When the sole
+                   busy holder matches, sync_restart mints restart_intent_id and defers
+                   until the caller exits; foreign holders still get state=busy.
         reason: optional reason for charter_pause
         intent_id: required for cancel_restart_intent (restart-intent retraction)
 
@@ -357,9 +363,12 @@ def register_manage_tools(mcp: FastMCP) -> None:
         on git_integration_worker). A deferral returns
         {"status":"deferred","state","service","reason","retry_after_s",
         "active_work","active_work_summary"} where state ∈ {busy, in_progress,
-        probe_error}. Prefer active_work_summary for a one-line holder identity;
-        dig into active_work only when you need structure. Honor retry_after_s
-        and retry, or pass force=true to preempt in-flight work.
+        probe_error, draining}. Prefer active_work_summary for a one-line holder
+        identity; dig into active_work only when you need structure. Honor
+        retry_after_s and retry, or pass force=true to preempt in-flight work.
+        Self-holder busy-skip: when caller_dispatch_id matches the sole write-lease
+        holder, sync_restart returns state=draining with restart_intent_id (post-exit
+        execution) instead of state=busy without an intent.
 
         Self-restart (mcp): sync_restart/rebuild returns status=ok immediately
         (manage.sock defers container stop to a background task). The triggering
@@ -410,6 +419,11 @@ def register_manage_tools(mcp: FastMCP) -> None:
             params["force"] = True
         if park_live and action in {"stop", "restart", "sync_restart"}:
             params["park_live"] = True
+        effective_caller = (
+            caller_dispatch_id or os.environ.get("CURSOR_SDK_DISPATCH_ID", "")
+        ).strip()
+        if effective_caller and action in {"stop", "restart", "sync_restart"}:
+            params["caller_dispatch_id"] = effective_caller
         if action == "cancel_restart_intent":
             params["intent_id"] = intent_id
         if action == "restart_intent_status":

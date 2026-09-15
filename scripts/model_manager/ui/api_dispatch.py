@@ -21,10 +21,13 @@ from .controller.fleet_liveness import build_snapshot
 from .controller.restart_drain import (
     BackgroundCompleteHook,
     BackgroundFailedHook,
+    LocalServiceDrainSupervisor,
     run_gated,
     run_gated_deferred,
     run_gated_drain_supervised,
     run_gated_drain_supervised_blocking,
+    run_gated_self_holder_drain_supervised,
+    sole_busy_holder_matches,
 )
 from .controller.restart_intent_consumer import project_restart_intent_consumer
 from .controller.restart_intent_store import (
@@ -100,8 +103,7 @@ async def execute(
             unexpected = sorted(set(params) - {"code_ref"})
             if unexpected:
                 raise ValueError(
-                    "fleet_liveness accepts only code_ref: "
-                    + ", ".join(unexpected)
+                    "fleet_liveness accepts only code_ref: " + ", ".join(unexpected)
                 )
             code_ref = params.get("code_ref")
             if code_ref is not None and not isinstance(code_ref, str):
@@ -243,6 +245,7 @@ async def execute(
                     no_cache=False,
                 )
             force = bool(params.get("force", False))
+            caller_dispatch_id = _optional_attr_str(params, "caller_dispatch_id")
             if service == "git_integration_worker" and not force:
                 return await _git_worker_drain_supervised(
                     ctl,
@@ -251,6 +254,36 @@ async def execute(
                     row_id=_optional_attr_str(params, "row_id"),
                     park_live=bool(params.get("park_live", False)),
                 )
+            if not force and caller_dispatch_id:
+                work = await ctl.restart_gate.probe(service)
+                if work.busy and sole_busy_holder_matches(
+                    work.detail, caller_dispatch_id
+                ):
+                    supervisor = LocalServiceDrainSupervisor(
+                        gate=ctl.restart_gate,
+                        service=service,
+                        store=ctl.restart_intent_store,
+                        lifecycle=lambda: _lifecycle_with_restart_window(
+                            ctl,
+                            service,
+                            "sync_restart",
+                            lambda: _sync_restart(ctl, service),
+                        ),
+                    )
+                    return await run_gated_self_holder_drain_supervised(
+                        ctl.restart_gate,
+                        "sync_restart",
+                        service,
+                        store=ctl.restart_intent_store,
+                        supervisor=supervisor,
+                        reason=(
+                            "manage sync_restart "
+                            f"(self-holder busy-skip, caller={caller_dispatch_id})"
+                        ),
+                        caller_dispatch_id=caller_dispatch_id,
+                        code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
+                        row_id=_optional_attr_str(params, "row_id"),
+                    )
             return await run_gated(
                 ctl.restart_gate,
                 "sync_restart",

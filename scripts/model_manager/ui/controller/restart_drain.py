@@ -67,6 +67,58 @@ GIT_INTEGRATION_WORKER_URL = os.environ.get(
 # live work; rebuild routes through sync_restart for the relevant services.
 GATED_ACTIONS = frozenset({"stop", "restart", "sync_restart"})
 
+_SELF_HOLDER_POLL_INTERVAL_S = 0.2
+
+
+def holder_dispatch_id_from_active_work(active_work: dict[str, Any]) -> str | None:
+    """Extract the active write-lease holder dispatch id from a probe payload."""
+    lease = active_work.get("write_lease")
+    if isinstance(lease, dict):
+        holder = lease.get("holder_dispatch_id")
+        if isinstance(holder, str) and holder.strip():
+            return holder.strip()
+    gate = active_work.get("cursor_sdk_gate")
+    if isinstance(gate, dict):
+        busy = gate.get("busy_status")
+        if isinstance(busy, dict):
+            active_holder = busy.get("active_holder")
+            if isinstance(active_holder, dict):
+                holder = active_holder.get("dispatch_id")
+                if isinstance(holder, str) and holder.strip():
+                    return holder.strip()
+    return None
+
+
+def sole_busy_holder_matches(
+    active_work: dict[str, Any], caller_dispatch_id: str
+) -> bool:
+    """True when ``caller_dispatch_id`` is the only busy gate holder in the probe."""
+    caller = caller_dispatch_id.strip()
+    if not caller:
+        return False
+    holder = holder_dispatch_id_from_active_work(active_work)
+    if holder != caller:
+        return False
+    active_count = active_work.get("active_count")
+    if isinstance(active_count, int) and active_count != 1:
+        return False
+    lease = active_work.get("write_lease")
+    if isinstance(lease, dict):
+        queue_depth = lease.get("queue_depth")
+        if isinstance(queue_depth, int) and queue_depth > 0:
+            return False
+    gate = active_work.get("cursor_sdk_gate")
+    if isinstance(gate, dict):
+        busy = gate.get("busy_status")
+        if isinstance(busy, dict):
+            queue_depth = busy.get("queue_depth")
+            if isinstance(queue_depth, int) and queue_depth > 0:
+                return False
+    queued = active_work.get("queued")
+    if isinstance(queued, int) and queued > 0:
+        return False
+    return True
+
 
 @dataclass(slots=True, kw_only=True)
 class ActiveWork:
@@ -469,6 +521,109 @@ def _spawn_supervised(
     task.add_done_callback(_SUPERVISE_TASKS.discard)
 
 
+@dataclass(slots=True, kw_only=True)
+class LocalServiceDrainSupervisor:
+    """Wait for a self-holder cursor-sdk dispatch to exit, then run lifecycle."""
+
+    gate: RestartDrainGate
+    service: str
+    store: Any
+    lifecycle: Callable[[], Awaitable[str]]
+    deadline_s: float = 604800.0
+    poll_interval_s: float = _SELF_HOLDER_POLL_INTERVAL_S
+
+    async def supervise(self, intent: Any) -> None:
+        from .restart_intent_states import (
+            STATUS_COMPLETED,
+            STATUS_DRAINED_RESTARTING,
+            STATUS_FAILED,
+            STATUS_TIMEOUT,
+        )
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.deadline_s
+        intent_id = intent.intent_id
+        try:
+            while loop.time() < deadline:
+                work = await self.gate.probe(self.service)
+                if not work.busy:
+                    break
+                await asyncio.sleep(self.poll_interval_s)
+            else:
+                self.store.advance(intent_id, status=STATUS_TIMEOUT)
+                return
+            self.store.advance(intent_id, status=STATUS_DRAINED_RESTARTING)
+            await self.lifecycle()
+            self.store.advance(intent_id, status=STATUS_COMPLETED)
+        except Exception:
+            current = self.store.get(intent_id)
+            if current is not None and current.status not in {
+                STATUS_COMPLETED,
+                STATUS_TIMEOUT,
+            }:
+                self.store.advance(intent_id, status=STATUS_FAILED)
+            raise
+
+
+async def run_gated_self_holder_drain_supervised(
+    gate: RestartDrainGate,
+    action: str,
+    service: str,
+    *,
+    store: Any,
+    supervisor: Any,
+    reason: str,
+    caller_dispatch_id: str,
+    code_ref: str = "HEAD",
+    row_id: str | None = None,
+) -> dict[str, Any]:
+    """Arm a durable restart intent when the sole busy holder is the caller dispatch."""
+    work = await gate.probe(service)
+    if not work.busy or not sole_busy_holder_matches(work.detail, caller_dispatch_id):
+        outcome = await gate.evaluate(service, force=False)
+        if outcome is not None:
+            return outcome.to_result()
+        return {
+            "status": "error",
+            "service": service,
+            "reason": "self_holder_drain_precondition_failed",
+        }
+
+    outcome = await gate.evaluate(service, force=True, supervised_drain=True)
+    if outcome is not None:
+        existing = store.active_for_service(service)
+        if existing is not None:
+            validation_id = mint_activation_validation(
+                store, existing, code_ref=code_ref, row_id=row_id
+            )
+            return drain_deferred_result(
+                existing,
+                reason="drain already in progress for this service",
+                activation_validation_id=validation_id,
+            )
+        return outcome.to_result()
+
+    deadline_at = (
+        datetime.now(UTC) + timedelta(seconds=supervisor.deadline_s)
+    ).isoformat()
+    try:
+        intent = store.create_intent(
+            service=service,
+            action=action,
+            deadline_at=deadline_at,
+            reason=reason,
+        )
+        validation_id = mint_activation_validation(
+            store, intent, code_ref=code_ref, row_id=row_id
+        )
+    except Exception:
+        await gate.release(service)
+        raise
+    await open_service_window(store, service, reason=f"self-holder drain {action}")
+    _spawn_supervised(gate, service, supervisor, intent)
+    return drain_deferred_result(intent, activation_validation_id=validation_id)
+
+
 async def run_gated_drain_supervised(
     gate: RestartDrainGate,
     action: str,
@@ -594,13 +749,17 @@ __all__ = [
     "GATED_ACTIONS",
     "GIT_INTEGRATION_WORKER_URL",
     "HttpActiveWorkProbe",
+    "LocalServiceDrainSupervisor",
     "NullBusyProbe",
     "RETRY_AFTER_S",
     "RestartDrainGate",
     "STARGATE_PROBE_URL",
+    "holder_dispatch_id_from_active_work",
     "resume_drain_supervision",
     "run_gated",
     "run_gated_deferred",
     "run_gated_drain_supervised",
     "run_gated_drain_supervised_blocking",
+    "run_gated_self_holder_drain_supervised",
+    "sole_busy_holder_matches",
 ]
