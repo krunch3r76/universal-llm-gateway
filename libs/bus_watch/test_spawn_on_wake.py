@@ -99,7 +99,9 @@ def test_predicate_refuses_live_seat_lock() -> None:
 
 def test_predicate_refuses_hop_cap(monkeypatch) -> None:  # noqa: ANN001
     night = "2026-09-11"
-    monkeypatch.setattr("bus_watch.spawn_wake.predicate.current_night_id", lambda: night)
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.predicate.current_night_id", lambda: night
+    )
     lock = {"holder": None, "hops_by_night": {night: 8}, "hops": 8, "night_id": night}
     ev = evaluate_spawn_predicate(_digest(attention=[{"id": "1"}]), {}, lock=lock)
     assert ev["clauses"]["hops_under_cap"] is False
@@ -394,6 +396,20 @@ _CLOSED_WORK = {
     "status": "closed",
     "lifecycle": "completed",
     "last_subject": "cursor-sdk CLOSEOUT 2dee4a448315-c155f848 contract=implement",
+    "unread_turns": [
+        {
+            "turn_number": 1,
+            "from": "web-anthropic",
+            "subject": "IMPLEMENT",
+            "body": "TYPE: DIRECTIVE\n\nDo the thing.",
+        },
+        {
+            "turn_number": 2,
+            "from": "cursor-sdk",
+            "subject": "cursor-sdk CLOSEOUT 2dee4a448315 contract=implement",
+            "body": '{"status":"complete"}',
+        },
+    ],
 }
 _CLOSED_SUCCESSOR = {
     "id": "10583",
@@ -406,8 +422,7 @@ _CLOSED_SUCCESSOR = {
 
 
 def test_closed_unread_work_lane_wakes_once() -> None:
-    """A worker's closeout is the wake (10534 #167: 'closeout≠wake', four unread
-    closeouts, ticker held); the same closeout at the same turn count never wakes twice."""
+    """A worker's closeout is the wake (10534 #167); relay turns after latch do not re-arm."""
     first = evaluate_spawn_predicate(
         _digest(attention=[_CLOSED_WORK]), {}, lock={"holder": None}
     )
@@ -418,12 +433,60 @@ def test_closed_unread_work_lane_wakes_once() -> None:
         lock={"holder": None},
     )
     assert served["clauses"]["spawn_signal"] is False
-    reopened = evaluate_spawn_predicate(
-        _digest(attention=[{**_CLOSED_WORK, "turns": 3}]),
-        {"served_closeouts": {"10593": 2}},
-        lock={"holder": None},
+    relay_only = {
+        **_CLOSED_WORK,
+        "turns": 4,
+        "unread": 2,
+        "unread_turns": [
+            {
+                "turn_number": 3,
+                "from": "cursor-auto",
+                "subject": "status:partial:capture — relay",
+                "body": "TYPE: CLOSEOUT\nstatus: partial:capture\n",
+            },
+            {
+                "turn_number": 4,
+                "from": "cursor-auto",
+                "subject": "WAKE — closeout relayed · auto-deadbeef",
+                "body": (
+                    "TYPE: WAKE\n"
+                    "dispatch_id: auto-deadbeef\n"
+                    "Unread ping for an absent operator waiter after CLOSEOUT relay; "
+                    "not a new DIRECTIVE."
+                ),
+            },
+        ],
+    }
+    assert (
+        evaluate_spawn_predicate(
+            _digest(attention=[relay_only]),
+            {"served_closeouts": {"10593": 2}},
+            lock={"holder": None},
+        )["clauses"]["spawn_signal"]
+        is False
     )
-    assert reopened["clauses"]["spawn_signal"] is True
+    new_directive = {
+        **_CLOSED_WORK,
+        "turns": 5,
+        "unread": 3,
+        "unread_turns": relay_only["unread_turns"]
+        + [
+            {
+                "turn_number": 5,
+                "from": "web-anthropic",
+                "subject": "IMPLEMENT — follow-up",
+                "body": "TYPE: DIRECTIVE\n\nNew work after closeout.",
+            }
+        ],
+    }
+    assert (
+        evaluate_spawn_predicate(
+            _digest(attention=[new_directive]),
+            {"served_closeouts": {"10593": 2}},
+            lock={"holder": None},
+        )["clauses"]["spawn_signal"]
+        is True
+    )
 
 
 def test_successor_closeout_never_wakes_next_successor() -> None:
@@ -559,7 +622,27 @@ def test_pending_clears_when_digest_shows_closed_worker(
         }
     ]
     digest["attention"] = [
-        {"id": "10579", "unread": 2, "status": "closed", "lifecycle": "completed"}
+        {
+            "id": "10579",
+            "turns": 10,
+            "unread": 2,
+            "status": "closed",
+            "lifecycle": "completed",
+            "unread_turns": [
+                {
+                    "turn_number": 9,
+                    "from": "cursor-auto",
+                    "subject": "status:partial:capture — relay",
+                    "body": "TYPE: CLOSEOUT\nstatus: partial:capture\n",
+                },
+                {
+                    "turn_number": 10,
+                    "from": "cursor-auto",
+                    "subject": "WAKE — closeout relayed",
+                    "body": "TYPE: WAKE\n",
+                },
+            ],
+        }
     ]
     state = {
         "pending_spawn": {
@@ -694,3 +777,120 @@ def test_abandoned_lane_does_not_wake() -> None:
         "last_subject": "Dispatch orphaned — worker terminated before completion",
     }
     assert actionable_attention([orphan], state={}) == []
+
+
+def test_relay_ping_specimen_11440_latched_at_3_stays_suppressed() -> None:
+    """AC3 — live 11440 shape: closeout at 3, two relay turns, served mark 3 → []."""
+    from bus_watch.spawn_pending import actionable_attention
+
+    lane = {
+        "id": "11440",
+        "unread": 2,
+        "turns": 5,
+        "status": "closed",
+        "lifecycle": "completed",
+        "unread_turns": [
+            {
+                "turn_number": 4,
+                "from": "cursor-auto",
+                "subject": "status:partial:capture — IMPLEMENT",
+                "body": "TYPE: CLOSEOUT\nstatus: partial:capture\n",
+            },
+            {
+                "turn_number": 5,
+                "from": "cursor-auto",
+                "subject": "WAKE — closeout relayed · auto-af1abe9399c5",
+                "body": (
+                    "TYPE: WAKE\n"
+                    "dispatch_id: auto-af1abe9399c5\n"
+                    "Unread ping for an absent operator waiter after CLOSEOUT relay; "
+                    "not a new DIRECTIVE."
+                ),
+            },
+        ],
+    }
+    assert actionable_attention([lane], state={"served_closeouts": {"11440": 3}}) == []
+
+
+def test_relay_ping_specimen_11446_progress_plus_relay_stays_suppressed() -> None:
+    """AC3 — live 11446 shape: progress heartbeat + relay + WAKE after latch at 3."""
+    from bus_watch.spawn_pending import actionable_attention
+
+    lane = {
+        "id": "11446",
+        "unread": 3,
+        "turns": 6,
+        "status": "closed",
+        "lifecycle": "completed",
+        "unread_turns": [
+            {
+                "turn_number": 4,
+                "from": "cursor-auto",
+                "subject": "progress — elapsed 301s",
+                "body": (
+                    '{\n  "summary": "Still running — 5.0 min elapsed, no terminal yet."\n}'
+                ),
+            },
+            {
+                "turn_number": 5,
+                "from": "cursor-auto",
+                "subject": "status:partial:capture — IMPLEMENT",
+                "body": "TYPE: CLOSEOUT\nstatus: partial:capture\n",
+            },
+            {
+                "turn_number": 6,
+                "from": "cursor-auto",
+                "subject": "WAKE — closeout relayed · auto-de4f3f9e8b3a",
+                "body": "TYPE: WAKE\n",
+            },
+        ],
+    }
+    assert actionable_attention([lane], state={"served_closeouts": {"11446": 3}}) == []
+
+
+def test_actionable_kind_keys_on_from_and_type_line_only() -> None:
+    """AC5 — classifier ignores model prose; only from + TYPE: / progress markers."""
+    from bus_watch.spawn_pending import actionable_kind
+
+    relay = {
+        "from": "cursor-auto",
+        "subject": "WAKE — closeout relayed · auto-x",
+        "body": (
+            "TYPE: WAKE\n"
+            "This prose would look like TYPE: DIRECTIVE if we scanned the whole body."
+        ),
+    }
+    assert actionable_kind(relay) is False
+    prose_directive = {
+        "from": "cursor-auto",
+        "subject": "looks like a directive",
+        "body": "TYPE: CLOSEOUT\nThe operator wrote TYPE: DIRECTIVE in the essay below.",
+    }
+    assert actionable_kind(prose_directive) is False
+    assert (
+        actionable_kind(
+            {
+                "from": "web-anthropic",
+                "subject": "IMPLEMENT",
+                "body": "TYPE: DIRECTIVE\n\nReal commission.",
+            }
+        )
+        is True
+    )
+
+
+def test_actionable_kind_unknown_turn_fails_closed() -> None:
+    """AC5 — unrecognized kind is actionable, not suppressed."""
+    from bus_watch.spawn_pending import actionable_kind
+
+    assert (
+        actionable_kind(
+            {
+                "from": "cursor-auto",
+                "subject": "status:admitted",
+                "body": "TYPE: BRIEFING\n\nEpisode open.",
+            }
+        )
+        is True
+    )
+    assert actionable_kind({"from": "cursor-auto", "subject": "?", "body": ""}) is True

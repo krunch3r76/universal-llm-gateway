@@ -44,6 +44,7 @@ from bus_watch.ide_budget import (
 from bus_watch.induction import build_wake_induction
 from bus_watch.liaison_watchers import collect_watchers
 from bus_watch.life_digest import build_life_block, project_life_block
+from bus_watch.spawn_pending import build_attention_lanes
 
 _STARGATE_HEALTH = os.environ.get(
     "LIAISON_STARGATE_HEALTH", "http://localhost:9999/health"
@@ -172,6 +173,7 @@ def build_digest(
         lanes = _child_lanes(client, root_id) if "_error" not in root else []
         lane_ids = {root_id, *(lane["id"] for lane in lanes)}
         unread = _unread_toc(client, lane_ids)
+        attention = build_attention_lanes(lanes, fetch_unread_turns=lambda tid: (_get(client, "/turns", thread=tid, unread=True, last=25) or {}).get("turns"))  # noqa: E501
 
     policy = effective_policy(state)
     night_id = current_night_id()
@@ -199,10 +201,7 @@ def build_digest(
         "register": register,
         "lanes": lanes,
         # fmt: off
-        "attention": [
-            lane for lane in lanes if (lane["unread"] or 0) > 0 and not lane.get("nag")
-        ]
-        + frictions["attention"],
+        "attention": attention + frictions["attention"],
         "attention_nag_excluded": {
             "count": sum(1 for lane in lanes if lane.get("nag")),
             "source": "liaison_digest._NAG_RE",

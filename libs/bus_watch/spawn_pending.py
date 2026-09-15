@@ -16,6 +16,7 @@ mill that minted four unasked Opus liaisons on 10534 (2026-09-12).
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -39,6 +40,12 @@ _SUCCESSOR_SUBJECT_MARK = "caller=liaison-ticker"
 _SERVED_KEEP = 200
 _SUCCESSOR_THREADS_KEEP = 50
 IDE_IDLE_FORFEIT_S = 1200.0
+_RELAY_FROM = "cursor-auto"
+_PROGRESS_SUBJECT_RE = re.compile(r"^progress\s+—\s+elapsed\b", re.I)
+_PROGRESS_JSON_RE = re.compile(
+    r'^\s*\{\s*"summary"\s*:\s*"Still running',
+    re.M,
+)
 
 
 def _parse_iso_ts(value: str | None) -> float | None:
@@ -62,6 +69,138 @@ def row_is_terminal(row: dict[str, Any]) -> bool:
     return str(row.get("lifecycle") or "").lower() in _TERMINAL_LIFECYCLES
 
 
+def _first_type_line(body: str) -> str | None:
+    """First ``TYPE:`` line in a turn body (programmatic envelope marker)."""
+    for line in str(body or "").splitlines():
+        stripped = line.strip()
+        if stripped.upper().startswith("TYPE:"):
+            return stripped
+    return None
+
+
+def _is_progress_heartbeat(*, from_agent: str, subject: str, body: str) -> bool:
+    """``cursor-auto`` dispatch progress turns (``dispatch_progress.py``)."""
+    if from_agent != _RELAY_FROM:
+        return False
+    if _PROGRESS_SUBJECT_RE.match(str(subject or "").strip()):
+        return True
+    return bool(_PROGRESS_JSON_RE.match(str(body or "")))
+
+
+def _relay_non_actionable_kind(*, from_agent: str, subject: str, body: str) -> bool:
+    """Post-terminal relay turns emitted by ``cursor-auto`` from code, not model prose."""
+    if from_agent != _RELAY_FROM:
+        return False
+    if _is_progress_heartbeat(from_agent=from_agent, subject=subject, body=body):
+        return True
+    type_line = _first_type_line(body)
+    if type_line is None:
+        return False
+    upper = type_line.upper()
+    return upper.startswith("TYPE: WAKE") or upper.startswith("TYPE: CLOSEOUT")
+
+
+def actionable_kind(turn: dict[str, Any]) -> bool:
+    """True when an unread turn after the served mark deserves a wake.
+
+    Classifier keys only on ``from`` / ``from_agent``, ``subject``, and the
+    programmatic ``TYPE:`` first line. Unrecognized kinds fail closed (wake).
+    """
+    from_agent = str(turn.get("from") or turn.get("from_agent") or "")
+    if not from_agent:
+        return True
+    subject = str(turn.get("subject") or "")
+    body = str(turn.get("body") or "")
+    if _relay_non_actionable_kind(from_agent=from_agent, subject=subject, body=body):
+        return False
+    return True
+
+
+def _unread_turns_for_item(item: dict[str, Any]) -> list[dict[str, Any]] | None:
+    raw = item.get("unread_turns")
+    if not isinstance(raw, list):
+        return None
+    return [row for row in raw if isinstance(row, dict)]
+
+
+def _served_mark(served: dict[str, Any], lane_id: str) -> int:
+    raw = served.get(lane_id)
+    if raw is None:
+        return 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _terminal_lane_has_actionable_unread(
+    item: dict[str, Any], *, served_mark: int
+) -> bool:
+    """True when some unread turn after ``served_mark`` is an actionable kind."""
+    unread_turns = _unread_turns_for_item(item)
+    if unread_turns is None:
+        return True
+    pending = [
+        row for row in unread_turns if int(row.get("turn_number") or 0) > served_mark
+    ]
+    if not pending:
+        return False
+    return any(actionable_kind(row) for row in pending)
+
+
+def _closeout_high_water(item: dict[str, Any]) -> int:
+    unread_turns = _unread_turns_for_item(item)
+    if unread_turns:
+        return max(int(row.get("turn_number") or 0) for row in unread_turns)
+    return int(item.get("turns") or 0)
+
+
+def compact_unread_turn_summaries(turns: Any) -> list[dict[str, Any]]:
+    """Shrink bus turn rows to the fields ``actionable_kind`` reads."""
+    if not isinstance(turns, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in turns:
+        if not isinstance(row, dict):
+            continue
+        out.append(
+            {
+                "turn_number": row.get("turn_number"),
+                "from": row.get("from") or row.get("from_agent"),
+                "subject": row.get("subject"),
+                "body": row.get("body") or "",
+            }
+        )
+    return out
+
+
+def build_attention_lanes(
+    lanes: list[dict[str, Any]],
+    *,
+    fetch_unread_turns: Callable[[str], Any],
+) -> list[dict[str, Any]]:
+    """Unread, non-nag lanes with gate-B ``unread_turns`` on terminal rows."""
+    attention = [
+        lane for lane in lanes if (lane.get("unread") or 0) > 0 and not lane.get("nag")
+    ]
+    enrich_terminal_attention_turns(attention, fetch_unread_turns=fetch_unread_turns)
+    return attention
+
+
+def enrich_terminal_attention_turns(
+    attention: list[dict[str, Any]],
+    *,
+    fetch_unread_turns: Callable[[str], Any],
+) -> None:
+    """Attach ``unread_turns`` summaries for terminal attention lanes in place."""
+    for item in attention:
+        if not row_is_terminal(item):
+            continue
+        summaries = compact_unread_turn_summaries(fetch_unread_turns(str(item["id"])))
+        if summaries:
+            item["unread_turns"] = summaries
+
+
 def _is_successor_lane(item: dict[str, Any], successors: set[str]) -> bool:
     """A lane the ticker spawned: recorded thread id, or the wire's caller mark
     on the closeout subject when the admit payload carried no thread id."""
@@ -76,10 +215,15 @@ def actionable_attention(
     """Wake items: unread live lanes, plus each finished *work* lane's closeout once.
 
     A closeout is the moment the house needs a seat (harvest → fold → decide →
-    dispatch), so a terminal lane with unread turns wakes — once per turn count
-    (``state.served_closeouts``) and never for a successor the ticker itself
-    spawned (``state.successor_threads`` / ``caller=liaison-ticker``). Budget
-    estimates are never attention.
+    dispatch), so a terminal lane with unread turns wakes — once per served
+    high-water ``turn_number`` (``state.served_closeouts``), ignoring
+    post-closeout relay / WAKE / progress turns from ``cursor-auto``, and never
+    for a successor the ticker itself spawned (``state.successor_threads`` /
+    ``caller=liaison-ticker``). Budget estimates are never attention.
+
+    Attention rows may carry ``unread_turns`` (``turn_number``, ``from``,
+    ``subject``, ``body``) for kind discrimination; absent that list the gate
+    fails closed (wake) so a missed directive is never suppressed.
     """
     st = state or {}
     served = st.get("served_closeouts") or {}
@@ -90,11 +234,16 @@ def actionable_attention(
         if not isinstance(item, dict) or item.get("kind") == "budget_estimate":
             continue
         if row_is_terminal(item):
+            if str(item.get("lifecycle") or "").lower() == "abandoned":
+                continue
+            lane_id = str(item.get("id") or "")
             if int(item.get("unread") or 0) <= 0 or _is_successor_lane(
                 item, successors
             ):
                 continue
-            if str(served.get(str(item.get("id")))) == str(item.get("turns")):
+            if not _terminal_lane_has_actionable_unread(
+                item, served_mark=_served_mark(served, lane_id)
+            ):
                 continue
         out.append(item)
     return out
@@ -213,7 +362,10 @@ def record_spawn_service(state: dict[str, Any], attention: Any) -> None:
             and row_is_terminal(item)
             and item.get("id") is not None
         ):
-            served[str(item["id"])] = item.get("turns")
+            lane_id = str(item["id"])
+            served[lane_id] = max(
+                _served_mark(served, lane_id), _closeout_high_water(item)
+            )
     state["served_closeouts"] = dict(list(served.items())[-_SERVED_KEEP:])
     thread_id = str((state.get("pending_spawn") or {}).get("thread_id") or "").strip()
     if thread_id:
@@ -292,10 +444,14 @@ def checkpoint_due_wake(state: dict[str, Any], checkpoint_due: bool) -> bool:
 
 __all__ = [
     "IDE_IDLE_FORFEIT_S",
+    "actionable_kind",
     "actionable_attention",
+    "build_attention_lanes",
     "checkpoint_due_wake",
+    "compact_unread_turn_summaries",
     "dead_sdk_holder",
     "digest_pending_is_terminal",
+    "enrich_terminal_attention_turns",
     "handoff_wake",
     "idle_ide_forfeit",
     "pending_spawn_terminal",
