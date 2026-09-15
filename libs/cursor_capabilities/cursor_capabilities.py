@@ -263,6 +263,20 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"context": "272k", "reasoning": "medium", "fast": "false"},
         instruction_profile="reasoner",
     ),
+    # Meta Muse Spark 1.3 (Cursor GA 2026-09-09) — first Meta provider model.
+    # Knobs seeded from cursor.com/docs/models/muse-spark-1-3 (six effort levels,
+    # 300k default / 1m Max Mode at the same rates); no live ListModels probe yet.
+    "muse-spark-1.3": ModelCapability(
+        knobs={
+            "context": KnobSpec(accepted=("300k", "1m"), default="300k"),
+            "effort": KnobSpec(
+                accepted=("minimal", "low", "medium", "high", "xhigh", "max"),
+                default="high",
+            ),
+        },
+        default_variant={"context": "300k", "effort": "high"},
+        instruction_profile="reasoner",
+    ),
     # Cursor Grok 4.6 — effort + fast only (no thinking/context knobs).
     # KnobSpec.default drives omit-path emit; default_variant may still mirror
     # live ListModels (fast=true there) — descriptor default wins on omit-path.

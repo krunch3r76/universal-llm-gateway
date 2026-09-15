@@ -15,6 +15,7 @@ OTHER_MODELS_BARE: frozenset[str] = frozenset(
         "gpt-5.6-terra",
         "gpt-5.6-sol",
         "gpt-5.6-luna",
+        "muse-spark-1.3",
     }
 )
 
