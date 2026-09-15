@@ -27,6 +27,7 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     root.mkdir()
     regs = root / "registrations"
     regs.mkdir()
+    monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "1")
     monkeypatch.setattr(reg._store, "REGISTRY_DIR", root)
     monkeypatch.setattr(reg._store, "REGISTRY_LOG", root / "registry.jsonl")
     monkeypatch.setattr(reg._store, "ACTIVE_JSON", root / "active.json")
@@ -239,3 +240,90 @@ def test_ra_seat_row_projector_omits_port_and_cdp_url(isolated_registry: Path) -
     assert projected is not None
     assert "port" not in projected
     assert "cdp_url" not in projected
+
+
+def test_registry_dir_pins_operator_home_under_dispatch_overlay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC1: overlay HOME resolves registry to operator passwd home."""
+    import pwd
+
+    from claude_bundles import cdp_registry_store as store
+
+    operator = tmp_path / "operator-home"
+    operator.mkdir()
+    dispatch = tmp_path / "cursor-dispatch-homes" / "auto-dispatch-home"
+    dispatch.mkdir(parents=True)
+    monkeypatch.setattr(
+        pwd,
+        "getpwuid",
+        lambda _uid: type("Pw", (), {"pw_dir": str(operator)})(),
+    )
+    monkeypatch.setenv("HOME", str(dispatch))
+    monkeypatch.delenv("CDP_REGISTRY_HOME", raising=False)
+    monkeypatch.delenv("CHARTER_RUNNER_OPERATOR_HOME", raising=False)
+    resolved = store._resolve_registry_dir()
+    assert resolved == operator / ".gateway" / "cdp-registry"
+
+
+def test_bind_session_address_journals_seat_superseded(
+    isolated_registry: Path,
+) -> None:
+    """AC2: bind_session_address appends seat_lane_bound with superseded[]."""
+    first = _mint_driving(holder="a")
+    assert reg.bind_session_address(first.registration_id, chat_url=_CSE)
+    second = _mint_driving(holder="b")
+    assert reg.bind_session_address(second.registration_id, chat_url=_CSE + "2")
+    lines = reg._store.read_registry_log()
+    seat_lines = [ln for ln in lines if ln.get("event") == "seat_lane_bound"]
+    assert len(seat_lines) >= 2
+    last = seat_lines[-1]
+    assert last.get("registration_id") == second.registration_id
+    assert first.registration_id in (last.get("superseded") or [])
+
+
+def test_non_authority_seat_write_refused(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC3: non-authority seat bind raises ProtocolError."""
+    from universal_protocol.errors import ProtocolError
+
+    minted = _mint_driving()
+    monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "0")
+    with pytest.raises(ProtocolError, match="authority_refused"):
+        reg.bind_session_address(minted.registration_id, chat_url=_CSE)
+
+
+def test_seat_fold_invariant_at_most_one_open_per_lane(
+    isolated_registry: Path,
+) -> None:
+    """AC5: journal replay never yields >1 open seat per lane."""
+    first = _mint_driving(holder="a")
+    assert reg.bind_session_address(first.registration_id, chat_url=_CSE)
+    second = _mint_driving(holder="b")
+    assert reg.bind_session_address(second.registration_id, chat_url=_CSE + "2")
+    reg._store.verify_seat_fold_invariant()
+
+
+def test_cross_home_registry_dir_byte_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC6: dispatch overlay and operator HOME resolve the same registry path."""
+    import pwd
+
+    from claude_bundles import cdp_registry_store as store
+
+    operator = tmp_path / "operator-home"
+    dispatch = tmp_path / "cursor-dispatch-homes" / "auto-x-home"
+    dispatch.mkdir(parents=True)
+    monkeypatch.setattr(
+        pwd,
+        "getpwuid",
+        lambda _uid: type("Pw", (), {"pw_dir": str(operator)})(),
+    )
+    monkeypatch.delenv("CDP_REGISTRY_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(dispatch))
+    from_dispatch = store._resolve_registry_dir()
+    monkeypatch.setenv("HOME", str(operator))
+    from_operator = store._resolve_registry_dir()
+    assert from_dispatch == from_operator

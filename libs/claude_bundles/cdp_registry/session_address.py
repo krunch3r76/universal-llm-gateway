@@ -84,6 +84,8 @@ def bind_session_address(
         updated["chat_url_bound_at"] = time.time()
         active[registration_id] = updated
         bound_row, released_rows = apply_driving_seat_bind(active, registration_id)
+        if bound_row is not None or released_rows:
+            _store.require_seat_authority(operation="bind_session_address")
         _store.write_active(active)
         _store.append_log(
             "session_address_bound",
@@ -94,6 +96,17 @@ def bind_session_address(
                 "target_id": target_id,
             },
         )
+        if bound_row is not None or released_rows:
+            _store.append_seat_transition_journal(
+                registration_id=registration_id,
+                seat_lane=str((bound_row or {}).get("seat_lane") or ""),
+                seat_bound_at=(bound_row or {}).get("seat_bound_at"),
+                superseded=[
+                    str(r.get("registration_id") or "")
+                    for r in released_rows
+                    if r.get("registration_id")
+                ],
+            )
         _append_lane_less_episode(
             url=url,
             registration_id=registration_id,
@@ -173,14 +186,17 @@ def bind_driving_seat(registration_id: str) -> None:
         active = _store.load_active()
         bound_row, released_rows = apply_driving_seat_bind(active, registration_id)
         if bound_row is not None or released_rows:
+            _store.require_seat_authority(operation="bind_driving_seat")
             _store.write_active(active)
-            _store.append_log(
-                "seat_lane_bound",
-                {
-                    "registration_id": registration_id,
-                    "seat_lane": (bound_row or {}).get("seat_lane"),
-                    "superseded": [r.get("registration_id") for r in released_rows],
-                },
+            _store.append_seat_transition_journal(
+                registration_id=registration_id,
+                seat_lane=str((bound_row or {}).get("seat_lane") or ""),
+                seat_bound_at=(bound_row or {}).get("seat_bound_at"),
+                superseded=[
+                    str(r.get("registration_id") or "")
+                    for r in released_rows
+                    if r.get("registration_id")
+                ],
             )
     _emit_seat_axis_events(bound_row, released_rows)
 

@@ -6,17 +6,40 @@ import contextlib
 import fcntl
 import json
 import os
+import pwd
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from universal_protocol.errors import ProtocolError
+
 from claude_bundles.cdp_registry.models import seat_open
 
-REGISTRY_DIR = Path.home() / ".gateway" / "cdp-registry"
 # Same directory name as cursor_home._default_dispatch_home_root. Libs must
 # not import GIW; keep this fingerprint aligned if that root is renamed.
 DISPATCH_HOME_MARKER = "cursor-dispatch-homes"
+
+
+def _operator_home() -> Path:
+    """Real operator home — not cursor-sdk per-dispatch HOME swap."""
+    if op_home := os.environ.get("CHARTER_RUNNER_OPERATOR_HOME"):
+        return Path(op_home).expanduser()
+    current = Path.home()
+    if DISPATCH_HOME_MARKER in current.as_posix():
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    return current
+
+
+def _resolve_registry_dir() -> Path:
+    """Pinned registry root — ``CDP_REGISTRY_HOME`` override, else operator home."""
+    if override := os.environ.get("CDP_REGISTRY_HOME", "").strip():
+        return Path(override).expanduser()
+    return _operator_home() / ".gateway" / "cdp-registry"
+
+
+REGISTRY_DIR = _resolve_registry_dir()
 REGISTRY_LOG = REGISTRY_DIR / "registry.jsonl"
 ACTIVE_JSON = REGISTRY_DIR / "active.json"
 SESSIONS_JSON = REGISTRY_DIR / "sessions.json"
@@ -27,6 +50,36 @@ REGISTRATIONS_DIR = REGISTRY_DIR / "registrations"
 
 class RegistryStoreError(RuntimeError):
     """Corrupt or invalid registry on-disk state."""
+
+
+def is_seat_authority() -> bool:
+    """True when this process may mutate the fleet seat key."""
+    raw = os.environ.get("CDP_REGISTRY_SEAT_AUTHORITY", "").strip().lower()
+    if raw in ("1", "true", "yes"):
+        return True
+    if raw in ("0", "false", "no"):
+        return False
+    return classify_observed_home_kind(Path.home()) == "operator"
+
+
+def require_seat_authority(*, operation: str) -> None:
+    """Refuse seat mutation from a non-authority process."""
+    if is_seat_authority():
+        return
+    raise ProtocolError(
+        code="seat.authority_refused",
+        message=(
+            f"seat mutation {operation!r} refused: this process is not the "
+            "cdp_ask seat authority"
+        ),
+        source="rpc",
+        retryable=False,
+        data={
+            "operation": operation,
+            "observed_home_kind": classify_observed_home_kind(Path.home()),
+            "recovery": os.environ.get("PROJECT_ASK_URL", "").strip() or None,
+        },
+    )
 
 
 @dataclass(frozen=True)
@@ -141,6 +194,102 @@ def append_log(event: str, record: dict[str, Any]) -> None:
         fh.write(line + "\n")
         fh.flush()
         os.fsync(fh.fileno())
+
+
+def read_registry_log() -> list[dict[str, Any]]:
+    """Read all registry.jsonl records in append order."""
+    if not REGISTRY_LOG.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for raw in REGISTRY_LOG.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        row = json.loads(raw)
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def append_seat_transition_journal(
+    *,
+    registration_id: str,
+    seat_lane: str | None,
+    seat_bound_at: float | None,
+    superseded: list[str],
+) -> None:
+    """Append one durable seat-axis journal line under authority."""
+    require_seat_authority(operation="append_seat_transition_journal")
+    append_log(
+        "seat_lane_bound",
+        {
+            "registration_id": registration_id,
+            "seat_lane": seat_lane,
+            "seat_bound_at": seat_bound_at,
+            "superseded": list(superseded),
+            "event_id": uuid.uuid4().hex,
+        },
+    )
+
+
+def _apply_seat_lane_bound(active: dict[str, dict[str, Any]], record: dict[str, Any]) -> None:
+    """Apply one ``seat_lane_bound`` journal line to *active* (in-memory replay)."""
+    reg_id = str(record.get("registration_id") or "").strip()
+    lane = str(record.get("seat_lane") or "").strip()
+    if not reg_id or not lane:
+        return
+    ts = record.get("seat_bound_at")
+    closed_at = record.get("ts")
+    for sid in record.get("superseded") or []:
+        other_id = str(sid or "").strip()
+        if not other_id or other_id not in active:
+            continue
+        closed = dict(active[other_id])
+        closed["seat_closed_at"] = closed_at if closed_at is not None else time.time()
+        closed["seat_close_reason"] = "superseded"
+        closed["superseded_by"] = reg_id
+        active[other_id] = closed
+    row = dict(active.get(reg_id) or {})
+    row["registration_id"] = reg_id
+    row["seat_lane"] = lane
+    row["seat_bound_at"] = ts
+    row["seat_closed_at"] = None
+    active[reg_id] = row
+
+
+def fold_seat_journal(active: dict[str, dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
+    """Replay seat_lane_bound lines from registry.jsonl into *active* or a fresh map."""
+    state = dict(active) if active is not None else {}
+    for record in read_registry_log():
+        if str(record.get("event") or "") == "seat_lane_bound":
+            _apply_seat_lane_bound(state, record)
+    return state
+
+
+def open_seats_per_lane(active: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    """Return open seat registration ids grouped by lane."""
+    by_lane: dict[str, list[str]] = {}
+    for rid, row in active.items():
+        if not isinstance(row, dict) or not seat_open(row):
+            continue
+        lane = str(row.get("seat_lane") or "").strip()
+        if lane:
+            by_lane.setdefault(lane, []).append(str(rid))
+    return by_lane
+
+
+def verify_seat_fold_invariant() -> None:
+    """Raise when replay at any journal prefix yields >1 open seat on a lane."""
+    prefix: dict[str, dict[str, Any]] = {}
+    for record in read_registry_log():
+        if str(record.get("event") or "") != "seat_lane_bound":
+            continue
+        _apply_seat_lane_bound(prefix, record)
+        for lane, open_ids in open_seats_per_lane(prefix).items():
+            if len(open_ids) > 1:
+                raise RegistryStoreError(
+                    f"seat fold invariant violated on lane {lane!r}: "
+                    f"{len(open_ids)} open seats {open_ids}"
+                )
 
 
 def load_sessions_read() -> RegistryRead:

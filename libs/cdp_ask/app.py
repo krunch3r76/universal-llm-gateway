@@ -134,6 +134,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
     @app.on_event("startup")
     async def _startup() -> None:
+        os.environ.setdefault("CDP_REGISTRY_SEAT_AUTHORITY", "1")
         verify_harvest_root()
         reaped = await execution_store.boot_reconcile()
         if reaped:
@@ -161,6 +162,17 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         read, projecting seat-open rows without ``port`` or ``cdp_url``.
         """
         return await execution_store.active_work_snapshot()
+
+    @app.get("/v1/project-ask/operator-seat/{parent_thread}")
+    async def operator_seat(parent_thread: str) -> dict[str, object]:
+        """Return the authority seat projection for one lane (source + observed_at)."""
+        from cdp_ask.operator_seat_resolve import resolve_operator_seat
+
+        lane = str(parent_thread or "").strip()
+        if not lane:
+            raise HTTPException(status_code=400, detail="parent_thread required")
+        snap = await execution_store.active_work_snapshot()
+        return resolve_operator_seat(lane, get_lane_snapshot=lambda: snap)
 
     @app.get("/v1/project-ask/drain-state")
     async def drain_state() -> dict[str, object]:

@@ -1,30 +1,51 @@
 """Cross-host operator CSE identity resolution via Jupiter active-work HTTP.
 
 Liaison and cursor-auto seats on io resolve operator/mission CSE rows from
-``GET /v1/project-ask/active-work`` ``seat_rows`` (includes dormant seats)
-before falling back to the host-local registry file that only cdp_ask populates.
+``GET /v1/project-ask/active-work`` ``seat_rows`` (includes dormant seats).
+Local registry fallback is deleted — authority unreachable returns unavailable.
 """
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import quote
 
 from claude_bundles.cdp_registry import chat_url_for_registration
-from claude_bundles.cdp_registry_store import load_active
-from claude_bundles.hop_cadence_seat_snap import seat_rows_from_registry_records
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
-from cdp_ask.client import CdpAskClient, CdpAskClientError
+from cdp_ask.client import CdpAskClient, CdpAskClientError, project_ask_base_url
 from cdp_ask.lane_snapshot import read_cdp_lane_snapshot
 
 _DEFAULT_TIMEOUT_S = 10.0
 _LaneSnapshotGetter = Callable[[], dict[str, Any]]
 
 
-def _null_identity() -> dict[str, str | None]:
-    return {"chat_url": None, "registration_id": None, "source": None}
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
+def _null_identity(*, observed_at: str | None = None) -> dict[str, Any]:
+    return {
+        "chat_url": None,
+        "registration_id": None,
+        "source": None,
+        "observed_at": observed_at,
+        "authority_reachable": True,
+    }
+
+
+def _unavailable_identity(*, recovery: str | None = None) -> dict[str, Any]:
+    endpoint = (recovery or project_ask_base_url() or "").strip() or None
+    return {
+        "chat_url": None,
+        "registration_id": None,
+        "source": "unavailable",
+        "observed_at": _now_iso(),
+        "authority_reachable": False,
+        "recovery": endpoint,
+    }
 
 
 def _seat_bound_at_float(raw: Any) -> float:
@@ -61,6 +82,8 @@ def _provenance_get(
     client: CdpAskClient | None = None,
 ) -> dict[str, Any] | None:
     """Best-effort GET /v1/cse-session/provenance when identity matches."""
+    from urllib.parse import quote
+
     rid = (registration_id or "").strip()
     if not rid:
         return None
@@ -129,39 +152,41 @@ def _resolve_from_http(
     get_lane_snapshot: _LaneSnapshotGetter,
     timeout_s: float = _DEFAULT_TIMEOUT_S,
     client: CdpAskClient | None = None,
-) -> dict[str, str | None]:
+) -> dict[str, Any]:
     try:
         snap = get_lane_snapshot()
     except (CdpAskClientError, OSError, ValueError):
-        return _null_identity()
+        from claude_bundles import cdp_registry_events as _events
+
+        with contextlib.suppress(Exception):
+            _events.emit(_events.cdp_seat_authority_unreachable(parent_thread=parent_thread))
+        return _unavailable_identity()
     if not isinstance(snap, dict):
         return _null_identity()
+    observed_at = str(snap.get("observed_at") or "").strip() or _now_iso()
     seat_rows = snap.get("seat_rows")
     if not isinstance(seat_rows, list):
-        return _null_identity()
+        return _null_identity(observed_at=observed_at)
     candidates = _candidates_from_seat_rows(seat_rows, parent_thread, purposes)
     reg_id, _reason = _select_registration_id(candidates)
     if not reg_id:
-        return _null_identity()
+        return _null_identity(observed_at=observed_at)
     chat_url = (
         _chat_url_from_provenance(reg_id, timeout_s=timeout_s, client=client)
         or _chat_url_for_registration(reg_id)
     )
-    return {"chat_url": chat_url, "registration_id": reg_id, "source": "http"}
-
-
-def _resolve_from_local(
-    parent_thread: str,
-    purposes: frozenset[str],
-) -> dict[str, str | None]:
-    active = load_active()
-    seat_rows = seat_rows_from_registry_records(active)
-    candidates = _candidates_from_seat_rows(seat_rows, parent_thread, purposes)
-    reg_id, _reason = _select_registration_id(candidates)
-    if not reg_id:
-        return _null_identity()
-    chat_url = _chat_url_for_registration(reg_id)
-    return {"chat_url": chat_url, "registration_id": reg_id, "source": "local"}
+    row_source = "http"
+    for row in seat_rows:
+        if isinstance(row, dict) and str(row.get("registration_id") or "") == reg_id:
+            row_source = str(row.get("source") or "http")
+            break
+    return {
+        "chat_url": chat_url,
+        "registration_id": reg_id,
+        "source": row_source,
+        "observed_at": observed_at,
+        "authority_reachable": True,
+    }
 
 
 def resolve_operator_seat(
@@ -170,8 +195,8 @@ def resolve_operator_seat(
     purposes: frozenset[str] = OPERATOR_PURPOSES,
     timeout_s: float = _DEFAULT_TIMEOUT_S,
     get_lane_snapshot: _LaneSnapshotGetter | None = None,
-) -> dict[str, str | None]:
-    """Resolve operator CSE ``{chat_url, registration_id, source}`` for *parent_thread* via HTTP then local registry."""
+) -> dict[str, Any]:
+    """Resolve operator CSE identity for *parent_thread* via authority HTTP projection."""
     parent = str(parent_thread or "").strip()
     if not parent:
         return _null_identity()
@@ -187,16 +212,13 @@ def resolve_operator_seat(
     else:
         getter = get_lane_snapshot
 
-    http_result = _resolve_from_http(
+    return _resolve_from_http(
         parent,
         purposes,
         get_lane_snapshot=getter,
         timeout_s=timeout_s,
         client=client,
     )
-    if http_result.get("registration_id"):
-        return http_result
-    return _resolve_from_local(parent, purposes)
 
 
 __all__ = ["registration_resolvable_via_provenance", "resolve_operator_seat"]

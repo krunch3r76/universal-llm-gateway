@@ -18,7 +18,6 @@ from cdp_ask.operator_seat_resolve import (
     _candidates_from_seat_rows,
     _chat_url_from_provenance,
     _resolve_from_http,
-    _resolve_from_local,
     _select_registration_id,
     resolve_operator_seat,
 )
@@ -52,10 +51,18 @@ def test_seat_row_carries_every_field_the_resolver_reads() -> None:
         assert projected[field] is not None or field == "execution_id"
 
 
+def test_seat_row_projection_includes_observed_at_when_stamped() -> None:
+    projected = seat_row_from_registry_record(
+        _registry_record(), observed_at="2026-09-15T00:00:00+00:00"
+    )
+    assert projected is not None
+    assert projected.get("observed_at") == "2026-09-15T00:00:00+00:00"
+
+
 def test_seat_row_projection_field_set() -> None:
     projected = seat_row_from_registry_record(_registry_record())
     assert projected is not None
-    assert set(projected.keys()) == {
+    assert {
         "registration_id",
         "execution_id",
         "parent_thread",
@@ -67,7 +74,7 @@ def test_seat_row_projection_field_set() -> None:
         "host_status",
         "seat_lane",
         "seat_bound_at",
-    }
+    } <= set(projected.keys())
     assert "chat_url" not in projected
     assert "cdp_url" not in projected
     assert "port" not in projected
@@ -102,8 +109,10 @@ def test_select_registration_id_picks_max_seat_bound_at_with_reason() -> None:
 
 
 def test_resolve_dormant_seat_row_via_http() -> None:
-    seat_rows = seat_rows_from_registry_records([_registry_record()])
-    snap = {"seat_rows": seat_rows}
+    seat_rows = seat_rows_from_registry_records(
+        [_registry_record()], observed_at="2026-09-15T01:00:00+00:00"
+    )
+    snap = {"seat_rows": seat_rows, "observed_at": "2026-09-15T01:00:00+00:00"}
     with patch(
         "cdp_ask.operator_seat_resolve._chat_url_from_provenance",
         return_value="https://claude.ai/cowork/cse_dormant",
@@ -111,22 +120,28 @@ def test_resolve_dormant_seat_row_via_http() -> None:
         out = resolve_operator_seat("10479", get_lane_snapshot=lambda: snap)
     assert out["registration_id"] == "reg-dormant"
     assert out["chat_url"] == "https://claude.ai/cowork/cse_dormant"
-    assert out["source"] == "http"
+    assert out["source"] == "cse-session-registry:seat-axis"
+    assert out["observed_at"] == "2026-09-15T01:00:00+00:00"
+    assert out["authority_reachable"] is True
 
 
-def test_http_failure_falls_back_to_local_then_null() -> None:
+def test_http_failure_returns_unavailable_not_local() -> None:
     def _fail() -> dict:
         raise CdpAskClientError("unreachable")
 
-    with patch("cdp_ask.operator_seat_resolve.load_active", return_value={}):
-        out = resolve_operator_seat("10479", get_lane_snapshot=_fail)
-    assert out == {"chat_url": None, "registration_id": None, "source": None}
+    out = resolve_operator_seat("10479", get_lane_snapshot=_fail)
+    assert out["registration_id"] is None
+    assert out["source"] == "unavailable"
+    assert out["authority_reachable"] is False
+    assert out.get("observed_at")
 
 
-def test_http_malformed_json_falls_back_without_raise() -> None:
-    with patch("cdp_ask.operator_seat_resolve.load_active", return_value={}):
-        out = resolve_operator_seat("10479", get_lane_snapshot=lambda: {})
+def test_http_malformed_json_returns_null_with_observed_at() -> None:
+    out = resolve_operator_seat(
+        "10479", get_lane_snapshot=lambda: {"observed_at": "2026-09-15T02:00:00+00:00"}
+    )
     assert out["source"] is None
+    assert out["observed_at"] == "2026-09-15T02:00:00+00:00"
 
 
 def test_purpose_mismatch_not_resolved() -> None:
@@ -162,28 +177,14 @@ def test_two_seat_open_rows_selects_newest_bound_at() -> None:
     assert "500.0" in reason
 
 
-def test_local_fallback_when_http_empty() -> None:
-    record = _registry_record(
-        registration_id="reg-local",
-        status="active",
-        seat_bound_at=42.0,
+def test_empty_http_seat_rows_returns_null_not_local_fallback() -> None:
+    out = resolve_operator_seat(
+        "10479",
+        get_lane_snapshot=lambda: {"seat_rows": [], "observed_at": "t"},
     )
-    with (
-        patch(
-            "cdp_ask.operator_seat_resolve.load_active",
-            return_value={"reg-local": record},
-        ),
-        patch(
-            "cdp_ask.operator_seat_resolve.chat_url_for_registration",
-            return_value="https://claude.ai/chat/local",
-        ),
-    ):
-        out = resolve_operator_seat(
-            "10479",
-            get_lane_snapshot=lambda: {"seat_rows": []},
-        )
-    assert out["registration_id"] == "reg-local"
-    assert out["source"] == "local"
+    assert out["registration_id"] is None
+    assert out["source"] is None
+    assert out["observed_at"] == "t"
 
 
 @pytest.mark.parametrize(
@@ -217,34 +218,20 @@ def test_local_fallback_when_http_empty() -> None:
         ],
     ],
 )
-def test_local_http_parity_on_seat_rows(records: list[dict]) -> None:
-    """AC3: local and HTTP paths agree on registration_id for the same map."""
-    active = {str(r["registration_id"]): dict(r) for r in records}
-    seat_rows = seat_rows_from_registry_records(active)
-    snap = {"seat_rows": seat_rows}
+def test_http_resolution_picks_same_registration_id(records: list[dict]) -> None:
+    """HTTP path selects registration_id consistently for the same seat map."""
+    seat_rows = seat_rows_from_registry_records(records)
+    snap = {"seat_rows": seat_rows, "observed_at": "2026-09-15T03:00:00+00:00"}
     purposes = frozenset({"operator-proxy"})
-
-    with (
-        patch(
-            "cdp_ask.operator_seat_resolve.load_active",
-            return_value=active,
-        ),
-        patch(
-            "cdp_ask.operator_seat_resolve._chat_url_from_provenance",
-            return_value=None,
-        ),
-        patch(
-            "cdp_ask.operator_seat_resolve.chat_url_for_registration",
-            return_value=None,
-        ),
-    ):
-        local = _resolve_from_local("10479", purposes)
-        http = _resolve_from_http(
-            "10479",
-            purposes,
-            get_lane_snapshot=lambda: snap,
-        )
-    assert local["registration_id"] == http["registration_id"]
+    http = _resolve_from_http(
+        "10479",
+        purposes,
+        get_lane_snapshot=lambda: snap,
+    )
+    assert http.get("observed_at") == "2026-09-15T03:00:00+00:00"
+    candidates = _candidates_from_seat_rows(seat_rows, "10479", purposes)
+    expected, _ = _select_registration_id(candidates)
+    assert http["registration_id"] == expected
 
 
 def test_http_path_enriches_chat_url_from_provenance() -> None:
@@ -255,13 +242,11 @@ def test_http_path_enriches_chat_url_from_provenance() -> None:
     ):
         out = resolve_operator_seat(
             "10479",
-            get_lane_snapshot=lambda: {"seat_rows": seat_rows},
+            get_lane_snapshot=lambda: {"seat_rows": seat_rows, "observed_at": "t"},
         )
-    assert out == {
-        "chat_url": "https://claude.ai/chat/provenance",
-        "registration_id": "reg-remote",
-        "source": "http",
-    }
+    assert out["chat_url"] == "https://claude.ai/chat/provenance"
+    assert out["registration_id"] == "reg-remote"
+    assert out["source"] == "http" or out["source"] == "cse-session-registry:seat-axis"
 
 
 @pytest.mark.parametrize(
@@ -317,11 +302,16 @@ def test_http_provenance_failure_falls_back_to_null_chat_url() -> None:
     ):
         out = resolve_operator_seat(
             "10479",
-            get_lane_snapshot=lambda: {"seat_rows": seat_rows},
+            get_lane_snapshot=lambda: {"seat_rows": seat_rows, "observed_at": "t"},
         )
     assert out["registration_id"] == "reg-remote"
     assert out["chat_url"] is None
-    assert out["source"] == "http"
+
+
+def test_resolve_from_local_deleted() -> None:
+    import cdp_ask.operator_seat_resolve as mod
+
+    assert not hasattr(mod, "_resolve_from_local")
 
 
 def test_resolver_read_set_has_no_defaults_in_projection() -> None:

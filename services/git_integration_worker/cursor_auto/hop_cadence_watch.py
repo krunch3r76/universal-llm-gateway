@@ -98,7 +98,9 @@ def watches_path() -> Path:
     raw = os.environ.get("CURSOR_AUTO_HOP_WATCHES_PATH", "").strip()
     if raw:
         return Path(raw)
-    return Path.home() / ".gateway" / "cdp-registry" / _WATCH_FILENAME
+    from claude_bundles.cdp_registry_store import REGISTRY_DIR
+
+    return REGISTRY_DIR / _WATCH_FILENAME
 
 
 @dataclass(frozen=True)

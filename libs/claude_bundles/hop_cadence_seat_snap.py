@@ -195,6 +195,7 @@ def seat_row_from_registry_record(
     record: Mapping[str, Any],
     *,
     stream_index: StreamIndex | None = None,
+    observed_at: str | None = None,
 ) -> dict[str, Any] | None:
     """Project one seat-open registry row into a hop-identity snap row.
 
@@ -210,7 +211,7 @@ def seat_row_from_registry_record(
     execution_id = str(record.get("execution_id") or "").strip()
     exec_for_row = execution_id or SEATED_NO_STREAM_EXECUTION
     host_status = str(record.get("status") or "")
-    return {
+    row = {
         "registration_id": registration_id,
         "execution_id": exec_for_row,
         "parent_thread": record.get("parent_thread"),
@@ -223,12 +224,16 @@ def seat_row_from_registry_record(
         "seat_lane": record.get("seat_lane"),
         "seat_bound_at": record.get("seat_bound_at"),
     }
+    if observed_at:
+        row["observed_at"] = observed_at
+    return row
 
 
 def seat_rows_from_registry_records(
     records: Mapping[str, Mapping[str, Any]] | list[Mapping[str, Any]],
     *,
     stream_index: StreamIndex | None = None,
+    observed_at: str | None = None,
 ) -> list[dict[str, Any]]:
     """Project seat-open registry records into hop-identity seat-axis rows."""
     values: list[Mapping[str, Any]]
@@ -239,7 +244,7 @@ def seat_rows_from_registry_records(
     out: list[dict[str, Any]] = []
     for record in values:
         projected = seat_row_from_registry_record(
-            record, stream_index=stream_index
+            record, stream_index=stream_index, observed_at=observed_at
         )
         if projected is not None:
             out.append(projected)
@@ -273,6 +278,7 @@ def attach_registry_seated_rows(snap: dict[str, Any]) -> dict[str, Any]:
     if not need_seated and not need_seat:
         return snap
     stream_index = build_stream_index_from_snap(snap)
+    observed_at = str(snap.get("observed_at") or "").strip() or None
     try:
         from claude_bundles.cdp_registry_store import load_active as _load_active
 
@@ -290,7 +296,9 @@ def attach_registry_seated_rows(snap: dict[str, Any]) -> dict[str, Any]:
     if need_seat:
         out = attach_seat_rows(
             out,
-            seat_rows_from_registry_records(raw, stream_index=stream_index),
+            seat_rows_from_registry_records(
+                raw, stream_index=stream_index, observed_at=observed_at
+            ),
         )
     return out
 

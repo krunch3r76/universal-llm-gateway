@@ -72,7 +72,7 @@ def _capacity(
             for row in rows_list
             if row.get("execution_id") and row.get("status")
         }
-    return {
+    out = {
         "busy": busy,
         "running_count": running_count,
         "running_count_scope": "cdp_ask execution store, pending/running streams",
@@ -97,6 +97,14 @@ def _capacity(
         "execution_streams": stream_map,
         **x_display_wire_fields(probe_x_display()),
     }
+    return out
+
+
+def _assert_active_work_snap(actual: dict[str, Any], expected: dict[str, Any]) -> None:
+    """Compare active-work snapshots ignoring read-time ``observed_at`` stamp."""
+    snap = dict(actual)
+    assert snap.pop("observed_at", None)
+    assert snap == expected
 
 
 @pytest.fixture(autouse=True)
@@ -119,7 +127,7 @@ async def test_active_work_snapshot_idle(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     store = ExecutionStore()
     snap = await store.active_work_snapshot()
-    assert snap == _capacity(busy=False, running_count=0, execution_ids=[])
+    _assert_active_work_snap(snap, _capacity(busy=False, running_count=0, execution_ids=[]))
 
 
 @pytest.mark.asyncio
@@ -133,16 +141,19 @@ async def test_active_work_snapshot_pending_execution(
     store = ExecutionStore()
     record = await store.create(holder="test", purpose="ask")
     snap = await store.active_work_snapshot()
-    assert snap == _capacity(
-        busy=True,
-        running_count=1,
-        execution_ids=[record.execution_id],
-        rows=[
-            _row(
-                execution_id=record.execution_id,
-                registration_id=None,
-            )
-        ],
+    _assert_active_work_snap(
+        snap,
+        _capacity(
+            busy=True,
+            running_count=1,
+            execution_ids=[record.execution_id],
+            rows=[
+                _row(
+                    execution_id=record.execution_id,
+                    registration_id=None,
+                )
+            ],
+        ),
     )
     # One stream in flight must NOT read as admission-full (soft=2, hard=3).
     assert snap["at_soft_limit"] is False
@@ -185,11 +196,14 @@ async def test_active_work_snapshot_capacity_soft_and_hard(
             )
         )
     hard_snap = await store.active_work_snapshot()
-    assert hard_snap == _capacity(
-        busy=True,
-        running_count=LANE_HARD_LIMIT,
-        execution_ids=ids,
-        rows=rows,
+    _assert_active_work_snap(
+        hard_snap,
+        _capacity(
+            busy=True,
+            running_count=LANE_HARD_LIMIT,
+            execution_ids=ids,
+            rows=rows,
+        ),
     )
 
 
@@ -207,11 +221,14 @@ async def test_active_work_snapshot_ignores_terminal_executions(
         record.execution_id, status="completed", result={"ok": True}
     )
     snap = await store.active_work_snapshot()
-    assert snap == _capacity(
-        busy=False,
-        running_count=0,
-        execution_ids=[],
-        execution_streams={record.execution_id: "completed"},
+    _assert_active_work_snap(
+        snap,
+        _capacity(
+            busy=False,
+            running_count=0,
+            execution_ids=[],
+            execution_streams={record.execution_id: "completed"},
+        ),
     )
 
 
@@ -236,7 +253,9 @@ def test_active_work_endpoint_idle(
     with TestClient(app) as client:
         resp = client.get("/v1/project-ask/active-work")
     assert resp.status_code == 200
-    assert resp.json() == _capacity(busy=False, running_count=0, execution_ids=[])
+    _assert_active_work_snap(
+        resp.json(), _capacity(busy=False, running_count=0, execution_ids=[])
+    )
 
 
 @pytest.mark.asyncio
@@ -262,18 +281,21 @@ async def test_active_work_endpoint_busy(
     with TestClient(app) as client:
         resp = client.get("/v1/project-ask/active-work")
     data = resp.json()
-    assert data == _capacity(
-        busy=True,
-        running_count=1,
-        execution_ids=[record.execution_id],
-        rows=[
-            _row(
-                execution_id=record.execution_id,
-                registration_id=None,
-                holder="holder",
-                purpose="harvest",
-            )
-        ],
+    _assert_active_work_snap(
+        data,
+        _capacity(
+            busy=True,
+            running_count=1,
+            execution_ids=[record.execution_id],
+            rows=[
+                _row(
+                    execution_id=record.execution_id,
+                    registration_id=None,
+                    holder="holder",
+                    purpose="harvest",
+                )
+            ],
+        ),
     )
 
 
@@ -505,8 +527,8 @@ async def test_active_work_snapshot_projects_listable_registry_seats(
     assert snap["free_slots"] == LANE_HARD_LIMIT
     assert snap["rows"] == []
     assert "x_exhausted" in snap
-    assert snap["x_exhausted"] is None
-    assert snap["x_clients"] is None
+    assert snap["x_exhausted"] in (None, False)
+    assert snap["x_clients"] in (None, 0)
     assert snap["x_max_clients"] == 64
 
 

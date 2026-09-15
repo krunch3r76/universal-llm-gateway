@@ -186,6 +186,8 @@ class ExecutionStore:
         attached as ``x_*`` on the same snapshot and does not rewrite that
         formula.
         """
+        from datetime import UTC, datetime
+
         from claude_bundles.cdp_registry_store import load_active
         from claude_bundles.hop_cadence_seat_snap import (
             attach_seat_rows,
@@ -204,12 +206,16 @@ class ExecutionStore:
                 rec.execution_id: rec.status for rec in self._records.values()
             }
         payload["execution_streams"] = dict(stream_index)
+        observed_at = datetime.now(UTC).isoformat()
+        payload["observed_at"] = observed_at
         try:
             raw = load_active()
             seated = seated_rows_from_registry_records(
                 raw, stream_index=stream_index
             )
-            seat = seat_rows_from_registry_records(raw, stream_index=stream_index)
+            seat = seat_rows_from_registry_records(
+                raw, stream_index=stream_index, observed_at=observed_at
+            )
         except Exception:  # noqa: BLE001 — identity attach must not break admission
             seated = []
             seat = []

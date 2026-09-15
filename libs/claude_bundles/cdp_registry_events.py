@@ -390,6 +390,20 @@ def cdp_seat_superseded(
 
 
 @event_factory
+def cdp_seat_authority_unreachable(*, parent_thread: str) -> Event:
+    """Advisory: seat authority HTTP projection failed for *parent_thread*."""
+    return Event(
+        signal="cdp.seat.authority_unreachable",
+        role="observation",
+        scope="node",
+        payload={
+            "parent_thread": parent_thread,
+            "recovery": os.environ.get("PROJECT_ASK_URL", "").strip() or None,
+        },
+    )
+
+
+@event_factory
 def cdp_seat_lane_bound(
     *,
     registration_id: str,

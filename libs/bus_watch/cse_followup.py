@@ -31,15 +31,31 @@ def resolve_cse_identity(root_id: str) -> dict[str, str | None]:
     """Resolve CSE ``chat_url`` / ``registration_id`` from registry ``parent_thread``."""
     parent = str(root_id or "").strip()
     if not parent:
-        return {"chat_url": None, "registration_id": None, "url": None, "source": None}
+        return {
+            "chat_url": None,
+            "registration_id": None,
+            "url": None,
+            "source": None,
+            "observed_at": None,
+        }
 
     resolved = resolve_operator_seat(parent)
+    if resolved.get("source") == "unavailable":
+        return {
+            "chat_url": None,
+            "registration_id": None,
+            "url": None,
+            "source": "unavailable",
+            "observed_at": resolved.get("observed_at"),
+            "recovery": resolved.get("recovery"),
+        }
     url = resolved.get("chat_url")
     return {
         "chat_url": url,
         "registration_id": resolved.get("registration_id"),
         "url": url,
         "source": resolved.get("source"),
+        "observed_at": resolved.get("observed_at"),
     }
 
 

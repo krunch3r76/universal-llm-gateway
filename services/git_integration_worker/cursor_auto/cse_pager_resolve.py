@@ -105,6 +105,12 @@ def _from_csr(job: AutoJob, pager_key: str) -> dict[str, str | None]:
 
 def _from_registry(pager_key: str) -> dict[str, str | None]:
     resolved = resolve_operator_seat(pager_key)
+    if resolved.get("source") == "unavailable":
+        return {
+            "chat_url": None,
+            "registration_id": None,
+            "source": "unavailable",
+        }
     reg_id = (resolved.get("registration_id") or "").strip() or None
     if not reg_id:
         return _empty_address()
