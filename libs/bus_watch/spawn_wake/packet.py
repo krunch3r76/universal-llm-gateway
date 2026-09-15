@@ -91,10 +91,9 @@ def successor_context_from_digest(digest: dict[str, Any]) -> dict[str, Any]:
     root = digest.get("root") or {}
     return {
         "gear": policy.get("gear"),
-        # Same precedence as the induction NOW: seat bind, then policy bind,
-        # then the newest undispositioned friction.
-        "row": digest.get("summary_row")
-        or str(policy.get("now_row") or "").strip()
+        # Same precedence as induction NOW: policy.now_row ≻ legacy summary_row.
+        "row": str(policy.get("now_row") or "").strip()
+        or str(digest.get("summary_row") or "").strip()
         or friction_now_row(digest)
         or root.get("last_subject")
         or "",

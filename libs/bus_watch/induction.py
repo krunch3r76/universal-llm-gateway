@@ -118,6 +118,30 @@ def _use_skill_lines(loaded: list[str]) -> list[str]:
     return [f"Use the {slug} skill" for slug in dict.fromkeys(slugs)]
 
 
+def _resolve_now_row(digest: dict[str, Any]) -> str:
+    """Seat bind ≻ legacy summary_row ≻ forcing friction (11367#7 / a:34028)."""
+    policy = digest.get("policy") or {}
+    friction_now = _friction_now(digest)
+    return (
+        str(policy.get("now_row") or "").strip()
+        or str(digest.get("summary_row") or "").strip()
+        or friction_now
+    )
+
+
+def _format_now_line(digest: dict[str, Any], now_row: str) -> str:
+    """Pointers not prose — tip turn + root address, body capped (cdp-seat-wake §7)."""
+    root = digest.get("root") or {}
+    root_id = root.get("id")
+    tip = root.get("turns")
+    body = str(now_row or "").strip()
+    if len(body) > 120:
+        body = body[:117].rstrip() + "…"
+    if tip is not None and root_id:
+        return f"tip #{tip} on agent-bus:{root_id} · {body}"
+    return body
+
+
 def build_wake_induction(
     digest: dict[str, Any], *, cap: int = INDUCTION_CAP, surface: str = "ide"
 ) -> str:
@@ -135,15 +159,10 @@ def build_wake_induction(
     root = digest.get("root") or {}
     policy = digest.get("policy") or {}
     root_id = root.get("id")
-    # ``policy.now_row`` is the seat's own bind (``liaison-tick.py --set now_row=…``
-    # after each Decide step); ``summary_row`` is the older state field. With no
-    # seat bind, an undispositioned friction is the NOW row: the score is not
-    # empty while a charter-owned friction waits (todo:liaison-friction-score-rows).
+    # ``policy.now_row`` is the live seat bind (``liaison-tick.py --set now_row=…``);
+    # ``summary_row`` is legacy tick state and must not outrank a fresh bind (11367#7).
     friction_now = _friction_now(digest)
-    now_row = (
-        str(digest.get("summary_row") or policy.get("now_row") or "").strip()
-        or friction_now
-    )
+    now_row = _resolve_now_row(digest)
     events = _events(digest)
     forcing = bool(events or friction_now)
     head = f"WAKE {root_id} · turns={root.get('turns')} · {digest.get('ts')}"
@@ -155,7 +174,7 @@ def build_wake_induction(
     if len(events) > _EVENT_ITEMS:
         lines.append(f"Event: +{len(events) - _EVENT_ITEMS} more in the digest")
     lines.append(
-        f"NOW: {now_row}"
+        f"NOW: {_format_now_line(digest, now_row)}"
         if now_row
         else "NOW: (empty — pull the next objective per liaison skill § Objectives; "
         "empty NOW is not a stop)"

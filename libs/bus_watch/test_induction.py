@@ -43,7 +43,7 @@ def test_induction_plants_addresses_not_a_skill_copy() -> None:
     assert text.startswith("WAKE 10479 · turns=214")
     assert "Event: 10586 unread=1" in text
     assert "watcher 10479-10586-r9-none complete" in text
-    assert "NOW: R9 Lane A serialization" in text
+    assert "NOW: tip #214 on agent-bus:10479 · R9 Lane A serialization" in text
     assert "do not re-read): liaison skill · git-posture § Land" in text
     assert "register=autonomous · hopper paused (10479#210)" in text
     assert "cdp/opus-5 first" in text
@@ -126,7 +126,35 @@ def test_induction_now_from_policy_bind() -> None:
     text = build_wake_induction(
         _digest(summary_row=None, policy={"now_row": "R10 wake induction transport"})
     )
-    assert "NOW: R10 wake induction transport" in text
+    assert "NOW: tip #214 on agent-bus:10479 · R10 wake induction transport" in text
+
+
+def test_induction_policy_now_row_wins_over_stale_summary_row() -> None:
+    text = build_wake_induction(
+        _digest(
+            summary_row="IN FLIGHT lane 11364 stale prose",
+            policy={"now_row": "POST-LAND tail — close todo"},
+        )
+    )
+    assert "POST-LAND tail" in text
+    assert "IN FLIGHT lane 11364" not in text
+    assert "tip #214 on agent-bus:10479" in text
+
+
+def test_induction_cse_fire_keeps_use_lines_when_summary_row_stale() -> None:
+    """11367#7: long stale summary_row must not eat cap and drop skill activation."""
+    stale = "IN FLIGHT " + ("lane 11364 " * 40)
+    cse = build_wake_induction(
+        _digest(
+            summary_row=stale,
+            policy={"now_row": "close todo"},
+        ),
+        surface="cse",
+    )
+    assert "Use the liaison skill" in cse
+    assert "IN FLIGHT lane 11364" not in cse
+    assert "close todo" in cse
+    assert len(cse.encode("utf-8")) <= INDUCTION_CAP
 
 
 def test_induction_quiet_form() -> None:
