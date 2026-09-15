@@ -250,8 +250,7 @@ async def dispatch_cursor_sdk_worker(
         payload["caller_agent"] = caller_agent
     if model_knobs:
         payload["model_knobs"] = model_knobs
-    if read_only:
-        payload["read_only"] = True
+    payload["read_only"] = read_only
     if close_contract != "auto":
         payload["close_contract"] = close_contract
     if nest_under:
@@ -355,8 +354,7 @@ async def dispatch_cursor_sdk_worker_message(
         payload["caller_agent"] = caller_agent
     if model_knobs:
         payload["model_knobs"] = model_knobs
-    if read_only:
-        payload["read_only"] = True
+    payload["read_only"] = read_only
     if nest_under:
         payload["nest_under"] = nest_under
     if lane:

@@ -535,7 +535,7 @@ async def process_job(
         message=message,
         nest_under=nest_under,
         model_knobs=knobs or None,
-        read_only=True if read_only else None,
+        read_only=read_only,
         sdk_mode=nested_sdk_mode,
         relay_ctx=relay_ctx,
     )

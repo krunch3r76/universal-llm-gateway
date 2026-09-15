@@ -188,9 +188,9 @@ async def submit_nested_dispatch(
 ) -> dict[str, Any]:
     """POST ``/api/v1/cursor/dispatch`` for one nested SDK run.
 
-    *read_only* must be passed explicitly for lease-exempt legs: the route infers
-    ``read_only=False`` for ``none``, so an advisory reader that never
-    writes would otherwise contend for the write lease like an implement run.
+    *read_only* must be passed explicitly for writable nested legs: when omitted,
+    GIW ``_effective_read_only`` defaults ``none``/``consult`` to ``True``, which
+    rejects ``lane='B'`` even when cursor-auto resolved a writable implement path.
 
     *bind_job* is the executor identity write. Reflex / second-read legs pass
     false so they cannot last-write-win the job's ``dispatch_id``. Executor
