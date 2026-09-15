@@ -55,7 +55,7 @@ manual_seat ∧ fresh_packet_context ⇒ team_dispatch(handoff, own_alias)
 
 | Axis | Meaning | Examples |
 |---|---|---|
-| `op` | Output channel | `generate`, `to_thread`, `handoff` |
+| `op` | Output channel | `generate`, `to_thread`, `handoff`, `steer` |
 | `role` | Functional API role, or handoff roster role | `reviewer`, `skeptic`, `web-consult`, `cursor-implement` |
 | `model` | Optional API wire ID | `openai/gpt-5.5`, not `web-anthropic` |
 
@@ -64,6 +64,7 @@ manual_seat ∧ fresh_packet_context ⇒ team_dispatch(handoff, own_alias)
 | `generate` | Cloud API call OR SDK executor; auto result thread; Stargate posts on behalf; poll via `agent_bus(wait)` from `poll_hint` | API roles (api_dispatchable): `reviewer`, `synthesizer`, `artisan`, `skeptic`. Plus `cursor-sdk` — SDK substrate (→ git_integration_worker), NOT an api_dispatchable role |
 | `to_thread` | Same, delivered to named bus thread | Same API roles |
 | `handoff` | Creates bus thread + pointer; no model; operator/IDE push | Handoff roster roles (`web-consult`, `cursor-consult`, `cursor-implement`); not raw seat slugs |
+| `steer` | Seat-initiated GIW relay on one live cursor-sdk dispatch (`park_for_restart` or `inject`); ¬ generate, ¬ handoff | `steer ∈ {park_for_restart, inject}` + `dispatch_id` + `reason` (see §0b) |
 
 Delivery ownership: generate/to_thread results are posted by Stargate on behalf. The model must not be told “reply on this thread”; with `mcp=true` that can cause duplicate self-posts. Omit `mcp` for self-contained consults; reserve it for real investigation/tool use — and note that an **axis-2 skeptic densify/ratification citing live files IS such tool use**: set explicit `mcp=true` + `max_tool_turns≥15` (see `cheap-recon-before-escalation` § Skeptic dispatch mechanics), not silent omit or cargo-cult `mcp=false`.
 
@@ -87,6 +88,22 @@ Handoff statuses: `awaiting_first_reply`, `complete`, telemetry/future states `a
 
 ## Dispatch Workflow/0a. Seat vs role vs model
 > `generate_roles()` (`libs/agent_seat/dispatch_role_catalog.py`) returns exactly `[reviewer, synthesizer, artisan, skeptic]`. `cursor-sdk` admits on `op=generate` via a distinct SDK-substrate path (`is_cursor_sdk_generate_admission` → `resolve_cursor_sdk_generate_target`, `config/routing/route_policy.yaml`), so it is intentionally absent from that list. Verification greps comparing `generate_roles()` output to prose must target the api-role row only.
+
+## 0b. Steer and mistaken-admit discard
+
+`team_dispatch(op="steer", steer="park_for_restart", dispatch_id=…, reason=…)` is **drain + resume**, not stop: GIW parks the live bridge, posts a PARKED turn, and auto-admits a `resume_of` child that continues the same `execution_id` until terminal CLOSEOUT — it does **not** discard work.
+
+**Operator names kill / discard / void on a mistaken admit:**
+
+| Row state | Reachable path |
+|---|---|
+| Idle (`queued` / `admitted`, no live bridge task) | `DELETE /api/v1/cursor/dispatch/{dispatch_id}` (GIW operator cancel) → `outcome=cancelled` |
+| Running (bridge live, or `parked_waiting`) | Same DELETE → **409 `not_cancellable_running`** — terminal refusal while the bridge is live; **¬** steer `park_for_restart` as fallback |
+| After 409 or while running | Accept the eventual partial/terminal closeout; no idle-discard path exists until the bridge ends |
+
+**¬ steer park when the operator named kill.** `park_for_restart` arms resume; using it as a discard proxy burns tokens on work the operator already rejected.
+
+Park → resume chain detail: `agent-bus-discipline` § Park → resume chain. Open product bind: `steer=cancel_discard` (kill without resume) — not on the steer enum; judgment bind escalates separately.
 
 ## 1. Model string
 
@@ -174,6 +191,8 @@ CODE_EXTRA call names below are **code-surface vocabulary** (see Surface gate).
 - Polling most recent thread instead of returned handle.
 - Client-side/fetch poll loops instead of one `agent_bus(wait)` call per check.
 - Corpus dedup/prune/trash while a cursor-sdk ingest dispatch is still live.
+- `team_dispatch(op="steer", steer="park_for_restart")` when the operator named kill/discard — park resumes, it does not stop.
+- Reading 409 `not_cancellable_running` on operator DELETE as permission to park instead.
 
 ## 8. Sub-workflows
 
@@ -182,6 +201,7 @@ CODE_EXTRA call names below are **code-surface vocabulary** (see Surface gate).
 | Workflow lane case studies | `cortex://notes/system/specs/dispatch-workflow-case-studies.md` |
 | Unattended code execution (cursor-sdk) | `consult-routing` § General execution lane + `cursor-sdk-instruction-standard` |
 | Plan vs agent on cursor-sdk | `consult-routing` § cursor-sdk `sdk_mode` · `docs/agent-guides/cursor-sdk-conversation-mode.md` |
+| Steer verbs (`park_for_restart`, `inject`) and park/resume | `agent-bus-discipline` § Park → resume chain |
 
 ## Minimal operating summary
 
