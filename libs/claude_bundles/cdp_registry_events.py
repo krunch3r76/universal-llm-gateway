@@ -432,6 +432,27 @@ def cdp_seat_lane_released(
 
 
 @event_factory
+def cdp_seat_lane_reconciled(
+    *,
+    registration_id: str,
+    seat_lane: str,
+    released_registration_ids: list[str],
+) -> Event:
+    """Multi-close convergence: one bind closed two or more predecessor seats."""
+    return Event(
+        signal="cdp.seat.lane_reconciled",
+        role="coordination",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "seat_lane": seat_lane,
+            "released_registration_ids": released_registration_ids,
+            "released_count": len(released_registration_ids),
+        },
+    )
+
+
+@event_factory
 def cdp_occupancy_overlap(*, lane: str, execution_ids: list[str]) -> Event:
     """Census OVERLAP: ≥2 operator-purpose streams on one recorded lane."""
     return Event(

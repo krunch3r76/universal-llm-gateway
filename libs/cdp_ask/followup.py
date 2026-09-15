@@ -131,6 +131,8 @@ async def _maybe_reattach(
         chat_url,
         holder=holder,
         purpose=req.purpose,
+        parent_thread=req.parent_thread,
+        mission_kind=req.mission_kind,
         allow_mint=bool(req.reattach),
         restrict_to_registration_id=restrict_registration_id(reason, chat_url),
     )

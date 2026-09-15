@@ -104,6 +104,22 @@ def bind_session_address(
     return True
 
 
+def _next_seat_bound_at(ts: float, released: list[dict[str, Any]]) -> float:
+    """Monotonic seat provenance: strictly after every predecessor closed in this bind."""
+    floor = ts
+    for row in released:
+        prior = row.get("seat_bound_at")
+        if prior is None:
+            continue
+        try:
+            floor = max(floor, float(prior) + 1e-6)
+        except (TypeError, ValueError):
+            continue
+    if released and floor <= ts:
+        return ts + 1e-6
+    return floor
+
+
 def apply_driving_seat_bind(
     active: dict[str, dict[str, Any]],
     registration_id: str,
@@ -127,13 +143,9 @@ def apply_driving_seat_bind(
     if not lane or purpose not in OPERATOR_PURPOSES or kind == "hop":
         return None, []
     ts = time.time() if now is None else now
-    newly_bound = not seat_open(row, lane)
     updated = dict(row)
     updated["seat_lane"] = lane
     updated["seat_closed_at"] = None
-    if newly_bound:
-        updated["seat_bound_at"] = ts
-    active[registration_id] = updated
     released: list[dict[str, Any]] = []
     for other_id, other in list(active.items()):
         if other_id == registration_id or not isinstance(other, dict):
@@ -145,8 +157,8 @@ def apply_driving_seat_bind(
             closed["superseded_by"] = registration_id
             active[other_id] = closed
             released.append(closed)
-    if not newly_bound and not released:
-        return None, []
+    updated["seat_bound_at"] = _next_seat_bound_at(ts, released)
+    active[registration_id] = updated
     return updated, released
 
 
@@ -192,6 +204,19 @@ def _emit_seat_axis_events(
                     superseded_registration_id=superseded or None,
                 )
             )
+        if len(released_rows) >= 2:
+            with contextlib.suppress(Exception):
+                _events.emit(
+                    _events.cdp_seat_lane_reconciled(
+                        registration_id=str(bound_row.get("registration_id") or ""),
+                        seat_lane=lane,
+                        released_registration_ids=[
+                            str(r.get("registration_id") or "")
+                            for r in released_rows
+                            if r.get("registration_id")
+                        ],
+                    )
+                )
     for closed in released_rows:
         with contextlib.suppress(Exception):
             _events.emit(

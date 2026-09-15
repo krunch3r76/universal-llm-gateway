@@ -167,6 +167,69 @@ def test_write_read_gate_open_seat_census_still_zero(isolated_registry: Path) ->
     assert census_match_ids(_LANE, snap) == []
 
 
+def test_convergence_emits_lane_released_per_predecessor(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC5: multi-close convergence emits one lane_released per closed row."""
+    captured: list[str] = []
+
+    def _capture(event: Any) -> None:
+        captured.append(getattr(event, "signal", "") or "")
+
+    monkeypatch.setattr(reg._events, "emit", _capture)
+    first = _mint_driving(holder="a")
+    second = _mint_driving(holder="b")
+    third = _mint_driving(holder="c")
+    active = reg._load_active()
+    for rid in (first.registration_id, second.registration_id, third.registration_id):
+        row = dict(active[rid])
+        row["seat_lane"] = _LANE
+        row["seat_bound_at"] = float(active[rid].get("seat_bound_at") or 0) + 1.0
+        row["seat_closed_at"] = None
+        active[rid] = row
+    active[third.registration_id]["seat_bound_at"] = 900.0
+    reg._store.write_active(active)
+    captured.clear()
+    reg.bind_driving_seat(third.registration_id)
+    released = [s for s in captured if s == "cdp.seat.lane_released"]
+    assert len(released) == 2
+    assert "cdp.seat.lane_bound" in captured
+    assert "cdp.seat.lane_reconciled" in captured
+
+
+def test_relaunch_dormant_refreshes_seat_bound_at_above_predecessors(
+    isolated_registry: Path,
+) -> None:
+    """AC2: dormant wake + bind yields seat_bound_at above closed predecessors."""
+    from claude_bundles.cdp_registry.session_address import apply_driving_seat_bind
+
+    first = _mint_driving(holder="a")
+    second = _mint_driving(holder="b")
+    active = reg._load_active()
+    for rid, bound_at in (
+        (first.registration_id, 100.0),
+        (second.registration_id, 500.0),
+    ):
+        row = dict(active[rid])
+        row.update(
+            {
+                "seat_lane": _LANE,
+                "seat_bound_at": bound_at,
+                "seat_closed_at": None,
+            }
+        )
+        active[rid] = row
+    active[first.registration_id]["status"] = "dormant"
+    reg._store.write_active(active)
+    bound, released = apply_driving_seat_bind(
+        reg._load_active(), first.registration_id, now=600.0
+    )
+    assert bound is not None
+    assert len(released) == 1
+    assert bound["seat_bound_at"] > 500.0
+    assert bound["seat_bound_at"] > released[0]["seat_bound_at"]
+
+
 def test_ra_seat_row_projector_omits_port_and_cdp_url(isolated_registry: Path) -> None:
     minted = _mint_driving()
     assert reg.bind_session_address(minted.registration_id, chat_url=_CSE)

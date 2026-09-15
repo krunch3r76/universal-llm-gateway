@@ -11,8 +11,9 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
 
-from claude_bundles.cdp_registry import chat_url_for_registration, list_active
+from claude_bundles.cdp_registry import chat_url_for_registration
 from claude_bundles.cdp_registry_store import load_active
+from claude_bundles.hop_cadence_seat_snap import seat_rows_from_registry_records
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
 from cdp_ask.client import CdpAskClient, CdpAskClientError
@@ -153,22 +154,9 @@ def _resolve_from_local(
     parent_thread: str,
     purposes: frozenset[str],
 ) -> dict[str, str | None]:
-    parent = parent_thread.strip()
     active = load_active()
-    candidates: list[tuple[str, float]] = []
-    for reg in list_active():
-        purpose = (reg.purpose or "").strip()
-        if purpose not in purposes:
-            continue
-        if str(reg.parent_thread or "").strip() != parent:
-            continue
-        raw = active.get(reg.registration_id) or {}
-        candidates.append(
-            (
-                reg.registration_id,
-                _seat_bound_at_float(raw.get("seat_bound_at")),
-            )
-        )
+    seat_rows = seat_rows_from_registry_records(active)
+    candidates = _candidates_from_seat_rows(seat_rows, parent_thread, purposes)
     reg_id, _reason = _select_registration_id(candidates)
     if not reg_id:
         return _null_identity()

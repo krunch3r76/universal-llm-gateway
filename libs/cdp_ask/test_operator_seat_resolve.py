@@ -17,6 +17,8 @@ from cdp_ask.client import CdpAskClientError
 from cdp_ask.operator_seat_resolve import (
     _candidates_from_seat_rows,
     _chat_url_from_provenance,
+    _resolve_from_http,
+    _resolve_from_local,
     _select_registration_id,
     resolve_operator_seat,
 )
@@ -116,19 +118,13 @@ def test_http_failure_falls_back_to_local_then_null() -> None:
     def _fail() -> dict:
         raise CdpAskClientError("unreachable")
 
-    with (
-        patch("cdp_ask.operator_seat_resolve.list_active", return_value=[]),
-        patch("cdp_ask.operator_seat_resolve.load_active", return_value={}),
-    ):
+    with patch("cdp_ask.operator_seat_resolve.load_active", return_value={}):
         out = resolve_operator_seat("10479", get_lane_snapshot=_fail)
     assert out == {"chat_url": None, "registration_id": None, "source": None}
 
 
 def test_http_malformed_json_falls_back_without_raise() -> None:
-    with (
-        patch("cdp_ask.operator_seat_resolve.list_active", return_value=[]),
-        patch("cdp_ask.operator_seat_resolve.load_active", return_value={}),
-    ):
+    with patch("cdp_ask.operator_seat_resolve.load_active", return_value={}):
         out = resolve_operator_seat("10479", get_lane_snapshot=lambda: {})
     assert out["source"] is None
 
@@ -167,19 +163,15 @@ def test_two_seat_open_rows_selects_newest_bound_at() -> None:
 
 
 def test_local_fallback_when_http_empty() -> None:
-    reg = MagicMock()
-    reg.registration_id = "reg-local"
-    reg.parent_thread = "10479"
-    reg.purpose = "operator-proxy"
-
+    record = _registry_record(
+        registration_id="reg-local",
+        status="active",
+        seat_bound_at=42.0,
+    )
     with (
         patch(
-            "cdp_ask.operator_seat_resolve.list_active",
-            return_value=[reg],
-        ),
-        patch(
             "cdp_ask.operator_seat_resolve.load_active",
-            return_value={"reg-local": {"seat_bound_at": 42.0}},
+            return_value={"reg-local": record},
         ),
         patch(
             "cdp_ask.operator_seat_resolve.chat_url_for_registration",
@@ -192,6 +184,67 @@ def test_local_fallback_when_http_empty() -> None:
         )
     assert out["registration_id"] == "reg-local"
     assert out["source"] == "local"
+
+
+@pytest.mark.parametrize(
+    "records",
+    [
+        [_registry_record(status="dormant", seat_bound_at=200.0)],
+        [
+            _registry_record(
+                registration_id="reg-open",
+                status="active",
+                seat_bound_at=300.0,
+            ),
+            _registry_record(
+                registration_id="reg-closed",
+                status="released",
+                seat_bound_at=100.0,
+                seat_closed_at=50.0,
+            ),
+        ],
+        [
+            _registry_record(
+                registration_id="reg-old",
+                status="active",
+                seat_bound_at=100.0,
+            ),
+            _registry_record(
+                registration_id="reg-new",
+                status="dormant",
+                seat_bound_at=500.0,
+            ),
+        ],
+    ],
+)
+def test_local_http_parity_on_seat_rows(records: list[dict]) -> None:
+    """AC3: local and HTTP paths agree on registration_id for the same map."""
+    active = {str(r["registration_id"]): dict(r) for r in records}
+    seat_rows = seat_rows_from_registry_records(active)
+    snap = {"seat_rows": seat_rows}
+    purposes = frozenset({"operator-proxy"})
+
+    with (
+        patch(
+            "cdp_ask.operator_seat_resolve.load_active",
+            return_value=active,
+        ),
+        patch(
+            "cdp_ask.operator_seat_resolve._chat_url_from_provenance",
+            return_value=None,
+        ),
+        patch(
+            "cdp_ask.operator_seat_resolve.chat_url_for_registration",
+            return_value=None,
+        ),
+    ):
+        local = _resolve_from_local("10479", purposes)
+        http = _resolve_from_http(
+            "10479",
+            purposes,
+            get_lane_snapshot=lambda: snap,
+        )
+    assert local["registration_id"] == http["registration_id"]
 
 
 def test_http_path_enriches_chat_url_from_provenance() -> None:

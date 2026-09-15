@@ -106,6 +106,50 @@ def test_ensure_relaunches_dormant_unbound_row(isolated_registry: Path) -> None:
     assert reg._store.load_active()[again.registration_id]["status"] == "active"
 
 
+def test_ensure_converges_when_two_open_seats_exist(
+    isolated_registry: Path,
+) -> None:
+    """AC1: N>1 seat-open rows converge to one without RegistryError."""
+    from claude_bundles.cdp_registry.models import seat_open
+
+    first = _ensure()
+    active = reg._store.load_active()
+    first_row = dict(active[first.registration_id])
+    second_id = "dormant-open-seat"
+    second_row = dict(first_row)
+    second_row.update(
+        {
+            "registration_id": second_id,
+            "status": "dormant",
+            "seat_lane": "9497",
+            "seat_bound_at": 100.0,
+            "seat_closed_at": None,
+            "port": 9224,
+            "profile_suffix": "seat-b",
+        }
+    )
+    first_row.update(
+        {
+            "seat_lane": "9497",
+            "seat_bound_at": 500.0,
+            "seat_closed_at": None,
+        }
+    )
+    active[first.registration_id] = first_row
+    active[second_id] = second_row
+    reg._store.write_active(active)
+    third = _ensure()
+    final = reg._store.load_active()
+    open_ids = [
+        rid
+        for rid, row in final.items()
+        if isinstance(row, dict) and seat_open(row, "9497")
+    ]
+    assert len(open_ids) == 1
+    assert third.registration_id == first.registration_id
+    assert not seat_open(final[second_id], "9497")
+
+
 def test_ensure_raises_when_two_listable_driving_rows_exist(
     isolated_registry: Path,
 ) -> None:

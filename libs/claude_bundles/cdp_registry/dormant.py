@@ -226,9 +226,6 @@ def relaunch_dormant(
         carry={
             "chat_url": chat_url,
             "relaunched_from_dormant_at": row.get("dormant_at"),
-            "seat_lane": row.get("seat_lane"),
-            "seat_closed_at": row.get("seat_closed_at"),
-            "seat_bound_at": row.get("seat_bound_at"),
         },
     )
     try:
@@ -241,6 +238,16 @@ def relaunch_dormant(
         raise
 
     reg = _row_to_registration(activated)
+    from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+
+    purpose = str(row.get("purpose") or "").strip()
+    kind = str(row.get("mission_kind") or "root").strip().lower() or "root"
+    parent = str(row.get("parent_thread") or "").strip()
+    if parent and purpose in OPERATOR_PURPOSES and kind != "hop":
+        from claude_bundles.cdp_registry.session_address import bind_driving_seat
+
+        bind_driving_seat(registration_id)
+        reg = _row_to_registration(_store.load_active()[registration_id])
     with contextlib.suppress(Exception):
         _events.emit(
             _events.cdp_port_relaunched(

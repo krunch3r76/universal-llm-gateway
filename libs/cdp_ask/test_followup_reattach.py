@@ -355,7 +355,58 @@ async def test_launch_path_registers_lane(monkeypatch: pytest.MonkeyPatch) -> No
     outcome = await ensure_cse_attached(CSE_A, holder="h")
     assert outcome.ok is True
     assert outcome.lane_created is True
-    register.assert_called_once_with(holder="h", purpose=None)
+    register.assert_called_once_with(
+        holder="h", purpose=None, parent_thread=None, mission_kind=None
+    )
+
+
+@pytest.mark.asyncio
+async def test_operator_mint_with_lane_yields_seat_open_after_bind(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """AC4: operator-purpose mint with parent_thread seats after bind_session_address."""
+    from claude_bundles import cdp_registry as reg
+    from claude_bundles.cdp_registry.models import seat_open
+
+    root = tmp_path / "cdp-registry"
+    root.mkdir()
+    regs = root / "registrations"
+    regs.mkdir()
+    for target in (reg._store, reg):
+        monkeypatch.setattr(target, "REGISTRY_DIR", root)
+        monkeypatch.setattr(target, "REGISTRY_LOG", root / "registry.jsonl")
+        monkeypatch.setattr(target, "ACTIVE_JSON", root / "active.json")
+        monkeypatch.setattr(target, "PORTS_LOCK", root / "ports.lock")
+        monkeypatch.setattr(target, "REGISTRATIONS_DIR", regs)
+    monkeypatch.setattr(reg, "_HELD_LOCKS", {})
+    monkeypatch.setattr(reg, "PORT_RANGE", range(9223, 9226))
+    profiles = tmp_path / "profiles"
+    profiles.mkdir()
+    monkeypatch.setattr(
+        reg.cdp_lane,
+        "profile_for",
+        lambda suffix: profiles / f"claude-ai-chrome-profile-{suffix}",
+    )
+    monkeypatch.setattr(
+        reg.cdp_lane,
+        "_launch_chrome",
+        lambda port, profile: (profile.mkdir(parents=True, exist_ok=True) or 1),
+    )
+    monkeypatch.setattr(
+        "cdp_ask.followup_reattach.connect_cdp",
+        _connect_factory(),
+    )
+
+    outcome = await ensure_cse_attached(
+        CSE_A,
+        holder="h",
+        purpose="operator-proxy",
+        parent_thread="10479",
+    )
+    assert outcome.ok is True
+    assert outcome.lane_created is True
+    row = reg._load_active()[outcome.registration_id]
+    assert seat_open(row, "10479")
 
 
 @pytest.mark.asyncio
@@ -413,7 +464,9 @@ async def test_orphan_only_discovery_does_not_exhaust_capacity(
     outcome = await ensure_cse_attached(CSE_A, holder="h")
     assert outcome.error != "lane_capacity_exhausted"
     assert outcome.error == "reattach_navigate_failed"
-    register.assert_called_once_with(holder="h", purpose=None)
+    register.assert_called_once_with(
+        holder="h", purpose=None, parent_thread=None, mission_kind=None
+    )
 
 
 @pytest.mark.asyncio

@@ -88,10 +88,17 @@ def ensure_driving_operator_seat(
         if isinstance(row, dict) and seat_open(row, parent)
     ]
     if len(open_seats) > 1:
-        ids = ", ".join(sorted(rid for rid, _row in open_seats))
-        raise RegistryError(
-            f"ambiguous open driving seats on parent_thread={parent}: {ids}"
-        )
+        winner_id = max(
+            open_seats,
+            key=lambda item: float(item[1].get("seat_bound_at") or 0.0),
+        )[0]
+        cdp_registry.bind_driving_seat(winner_id)
+        active = store.load_active()
+        open_seats = [
+            (rid, row)
+            for rid, row in active.items()
+            if isinstance(row, dict) and seat_open(row, parent)
+        ]
     if len(open_seats) == 1:
         rid, row = open_seats[0]
         if row.get("status") == STATUS_DORMANT:

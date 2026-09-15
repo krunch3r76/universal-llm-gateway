@@ -17,8 +17,6 @@ from claude_bundles import cdp_registry
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.skills_ui_panel import connect_cdp
 
-from cdp_ask.execution_store import ExecutionStore
-
 _CSE_PATH_MARKER = "/cowork/cse_"
 
 
@@ -177,6 +175,8 @@ async def ensure_cse_attached(
     *,
     holder: str,
     purpose: str | None = None,
+    parent_thread: str | None = None,
+    mission_kind: str | None = None,
     allow_mint: bool = True,
     restrict_to_registration_id: str | None = None,
 ) -> ReattachOutcome:
@@ -229,7 +229,12 @@ async def ensure_cse_attached(
     if not allow_mint:
         return ReattachOutcome(ok=False, error="reattach_no_host_available")
 
-    reg = cdp_registry.register_lane(holder=holder, purpose=purpose)
+    reg = cdp_registry.register_lane(
+        holder=holder,
+        purpose=purpose,
+        parent_thread=parent_thread,
+        mission_kind=mission_kind,
+    )
     opened = await _navigate_new_page(reg, chat_url)
     if opened is None:
         cdp_registry.deregister_lane(reg.registration_id)
