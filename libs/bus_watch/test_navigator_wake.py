@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +105,32 @@ def test_navigator_single_flight_lease(tmp_path: Path, monkeypatch) -> None:
         _digest(), _state(), register="autonomous", now=10_000.0
     )
     assert evaluation["clauses"]["navigator_single_flight"] is False
+
+
+@pytest.mark.offline
+def test_navigator_lease_concurrent_acquire_one_winner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression a:33951 — flock must block two simultaneous acquire attempts."""
+    monkeypatch.setattr("bus_watch.navigator_wake.WATCH_DIR", tmp_path)
+    barrier = threading.Barrier(2)
+    results: list[dict[str, Any]] = []
+
+    def _try() -> None:
+        barrier.wait()
+        results.append(acquire_navigator_lease("10479", ttl_seconds=600.0))
+
+    threads = [threading.Thread(target=_try) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert len(results) == 2
+    winners = [r for r in results if r.get("ok")]
+    losers = [r for r in results if not r.get("ok")]
+    assert len(winners) == 1
+    assert len(losers) == 1
+    assert losers[0]["reason"] == "navigator_in_flight"
 
 
 @pytest.mark.offline

@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from durable_io.atomic import durable_write_text, path_flock
 from stargate_dispatch.client import submit_team_dispatch
 
 from bus_watch.doorbell import render_doorbell
@@ -87,26 +88,30 @@ def acquire_navigator_lease(
     work_key: str | None = None,
     execution_id: str | None = None,
 ) -> dict[str, Any]:
-    """Atomically claim ``navigator:<root>`` for ``ttl_seconds``."""
+    """Atomically claim ``navigator:<root>`` for ``ttl_seconds``.
+
+    Cross-process serialisation uses ``fcntl.flock`` on a sibling lockfile
+    (``durable_io.atomic.path_flock``) so concurrent tickers cannot both pass
+    the read-then-write window (a:33951).
+    """
     rid = _validate_root_id(root_id)
     path = navigator_lock_path(rid)
-    current = read_navigator_lock(rid)
-    if current.get("holder") and not _lease_expired(current):
-        return {"ok": False, "reason": "navigator_in_flight", "lock": current}
-    expires_at_ts = time.time() + ttl_seconds
-    payload = {
-        "holder": holder,
-        "holder_pid": os.getpid(),
-        "claimed_at": _utcnow(),
-        "expires_at_ts": expires_at_ts,
-        "root": rid,
-        "work_key": work_key,
-        "execution_id": execution_id,
-    }
     WATCH_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    with path_flock(path):
+        current = read_navigator_lock(rid)
+        if current.get("holder") and not _lease_expired(current):
+            return {"ok": False, "reason": "navigator_in_flight", "lock": current}
+        expires_at_ts = time.time() + ttl_seconds
+        payload = {
+            "holder": holder,
+            "holder_pid": os.getpid(),
+            "claimed_at": _utcnow(),
+            "expires_at_ts": expires_at_ts,
+            "root": rid,
+            "work_key": work_key,
+            "execution_id": execution_id,
+        }
+        durable_write_text(path, json.dumps(payload, indent=2), already_locked=True)
     return {"ok": True, "lock": payload}
 
 
@@ -116,14 +121,16 @@ def release_navigator_lease(
     """Drop the navigator lease when dispatch reaches terminal state."""
     rid = _validate_root_id(root_id)
     path = navigator_lock_path(rid)
-    current = read_navigator_lock(rid)
-    if holder and current.get("holder") not in (holder, None):
-        return {"ok": False, "reason": "not_holder", "lock": current}
-    if current:
-        path.write_text(
-            json.dumps({"holder": None, "released_at": _utcnow(), "root": rid}),
-            encoding="utf-8",
-        )
+    with path_flock(path):
+        current = read_navigator_lock(rid)
+        if holder and current.get("holder") not in (holder, None):
+            return {"ok": False, "reason": "not_holder", "lock": current}
+        if current:
+            durable_write_text(
+                path,
+                json.dumps({"holder": None, "released_at": _utcnow(), "root": rid}),
+                already_locked=True,
+            )
     return {"ok": True, "lock": read_navigator_lock(rid)}
 
 
@@ -357,9 +364,12 @@ def fire_navigator_wake(
     if result["ok"]:
         execution_id = str(payload.get("execution_id") or "").strip()
         lock_path = navigator_lock_path(root_id)
-        lock = read_navigator_lock(root_id)
-        lock["execution_id"] = execution_id
-        lock_path.write_text(json.dumps(lock, indent=2), encoding="utf-8")
+        with path_flock(lock_path):
+            lock = read_navigator_lock(root_id)
+            lock["execution_id"] = execution_id
+            durable_write_text(
+                lock_path, json.dumps(lock, indent=2), already_locked=True
+            )
         if evaluation["include_commission"]:
             by_night = dict(state.get("navigator_commissions_by_night") or {})
             count = int(by_night.get(night_id) or 0) + 1
