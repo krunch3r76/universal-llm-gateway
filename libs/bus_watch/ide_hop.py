@@ -259,6 +259,59 @@ def remote_launch_command(
     )
 
 
+def _parse_keystroke_stdout(stdout: str) -> dict[str, Any]:
+    """Structured keystroke telemetry from the remote launcher's stdout."""
+    text = stdout.strip()
+    if not text:
+        return {"raw_stdout": ""}
+    for candidate in (text, text.splitlines()[-1]):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {"raw_stdout": stdout[-500:]}
+
+
+def remote_toplevels(gui_host: str) -> list[dict[str, Any]] | str:
+    """Compositor toplevel list from the GUI host — the ``not_landed`` diagnostic.
+
+    A hop can report ``activated`` on a title match and still not produce a chat:
+    the matched window may be the only Cursor toplevel while no editor window is
+    open, or the title may match a surface that does not host chats. Neither is
+    visible from the hub afterwards, so a failed hop captures the list at failure
+    time instead of costing an operator round-trip (hop 2026-09-15 05:12Z).
+    """
+    cmd = (
+        "export WAYLAND_DISPLAY=wayland-1 XDG_RUNTIME_DIR=/run/user/1000; "
+        f"python3 {shlex.quote(f'{DEFAULT_REMOTE_REPO}/scripts/cosmic_focus_window.py')} list"
+    )
+    try:
+        proc = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", gui_host, cmd],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return f"toplevel probe failed: {exc}"
+    if proc.returncode != 0:
+        return f"toplevel probe exit {proc.returncode}: {proc.stderr[-200:]}"
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return proc.stdout[-500:]
+    rows = payload.get("toplevels") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return proc.stdout[-500:]
+    return [
+        {k: row.get(k) for k in ("title", "app_id", "activated")}
+        for row in rows
+        if isinstance(row, dict)
+    ]
+
+
 def fire_ide_hop(
     message: str,
     *,
@@ -327,10 +380,13 @@ def fire_ide_hop(
             "stdout": proc.stdout[-1000:],
             **result,
         }
-    try:
-        keystroke = json.loads(proc.stdout.strip().splitlines()[-1])
-    except (json.JSONDecodeError, IndexError):
-        keystroke = {"raw_stdout": proc.stdout[-500:]}
+    # The remote prints ``json.dumps(out, indent=2)``, so the last stdout line is
+    # a bare ``}`` — parsing only that line silently discarded the activate proof
+    # on every hop and left ``raw_stdout`` as the sole telemetry (hop 2026-09-15
+    # 05:12Z: diagnosis of a not_landed needed the focused handle and could not
+    # read it). Parse the whole payload; fall back to the last line for a remote
+    # that ever emits single-line JSON.
+    keystroke = _parse_keystroke_stdout(proc.stdout)
     landed_id = wait_for_landed_transcript(
         hop_header_line(message),
         since_epoch=fired_at,
@@ -338,14 +394,24 @@ def fire_ide_hop(
         timeout_s=landing_timeout_s,
     )
     if landed_id is None:
+        toplevels = remote_toplevels(gui_host)
+        cursor_windows = (
+            [row for row in toplevels if row.get("app_id") == "cursor"]
+            if isinstance(toplevels, list)
+            else []
+        )
         return {
             "ok": False,
             "phase": "not_landed",
             "keystroke": keystroke,
+            "toplevels": toplevels,
+            "cursor_windows": cursor_windows,
             "fix": (
                 "no new Cursor chat carries the hop header — Ctrl+N / paste / "
                 f"Ctrl+Enter did not submit, or keys hit another window; "
-                f"focus was {focus_title!r} on {gui_host}"
+                f"focus was {focus_title!r} on {gui_host}. Check cursor_windows: "
+                "a lone 'Cursor Agents' toplevel with no editor window, or a "
+                "Cursor backend error, both activate cleanly and still land nothing."
             ),
             **result,
         }
