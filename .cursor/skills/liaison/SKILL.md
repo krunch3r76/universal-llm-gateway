@@ -282,7 +282,7 @@ NOW verbatim as `--row`; a headless successor gets it as `row=`.
 
 | Stop | Trigger | Action |
 |---|---|---|
-| `OPERATOR_GATE` | credentials · irreversible · money · outbound/calendar that commit other people · fleet-wide restart — **only when armed** via `liaison-tick.py --set operator_gate=…` (records `source=operator`, `as_of`). Seat prose or `now_row` containing `OPERATOR_GATE` is **not** a gate | CHECKPOINT + page + park **that row** (other rows continue). Clear with `--set operator_gate=clear`. ¬ a Cowork permission dialog, ¬ a missing scheduled-task tool, ¬ A7 first-ticker-night — those take the named fallback (gear-3 ticker). Hop refuses only on operator-sourced gate state, not on gate text in `now_row` |
+| `OPERATOR_GATE` | credentials · irreversible · money · outbound/calendar that commit other people · fleet-wide restart — **only when armed** via `liaison-tick.py --operator-gate <row>` (records `source=operator`, `as_of`). Seat prose or `now_row` containing `OPERATOR_GATE` is **not** a gate, and the successor-writable `--set` channel refuses the key | CHECKPOINT + page + park **that row** (other rows continue). Clear with `--operator-gate clear`. ¬ a Cowork permission dialog, ¬ a missing scheduled-task tool, ¬ A7 first-ticker-night — those take the named fallback (gear-3 ticker). Hop refuses only on operator-sourced gate state, not on gate text in `now_row` |
 | `HOLD_MERGE` | operator **explicitly** asked to hold the merge | leave lane branch, row `LAND OWED`, page; ¬ hop. Silence / missing `auto_land` is **not** a hold |
 | `CONSULT_PENDING` | independent check disagrees | row pinned, continue other rows |
 | `REPEATED_FAILURE` | same fix failed twice | stop the row, file friction, page |

@@ -9,7 +9,8 @@ seat lands in-tab, it does not hop.
 Operator 2026-09-15 (a:34092): ``OPERATOR_GATE`` is a typed stop with
 ``source=operator`` in policy — not a substring of ``now_row``. A seat
 writing gate prose into ``now_row`` does not arm or block; only
-``liaison-tick.py --set operator_gate=…`` arms it (page + park that row).
+``liaison-tick.py --operator-gate …`` arms it (page + park that row). The
+shared ``--set`` channel refuses the key — successors reach only ``--set``.
 """
 
 from __future__ import annotations

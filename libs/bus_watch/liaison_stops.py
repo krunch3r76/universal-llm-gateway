@@ -28,7 +28,7 @@ def _iso(value: datetime | str) -> str:
 
 
 def stamp_operator_gate(raw: object, *, as_of: datetime | str) -> dict[str, Any]:
-    """Arm or clear ``policy.operator_gate`` via the operator ``--set`` path only."""
+    """Build the typed gate record. Reached only from ``--operator-gate``."""
     as_of_iso = _iso(as_of)
     if isinstance(raw, dict):
         row = str(raw.get("row") or "").strip() or None
@@ -73,27 +73,50 @@ def operator_gate_armed(policy: dict[str, Any]) -> bool:
     return rec.get("source") == OPERATOR_SOURCE and bool(rec.get("value"))
 
 
+class OperatorGateChannelError(ValueError):
+    """Raised when ``operator_gate`` is routed through the shared ``--set`` channel."""
+
+
+def arm_operator_gate(
+    policy: dict[str, Any],
+    raw: object,
+    *,
+    as_of: datetime | str,
+) -> dict[str, object]:
+    """Arm or clear the gate. Sole arming path — reached only from the operator flag."""
+    merged = dict(policy)
+    merged[OPERATOR_GATE_KEY] = stamp_operator_gate(raw, as_of=as_of)
+    return merged
+
+
 def apply_policy_set(
     policy: dict[str, Any],
     set_items: dict[str, object],
     *,
     as_of: datetime | str,
 ) -> dict[str, object]:
-    """Merge ``--set`` keys into policy; ``operator_gate`` is stamped, ``now_row`` never arms."""
-    merged = dict(policy)
-    pending = dict(set_items)
-    if OPERATOR_GATE_KEY in pending:
-        merged[OPERATOR_GATE_KEY] = stamp_operator_gate(
-            pending.pop(OPERATOR_GATE_KEY), as_of=as_of
+    """Merge ``--set`` keys into policy.
+
+    ``operator_gate`` is refused here rather than stamped: ``--set`` is the channel
+    successors are handed, and ``stamp_operator_gate`` cannot tell callers apart, so
+    admitting the key on this channel would let a seat self-certify ``source=operator``.
+    """
+    if OPERATOR_GATE_KEY in set_items:
+        raise OperatorGateChannelError(
+            f"refusing: {OPERATOR_GATE_KEY} cannot be armed via --set "
+            "(successor-writable channel); use --operator-gate"
         )
-    merged.update(pending)
+    merged = dict(policy)
+    merged.update(set_items)
     return merged
 
 
 __all__ = [
     "OPERATOR_GATE_KEY",
     "OPERATOR_SOURCE",
+    "OperatorGateChannelError",
     "apply_policy_set",
+    "arm_operator_gate",
     "operator_gate_armed",
     "read_operator_gate",
     "stamp_operator_gate",

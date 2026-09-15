@@ -11,7 +11,9 @@ import pytest
 
 from bus_watch.hop_qualify import hop_qualifies
 from bus_watch.liaison_stops import (
+    OperatorGateChannelError,
     apply_policy_set,
+    arm_operator_gate,
     operator_gate_armed,
     read_operator_gate,
     stamp_operator_gate,
@@ -53,7 +55,7 @@ def test_arm_via_operator_path_records_source_and_as_of() -> None:
     assert rec["source"] == "operator"
     assert rec["as_of"] == "2026-09-15T12:00:00Z"
     assert rec["row"] == "credentials for deploy"
-    policy = apply_policy_set({}, {"operator_gate": True}, as_of="2026-09-15T13:00:00Z")
+    policy = arm_operator_gate({}, True, as_of="2026-09-15T13:00:00Z")
     assert operator_gate_armed(policy)
     stored = read_operator_gate(policy)
     assert stored is not None
@@ -61,10 +63,16 @@ def test_arm_via_operator_path_records_source_and_as_of() -> None:
     assert stored["as_of"] == "2026-09-15T13:00:00Z"
 
 
+def test_set_channel_refuses_operator_gate_key() -> None:
+    """A successor reaches only --set; it must not be able to self-certify a gate."""
+    with pytest.raises(OperatorGateChannelError):
+        apply_policy_set({}, {"operator_gate": True}, as_of="2026-09-15T13:00:00Z")
+
+
 def test_clear_operator_gate() -> None:
-    policy = apply_policy_set(
+    policy = arm_operator_gate(
         {"operator_gate": stamp_operator_gate(True, as_of="2026-09-15T12:00:00Z")},
-        {"operator_gate": "clear"},
+        "clear",
         as_of="2026-09-15T13:00:00Z",
     )
     rec = read_operator_gate(policy)

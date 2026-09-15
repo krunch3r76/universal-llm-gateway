@@ -58,7 +58,11 @@ from bus_watch.liaison_digest import (
     build_digest,
     effective_policy,
 )
-from bus_watch.liaison_stops import apply_policy_set
+from bus_watch.liaison_stops import (
+    OperatorGateChannelError,
+    apply_policy_set,
+    arm_operator_gate,
+)
 from bus_watch.spawn_on_wake import tick_spawn_on_wake
 from bus_watch.tick_state import (
     absorb_operator_edits,
@@ -222,6 +226,13 @@ def main() -> int:
         help="set a policy knob (gear, successor_model, max_ticks_per_hop, …); repeatable",
     )
     p.add_argument(
+        "--operator-gate",
+        default=None,
+        metavar="ARM|clear|ROW",
+        help="operator-only: arm or clear the typed OPERATOR_GATE stop (a:34092). Never "
+        "appears in a successor wake — the shared --set channel refuses this key",
+    )
+    p.add_argument(
         "--policy", action="store_true", help="print the effective policy and exit"
     )
     p.add_argument(
@@ -273,6 +284,10 @@ def main() -> int:
     state = load_state(state_path)
     if set_items:
         _validate_successor_policy_set(root, state, set_items)
+        try:
+            apply_policy_set({}, set_items, as_of=_utcnow())
+        except OperatorGateChannelError as exc:
+            p.error(str(exc))
 
     def _operator_edits(fresh: dict) -> None:
         # Applied to the file as it is at write time (tick_state.update_state):
@@ -291,6 +306,10 @@ def main() -> int:
         if set_items:
             fresh["policy"] = apply_policy_set(
                 fresh.get("policy") or {}, set_items, as_of=_utcnow()
+            )
+        if args.operator_gate is not None:
+            fresh["policy"] = arm_operator_gate(
+                fresh.get("policy") or {}, args.operator_gate, as_of=_utcnow()
             )
 
     _operator_edits(state)
