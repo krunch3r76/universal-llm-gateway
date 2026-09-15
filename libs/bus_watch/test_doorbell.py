@@ -190,9 +190,9 @@ def test_commission_shed_is_atomic_under_cap() -> None:
 
 
 @pytest.mark.offline
-def test_default_render_byte_identical_921() -> None:
+def test_default_render_byte_identical_1019() -> None:
     text = _default_render()
-    assert len(text.encode("utf-8")) == 921
+    assert len(text.encode("utf-8")) == 1019
 
 
 @pytest.mark.offline

@@ -5,8 +5,8 @@ on the bus/graph. Amendment A1 digest delivery; memos 10479#118 (plant an
 address, never a dump) and #120 (direct ``Use the <slug> skill`` lines).
 
 ``DOORBELL_CAP`` is 1400 bytes: basis floor is ~1132 B once the status quintuple
-is carried; the ``commission:`` line costs exactly 203 B (measured); 1400 leaves
-268 B of ladder headroom. The binder's rule is "the basis is never shed to fit a
+is carried; the ``commission:`` line costs exactly 250 B (measured, including the
+admission-gate tokens); 1400 leaves 221 B of ladder headroom. The binder's rule is "the basis is never shed to fit a
 cap; the cap moves."
 """
 
@@ -32,7 +32,14 @@ _ECHO_FIELDS = (
     "tools: <count>",
 )
 _SHEDDABLE_ECHO_FIELDS = ("tools: <count>", "objective: <root.last_subject>")
-_COMMISSION_HINT = "if attention mint; quiet echo; "
+# The admission gate reads line-start tokens, so a commission whose scope lives in
+# prose caps is refused ``empty_directive_scope``; a pinned model on the ask lane is
+# refused ``ask_escalation_unsupported``. Both refusals cost a whole tick, so the
+# doorbell names the tokens rather than leaving them to the seat's memory.
+_COMMISSION_HINT = (
+    "if attention mint; quiet echo; line-start `scope:` + `files_expected:` + "
+    "`vision:` (prose caps are not tokens); ¬desired_model; "
+)
 _STALE_CONTRACT = "re-fetch DIGEST; on epoch mismatch echo STALE and stop"
 
 __all__ = [
