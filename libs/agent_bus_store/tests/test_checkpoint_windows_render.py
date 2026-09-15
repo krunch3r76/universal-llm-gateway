@@ -7,9 +7,11 @@ from datetime import timedelta
 
 import pytest
 from agent_bus_store.checkpoint_projection import RESUME_FOOTER_PREFIX
+from agent_bus_store.checkpoint_projection_lanes import CHECKPOINT_MAX_CHILD_ROWS
 from agent_bus_store.checkpoint_windows_render import (
     CheckpointTurnRow,
     WindowRow,
+    _visible_window_rows,
     apply_checkpoint_windows_to_rows,
     extract_arc_from_summary,
     fetch_journals_for_thread,
@@ -133,6 +135,30 @@ def test_render_windows_table_and_section() -> None:
     section = render_windows_section(rows=rows)
     assert "## Windows (rendered at read" in section
     assert table in section
+
+
+def test_visible_window_rows_keeps_newest_cap() -> None:
+    rows = tuple(
+        WindowRow(i, i * 10, f"sess-{i}", f"arc-{i}", i) for i in range(1, 13)
+    )
+    visible, omitted = _visible_window_rows(rows)
+    assert omitted == 12 - CHECKPOINT_MAX_CHILD_ROWS
+    assert len(visible) == CHECKPOINT_MAX_CHILD_ROWS
+    assert visible[0].cp_ordinal == 5
+    assert visible[-1].cp_ordinal == 12
+
+
+def test_render_windows_section_caps_with_pointer() -> None:
+    rows = tuple(
+        WindowRow(i, i * 10, f"sess-{i}", f"arc-{i}", i) for i in range(1, 13)
+    )
+    section = render_windows_section(rows=rows, root_thread="10479")
+    assert "| 5 | 50 |" in section
+    assert "| 12 | 120 |" in section
+    assert "| 1 | 10 |" not in section
+    assert "_+4 earlier windows omitted" in section
+    assert "CHECKPOINT_MAX_CHILD_ROWS=8" in section
+    assert "10479-transcript-projection" in section
 
 
 def test_inject_windows_before_residue() -> None:

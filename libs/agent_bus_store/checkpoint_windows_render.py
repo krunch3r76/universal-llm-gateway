@@ -16,6 +16,8 @@ from .checkpoint_projection import (
     RESUME_FOOTER_PREFIX,
     is_checkpoint_subject,
 )
+from .checkpoint_projection_lanes import CHECKPOINT_MAX_CHILD_ROWS
+from .checkpoint_projection_producers import transcript_projection_registry_uri
 from .checkpoint_windows_join import (
     CheckpointTurnLister,
     CheckpointTurnRow,
@@ -44,6 +46,16 @@ _PRIOR_WINDOWS_RE = re.compile(
 )
 
 
+def _visible_window_rows(
+    rows: tuple[WindowRow, ...],
+) -> tuple[tuple[WindowRow, ...], int]:
+    """Keep the newest window rows; return (visible, omitted_earlier_count)."""
+    cap = CHECKPOINT_MAX_CHILD_ROWS
+    if len(rows) <= cap:
+        return rows, 0
+    return rows[-cap:], len(rows) - cap
+
+
 def render_windows_table(rows: tuple[WindowRow, ...]) -> str:
     """Render the markdown table body (without section header)."""
     if not rows:
@@ -66,11 +78,24 @@ def render_windows_section(
     *,
     rows: tuple[WindowRow, ...],
     unrendered: bool = False,
+    root_thread: str | None = None,
 ) -> str:
     parts = [_WINDOWS_HEADER]
     if unrendered:
         parts.append(_WINDOWS_UNRENDERED_BANNER)
-    parts.append(render_windows_table(rows))
+    visible, omitted = _visible_window_rows(rows)
+    parts.append(render_windows_table(visible))
+    if omitted > 0:
+        registry = (
+            transcript_projection_registry_uri(root_thread)
+            if root_thread
+            else "checkpoint_windows_render"
+        )
+        parts.append(
+            f"_+{omitted} earlier windows omitted · cap: "
+            f"checkpoint_projection_lanes.CHECKPOINT_MAX_CHILD_ROWS="
+            f"{CHECKPOINT_MAX_CHILD_ROWS}_ · registry: {registry}_"
+        )
     return "\n".join(parts)
 
 
@@ -153,7 +178,11 @@ def _apply_checkpoint_windows_to_single_thread_rows(
         )
         unrendered = True
 
-    windows_md = render_windows_section(rows=window_rows, unrendered=unrendered)
+    windows_md = render_windows_section(
+        rows=window_rows,
+        unrendered=unrendered,
+        root_thread=thread,
+    )
     rendered: list[dict[str, Any]] = []
     for row in rows:
         if int(row["id"]) not in checkpoint_ids:
@@ -230,7 +259,11 @@ def maybe_render_checkpoint_windows(
             for cp in turns
         )
         unrendered = True
-    windows_md = render_windows_section(rows=rows, unrendered=unrendered)
+    windows_md = render_windows_section(
+        rows=rows,
+        unrendered=unrendered,
+        root_thread=thread,
+    )
     return inject_windows_section(body, windows_md)
 
 
