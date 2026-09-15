@@ -9,17 +9,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from cdp_ask.operator_seat_resolve import resolve_operator_seat
 from claude_bundles.cdp_registry.session_address import (
     chat_url_for_registration,
     list_active,
 )
-from claude_bundles.cdp_registry_store import load_active as load_active_rows
 from claude_bundles.cdp_registry_store import load_sessions
 from claude_bundles.cse_session_obligations import (
     resolve_payment_channel,
     stamp_session_ids,
 )
-from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.hop_cadence_home_lane import (
@@ -100,30 +99,11 @@ def _from_csr(job: AutoJob, pager_key: str) -> dict[str, str | None]:
 
 
 def _from_registry(pager_key: str) -> dict[str, str | None]:
-    active = load_active_rows()
-    rows: list[tuple[str, str | None, float]] = []
-    for reg in list_active():
-        purpose = (reg.purpose or "").strip()
-        if purpose not in OPERATOR_PURPOSES:
-            continue
-        if str(reg.parent_thread or "").strip() != pager_key:
-            continue
-        raw = active.get(reg.registration_id) or {}
-        started = raw.get("started_at")
-        try:
-            started_f = float(started) if started is not None else 0.0
-        except (TypeError, ValueError):
-            started_f = 0.0
-        kind = str(reg.mission_kind or "root").strip().lower() or "root"
-        rows.append((reg.registration_id, kind, started_f))
-    if not rows:
+    resolved = resolve_operator_seat(pager_key)
+    reg_id = (resolved.get("registration_id") or "").strip() or None
+    if not reg_id:
         return _empty_address()
-    hop_rows = [r for r in rows if r[1] == "hop"]
-    if len(hop_rows) == 1:
-        reg_id = hop_rows[0][0]
-    else:
-        reg_id = max(rows, key=lambda r: r[2])[0]
-    url = _url_for_registration(reg_id)
+    url = (resolved.get("chat_url") or "").strip() or _url_for_registration(reg_id)
     return {"chat_url": url, "registration_id": reg_id, "source": "registry"}
 
 

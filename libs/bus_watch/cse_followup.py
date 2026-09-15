@@ -7,9 +7,7 @@ from typing import Any, Protocol
 
 import httpx
 from cdp_ask.client import format_cdp_ask_http_error, project_ask_base_url
-from claude_bundles.cdp_registry import chat_url_for_registration, list_active
-from claude_bundles.cdp_registry_store import load_active
-from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+from cdp_ask.operator_seat_resolve import resolve_operator_seat
 
 _FOLLOWUPS_PATH = "/v1/project-ask/followups"
 _DEFAULT_TIMEOUT_S = 60.0
@@ -33,32 +31,16 @@ def resolve_cse_identity(root_id: str) -> dict[str, str | None]:
     """Resolve CSE ``chat_url`` / ``registration_id`` from registry ``parent_thread``."""
     parent = str(root_id or "").strip()
     if not parent:
-        return {"chat_url": None, "registration_id": None, "url": None}
+        return {"chat_url": None, "registration_id": None, "url": None, "source": None}
 
-    active = load_active()
-    rows: list[tuple[str, str | None, float]] = []
-    for reg in list_active():
-        purpose = (reg.purpose or "").strip()
-        if purpose not in OPERATOR_PURPOSES:
-            continue
-        if str(reg.parent_thread or "").strip() != parent:
-            continue
-        raw = active.get(reg.registration_id) or {}
-        started = raw.get("started_at")
-        try:
-            started_f = float(started) if started is not None else 0.0
-        except (TypeError, ValueError):
-            started_f = 0.0
-        kind = str(reg.mission_kind or "root").strip().lower() or "root"
-        rows.append((reg.registration_id, kind, started_f))
-
-    if not rows:
-        return {"chat_url": None, "registration_id": None, "url": None}
-
-    hop_rows = [row for row in rows if row[1] == "hop"]
-    reg_id = hop_rows[0][0] if len(hop_rows) == 1 else max(rows, key=lambda r: r[2])[0]
-    url = (chat_url_for_registration(reg_id) or "").strip() or None
-    return {"chat_url": url, "registration_id": reg_id, "url": url}
+    resolved = resolve_operator_seat(parent)
+    url = resolved.get("chat_url")
+    return {
+        "chat_url": url,
+        "registration_id": resolved.get("registration_id"),
+        "url": url,
+        "source": resolved.get("source"),
+    }
 
 
 def fire_cse_followup(
@@ -86,6 +68,7 @@ def fire_cse_followup(
             "root": root,
             "url": url,
             "registration_id": registration_id,
+            "source": identity.get("source"),
             "send_verified": False,
         }
 
