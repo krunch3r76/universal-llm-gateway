@@ -16,6 +16,7 @@ def build_successor_message(
     *,
     gear: str,
     row: str,
+    seat: str = "cursor-sdk",
     tip_cp_ordinal: int | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
@@ -26,6 +27,7 @@ def build_successor_message(
         root_id,
         gear=gear,
         row=row,
+        seat=seat,
         tip_cp_ordinal=tip_cp_ordinal,
         ring=ring,
         extra_addresses=tuple(extra_addresses),
@@ -44,17 +46,19 @@ def build_dispatch_body(
     max_hop = int(policy.get("max_hop_minutes") or 60)
     ctx = dict(successor_context or {})
     extras = ctx.get("extra_addresses") or policy.get("successor_extra_addresses") or ()
+    seat = policy.get("successor_seat") or "cursor-sdk"
     message = build_successor_message(
         root_id,
         gear=str(ctx.get("gear") or policy.get("gear") or "1-fable-mvp"),
         row=str(ctx.get("row") or ""),
+        seat=seat,
         tip_cp_ordinal=ctx.get("tip_cp_ordinal"),
         ring=ctx.get("ring") or policy.get("wake_ring"),
         extra_addresses=tuple(extras),
     )
     body: dict[str, Any] = {
         "op": "generate",
-        "seat": policy.get("successor_seat") or "cursor-sdk",
+        "seat": seat,
         "contract": "none",
         "lane": "A",
         "model": policy.get("successor_model"),

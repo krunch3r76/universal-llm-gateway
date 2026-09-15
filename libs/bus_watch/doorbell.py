@@ -122,11 +122,29 @@ def basis_floor_bytes(
     return len(text.encode("utf-8"))
 
 
+def _seat_surface(seat: str) -> str:
+    """Map a dispatch seat id to the ``doorbell_skills`` surface key."""
+    key = str(seat or "cursor-sdk").strip().lower()
+    if key.startswith("cdp"):
+        return "cdp"
+    if key.startswith("cse"):
+        return "cse"
+    if key in ("cursor-sdk", "cursor"):
+        return "cursor-sdk"
+    return key if key in ("ide", "cursor-sdk", "cdp", "cse") else "ide"
+
+
+def _seat_has_jupiter_shell(seat: str) -> bool:
+    """True when the seat can arm ``watch-supervise.sh`` (Jupiter IDE shell)."""
+    return str(seat or "").strip().lower() in ("cursor-sdk", "cursor")
+
+
 def render_doorbell(
     root: str,
     slug: str,
     *,
     ring: str | None = None,
+    seat: str = "web-anthropic",
     surface: str = "ide",
     skills: tuple[str, ...] | None = None,
     extra_addresses: tuple[str, ...] = (),
@@ -199,7 +217,7 @@ def render_doorbell(
         lines.extend(f"Use the {skill} skill." for skill in skill_slugs)
         lines.extend(
             [
-                f"frame: fired by {fire}; seat web-anthropic; prior wake = last ORIENTED turn on agent-bus:{echo}.",
+                f"frame: fired by {fire}; seat {seat}; prior wake = last ORIENTED turn on agent-bus:{echo}.",
                 f'echo: agent_bus(send, thread={echo}, subject="ORIENTED {root}", body="{body}")',
             ]
         )
@@ -232,8 +250,8 @@ def render_doorbell(
     return message
 
 
-def _successor_liaison_slug() -> str:
-    return doorbell_skills("cursor-sdk")[0]
+def _successor_liaison_slug(seat: str = "cursor-sdk") -> str:
+    return doorbell_skills(_seat_surface(seat))[0]
 
 
 def _compose_successor_wake(
@@ -241,6 +259,7 @@ def _compose_successor_wake(
     *,
     gear: str,
     row: str,
+    seat: str = "cursor-sdk",
     tip_cp_ordinal: int | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
@@ -250,27 +269,35 @@ def _compose_successor_wake(
     tip_val = tip_cp_ordinal if tip_cp_ordinal is not None else ""
     extras = "".join(f"; {render_address(addr)}" for addr in extra_addresses)
     resume_args = f'{{"op":"resume","thread":"{root_id}"}}'
-    return (
-        f"resume {root_id}\n\n"
-        f"WAKE — liaison headless successor, house agent-bus:{root_id} — contract: none.\n"
+    liaison_slug = _successor_liaison_slug(seat)
+    lines = [
+        f"resume {root_id}",
+        "",
+        f"WAKE — liaison headless successor, house agent-bus:{root_id} — contract: none.",
         "duty: run the tick; checkpoint; hop only if hop_qualifies. "
-        "Hop only when autonomous follow-up remains; HOLD_MERGE / empty NOW / quiet tick → STAY.\n"
-        "disclosure: orientation ritual; one echo before the first move.\n"
+        "Hop only when autonomous follow-up remains; HOLD_MERGE / empty NOW / quiet tick → STAY.",
+        "disclosure: orientation ritual; one echo before the first move.",
         f"objective: tip CHECKPOINT on agent-bus:{root_id} "
-        f"(tip_cp_ordinal={tip_val}); row={row}; gear: {gear}.\n"
+        f"(tip_cp_ordinal={tip_val}); row={row}; gear: {gear}.",
         f"addresses: dispatch(tool=\"continuity\", arguments='{resume_args}'); "
-        f"agent_bus_read(thread_get, thread={root_id}); agent-bus:{echo} (echo){extras}\n"
-        f"Use the {_successor_liaison_slug()} skill. "
-        f"LOAD the {_successor_liaison_slug()} skill body; do not skim.\n"
-        "LOAD AND EXECUTE runbook:bus-consult-watcher (legs 1-3).\n"
-        f"frame: spawned by liaison-ticker gear {gear}; seat cursor-sdk; "
-        f"predecessor = prior lease holder on agent-bus:{root_id}. "
-        "§ Peer-house: keep both; cdp/opus-5 → 2nd pool → cursor/claude-opus-5; "
-        "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled.\n"
-        f'echo: agent_bus(send, thread={echo}, subject="ORIENTED {root_id}", '
-        'body="ORIENTED / tip: <CHECKPOINT subject> cp_ordinal=<n> / row: <row> / seat: cursor-sdk") '
-        "before the first mutating move.\n"
+        f"agent_bus_read(thread_get, thread={root_id}); agent-bus:{echo} (echo){extras}",
+        f"Use the {liaison_slug} skill. "
+        f"LOAD the {liaison_slug} skill body; do not skim.",
+    ]
+    if _seat_has_jupiter_shell(seat):
+        lines.append("LOAD AND EXECUTE runbook:bus-consult-watcher (legs 1-3).")
+    lines.extend(
+        [
+            f"frame: spawned by liaison-ticker gear {gear}; seat {seat}; "
+            f"predecessor = prior lease holder on agent-bus:{root_id}. "
+            "§ Peer-house: keep both; cdp/opus-5 → 2nd pool → cursor/claude-opus-5; "
+            "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled.",
+            f'echo: agent_bus(send, thread={echo}, subject="ORIENTED {root_id}", '
+            f'body="ORIENTED / tip: <CHECKPOINT subject> cp_ordinal=<n> / row: <row> / seat: {seat}") '
+            "before the first mutating move.",
+        ]
     )
+    return "\n".join(lines) + "\n"
 
 
 def successor_wake_unshed_byte_length(
@@ -278,6 +305,7 @@ def successor_wake_unshed_byte_length(
     *,
     gear: str,
     row: str,
+    seat: str = "cursor-sdk",
     tip_cp_ordinal: int | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
@@ -288,6 +316,7 @@ def successor_wake_unshed_byte_length(
             root_id,
             gear=gear,
             row=row,
+            seat=seat,
             tip_cp_ordinal=tip_cp_ordinal,
             ring=ring,
             extra_addresses=extra_addresses,
@@ -325,6 +354,7 @@ def render_successor_wake(
     *,
     gear: str,
     row: str,
+    seat: str = "cursor-sdk",
     tip_cp_ordinal: int | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
@@ -347,6 +377,7 @@ def render_successor_wake(
             root_id,
             gear=gear,
             row=row_text,
+            seat=seat,
             tip_cp_ordinal=tip_cp_ordinal,
             ring=ring,
             extra_addresses=addresses,
