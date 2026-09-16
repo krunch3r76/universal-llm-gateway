@@ -41,16 +41,19 @@ _DISPATCH_TIMEOUT = 15.0
 
 
 def coerce_checkpoint_pre_consolidate(
-    surface: str, pre_consolidate: bool | None
+    surface: str,
+    pre_consolidate: bool | None,
+    channel: str | None = None,
 ) -> bool:
-    """Default omitted ``pre_consolidate`` so IDE hops do not dual-succeed.
+    """Default omitted ``pre_consolidate`` keyed on hop channel, not surface.
 
-    ``surface=cursor`` omit → False (a:33285 / a:33297). ``claude_ai`` omit
-    stays True. Explicit values always win.
+    ``channel=hop`` omit → False (IDE hop / explicit hop seal). All other
+    channels omit → True (pipeline authors). Explicit values always win.
     """
+    del surface  # surface no longer participates in the default
     if pre_consolidate is not None:
         return bool(pre_consolidate)
-    return surface != "cursor"
+    return channel != "hop"
 
 
 def _no_root_house_error(trigger_thread: str) -> dict[str, Any]:
@@ -357,7 +360,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
                 chat_url=chat_url,
                 residue=residue,
                 pre_consolidate=coerce_checkpoint_pre_consolidate(
-                    surface, pre_consolidate
+                    surface, pre_consolidate, channel
                 ),
                 tools=tools or "none",
                 channel=channel,

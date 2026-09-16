@@ -259,11 +259,19 @@ def test_checkpoint_missing_required(continuity_fn) -> None:
     assert result["error"]["code"] == "missing_required"
 
 
-def test_coerce_checkpoint_pre_consolidate() -> None:
-    assert coerce_checkpoint_pre_consolidate("cursor", None) is False
-    assert coerce_checkpoint_pre_consolidate("claude_ai", None) is True
-    assert coerce_checkpoint_pre_consolidate("cursor", True) is True
-    assert coerce_checkpoint_pre_consolidate("claude_ai", False) is False
+def test_coerce_pre_consolidate_defaults_true_without_hop_channel() -> None:
+    assert coerce_checkpoint_pre_consolidate("cursor", None, None) is True
+    assert coerce_checkpoint_pre_consolidate("claude_ai", None, None) is True
+
+
+def test_coerce_pre_consolidate_hop_channel_forces_false() -> None:
+    assert coerce_checkpoint_pre_consolidate("cursor", None, "hop") is False
+    assert coerce_checkpoint_pre_consolidate("claude_ai", None, "hop") is False
+
+
+def test_coerce_pre_consolidate_explicit_value_wins() -> None:
+    assert coerce_checkpoint_pre_consolidate("cursor", True, "hop") is True
+    assert coerce_checkpoint_pre_consolidate("claude_ai", False, None) is False
 
 
 def test_checkpoint_relay(continuity_fn) -> None:
@@ -301,7 +309,7 @@ def test_checkpoint_relay(continuity_fn) -> None:
     assert result["execution_id"] == "exec-cp-1"
     assert posted["url"] == "/api/v1/continuity/checkpoint"
     assert posted["body"]["surface"] == "cursor"
-    assert posted["body"]["pre_consolidate"] is False
+    assert posted["body"]["pre_consolidate"] is True
 
 
 def test_checkpoint_claude_ai_omitted_pre_consolidate_defaults_true(

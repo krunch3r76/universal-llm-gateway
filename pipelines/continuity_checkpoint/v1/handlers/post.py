@@ -12,6 +12,7 @@ from continuity_tape.events import stargate_continuity_checkpoint_posted
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
+from ._card_patch import clamp_residue
 from ._clients import bus_get, bus_send, step_output_json
 
 logger = logging.getLogger(__name__)
@@ -160,8 +161,9 @@ class ContinuityCheckpointPostHandler(BaseHandler):
                 "card_patch_applied": False,
             }
 
-        residue_source = "caller" if caller_residue else pre.get("residue_source")
+        pre_source = pre.get("residue_source")
         mission = str(pre.get("mission") or "")
+        residue_clamped = False
 
         tip, _ = await bus_get(
             "/turns/by-number",
@@ -170,19 +172,25 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         after_turn = int(tip.get("turn_number") or 0) if isinstance(tip, dict) else 0
         prior_body = str(tip.get("body") or "") if isinstance(tip, dict) else ""
 
-        if caller_residue:
-            residue = caller_residue[:800]
-        elif residue_source is None:
+        if pre_source in ("model", "seed", "mechanical"):
+            residue, residue_clamped = clamp_residue(str(pre.get("residue") or ""))
+            residue_source = pre_source
+        elif caller_residue:
+            residue, residue_clamped = clamp_residue(caller_residue)
+            residue_source = "caller"
+        elif pre_source is None:
             carried = _carry_forward_residue(
                 prior_body=prior_body, prior_turn=after_turn
             )
             if carried:
-                residue = carried[:800]
+                residue, residue_clamped = clamp_residue(carried)
                 residue_source = "carried_forward"
             else:
-                residue = str(pre.get("residue") or "")[:800]
+                residue, residue_clamped = clamp_residue(str(pre.get("residue") or ""))
+                residue_source = pre_source or "mechanical"
         else:
-            residue = str(pre.get("residue") or "")[:800]
+            residue, residue_clamped = clamp_residue(str(pre.get("residue") or ""))
+            residue_source = pre_source or "mechanical"
 
         checkpoint_channel = str(options.get("channel") or "continuity")
         body = _compose_body(
@@ -277,6 +285,7 @@ class ContinuityCheckpointPostHandler(BaseHandler):
                 "executor": pre.get("executor") or "skipped",
                 "card_patch_applied": bool(pre.get("card_patch_applied")),
                 "residue_source": residue_source,
+                "residue_clamped": residue_clamped,
                 "supersedes_tip": supersedes_tip,
             },
             "harvest_entity_id": f"transcript:{session_id}" if session_id else None,

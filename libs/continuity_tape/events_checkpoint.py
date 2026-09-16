@@ -169,6 +169,31 @@ def stargate_continuity_checkpoint_tail_folded(
 
 
 @event_factory
+def stargate_continuity_checkpoint_pre_consolidate_degraded(
+    *,
+    execution_id: str,
+    thread: str,
+    surface: str,
+    from_agent: str,
+    reason: str,
+) -> Event:
+    ev = Event(
+        signal="stargate.continuity.checkpoint.pre_consolidate_degraded",
+        role="observation",
+        scope="global",
+        payload={
+            "execution_id": execution_id,
+            "thread": thread,
+            "surface": surface,
+            "from_agent": from_agent,
+            "reason": reason,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
 def mcp_continuity_checkpoint_requested(
     *,
     surface: str,
@@ -190,6 +215,7 @@ __all__ = [
     "stargate_continuity_checkpoint_card_patched",
     "stargate_continuity_checkpoint_failed",
     "stargate_continuity_checkpoint_posted",
+    "stargate_continuity_checkpoint_pre_consolidate_degraded",
     "stargate_continuity_checkpoint_sealed",
     "stargate_continuity_checkpoint_tail_folded",
 ]

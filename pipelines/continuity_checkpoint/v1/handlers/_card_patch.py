@@ -13,6 +13,24 @@ from markdown_sections import read_section, replace_section
 _JSON_FENCE_RE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE)
 _WORKSPACES_ULG_PREFIX = "workspaces://universal-llm-gateway/"
 
+RESIDUE_CAP_CHARS = 800
+
+
+def clamp_residue(text: str, cap: int = RESIDUE_CAP_CHARS) -> tuple[str, bool]:
+    """Truncate at last line boundary ≤ cap; append marker when clamped."""
+    if len(text) <= cap:
+        return text, False
+    cut = text.rfind("\n", 0, cap + 1)
+    if cut <= 0:
+        truncated = text[:cap]
+    else:
+        truncated = text[:cut].rstrip("\n")
+    marker = f"…[residue clamped {len(text)}→{cap}]"
+    # Keep marker within cap when possible
+    if len(truncated) + len(marker) > cap:
+        truncated = truncated[: max(0, cap - len(marker))]
+    return truncated + marker, True
+
 
 def _ulg_repo_root() -> Path | None:
     for key in ("UNIVERSAL_LLM_GATEWAY_ROOT", "REPO_ROOT", "WORKSPACE_ROOT"):
@@ -85,7 +103,7 @@ def validate_worker_payload(data: dict[str, Any]) -> tuple[bool, str]:
     mission = str(data.get("mission") or "")
     if "### User" in residue or "### User" in mission:
         return False, "speech_in_body"
-    if len(residue) > 800:
+    if len(residue) > 2 * RESIDUE_CAP_CHARS:
         return False, "residue_too_long"
     if "Mission:" not in residue and not mission.strip():
         return False, "missing_mission"
@@ -218,9 +236,11 @@ def apply_fold_summary_to_card(
 
 
 __all__ = [
+    "RESIDUE_CAP_CHARS",
     "apply_card_patch",
     "apply_fold_summary_to_card",
     "card_path",
+    "clamp_residue",
     "derive_settled_live_next",
     "parse_worker_json",
     "validate_worker_payload",

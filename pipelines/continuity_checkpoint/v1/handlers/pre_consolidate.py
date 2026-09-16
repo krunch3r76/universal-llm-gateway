@@ -7,11 +7,19 @@ import logging
 import time
 from typing import Any, override
 
-from continuity_tape.events import stargate_continuity_checkpoint_card_patched
+from continuity_tape.events import (
+    stargate_continuity_checkpoint_card_patched,
+    stargate_continuity_checkpoint_pre_consolidate_degraded,
+)
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from ._card_patch import apply_card_patch, parse_worker_json, validate_worker_payload
+from ._card_patch import (
+    apply_card_patch,
+    clamp_residue,
+    parse_worker_json,
+    validate_worker_payload,
+)
 from ._clients import (
     bus_fetch_turn,
     bus_get,
@@ -20,7 +28,12 @@ from ._clients import (
     stargate_post,
     step_output_json,
 )
-from ._packet import render_pre_consolidate_packet, write_packet_file
+from ._packet import (
+    PRE_CONSOLIDATE_TAPE_CHARS,
+    render_pre_consolidate_packet,
+    render_tape_lines,
+    write_packet_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +72,23 @@ def _tape_summary(tape_json: dict[str, Any] | None) -> str:
     )
 
 
+def _emit_degraded(
+    *,
+    execution_id: str,
+    thread: str,
+    surface: str,
+    from_agent: str,
+    reason: str,
+) -> None:
+    stargate_continuity_checkpoint_pre_consolidate_degraded(
+        execution_id=execution_id,
+        thread=thread,
+        surface=surface,
+        from_agent=from_agent,
+        reason=reason,
+    )
+
+
 class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
     """Dispatch read-only cursor-sdk packet and apply card patch from worker JSON."""
 
@@ -69,8 +99,10 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
         options: dict[str, Any] = getattr(context, "options", {}) or {}
         thread = str(options.get("thread") or context.dispatch_thread_id or "")
         from_agent = str(options.get("from_agent") or "continuity")
+        surface = str(options.get("surface") or "cursor")
         execution_id = str(context.execution_id or "")
-        seat_residue = str(options.get("residue") or "")
+        seat_seed_raw = str(options.get("residue") or "")
+        tape_chars = int(options.get("tape_chars") or PRE_CONSOLIDATE_TAPE_CHARS)
 
         outputs = getattr(context, "outputs", {}) or {}
         seal = step_output_json(outputs, "seal")
@@ -118,62 +150,42 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
         if isinstance(tip, dict):
             tip_residue = str(tip.get("body") or "")[:1200]
 
-        if seat_residue:
-            result = {
-                "residue": seat_residue[:800],
-                "residue_source": "seat",
-                "mission": "",
-                "card_patch_applied": False,
-                "executor": "cursor-sdk",
-                "worker_thread": None,
-                "dispatch_id": None,
-            }
-            packet = render_pre_consolidate_packet(
+        tape_lines, tape_stats = render_tape_lines(tape_step, max_chars=tape_chars)
+        tape_summary = _tape_summary(tape_step)
+        if tape_stats.get("truncated"):
+            _emit_degraded(
+                execution_id=execution_id,
                 thread=thread,
-                seal=seal,
-                tape_summary=_tape_summary(tape_step),
-                tip_residue=tip_residue,
-                resume_open=resume_open,
-                pools_section=pools_section,
-                hub_summary=hub_summary,
-                seat_residue=seat_residue,
+                surface=surface,
+                from_agent=from_agent,
+                reason="tape_truncated",
             )
-            packet_path = write_packet_file(
-                thread=thread, execution_id=execution_id, content=packet
+
+        seat_seed, seed_truncated = clamp_residue(seat_seed_raw) if seat_seed_raw else ("", False)
+        if seed_truncated:
+            _emit_degraded(
+                execution_id=execution_id,
+                thread=thread,
+                surface=surface,
+                from_agent=from_agent,
+                reason="seed_truncated",
             )
-            dispatch_body: dict[str, Any] = {
-                "op": "generate",
-                "seat": "cursor-sdk",
-                "contract": "none",
-                "lane": "A",
-                "read_only": True,
-                "mcp": False,
-                "server_tools": False,
-                "max_tool_turns": 0,
-                "dispatch_thread_id": thread,
-                "caller_agent": from_agent,
-            }
-            if packet_path:
-                dispatch_body["packet_path"] = packet_path
-            else:
-                dispatch_body["prompt"] = packet
-            await stargate_post("/api/v1/team/dispatch", dispatch_body)
-            return StepOutput(raw=json.dumps(result), json=result)
 
         packet = render_pre_consolidate_packet(
             thread=thread,
             seal=seal,
-            tape_summary=_tape_summary(tape_step),
+            tape_summary=tape_summary,
+            tape_lines=tape_lines,
             tip_residue=tip_residue,
             resume_open=resume_open,
             pools_section=pools_section,
             hub_summary=hub_summary,
-            seat_residue="",
+            seat_seed=seat_seed,
         )
         packet_path = write_packet_file(
             thread=thread, execution_id=execution_id, content=packet
         )
-        dispatch_body = {
+        dispatch_body: dict[str, Any] = {
             "op": "generate",
             "seat": "cursor-sdk",
             "contract": "none",
@@ -194,22 +206,32 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
             "/api/v1/team/dispatch", dispatch_body
         )
         if dispatch_status >= 400 or dispatch_resp.get("error"):
+            fallback = seat_seed if seat_seed else _mechanical_residue(seal)
+            residue, _ = clamp_residue(fallback)
             result = {
-                "residue": _mechanical_residue(seal),
-                "residue_source": "mechanical",
+                "residue": residue,
+                "residue_source": "seed" if seat_seed else "mechanical",
                 "mission": "",
                 "card_patch_applied": False,
                 "executor": "cursor-sdk",
                 "worker_thread": None,
                 "dispatch_id": None,
+                "seed_truncated": seed_truncated,
+                "tape_stats": tape_stats,
             }
+            _emit_degraded(
+                execution_id=execution_id,
+                thread=thread,
+                surface=surface,
+                from_agent=from_agent,
+                reason="worker_fallback_seed" if seat_seed else "worker_fallback_mechanical",
+            )
             return StepOutput(raw=json.dumps(result), json=result)
 
         poll_hint = dispatch_resp.get("poll_hint") or {}
         poll_args = poll_hint.get("arguments") if isinstance(poll_hint, dict) else {}
         if not isinstance(poll_args, dict):
             poll_args = {}
-        # poll_hint.thread is the worker lane; dispatch_thread_id is coordination only.
         worker_thread = str(
             poll_args.get("thread")
             or dispatch_resp.get("thread")
@@ -261,29 +283,51 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
 
         worker_data = parse_worker_json(worker_body) if worker_body else None
         if not worker_data:
+            fallback = seat_seed if seat_seed else _mechanical_residue(seal)
+            residue, _ = clamp_residue(fallback)
             result = {
-                "residue": _mechanical_residue(seal),
-                "residue_source": "mechanical",
+                "residue": residue,
+                "residue_source": "seed" if seat_seed else "mechanical",
                 "mission": "",
                 "card_patch_applied": False,
                 "executor": "cursor-sdk",
                 "worker_thread": worker_thread,
                 "dispatch_id": dispatch_id,
+                "seed_truncated": seed_truncated,
+                "tape_stats": tape_stats,
             }
+            _emit_degraded(
+                execution_id=execution_id,
+                thread=thread,
+                surface=surface,
+                from_agent=from_agent,
+                reason="worker_fallback_seed" if seat_seed else "worker_fallback_mechanical",
+            )
             return StepOutput(raw=json.dumps(result), json=result)
 
         ok, reason = validate_worker_payload(worker_data)
         if not ok:
+            fallback = seat_seed if seat_seed else _mechanical_residue(seal)
+            residue, _ = clamp_residue(fallback)
             result = {
-                "residue": _mechanical_residue(seal),
-                "residue_source": "mechanical",
+                "residue": residue,
+                "residue_source": "seed" if seat_seed else "mechanical",
                 "mission": "",
                 "card_patch_applied": False,
                 "executor": "cursor-sdk",
                 "worker_thread": worker_thread,
                 "dispatch_id": dispatch_id,
                 "validation": reason,
+                "seed_truncated": seed_truncated,
+                "tape_stats": tape_stats,
             }
+            _emit_degraded(
+                execution_id=execution_id,
+                thread=thread,
+                surface=surface,
+                from_agent=from_agent,
+                reason="worker_fallback_seed" if seat_seed else "worker_fallback_mechanical",
+            )
             return StepOutput(raw=json.dumps(result), json=result)
 
         card_patch = worker_data.get("card_patch") or {}
@@ -296,22 +340,26 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
             stargate_continuity_checkpoint_card_patched(
                 execution_id=execution_id,
                 thread=thread,
-                surface=str(options.get("surface") or "cursor"),
+                surface=surface,
                 from_agent=from_agent,
                 card_uri=card_uri,
                 executor="cursor-sdk",
             )
 
-        residue = str(worker_data.get("residue") or "")[:800]
+        raw_residue = str(worker_data.get("residue") or "")
+        residue, residue_clamped = clamp_residue(raw_residue)
         mission = str(worker_data.get("mission") or "")
         result = {
             "residue": residue,
             "residue_source": "model",
+            "residue_clamped": residue_clamped,
             "mission": mission,
             "card_patch_applied": applied,
             "card_patch_reason": patch_reason,
             "executor": "cursor-sdk",
             "worker_thread": worker_thread,
             "dispatch_id": dispatch_id,
+            "seed_truncated": seed_truncated,
+            "tape_stats": tape_stats,
         }
         return StepOutput(raw=json.dumps(result), json=result)

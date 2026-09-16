@@ -110,6 +110,7 @@ from .events_checkpoint import (  # noqa: E402
     stargate_continuity_checkpoint_card_patched,
     stargate_continuity_checkpoint_failed,
     stargate_continuity_checkpoint_posted,
+    stargate_continuity_checkpoint_pre_consolidate_degraded,
     stargate_continuity_checkpoint_sealed,
     stargate_continuity_checkpoint_tail_folded,
 )
@@ -122,6 +123,7 @@ __all__ = [
     "stargate_continuity_checkpoint_sealed",
     "stargate_continuity_checkpoint_card_patched",
     "stargate_continuity_checkpoint_posted",
+    "stargate_continuity_checkpoint_pre_consolidate_degraded",
     "stargate_continuity_checkpoint_failed",
     "mcp_continuity_checkpoint_requested",
     "stargate_continuity_checkpoint_tail_folded",
