@@ -18,6 +18,9 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.admit_report import (
+    admit_plane_resolved_effort,
+)
 from services.git_integration_worker.cursor_auto.episode_briefing import (
     fetch_thread_turns,
 )
@@ -41,7 +44,7 @@ def format_resolved_envelope(*, model: str, effort: dict[str, Any]) -> str:
         "resolved_envelope: "
         f"model={model} "
         f"requested_effort={effort.get('requested') or 'unset'} "
-        f"resolved_effort={effort.get('resolved_effort') or 'unset'} "
+        f"resolved_effort={admit_plane_resolved_effort(model, effort) or 'unset'} "
         f"wire_effort={effort.get('wire_effort') or 'unset'}"
     )
 

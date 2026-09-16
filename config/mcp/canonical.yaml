@@ -2030,7 +2030,11 @@ tools:
         description: auto | composer-2.5 | grok-4.6 | opus-5 (default auto).
       desired_effort:
         type: string
-        description: low | medium | high | max (default medium).
+        description: "Portable wire intent; per-model acceptance from CURSOR_MODEL_CAPABILITIES
+          — composer-2.5: no effort axis; grok-4.6: low|medium|high|xhigh (default high);
+          opus-5 (claude-opus-5): low|medium|high|xhigh|max (default high). max is not a
+          universal rung — models without max degrade to their ceiling. Omitted/auto resolves
+          per contract_effort (default medium for answer/implement)."
       escalation:
         type: string
         description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; 
@@ -2130,7 +2134,11 @@ tools:
         description: auto | composer-2.5 | grok-4.6 | opus-5 (default auto).
       desired_effort:
         type: string
-        description: low | medium | high | max (default medium).
+        description: "Portable wire intent; per-model acceptance from CURSOR_MODEL_CAPABILITIES
+          — composer-2.5: no effort axis; grok-4.6: low|medium|high|xhigh (default high);
+          opus-5 (claude-opus-5): low|medium|high|xhigh|max (default high). max is not a
+          universal rung — models without max degrade to their ceiling. Omitted/auto resolves
+          per contract_effort (default medium for answer/implement)."
       escalation:
         type: string
         description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; 
@@ -2297,7 +2305,11 @@ tools:
         description: auto | composer-2.5 | grok-4.6 | opus-5 (default auto).
       desired_effort:
         type: string
-        description: low | medium | high | max (default medium).
+        description: "Portable wire intent; per-model acceptance from CURSOR_MODEL_CAPABILITIES
+          — composer-2.5: no effort axis; grok-4.6: low|medium|high|xhigh (default high);
+          opus-5 (claude-opus-5): low|medium|high|xhigh|max (default high). max is not a
+          universal rung — models without max degrade to their ceiling. Omitted/auto resolves
+          per contract_effort (default medium for answer/implement)."
       escalation:
         type: string
         description: Optional CDP escalation leg — cdp/opus-5 | cdp/fable only; 

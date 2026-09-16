@@ -13,10 +13,34 @@ from reasoning_posture_contracts import (
     reasoning_posture_warrants_injection,
 )
 
+from cursor_capabilities import effort_knob_name
+
 from services.git_integration_worker.cursor_auto.field_parity import (
     FieldParityReport,
     render_field_parity_line,
 )
+from services.git_integration_worker.cursor_auto.knob_compose import capability_bare_id
+
+_UNSUPPORTED_EFFORT_AXIS = "(unsupported: model has no effort axis)"
+
+
+def admit_plane_resolved_effort(
+    model_id: str | None,
+    effort: dict[str, Any],
+) -> str:
+    """Echo value for the admit-plane ``resolved=`` line — not the wire request.
+
+    Models without an effort-like knob must not echo the requested rung as if it
+    bound onto the executor; ``requested`` stays visible beside this field.
+    """
+    if model_id:
+        try:
+            bare = capability_bare_id(str(model_id))
+        except ValueError:
+            bare = None
+        if bare is not None and effort_knob_name(bare) is None:
+            return _UNSUPPORTED_EFFORT_AXIS
+    return str(effort.get("resolved_effort") or "")
 
 
 def build_admit_report_body(
@@ -49,7 +73,7 @@ def build_admit_report_body(
         f"resolved={model.get('resolved_model_id')} (admit-plane)\n"
         f"model_honored={model.get('honored')} (admit-plane pin result)\n"
         f"requested_effort={effort.get('requested')} "
-        f"resolved={effort.get('resolved_effort')}\n"
+        f"resolved={admit_plane_resolved_effort(model.get('resolved_model_id'), effort)}\n"
         f"requested_escalation={escalation.get('requested') or '(none)'} "
         f"resolved={escalation.get('resolved_escalation') or '(none)'}\n"
         f"contract={contract} "
