@@ -198,7 +198,8 @@ def test_validate_worker_payload_clamps_soft_overflow() -> None:
     assert reason == "ok"
     clamped, truncated = clamp_residue(residue)
     assert truncated
-    assert len(clamped) <= RESIDUE_CAP_CHARS + 40
+    assert len(clamped) <= RESIDUE_CAP_CHARS
+    assert len(clamped) >= int(RESIDUE_CAP_CHARS * 0.6)
 
 
 def test_validate_worker_payload_rejects_double_cap() -> None:
@@ -272,5 +273,87 @@ async def test_seed_is_folded_and_worker_awaited() -> None:
         out = await handler.execute(object(), _Ctx())
     mock_post.assert_awaited_once()
     mock_wait.assert_awaited()
+    assert mock_wait.await_args.kwargs.get("completion") == "proof_reply_from"
     assert out.json["residue_source"] == "model"
     assert out.json["residue"] == "Mission: worker authored"
+
+
+@pytest.mark.asyncio
+async def test_waits_past_non_closeout_first_reply() -> None:
+    """Non-CLOSEOUT first reply advances the pointer; CLOSEOUT body is bound."""
+    from .pre_consolidate import ContinuityCheckpointPreConsolidateHandler
+
+    worker_json = (
+        '```json\n{"card_patch": {"resume_open": "In one line: go"}, '
+        '"residue": "Mission: closeout bound", "mission": "one"}\n```\n'
+    )
+
+    class _Ctx:
+        execution_id = "exec-pre-nc"
+        dispatch_thread_id = "10223"
+        options = {
+            "thread": "10223",
+            "surface": "cursor",
+            "from_agent": "continuity",
+            "residue": "Ruling: seed line",
+        }
+        outputs = {"seal": {"json": {"turn_count": 1}}, "tape": {"json": {}}}
+
+    wait_responses = [
+        {"complete": True, "qualifying_reply_turn": 2},
+        {"complete": True, "qualifying_reply_turn": 3},
+    ]
+
+    async def _wait_side_effect(**_kwargs: object) -> tuple[dict[str, object], int]:
+        return wait_responses.pop(0), 200
+
+    async def _fetch_side_effect(
+        *, thread: str, turn_number: int
+    ) -> dict[str, object]:
+        del thread
+        if turn_number == 2:
+            return {
+                "turn_number": 2,
+                "from_agent": "cursor-sdk",
+                "subject": "cursor-sdk progress",
+                "body": "intermediate — not closeout",
+            }
+        return {
+            "turn_number": 3,
+            "from_agent": "cursor-sdk",
+            "subject": "cursor-sdk CLOSEOUT x",
+            "body": worker_json,
+        }
+
+    handler = ContinuityCheckpointPreConsolidateHandler()
+    dispatch_resp = {
+        "thread_id": "10435",
+        "poll_hint": {
+            "arguments": {"thread": "10435", "after_turn": 1, "from_agent": "cursor-sdk"}
+        },
+        "reply_from_agent": "cursor-sdk",
+        "dispatch_id": "d1",
+    }
+    with (
+        patch(
+            "handlers.pre_consolidate.stargate_post",
+            new=AsyncMock(return_value=(dispatch_resp, 202)),
+        ),
+        patch(
+            "handlers.pre_consolidate.bus_wait",
+            new=AsyncMock(side_effect=_wait_side_effect),
+        ) as mock_wait,
+        patch(
+            "handlers.pre_consolidate.bus_fetch_turn",
+            new=AsyncMock(side_effect=_fetch_side_effect),
+        ),
+        patch(
+            "handlers.pre_consolidate.apply_card_patch",
+            return_value=(True, "uri", "ok"),
+        ),
+    ):
+        out = await handler.execute(object(), _Ctx())
+    assert mock_wait.await_count == 2
+    assert mock_wait.await_args_list[1].kwargs["after_turn"] == 2
+    assert out.json["residue_source"] == "model"
+    assert out.json["residue"] == "Mission: closeout bound"

@@ -74,10 +74,21 @@ def render_tape_lines(
         )
         return full, stats
 
+    total_turns = len(blocks)
     dropped = 0
-    while rendered_blocks and len("\n\n".join(rendered_blocks)) > max_chars:
+    joined_len = len("\n\n".join(rendered_blocks))
+    while len(rendered_blocks) > 1 and joined_len > max_chars:
         rendered_blocks.pop(0)
         dropped += 1
+        joined_len = len("\n\n".join(rendered_blocks))
+
+    if rendered_blocks and joined_len > max_chars:
+        header, _, content = rendered_blocks[0].partition("\n")
+        budget = max_chars - len(header) - 1
+        if budget > 0:
+            rendered_blocks[0] = f"{header}\n{content[:budget]}"
+        if len(rendered_blocks) == 1:
+            dropped = total_turns - 1
 
     oldest_kept = "t?"
     if rendered_blocks:

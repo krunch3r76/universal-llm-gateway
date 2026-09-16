@@ -20,13 +20,13 @@ def clamp_residue(text: str, cap: int = RESIDUE_CAP_CHARS) -> tuple[str, bool]:
     """Truncate at last line boundary ≤ cap; append marker when clamped."""
     if len(text) <= cap:
         return text, False
+    marker = f"…[residue clamped {len(text)}→{cap}]"
+    min_keep = max(1, int(cap * 0.6))
     cut = text.rfind("\n", 0, cap + 1)
-    if cut <= 0:
-        truncated = text[:cap]
+    if cut <= 0 or cut < min_keep:
+        truncated = text[: max(0, cap - len(marker))]
     else:
         truncated = text[:cut].rstrip("\n")
-    marker = f"…[residue clamped {len(text)}→{cap}]"
-    # Keep marker within cap when possible
     if len(truncated) + len(marker) > cap:
         truncated = truncated[: max(0, cap - len(marker))]
     return truncated + marker, True

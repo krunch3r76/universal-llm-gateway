@@ -182,12 +182,13 @@ async def bus_wait(
     after_turn: int,
     wait_seconds: float,
     from_agent: str,
+    completion: str = "first_reply_from",
 ) -> tuple[dict[str, Any], int]:
     """GET ``/threads/{thread}/wait`` for pre-consolidate idle polling."""
     params = {
         "after_turn": after_turn,
         "wait": min(wait_seconds, 60.0),
-        "completion": "first_reply_from",
+        "completion": completion,
         "from_agent": from_agent,
     }
     path = f"/threads/{thread}/wait"

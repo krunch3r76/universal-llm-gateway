@@ -232,13 +232,35 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
         poll_args = poll_hint.get("arguments") if isinstance(poll_hint, dict) else {}
         if not isinstance(poll_args, dict):
             poll_args = {}
-        worker_thread = str(
+        worker_thread_raw = (
             poll_args.get("thread")
             or dispatch_resp.get("thread")
             or dispatch_resp.get("thread_id")
             or dispatch_resp.get("worker_thread")
-            or thread
         )
+        if not worker_thread_raw:
+            fallback = seat_seed if seat_seed else _mechanical_residue(seal)
+            residue, _ = clamp_residue(fallback)
+            result = {
+                "residue": residue,
+                "residue_source": "seed" if seat_seed else "mechanical",
+                "mission": "",
+                "card_patch_applied": False,
+                "executor": "cursor-sdk",
+                "worker_thread": None,
+                "dispatch_id": dispatch_resp.get("dispatch_id"),
+                "seed_truncated": seed_truncated,
+                "tape_stats": tape_stats,
+            }
+            _emit_degraded(
+                execution_id=execution_id,
+                thread=thread,
+                surface=surface,
+                from_agent=from_agent,
+                reason="worker_thread_missing",
+            )
+            return StepOutput(raw=json.dumps(result), json=result)
+        worker_thread = str(worker_thread_raw)
         dispatch_id = dispatch_resp.get("dispatch_id")
         after_turn = int(
             dispatch_resp.get("after_turn")
@@ -254,15 +276,14 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
         last_progress = time.monotonic()
         last_seen_turn = after_turn
         worker_body = ""
-        closeout_seen = False
         while True:
             wait_resp, _ = await bus_wait(
                 thread=worker_thread,
                 after_turn=after_turn,
                 wait_seconds=60.0,
                 from_agent=reply_from,
+                completion="proof_reply_from",
             )
-            complete = bool(wait_resp.get("complete"))
             qual_turn = wait_resp.get("qualifying_reply_turn")
             if qual_turn is not None:
                 turn_payload = await bus_fetch_turn(
@@ -275,11 +296,14 @@ class ContinuityCheckpointPreConsolidateHandler(BaseHandler):
                     last_progress = time.monotonic()
                     worker_body = str(turn_payload.get("body") or "")
                     if _is_sdk_closeout_turn(turn_payload, reply_from):
-                        closeout_seen = True
-            if complete or closeout_seen:
-                break
+                        break
+                    after_turn = last_seen_turn
+                    continue
             if time.monotonic() - last_progress >= _IDLE_GIVE_UP_S:
                 break
+            if not wait_resp.get("complete"):
+                continue
+            break
 
         worker_data = parse_worker_json(worker_body) if worker_body else None
         if not worker_data:

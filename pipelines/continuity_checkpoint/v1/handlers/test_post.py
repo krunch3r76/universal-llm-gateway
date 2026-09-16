@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from ._card_patch import RESIDUE_CAP_CHARS, clamp_residue
 from .post import (
     ContinuityCheckpointPostHandler,
     _carry_forward_residue,
@@ -439,6 +440,54 @@ async def test_no_scoreboard_pin_when_prior_and_tail_both_absent() -> None:
         await handler.execute(_Step(), ctx)
     body = send.await_args.kwargs["body"]
     assert "Scoreboard:" not in body
+
+
+@pytest.mark.asyncio
+async def test_model_residue_wins_over_caller_residue() -> None:
+    """Worker residue (residue_source=model) wins over caller-authored seed."""
+    ctx = _Ctx()
+    ctx.options["residue"] = "caller seed must not win"
+    ctx.outputs["pre_consolidate"]["json"]["residue_source"] = "model"
+    ctx.outputs["pre_consolidate"]["json"]["residue"] = "Mission: worker wins"
+    send = AsyncMock(return_value=({"turn_number": 11}, 201))
+    handler = ContinuityCheckpointPostHandler()
+    with (
+        patch(
+            "handlers.post.bus_get",
+            new=AsyncMock(return_value=({"turn_number": 10}, 200)),
+        ),
+        patch("handlers.post.bus_send", new=send),
+    ):
+        out = await handler.execute(_Step(), ctx)
+    body = send.await_args.kwargs["body"]
+    assert "Mission: worker wins" in body
+    assert "caller seed must not win" not in body
+    assert out.json["pre_consolidate"]["residue_source"] == "model"
+
+
+@pytest.mark.asyncio
+async def test_post_clamps_oversized_model_residue() -> None:
+    """Post-side clamp applies marker and sets residue_clamped on terminal result."""
+    long_residue = "Mission: ok\n" + ("y" * 930)
+    ctx = _Ctx()
+    ctx.outputs["pre_consolidate"]["json"]["residue"] = long_residue
+    ctx.outputs["pre_consolidate"]["json"]["residue_source"] = "model"
+    send = AsyncMock(return_value=({"turn_number": 11}, 201))
+    handler = ContinuityCheckpointPostHandler()
+    with (
+        patch(
+            "handlers.post.bus_get",
+            new=AsyncMock(return_value=({"turn_number": 10}, 200)),
+        ),
+        patch("handlers.post.bus_send", new=send),
+    ):
+        out = await handler.execute(_Step(), ctx)
+    clamped, _ = clamp_residue(long_residue)
+    body = send.await_args.kwargs["body"]
+    assert clamped in body
+    assert out.json["pre_consolidate"]["residue_clamped"] is True
+    assert len(clamped) <= RESIDUE_CAP_CHARS
+    assert len(clamped) >= int(RESIDUE_CAP_CHARS * 0.6)
 
 
 @pytest.mark.asyncio
