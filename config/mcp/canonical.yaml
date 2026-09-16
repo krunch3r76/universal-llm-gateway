@@ -3604,6 +3604,9 @@ tools:
         type: integer
       harvest:
         type: boolean
+      channel:
+        type: string
+        description: last_session wall selector — continuity (default) or all
     required:
     - thread
   skill_uri: agent_skill:continuity-thread-shaping
@@ -3648,6 +3651,9 @@ tools:
         type: boolean
       tools:
         type: string
+      channel:
+        type: string
+        description: checkpoint window channel — continuity (default) or hop
     required:
     - thread
     - surface

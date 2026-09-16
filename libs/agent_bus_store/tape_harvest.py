@@ -94,6 +94,7 @@ def render_tape_with_harvest(
     include_extras: bool = False,
     tools: str = "none",
     harvest_timeout: float = TAPE_HARVEST_TIMEOUT_S,
+    channel: str = "continuity",
 ) -> dict[str, Any]:
     """Optionally harvest bindable windows, then render the continuity tape."""
     harvest_stats: dict[str, Any] | None = None
@@ -145,6 +146,7 @@ def render_tape_with_harvest(
         prior_cells=prior_cells,
         include_extras=include_extras,
         tools=tools,  # type: ignore[arg-type]
+        channel=channel,
     )
 
 

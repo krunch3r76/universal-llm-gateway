@@ -8,6 +8,12 @@ from continuity_tape.messages import Tools, messages_sha256
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
+from .tape_cells import (
+    _cells_for_lane,
+    _filter_messages_to_cells,
+    _last_session_cells,
+    _window_segments,
+)
 from .tape_membership import (
     TapeSegment,
     _binding_for_journal,
@@ -15,14 +21,7 @@ from .tape_membership import (
     build_lane_segments,
     filter_lane_journals,
 )
-from .tape_pour import (
-    _cells_for_lane,
-    _filter_messages_to_cells,
-    _last_session_cells,
-    _window_segments,
-    build_open_line,
-    pour_lane_messages,
-)
+from .tape_pour import build_open_line, pour_lane_messages
 
 _DEFAULT_BUDGET_BYTES = 512_000
 
@@ -226,6 +225,7 @@ def render_tape(
     prior_cells: int = 1,
     include_extras: bool = False,
     tools: Tools = "none",
+    channel: str = "continuity",
 ) -> dict[str, Any]:
     """Render messages+extras dump for a continuity lane (read-only)."""
     from cortex_store.db import cortex_conn, decode_row
@@ -260,6 +260,7 @@ def render_tape(
         payload_bytes,
         tools_available,
         degraded,
+        hop_cells_skipped,
     ) = pour_lane_messages(
         thread_id=thread_id,
         journals=journals,
@@ -272,10 +273,12 @@ def render_tape(
         budget_bytes=budget_bytes,
         tools=tools,
         include_extras=include_extras,
+        channel=channel,
     )
     if scope == "window" and transcript_id:
         segments = _window_segments(segments, cells)
     from cortex_store.events_tape import (
+        agent_bus_tape_hop_cells_skipped,
         agent_bus_tape_rendered,
         agent_bus_tape_segment_unavailable,
     )
@@ -300,6 +303,22 @@ def render_tape(
         surfaces=["cursor"],
         tools_available=tools_available,
     )
+    if hop_cells_skipped > 0:
+        wall_cp_ordinal: int | None = None
+        wall_bus_turn_id: int | None = None
+        for cell in reversed(cells):
+            if cell.get("bus_turn_id") is not None:
+                wall_cp_ordinal = int(cell.get("cp_ordinal") or 0)
+                wall_bus_turn_id = int(cell.get("bus_turn_id") or 0)
+                break
+        agent_bus_tape_hop_cells_skipped(
+            thread_id=thread_id,
+            scope=scope,
+            channel=channel,
+            hop_cells_skipped=hop_cells_skipped,
+            wall_cp_ordinal=wall_cp_ordinal,
+            wall_bus_turn_id=wall_bus_turn_id,
+        )
     mismatch = _build_mismatch_rows(cells=cells, segments=segments)
     open_line = build_open_line(
         thread_id=thread_id,
@@ -318,6 +337,7 @@ def render_tape(
         prior_cells=prior_cells,
         tools_available=tools_available,
         degraded=degraded,
+        hop_cells_skipped=hop_cells_skipped,
     )
     meta = {
         "messages_sha256": messages_sha256(messages),

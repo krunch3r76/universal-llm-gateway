@@ -3,7 +3,8 @@
 
 Run after the CHECKPOINT lands (same turn), as the last action of the old tab:
 
-  python scripts/liaison-ide-hop.py --root 10479 --row "R16 GPT removal densify" [--dry-run]
+  python scripts/liaison-ide-hop.py --root 10479 --row "R16 GPT removal densify" \\
+    --transcript-id <departing-tab-uuid> [--dry-run]
   python scripts/liaison-ide-hop.py --root 10479 --find-transcript "resume 10479"
 
 The message the new tab receives is ``resume <R>`` plus NOW row and one ARM line per
@@ -32,6 +33,7 @@ from bus_watch.ide_hop import (
     fire_ide_hop,
     live_watcher_labels,
     policy_gui_host,
+    seal_hop_window,
     tick_register,
 )
 from bus_watch.tick_state import load_state
@@ -59,6 +61,12 @@ def main() -> int:
         type=int,
         default=None,
         help="tip CHECKPOINT ordinal, for the message header",
+    )
+    p.add_argument(
+        "--transcript-id",
+        default=None,
+        metavar="UUID",
+        help="departing tab transcript id — required; seals channel=hop before keystroke",
     )
     p.add_argument(
         "--gui-host",
@@ -127,6 +135,25 @@ def main() -> int:
             )
         )
         return 2
+    if not args.transcript_id:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "phase": "seal_transcript_unknown",
+                    "root": args.root,
+                    "fix": "pass --transcript-id <departing tab uuid>",
+                }
+            )
+        )
+        return 2
+    seal = seal_hop_window(
+        args.root,
+        transcript_id=args.transcript_id,
+    )
+    if not seal.get("ok"):
+        print(json.dumps({"ok": False, "root": args.root, **seal}, indent=2))
+        return 2
     message = build_ide_hop_message(
         args.root,
         row=args.row,
@@ -143,6 +170,7 @@ def main() -> int:
         no_raise=args.no_raise,
     )
     out["arm_labels"] = labels
+    out["seal"] = seal
     out["message"] = message
     print(json.dumps(out, indent=2))
     return 0 if out.get("ok") else 2

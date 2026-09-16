@@ -151,7 +151,11 @@ On CHECKPOINT, under `## Anchor`, cite the posting window:
 
 `K` = `turn_count` from `session_close_preflight` or `assemble_transcript` on that
 window's JSONL in the same turn (hand counts forbidden; **CHECKPOINT-authoring
-only** — resume ¬ loads this JSONL). Zero-CP windows:
+only** — resume ¬ loads this JSONL). **Attended IDE seat (resolution a):** when
+authoring a CHECKPOINT via `agent_bus send` (not the pipeline), include the
+`## Anchor` / `Window:` line in the authored body — same template as pipeline
+seals. `K` must come from a same-turn tool observation; hand counts are forbidden.
+Zero-CP windows:
 `boundary=window_whole`. **On resume:** the Window line is the **anchor citation**
 (which posting window) — execute § Resume step 5 before operator-facing prose;
 harvest/seal is substrate. **Lid-close seal (O15 D2):** root CHECKPOINT post with a

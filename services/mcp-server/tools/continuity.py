@@ -281,6 +281,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         pre_consolidate: bool | None = None,
         pool: str | None = None,
         fence_id: str | None = None,
+        channel: str | None = None,
     ) -> dict[str, Any]:
         """Continuity consolidation — dispatch ``consolidate-continuity`` without CLI.
 
@@ -359,6 +360,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
                     surface, pre_consolidate
                 ),
                 tools=tools or "none",
+                channel=channel,
             )
 
         if op == "tape_read":
@@ -378,6 +380,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
                 tools=tools or "none",
                 budget_bytes=budget_bytes,
                 harvest=bool(harvest),
+                channel=channel,
             )
 
         if op in {"consolidate", "replay"}:

@@ -43,6 +43,31 @@ def test_compose_body_refused_seal_omits_window() -> None:
     assert "Harvest: refused(transcript_seal.not_lane_window)" in body
 
 
+def test_compose_body_cursor_hop_channel_token() -> None:
+    body = _compose_body(
+        residue="WIP",
+        seal={
+            "transcript_id": "550e8400-e29b-41d4-a716-446655440000",
+            "turn_count": 4,
+            "session_id": "cursor-test",
+            "messages_sha256": "deadbeef",
+            "refused": None,
+        },
+        mission="resume",
+        surface="cursor",
+        channel="hop",
+    )
+    assert (
+        "Window: transcript_id=550e8400-e29b-41d4-a716-446655440000 · "
+        "turns@cp=4 · channel=hop"
+    ) in body
+    from cortex_store.transcript_projection_membership import _WINDOW_ANCHOR_RE
+
+    for line in body.splitlines():
+        if line.startswith("Window:"):
+            assert _WINDOW_ANCHOR_RE.search(line) is not None
+
+
 def test_compose_body_claude_ai_window_anchor() -> None:
     body = _compose_body(
         residue="WIP",

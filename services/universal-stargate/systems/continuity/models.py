@@ -17,6 +17,7 @@ class TapeReadRequest(BaseModel):
     tools: Tools = "none"
     budget_bytes: int = Field(default=512_000, ge=1024, le=8_000_000)
     harvest: bool = False
+    channel: str | None = None
 
 
 class CheckpointRequest(BaseModel):
@@ -30,6 +31,7 @@ class CheckpointRequest(BaseModel):
     pre_consolidate: bool = True
     tools: Tools = "none"
     pipeline_options: dict[str, Any] | None = None
+    channel: str | None = None
 
 
 class CheckpointAccepted(BaseModel):

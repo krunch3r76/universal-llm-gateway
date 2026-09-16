@@ -5,7 +5,9 @@ from __future__ import annotations
 import re
 
 _WINDOW_LINE_RE = re.compile(
-    r"transcript_id=(?P<uuid>[0-9a-f-]+)\s*·\s*turns@cp=(?P<turns>\d+)",
+    r"transcript_id=(?P<uuid>[0-9a-f-]+)\s*·\s*turns@cp=(?P<turns>\d+)"
+    r"(?:\s*·\s*coverage=\w+)?"
+    r"(?:\s*·\s*channel=(?P<channel>hop|continuity))?",
     re.IGNORECASE,
 )
 

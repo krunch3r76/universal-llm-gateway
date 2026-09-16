@@ -148,6 +148,7 @@ async def fetch_tape_envelope(
     tools: str = "none",
     budget_bytes: int = 512_000,
     harvest: bool = False,
+    channel: str = "continuity",
     caller_agent: str = "stargate",
     door: str = "sync",
     execution_id: str | None = None,
@@ -162,6 +163,7 @@ async def fetch_tape_envelope(
         "tools": tools,
         "budget_bytes": budget_bytes,
         "harvest": harvest,
+        "channel": channel,
     }
     params: dict[str, Any] = {
         "scope": scope,
@@ -170,6 +172,7 @@ async def fetch_tape_envelope(
         "budget_bytes": budget_bytes,
         "harvest": str(harvest).lower(),
         "prior_cells": prior_cells,
+        "channel": channel,
     }
     if transcript_id:
         params["transcript_id"] = transcript_id

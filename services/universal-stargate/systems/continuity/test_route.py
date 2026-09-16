@@ -155,3 +155,32 @@ async def test_checkpoint_claude_ai_admits_with_chat_url() -> None:
     payload = json.loads(resp.body)
     assert payload["execution_id"] == "exec-claude-ai"
     assert payload["pipeline"] == "continuity-checkpoint-v1"
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_rejects_unknown_channel() -> None:
+    from systems.continuity.models import CheckpointRequest
+
+    route_mod = _import_route_module(with_dispatch=True)
+    body = CheckpointRequest(
+        thread="10479",
+        surface="cursor",
+        from_agent="cursor",
+        channel="all",
+    )
+    resp = await route_mod.continuity_checkpoint(body, current_user={"agent": "cursor"})
+    assert resp.status_code == 422
+    payload = json.loads(resp.body)
+    assert payload["error"]["code"] == "checkpoint.channel_unknown"
+
+
+@pytest.mark.asyncio
+async def test_tape_read_rejects_channel_hop() -> None:
+    from systems.continuity.models import TapeReadRequest
+
+    route_mod = _import_route_module()
+    body = TapeReadRequest(thread="10479", channel="hop")
+    resp = await route_mod.continuity_tape_read(body, current_user={"agent": "cursor"})
+    assert resp.status_code == 422
+    payload = json.loads(resp.body)
+    assert payload["error"]["code"] == "tape.channel_unknown"

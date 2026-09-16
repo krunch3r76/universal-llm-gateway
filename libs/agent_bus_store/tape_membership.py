@@ -18,7 +18,9 @@ from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
 
 _WINDOW_LINE_RE = re.compile(
-    r"transcript_id=(?P<uuid>[0-9a-f-]+)\s*·\s*turns@cp=(?P<turns>\d+)",
+    r"transcript_id=(?P<uuid>[0-9a-f-]+)\s*·\s*turns@cp=(?P<turns>\d+)"
+    r"(?:\s*·\s*coverage=\w+)?"
+    r"(?:\s*·\s*channel=(?P<channel>hop|continuity))?",
     re.IGNORECASE,
 )
 _WHOLE_BOUNDARY_RE = re.compile(
@@ -92,10 +94,11 @@ def _parse_window_lines(body: str) -> list[dict[str, Any]]:
                 {
                     "transcript_id": match.group("uuid"),
                     "turns_at_cp": int(match.group("turns")),
+                    "channel": match.group("channel") or "continuity",
                 }
             )
         elif _WHOLE_BOUNDARY_RE.search(line):
-            anchors.append({"boundary": "window_whole"})
+            anchors.append({"boundary": "window_whole", "channel": "continuity"})
     return anchors
 
 

@@ -15,6 +15,8 @@ from ...tape_harvest import render_tape_with_harvest
 from ...thread_classification import classify_thread
 from . import router
 
+_VALID_TAPE_CHANNELS = frozenset({"continuity", "all"})
+
 
 @router.get(
     "/threads/{thread_id}/tape",
@@ -51,8 +53,23 @@ async def tape_route(
         "none",
         description="Tool surface policy: none | marker | openai.",
     ),
+    channel: str = Query(
+        "continuity",
+        description=(
+            "Wall selection for scope=last_session: continuity (skip hop cells) "
+            "or all (include hop wall). Invalid: hop."
+        ),
+    ),
 ) -> dict[str, Any]:
     """Render the messages+extras continuity tape for a root lane."""
+    if channel not in _VALID_TAPE_CHANNELS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": f"unknown tape channel {channel!r}",
+                "code": "tape.channel_unknown",
+            },
+        )
     if scope == "window" and not transcript_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -83,6 +100,7 @@ async def tape_route(
             scope=scope,
             transcript_id=transcript_id,
             prior_cells=prior_cells,
+            channel=channel,
         )
     except HTTPException:
         raise

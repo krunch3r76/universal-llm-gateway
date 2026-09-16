@@ -33,7 +33,13 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+import httpx
 from durable_io.atomic import durable_write_text
+from transport_utils import (
+    DEFAULT_AGENT_BUS_URL,
+    DEFAULT_STARGATE_URL,
+    make_sync_client,
+)
 
 from bus_watch.doorbell_skills import primary_liaison_slug
 from bus_watch.fable_lock import WATCH_DIR
@@ -55,6 +61,8 @@ MESSAGE_CAP = 2048
 # qualifying reply (a:33284; hop 15 ARM: none live while G6 was in_flight).
 LIVE_WATCHER_STATUSES = frozenset({"polling", "running", "predicate_unmet"})
 DEFAULT_REMOTE_REPO = os.environ.get("ORCHESTRATOR_REPO", str(_REPO))
+_CHECKPOINT_TIMEOUT_S = 15.0
+_WAIT_SLICE_S = 55.0
 
 
 def policy_gui_host(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
@@ -209,6 +217,112 @@ def build_ide_hop_message(
     if len(encoded) > cap:
         raise ValueError(f"ide hop message exceeds {cap} bytes ({len(encoded)})")
     return message
+
+
+def _bus_auth_headers() -> dict[str, str]:
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
+def seal_hop_window(
+    root_id: str,
+    *,
+    transcript_id: str,
+    residue: str | None = None,
+    timeout_s: float = 120.0,
+    from_agent: str = "cursor",
+) -> dict[str, Any]:
+    """Seal the departing IDE tab as ``channel=hop`` before keystroking the successor.
+
+    Posts Stargate ``/api/v1/continuity/checkpoint`` with ``pre_consolidate=False``,
+    then blocks on the route's ``poll_hint`` until the CHECKPOINT turn lands. Returns
+    a refusal dict on any failure — callers must not keystroke when ``ok`` is false.
+    """
+    body: dict[str, Any] = {
+        "thread": root_id,
+        "surface": "cursor",
+        "from_agent": from_agent,
+        "transcript_id": transcript_id,
+        "pre_consolidate": False,
+        "channel": "hop",
+    }
+    if residue is not None:
+        body["residue"] = residue
+    try:
+        with make_sync_client(
+            DEFAULT_STARGATE_URL, timeout=_CHECKPOINT_TIMEOUT_S
+        ) as client:
+            resp = client.post("/api/v1/continuity/checkpoint", json=body)
+    except httpx.HTTPError as exc:
+        return {"ok": False, "phase": "stargate_unreachable", "error": str(exc)}
+    if resp.status_code >= 400:
+        try:
+            payload = resp.json()
+        except ValueError:
+            payload = {"message": resp.text[-500:]}
+        code = (
+            (payload.get("error") or {}).get("code")
+            if isinstance(payload, dict)
+            else None
+        )
+        return {
+            "ok": False,
+            "phase": str(code or f"checkpoint_http_{resp.status_code}"),
+            "status_code": resp.status_code,
+            "error": payload,
+        }
+    try:
+        accepted = resp.json()
+    except ValueError:
+        return {"ok": False, "phase": "checkpoint_bad_response"}
+    poll_hint = accepted.get("poll_hint") if isinstance(accepted, dict) else None
+    args = (
+        poll_hint.get("arguments_json")
+        if isinstance(poll_hint, dict)
+        else None
+    ) or {}
+    after_turn = int(args.get("after_turn") or 0)
+    wait_from = str(args.get("from_agent") or from_agent)
+    completion = str(args.get("completion") or "first_reply_from")
+    deadline = time.time() + max(timeout_s, 1.0)
+    while time.time() < deadline:
+        wait_budget = min(_WAIT_SLICE_S, max(1.0, deadline - time.time()))
+        try:
+            with make_sync_client(
+                DEFAULT_AGENT_BUS_URL, timeout=wait_budget + 10.0
+            ) as bus:
+                wait_resp = bus.get(
+                    f"/threads/{root_id}/wait",
+                    params={
+                        "after_turn": after_turn,
+                        "wait": min(wait_budget, 60.0),
+                        "completion": completion,
+                        "from_agent": wait_from,
+                    },
+                    headers=_bus_auth_headers(),
+                )
+        except httpx.HTTPError as exc:
+            return {"ok": False, "phase": "wait_unreachable", "error": str(exc)}
+        if wait_resp.status_code >= 400:
+            return {
+                "ok": False,
+                "phase": f"wait_http_{wait_resp.status_code}",
+                "status_code": wait_resp.status_code,
+            }
+        try:
+            wait_payload = wait_resp.json()
+        except ValueError:
+            return {"ok": False, "phase": "wait_bad_response"}
+        if wait_payload.get("complete"):
+            turn_raw = wait_payload.get("qualifying_reply_turn")
+            bus_turn = int(turn_raw) if turn_raw is not None else None
+            return {
+                "ok": True,
+                "phase": "sealed",
+                "bus_turn": bus_turn,
+                "execution_id": accepted.get("execution_id"),
+            }
+    return {"ok": False, "phase": "seal_timeout", "bus_turn": None}
 
 
 def find_transcript_id(

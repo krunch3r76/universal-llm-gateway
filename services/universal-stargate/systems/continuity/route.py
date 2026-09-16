@@ -20,6 +20,8 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/continuity", tags=["continuity"])
 
 _PIPELINE_ID = "continuity-checkpoint-v1"
+_VALID_CHECKPOINT_CHANNELS = frozenset({"continuity", "hop"})
+_VALID_TAPE_CHANNELS = frozenset({"continuity", "all"})
 
 
 def _iso_utc_now() -> str:
@@ -46,6 +48,13 @@ async def continuity_tape_read(
     current_user: dict[str, Any] = Depends(get_auth_dependency),
 ) -> JSONResponse:
     """Door 1 sync relay — agent-bus tape as ``ContinuityMessagesEnvelope``."""
+    channel = body.channel or "continuity"
+    if channel not in _VALID_TAPE_CHANNELS:
+        return _error_response(
+            422,
+            "tape.channel_unknown",
+            f"unknown tape channel {channel!r}",
+        )
     caller_agent = str(
         current_user.get("agent") or current_user.get("sub") or "stargate"
     )
@@ -58,6 +67,7 @@ async def continuity_tape_read(
         tools=body.tools,
         budget_bytes=body.budget_bytes,
         harvest=body.harvest,
+        channel=channel,
         caller_agent=caller_agent,
         door="sync",
     )
@@ -78,6 +88,13 @@ async def continuity_checkpoint(
     current_user: dict[str, Any] = Depends(get_auth_dependency),
 ) -> JSONResponse:
     """Admit continuity-checkpoint-v1 async pipeline for a root lane CHECKPOINT."""
+    channel = body.channel or "continuity"
+    if channel not in _VALID_CHECKPOINT_CHANNELS:
+        return _error_response(
+            422,
+            "checkpoint.channel_unknown",
+            f"unknown checkpoint channel {channel!r}",
+        )
     if body.surface == "claude_ai" and not body.chat_url:
         return _error_response(
             422,
@@ -105,6 +122,7 @@ async def continuity_checkpoint(
         "pre_consolidate": body.pre_consolidate,
         "tools": body.tools,
         "execution_context": "continuity-checkpoint",
+        "channel": channel,
     }
     if body.transcript_id is not None:
         pipeline_options["transcript_id"] = body.transcript_id

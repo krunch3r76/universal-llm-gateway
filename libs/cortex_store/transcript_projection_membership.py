@@ -30,7 +30,9 @@ from cortex_store.transcript_projection_facts import (
 from cortex_store.transcript_session_id import _jsonl_paths_by_mtime_desc
 
 _WINDOW_ANCHOR_RE = re.compile(
-    r"Window:\s*transcript_id=([0-9a-f-]{36})\s*·\s*turns@cp=(\d+)",
+    r"Window:\s*transcript_id=([0-9a-f-]{36})\s*·\s*turns@cp=(\d+)"
+    r"(?:\s*·\s*coverage=\w+)?"
+    r"(?:\s*·\s*channel=(?P<channel>hop|continuity))?",
     re.I,
 )
 _HIGHLIGHT_RE = re.compile(r"(?m)^(?:\*\*)?Highlight:(?:\*\*)?\s*(.+)$")

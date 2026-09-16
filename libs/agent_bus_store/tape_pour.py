@@ -1,4 +1,4 @@
-"""Tape cells, message pour, and degrade (Phase 2 split)."""
+"""Tape message pour and open_line projection (Phase 2 split)."""
 
 from __future__ import annotations
 
@@ -11,225 +11,13 @@ from cortex_store.verbatim_succession import (
     split_verbatim_layer,
 )
 
-from .checkpoint_windows_render import list_checkpoint_turns
-from .db.connection import connect
-from .tape_membership import (
-    _parse_window_lines,
-    _turn_count_verbatim,
-    build_chain_segments,
+from .tape_cells import (
+    _cells_for_lane,
+    _filter_messages_to_cells,
+    _last_session_cells,
+    _window_cells,
 )
-
-
-def _last_turns_at_cp(
-    cp_anchors: list[tuple[Any, list[dict[str, Any]]]],
-    *,
-    transcript_id: str,
-    before_index: int | None = None,
-) -> int:
-    limit = len(cp_anchors) if before_index is None else before_index
-    last = 0
-    for idx in range(limit):
-        for anchor in cp_anchors[idx][1]:
-            if anchor.get("transcript_id") == transcript_id and anchor.get("turns_at_cp") is not None:
-                last = int(anchor["turns_at_cp"])
-    return last
-
-
-def _max_turn_hi_by_transcript(chain_segments: list[dict[str, Any]]) -> dict[str, int]:
-    out: dict[str, int] = {}
-    for seg in chain_segments:
-        tid = str(seg["transcript_id"])
-        out[tid] = max(out.get(tid, 0), int(seg["turn_hi"]))
-    return out
-
-
-def _cells_for_lane(
-    *,
-    thread_id: str,
-    lane_journals: list[dict[str, Any]],
-    files_root: Any,
-) -> list[dict[str, Any]]:
-    cps = list_checkpoint_turns(thread_id=thread_id)
-    chain_segments = build_chain_segments(lane_journals, files_root=files_root)
-    max_turn_by_tid = _max_turn_hi_by_transcript(chain_segments)
-    cp_anchors: list[tuple[Any, list[dict[str, Any]]]] = []
-    for cp in cps:
-        with connect() as conn:
-            row = conn.execute(
-                "SELECT body FROM turns WHERE thread = ? AND turn_number = ?",
-                (thread_id, cp.turn_number),
-            ).fetchone()
-        body = str(row["body"]) if row else ""
-        cp_anchors.append((cp, _parse_window_lines(body)))
-    cells: list[dict[str, Any]] = []
-    if not cp_anchors:
-        for seg in chain_segments:
-            cells.append(
-                {
-                    "cp_ordinal": 0,
-                    "transcript_id": seg["transcript_id"],
-                    "turn_lo": seg["turn_lo"],
-                    "turn_hi": seg["turn_hi"],
-                    "boundary": "window_whole",
-                    "bus_turn_id": None,
-                }
-            )
-        return cells
-    seen_transcript_ids: set[str] = set(max_turn_by_tid)
-    for _, anchors in cp_anchors:
-        for anchor in anchors:
-            tid = anchor.get("transcript_id")
-            if tid:
-                seen_transcript_ids.add(str(tid))
-    for idx, (cp, anchors) in enumerate(cp_anchors):
-        for anchor in anchors:
-            if anchor.get("boundary") == "window_whole":
-                tid = anchor.get("transcript_id")
-                targets = (
-                    [seg for seg in chain_segments if str(seg["transcript_id"]) == str(tid)]
-                    if tid
-                    else chain_segments
-                )
-                for seg in targets:
-                    cells.append(
-                        {
-                            "cp_ordinal": cp.cp_ordinal,
-                            "transcript_id": seg["transcript_id"],
-                            "turn_lo": seg["turn_lo"],
-                            "turn_hi": seg["turn_hi"],
-                            "boundary": "window_whole",
-                            "bus_turn_id": cp.turn_number,
-                        }
-                    )
-                continue
-            tid = anchor.get("transcript_id")
-            turns_at_cp = anchor.get("turns_at_cp")
-            if not tid or turns_at_cp is None:
-                continue
-            transcript_id = str(tid)
-            turn_hi = int(turns_at_cp)
-            turn_lo = _last_turns_at_cp(
-                cp_anchors, transcript_id=transcript_id, before_index=idx
-            )
-            if turn_hi <= turn_lo:
-                continue
-            cells.append(
-                {
-                    "cp_ordinal": cp.cp_ordinal,
-                    "transcript_id": transcript_id,
-                    "turn_lo": turn_lo,
-                    "turn_hi": turn_hi,
-                    "boundary": None,
-                    "bus_turn_id": cp.turn_number,
-                }
-            )
-    last_cp = cp_anchors[-1][0]
-    for transcript_id in sorted(seen_transcript_ids):
-        turn_lo = _last_turns_at_cp(cp_anchors, transcript_id=transcript_id)
-        turn_hi = max_turn_by_tid.get(transcript_id, turn_lo)
-        if turn_hi <= turn_lo:
-            from agent_bus_store import tape_render as tape_live
-
-            live_hi = tape_live.live_jsonl_turn_count(transcript_id)
-            if live_hi <= turn_lo:
-                continue
-            turn_hi = live_hi
-        cells.append(
-            {
-                "cp_ordinal": last_cp.cp_ordinal + 1,
-                "transcript_id": transcript_id,
-                "turn_lo": turn_lo,
-                "turn_hi": turn_hi,
-                "boundary": None,
-                "bus_turn_id": None,
-            }
-        )
-    return cells
-
-
-def _window_cells(
-    cells: list[dict[str, Any]],
-    *,
-    transcript_id: str,
-    prior_cells: int,
-) -> list[dict[str, Any]]:
-    window = [
-        c for c in cells if str(c.get("transcript_id") or "") == transcript_id
-    ]
-    if not window:
-        return []
-    first_idx = next(
-        i
-        for i, c in enumerate(cells)
-        if str(c.get("transcript_id") or "") == transcript_id
-    )
-    before = cells[:first_idx]
-    prior = before[-prior_cells:] if prior_cells > 0 else []
-    selected_keys = {
-        (
-            int(c.get("cp_ordinal") or 0),
-            str(c.get("transcript_id") or ""),
-            int(c.get("turn_lo") or 0),
-            int(c.get("turn_hi") or 0),
-            c.get("bus_turn_id"),
-        )
-        for c in prior + window
-    }
-    return [
-        c
-        for c in cells
-        if (
-            int(c.get("cp_ordinal") or 0),
-            str(c.get("transcript_id") or ""),
-            int(c.get("turn_lo") or 0),
-            int(c.get("turn_hi") or 0),
-            c.get("bus_turn_id"),
-        )
-        in selected_keys
-    ]
-
-
-def _window_segments(
-    segments: list[dict[str, Any]],
-    cells: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    # Window read must not list lane segments absent from post-filter cells.
-    cell_tids = {str(c.get("transcript_id") or "") for c in cells}
-    return [
-        s
-        for s in segments
-        if str(s.get("transcript_id") or "") in cell_tids
-    ]
-
-
-def _last_session_cells(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    last_cp_ordinal: int | None = None
-    for cell in reversed(cells):
-        if cell.get("bus_turn_id") is not None:
-            last_cp_ordinal = int(cell.get("cp_ordinal") or 0)
-            break
-    if last_cp_ordinal is None:
-        return list(cells)
-    allowed = {last_cp_ordinal, last_cp_ordinal + 1}
-    return [cell for cell in cells if int(cell.get("cp_ordinal") or 0) in allowed]
-
-
-def _message_in_cell(msg: dict[str, Any], cell: dict[str, Any]) -> bool:
-    if str(msg.get("transcript_id") or "") != str(cell.get("transcript_id") or ""):
-        return False
-    turn_index = int(msg.get("turn_index") or 0)
-    turn_lo = int(cell.get("turn_lo") or 0)
-    turn_hi = int(cell.get("turn_hi") or 0)
-    return turn_lo < turn_index <= turn_hi
-
-
-def _filter_messages_to_cells(
-    messages: list[dict[str, Any]],
-    cells: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    if not cells:
-        return []
-    return [msg for msg in messages if any(_message_in_cell(msg, cell) for cell in cells)]
+from .tape_membership import _turn_count_verbatim
 
 
 def pour_lane_messages(
@@ -245,6 +33,7 @@ def pour_lane_messages(
     budget_bytes: int,
     tools: Tools,
     include_extras: bool,
+    channel: str = "continuity",
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -253,6 +42,7 @@ def pour_lane_messages(
     int,
     bool,
     dict[str, Any] | None,
+    int,
 ]:
     from agent_bus_store import tape_render as tape_live
     from agent_bus_store.tape_degrade import degrade_overflow_messages, payload_bytes
@@ -295,13 +85,14 @@ def pour_lane_messages(
                     if turn_lo < turn_index <= turn_hi:
                         messages.append({**msg, "window_whole": False})
     messages.extend(tape_live.anchor_jsonl_messages(thread_id, existing=messages))
+    hop_cells_skipped = 0
     if scope == "window" and transcript_id:
         cells = _window_cells(
             cells, transcript_id=transcript_id, prior_cells=prior_cells
         )
         messages = _filter_messages_to_cells(messages, cells)
     elif scope == "last_session":
-        cells = _last_session_cells(cells)
+        cells, hop_cells_skipped = _last_session_cells(cells, channel=channel)
         messages = _filter_messages_to_cells(messages, cells)
     truncated = payload_bytes(messages, []) > budget_bytes
     index_rows: list[dict[str, Any]] = []
@@ -328,6 +119,7 @@ def pour_lane_messages(
         payload_bytes_val,
         tools_available,
         degraded,
+        hop_cells_skipped,
     )
 
 
@@ -349,6 +141,7 @@ def build_open_line(
     prior_cells: int = 1,
     tools_available: bool,
     degraded: dict[str, Any] | None = None,
+    hop_cells_skipped: int = 0,
 ) -> dict[str, Any]:
     from agent_bus_store import tape_render as tape_meta
     last_cp: dict[str, Any] | None = None
@@ -360,6 +153,7 @@ def build_open_line(
                 "transcript_id": cell.get("transcript_id"),
                 "turn_lo": cell.get("turn_lo"),
                 "turn_hi": cell.get("turn_hi"),
+                "channel": cell.get("channel") or "continuity",
             }
             break
     open_cells = [c for c in cells if c.get("bus_turn_id") is None]
@@ -399,6 +193,7 @@ def build_open_line(
         "harvest": harvest,
         "mismatch": mismatch,
         "tools_available": tools_available,
+        "hop_cells_skipped": hop_cells_skipped,
     }
     if truncated and degraded is not None:
         open_line["degraded"] = degraded
@@ -413,10 +208,6 @@ def build_open_line(
 
 
 __all__ = [
-    "_cells_for_lane",
-    "_filter_messages_to_cells",
-    "_last_session_cells",
-    "_window_cells",
     "build_open_line",
     "pour_lane_messages",
 ]

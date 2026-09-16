@@ -246,6 +246,7 @@ def _tape_dispatch(
     prior_cells: int | None = None,
     include_extras: bool | None = None,
     tools: str | None = None,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     """Relay GET /threads/{thread}/tape — continuity tape render."""
     lane = str(thread or thread_id or "")
@@ -268,6 +269,8 @@ def _tape_dispatch(
         params.append("include_extras=true")
     if tools:
         params.append(f"tools={tools}")
+    if channel:
+        params.append(f"channel={channel}")
     query = f"?{'&'.join(params)}" if params else ""
     result = relay("agent-bus", "GET", f"/threads/{lane}/tape{query}")
     if isinstance(result, dict) and "error" in result:

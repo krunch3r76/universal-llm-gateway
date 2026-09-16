@@ -28,6 +28,7 @@ def _continuity_tape_read(
     tools: str = "none",
     budget_bytes: int | None = None,
     harvest: bool = False,
+    channel: str | None = None,
 ) -> dict[str, Any]:
     """POST Stargate ``/api/v1/continuity/tape-read`` (Door 1 sync relay)."""
     from continuity_tape.events import mcp_continuity_tape_read_requested
@@ -46,6 +47,8 @@ def _continuity_tape_read(
         body["prior_cells"] = prior_cells
     if budget_bytes is not None:
         body["budget_bytes"] = budget_bytes
+    if channel is not None:
+        body["channel"] = channel
     stargate_url = os.environ.get("STARGATE_URL", STARGATE_URL)
     try:
         with make_sync_client(stargate_url, timeout=_TAPE_READ_TIMEOUT) as client:
@@ -85,6 +88,7 @@ def _continuity_checkpoint(
     residue: str | None = None,
     pre_consolidate: bool = True,
     tools: str = "none",
+    channel: str | None = None,
 ) -> dict[str, Any]:
     """POST Stargate ``/api/v1/continuity/checkpoint`` (async pipeline relay)."""
     from continuity_tape.events import mcp_continuity_checkpoint_requested
@@ -106,6 +110,8 @@ def _continuity_checkpoint(
         body["chat_url"] = chat_url
     if residue is not None:
         body["residue"] = residue
+    if channel is not None:
+        body["channel"] = channel
     stargate_url = os.environ.get("STARGATE_URL", STARGATE_URL)
     try:
         with make_sync_client(stargate_url, timeout=_CHECKPOINT_TIMEOUT) as client:

@@ -82,7 +82,7 @@ def test_last_session_scope_keeps_only_last_cp_interval() -> None:
         {"cp_ordinal": 2, "transcript_id": "a", "turn_lo": 5, "turn_hi": 12, "bus_turn_id": 20},
         {"cp_ordinal": 3, "transcript_id": "a", "turn_lo": 12, "turn_hi": 18, "bus_turn_id": None},
     ]
-    scoped = _last_session_cells(cells)
+    scoped, _skipped = _last_session_cells(cells)
     assert [c["cp_ordinal"] for c in scoped] == [2, 3]
     messages = [
         {"transcript_id": "a", "turn_index": 4, "role": "user", "content": "old"},
@@ -96,7 +96,7 @@ def test_last_session_scope_keeps_only_last_cp_interval() -> None:
 def test_render_tape_returns_messages_and_index_arrays() -> None:
     with (
         patch("agent_bus_store.tape_membership.list_checkpoint_turns", return_value=()),
-        patch("agent_bus_store.tape_pour.list_checkpoint_turns", return_value=()),
+        patch("agent_bus_store.tape_cells.list_checkpoint_turns", return_value=()),
         patch("cortex_store.db.cortex_conn") as mock_conn,
         patch("cortex_store.events_tape.agent_bus_tape_rendered"),
     ):

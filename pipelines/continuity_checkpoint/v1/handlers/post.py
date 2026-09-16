@@ -73,6 +73,7 @@ def _compose_body(
     seal: dict[str, Any],
     mission: str,
     surface: str = "cursor",
+    channel: str = "continuity",
 ) -> str:
     lines = ["## Residue (authored — cap ~800 chars)", residue.strip(), "", "## Anchor"]
     refused = seal.get("refused")
@@ -84,17 +85,19 @@ def _compose_body(
         session_id = seal.get("session_id") or ""
         sha = seal.get("messages_sha256")
         sha_token = sha if sha else "absent"
+        hop_suffix = " · channel=hop" if channel == "hop" else ""
         if surface == "claude_ai":
             chat_url = seal.get("chat_url") or ""
             coverage = seal.get("coverage") or "tail"
             lines.append(
                 f"Window: chat_url={chat_url} · transcript_id={transcript_id} · "
-                f"turns@cp={turn_count} · coverage={coverage}"
+                f"turns@cp={turn_count} · coverage={coverage}{hop_suffix}"
             )
             harvest_surface = "claude_ai"
         else:
             lines.append(
-                f"Window: transcript_id={transcript_id} · turns@cp={turn_count}"
+                f"Window: transcript_id={transcript_id} · "
+                f"turns@cp={turn_count}{hop_suffix}"
             )
             harvest_surface = "cursor"
         lines.append(
@@ -181,8 +184,13 @@ class ContinuityCheckpointPostHandler(BaseHandler):
         else:
             residue = str(pre.get("residue") or "")[:800]
 
+        checkpoint_channel = str(options.get("channel") or "continuity")
         body = _compose_body(
-            residue=residue, seal=seal, mission=mission, surface=surface
+            residue=residue,
+            seal=seal,
+            mission=mission,
+            surface=surface,
+            channel=checkpoint_channel,
         )
         scoreboard_pin = tail.get("scoreboard_pin")
         live_tail_pin = bool(scoreboard_pin)

@@ -119,6 +119,33 @@ def agent_bus_tape_rendered(
 
 
 @event_factory
+def agent_bus_tape_hop_cells_skipped(
+    *,
+    thread_id: str,
+    scope: str,
+    channel: str,
+    hop_cells_skipped: int,
+    wall_cp_ordinal: int | None,
+    wall_bus_turn_id: int | None,
+) -> Event:
+    ev = Event(
+        signal="agent_bus.tape.hop_cells_skipped",
+        role="observation",
+        scope="global",
+        payload={
+            "thread_id": thread_id,
+            "scope": scope,
+            "channel": channel,
+            "hop_cells_skipped": hop_cells_skipped,
+            "wall_cp_ordinal": wall_cp_ordinal,
+            "wall_bus_turn_id": wall_bus_turn_id,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
 def agent_bus_tape_segment_unavailable(
     *,
     thread_id: str,

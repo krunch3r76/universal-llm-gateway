@@ -106,10 +106,13 @@ is fully met (arc close), **never** on hop or mid-wait. Re-check after every CHE
    quiet tick · hop script refuse · operator park · explicit hold-merge. Autonomous
    LAND OWED without an explicit hold is **land**, not a stay-for-ack. Harvest-complete
    with nothing next is a stay. `scripts/liaison-ide-hop.py` refuses `no_autonomous_followup`
-   unless `--force`. In-flight watcher ⇒ harvest in this tab; hop it only when this tab
-   cannot continue. Hops do **not** stop because `lock.hops` equals 8; this-root cap is
-   `policy.max_hops_per_night` on `liaison-fable-<root>.lock`. Attended hop is the last
-   action **only when hopping** (`policy.gui_host` required; `ok` = landed transcript).
+   unless `--force`. **Hop ordering (10479 hop-channel):** qualify → **`seal_hop_window`
+   (`channel=hop`)** → message → keystroke → landed. Pass **`--transcript-id <departing tab
+   uuid>`** (required; not inferred — `find_transcript_id` resolves the wrong tab). A hop
+   that cannot seal does not keystroke. In-flight watcher ⇒ harvest in this tab; hop it only
+   when this tab cannot continue. Hops do **not** stop because `lock.hops` equals 8; this-root
+   cap is `policy.max_hops_per_night` on `liaison-fable-<root>.lock`. Attended hop is the
+   last action **only when hopping** (`policy.gui_host` required; `ok` = landed transcript).
    Autonomous hop-qualifying CP: kill the loop → `--release` → one successor. One tab live.
    **`ok` retires this tab**: `watch-supervise.sh tail` is one-tailer-per-label — the
    successor's re-arm kills the predecessor's tail — so a later wake here is a dead tail,
@@ -223,7 +226,7 @@ dispatches (`contract=implement`, omit `model=`) run **alongside** — they are 
 | Judgment fork | **this seat** binds inline when Opus-class; below Opus, § Reasoning recon first (`cdp/opus-5` wide read → bind on the compact) | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
 | Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5)`** — announce `CDP: <trigger> — <why>`; opus hops (`agent_bus hop`) to stay lean | one round; disagreement ⇒ `CONSULT_PENDING` stop |
 | Long-context reasoning inside a work tab | `cursor/claude-opus-5` (Cursor Fable credit window closed) | `Task(model=claude-fable-5-1-thinking-max)` only if the operator names Fable credits as open |
-| Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>"` (keystroke hop, fresh tab, ~40k-token orient vs 12–31M per headless hop); autonomous: § Headless successor (resume-fence pull) — the successor pulls the tip via `dispatch(tool="continuity")`; `cursor_request` is not a successor path (enqueues cursor-auto) | — |
+| Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>" --transcript-id <this tab uuid>` (seals `channel=hop` then keystroke hop, fresh tab, ~40k-token orient vs 12–31M per headless hop); autonomous: § Headless successor (resume-fence pull) — the successor pulls the tip via `dispatch(tool="continuity")`; `cursor_request` is not a successor path (enqueues cursor-auto) | — |
 
 **Reasoning recon** (operator-endorsed 2026-09-10 22:39 PT, observed on 10479#18): before a judgment bind, the
 liaison sends the *wide read* to `cdp/opus-5` (`CDP: <trigger> — <why>`, tape cell / CP residue + the decision as
