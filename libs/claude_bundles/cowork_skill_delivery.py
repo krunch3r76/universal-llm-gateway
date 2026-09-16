@@ -408,8 +408,14 @@ def parse_cdp_sealed_skill_channels(
 
 
 def _attach_only_surface(surface_class: str) -> bool:
-    """True when CDP delivery must be Customize attach (not ``<skills_inline>``)."""
-    return surface_class in {"shared_sync", "life_local"}
+    """True when CDP delivery must be Customize attach (not ``<skills_inline>``).
+
+    Mirrors ``partition_cdp_skills``, the sole ``skills=`` disposition authority:
+    only ``shared_sync`` reaches the attach manifest, so only ``shared_sync`` may
+    be *required* there. ``life_local`` is inline-delivered and attesting it as
+    attach-only made it unsatisfiable.
+    """
+    return surface_class == "shared_sync"
 
 
 def attest_delivery_channels(
@@ -423,9 +429,11 @@ def attest_delivery_channels(
     """Fail closed when a required slug lacks the correct delivery channel.
 
     Channel by ``surface_class`` (friction a:27142 / 26986 / 24594):
-    - ``shared_sync`` / ``life_local`` → **must** be in ``attached``
-      (``+`` → Skills). Inline alone / slash-manifest-only does not count.
-    - All other surfaces → **must** be in ``inlined`` (``<skills_inline>``).
+    - ``shared_sync`` → **must** be in ``attached`` (``+`` → Skills). Inline
+      alone / slash-manifest-only does not count.
+    - All other surfaces, ``life_local`` included → **must** be in ``inlined``
+      (``<skills_inline>``), which is the channel ``partition_cdp_skills``
+      actually uses for them.
 
     Axes (do not conflate):
     - ``surface_class`` — CDP delivery channel via ``partition_cdp_skills``
