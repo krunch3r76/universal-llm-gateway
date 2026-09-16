@@ -19,6 +19,28 @@ from .tape_cells import (
 )
 from .tape_membership import _turn_count_verbatim
 
+# Reasons ``filter_lane_journals`` can emit — not discover-door keys (foreign_dominant, no_touch).
+_FILTER_LANE_EXCLUDED_REASONS = frozenset(
+    {"read_only", "dropped", "segment_unavailable"}
+)
+
+
+def _excluded_counts_projection(
+    excluded: list[dict[str, Any]],
+    *,
+    harvest_stats: dict[str, Any] | None,
+) -> tuple[dict[str, int], dict[str, str]]:
+    """Counts only keys this door can observe; name scope so zero ≠ unobservable."""
+    counts = {
+        reason: sum(1 for entry in excluded if entry.get("reason") == reason)
+        for reason in sorted(_FILTER_LANE_EXCLUDED_REASONS)
+    }
+    scope_meta = {
+        "scope": "post_cite_prefilter_binding_failures",
+        "door": "resume_fence" if harvest_stats is None else "tape_render",
+    }
+    return counts, scope_meta
+
 
 def pour_lane_messages(
     *,
@@ -166,15 +188,9 @@ def build_open_line(
             for c in open_cells
         ),
     }
-    counts = {
-        "read_only": sum(1 for e in excluded if e.get("reason") == "read_only"),
-        "foreign_dominant": sum(1 for e in excluded if e.get("reason") == "foreign_dominant"),
-        "no_touch": sum(1 for e in excluded if e.get("reason") == "no_touch"),
-        "dropped": sum(1 for e in excluded if e.get("reason") == "dropped"),
-        "segment_unavailable": sum(
-            1 for e in excluded if e.get("reason") == "segment_unavailable"
-        ),
-    }
+    counts, excluded_counts_scope = _excluded_counts_projection(
+        excluded, harvest_stats=harvest
+    )
     open_line: dict[str, Any] = {
         "thread_id": thread_id,
         "scope": scope,
@@ -190,6 +206,7 @@ def build_open_line(
         "last_cp": last_cp,
         "open_interval": open_interval,
         "excluded_counts": counts,
+        "excluded_counts_scope": excluded_counts_scope,
         "harvest": harvest,
         "mismatch": mismatch,
         "tools_available": tools_available,
@@ -208,6 +225,7 @@ def build_open_line(
 
 
 __all__ = [
+    "_excluded_counts_projection",
     "build_open_line",
     "pour_lane_messages",
 ]
