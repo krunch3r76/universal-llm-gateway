@@ -58,26 +58,65 @@ async ({ limit, afterTurn }) => {
   }
 
   const isClaudeChat = /\\/chat\\//.test(url) && !/\\/cowork\\/cse_/.test(url);
+  const loadBtnRe = /load\\s+(later|earlier|previous|more)\\s+messages/i;
+  function pickLoadButton() {
+    const buttons = [...document.querySelectorAll('button')]
+      .filter((el) => loadBtnRe.test((el.innerText || '').trim()));
+    return buttons.find((el) => /earlier|previous/i.test((el.innerText || '').trim()))
+      || buttons.find((el) => /later|more/i.test((el.innerText || '').trim()))
+      || buttons[0]
+      || null;
+  }
+  function countHarvestRows() {
+    const transcriptRows = document.querySelectorAll('[data-testid="transcript-row"]').length;
+    if (transcriptRows > 0) return transcriptRows;
+    return document.querySelectorAll(
+      '[data-testid="user-message"], [data-testid="human-turn"], div[class*="font-user"], '
+      + '[data-testid="assistant-message"], [data-testid="assistant-turn"], div[class*="font-claude"]'
+    ).length;
+  }
+  function extractTurnFromRow(row) {
+    let author = null;
+    let bodyEl = null;
+    const perfRow = (row.getAttribute('data-perf-row') || '').toLowerCase();
+    if (perfRow === 'human' || row.querySelector('[data-testid="user-message"]')) {
+      author = 'user';
+      bodyEl = row.querySelector('[data-testid="user-message"]') || row;
+    } else {
+      bodyEl = row.querySelector('div.font-claude-response, div[class*="font-claude"]');
+      if (bodyEl) author = 'assistant';
+      if (!bodyEl && perfRow === 'assistant') {
+        bodyEl = row;
+        author = 'assistant';
+      }
+    }
+    if (!author || !bodyEl) return null;
+    const text = (bodyEl.innerText || '').trim();
+    if (/^You said:\\s*/i.test(text)) return null;
+    if (text.length < 1) return null;
+    const timeEl = row.querySelector('time[datetime]');
+    const timestamp = timeEl ? timeEl.getAttribute('datetime') : null;
+    return { author, timestamp, text };
+  }
   let preloadClicks = 0;
   if (isClaudeChat) {
     let prevRows = -1;
     let stableRounds = 0;
-    for (let round = 0; round < 120; round++) {
-      const btn = [...document.querySelectorAll('button')]
-        .find((el) => /load later messages/i.test((el.innerText || '').trim()));
+    for (let round = 0; round < 30; round++) {
+      const btn = pickLoadButton();
       if (btn) {
         btn.click();
         preloadClicks += 1;
+        stableRounds = 0;
       }
       const scroller = findMainScroller();
       if (scroller) scroller.scrollTop = 0;
       window.scrollTo(0, 0);
-      await sleep(900);
-      const rowCount = document.querySelectorAll('[data-testid="transcript-row"]').length;
-      if (rowCount === prevRows) {
-        stableRounds += 1;
-      } else {
-        stableRounds = 0;
+      await sleep(500);
+      const rowCount = countHarvestRows();
+      if (!btn) {
+        if (rowCount === prevRows) stableRounds += 1;
+        else stableRounds = 0;
       }
       prevRows = rowCount;
       if (!btn && stableRounds >= 4) break;
@@ -209,57 +248,87 @@ async ({ limit, afterTurn }) => {
   let scrollIterations = 0;
   let stable = false;
   let savedScrollTop = 0;
-  if (scroller) {
-    savedScrollTop = scroller.scrollTop;
-    let stableRounds = 0;
-    let prevCount = -1;
-    for (let round = 0; round < 20; round++) {
-      scroller.scrollTop = 0;
-      await sleep(300);
-      scrollIterations = round + 1;
-      const count = document.querySelectorAll('[data-testid="transcript-row"]').length;
-      if (count === prevCount) {
-        stableRounds += 1;
-        if (stableRounds >= 3) {
-          stable = true;
-          break;
-        }
-      } else {
-        stableRounds = 0;
-      }
-      prevCount = count;
-    }
-  }
-
-  const allRows = Array.from(document.querySelectorAll('[data-testid="transcript-row"]'));
   const rawTurns = [];
-  let ordinal = 0;
   let firstRowAuthor = null;
-  for (const row of allRows) {
-    let author = null;
-    let bodyEl = null;
-    const perfRow = (row.getAttribute('data-perf-row') || '').toLowerCase();
-    if (perfRow === 'human' || row.querySelector('[data-testid="user-message"]')) {
-      author = 'user';
-      bodyEl = row.querySelector('[data-testid="user-message"]') || row;
-    } else {
-      bodyEl = row.querySelector('div.font-claude-response, div[class*="font-claude"]');
-      if (bodyEl) author = 'assistant';
-      if (!bodyEl && perfRow === 'assistant') {
-        bodyEl = row;
-        author = 'assistant';
+  if (isClaudeChat && scroller) {
+    savedScrollTop = scroller.scrollTop;
+    const seen = new Set();
+    const ordered = [];
+    let prevScrollH = -1;
+    let stableScrollH = 0;
+    for (let round = 0; round < 8; round++) {
+      scrollIterations = round + 1;
+      const maxH = scroller.scrollHeight;
+      const steps = Math.max(20, Math.ceil(maxH / 500));
+      for (let i = 0; i <= steps; i++) {
+        scroller.scrollTop = Math.round((i / steps) * maxH);
+        await sleep(120);
+        for (const row of document.querySelectorAll('[data-testid="transcript-row"]')) {
+          const item = extractTurnFromRow(row);
+          if (!item) continue;
+          const key = (item.timestamp || '') + '|' + item.author + '|' + item.text.substring(0, 160);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          ordered.push(item);
+        }
+      }
+      if (maxH === prevScrollH) stableScrollH += 1;
+      else stableScrollH = 0;
+      prevScrollH = maxH;
+      const btn = pickLoadButton();
+      if (btn) {
+        btn.click();
+        await sleep(400);
+      } else if (stableScrollH >= 1) {
+        stable = true;
+        break;
       }
     }
-    if (!author || !bodyEl) continue;
-    if (firstRowAuthor === null) firstRowAuthor = author;
-    const text = (bodyEl.innerText || '').trim();
-    if (/^You said:\\s*/i.test(text)) continue;
-    if (text.length < 1) continue;
-    const timeEl = row.querySelector('time[datetime]');
-    const timestamp = timeEl ? timeEl.getAttribute('datetime') : null;
-    ordinal += 1;
-    if (afterTurn !== null && afterTurn !== undefined && ordinal <= afterTurn) continue;
-    rawTurns.push({ author, timestamp, text, ordinal });
+    ordered.sort((a, b) => {
+      if (a.timestamp && b.timestamp) return a.timestamp.localeCompare(b.timestamp);
+      if (a.timestamp) return -1;
+      if (b.timestamp) return 1;
+      return 0;
+    });
+    let ordinal = 0;
+    for (const item of ordered) {
+      ordinal += 1;
+      if (firstRowAuthor === null) firstRowAuthor = item.author;
+      if (afterTurn !== null && afterTurn !== undefined && ordinal <= afterTurn) continue;
+      rawTurns.push({ author: item.author, timestamp: item.timestamp, text: item.text, ordinal });
+    }
+  } else {
+    if (scroller) {
+      savedScrollTop = scroller.scrollTop;
+      let stableRounds = 0;
+      let prevCount = -1;
+      for (let round = 0; round < 20; round++) {
+        scroller.scrollTop = 0;
+        await sleep(300);
+        scrollIterations = round + 1;
+        const count = document.querySelectorAll('[data-testid="transcript-row"]').length;
+        if (count === prevCount) {
+          stableRounds += 1;
+          if (stableRounds >= 3) {
+            stable = true;
+            break;
+          }
+        } else {
+          stableRounds = 0;
+        }
+        prevCount = count;
+      }
+    }
+    const allRows = Array.from(document.querySelectorAll('[data-testid="transcript-row"]'));
+    let ordinal = 0;
+    for (const row of allRows) {
+      const item = extractTurnFromRow(row);
+      if (!item) continue;
+      if (firstRowAuthor === null) firstRowAuthor = item.author;
+      ordinal += 1;
+      if (afterTurn !== null && afterTurn !== undefined && ordinal <= afterTurn) continue;
+      rawTurns.push({ author: item.author, timestamp: item.timestamp, text: item.text, ordinal });
+    }
   }
 
   const turns = rawTurns.slice(-limit);
@@ -267,7 +336,8 @@ async ({ limit, afterTurn }) => {
   const hasUser = rawTurns.some((t) => t.author === 'user');
   const atTop = scroller ? scroller.scrollTop === 0 : false;
   let coverage = 'tail';
-  if (hasUser && stable && atTop && !streaming && !ariaBusy) {
+  const sweptFull = isClaudeChat && stable;
+  if (hasUser && !streaming && !ariaBusy && ((stable && atTop) || sweptFull)) {
     coverage = 'full';
   }
 
