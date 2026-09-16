@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from cursor_capabilities import (
     CURSOR_MODEL_CAPABILITIES,
@@ -114,3 +116,43 @@ def test_effective_knobs_drops_invalid_override() -> None:
     assert effective_knobs("grok-4.6", {"effort": "max", "fast": "true"}) == {
         "fast": "true",
     }
+
+
+def test_effective_knobs_warns_invalid_effort_value(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="cursor_capabilities.cursor_capabilities")
+    assert effective_knobs("grok-4.6", {"effort": "max"}) == {
+        "fast": "false",
+    }
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    msg = warnings[0].message
+    assert "grok-4.6" in msg
+    assert "effort" in msg
+    assert "max" in msg
+    assert "high" in msg
+
+
+def test_effective_knobs_warns_no_such_knob(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.WARNING, logger="cursor_capabilities.cursor_capabilities")
+    assert effective_knobs("composer-2.5", {"effort": "high"}) == {"fast": "true"}
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    msg = warnings[0].message
+    assert "composer-2.5" in msg
+    assert "effort" in msg
+    assert "high" in msg
+    assert "absent" in msg
+
+
+def test_effective_knobs_accepted_values_no_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="cursor_capabilities.cursor_capabilities")
+    assert effective_knobs("grok-4.6", {"effort": "xhigh", "fast": "true"}) == {
+        "effort": "xhigh",
+        "fast": "true",
+    }
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == []

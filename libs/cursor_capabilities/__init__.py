@@ -20,7 +20,7 @@ from .cursor_capabilities import (
 from .model_pools import OTHER_MODELS_BARE, is_other_models_pool
 
 # Harvest nominates these manage slugs when this lib lands (package-grain).
-CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'stargate')
+CONSUMERS: tuple[str, ...] = ("git_integration_worker", "stargate")
 
 __all__ = [
     "CURSOR_DENIED_MODELS",

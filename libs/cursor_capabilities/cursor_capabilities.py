@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final
@@ -10,6 +11,8 @@ from effort_vocabulary import WIRE_LADDER
 
 # Full wire ladder for models that accept every rung; capability subsets below.
 _FULL_EFFORT: Final[tuple[str, ...]] = WIRE_LADDER
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "CURSOR_DENIED_MODELS",
@@ -417,8 +420,25 @@ def effective_knobs(
             value = override_map[name]
             if value in spec.accepted:
                 result[name] = value
+            else:
+                used = spec.default if spec.default is not None else "absent"
+                logger.warning(
+                    "%s knob %s=%s dropped (not in accepted); using %s",
+                    bare,
+                    name,
+                    value,
+                    used,
+                )
         elif spec.default is not None:
             result[name] = spec.default
+    for name, value in override_map.items():
+        if name not in knob_specs:
+            logger.warning(
+                "%s knob %s=%s dropped (no such knob on model); using absent",
+                bare,
+                name,
+                value,
+            )
     return result
 
 
