@@ -23,10 +23,76 @@ async ({ limit, afterTurn }) => {
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  function authorFor(el) {
+    const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+    if (testid === 'user-message' || testid === 'human-turn') return 'user';
+    const cls = String(el.className || '');
+    if (cls.includes('font-user')) return 'user';
+    return 'assistant';
+  }
+
+  function excluded(el) {
+    if (!el) return true;
+    if (el.isContentEditable) return true;
+    if (el.closest('[contenteditable="true"]')) return true;
+    const testid = (el.getAttribute('data-testid') || '').toLowerCase();
+    if (testid.includes('composer') || testid.includes('input')) return true;
+    if (el.getAttribute('role') === 'textbox') return true;
+    return false;
+  }
+
+  function findMainScroller() {
+    let scroller = null;
+    let maxH = 0;
+    for (const el of document.querySelectorAll('*')) {
+      const style = window.getComputedStyle(el);
+      const oy = style.overflowY;
+      if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 100) {
+        if (el.scrollHeight > maxH) {
+          maxH = el.scrollHeight;
+          scroller = el;
+        }
+      }
+    }
+    return scroller;
+  }
+
+  const isClaudeChat = /\\/chat\\//.test(url) && !/\\/cowork\\/cse_/.test(url);
+  let preloadClicks = 0;
+  if (isClaudeChat) {
+    let prevRows = -1;
+    let stableRounds = 0;
+    for (let round = 0; round < 120; round++) {
+      const btn = [...document.querySelectorAll('button')]
+        .find((el) => /load later messages/i.test((el.innerText || '').trim()));
+      if (btn) {
+        btn.click();
+        preloadClicks += 1;
+      }
+      const scroller = findMainScroller();
+      if (scroller) scroller.scrollTop = 0;
+      window.scrollTo(0, 0);
+      await sleep(900);
+      const rowCount = document.querySelectorAll('[data-testid="transcript-row"]').length;
+      if (rowCount === prevRows) {
+        stableRounds += 1;
+      } else {
+        stableRounds = 0;
+      }
+      prevRows = rowCount;
+      if (!btn && stableRounds >= 4) break;
+    }
+  }
+
   const rows = document.querySelectorAll('[data-testid="transcript-row"]');
   if (rows.length === 0) {
     const isCoworkCse = /\\/cowork\\/cse_/.test(url);
-    const baseSelectors = [
+    const userSelectors = [
+      '[data-testid="user-message"]',
+      '[data-testid="human-turn"]',
+      'div[class*="font-user"]',
+    ];
+    const assistantSelectors = [
       '[data-testid="assistant-message"]',
       '[data-testid="assistant-turn"]',
       'div[class*="font-claude"]',
@@ -39,42 +105,86 @@ async ({ limit, afterTurn }) => {
           '[role="article"]',
         ]
       : [];
-    const seen = new Set();
-    const turns = [];
-    let ordinal = 0;
-    for (const sel of [...baseSelectors, ...coworkSelectors]) {
-      for (const el of document.querySelectorAll(sel)) {
-        if (seen.has(el)) continue;
-        seen.add(el);
-        const t = (el.innerText || '').trim();
-        if (/^You said:\\s*/i.test(t)) continue;
-        if (t.length < 1) continue;
-        ordinal += 1;
-        if (afterTurn !== null && afterTurn !== undefined && ordinal <= afterTurn) continue;
-        turns.push({
-          author: 'assistant',
-          timestamp: null,
-          text: t,
-          ordinal,
-        });
-        if (turns.length >= limit) break;
+
+    let scrollIterations = 0;
+    let stable = false;
+    let stableRounds = 0;
+    let prevCount = -1;
+    for (let round = 0; round < 20; round++) {
+      window.scrollTo(0, 0);
+      await sleep(300);
+      scrollIterations = round + 1;
+      const count = document.querySelectorAll(
+        '[data-testid="user-message"], [data-testid="assistant-message"]'
+      ).length;
+      if (count === prevCount) {
+        stableRounds += 1;
+        if (stableRounds >= 3) {
+          stable = true;
+          break;
+        }
+      } else {
+        stableRounds = 0;
       }
-      if (turns.length >= limit) break;
+      prevCount = count;
     }
-    const firstAuthor = turns.length ? turns[0].author : null;
+
+    const seen = new Set();
+    const nodes = [];
+    for (const sel of [...userSelectors, ...assistantSelectors, ...coworkSelectors]) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (seen.has(el) || excluded(el)) continue;
+        seen.add(el);
+        nodes.push({ el, author: authorFor(el) });
+      }
+    }
+    nodes.sort((a, b) => {
+      const pos = a.el.compareDocumentPosition(b.el);
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    });
+
+    const rawTurns = [];
+    let ordinal = 0;
+    let firstRowAuthor = null;
+    for (const { el, author } of nodes) {
+      const t = (el.innerText || '').trim();
+      if (/^You said:\\s*/i.test(t)) continue;
+      if (t.length < 1) continue;
+      const timeEl = el.closest('[data-testid="transcript-row"]')
+        ? el.closest('[data-testid="transcript-row"]').querySelector('time[datetime]')
+        : el.querySelector('time[datetime]');
+      const timestamp = timeEl ? timeEl.getAttribute('datetime') : null;
+      ordinal += 1;
+      if (firstRowAuthor === null) firstRowAuthor = author;
+      if (afterTurn !== null && afterTurn !== undefined && ordinal <= afterTurn) continue;
+      rawTurns.push({ author, timestamp, text: t, ordinal });
+    }
+
+    const turns = rawTurns.slice(-limit);
+    const truncated = rawTurns.length > limit;
+    const hasUser = rawTurns.some((t) => t.author === 'user');
+    const atTop = window.scrollY === 0 || document.documentElement.scrollTop === 0;
+    let coverage = 'tail';
+    if (hasUser && stable && atTop && !streaming && !ariaBusy) {
+      coverage = 'full';
+    }
+
     return {
       title,
       url,
       turns,
-      coverage: 'tail',
-      scroll_iterations: 0,
-      first_row_author: firstAuthor,
+      coverage,
+      scroll_iterations: scrollIterations,
+      first_row_author: firstRowAuthor,
       streaming,
       stop,
       tool_pause: toolPause,
       spinner,
       aria_busy: ariaBusy,
-      truncated: ordinal > (afterTurn || 0) + limit,
+      truncated,
+      zero_user_turns: !hasUser,
     };
   }
 
@@ -91,6 +201,9 @@ async ({ limit, afterTurn }) => {
       }
       el = el.parentElement;
     }
+  }
+  if (!scroller) {
+    scroller = findMainScroller();
   }
 
   let scrollIterations = 0;
@@ -125,12 +238,17 @@ async ({ limit, afterTurn }) => {
   for (const row of allRows) {
     let author = null;
     let bodyEl = null;
-    if (row.querySelector('[data-testid="user-message"]')) {
+    const perfRow = (row.getAttribute('data-perf-row') || '').toLowerCase();
+    if (perfRow === 'human' || row.querySelector('[data-testid="user-message"]')) {
       author = 'user';
-      bodyEl = row.querySelector('[data-testid="user-message"]');
+      bodyEl = row.querySelector('[data-testid="user-message"]') || row;
     } else {
       bodyEl = row.querySelector('div.font-claude-response, div[class*="font-claude"]');
       if (bodyEl) author = 'assistant';
+      if (!bodyEl && perfRow === 'assistant') {
+        bodyEl = row;
+        author = 'assistant';
+      }
     }
     if (!author || !bodyEl) continue;
     if (firstRowAuthor === null) firstRowAuthor = author;
@@ -163,6 +281,7 @@ async ({ limit, afterTurn }) => {
     turns,
     coverage,
     scroll_iterations: scrollIterations,
+    preload_clicks: preloadClicks,
     first_row_author: firstRowAuthor,
     streaming,
     stop,
@@ -170,6 +289,7 @@ async ({ limit, afterTurn }) => {
     spinner,
     aria_busy: ariaBusy,
     truncated,
+    zero_user_turns: !hasUser,
   };
 }
 """
@@ -203,4 +323,10 @@ async def harvest_turns(
     raw["turns"] = turns
     raw["in_flight"] = _in_flight(raw)
     raw.pop("incomplete_dom", None)
+    user_count = sum(1 for row in turns if row.get("author") == "user")
+    raw["user_turn_count"] = user_count
+    if user_count == 0 and turns:
+        raw["coverage"] = "tail"
+        raw["zero_user_turns"] = True
+        raw["harvest_failed"] = "zero_user_turns"
     return raw
