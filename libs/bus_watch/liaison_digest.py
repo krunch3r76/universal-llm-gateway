@@ -44,7 +44,7 @@ from bus_watch.ide_budget import (
 from bus_watch.induction import build_wake_induction
 from bus_watch.liaison_watchers import collect_watchers
 from bus_watch.life_digest import build_life_block, project_life_block
-from bus_watch.spawn_pending import build_attention_lanes
+from bus_watch.spawn_pending import build_attention_lanes, digest_root_surface
 
 _STARGATE_HEALTH = os.environ.get(
     "LIAISON_STARGATE_HEALTH", "http://localhost:9999/health"
@@ -60,7 +60,6 @@ _NAG_RE = re.compile(r"^branch-debt\b", re.I)
 _NAG_SENDERS = frozenset({"git-integration-worker"})
 # Per-tick fixed overhead the seat spends reading the digest and deciding.
 TICK_OVERHEAD_TOKENS = 3000
-_TICK_OVERHEAD_TOKENS = TICK_OVERHEAD_TOKENS
 _MAX_LANES = 25
 _SUBJECT_CAP = 120
 _WORKER_RE = re.compile(r"Worker thread `(\d+)`")
@@ -170,6 +169,9 @@ def build_digest(
     """Assemble one digest; mutates ``state`` counters (ticks, est_tokens)."""
     with _bus() as client:
         root = _get(client, f"/threads/{root_id}") or {}
+        recent_turns, tip_checkpoint_turn = digest_root_surface(
+            client, _get, root_id, root
+        )
         lanes = _child_lanes(client, root_id) if "_error" not in root else []
         lane_ids = {root_id, *(lane["id"] for lane in lanes)}
         unread = _unread_toc(client, lane_ids)
@@ -196,6 +198,8 @@ def build_digest(
             "turns": root.get("turn_count"),
             "unread": root.get("unread_count"),
             "last_subject": str(root.get("last_subject") or "")[:_SUBJECT_CAP],
+            "recent_turns": recent_turns,
+            "tip_checkpoint_turn": tip_checkpoint_turn,
             "error": root.get("_error"),
         },
         "register": register,
@@ -215,10 +219,6 @@ def build_digest(
         ),
         "fleet": {"stargate": _health(_STARGATE_HEALTH), "giw": _health(_GIW_HEALTH)},
         "fable_lock": lock_now,
-        # A gear preset or --set override raises the cap; this field must move
-        # with it or a seat stops at 8 while policy authorises 16 (row R14).
-        # lock.hops live on liaison-fable-<root>.lock; seats must not treat
-        # lock_hops == 8 as this root's designed stop (10534 2026-09-12).
         "hop_cap": {
             "max_hops_per_night": policy["max_hops_per_night"],
             "source": "policy.max_hops_per_night",
@@ -238,7 +238,7 @@ def build_digest(
     }
     est = (
         int(state.get("est_tokens") or 0)
-        + _TICK_OVERHEAD_TOKENS
+        + TICK_OVERHEAD_TOKENS
         + len(json.dumps(digest)) // 4
     )
     pct = round(100.0 * est / max(budget_tokens, 1), 1)
@@ -314,10 +314,12 @@ def build_digest(
         pct >= 60.0 and last_cp_tick < ticks - 2
     )
     digest["summary_row"] = state.get("summary_row")
-    # Planted address for the woken seat (10479 #82/#118/#120): read before the
-    # JSON, carried on the DIGEST turn and by any paste transport.
-    induction_surface = "cse" if register == "cse" else "ide"
-    digest["induction"] = build_wake_induction(digest, surface=induction_surface)
+    digest["induction"] = build_wake_induction(
+        digest,
+        surface="cse" if register == "cse" else "ide",
+        state=state,
+        lock=lock_now,
+    )
     state.update(
         {
             "fingerprint": fp,

@@ -87,6 +87,36 @@ def _under_dispatch_cap(dispatches: int, policy: dict[str, Any]) -> bool:
     return cap <= 0 or dispatches < cap
 
 
+def compute_spawn_signal_sources(
+    digest: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    lock: dict[str, Any] | None = None,
+    now: float | None = None,
+) -> list[str]:
+    """Name each wake clause that fired for provenance on the successor paste."""
+    policy = digest.get("policy") or {}
+    if lock is None:
+        root_id = str((digest.get("root") or {}).get("id") or "").strip()
+        lock = read_lock(root_id) if root_id else {}
+    ts = now if now is not None else time.time()
+    attention = digest.get("attention") or []
+    checkpoint_due = bool(digest.get("checkpoint_due"))
+    budget_spawn, _reason = _context_budget_spawn_allowed(
+        digest, lock=lock, policy=policy, now=ts
+    )
+    sources: list[str] = []
+    if actionable_attention(attention, state=state):
+        sources.append("actionable_attention")
+    if checkpoint_due_wake(state, checkpoint_due):
+        sources.append("checkpoint_due")
+    if handoff_wake(state):
+        sources.append("handoff")
+    if budget_spawn:
+        sources.append("context_budget")
+    return sources
+
+
 def evaluate_spawn_predicate(
     digest: dict[str, Any],
     state: dict[str, Any],
@@ -103,18 +133,14 @@ def evaluate_spawn_predicate(
         lock = read_lock(root_id) if root_id else {}
     ts = now if now is not None else time.time()
     night_id = current_night_id()
-    attention = digest.get("attention") or []
-    checkpoint_due = bool(digest.get("checkpoint_due"))
     budget = digest.get("budget") or {}
     budget_spawn, budget_reason = _context_budget_spawn_allowed(
         digest, lock=lock, policy=policy, now=ts
     )
-    spawn_signal = (
-        bool(actionable_attention(attention, state=state))
-        or checkpoint_due_wake(state, checkpoint_due)
-        or handoff_wake(state)
-        or budget_spawn
+    spawn_signal_sources = compute_spawn_signal_sources(
+        digest, state, lock=lock, now=ts
     )
+    spawn_signal = bool(spawn_signal_sources)
     register = str(digest.get("register") or state.get("register") or "")
     idle_forfeit = idle_ide_forfeit(lock, register=register, policy=policy)
     grace = float(policy.get("spawn_grace_seconds") or 900)
@@ -157,6 +183,7 @@ def evaluate_spawn_predicate(
         "spawn": spawn,
         "clauses": clauses,
         "spawn_fingerprint": fp,
+        "spawn_signal_sources": spawn_signal_sources,
         "night_id": night_id,
         "hops": hops,
         "dispatches_tonight": dispatches,

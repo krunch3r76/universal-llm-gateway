@@ -31,6 +31,8 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "successor_cost_intent": "deliberate_high_cost",
     "max_ticks_per_hop": 5,
     "max_hop_minutes": 60,
+    # Wall-clock backstop for pending_spawn release — strictly longer than max_hop.
+    "pending_stale_backstop_minutes": 180,
     "poll_seconds": 600,
     "max_hops_per_night": MAX_HOPS_PER_NIGHT,
     # Opt-in ceiling: non-positive means no dispatch cap (operator 2026-09-13).

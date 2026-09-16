@@ -258,7 +258,9 @@ def test_commission_guard_present_whenever_commission_line_is() -> None:
 _SUCCESSOR_KW = {
     "gear": "3-wake-on-attention",
     "row": "Settled · Live · Next",
-    "tip_cp_ordinal": 42,
+    "tip_turn": 42,
+    "tip_checkpoint_turn": 40,
+    "spawn_signal_sources": ["checkpoint_due"],
 }
 
 
@@ -276,7 +278,8 @@ def test_successor_wake_sheds_overlong_row_without_raising() -> None:
         "10479",
         gear="3-wake-on-attention",
         row=long_row,
-        tip_cp_ordinal=1,
+        tip_turn=1,
+        tip_checkpoint_turn=1,
     )
     assert len(text.encode("utf-8")) <= SUCCESSOR_WAKE_CAP
 
@@ -286,7 +289,7 @@ def test_successor_wake_fitting_input_byte_identical() -> None:
     first = _default_successor_render()
     second = _default_successor_render()
     assert first == second
-    assert len(first.encode("utf-8")) == 1146
+    assert len(first.encode("utf-8")) == 1173
 
 
 @pytest.mark.offline
@@ -298,7 +301,8 @@ def test_successor_wake_truncation_marker_only_when_shed() -> None:
         "10479",
         gear="3-wake-on-attention",
         row=long_row,
-        tip_cp_ordinal=1,
+        tip_turn=1,
+        tip_checkpoint_turn=1,
     )
     assert "..." in shed
     assert f"row={long_row}" not in shed
@@ -311,14 +315,16 @@ def test_successor_wake_load_bearing_fields_survive_maximal_shedding() -> None:
         "10479",
         gear="3-wake-on-attention",
         row=long_row,
-        tip_cp_ordinal=99,
+        tip_turn=99,
+        tip_checkpoint_turn=88,
         ring="10532",
     )
     assert "resume 10479" in text
     assert 'dispatch(tool="continuity", arguments=\'{"op":"resume","thread":"10479"}\')' in text
     assert "agent_bus_read(thread_get, thread=10479)" in text
     assert "agent-bus:10532 (echo)" in text
-    assert "tip_cp_ordinal=99" in text
+    assert "tip turn #99" in text
+    assert "tip CHECKPOINT #88" in text
     assert "gear: 3-wake-on-attention" in text
     assert "Use the liaison skill." in text
     assert "runbook:bus-consult-watcher" in text

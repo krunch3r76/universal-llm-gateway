@@ -22,6 +22,7 @@ from typing import Any
 from bus_watch.doorbell_skills import primary_liaison_slug
 from bus_watch.friction_rows import event_line as _friction_event
 from bus_watch.friction_rows import now_row as _friction_now
+from bus_watch.spawn_wake.predicate import compute_spawn_signal_sources
 
 INDUCTION_CAP = 700
 _EVENT_ITEMS = 3
@@ -157,19 +158,24 @@ def _format_now_line(digest: dict[str, Any], now_row: str, *, source: str) -> st
         if tip is not None and root_id:
             handoff = str(root.get("last_subject") or "").strip()
             if handoff:
-                return f"tip #{tip} on agent-bus:{root_id} · «{handoff[:_SUBJECT_CHARS]}»"
-            return f"tip #{tip} on agent-bus:{root_id}"
+                return f"tip turn #{tip} on agent-bus:{root_id} · «{handoff[:_SUBJECT_CHARS]}»"
+            return f"tip turn #{tip} on agent-bus:{root_id}"
         return ""
     body = str(now_row or "").strip()
     if len(body) > 120:
         body = body[:117].rstrip() + "…"
     if tip is not None and root_id:
-        return f"tip #{tip} on agent-bus:{root_id} · {body}"
+        return f"tip turn #{tip} on agent-bus:{root_id} · {body}"
     return body
 
 
 def build_wake_induction(
-    digest: dict[str, Any], *, cap: int = INDUCTION_CAP, surface: str = "ide"
+    digest: dict[str, Any],
+    *,
+    cap: int = INDUCTION_CAP,
+    surface: str = "ide",
+    state: dict[str, Any] | None = None,
+    lock: dict[str, Any] | None = None,
 ) -> str:
     """Render the wake as a short planted-address block (≤ ``cap`` bytes).
 
@@ -191,6 +197,12 @@ def build_wake_induction(
     now_row, now_source = _resolve_now_row(digest)
     events = _events(digest)
     forcing = bool(events or friction_now)
+    st = state if state is not None else {}
+    lock_now = lock if lock is not None else digest.get("fable_lock") or {}
+    spawn_sources = compute_spawn_signal_sources(digest, st, lock=lock_now)
+    digest = {**digest, "spawn_signal_sources": spawn_sources}
+    if spawn_sources:
+        events = [f"wake {','.join(spawn_sources)}", *events]
     head = f"WAKE {root_id} · turns={root.get('turns')} · {digest.get('ts')}"
     if not forcing and not digest.get("changed_since_last_tick"):
         head = head.replace("WAKE", "QUIET", 1)
@@ -243,6 +255,7 @@ def _fit(lines: list[str], cap: int) -> str:
                     for i in range(len(lines) - 2, 0, -1)
                     if lines[i].startswith("Event:")
                     and not lines[i].startswith("Event: CONTEXT_BUDGET")
+                    and not lines[i].startswith("Event: wake")
                 ),
                 None,
             )
@@ -273,6 +286,7 @@ def _fit_cse(lines: list[str], cap: int) -> str:
                     for i in range(len(lines) - 2, 0, -1)
                     if lines[i].startswith("Event:")
                     and not lines[i].startswith("Event: CONTEXT_BUDGET")
+                    and not lines[i].startswith("Event: wake")
                 ),
                 None,
             )

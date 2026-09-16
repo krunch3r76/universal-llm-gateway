@@ -44,7 +44,7 @@ def test_induction_plants_addresses_not_a_skill_copy() -> None:
     assert "Event: 10586 unread=1" in text
     assert "watcher 10479-10586-r9-none complete" in text
     assert (
-        "NOW: tip #214 on agent-bus:10479 · «CHECKPOINT 10479 54b93098»" in text
+        "NOW: tip turn #214 on agent-bus:10479 · «CHECKPOINT 10479 54b93098»" in text
     )
     assert "do not re-read): liaison skill · git-posture § Land" in text
     assert "register=autonomous · hopper paused (10479#210)" in text
@@ -128,7 +128,7 @@ def test_induction_now_from_policy_bind() -> None:
     text = build_wake_induction(
         _digest(summary_row=None, policy={"now_row": "R10 wake induction transport"})
     )
-    assert "NOW: tip #214 on agent-bus:10479 · R10 wake induction transport" in text
+    assert "NOW: tip turn #214 on agent-bus:10479 · R10 wake induction transport" in text
 
 
 def test_induction_policy_now_row_wins_over_stale_summary_row() -> None:
@@ -140,7 +140,7 @@ def test_induction_policy_now_row_wins_over_stale_summary_row() -> None:
     )
     assert "POST-LAND tail" in text
     assert "IN FLIGHT lane 11364" not in text
-    assert "tip #214 on agent-bus:10479" in text
+    assert "tip turn #214 on agent-bus:10479" in text
 
 
 def test_induction_cse_fire_keeps_use_lines_when_summary_row_stale() -> None:
@@ -173,8 +173,8 @@ def test_induction_respects_cap() -> None:
     lanes = [
         {"id": str(20000 + i), "unread": 3, "last_subject": "x" * 56} for i in range(12)
     ]
-    text = build_wake_induction(_digest(attention=lanes), cap=400)
-    assert len(text.encode("utf-8")) <= 400
+    text = build_wake_induction(_digest(attention=lanes), cap=435)
+    assert len(text.encode("utf-8")) <= 435
     assert text.startswith("WAKE 10479")
     assert "NOW:" in text
 
@@ -233,3 +233,21 @@ def test_induction_cse_cap_trims_use_lines_last() -> None:
     assert len(text.encode("utf-8")) <= 700
     assert "Standing: register=" in text
     assert "Use the liaison skill" in text
+
+
+def test_induction_spawn_signal_survives_cap() -> None:
+    digest = _digest(
+        spawn_signal_sources=["actionable_attention", "checkpoint_due"],
+        checkpoint_due=True,
+        policy={
+            "induction_binds": ["a long standing bind " * 8, "another " * 20],
+            "induction_loaded": ["git-posture § Land"],
+        },
+        attention=[
+            {"id": str(n), "unread": 2, "last_subject": "cursor-sdk CLOSEOUT " * 3}
+            for n in range(10590, 10596)
+        ],
+    )
+    text = build_wake_induction(digest, cap=700)
+    assert "Event: wake actionable_attention,checkpoint_due" in text
+    assert len(text.encode("utf-8")) <= 700

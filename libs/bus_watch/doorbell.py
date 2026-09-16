@@ -260,13 +260,17 @@ def _compose_successor_wake(
     gear: str,
     row: str,
     seat: str = "cursor-sdk",
-    tip_cp_ordinal: int | None = None,
+    tip_turn: int | None = None,
+    tip_checkpoint_turn: int | None = None,
+    spawn_signal_sources: list[str] | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
 ) -> str:
     """Compose successor paste without cap shedding (for validation and render)."""
     echo = ring if ring else root_id
-    tip_val = tip_cp_ordinal if tip_cp_ordinal is not None else ""
+    tip_turn_val = tip_turn if tip_turn is not None else ""
+    tip_cp_val = tip_checkpoint_turn if tip_checkpoint_turn is not None else ""
+    signal_text = ",".join(spawn_signal_sources or []) or "none"
     extras = "".join(f"; {render_address(addr)}" for addr in extra_addresses)
     resume_args = f'{{"op":"resume","thread":"{root_id}"}}'
     liaison_slug = _successor_liaison_slug(seat)
@@ -277,8 +281,9 @@ def _compose_successor_wake(
         "duty: run the tick; checkpoint; hop only if hop_qualifies. "
         "Hop only when autonomous follow-up remains; HOLD_MERGE / empty NOW / quiet tick → STAY.",
         "disclosure: orientation ritual; one echo before the first move.",
-        f"objective: tip CHECKPOINT on agent-bus:{root_id} "
-        f"(tip_cp_ordinal={tip_val}); row={row}; gear: {gear}.",
+        f"objective: tip turn #{tip_turn_val} on agent-bus:{root_id}; "
+        f"tip CHECKPOINT #{tip_cp_val}; row={row}; gear: {gear}; "
+        f"spawn_signal={signal_text}.",
         f"addresses: dispatch(tool=\"continuity\", arguments='{resume_args}'); "
         f"agent_bus_read(thread_get, thread={root_id}); agent-bus:{echo} (echo){extras}",
         f"Use the {liaison_slug} skill. "
@@ -306,7 +311,9 @@ def successor_wake_unshed_byte_length(
     gear: str,
     row: str,
     seat: str = "cursor-sdk",
-    tip_cp_ordinal: int | None = None,
+    tip_turn: int | None = None,
+    tip_checkpoint_turn: int | None = None,
+    spawn_signal_sources: list[str] | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
 ) -> int:
@@ -317,7 +324,9 @@ def successor_wake_unshed_byte_length(
             gear=gear,
             row=row,
             seat=seat,
-            tip_cp_ordinal=tip_cp_ordinal,
+            tip_turn=tip_turn,
+            tip_checkpoint_turn=tip_checkpoint_turn,
+            spawn_signal_sources=spawn_signal_sources,
             ring=ring,
             extra_addresses=extra_addresses,
         ).encode("utf-8")
@@ -355,7 +364,9 @@ def render_successor_wake(
     gear: str,
     row: str,
     seat: str = "cursor-sdk",
-    tip_cp_ordinal: int | None = None,
+    tip_turn: int | None = None,
+    tip_checkpoint_turn: int | None = None,
+    spawn_signal_sources: list[str] | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
     cap: int = SUCCESSOR_WAKE_CAP,
@@ -378,7 +389,9 @@ def render_successor_wake(
             gear=gear,
             row=row_text,
             seat=seat,
-            tip_cp_ordinal=tip_cp_ordinal,
+            tip_turn=tip_turn,
+            tip_checkpoint_turn=tip_checkpoint_turn,
+            spawn_signal_sources=spawn_signal_sources,
             ring=ring,
             extra_addresses=addresses,
         )

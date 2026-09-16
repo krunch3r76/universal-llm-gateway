@@ -18,6 +18,7 @@ from bus_watch.spawn_on_wake import (
     spawn_fingerprint,
     tick_spawn_on_wake,
 )
+from bus_watch.spawn_pending import digest_pending_is_terminal
 
 
 def _digest(*, attention=None, checkpoint_due=False, turns=10, budget=None):  # noqa: ANN001
@@ -177,7 +178,9 @@ def test_dispatch_body_message_not_packet() -> None:
         successor_context={
             "gear": "3-wake-on-attention",
             "row": "Settled · Live · Next",
-            "tip_cp_ordinal": 42,
+            "tip_turn": 42,
+            "tip_checkpoint_turn": 40,
+            "spawn_signal_sources": ["actionable_attention"],
         },
     )
     assert body["op"] == "generate"
@@ -194,7 +197,9 @@ def test_dispatch_body_message_not_packet() -> None:
         "agent_bus_read(thread_get",
         "gear:",
         "row=",
-        "tip_cp_ordinal=",
+        "tip turn #",
+        "tip CHECKPOINT #",
+        "spawn_signal=",
         "contract: none",
         "LOAD the liaison skill",
         "Hop only when autonomous follow-up remains",
@@ -229,7 +234,8 @@ def test_successor_message_sheds_when_over_cap() -> None:
         "10479",
         gear="3-wake-on-attention",
         row="x" * 3000,
-        tip_cp_ordinal=1,
+        tip_turn=1,
+        tip_checkpoint_turn=1,
     )
     assert len(text.encode("utf-8")) <= 2048
     assert "..." in text
@@ -240,7 +246,8 @@ def _default_successor() -> str:
         "10479",
         gear="3-wake-on-attention",
         row="Settled · Live · Next",
-        tip_cp_ordinal=42,
+        tip_turn=42,
+        tip_checkpoint_turn=40,
     )
 
 
@@ -267,7 +274,8 @@ def test_successor_message_ring_and_extra_addresses() -> None:
         "10479",
         gear="3-wake-on-attention",
         row="Settled · Live · Next",
-        tip_cp_ordinal=42,
+        tip_turn=42,
+        tip_checkpoint_turn=40,
         ring="10532",
         extra_addresses=(
             "cortex://notes/system/threads/10479-charter-scoreboard.md#Loop",
@@ -315,7 +323,9 @@ def test_dispatch_body_threads_ring_and_extras() -> None:
         successor_context={
             "gear": "3-wake-on-attention",
             "row": "Settled · Live · Next",
-            "tip_cp_ordinal": 42,
+            "tip_turn": 42,
+            "tip_checkpoint_turn": 40,
+            "spawn_signal_sources": ["actionable_attention"],
         },
     )
     message = body["message"]
@@ -657,6 +667,55 @@ def test_pending_clears_when_digest_shows_closed_worker(
     assert result["action"] == "hold"
 
 
+def test_root_pending_not_terminal_at_max_hop_without_closeout() -> None:
+    """a:34257 specimen — ROOT thread_id must not release at max_hop_minutes."""
+    pending = {
+        "execution_id": "585b780e-685e-402b-aee4-2abae834c1a3",
+        "thread_id": "10479",
+        "spawned_at": "2026-09-16T10:00:22Z",
+    }
+    digest = {
+        "root": {"id": "10479", "turns": 2634, "recent_turns": []},
+        "lanes": [],
+        "attention": [{"kind": "budget_estimate"}],
+        "policy": {"max_hop_minutes": 30, "pending_stale_backstop_minutes": 180},
+    }
+    spawned = datetime.fromisoformat("2026-09-16T10:00:22+00:00").timestamp()
+    checker = digest_pending_is_terminal(digest, now=spawned + 1900)
+    assert checker(pending) is False
+    assert checker.last_reason == "unresolved_root_pending"
+
+
+def test_root_pending_terminal_on_successor_closeout_on_root() -> None:
+    pending = {
+        "execution_id": "585b780e-685e-402b-aee4-2abae834c1a3",
+        "thread_id": "10479",
+        "spawned_at": "2026-09-16T10:00:22Z",
+    }
+    digest = {
+        "root": {
+            "id": "10479",
+            "turns": 2635,
+            "recent_turns": [
+                {
+                    "turn_number": 2635,
+                    "from": "cdp",
+                    "subject": "CHECKPOINT 10479",
+                    "body": "TYPE: CHECKPOINT\n585b780e-685e-402b-aee4-2abae834c1a3",
+                    "created_at": "2026-09-16T10:31:00Z",
+                }
+            ],
+        },
+        "lanes": [],
+        "attention": [],
+        "policy": {"max_hop_minutes": 30, "pending_stale_backstop_minutes": 180},
+    }
+    spawned = datetime.fromisoformat("2026-09-16T10:00:22+00:00").timestamp()
+    checker = digest_pending_is_terminal(digest, now=spawned + 1900)
+    assert checker(pending) is True
+    assert checker.last_reason == "lifecycle"
+
+
 def test_stale_pending_without_lane_is_terminal() -> None:
     digest = _digest(attention=[{"id": "1"}])
     pending = {
@@ -713,7 +772,8 @@ def test_successor_wake_shell_seat_names_seat_and_emits_watcher() -> None:
         gear="3-wake-on-attention",
         row="Settled · Live · Next",
         seat="cursor-sdk",
-        tip_cp_ordinal=42,
+        tip_turn=42,
+        tip_checkpoint_turn=40,
     )
     assert "seat cursor-sdk" in text
     assert "seat: cursor-sdk" in text
@@ -726,7 +786,8 @@ def test_successor_wake_cdp_seat_names_seat_and_omits_watcher() -> None:
         gear="4-cdp-liaison",
         row="Settled · Live · Next",
         seat="cdp",
-        tip_cp_ordinal=42,
+        tip_turn=42,
+        tip_checkpoint_turn=40,
     )
     assert "seat cdp" in text
     assert "seat: cdp" in text
@@ -739,7 +800,8 @@ def test_successor_wake_web_anthropic_seat_names_seat_and_omits_watcher() -> Non
         gear="3-wake-on-attention",
         row="Settled · Live · Next",
         seat="web-anthropic",
-        tip_cp_ordinal=42,
+        tip_turn=42,
+        tip_checkpoint_turn=40,
     )
     assert "seat web-anthropic" in text
     assert "seat: web-anthropic" in text
@@ -758,7 +820,9 @@ def test_dispatch_body_passes_resolved_seat_into_message() -> None:
         successor_context={
             "gear": "4-cdp-liaison",
             "row": "Settled · Live · Next",
-            "tip_cp_ordinal": 42,
+            "tip_turn": 42,
+            "tip_checkpoint_turn": 40,
+            "spawn_signal_sources": ["actionable_attention"],
         },
     )
     assert body["seat"] == "cdp"
@@ -893,4 +957,25 @@ def test_actionable_kind_unknown_turn_fails_closed() -> None:
         )
         is True
     )
-    assert actionable_kind({"from": "cursor-auto", "subject": "?", "body": ""}) is True
+
+
+def test_successor_context_separates_tip_turn_from_checkpoint() -> None:
+    from bus_watch.spawn_on_wake import successor_context_from_digest
+
+    ctx = successor_context_from_digest(
+        {
+            "root": {"id": "10479", "turns": 2669, "tip_checkpoint_turn": 2661},
+            "policy": {"gear": "3-wake-on-attention"},
+            "spawn_signal_sources": ["actionable_attention"],
+        }
+    )
+    assert ctx["tip_turn"] == 2669
+    assert ctx["tip_checkpoint_turn"] == 2661
+    assert ctx["tip_turn"] != ctx["tip_checkpoint_turn"]
+
+
+def test_evaluate_spawn_predicate_reports_signal_sources() -> None:
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    ev = evaluate_spawn_predicate(digest, {}, lock={"holder": None})
+    assert ev["spawn_signal_sources"] == ["actionable_attention"]
+    assert ev["clauses"]["spawn_signal"] is True
