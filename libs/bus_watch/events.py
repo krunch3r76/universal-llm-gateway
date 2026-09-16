@@ -75,3 +75,29 @@ def emit_night_id_reset(**kwargs: Any) -> None:
 
 def emit_lease_forfeited(**kwargs: Any) -> None:
     _emit(LiaisonLeaseForfeited(**kwargs))
+
+
+@event_factory
+def LiaisonPendingSpawnReleased(  # noqa: N802
+    *,
+    root_id: str,
+    execution_id: str,
+    thread_id: str,
+    reason: str,
+    spawned_at: str | None = None,
+) -> Event:
+    return Event(
+        signal="liaison.pending_spawn.released",
+        payload={
+            "root_id": root_id,
+            "execution_id": execution_id,
+            "thread_id": thread_id,
+            "reason": reason,
+            "spawned_at": spawned_at,
+        },
+        scope="global",
+    )
+
+
+def emit_pending_spawn_released(**kwargs: Any) -> None:
+    _emit(LiaisonPendingSpawnReleased(**kwargs))

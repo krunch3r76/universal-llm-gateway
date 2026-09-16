@@ -9,6 +9,7 @@ from typing import Any
 
 from stargate_dispatch.client import submit_team_dispatch
 
+from bus_watch.events import emit_pending_spawn_released
 from bus_watch.fable_lock import (
     current_night_id,
     read_lock,
@@ -132,6 +133,14 @@ def tick_spawn_on_wake(
     if pending := state.get("pending_spawn"):
         if checker(pending):
             finished_execution_id = str(pending.get("execution_id") or "")
+            reason = getattr(checker, "last_reason", None) or "terminal"
+            emit_pending_spawn_released(
+                root_id=root_id,
+                execution_id=finished_execution_id,
+                thread_id=str(pending.get("thread_id") or ""),
+                reason=str(reason),
+                spawned_at=str(pending.get("spawned_at") or "") or None,
+            )
             state.pop("pending_spawn", None)
     reaped = dead_sdk_holder(
         lock,
@@ -144,7 +153,10 @@ def tick_spawn_on_wake(
     evaluation = evaluate_spawn_predicate(digest, state, lock=lock, is_terminal=checker)
     if reaped:
         evaluation["reaped_sdk_holder"] = reaped
-    successor_context = successor_context_from_digest(digest)
+    successor_context = successor_context_from_digest(
+        digest,
+        spawn_signal_sources=evaluation.get("spawn_signal_sources"),
+    )
     body = build_dispatch_body(root_id, policy, successor_context=successor_context)
     if dry_run:
         return {
@@ -171,5 +183,5 @@ def tick_spawn_on_wake(
     if 0 < status < 400:
         if digest.get("checkpoint_due"):
             state["checkpoint_due_spawned_tick"] = int(state.get("last_cp_tick") or 0)
-        record_spawn_service(state, digest.get("attention"))
+        record_spawn_service(state, digest.get("attention"), root_id=root_id)
     return {"action": "spawned", "evaluation": evaluation, "fire": fired}

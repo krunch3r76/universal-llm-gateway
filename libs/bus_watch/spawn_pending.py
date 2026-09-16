@@ -46,6 +46,10 @@ _PROGRESS_JSON_RE = re.compile(
     r'^\s*\{\s*"summary"\s*:\s*"Still running',
     re.M,
 )
+_ROOT_SUCCESSOR_TERMINAL_RE = re.compile(
+    r"CHECKPOINT|CLOSEOUT|\bSTAY\b|TYPE:\s*(CHECKPOINT|CLOSEOUT|STAY)",
+    re.I,
+)
 
 
 def _parse_iso_ts(value: str | None) -> float | None:
@@ -347,7 +351,9 @@ def dead_sdk_holder(
     return None
 
 
-def record_spawn_service(state: dict[str, Any], attention: Any) -> None:
+def record_spawn_service(
+    state: dict[str, Any], attention: Any, *, root_id: str | None = None
+) -> None:
     """After a successful fire: latch the handoff, mark the closeouts and the
     friction rows this successor was spawned for, and remember the successor's
     own lane."""
@@ -368,7 +374,8 @@ def record_spawn_service(state: dict[str, Any], attention: Any) -> None:
             )
     state["served_closeouts"] = dict(list(served.items())[-_SERVED_KEEP:])
     thread_id = str((state.get("pending_spawn") or {}).get("thread_id") or "").strip()
-    if thread_id:
+    rid = str(root_id or "").strip()
+    if thread_id and thread_id != rid:
         kept = [
             str(x)
             for x in (state.get("successor_threads") or [])
@@ -394,16 +401,162 @@ def pending_spawn_terminal(
     return is_terminal(pending)
 
 
+def _compact_root_turn(turn: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "turn_number": turn.get("turn_number"),
+        "from": turn.get("from") or turn.get("from_agent"),
+        "subject": turn.get("subject"),
+        "body": str(turn.get("body") or "")[:400],
+        "created_at": turn.get("created_at"),
+    }
+
+
+def compact_root_turn_summaries(turns: Any) -> list[dict[str, Any]]:
+    """Shrink root bus turns for digest pending-spawn lifecycle checks."""
+    if not isinstance(turns, list):
+        return []
+    return [_compact_root_turn(row) for row in turns if isinstance(row, dict)]
+
+
+def tip_checkpoint_turn_from_turns(turns: Any) -> int | None:
+    """Newest CHECKPOINT turn on the continuity root (tip CHECKPOINT ordinal)."""
+    if not isinstance(turns, list):
+        return None
+    candidates = [
+        t
+        for t in turns
+        if isinstance(t, dict)
+        and str(t.get("subject") or "").upper().startswith("CHECKPOINT")
+    ]
+    if not candidates:
+        return None
+    tip = max(candidates, key=lambda t: int(t.get("turn_number") or 0))
+    num = tip.get("turn_number")
+    return int(num) if num is not None else None
+
+
+def root_turn_surface(raw_turns: Any) -> tuple[list[dict[str, Any]], int | None]:
+    """Compact root turns plus tip CHECKPOINT ordinal for digest surfaces."""
+    return compact_root_turn_summaries(raw_turns), tip_checkpoint_turn_from_turns(
+        raw_turns
+    )
+
+
+def digest_root_surface(
+    client: Any, get: Callable[..., Any], root_id: str, root: dict[str, Any]
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Fetch compact root turns and tip CHECKPOINT ordinal for digest assembly."""
+    if root.get("_error"):
+        return [], None
+    raw = (get(client, "/turns", thread=root_id, last=20) or {}).get("turns") or []
+    return root_turn_surface(raw)
+
+
+def _turn_text(turn: dict[str, Any]) -> str:
+    return " ".join(
+        str(turn.get(key) or "")
+        for key in ("subject", "body", "from", "from_agent")
+    )
+
+
+def _successor_terminal_on_root(
+    pending: dict[str, Any],
+    root_turns: list[dict[str, Any]],
+    *,
+    spawned_at: float | None,
+) -> bool:
+    """True when the successor's closeout/CHECKPOINT/STAY landed on the root."""
+    execution_id = str(pending.get("execution_id") or "").strip()
+    if not execution_id:
+        return False
+    for turn in root_turns:
+        if spawned_at is not None:
+            created = _parse_iso_ts(str(turn.get("created_at") or "") or None)
+            if created is not None and created <= spawned_at:
+                continue
+        text = _turn_text(turn)
+        if execution_id not in text:
+            continue
+        if _ROOT_SUCCESSOR_TERMINAL_RE.search(text):
+            return True
+    return False
+
+
+class PendingTerminalChecker:
+    """Callable pending-spawn terminality with an explicit ``last_reason``."""
+
+    last_reason: str | None = None
+
+    def __init__(
+        self,
+        *,
+        root_id: str,
+        rows: dict[str, dict[str, Any]],
+        root_turns: list[dict[str, Any]],
+        backstop_s: float,
+        ts: float,
+    ) -> None:
+        self._root_id = root_id
+        self._rows = rows
+        self._root_turns = root_turns
+        self._backstop_s = backstop_s
+        self._ts = ts
+
+    def __call__(self, pending: dict[str, Any]) -> bool:
+        tid = str(pending.get("thread_id") or "").strip()
+        spawned = _parse_iso_ts(str(pending.get("spawned_at") or "") or None)
+        if tid and tid != self._root_id:
+            row = self._rows.get(tid)
+            if row is not None:
+                if row_is_terminal(row):
+                    self.last_reason = "lane_lifecycle"
+                    return True
+                self.last_reason = "pending_live"
+                return False
+        elif tid and tid == self._root_id:
+            if _successor_terminal_on_root(
+                pending, self._root_turns, spawned_at=spawned
+            ):
+                self.last_reason = "lifecycle"
+                return True
+            if spawned is not None and (self._ts - spawned) > self._backstop_s:
+                self.last_reason = "stale_backstop"
+                return True
+            self.last_reason = "unresolved_root_pending"
+            return False
+        elif not tid:
+            if _successor_terminal_on_root(
+                pending, self._root_turns, spawned_at=spawned
+            ):
+                self.last_reason = "lifecycle"
+                return True
+            if spawned is not None and (self._ts - spawned) > self._backstop_s:
+                self.last_reason = "stale_backstop"
+                return True
+            self.last_reason = "unresolved_empty_thread"
+            return False
+        if _successor_terminal_on_root(pending, self._root_turns, spawned_at=spawned):
+            self.last_reason = "lifecycle"
+            return True
+        if spawned is not None and (self._ts - spawned) > self._backstop_s:
+            self.last_reason = "stale_backstop"
+            return True
+        self.last_reason = "pending_live"
+        return False
+
+
 def digest_pending_is_terminal(
     digest: dict[str, Any],
     *,
     now: float | None = None,
-) -> Callable[[dict[str, Any]], bool]:
-    """Build a checker: pending ``thread_id`` is terminal per digest lanes.
+) -> PendingTerminalChecker:
+    """Build a checker: pending resolves from lane lifecycle, root evidence, or backstop.
 
-    A worker missing from the digest is still treated as live (admit race)
-    unless ``spawned_at`` is older than ``policy.max_hop_minutes``. Vanished
-    plus stale is the 10534 failure class when the mutex outlived the seat.
+    When ``pending_spawn.thread_id`` is the continuity root (or empty), the lane
+    branch is unresolvable — terminality comes from successor closeout evidence
+    on ``digest.root.recent_turns``, then an explicit stale backstop
+    (``policy.pending_stale_backstop_minutes``, default 180), never
+    ``max_hop_minutes``.
     """
     rows: dict[str, dict[str, Any]] = {}
     for bucket in (digest.get("lanes") or []), (digest.get("attention") or []):
@@ -412,21 +565,21 @@ def digest_pending_is_terminal(
         for item in bucket:
             if isinstance(item, dict) and item.get("id") is not None:
                 rows[str(item["id"])] = item
-    max_age_s = float((digest.get("policy") or {}).get("max_hop_minutes") or 60) * 60.0
+    policy = digest.get("policy") or {}
+    backstop_s = float(policy.get("pending_stale_backstop_minutes") or 180) * 60.0
     ts = now if now is not None else datetime.now(UTC).timestamp()
-
-    def is_terminal(pending: dict[str, Any]) -> bool:
-        tid = str(pending.get("thread_id") or "").strip()
-        if tid:
-            row = rows.get(tid)
-            if row is not None:
-                return row_is_terminal(row)
-        spawned = _parse_iso_ts(str(pending.get("spawned_at") or "") or None)
-        if spawned is not None and (ts - spawned) > max_age_s:
-            return True
-        return False
-
-    return is_terminal
+    root = digest.get("root") or {}
+    root_id = str(root.get("id") or "").strip()
+    root_turns = root.get("recent_turns")
+    if not isinstance(root_turns, list):
+        root_turns = []
+    return PendingTerminalChecker(
+        root_id=root_id,
+        rows=rows,
+        root_turns=[t for t in root_turns if isinstance(t, dict)],
+        backstop_s=backstop_s,
+        ts=ts,
+    )
 
 
 def checkpoint_due_wake(state: dict[str, Any], checkpoint_due: bool) -> bool:
@@ -444,10 +597,12 @@ def checkpoint_due_wake(state: dict[str, Any], checkpoint_due: bool) -> bool:
 
 __all__ = [
     "IDE_IDLE_FORFEIT_S",
+    "PendingTerminalChecker",
     "actionable_kind",
     "actionable_attention",
     "build_attention_lanes",
     "checkpoint_due_wake",
+    "compact_root_turn_summaries",
     "compact_unread_turn_summaries",
     "dead_sdk_holder",
     "digest_pending_is_terminal",
@@ -456,5 +611,7 @@ __all__ = [
     "idle_ide_forfeit",
     "pending_spawn_terminal",
     "record_spawn_service",
+    "digest_root_surface",
     "row_is_terminal",
+    "tip_checkpoint_turn_from_turns",
 ]
