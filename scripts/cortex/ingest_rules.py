@@ -153,6 +153,13 @@ def _projection_matches_live(
     return True, ""
 
 
+def _live_rule_ids(client: object) -> tuple[int, set[str]]:
+    status, body = _request(client, "GET", "/entities?type=rule&limit=500")
+    if status != 200:
+        return status, set()
+    return 200, {row["id"] for row in body.get("items", [])}
+
+
 def _check(client: object, root: Path) -> int:
     failures = 0
     for slug in sorted(AGENT_GUIDES_RULE_SLUGS):
@@ -174,15 +181,30 @@ def _check(client: object, root: Path) -> int:
         if not ok:
             print(f"DRIFT: {entity_id} {reason}", file=sys.stderr)
             failures += 1
+
+    list_status, live_ids = _live_rule_ids(client)
+    if list_status != 200:
+        print(
+            f"DRIFT: GET /entities?type=rule {list_status} (cannot enumerate orphans)",
+            file=sys.stderr,
+        )
+        failures += 1
+    else:
+        expected_ids = {f"rule:{slug}" for slug in AGENT_GUIDES_RULE_SLUGS}
+        for eid in sorted(live_ids - expected_ids):
+            print(f"DRIFT: orphan rule entity {eid} (not in manifest)", file=sys.stderr)
+            failures += 1
     return failures
 
 
 def _audit(client: object, root: Path) -> int:
-    status, body = _request(client, "GET", "/entities?type=rule&limit=500")
-    if status != 200:
-        print(f"AUDIT FAIL: GET /entities?type=rule {status} → {body}", file=sys.stderr)
+    list_status, live_ids = _live_rule_ids(client)
+    if list_status != 200:
+        print(
+            f"AUDIT FAIL: GET /entities?type=rule {list_status} → cannot list rule entities",
+            file=sys.stderr,
+        )
         return 2
-    live_ids = {row["id"] for row in body.get("items", [])}
     expected_ids = {f"rule:{slug}" for slug in AGENT_GUIDES_RULE_SLUGS}
     missing = sorted(expected_ids - live_ids)
     orphan = sorted(live_ids - expected_ids)
@@ -210,7 +232,7 @@ def _audit(client: object, root: Path) -> int:
     print(f"  Orphan rule entities    : {len(orphan)}")
     for eid in orphan:
         print(f"    - {eid}")
-    return 0 if not (missing or drifted) else 1
+    return 0 if not (missing or drifted or orphan) else 1
 
 
 def main(argv: list[str] | None = None) -> int:
