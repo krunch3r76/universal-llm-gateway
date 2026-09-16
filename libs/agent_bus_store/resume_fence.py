@@ -49,7 +49,10 @@ _TRANSCRIPT_ID_RE = re.compile(
 )
 _SECTION_CHILD = "### Child lanes"
 _SECTION_CITED = "### Cited lanes"
-RESUME_FENCE_TAPE_BUDGET = int(os.environ.get("RESUME_FENCE_TAPE_BUDGET", "24000"))
+# Matches the other tape doors (tape_render._DEFAULT_BUDGET_BYTES, GET
+# /threads/{id}/tape). The prior 24000 starved the one door continuity depends
+# on: a 276911-byte window degraded to a single body, oldest popped first.
+RESUME_FENCE_TAPE_BUDGET = int(os.environ.get("RESUME_FENCE_TAPE_BUDGET", "512000"))
 
 
 def _sha256_text(text: str) -> str:
