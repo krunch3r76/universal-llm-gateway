@@ -17,7 +17,9 @@ def build_successor_message(
     gear: str,
     row: str,
     seat: str = "cursor-sdk",
-    tip_cp_ordinal: int | None = None,
+    tip_turn: int | None = None,
+    tip_checkpoint_turn: int | None = None,
+    spawn_signal_sources: list[str] | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
     cap: int = SUCCESSOR_MESSAGE_CAP,
@@ -28,7 +30,9 @@ def build_successor_message(
         gear=gear,
         row=row,
         seat=seat,
-        tip_cp_ordinal=tip_cp_ordinal,
+        tip_turn=tip_turn,
+        tip_checkpoint_turn=tip_checkpoint_turn,
+        spawn_signal_sources=spawn_signal_sources,
         ring=ring,
         extra_addresses=tuple(extra_addresses),
         cap=cap,
@@ -52,7 +56,9 @@ def build_dispatch_body(
         gear=str(ctx.get("gear") or policy.get("gear") or "1-fable-mvp"),
         row=str(ctx.get("row") or ""),
         seat=seat,
-        tip_cp_ordinal=ctx.get("tip_cp_ordinal"),
+        tip_turn=ctx.get("tip_turn"),
+        tip_checkpoint_turn=ctx.get("tip_checkpoint_turn"),
+        spawn_signal_sources=list(ctx.get("spawn_signal_sources") or []),
         ring=ctx.get("ring") or policy.get("wake_ring"),
         extra_addresses=tuple(extras),
     )
@@ -88,11 +94,20 @@ def _wire_submit_body(body: dict[str, Any]) -> dict[str, Any]:
     return wired
 
 
-def successor_context_from_digest(digest: dict[str, Any]) -> dict[str, Any]:
+def successor_context_from_digest(
+    digest: dict[str, Any],
+    *,
+    spawn_signal_sources: list[str] | None = None,
+) -> dict[str, Any]:
     """Extract message bind fields from a digest snapshot; with no seat-bound
     row, a forcing friction is the row the successor is spawned for."""
     policy = digest.get("policy") or {}
     root = digest.get("root") or {}
+    sources = spawn_signal_sources
+    if sources is None:
+        raw = digest.get("spawn_signal_sources")
+        sources = list(raw) if isinstance(raw, list) else []
+    tip_cp = root.get("tip_checkpoint_turn")
     return {
         "gear": policy.get("gear"),
         # Same precedence as induction NOW: policy.now_row ≻ friction ≻ summary_row.
@@ -101,6 +116,8 @@ def successor_context_from_digest(digest: dict[str, Any]) -> dict[str, Any]:
         or str(digest.get("summary_row") or "").strip()
         or root.get("last_subject")
         or "",
-        "tip_cp_ordinal": root.get("turns"),
+        "tip_turn": root.get("turns"),
+        "tip_checkpoint_turn": int(tip_cp) if tip_cp is not None else None,
+        "spawn_signal_sources": sources,
         "ring": policy.get("wake_ring"),
     }

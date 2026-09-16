@@ -66,6 +66,8 @@ def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
             "turns": root.get("turns"),
             "unread": root.get("unread"),
             "last_subject": root.get("last_subject"),
+            "recent_turns": root.get("recent_turns"),
+            "tip_checkpoint_turn": root.get("tip_checkpoint_turn"),
         },
         "attention": attention,
         "checkpoint_due": digest.get("checkpoint_due"),
