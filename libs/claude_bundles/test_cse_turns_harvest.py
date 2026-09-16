@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,10 +16,20 @@ def test_cse_turns_js_source_present() -> None:
     assert "limit" in CSE_TURNS_JS
     assert 'data-testid="transcript-row"' in CSE_TURNS_JS
     assert 'data-testid="user-message"' in CSE_TURNS_JS
-    assert "slice(-" in CSE_TURNS_JS
     assert "scrollTop" in CSE_TURNS_JS
     assert 'data-testid*="user"' not in CSE_TURNS_JS
-    assert "slice(0," not in CSE_TURNS_JS
+    # The bounded read must take the TAIL of the harvested turn list, never the
+    # head. Guard the list operations by name; string prefixes (dedupe keys)
+    # are not what this protects, and a bare "slice(0," ban was satisfied by
+    # renaming to substring() without changing anything.
+    assert "rawTurns.slice(-limit)" in CSE_TURNS_JS
+    assert (
+        re.search(
+            r"\b(rawTurns|ordered|turns)\.(slice|splice|substring)\(0,", CSE_TURNS_JS
+        )
+        is None
+    )
+    assert "coverage_reason" in CSE_TURNS_JS
 
 
 @pytest.mark.offline
