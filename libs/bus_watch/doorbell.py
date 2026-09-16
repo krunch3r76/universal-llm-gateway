@@ -254,6 +254,20 @@ def _successor_liaison_slug(seat: str = "cursor-sdk") -> str:
     return doorbell_skills(_seat_surface(seat))[0]
 
 
+def _successor_duty_line(contract: str) -> str:
+    if contract != "none":
+        return (
+            "duty: dispatch -> read back -> verify -> CP. Commission the work on a child lane "
+            "(cursor_request, parent_thread=<root>, lane_role=sub_mission); read its closeout; "
+            "verify against git before any 'landed' word; then checkpoint. "
+            "Orienting and writing STAY is not the leg."
+        )
+    return (
+        "duty: run the tick; checkpoint; hop only if hop_qualifies. "
+        "Hop only when autonomous follow-up remains; HOLD_MERGE / empty NOW / quiet tick → STAY."
+    )
+
+
 def _compose_successor_wake(
     root_id: str,
     *,
@@ -265,6 +279,7 @@ def _compose_successor_wake(
     spawn_signal_sources: list[str] | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
+    contract: str = "none",
 ) -> str:
     """Compose successor paste without cap shedding (for validation and render)."""
     echo = ring if ring else root_id
@@ -277,9 +292,8 @@ def _compose_successor_wake(
     lines = [
         f"resume {root_id}",
         "",
-        f"WAKE — liaison headless successor, house agent-bus:{root_id} — contract: none.",
-        "duty: run the tick; checkpoint; hop only if hop_qualifies. "
-        "Hop only when autonomous follow-up remains; HOLD_MERGE / empty NOW / quiet tick → STAY.",
+        f"WAKE — liaison headless successor, house agent-bus:{root_id} — contract: {contract}.",
+        _successor_duty_line(contract),
         "disclosure: orientation ritual; one echo before the first move.",
         f"objective: tip turn #{tip_turn_val} on agent-bus:{root_id}; "
         f"tip CHECKPOINT #{tip_cp_val}; row={row}; gear: {gear}; "
@@ -316,6 +330,7 @@ def successor_wake_unshed_byte_length(
     spawn_signal_sources: list[str] | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
+    contract: str = "none",
 ) -> int:
     """Byte length of the successor paste before cap shedding (``--set`` validation)."""
     return len(
@@ -329,6 +344,7 @@ def successor_wake_unshed_byte_length(
             spawn_signal_sources=spawn_signal_sources,
             ring=ring,
             extra_addresses=extra_addresses,
+            contract=contract,
         ).encode("utf-8")
     )
 
@@ -369,6 +385,7 @@ def render_successor_wake(
     spawn_signal_sources: list[str] | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
+    contract: str = "none",
     cap: int = SUCCESSOR_WAKE_CAP,
 ) -> str:
     """Doorbell-shaped successor paste. Line 1 stays ``resume {root}`` (GIW fence).
@@ -394,6 +411,7 @@ def render_successor_wake(
             spawn_signal_sources=spawn_signal_sources,
             ring=ring,
             extra_addresses=addresses,
+            contract=contract,
         )
 
     row_text = row
