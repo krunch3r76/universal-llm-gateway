@@ -100,7 +100,11 @@ async ({ limit, afterTurn }) => {
     if (text.length < 1) return null;
     const timeEl = row.querySelector('time[datetime]');
     const timestamp = timeEl ? timeEl.getAttribute('datetime') : null;
-    return { author, timestamp, text };
+    // Virtualized claude.ai rows carry their absolute conversation ordinal;
+    // almost no row carries a <time datetime>, so this is the order signal.
+    const rawIndex = row.getAttribute('data-index') ?? row.getAttribute('data-rs-index');
+    const index = rawIndex !== null && /^\d+$/.test(rawIndex) ? Number(rawIndex) : null;
+    return { author, timestamp, text, index };
   }
   let preloadClicks = 0;
   if (isClaudeChat) {
@@ -283,9 +287,12 @@ async ({ limit, afterTurn }) => {
         for (const row of document.querySelectorAll('[data-testid="transcript-row"]')) {
           const item = extractTurnFromRow(row);
           if (!item) continue;
-          const key = (item.timestamp || '') + '|' + item.author + '|' + item.text.substring(0, 160);
+          const key = item.index !== null
+            ? 'i:' + item.index
+            : (item.timestamp || '') + '|' + item.author + '|' + item.text.substring(0, 160);
           if (seen.has(key)) continue;
           seen.add(key);
+          item.seq = ordered.length;
           ordered.push(item);
           added += 1;
         }
@@ -308,11 +315,18 @@ async ({ limit, afterTurn }) => {
       }
     }
     sweepElapsedMs = Date.now() - sweepStartedAt;
+    // Order by the row's own conversation index. Sorting by timestamp put the
+    // newest reply (the only row with a <time datetime>) at Turn 1. Without an
+    // index, fall back to carried timestamp then capture sequence.
+    let carriedTs = '';
+    for (const item of ordered) {
+      if (item.timestamp) carriedTs = item.timestamp;
+      item.sortTs = carriedTs;
+    }
     ordered.sort((a, b) => {
-      if (a.timestamp && b.timestamp) return a.timestamp.localeCompare(b.timestamp);
-      if (a.timestamp) return -1;
-      if (b.timestamp) return 1;
-      return 0;
+      if (a.index !== null && b.index !== null) return a.index - b.index;
+      if (a.sortTs !== b.sortTs) return a.sortTs.localeCompare(b.sortTs);
+      return a.seq - b.seq;
     });
     let ordinal = 0;
     for (const item of ordered) {
