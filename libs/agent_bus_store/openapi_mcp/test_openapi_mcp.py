@@ -8,13 +8,19 @@ from openapi_mcp.binding import extract_typed_routes
 from agent_bus_store.openapi_mcp.codegen import check_generated_module, dry_run_generate
 from agent_bus_store.server import create_app
 
+# Bump deliberately when a route gains or loses an x-mcp stamp; the count is the
+# guard against a stamp disappearing silently.
+SERVED_OP_COUNT = 24
+
 
 @pytest.mark.offline
-def test_extract_typed_routes_returns_twenty_two_ops() -> None:
+def test_extract_typed_routes_returns_every_stamped_op() -> None:
     schema = create_app().openapi()
     routes = extract_typed_routes(schema)
-    assert len(routes) == 22
+    assert len(routes) == SERVED_OP_COUNT
     assert "send" in routes
+    assert "resume_fence" in routes
+    assert "tape" in routes
     assert "branch_associate" in routes
     assert "branch_current" in routes
     assert "lane_bind" in routes
@@ -76,7 +82,7 @@ def test_generated_manifest_matches_openapi() -> None:
 def test_generator_dry_run_covers_served_ops() -> None:
     schema = create_app().openapi()
     manifest = dry_run_generate(schema)
-    assert len(manifest.served_ops) == 22
+    assert len(manifest.served_ops) == SERVED_OP_COUNT
     assert manifest.served_ops["send"]["path"] == "/threads/send"
     assert manifest.served_ops["lineage"]["path"] == "/threads/{thread_id}/lineage"
     assert manifest.openapi_sha256
