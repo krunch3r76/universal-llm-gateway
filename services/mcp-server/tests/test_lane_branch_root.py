@@ -13,7 +13,7 @@ from lane_branch_root import (
 )
 
 HOST_STYLE_PORCELAIN = """\
-worktree /mnt/torus/projects/ulg-arc-worktrees/cursor-sdk-abc
+worktree /mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/cursor-sdk-abc
 HEAD deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
 branch refs/heads/cursor-sdk/abc
 
@@ -23,7 +23,7 @@ branch refs/heads/master
 """
 
 DISAGREEING_NAMES_PORCELAIN = """\
-worktree /mnt/torus/projects/ulg-arc-worktrees/cursor-sdk-auto-a6a6daacdfc6
+worktree /mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/cursor-sdk-auto-a6a6daacdfc6
 HEAD deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
 branch refs/heads/arc/cortex-assertion-update-legibility-land
 """
@@ -104,6 +104,37 @@ def test_worktree_dirname_for_branch_no_match_raises(
         worktree_dirname_for_branch("missing/branch")
 
 
+def test_root_for_thread_resolves_per_repo_subroot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GIW layout: {parent}/ulg-arc-worktrees/{repo}/lane-{thread}."""
+    from lane_branch_root import root_for_thread
+
+    parent = tmp_path / "projects"
+    repo = parent / "universal-llm-gateway"
+    lane = parent / "ulg-arc-worktrees" / "universal-llm-gateway" / "lane-7119"
+    repo.mkdir(parents=True)
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "scripts" / "check-imports").write_text("")
+    lane.mkdir(parents=True)
+    monkeypatch.setattr("lane_branch_root.project_root_path", lambda: parent)
+    monkeypatch.setattr(
+        "lane_branch_root.worktree_dirname_for_branch",
+        lambda _branch: "lane-7119",
+    )
+    with patch(
+        "lane_branch_root.relay",
+        return_value={
+            "thread_id": "7119",
+            "current_branch": "cursor-sdk/lane-7119",
+            "association_id": 1,
+            "state": "associated",
+        },
+    ):
+        assert root_for_thread("7119") == lane
+
+
 def test_root_for_thread_missing_directory_raises(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -112,7 +143,10 @@ def test_root_for_thread_missing_directory_raises(
 
     project_root = tmp_path / "project"
     project_root.mkdir()
-    (project_root / "universal-llm-gateway").mkdir()
+    repo = project_root / "universal-llm-gateway"
+    repo.mkdir()
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "scripts" / "check-imports").write_text("")
     monkeypatch.setenv("LANE_WORKTREE_ROOT_DIRNAME", "ulg-arc-worktrees")
     monkeypatch.setattr(
         "lane_branch_root.project_root_path",

@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from fs_roots import project_root_path
+from tools._project_paths import repo_base_for
 from tools.agent_bus._shared import relay
 
 WORKTREE_ROOT_DIRNAME = os.environ.get(
@@ -71,7 +72,7 @@ def _parse_worktree_porcelain(text: str) -> list[dict[str, str | None]]:
 
 def worktree_dirname_for_branch(branch: str) -> str:
     """Return worktree directory basename for *branch* via git porcelain."""
-    repo = project_root_path() / GATEWAY_REPO_DIRNAME
+    repo = repo_base_for(project_root_path())
     try:
         proc = subprocess.run(
             ["git", "-C", str(repo), "worktree", "list", "--porcelain"],
@@ -101,7 +102,8 @@ def root_for_thread(thread_id: str) -> Path:
     """Compose thread → branch → worktree dirname → verified root path."""
     branch = branch_for_thread(thread_id)
     dirname = worktree_dirname_for_branch(branch)
-    candidate = project_root_path() / WORKTREE_ROOT_DIRNAME / dirname
+    repo = repo_base_for(project_root_path())
+    candidate = repo.parent / WORKTREE_ROOT_DIRNAME / repo.name / dirname
     if not candidate.is_dir():
         raise LaneBranchResolutionError(
             f"thread {thread_id!r}: resolved worktree root {candidate} is not a directory"
