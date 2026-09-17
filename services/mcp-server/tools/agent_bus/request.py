@@ -394,9 +394,10 @@ def _request_dispatch(
     ``propagate`` = operator restart request (propagation ledger + drain-gated
     sync_restart — not tier-M ``manage.*``).
 
-    ``lane``: optional GIW checkout-isolation ``A`` (local master) or ``B``
-    (``cursor-sdk/lane-{thread}``). Omit for current ``select_lane`` defaults.
-    ``parent_thread`` + ``lane_role`` may atomically bind a newly minted
+    ``lane``: optional GIW checkout-isolation. In-repo implement uses lane B
+    (pass ``B``). Omit is not that default: empty ``files_expected`` + omit
+    selects Lane A (``select_lane`` ``opt_out``). ``parent_thread`` +
+    ``lane_role`` may atomically bind a newly minted
     bus-thread lane; both must be supplied together. Distinct from tag
     ``lane:cursor-auto``. Invalid values reject 422 ``request_lane_invalid``
     before the turn is written.

@@ -194,7 +194,7 @@ team_dispatch(
   op=generate,
   seat=cursor-sdk,
   contract=none,
-  lane="A",
+  lane="A",  # bind-only hop (empty files_expected). In-repo implement uses lane B.
   model=<policy.successor_model>,
   prompt=<build_successor_message>,
   dispatch_thread_id=<R>,

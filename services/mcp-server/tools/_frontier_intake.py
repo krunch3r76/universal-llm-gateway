@@ -426,9 +426,11 @@ def require_explicit_cursor_seat_for_handoff(
 
 
 _LANE_REQUIRED_MESSAGE = (
-    "lane is required for top-level seat=cursor-sdk generate/to_thread "
-    "(pass A or B). Omit only when nest_under or resume_of inherits parent "
-    "isolation. See agent_skill:consult-routing § cursor-sdk checkout lane. "
+    "lane is required for top-level seat=cursor-sdk generate/to_thread. "
+    "In-repo implement uses lane B; pass A only as the named exception "
+    "(bind-only / empty files_expected / out-of-repo) with a one-line reason. "
+    "Omit only when nest_under or resume_of inherits parent isolation. "
+    "See agent_skill:consult-routing § cursor-sdk checkout lane. "
     "contract=wrap is exempt (no GIW checkout)."
 )
 

@@ -107,7 +107,7 @@ slugs are left in place. Per-slug outcome: `frontier.sdk.worker.skills.mounted`.
 
 ## D-lane — explicit checkout lane (top-level generate)
 
-`lane=` is a **wire parameter** on `team_dispatch(op=generate|to_thread, seat=cursor-sdk)`.
+In-repo implement uses lane B. `lane=` is a **wire parameter** on `team_dispatch(op=generate|to_thread, seat=cursor-sdk)`.
 Packet prose does not select a lane. SOT: `consult-routing` § cursor-sdk checkout lane.
 
 | Situation | Pass |
@@ -135,7 +135,7 @@ pass, not only service-up.
 - [ ] Every fork is bound in the dispatch.
 - [ ] Propagation named for every touched surface that needs one (service restart, plugin install), or `propagation: none` stated.
 - [ ] cursor-sdk `op=generate`: before `team_dispatch`, verify `dispatch_thread_id` has `lifecycle_state=pending ∧ turn_count=0`; otherwise halt and fix. Response `consolidation_split_warning` is too late. **Conductor carve-out:** `` may pass a continuity root with turns (mint child) or a pending-empty *child* of the root — still never a lifecycle-null empty thread.
-- [ ] Top-level cursor-sdk generate: `lane=` set (`A` or `B`) unless `nest_under` / `resume_of`. After admit, quote the lane event / `active_by_lane`.
+- [ ] Top-level cursor-sdk generate: in-repo implement uses lane B (`lane="B"`). `lane="A"` only with a one-line reason. Omit only `nest_under` / `resume_of`. After admit, quote the lane event / `active_by_lane`.
 
 ## Gate-2 implement-ready checklist
 
@@ -149,7 +149,7 @@ Before marking a `judgment_required` todo implement-ready, verify ALL:
 
 ## Materializer preconditions
 
-`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug})` reads entity state, not dispatch params. Required:
+`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})` reads entity state, not dispatch params. Required:
 
 1. `todo.attributes.density_triage ∈ {judgment_required, mechanical}`. `mechanical` bypasses spec; any other value rejects (`implement_triage_unknown`).
 2. Todo entity `source_uri` points at `cortex://notes/system/specs/{slug}.md` or `notes/system/specs/{slug}.md`; `attributes.spec_path` is ignored.

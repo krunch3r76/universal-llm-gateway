@@ -306,7 +306,8 @@ team_dispatch(op="handoff", seat="cursor", contract="implement",
 # (Legacy hand-authored alternative: packet_path="…/<task>-implement-packet.md")
 
 # Bound implement (→ Cursor SDK) — DEFAULT; auto Composer, no IDE pickup
-team_dispatch(op="generate", seat="cursor-sdk", contract="implement",
+# In-repo implement uses lane B. lane="A" only with a one-line reason.
+team_dispatch(op="generate", seat="cursor-sdk", contract="implement", lane="B",
               source_ref="todo:<slug>", dispatch_thread_id="<arc-id>")
 # → poll agent_bus(wait) from poll_hint; server materializes from todo attributes
 # (Legacy hand-authored alternative: packet_path="tmp/reviews/<task>-implement-packet.md")

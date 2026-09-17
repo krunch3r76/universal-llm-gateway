@@ -42,7 +42,8 @@ class AutoJob:
     # Sealed advisor brief for CDP escalation (explicit; not job.body).
     prompt_uri: str | None = None
     advisor_brief: str | None = None
-    # GIW checkout-isolation lane (``A``|``B``); None ⇒ select_lane defaults.
+    # GIW checkout-isolation lane. In-repo implement uses lane B;
+    # None + empty files_expected → A (select_lane opt_out).
     lane: str | None = None
     # Satellite repo name under the projects root; None/omit ⇒ hub ULG.
     workspace: str | None = None

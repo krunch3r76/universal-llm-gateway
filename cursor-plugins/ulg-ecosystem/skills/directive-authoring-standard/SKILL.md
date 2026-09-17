@@ -124,7 +124,7 @@ DIRECTIVE names: conductor role, a root thread (`new_slug` or existing `role:roo
 **Composer + lane (BINDING):**
 - Omit `model=` — Composer is the only cursor_sdk seat; `model_knobs={"fast":"true"}` on the wire unless an arc pin names otherwise.
 - Name CDP escalation model (`cdp/fable` or `cdp/opus-5`) in the directive when the leg needs independent intelligence beyond Composer enumerate.
-- `lane="B"` is a **wire parameter**, not packet prose. Omitted `lane=` resolves to Lane A / shared-master regardless of body text. Name Lane A only for mechanical single-locus.
+- In-repo implement uses lane B — pass `lane="B"` on the wire (`cursor_request` / nested `team_dispatch`). `lane=` is a **wire parameter**, not packet prose. Omit on `agent_bus.request` + empty `files_expected` selects Lane A; `team_dispatch` top-level omit is 422 `lane_required`, not A. Name `lane="A"` only with a one-line reason (bind-only / empty scope / out-of-repo).
 
 Full recipe (mandatory conductor Use-line, six-block packet): `cursor_request` docstring `COMMISSION_CONDUCTOR` — read live, this skill does not duplicate it. Packet shape + tier table: `conductor`.
 

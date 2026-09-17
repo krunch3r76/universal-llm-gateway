@@ -121,8 +121,10 @@ def resolve_checkout_lane(
     """Validate optional GIW checkout-isolation ``lane`` (``A``|``B``).
 
     Distinct from ``lane_role`` (bus-thread parentage) and from tag
-    ``lane:cursor-auto``. Empty/None means omit — ``select_lane`` defaults
-    stay unchanged. ``B`` requires a materialized worktree at GIW admit
+    ``lane:cursor-auto``. Empty/None omits the wire key. In-repo implement
+    uses lane B (pass ``B``). Omit + empty ``files_expected`` selects Lane A
+    (``select_lane`` ``opt_out``) — omit is not the implement default.
+    ``B`` requires a materialized worktree at GIW admit
     (else ``CURSOR_LANE_B_WORKTREE_MISSING``). Invalid values reject before
     the turn is written.
     """

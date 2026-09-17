@@ -13,8 +13,10 @@ from typing import Any
 def live_probe_generate_kwargs(**overrides: Any) -> dict[str, Any]:
     """Kwargs for ``team_dispatch(op=generate, seat=cursor-sdk, …)`` live board probes.
 
-    Always forces ``auto_review_child=False``. Defaults ``lane="A"`` (bind-only
-    probe). Callers may override other keys but not the auto-review flag —
+    Always forces ``auto_review_child=False``. Defaults ``lane="A"`` because
+    this helper is bind-only / empty-``files_expected`` (named exception).
+    In-repo implement uses lane B — do not copy this default onto implement
+    generates. Callers may override other keys but not the auto-review flag —
     ``False`` is applied last and cannot be overridden.
 
     Example::

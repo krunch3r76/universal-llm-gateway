@@ -127,7 +127,7 @@ Pick the cheapest sound route for this seat. **SOT:** consult-routing § Address
 | **SEED** | no closable `todo:` ∧ codework | **`/work-item-seed`** S4a then spawn — Use the `work-item-seed-path` skill |
 | **LAYER** | **`bind_status=unsettled`** ∧ **`density_triage∈{judgment_required,recon_pending}`** ∧ codework; default when unmatched codework | Re-admit conductor at highest open G — Use the `abstraction-layering` skill for **gate shape**; `/layer` is not a second admit; **defer §3b** unless `check_requested=true` |
 | **PATH-SIM** | same bind ∧ (**non-codework** ∨ `arc_lane=path_sim` ∨ operator named `/path-sim`) | `/path-sim` (bundled) — Use the `path-sim` skill § Bundled dispatch |
-| DISPATCH | **`density_triage=mechanical`**; or **`implement_ready`** ∧ dense spec after Gate-2; explicit post-densify implement after opt-in Gate-6 | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=…)` |
+| DISPATCH | **`density_triage=mechanical`**; or **`implement_ready`** ∧ dense spec after Gate-2; explicit post-densify implement after opt-in Gate-6 | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=…)` |
 | COORDINATE | operator/other seat needed; dirty-tree commit; cross-seat changes; owner ratification | ask/operator or agent_bus handoff |
 
 `bind_status=deferred` ⇒ **held** (no route; `next_action=await_unblock`).
@@ -157,7 +157,7 @@ PATH-SIM only on the §3 trigger set (non-codework / `arc_lane=path_sim` / named
 | 2 | Dispatch Gate-6 on the substrate above; ensure the ratifying turn body carries literal `FILE_EVIDENCE_PATHS:` (bare `workspaces://`/`cortex://` paths, no bullets). Spine home = GPT merged-check turn. |
 | 3 | Assert `status(todo, skeptic_ratified, current)` **confirmed**, `evidence_uris` = [`agent-bus:{tid}#turn-{N}` of that FILE_EVIDENCE turn, `spec_sha256:<current hex>`]. Grounding reads the **first** `agent-bus:` URI — ¬ cite orchestration root / densify WIP. |
 | 4 | `cortex(tool="implement_ready_preflight", arguments='{"source_ref":"todo:{slug}"}')` → `admitted=true` (empty gate-13 warnings, or fix named code). |
-| 5 | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug})`. |
+| 5 | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})`. |
 
 `FILE_EVIDENCE_PATHS ∈ Gate-6 turn body ⇏ Gate-13 pass`. Absent the `skeptic_ratified` assertion citing that turn → `skeptic_pass_missing` / `skeptic_evidence_missing` (incident: a23903 + 4917#110).
 
@@ -169,7 +169,7 @@ PATH-SIM only on the §3 trigger set (non-codework / `arc_lane=path_sim` / named
 | A2 | Confirm Gate-6 turn has `FILE_EVIDENCE_PATHS:` + affirmative verdict + `spec_sha256:<hex>`. |
 | A3 | Set `attributes.gate6_ratification_uri=agent-bus:{tid}#turn-{N}` (explicit `#turn-N` required). |
 | A4 | `implement_ready_preflight` → `admitted=true` with gate-13 evidence grounded. |
-| A5 | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug})`. |
+| A5 | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})`. |
 
 **Waiver path** (stamp unavailable; same pattern as sw-imprint-commit densify): set `attributes.recon_waived` to a **JSON string**:
 

@@ -134,7 +134,7 @@ Returns `{thread, turn, handler_status, poll_hint}` — poll terminal via `poll_
 
 **`desired_effort`:** omit/`auto` → judgment contracts `xhigh`, mechanical `medium`; explicit rung honored.
 
-**`lane`:** optional GIW checkout `A`|`B`; omit = `select_lane` defaults. Distinct from `lane_role`. **`workspace`:** optional satellite (`SATELLITES.txt`); omit = hub. **`parent_thread`+`lane_role`:** both required when either supplied.
+**`lane`:** optional GIW checkout. In-repo implement uses lane B — pass `B`. Omit is not the implement default: empty `files_expected` + omit → `select_lane` Lane A (`opt_out`). Distinct from `lane_role`. **`workspace`:** optional satellite (`SATELLITES.txt`); omit = hub. **`parent_thread`+`lane_role`:** both required when either supplied.
 
 **Admit gates:** `contract`∈{`implement`,`investigate`} ⇒ DIRECTIVE body MUST include `vision:` else **`vision_field_missing`** at admit (pre-model). `require_attended` (wire or body OR) ⇒ terminal **`status:needs-attended`** + one recommended answer.
 

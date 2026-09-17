@@ -16,11 +16,11 @@ Read on:
 
 Default substrate: **attended Cursor IDE** edits on the live shared checkout
 (`GIT_INTEGRATION_SOURCE_REPO`, default `universal-llm-gateway`). **cursor-sdk
-generate** defaults to **Lane B** when the caller **passes** `lane="B"` (regime
-on, in-repo). Omit is not that default: empty `files_expected` + omit → Lane A.
-Explicit `lane="A"` or out-of-repo stays on the shared checkout. Caller recipe:
-`consult-routing` § cursor-sdk checkout lane. These rules bind unless the
-operator directs otherwise.
+generate:** in-repo implement uses lane B — pass `lane="B"` (regime on, in-repo).
+Omit is not that default: empty `files_expected` + omit → Lane A.
+Explicit `lane="A"` (named exception + one-line reason) or out-of-repo stays on
+the shared checkout. Caller recipe: `consult-routing` § cursor-sdk checkout lane.
+These rules bind unless the operator directs otherwise.
 
 **Sole-checkout corollary:** this seat assumes one live shared `master`
 working tree and **¬intersecting parallel writers**. Do **not** `git stash`
@@ -200,6 +200,8 @@ is a separate courtesy problem, not proof that live-without-commit is defective.
 Doctrine: `decision:checkout-disk-is-executable`.
 
 ## Default implement lane
+
+In-repo implement uses lane B.
 
 | Surface | Where work lands | Git protocol |
 |---|---|---|

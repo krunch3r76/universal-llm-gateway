@@ -23,7 +23,7 @@ is current state while G1–G3 open. Bugfix on pattern P ⇒ service sweep (`[qu
 
 | Need | Path | Autonomy |
 |---|---|---|
-| Mechanical implement | `team_dispatch(op=generate, seat=cursor-sdk)` → Composer (omit `model=`) | autonomous |
+| Mechanical implement | `team_dispatch(op=generate, seat=cursor-sdk, lane="B")` → Composer (omit `model=`). In-repo implement uses lane B; `lane="A"` only with a one-line reason | autonomous |
 | Investigate residual · conductor drive | Composer (omit `model=`, `contract=conductor\|investigate`) — returns `OPEN FORK:` lines, never binds | autonomous |
 | Greater reasoning / independent check | **`cdp/fable`** width · **`cdp/opus-5`** bind/review — announce `CDP: <trigger> — <why>`, then proceed | autonomous on trigger |
 | Premium live checkout | `cursor/claude-opus-5` — inform-then-proceed (wait only if premium spend paused) | announce |

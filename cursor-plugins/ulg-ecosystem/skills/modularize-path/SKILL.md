@@ -194,6 +194,7 @@ team_dispatch(
   seat="cursor-sdk",
   # omit model= → Composer
   contract="implement",  # or pure-mechanical when plan fully pinned
+  lane="B",  # in-repo implement uses lane B; nest_under inherits if parent isolated
   packet_path="tmp/modularize-plans/{name}-implement.md",
   nest_under="{parent}" if cursor_sdk_gate held,
 )

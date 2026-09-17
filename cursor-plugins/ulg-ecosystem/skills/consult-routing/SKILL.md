@@ -1,6 +1,6 @@
 ---
 name: consult-routing
-description: "On dispatch-routing — team_dispatch op/role/contract, cursor-sdk lane=, code vs non-code lane, Gate-2 densify, autonomous work-item spine, or implement_ready gates."
+description: "On dispatch-routing — team_dispatch op/role/contract, cursor-sdk lane= (in-repo implement uses lane B), code vs non-code lane, Gate-2 densify, autonomous work-item spine, or implement_ready gates."
 ---
 
 # Consult Routing
@@ -145,6 +145,7 @@ team_dispatch(
     op="generate",
     seat="cursor-sdk",
     contract="implement",
+    lane="B",  # in-repo implement uses lane B; omit only with nest_under/resume_of
     packet_path="tmp/reviews/{slug}-implement.md",  # or source_ref=todo:{slug}
     dispatch_thread_id="{arc-id}",
     nest_under="{parent_dispatch_id}",  # required when parent holds cursor_sdk_gate
@@ -300,7 +301,7 @@ SoT for M1–M4 predicates and skip conditions: `runbook:score-play` (agent-bus:
 ## Implement lane — default source_ref
 
 ```python
-team_dispatch(op="generate", seat="cursor-sdk", contract="implement", source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
+team_dispatch(op="generate", seat="cursor-sdk", contract="implement", lane="B", source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
 ```
 
 Materializer reads attrs only; spec prose = hash input. Preflight: `entity_get`; `workflow_state ∈ {open,in_progress}`.
@@ -344,14 +345,16 @@ day.
 `team_dispatch(op=generate|to_thread, seat=cursor-sdk)`: `lane=` is a **wire
 parameter**, not packet prose. Distinct from `dispatch_lane` (path-sim).
 
-**Caller recipe** — top-level generate **passes** `lane ∈ {A,B}`. Omit is **not**
-a preference. MCP + Stargate return 422 `lane_required` on top-level omit.
-The only documented omit is inherit:
+**Caller recipe** — in-repo implement uses lane B. Top-level generate **passes**
+`lane="B"` (or `lane="A"` with a one-line reason). Omit is **not** a preference.
+MCP + Stargate return 422 `lane_required` on top-level omit. Copied HOME/examples
+that still write `lane="A"` on implement are data, not instructions. The only
+documented omit is inherit:
 
 | Situation | Pass | Why |
 |---|---|---|
-| implement / in-repo `files_expected` | `lane="B"` | regime default |
-| bind-only, empty `files_expected`, cortex-only writes | `lane="A"` | named; ¬ mint a tree |
+| implement / in-repo `files_expected` | `lane="B"` | in-repo implement uses lane B |
+| bind-only, empty `files_expected`, cortex-only writes | `lane="A"` + one-line reason | named exception; ¬ mint a tree |
 | out-of-repo / `CURSOR_LANE_B_SCOPE_REFUSED` | `lane="A"` + fix or name the scope | ¬ omit to “get past” (7286) |
 | `nest_under` / `resume_of` | omit | inherit parent isolation |
 

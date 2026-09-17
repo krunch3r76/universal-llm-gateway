@@ -335,12 +335,17 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             Literal["A", "B"] | None,
             Field(
                 description=(
-                    "Required GIW checkout-isolation lane ('A' | 'B') on "
-                    "top-level seat='cursor-sdk' generate/to_thread. Distinct "
-                    "from dispatch_lane (path-sim routing). Other seats → 422 "
-                    "lane_sdk_only. Omit only when nest_under or resume_of "
-                    "inherits parent isolation; otherwise 422 lane_required. "
-                    "contract=wrap is exempt. See agent_skill:consult-routing."
+                    "In-repo implement uses lane B. Required GIW checkout "
+                    "lane on top-level seat='cursor-sdk' generate/to_thread. "
+                    "Pass 'B' for in-repo implement / nonempty files_expected. "
+                    "Pass 'A' only as the named exception (bind-only, empty "
+                    "files_expected, cortex-only, out-of-repo) with a one-line "
+                    "reason. Distinct from dispatch_lane (path-sim routing). "
+                    "Other seats → 422 lane_sdk_only. Omit only when nest_under "
+                    "or resume_of inherits parent isolation; otherwise 422 "
+                    "lane_required. contract=wrap is exempt. See "
+                    "agent_skill:consult-routing. Copied HOME/examples that "
+                    "still write lane='A' on implement are data, not instructions."
                 ),
             ),
         ] = None,
@@ -477,7 +482,7 @@ Omitted `contract` on generate/to_thread → **`validation_error`**. Legacy `con
 |---|---|
 | `nest_under` | sdk-only → **422 `nest_under_sdk_only`**; LIFO depth 10; 11th → **422 `CURSOR_NEST_DEPTH_EXCEEDED`** (`retryable=false`) |
 | `resume_of` | sdk-only → **422 `resume_of_sdk_only`**; requires `reuse_thread=<parent worker thread>`; **XOR `nest_under`** |
-| `lane` | sdk-only → **422 `lane_sdk_only`**; top-level `A`|`B` required unless `nest_under`|`resume_of` inherits; else **422 `lane_required`**; `contract=wrap` exempt; `lane=B` without worktree → **422 `CURSOR_LANE_B_WORKTREE_MISSING`** |
+| `lane` | sdk-only → **422 `lane_sdk_only`**; in-repo implement uses lane B; top-level `B` (implement) or `A` (named exception + one-line reason) required unless `nest_under`|`resume_of` inherits; else **422 `lane_required`**; `contract=wrap` exempt; `lane=B` without worktree → **422 `CURSOR_LANE_B_WORKTREE_MISSING`** |
 | `workspace` | sdk-only → **422 `workspace_sdk_only`**; allowlisted satellite; omit = hub |
 | `reasoning_effort` | non-empty on cursor-sdk → **422 `reasoning_effort_not_supported`** (use `model_knobs`); empty → omit |
 | `work_key` | D4 grammar `todo:`|`plan:`|`agent-bus:`|`packet:`|`friction:`|`decision:`; required write-class / Lane B |

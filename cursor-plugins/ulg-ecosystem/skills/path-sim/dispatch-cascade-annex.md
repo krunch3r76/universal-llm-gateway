@@ -95,7 +95,7 @@ Both pins **default-on** for bundled `judgment_required` arcs — skip only the 
 | 1 Q (L0) | **Lead fires CDP Fable** — default bundled/full arc. Primary: `team_dispatch(model=cdp/fable, contract=none, …)` (Use the `claude-ai-cdp-navigation` skill · consult-routing Anthropic substrate). Escape: CLI `claude-ai-sync-jupiter project-ask` with `model=fable-5.1`. MCP `project_ask` is removed. Operator-framed only via **positive attestation** (`operator_framed` + `pinned_question` + resolvable `frame_uri`) ⇒ **bounded adopt-or-contradict Q** (`frame_verdict` + `frame_delta`) then A — **¬** `q_skipped`, **¬** frame-as-Q. Unframed/isolated ⇒ normal **Fable Q** → A — ¬ escalate to human (§ L0 / Q pairing). **¬** default Q to Opus CDP (R-admit owns Opus — keep Q≠R seats). | Fable Max (CDP) | `cortex://notes/system/threads/path-sim-{slug}-fable-l0-q.md` |
 | 2 A (L1+L2) | **Stage-A three-leg:** Composer enumerate (`omit model=`, `{fast:true}`, `contract=none`) → **`team_dispatch(model=cdp/fable, contract=none, …)` bind** → Composer Gate-2 closeout — **halts at admit-gate, ¬ implement** | Fable Max (CDP bind) | `…/path-sim-{slug}-fable-a-l1l2.md` |
 | 3 R-admit | **LEAD fires `team_dispatch(model=cdp/opus-5)`** (Use the `claude-ai-cdp-navigation` skill; IF6 escape = CLI `claude-ai-sync-jupiter project-ask`; MCP `project_ask` is removed) | web-anthropic **Opus 5** | **default-on, lead-owned** — skip only closed set |
-| 4 Implement | **`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug})`** — **separate dispatch, after R-admit ADMIT** | cursor-sdk Composer 2.5 (role default) | code diff + closeout sidecar |
+| 4 Implement | **`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})`** — **separate dispatch, after R-admit ADMIT** | cursor-sdk Composer 2.5 (role default) | code diff + closeout sidecar |
 | 5 R-after | **LEAD fires `/work-item-review todo:{slug}`** via **`cdp/opus-5` `purpose=review` `reasoning_effort="high"`** — after Stage-B ship | **Opus 5 (CDP review)** | **default-on, lead-owned** — same closed skip set; entry SOT = `.cursor/commands/work-item-review.md`. Delivery critique (≠ R-admit web seat). |
 | 6 Closeout | lead (orchestrator) | — | `…/path-sim-{slug}-implement-closeout.md` (+ R-after verdict URI) |
 
@@ -433,7 +433,7 @@ Lead MUST verify before auto-advancing:
 
 ```
 team_dispatch(
-  op=generate, seat=cursor-sdk, contract=implement,
+  op=generate, seat=cursor-sdk, contract=implement, lane="B",
   source_ref=todo:{slug}, dispatch_thread_id=<bus thread id>,
   skills=[path-sim, cheap-recon-before-escalation, docstring-quality, event-instrumentation-discipline, cursor-sdk-instruction-standard]
 )

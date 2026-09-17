@@ -10,7 +10,7 @@ sot: workspace
 Stage → densify → wrap → `source_ref` dispatch. Default:
 
 ```text
-team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug})
+team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})
 ```
 
 Six-block authority: `architecture-handoff-protocol.mdc` § The Six Required Blocks. Human kickoff: `handoff-prompt-authoring`.
@@ -62,7 +62,7 @@ dispatch/CLOSEOUT turn or the todo attribute, never as a trailer inside the docu
 ## Gate 3 — direct implement dispatch
 
 ```python
-team_dispatch(op="generate", seat=cursor-sdk, contract=implement, source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
+team_dispatch(op="generate", seat=cursor-sdk, contract=implement, lane="B", source_ref="todo:{slug}", dispatch_thread_id="{arc-id}")
 ```
 
 **Compliance:** todo resolves; implement-ready + `spec_sha256`; attrs populated; zero forks; `validate_dense_spec` passes.

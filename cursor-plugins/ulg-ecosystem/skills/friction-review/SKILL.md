@@ -11,7 +11,7 @@ They record tool/schema/boot/protocol gaps (F5 funnel) **and** feature asks (`ca
 **Critical split:** `friction()` = **informing observation log** (see § Informing frictions).
 A fix cycle = **codified bug ticket** via the investigate→execute lifecycle; once the
 investigate close distills attributes, the execute default is server materialization via
-`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug})` —
+`team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})` —
 `cursor-implement` / `web-implement` + `packet_path` are the named fallback. Operator says
 "dispatch / address / fix the friction" → open the ticket; do not stop at logging.
 
@@ -134,7 +134,7 @@ input to investigate, not authorization to skip investigate and self-execute.
 | Stage | When (default) | Transport | Tier |
 |---|---|---|---|
 | **Investigate + decide** | Root cause unknown / design open; most `friction()` categories except mechanical-only | **Code-lane `judgment_required` todo:** autonomous spine (recon→settle→Grok densify→GPT check). **Attended/web:** only on operator opt-in or `authority_fork` escalate. **Self-contained corpus (no spine todo yet):** GPT generate OK. **`cursor-consult`:** Cursor-seat need or operator ask | spine / GPT / attended opt-in |
-| **Execute** | Dense implement spec exists OR mechanical-only | default `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug})`; web-native inline `fs` fix when already on web seat; `cursor-implement` / `web-implement` + `packet_path` = named fallback (§ Fallback triggers) | Composer / web |
+| **Execute** | Dense implement spec exists OR mechanical-only | default `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})`; web-native inline `fs` fix when already on web seat; `cursor-implement` / `web-implement` + `packet_path` = named fallback (§ Fallback triggers) | Composer / web |
 
 | Initiator / seat | Investigate (default) | Execute |
 |------------------|----------------------|-----------|
@@ -149,7 +149,7 @@ input to investigate, not authorization to skip investigate and self-execute.
    **distill `files_expected` / `acceptance_criteria` (+ `required_skills`) onto the bug-fix `todo:`** +
    implement-ready assertion citing the spec + `spec_sha256` (cross-ref `handoff-packet-authoring.md`
    § Gate 2 step 6 + consult-routing § Densify lane) + spine GPT merged check
-3. **Execute** — default `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, source_ref=todo:{slug})`;
+3. **Execute** — default `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane="B", source_ref=todo:{slug})`;
    web-native inline `fs` fix on web seat; patch, verify, restart if substrate change
 4. **Report** — bus closeout: root cause, paths, verification evidence
 5. **Secondary findings** — issues found during investigation → labeled in closeout;
