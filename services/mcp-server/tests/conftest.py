@@ -7,6 +7,11 @@ sys.path manipulation (which trips ruff E402/I001).
 
 from __future__ import annotations
 
+import os
+
+# Fail-closed: never page the operator's phone during mcp-server pytest runs.
+os.environ["PAGER_NOTIFY_ENABLED"] = "0"
+
 import sys
 from pathlib import Path
 
