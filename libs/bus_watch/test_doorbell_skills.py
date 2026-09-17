@@ -11,6 +11,7 @@ from bus_watch.doorbell_skills import (
     LIAISON_PROTOCOL_LOADER,
     dispatch_skills_for_surface,
     doorbell_skills,
+    navigator_doorbell_skills_from_policy,
     primary_liaison_slug,
 )
 
@@ -20,6 +21,25 @@ def test_doorbell_skills_preflight_ide_and_cdp() -> None:
     assert doorbell_skills("ide") == ("liaison", "reasoning-posture")
     assert doorbell_skills("cdp") == ("liaison", "reasoning-posture")
     assert primary_liaison_slug("ide") == "liaison"
+
+
+@pytest.mark.offline
+def test_navigator_doorbell_skills_from_policy_override() -> None:
+    policy = {
+        "navigator_skills": [
+            "liaison",
+            "reasoning-posture",
+            "architecture-invariants",
+            "ulg-architecture",
+        ],
+    }
+    assert navigator_doorbell_skills_from_policy(policy) == (
+        "liaison",
+        "reasoning-posture",
+        "architecture-invariants",
+        "ulg-architecture",
+    )
+    assert navigator_doorbell_skills_from_policy({}) == doorbell_skills("cdp")
 
 
 @pytest.mark.offline
