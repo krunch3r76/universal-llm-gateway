@@ -19,7 +19,7 @@ from __future__ import annotations
 import shlex
 from typing import Any
 
-from bus_watch.doorbell_skills import primary_liaison_slug
+from bus_watch.doorbell_skills import navigator_doorbell_skills_from_policy
 from bus_watch.friction_rows import event_line as _friction_event
 from bus_watch.friction_rows import now_row as _friction_now
 from bus_watch.spawn_wake.predicate import compute_spawn_signal_sources
@@ -217,8 +217,10 @@ def build_wake_induction(
         else "NOW: (empty — pull the next objective per liaison skill § Objectives; "
         "empty NOW is not a stop)"
     )
-    liaison_label = f"{primary_liaison_slug(surface)} skill"
-    loaded = list(dict.fromkeys([liaison_label, *_listed(policy, "induction_loaded")]))
+    nav_labels = [
+        f"{slug} skill" for slug in navigator_doorbell_skills_from_policy(policy)
+    ]
+    loaded = list(dict.fromkeys([*nav_labels, *_listed(policy, "induction_loaded")]))
     if surface == "cse":
         lines.extend(_use_skill_lines(loaded))
     else:

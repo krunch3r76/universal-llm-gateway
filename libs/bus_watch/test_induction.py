@@ -43,10 +43,11 @@ def test_induction_plants_addresses_not_a_skill_copy() -> None:
     assert text.startswith("WAKE 10479 · turns=214")
     assert "Event: 10586 unread=1" in text
     assert "watcher 10479-10586-r9-none complete" in text
+    assert "NOW: tip turn #214 on agent-bus:10479 · «CHECKPOINT 10479 54b93098»" in text
     assert (
-        "NOW: tip turn #214 on agent-bus:10479 · «CHECKPOINT 10479 54b93098»" in text
+        "do not re-read): liaison skill · reasoning-posture skill · git-posture § Land"
+        in text
     )
-    assert "do not re-read): liaison skill · git-posture § Land" in text
     assert "register=autonomous · hopper paused (10479#210)" in text
     assert "cdp/opus-5 first" in text
     assert len(text.encode("utf-8")) <= INDUCTION_CAP
@@ -128,7 +129,9 @@ def test_induction_now_from_policy_bind() -> None:
     text = build_wake_induction(
         _digest(summary_row=None, policy={"now_row": "R10 wake induction transport"})
     )
-    assert "NOW: tip turn #214 on agent-bus:10479 · R10 wake induction transport" in text
+    assert (
+        "NOW: tip turn #214 on agent-bus:10479 · R10 wake induction transport" in text
+    )
 
 
 def test_induction_policy_now_row_wins_over_stale_summary_row() -> None:
@@ -173,8 +176,8 @@ def test_induction_respects_cap() -> None:
     lanes = [
         {"id": str(20000 + i), "unread": 3, "last_subject": "x" * 56} for i in range(12)
     ]
-    text = build_wake_induction(_digest(attention=lanes), cap=435)
-    assert len(text.encode("utf-8")) <= 435
+    text = build_wake_induction(_digest(attention=lanes), cap=460)
+    assert len(text.encode("utf-8")) <= 460
     assert text.startswith("WAKE 10479")
     assert "NOW:" in text
 
@@ -216,6 +219,28 @@ def test_induction_cse_always_includes_liaison_skill() -> None:
     cse = build_wake_induction(_digest(policy={}), surface="cse")
     assert "Use the liaison skill" in cse
     assert cse.count("Use the ") >= 1
+
+
+def test_induction_loaded_fence_matches_navigator_skills_policy() -> None:
+    """Loaded fence must mirror navigator_doorbell_skills_from_policy (delivery list)."""
+    policy = {
+        "navigator_skills": [
+            "liaison",
+            "reasoning-posture",
+            "architecture-invariants",
+            "ulg-architecture",
+        ],
+        "induction_loaded": ["git-posture § Land"],
+    }
+    text = build_wake_induction(_digest(policy=policy))
+    assert (
+        "Loaded already (do not re-read): liaison skill · reasoning-posture skill · "
+        "architecture-invariants skill · ulg-architecture skill · git-posture § Land"
+        in text
+    )
+    cse = build_wake_induction(_digest(policy=policy), surface="cse")
+    assert "Use the architecture-invariants skill" in cse
+    assert "Use the ulg-architecture skill" in cse
 
 
 def test_induction_cse_cap_trims_use_lines_last() -> None:
