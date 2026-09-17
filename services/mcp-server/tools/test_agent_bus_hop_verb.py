@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from contract_vocab import CANONICAL_CONTRACTS
 from hop_handoff import StandingHandoffFreshness
+
 from tools.agent_bus.hop import _hop_dispatch
 from tools.agent_bus.request_intake import reset_request_id_registry_for_tests
 from tools.agent_bus.request_worker_client import enqueue_auto_job
