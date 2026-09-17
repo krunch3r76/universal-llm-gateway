@@ -42,6 +42,7 @@ from implement_admission.propagation_row import (
 
 from services.git_integration_worker.config import load_config
 from services.git_integration_worker.cursor_auto.fix_hints import (
+    PROPAGATE_BLOCK_INVALID_FIX_HINT,
     PROPAGATE_MISSING_FIX_HINT,
     PROPAGATE_SCOPE_FIX_HINT,
 )
@@ -83,28 +84,40 @@ def _rows_from_structured_block(
     raw_rows, flags = parse_propagation_block(body)
     all_flags = tuple(flags)
     if flags:
-        return (), all_flags, _error(
-            "propagation_block_invalid",
-            f"## propagation block rejected: {', '.join(flags)}",
-            PROPAGATE_MISSING_FIX_HINT,
-            invalid_flags=list(flags),
-            legal_safe_window=LEGAL_SAFE_WINDOW_LIST,
+        return (
+            (),
+            all_flags,
+            _error(
+                "propagation_block_invalid",
+                f"## propagation block rejected: {', '.join(flags)}",
+                PROPAGATE_BLOCK_INVALID_FIX_HINT,
+                invalid_flags=list(flags),
+                legal_safe_window=LEGAL_SAFE_WINDOW_LIST,
+            ),
         )
     if not raw_rows:
-        return (), all_flags, _error(
-            "propagation_block_empty",
-            "## propagation block present but contained no valid rows.",
-            PROPAGATE_MISSING_FIX_HINT,
+        return (
+            (),
+            all_flags,
+            _error(
+                "propagation_block_empty",
+                "## propagation block present but contained no valid rows.",
+                PROPAGATE_MISSING_FIX_HINT,
+            ),
         )
     rows, parse_flags = rows_from_parsed_block(raw_rows)
     all_flags = all_flags + tuple(parse_flags)
     if parse_flags or not rows:
-        return (), all_flags, _error(
-            "propagation_block_invalid",
-            f"## propagation block rejected: {', '.join(parse_flags) or 'no valid rows'}",
-            PROPAGATE_MISSING_FIX_HINT,
-            invalid_flags=list(parse_flags),
-            legal_safe_window=LEGAL_SAFE_WINDOW_LIST,
+        return (
+            (),
+            all_flags,
+            _error(
+                "propagation_block_invalid",
+                f"## propagation block rejected: {', '.join(parse_flags) or 'no valid rows'}",
+                PROPAGATE_BLOCK_INVALID_FIX_HINT,
+                invalid_flags=list(parse_flags),
+                legal_safe_window=LEGAL_SAFE_WINDOW_LIST,
+            ),
         )
     return tuple(rows), all_flags, None
 
@@ -152,10 +165,10 @@ def _rows_from_shorthand(body: str) -> tuple[PropagationRow, ...]:
     if service_error:
         return ()
     code_ref_match = _CODE_REF_FIELD_RE.search(body)
-    raw_ref = code_ref_match.group(1).strip() if code_ref_match else resolve_code_version()
-    code_ref = require_resolvable_code_ref(
-        normalize_code_ref(raw_ref), service=service
+    raw_ref = (
+        code_ref_match.group(1).strip() if code_ref_match else resolve_code_version()
     )
+    code_ref = require_resolvable_code_ref(normalize_code_ref(raw_ref), service=service)
     proof_class = default_proof_class(service)
     preempt_match = _ALLOW_SELF_PREEMPT_RE.search(body)
     allow_self_preempt = coerce_allow_self_preempt_flag(
@@ -230,10 +243,14 @@ def admit_propagate_body(body: str) -> PropagateAdmission:
         consumed = consumed_keys_from_yaml_block(text)
         rows, flags, block_error = _rows_from_structured_block(text)
         if block_error is not None:
-            return PropagateAdmission(flags=flags, consumed_keys=consumed, error=block_error)
+            return PropagateAdmission(
+                flags=flags, consumed_keys=consumed, error=block_error
+            )
         validated, ref_error = _validate_admitted_rows(rows)
         if ref_error is not None:
-            return PropagateAdmission(flags=flags, consumed_keys=consumed, error=ref_error)
+            return PropagateAdmission(
+                flags=flags, consumed_keys=consumed, error=ref_error
+            )
         raw_rows, _ = parse_propagation_block(text)
         version_pins = _version_pins_from_parsed_block(raw_rows)
         enriched = _enrich_admitted_rows(validated, version_pins)
@@ -277,9 +294,7 @@ def rows_from_admission_payload(
     raw = payload.get("propagation")
     if not isinstance(raw, list):
         return (), ()
-    rows = tuple(
-        row_from_mapping(item) for item in raw if isinstance(item, dict)
-    )
+    rows = tuple(row_from_mapping(item) for item in raw if isinstance(item, dict))
     return rows, ()
 
 

@@ -90,6 +90,19 @@ ADMISSION_AUTHORITY = "cursor_auto.admit_gates.blocking_admit_gate"
 #: Authority-of-record when the synchronous projection is absent or stale.
 ADMISSION_RECOVERY = "agent_bus_read(job_state)"
 
+# Refusal payload keys surfaced on ``job_admission`` (producer detail the caller
+# needs to self-repair without a second read).
+_REFUSAL_DETAIL_WIRE_KEYS: tuple[str, ...] = (
+    "fix_hint",
+    "missed_tokens",
+    "summary",
+    "invalid_flags",
+    "legal_safe_window",
+)
+
+# Payload keys mirrored on the wire elsewhere or withheld as ladder internals.
+_REFUSAL_PAYLOAD_SUPPRESSED = frozenset({"reason", "contract", "density"})
+
 _ADMIT_GATE_CONTRACTS: frozenset[str] = frozenset({"confer", "ask"})
 
 
@@ -527,10 +540,22 @@ def admission_from_verdict(verdict: BodyPureVerdict, *, scope: str) -> dict[str,
     }
     if verdict.refusal is not None:
         payload = verdict.refusal.payload
-        if payload.get("fix_hint") is not None:
-            projection["fix_hint"] = payload["fix_hint"]
-        if payload.get("missed_tokens") is not None:
-            projection["missed_tokens"] = list(payload["missed_tokens"])
+        for key in _REFUSAL_DETAIL_WIRE_KEYS:
+            value = payload.get(key)
+            if value is None:
+                continue
+            if key in {"missed_tokens", "invalid_flags", "legal_safe_window"}:
+                projection[key] = list(value)
+            else:
+                projection[key] = value
+        dropped = sorted(
+            key
+            for key in payload
+            if key not in _REFUSAL_DETAIL_WIRE_KEYS
+            and key not in _REFUSAL_PAYLOAD_SUPPRESSED
+        )
+        if dropped:
+            projection["wire_dropped_fields"] = dropped
     return projection
 
 

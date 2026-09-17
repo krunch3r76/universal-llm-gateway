@@ -23,6 +23,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services.git_integration_worker.app import create_app
+from services.git_integration_worker.cursor_auto.fix_hints import (
+    PROPAGATE_BLOCK_INVALID_FIX_HINT,
+    PROPAGATE_MISSING_FIX_HINT,
+)
 from services.git_integration_worker.cursor_auto.liveness import get_registry
 
 
@@ -139,6 +143,55 @@ def test_no_live_handler_states_no_job_was_admitted(
     assert payload["auto_handler_status"] == "no-auto-handler"
     assert payload["job_admission"]["outcome"] == "not_applicable"
     assert payload["job_admission"]["reason"] == "no_live_auto_handler"
+
+
+_PROPAGATION_INVALID_PROOF_CLASS_BODY = """\
+TYPE: DIRECTIVE
+contract: propagate
+effects_expected: row persisted
+
+## propagation
+```yaml
+propagation:
+  - service: mcp
+    code_ref: d3e17d54
+    safe_window: standalone_ok
+    proof_class: served_artifact
+```
+"""
+
+
+def test_propagation_block_invalid_refusal_projects_invalid_flags(
+    cursor_auto_client: TestClient,
+) -> None:
+    """AC1 (a:35369): caller sees which propagation field was rejected."""
+    get_registry().register("11626-handler")
+    resp = cursor_auto_client.post(
+        "/api/v1/git/cursor-auto/enqueue",
+        json={
+            "thread_id": "11626",
+            "turn_number": 1,
+            "subject": "propagation invalid proof_class",
+            "body": _PROPAGATION_INVALID_PROOF_CLASS_BODY,
+            "from_agent": "mcp-server",
+            "to_agent": "cursor",
+            "desired_model": "auto",
+            "desired_effort": "medium",
+            "contract": "propagate",
+            "request_id": "rid-11626",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    admission = resp.json()["job_admission"]
+    assert admission["outcome"] == "refused"
+    assert admission["reason"] == "propagation_block_invalid"
+    assert isinstance(admission["invalid_flags"], list)
+    assert any(
+        "invalid_proof_class:served_artifact" in flag
+        for flag in admission["invalid_flags"]
+    )
+    assert admission["fix_hint"] == PROPAGATE_BLOCK_INVALID_FIX_HINT
+    assert admission["fix_hint"] != PROPAGATE_MISSING_FIX_HINT
 
 
 def test_retired_tokens_are_gone_from_every_enqueue_path(

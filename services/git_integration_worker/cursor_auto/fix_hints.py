@@ -42,7 +42,7 @@ CONTINUITY_HOP_FIX_HINT = (
 
 EXECUTE_TOOL_OP_FIX_HINT = (
     "`contract: execute` runs exactly one manifest-approved tier-M op. Add "
-    "`tool_op: <tool>.<op>` (one line, one op) plus `tool_args: {\"k\": \"v\"}` "
+    '`tool_op: <tool>.<op>` (one line, one op) plus `tool_args: {"k": "v"}` '
     "as a single-line JSON object, and `effects_expected: <observable result>`. "
     f"Template: {TIER_M_TEMPLATE_REF}."
 )
@@ -72,6 +72,13 @@ PROPAGATE_MISSING_FIX_HINT = (
     "`scope: propagation sync_restart mcp` with `effects_expected:`."
 )
 
+PROPAGATE_BLOCK_INVALID_FIX_HINT = (
+    "The `## propagation` block parsed but one or more fields failed validation. "
+    "Read `invalid_flags` on this refusal — each names the rejected field and why "
+    "(e.g. invalid_proof_class, invalid_safe_window). Fix those fields using "
+    "`legal_safe_window` and the service-specific proof_class rules, then re-issue."
+)
+
 OPTIONS_SYMMETRY_FIX_HINT = (
     "Every option in `## options` must share the same key set with non-empty "
     "`cost:`, `benefit:`, and `falsifier:` values, and at least two options "
@@ -93,6 +100,7 @@ __all__ = [
     "OPTIONS_SYMMETRY_FIX_HINT",
     "PICKUP_AWAITS_STOP_FIX_HINT",
     "PICKUP_DECLARATION_FIX_HINT",
+    "PROPAGATE_BLOCK_INVALID_FIX_HINT",
     "PROPAGATE_MISSING_FIX_HINT",
     "PROPAGATE_SCOPE_FIX_HINT",
     "EXECUTE_EFFECTS_MISSING_FIX_HINT",
