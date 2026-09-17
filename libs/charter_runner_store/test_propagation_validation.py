@@ -75,6 +75,10 @@ def test_validation_record_and_current_projection(monkeypatch, tmp_path):
     result = propagation_validation.current_validation("agent_bus", "a" * 40)
     assert result["verdict"] == "running_committed_code"
     assert result["activation"]["validation_id"] == validation_id
+    assert result["liveness_measured"] is True
+    assert result["liveness_measured_authority"] == "observed"
+    assert result["verdict_authority"] == "observed"
+    assert result["silent_channel"] is None
 
 
 def test_unknown_probe_never_promotes_stale_record(monkeypatch, tmp_path):
@@ -102,6 +106,60 @@ def test_unknown_probe_never_promotes_stale_record(monkeypatch, tmp_path):
         propagation_validation.current_validation("agent_bus", "b" * 40)["verdict"]
         == "unknown"
     )
+
+
+def test_unknown_probe_names_silent_channel_with_stale_activation(
+    monkeypatch, tmp_path
+):
+    """Unknown probe keeps verdict unknown, names liveness silence, retains activation."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    propagation_validation.record_validation(
+        service="agent_bus",
+        code_ref="b" * 40,
+        outcome="validated",
+        identity_measurement="changed",
+    )
+    monkeypatch.setattr(
+        "charter_runner_store.propagation_validation.close.observe_code_ref_live",
+        lambda service, code_ref: CodeRefLiveness(
+            answer="unknown",
+            service=service,
+            code_ref=code_ref,
+            observed_code_version=None,
+            relation=None,
+            observation={"probe_reachable": False},
+            reason="unreachable",
+        ),
+    )
+    result = propagation_validation.current_validation("agent_bus", "b" * 40)
+    assert result["verdict"] == "unknown"
+    assert result["silent_channel"] == "liveness"
+    assert result["verdict_authority"] == "derived"
+    assert result["activation"] is not None
+
+
+def test_live_no_probe_names_observed_verdict_without_silent_channel(
+    monkeypatch, tmp_path
+):
+    """Definitive no-answer probe yields observed verdict without silent_channel."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "charter_runner_store.propagation_validation.close.observe_code_ref_live",
+        lambda service, code_ref: CodeRefLiveness(
+            answer="no",
+            service=service,
+            code_ref=code_ref,
+            observed_code_version="c" * 40,
+            relation="unrelated",
+            observation={"probe_reachable": True},
+            reason="mismatch",
+        ),
+    )
+    result = propagation_validation.current_validation("agent_bus", "d" * 40)
+    assert result["verdict"] == "not_running_committed_code"
+    assert result["silent_channel"] is None
+    assert result["verdict_authority"] == "observed"
+    assert result["liveness_measured"] is True
 
 
 @pytest.mark.offline
