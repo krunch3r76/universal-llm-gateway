@@ -63,6 +63,32 @@ def _lane_provenance_fields(*, thread: str, branch: str, root: Path) -> dict[str
     }
 
 
+def _apply_lane_ingress(
+    *,
+    path: str,
+    sandbox: str,
+    for_write: bool,
+    lane_root: Path,
+) -> tuple[str, dict[str, Any]]:
+    """Re-resolve ingress against a lane-bound worktree root."""
+    from implement_admission.closeout_helpers import cortex_files_root
+    from implement_admission.scheme_resolve import resolve_fs_ingress
+
+    ingress = resolve_fs_ingress(
+        path,
+        sandbox=sandbox,
+        workspaces_root_override=lane_root,
+        cortex_root=cortex_files_root(),
+        for_write=for_write,
+    )
+    meta: dict[str, Any] = {}
+    if ingress.path_input_normalized:
+        meta["path_input_normalized"] = True
+    if ingress.normalization_advisory:
+        meta["normalization_advisory"] = ingress.normalization_advisory
+    return ingress.rel_path, meta
+
+
 def _resolve_workspaces_binding(
     *,
     surface: Surface,
@@ -137,6 +163,7 @@ def fs_impl(
         path=path,
     )
     effective_path = path
+    lane_thread = str(thread).strip() if thread else ""
     if path.strip():
         from implement_admission.closeout_helpers import cortex_files_root
         from implement_admission.scheme_resolve import resolve_fs_ingress
@@ -208,6 +235,14 @@ def fs_impl(
             if bind_error is not None:
                 return bind_error
             with bind_ctx as root:
+                if lane_thread and path.strip():
+                    effective_path, lane_ingress_meta = _apply_lane_ingress(
+                        path=path,
+                        sandbox=effective_sandbox,
+                        for_write=op in _PATH_WRITE_OPS,
+                        lane_root=root,
+                    )
+                    ingress_meta.update(lane_ingress_meta)
                 result = md_fn(
                     op=md_op,
                     path=effective_path,
@@ -274,6 +309,14 @@ def fs_impl(
         if bind_error is not None:
             return bind_error
         with bind_ctx as root:
+            if lane_thread and path.strip():
+                effective_path, lane_ingress_meta = _apply_lane_ingress(
+                    path=path,
+                    sandbox=effective_sandbox,
+                    for_write=op in _PATH_WRITE_OPS,
+                    lane_root=root,
+                )
+                ingress_meta.update(lane_ingress_meta)
             result = dispatch_workspaces_op(
                 op,
                 effective_path,

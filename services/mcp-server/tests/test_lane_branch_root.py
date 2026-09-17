@@ -259,3 +259,65 @@ def test_fs_impl_thread_unresolvable_returns_error(
     assert "error" in result
     assert "7119" in result["error"]
     assert "state='none'" in result["error"]
+
+
+def test_fs_impl_thread_read_resolves_under_lane_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fs(read, thread=…) must read from the lane worktree, not shared checkout."""
+    from project_ops import workspaces_impl_registry
+
+    parent = tmp_path / "projects"
+    repo = parent / "universal-llm-gateway"
+    lane = parent / "ulg-arc-worktrees" / "universal-llm-gateway" / "lane-11579"
+    skill = lane / ".cursor" / "skills" / "liaison" / "SKILL.md"
+    repo.mkdir(parents=True)
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "scripts" / "check-imports").write_text("")
+    skill.parent.mkdir(parents=True)
+    skill.write_text("lane liaison skill body\n")
+    shared_skill = repo / ".cursor" / "skills" / "liaison" / "SKILL.md"
+    shared_skill.parent.mkdir(parents=True)
+    shared_skill.write_text("shared checkout body\n")
+
+    monkeypatch.setattr("lane_branch_root.project_root_path", lambda: parent)
+    monkeypatch.setattr(
+        "lane_branch_root.worktree_dirname_for_branch",
+        lambda _branch: "lane-11579",
+    )
+    with patch(
+        "lane_branch_root.relay",
+        return_value={
+            "thread_id": "11579",
+            "current_branch": "cursor-sdk/lane-11579",
+            "association_id": 1,
+            "state": "associated",
+        },
+    ):
+        result = fs_impl(
+            surface="code",
+            overflow_registry=workspaces_impl_registry(),
+            op="read",
+            sandbox="workspaces",
+            path=".cursor/skills/liaison/SKILL.md",
+            paths=None,
+            content="",
+            target="",
+            target_sandbox="",
+            line=0,
+            section="",
+            all_occurrences=False,
+            include_untracked=True,
+            binary=False,
+            max_depth=3,
+            offset=0,
+            limit=0,
+            expected_sha256="",
+            if_absent=False,
+            thread="11579",
+        )
+
+    assert "error" not in result, result
+    assert result["content"] == "lane liaison skill body\n"
+    assert result["lane_worktree_root"] == str(lane.resolve())

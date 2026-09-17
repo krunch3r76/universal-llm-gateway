@@ -69,10 +69,12 @@ def _resolve_sandbox(sandbox: str, path: str, *, for_write: bool = False) -> Pat
     from implement_admission.closeout_helpers import cortex_files_root
     from implement_admission.scheme_resolve import resolve_fs_ingress
 
+    root_override = _PROJECT_ROOT.resolve() if sandbox == "workspaces" else None
     try:
         ingress = resolve_fs_ingress(
             path,
             sandbox=sandbox,
+            workspaces_root_override=root_override,
             cortex_root=cortex_files_root() if sandbox == "cortex" else None,
             for_write=for_write,
         )

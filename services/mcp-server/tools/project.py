@@ -114,19 +114,29 @@ def _safe_project_path(relative: str) -> Path:
 
 def _resolve_project_file_path(relative: str) -> tuple[Path, str]:
     """Resolve a readable file via shared ingress, including Share URIs."""
-    from implement_admission.scheme_resolve import resolve_fs_ingress
+    from implement_admission.closeout_helpers import cortex_files_root
+    from implement_admission.scheme_resolve import (
+        _packet_path_variants,
+        resolve_fs_ingress,
+    )
+
+    root = _PROJECT_ROOT.resolve()
+    for variant in _packet_path_variants(relative.lstrip("/")):
+        resolved = resolve_existing_file(variant, root=root)
+        if resolved is not None:
+            return resolved, workspaces_relative(resolved, root)
 
     try:
-        ingress = resolve_fs_ingress(relative, sandbox="workspaces")
+        ingress = resolve_fs_ingress(
+            relative,
+            sandbox="workspaces",
+            workspaces_root_override=root,
+            cortex_root=cortex_files_root(),
+        )
     except ValueError:
         ingress = None
     if ingress is not None and ingress.resolved is not None:
-        rel = ingress.rel_path
-        return ingress.resolved, rel
-    resolved = resolve_existing_file(relative, root=_PROJECT_ROOT.resolve())
-    if resolved is not None:
-        rel = workspaces_relative(resolved, _PROJECT_ROOT.resolve())
-        return resolved, rel
+        return ingress.resolved, ingress.rel_path
     return _safe_project_path(relative), relative.lstrip("/")
 
 
