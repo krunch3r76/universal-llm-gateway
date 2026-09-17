@@ -263,6 +263,27 @@ _SUCCESSOR_KW = {
     "spawn_signal_sources": ["checkpoint_due"],
 }
 
+_SUCCESSOR_WAKE_GOLDEN = (
+    "resume 10479\n\n"
+    "WAKE — liaison headless successor, house agent-bus:10479 — contract: none.\n"
+    "duty: run the tick; checkpoint; hop only if hop_qualifies. "
+    "Hop only when autonomous follow-up remains; HOLD_MERGE / empty NOW / quiet tick → STAY.\n"
+    "disclosure: orientation ritual; one echo before the first move.\n"
+    "objective: tip turn #42 on agent-bus:10479; tip CHECKPOINT #40; "
+    "row=Settled · Live · Next; gear: 3-wake-on-attention; spawn_signal=checkpoint_due.\n"
+    'addresses: dispatch(tool="continuity", arguments=\'{"op":"resume","thread":"10479"}\'); '
+    "agent_bus_read(thread_get, thread=10479); agent-bus:10479 (echo)\n"
+    "Use the liaison skill. LOAD the liaison skill body; do not skim.\n"
+    "LOAD AND EXECUTE runbook:bus-consult-watcher (legs 1-3).\n"
+    "frame: spawned by liaison-ticker gear 3-wake-on-attention; seat cursor-sdk; "
+    "predecessor = prior lease holder on agent-bus:10479. "
+    "§ Peer-house: keep both; cdp/opus-5 → 2nd pool → cursor/claude-opus-5; "
+    "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled.\n"
+    'echo: agent_bus(send, thread=10479, subject="ORIENTED 10479", '
+    'body="ORIENTED / tip: <CHECKPOINT subject> cp_ordinal=<n> / row: <row> / seat: cursor-sdk") '
+    "before the first mutating move.\n"
+)
+
 
 def _default_successor_render() -> str:
     return render_successor_wake("10479", **_SUCCESSOR_KW)
@@ -272,7 +293,9 @@ def _default_successor_render() -> str:
 def test_successor_wake_sheds_overlong_row_without_raising() -> None:
     """Regression for a:33659 — verbose now_row must not crash-loop the ticker."""
     long_row = "R" + (" verbose policy bind " * 80)
-    unshed = successor_wake_unshed_byte_length("10479", gear="3-wake-on-attention", row=long_row)
+    unshed = successor_wake_unshed_byte_length(
+        "10479", gear="3-wake-on-attention", row=long_row
+    )
     assert unshed > SUCCESSOR_WAKE_CAP
     text = render_successor_wake(
         "10479",
@@ -290,6 +313,37 @@ def test_successor_wake_fitting_input_byte_identical() -> None:
     second = _default_successor_render()
     assert first == second
     assert len(first.encode("utf-8")) == 1173
+
+
+@pytest.mark.offline
+def test_successor_wake_default_contract_byte_identical_to_golden() -> None:
+    """AC1.4 — no contract arg must match pre-change golden paste."""
+    assert render_successor_wake("10479", **_SUCCESSOR_KW) == _SUCCESSOR_WAKE_GOLDEN
+
+
+@pytest.mark.offline
+def test_successor_wake_conductor_contract_duty_line() -> None:
+    """AC1.3 — conductor contract swaps duty line; no hop_qualifies."""
+    text = render_successor_wake("10479", **_SUCCESSOR_KW, contract="conductor")
+    assert "— contract: conductor." in text
+    assert "dispatch -> read back -> verify -> CP" in text
+    assert "hop only if hop_qualifies" not in text
+
+
+@pytest.mark.offline
+def test_successor_wake_conductor_contract_survives_row_shedding() -> None:
+    """AC1.5 — contract line is never shed."""
+    long_row = "z" * 5000
+    text = render_successor_wake(
+        "10479",
+        gear="3-wake-on-attention",
+        row=long_row,
+        tip_turn=1,
+        tip_checkpoint_turn=1,
+        contract="conductor",
+    )
+    assert "— contract: conductor." in text
+    assert len(text.encode("utf-8")) <= SUCCESSOR_WAKE_CAP
 
 
 @pytest.mark.offline
@@ -320,7 +374,10 @@ def test_successor_wake_load_bearing_fields_survive_maximal_shedding() -> None:
         ring="10532",
     )
     assert "resume 10479" in text
-    assert 'dispatch(tool="continuity", arguments=\'{"op":"resume","thread":"10479"}\')' in text
+    assert (
+        'dispatch(tool="continuity", arguments=\'{"op":"resume","thread":"10479"}\')'
+        in text
+    )
     assert "agent_bus_read(thread_get, thread=10479)" in text
     assert "agent-bus:10532 (echo)" in text
     assert "tip turn #99" in text

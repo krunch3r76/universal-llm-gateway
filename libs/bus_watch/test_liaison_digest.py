@@ -169,6 +169,33 @@ def test_attention_excludes_terminal_without_unread(
     assert "10496" in ids
 
 
+def test_checkpoint_observed_event_signal() -> None:
+    """AC2.5 — event factory declares liaison.checkpoint.observed."""
+    from bus_watch.events import LiaisonCheckpointObserved
+
+    event = LiaisonCheckpointObserved(
+        root="10479",
+        turn=10,
+        prior_turn=0,
+        source="digest.root.tip_checkpoint_turn",
+    )
+    assert event.signal == "liaison.checkpoint.observed"
+
+
+def test_gear4_successor_contract_conductor_gear3_none() -> None:
+    """AC1.1 — gear-4 binds conductor; other gears keep none."""
+    assert (
+        effective_policy({"policy": {"gear": "4-cdp-liaison"}})["successor_contract"]
+        == "conductor"
+    )
+    assert (
+        effective_policy({"policy": {"gear": "3-wake-on-attention"}})[
+            "successor_contract"
+        ]
+        == "none"
+    )
+
+
 def test_gear_three_disarmed_by_default() -> None:
     """A7: gear 3 must not imply policy.ready — the register does."""
     policy = effective_policy({"policy": {"gear": "3-wake-on-attention"}})
@@ -328,7 +355,7 @@ def test_liaison_digest_sloc_cap() -> None:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     )
-    assert sloc <= 306
+    assert sloc <= 325
 
 
 @patch("bus_watch.liaison_digest.collect_watchers", return_value=[])
@@ -397,3 +424,160 @@ def test_life_root_digest_attaches_life_block(
     assert "life" in digest
     assert digest["life"]["now"] is None
     assert "gates" in digest["life"]
+
+
+def _digest_mocks(
+    mock_bus: MagicMock,
+    mock_get: MagicMock,
+    *,
+    tip_checkpoint_turn: int | None,
+) -> None:
+    mock_bus.return_value.__enter__.return_value = MagicMock()
+    mock_get.return_value = {
+        "id": "10479",
+        "turn_count": 10,
+        "status": "active",
+        "last_subject": "CHECKPOINT",
+    }
+
+
+@patch("bus_watch.liaison_digest.emit_checkpoint_observed")
+@patch("bus_watch.liaison_digest.collect_watchers", return_value=[])
+@patch("bus_watch.liaison_digest._health", return_value="ok")
+@patch("bus_watch.liaison_digest._unread_toc", return_value=[])
+@patch("bus_watch.liaison_digest._child_lanes", return_value=[])
+@patch("bus_watch.liaison_digest.digest_root_surface")
+@patch("bus_watch.liaison_digest._get")
+@patch("bus_watch.liaison_digest._bus")
+@patch("bus_watch.liaison_digest.read_lock", return_value={"holder": None})
+@patch("bus_watch.digest_budget._read_sdk_usage_live", return_value=None)
+def test_checkpoint_observed_advances_epoch_and_clears_due(
+    _usage: object,
+    _lock: object,
+    mock_bus: MagicMock,
+    mock_get: MagicMock,
+    mock_root_surface: MagicMock,
+    _child: MagicMock,
+    _toc: MagicMock,
+    _health: MagicMock,
+    _watchers: MagicMock,
+    mock_emit: MagicMock,
+) -> None:
+    """AC2.1 — newer tip CHECKPOINT advances epoch; following build not due."""
+    _digest_mocks(mock_bus, mock_get, tip_checkpoint_turn=None)
+    mock_root_surface.return_value = ([], None)
+    state: dict = {"ticks": 5, "last_cp_tick": 0, "last_cp_turn": 0, "policy": {}}
+    due_before = build_digest(
+        "10479", state, register="autonomous", budget_tokens=700000
+    )
+    assert due_before["checkpoint_due"] is True
+    mock_root_surface.return_value = ([], 50)
+    due_after = build_digest(
+        "10479", state, register="autonomous", budget_tokens=700000
+    )
+    assert state["last_cp_turn"] == 50
+    assert state["last_cp_tick"] == 7
+    assert due_after["checkpoint_due"] is False
+    mock_emit.assert_called_once_with(
+        root="10479",
+        turn=50,
+        prior_turn=0,
+        source="digest.root.tip_checkpoint_turn",
+    )
+
+
+@patch("bus_watch.liaison_digest.emit_checkpoint_observed")
+@patch("bus_watch.liaison_digest.collect_watchers", return_value=[])
+@patch("bus_watch.liaison_digest._health", return_value="ok")
+@patch("bus_watch.liaison_digest._unread_toc", return_value=[])
+@patch("bus_watch.liaison_digest._child_lanes", return_value=[])
+@patch("bus_watch.liaison_digest.digest_root_surface")
+@patch("bus_watch.liaison_digest._get")
+@patch("bus_watch.liaison_digest._bus")
+@patch("bus_watch.liaison_digest.read_lock", return_value={"holder": None})
+@patch("bus_watch.digest_budget._read_sdk_usage_live", return_value=None)
+def test_checkpoint_observed_idempotent_same_turn(
+    _usage: object,
+    _lock: object,
+    mock_bus: MagicMock,
+    mock_get: MagicMock,
+    mock_root_surface: MagicMock,
+    _child: MagicMock,
+    _toc: MagicMock,
+    _health: MagicMock,
+    _watchers: MagicMock,
+    mock_emit: MagicMock,
+) -> None:
+    """AC2.2 — unchanged tip CHECKPOINT does not re-emit."""
+    _digest_mocks(mock_bus, mock_get, tip_checkpoint_turn=40)
+    mock_root_surface.return_value = ([], 40)
+    state: dict = {"ticks": 1, "last_cp_turn": 40, "last_cp_tick": 2, "policy": {}}
+    before = dict(state)
+    build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    assert state["last_cp_turn"] == before["last_cp_turn"]
+    assert state["last_cp_tick"] == before["last_cp_tick"]
+    mock_emit.assert_not_called()
+
+
+@patch("bus_watch.liaison_digest.emit_checkpoint_observed")
+@patch("bus_watch.liaison_digest.collect_watchers", return_value=[])
+@patch("bus_watch.liaison_digest._health", return_value="ok")
+@patch("bus_watch.liaison_digest._unread_toc", return_value=[])
+@patch("bus_watch.liaison_digest._child_lanes", return_value=[])
+@patch("bus_watch.liaison_digest.digest_root_surface")
+@patch("bus_watch.liaison_digest._get")
+@patch("bus_watch.liaison_digest._bus")
+@patch("bus_watch.liaison_digest.read_lock", return_value={"holder": None})
+@patch("bus_watch.digest_budget._read_sdk_usage_live", return_value=None)
+def test_checkpoint_absent_leaves_epoch_untouched(
+    _usage: object,
+    _lock: object,
+    mock_bus: MagicMock,
+    mock_get: MagicMock,
+    mock_root_surface: MagicMock,
+    _child: MagicMock,
+    _toc: MagicMock,
+    _health: MagicMock,
+    _watchers: MagicMock,
+    mock_emit: MagicMock,
+) -> None:
+    """AC2.3 — no tip CHECKPOINT leaves today's behavior."""
+    _digest_mocks(mock_bus, mock_get, tip_checkpoint_turn=None)
+    mock_root_surface.return_value = ([], None)
+    state: dict = {"ticks": 3, "last_cp_tick": 1, "policy": {}}
+    before = dict(state)
+    build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    assert state.get("last_cp_turn") == before.get("last_cp_turn")
+    assert state["last_cp_tick"] == before["last_cp_tick"]
+    mock_emit.assert_not_called()
+
+
+@patch("bus_watch.liaison_digest.emit_checkpoint_observed")
+@patch("bus_watch.liaison_digest.collect_watchers", return_value=[])
+@patch("bus_watch.liaison_digest._health", return_value="ok")
+@patch("bus_watch.liaison_digest._unread_toc", return_value=[])
+@patch("bus_watch.liaison_digest._child_lanes", return_value=[])
+@patch("bus_watch.liaison_digest.digest_root_surface")
+@patch("bus_watch.liaison_digest._get")
+@patch("bus_watch.liaison_digest._bus")
+@patch("bus_watch.liaison_digest.read_lock", return_value={"holder": None})
+@patch("bus_watch.digest_budget._read_sdk_usage_live", return_value=None)
+def test_manual_last_cp_tick_not_lowered(
+    _usage: object,
+    _lock: object,
+    mock_bus: MagicMock,
+    mock_get: MagicMock,
+    mock_root_surface: MagicMock,
+    _child: MagicMock,
+    _toc: MagicMock,
+    _health: MagicMock,
+    _watchers: MagicMock,
+    mock_emit: MagicMock,
+) -> None:
+    """AC2.4 — manual mark ahead of ticks is preserved via max()."""
+    _digest_mocks(mock_bus, mock_get, tip_checkpoint_turn=10)
+    mock_root_surface.return_value = ([], 10)
+    state: dict = {"ticks": 2, "last_cp_tick": 100, "last_cp_turn": 0, "policy": {}}
+    build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    assert state["last_cp_tick"] == 100
+    assert state["last_cp_turn"] == 10

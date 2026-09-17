@@ -40,6 +40,7 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "wake_on_attention_only": False,
     "spawn_grace_seconds": 900,
     "successor_seat": "cursor-sdk",
+    "successor_contract": "none",
     "budget_max_age_s": 300,
     "gui_host": None,
     "ready": False,
@@ -72,6 +73,7 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         "successor_seat": "cdp",
         "successor_model": "cdp/opus-5",
         "successor_cost_intent": None,
+        "successor_contract": "conductor",
         "ready": False,
     },
 }

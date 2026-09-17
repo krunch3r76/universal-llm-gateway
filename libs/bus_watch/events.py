@@ -101,3 +101,27 @@ def LiaisonPendingSpawnReleased(  # noqa: N802
 
 def emit_pending_spawn_released(**kwargs: Any) -> None:
     _emit(LiaisonPendingSpawnReleased(**kwargs))
+
+
+@event_factory
+def LiaisonCheckpointObserved(  # noqa: N802
+    *,
+    root: str,
+    turn: int,
+    prior_turn: int,
+    source: str,
+) -> Event:
+    return Event(
+        signal="liaison.checkpoint.observed",
+        payload={
+            "root": root,
+            "turn": turn,
+            "prior_turn": prior_turn,
+            "source": source,
+        },
+        scope="global",
+    )
+
+
+def emit_checkpoint_observed(**kwargs: Any) -> None:
+    _emit(LiaisonCheckpointObserved(**kwargs))

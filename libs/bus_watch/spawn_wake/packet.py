@@ -22,6 +22,7 @@ def build_successor_message(
     spawn_signal_sources: list[str] | None = None,
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
+    contract: str = "none",
     cap: int = SUCCESSOR_MESSAGE_CAP,
 ) -> str:
     """Inline resume-fence pull recipe for a headless liaison successor."""
@@ -35,6 +36,7 @@ def build_successor_message(
         spawn_signal_sources=spawn_signal_sources,
         ring=ring,
         extra_addresses=tuple(extra_addresses),
+        contract=contract,
         cap=cap,
     )
 
@@ -51,6 +53,7 @@ def build_dispatch_body(
     ctx = dict(successor_context or {})
     extras = ctx.get("extra_addresses") or policy.get("successor_extra_addresses") or ()
     seat = policy.get("successor_seat") or "cursor-sdk"
+    contract = str(policy.get("successor_contract") or "none")
     message = build_successor_message(
         root_id,
         gear=str(ctx.get("gear") or policy.get("gear") or "1-fable-mvp"),
@@ -61,11 +64,12 @@ def build_dispatch_body(
         spawn_signal_sources=list(ctx.get("spawn_signal_sources") or []),
         ring=ctx.get("ring") or policy.get("wake_ring"),
         extra_addresses=tuple(extras),
+        contract=contract,
     )
     body: dict[str, Any] = {
         "op": "generate",
         "seat": seat,
-        "contract": "none",
+        "contract": contract,
         "lane": "A",
         "model": policy.get("successor_model"),
         "message": message,

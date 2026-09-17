@@ -34,6 +34,7 @@ from bus_watch.digest_budget import (
     effective_policy,
     health_probe,
 )
+from bus_watch.events import emit_checkpoint_observed
 from bus_watch.fable_lock import WATCH_DIR, current_night_id, read_lock
 from bus_watch.friction_rows import fold_fingerprint, harvest_frictions
 from bus_watch.ide_budget import (
@@ -175,7 +176,12 @@ def build_digest(
         lanes = _child_lanes(client, root_id) if "_error" not in root else []
         lane_ids = {root_id, *(lane["id"] for lane in lanes)}
         unread = _unread_toc(client, lane_ids)
-        attention = build_attention_lanes(lanes, fetch_unread_turns=lambda tid: (_get(client, "/turns", thread=tid, unread=True, last=25) or {}).get("turns"))  # noqa: E501
+        attention = build_attention_lanes(
+            lanes,
+            fetch_unread_turns=lambda tid: (
+                _get(client, "/turns", thread=tid, unread=True, last=25) or {}
+            ).get("turns"),
+        )  # noqa: E501
 
     policy = effective_policy(state)
     night_id = current_night_id()
@@ -183,6 +189,16 @@ def build_digest(
     fp = fold_fingerprint(digest_fingerprint(root, lanes), frictions["rows"])
     changed = fp != state.get("fingerprint")
     ticks = int(state.get("ticks") or 0) + 1
+    prior_cp_turn = int(state.get("last_cp_turn") or 0)
+    if tip_checkpoint_turn is not None and tip_checkpoint_turn > prior_cp_turn:
+        state["last_cp_turn"] = tip_checkpoint_turn
+        state["last_cp_tick"] = max(int(state.get("last_cp_tick") or 0), ticks)
+        emit_checkpoint_observed(
+            root=root_id,
+            turn=tip_checkpoint_turn,
+            prior_turn=prior_cp_turn,
+            source="digest.root.tip_checkpoint_turn",
+        )
     digest_ts = _utcnow()
     lock_now = read_lock(root_id)
     dispatches = int(

@@ -814,6 +814,7 @@ def test_dispatch_body_passes_resolved_seat_into_message() -> None:
         {
             "successor_model": "cdp/opus-5",
             "successor_seat": "cdp",
+            "successor_contract": "conductor",
             "max_hop_minutes": 60,
             "gear": "4-cdp-liaison",
         },
@@ -826,8 +827,32 @@ def test_dispatch_body_passes_resolved_seat_into_message() -> None:
         },
     )
     assert body["seat"] == "cdp"
+    assert body["contract"] == "conductor"
     assert "seat cdp" in body["message"]
+    assert "— contract: conductor." in body["message"]
     assert "runbook:bus-consult-watcher" not in body["message"]
+
+
+def test_dispatch_body_contract_defaults_none_when_absent() -> None:
+    """AC1.2 — absent successor_contract stays none on the wire."""
+    body = build_dispatch_body(
+        "10479",
+        {"successor_model": "cursor/claude-fable-5-1", "max_hop_minutes": 60},
+    )
+    assert body["contract"] == "none"
+
+
+def test_dispatch_body_contract_conductor_from_policy() -> None:
+    """AC1.2 — policy successor_contract binds the generate payload."""
+    body = build_dispatch_body(
+        "10479",
+        {
+            "successor_contract": "conductor",
+            "successor_model": "cdp/opus-5",
+            "max_hop_minutes": 60,
+        },
+    )
+    assert body["contract"] == "conductor"
 
 
 def test_abandoned_lane_does_not_wake() -> None:
