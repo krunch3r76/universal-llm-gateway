@@ -31,6 +31,25 @@ Light execution: `team_dispatch(op=generate, seat=cursor-sdk)` invokes Composer 
 
 One opening mention drifts out of Composer attention mid-turn; repeat verbatim where fulfillment happens.
 
+## D2.1 — Analysis output contract (standing, house-wide)
+
+`returns(analysis ∨ root_cause ∨ recon ∨ judgment) ⇒ shape(atomic ∧ cited ∧ unverified_first_class ∧ mechanism⊥fix)`.
+
+Applies to every seat that returns reasoning — cursor-sdk, cursor-auto, CDP preambles. Constrains
+FORM only; it says nothing about confidence or self-regard, which is why it is safe where an
+induction is not (`a:34682` — confidence framing cost calibration on a code root-cause screen).
+
+| Requirement | Shape |
+|---|---|
+| Atomic claims | Numbered; one falsifiable statement each. No compound claim carrying two truth values. |
+| Citation per claim | `path:line` for code, assertion id for graph, tool-response field for state. Uncitable ⇒ not a claim. |
+| `UNVERIFIED` first-class | A legitimate terminal answer, not a gap to bridge by inference. Preferred over a plausible chain. |
+| Mechanism ⊥ fix | Why-it-breaks and what-to-change are separate numbered claims; never one sentence. |
+
+Failure mode this prevents: a fluent answer that joins two verified halves into a causal chain the
+code does not contain, which reads denser than the correct answer and passes lead-seat review on
+fluency (Sharma et al. bias, observed on this seat). Ratified 2026-09-16, durable at `a:34687`.
+
 ## D3 — Mandatory self-check
 
 Final instruction block MUST be a worker-executed inline report:
@@ -110,6 +129,7 @@ pass, not only service-up.
 - [ ] Implement contract: `entity_get(todo:{slug})`; confirm `workflow_state ∈ {open,in_progress}`. Entity is canonical; boot-card/bus rows may be stale.
 - [ ] All file/Cortex paths exact; no globs, "appropriate location," or implied destination.
 - [ ] Output contract repeated in preamble, delivery step, and self-check.
+- [ ] Analysis-returning dispatch: D2.1 shape stated (atomic + `path:line` cited + `UNVERIFIED` admitted + mechanism separate from fix).
 - [ ] Self-check is the final instruction block.
 - [ ] Destructive steps include `HARD STOP` + precondition.
 - [ ] Every fork is bound in the dispatch.

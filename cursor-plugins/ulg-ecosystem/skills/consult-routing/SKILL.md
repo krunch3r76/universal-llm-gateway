@@ -191,7 +191,7 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 | workflow | seat | model | contracts |
 |---|---|---|---|
 | auto_judgment | cursor-sdk | cursor/composer-2.5 | answer, confer, ask, verify, execute, propagate, sketch, none, conductor |
-| check_review | cursor-sdk | cursor/claude-fable-5-1 | — |
+| check_review | cursor-sdk | cursor/muse-spark-1.3 | — |
 | investigate | cursor-sdk | cursor/composer-2.5 | investigate, recon, seed |
 | mechanical_implement | cursor-sdk | cursor/composer-2.5 | implement |
 
