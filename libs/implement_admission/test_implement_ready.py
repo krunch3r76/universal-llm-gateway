@@ -8,7 +8,17 @@ from pathlib import Path
 import pytest
 
 from implement_admission.dense_spec_schema import dense_spec_hash_uri
-from implement_admission.implement_ready import evaluate_implement_ready
+from implement_admission.implement_ready import (
+    evaluate_implement_ready,
+    implement_ready_predicate,
+)
+from implement_admission.implement_ready_pin import (
+    REQUESTED,
+    RESOLVED_PREDICATE,
+    UNRESOLVED,
+    implement_ready_pin_reason,
+    resolve_implement_ready_pin,
+)
 
 _NOW = "2026-06-12T12:00:00+00:00"
 _TODO = "todo:densification-implement-admission-gate"
@@ -336,3 +346,139 @@ def test_empty_acceptance_rejects() -> None:
     )
     assert verdict.admitted is False
     assert verdict.code == "implement_attrs_unpopulated"
+
+
+class _StubCortex:
+    """Minimal ImplementReadyCortex over an in-memory assertion table."""
+
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = rows
+
+    def entity_get(self, entity_id: str, **kwargs: object) -> dict:
+        return {"id": entity_id}
+
+    def assertion_get(self, assertion_id: int) -> dict:
+        for row in self._rows:
+            if row.get("id") == assertion_id:
+                return row
+        return {"error": f"not found: {assertion_id}"}
+
+    def assertions(self, entity_id: str, **kwargs: object) -> dict:
+        return {"items": [r for r in self._rows if r.get("entity_id") == entity_id]}
+
+
+def _row(
+    aid: int,
+    *,
+    predicate: str | None,
+    valid_until: str | None = None,
+    confidence: str = "confirmed",
+    observed_at: str = "2026-06-12T11:00:00+00:00",
+    entity_id: str = _TODO,
+) -> dict:
+    return {
+        "id": aid,
+        "entity_id": entity_id,
+        "predicate_form": predicate,
+        "confidence": confidence,
+        "superseded_by": None,
+        "valid_until": valid_until,
+        "observed_at": observed_at,
+        "evidence_uris": [_SPEC],
+    }
+
+
+_EXPIRED = "2026-06-12T11:59:00+00:00"
+
+
+@pytest.mark.offline
+def test_pin_resolves_newest_active_predicate_row_when_pin_is_inactive() -> None:
+    # The named regression: a retracted pin must not latch admission shut
+    # while an active, correctly-predicated declaration sits on the entity.
+    stale = _row(35286, predicate=f"has_attribute({_TODO}, implement_ready)",
+                 valid_until=_EXPIRED)
+    fresh = _row(35315, predicate=implement_ready_predicate(_TODO),
+                 observed_at="2026-06-12T11:30:00+00:00")
+    pin = resolve_implement_ready_pin(
+        todo_id=_TODO,
+        cortex=_StubCortex([stale, fresh]),
+        now_iso=_NOW,
+        pinned_id=35286,
+        pinned_assertion=stale,
+    )
+    assert pin.assertion_id == 35315
+    assert pin.basis == RESOLVED_PREDICATE
+
+
+@pytest.mark.offline
+def test_pin_honors_requested_id_when_confirmed_active_and_on_entity() -> None:
+    stale = _row(35286, predicate=f"has_attribute({_TODO}, implement_ready)",
+                 valid_until=_EXPIRED)
+    requested = _row(35315, predicate=implement_ready_predicate(_TODO))
+    pin = resolve_implement_ready_pin(
+        todo_id=_TODO,
+        cortex=_StubCortex([stale, requested]),
+        now_iso=_NOW,
+        pinned_id=35286,
+        pinned_assertion=stale,
+        requested_id=35315,
+    )
+    assert pin.assertion_id == 35315
+    assert pin.basis == REQUESTED
+    assert pin.rejected_requested_id is None
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    "bad",
+    [
+        _row(700, predicate=None, entity_id="todo:other"),
+        _row(700, predicate=None, confidence="hypothesized"),
+        _row(700, predicate=None, valid_until=_EXPIRED),
+    ],
+    ids=["other_entity", "not_confirmed", "inactive"],
+)
+def test_pin_refuses_requested_id_that_is_not_confirmed_active_on_entity(
+    bad: dict,
+) -> None:
+    pin = resolve_implement_ready_pin(
+        todo_id=_TODO,
+        cortex=_StubCortex([bad]),
+        now_iso=_NOW,
+        pinned_id=None,
+        pinned_assertion=None,
+        requested_id=700,
+    )
+    assert pin.basis == UNRESOLVED
+    assert pin.rejected_requested_id == 700
+    reason = implement_ready_pin_reason(_TODO, pin=pin)
+    assert implement_ready_predicate(_TODO) in reason
+    assert "700 was not honoured" in reason
+
+
+@pytest.mark.offline
+def test_pin_reason_names_required_predicate_and_rejects_has_attribute_form() -> None:
+    pin = resolve_implement_ready_pin(
+        todo_id=_TODO,
+        cortex=_StubCortex(
+            [_row(35286, predicate=f"has_attribute({_TODO}, implement_ready)")]
+        ),
+        now_iso=_NOW,
+        pinned_id=None,
+        pinned_assertion=None,
+    )
+    assert pin.basis == UNRESOLVED
+    reason = implement_ready_pin_reason(_TODO, pin=pin)
+    assert f"status({_TODO}, implement_ready, current)" in reason
+    assert "is not resolvable" in reason
+
+
+@pytest.mark.offline
+def test_inactive_verdict_reason_names_the_required_predicate() -> None:
+    verdict = evaluate_implement_ready(
+        **_judgment_ready_kwargs(assertion=_valid_assertion(superseded_by=2)),
+    )
+    assert verdict.code == "implement_ready_assertion_inactive"
+    assert verdict.reason is not None
+    assert implement_ready_predicate(_TODO) in verdict.reason
+    assert "has_attribute" in verdict.reason

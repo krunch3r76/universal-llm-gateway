@@ -30,6 +30,11 @@ from implement_admission.implement_ready_gate_resolve import (
     SkepticRatificationOutcome,
     resolve_skeptic_ratification,
 )
+from implement_admission.implement_ready_pin import (
+    UNRESOLVED,
+    implement_ready_pin_reason,
+    resolve_implement_ready_pin,
+)
 from implement_admission.recon_waiver import (
     WaiverInfo,
     build_structured_waiver,
@@ -212,6 +217,7 @@ def _evaluate_from_persisted(
     persisted_attrs: dict[str, Any] | None = None,
     persisted_source_uri: str | None = None,
     persisted_name: str | None = None,
+    requested_assertion_id: Any = None,
 ) -> ImplementReadyVerdict:
     if persisted_attrs is not None:
         attrs = persisted_attrs
@@ -232,12 +238,21 @@ def _evaluate_from_persisted(
         entity_name = entity.get("name")
         spec_text = read_dense_spec_text(prepared.spec_path)
 
-    aid = _coerce_assertion_id(attrs.get("implement_ready_assertion_id"))
-    assertion: dict[str, Any] | None = None
-    if aid is not None:
-        loaded = _op_assertion_get(assertion_id=aid)
+    pinned_id = _coerce_assertion_id(attrs.get("implement_ready_assertion_id"))
+    pinned: dict[str, Any] | None = None
+    if pinned_id is not None:
+        loaded = _op_assertion_get(assertion_id=pinned_id)
         if isinstance(loaded, dict) and "error" not in loaded:
-            assertion = loaded
+            pinned = loaded
+    pin = resolve_implement_ready_pin(
+        todo_id=entity_id,
+        cortex=_DistillImplementReadyCortex(),
+        now_iso=datetime.now(UTC).isoformat(),
+        pinned_id=pinned_id,
+        pinned_assertion=pinned,
+        requested_id=requested_assertion_id,
+    )
+    aid, assertion = pin.assertion_id, pin.assertion
 
     raw_files = attrs.get("files_expected")
     files_expected = raw_files if isinstance(raw_files, list) else []
@@ -274,7 +289,7 @@ def _evaluate_from_persisted(
     # Mirror implement_ready_gate.py — record is SoT; attrs are display cache.
     consult_record = load_todo_consult_provenance(entity_id)
 
-    return evaluate_implement_ready(
+    verdict = evaluate_implement_ready(
         todo_id=entity_id,
         density_triage=attrs.get("density_triage"),
         source_uri=source_uri,
@@ -294,6 +309,13 @@ def _evaluate_from_persisted(
         skeptic_evidence_mode=skeptic_outcome.evidence_mode,
         consult_provenance_record=consult_record,
     )
+    if not verdict.admitted and pin.basis == UNRESOLVED:
+        return ImplementReadyVerdict(
+            admitted=False,
+            code=verdict.code,
+            reason=f"{verdict.reason} {implement_ready_pin_reason(entity_id, pin=pin)}",
+        )
+    return verdict
 
 
 def _success_payload(
@@ -379,6 +401,7 @@ def distill_todo_implement_gate(
     source_uri: str | None = None,
     recon_waive_reason_code: str | None = None,
     recon_waive_reason: str | None = None,
+    implement_ready_assertion_id: int | str | None = None,
     **_: object,
 ) -> dict[str, Any]:
     """Atomically wire implement-admission gate fields at Gate-2 close."""
@@ -468,6 +491,7 @@ def distill_todo_implement_gate(
             verdict = _evaluate_from_persisted(
                 entity_id=resolved.entity_id,
                 prepared=prepared,
+                requested_assertion_id=implement_ready_assertion_id,
             )
             if not verdict.admitted:
                 return {
@@ -534,6 +558,28 @@ def distill_todo_implement_gate(
         if not assertion_id:
             return {"error": "Assertion write returned no id", "step": "assert"}
 
+        # Dedup can hand back a PRIOR row with an identical claim (_create.py
+        # exact_claim_hash). Adopting a retracted one re-stamps an inactive pin
+        # and then retracts a row this call did not create — the latch that
+        # made "record a fresh declaration" unsatisfiable.
+        if assert_result.get("already_known") and _assertion_inactive(
+            _load_assertion(conn, assertion_id) or {},
+            now_iso=datetime.now(UTC).isoformat(),
+        ):
+            return {
+                "ok": False,
+                "todo_id": resolved.entity_id,
+                "source_uri": prepared.spec_path,
+                "implement_ready_assertion_id": assertion_id,
+                "gate_code": "implement_ready_claim_collides_with_inactive_row",
+                "gate_reason": (
+                    f"{resolved.entity_id}: the gate's readiness claim deduped onto "
+                    f"inactive assertion {assertion_id} instead of minting a new row "
+                    "— pass a distinct claim= or implement_ready_assertion_id= naming "
+                    "an active confirmed row bound to this todo"
+                ),
+            }
+
         attr_patch: dict[str, Any] = {
             "density_triage": triage,
             "implement_ready_assertion_id": assertion_id,
@@ -552,6 +598,7 @@ def distill_todo_implement_gate(
             persisted_attrs=card_patch,
             persisted_source_uri=prepared.spec_path,
             persisted_name=row.get("name"),
+            requested_assertion_id=implement_ready_assertion_id,
         )
         if not pre_verdict.admitted:
             retract = _retract_assertion(assertion_id)
@@ -609,6 +656,7 @@ def distill_todo_implement_gate(
         post_verdict = _evaluate_from_persisted(
             entity_id=resolved.entity_id,
             prepared=prepared,
+            requested_assertion_id=implement_ready_assertion_id,
         )
         if not post_verdict.admitted:
             rollback_err = _rollback_distill_gate_stamp(

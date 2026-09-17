@@ -11,6 +11,8 @@ import pytest
 from implement_admission.dense_spec_schema import dense_spec_hash_uri
 from implement_admission.implement_ready import evaluate_implement_ready
 from implement_admission.implement_ready_preflight import (
+    ADMITTED_BASIS_GATES_EVALUATED,
+    ADMITTED_BASIS_MECHANICAL_BYPASS,
     GateStatus,
     preflight_implement_ready,
 )
@@ -227,16 +229,39 @@ def test_gate13_stale_recon_waiver_requires_skeptic_ratification() -> None:
 
 
 @pytest.mark.offline
-def test_gate0_mechanical_bypass() -> None:
+def test_gate0_mechanical_bypass_is_labelled_bypassed_not_checked() -> None:
+    # A mechanical todo needs no implement-ready gate, so admission stands —
+    # but the payload must not be readable as "the gates ran and passed".
     args = make(density_triage="mechanical")
     verdict = evaluate_implement_ready(**args)
     report = preflight_implement_ready(**args)
     assert verdict.admitted is True
     assert report.admitted is True
     assert len(report.gates) == 15
-    assert report.gates[0].status == GateStatus.PASSED
+    assert report.gates[0].status == GateStatus.BYPASSED
     assert all(g.status == GateStatus.NOT_APPLICABLE for g in report.gates[1:])
+    assert report.gates_evaluated is False
+    assert report.admitted_basis == ADMITTED_BASIS_MECHANICAL_BYPASS
+    body = report.to_dict()
+    assert body["bypassed"] is True
+    assert body["gates_evaluated"] is False
+    assert body["admitted_basis"] == ADMITTED_BASIS_MECHANICAL_BYPASS
+    assert body["gates"][0]["status"] == "bypassed"
+    assert "BYPASSED, not checked" in " ".join(report.warnings)
     parity(verdict=verdict, preflight_report=report)
+
+
+@pytest.mark.offline
+def test_evaluated_admit_declares_gates_evaluated_basis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    assertion = {**BASE["assertion"], "evidence_uris": _ready_evidence()}
+    report = preflight_implement_ready(**make_ready(tmp_path, assertion=assertion))
+    assert report.admitted is True
+    assert report.gates_evaluated is True
+    assert report.admitted_basis == ADMITTED_BASIS_GATES_EVALUATED
+    assert report.to_dict()["bypassed"] is False
 
 
 @pytest.mark.offline

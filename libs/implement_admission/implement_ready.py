@@ -18,6 +18,13 @@ from implement_admission.density_triage_gate import (
     format_implement_triage_unknown_reason,
 )
 
+IMPLEMENT_READY_STATUS = "implement_ready"
+
+
+def implement_ready_predicate(todo_id: str) -> str:
+    """The only predicate_form the readiness resolver matches on."""
+    return f"status({todo_id}, {IMPLEMENT_READY_STATUS}, current)"
+
 
 @dataclass(frozen=True, slots=True)
 class ImplementReadyVerdict:
@@ -199,7 +206,11 @@ def evaluate_implement_ready(
         return _reject(
             "implement_ready_assertion_inactive",
             f"{todo_id}: assertion {implement_ready_assertion_id} is superseded "
-            "or expired — record a fresh implement-ready declaration",
+            "or expired, and no active replacement was resolvable — record a "
+            f"confirmed assertion whose predicate_form is exactly "
+            f"{implement_ready_predicate(todo_id)}, citing the dense spec and "
+            f"its spec_sha256:<hex>. A has_attribute({todo_id}, "
+            "implement_ready) form is not resolvable by the readiness scan.",
         )
 
     dense_uri = (source_uri or "").strip()
@@ -302,4 +313,10 @@ def evaluate_implement_ready(
     )
 
 
-__all__ = ["ImplementReadyVerdict", "assertion_active", "evaluate_implement_ready"]
+__all__ = [
+    "IMPLEMENT_READY_STATUS",
+    "ImplementReadyVerdict",
+    "assertion_active",
+    "evaluate_implement_ready",
+    "implement_ready_predicate",
+]

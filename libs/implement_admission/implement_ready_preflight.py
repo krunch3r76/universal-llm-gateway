@@ -22,6 +22,7 @@ from implement_admission.implement_ready import (
     _assertion_inactive,
     _consult_provenance_reject,
     _skeptic_evidence_reject,
+    implement_ready_predicate,
 )
 
 _GATE_NAMES: dict[int, str] = {
@@ -54,6 +55,19 @@ class GateStatus(StrEnum):
     FAILED = "failed"
     BLOCKED = "blocked"
     NOT_APPLICABLE = "not_applicable"
+    BYPASSED = "bypassed"
+
+
+ADMITTED_BASIS_GATES_EVALUATED = "gates_evaluated"
+ADMITTED_BASIS_MECHANICAL_BYPASS = "mechanical_bypass"
+
+_MECHANICAL_BYPASS_WARNING = (
+    "density_triage=mechanical: gates 1-14 were BYPASSED, not checked. No "
+    "readiness assertion, dense spec, attribute distillation, skeptic pass or "
+    "consult provenance was evaluated for this todo. admitted=true here means "
+    "'mechanical work needs no implement-ready gate', not 'the gates ran and "
+    "passed' — read admitted_basis before treating this as a verdict."
+)
 
 
 @dataclass(frozen=True)
@@ -107,11 +121,16 @@ class PreflightReport:
     recon_waived: bool = False
     recon_waiver: dict[str, Any] | None = None
     warnings: list[str] = field(default_factory=list)
+    gates_evaluated: bool = True
+    admitted_basis: str = ADMITTED_BASIS_GATES_EVALUATED
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "ok": self.admitted,
             "admitted": self.admitted,
+            "admitted_basis": self.admitted_basis,
+            "gates_evaluated": self.gates_evaluated,
+            "bypassed": not self.gates_evaluated,
             "summary": self.summary,
             **({"first_failure": self.first_failure} if self.first_failure else {}),
             **({"resolution": self.resolution} if self.resolution else {}),
@@ -256,15 +275,20 @@ def preflight_implement_ready(
     triage = (density_triage or "").strip() or None
 
     if triage == MECHANICAL:
-        _pass(0, "mechanical_bypass")
+        gates.append(
+            GateReport(gate=0, name="mechanical_bypass", status=GateStatus.BYPASSED)
+        )
         for i in range(1, 15):
             _na(i, _GATE_NAMES[i])
         return PreflightReport(
             admitted=True,
-            summary={"failed": 0, "blocked": 0, "not_applicable": 14},
+            summary={"failed": 0, "blocked": 0, "not_applicable": 14, "bypassed": 1},
             first_failure=None,
             resolution=resolution,
             gates=gates,
+            warnings=[_MECHANICAL_BYPASS_WARNING],
+            gates_evaluated=False,
+            admitted_basis=ADMITTED_BASIS_MECHANICAL_BYPASS,
         )
     _na(0, "mechanical_bypass")
 
@@ -349,7 +373,11 @@ def preflight_implement_ready(
         code = "implement_ready_assertion_inactive"
         reason = (
             f"{todo_id}: assertion {implement_ready_assertion_id} is superseded "
-            "or expired — record a fresh implement-ready declaration"
+            "or expired, and no active replacement was resolvable — record a "
+            f"confirmed assertion whose predicate_form is exactly "
+            f"{implement_ready_predicate(todo_id)}, citing the dense spec and "
+            f"its spec_sha256:<hex>. A has_attribute({todo_id}, "
+            "implement_ready) form is not resolvable by the readiness scan."
         )
         _fail(5, "assertion_active", code, reason)
     else:
@@ -562,6 +590,8 @@ def preflight_implement_ready(
 
 
 __all__ = [
+    "ADMITTED_BASIS_GATES_EVALUATED",
+    "ADMITTED_BASIS_MECHANICAL_BYPASS",
     "GateReport",
     "GateStatus",
     "PreflightReport",

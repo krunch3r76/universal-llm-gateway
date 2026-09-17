@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from implement_admission.dense_spec_schema import DENSE_SPEC_RE, spec_basename
-from implement_admission.implement_ready import assertion_active
+from implement_admission.implement_ready import (
+    assertion_active,
+    implement_ready_predicate,
+)
 from implement_admission.scheme_resolve import (
     parse_schemed_path,
     resolve_schemed_packet_file,
@@ -50,7 +53,6 @@ def _normalize_predicate(raw: Any) -> str:
     return "".join(raw.split()).lower()
 
 
-_IMPLEMENT_READY_STATUS = "implement_ready"
 _SKEPTIC_RATIFIED_STATUS = "skeptic_ratified"
 
 
@@ -84,9 +86,7 @@ def resolve_fresh_implement_ready(
     if not isinstance(items, list):
         return None
 
-    target = _normalize_predicate(
-        f"status({todo_id}, {_IMPLEMENT_READY_STATUS}, current)"
-    )
+    target = _normalize_predicate(implement_ready_predicate(todo_id))
     best: dict[str, Any] | None = None
     best_key: tuple[str, int] = ("", -1)
     for item in items:
@@ -292,6 +292,7 @@ __all__ = [
     "SkepticRatificationOutcome",
     "coerce_assertion_id",
     "decode_gate_attributes",
+    "implement_ready_predicate",
     "pin_needs_resolution",
     "read_dense_spec_text",
     "resolve_fresh_implement_ready",
