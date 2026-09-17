@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agent_bus_store.checkpoint_kind_detector import (
     checkpoint_auto_stamp_enabled,
+    checkpoint_auto_supersede_enabled,
     is_birth_shaped_checkpoint,
     is_bootstrap_structural_checkpoint,
     is_steady_state_structural_checkpoint,
@@ -52,6 +53,11 @@ def test_non_checkpoint_subject_false() -> None:
 def test_auto_stamp_default_off(monkeypatch) -> None:
     monkeypatch.delenv("AGENT_BUS_CHECKPOINT_AUTO_STAMP", raising=False)
     assert not checkpoint_auto_stamp_enabled()
+
+
+def test_checkpoint_auto_supersede_enabled_default_off(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_BUS_CHECKPOINT_AUTO_SUPERSEDE", raising=False)
+    assert not checkpoint_auto_supersede_enabled()
 
 
 def test_auto_stamp_flag_on(monkeypatch) -> None:

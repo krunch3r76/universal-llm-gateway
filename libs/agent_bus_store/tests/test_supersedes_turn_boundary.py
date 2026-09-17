@@ -383,6 +383,7 @@ def test_reply_auto_derives_supersedes_like_send(tmp_path, monkeypatch) -> None:
 
 
 def test_auto_derive_supersedes_disabled_by_default(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_BUS_CHECKPOINT_AUTO_SUPERSEDE", raising=False)
     app = _app(tmp_path, monkeypatch)
     with TestClient(app) as client:
         seed = client.post(
