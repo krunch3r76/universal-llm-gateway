@@ -154,4 +154,5 @@ def test_notify_tool_failed_includes_reason(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert out["status"] == "failed"
     assert out["reason"] == "HTTP 503"
-    assert out["error"] == "bridge down"
+    assert out["error"] == "Pager delivery failed: HTTP 503"
+    assert out["data"]["detail"] == "bridge down"

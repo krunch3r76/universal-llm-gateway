@@ -187,3 +187,30 @@ def error_envelope(
         "retryable": retryable,
         "data": data or {},
     }
+
+
+def delivery_non_event_envelope(
+    *,
+    code: str,
+    message: str,
+    reason: str,
+    source: ErrorSource = "gateway",
+    retryable: bool = False,
+    data: dict[str, Any] | None = None,
+    status: Literal["blocked", "failed"] = "failed",
+) -> dict[str, Any]:
+    """``delivery_non_event`` — refusal when the implied effect did not occur.
+
+    Top-level ``error`` (string) plus ``[quality:error-envelope]`` fields. Identity
+    stamps such as ``from_agent`` / ``stamped_at`` are omitted so callers cannot
+    mistake the payload for a delivered page.
+    """
+    payload = dict(data or {})
+    payload.setdefault("reason", reason)
+    envelope = error_envelope(code, message, source, retryable, payload)
+    return {
+        "error": message,
+        "status": status,
+        "reason": reason,
+        **envelope,
+    }

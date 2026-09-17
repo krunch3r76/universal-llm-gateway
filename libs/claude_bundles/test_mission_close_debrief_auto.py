@@ -281,7 +281,13 @@ def test_deliver_sent_on_rich_closeout() -> None:
 
 
 def test_deliver_disabled_reports_status() -> None:
-    with patch("pager_notify.life_notify.pager_enabled", return_value=False):
+    with (
+        patch("pager_notify.life_notify.pager_enabled", return_value=False),
+        patch(
+            "pager_notify.life_notify._pager_disabled_reason",
+            return_value="PAGER_NOTIFY_ENABLED=0",
+        ),
+    ):
         outcome = deliver_mission_debrief_auto(
             closeout_subject="MISSION CLOSEOUT",
             closeout_body=_NONE_BODY,
@@ -289,5 +295,6 @@ def test_deliver_disabled_reports_status() -> None:
             from_agent="web-anthropic",
             record_fn=lambda *_a, **_k: None,
         )
-    assert outcome["status"] == "disabled"
+    assert outcome["status"] == "blocked"
     assert outcome["reason"] == "PAGER_NOTIFY_ENABLED=0"
+    assert "from_agent" not in outcome

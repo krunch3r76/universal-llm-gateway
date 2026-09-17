@@ -76,16 +76,24 @@ def test_append_ref_to_body_prefers_full_body() -> None:
 def test_notify_kill_switch() -> None:
     notify = _notify_fn()
     with bind_request("default", surface="life"):
-        with patch("pager_notify.life_notify.pager_enabled", return_value=False):
+        with (
+            patch("pager_notify.life_notify.pager_enabled", return_value=False),
+            patch(
+                "pager_notify.life_notify._pager_disabled_reason",
+                return_value="PAGER_NOTIFY_ENABLED=0",
+            ),
+        ):
             result = notify(
                 subject="ULG test",
                 body="disabled path",
                 ref="agent-bus:1",
             )
-    assert result["status"] == "disabled"
+    assert result["status"] == "blocked"
     assert result["reason"] == "PAGER_NOTIFY_ENABLED=0"
-    assert result["from_agent"] == "web-anthropic"
-    assert result["ref"] == "agent-bus:1"
+    assert "error" in result
+    assert result["code"] == "PAGER_NOTIFY_DISABLED"
+    assert "from_agent" not in result
+    assert "stamped_at" not in result
 
 
 def test_notify_unreferenced_and_event_emit() -> None:

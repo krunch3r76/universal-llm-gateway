@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, Callable
+from typing import Any
 
-from pager_notify.client import notify_pager, pager_enabled
+from universal_protocol.errors import delivery_non_event_envelope
+
+from pager_notify.client import _pager_disabled_reason, notify_pager, pager_enabled
 from pager_notify.so_what import SMS_BODY_MAX, SMS_SUBJECT_MAX
 
 _UNREFERENCED = "(unreferenced)"
@@ -69,11 +72,14 @@ def deliver_pager_notify(
     }
 
     if not pager_enabled():
-        return {
-            **base,
-            "status": "disabled",
-            "reason": "PAGER_NOTIFY_ENABLED=0",
-        }
+        disabled_reason = _pager_disabled_reason() or "PAGER_NOTIFY_ENABLED=0"
+        return delivery_non_event_envelope(
+            code="PAGER_NOTIFY_DISABLED",
+            message=f"Pager delivery did not occur: {disabled_reason}",
+            reason=disabled_reason,
+            status="blocked",
+            data={"channel": "pager", "from_agent": from_agent, "ref": ref_norm},
+        )
 
     result = asyncio.run(notify_pager(subject_out, body_out, tag=tag_out))
 
@@ -89,24 +95,29 @@ def deliver_pager_notify(
         )
         return {**base, "status": "sent"}
 
-    out = {
-        **base,
-        "status": "failed",
-        "reason": result.reason or "notify_pager returned failed",
-    }
-    if result.error:
-        out["error"] = result.error
+    fail_reason = result.reason or "notify_pager returned failed"
     if failed_event:
         emit(
             failed_event,
             from_agent=from_agent,
             ref=ref_norm,
             tag=tag_out,
-            reason=out["reason"],
+            reason=fail_reason,
             error=result.error or "",
             stamped_at=stamped_at,
         )
-    return out
+    return delivery_non_event_envelope(
+        code="PAGER_NOTIFY_FAILED",
+        message=f"Pager delivery failed: {fail_reason}",
+        reason=fail_reason,
+        status="failed",
+        data={
+            "channel": "pager",
+            "from_agent": from_agent,
+            "ref": ref_norm,
+            "detail": result.error or "",
+        },
+    )
 
 
 __all__ = [
