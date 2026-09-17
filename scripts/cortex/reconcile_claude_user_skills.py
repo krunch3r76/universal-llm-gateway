@@ -125,6 +125,13 @@ def main() -> int:
             print("replace: " + ",".join(plan.stale))
     if not args.apply and not args.dry_run:
         return 0 if plan.mirrored() else 1
+    # Empty user/ means the dump omitted Customize bodies — not "everything missing".
+    if args.apply and not args.dry_run and not plan.user:
+        print(
+            "REFUSE apply: zip skills/user/ is empty — incomplete dump, not 1:1",
+            file=sys.stderr,
+        )
+        return 2
     rc = apply_plan(plan, cdp_url=args.cdp_url, dry_run=args.dry_run)
     if rc:
         return rc

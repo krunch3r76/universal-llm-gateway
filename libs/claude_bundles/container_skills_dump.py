@@ -6,25 +6,34 @@ cannot see the tree. Stargate ``/v1/chat/completions`` artifact grab is
 untested — do not treat it as live.
 
 Never pick a ``/cowork/cse_`` tab unless the caller names that URL. Occupancy:
-open a fresh ``/new`` chat so dump does not steal a live stream.
+open a fresh ``/new`` chat so dump does not steal a live stream. ``/new``
+defaults to Cowork (friction 25051); harvest the zip from the chat card **or**
+the Cowork Output download — do not treat the landing CSE as a live stream.
 """
 
 from __future__ import annotations
 
+import io
 import os
+import zipfile
 from pathlib import Path
 
 from playwright.async_api import Page
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
+from claude_bundles.chat_cowork_mode import ensure_chat_compose
 from claude_bundles.chat_reply_wait import harvest_assistant, wait_assistant_reply
 from claude_bundles.container_skills_zip import pick_download_label
+from claude_bundles.cowork_output_download import download_cowork_output
 from claude_bundles.project_ask import send_prompt
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
 NEW_CHAT_URL = "https://claude.ai/new"
 DUMP_PROMPT = """You have a server-side skills directory at /mnt/skills with three trees: public, examples, and user.
-Compress the entire /mnt/skills tree into one zip named claude-skills.zip and offer it as a downloadable artifact.
-Keep the zip layout as skills/public, skills/examples, skills/user. Do not omit a tree. Do not list files instead of zipping.
+First run: find /mnt/skills -maxdepth 2 -type d
+Then compress the entire /mnt/skills tree into one zip named claude-skills.zip and offer it as a downloadable artifact.
+Keep the zip layout as skills/public, skills/examples, skills/user. Include skills/user even if empty. Do not omit a tree. Do not list files instead of zipping.
+After the zip, say USER_SKILL_COUNT=<n> for the number of skill directories under /mnt/skills/user.
 """
 
 
@@ -51,7 +60,7 @@ async def _fresh_chat(ctx) -> Page:
     return page
 
 
-async def download_skills_zip(page: Page, out: Path) -> Path:
+async def _click_chat_zip_card(page: Page, out: Path) -> Path:
     """Click the in-chat skills-zip card and save the download."""
     buttons = page.get_by_role("button")
     labels: list[str] = []
@@ -80,6 +89,38 @@ async def download_skills_zip(page: Page, out: Path) -> Path:
     return out
 
 
+async def _save_cowork_zip(page: Page, out: Path) -> Path | None:
+    """Write Cowork Output bytes when they are a zip (``/new`` → CSE)."""
+    result = await download_cowork_output(page, timeout_ms=60_000)
+    if result is None or not result.content_bytes:
+        return None
+    raw = result.content_bytes
+    if not zipfile.is_zipfile(io.BytesIO(raw)):
+        return None
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(raw)
+    return out
+
+
+async def download_skills_zip(page: Page, out: Path) -> Path:
+    """Harvest ``claude-skills.zip`` from the chat card or Cowork Output."""
+    last_err: RuntimeError | None = None
+    for _ in range(6):
+        try:
+            return await _click_chat_zip_card(page, out)
+        except RuntimeError as exc:
+            last_err = exc
+        except PlaywrightTimeoutError as exc:
+            last_err = RuntimeError(f"zip card click produced no download: {exc}")
+        saved = await _save_cowork_zip(page, out)
+        if saved is not None:
+            return saved
+        await page.wait_for_timeout(10_000)
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("skills zip download control not found")
+
+
 async def dump_container_skills(
     *,
     out: Path,
@@ -88,6 +129,7 @@ async def dump_container_skills(
     download_only: bool = False,
     prompt: str = DUMP_PROMPT,
     timeout_s: int = 360,
+    chat_compose: bool = False,
 ) -> Path:
     """Submit (optional) then download ``claude-skills.zip`` from the chat card."""
     if download_only and not chat_url:
@@ -101,9 +143,17 @@ async def dump_container_skills(
         page = await (_reuse_or_open(ctx, chat_url) if chat_url else _fresh_chat(ctx))
         if not download_only:
             await _wait_composer(page)
+            if chat_compose:
+                # Operator-gated: /new defaults to Cowork; Chat is the standing
+                # /mnt/skills dump transport (a23741). Cowork dumps omit user/.
+                mode = await ensure_chat_compose(page)
+                if not mode.get("ok"):
+                    raise RuntimeError(f"ensure_chat_compose failed: {mode}")
+                print(f"compose chat url={page.url}", flush=True)
             before = await harvest_assistant(page, min_msg_chars=10)
             await send_prompt(page, prompt)
             await wait_assistant_reply(page, before=before, timeout_s=timeout_s)
+            print(f"after send url={page.url}", flush=True)
         await download_skills_zip(page, out)
         return out
     finally:

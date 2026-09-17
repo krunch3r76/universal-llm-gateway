@@ -524,9 +524,10 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: none
   writing-with-provenance:
-    # Demoted from shared_sync 2026-08-02 — claim-record drafting on-demand,
-    # ¬ every web/Customize open (opening-context cost).
-    surface_class: cursor_only
+    # Restored to shared_sync 2026-09-16 — mcp_surface_required=none (life-compatible);
+    # operator: if life-compatible it belongs on claude.ai. 2026-08-02 demotion
+    # was opening-context cost only, not an MCP-surface wall.
+    surface_class: shared_sync
     mcp_surface_required: none
   w2-ingestion:
     surface_class: cursor_only

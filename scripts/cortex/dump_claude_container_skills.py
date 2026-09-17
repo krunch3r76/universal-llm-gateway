@@ -47,6 +47,17 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--prompt-file", type=Path)
     parser.add_argument("--timeout-s", type=int, default=360)
+    parser.add_argument(
+        "--chat",
+        action="store_true",
+        default=True,
+        help="Force Chat compose on /new (standing dump; Cowork omits user/).",
+    )
+    parser.add_argument(
+        "--cowork",
+        action="store_true",
+        help="Dump via /new Cowork default (omits skills/user/).",
+    )
     return parser.parse_args()
 
 
@@ -63,6 +74,7 @@ def main() -> int:
             download_only=args.download_only,
             prompt=prompt,
             timeout_s=args.timeout_s,
+            chat_compose=not args.cowork,
         )
     )
     inv = zip_tree_inventory(out)

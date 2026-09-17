@@ -245,7 +245,9 @@ def _yaml_scalar(value: str) -> str:
         return '""'
     if re.fullmatch(r"[^\n\"'#,:{}\\[\\]&*!?|>@%]+", value):
         return value
-    return json.dumps(value)
+    # claude.ai rejects \uXXXX / hex escapes in SKILL.md frontmatter
+    # (plugin_upload_hooks_invalid). Keep the JSON quoting, write UTF-8 literally.
+    return json.dumps(value, ensure_ascii=False)
 
 
 def fit_claude_ai_description(

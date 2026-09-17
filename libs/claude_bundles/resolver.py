@@ -5,13 +5,13 @@ Placement authority: ``config/skills.yaml`` via ``claude_bundles.catalog``.
 
 from __future__ import annotations
 
-import json
 import re
 from functools import lru_cache
 from pathlib import Path
 
 from claude_bundles.bundle_description import (
     FrontmatterParseError,
+    _yaml_scalar,
     parse_frontmatter,
     resolve_bundle_description,
 )
@@ -127,14 +127,6 @@ def _strip_pointer_fences(body: str) -> str:
         i += 1
     cleaned = "\n".join(out).strip()
     return f"{cleaned}\n" if cleaned else ""
-
-
-def _yaml_scalar(value: str) -> str:
-    if not value:
-        return '""'
-    if re.fullmatch(r"[^\n\"'#,:{}\\[\\]&*!?|>@%]+", value):
-        return value
-    return json.dumps(value)
 
 
 def render_bundle(
