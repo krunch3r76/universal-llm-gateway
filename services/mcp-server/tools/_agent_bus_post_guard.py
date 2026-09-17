@@ -131,7 +131,8 @@ def reconcile_send_arguments(
                 "executor role (and a valid turn author), not a mailbox. A turn sent "
                 "there reaches no inbox and arms nothing. To arm cursor-auto use "
                 "agent_bus(tool='request', to='cursor', ...) which probes handler "
-                "liveness and returns handler_status + poll_hint. To reach an attended "
+                "liveness and returns auto_handler_status + job_admission + "
+                "poll_hint. To reach an attended "
                 "cursor seat use send with to='cursor'."
             ),
             "reason": "send_to_cursor_auto_not_addressable",

@@ -78,7 +78,7 @@ def test_new_sender_old_receiver_enqueue_200_job_admitted_skew_logged(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["ok"] is True
-    assert body["handler_status"] == "auto-admit-armed"
+    assert body["auto_handler_status"] == "auto-handler-live"
     job_id = body["job_id"]
     job = get_queue().get(job_id)
     assert job is not None

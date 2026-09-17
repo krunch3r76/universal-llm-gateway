@@ -262,22 +262,28 @@ def enqueue_auto_job(
         with httpx.Client(timeout=timeout_s) as client:
             resp = client.post(url, json=payload)
         data = resp.json() if resp.content else {}
+        # Relay both projections the worker minted; never restate them here.
+        # Hardcoding the status was how the admit verdict got dropped on the
+        # floor while the envelope still read as success.
+        relayed = {
+            "auto_handler_status": str(
+                data.get("auto_handler_status") or "no-auto-handler"
+            ),
+            "job_admission": data.get("job_admission"),
+        }
         if resp.status_code == 200 and data.get("ok"):
-            return {
-                "ok": True,
-                "handler_status": "auto-admit-armed",
-                "enqueue": data,
-            }
+            return {"ok": True, **relayed, "enqueue": data}
         return {
             "ok": False,
-            "handler_status": data.get("handler_status", "no-auto-handler"),
+            **relayed,
             "enqueue": data,
             "status_code": resp.status_code,
         }
     except (httpx.HTTPError, ValueError, OSError) as exc:
         return {
             "ok": False,
-            "handler_status": "no-auto-handler",
+            "auto_handler_status": "no-auto-handler",
+            "job_admission": None,
             "reason": "enqueue_unreachable",
             "error": str(exc),
         }

@@ -105,7 +105,7 @@ def test_enqueue_static_pin_refused_does_not_persist_job(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["ok"] is True
-    assert body["handler_status"] == "static-pin-refused"
+    assert body["auto_handler_status"] == "static-pin-refused"
     assert body["static_refusal"] is True
     assert body["reason"] == "model_pin_refused"
     assert queue.snapshot()["total"] == before_total
@@ -146,6 +146,6 @@ def test_enqueue_continuity_hop_skips_static_pin_check(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["ok"] is True
-    assert body["handler_status"] == "auto-admit-armed"
+    assert body["auto_handler_status"] == "auto-handler-live"
     assert body.get("static_refusal") is not True
     assert queue.snapshot()["total"] == before_total + 1

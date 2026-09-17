@@ -42,7 +42,7 @@ def _hop_dispatch(
 
     ``thread`` is required (a hop is always on an existing private lane).
     ``reason`` becomes the body ``trigger:`` line. The verb reports
-    *armed* (``handler_status``) — never ``status:done``. The successor
+    *armed* (``auto_handler_status``) — never ``status:done``. The successor
     selection key is ``successor_birth_id`` on the structural hop body
     (echoed onto the registration stamp). When the seated CSE calls
     ``agent_bus.hop`` via MCP, the return is the predecessor's receipt and
@@ -126,7 +126,7 @@ def _hop_dispatch(
         "mcp.agentbus.hop.posted",
         thread=thread_id,
         reason=trigger,
-        handler_status=str(result.get("handler_status") or ""),
+        auto_handler_status=str(result.get("auto_handler_status") or ""),
     )
     stamped = dict(result)
     stamped["continuity_hop"] = True

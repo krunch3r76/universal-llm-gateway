@@ -166,6 +166,60 @@ def emit_frontier_sdk_auto_empty_directive_scope_blocked(
 
 
 @event_factory
+def FrontierSdkAutoJobAdmissionProjected(  # noqa: N802
+    thread_id: str,
+    job_id: str,
+    outcome: str,
+    reason: str | None,
+    deferred_gates: tuple[str, ...],
+) -> Event:
+    return Event(
+        signal="frontier.sdk.auto.job_admission_projected",
+        payload={
+            "thread_id": thread_id,
+            "job_id": job_id,
+            "outcome": outcome,
+            "reason": reason,
+            "deferred_gates": list(deferred_gates),
+        },
+        scope="node",
+    )
+
+
+def emit_frontier_sdk_auto_job_admission_projected(
+    *,
+    thread_id: str,
+    job_id: str,
+    outcome: str,
+    reason: str | None = None,
+    deferred_gates: tuple[str, ...] = (),
+) -> None:
+    """Emit the admit-ladder verdict ``/enqueue`` put on the wire.
+
+    Advisory broadcast only — the caller learns the outcome from the response
+    field, never from this event (``[universal:state-provenance]``).
+    """
+    _emit(
+        FrontierSdkAutoJobAdmissionProjected(
+            thread_id=thread_id,
+            job_id=job_id,
+            outcome=outcome,
+            reason=reason,
+            deferred_gates=deferred_gates,
+        )
+    )
+    logger.info(
+        "cursor-auto job_admission_projected: thread_id=%s job_id=%s outcome=%s "
+        "reason=%s deferred=%s",
+        thread_id,
+        job_id,
+        outcome,
+        reason,
+        deferred_gates,
+    )
+
+
+@event_factory
 def FrontierSdkAutoEmptyDirectiveScopeWaived(  # noqa: N802
     thread_id: str,
     contract: str,

@@ -10,6 +10,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.admission_verdict import (
+    admission_from_verdict,
+    admission_not_applicable,
+    admit_gate_entered,
+    evaluate_body_pure_gates,
+)
 from services.git_integration_worker.cursor_auto.continuity_hop import (
     run_continuity_hop_concurrent,
 )
@@ -17,8 +23,10 @@ from services.git_integration_worker.cursor_auto.cse_wait_report import (
     schedule_wait_report_if_waiting,
 )
 from services.git_integration_worker.cursor_auto.directive import (
+    effective_contract,
     is_continuity_hop_request,
     is_mission_negotiation_directive,
+    parse_request_body,
     split_continuity_hop_legs,
 )
 from services.git_integration_worker.cursor_auto.execution_mode import (
@@ -55,6 +63,9 @@ from services.git_integration_worker.cursor_auto.wire_skew_events import (
     note_dropped_fields,
 )
 from services.git_integration_worker.cursor_bus import CursorBusClient
+from services.git_integration_worker.cursor_sdk_events import (
+    emit_frontier_sdk_auto_job_admission_projected,
+)
 
 logger = get_logger(__name__)
 
@@ -116,6 +127,33 @@ class EnqueueBody(BaseModel):
         return data
 
 
+def _project_job_admission(job: AutoJob, *, is_hop: bool, scope: str) -> dict[str, Any]:
+    """Body-pure admit-ladder verdict for this job, as a wire projection.
+
+    A continuity hop routes around admit entirely — ``process_job``
+    short-circuits before the ladder — so it reports ``not_applicable`` rather
+    than the ``continuity_hop_misroute`` refusal the ladder would hand back.
+    """
+    if is_hop:
+        return admission_not_applicable(scope=scope, reason="continuity_hop_route")
+    contract = effective_contract(job.contract, job.body)
+    if not admit_gate_entered(
+        directive_present=parse_request_body(job.body) is not None,
+        contract=contract,
+    ):
+        return admission_not_applicable(scope=scope, reason="admit_gate_not_entered")
+    return admission_from_verdict(
+        evaluate_body_pure_gates(
+            subject=job.subject or "",
+            body=job.body or "",
+            contract=contract,
+            desired_model=job.desired_model,
+            continuity_hop=False,
+        ),
+        scope=scope,
+    )
+
+
 @router.get("/liveness")
 async def liveness() -> dict[str, Any]:
     """Arm-predicate probe (handler heartbeat) + admit-eligible queue-health
@@ -160,12 +198,21 @@ async def job_state(
 async def enqueue(body: EnqueueBody, request: Request):
     """Admit-on-request enqueue. Requires a live Auto handler (else 503)."""
     registry = get_registry()
+    scope = (
+        f"request_id:{body.request_id}"
+        if body.request_id
+        else f"thread:{body.thread_id}"
+    )
     if not registry.is_live():
         return JSONResponse(
             status_code=503,
             content={
                 "ok": False,
-                "handler_status": "no-auto-handler",
+                "auto_handler_status": "no-auto-handler",
+                "job_admission": admission_not_applicable(
+                    scope=scope,
+                    reason="no_live_auto_handler",
+                ),
                 "reason": "no_live_auto_handler",
                 "liveness": registry.snapshot(),
             },
@@ -238,7 +285,11 @@ async def enqueue(body: EnqueueBody, request: Request):
                 status_code=200,
                 content={
                     "ok": True,
-                    "handler_status": "static-pin-refused",
+                    "auto_handler_status": "static-pin-refused",
+                    "job_admission": admission_not_applicable(
+                        scope=scope,
+                        reason=static_refusal.reason,
+                    ),
                     "static_refusal": True,
                     "terminal_status": terminal.get("terminal_status"),
                     "reason": static_refusal.reason,
@@ -354,6 +405,11 @@ async def enqueue(body: EnqueueBody, request: Request):
                 content={
                     "ok": False,
                     "error": "admission_controller_unavailable",
+                    "auto_handler_status": "enqueue_failed",
+                    "job_admission": admission_not_applicable(
+                        scope=scope,
+                        reason="missing_admission_controller",
+                    ),
                     "reason": "missing_admission_controller",
                     "job_id": job.job_id,
                 },
@@ -379,11 +435,20 @@ async def enqueue(body: EnqueueBody, request: Request):
         waiter=waiter,
         controller=getattr(request.app.state, "admission_controller", None),
     )
+    job_admission = _project_job_admission(job, is_hop=is_hop, scope=scope)
+    emit_frontier_sdk_auto_job_admission_projected(
+        thread_id=body.thread_id,
+        job_id=job.job_id,
+        outcome=str(job_admission["outcome"]),
+        reason=job_admission.get("reason"),
+        deferred_gates=tuple(job_admission["coverage"]["deferred"]),
+    )
     return JSONResponse(
         status_code=200,
         content={
             "ok": True,
-            "handler_status": "auto-admit-armed",
+            "auto_handler_status": "auto-handler-live",
+            "job_admission": job_admission,
             "job_id": job.job_id,
             "request_id": job.request_id,
             "superseded": interrupt,

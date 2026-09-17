@@ -128,7 +128,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
     ) -> Any:
         """Sanctioned unattended cursor-auto lane — `agent_bus` `request` only; `to=cursor` fixed (¬caller param). Exactly one of `new_slug`|`thread` required.
 
-Returns `{thread, turn, handler_status, poll_hint}` — poll terminal via `poll_hint`, ¬client loop. Author: prefer `from_agent=`; surface autofill life→`web-anthropic`, code→`cursor`. Optional `cse_registration_id`|`cse_chat_url` (same as `agent_bus.request`).
+Returns `{thread, turn, auto_handler_status, job_admission, poll_hint}` — `auto_handler_status` is the Auto handler's heartbeat, `job_admission` is this job's admit-gate verdict (`outcome` ∈ `refused`|`deferred`|`waived`|`admitted`|`not_applicable`, with `coverage` naming which gates crossed the wire). Poll terminal via `poll_hint`, ¬client loop. Author: prefer `from_agent=`; surface autofill life→`web-anthropic`, code→`cursor`. Optional `cse_registration_id`|`cse_chat_url` (same as `agent_bus.request`).
 
 **Contract:** `contract`∈{`answer`,`confer`,`ask`,`investigate`,`implement`,`verify`,`execute`,`propagate`,`seed`,`recon`} — unknown → **422** before turn write; `consult` aliases `confer`.
 

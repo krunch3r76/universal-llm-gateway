@@ -81,7 +81,7 @@ def test_dispatch_honors_consult_as_confer_and_stamps_note() -> None:
 
     def fake_impl(**kwargs):
         captured.update(kwargs)
-        return {"handler_status": "auto-admit-armed"}
+        return {"auto_handler_status": "auto-handler-live"}
 
     def fake_record(signal: str, **payload: object) -> None:
         events.append((signal, dict(payload)))
@@ -139,7 +139,7 @@ def test_dispatch_normalizes_or_omits_checkout_lane(
 
     def fake_impl(**kwargs):
         captured.update(kwargs)
-        return {"handler_status": "auto-admit-armed"}
+        return {"auto_handler_status": "auto-handler-live"}
 
     with patch("tools.agent_bus.request._request_impl", side_effect=fake_impl):
         kwargs: dict[str, object] = {
@@ -152,7 +152,7 @@ def test_dispatch_normalizes_or_omits_checkout_lane(
         if raw:
             kwargs["lane"] = raw
         result = _request_dispatch(**kwargs)  # type: ignore[arg-type]
-    assert result["handler_status"] == "auto-admit-armed"
+    assert result["auto_handler_status"] == "auto-handler-live"
     assert captured.get("lane") == expected
 
 
@@ -174,7 +174,7 @@ def test_request_lane_reaches_select_lane_as_explicit() -> None:
 
     def fake_enq(**kwargs):
         enq_kw.update(kwargs)
-        return {"ok": True, "handler_status": "auto-admit-armed", "enqueue": {}}
+        return {"ok": True, "auto_handler_status": "auto-handler-live", "enqueue": {}}
 
     with (
         patch("tools.agent_bus.request._send_dispatch", side_effect=fake_send),
@@ -232,7 +232,7 @@ def test_request_omitted_lane_keeps_select_lane_default() -> None:
 
     def fake_enq(**kwargs):
         enq_kw.update(kwargs)
-        return {"ok": True, "handler_status": "auto-admit-armed", "enqueue": {}}
+        return {"ok": True, "auto_handler_status": "auto-handler-live", "enqueue": {}}
 
     with (
         patch("tools.agent_bus.request._send_dispatch", side_effect=fake_send),

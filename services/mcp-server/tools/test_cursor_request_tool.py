@@ -101,7 +101,7 @@ def test_valid_call_delegates_to_request_dispatch_with_to_cursor() -> None:
         return {
             "thread": {"id": "900"},
             "turn": {"turn_number": 1},
-            "handler_status": "auto-admit-armed",
+            "auto_handler_status": "auto-handler-live",
             "poll_hint": {"thread": "900", "after_turn": 1},
         }
 
@@ -115,7 +115,7 @@ def test_valid_call_delegates_to_request_dispatch_with_to_cursor() -> None:
                 from_agent="web-anthropic",
             )
 
-    assert result["handler_status"] == "auto-admit-armed"
+    assert result["auto_handler_status"] == "auto-handler-live"
     assert len(captured) == 1
     assert captured[0]["to"] == "cursor"
     assert captured[0]["new_slug"] == "arm-auto"
@@ -137,7 +137,7 @@ def test_cursor_request_forwards_checkout_lane() -> None:
         return {
             "thread": {"id": "900"},
             "turn": {"turn_number": 1},
-            "handler_status": "auto-admit-armed",
+            "auto_handler_status": "auto-handler-live",
         }
 
     with patch("tools.cursor_request._request_dispatch", side_effect=_fake_dispatch):
@@ -255,7 +255,7 @@ def test_from_omitted_reaches_dispatch_autofilled_on_life_surface() -> None:
         return {
             "thread": {"id": "901"},
             "turn": {},
-            "handler_status": "no-auto-handler",
+            "auto_handler_status": "no-auto-handler",
         }
 
     with patch("tools.cursor_request._request_dispatch", side_effect=_fake_dispatch):

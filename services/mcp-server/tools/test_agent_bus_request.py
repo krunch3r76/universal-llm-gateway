@@ -30,7 +30,7 @@ def test_merge_lane_tags_dedupes():
 
 
 def test_arm_predicate_no_live_handler():
-    """F1: unreachable / non-live ⇒ live=False (never auto-admit-armed)."""
+    """F1: unreachable / non-live ⇒ live=False (never auto-handler-live)."""
     with (
         patch("tools.agent_bus.request_worker_client.httpx.Client") as client_cls,
         patch("tools.agent_bus.request_worker_client.time.sleep"),
@@ -184,7 +184,7 @@ def test_request_enqueue_failure_visible_park():
             "tools.agent_bus.request.enqueue_auto_job",
             return_value={
                 "ok": False,
-                "handler_status": "no-auto-handler",
+                "auto_handler_status": "no-auto-handler",
                 "reason": "enqueue_unreachable",
                 "error": "timeout",
             },
@@ -209,7 +209,7 @@ def test_request_enqueue_failure_visible_park():
             after_turn=0,
             summary=None,
         )
-    assert result["handler_status"] == "no-auto-handler"
+    assert result["auto_handler_status"] == "no-auto-handler"
     assert result["enqueue_failure"]["terminal_park"] is True
     assert result["enqueue_failure"]["reason"] == "enqueue_unreachable"
     assert result["enqueue_failure"]["error_class"] == "enqueue_unreachable"
@@ -241,7 +241,7 @@ def test_request_transient_probe_then_arms():
             "tools.agent_bus.request.enqueue_auto_job",
             return_value={
                 "ok": True,
-                "handler_status": "auto-admit-armed",
+                "auto_handler_status": "auto-handler-live",
                 "enqueue": {"ok": True},
             },
         ),
@@ -265,14 +265,15 @@ def test_request_transient_probe_then_arms():
             after_turn=0,
             summary=None,
         )
-    assert result["handler_status"] == "auto-admit-armed"
+    assert result["auto_handler_status"] == "auto-handler-live"
     assert "enqueue_failure" not in result
     assert "producer" not in result["poll_hint"]
     record_mock.assert_called_once_with(
         "mcp.agentbus.request.posted",
         thread="55",
         turn_number=1,
-        handler_status="auto-admit-armed",
+        auto_handler_status="auto-handler-live",
+        job_admission_outcome="not_applicable",
         desired_model="auto",
         contract="answer",
     )
@@ -300,7 +301,7 @@ def test_request_posted_emit_carries_ledger_request_id():
             "tools.agent_bus.request.enqueue_auto_job",
             return_value={
                 "ok": True,
-                "handler_status": "auto-admit-armed",
+                "auto_handler_status": "auto-handler-live",
                 "enqueue": {"ok": True},
             },
         ),
@@ -329,7 +330,8 @@ def test_request_posted_emit_carries_ledger_request_id():
         "mcp.agentbus.request.posted",
         thread="55",
         turn_number=1,
-        handler_status="auto-admit-armed",
+        auto_handler_status="auto-handler-live",
+        job_admission_outcome="not_applicable",
         desired_model="auto",
         contract="answer",
         request_id="ledger-req-abc123",
@@ -358,7 +360,7 @@ def test_request_promotes_same_thread_lane_counts():
             "tools.agent_bus.request.enqueue_auto_job",
             return_value={
                 "ok": True,
-                "handler_status": "auto-admit-armed",
+                "auto_handler_status": "auto-handler-live",
                 "enqueue": {
                     "ok": True,
                     "superseded": None,
@@ -653,7 +655,7 @@ def test_request_omit_desired_effort_enqueues_auto() -> None:
     ):
         enqueue_mock.return_value = {
             "ok": True,
-            "handler_status": "auto-admit-armed",
+            "auto_handler_status": "auto-handler-live",
             "enqueue": {"ok": True},
         }
         _request_dispatch(

@@ -8,6 +8,9 @@ from agent_seat.registry import normalize_bus_address
 from contract_vocab import nested_scope_contracts
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_auto.admission_verdict import (
+    admit_gate_entered,
+)
 from services.git_integration_worker.cursor_auto.admit_gates import (
     AdmitGateResult,
     blocking_admit_gate,
@@ -245,14 +248,9 @@ async def process_job(
     escalation = resolve_escalation(job.escalation)
     contract_info = resolve_contract_disposition(contract)
     gate_result = AdmitGateResult()
-    if (
-        directive is not None
-        or contract in _NESTED_CONTRACTS
-        or contract
-        in {
-            EXECUTE_CONTRACT,
-            PROPAGATE_CONTRACT,
-        }
+    if admit_gate_entered(
+        directive_present=directive is not None,
+        contract=contract,
     ):
         gate_result = await blocking_admit_gate(job, client=client, queue=queue)
         if gate_result.blocked is not None:

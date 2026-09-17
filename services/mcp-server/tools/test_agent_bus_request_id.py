@@ -21,7 +21,7 @@ def test_request_id_echoed_when_caller_supplies() -> None:
         contract_intake.return_value.contract = "execute"
         contract_intake.return_value.deprecated = False
         impl.side_effect = lambda **kwargs: {
-            "handler_status": "auto-admit-armed",
+            "auto_handler_status": "auto-handler-live",
             "request_id": kwargs.get("request_id"),
         }
         result = _request_dispatch(
@@ -67,7 +67,7 @@ def test_absent_request_id_minted_and_echoed() -> None:
     def fake_impl(**kwargs):
         captured.update(kwargs)
         return {
-            "handler_status": "no-auto-handler",
+            "auto_handler_status": "no-auto-handler",
             "request_id": kwargs.get("request_id"),
         }
 

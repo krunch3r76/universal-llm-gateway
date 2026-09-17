@@ -119,8 +119,14 @@ def _emit_dispatch(
 
     turn_obj = auto_result.get("turn") or {}
     turn_n = turn_obj.get("turn_number")
-    handler = auto_result.get("handler_status")
-    print(f"relay_complete turn={turn_n} handler_status={handler}", flush=True)
+    handler = auto_result.get("auto_handler_status")
+    admission = auto_result.get("job_admission") or {}
+    print(
+        f"relay_complete turn={turn_n} auto_handler_status={handler} "
+        f"job_admission={admission.get('outcome')}"
+        f"{'/' + str(admission.get('reason')) if admission.get('reason') else ''}",
+        flush=True,
+    )
 
     update_body = "\n".join(
         [

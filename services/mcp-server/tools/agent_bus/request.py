@@ -1,8 +1,15 @@
 """agent_bus ``request`` — life-callable Cursor Auto admit channel.
 
 Writes a send-equivalent turn (injecting ``lane:cursor-auto``), probes a live
-Auto handler, enqueues when armed, and returns ``{thread, turn, handler_status,
-poll_hint}``. Distinct from ``send`` and from ``lane:life-to-code``.
+Auto handler, enqueues when armed, and returns ``{thread, turn,
+auto_handler_status, job_admission, poll_hint}``. Distinct from ``send`` and
+from ``lane:life-to-code``.
+
+Two projections, kept apart. ``auto_handler_status`` is the Auto handler's
+heartbeat (scope: the handler; freshness: at probe). ``job_admission`` is the
+admit-gate verdict for this request (scope: this ``request_id``; freshness: at
+admission), minted by GIW and relayed here — never restated. Conflating them is
+the defect this surface was built to close.
 
 Sender wire discipline (harvest-restart-propagation I3): enqueue JSON fields added
 by MCP must remain optional-with-default — never rename or remove existing keys.
@@ -24,6 +31,7 @@ from .request_cse_bind import maybe_bind_thread_cse
 from .request_failure import (
     annotate_poll_hint_no_producer,
     build_enqueue_failure,
+    build_job_admission_unreached,
     enqueue_failure_reason,
     error_class_from_enqueue,
     error_class_from_liveness,
@@ -177,6 +185,9 @@ def _request_impl(
         cse_registration_id=cse_registration_id,
     )
 
+    admission_scope = (
+        f"request_id:{request_id}" if request_id else f"thread:{thread_id}"
+    )
     liveness = probe_auto_liveness()
     if not liveness.get("live"):
         reason = str(liveness.get("reason", "no_live_handler"))
@@ -195,7 +206,11 @@ def _request_impl(
         degraded = {
             "thread": thread_obj,
             "turn": turn_obj,
-            "handler_status": "no-auto-handler",
+            "auto_handler_status": "no-auto-handler",
+            "job_admission": build_job_admission_unreached(
+                reason=reason,
+                scope=admission_scope,
+            ),
             "poll_hint": annotate_poll_hint_no_producer(
                 _build_poll_hint(
                     thread_id=thread_id,
@@ -257,7 +272,12 @@ def _request_impl(
         result = {
             "thread": thread_obj,
             "turn": turn_obj,
-            "handler_status": "no-auto-handler",
+            "auto_handler_status": "no-auto-handler",
+            "job_admission": enq.get("job_admission")
+            or build_job_admission_unreached(
+                reason=reason,
+                scope=admission_scope,
+            ),
             "poll_hint": annotate_poll_hint_no_producer(
                 _build_poll_hint(
                     thread_id=thread_id,
@@ -281,11 +301,18 @@ def _request_impl(
             result["request_id"] = request_id
         return result
 
-    handler_status = "auto-admit-armed"
+    auto_handler_status = str(enq.get("auto_handler_status") or "auto-handler-live")
+    # The admit-ladder verdict is GIW's to mint; MCP promotes it beside the
+    # handler heartbeat so a caller's first read answers both questions.
+    job_admission = enq.get("job_admission") or build_job_admission_unreached(
+        reason="worker_projection_absent",
+        scope=admission_scope,
+    )
     posted_kw: dict[str, Any] = {
         "thread": thread_id,
         "turn_number": turn_number,
-        "handler_status": handler_status,
+        "auto_handler_status": auto_handler_status,
+        "job_admission_outcome": str(job_admission.get("outcome") or ""),
         "desired_model": desired_model,
         "contract": contract,
     }
@@ -324,7 +351,8 @@ def _request_impl(
     result = {
         "thread": thread_obj,
         "turn": turn_obj,
-        "handler_status": handler_status,
+        "auto_handler_status": auto_handler_status,
+        "job_admission": job_admission,
         "poll_hint": _build_poll_hint(
             thread_id=thread_id,
             after_turn=turn_number,

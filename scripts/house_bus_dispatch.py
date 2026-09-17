@@ -111,7 +111,8 @@ def dispatch_cursor_eval(
     if request_id:
         enqueue_payload["request_id"] = request_id
 
-    handler_status = "no-auto-handler"
+    auto_handler_status = "no-auto-handler"
+    job_admission: dict[str, Any] | None = None
     enqueue_result: dict[str, Any] = {}
     try:
         with httpx.Client(timeout=15.0) as client:
@@ -120,17 +121,20 @@ def dispatch_cursor_eval(
             if live.get("live"):
                 enq_resp = client.post(_AUTO_ENQUEUE, json=enqueue_payload)
                 enqueue_result = enq_resp.json() if enq_resp.content else {}
-                if enq_resp.status_code == 200 and enqueue_result.get("ok"):
-                    handler_status = "auto-admit-armed"
-                else:
-                    handler_status = str(enqueue_result.get("handler_status") or "enqueue_failed")
+                # Relay what the worker minted; a hardcoded status here would
+                # restate the handler heartbeat as a job verdict.
+                auto_handler_status = str(
+                    enqueue_result.get("auto_handler_status") or "enqueue_failed"
+                )
+                job_admission = enqueue_result.get("job_admission")
     except (httpx.HTTPError, ValueError, OSError) as exc:
         enqueue_result = {"error": str(exc)}
 
     return {
         "thread": thread_obj,
         "turn": turn_obj,
-        "handler_status": handler_status,
+        "auto_handler_status": auto_handler_status,
+        "job_admission": job_admission,
         "enqueue": enqueue_result,
         "contract": contract,
         "workspace": workspace,

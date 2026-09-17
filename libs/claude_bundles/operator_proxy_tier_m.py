@@ -15,7 +15,8 @@ INJECTORS: tuple[str, ...] = ("cdp_ask",)
 TIER_M_HEADING = "## Tier-M tool ask — DIRECTIVE template (BINDING)"
 WIRE_NEUTRAL_HEADING = "## Wire-neutral authoring (BINDING)"
 DEGRADE_LADDER_HEADING = (
-    "## Degrade ladder — handler_status → prescribed move (BINDING)"
+    "## Degrade ladder — auto_handler_status + job_admission → prescribed move "
+    "(BINDING)"
 )
 
 _TIER_M_TEMPLATE = """\
@@ -39,9 +40,10 @@ vision: mechanical — tier-M surface asymmetry relay; no design content
 
 `tool_op:` and `effects_expected:` are first-class scope tokens — a tool ask no
 longer has to borrow `files_expected: none` to clear the scope gate. `vision:`
-is still required for `implement` / `investigate`. A blocked reply carries
-`missed_tokens` plus a `fix_hint` naming the exact lines to add: fix the named
-lines and re-issue on the same thread. **One live request per private thread** —
+is still required for `implement` / `investigate`. A body-pure gate refusal
+shows up synchronously as `job_admission.outcome: refused`, carrying
+`missed_tokens` plus a `fix_hint` naming the exact lines to add on that same
+container: fix the named lines and re-issue on the same thread. **One live request per private thread** —
 a second `agent_bus.request` supersedes the *first eligible predecessor*, queued
 or claimed — it does not append (`run_cancel` / `pre_register_live_run` for
 claimed; `queue_withdraw` for queued). Both do not run. Continuity hops skip;
@@ -190,9 +192,34 @@ propagate from a seat outside the GIW lease (parent cursor-auto after nested exi
 or operator-proxy top-level)."""
 
 _DEGRADE_LADDER = """\
-- `auto-admit-armed` — Auto is running it; poll the returned `poll_hint` in one
-  continuous hold up to `wait_seconds ≤ 60` (life MCP client ceiling);
-  re-arm only after an empty return or for nests that outlast one hold.
+Two fields, two subjects. `auto_handler_status` is the **Auto handler's**
+heartbeat; `job_admission` is the admit-gate verdict for **your job**. A live
+handler is not an admitted ask — read both, and never infer the second from the
+first.
+
+- `auto-handler-live` — a handler is up and accepted the turn. It says nothing
+  about whether your job will run; `job_admission` in the same response is where
+  that answer lives.
+- `job_admission.outcome: refused` — the job is already dead, terminal-failing
+  within ~30ms of this reply. `reason` names the gate; `fix_hint` and
+  `missed_tokens` sit on the same container. Fix per those and re-issue on the
+  same thread. Do **not** poll a refused job — polling it is how six dispatch
+  lanes were recorded as armed while they were already gone.
+- `job_admission.outcome: deferred` — every body-pure gate passed and the
+  thread-state gates listed in `coverage.deferred` have not run yet. This is the
+  normal armed reading: poll the returned `poll_hint` in one continuous hold up
+  to `wait_seconds ≤ 60` (life MCP client ceiling); re-arm only after an empty
+  return or for nests that outlast one hold. A later terminal refusal from a
+  deferred gate is still possible — `agent_bus_read(job_state)` is
+  authority-of-record.
+- `job_admission.outcome: admitted` — the ladder completed synchronously
+  (`execute` / `propagate` approval short-circuits the thread-state gates). Poll
+  as for `deferred`.
+- `job_admission.outcome: waived` — admitted by an explicit scope waiver;
+  `coverage.waived` names the gate. Poll as for `deferred`.
+- `job_admission.outcome: not_applicable` — no job entered admit at all;
+  `reason` says which path (continuity hop, static-pin refusal, no live
+  handler). Nothing is running.
 - `no-auto-handler` — the turn was written but nothing will act on it; the ask is
   parked. Re-`request` after liveness returns, or `send` + park. Never long-wait.
 - `status:blocked (reason)` — authoring defect; fix per `missed_tokens` +

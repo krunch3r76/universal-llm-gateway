@@ -48,7 +48,7 @@ def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
     def fake_impl(**kwargs):
         captured.update(kwargs)
         return {
-            "handler_status": "auto-admit-armed",
+            "auto_handler_status": "auto-handler-live",
             "thread": {"id": "77"},
             "turn": {"turn_number": 2},
         }
@@ -78,7 +78,7 @@ def test_hop_impl_forwards_continuity_hop_and_handoff_body() -> None:
     assert result["successor"]["names"] == "successor"
     assert result["successor"]["value"]
     assert "predecessor's receipt" in result["successor"]["note"]
-    assert result["handler_status"] == "auto-admit-armed"
+    assert result["auto_handler_status"] == "auto-handler-live"
     assert "status:done" not in str(result)
 
 
@@ -88,7 +88,7 @@ def test_hop_degrades_when_auto_dead() -> None:
         patch(
             "tools.agent_bus.hop._request_impl",
             return_value={
-                "handler_status": "no-auto-handler",
+                "auto_handler_status": "no-auto-handler",
                 "enqueue_failure": {"reason": "no_live_handler", "terminal_park": True},
                 "thread": {"id": "77"},
                 "turn": {"turn_number": 1},
@@ -101,7 +101,7 @@ def test_hop_degrades_when_auto_dead() -> None:
             reason="mcp-restart-healthy",
             from_agent="web-anthropic",
         )
-    assert result["handler_status"] == "no-auto-handler"
+    assert result["auto_handler_status"] == "no-auto-handler"
     assert result["continuity_hop"] is True
     assert result["enqueue_failure"]["terminal_park"] is True
 

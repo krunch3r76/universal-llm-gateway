@@ -1,6 +1,6 @@
 """In-process Auto handler registration + heartbeat for arm predicate.
 
-``handler_status=auto-admit-armed`` requires a live registered handler — a
+``auto_handler_status=auto-handler-live`` requires a live registered handler — a
 successful turn write alone is not arm evidence (R-admit HIGH / F1).
 """
 

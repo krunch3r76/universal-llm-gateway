@@ -3,11 +3,44 @@
 Owns the park envelope when Auto is unreachable or enqueue fails — not the
 turn write. Callers (``request.py``, ``hop.py``) attach these onto an otherwise
 successful send so the lane tag survives and the poller sees ``producer=none``.
+
+Also owns the ``job_admission`` projection for the paths that never reach the
+admit ladder at all. GIW's ``cursor_auto.admission_verdict`` is the authority
+for a real verdict; MCP cannot import it across the service boundary
+(``[universal:mcp]``), and on these paths there is no verdict to relay — the
+request never got far enough to create a job.
 """
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
+
+#: Mirrors ``cursor_auto.admission_verdict.ADMISSION_AUTHORITY``.
+_ADMISSION_AUTHORITY = "cursor_auto.admit_gates.blocking_admit_gate"
+_ADMISSION_RECOVERY = "agent_bus_read(job_state)"
+
+
+def build_job_admission_unreached(*, reason: str, scope: str) -> dict[str, Any]:
+    """State positively that no job was admitted, because none was created.
+
+    Used when liveness refused, the enqueue POST failed, or GIW answered
+    without a projection. Never a substitute for a relayed verdict.
+    """
+    return {
+        "outcome": "not_applicable",
+        "reason": reason,
+        "as_of": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "source": _ADMISSION_AUTHORITY,
+        "scope": scope,
+        "coverage": {
+            "asserted": [],
+            "deferred": [],
+            "not_applicable": ["admit_ladder_not_reached"],
+            "waived": [],
+        },
+        "recovery": _ADMISSION_RECOVERY,
+    }
 
 
 def annotate_poll_hint_no_producer(poll_hint: dict[str, Any]) -> dict[str, Any]:
@@ -48,13 +81,13 @@ def error_class_from_liveness(liveness: dict[str, Any]) -> str:
 
 
 def enqueue_failure_reason(enq: dict[str, Any]) -> str:
-    """Prefer explicit reason, then worker handler_status, then a generic token."""
+    """Prefer explicit reason, then worker auto_handler_status, then a generic token."""
     if enq.get("reason"):
         return str(enq["reason"])
     enqueue_data = enq.get("enqueue") or {}
-    if enqueue_data.get("handler_status"):
-        return str(enqueue_data["handler_status"])
-    return str(enq.get("handler_status", "no-auto-handler"))
+    if enqueue_data.get("auto_handler_status"):
+        return str(enqueue_data["auto_handler_status"])
+    return str(enq.get("auto_handler_status", "no-auto-handler"))
 
 
 def error_class_from_enqueue(enq: dict[str, Any]) -> str:
@@ -64,7 +97,7 @@ def error_class_from_enqueue(enq: dict[str, Any]) -> str:
         return "enqueue_unreachable"
     enqueue_data = enq.get("enqueue") or {}
     worker_status = str(
-        enqueue_data.get("handler_status") or enq.get("handler_status") or ""
+        enqueue_data.get("auto_handler_status") or enq.get("auto_handler_status") or ""
     )
     if worker_status in {"no_live_auto_handler", "no-auto-handler"}:
         return "handler_dead"
