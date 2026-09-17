@@ -137,6 +137,29 @@ def _served_mark(served: dict[str, Any], lane_id: str) -> int:
         return 0
 
 
+def _lane_turns(item: dict[str, Any]) -> int | None:
+    raw = item.get("turns")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _live_lane_actionable(item: dict[str, Any], served_lanes: dict[str, Any]) -> bool:
+    """Non-terminal lane: actionable when ``turns`` exceeds ``served_lanes`` mark.
+
+    Absent or unparseable ``turns`` fails closed (actionable), matching the
+    ``unread_turns`` posture for terminal lanes.
+    """
+    turns = _lane_turns(item)
+    if turns is None:
+        return True
+    lane_id = str(item.get("id") or "")
+    return turns > _served_mark(served_lanes, lane_id)
+
+
 def _terminal_lane_has_actionable_unread(
     item: dict[str, Any], *, served_mark: int
 ) -> bool:
@@ -216,7 +239,8 @@ def _is_successor_lane(item: dict[str, Any], successors: set[str]) -> bool:
 def actionable_attention(
     attention: Any, *, state: dict[str, Any] | None = None
 ) -> list[Any]:
-    """Wake items: unread live lanes, plus each finished *work* lane's closeout once.
+    """Wake items: unread live lanes once per ``turns`` mark (``state.served_lanes``),
+    plus each finished *work* lane's closeout once.
 
     A closeout is the moment the house needs a seat (harvest → fold → decide →
     dispatch), so a terminal lane with unread turns wakes — once per served
@@ -227,10 +251,12 @@ def actionable_attention(
 
     Attention rows may carry ``unread_turns`` (``turn_number``, ``from``,
     ``subject``, ``body``) for kind discrimination; absent that list the gate
-    fails closed (wake) so a missed directive is never suppressed.
+    fails closed (wake) so a missed directive is never suppressed. Live lanes
+    without a parseable ``turns`` fail closed the same way.
     """
     st = state or {}
     served = st.get("served_closeouts") or {}
+    served_lanes = st.get("served_lanes") or {}
     successors = {str(x) for x in (st.get("successor_threads") or [])}
     items = attention if isinstance(attention, list) else []
     out: list[Any] = []
@@ -249,6 +275,8 @@ def actionable_attention(
                 item, served_mark=_served_mark(served, lane_id)
             ):
                 continue
+        elif not _live_lane_actionable(item, served_lanes):
+            continue
         out.append(item)
     return out
 
@@ -362,17 +390,21 @@ def record_spawn_service(
     if handoff.get("seq"):
         state["handoff_spawned_seq"] = int(handoff["seq"])
     served = dict(state.get("served_closeouts") or {})
+    served_lanes = dict(state.get("served_lanes") or {})
     for item in attention if isinstance(attention, list) else []:
-        if (
-            isinstance(item, dict)
-            and row_is_terminal(item)
-            and item.get("id") is not None
-        ):
-            lane_id = str(item["id"])
+        if not isinstance(item, dict) or item.get("id") is None:
+            continue
+        lane_id = str(item["id"])
+        if row_is_terminal(item):
             served[lane_id] = max(
                 _served_mark(served, lane_id), _closeout_high_water(item)
             )
+        else:
+            turns = _lane_turns(item)
+            if turns is not None:
+                served_lanes[lane_id] = max(_served_mark(served_lanes, lane_id), turns)
     state["served_closeouts"] = dict(list(served.items())[-_SERVED_KEEP:])
+    state["served_lanes"] = dict(list(served_lanes.items())[-_SERVED_KEEP:])
     thread_id = str((state.get("pending_spawn") or {}).get("thread_id") or "").strip()
     rid = str(root_id or "").strip()
     if thread_id and thread_id != rid:
@@ -454,8 +486,7 @@ def digest_root_surface(
 
 def _turn_text(turn: dict[str, Any]) -> str:
     return " ".join(
-        str(turn.get(key) or "")
-        for key in ("subject", "body", "from", "from_agent")
+        str(turn.get(key) or "") for key in ("subject", "body", "from", "from_agent")
     )
 
 

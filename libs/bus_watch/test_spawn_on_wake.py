@@ -163,8 +163,20 @@ def test_grace_and_fingerprint_clauses() -> None:
         "last_spawn_at": time.time(),
     }
     ev = evaluate_spawn_predicate(digest, state, lock={"holder": None}, now=time.time())
-    assert ev["clauses"]["fingerprint_changed"] is False
+    assert ev["clauses"]["fingerprint_changed"] is True
     assert ev["clauses"]["grace_elapsed"] is False
+    assert ev["spawn"] is False
+
+    quiet = _digest(attention=[])
+    quiet_state = {
+        "last_spawn_fingerprint": spawn_fingerprint(quiet["root"], quiet["lanes"]),
+        "last_spawn_at": time.time(),
+    }
+    quiet_ev = evaluate_spawn_predicate(
+        quiet, quiet_state, lock={"holder": None}, now=time.time()
+    )
+    assert quiet_ev["clauses"]["fingerprint_changed"] is False
+    assert quiet_ev["clauses"]["grace_elapsed"] is False
 
 
 def test_dispatch_body_message_not_packet() -> None:
@@ -1004,3 +1016,81 @@ def test_evaluate_spawn_predicate_reports_signal_sources() -> None:
     ev = evaluate_spawn_predicate(digest, {}, lock={"holder": None})
     assert ev["spawn_signal_sources"] == ["actionable_attention"]
     assert ev["clauses"]["spawn_signal"] is True
+
+
+_LIVE_LANE = {
+    "id": "11570",
+    "unread": 1,
+    "turns": 5,
+    "status": "active",
+    "lifecycle": "admitted",
+}
+
+
+def test_live_lane_latched_at_turns_not_actionable_second_tick() -> None:
+    """AC4(i) — same ``turns`` mark must not re-arm live unread attention."""
+    from bus_watch.spawn_pending import actionable_attention
+
+    assert actionable_attention([_LIVE_LANE], state={}) == [_LIVE_LANE]
+    assert (
+        actionable_attention([_LIVE_LANE], state={"served_lanes": {"11570": 5}}) == []
+    )
+
+
+def test_live_lane_turns_increment_actionable_again() -> None:
+    """AC4(ii) — incremented ``turns`` re-arms after ``served_lanes`` latch."""
+    from bus_watch.spawn_pending import actionable_attention
+
+    bumped = {**_LIVE_LANE, "turns": 6}
+    assert actionable_attention([bumped], state={"served_lanes": {"11570": 5}}) == [
+        bumped
+    ]
+
+
+def test_frozen_fingerprint_no_unlatched_source_no_spawn() -> None:
+    """AC4(iii) — unchanged fingerprint with all sources latched must not spawn."""
+    digest = _digest(attention=[])
+    fp = spawn_fingerprint(digest["root"], digest["lanes"])
+    state = {"last_spawn_fingerprint": fp, "last_spawn_at": 0.0}
+    ev = evaluate_spawn_predicate(digest, state, lock={"holder": None}, now=time.time())
+    assert ev["clauses"]["spawn_signal"] is False
+    assert ev["clauses"]["fingerprint_changed"] is False
+    assert ev["spawn"] is False
+
+
+def test_frozen_fingerprint_unlatched_source_spawns() -> None:
+    """AC4(iv) — a:35207 regression: unlatched attention must not freeze the chain."""
+    digest = _digest(attention=[_LIVE_LANE])
+    fp = spawn_fingerprint(digest["root"], digest["lanes"])
+    state = {"last_spawn_fingerprint": fp, "last_spawn_at": 0.0}
+    ev = evaluate_spawn_predicate(digest, state, lock={"holder": None}, now=time.time())
+    assert ev["clauses"]["spawn_signal"] is True
+    assert ev["clauses"]["fingerprint_changed"] is True
+    assert ev["spawn"] is True
+
+
+def test_frozen_fingerprint_latched_live_lane_no_spawn() -> None:
+    """Falsifier guard — permanently-unread lane latched at ``turns`` must stay quiet."""
+    digest = _digest(attention=[_LIVE_LANE])
+    fp = spawn_fingerprint(digest["root"], digest["lanes"])
+    state = {
+        "last_spawn_fingerprint": fp,
+        "last_spawn_at": 0.0,
+        "served_lanes": {"11570": 5},
+    }
+    ev = evaluate_spawn_predicate(digest, state, lock={"holder": None}, now=time.time())
+    assert ev["clauses"]["spawn_signal"] is False
+    assert ev["clauses"]["fingerprint_changed"] is False
+    assert ev["spawn"] is False
+
+
+def test_record_spawn_service_latches_live_lane_turns() -> None:
+    """AC2 — ``served_lanes`` mirrors ``served_closeouts`` for live attention."""
+    from bus_watch.spawn_pending import actionable_attention, record_spawn_service
+
+    state: dict = {"pending_spawn": {"thread_id": "10601"}}
+    assert actionable_attention([_LIVE_LANE], state=state) == [_LIVE_LANE]
+    record_spawn_service(state, [_LIVE_LANE])
+    assert state["served_lanes"] == {"11570": 5}
+    assert actionable_attention([_LIVE_LANE], state=state) == []
+    assert state["successor_threads"] == ["10601"]
