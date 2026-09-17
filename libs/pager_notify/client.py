@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 from dataclasses import dataclass
 from typing import Literal
 
@@ -42,9 +41,7 @@ class NotifyResult:
 
 
 def _pytest_detected() -> bool:
-    if os.environ.get("PYTEST_CURRENT_TEST"):
-        return True
-    return "pytest" in sys.modules
+    return bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 
 def _pager_disabled_reason() -> str | None:

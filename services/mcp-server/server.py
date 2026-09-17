@@ -201,6 +201,8 @@ def _discover_private_tools(
         short_name = mod_name.rsplit(".", 1)[-1]
         if short_name.startswith("_"):
             continue
+        if short_name.startswith("test_") or short_name.endswith("_test"):
+            continue
         if surface == "life" and short_name not in LIFE_PRIVATE_TOOL_MODULES:
             continue
         try:
