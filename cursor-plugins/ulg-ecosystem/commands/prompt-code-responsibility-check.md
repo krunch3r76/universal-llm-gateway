@@ -38,7 +38,7 @@ Steps + targets | New files ≤300 SLOC
 - [ ] Event-driven: ∃! update path
 - [ ] Non-blocking: ¬blocking I/O, ¬`await gather()`
 - [ ] SRP: <3 responsibilities, handlers ≤80 SLOC
-- [ ] Compile/lint: `python -m compileall`, `ruff check`
+- [ ] Compile/lint: `python -m compileall {files}`, `ruff check {files}`
 
 ## SRP Triggers
 | Condition | Action |

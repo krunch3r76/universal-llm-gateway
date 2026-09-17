@@ -240,7 +240,7 @@ for verification, and the `plan_phase` entity is confirmed in Cortex.
 ## Quality Gates (NOT complete until)
 - [ ] `python -m compileall` passes
 - [ ] ∀ imports resolve
-- [ ] `ruff check` passes
+- [ ] `ruff check {files}` passes
 - [ ] Plan checklist ∀ pass
 - [ ] Tests pass
 - [ ] Summary created at derived path and read back for verification

@@ -441,7 +441,7 @@ With MCP tools available, the optimal workflow combines both:
 | Replay step | — | `replay -s <step> --pipeline-dir ...` |
 | Compare | `observability(operation="compare-runs")` | `compare fixture replay.json` |
 | Validate | `pipeline(op="validate", pipeline_id="…")` | `python scripts/validate-pipeline.py` |
-| Quality check | `dispatch("quality_gate")` | `ruff check && compileall` |
+| Quality check | `dispatch("quality_gate")` | `ruff check {files} && compileall {files}` |
 
 MCP handles the outer loop (run, observe, compare). CLI handles the inner loop
 (inspect, replay, consult). Use MCP `execution_id` to bridge between them.
