@@ -26,10 +26,10 @@ from markdown_sections import (
     list_sections as md_list_sections,
 )
 from markdown_sections import (
-    read_section as md_read_section,
+    patch_section_body as md_patch_section_body,
 )
 from markdown_sections import (
-    patch_section_body as md_patch_section_body,
+    read_section as md_read_section,
 )
 from markdown_sections import (
     replace_section as md_replace_section,
