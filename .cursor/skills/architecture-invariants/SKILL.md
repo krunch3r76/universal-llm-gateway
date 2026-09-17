@@ -29,7 +29,7 @@ Cite applicable tags in handoff Block 2. Load deferred refs by tag when procedur
 | `[universal:rest]` | `/v1/*` OpenAI-compatible only; project/admin endpoints under `/api/v1/*` or explicit namespace; prefer REST over direct catalog access | New endpoints, wire projections | Namespace grep; sole owner of API namespace rules |
 | `[universal:satellite]` | Personal microservices: own container/process, UDS at `/tmp/universal-protocol/{name}.sock`, `openapi.yaml` contract, Bearer auth | New satellite services | Contract + auth review |
 | `[scope]` | Every changed line traces to user request ∨ direct consequence; ¬unrelated same-diff edits | All edits | Diff review |
-| `[quality]` | SLOC ≤400 existing / ≤300 new; compile + ruff + modularize gates; typed functions | Code changes | → `architecture-invariants/quality-gates.md` |
+| `[quality]` | SLOC ≤400 existing / ≤300 new; compile + ruff + modularize gates on passed files only (no repo-wide mode; `quality_gate(files)` in `services/mcp-server/tools/quality.py`); typed functions | Code changes | → `architecture-invariants/quality-gates.md` |
 | `[quality:bug-class-sweep]` | Bugfix on pattern P ⇒ grep entire service/library for P before declaring complete | Bugfixes targeting a code pattern | → `quality-gates.md` |
 | `[quality:error-envelope]` | Error shape `{code, message, source, retryable, data}` via `ProtocolError` | Error response changes | → `quality-gates.md` |
 | `[simplicity]` | Minimum code solving stated problem; fix root cause not symptom | Implementation | Review speculative abstraction |

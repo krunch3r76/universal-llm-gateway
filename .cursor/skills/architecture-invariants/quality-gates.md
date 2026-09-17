@@ -9,10 +9,12 @@ Existing files ≤400 SLOC; new files ≤300 SLOC; exceeded ⇒ split before com
 
 ```bash
 python -m compileall -q {files}
-ruff check && ruff format --check
-ruff check --select=UP --fix
+ruff check {files} && ruff format --check {files}
+ruff check --select=UP --fix {files}
 scripts/modularize scan {files}
 ```
+
+The enforced gate is `quality_gate(files)` in `services/mcp-server/tools/quality.py`: it lints only the files passed to it and has no repo-wide mode, so a repo-wide `ruff check .` result is not a reading of the enforced gate.
 
 ∀ function: typed params + return. Remove deprecated/unused imports (F401); ¬comment-out dead code.
 
