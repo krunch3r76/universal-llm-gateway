@@ -129,6 +129,47 @@ def _service_info(service_state: ServiceState, service: str) -> ServiceInfo:
     return checker()
 
 
+def _code_ref_validation_with_provenance(
+    service: str,
+    code_ref: str,
+    *,
+    authoritative_status: str,
+    health_url: str | None,
+) -> dict[str, Any]:
+    """Attach code-ref liveness as a derived plane under manage health authority."""
+    validation = current_validation(service, code_ref)
+    liveness = validation.get("liveness") or {}
+    observation = liveness.get("observation") or {}
+    provenance: dict[str, Any] = {
+        "authority": "services[].status",
+        "derived_plane": "code_ref_validation",
+        "basis": "derived",
+        "manage_health_checker": {
+            "status": authoritative_status,
+            "health_url": health_url,
+            "probe": "GET /health via ServiceState.check_*",
+        },
+        "code_ref_probe": {
+            "endpoint": "GET /api/v1/git/cursor-auto/liveness",
+            "observation": observation,
+        },
+        "note": (
+            "code_ref liveness answers whether a code_ref is live on the service; "
+            "it does not override services[].status from the manage health checker."
+        ),
+    }
+    manage_healthy = authoritative_status == "running"
+    obs_live = observation.get("live") is True
+    if obs_live and not manage_healthy:
+        provenance["contradiction"] = {
+            "manage_status": authoritative_status,
+            "code_ref_live": obs_live,
+            "resolution": "trust services[].status; cursor-auto liveness is orthogonal",
+        }
+    validation["provenance"] = provenance
+    return validation
+
+
 def build_snapshot(
     root: Path, service_state: ServiceState, *, code_ref: str | None = None
 ) -> dict[str, Any]:
@@ -240,8 +281,11 @@ def build_snapshot(
             )
         )
         if code_ref:
-            row["code_ref_validation"] = current_validation(
-                row["service"], code_ref
+            row["code_ref_validation"] = _code_ref_validation_with_provenance(
+                row["service"],
+                code_ref,
+                authoritative_status=row["status"],
+                health_url=row.get("health_url"),
             )
 
     finished = time.time()

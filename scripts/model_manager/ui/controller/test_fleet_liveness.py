@@ -296,6 +296,89 @@ def test_snapshot_copies_detail_pid_health_url(
     assert rag["health_url"] == "unix:///tmp/universal-protocol/rag.sock/stats"
 
 
+def test_code_ref_validation_labeled_derived_under_manage_authority(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """code_ref liveness must not read as contradicting services[].status."""
+    empty_probe = {
+        "raw": "",
+        "paths": {},
+        "errors": [],
+        "branch": "master",
+        "head_sha": "head",
+        "clock": {},
+    }
+    probes = iter((empty_probe, empty_probe))
+    monkeypatch.setattr(live, "_tree_probe", lambda *_: next(probes))
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name="git-integration-worker",
+            status=ServiceStatus.UNHEALTHY,
+            pid=123,
+            health_url="http://127.0.0.1:8791/health",
+            detail="PID 123, health probe failed",
+        )
+        if service == "git_integration_worker"
+        else ServiceInfo(name=service, status=ServiceStatus.RUNNING, pid=1),
+    )
+    monkeypatch.setattr(
+        live,
+        "_container_start",
+        lambda _container: {
+            "kind": "container_started_at",
+            "value_utc": None,
+            "granularity_s": 0.001,
+            "clock_domain": "docker_host",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_mcp_reported_version",
+        lambda _container: {
+            "field": "code_version",
+            "value": None,
+            "denotes": "test",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_process_start",
+        lambda _pid: {
+            "kind": "host_proc_start",
+            "value_utc": "2026-08-15T00:00:00Z",
+            "granularity_s": 0.001,
+            "clock_domain": "host_proc",
+            "error": None,
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "current_validation",
+        lambda service, code_ref: {
+            "verdict": "running_committed_code",
+            "liveness": {
+                "answer": "yes",
+                "observation": {"live": True, "probe_reachable": True},
+            },
+            "activation": None,
+        },
+    )
+    result = live.build_snapshot(tmp_path, SimpleNamespace(), code_ref="abc123")
+    giw = next(
+        row for row in result["services"] if row["service"] == "git_integration_worker"
+    )
+    assert giw["status"] == "unhealthy"
+    prov = giw["code_ref_validation"]["provenance"]
+    assert prov["authority"] == "services[].status"
+    assert prov["basis"] == "derived"
+    assert prov["contradiction"]["manage_status"] == "unhealthy"
+    assert prov["contradiction"]["code_ref_live"] is True
+
+
 def test_mcp_reported_version_qualifies_working_tree_label(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
