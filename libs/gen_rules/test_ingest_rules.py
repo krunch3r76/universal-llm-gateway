@@ -71,11 +71,13 @@ def test_tg1_projection_upsert_and_check_passes(tmp_path: Path) -> None:
         "attributes": {
             "applicable_agents": entry["applicable_agents"],
             "digest": digest,
+            "delivery_priority": 100,
         },
     }
     responses: dict[tuple[str, str], tuple[int, dict]] = {
         ("GET", f"/entities/{entity_id}"): (404, {}),
         ("POST", "/entities"): (200, projection),
+        ("GET", "/entities"): (200, {"items": [{"id": entity_id}]}),
     }
     client = _mock_client(responses)
     manifest = {slug: entry}
@@ -112,8 +114,56 @@ def test_tg1_check_fails_on_digest_drift(tmp_path: Path) -> None:
                 "attributes": {
                     "applicable_agents": ["*"],
                     "digest": stale_digest,
+                    "delivery_priority": 100,
                 },
             },
+        ),
+        ("GET", "/entities"): (200, {"items": [{"id": entity_id}]}),
+    }
+    client = _mock_client(responses)
+    manifest = {
+        slug: {
+            "source": "agent-surface/sources/system-conduct.md",
+            "applicable_agents": ["*"],
+        }
+    }
+    with (
+        patch("ingest_rules.AGENT_GUIDES_RULE_SLUGS", manifest),
+        patch("ingest_rules.validate_rule_manifest_slugs"),
+    ):
+        from ingest_rules import _check
+
+        assert _check(client, tmp_path) == 1
+
+
+def test_check_fails_and_names_orphan_rule_entities(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    slug = "system-conduct"
+    orphan_id = "rule:orphan-not-in-manifest"
+    rule_dir = tmp_path / "docs" / "agent-guides" / "rules"
+    rule_dir.mkdir(parents=True)
+    rule_file = rule_dir / f"{slug}.md"
+    rule_file.write_text("manifest body", encoding="utf-8")
+    source_uri = f"docs/agent-guides/rules/{slug}.md"
+    with patch("cortex_store.routes.boot._skill_trigger._FILES_ROOT", tmp_path):
+        digest = body_digest(source_uri, slug)
+    entity_id = f"rule:{slug}"
+    responses: dict[tuple[str, str], tuple[int, dict]] = {
+        ("GET", f"/entities/{entity_id}"): (
+            200,
+            {
+                "source_uri": source_uri,
+                "attributes": {
+                    "applicable_agents": ["*"],
+                    "digest": digest,
+                    "delivery_priority": 100,
+                },
+            },
+        ),
+        ("GET", "/entities"): (
+            200,
+            {"items": [{"id": entity_id}, {"id": orphan_id}]},
         ),
     }
     client = _mock_client(responses)
@@ -130,3 +180,46 @@ def test_tg1_check_fails_on_digest_drift(tmp_path: Path) -> None:
         from ingest_rules import _check
 
         assert _check(client, tmp_path) == 1
+    captured = capsys.readouterr()
+    assert orphan_id in captured.err
+    assert "orphan rule entity" in captured.err
+
+
+def test_check_passes_when_no_orphan_rule_entities(tmp_path: Path) -> None:
+    slug = "system-conduct"
+    rule_dir = tmp_path / "docs" / "agent-guides" / "rules"
+    rule_dir.mkdir(parents=True)
+    rule_file = rule_dir / f"{slug}.md"
+    rule_file.write_text("manifest body", encoding="utf-8")
+    source_uri = f"docs/agent-guides/rules/{slug}.md"
+    with patch("cortex_store.routes.boot._skill_trigger._FILES_ROOT", tmp_path):
+        digest = body_digest(source_uri, slug)
+    entity_id = f"rule:{slug}"
+    responses: dict[tuple[str, str], tuple[int, dict]] = {
+        ("GET", f"/entities/{entity_id}"): (
+            200,
+            {
+                "source_uri": source_uri,
+                "attributes": {
+                    "applicable_agents": ["*"],
+                    "digest": digest,
+                    "delivery_priority": 100,
+                },
+            },
+        ),
+        ("GET", "/entities"): (200, {"items": [{"id": entity_id}]}),
+    }
+    client = _mock_client(responses)
+    manifest = {
+        slug: {
+            "source": "agent-surface/sources/system-conduct.md",
+            "applicable_agents": ["*"],
+        }
+    }
+    with (
+        patch("ingest_rules.AGENT_GUIDES_RULE_SLUGS", manifest),
+        patch("ingest_rules.validate_rule_manifest_slugs"),
+    ):
+        from ingest_rules import _check
+
+        assert _check(client, tmp_path) == 0
