@@ -8,15 +8,23 @@ without linear thread reads. Body is projected JSON capped at 4 KB.
 from __future__ import annotations
 
 import json
-from typing import Any
+import sys
+import time
+from datetime import datetime
+from typing import Any, Literal
 
 import httpx
 
+from bus_watch.digest_budget import _utcnow
 from bus_watch.liaison_digest import _bus, effective_policy
+from bus_watch.liaison_pager import page_liaison
 from bus_watch.spawn_pending import row_is_terminal
 
 _BODY_CAP = 4096
 _LANE_CAP = 12
+_STALE_RETRY_MINUTES = 2
+
+PublishOutcome = Literal["published", "skipped", "failed"]
 
 
 def _lane_rank(row: dict[str, Any]) -> int:
@@ -26,6 +34,39 @@ def _lane_rank(row: dict[str, Any]) -> int:
     if row_is_terminal(row):
         return 2 if unread else 1
     return 0 if unread else 1
+
+
+def _induction_binds_uri(root_id: str) -> str:
+    return f"cortex://notes/system/threads/{root_id}-orchestrator/index"
+
+
+def _parse_iso_ts(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        normalized = str(value).replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized).timestamp()
+    except ValueError:
+        return None
+
+
+def _digest_is_stale(digest: dict[str, Any], state: dict[str, Any]) -> bool:
+    root_turns = (digest.get("root") or {}).get("turns")
+    prior = state.get("digest_turn_number")
+    if prior is None or root_turns is None:
+        return False
+    return int(root_turns) > int(prior)
+
+
+def _stale_retry_due(state: dict[str, Any], *, now: float | None = None) -> bool:
+    now_ts = now if now is not None else time.time()
+    last = state.get("last_stale_publish_attempt_at")
+    if not last:
+        return True
+    last_ts = _parse_iso_ts(str(last))
+    if last_ts is None:
+        return True
+    return (now_ts - last_ts) >= (_STALE_RETRY_MINUTES * 60)
 
 
 def _attn_rank(item: dict[str, Any]) -> int:
@@ -55,6 +96,18 @@ def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
     root = digest.get("root") or {}
     policy = digest.get("policy") or {}
     budget = digest.get("budget") or {}
+    root_id = str(root.get("id") or "")
+    binds = policy.get("induction_binds") or []
+    policy_out: dict[str, Any] = {
+        "gear": policy.get("gear"),
+        "successor_model": policy.get("successor_model"),
+        "successor_model_source": policy.get("successor_model_source"),
+        "post_digest": policy.get("post_digest"),
+    }
+    if binds:
+        # Publish floor: count + cortex URI only — full binds live in tick.json.
+        policy_out["induction_binds_count"] = len(binds)
+        policy_out["induction_binds_uri"] = _induction_binds_uri(root_id)
     out: dict[str, Any] = {
         # First key on purpose: the planted address a woken seat reads before
         # the counters (10479 #120 — plant the address in what the seat reads).
@@ -66,23 +119,13 @@ def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
             "turns": root.get("turns"),
             "unread": root.get("unread"),
             "last_subject": root.get("last_subject"),
-            "recent_turns": root.get("recent_turns"),
             "tip_checkpoint_turn": root.get("tip_checkpoint_turn"),
         },
         "attention": attention,
         "checkpoint_due": digest.get("checkpoint_due"),
         "lanes": lanes,
         "watchers": digest.get("watchers_complete_unrelayed"),
-        "policy": {
-            "gear": policy.get("gear"),
-            "successor_model": policy.get("successor_model"),
-            "successor_model_source": policy.get("successor_model_source"),
-            "post_digest": policy.get("post_digest"),
-            # Standing operator binds (liaison-tick --set induction_binds=…); the
-            # navigator reads the published DIGEST policy object, not the full
-            # state file — omitting this key made writes silently decorative (a:33719).
-            "induction_binds": policy.get("induction_binds"),
-        },
+        "policy": policy_out,
         "budget": {
             "stop_class": budget.get("stop_class"),
             "source": budget.get("source"),
@@ -155,11 +198,26 @@ def render_body(projection: dict[str, Any], *, cap: int = _BODY_CAP) -> str | No
         return None
 
 
-def _publish_failed(error: str) -> None:
+def _publish_skipped(reason: str) -> None:
     print(
-        json.dumps({"loop": "digest_publish_failed", "error": error[:200]}),
+        json.dumps({"loop": "digest_publish_skipped", "reason": reason}),
         flush=True,
     )
+
+
+def _publish_failed(root_id: str, state: dict[str, Any], error: str) -> None:
+    err = error[:200]
+    state["last_publish_error"] = err
+    state["last_publish_attempt_at"] = _utcnow()
+    print(json.dumps({"loop": "digest_publish_failed", "error": err}), flush=True)
+    print(f"DIGEST_PUBLISH_FAILED root={root_id} error={err}", file=sys.stderr, flush=True)
+    if state.get("last_paged_publish_error") != err:
+        page_liaison(
+            root_id,
+            f"liaison {root_id} — digest publish failed",
+            err,
+        )
+        state["last_paged_publish_error"] = err
 
 
 def publish_digest(
@@ -172,7 +230,7 @@ def publish_digest(
     """Post ``DIGEST <root> <ts>`` on the root; supersede the prior digest turn."""
     body = render_body(project_digest(digest))
     if body is None:
-        _publish_failed("body_exceeds_cap")
+        _publish_failed(root_id, state, "body_exceeds_cap")
         return None
     ts = digest.get("ts") or ""
     payload: dict[str, Any] = {
@@ -196,25 +254,28 @@ def publish_digest(
             with _bus() as c:
                 resp = _post(c)
     except httpx.HTTPError as exc:
-        _publish_failed(f"{type(exc).__name__}: {exc}")
+        _publish_failed(root_id, state, f"{type(exc).__name__}: {exc}")
         return None
     if resp.status_code >= 400:
-        _publish_failed(f"http_{resp.status_code}")
+        _publish_failed(root_id, state, f"http_{resp.status_code}")
         return None
     try:
         data = resp.json()
     except ValueError:
-        _publish_failed("non_json_response")
+        _publish_failed(root_id, state, "non_json_response")
         return None
     turn = data.get("turn") if isinstance(data.get("turn"), dict) else {}
     turn_number = turn.get("turn_number")
     turn_id = turn.get("id")
     if turn_number is None:
-        _publish_failed("missing_turn_number")
+        _publish_failed(root_id, state, "missing_turn_number")
         return None
     state["digest_turn_number"] = turn_number
     if turn_id is not None:
         state["digest_turn_id"] = turn_id
+    state["last_publish_error"] = None
+    state["last_paged_publish_error"] = None
+    state["last_publish_attempt_at"] = _utcnow()
     return {"turn_number": turn_number, "turn_id": turn_id}
 
 
@@ -225,7 +286,7 @@ def publish_if_enabled(
     *,
     require_change: bool = False,
     client: httpx.Client | None = None,
-) -> bool:
+) -> PublishOutcome:
     """Publish when ``post_digest`` policy is on; optional digest-change gate.
 
     Our own DIGEST turn bumps the root's turn count, so the next tick would read as
@@ -233,16 +294,25 @@ def publish_if_enabled(
     the root's newest turn is the digest we posted and the lanes/attention we
     published from are unchanged — nothing happened, so nothing is published.
     """
-    if require_change and not digest.get("changed_since_last_tick"):
-        return False
     if not effective_policy(state).get("post_digest"):
-        return False
+        _publish_skipped("post_digest_off")
+        return "skipped"
     if is_own_digest_echo(digest, state):
-        return False
+        _publish_skipped("own_echo")
+        return "skipped"
+    changed = bool(digest.get("changed_since_last_tick"))
+    stale = _digest_is_stale(digest, state)
+    force_stale = stale and _stale_retry_due(state)
+    if require_change and not changed and not force_stale:
+        _publish_skipped("require_change")
+        return "skipped"
+    if force_stale:
+        state["last_stale_publish_attempt_at"] = _utcnow()
     published = publish_digest(root_id, digest, state, client=client)
     if published is not None:
         state["digest_lanes_fp"] = _lanes_fingerprint(digest)
-    return published is not None
+        return "published"
+    return "failed"
 
 
 def _lanes_fingerprint(digest: dict[str, Any]) -> str:
@@ -287,6 +357,7 @@ def is_own_digest_echo(digest: dict[str, Any], state: dict[str, Any]) -> bool:
 
 
 __all__ = [
+    "PublishOutcome",
     "is_own_digest_echo",
     "project_digest",
     "publish_digest",

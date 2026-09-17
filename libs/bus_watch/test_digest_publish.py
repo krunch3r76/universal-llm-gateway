@@ -6,8 +6,10 @@ import json
 from unittest.mock import MagicMock
 
 import httpx
+import pytest
 
 from bus_watch.digest_publish import (
+    _BODY_CAP,
     project_digest,
     publish_digest,
     publish_if_enabled,
@@ -82,8 +84,8 @@ def test_projection_drops_unlisted_keys_and_filters_terminal() -> None:
         "successor_model": "cursor/claude-opus-5",
         "successor_model_source": None,
         "post_digest": True,
-        "induction_binds": None,
     }
+    assert "recent_turns" not in proj["root"]
     assert proj["budget"] == {
         "stop_class": None,
         "source": None,
@@ -110,23 +112,68 @@ def test_projection_omits_life_for_code_root_digest() -> None:
     assert "life" not in proj
 
 
-def test_projection_includes_induction_binds_in_policy() -> None:
-    """Regression for a:33719 — navigator reads published policy, not state file."""
+def test_projection_sheds_induction_binds_to_uri() -> None:
+    """Publish floor: count + cortex URI only (a:35271 / a:33719 successor)."""
     binds = ["hopper paused (10479#210)", "cap 999 lane=B"]
     digest = _full_digest(
+        root={"id": "10479", "slug": "liaison-root", "turns": 10, "unread": 1},
         policy={
             "gear": "3-wake-on-attention",
             "successor_model": "cursor/claude-opus-5",
             "post_digest": True,
             "induction_binds": binds,
-        }
+        },
     )
     proj = project_digest(digest)
-    assert proj["policy"]["induction_binds"] == binds
+    assert proj["policy"]["induction_binds_count"] == 2
+    assert (
+        proj["policy"]["induction_binds_uri"]
+        == "cortex://notes/system/threads/10479-orchestrator/index"
+    )
+    assert "induction_binds" not in proj["policy"]
     body = render_body(proj)
     assert body is not None
     parsed = json.loads(body)
-    assert parsed["policy"]["induction_binds"] == binds
+    assert parsed["policy"]["induction_binds_count"] == 2
+    assert "induction_binds" not in parsed["policy"]
+
+
+def test_render_body_10479_scale_floor_fits_cap() -> None:
+    """Regression for a:35271 — 20×400 root turns + 14 binds must fit 4 KB."""
+    recent_turns = [
+        {
+            "turn_number": i,
+            "subject": f"turn-{i}",
+            "body": "x" * 400,
+            "from": "cursor",
+        }
+        for i in range(20)
+    ]
+    binds = [f"operator bind paragraph {i}: " + ("y" * 200) for i in range(14)]
+    digest = _full_digest(
+        root={
+            "id": "10479",
+            "slug": "liaison-root",
+            "turns": 2780,
+            "unread": 0,
+            "last_subject": "CHECKPOINT",
+            "recent_turns": recent_turns,
+            "tip_checkpoint_turn": 2778,
+        },
+        policy={
+            "gear": "3-wake-on-attention",
+            "successor_model": "cdp/opus-5",
+            "post_digest": True,
+            "induction_binds": binds,
+        },
+    )
+    proj = project_digest(digest)
+    body = render_body(proj)
+    assert body is not None
+    assert len(body.encode("utf-8")) <= _BODY_CAP
+    parsed = json.loads(body)
+    assert "recent_turns" not in parsed["root"]
+    assert parsed["policy"]["induction_binds_count"] == 14
 
 
 def test_render_body_fits_cap_with_many_lanes() -> None:
@@ -176,9 +223,11 @@ def test_publish_http_error_returns_none_state_unchanged() -> None:
     client = MagicMock()
     client.post.side_effect = httpx.HTTPError("down")
     state = {"digest_turn_number": 5, "digest_turn_id": 50}
-    before = dict(state)
     assert publish_digest("10479", _full_digest(), state, client=client) is None
-    assert state == before
+    assert state["digest_turn_number"] == 5
+    assert state["digest_turn_id"] == 50
+    assert state["last_publish_error"] == "HTTPError: down"
+    assert state["last_publish_attempt_at"]
 
 
 def test_publish_if_enabled_skips_echo_of_own_digest_turn() -> None:
@@ -191,7 +240,7 @@ def test_publish_if_enabled_skips_echo_of_own_digest_turn() -> None:
     state = {"policy": {"gear": "3-wake-on-attention"}}
     budget = {"kind": "budget_estimate", "used_tokens": 1, "pct": 0.1}
     first = _full_digest(changed_since_last_tick=True, attention=[{"id": "2"}, budget])
-    assert publish_if_enabled("10479", first, state, client=client) is True
+    assert publish_if_enabled("10479", first, state, client=client) == "published"
     assert state["digest_turn_number"] == 11
     # Next tick: root.turns == our turn, everything a reader acts on is unchanged;
     # the budget estimate's moving numbers must not count as a change.
@@ -200,15 +249,79 @@ def test_publish_if_enabled_skips_echo_of_own_digest_turn() -> None:
         changed_since_last_tick=True, attention=[{"id": "2"}, moved_budget]
     )
     echo["root"] = {**echo["root"], "turns": 11, "last_subject": "DIGEST 10479 …"}
-    assert publish_if_enabled("10479", echo, state, client=client) is False
+    assert publish_if_enabled("10479", echo, state, client=client) == "skipped"
     assert client.post.call_count == 1
     # A real lane change on top of the echo publishes again.
     moved = _full_digest(changed_since_last_tick=True)
     moved["root"] = {**moved["root"], "turns": 11}
     moved["lanes"][1] = {**moved["lanes"][1], "turns": 7}
     resp.json.return_value = {"turn": {"turn_number": 12, "id": 1002}}
-    assert publish_if_enabled("10479", moved, state, client=client) is True
+    assert publish_if_enabled("10479", moved, state, client=client) == "published"
     assert client.post.call_count == 2
+
+
+def test_publish_failure_is_loud_and_persisted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pages: list[tuple] = []
+    monkeypatch.setattr(
+        "bus_watch.digest_publish.page_liaison", lambda *a: pages.append(a)
+    )
+    monkeypatch.setattr(
+        "bus_watch.digest_publish.render_body",
+        lambda *_a, **_k: None,
+    )
+    state: dict = {"digest_turn_number": 5}
+    result = publish_digest("10479", _full_digest(), state, client=MagicMock())
+    assert result is None
+    assert state["last_publish_error"] == "body_exceeds_cap"
+    assert state["last_publish_attempt_at"]
+    captured = capsys.readouterr()
+    assert '{"loop": "digest_publish_failed", "error": "body_exceeds_cap"}' in (
+        captured.out
+    )
+    assert "DIGEST_PUBLISH_FAILED root=10479 error=body_exceeds_cap" in captured.err
+    assert len(pages) == 1
+
+
+def test_stale_retry_bypasses_require_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 201
+    resp.json.return_value = {"turn": {"turn_number": 2680, "id": 7000}}
+    client.post.return_value = resp
+    state = {
+        "policy": {"gear": "3-wake-on-attention"},
+        "digest_turn_number": 2679,
+    }
+    digest = _full_digest(
+        changed_since_last_tick=False,
+        root={"id": "10479", "turns": 2780, "unread": 0, "last_subject": "x"},
+    )
+    assert (
+        publish_if_enabled(
+            "10479", digest, state, require_change=True, client=client
+        )
+        == "published"
+    )
+    assert state["digest_turn_number"] == 2680
+
+
+def test_publish_skipped_require_change_emits_reason(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    state = {"policy": {"gear": "3-wake-on-attention"}, "digest_turn_number": 99}
+    digest = _full_digest(
+        changed_since_last_tick=False,
+        root={"id": "10479", "turns": 99, "unread": 0, "last_subject": "x"},
+    )
+    assert (
+        publish_if_enabled("10479", digest, state, require_change=True) == "skipped"
+    )
+    captured = capsys.readouterr()
+    assert (
+        '{"loop": "digest_publish_skipped", "reason": "require_change"}' in captured.out
+    )
 
 
 def test_render_body_wide_attention_keeps_induction() -> None:

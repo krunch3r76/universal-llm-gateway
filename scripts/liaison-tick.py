@@ -436,7 +436,12 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
                 time.sleep(poll_s)
                 continue
             spawn_result = tick_spawn_on_wake(digest, state, root, dry_run=args.dry_run)
-            publish_if_enabled(root, digest, state, require_change=True)
+            prior_fp = state.get("fingerprint")
+            publish_outcome = publish_if_enabled(
+                root, digest, state, require_change=True
+            )
+            if publish_outcome == "failed" and digest.get("changed_since_last_tick"):
+                state["fingerprint"] = prior_fp
             save_state(state_path, state)
             line = {
                 "spawn": spawn_result,
@@ -505,7 +510,9 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
             if budget_stop_new:
                 state["budget_stop_emitted_epoch"] = budget.get("epoch")
             save_state(state_path, state)
-            publish_if_enabled(root, digest, state) and save_state(state_path, state)
+            publish_if_enabled(root, digest, state) == "published" and save_state(
+                state_path, state
+            )
             print(f"{_SENTINEL} {json.dumps(digest, default=str)}", flush=True)
             last_emit = now
         else:
