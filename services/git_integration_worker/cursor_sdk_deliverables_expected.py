@@ -15,7 +15,9 @@ cannot launder a zero-artifact complete/shipped.
 from __future__ import annotations
 
 import re
+import subprocess
 from collections.abc import Iterable
+from pathlib import Path
 
 from implement_admission.normalize import _files_from_packet
 
@@ -28,6 +30,17 @@ from services.git_integration_worker.cursor_sdk_residual_deliverable_capture imp
 )
 
 GIT_UNREACHABLE_REASON = "git unreachable"
+_GIT_TIMEOUT_S = 10.0
+HUB_MASTER_HEAD_RECOVERED = "hub_master_head_recovered:lane_meter_zero"
+HUB_MASTER_HEAD_RECOVERY_NOT_FOUND = (
+    "hub_master_head_recovery:dispatch_commit_not_found"
+)
+HUB_MASTER_HEAD_RECOVERY_EQUALS_TIP = (
+    "hub_master_head_recovery:recovered_equals_lane_tip"
+)
+HUB_MASTER_HEAD_RECOVERY_NOT_AHEAD = (
+    "hub_master_head_recovery:recovered_not_ahead_of_branch_point"
+)
 
 _EVIDENCE_REQUIRED_RE = re.compile(
     r"^[ \t]*evidence_required\s*:\s*(.+)$",
@@ -122,6 +135,109 @@ def admit_landed_true(
     if commits_ahead is None:
         return None
     return commits_ahead >= 1
+
+
+def _count_commits_between(
+    source_repo: Path, base_sha: str, tip_sha: str
+) -> int | None:
+    """Return commit count ``base_sha..tip_sha``; None when git cannot measure."""
+    try:
+        proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(source_repo),
+                "rev-list",
+                "--count",
+                f"{base_sha}..{tip_sha}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0 or not proc.stdout.strip().isdigit():
+        return None
+    return int(proc.stdout.strip())
+
+
+def resolve_lane_b_landed_head(
+    source_repo: Path,
+    *,
+    dispatch_id: str,
+    branch_point: str,
+    lane_head_sha: str | None,
+    commits_ahead: int | None,
+    files_outside_repo: tuple[str, ...],
+) -> tuple[str | None, int | None, str | None]:
+    """Recover hub-master head when lane meter reads 0 but hub-path writes exist.
+
+    Lane-B ``branch_state`` measures only the lane branch tip. A dispatch that
+    commits path-explicitly on hub master leaves ``commits_ahead=0`` while the
+    real dispatch commit sits on ``receipt_tree``. Re-resolve via
+    ``recover_capture_head`` and measure ``branch_point..recovered`` so G₂ can
+    admit landed without relaxing ``admit_landed_true``. Side effects: git read.
+    """
+    if commits_ahead != 0:
+        return lane_head_sha, commits_ahead, None
+    if not files_outside_repo:
+        return lane_head_sha, commits_ahead, None
+    if not lane_head_sha:
+        return lane_head_sha, commits_ahead, None
+
+    from services.git_integration_worker.cursor_auto.closeout_capture_head_recover import (
+        recover_capture_head,
+    )
+
+    recovered_sha, _recovered_branch = recover_capture_head(
+        source_repo, dispatch_id=dispatch_id
+    )
+    if not recovered_sha:
+        return (
+            lane_head_sha,
+            commits_ahead,
+            HUB_MASTER_HEAD_RECOVERY_NOT_FOUND,
+        )
+    if recovered_sha == lane_head_sha:
+        return (
+            lane_head_sha,
+            commits_ahead,
+            HUB_MASTER_HEAD_RECOVERY_EQUALS_TIP,
+        )
+
+    recovered_ahead = _count_commits_between(
+        source_repo, branch_point, recovered_sha
+    )
+    if recovered_ahead is None or recovered_ahead < 1:
+        return (
+            lane_head_sha,
+            commits_ahead,
+            HUB_MASTER_HEAD_RECOVERY_NOT_AHEAD,
+        )
+
+    return recovered_sha, recovered_ahead, HUB_MASTER_HEAD_RECOVERED
+
+
+def annotate_landed_resolution_disagreement(
+    resolution_reason: str | None,
+    *,
+    landed: bool | None,
+    ancestry_on_master: bool | None,
+) -> str | None:
+    """Append ancestry disagreement suffix when recovery and G₂ still diverge."""
+    if not resolution_reason or not resolution_reason.startswith(
+        "hub_master_head_recovered"
+    ):
+        return resolution_reason
+    if landed is not False:
+        return resolution_reason
+    if ancestry_on_master is False:
+        return f"{resolution_reason}:ancestry_disagrees"
+    if ancestry_on_master is None:
+        return f"{resolution_reason}:ancestry_unknown"
+    return resolution_reason
 
 
 def _has_tracked_paths(

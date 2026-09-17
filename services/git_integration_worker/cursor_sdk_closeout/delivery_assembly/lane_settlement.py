@@ -38,6 +38,7 @@ def settle_lane_and_dispatch_fields(
     offgit_uris: object,
     thread_id: str,
     gate_d_created_rels: tuple[str, ...],
+    files_outside_repo: tuple[str, ...] = (),
 ) -> tuple[
     str | None,
     str | None,
@@ -53,6 +54,7 @@ def settle_lane_and_dispatch_fields(
     str | None,
     list[str],
     str | None,
+    str | None,
 ]:
     lane_b_lane: str | None = None
     lane_b_branch: str | None = None
@@ -60,6 +62,7 @@ def settle_lane_and_dispatch_fields(
     lane_b_head_sha: str | None = None
     lane_b_commits_ahead: int | None = None
     lane_b_landed: bool | None = None
+    landed_resolution_reason: str | None = None
     if binding is not None and binding.lane == "B":
         from services.git_integration_worker.cursor_sdk_lane_b_commit import (
             branch_state,
@@ -114,6 +117,27 @@ def settle_lane_and_dispatch_fields(
             lane_b_branch_point = record.branch_point
             lane_b_head_sha = state.head_sha
             lane_b_commits_ahead = state.commits_ahead
+            from services.git_integration_worker.cursor_sdk_deliverables_expected import (
+                annotate_landed_resolution_disagreement,
+                resolve_lane_b_landed_head,
+            )
+
+            resolved_head, resolved_ahead, resolution_reason = (
+                resolve_lane_b_landed_head(
+                    binding.receipt_tree,
+                    dispatch_id=dispatch_id,
+                    branch_point=record.branch_point,
+                    lane_head_sha=state.head_sha,
+                    commits_ahead=state.commits_ahead,
+                    files_outside_repo=files_outside_repo,
+                )
+            )
+            if resolution_reason:
+                landed_resolution_reason = resolution_reason
+            if resolved_head is not None:
+                lane_b_head_sha = resolved_head
+            if resolved_ahead is not None:
+                lane_b_commits_ahead = resolved_ahead
             # landed@local-master — ancestry probe + G₂ meter; unknown stays None.
             from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
                 probe_three_planes,
@@ -121,7 +145,7 @@ def settle_lane_and_dispatch_fields(
 
             plane_obs = probe_three_planes(
                 binding.receipt_tree,
-                head_sha=state.head_sha,
+                head_sha=lane_b_head_sha,
                 branch=record.branch_name,
             )
             # G₂: measured 0 refuses vacuous True; unknown ancestry/meter → None.
@@ -131,7 +155,12 @@ def settle_lane_and_dispatch_fields(
 
             lane_b_landed = admit_landed_true(
                 ancestry_on_master=plane_obs.landed_local_master,
-                commits_ahead=state.commits_ahead,
+                commits_ahead=lane_b_commits_ahead,
+            )
+            landed_resolution_reason = annotate_landed_resolution_disagreement(
+                landed_resolution_reason,
+                landed=lane_b_landed,
+                ancestry_on_master=plane_obs.landed_local_master,
             )
             if outcome.status != "finished" and not state.safe_to_delete:
                 from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
@@ -233,5 +262,5 @@ def settle_lane_and_dispatch_fields(
         lane_b_lane, lane_b_branch, lane_b_branch_point, capture_head_sha,
         capture_commits_ahead, capture_commits_ahead_unfiltered, capture_landed,
         reported_lane, isolation_mat, escalation_harvest, cortex_authoritative,
-        closeout_head, deviations, divergence_reason,
+        closeout_head, deviations, divergence_reason, landed_resolution_reason,
     )

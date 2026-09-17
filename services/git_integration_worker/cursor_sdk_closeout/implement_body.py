@@ -115,6 +115,7 @@ def build_implement_closeout_body(
     commits_ahead: int | None = None,
     commits_ahead_unfiltered: int | None = None,
     landed: bool | None = None,
+    landed_resolution_reason: str | None = None,
     isolation_materialized: bool | None = None,
     escalation_harvest: str | None = "none",
     resolved_model: str | None = None,
@@ -429,6 +430,8 @@ def build_implement_closeout_body(
             payload["landed"] = landed
         else:
             payload.pop("landed", None)
+        if landed_resolution_reason:
+            payload["landed_resolution_reason"] = landed_resolution_reason
         if sdk_mode is not None and sdk_mode != "agent":
             payload["sdk_mode"] = sdk_mode
         if nest_implement_hint is not None:

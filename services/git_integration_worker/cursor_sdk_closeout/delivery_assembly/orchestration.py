@@ -124,7 +124,7 @@ def _assemble_closeout_delivery(
     lane_b_lane, lane_b_branch, lane_b_branch_point, capture_head_sha,
     capture_commits_ahead, capture_commits_ahead_unfiltered, capture_landed,
     reported_lane, isolation_mat, escalation_harvest, cortex_authoritative,
-    closeout_head, deviations, divergence_reason,
+    closeout_head, deviations, divergence_reason, landed_resolution_reason,
     ) = lane_settlement.settle_lane_and_dispatch_fields(
     binding=binding,
     dispatch_id=dispatch_id,
@@ -139,6 +139,7 @@ def _assemble_closeout_delivery(
     offgit_uris=offgit_uris,
     thread_id=thread_id,
     gate_d_created_rels=gate_d_created_rels,
+    files_outside_repo=all_outside_repo,
     )
     from services.git_integration_worker.cursor_sdk_mode import sdk_mode_for_dispatch
 
@@ -183,6 +184,7 @@ def _assemble_closeout_delivery(
     commits_ahead=capture_commits_ahead,
     commits_ahead_unfiltered=capture_commits_ahead_unfiltered,
     landed=capture_landed,
+    landed_resolution_reason=landed_resolution_reason,
     isolation_materialized=isolation_mat,
     escalation_harvest=escalation_harvest,
     resolved_model=resolved_model,
