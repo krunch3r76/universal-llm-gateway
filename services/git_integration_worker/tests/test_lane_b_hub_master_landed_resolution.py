@@ -22,6 +22,7 @@ from services.git_integration_worker.cursor_sdk_closeout.delivery_assembly.lane_
 )
 from services.git_integration_worker.cursor_sdk_deliverables_expected import (
     HUB_MASTER_HEAD_RECOVERED,
+    HUB_MASTER_HEAD_RECOVERY_NOT_FOUND,
 )
 from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     branch_state,
@@ -185,6 +186,52 @@ def test_ac2_hub_master_commit_reports_landed_true_11616_shape(
     assert reason == HUB_MASTER_HEAD_RECOVERED
 
 
+def test_ac3_noop_dispatch_reports_landed_false(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """AC3 falsifier — dispatch that commits nothing must stay landed=false."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "auto-noop-shape"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/lane-{dispatch_id}"
+    branch_point = resolve_master_branch_point(source_repo)
+    state = branch_state(
+        source_repo,
+        branch_name=branch,
+        branch_point=branch_point,
+    )
+    assert state.commits_ahead == 0
+    assert state.head_sha == branch_point
+
+    cfg = _cfg(source_repo, worktree_root)
+    binding = _lane_b_binding(cfg, wt)
+    landed, head_sha, commits_ahead, reason = _settle_lane_b(
+        source_repo=source_repo,
+        binding=binding,
+        dispatch_id=dispatch_id,
+        files_outside_repo=(),
+    )
+    assert landed is False
+    assert head_sha == branch_point
+    assert commits_ahead == 0
+    assert reason is None
+
+    landed2, head_sha2, commits_ahead2, reason2 = _settle_lane_b(
+        source_repo=source_repo,
+        binding=binding,
+        dispatch_id=dispatch_id,
+        files_outside_repo=("services/phantom_hub_write.py",),
+    )
+    assert landed2 is False
+    assert head_sha2 == branch_point
+    assert commits_ahead2 == 0
+    assert reason2 == HUB_MASTER_HEAD_RECOVERY_NOT_FOUND
+
+
 def test_ac3_unmerged_lane_branch_stays_not_landed_11611_shape(
     source_repo: Path, tmp_path: Path
 ) -> None:
@@ -274,6 +321,7 @@ def test_ac2_ac3_ac4_subprocess_exit_codes() -> None:
     )
     cases = (
         "test_ac2_hub_master_commit_reports_landed_true_11616_shape",
+        "test_ac3_noop_dispatch_reports_landed_false",
         "test_ac3_unmerged_lane_branch_stays_not_landed_11611_shape",
         "test_ac4_lane_branch_advance_unchanged_11618_shape",
     )
