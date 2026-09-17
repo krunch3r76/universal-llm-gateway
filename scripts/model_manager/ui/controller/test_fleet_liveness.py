@@ -296,6 +296,90 @@ def test_snapshot_copies_detail_pid_health_url(
     assert rag["health_url"] == "unix:///tmp/universal-protocol/rag.sock/stats"
 
 
+def test_omitting_activation_validation_id_preserves_join_miss_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Omitting activation_validation_id must not widen the primary join."""
+    empty_probe = {
+        "raw": "",
+        "paths": {},
+        "errors": [],
+        "branch": "master",
+        "head_sha": "head",
+        "clock": {},
+    }
+    probes = iter((empty_probe, empty_probe))
+    monkeypatch.setattr(live, "_tree_probe", lambda *_: next(probes))
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=1
+        ),
+    )
+    monkeypatch.setattr(
+        live,
+        "_container_start",
+        lambda _container: {
+            "kind": "container_started_at",
+            "value_utc": None,
+            "granularity_s": 0.001,
+            "clock_domain": "docker_host",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_mcp_reported_version",
+        lambda _container: {
+            "field": "code_version",
+            "value": None,
+            "denotes": "test",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_process_start",
+        lambda _pid: {
+            "kind": "host_proc_start",
+            "value_utc": "2026-08-15T00:00:00Z",
+            "granularity_s": 0.001,
+            "clock_domain": "host_proc",
+            "error": None,
+        },
+    )
+    calls: list[dict[str, object | None]] = []
+
+    def _current_validation(service, code_ref, *, activation_validation_id=None):
+        calls.append(
+            {
+                "service": service,
+                "code_ref": code_ref,
+                "activation_validation_id": activation_validation_id,
+            }
+        )
+        return {
+            "verdict": "activation_unattributed",
+            "liveness": {"answer": "yes", "observation": {}},
+            "activation": None,
+        }
+
+    monkeypatch.setattr(live, "current_validation", _current_validation)
+    result = live.build_snapshot(tmp_path, SimpleNamespace(), code_ref="probe-sha")
+    giw = next(
+        row for row in result["services"] if row["service"] == "git_integration_worker"
+    )
+    assert giw["code_ref_validation"]["verdict"] == "activation_unattributed"
+    assert giw["code_ref_validation"]["activation"] is None
+    giw_call = next(c for c in calls if c["service"] == "git_integration_worker")
+    assert giw_call == {
+        "service": "git_integration_worker",
+        "code_ref": "probe-sha",
+        "activation_validation_id": None,
+    }
+
+
 def test_code_ref_validation_labeled_derived_under_manage_authority(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:

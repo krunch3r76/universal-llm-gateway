@@ -135,9 +135,12 @@ def _code_ref_validation_with_provenance(
     *,
     authoritative_status: str,
     health_url: str | None,
+    activation_validation_id: str | None = None,
 ) -> dict[str, Any]:
     """Attach code-ref liveness as a derived plane under manage health authority."""
-    validation = current_validation(service, code_ref)
+    validation = current_validation(
+        service, code_ref, activation_validation_id=activation_validation_id
+    )
     liveness = validation.get("liveness") or {}
     observation = liveness.get("observation") or {}
     provenance: dict[str, Any] = {
@@ -171,7 +174,11 @@ def _code_ref_validation_with_provenance(
 
 
 def build_snapshot(
-    root: Path, service_state: ServiceState, *, code_ref: str | None = None
+    root: Path,
+    service_state: ServiceState,
+    *,
+    code_ref: str | None = None,
+    activation_validation_id: str | None = None,
 ) -> dict[str, Any]:
     """Build a fresh evidence snapshot without mutating checkout or services.
 
@@ -286,6 +293,7 @@ def build_snapshot(
                 code_ref,
                 authoritative_status=row["status"],
                 health_url=row.get("health_url"),
+                activation_validation_id=activation_validation_id,
             )
 
     finished = time.time()

@@ -21,11 +21,14 @@ class _Recorder:
         return decorate
 
 
-def test_registers_zero_argument_read_only_wrapper() -> None:
+def test_registers_optional_code_ref_and_activation_validation_id() -> None:
     recorder = _Recorder()
     fleet_liveness.register_fleet_liveness_tools(recorder)  # type: ignore[arg-type]
     fn = recorder.functions["fleet_liveness"]
-    assert list(inspect.signature(fn).parameters) == []
+    assert list(inspect.signature(fn).parameters) == [
+        "code_ref",
+        "activation_validation_id",
+    ]
 
 
 def test_wrapper_forwards_manage_snapshot(monkeypatch) -> None:
@@ -42,3 +45,28 @@ def test_wrapper_forwards_manage_snapshot(monkeypatch) -> None:
         lambda raw: raw["result"],
     )
     assert recorder.functions["fleet_liveness"]() == {"schema_version": 1}
+
+
+def test_wrapper_forwards_activation_validation_id(monkeypatch) -> None:
+    recorder = _Recorder()
+    fleet_liveness.register_fleet_liveness_tools(recorder)  # type: ignore[arg-type]
+    captured: list[dict] = []
+
+    def _capture(body, timeout):
+        captured.append(body)
+        return {"result": {"schema_version": 1}}
+
+    monkeypatch.setattr(fleet_liveness, "_call_manage", _capture)
+    monkeypatch.setattr(
+        fleet_liveness,
+        "_extract_result",
+        lambda raw: raw["result"],
+    )
+    recorder.functions["fleet_liveness"](
+        code_ref="abc",
+        activation_validation_id="val-1",
+    )
+    assert captured[0]["params"] == {
+        "code_ref": "abc",
+        "activation_validation_id": "val-1",
+    }
