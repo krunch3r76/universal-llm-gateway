@@ -206,6 +206,7 @@ def build_chain_segments(
                 "turn_count": turn_hi - turn_lo,
                 "verbatim_sha256": _verbatim_sha256(verbatim),
                 "conversation_uuid": journal.get("conversation_uuid"),
+                "verbatim_codec": journal.get("verbatim_codec") or "md-v1",
             }
         )
     return segments
@@ -346,6 +347,7 @@ def build_lane_segments(
                     "turn_count": seg.turn_count,
                     "verbatim_sha256": seg.verbatim_sha256,
                     "conversation_uuid": seg.conversation_uuid,
+                    "verbatim_codec": journal.get("verbatim_codec") or "md-v1",
                     "binding": journal.get("_binding", seg.binding),
                     "dominant_lane": journal.get("_dominant_lane"),
                     "boundary": seg.boundary or (
