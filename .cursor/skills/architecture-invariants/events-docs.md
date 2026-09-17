@@ -26,7 +26,7 @@ Extending one factory's payload in event family E ⇒ audit every sibling factor
 
 Architecture change adding/changing/removing observable behavior ⇒ update event vocabulary same change.  
 Generated table regions in `docs/event-contracts.md` come from `scripts/gen-event-catalog`; ¬hand-edit inside `<!-- GENERATED -->` markers.  
-Run `scripts/gen-event-catalog --check` to enforce code↔doc parity. Curated prose lives outside markers.
+Run `gen-event-catalog check` to enforce code↔doc parity. Curated prose lives outside markers.
 
 ## Dormancy (cross-ref `[quality]`)
 
