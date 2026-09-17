@@ -230,6 +230,46 @@ def iter_regions(text: str):
             i += 1
 
 
+_INSERT_ANCHOR = "## Ordering Guarantees"
+
+
+def insert_missing_regions(
+    doc_path: Path,
+    records: list[FactoryRecord],
+    overlay: dict[str, str],
+    inventory_sha: str,
+) -> int:
+    """Insert GENERATED regions for code domains that have no region in the doc.
+
+    New blocks are placed immediately before ``_INSERT_ANCHOR``, sorted by domain
+    name, so repeated sync runs produce identical placement.
+    """
+    text = doc_path.read_text(encoding="utf-8")
+    by_domain: dict[str, list[FactoryRecord]] = {}
+    for r in records:
+        by_domain.setdefault(r.domain, []).append(r)
+
+    existing = {region for region, _, _, _ in iter_regions(text)}
+    missing = sorted(set(by_domain) - existing)
+    if not missing:
+        return 0
+
+    blocks = [
+        render_region(domain, by_domain[domain], overlay, inventory_sha)
+        for domain in missing
+    ]
+    insert_text = "\n\n".join(blocks) + "\n\n"
+
+    anchor_idx = text.find(_INSERT_ANCHOR)
+    if anchor_idx == -1:
+        new_text = text.rstrip() + "\n\n" + insert_text
+    else:
+        new_text = text[:anchor_idx] + insert_text + text[anchor_idx:]
+
+    doc_path.write_text(new_text, encoding="utf-8")
+    return len(missing)
+
+
 def patch_doc(
     doc_path: Path,
     records: list[FactoryRecord],
@@ -237,6 +277,7 @@ def patch_doc(
     inventory_sha: str,
 ) -> None:
     """Replace each GENERATED region body with freshly rendered domain table."""
+    insert_missing_regions(doc_path, records, overlay, inventory_sha)
     text = doc_path.read_text(encoding="utf-8")
     by_domain: dict[str, list[FactoryRecord]] = {}
     for r in records:

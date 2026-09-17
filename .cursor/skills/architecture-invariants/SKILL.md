@@ -33,7 +33,7 @@ Cite applicable tags in handoff Block 2. Load deferred refs by tag when procedur
 | `[quality:bug-class-sweep]` | Bugfix on pattern P ⇒ grep entire service/library for P before declaring complete | Bugfixes targeting a code pattern | → `quality-gates.md` |
 | `[quality:error-envelope]` | Error shape `{code, message, source, retryable, data}` via `ProtocolError` | Error response changes | → `quality-gates.md` |
 | `[simplicity]` | Minimum code solving stated problem; fix root cause not symptom | Implementation | Review speculative abstraction |
-| `[docs]` | Event/API/runtime contract changes ⇒ doc audit; generated catalog regions via `gen-event-catalog --check` | Contract/semantics changes | → `events-docs.md` |
+| `[docs]` | Event/API/runtime contract changes ⇒ doc audit; generated catalog regions via `gen-event-catalog check` | Contract/semantics changes | → `events-docs.md` |
 | `[docker]` | `--no-cache` disables layer reuse + `--pull`; scoped buildx prune only | Docker rebuild/cache decisions | → `quality-gates.md` |
 | `[universal:refs]` | Cross-resident refs use `cortex://` or `workspaces://`; ¬absolute paths in cross-resident artifacts | Packets, specs, handoffs consumed by other residents | grep `/mnt/torus/` in artifacts |
 | `[universal:git-posture]` | Canonical state = on-disk tree + cortex/RAG + live process; git ≠ project index; no standing git workflow; commit optional; `git diff` unreliable on master; ¬ diffs to LLMs — whole files/sections only | Git state inference, canonicality, cursor-sdk substrate, git CLI | → `git-posture.md` |

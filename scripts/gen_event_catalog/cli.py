@@ -100,12 +100,20 @@ def _check_doc(records, overlay: dict[str, str], sha: str) -> int:
         return 1
 
     regions = list(iter_regions(text))
-    if not regions:
+    doc_regions = {region for region, _, _, _ in regions}
+    factory_by_domain = _by_domain(records)
+
+    errors: list[str] = []
+    for domain, recs in sorted(factory_by_domain.items()):
+        if domain not in doc_regions:
+            errors.append(
+                f"domain={domain}: no GENERATED region in doc ({len(recs)} signals)"
+            )
+
+    if not regions and not errors:
         print("❌ no GENERATED regions in docs/event-contracts.md", file=sys.stderr)
         return 1
 
-    factory_by_domain = _by_domain(records)
-    errors: list[str] = []
     for region, _s, _e, inner in regions:
         expected = _rendered_region(region, records, overlay, sha)
         actual = inner.strip()
