@@ -51,6 +51,7 @@ from bus_watch.fable_lock import (
 )
 from bus_watch.friction_rows import mark_friction, parse_mark
 from bus_watch.go_under import go_under
+from bus_watch.lane_closeout import query_lane_closeouts
 from bus_watch.liaison_digest import (
     TICK_OVERHEAD_TOKENS as _TICK_OVERHEAD_TOKENS,
 )
@@ -63,7 +64,6 @@ from bus_watch.liaison_stops import (
     apply_policy_set,
     arm_operator_gate,
 )
-from bus_watch.lane_closeout import query_lane_closeouts
 from bus_watch.spawn_on_wake import tick_spawn_on_wake
 from bus_watch.tick_state import (
     absorb_operator_edits,
