@@ -474,6 +474,33 @@ def test_successor_wake_truncation_marker_only_when_shed() -> None:
     assert f"row={long_row}" not in shed
 
 
+_10479_CDP_SUCCESSOR_KW = {
+    "gear": "4-cdp-liaison",
+    "row": "Settled · Live · Next",
+    "seat": "cdp",
+    "tip_turn": 42,
+    "tip_checkpoint_turn": 40,
+    "spawn_signal_sources": ["checkpoint_due"],
+}
+
+
+@pytest.mark.offline
+def test_successor_wake_cdp_10479_inlines_liaison_body_without_use_line() -> None:
+    """AC4 — rendered CDP successor wake seals liaison SOT; no Customize Use-line."""
+    rendered = render_successor_wake("10479", **_10479_CDP_SUCCESSOR_KW)
+    assert "harvests → folds → decides → dispatches → checkpoints → hops" in rendered
+    assert "Use the liaison skill" not in rendered
+    assert '<skill slug="liaison"' in rendered
+    assert "<skills_inline>" in rendered
+
+
+@pytest.mark.offline
+def test_successor_wake_cdp_omits_use_the_liaison_line() -> None:
+    text = render_successor_wake("10479", **_10479_CDP_SUCCESSOR_KW)
+    assert "Use the liaison skill" not in text
+    assert "LOAD the liaison skill body" not in text
+
+
 @pytest.mark.offline
 def test_successor_wake_load_bearing_fields_survive_maximal_shedding() -> None:
     long_row = "y" * 5000
