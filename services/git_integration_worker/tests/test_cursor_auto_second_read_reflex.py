@@ -141,10 +141,11 @@ def test_grok_explicit_fast_true_is_preserved() -> None:
 
 
 def test_model_without_effort_knob_gets_none() -> None:
+    """Composer has no effort knob; omit-path still fills fast=false (cost)."""
     knobs = compose_model_knobs(
         {"resolved_model_id": "cursor/composer-2.5"}, {"resolved_effort": "high"}
     )
-    assert knobs == {}
+    assert knobs == {"fast": "false"}
 
 
 def test_unknown_model_does_not_raise() -> None:
