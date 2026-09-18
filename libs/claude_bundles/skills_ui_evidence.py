@@ -33,29 +33,32 @@ class ComposerPollutedError(RuntimeError):
     """Chat composer has attachment chips — upload path must not mutate operator chat."""
 
 
-async def composer_has_attachments(page: Page) -> bool:
-    """Return True when visible attachment-semantic chips pollute the composer.
+_COMPOSER = "[data-testid='chat-input']"
+_ATTACHMENT_IN_COMPOSER = (
+    "[data-testid='file-attachment']",
+    "[data-testid='attachment']",
+    ".attachment-chip",
+)
 
-    Page-chrome badges (e.g. Labs/Beta feature chips matching generic ``chip``
-    classes or ``data-testid*='chip'``) are intentionally excluded — only
-    attachment-semantic selectors are consulted. Fail-closed pollution detection
-    rests on those primaries; if a future attachment variant uses only a bare
-    ``chip`` class with no attachment token, repair via a composer-scoped
-    fallback (P2), not a page-wide chip scan.
+
+async def composer_has_attachments(page: Page) -> bool:
+    """Return True when visible attachment chips sit in the chat composer.
+
+    Page-chrome toasts (``Replaced {slug}``) and settings-panel classes that
+    happen to contain ``attachment`` are not composer pollution — a page-wide
+    ``[class*='attachment']`` scan false-failed a landed replace (2026-09-17).
+    Scope is the composer; precise testids only.
     """
-    selectors = (
-        "[data-testid='file-attachment']",
-        "[data-testid='attachment']",
-        ".attachment-chip",
-        "[class*='attachment']",
-        "[class*='Attachment']",
-    )
-    for sel in selectors:
-        loc = page.locator(sel)
-        if await loc.count():
-            for i in range(min(await loc.count(), 5)):
-                if await loc.nth(i).is_visible():
-                    return True
+    composer = page.locator(_COMPOSER)
+    root = composer if await composer.count() else page
+    for sel in _ATTACHMENT_IN_COMPOSER:
+        loc = root.locator(sel)
+        n = await loc.count()
+        if not n:
+            continue
+        for i in range(min(n, 5)):
+            if await loc.nth(i).is_visible():
+                return True
     return False
 
 
@@ -185,6 +188,7 @@ class SlugOutcome:
     network_status: dict[str, Any] | None = None
     skill_upload_url: str | None = None
     composer_polluted: bool = False
+    confirm: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -206,6 +210,7 @@ class RunReport:
         mode: str,
         network_status: dict | None,
         skill_upload_url: str | None = None,
+        confirm: dict[str, Any] | None = None,
     ) -> None:
         self.uploaded.append(slug)
         if skill_upload_url:
@@ -217,6 +222,7 @@ class RunReport:
                 mode=mode,
                 network_status=network_status,
                 skill_upload_url=skill_upload_url,
+                confirm=confirm or {},
             )
         )
 

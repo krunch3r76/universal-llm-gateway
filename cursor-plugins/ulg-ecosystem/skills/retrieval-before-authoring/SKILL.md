@@ -1,6 +1,6 @@
 ---
 name: retrieval-before-authoring
-description: "Before writing a prompt, packet, or letter that another agent or a human will act on — search the prompting corpus first, then author, then dispatch. Retrieval scored positive in Trial 01; authoring from priors alone is the failure mode."
+description: "Before writing a prompt, packet, or letter another agent or human will act on — retrieve the prompting corpus, then author. Trial 01 scored retrieval positive; priors-only authoring is the failure."
 trigger_match_terms: ["write a prompt", "author a prompt", "prompt design", "write the packet", "compose a packet", "elicit", "elicitation", "register", "voice", "genre", "rag_search", "retrieval before authoring", "superior prompting", "prompt for another agent"]
 ---
 
@@ -18,13 +18,16 @@ Run one `rag(op="search", ...)` per scope. Do not skip this to save a turn.
 | Scope | What it holds |
 |---|---|
 | `llm_prompting` | persona/framing effects, ICL, long-context, prompt optimization |
+| `llm_writing` | prose quality, register, revision, rhetoric, audience-aware generation |
 | `suggestion_orientation` | elicitation, free-strategy, Law of Reversed Effort, demand characteristics |
 | `prompt_injection` | spotlighting, instruction hierarchy, post-prompting, provenance |
 | `agent_skills_research` | procedural memory, progressive disclosure, compiled artifacts |
 | `constitutional_ai` | self-report reliability, sycophancy, fluency bias, verification |
 
 `suggestion_orientation` is **not** inside the composite `research` / `all_research`
-scopes — query it by name or the arc under-draws. Call shape:
+scopes — query it by name or the arc under-draws. `llm_writing` is in `research` /
+`all_corpus` but writing commissions still query it **by name** so format-tax
+prompting does not drown the retrieve. Call shape:
 
 ```
 rag(op="search", arguments='{"query":"...","scope":"llm_prompting","top_k":10}')

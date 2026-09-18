@@ -374,6 +374,7 @@ Zip `mirrored` ≠ Cowork `+` → Skills attach-ready.
 | WebSocket 403 from Playwright | Missing `--remote-allow-origins=*` | Restart Chrome with flags in runbook |
 | `gen_claude_bundles --check` httpx error on Jupiter | Cortex socket not on Jupiter | Run `--check` from workstation |
 | Run report `network_status.ok` but upload failed | F9 regex matches Datadog `/api/v2/rum` + bare-2xx slug_echo | Live-verify 2026-07-09 — reopen harden; do not trust F9 until tightened |
+| `uploaded 0/1` after a Replace toast | Page-wide `[class*='attachment']` treated the success toast as composer pollution (2026-09-17) | In-run `OK {slug} confirm=toast+table` is the upload proof. `dump-skills` is a content-hash audit, not the OK line |
 | **Replace confirm dialog** | Name collision on UI | Normal — automation clicks *Upload and replace* |
 | **Description XML tags** | `<…>` in YAML description | Fix SOT / regen |
 | **Retired slug still on UI** | Removed/demoted in `config/skills.yaml` but not uninstalled | `claude-ai-sync-jupiter uninstall --slugs {slug}` (More options → Uninstall) |

@@ -29,6 +29,7 @@ SUBDIRECTORY_TO_SCOPE: dict[str, str] = {
     "code-retrieval": "code_retrieval",
     "knowledge-management": "knowledge_systems",
     "llm/prompting": "llm_prompting",
+    "llm/writing": "llm_writing",
     "documentation": "code_documentation",
     "software-agents": "software_agents",
     "agent-evaluation": "agent_evaluation",

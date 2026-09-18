@@ -460,8 +460,10 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: code
   retrieval-before-authoring:
-    surface_class: cursor_only
-    mcp_surface_required: code
+    # Promoted 2026-09-17 — rag is on life (a:35181); operator: add as claude.ai slug.
+    # Prior cursor_only/code was neighbor-copy; catalog forbids shared_sync+code.
+    surface_class: shared_sync
+    mcp_surface_required: life
   review-task-guidance:
     surface_class: cursor_only
     mcp_surface_required: none

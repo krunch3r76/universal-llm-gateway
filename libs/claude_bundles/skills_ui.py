@@ -27,6 +27,7 @@ from claude_bundles.skills_ui_evidence import (
     capture_failure_state,
     composer_has_attachments,
 )
+from claude_bundles.skills_ui_landed import confirm_skill_upload_ui
 from claude_bundles.skills_ui_menu import (
     PreflightMenuError,
     diagnose_payload,
@@ -282,6 +283,9 @@ async def upload_skills(
                         oracle=oracle,
                     )
                     nav_gate.network_verified = True
+                    confirm = await confirm_skill_upload_ui(
+                        page, slug, replacing=replacing
+                    )
                     await _assert_composer_clean(page, slug)
                     uploaded.append(slug)
                     table_before.add(slug.lower())
@@ -290,8 +294,12 @@ async def upload_skills(
                         mode=mode,
                         network_status=_network_status(oracle, slug),
                         skill_upload_url=oracle.skill_upload_url,
+                        confirm=confirm.as_dict(),
                     )
-                    print(f"OK {slug}", file=sys.stderr)
+                    print(
+                        f"OK {slug} confirm={confirm.kind}",
+                        file=sys.stderr,
+                    )
                     last_exc = None
                     break
                 except ReplaceBlockedError as exc:

@@ -9,6 +9,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from claude_bundles.skills_ui_evidence import composer_has_attachments
+from claude_bundles.skills_ui_landed import (
+    confirm_skill_upload_ui,
+    toast_names_slug,
+)
 from claude_bundles.skills_ui_network import (
     UploadResult,
     _is_noise_url,
@@ -204,6 +208,68 @@ async def test_composer_has_attachments_detects_file_attachment_chip() -> None:
         }
     )
     assert await composer_has_attachments(page)
+
+
+@pytest.mark.asyncio
+async def test_composer_has_attachments_ignores_replaced_toast() -> None:
+    """Success toast is not a composer chip — 2026-09-17 false fail."""
+    composer = _mock_locator(count=1, visible=True)
+    composer.locator = MagicMock(return_value=_mock_locator())
+    toast = _mock_locator(count=1, visible=True)
+    page = _mock_page(
+        {
+            "[data-testid='chat-input']": composer,
+            "[class*='attachment']": toast,
+            "[class*='Attachment']": toast,
+        }
+    )
+    assert not await composer_has_attachments(page)
+
+
+def test_toast_names_slug_matches_replaced_copy() -> None:
+    assert toast_names_slug("Replaced retrieval-before-authoring", "retrieval-before-authoring")
+    assert not toast_names_slug("Labs beta attachment", "retrieval-before-authoring")
+
+
+@pytest.mark.asyncio
+async def test_confirm_skill_upload_ui_toast_and_table() -> None:
+    page = MagicMock()
+    with (
+        patch(
+            "claude_bundles.skills_ui_landed.read_skill_upload_toast",
+            new_callable=AsyncMock,
+            return_value="Replaced retrieval-before-authoring",
+        ),
+        patch(
+            "claude_bundles.skills_ui_landed.snapshot_slug_row",
+            new_callable=AsyncMock,
+            return_value="retrieval-before-authoring\t9/17/26\tYou",
+        ),
+    ):
+        got = await confirm_skill_upload_ui(
+            page, "retrieval-before-authoring", replacing=True
+        )
+    assert got.kind == "toast+table"
+    assert got.toast == "Replaced retrieval-before-authoring"
+
+
+@pytest.mark.asyncio
+async def test_confirm_skill_upload_ui_raises_without_toast_or_row() -> None:
+    page = MagicMock()
+    with (
+        patch(
+            "claude_bundles.skills_ui_landed.read_skill_upload_toast",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.skills_ui_landed.snapshot_slug_row",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        pytest.raises(RuntimeError, match="UI confirm missing"),
+    ):
+        await confirm_skill_upload_ui(page, "retrieval-before-authoring", replacing=True)
 
 
 @pytest.mark.asyncio

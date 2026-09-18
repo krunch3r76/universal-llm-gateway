@@ -140,6 +140,7 @@ Run `rag(op="coverage")`; confirm each scope count and `last_indexed` freshness.
 | Subdir | Scope | Content |
 |---|---|---|
 | `llm/prompting` | `llm_prompting` | large-model prompting, format effects, instruction following |
+| `llm/writing` | `llm_writing` | LLM prose quality, register, revision, rhetoric — not instruction-following |
 | `prompting` | `small_llm_prompting` | small/local model prompting |
 | `workflows` | `workflows` | pipeline architecture, orchestration, long-context instruction following |
 | `rag-systems` | `rag_systems` | RAG architecture/eval/benchmarks |
