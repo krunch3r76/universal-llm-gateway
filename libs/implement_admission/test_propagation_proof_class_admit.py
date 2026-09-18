@@ -79,6 +79,16 @@ def test_legal_proof_classes_unprobeable_excludes_process_live():
     assert validate_proof_class("email_bridge", "process_live") is not None
 
 
+def test_unknown_proof_class_names_legal_set_for_service():
+    """AC1 (a:35350): unknown enum values must name legal classes, not refuse silently."""
+    token = validate_proof_class("git_integration_worker", "code_version")
+    assert token is not None
+    assert "unknown_proof_class:code_version" in token
+    assert "legal for git_integration_worker:" in token
+    assert "process_live" in token
+    assert "served_artifact" in token
+
+
 def test_legal_proof_classes_probeable_includes_process_live():
     """M2: fetcher map keys keep process_live legal (oracle, not a frozen deny list)."""
     from services.git_integration_worker.cursor_auto.propagation_probe import (
