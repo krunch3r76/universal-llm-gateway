@@ -7,7 +7,7 @@ generator_version: "1.0.0"
 
 # Corpus-Grounded Skill Authoring
 
-Author domain skills from **evidence, not priors**. This skill governs where a skill's content comes from and how it stays true; `corpus-map-authoring` governs the **harvest workflow** that produces durable maps/digests first; `skill-document-writing` governs the form (L1/L2/L3, lifecycle, registration); `frontier-model-instructions` governs the voice (FOL). Load map workflow + this skill + form/voice for a knowledge skill.
+Author domain skills from **evidence, not priors**. This skill governs where a skill's content comes from and how it stays true; `skill-document-writing` governs the form (L1/L2/L3, lifecycle, registration); `frontier-model-instructions` governs the voice (FOL). Load this skill + form/voice for a knowledge skill.
 
 ## When this fires
 
@@ -25,7 +25,7 @@ Author domain skills from **evidence, not priors**. This skill governs where a s
 ## Grounding loop
 
 1. **Scope + locate corpus.** State the body of truth the skill must encode; enumerate corpora (`rag(op="list_scopes")`, entity graph, ingested docs, code). Missing ⇒ ingest first (`research-article-search` → `document-ingestion`).
-2. **Map, then retrieve.** `¬digest ∧ ¬refined_map ⇒` run `corpus-map-authoring` (Phases 0–5) to produce sidecars + `refined-map.md` + optional `{topic}-excerpts.md` before extracting rules. Then pull from the map/digest and corpus (entity reads, fs reads), ¬ from priors. `load_bearing_claim ⇒ has(source_uri ∨ chunk_id ∨ assertion)`.
+2. **Live retrieve.** Run `rag(op="search")` per named scope + entity/fs SOT reads. A refined-map or excerpts digest is **not** a substitute for live retrieval and **not** a precondition for authoring. `load_bearing_claim ⇒ has(source_uri ∨ chunk_id ∨ assertion)`.
 3. **Extract core rules from evidence.** Classify with the SkillReducer taxonomy (skill-document-writing § Body taxonomy). Keep evidence-backed `core_rule` / `procedure_step`; demote ungrounded generality to `background`.
 4. **Ground in the entity graph.** Assert key claims as entities/assertions with `evidence_uris` → corpus; relate the skill entity to its corpus. **Entities are the SOT** — a domain claim lives as a verifiable, supersedable assertion, not just prose. Prefer entity / fs SOT over semantic RAG for anything that must stay current (RAG snapshots go stale).
 5. **Author per skill-document-writing.** Form, L1/L2/L3, FOL, registration.
@@ -72,7 +72,7 @@ RAG is offline authoring/audit, ¬ runtime skill discovery (runtime = native ind
 
 ## Related skills
 
-- corpus-map-authoring — multi-seat harvest workflow (Opus queries → Composer recon → web refine → distill)
+- corpus-map-authoring — optional multi-seat harvest workflow (not a required gate before authoring)
 - skill-document-writing — form, L1/L2/L3, lifecycle, registration
 - frontier-model-instructions — FOL / voice / compression floor
 - document-ingestion — bring a corpus in
