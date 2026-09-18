@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+import re
+
 from bus_watch.doorbell import (
     DOORBELL_CAP,
     SUCCESSOR_WAKE_CAP,
@@ -17,13 +19,17 @@ from bus_watch.doorbell import (
     render_successor_wake,
     successor_wake_unshed_byte_length,
 )
+from bus_watch.doorbell_skills import (
+    liaison_protocol_sot_uri,
+    seat_dispatch_surface,
+    seat_doorbell_surface,
+)
 
 _DEFAULT_ARGS = ("10479", "liaison-autonomous-night")
-_DEFAULT_KW = {"ring": "10532"}
+_DEFAULT_KW = {"ring": "10532", "seat": "cursor-sdk"}
 _LIVE_10479_KW = {
     "ring": "10532",
     "seat": "web-anthropic",
-    "surface": "ide",
     "include_commission": True,
 }
 
@@ -152,6 +158,29 @@ def test_default_render_contains_required_fragments() -> None:
 
 
 @pytest.mark.offline
+def test_web_anthropic_doorbell_classifies_as_life_not_ide() -> None:
+    """AC1 — life seat maps to ``life`` surface; classifier does not fold to IDE."""
+    assert seat_dispatch_surface("web-anthropic") == "life"
+    assert seat_doorbell_surface("web-anthropic") == "life"
+    assert seat_doorbell_surface("web-anthropic") != "ide"
+
+
+@pytest.mark.offline
+def test_web_anthropic_doorbell_carries_resolvable_liaison_not_use_line() -> None:
+    """AC2 / falsifier — no Customize self-fetch; liaison SOT is addressable."""
+    text = render_doorbell(
+        "10479",
+        "liaison-autonomous-night",
+        ring="10532",
+        seat="web-anthropic",
+        include_commission=True,
+    )
+    assert not re.search(r"^Use the liaison skill\.$", text, re.MULTILINE)
+    assert render_address(liaison_protocol_sot_uri()) in text
+    assert "Use the reasoning-posture skill." in text
+
+
+@pytest.mark.offline
 def test_ring_none_echoes_root() -> None:
     text = render_doorbell("10479", "liaison-autonomous-night")
     assert "thread=10479" in text
@@ -216,6 +245,7 @@ def test_seating_render_sheds_placeholders_not_addresses() -> None:
         "10479",
         "claude-ai-navigator-seat",
         ring="10532",
+        seat="cursor-sdk",
         extra_addresses=extras,
         fired_by="cdp generate on agent-bus:11165, not a scheduled task",
         cap=1024,
@@ -293,6 +323,7 @@ def test_commission_shed_is_atomic_under_cap() -> None:
     text = render_doorbell(
         "10479",
         "claude-ai-navigator-seat",
+        seat="cursor-sdk",
         **_SEATING_KW,
         cap=954,
     )
@@ -302,9 +333,13 @@ def test_commission_shed_is_atomic_under_cap() -> None:
 
 
 @pytest.mark.offline
-def test_default_render_byte_identical_1019() -> None:
-    text = _default_render()
-    assert len(text.encode("utf-8")) == 1019
+def test_live_10479_web_anthropic_render_byte_length() -> None:
+    """AC4 — 11655 regression pin corrected: life render is not the old 1019 B IDE paste."""
+    text = _live_10479_render()
+    encoded_len = len(text.encode("utf-8"))
+    assert encoded_len == 1085
+    assert encoded_len != 1019
+    assert not re.search(r"^Use the liaison skill\.$", text, re.MULTILINE)
 
 
 @pytest.mark.offline
@@ -358,6 +393,7 @@ def test_commission_guard_present_whenever_commission_line_is() -> None:
         text = render_doorbell(
             "10479",
             "claude-ai-navigator-seat",
+            seat="cursor-sdk",
             **_SEATING_KW,
             cap=cap,
         )

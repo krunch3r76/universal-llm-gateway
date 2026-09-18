@@ -21,7 +21,9 @@ from pathlib import Path
 from bus_watch.doorbell_skills import (
     dispatch_skills_for_surface,
     doorbell_skills,
+    liaison_protocol_sot_uri,
     seat_dispatch_surface,
+    seat_doorbell_surface,
 )
 
 DOORBELL_CAP = 1400
@@ -244,14 +246,7 @@ def basis_floor_bytes(
 
 def _seat_surface(seat: str) -> str:
     """Map a dispatch seat id to the ``doorbell_skills`` surface key."""
-    key = str(seat or "cursor-sdk").strip().lower()
-    if key.startswith("cdp"):
-        return "cdp"
-    if key.startswith("cse"):
-        return "cse"
-    if key in ("cursor-sdk", "cursor"):
-        return "cursor-sdk"
-    return key if key in ("ide", "cursor-sdk", "cdp", "cse") else "ide"
+    return seat_doorbell_surface(seat)
 
 
 def _seat_has_jupiter_shell(seat: str) -> bool:
@@ -290,15 +285,19 @@ def render_doorbell(
     DIGEST fetch window is 10 turns, not 3: root housekeeping (admits, INFO, CP
     pointers) outran a 3-turn window by six turns on 2026-09-12 (agent-bus:10479#139).
 
-    ``surface`` selects the default Use-line slugs via ``doorbell_skills`` when
-    ``skills`` is omitted; explicit ``skills`` preserves byte-identical output.
+    When ``skills`` is omitted, Use-line slugs derive from ``seat`` via
+    ``seat_doorbell_surface`` (the ``surface`` kwarg is legacy-only). Life seats
+    plant the liaison SOT as a resolvable ``md_read`` address under the cap.
     """
-    skill_slugs = skills if skills is not None else doorbell_skills(surface)
+    effective_surface = _seat_surface(seat)
+    skill_slugs = skills if skills is not None else doorbell_skills(effective_surface)
     echo = ring if ring else root
     address_parts = [
         f"agent_bus_read(fetch, thread={root}, last=10, compact=true)",
         f"agent-bus:{echo} (echo)",
     ]
+    if skills is None and seat_dispatch_surface(seat) == "life":
+        address_parts.append(render_address(liaison_protocol_sot_uri()))
     address_parts.extend(render_address(addr) for addr in extra_addresses)
     addresses = "; ".join(address_parts)
     # Default keeps the scheduled-task frame (R15). CDP/live seating passes fired_by
@@ -375,7 +374,7 @@ def _successor_liaison_slug(seat: str = "cursor-sdk") -> str:
 
 
 def _inline_successor_dispatch_skills(text: str, seat: str) -> str:
-    """Prepend ``<skills_inline>`` bodies for CDP/CSE successors (not Use-lines)."""
+    """Prepend ``<skills_inline>`` bodies for CDP/CSE/life successors (not Use-lines)."""
     surface = seat_dispatch_surface(seat)
     if not surface:
         return text

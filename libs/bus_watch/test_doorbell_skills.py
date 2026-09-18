@@ -15,14 +15,32 @@ from bus_watch.doorbell_skills import (
     navigator_doorbell_skills_from_policy,
     primary_liaison_slug,
     seat_dispatch_surface,
+    seat_doorbell_surface,
 )
 
 
 @pytest.mark.offline
 def test_doorbell_skills_preflight_ide_and_cdp() -> None:
     assert doorbell_skills("ide") == ("liaison", "reasoning-posture")
-    assert doorbell_skills("cdp") == ("liaison", "reasoning-posture")
+    assert doorbell_skills("cdp") == ("reasoning-posture",)
+    assert doorbell_skills("life") == ("reasoning-posture",)
     assert primary_liaison_slug("ide") == "liaison"
+    assert primary_liaison_slug("life") == "liaison"
+
+
+@pytest.mark.offline
+def test_preflight_drops_cursor_only_on_non_cursor_surfaces() -> None:
+    """AC3 — ``cursor_only`` slugs are shed from Use-lines on life/CDP surfaces."""
+    assert doorbell_skills("ide") == ("liaison", "reasoning-posture")
+    assert doorbell_skills("life") == ("reasoning-posture",)
+    assert doorbell_skills("cdp") == ("reasoning-posture",)
+
+
+@pytest.mark.offline
+def test_seat_dispatch_surface_maps_life_seats() -> None:
+    assert seat_dispatch_surface("web-anthropic") == "life"
+    assert seat_doorbell_surface("web-anthropic") == "life"
+    assert is_dispatch_skills_surface("web-anthropic")
 
 
 @pytest.mark.offline
@@ -54,9 +72,10 @@ def test_seat_dispatch_surface_maps_cdp_cse_seats() -> None:
 
 
 @pytest.mark.offline
-def test_dispatch_skills_only_on_cdp_cse_surfaces() -> None:
+def test_dispatch_skills_only_on_cdp_cse_life_surfaces() -> None:
     assert dispatch_skills_for_surface("cdp") == ["liaison", "reasoning-posture"]
     assert dispatch_skills_for_surface("cse") == ["liaison", "reasoning-posture"]
+    assert dispatch_skills_for_surface("life") == ["liaison", "reasoning-posture"]
     assert dispatch_skills_for_surface("ide") == []
     assert dispatch_skills_for_surface("cursor-sdk") == []
 
