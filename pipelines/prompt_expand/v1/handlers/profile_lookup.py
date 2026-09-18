@@ -2,27 +2,37 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-import time
+import re
 from pathlib import Path
 from typing import Any, override
 
+import httpx
 import yaml
+from systems.pipeline.core.dag import PipelineExecutionError
 from systems.pipeline.core.events.prompt_expand import (
     ExpandAdmitted,
     ExpandAuthorCompleted,
     ExpandCompleted,
     ExpandRetrieveCompleted,
 )
+from systems.pipeline.core.execution.errors import StepTimeoutError
 from systems.pipeline.core.handlers.builtin import BaseHandler
+from systems.pipeline.core.handlers.pipeline_call import PipelineCallHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
-from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
 logger = get_logger(__name__)
 
 _PROFILE_TABLES_PATH = Path(__file__).resolve().parent.parent / "profile_tables.yaml"
-_CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
+_RETRIEVE_MAX_ATTEMPTS = 3
+_RETRIEVE_BACKOFF_SECONDS = 2.0
+_PIPELINE_CALL_HANDLER = PipelineCallHandler()
+
+_CDP_CODE_EXTRA_RE = re.compile(
+    r"team_dispatch|manage|pipeline|panel_dispatch|quality_gate"
+)
 
 _VALID_CONTRACTS = frozenset(
     {"consult", "investigate", "implement", "confer", "review", "none"}
@@ -101,6 +111,68 @@ def _pipeline_meta(context: Any) -> tuple[str, str]:
 
 def _options(context: Any) -> dict[str, Any]:
     return dict(getattr(context, "options", {}) or {})
+
+
+def _is_timeout_exception(exc: BaseException) -> bool:
+    if isinstance(exc, StepTimeoutError | httpx.TimeoutException):
+        return True
+    return type(exc).__name__ in {
+        "TimeoutException",
+        "ReadTimeout",
+        "StepTimeoutError",
+        "HandlerTimeoutError",
+    }
+
+
+def _cdp_forbidden_door(authored: str) -> str | None:
+    match = _CDP_CODE_EXTRA_RE.search(authored)
+    return match.group(0) if match else None
+
+
+def _build_retrieve_pipeline_options(
+    step: Any, context: Any, scopes: list[str]
+) -> dict[str, Any]:
+    step_options: dict[str, Any] = dict(
+        step.get_domain_field("pipeline_options", {}) or {}
+    )
+    forwarded = {
+        k: v
+        for k, v in _options(context).items()
+        if k.startswith(("rag_", "scope_", "rerank_"))
+        or k == "include_retrieval_metadata"
+    }
+    merged: dict[str, Any] = {**step_options, **forwarded, "scope": scopes}
+    merged.pop("target", None)
+    return merged
+
+
+def _synthetic_pipeline_call_step(
+    parent_step: Any, pipeline_options: dict[str, Any]
+) -> Any:
+    consumer_model_ref = parent_step.get_domain_field("consumer_model_ref", "")
+    stargate_url = parent_step.get_domain_field("stargate_url", None)
+    per_attempt_timeout = parent_step.get_domain_field(
+        "per_attempt_timeout_seconds", 25
+    )
+
+    class _CallStep:
+        id = getattr(parent_step, "id", "retrieve_context")
+        handler_timeout_seconds = per_attempt_timeout
+        timeout_seconds = per_attempt_timeout
+
+        @staticmethod
+        def get_domain_field(key: str, default: Any = None) -> Any:
+            if key == "pipeline_id":
+                return "rag-context"
+            if key == "pipeline_options":
+                return pipeline_options
+            if key == "consumer_model_ref":
+                return consumer_model_ref
+            if key == "stargate_url" and stargate_url is not None:
+                return stargate_url
+            return default
+
+    return _CallStep()
 
 
 class PromptExpandValidateOptionsHandler(BaseHandler):
@@ -221,7 +293,7 @@ class PromptExpandProfileLookupHandler(BaseHandler):
 
 
 class PromptExpandRetrieveHandler(BaseHandler):
-    """RAG retrieve leg — pipeline_call_v1 semantics with dynamic scope from profile row."""
+    """RAG retrieve leg — composes PipelineCallHandler with handler-owned 3× retry."""
 
     step_type = "prompt_expand_retrieve_v1"
 
@@ -231,101 +303,53 @@ class PromptExpandRetrieveHandler(BaseHandler):
         if not profile_out or not profile_out.json:
             return _typed_reject("expand.profile_missing", "resolve_profile output missing")
 
-        scopes = profile_out.json.get("retrieve_scopes") or []
-        step_options: dict[str, Any] = step.get_domain_field("pipeline_options", {}) or {}
-        forwarded = {
-            k: v
-            for k, v in _options(context).items()
-            if k.startswith(("rag_", "scope_", "rerank_"))
-            or k == "include_retrieval_metadata"
-        }
-        merged_options: dict[str, Any] = {
-            **step_options,
-            **forwarded,
-            "scope": scopes,
-        }
-        if "target" in merged_options:
-            del merged_options["target"]
+        scopes = list(profile_out.json.get("retrieve_scopes") or [])
+        merged_options = _build_retrieve_pipeline_options(step, context, scopes)
+        call_step = _synthetic_pipeline_call_step(step, merged_options)
 
-        consumer_model_ref: str = step.get_domain_field("consumer_model_ref", "")
-        if consumer_model_ref and context._registry is not None:
+        last_latency_ms = 0.0
+        for attempt in range(1, _RETRIEVE_MAX_ATTEMPTS + 1):
             try:
-                model_config = context._registry.get_model_config(
-                    consumer_model_ref,
-                    domain=context.pipeline.domain,
-                    search_path=context.pipeline.source_search_path,
+                call_out = await _PIPELINE_CALL_HANDLER.execute(call_step, context)
+            except PipelineExecutionError as exc:
+                return StepOutput(
+                    raw=str(exc),
+                    json={
+                        "merged_options": merged_options,
+                        "attempts": attempt,
+                        "timed_out": False,
+                        "upstream_error": True,
+                        "latency_ms": last_latency_ms,
+                    },
                 )
-                merged_options["consumer_model"] = model_config.model
-            except KeyError:
-                logger.warning(
-                    "prompt_expand_retrieve: consumer_model_ref %r not found",
-                    consumer_model_ref,
+            except Exception as exc:
+                if not _is_timeout_exception(exc):
+                    raise
+                if attempt < _RETRIEVE_MAX_ATTEMPTS:
+                    await asyncio.sleep(_RETRIEVE_BACKOFF_SECONDS)
+                    continue
+                return StepOutput(
+                    raw="",
+                    json={
+                        "merged_options": merged_options,
+                        "attempts": attempt,
+                        "timed_out": True,
+                        "upstream_error": False,
+                        "latency_ms": last_latency_ms,
+                    },
                 )
 
-        try:
-            from pipelines.rag.scope_helpers import fetch_scope_options_text
-
-            if "scope_options" not in merged_options:
-                merged_options["scope_options"] = fetch_scope_options_text()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("prompt_expand_retrieve: scope_options inject failed: %s", exc)
-
-        body = {
-            "model": "rag-context",
-            "messages": [{"role": "user", "content": context.source_text}],
-            "stream": False,
-            "pipeline_options": merged_options,
-        }
-
-        stargate_url: str = step.get_domain_field("stargate_url", DEFAULT_STARGATE_URL)
-        timeout = (step.handler_timeout_seconds or step.timeout_seconds or 60) + 10
-        start = time.monotonic()
-        timed_out = False
-        upstream_error = False
-        content = ""
-        step_json: dict[str, Any] = {"merged_options": merged_options}
-
-        try:
-            async with make_async_client(stargate_url, timeout=timeout) as client:
-                response = await client.post(_CHAT_COMPLETIONS_PATH, json=body)
-            latency_ms = (time.monotonic() - start) * 1000
-            if response.is_error:
-                upstream_error = True
-                content = f"Sub-pipeline 'rag-context' failed: {response.text}"
-            else:
-                data = response.json()
-                content = (
-                    data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    or ""
-                )
-                if not content.strip():
-                    content = (
-                        f"{_EMPTY_RETRIEVAL_SENTINEL}. "
-                        "The answer is generated from model knowledge only."
-                    )
-                pipeline_block = data.get("pipeline")
-                if isinstance(pipeline_block, dict):
-                    retrieval = pipeline_block.get("retrieval")
-                    if isinstance(retrieval, dict) and retrieval:
-                        step_json["retrieval"] = retrieval
-        except Exception as exc:  # noqa: BLE001
-            latency_ms = (time.monotonic() - start) * 1000
-            exc_name = type(exc).__name__
-            if exc_name in {"TimeoutException", "ReadTimeout", "StepTimeoutError"}:
-                timed_out = True
-                content = ""
-            else:
-                upstream_error = True
-                content = f"Sub-pipeline 'rag-context' failed: {exc}"
-
-        step_json.update(
-            {
-                "timed_out": timed_out,
-                "upstream_error": upstream_error,
-                "latency_ms": latency_ms,
+            last_latency_ms = float(getattr(call_out, "latency_ms", 0) or 0)
+            step_json: dict[str, Any] = {
+                "merged_options": merged_options,
+                "attempts": attempt,
+                "timed_out": False,
+                "upstream_error": False,
+                "latency_ms": last_latency_ms,
             }
-        )
-        return StepOutput(raw=content, json=step_json)
+            if call_out.json:
+                step_json.update(call_out.json)
+            return StepOutput(raw=call_out.raw, json=step_json)
 
 
 class PromptExpandClassifyRetrieveHandler(BaseHandler):
@@ -347,7 +371,7 @@ class PromptExpandClassifyRetrieveHandler(BaseHandler):
         retrieve_json = (retrieve_out.json if retrieve_out else {}) or {}
         timed_out = bool(retrieve_json.get("timed_out"))
         upstream_error = bool(retrieve_json.get("upstream_error"))
-        attempts = int(retrieve_json.get("attempts") or 1)
+        attempts = int(retrieve_json.get("attempts", 0))
 
         if timed_out:
             rag_status = "deadline"
@@ -436,6 +460,14 @@ class PromptExpandFormatOutputHandler(BaseHandler):
             )
 
         authored = (author_out.raw if author_out else "") or ""
+        if target == "cdp" and authored.strip():
+            forbidden = _cdp_forbidden_door(authored)
+            if forbidden:
+                return _typed_reject(
+                    "expand.cdp_code_extra_doors",
+                    f"cdp TASK' names forbidden door {forbidden!r}",
+                )
+
         header = {
             "pipeline": "prompt-expand",
             "contract": profile_json.get("contract"),

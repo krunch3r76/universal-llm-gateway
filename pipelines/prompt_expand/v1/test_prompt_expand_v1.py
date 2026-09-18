@@ -6,6 +6,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -134,7 +135,8 @@ async def test_classify_stamp_empty_proceeds_priors_only() -> None:
         _base_options(rag_fail="stamp"),
         {
             "retrieve_context": _Out(
-                raw=f"{_EMPTY_RETRIEVAL_SENTINEL}. The answer is generated from model knowledge only."
+                raw=f"{_EMPTY_RETRIEVAL_SENTINEL}. The answer is generated from model knowledge only.",
+                json={"attempts": 1, "timed_out": False, "upstream_error": False},
             ),
             "resolve_profile": _Out(json={"retrieve_scopes": ["llm_prompting"]}),
         },
@@ -150,7 +152,10 @@ async def test_classify_abort_empty_stops() -> None:
     ctx = _Ctx(
         _base_options(rag_fail="abort"),
         {
-            "retrieve_context": _Out(raw=_EMPTY_RETRIEVAL_SENTINEL),
+            "retrieve_context": _Out(
+                raw=_EMPTY_RETRIEVAL_SENTINEL,
+                json={"attempts": 1, "timed_out": False, "upstream_error": False},
+            ),
             "resolve_profile": _Out(json={"retrieve_scopes": ["llm_prompting"]}),
         },
     )
@@ -165,7 +170,10 @@ async def test_classify_timeout_degraded_author_proceeds() -> None:
     ctx = _Ctx(
         _base_options(rag_fail="abort"),
         {
-            "retrieve_context": _Out(raw="", json={"timed_out": True, "attempts": 3}),
+            "retrieve_context": _Out(
+                raw="",
+                json={"timed_out": True, "attempts": 3, "upstream_error": False},
+            ),
             "resolve_profile": _Out(json={"retrieve_scopes": ["llm_prompting"]}),
         },
     )
@@ -173,6 +181,7 @@ async def test_classify_timeout_degraded_author_proceeds() -> None:
     assert out.json["rag_status"] == "deadline"
     assert out.json["provenance_mode"] == "DEGRADED"
     assert out.json["proceed"] is True
+    assert out.json["attempts"] == 3
 
 
 @pytest.mark.asyncio
@@ -203,12 +212,102 @@ async def test_format_dispatch_json_envelope_no_bus_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cdp_author_prompts_exclude_code_doors() -> None:
-    prompts_path = Path(__file__).resolve().parent / "prompts.yaml"
-    data = yaml.safe_load(prompts_path.read_text(encoding="utf-8"))
-    cdp_sys = data["prompts"]["author_cdp"]["system_prompt"]
-    assert "team_dispatch" in cdp_sys  # forbidden mention in negative rule
-    assert "Never name team_dispatch" in cdp_sys
+async def test_format_cdp_rejects_code_extra_in_rendered_output() -> None:
+    handler = PromptExpandFormatOutputHandler()
+    ctx = _Ctx(
+        _base_options(target="cdp"),
+        {
+            "classify_retrieve": _Out(
+                json={
+                    "rag_status": "ok",
+                    "provenance_mode": "NORMAL",
+                    "proceed": True,
+                    "attempts": 1,
+                }
+            ),
+            "resolve_profile": _Out(
+                json={
+                    "contract": "implement",
+                    "stage": "g5",
+                    "executor_tier": "frontier",
+                    "retrieve_scopes": ["llm_prompting"],
+                    "target_static": True,
+                    "allowed_doors": ["cortex", "fs"],
+                    "elicitation": False,
+                }
+            ),
+            "select_author": _Out(raw="Fire via team_dispatch on the bus"),
+        },
+    )
+    out = await handler.execute(_Step(), ctx)
+    assert out.json["error"]["code"] == "expand.cdp_code_extra_doors"
+    assert out.error
+
+
+@pytest.mark.asyncio
+async def test_format_cdp_passes_clean_rendered_output() -> None:
+    handler = PromptExpandFormatOutputHandler()
+    ctx = _Ctx(
+        _base_options(target="cdp"),
+        {
+            "classify_retrieve": _Out(
+                json={
+                    "rag_status": "ok",
+                    "provenance_mode": "NORMAL",
+                    "proceed": True,
+                    "attempts": 1,
+                }
+            ),
+            "resolve_profile": _Out(
+                json={
+                    "contract": "implement",
+                    "stage": "g5",
+                    "executor_tier": "frontier",
+                    "retrieve_scopes": ["llm_prompting"],
+                    "target_static": True,
+                    "allowed_doors": ["cortex", "fs", "cdp_ask"],
+                    "elicitation": False,
+                }
+            ),
+            "select_author": _Out(raw="Use cortex and cdp_ask only"),
+        },
+    )
+    out = await handler.execute(_Step(), ctx)
+    assert out.error is None
+    assert "cdp_ask" in out.raw
+
+
+@pytest.mark.asyncio
+async def test_format_cursor_allows_team_dispatch_in_rendered_output() -> None:
+    handler = PromptExpandFormatOutputHandler()
+    ctx = _Ctx(
+        _base_options(target="cursor"),
+        {
+            "classify_retrieve": _Out(
+                json={
+                    "rag_status": "ok",
+                    "provenance_mode": "NORMAL",
+                    "proceed": True,
+                    "attempts": 1,
+                }
+            ),
+            "resolve_profile": _Out(
+                json={
+                    "contract": "implement",
+                    "stage": "g5",
+                    "executor_tier": "frontier",
+                    "retrieve_scopes": ["llm_prompting"],
+                    "target_static": True,
+                    "allowed_doors": ["cortex", "team_dispatch"],
+                    "elicitation": False,
+                }
+            ),
+            "select_author": _Out(raw="Chain team_dispatch for the code lane"),
+        },
+    )
+    out = await handler.execute(_Step(), ctx)
+    assert out.error is None
+    assert "team_dispatch" in out.raw
 
 
 def test_profile_tables_no_top_level_version_key() -> None:
@@ -270,48 +369,67 @@ def test_handlers_no_in_dag_bus_or_dispatch_calls() -> None:
 
 @pytest.mark.asyncio
 async def test_retrieve_merged_options_omit_target(monkeypatch) -> None:
-    captured: dict = {}
+    captured: dict[str, Any] = {}
 
-    class _Resp:
-        is_error = False
+    async def _fake_pipeline_call(step, _ctx):
+        captured["pipeline_options"] = step.get_domain_field("pipeline_options", {})
+        out = _Out(raw="ctx chunk", json={"retrieval": {}})
+        out.latency_ms = 1.0
+        return out
 
-        def json(self):
-            return {"choices": [{"message": {"content": "ctx chunk"}}]}
-
-    async def _fake_post(*_a, **kwargs):
-        captured["body"] = kwargs.get("json") or {}
-        return _Resp()
-
-    class _Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *_):
-            return None
-
-        post = _fake_post
-
-    monkeypatch.setattr(
-        _handlers,
-        "make_async_client",
-        lambda *_a, **_k: _Client(),
-    )
-    monkeypatch.setattr(
-        "pipelines.rag.scope_helpers.fetch_scope_options_text",
-        lambda: "scopes",
-    )
+    monkeypatch.setattr(_handlers, "_PIPELINE_CALL_HANDLER", _handlers.PipelineCallHandler())
+    monkeypatch.setattr(_handlers._PIPELINE_CALL_HANDLER, "execute", _fake_pipeline_call)
 
     handler = PromptExpandRetrieveHandler()
     ctx = _Ctx(
         _base_options(target="cdp"),
-        {"resolve_profile": _Out(json={"retrieve_scopes": ["llm_prompting", "prompt_injection"]})},
+        {
+            "resolve_profile": _Out(
+                json={"retrieve_scopes": ["llm_prompting", "prompt_injection"]}
+            )
+        },
     )
     step = _Step()
     step.get_domain_field = lambda key, default=None: (  # type: ignore[method-assign]
-        {"expand": "m"} if key == "consumer_model_ref" else default
+        "expand" if key == "consumer_model_ref" else default
     )
     out = await handler.execute(step, ctx)
     merged = out.json["merged_options"]
     assert "target" not in merged
     assert merged["scope"] == ["llm_prompting", "prompt_injection"]
-    assert captured["body"]["pipeline_options"]["scope"] == merged["scope"]
+    assert captured["pipeline_options"]["scope"] == merged["scope"]
+    assert out.json["attempts"] == 1
+
+
+@pytest.mark.asyncio
+async def test_retrieve_timeout_three_attempts_then_degraded(monkeypatch) -> None:
+    import httpx
+
+    calls = {"n": 0}
+
+    async def _always_timeout(_step, _ctx):
+        calls["n"] += 1
+        raise httpx.ReadTimeout("rag-context slow")
+
+    monkeypatch.setattr(_handlers, "_PIPELINE_CALL_HANDLER", _handlers.PipelineCallHandler())
+    monkeypatch.setattr(_handlers._PIPELINE_CALL_HANDLER, "execute", _always_timeout)
+    monkeypatch.setattr(_handlers, "_RETRIEVE_BACKOFF_SECONDS", 0.0)
+
+    handler = PromptExpandRetrieveHandler()
+    ctx = _Ctx(
+        _base_options(),
+        {"resolve_profile": _Out(json={"retrieve_scopes": ["llm_prompting"]})},
+    )
+    out = await handler.execute(_Step(), ctx)
+    assert calls["n"] == 3
+    assert out.json["attempts"] == 3
+    assert out.json["timed_out"] is True
+    assert out.raw == ""
+
+    classify = PromptExpandClassifyRetrieveHandler()
+    ctx._outputs["retrieve_context"] = _Out(raw=out.raw, json=out.json)
+    classified = await classify.execute(_Step(), ctx)
+    assert classified.json["rag_status"] == "deadline"
+    assert classified.json["provenance_mode"] == "DEGRADED"
+    assert classified.json["proceed"] is True
+    assert classified.json["attempts"] == 3

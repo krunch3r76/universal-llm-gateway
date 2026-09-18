@@ -35,18 +35,8 @@ steps:
   - name: retrieve_context
     type: prompt_expand_retrieve_v1
     consumer_model_ref: expand
-    timeout_seconds: 300
-    handler_timeout_seconds: 90
-    retry_policy:
-      max_attempts: 3
-      backoff_strategy: fixed
-      initial_interval_seconds: 2
-      retry_on:
-        - TimeoutException
-        - ReadTimeout
-        - StepTimeoutError
-      dont_retry_on:
-        - PipelineExecutionError
+    per_attempt_timeout_seconds: 25
+    timeout_seconds: 120
 
   - name: classify_retrieve
     type: prompt_expand_classify_retrieve_v1
