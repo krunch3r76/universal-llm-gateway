@@ -18,30 +18,38 @@ Use for research-corpus extension, literature survey during recon, or multi-mode
 
 **Discovery is a pass, not a `team_dispatch` role.** Naming “discovery” in operator prose must carry model + substrate (see `composer-standing-reply-format` § In-flight step naming).
 
-### Preferred discovery chain (bound 2026-07-19 — agent-bus:5379)
+### Preferred discovery chain (bound 2026-09-18 — agent-bus:11649 + assertion 35408)
 
 `gpt-5-search-api` is **demoted** for literature discovery (theme-drift / shallow). Default chain — each pass **adds** against an explicit exclude list:
 
 | Order | Model + substrate | Purpose |
 |---|---|---|
-| 1 | `openai/o4-mini-deep-research` via `pipeline(chat-dispatch)` | OpenAI deep lit pass (default first) |
-| 2 | `openrouter/perplexity/sonar-deep-research` via `pipeline(chat-dispatch)` | tentative second deep pass |
-| 3 (final searcher) | **Cursor** — usually `cursor/claude-opus-4-8` (cursor-sdk) or Opus via `team_dispatch(model=cdp/opus-5)` when packaging is cortex-only | last live find + judgment; spend monitor via events when available |
-| escalate | `openai/o3-deep-research` | only if still thin after carding (~5× o4 token rates) |
+| 1 | `openrouter/perplexity/sonar-deep-research` via `pipeline(chat-dispatch)` | first deep lit pass |
+| 2 | `openai/gpt-5.6-sol` via `pipeline(chat-dispatch)` | second pass — OpenAI direct; omit `server_tools` so the card can inject `web_search_preview` |
+| 3 (final searcher + scoping) | `cdp/opus-5` (cortex-packaged) or cursor-sdk live-checkout Opus when browse is required | last live find + judgment — **not** the discovery opener |
 
-**Final-searcher rule:** Cursor (usually Opus on cursor-sdk, else CDP Opus) runs **last** so earlier cheap/deep passes densify the exclude list first. ¬ put CDP/cursor first as the default discovery opener.
+**Wire invariant:** `wire_id = provider_prefix + model`. `GET :9999/v1/models` listing ≠ upstream live.
+
+**Liveness gate:** a SKU is live only if it appears in this table after the last probe, or a probe other than `GET /v1/models` succeeded this session (OpenRouter public list, `:9999/api/models` row, or a non-404 provider response).
+
+**Final-searcher rule:** CDP/cursor Opus runs **last** so earlier deep passes densify the exclude list first. ¬ put CDP/cursor first as the default discovery opener.
 
 **Chain rule:** each dispatch receives (a) themes/brief, (b) **exclude list** of arXiv IDs / DOIs / URLs already found, (c) instruction: return **only novel** rows. Overlaps that slip through are **expected chain noise** — scrub at merge/scoping; ¬ treat as pass failure or blocker.
 
 **Open-access ingest gate (operator constraint):** no institutional library for paywalled PDFs. Discovery may *cite* paywalled work as “no-ingest”; **ingest queue = OA only** (arXiv PDF, ACL Anthology OA, PMC, OpenReview PDF, author PDF). Aligns with `research-article-ingest` (`paywall_stub ∨ abstract_only ⇒ STOP`).
 
-| Demoted / wrong | Why |
+| Retired / demoted / wrong wire | Why |
 |---|---|
-| `openai/gpt-5-search-api` | Fast Chat Completions search — not clean for lit discovery |
-| general `openai/gpt-5.5` (+ tools) | Frontier chat SKU; far more costly; ¬ discovery default |
+| `openai/o4-mini-deep-research` (+ `-2025-06-26`) | **retired** — upstream 404 / dead SKU |
+| `openai/o3-deep-research` (+ snapshot) | **retired** — superseded chain |
+| `openai/gpt-5-search-api` | demoted — theme drift / not lit-agent depth |
+| general `openai/gpt-5.5` (+ tools) | demoted — frontier chat SKU; ¬ discovery default |
 | `anthropic/*` API mcp | prohibited / timeout path |
+| `grok-web` | deprecated |
+| `perplexity/sonar-deep-research` (no `openrouter/` prefix) | wrong wire |
+| `openrouter/openai/gpt-5.6-sol` | wrong wire — use `openai/gpt-5.6-sol` unless explicitly wanted |
 
-Scoping: after the chain merge — Opus on cursor-sdk or CDP as appropriate.
+Scoping: after the chain merge — `cdp/opus-5` or cursor-sdk Opus as appropriate (Step 4).
 
 ## Step 1 — Search brief
 
@@ -61,29 +69,21 @@ Write/update exclude seed: `cortex://notes/system/threads/<thread>-discovery-exc
 
 ```python
 pipeline(op="async", pipeline_id="chat-dispatch",
-  options={"model": "openai/o4-mini-deep-research"},  # then sonar-deep-research
+  options={"model": "openrouter/perplexity/sonar-deep-research"},  # then openai/gpt-5.6-sol
   messages=[{"role": "user", "content": "<brief + exclude list + OA-only ingest flag>"}],
   result_delivery={
     "bus_thread": "<orchestration-thread-id>",
     "bus_from_agent": "cursor",
     "bus_to_agent": "cursor",
-    "bus_subject": "DONE discovery — o4-mini-deep-research",
+    "bus_subject": "DONE discovery — sonar-deep-research",
   })
 ```
 
+Second pass — same shape, `options={"model": "openai/gpt-5.6-sol"}`; omit `server_tools` so the capability card injects `web_search_preview`.
+
 After each pass: append novel IDs to the exclude seed before the next model. Deep research may run minutes — async + poll; ¬ treat search-api as substitute.
 
-Known non-live / wrong-SKU paths:
-
-| Model/path | Issue |
-|---|---|
-| `openai/gpt-5-search-api` | demoted — theme drift / not lit-agent depth |
-| general `openai/gpt-5.5` (+ MCP tools) | wrong SKU — frontier chat |
-| `anthropic/*` API with `mcp=True` | `tool_search` 300s timeout (friction 21132) |
-| parametric-only non-research models | recall only — not discovery |
-| `grok-web` | deprecated |
-
-Cost note (OpenRouter list prices, 2026-07-19): o4-mini-deep-research ≈ $2/M in · $8/M out; o3-deep-research ≈ $10/M · $40/M (**~5×** o4); Perplexity sonar-deep-research ≈ same token rates as o4-mini. Absolute $ per deep query is still much higher than a short search call because deep research burns many tokens.
+Known non-live / wrong-SKU paths: see retired/demoted table above; also `anthropic/*` API with `mcp=True` (`tool_search` 300s timeout, friction 21132) and parametric-only non-research models (recall only — not discovery).
 
 ## Step 3 — Wait and validate liveness
 

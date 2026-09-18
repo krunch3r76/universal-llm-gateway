@@ -20,7 +20,7 @@ Sole placement: catalog row (`surface_class` + `mcp_surface_required`). ¬ inven
 |---|---|
 | Trivial edit | this |
 | New procedural | `frontier-model-instructions` → this → `agent-guidance-writing` |
-| Domain / knowledge | `corpus-map-authoring` → `corpus-grounded-skill-authoring` → `frontier-model-instructions` → this |
+| Domain / knowledge | `corpus-grounded-skill-authoring` (live `rag(op="search")` per scope + entity/fs SOT) → `frontier-model-instructions` → this |
 | Compression / substantive | `frontier-model-instructions` → this → digest + workflow map |
 | New Cursor bootstrap | `create-skill` + procedural row |
 | `.mdc` rule (not a skill) | `frontier-model-instructions` → `cursor-rule-authoring` |

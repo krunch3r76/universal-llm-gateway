@@ -7,7 +7,9 @@ generator_version: "1.0.0"
 
 # Corpus Map Authoring
 
-Build a **durable corpus map** before encoding domain knowledge in a skill or dense spec. This skill governs the **multi-seat harvest workflow**; `corpus-grounded-skill-authoring` governs epistemics (evidence → skill claims); `skill-document-writing` governs SKILL.md form.
+Build a **durable corpus map** for investigation or densify prep — **optional**, not a required gate before skill authoring. Query design → `cheap-recon-before-escalation` or `research-article-search`; KEEP/DROP on an ingest queue → `research-article-search` Step 4. **`refined-map.md` / `{topic}-excerpts.md` are not substitutes for live `rag(op="search")`** — downstream seats must retrieve live, not read a frozen digest instead of RAG.
+
+This skill governs the **multi-seat harvest workflow** when a durable map is wanted; `corpus-grounded-skill-authoring` governs epistemics (evidence → skill claims); `skill-document-writing` governs SKILL.md form.
 
 ## Load order
 
@@ -16,20 +18,19 @@ Build a **durable corpus map** before encoding domain knowledge in a skill or de
 | Any corpus-map arc | this skill → `cortex://notes/system/references/corpus-map-workflow.md` |
 | Composer harvest dispatch | + `cursor-sdk-instruction-standard` (D0 `<mcp_capabilities>`) |
 | RAG scope guard | + `cheap-recon-before-escalation` § Optional RAG recon |
-| After map complete → skill | + `corpus-grounded-skill-authoring` |
+| After map complete → skill | + `corpus-grounded-skill-authoring` (live RAG, not digest-as-SOT) |
 
 ## When this fires
 
 `need_durable_corpus_map(label) ⇒ this skill`. Typical triggers:
 
-- Authoring a **knowledge skill** and no digest/map exists yet
-- Investigation/densify/skeptic prep needing cited corpus anchors
+- Investigation/densify/skeptic prep needing a cited corpus anchor map (optional — not required before skill authoring)
 - Operator ordered **ingest → classify → recon map → refine**
 
 | Situation | Skill |
 |---|---|
 | Build harvest map from indexed corpus | **this skill** |
-| Author skill claims from evidence | corpus-grounded-skill-authoring (after map) |
+| Author skill claims from evidence | corpus-grounded-skill-authoring (live RAG + entity/fs SOT) |
 | Extend corpus (papers not yet indexed) | research-article-search → document-ingestion |
 | One-off lookup | `rag(op="search")` only — not this workflow |
 | Tier escalation / cheap recon ladder | cheap-recon-before-escalation |
@@ -94,7 +95,7 @@ Record scope-correction lessons when a re-run was needed.
 
 | Downstream | Action |
 |---|---|
-| Knowledge skill | Point `corpus-grounded-skill-authoring` load order at excerpts + optional `{topic}-workflow-map.md` |
+| Knowledge skill | Point `corpus-grounded-skill-authoring` at live RAG per scope; map/excerpts are navigation aids only — ¬ substitute for `rag(op="search")` |
 | Implement / densify | Mandatory read order in dispatch spec |
 | Graph | Assert map URIs on todo/skill entity `evidence_uris` |
 
