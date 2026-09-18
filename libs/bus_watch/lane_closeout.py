@@ -17,6 +17,7 @@ import httpx
 
 from bus_watch.digest_budget import _get
 from bus_watch.events import emit_lane_closeout_observed
+from bus_watch.lane_live import probe_live
 from bus_watch.spawn_pending import row_is_terminal
 
 CLOSEOUT_SUBJECT_PREFIX = "LANE CLOSEOUT"
@@ -147,7 +148,7 @@ def build_closeout_record(
         "work_key": work_key,
         "settled": parsed["settled"],
         "landed": landed,
-        "live": probe_live(lane.get("id"), landed),
+        "live": probe_live(lane.get("id"), landed, parent_root=parent_root),
         "next": parsed["next"],
         "terminal_status": terminal_status,
         "closed_at": closed_at or _utcnow_iso(),
@@ -156,14 +157,6 @@ def build_closeout_record(
     if parsed["land_disposition"]:
         record["land_disposition"] = parsed["land_disposition"]
     return record
-
-
-def probe_live(lane_id: Any, landed_sha: str) -> str:
-    """Tri-state liveness at read time — never inferred from ``landed`` alone."""
-    _ = lane_id
-    if not str(landed_sha or "").strip():
-        return "unprobed"
-    return "unprobed"
 
 
 def format_closeout_body(record: dict[str, Any], *, abandoned: bool = False) -> str:
@@ -241,7 +234,7 @@ def query_lane_closeouts(
             continue
         seen.add(key)
         landed = str(record.get("landed") or "")
-        record["live"] = probe_live(lane, landed)
+        record["live"] = probe_live(lane, landed, parent_root=root_id)
         if now_fn is not None:
             record["queried_at"] = now_fn()
         rows.append(record)

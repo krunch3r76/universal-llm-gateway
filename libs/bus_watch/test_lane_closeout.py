@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from bus_watch.events import LiaisonLaneCloseoutObserved
 from bus_watch.induction import build_wake_induction
 from bus_watch.lane_closeout import (
@@ -19,6 +21,14 @@ from bus_watch.lane_closeout import (
 )
 from bus_watch.producer_grace import ProducerGrace
 from bus_watch.spawn_pending import attention_now_row
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_live_inspect(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Record builders must not probe the live 11667 ticker."""
+    monkeypatch.setattr("bus_watch.lane_live.ticker_start_unix", lambda _root: None)
+    monkeypatch.setattr("bus_watch.lane_live.commit_unix", lambda _sha: None)
+    monkeypatch.setattr("bus_watch.lane_live.sha_on_head", lambda _sha: None)
 
 
 def _worker_closeout(*, sha: str = "0e6653cdf") -> str:
