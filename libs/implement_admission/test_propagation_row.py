@@ -10,12 +10,15 @@ from implement_admission.propagation_row import (
     PropagationRow,
     coerce_allow_self_preempt_flag,
     compose_proof,
+    propagation_residue_from_rows,
     resolve_code_ref,
+    residue_line_from_row,
     row_from_mapping_strict,
     rows_from_closeout_payload,
     rows_from_lib_consumers,
     rows_from_residue_lines,
     rows_from_service_paths,
+    stamp_liveness_on_row,
 )
 
 
@@ -411,3 +414,88 @@ def test_row_from_mapping_strict_force_allows_mcp_and_cdp_ask(monkeypatch):
 def test_coerce_allow_self_preempt_default_true():
     """M5: default remains True; not flipped by M2–M4."""
     assert coerce_allow_self_preempt_flag(None) is True
+
+
+def test_stamp_liveness_on_row_records_probe_answer() -> None:
+    ref = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    row = PropagationRow(
+        service="git_integration_worker",
+        code_ref=ref,
+        proof="probe",
+        proof_class="served_artifact",
+    )
+    stamped = stamp_liveness_on_row(
+        row,
+    )
+    # Default probe may be unreachable in CI — either way emission is stamped.
+    assert stamped.liveness_emission is not None
+    assert stamped.liveness_emission.answer in {"yes", "no", "unknown"}
+
+
+def test_stamp_liveness_on_row_with_injected_probe(monkeypatch) -> None:
+    from charter_runner_store.propagation_liveness import CodeRefLiveness
+
+    ref = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    row = PropagationRow(
+        service="mcp",
+        code_ref=ref,
+        proof="probe",
+        proof_class="client_visible",
+    )
+
+    def _fake_observe(service: str, code_ref: str, *, probe=None):
+        return CodeRefLiveness(
+            answer="yes",
+            service=service,
+            code_ref=code_ref,
+            observed_code_version=ref,
+            relation="equal",
+            observation={"code_version": ref, "probe_reachable": True},
+            reason="injected",
+        )
+
+    monkeypatch.setattr(
+        "charter_runner_store.propagation_liveness.observe_code_ref_live",
+        _fake_observe,
+    )
+    stamped = stamp_liveness_on_row(row)
+    assert stamped.liveness_emission is not None
+    assert stamped.liveness_emission.answer == "yes"
+    assert stamped.liveness_emission.observed_code_version == ref
+    import json
+
+    obs = json.loads(stamped.liveness_emission.observation)
+    assert obs.get("code_version") == ref
+
+
+def test_residue_line_from_row_preserves_tags() -> None:
+    row = PropagationRow(
+        service="git_integration_worker",
+        code_ref="cccccccccccccccccccccccccccccccccccccccc",
+        proof="probe",
+        proof_class="served_artifact",
+        reason="path-derived obligation; derived:path_prefix; import_path:not_probed",
+    )
+    line = residue_line_from_row(row)
+    assert line.startswith("sync_restart: git_integration_worker")
+    assert "derived:path_prefix" in line
+    assert "import_path:not_probed" in line
+
+
+def test_propagation_residue_from_rows_appends_non_sync_actions() -> None:
+    row = PropagationRow(
+        service="mcp",
+        code_ref="dddddddddddddddddddddddddddddddddddddddd",
+        proof="probe",
+        proof_class="client_visible",
+    )
+    residue = propagation_residue_from_rows(
+        [row],
+        other_actions=[
+            "install_plugin: scripts/cursor/install-ecosystem-plugin.sh",
+            'sync_restart: stale — manage(action="sync_restart", service="stale")',
+        ],
+    )
+    assert len(residue) == 2
+    assert residue[0].startswith("sync_restart: mcp")
+    assert residue[1].startswith("install_plugin:")

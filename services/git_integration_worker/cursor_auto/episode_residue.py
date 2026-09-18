@@ -18,10 +18,12 @@ from implement_admission.propagation_row import (
     PropagationRow,
     is_lib_test_module,
     land_paths_for_propagation,
+    propagation_residue_from_rows,
     resolve_code_ref,
     rows_from_lib_consumers,
     rows_from_parsed_block,
     rows_from_service_paths,
+    stamp_liveness_on_rows,
 )
 from implement_admission.serving_coverage import residue_for_empty_nominations
 
@@ -398,15 +400,30 @@ def resolve_propagation_for_finalize(
     markdown_sources: Sequence[str],
     code_ref: str,
 ) -> tuple[PropagationRow, ...]:
-    """Resolve structured propagation rows for SDK closeout finalize."""
+    """Resolve structured propagation rows for SDK closeout finalize.
+
+    Each touched consumer row carries an emission-time ``liveness_emission``
+    stamp from ``observe_code_ref_live`` (one HTTP GET /health per slug).
+    """
     parsed, _flags = propagation_rows_from_markdown_sources(*markdown_sources)
     if parsed:
         block_rows, _ = rows_from_parsed_block(parsed)
         if block_rows:
-            return tuple(block_rows)
+            return tuple(stamp_liveness_on_rows(block_rows))
 
     paths = list(residue_paths)
     consumer_rows, _escalations = rows_from_lib_consumers(paths, code_ref=code_ref)
     if consumer_rows:
-        return tuple(consumer_rows)
-    return tuple(rows_from_service_paths(paths, code_ref=code_ref))
+        return tuple(stamp_liveness_on_rows(consumer_rows))
+    service_rows = rows_from_service_paths(paths, code_ref=code_ref)
+    return tuple(stamp_liveness_on_rows(service_rows))
+
+
+def propagation_residue_for_finalize(
+    rows: Sequence[PropagationRow],
+    paths: Sequence[str],
+) -> list[str]:
+    """Derive ``propagation_residue`` from probed rows plus non-sync path actions."""
+    return propagation_residue_from_rows(
+        rows, other_actions=residue_actions(paths)
+    )

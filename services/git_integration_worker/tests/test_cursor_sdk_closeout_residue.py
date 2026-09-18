@@ -86,6 +86,52 @@ def test_build_closeout_empty_residue_for_docs_only() -> None:
     assert payload["propagation_residue"] == []
 
 
+def test_build_closeout_propagation_rows_carry_liveness_emission() -> None:
+    body = build_implement_closeout_body(
+        dispatch_id="residue-liveness",
+        outcome=_outcome(),
+        degraded_reason=None,
+        sidecar_ref=sidecar_workspaces_ref("residue-liveness"),
+        result_bytes=4,
+        thread_id="t-residue-liveness",
+        work_item_ref="todo:residue-liveness",
+        change_set=ChangeSet(
+            created=(),
+            modified=("services/git_integration_worker/cursor_auto/handler.py",),
+            deleted=(),
+        ),
+    )
+    payload = json.loads(body)
+    assert payload["propagation"]
+    row = payload["propagation"][0]
+    assert row["service"] == "git_integration_worker"
+    assert row.get("liveness_emission") is not None
+    assert row["liveness_emission"]["answer"] in {"yes", "no", "unknown"}
+
+
+def test_finalize_preserves_propagation_on_shrink() -> None:
+    body = build_implement_closeout_body(
+        dispatch_id="residue-shrink",
+        outcome=_outcome(),
+        degraded_reason=None,
+        sidecar_ref=sidecar_workspaces_ref("residue-shrink"),
+        result_bytes=4,
+        thread_id="t-residue-shrink",
+        work_item_ref="todo:residue-shrink",
+        change_set=ChangeSet(
+            created=(),
+            modified=("services/git_integration_worker/x.py",),
+            deleted=(),
+        ),
+    )
+    payload = json.loads(body)
+    oversize = {**payload, "summary": "x" * 7000}
+    reduced = json.loads(finalize_closeout_body(json.dumps(oversize)))
+    assert reduced.get("propagation")
+    assert reduced["propagation"][0]["service"] == "git_integration_worker"
+    assert reduced["propagation"][0].get("liveness_emission") is not None
+
+
 def test_finalize_preserves_propagation_residue() -> None:
     body = build_implement_closeout_body(
         dispatch_id="residue-finalize",
@@ -106,9 +152,11 @@ def test_finalize_preserves_propagation_residue() -> None:
     payload = json.loads(body)
     assert payload["propagation_residue"]
     finalized = finalize_closeout_body(body)
-    assert (
-        json.loads(finalized)["propagation_residue"] == payload["propagation_residue"]
-    )
+    reduced = json.loads(finalized)
+    assert reduced["propagation_residue"] == payload["propagation_residue"]
+    assert reduced.get("propagation")
+    assert reduced["propagation"][0]["service"] == payload["propagation"][0]["service"]
+    assert reduced["propagation"][0].get("liveness_emission") is not None
 
 
 def test_build_closeout_no_propagation_from_deleted_lib() -> None:
