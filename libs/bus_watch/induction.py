@@ -16,12 +16,13 @@ carry it now; a keystroke follow-up paste into the live IDE tab and
 
 from __future__ import annotations
 
+import re
 import shlex
 from pathlib import Path
 from typing import Any
 
 from claude_bundles.catalog import load_skill_catalog
-from claude_bundles.cdp_inline_read_cue import emit_workspaces_fs_read
+from claude_bundles.cdp_inline_excerpt import _yaml_frontmatter_end, excerpt_skill_body
 
 from bus_watch.doorbell_skills import navigator_doorbell_skills_from_policy
 from bus_watch.friction_rows import event_line as _friction_event
@@ -29,6 +30,14 @@ from bus_watch.friction_rows import now_row as _friction_now
 from bus_watch.spawn_wake.predicate import compute_spawn_signal_sources
 
 INDUCTION_CAP = 700
+# Per-skill excerpt budget for CSE ``<skills_inline>`` (full SOT stays on disk).
+CSE_INLINE_SKILL_MAX_CHARS = 800
+CSE_INLINE_TRUNCATION_MARKER = "full SOT not sealed"
+# Distinctive SOT lines the successor must receive inside ``<skills_inline>`` (not via fetch).
+_CSE_INLINE_ANCHORS: dict[str, str] = {
+    "liaison": "harvests → folds → decides → dispatches → checkpoints → hops",
+}
+_INLINE_SLUG_RE = re.compile(r'<skill slug="([^"]+)"')
 _EVENT_ITEMS = 3
 _SUBJECT_CHARS = 56
 _ONE_STEP = (
@@ -127,19 +136,78 @@ def _skill_slug(label: str) -> str:
 
 
 def _is_droppable_cse_skill_line(line: str) -> bool:
-    """Skill activation lines trimmed last when the CSE induction block exceeds cap."""
-    if line.startswith("Use the ") and line.endswith(" skill"):
-        return True
-    return ': fs(sandbox="workspaces"' in line
+    """``Use the … skill`` lines trimmed before ``<skills_inline>`` bodies under cap."""
+    return line.startswith("Use the ") and line.endswith(" skill")
+
+
+def _cse_skill_excerpt(raw: str, slug: str, max_chars: int) -> str:
+    """Size-gated excerpt for CSE induction — anchor line first, then operational prose."""
+    text = raw if raw.endswith("\n") else f"{raw}\n"
+    anchor = _CSE_INLINE_ANCHORS.get(slug)
+    if anchor and anchor in text:
+        idx = text.find(anchor)
+        start = text.rfind("\n", 0, max(0, idx - 1)) + 1
+        anchor_end = idx + len(anchor)
+        if anchor_end < len(text) and text[anchor_end : anchor_end + 2] == "**":
+            anchor_end += 2
+        chunk = text[start:anchor_end].strip()
+        if len(chunk) + 1 <= max_chars:
+            return f"{chunk}\n"
+        return excerpt_skill_body(f"{chunk}\n", slug=slug, max_chars=max_chars)
+    fm_end = _yaml_frontmatter_end(text)
+    body = text[fm_end:] if fm_end else text
+    return excerpt_skill_body(body, slug=slug, max_chars=max_chars)
+
+
+def _anchor_line_budget(raw: str, slug: str) -> int:
+    """Minimum ``max_chars`` so an anchored slug's witness line survives excerpting."""
+    anchor = _CSE_INLINE_ANCHORS.get(slug)
+    if not anchor or anchor not in raw:
+        return 64
+    idx = raw.find(anchor)
+    start = raw.rfind("\n", 0, max(0, idx - 1)) + 1
+    anchor_end = idx + len(anchor)
+    if anchor_end < len(raw) and raw[anchor_end : anchor_end + 2] == "**":
+        anchor_end += 2
+    return len(raw[start:anchor_end].strip()) + 8
+
+
+def _render_cse_skills_inline(
+    inline_slugs: list[str],
+    *,
+    repo_root: Path,
+    max_chars_per_skill: int = CSE_INLINE_SKILL_MAX_CHARS,
+    per_slug_budget: dict[str, int] | None = None,
+) -> str:
+    """Compact ``<skills_inline>`` block — SOT bodies, not ``fs`` pointers."""
+    if not inline_slugs:
+        return ""
+    catalog = load_skill_catalog(validate_sot=False)
+    parts = ["<skills_inline>"]
+    for slug in inline_slugs:
+        entry = catalog.get(slug)
+        sot, _ = catalog.resolve_sot(slug, repo_root)
+        raw = sot.read_text(encoding="utf-8")
+        budget = (per_slug_budget or {}).get(slug, max_chars_per_skill)
+        body = _cse_skill_excerpt(raw, slug=slug, max_chars=budget)
+        parts.append(f'<skill slug="{slug}" surface_class="{entry.surface_class}">')
+        parts.append(body.rstrip())
+        parts.append("</skill>")
+    parts.append("</skills_inline>")
+    return "\n".join(parts)
+
+
+def _inline_slugs_from_block(block: str) -> list[str]:
+    return _INLINE_SLUG_RE.findall(block)
 
 
 def _cse_skill_activation_lines(loaded: list[str]) -> list[str]:
-    """Route ``loaded`` through ``partition_cdp_skills`` before emitting CSE cues.
+    """Route ``loaded`` through ``partition_cdp_skills`` before emitting CSE delivery.
 
     ``shared_sync`` slugs keep the Customize self-fetch ``Use the … skill`` line.
-    Every other catalog class (``cursor_only`` included) gets the workspaces SOT
-    read cue — the same channel ``cdp_inline_read_cue`` documents for CDP inline
-    delivery, without the forbidden Use-the verb.
+    Every other catalog class (``cursor_only`` included) seals SOT **bodies** inside
+    ``<skills_inline>`` — the successor must not spend a turn fetching what induction
+    claimed it already held.
     """
     slugs = [s for s in (_skill_slug(label) for label in loaded) if s]
     unique = list(dict.fromkeys(slugs))
@@ -165,11 +233,9 @@ def _cse_skill_activation_lines(loaded: list[str]) -> list[str]:
     for slug in unique:
         if slug in slash_set:
             lines.append(f"Use the {slug} skill")
-        elif slug in inline_set:
-            entry = catalog.get(slug)
-            sot, _ = catalog.resolve_sot(slug, repo_root)
-            fs_line = emit_workspaces_fs_read(sot, repo_root)
-            lines.append(f"{slug} ({entry.surface_class}): {fs_line}")
+    if inline_set:
+        ordered_inline = [slug for slug in unique if slug in inline_set]
+        lines.append(_render_cse_skills_inline(ordered_inline, repo_root=repo_root))
     return lines
 
 
@@ -231,9 +297,9 @@ def build_wake_induction(
     carries standing operator binds (e.g. "hopper paused (10479#210)").
 
     ``surface='cse'`` routes each loaded slug through ``partition_cdp_skills``:
-    ``shared_sync`` → ``Use the <slug> skill``; ``cursor_only`` (etc.) → SOT
-    ``fs`` read cue. ``surface='ide'`` keeps the legacy single ``Loaded already
-    (do not re-read)`` line.
+    ``shared_sync`` → ``Use the <slug> skill``; ``cursor_only`` (etc.) → SOT body
+    inside ``<skills_inline>``. ``surface='ide'`` keeps the legacy single
+    ``Loaded already (do not re-read)`` line.
     """
     root = digest.get("root") or {}
     policy = digest.get("policy") or {}
@@ -321,8 +387,66 @@ def _fit(lines: list[str], cap: int) -> str:
     return text
 
 
+def _resize_cse_skills_inline(lines: list[str], cap: int) -> bool:
+    """Re-excerpt ``<skills_inline>`` to the largest bodies that still fit ``cap``."""
+    inline_at = next(
+        (i for i, ln in enumerate(lines) if ln.startswith("<skills_inline>")), None
+    )
+    if inline_at is None:
+        return False
+    repo_root = Path(__file__).resolve().parents[2]
+    slugs = _inline_slugs_from_block(lines[inline_at])
+    if not slugs:
+        return False
+    prefix = "\n".join(lines[:inline_at])
+    suffix = "\n".join(lines[inline_at + 1 :])
+    overhead = len(prefix.encode("utf-8")) + len(suffix.encode("utf-8"))
+    if prefix and suffix:
+        overhead += 2  # newlines joining prefix, block, suffix
+    elif prefix or suffix:
+        overhead += 1
+    catalog = load_skill_catalog(validate_sot=False)
+    fixed: dict[str, int] = {}
+    for slug in slugs:
+        if slug in _CSE_INLINE_ANCHORS:
+            sot, _ = catalog.resolve_sot(slug, repo_root)
+            fixed[slug] = _anchor_line_budget(sot.read_text(encoding="utf-8"), slug)
+    variable = [slug for slug in slugs if slug not in fixed]
+    per_slug_min = {**fixed, **{slug: 64 for slug in variable}}
+    block_min = _render_cse_skills_inline(
+        slugs, repo_root=repo_root, per_slug_budget=per_slug_min
+    )
+    min_block_len = len(block_min.encode("utf-8"))
+    if overhead + min_block_len <= cap:
+        slack = cap - overhead - min_block_len
+        if slack < 80:
+            lines[inline_at] = block_min
+            return True
+    lo, hi = 64, CSE_INLINE_SKILL_MAX_CHARS
+    best: str | None = None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        per_slug = {**fixed, **{slug: mid for slug in variable}}
+        block = _render_cse_skills_inline(
+            slugs,
+            repo_root=repo_root,
+            per_slug_budget=per_slug,
+        )
+        if overhead + len(block.encode("utf-8")) <= cap:
+            best = block
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    if best is None:
+        if overhead + len(block_min.encode("utf-8")) > cap:
+            return False
+        best = block_min
+    lines[inline_at] = best
+    return True
+
+
 def _fit_cse(lines: list[str], cap: int) -> str:
-    """Trim to ``cap`` bytes; drop ``Use the … skill`` lines only after events and standing."""
+    """Trim to ``cap`` bytes; drop ``Use the … skill`` before ``<skills_inline>`` bodies."""
     text = "\n".join(lines)
     while len(text.encode("utf-8")) > cap and len(lines) > 3:
         drop_at = next(
@@ -348,17 +472,26 @@ def _fit_cse(lines: list[str], cap: int) -> str:
             if standing_at is not None and " · " in lines[standing_at]:
                 lines[standing_at] = lines[standing_at].split(" · ", 1)[0]
             else:
-                use_at = next(
-                    (
-                        i
-                        for i in range(len(lines) - 1, -1, -1)
-                        if _is_droppable_cse_skill_line(lines[i])
-                    ),
+                wake_at = next(
+                    (i for i, ln in enumerate(lines) if ln.startswith("Event: wake ")),
                     None,
                 )
-                if use_at is None:
-                    break
-                lines.pop(use_at)
+                if wake_at is not None:
+                    lines.pop(wake_at)
+                elif _resize_cse_skills_inline(lines, cap):
+                    pass
+                else:
+                    use_at = next(
+                        (
+                            i
+                            for i in range(len(lines) - 1, -1, -1)
+                            if _is_droppable_cse_skill_line(lines[i])
+                        ),
+                        None,
+                    )
+                    if use_at is None:
+                        break
+                    lines.pop(use_at)
         text = "\n".join(lines)
     return text
 

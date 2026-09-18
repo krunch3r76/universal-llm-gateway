@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from bus_watch.induction import INDUCTION_CAP, build_wake_induction
+from bus_watch.induction import (
+    CSE_INLINE_TRUNCATION_MARKER,
+    INDUCTION_CAP,
+    build_wake_induction,
+)
 
 
 def _digest(**over):  # noqa: ANN003, ANN202
@@ -157,7 +161,9 @@ def test_induction_cse_fire_keeps_skill_activation_when_summary_row_stale() -> N
         surface="cse",
     )
     assert "Use the liaison skill" not in cse
-    assert ".cursor/skills/liaison/SKILL.md" in cse
+    assert "<skills_inline>" in cse
+    assert 'slug="liaison"' in cse
+    assert "harvests → folds → decides → dispatches → checkpoints → hops" in cse
     assert "Use the reasoning-posture skill" in cse
     assert "IN FLIGHT lane 11364" not in cse
     assert "close todo" in cse
@@ -197,7 +203,9 @@ def test_induction_cse_surface_use_lines() -> None:
     text = build_wake_induction(_digest())
     cse = build_wake_induction(_digest(), surface="cse")
     assert "Use the liaison skill" not in cse
-    assert ".cursor/skills/liaison/SKILL.md" in cse
+    assert "<skills_inline>" in cse
+    assert 'slug="liaison"' in cse
+    assert "harvests → folds → decides → dispatches → checkpoints → hops" in cse
     assert "Use the reasoning-posture skill" in cse
     assert "Use the git-posture skill" not in cse
     assert "Loaded already (do not re-read)" not in cse
@@ -216,15 +224,18 @@ def test_induction_cse_use_lines_are_bare_slugs() -> None:
     assert " § " not in cse
     assert "Use the fs skill" in cse
     assert "Use the liaison skill" not in cse
-    assert ".cursor/skills/liaison/SKILL.md" in cse
+    assert "<skills_inline>" in cse
+    assert 'slug="liaison"' in cse
+    assert "harvests → folds → decides → dispatches → checkpoints → hops" in cse
 
 
-def test_induction_cse_liaison_cursor_only_inlines_sot_not_use_the() -> None:
-    """AC1 falsifier: ``liaison`` is ``cursor_only`` — no Customize self-fetch line."""
+def test_induction_cse_liaison_cursor_only_inlines_sot_body_in_skills_inline() -> None:
+    """``liaison`` is ``cursor_only`` — SOT body in ``<skills_inline>``, not Use-the."""
     cse = build_wake_induction(_digest(policy={}), surface="cse")
     assert "Use the liaison skill" not in cse
-    assert ".cursor/skills/liaison/SKILL.md" in cse
-    assert "liaison (cursor_only):" in cse
+    assert "<skills_inline>" in cse
+    assert 'slug="liaison"' in cse
+    assert "harvests → folds → decides → dispatches → checkpoints → hops" in cse
     assert "Use the reasoning-posture skill" in cse
 
 
@@ -248,8 +259,12 @@ def test_induction_loaded_fence_matches_navigator_skills_policy() -> None:
     cse = build_wake_induction(_digest(policy=policy), surface="cse", cap=1200)
     assert "Use the architecture-invariants skill" not in cse
     assert "Use the ulg-architecture skill" not in cse
-    assert "architecture-invariants (cursor_only):" in cse
-    assert "ulg-architecture (cursor_only):" in cse
+    assert "<skills_inline>" in cse
+    assert 'slug="liaison"' in cse
+    assert 'slug="architecture-invariants"' in cse
+    assert 'slug="ulg-architecture"' in cse
+    assert "harvests → folds → decides → dispatches → checkpoints → hops" in cse
+    assert "ULG Architecture" in cse
     assert "Use the reasoning-posture skill" in cse
 
 
@@ -268,7 +283,9 @@ def test_induction_cse_cap_trims_use_lines_last() -> None:
     assert len(text.encode("utf-8")) <= 700
     assert "Standing: register=" in text
     assert "Use the reasoning-posture skill" in text
-    assert ".cursor/skills/liaison/SKILL.md" in text
+    assert "<skills_inline>" in text
+    assert 'slug="liaison"' in text
+    assert CSE_INLINE_TRUNCATION_MARKER in text
 
 
 def test_induction_spawn_signal_survives_cap() -> None:
