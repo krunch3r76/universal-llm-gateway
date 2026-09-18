@@ -16,6 +16,7 @@ from typing import Any, Literal
 import httpx
 
 from bus_watch.digest_budget import _utcnow
+from bus_watch.lane_closeout import lane_status_query_pointer, query_lane_closeouts
 from bus_watch.liaison_digest import _bus, effective_policy
 from bus_watch.liaison_pager import page_liaison
 from bus_watch.spawn_pending import row_is_terminal
@@ -80,6 +81,22 @@ def _attn_rank(item: dict[str, Any]) -> int:
     return 0
 
 
+def _closeout_journal_meta(root_id: str) -> dict[str, Any]:
+    if not root_id:
+        return {}
+    try:
+        with _bus() as client:
+            rows = query_lane_closeouts(client, root_id, last=200)
+    except Exception:  # noqa: BLE001 — publish must not fail on query errors
+        return {}
+    if not rows:
+        return {}
+    return {
+        "lane_closeouts_count": len(rows),
+        "lane_closeouts_query": lane_status_query_pointer(root_id),
+    }
+
+
 def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
     """Drop unlisted digest keys; keep lanes with unread or non-terminal status."""
     lanes_in = digest.get("lanes") or []
@@ -108,6 +125,9 @@ def project_digest(digest: dict[str, Any]) -> dict[str, Any]:
         # Publish floor: count + cortex URI only — full binds live in tick.json.
         policy_out["induction_binds_count"] = len(binds)
         policy_out["induction_binds_uri"] = _induction_binds_uri(root_id)
+    closeout_meta = _closeout_journal_meta(root_id)
+    if closeout_meta:
+        policy_out.update(closeout_meta)
     out: dict[str, Any] = {
         # First key on purpose: the planted address a woken seat reads before
         # the counters (10479 #120 — plant the address in what the seat reads).

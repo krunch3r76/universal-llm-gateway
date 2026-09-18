@@ -7,6 +7,7 @@ from typing import Any
 from bus_watch.doorbell import render_successor_wake
 from bus_watch.fable_lock import current_night_id
 from bus_watch.friction_rows import now_row as friction_now_row
+from bus_watch.spawn_pending import attention_now_row
 
 SUCCESSOR_MESSAGE_CAP = 2048
 
@@ -114,10 +115,11 @@ def successor_context_from_digest(
     tip_cp = root.get("tip_checkpoint_turn")
     return {
         "gear": policy.get("gear"),
-        # Same precedence as induction NOW: policy.now_row ≻ friction ≻ summary_row.
+        # Same precedence as induction NOW: policy ≻ friction ≻ summary_row ≻ attention.
         "row": str(policy.get("now_row") or "").strip()
         or friction_now_row(digest)
         or str(digest.get("summary_row") or "").strip()
+        or attention_now_row(digest)
         or root.get("last_subject")
         or "",
         "tip_turn": root.get("turns"),

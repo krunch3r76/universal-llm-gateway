@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
@@ -110,6 +110,36 @@ def test_projection_includes_life_when_present() -> None:
 def test_projection_omits_life_for_code_root_digest() -> None:
     proj = project_digest(_full_digest())
     assert "life" not in proj
+
+
+def test_projection_includes_lane_closeout_query_pointer() -> None:
+    record = {
+        "lane": "11692",
+        "parent_root": "11667",
+        "settled": "complete",
+        "landed": "0e6653cdf",
+        "live": "unprobed",
+        "next": "verify",
+        "terminal_status": "completed",
+        "closed_at": "2026-09-18T16:00:00Z",
+    }
+    with patch(
+        "bus_watch.digest_publish.query_lane_closeouts",
+        return_value=[record],
+    ):
+        proj = project_digest(_full_digest(root={"id": "11667", "turns": 51}))
+    assert proj["policy"]["lane_closeouts_count"] == 1
+    assert proj["policy"]["lane_closeouts_query"] == (
+        "liaison-tick.py --root 11667 --lane-status"
+    )
+    with patch(
+        "bus_watch.digest_publish.query_lane_closeouts",
+        return_value=[record],
+    ):
+        rendered = render_body(proj)
+    assert rendered is not None
+    parsed = json.loads(rendered)
+    assert parsed["policy"]["lane_closeouts_count"] == 1
 
 
 def test_projection_sheds_induction_binds_to_uri() -> None:

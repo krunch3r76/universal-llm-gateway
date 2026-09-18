@@ -91,7 +91,12 @@ def reap_navigator_lease(root_id: str, *, dry_run: bool = False) -> dict[str, An
     if not holder:
         return {"reaped": False, "reason": "no_holder"}
     if navigator_wake._lease_expired(lock):
-        return {"reaped": False, "reason": "ttl_already_expired"}
+        return {
+            "reaped": False,
+            "reason": "ttl_already_expired",
+            "grace_expired": True,
+            "holder": holder,
+        }
     execution_id = str(lock.get("execution_id") or "").strip()
     if not execution_id:
         # A lease claimed but never stamped with its execution id cannot be

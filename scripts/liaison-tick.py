@@ -63,6 +63,7 @@ from bus_watch.liaison_stops import (
     apply_policy_set,
     arm_operator_gate,
 )
+from bus_watch.lane_closeout import query_lane_closeouts
 from bus_watch.spawn_on_wake import tick_spawn_on_wake
 from bus_watch.tick_state import (
     absorb_operator_edits,
@@ -236,6 +237,11 @@ def main() -> int:
         "--policy", action="store_true", help="print the effective policy and exit"
     )
     p.add_argument(
+        "--lane-status",
+        action="store_true",
+        help="query OLN lane closeout journal on the parent root (bus turns only)",
+    )
+    p.add_argument(
         "--go-under",
         action="store_true",
         help="hand this house to the gear-3 ticker: register autonomous, drop a stale "
@@ -338,6 +344,14 @@ def main() -> int:
                 )
             )
             return 0
+
+    if args.lane_status:
+        from bus_watch.digest_budget import _bus
+
+        with _bus() as client:
+            rows = query_lane_closeouts(client, root, last=200)
+        print(json.dumps({"root": root, "lanes": rows}, default=str))
+        return 0
 
     if not args.loop:
         digest = build_digest(

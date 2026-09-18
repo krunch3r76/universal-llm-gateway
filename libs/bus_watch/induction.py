@@ -27,6 +27,7 @@ from claude_bundles.cdp_inline_excerpt import _yaml_frontmatter_end, excerpt_ski
 from bus_watch.doorbell_skills import navigator_doorbell_skills_from_policy
 from bus_watch.friction_rows import event_line as _friction_event
 from bus_watch.friction_rows import now_row as _friction_now
+from bus_watch.spawn_pending import attention_now_row
 from bus_watch.spawn_wake.predicate import compute_spawn_signal_sources
 
 INDUCTION_CAP = 700
@@ -240,11 +241,12 @@ def _cse_skill_activation_lines(loaded: list[str]) -> list[str]:
 
 
 def _resolve_now_row(digest: dict[str, Any]) -> tuple[str, str]:
-    """Seat bind ≻ forcing friction ≻ legacy summary_row (11367#7 / a:34028).
+    """Seat bind ≻ friction ≻ summary_row ≻ attention child ≻ empty (11693#4).
 
     Friction outranks ``summary_row`` so a stale tick bind cannot mask an
     undispositioned row; ``summary_row`` prose is never echoed verbatim on
-    the NOW line (see ``_format_now_line``).
+    the NOW line (see ``_format_now_line``). When those are empty, the newest
+    non-terminal commissioned ``sub_mission`` in attention becomes NOW.
     """
     policy = digest.get("policy") or {}
     policy_bind = str(policy.get("now_row") or "").strip()
@@ -256,12 +258,15 @@ def _resolve_now_row(digest: dict[str, Any]) -> tuple[str, str]:
     summary = str(digest.get("summary_row") or "").strip()
     if summary:
         return summary, "summary_row"
+    attention_now = attention_now_row(digest)
+    if attention_now:
+        return attention_now, "attention"
     return "", "empty"
 
 
 def _format_now_line(digest: dict[str, Any], now_row: str, *, source: str) -> str:
     """Pointers not prose — tip turn + handoff, not stale summary_row (§7)."""
-    if source == "friction":
+    if source in ("friction", "attention"):
         return str(now_row or "").strip()
     root = digest.get("root") or {}
     root_id = root.get("id")

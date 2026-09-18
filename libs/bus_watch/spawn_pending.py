@@ -62,6 +62,34 @@ def _parse_iso_ts(value: str | None) -> float | None:
         return None
 
 
+_SUBJECT_CHARS = 56
+
+
+def attention_now_row(digest: dict[str, Any]) -> str:
+    """Newest non-terminal ``sub_mission`` in digest attention (11693#4)."""
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    for item in digest.get("attention") or []:
+        if not isinstance(item, dict) or "id" not in item:
+            continue
+        if item.get("kind") in ("friction", "budget_estimate"):
+            continue
+        if item.get("lane_role") != "sub_mission":
+            continue
+        if row_is_terminal(item):
+            continue
+        updated = str(item.get("updated_at") or "")
+        candidates.append((updated, item))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda pair: pair[0])
+    lane = candidates[-1][1]
+    subject = str(lane.get("last_subject") or "")[:_SUBJECT_CHARS]
+    lane_id = lane["id"]
+    if subject:
+        return f"agent-bus:{lane_id} · «{subject}»"
+    return f"agent-bus:{lane_id}"
+
+
 def row_is_terminal(row: dict[str, Any]) -> bool:
     """True when a digest lane or attention item is a finished worker.
 
@@ -71,6 +99,26 @@ def row_is_terminal(row: dict[str, Any]) -> bool:
     if str(row.get("status") or "") == "closed":
         return True
     return str(row.get("lifecycle") or "").lower() in _TERMINAL_LIFECYCLES
+
+
+def observe_terminal_lane_closeouts(
+    parent_root: str,
+    lanes: list[dict[str, Any]],
+    state: dict[str, Any],
+    client: Any,
+    *,
+    fetch_turns: Callable[[str], Any],
+) -> list[dict[str, Any]]:
+    """At ``row_is_terminal`` transition, post one parent-root closeout row."""
+    from bus_watch.lane_closeout import observe_terminal_lane_closeouts as _emit
+
+    return _emit(
+        parent_root,
+        lanes,
+        state,
+        client,
+        fetch_turns=fetch_turns,
+    )
 
 
 def _first_type_line(body: str) -> str | None:
@@ -629,6 +677,7 @@ def checkpoint_due_wake(state: dict[str, Any], checkpoint_due: bool) -> bool:
 __all__ = [
     "IDE_IDLE_FORFEIT_S",
     "PendingTerminalChecker",
+    "attention_now_row",
     "actionable_kind",
     "actionable_attention",
     "build_attention_lanes",
@@ -640,6 +689,7 @@ __all__ = [
     "enrich_terminal_attention_turns",
     "handoff_wake",
     "idle_ide_forfeit",
+    "observe_terminal_lane_closeouts",
     "pending_spawn_terminal",
     "record_spawn_service",
     "digest_root_surface",

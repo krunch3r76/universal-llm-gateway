@@ -45,7 +45,11 @@ from bus_watch.ide_budget import (
 from bus_watch.induction import build_wake_induction
 from bus_watch.liaison_watchers import collect_watchers
 from bus_watch.life_digest import build_life_block, project_life_block
-from bus_watch.spawn_pending import build_attention_lanes, digest_root_surface
+from bus_watch.spawn_pending import (
+    build_attention_lanes,
+    digest_root_surface,
+    observe_terminal_lane_closeouts,
+)
 
 _STARGATE_HEALTH = os.environ.get(
     "LIAISON_STARGATE_HEALTH", "http://localhost:9999/health"
@@ -182,6 +186,15 @@ def build_digest(
                 _get(client, "/turns", thread=tid, unread=True, last=25) or {}
             ).get("turns"),
         )  # noqa: E501
+        observe_terminal_lane_closeouts(
+            root_id,
+            lanes,
+            state,
+            client,
+            fetch_turns=lambda tid: (
+                _get(client, "/turns", thread=tid, last=10) or {}
+            ).get("turns"),
+        )
 
     policy = effective_policy(state)
     night_id = current_night_id()
