@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from bus_watch.doorbell import (
     DOORBELL_CAP,
     SUCCESSOR_WAKE_CAP,
     basis_floor_bytes,
+    ensure_doorbell_file,
+    parse_doorbell_file,
     render_address,
     render_doorbell,
     render_successor_wake,
@@ -16,10 +20,118 @@ from bus_watch.doorbell import (
 
 _DEFAULT_ARGS = ("10479", "liaison-autonomous-night")
 _DEFAULT_KW = {"ring": "10532"}
+_LIVE_10479_KW = {
+    "ring": "10532",
+    "seat": "web-anthropic",
+    "surface": "ide",
+    "include_commission": True,
+}
 
 
 def _default_render() -> str:
     return render_doorbell(*_DEFAULT_ARGS, **_DEFAULT_KW)
+
+
+def _live_10479_render() -> str:
+    return render_doorbell(*_DEFAULT_ARGS, **_LIVE_10479_KW)
+
+
+@pytest.mark.offline
+def test_parse_doorbell_file_recovers_root_slug_ring() -> None:
+    text = _live_10479_render()
+    parsed = parse_doorbell_file(text)
+    assert parsed.root == "10479"
+    assert parsed.slug == "liaison-autonomous-night"
+    assert parsed.ring == "10532"
+
+
+@pytest.mark.offline
+def test_parse_doorbell_file_ring_none_when_echo_is_root() -> None:
+    text = render_doorbell("10479", "liaison-wake")
+    parsed = parse_doorbell_file(text)
+    assert parsed.ring is None
+    assert "agent-bus:10479 (echo)" in text
+
+
+@pytest.mark.offline
+def test_ensure_doorbell_file_refreshes_stale_content(tmp_path: Path) -> None:
+    path = tmp_path / "10479-liaison-wake-doorbell.md"
+    fresh = _live_10479_render()
+    stale = fresh.replace(
+        "line-start `scope:` + `files_expected:` + `vision:`",
+        "legacy commission hint without admission tokens",
+    )
+    path.write_text(stale, encoding="utf-8")
+
+    result = ensure_doorbell_file(path, root="10479")
+    assert result.wrote is True
+    assert path.read_text(encoding="utf-8") == fresh
+
+    mtime_before = path.stat().st_mtime_ns
+    second = ensure_doorbell_file(path, root="10479")
+    assert second.wrote is False
+    assert path.stat().st_mtime_ns == mtime_before
+
+
+@pytest.mark.offline
+def test_ensure_doorbell_file_defaults_preserve_existing_slug_and_ring(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "10479-liaison-wake-doorbell.md"
+    text = _live_10479_render()
+    path.write_text(text, encoding="utf-8")
+
+    result = ensure_doorbell_file(path, root="10479")
+    assert result.wrote is False
+    assert result.slug == "liaison-autonomous-night"
+    assert result.ring == "10532"
+    unchanged = path.read_text(encoding="utf-8")
+    assert "liaison-autonomous-night" in unchanged
+    assert "agent-bus:10532 (echo)" in unchanged
+    assert "liaison-wake" not in unchanged.splitlines()[0]
+
+
+@pytest.mark.offline
+def test_ensure_doorbell_file_explicit_slug_override_rewrites(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "10479-liaison-wake-doorbell.md"
+    path.write_text(_live_10479_render(), encoding="utf-8")
+    expected = render_doorbell("10479", "liaison-wake", ring="10532")
+
+    result = ensure_doorbell_file(
+        path,
+        root="10479",
+        slug="liaison-wake",
+        slug_explicit=True,
+        ring="10532",
+        ring_explicit=True,
+    )
+    assert result.wrote is True
+    assert path.read_text(encoding="utf-8") == expected
+
+
+@pytest.mark.offline
+def test_ensure_doorbell_file_idempotent_on_live_10479_artifact(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "10479-liaison-wake-doorbell.md"
+    text = _live_10479_render()
+    path.write_text(text, encoding="utf-8")
+
+    result = ensure_doorbell_file(path, root="10479")
+    assert result.wrote is False
+    assert path.read_bytes() == text.encode("utf-8")
+
+
+@pytest.mark.offline
+def test_ensure_doorbell_file_creates_new_with_defaults(tmp_path: Path) -> None:
+    path = tmp_path / "99999-liaison-wake-doorbell.md"
+    expected = render_doorbell("99999", "liaison-wake")
+
+    result = ensure_doorbell_file(path, root="99999")
+    assert result.wrote is True
+    assert path.read_text(encoding="utf-8") == expected
 
 
 @pytest.mark.offline

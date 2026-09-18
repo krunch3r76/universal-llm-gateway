@@ -12,7 +12,11 @@ cap; the cap moves."
 
 from __future__ import annotations
 
+import re
+import sys
 from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
 
 from bus_watch.doorbell_skills import doorbell_skills
 
@@ -43,15 +47,127 @@ _COMMISSION_HINT = (
 )
 _STALE_CONTRACT = "re-fetch DIGEST; on epoch mismatch echo STALE and stop"
 
+_HEADER_RE = re.compile(
+    r"^WAKE — liaison, house agent-bus:(?P<root>\S+) (?P<slug>.+)$",
+)
+_ECHO_RE = re.compile(r"agent-bus:(?P<ring>\d+) \(echo\)")
+
+
+@dataclass(frozen=True)
+class ParsedDoorbell:
+    root: str
+    slug: str
+    ring: str | None
+
+
+@dataclass(frozen=True)
+class EnsureDoorbellResult:
+    wrote: bool
+    slug: str
+    ring: str | None
+
+
 __all__ = [
     "DOORBELL_CAP",
     "SUCCESSOR_WAKE_CAP",
+    "EnsureDoorbellResult",
+    "ParsedDoorbell",
     "basis_floor_bytes",
+    "doorbell_prompt_uri",
+    "ensure_doorbell_file",
+    "parse_doorbell_file",
     "render_address",
     "render_doorbell",
     "render_successor_wake",
     "successor_wake_unshed_byte_length",
 ]
+
+
+def doorbell_prompt_uri(root: str) -> str:
+    """Cortex URI for the static liaison WAKE doorbell paste."""
+    return f"cortex://notes/system/threads/{root}-liaison-wake-doorbell.md"
+
+
+def parse_doorbell_file(text: str) -> ParsedDoorbell:
+    """Recover ``root``, ``slug``, and ``ring`` from an on-disk doorbell paste."""
+    lines = text.splitlines()
+    if not lines:
+        raise ValueError("empty doorbell file")
+    header = _HEADER_RE.match(lines[0])
+    if not header:
+        raise ValueError(f"unrecognized doorbell header: {lines[0]!r}")
+    root = header.group("root")
+    slug = header.group("slug")
+    ring: str | None = None
+    for line in lines:
+        if not line.startswith("addresses:"):
+            continue
+        echo = _ECHO_RE.search(line)
+        if echo is None:
+            break
+        echo_id = echo.group("ring")
+        ring = echo_id if echo_id != root else None
+        break
+    return ParsedDoorbell(root=root, slug=slug, ring=ring)
+
+
+def ensure_doorbell_file(
+    path: Path,
+    *,
+    root: str,
+    slug: str | None = None,
+    slug_explicit: bool = False,
+    ring: str | None = None,
+    ring_explicit: bool = False,
+    slug_default: str = "liaison-wake",
+    seat: str = "web-anthropic",
+    surface: str = "ide",
+    include_commission: bool = True,
+    **render_kw: object,
+) -> EnsureDoorbellResult:
+    """Write ``path`` when rendered bytes differ; preserve on-disk args by default.
+
+    When the file already exists, ``slug`` and ``ring`` are recovered from its
+    header and ``addresses:`` line unless the caller marked them explicit.
+    Explicit overrides that change recovered values are printed to stderr.
+    """
+    if path.is_file():
+        parsed = parse_doorbell_file(path.read_text(encoding="utf-8"))
+        effective_slug = slug if slug_explicit else parsed.slug
+        effective_ring = ring if ring_explicit else parsed.ring
+        if slug_explicit and slug != parsed.slug:
+            print(
+                f"doorbell slug: {parsed.slug!r} -> {effective_slug!r}",
+                file=sys.stderr,
+            )
+        if ring_explicit and ring != parsed.ring:
+            old_ring = parsed.ring if parsed.ring is not None else parsed.root
+            new_ring = effective_ring if effective_ring is not None else root
+            print(
+                f"doorbell ring: {old_ring!r} -> {new_ring!r}",
+                file=sys.stderr,
+            )
+    else:
+        effective_slug = slug if slug is not None else slug_default
+        effective_ring = ring if ring_explicit else None
+
+    rendered = render_doorbell(
+        root,
+        effective_slug,
+        ring=effective_ring,
+        seat=seat,
+        surface=surface,
+        include_commission=include_commission,
+        **render_kw,  # type: ignore[arg-type]
+    )
+    rendered_bytes = rendered.encode("utf-8")
+    if path.is_file() and path.read_bytes() == rendered_bytes:
+        return EnsureDoorbellResult(
+            wrote=False, slug=effective_slug, ring=effective_ring
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(rendered_bytes)
+    return EnsureDoorbellResult(wrote=True, slug=effective_slug, ring=effective_ring)
 
 
 def render_address(uri: str) -> str:

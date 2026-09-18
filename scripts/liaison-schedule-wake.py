@@ -21,7 +21,7 @@ from typing import Any
 
 import httpx
 import yaml
-from bus_watch.doorbell import render_doorbell
+from bus_watch.doorbell import doorbell_prompt_uri, ensure_doorbell_file
 from implement_admission.closeout_helpers import cortex_files_root
 
 _DEFAULT_WORKER_URL = "http://127.0.0.1:8091"
@@ -86,17 +86,15 @@ def _relay(
         return body
 
 
-def _doorbell_uri(root: str) -> str:
-    return f"cortex://notes/system/threads/{root}-liaison-wake-doorbell.md"
-
-
 def _ensure_doorbell_file(
     root: str,
-    slug: str,
     *,
+    slug: str | None,
+    slug_explicit: bool,
     ring: str | None,
+    ring_explicit: bool,
 ) -> str:
-    uri = _doorbell_uri(root)
+    uri = doorbell_prompt_uri(root)
     rel = uri.removeprefix("cortex://").lstrip("/")
     path = (cortex_files_root() / rel).resolve()
     root_resolved = cortex_files_root().resolve()
@@ -104,11 +102,14 @@ def _ensure_doorbell_file(
         path.relative_to(root_resolved)
     except ValueError as exc:
         raise ValueError(f"doorbell path escapes CORTEX_FILES_ROOT: {uri}") from exc
-    if path.is_file():
-        return uri
-    text = render_doorbell(root, slug, ring=ring)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
+    ensure_doorbell_file(
+        path,
+        root=root,
+        slug=slug,
+        slug_explicit=slug_explicit,
+        ring=ring,
+        ring_explicit=ring_explicit,
+    )
     return uri
 
 
@@ -135,11 +136,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument(
         "--slug",
-        default="liaison-wake",
-        help="Doorbell slug passed to render_doorbell (default: liaison-wake)",
+        default=argparse.SUPPRESS,
+        help="Doorbell slug passed to render_doorbell (default: liaison-wake for new files)",
     )
     p.add_argument(
-        "--ring", default=None, help="Echo thread for ORIENTED (default: root)"
+        "--ring",
+        default=argparse.SUPPRESS,
+        help="Echo thread for ORIENTED (default: root for new files)",
     )
     p.add_argument(
         "--delay-s",
@@ -181,7 +184,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    prompt_uri = _ensure_doorbell_file(root, args.slug, ring=args.ring)
+    slug_explicit = hasattr(args, "slug")
+    ring_explicit = hasattr(args, "ring")
+    slug = getattr(args, "slug", None)
+    ring = getattr(args, "ring", None)
+
+    prompt_uri = _ensure_doorbell_file(
+        root,
+        slug=slug,
+        slug_explicit=slug_explicit,
+        ring=ring,
+        ring_explicit=ring_explicit,
+    )
     delay_s = args.delay_s if args.delay_s is not None else 5.0
     body: dict[str, Any] = {
         "created_by": "life-seat",
