@@ -58,21 +58,52 @@ def _worker_dispatch_error(
     )
 
 
-async def dispatch_prepared_cursor_sdk(
-    handle: PreparedCursorSdkHandle,
+def _sdk_admit_envelope(
+    handle: PreparedCursorSdkHandle, *, queued: bool = False
 ) -> dict[str, Any]:
-    """Submit a prepared handle to the worker without reminting identities."""
-    if handle.thread_id is None:
-        from .admission import FrontierEndpointError
+    """202-shaped admit payload used when GIW POST is sync or expand-deferred."""
+    profile = get_profile(handle.family, handle.platform)
+    handoff_fields = build_handoff_result(
+        thread_id=handle.thread_id,
+        to_agent=handle.to_agent,
+        reply_from_agent=CURSOR_SDK_REPLY_SEAT,
+        poll_wait_seconds=resolve_poll_wait_seconds(poller_is_cursor_ide=True),
+        after_turn=handle.poll_after_turn if handle.poll_after_turn else 1,
+        execution_id=handle.execution_id,
+    )
+    emit_poll_hint_from_handoff(
+        request_id=handle.request_id,
+        thread_id=handle.thread_id,
+        caller_agent=handle.caller_agent or "cursor",
+        handoff_fields=handoff_fields,
+    )
+    result = build_sdk_generate_result(
+        role=handle.role,
+        profile=profile,
+        handoff_fields=handoff_fields,
+        execution_id=handle.execution_id,
+        thread_id=handle.thread_id,
+        to_agent=handle.to_agent,
+        resolved_model=handle.resolved_model,
+        resolved_contract=handle.handoff_contract,
+        warnings=list(handle.alignment_warnings),
+        durable=handle.admitted,
+        density_triage=handle.density_triage,
+        review_opt_out_reason_code=handle.review_opt_out_reason_code,
+        auto_review_child=handle.auto_review_child,
+    )
+    if handle.auto_review_defaulted:
+        result["auto_review_defaulted"] = True
+    result["knob_resolution"] = list(handle.knob_resolution)
+    if queued:
+        result["status"] = "queued"
+    result["dispatch_id"] = handle.dispatch_id
+    result["request_id"] = handle.request_id
+    return result
 
-        raise FrontierEndpointError(
-            request_id=handle.request_id,
-            field="thread_id",
-            reason="prepared handle missing thread_id; materialize before worker POST",
-            status_code=422,
-            code="CURSOR_PREPARED_HANDLE_INCOMPLETE",
-        )
 
+async def _finish_prepared_dispatch(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
+    """POST GIW and emit worker outcome. Used by the sync path and expand task."""
     if handle.packet_path is not None:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker(
             request_id=handle.request_id,
@@ -163,47 +194,34 @@ async def dispatch_prepared_cursor_sdk(
             handle.resolved_model, handle.aligned_knobs
         ),
     )
-
-    profile = get_profile(handle.family, handle.platform)
-    handoff_fields = build_handoff_result(
-        thread_id=handle.thread_id,
-        to_agent=handle.to_agent,
-        reply_from_agent=CURSOR_SDK_REPLY_SEAT,
-        poll_wait_seconds=resolve_poll_wait_seconds(poller_is_cursor_ide=True),
-        after_turn=handle.poll_after_turn if handle.poll_after_turn else 1,
-        execution_id=handle.execution_id,
-    )
-    emit_poll_hint_from_handoff(
-        request_id=handle.request_id,
-        thread_id=handle.thread_id,
-        caller_agent=handle.caller_agent or "cursor",
-        handoff_fields=handoff_fields,
-    )
-    result = build_sdk_generate_result(
-        role=handle.role,
-        profile=profile,
-        handoff_fields=handoff_fields,
-        execution_id=handle.execution_id,
-        thread_id=handle.thread_id,
-        to_agent=handle.to_agent,
-        resolved_model=handle.resolved_model,
-        resolved_contract=handle.handoff_contract,
-        warnings=list(handle.alignment_warnings),
-        durable=handle.admitted,
-        density_triage=handle.density_triage,
-        review_opt_out_reason_code=handle.review_opt_out_reason_code,
-        auto_review_child=handle.auto_review_child,
-    )
-    if handle.auto_review_defaulted:
-        result["auto_review_defaulted"] = True
-    result["knob_resolution"] = list(handle.knob_resolution)
+    result = _sdk_admit_envelope(handle, queued=queued)
     if queued:
-        ticket = worker_detail.get("ticket") or {}
-        result["status"] = "queued"
-        result["queue_ticket"] = ticket
-    result["dispatch_id"] = handle.dispatch_id
-    result["request_id"] = handle.request_id
+        result["queue_ticket"] = worker_detail.get("ticket") or {}
     return result
+
+
+async def dispatch_prepared_cursor_sdk(
+    handle: PreparedCursorSdkHandle,
+) -> dict[str, Any]:
+    """Submit a prepared handle to the worker without reminting identities."""
+    if handle.thread_id is None:
+        from .admission import FrontierEndpointError
+
+        raise FrontierEndpointError(
+            request_id=handle.request_id,
+            field="thread_id",
+            reason="prepared handle missing thread_id; materialize before worker POST",
+            status_code=422,
+            code="CURSOR_PREPARED_HANDLE_INCOMPLETE",
+        )
+
+    from .prompt_expand_prelude import schedule_sdk_expand_and_dispatch
+
+    if schedule_sdk_expand_and_dispatch(handle, _finish_prepared_dispatch):
+        result = _sdk_admit_envelope(handle)
+        result["prompt_expand"] = "pending"
+        return result
+    return await _finish_prepared_dispatch(handle)
 
 
 async def dispatch_cursor_sdk_generate(

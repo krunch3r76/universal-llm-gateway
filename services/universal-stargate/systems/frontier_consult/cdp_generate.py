@@ -583,6 +583,7 @@ async def dispatch_cdp_generate(
         "mission_kind": mission_kind,
         "parent_thread": parent_thread,
         "topic": dispatch_topic,
+        "contract": str(contract or "none"),
     }
     if isinstance(opts, dict):
         if "harvest_source" in opts:

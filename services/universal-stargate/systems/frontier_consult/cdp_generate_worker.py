@@ -357,6 +357,7 @@ async def run_cdp_worker(
     parent_thread: str | None = None,
     topic: str | None = None,
     project_uuid: str | None = None,
+    contract: str = "none",
 ) -> None:
     """Stage already done at admit; run adapter and post proof/failure turn."""
     from .cdp_generate_reconcile import (
@@ -431,6 +432,18 @@ async def run_cdp_worker(
         loop.call_soon_threadsafe(_publish)
 
     try:
+        from .prompt_expand_prelude import maybe_expand_cdp_prompt
+
+        prompt_uri = await asyncio.to_thread(
+            maybe_expand_cdp_prompt,
+            prompt_uri=prompt_uri,
+            execution_id=execution_id,
+            thread_id=thread_id,
+            parent_thread=parent_thread,
+            caller_agent=caller_agent,
+            contract=contract,
+            model_id=model_id,
+        )
         result = await asyncio.to_thread(
             run_cdp_generate,
             execution_id=execution_id,
