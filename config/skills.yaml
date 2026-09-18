@@ -459,6 +459,9 @@ skills:
   research-article-search:
     surface_class: cursor_only
     mcp_surface_required: code
+  retrieval-before-authoring:
+    surface_class: cursor_only
+    mcp_surface_required: code
   review-task-guidance:
     surface_class: cursor_only
     mcp_surface_required: none

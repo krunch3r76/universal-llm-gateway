@@ -37,6 +37,7 @@ over-refusal-prompt-framing
 pager-notify
 path-sim
 reasoning-posture
+retrieval-before-authoring
 residual-imprint
 satellite-workspace
 modularize-path
