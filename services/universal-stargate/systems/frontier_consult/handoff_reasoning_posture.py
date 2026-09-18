@@ -1,13 +1,14 @@
 """Judgment-skill gate for MCP-seat handoff enrich.
 
-Same skip set as GIW ``resolve_prompt_preamble``: consult / none
-handoffs get a ``reasoning-posture`` Use-line; mechanical/quick skip.
+Same skip/freeform sets as GIW ``resolve_prompt_preamble``: consult
+handoffs get judgment Use-lines; ``none`` is freeform; mechanical/quick skip.
 """
 
 from __future__ import annotations
 
 from implement_admission.admission_read import frontmatter_value
 from reasoning_posture_contracts import (
+    FREEFORM_CONTRACTS,
     HYPOTHESIZE_SIMULATE_CONTRACTS,
     REASONING_POSTURE_SKIP_CONTRACTS,
 )
@@ -31,15 +32,20 @@ def handoff_wants_reasoning_posture(text: str, handoff_contract: str | None) -> 
     raw = (handoff_contract or frontmatter_value(text, "contract") or "").strip()
     if not raw:
         return False
-    return raw.lower() not in REASONING_POSTURE_SKIP_CONTRACTS
+    lowered = raw.lower()
+    if lowered in FREEFORM_CONTRACTS:
+        return False
+    return lowered not in REASONING_POSTURE_SKIP_CONTRACTS
 
 
 def handoff_wants_hypothesize_simulate(text: str, handoff_contract: str | None) -> bool:
     """Return True when this handoff leaves the option space open to the seat.
 
-    ``consult`` and ``none`` both qualify: a consult carries a pinned
-    Question, while ``none`` is the binding leg of a judgment split and
-    must generate its own rivals.
+    ``consult`` qualifies: a consult carries a pinned Question and may need
+    rival generation. ``none`` is freeform — caller prompt is sole authority.
     """
     raw = (handoff_contract or frontmatter_value(text, "contract") or "").strip()
-    return raw.lower() in HYPOTHESIZE_SIMULATE_CONTRACTS
+    lowered = raw.lower()
+    if lowered in FREEFORM_CONTRACTS:
+        return False
+    return lowered in HYPOTHESIZE_SIMULATE_CONTRACTS

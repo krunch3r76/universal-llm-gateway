@@ -16,6 +16,7 @@ from reasoning_posture_contracts import (
     HYPOTHESIZE_SIMULATE_CONTRACTS,
     REASONING_POSTURE_PREAMBLE,
     REASONING_POSTURE_SKIP_CONTRACTS,
+    contract_is_freeform,
     reasoning_posture_warrants_injection,
 )
 
@@ -543,6 +544,26 @@ def resolve_prompt_preamble(
         preamble = _IMPLEMENT_PREAMBLE
     else:
         preamble = ""
+
+    if contract_is_freeform(contract):
+        parts: list[str] = []
+        resume_root = extract_resume_root_from_packet(existing_text or "")
+        if resume_root:
+            fence_block = _fetch_resume_fence_preamble(resume_root)
+            if fence_block:
+                parts.append(fence_block)
+        skill_block = _skill_invoke_block(
+            list(skills or []),
+            prompt_preamble,
+            existing_text,
+        )
+        if skill_block:
+            parts.append(skill_block)
+        if preamble:
+            parts.append(preamble.strip())
+        if not parts:
+            return ""
+        return "\n\n".join(parts) + "\n\n"
 
     parts = [
         _DELIVERABLE_ROUTING_PREAMBLE,

@@ -11,8 +11,12 @@ from __future__ import annotations
 CONSUMERS: tuple[str, ...] = ('git_integration_worker', 'stargate')
 
 REASONING_POSTURE_SKIP_CONTRACTS = frozenset(
-    {"implement", "pure-mechanical", "propagate", "execute", "answer", "ask"}
+    {"implement", "pure-mechanical", "propagate", "execute", "answer", "ask", "none"}
 )
+
+# ``team_dispatch(contract="none")``: caller prompt is sole task authority — no
+# harness judgment stack or universal preamble injection (GIW + handoff enrich).
+FREEFORM_CONTRACTS: frozenset[str] = frozenset({"none"})
 
 # Shared one-liner for GIW preamble, Stargate handoff enrich, and cursor-auto admit.
 REASONING_POSTURE_PREAMBLE = (
@@ -27,13 +31,18 @@ def reasoning_posture_warrants_injection(contract: str | None) -> bool:
 
 
 # Judgment contracts that receive hypothesize-simulate rival-fill injection.
-HYPOTHESIZE_SIMULATE_CONTRACTS = frozenset(
-    {"consult", "sketch", "conductor", "none"}
-)
+HYPOTHESIZE_SIMULATE_CONTRACTS = frozenset({"consult", "sketch", "conductor"})
+
+
+def contract_is_freeform(contract: str | None) -> bool:
+    """True when the harness must not inject steering preambles or judgment skills."""
+    return (contract or "").strip().lower() in FREEFORM_CONTRACTS
 
 __all__ = [
+    "FREEFORM_CONTRACTS",
     "HYPOTHESIZE_SIMULATE_CONTRACTS",
     "REASONING_POSTURE_PREAMBLE",
     "REASONING_POSTURE_SKIP_CONTRACTS",
+    "contract_is_freeform",
     "reasoning_posture_warrants_injection",
 ]

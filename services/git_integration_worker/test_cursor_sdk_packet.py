@@ -13,11 +13,21 @@ def test_extract_sdk_mode_from_packet_plan_line() -> None:
     assert extract_sdk_mode_from_packet(text) == "plan"
 
 
-def test_resolve_prompt_preamble_always_includes_deliverable_routing() -> None:
+def test_resolve_prompt_preamble_none_inferred_is_freeform() -> None:
     text = resolve_prompt_preamble(
         handoff_contract=None,
         prompt_preamble=None,
         inferred_contract="none",
+    )
+    assert text == ""
+    assert "DURABLE DELIVERABLE ROUTING" not in text
+
+
+def test_resolve_prompt_preamble_consult_includes_deliverable_routing() -> None:
+    text = resolve_prompt_preamble(
+        handoff_contract="consult",
+        prompt_preamble=None,
+        inferred_contract=None,
     )
     assert "DURABLE DELIVERABLE ROUTING" in text
     assert "CURSOR TRANSCRIPT READS" in text
@@ -51,14 +61,15 @@ def test_resolve_prompt_preamble_preserves_custom_preamble() -> None:
     )
 
 
-def test_resolve_prompt_preamble_injects_reasoning_posture_on_residual() -> None:
+def test_resolve_prompt_preamble_none_skips_judgment_stack() -> None:
     text = resolve_prompt_preamble(
         handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
     )
-    assert text.count("Use the `reasoning-posture` skill") == 1
-    assert text.count("Use the `ulg-for-llms` skill") == 1
+    assert text == ""
+    assert "reasoning-posture" not in text
+    assert "ulg-for-llms" not in text
 
 
 def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
@@ -73,7 +84,6 @@ def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
 
 
 def test_resolve_prompt_preamble_hypothesize_simulate_judgment_contracts() -> None:
-    """``none`` is the binding leg of a judgment split — it gets the fill."""
     consult = resolve_prompt_preamble(
         handoff_contract="consult",
         prompt_preamble=None,
@@ -85,7 +95,7 @@ def test_resolve_prompt_preamble_hypothesize_simulate_judgment_contracts() -> No
         prompt_preamble=None,
         inferred_contract=None,
     )
-    assert "Use the `hypothesize-simulate` skill" in residual
+    assert "hypothesize-simulate" not in residual
     implement = resolve_prompt_preamble(
         handoff_contract="implement",
         prompt_preamble=None,
@@ -110,7 +120,7 @@ def test_resolve_prompt_preamble_skips_reasoning_posture_on_mechanical_or_quick(
     assert "ulg-for-llms" not in text
 
 
-def test_resolve_prompt_preamble_reasoning_posture_idempotent_existing_text() -> None:
+def test_resolve_prompt_preamble_none_freeform_preserves_packet_text() -> None:
     existing = "Use the `reasoning-posture` skill — already in packet.\nDo the work."
     text = resolve_prompt_preamble(
         handoff_contract="none",
@@ -118,7 +128,7 @@ def test_resolve_prompt_preamble_reasoning_posture_idempotent_existing_text() ->
         inferred_contract=None,
         existing_text=existing,
     )
-    assert text.count("Use the `reasoning-posture` skill") == 0
+    assert text == ""
     combined = text + existing
     assert combined.count("Use the `reasoning-posture` skill") == 1
 

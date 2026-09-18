@@ -42,15 +42,20 @@ def test_packet_preamble_includes_breadth_recon_block() -> None:
     assert "ulg-for-llms" not in preamble
 
 
-def test_packet_preamble_residual_includes_reasoning_posture() -> None:
+def test_packet_preamble_none_is_freeform() -> None:
+    """``contract=none``: caller prompt is sole authority — no harness steering."""
     preamble = resolve_prompt_preamble(
         handoff_contract="none",
         prompt_preamble=None,
         inferred_contract=None,
+        lane="B",
+        lane_branch="cursor-sdk/lane-11651",
     )
-    assert "BREADTH RECON — EXPLORE DEFAULT" in preamble
-    assert "Use the `reasoning-posture` skill" in preamble
-    assert "Use the `ulg-for-llms` skill" in preamble
+    assert preamble == ""
+    assert "BREADTH RECON — EXPLORE DEFAULT" not in preamble
+    assert "DURABLE DELIVERABLE ROUTING" not in preamble
+    assert "Use the `reasoning-posture` skill" not in preamble
+    assert "LANE-B BRANCH CONTRACT" not in preamble
 
 
 @pytest.mark.parametrize(
