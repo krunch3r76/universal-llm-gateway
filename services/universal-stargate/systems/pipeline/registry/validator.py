@@ -8,6 +8,7 @@ Part of the pipeline registry package.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -46,7 +47,31 @@ def _collect_prompt_refs(
             refs.append((path, val))
         elif isinstance(val, dict):
             refs.extend(_collect_prompt_refs(val, path))
-    return refs
+        return refs
+
+
+def expected_domain_models_yaml(
+    registry: PipelineRegistry, pipeline: PipelineSpec
+) -> str:
+    """Return the domain-root models.yaml path this pipeline's aliases load from.
+
+    Loader reads only ``{search_path}/{domain}/models.yaml`` — never variant-dir
+    copies. Callers use this string in catalog-skip records.
+    """
+    domain = pipeline.domain
+    path_name = pipeline.source_search_path
+    base = registry._config_base_dir
+    for search_path in registry._search_paths:
+        expanded = Path(search_path).expanduser()
+        resolved = (
+            expanded.resolve()
+            if expanded.is_absolute()
+            else (base / expanded).resolve()
+        )
+        resolved_name = resolved.name or str(search_path).strip() or "config"
+        if resolved_name == path_name:
+            return str(resolved / domain / "models.yaml")
+    return f"{path_name}/{domain}/models.yaml"
 
 
 class PipelineValidator:
@@ -101,6 +126,49 @@ class PipelineValidator:
 
         return removed_ids
 
+    def _record_unknown_model_ref(
+        self, pipeline: PipelineSpec, step_id: str, alias: str
+    ) -> None:
+        """Stamp a catalog-skip when an in-YAML alias cannot resolve.
+
+        Distinguishes a missing domain-root models.yaml (the silent-omit class)
+        from an alias that is simply absent in an existing file.
+        """
+        expected = expected_domain_models_yaml(self._registry, pipeline)
+        reason = (
+            "missing_domain_models_yaml"
+            if not Path(expected).is_file()
+            else "unknown_model_ref"
+        )
+        existing = next(
+            (
+                row
+                for row in self._registry._catalog_skips
+                if row.get("pipeline_id") == pipeline.id and row.get("alias") == alias
+            ),
+            None,
+        )
+        if existing is not None:
+            return
+        self._registry._catalog_skips.append(
+            {
+                "pipeline_id": pipeline.id,
+                "alias": alias,
+                "expected_models_yaml": expected,
+                "reason": reason,
+                "step": step_id,
+            }
+        )
+        logger.error(
+            "Pipeline '%s' catalog skip: alias '%s' unresolved (%s); "
+            "expected %s (step %s)",
+            pipeline.id,
+            alias,
+            reason,
+            expected,
+            step_id,
+        )
+
     def _validate_pipeline(self, pipeline: PipelineSpec) -> list[str]:
         """Validate a single pipeline configuration."""
         errors = []
@@ -118,12 +186,11 @@ class PipelineValidator:
                     f"Step '{step.id}': No handler for type '{step.type}' "
                     f"in domain '{pipeline.type}' variant '{pipeline.source_variant}'"
                 )
-                continue
-
-            handler = handler_class()
-            if hasattr(handler, "validate"):
-                step_errors = handler.validate(step)
-                errors.extend(step_errors)
+            else:
+                handler = handler_class()
+                if hasattr(handler, "validate"):
+                    step_errors = handler.validate(step)
+                    errors.extend(step_errors)
 
             if step.model_ref:
                 model_ref_to_check = step.model_ref
@@ -149,6 +216,7 @@ class PipelineValidator:
                             search_path=pipeline.source_search_path,
                         )
                     except KeyError:
+                        self._record_unknown_model_ref(pipeline, step.id, step.model_ref)
                         errors.append(
                             f"Step '{step.id}': Unknown model_ref '{step.model_ref}'"
                         )
@@ -160,6 +228,7 @@ class PipelineValidator:
                             search_path=pipeline.source_search_path,
                         )
                     except KeyError:
+                        self._record_unknown_model_ref(pipeline, step.id, step.model_ref)
                         errors.append(
                             f"Step '{step.id}': Unknown model_ref '{step.model_ref}'"
                         )

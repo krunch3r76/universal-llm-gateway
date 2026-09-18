@@ -440,6 +440,22 @@ def _pipeline_validate(pipeline_id: str) -> dict[str, Any]:
     _cache_pipeline_timeouts(pipelines)
 
     if pipeline_id not in pipelines:
+        skips = pipelines_data.get("catalog_skips") or []
+        hit = next(
+            (
+                row
+                for row in skips
+                if isinstance(row, dict) and row.get("pipeline_id") == pipeline_id
+            ),
+            None,
+        )
+        if hit is not None:
+            return _validate_error(
+                pipeline_id,
+                f"Pipeline '{pipeline_id}' skipped: alias '{hit.get('alias')}' "
+                f"unresolved ({hit.get('reason')}); "
+                f"expected {hit.get('expected_models_yaml')}",
+            )
         available = sorted(pipelines.keys())
         return _validate_error(
             pipeline_id,

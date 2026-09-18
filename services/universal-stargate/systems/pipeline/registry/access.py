@@ -35,6 +35,20 @@ class PipelineAccessor:
     def get_pipeline(self, pipeline_id: str) -> PipelineSpec:
         """Get pipeline by ID."""
         if pipeline_id not in self._registry.pipelines:
+            skip = next(
+                (
+                    row
+                    for row in self._registry._catalog_skips
+                    if row.get("pipeline_id") == pipeline_id
+                ),
+                None,
+            )
+            if skip is not None:
+                raise KeyError(
+                    f"Pipeline '{pipeline_id}' skipped: alias '{skip.get('alias')}' "
+                    f"unresolved ({skip.get('reason')}); "
+                    f"expected {skip.get('expected_models_yaml')}"
+                )
             raise KeyError(f"Pipeline '{pipeline_id}' not found")
         return self._registry.pipelines[pipeline_id]
 
@@ -236,6 +250,11 @@ class PipelineAccessor:
             template=obj["template"],
             optional_placeholders=optional_placeholders,
         )
+
+    @property
+    def catalog_skips(self) -> list[dict[str, str]]:
+        """Caller-visible catalog drops (missing domain models.yaml / unknown alias)."""
+        return list(self._registry._catalog_skips)
 
     @property
     def unavailable_pipelines(self) -> list[tuple[str, list[str]]]:

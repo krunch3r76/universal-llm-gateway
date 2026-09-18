@@ -68,6 +68,7 @@ class PipelineRegistry:
         self.pipelines: dict[str, PipelineSpec] = {}
         self.prompts: dict[str, Any] = {}
         self._validation_errors: list[str] = []
+        self._catalog_skips: list[dict[str, str]] = []
         self._deferred_pipelines: list[tuple[Path, str, Path | None]] = []
         self._permanently_unavailable: list[tuple[str, list[str]]] = []
 
@@ -95,6 +96,7 @@ class PipelineRegistry:
             PipelineConfigError: If validation errors found
         """
         self._validation_errors = []
+        self._catalog_skips = []
         self._permanently_unavailable = []
 
         for search_path in self._search_paths:
@@ -185,6 +187,7 @@ class PipelineRegistry:
         self._domain_models = fresh._domain_models
         self.prompts = fresh.prompts
         self._validation_errors = fresh._validation_errors
+        self._catalog_skips = fresh._catalog_skips
         self._permanently_unavailable = fresh._permanently_unavailable
 
         new_pipeline_count = len(self.pipelines)
@@ -265,6 +268,11 @@ class PipelineRegistry:
     def get_prompt(self, prompt_ref: str):
         """Get structured prompt configuration by reference."""
         return self._accessor.get_prompt(prompt_ref)
+
+    @property
+    def catalog_skips(self) -> list[dict[str, str]]:
+        """Structured drops from unknown model_ref / missing domain models.yaml."""
+        return self._accessor.catalog_skips
 
     @property
     def unavailable_pipelines(self) -> list[tuple[str, list[str]]]:

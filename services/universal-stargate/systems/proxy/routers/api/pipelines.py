@@ -27,7 +27,9 @@ class PipelineSummary(TypedDict):
     timeout_seconds: float
 
 
-PipelinesResponse = dict[str, dict[str, PipelineSummary]]
+class PipelinesListResponse(TypedDict):
+    pipelines: dict[str, PipelineSummary]
+    catalog_skips: list[dict[str, str]]
 
 
 def _require_pipeline_registry(proxy: StargateProxy):
@@ -63,9 +65,9 @@ def _pipeline_summary(pipeline_id: str, proxy: StargateProxy) -> PipelineSummary
 async def list_pipelines(
     proxy: StargateProxy = Depends(get_proxy),
     _current_user: dict[str, object] = Depends(get_auth_dependency),
-) -> PipelinesResponse:
-    """Return metadata for all registered pipelines."""
+) -> PipelinesListResponse:
+    """Return metadata for all registered pipelines plus catalog skips."""
     registry = _require_pipeline_registry(proxy)
 
     pipelines = {pid: _pipeline_summary(pid, proxy) for pid in registry.pipelines}
-    return {"pipelines": pipelines}
+    return {"pipelines": pipelines, "catalog_skips": registry.catalog_skips}
