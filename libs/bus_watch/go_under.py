@@ -147,6 +147,15 @@ def go_under(
     policy = dict(state.get("policy") or {})
     ready_before = policy.get("ready")
     policy["ready"] = True  # go under = choose the ticker as the driver
+    # Fresh roots inherit POLICY_DEFAULTS gear 1 (spawn disabled, post_digest
+    # off). 11667 2026-09-18 went under with only successor_model set; the
+    # ticker saw attention including the new child and logged spawn.action=
+    # disabled. Gear 3 is the overnight driver; do not clobber an explicit gear.
+    if "gear" not in policy:
+        policy["gear"] = "3-wake-on-attention"
+    model = str(policy.get("successor_model") or "")
+    if model.startswith("cdp/") and "successor_seat" not in policy:
+        policy["successor_seat"] = "cdp"
     state["policy"] = policy
     seq = int((state.get("handoff") or {}).get("seq") or 0) + 1
     state["handoff"] = {

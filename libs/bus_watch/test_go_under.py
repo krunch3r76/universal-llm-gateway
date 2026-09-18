@@ -55,6 +55,33 @@ def test_go_under_arms_and_frees_the_seat(tmp_path: Path, monkeypatch) -> None: 
     assert "successor_model=cursor/composer-2.5" in result["under_line"]
 
 
+def test_go_under_plants_gear_three_on_fresh_policy(
+    tmp_path: Path, monkeypatch
+) -> None:  # noqa: ANN001
+    """Go-under on a root that never set gear must enable wake + digest."""
+    monkeypatch.setattr("bus_watch.go_under.read_lock", lambda *_a, **_k: {})
+    state = {
+        "register": "attended",
+        "policy": {"successor_model": "cdp/opus-5"},
+    }
+    result = go_under(
+        "11667",
+        state,
+        state_path=tmp_path / "s.json",
+        stop_loops=lambda root: [],
+        ensure=lambda root: {"alive": True, "started": False},
+        release=lambda *_a, **_k: {"ok": True},
+    )
+    assert result["ok"] is True
+    assert state["policy"]["gear"] == "3-wake-on-attention"
+    assert state["policy"]["successor_seat"] == "cdp"
+    eff = effective_policy(state)
+    assert eff["wake_on_attention_only"] is True
+    assert eff["post_digest"] is True
+    assert eff["successor_model"] == "cdp/opus-5"
+    assert eff["successor_seat"] == "cdp"
+
+
 def test_go_under_leaves_sdk_holder_and_refuses_unbound_model(
     tmp_path: Path, monkeypatch
 ) -> None:  # noqa: ANN001
