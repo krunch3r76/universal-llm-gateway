@@ -72,7 +72,7 @@ accepted** (use `xhigh`).
 
 ## Grok effort
 
-Gate = model card (`libs/cursor_capabilities`): `low|medium|high|xhigh`. `fast` is a separate knob (default true; `false` is the cheaper rate row). ¬ a policy ladder below the card.
+Gate = model card (`libs/cursor_capabilities`): `low|medium|high|xhigh`. `fast` is a separate knob: ULG omit-path / card default is **`false`** (Standard $/M). Fast (`true`) is **2×** those rates and requires `model_knobs={"fast":"true"}` — silence is Standard, not Fast. ¬ a policy ladder below the card.
 
 ## Auto / Cursor Router
 
