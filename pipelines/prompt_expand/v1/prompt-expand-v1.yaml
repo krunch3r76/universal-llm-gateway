@@ -35,15 +35,20 @@ steps:
   - name: retrieve_context
     type: prompt_expand_retrieve_v1
     consumer_model_ref: expand
-    per_attempt_timeout_seconds: 25
-    timeout_seconds: 120
+    # Live rag-context retrieve_assemble is ~54s (c22b74c3). 25s (G6r2-1)
+    # killed three in-flight children and returned raw="". Wall ≥ 3×attempt + backoff.
+    per_attempt_timeout_seconds: 90
+    timeout_seconds: 280
 
   - name: classify_retrieve
     type: prompt_expand_classify_retrieve_v1
+    handler_inputs:
+      retrieve_raw: retrieve_context.raw
+      retrieve_json: retrieve_context.json
 
   - name: author_cdp
     type: generate
-    condition: "options.target == 'cdp' and classify_retrieve.json.get('proceed') is not False"
+    condition: "options.target == 'cdp' and classify_retrieve.json.get('proceed') is True"
     model_ref: expand
     prompt_ref: prompt_expand.v1.author_cdp
     handler_inputs:
@@ -58,7 +63,7 @@ steps:
 
   - name: author_cursor
     type: generate
-    condition: "options.target == 'cursor' and classify_retrieve.json.get('proceed') is not False"
+    condition: "options.target == 'cursor' and classify_retrieve.json.get('proceed') is True"
     model_ref: expand
     prompt_ref: prompt_expand.v1.author_cursor
     handler_inputs:

@@ -19,6 +19,9 @@ prompts:
 
   author_cdp:
     description: "Author TASK' for cdp life-only target (no CODE_EXTRA service doors)"
+    # DEGRADED / timeout classify still authors; retrieve raw may be empty.
+    optional_placeholders:
+      - rag_context
     system_prompt: |
       You expand terse operator TASK lines into full next-seat dispatch packets.
 
@@ -49,6 +52,8 @@ prompts:
 
   author_cursor:
     description: "Author TASK' for cursor code+life target (includes dispatch doors)"
+    optional_placeholders:
+      - rag_context
     system_prompt: |
       You expand terse operator TASK lines into full next-seat dispatch packets.
 

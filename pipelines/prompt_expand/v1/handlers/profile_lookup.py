@@ -152,7 +152,7 @@ def _synthetic_pipeline_call_step(
     consumer_model_ref = parent_step.get_domain_field("consumer_model_ref", "")
     stargate_url = parent_step.get_domain_field("stargate_url", None)
     per_attempt_timeout = parent_step.get_domain_field(
-        "per_attempt_timeout_seconds", 25
+        "per_attempt_timeout_seconds", 90
     )
 
     class _CallStep:
@@ -385,7 +385,7 @@ class PromptExpandClassifyRetrieveHandler(BaseHandler):
             else:
                 provenance_mode = "ABORT"
                 proceed = False
-        elif _EMPTY_RETRIEVAL_SENTINEL in raw:
+        elif not raw.strip() or _EMPTY_RETRIEVAL_SENTINEL in raw:
             rag_status = "empty"
             if rag_fail == "stamp":
                 provenance_mode = "PRIORS-ONLY"

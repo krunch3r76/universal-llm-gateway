@@ -147,6 +147,25 @@ async def test_classify_stamp_empty_proceeds_priors_only() -> None:
 
 
 @pytest.mark.asyncio
+async def test_classify_abort_blank_raw_stops() -> None:
+    handler = PromptExpandClassifyRetrieveHandler()
+    ctx = _Ctx(
+        _base_options(rag_fail="abort"),
+        {
+            "retrieve_context": _Out(
+                raw="",
+                json={"attempts": 0, "timed_out": False, "upstream_error": False},
+            ),
+            "resolve_profile": _Out(json={"retrieve_scopes": ["llm_prompting"]}),
+        },
+    )
+    out = await handler.execute(_Step(), ctx)
+    assert out.json["rag_status"] == "empty"
+    assert out.json["proceed"] is False
+    assert out.error
+
+
+@pytest.mark.asyncio
 async def test_classify_abort_empty_stops() -> None:
     handler = PromptExpandClassifyRetrieveHandler()
     ctx = _Ctx(
