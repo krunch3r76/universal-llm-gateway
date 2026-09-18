@@ -268,18 +268,45 @@ def test_shedding_leaves_the_default_render_untouched() -> None:
 
 
 @pytest.mark.offline
+def test_doorbell_cap_is_2048() -> None:
+    assert DOORBELL_CAP == 2048
+
+
+@pytest.mark.offline
+def test_oversize_fail_open_retains_addresses() -> None:
+    """40 planted addresses must render without ValueError; OVERSIZE marks overflow."""
+    long_extras = tuple(
+        f"cortex://notes/system/threads/file-{idx}.md" for idx in range(40)
+    )
+    text = render_doorbell(*_DEFAULT_ARGS, ring="10532", extra_addresses=long_extras)
+    assert "OVERSIZE" in text
+    assert "file-0.md" in text
+    assert "file-39.md" in text
+
+
+@pytest.mark.offline
+def test_default_render_has_no_oversize_and_fits_cap() -> None:
+    text = _default_render()
+    assert "OVERSIZE" not in text
+    assert len(text.encode("utf-8")) <= DOORBELL_CAP
+
+
+@pytest.mark.offline
 def test_cap_enforced_and_overridable() -> None:
     long_extras = tuple(
         f"cortex://notes/system/threads/file-{idx}.md" for idx in range(40)
     )
-    with pytest.raises(ValueError, match="1400"):
-        render_doorbell(*_DEFAULT_ARGS, ring="10532", extra_addresses=long_extras)
-    render_doorbell(
+    oversize = render_doorbell(
+        *_DEFAULT_ARGS, ring="10532", extra_addresses=long_extras
+    )
+    assert "OVERSIZE" in oversize
+    fitting = render_doorbell(
         *_DEFAULT_ARGS,
         ring="10532",
         extra_addresses=long_extras,
         cap=8192,
     )
+    assert "OVERSIZE" not in fitting
 
 
 @pytest.mark.offline

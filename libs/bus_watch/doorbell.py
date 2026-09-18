@@ -4,10 +4,12 @@ The paste is the doorbell (F2): addresses + episodic frame only; payload stays
 on the bus/graph. Amendment A1 digest delivery; memos 10479#118 (plant an
 address, never a dump) and #120 (direct ``Use the <slug> skill`` lines).
 
-``DOORBELL_CAP`` is 1400 bytes: basis floor is ~1132 B once the status quintuple
+``DOORBELL_CAP`` is 2048 bytes: basis floor is ~1132 B once the status quintuple
 is carried; the ``commission:`` line costs exactly 250 B (measured, including the
-admission-gate tokens); 1400 leaves 221 B of ladder headroom. The binder's rule is "the basis is never shed to fit a
-cap; the cap moves."
+admission-gate tokens). When sheddables are exhausted and planted addresses still
+overflow the cap, ``render_doorbell`` fail-opens with an ``OVERSIZE`` line instead
+of raising — navigator units must not die on a fat paste. The binder's rule is
+"the basis is never shed to fit a cap; the cap moves."
 """
 
 from __future__ import annotations
@@ -26,7 +28,9 @@ from bus_watch.doorbell_skills import (
     seat_doorbell_surface,
 )
 
-DOORBELL_CAP = 1400
+DOORBELL_CAP = 2048
+
+_OVERSIZE_PREFIX = "OVERSIZE:"
 
 SUCCESSOR_WAKE_CAP = 2048
 _SUCCESSOR_ROW_TRUNC_MARKER = "..."
@@ -277,8 +281,9 @@ def render_doorbell(
     Identical for equal arguments (F2 M5) and capped so extra ``md_read`` addresses
     cannot grow the paste into a dump. A planted address outranks a placeholder: over
     ``cap`` the renderer sheds the optional echo fields and then the whole
-    ``commission:`` line before raising ``ValueError``, so seating a live wake with
-    one extra address is a render, not a hand-paste. The commission guard is never
+    ``commission:`` line before fail-opening with an ``OVERSIZE`` line (addresses
+    retained), so seating a live wake with one extra address is a render, not a
+    hand-paste. The commission guard is never
     shed while the line remains — either the line is complete or absent (10479#881).
     Addresses, ``Use the <slug> skill`` lines, and the frame are never shed — a
     doorbell without its address is not a doorbell (10479#118). The
@@ -365,7 +370,11 @@ def render_doorbell(
         message = compose()
     encoded = message.encode("utf-8")
     if len(encoded) > cap:
-        raise ValueError(f"doorbell exceeds {cap} bytes ({len(encoded)})")
+        oversize_line = (
+            f"{_OVERSIZE_PREFIX} doorbell exceeds {cap} bytes ({len(encoded)}); "
+            "addresses retained."
+        )
+        message = message.rstrip("\n") + "\n" + oversize_line + "\n"
     return message
 
 
