@@ -17,7 +17,11 @@ carry it now; a keystroke follow-up paste into the live IDE tab and
 from __future__ import annotations
 
 import shlex
+from pathlib import Path
 from typing import Any
+
+from claude_bundles.catalog import load_skill_catalog
+from claude_bundles.cdp_inline_read_cue import emit_workspaces_fs_read
 
 from bus_watch.doorbell_skills import navigator_doorbell_skills_from_policy
 from bus_watch.friction_rows import event_line as _friction_event
@@ -122,9 +126,51 @@ def _skill_slug(label: str) -> str:
     return slug
 
 
-def _use_skill_lines(loaded: list[str]) -> list[str]:
+def _is_droppable_cse_skill_line(line: str) -> bool:
+    """Skill activation lines trimmed last when the CSE induction block exceeds cap."""
+    if line.startswith("Use the ") and line.endswith(" skill"):
+        return True
+    return ': fs(sandbox="workspaces"' in line
+
+
+def _cse_skill_activation_lines(loaded: list[str]) -> list[str]:
+    """Route ``loaded`` through ``partition_cdp_skills`` before emitting CSE cues.
+
+    ``shared_sync`` slugs keep the Customize self-fetch ``Use the … skill`` line.
+    Every other catalog class (``cursor_only`` included) gets the workspaces SOT
+    read cue — the same channel ``cdp_inline_read_cue`` documents for CDP inline
+    delivery, without the forbidden Use-the verb.
+    """
     slugs = [s for s in (_skill_slug(label) for label in loaded) if s]
-    return [f"Use the {slug} skill" for slug in dict.fromkeys(slugs)]
+    unique = list(dict.fromkeys(slugs))
+    if not unique:
+        return []
+    catalog = load_skill_catalog(validate_sot=False)
+    repo_root = Path(__file__).resolve().parents[2]
+    slash: list[str] = []
+    inline: list[str] = []
+    seen: set[str] = set()
+    for slug in unique:
+        entry = catalog.get(slug)
+        if entry.slug in seen:
+            continue
+        seen.add(entry.slug)
+        if entry.surface_class == "shared_sync":
+            slash.append(entry.slug)
+        else:
+            inline.append(entry.slug)
+    slash_set = set(slash)
+    inline_set = set(inline)
+    lines: list[str] = []
+    for slug in unique:
+        if slug in slash_set:
+            lines.append(f"Use the {slug} skill")
+        elif slug in inline_set:
+            entry = catalog.get(slug)
+            sot, _ = catalog.resolve_sot(slug, repo_root)
+            fs_line = emit_workspaces_fs_read(sot, repo_root)
+            lines.append(f"{slug} ({entry.surface_class}): {fs_line}")
+    return lines
 
 
 def _resolve_now_row(digest: dict[str, Any]) -> tuple[str, str]:
@@ -184,9 +230,10 @@ def build_wake_induction(
     what the seat already holds and must not re-read; ``policy.induction_binds``
     carries standing operator binds (e.g. "hopper paused (10479#210)").
 
-    ``surface='cse'`` emits one ``Use the <slug> skill`` line per loaded skill
-    (claude.ai activation); ``surface='ide'`` keeps the legacy single
-    ``Loaded already (do not re-read)`` line.
+    ``surface='cse'`` routes each loaded slug through ``partition_cdp_skills``:
+    ``shared_sync`` → ``Use the <slug> skill``; ``cursor_only`` (etc.) → SOT
+    ``fs`` read cue. ``surface='ide'`` keeps the legacy single ``Loaded already
+    (do not re-read)`` line.
     """
     root = digest.get("root") or {}
     policy = digest.get("policy") or {}
@@ -222,7 +269,7 @@ def build_wake_induction(
     ]
     loaded = list(dict.fromkeys([*nav_labels, *_listed(policy, "induction_loaded")]))
     if surface == "cse":
-        lines.extend(_use_skill_lines(loaded))
+        lines.extend(_cse_skill_activation_lines(loaded))
     else:
         lines.append("Loaded already (do not re-read): " + " · ".join(loaded))
     standing = [
@@ -305,8 +352,7 @@ def _fit_cse(lines: list[str], cap: int) -> str:
                     (
                         i
                         for i in range(len(lines) - 1, -1, -1)
-                        if lines[i].startswith("Use the ")
-                        and lines[i].endswith(" skill")
+                        if _is_droppable_cse_skill_line(lines[i])
                     ),
                     None,
                 )

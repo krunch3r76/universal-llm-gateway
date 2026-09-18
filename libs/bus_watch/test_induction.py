@@ -146,7 +146,7 @@ def test_induction_policy_now_row_wins_over_stale_summary_row() -> None:
     assert "tip turn #214 on agent-bus:10479" in text
 
 
-def test_induction_cse_fire_keeps_use_lines_when_summary_row_stale() -> None:
+def test_induction_cse_fire_keeps_skill_activation_when_summary_row_stale() -> None:
     """11367#7: long stale summary_row must not eat cap and drop skill activation."""
     stale = "IN FLIGHT " + ("lane 11364 " * 40)
     cse = build_wake_induction(
@@ -156,7 +156,9 @@ def test_induction_cse_fire_keeps_use_lines_when_summary_row_stale() -> None:
         ),
         surface="cse",
     )
-    assert "Use the liaison skill" in cse
+    assert "Use the liaison skill" not in cse
+    assert ".cursor/skills/liaison/SKILL.md" in cse
+    assert "Use the reasoning-posture skill" in cse
     assert "IN FLIGHT lane 11364" not in cse
     assert "close todo" in cse
     assert len(cse.encode("utf-8")) <= INDUCTION_CAP
@@ -194,8 +196,10 @@ def test_induction_ide_surface_unchanged() -> None:
 def test_induction_cse_surface_use_lines() -> None:
     text = build_wake_induction(_digest())
     cse = build_wake_induction(_digest(), surface="cse")
-    assert "Use the liaison skill" in cse
-    assert "Use the git-posture skill" in cse
+    assert "Use the liaison skill" not in cse
+    assert ".cursor/skills/liaison/SKILL.md" in cse
+    assert "Use the reasoning-posture skill" in cse
+    assert "Use the git-posture skill" not in cse
     assert "Loaded already (do not re-read)" not in cse
     assert cse != text
 
@@ -211,14 +215,17 @@ def test_induction_cse_use_lines_are_bare_slugs() -> None:
     assert "Use the liaison skill skill" not in cse
     assert " § " not in cse
     assert "Use the fs skill" in cse
-    # "liaison skill" prepended by the builder and listed in policy is one slug.
-    assert cse.count("Use the liaison skill") == 1
+    assert "Use the liaison skill" not in cse
+    assert ".cursor/skills/liaison/SKILL.md" in cse
 
 
-def test_induction_cse_always_includes_liaison_skill() -> None:
+def test_induction_cse_liaison_cursor_only_inlines_sot_not_use_the() -> None:
+    """AC1 falsifier: ``liaison`` is ``cursor_only`` — no Customize self-fetch line."""
     cse = build_wake_induction(_digest(policy={}), surface="cse")
-    assert "Use the liaison skill" in cse
-    assert cse.count("Use the ") >= 1
+    assert "Use the liaison skill" not in cse
+    assert ".cursor/skills/liaison/SKILL.md" in cse
+    assert "liaison (cursor_only):" in cse
+    assert "Use the reasoning-posture skill" in cse
 
 
 def test_induction_loaded_fence_matches_navigator_skills_policy() -> None:
@@ -238,9 +245,12 @@ def test_induction_loaded_fence_matches_navigator_skills_policy() -> None:
         "architecture-invariants skill · ulg-architecture skill · git-posture § Land"
         in text
     )
-    cse = build_wake_induction(_digest(policy=policy), surface="cse")
-    assert "Use the architecture-invariants skill" in cse
-    assert "Use the ulg-architecture skill" in cse
+    cse = build_wake_induction(_digest(policy=policy), surface="cse", cap=1200)
+    assert "Use the architecture-invariants skill" not in cse
+    assert "Use the ulg-architecture skill" not in cse
+    assert "architecture-invariants (cursor_only):" in cse
+    assert "ulg-architecture (cursor_only):" in cse
+    assert "Use the reasoning-posture skill" in cse
 
 
 def test_induction_cse_cap_trims_use_lines_last() -> None:
@@ -257,7 +267,8 @@ def test_induction_cse_cap_trims_use_lines_last() -> None:
     text = build_wake_induction(digest, surface="cse", cap=700)
     assert len(text.encode("utf-8")) <= 700
     assert "Standing: register=" in text
-    assert "Use the liaison skill" in text
+    assert "Use the reasoning-posture skill" in text
+    assert ".cursor/skills/liaison/SKILL.md" in text
 
 
 def test_induction_spawn_signal_survives_cap() -> None:
