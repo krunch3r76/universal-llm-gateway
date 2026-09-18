@@ -10,6 +10,8 @@ from bus_watch.digest_budget import build_budget_block
 from bus_watch.liaison_digest import (
     GEAR_PRESETS,
     _child_lanes,
+    _lineage_lanes,
+    _merge_observe_lanes,
     build_digest,
     effective_policy,
     is_life_root,
@@ -87,6 +89,62 @@ def test_child_lanes_merged_listing_excludes_status_all(mock_get: MagicMock) -> 
     assert nag["nag"] is True
     assert live["nag"] is False
     assert lanes[-1]["id"] == "101"
+
+
+@patch("bus_watch.liaison_digest._get")
+def test_lineage_lanes_includes_closed_grandchild(mock_get: MagicMock) -> None:
+    """Closed OLN commission + implement grandchild are invisible to _child_lanes."""
+
+    def fake_get(_client: object, path: str, **_params: object) -> dict:
+        if path == "/threads/11667/lineage":
+            return {
+                "children": [
+                    {
+                        "thread_id": "11693",
+                        "status": "closed",
+                        "lane_role": "sub_mission",
+                    }
+                ]
+            }
+        if path == "/threads/11693/lineage":
+            return {
+                "children": [
+                    {
+                        "thread_id": "11697",
+                        "status": "closed",
+                        "lane_role": "sub_mission",
+                    }
+                ]
+            }
+        if path == "/threads/11693":
+            return {
+                "id": "11693",
+                "slug": "oln-lane-status-debrief",
+                "status": "closed",
+                "parent_thread": "11667",
+                "bus_lifecycle_state": None,
+                "last_subject": "DONE — OLN harness",
+            }
+        if path == "/threads/11697":
+            return {
+                "id": "11697",
+                "slug": "cursor-sdk-generate-88d73707",
+                "status": "closed",
+                "parent_thread": "11693",
+                "bus_lifecycle_state": "completed",
+                "last_subject": "cursor-sdk CLOSEOUT",
+            }
+        return {}
+
+    mock_get.side_effect = fake_get
+    rows = _lineage_lanes(MagicMock(), "11667")
+    ids = [row["id"] for row in rows]
+    assert ids == ["11693", "11697"]
+    assert rows[0]["status"] == "closed"
+    assert rows[1]["status"] == "closed"
+    live = [{"id": "11698", "status": "active"}]
+    merged = _merge_observe_lanes(live, rows)
+    assert [row["id"] for row in merged] == ["11698", "11693", "11697"]
 
 
 @patch("bus_watch.liaison_digest.collect_watchers", return_value=[])

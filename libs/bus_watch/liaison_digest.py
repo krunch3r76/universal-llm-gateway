@@ -66,6 +66,7 @@ _NAG_SENDERS = frozenset({"git-integration-worker"})
 # Per-tick fixed overhead the seat spends reading the digest and deciding.
 TICK_OVERHEAD_TOKENS = 3000
 _MAX_LANES = 25
+_MAX_LINEAGE = 40
 _SUBJECT_CAP = 120
 _WORKER_RE = re.compile(r"Worker thread `(\d+)`")
 _health = health_probe
@@ -141,6 +142,48 @@ def _child_lanes(client: httpx.Client, root: str) -> list[dict[str, Any]]:
     return out[:_MAX_LANES]
 
 
+def _lineage_lanes(client: httpx.Client, root: str) -> list[dict[str, Any]]:
+    """Closed-inclusive descendants via ``GET /threads/{id}/lineage``.
+
+    ``_child_lanes`` lists ``status=active`` + unread only — a closed
+    sub_mission (11693) and its implement grandchild (11697) vanish from
+    that set, so the closeout journal never sees the O→L→N task itself.
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    frontier = [root]
+    while frontier and len(out) < _MAX_LINEAGE:
+        nxt: list[str] = []
+        for parent in frontier:
+            lin = _get(client, f"/threads/{parent}/lineage") or {}
+            for child in lin.get("children") or []:
+                if not isinstance(child, dict):
+                    continue
+                tid = str(child.get("thread_id") or "")
+                if not tid or tid in seen or tid == root:
+                    continue
+                seen.add(tid)
+                row = _get(client, f"/threads/{tid}")
+                if row and "_error" not in row:
+                    out.append(_lane_row(row))
+                nxt.append(tid)
+        frontier = nxt
+    return out
+
+
+def _merge_observe_lanes(
+    live: list[dict[str, Any]], lineage: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    seen = {str(row.get("id")) for row in live if row.get("id")}
+    merged = list(live)
+    for row in lineage:
+        tid = str(row.get("id") or "")
+        if tid and tid not in seen:
+            seen.add(tid)
+            merged.append(row)
+    return merged
+
+
 def _unread_toc(client: httpx.Client, lane_ids: set[str]) -> list[dict[str, Any]]:
     toc = _get(client, "/turns/unread-toc", to="cursor", limit=100) or {}
     if "_error" in toc:
@@ -178,6 +221,11 @@ def build_digest(
             client, _get, root_id, root
         )
         lanes = _child_lanes(client, root_id) if "_error" not in root else []
+        observe_lanes = (
+            _merge_observe_lanes(lanes, _lineage_lanes(client, root_id))
+            if "_error" not in root
+            else []
+        )
         lane_ids = {root_id, *(lane["id"] for lane in lanes)}
         unread = _unread_toc(client, lane_ids)
         attention = build_attention_lanes(
@@ -188,7 +236,7 @@ def build_digest(
         )  # noqa: E501
         observe_terminal_lane_closeouts(
             root_id,
-            lanes,
+            observe_lanes,
             state,
             client,
             fetch_turns=lambda tid: (
