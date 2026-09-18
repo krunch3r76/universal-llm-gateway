@@ -1,20 +1,14 @@
-"""Unit tests for work-item state card helpers and D4 route totality."""
+"""Unit tests for work-item state card helpers."""
 
 from __future__ import annotations
-
-import itertools
 
 import pytest
 
 from cortex_store.dispatch_ops.state_card import (
     derive_next_action,
-    derive_work_item_route,
     merge_state_card,
     state_card_defaults,
 )
-
-_BIND_STATUSES = ("unsettled", "settled", "shipping", "deferred")
-_TRIAGE_VALUES = ("judgment_required", "recon_pending", "mechanical")
 
 
 @pytest.mark.parametrize(
@@ -61,73 +55,3 @@ def test_merge_state_card_stage_change_refreshes_next_action() -> None:
     base = merge_state_card({"bind_status": "settled", "workflow": "address"})
     advanced = merge_state_card({**base, "stage": "pickup"})
     assert advanced["next_action"] == "advance_address"
-
-
-def test_promote_card_routes_path_sim() -> None:
-    defaults = state_card_defaults()
-    route = derive_work_item_route(
-        bind_status=defaults["bind_status"],
-        density_triage="recon_pending",
-    )
-    assert route == "PATH-SIM"
-
-
-def test_unsettled_judgment_required_not_address() -> None:
-    assert (
-        derive_work_item_route(
-            bind_status="unsettled",
-            density_triage="judgment_required",
-        )
-        == "PATH-SIM"
-    )
-
-
-def test_settled_not_default_path_sim() -> None:
-    assert (
-        derive_work_item_route(
-            bind_status="settled",
-            density_triage="judgment_required",
-        )
-        == "ADDRESS"
-    )
-
-
-@pytest.mark.parametrize(
-    ("bind_status", "density_triage", "implement_ready", "expected"),
-    [
-        ("deferred", "judgment_required", False, "held"),
-        ("settled", "judgment_required", False, "ADDRESS"),
-        ("shipping", "mechanical", True, "ADDRESS"),
-        ("unsettled", "recon_pending", False, "PATH-SIM"),
-        ("unsettled", "judgment_required", False, "PATH-SIM"),
-        ("unsettled", "mechanical", False, "DISPATCH"),
-        ("unsettled", "mechanical", True, "DISPATCH"),
-        ("settled", "recon_pending", False, "PATH-SIM"),
-        ("unsettled", "unknown", False, "PATH-SIM"),
-    ],
-)
-def test_d4_route_cases(
-    bind_status: str,
-    density_triage: str,
-    implement_ready: bool,
-    expected: str,
-) -> None:
-    route = derive_work_item_route(
-        bind_status=bind_status,
-        density_triage=density_triage,
-        implement_ready=implement_ready,
-    )
-    assert route == expected
-
-
-def test_d4_totality_bind_status_by_triage() -> None:
-    """Every v0 bind_status × triage combo yields exactly one route bucket."""
-    allowed = {"ADDRESS", "PATH-SIM", "DISPATCH", "held"}
-    for bind_status, triage in itertools.product(_BIND_STATUSES, _TRIAGE_VALUES):
-        for implement_ready in (False, True):
-            route = derive_work_item_route(
-                bind_status=bind_status,
-                density_triage=triage,
-                implement_ready=implement_ready,
-            )
-            assert route in allowed

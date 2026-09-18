@@ -104,8 +104,10 @@ Stamp kind on todo attrs/description until work_item registry lands.
 
 ## Stages
 
+**Archived (2026-09-18):** S1→S6 journey on the seed path — identity punch only here; conductor owns S3/S4b/S5/G-ladder.
+
 ```
-S0 Lookup → S1 Intake → S2 Recon? → S3 Architecture? → S4a identity → S6 spawn conductor
+S0 Lookup → S4a identity → S6 spawn conductor
          ↳ hit existing todo → re-admit / halt · ¬ S4a · ¬ S6
          ↳ (conductor) S3 Mode B / G1 → S4b rich-seed → S5 attach → G2…G7
 ```

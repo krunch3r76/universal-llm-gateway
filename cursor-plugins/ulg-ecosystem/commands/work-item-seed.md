@@ -52,7 +52,7 @@ Bare `/work-item-seed` with **no idea text** ⇒ halt; ask for friction/idea (or
 
 ## Lead obligations
 
-Load the skill and run **S0 lookup** then S1→S4a→S6. **Publish stage disposition (S0–S6) before S4a.**
+Load the skill and run **S0 lookup** then **S4a→S6** (S1–S3/S5 conductor-owned — archived journey on this path). **Publish stage disposition (S0, S4a, S6) before S4a.**
 S0 hit (open todo for this idea, including a same-session NL punch) ⇒ SKIP S4a and S6; re-admit or halt-with-pointer.
 **¬ halt S4a for Mode B** when S0 missed. IDE does **not** fire Mode B Fable on this command.
 

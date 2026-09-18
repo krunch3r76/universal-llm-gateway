@@ -9,7 +9,7 @@ Seat this tab as the house liaison on continuity root `<root>` and arm the tick 
 3. **Register** — `~/.venvs/universal/bin/python scripts/liaison-tick.py --root <root> --register <register> --once`
    and quote `budget`, `lanes`, `attention`. Default register: `attended`.
 4. **Goal** — call `CreateGoal` once with the objective from the tip CHECKPOINT `## Objective` (append
-   "register=<register>; root=agent-bus:<root>"). This gives Cursor-native persistence across turns.
+   "register=<register>; root=agent-bus:<root>"). Goal-layer persistence only — **never** `work_key` / `source_ref`.
 5. **Arm the loop** (monitored shell, `block_until_ms: 0`, `notify_on_output` pattern `^AGENT_LOOP_TICK_liaison`,
    reason `liaison <root> tick`, debounce 15000). Any tab model may seat the liaison (skill § Seat model).
    This tab becomes the one liaison seat: the loop claims the seat lock as `ide:<transcript_id>` — resolve it

@@ -114,7 +114,7 @@ def test_debrief_notify_requires_beyond_line() -> None:
         "The fleet used to lose track of wake debt after PARKED closes.\n\n"
         "Looking back: We treated wake as courtesy.\n\n"
         "Architecture: CSE Session Registry on cdp-registry + project_ask followup.\n\n"
-        "Looking ahead: Enter /layer on the obligations todo.\n"
+        "Looking ahead: Re-admit conductor on the obligations todo.\n"
     )
     verdict = validate_mission_debrief_notify(
         subject="ULG mission debrief — 6576",
@@ -130,7 +130,7 @@ def test_debrief_notify_with_wake_passes() -> None:
         "The fleet used to lose track of wake debt after PARKED closes.\n\n"
         "Looking back: We treated wake as courtesy.\n\n"
         "Architecture: CSE Session Registry on cdp-registry + project_ask followup.\n\n"
-        "Looking ahead: Enter /layer on the obligations todo.\n\n"
+        "Looking ahead: Re-admit conductor on the obligations todo.\n\n"
         f"{BEYOND_NOTIFY_PREFIX} D10 — collector: this-seat · "
         "followup: poll 6576 after done"
     )
@@ -167,7 +167,7 @@ def test_debrief_notify_wake_incomplete_names_compact_beyond_surface() -> None:
         "Looking back: We treated wake as courtesy.\n\n"
         "Architecture: CSE Session Registry on cdp-registry + project_ask "
         "followup + agent-bus.\n\n"
-        "Looking ahead: Enter /layer on the obligations todo.\n\n"
+        "Looking ahead: Re-admit conductor on the obligations todo.\n\n"
         f"{BEYOND_HEADING}\n"
         "- D10 — collector: this-seat · followup: poll 6576\n"
         "- D11 — collector: cursor-auto · followup: agent_bus.request\n\n"

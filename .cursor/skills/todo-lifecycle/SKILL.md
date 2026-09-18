@@ -60,7 +60,9 @@ thin_seeder → strategic_framer → densify_adjudicator → [rare] Fable
 
 Charter detail: `cortex://notes/system/threads/4830-workflow-doctrine-charter.md`. Routing SOT: consult-routing § Autonomous work-item spine.
 
-## FOL pipeline (Gate 1–9)
+## FOL pipeline (Gate 1–9) — **archived as peer spine**
+
+**Archived (2026-09-18):** Gate 1–9 peer spine superseded for codework by Address rows + conductor G-ladder (`consult-routing` § Address). Keep gate-evidence below; use conductor spawn for new codework.
 
 ### 1. Seed
 

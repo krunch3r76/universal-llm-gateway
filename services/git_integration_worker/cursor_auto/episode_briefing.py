@@ -72,7 +72,7 @@ def build_briefing_block(
         lines.extend(
             [
                 "",
-                "Seed: work-item-seed-path S1→S6; Mode B ⇒ same-turn consult admit",
+                "Seed: work-item-seed-path S4a→S6; Mode B ⇒ conductor-owned consult",
                 "or named halt. CLOSEOUT: slug + consult URI + entry gate.",
                 "Standing mission: attended-charter-birth-with-cursor.md (7281).",
             ]

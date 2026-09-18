@@ -83,9 +83,7 @@ is fully met (arc close), **never** on hop or mid-wait. Re-check after every CHE
    status ← observed (quote sha / pytest line / execution_id). Landed ≠ live: a slice whose paths serve a
    running process needs `manage(sync_restart)` — **LOAD** `restart-drain-discipline` (`needed(restart) ⇒
    fire(restart)`; busy never skips).
-4. **Decide** — pick the scoreboard `NOW` row; with no seat bind the induction's NOW **is** the newest
-   undispositioned friction (§ Friction score rows) — not empty; if truly empty, pull the next objective
-   (see § Objectives). `reasoning-posture`: pin the question, bind, one determinate step.
+4. **Decide** — **Archived as G-row picker** — liaison computes Address (spawn/re-admit conductor for codework); conductor owns scoreboard NOW under `work_key=todo:{slug}`. With no seat bind the induction's NOW **is** the newest undispositioned friction (§ Friction score rows). `reasoning-posture`: pin the question, bind, one determinate step.
 5. **Dispatch** — by the ladder below; every dispatch gets a lane on the root (`dispatch_thread_id=R`) and an
    **in-session watcher**: **LOAD AND EXECUTE** `runbook:bus-consult-watcher` (all legs 1–3 — arm, wake,
    relay — before turn end; start-only / skipped tail / hold-turn = mis-arm).
@@ -225,7 +223,7 @@ dispatches (`contract=implement`, omit `model=`) run **alongside** — they are 
 | Mechanical implement with dense spec (`files_expected` + ACs) | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement\|pure-mechanical, lane="B", source_ref=todo:…, packet_path=…, dispatch_thread_id=R)` | none — Fable-densified packets skip skeptic |
 | Judgment fork | **this seat** binds inline when Opus-class; below Opus, § Reasoning recon first (`cdp/opus-5` wide read → bind on the compact) | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
 | Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5)`** — announce `CDP: <trigger> — <why>`; opus hops (`agent_bus hop`) to stay lean | one round; disagreement ⇒ `CONSULT_PENDING` stop |
-| Long-context reasoning inside a work tab | `cursor/claude-opus-5` (Cursor Fable credit window closed) | `Task(model=claude-fable-5-1-thinking-max)` only if the operator names Fable credits as open |
+| Long-context reasoning inside a work tab | `cursor/claude-opus-5` (Cursor Fable credit window closed) | **`cdp/fable`** only when the operator names it — never `cursor/claude-fable-5{,-1}` |
 | Successor (this tab must end) | attended: CHECKPOINT + `scripts/liaison-ide-hop.py --root R --row "<NOW>" --transcript-id <this tab uuid>` (seals `channel=hop` then keystroke hop, fresh tab, ~40k-token orient vs 12–31M per headless hop); autonomous: § Headless successor (resume-fence pull) — the successor pulls the tip via `dispatch(tool="continuity")`; `cursor_request` is not a successor path (enqueues cursor-auto) | — |
 
 **Reasoning recon** (operator-endorsed 2026-09-10 22:39 PT, observed on 10479#18): before a judgment bind, the
