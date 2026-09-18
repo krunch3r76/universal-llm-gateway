@@ -138,6 +138,28 @@ def test_induction_now_from_policy_bind() -> None:
     )
 
 
+def test_induction_attention_child_now_when_bind_empty() -> None:
+    """11667#51 specimen — commissioned child in attention fills empty NOW."""
+    digest = _digest(
+        summary_row=None,
+        policy={},
+        attention=[
+            {
+                "id": "11693",
+                "lane_role": "sub_mission",
+                "lifecycle": "admitted",
+                "last_subject": "COMMISSION — OLN lane status/debrief harness",
+                "updated_at": "2026-09-18T16:00:00Z",
+            }
+        ],
+    )
+    text = build_wake_induction(digest)
+    assert (
+        "NOW: agent-bus:11693 · «COMMISSION — OLN lane status/debrief harness»"
+        in text
+    )
+
+
 def test_induction_policy_now_row_wins_over_stale_summary_row() -> None:
     text = build_wake_induction(
         _digest(

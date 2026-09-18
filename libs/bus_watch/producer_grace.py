@@ -42,3 +42,27 @@ class ProducerGrace:
             self._started_at = now
             return False
         return (now - self._started_at) >= self._grace_seconds
+
+
+def maybe_abandon_lane_on_grace_expiry(
+    grace: ProducerGrace,
+    producer: dict[str, Any],
+    turn_count: int,
+    *,
+    parent_root: str,
+    lane: dict[str, Any],
+    state: dict[str, Any],
+    client: Any,
+) -> dict[str, Any] | None:
+    """When grace expires with no worker closeout, post ``LANE ABANDONED`` (AC5)."""
+    from bus_watch.lane_closeout import maybe_emit_abandoned_on_grace_expiry
+
+    return maybe_emit_abandoned_on_grace_expiry(
+        grace,
+        producer,
+        turn_count,
+        parent_root=parent_root,
+        lane=lane,
+        state=state,
+        client=client,
+    )

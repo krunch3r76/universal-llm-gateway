@@ -125,3 +125,29 @@ def LiaisonCheckpointObserved(  # noqa: N802
 
 def emit_checkpoint_observed(**kwargs: Any) -> None:
     _emit(LiaisonCheckpointObserved(**kwargs))
+
+
+@event_factory
+def LiaisonLaneCloseoutObserved(  # noqa: N802
+    *,
+    root: str,
+    lane: str,
+    terminal_status: str,
+    abandoned: bool,
+    turn: int | None,
+) -> Event:
+    return Event(
+        signal="liaison.lane_closeout.emitted",
+        payload={
+            "root": root,
+            "lane": lane,
+            "terminal_status": terminal_status,
+            "abandoned": abandoned,
+            "turn": turn,
+        },
+        scope="global",
+    )
+
+
+def emit_lane_closeout_observed(**kwargs: Any) -> None:
+    _emit(LiaisonLaneCloseoutObserved(**kwargs))
