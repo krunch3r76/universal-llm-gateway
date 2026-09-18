@@ -11,10 +11,7 @@ import pytest
 
 from cortex_store.dispatch_ops._friction_close_impl import close_friction_assertion
 from cortex_store.dispatch_ops.ops_entities import _op_entity_get
-from cortex_store.dispatch_ops.state_card import (
-    derive_work_item_route,
-    state_card_defaults,
-)
+from cortex_store.dispatch_ops.state_card import state_card_defaults
 
 _SKILL_ENTITY = "agent_skill:test-promoted"
 _TODO_ID = "todo:promoted-sample"
@@ -122,13 +119,7 @@ def test_promoted_todo_attributes(friction_db: int) -> None:
     defaults = state_card_defaults()
     for key in ("workflow", "stage", "bind_status", "next_action"):
         assert attrs.get(key) == defaults[key]
-    assert (
-        derive_work_item_route(
-            bind_status=attrs["bind_status"],
-            density_triage=attrs["density_triage"],
-        )
-        == "PATH-SIM"
-    )
+    assert attrs["next_action"] == defaults["next_action"]
 
 
 @pytest.mark.offline

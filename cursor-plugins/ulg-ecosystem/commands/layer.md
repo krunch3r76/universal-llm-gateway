@@ -13,11 +13,11 @@ Supersedes `path-sim` ratification windows for codework (`decision:abstraction-l
 
 | Condition | Route |
 |---|---|
-| Operator `/layer …` | This command → skill § When (entry-gate chooser) |
-| Any request to change the codebase — cursor-auto DIRECTIVE, friction fix cycle, charter codework arc | This lane; enter at the highest gate still open |
+| Operator `/layer …` | **Archived as front door** — gate-shape reference only; spawn/re-admit conductor per Address row 5/6 |
+| Any request to change the codebase — cursor-auto DIRECTIVE, friction fix cycle, charter codework arc | S4a → spawn conductor (or re-admit at persisted G-row); **¬ `/layer` as admit** |
 | Idea / friction with no work item yet | `/work-item-seed` (skill `work-item-seed-path`) — **S4a** then spawn conductor; ¬ `/layer` as the admit |
 | Operator asked Fable / architectural guidance ∧ (no todo ∨ Mode B mandatory) ∧ ¬ G1 skip | S4a if needed → spawn; G1 kwargs = skill `work-item-seed-path` § S3 Fable generate recipe (conductor copies) — ¬ reconstruct here |
-| Architecture consult already harvested | Skill § G1 skip + § Architecture-consult attach — stamp `derived_from` → `consult_kind=architecture` document; `/layer` enters G2 |
+| Architecture consult already harvested | Skill § G1 skip + § Architecture-consult attach — stamp `derived_from` → `consult_kind=architecture` document; re-admit conductor at G2 |
 | Hang the item on the charter tick | Skill § Tick enrollment + L3 `tick-enrollment-annex.md` — layer-shaped G1–G7 CHECKPOINT, **attended only** today |
 | Non-codework question/solution-space search · fat-packet deepen lane | `/path-sim` — not this lane |
 | Settled bind needing ship/advance only | `/address` peer (SOT: consult-routing § Address) |

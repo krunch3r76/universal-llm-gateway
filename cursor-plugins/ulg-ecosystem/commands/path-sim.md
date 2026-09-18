@@ -22,8 +22,8 @@ Path-sim — frontier question/solution-space search with **off-seat Q→A→R�
 | Post-ship critique (standalone / non-path-sim work item) | `/work-item-review` — also **auto-fired** after path-sim Stage-B (skill § R positions) |
 | Attended web densify | **`web-consult`** — not this lane |
 | In-seat L1/L2 tables only (no fix arc) | Operator must say so explicitly — not the default for frictions |
-| **Unattended full arc on the charter tick** | Same `/path-sim` entry + **`autonomous`** token (below) → lead sets todo attr **`attendance=autonomous`**, enrolls root with tag `charter-runner` **and** `enroll_charter_runner=true` (dual-key — tag alone is 422) → skill § Autonomous charter procession. Attendance resolves per root from the todo attr (or an `attendance:autonomous` root tag). Attended is the default (omit the token). **Consult stops** (`CONSULT_PENDING`, depth-1) ride this attendance axis — skill cites design-doc stop vocabulary; tick enforces. ¬ prose-paste a charter brief; the token is the short form. |
-| **Hang todo on tick / enroll `charter-runner` root** | Skill § **Tick enrollment — initial CHECKPOINT** — copy-paste template (byte-identical RESUME); mint scoreboard first. ¬ defer to agent-bus-discipline at enroll time. |
+| **Unattended full arc on the charter tick** | **Archived as IDE front door** — tick enrollment remains charter-runner materializer only; codework uses conductor spawn (Address row 5/6). Path-sim autonomous arc stays for non-codework. |
+| **Hang todo on tick / enroll `charter-runner` root** | **Archived for codework** — tick CHECKPOINT template is charter materializer output, not a navigator admit. Codework: spawn conductor. |
 
 ## Invocation
 

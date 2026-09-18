@@ -7,7 +7,7 @@ Address — settled work-item lifecycle peer beside `/layer` (path-sim only on i
 | Condition | Route |
 |---|---|
 | `bind_status=settled` or `shipping` ∧ `density_triage≠recon_pending` | This command — advance/verify/close |
-| `bind_status=unsettled` ∧ `density_triage∈{judgment_required,recon_pending}` ∧ codework | `/layer` — not this lane |
+| `bind_status=unsettled` ∧ `density_triage∈{judgment_required,recon_pending}` ∧ codework | **LAYER** — re-admit conductor (`contract=conductor`); **¬ `/layer` as front door** |
 | same bind ∧ (non-codework ∨ `arc_lane=path_sim` ∨ named `/path-sim`) | `/path-sim` (bundled) — not this lane |
 | `bind_status=deferred` | held — `next_action=await_unblock`; no route |
 | Gate-2 `implement_ready` just stamped | Writer sets `bind_status=settled`; pickup here after densify |

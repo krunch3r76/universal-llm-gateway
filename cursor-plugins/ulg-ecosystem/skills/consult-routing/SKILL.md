@@ -540,7 +540,8 @@ unify §3.1). `/layer` is gate-shape, ¬ a second admit. Path-sim is **not** the
 unmatched default. `/address` is the settled-ship peer.
 
 Attrs: `bind_status∈{unsettled,settled,shipping,deferred}`, `density_triage`,
-`arc_lane`. **PATH-SIM** only when **any**: non-codework · `arc_lane=path_sim` ·
+`arc_lane`. **Codework (R-1):** `codework ⇔ executor_harness ∈ {cursor-sdk,cursor-auto} ∨ arc_lane=layer`.
+**PATH-SIM** only when **any**: non-codework · `arc_lane=path_sim` ·
 operator named `/path-sim`.
 
 | # | Condition | Route |

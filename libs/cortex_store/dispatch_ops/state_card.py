@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
-
-Route = Literal["ADDRESS", "PATH-SIM", "DISPATCH", "held"]
+from typing import Any
 
 
 def state_card_defaults() -> dict[str, str]:
@@ -50,30 +48,8 @@ def merge_state_card(attrs: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def derive_work_item_route(
-    *,
-    bind_status: str,
-    density_triage: str,
-    implement_ready: bool = False,
-) -> Route:
-    """Total D4 router — one of ADDRESS, PATH-SIM, DISPATCH, or held."""
-    triage = (density_triage or "").strip()
-    status = (bind_status or "unsettled").strip()
-
-    if status == "deferred":
-        return "held"
-    if status in {"settled", "shipping"} and triage != "recon_pending":
-        return "ADDRESS"
-    if status == "unsettled" and triage in {"judgment_required", "recon_pending"}:
-        return "PATH-SIM"
-    if triage == "mechanical" or (implement_ready and triage != "recon_pending"):
-        return "DISPATCH"
-    return "PATH-SIM"
-
-
 __all__ = [
     "derive_next_action",
-    "derive_work_item_route",
     "merge_state_card",
     "state_card_defaults",
 ]

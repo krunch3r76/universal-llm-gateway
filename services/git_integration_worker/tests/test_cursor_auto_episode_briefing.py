@@ -65,7 +65,7 @@ def test_build_briefing_block_code_work_stanza():
 def test_build_briefing_block_seed_stanza():
     block = build_briefing_block(contract="seed")
     assert "work-item-seed-path" in block
-    assert "S1→S6" in block
+    assert "S4a→S6" in block
     assert "entry gate" in block
     assert "attended-charter-birth-with-cursor.md" in block
     assert "7281" in block
