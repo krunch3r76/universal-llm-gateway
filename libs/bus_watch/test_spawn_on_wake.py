@@ -854,6 +854,35 @@ def test_dispatch_body_contract_defaults_none_when_absent() -> None:
     assert body["contract"] == "none"
 
 
+def test_dispatch_body_grok_successor_pins_fast() -> None:
+    """Grok liaison hops pin Fast — omit-path alone is Standard (a:35522)."""
+    body = build_dispatch_body(
+        "10479",
+        {"successor_model": "cursor/grok-4.6", "max_hop_minutes": 60},
+    )
+    assert body["model_knobs"] == {"fast": "true"}
+
+
+def test_dispatch_body_successor_model_knobs_override_grok_fast() -> None:
+    body = build_dispatch_body(
+        "10479",
+        {
+            "successor_model": "cursor/grok-4.6",
+            "successor_model_knobs": {"fast": "false"},
+            "max_hop_minutes": 60,
+        },
+    )
+    assert body["model_knobs"] == {"fast": "false"}
+
+
+def test_dispatch_body_non_grok_omits_model_knobs() -> None:
+    body = build_dispatch_body(
+        "10479",
+        {"successor_model": "cursor/claude-opus-5", "max_hop_minutes": 60},
+    )
+    assert "model_knobs" not in body
+
+
 def test_dispatch_body_contract_conductor_from_policy() -> None:
     """AC1.2 — policy successor_contract binds the generate payload."""
     body = build_dispatch_body(

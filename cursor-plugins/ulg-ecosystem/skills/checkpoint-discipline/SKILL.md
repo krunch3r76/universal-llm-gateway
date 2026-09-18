@@ -191,7 +191,7 @@ can still post and refuse the window — do not take that path.
    **`pre_consolidate=false` is explicit.** Do not omit it — the channel default admits a
    cursor-sdk worker that authors residue and can patch cards; that worker is not the
    checkpoint author. Pipeline owns seal + mechanical post.
-2. **Tip author.** `team_dispatch(op=generate, model=cursor/grok-4.6, contract=none)`
+2. **Tip author.** `team_dispatch(op=generate, model=cursor/grok-4.6, contract=none, model_knobs={"fast":"true"})`
    (exactly one of `seat`|`role`; `dispatch_thread_id` resolved this turn). Duty: Window
    + CHECKPOINT prose + supersede + RESUME footer. ¬ cards · ¬ sketchboard /
    continuity-doc / charter scoreboard fold · ¬ `consolidate-continuity` · ¬ `card_patch`

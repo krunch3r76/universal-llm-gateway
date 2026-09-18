@@ -103,7 +103,7 @@ def test_effort_merges_onto_opus_and_preserves_base_knobs() -> None:
 def test_effort_within_accepted_range_passes_through() -> None:
     # grok's own accepted range includes xhigh (cursor_capabilities.py) — no
     # degradation needed for a value the model already accepts verbatim.
-    # Auto defaults fast=false when the knob is absent (catalog default is true).
+    # Auto omit-path fills fast=false when the knob is absent (ULG default, not Fast).
     knobs = compose_model_knobs(
         {"resolved_model_id": "cursor/grok-4.6"}, {"resolved_effort": "xhigh"}
     )

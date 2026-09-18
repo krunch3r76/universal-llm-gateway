@@ -87,6 +87,14 @@ def build_dispatch_body(
             else {}
         ),
     }
+    policy_knobs = policy.get("successor_model_knobs")
+    if isinstance(policy_knobs, dict):
+        body["model_knobs"] = {str(k): str(v) for k, v in policy_knobs.items()}
+    else:
+        model = str(policy.get("successor_model") or "")
+        bare_id = model.rsplit("/", 1)[-1] if model else ""
+        if bare_id == "grok-4.6":
+            body["model_knobs"] = {"fast": "true"}
     return body
 
 
