@@ -48,6 +48,7 @@ steps:
 
   - name: author_cdp
     type: generate
+    timeout_seconds: 360
     condition: "options.target == 'cdp' and classify_retrieve.json.get('proceed') is True"
     model_ref: expand
     prompt_ref: prompt_expand.v1.author_cdp
@@ -63,6 +64,7 @@ steps:
 
   - name: author_cursor
     type: generate
+    timeout_seconds: 360
     condition: "options.target == 'cursor' and classify_retrieve.json.get('proceed') is True"
     model_ref: expand
     prompt_ref: prompt_expand.v1.author_cursor
