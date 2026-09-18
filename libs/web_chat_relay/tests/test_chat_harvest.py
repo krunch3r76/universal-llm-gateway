@@ -180,8 +180,7 @@ def test_writer_empty_id_does_not_write(
 
 def test_truncated_view_does_not_cap_stored_messages() -> None:
     messages = [
-        {"role": "user", "content": f"t{i}", "turn_index": i}
-        for i in range(1, 21)
+        {"role": "user", "content": f"t{i}", "turn_index": i} for i in range(1, 21)
     ]
     view, truncated = project_messages_view(messages, include_turns="range", limit=5)
     assert len(view) == 5
@@ -193,8 +192,12 @@ def test_message_digest_equivalence_for_heading_in_body() -> None:
     body_with_heading = "## Turn 99 — user\nnested heading in body"
     plain = "plain body"
     assert message_digest(body_with_heading) != message_digest(plain)
-    rows_a = message_index([{"role": "user", "content": body_with_heading, "turn_index": 1}])
-    rows_b = message_index([{"role": "user", "content": body_with_heading, "turn_index": 1}])
+    rows_a = message_index(
+        [{"role": "user", "content": body_with_heading, "turn_index": 1}]
+    )
+    rows_b = message_index(
+        [{"role": "user", "content": body_with_heading, "turn_index": 1}]
+    )
     assert rows_a == rows_b
 
 
@@ -213,10 +216,7 @@ def test_grok_fixture_user_assistant_ordinals() -> None:
     assert turns[1].text == strip_chrome("Worked for 3s\n\nanswer")
 
 
-
-def test_legacy_md_import_once(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_legacy_md_import_once(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     cid = "47794c69-9fc"
     legacy = legacy_md_dest("grok", cid)
@@ -229,7 +229,7 @@ def test_legacy_md_import_once(
         "- harvested_at: `t0`\n"
         "- turn_count: `2`\n"
         "- streaming_at_harvest: `false`\n\n"
-        "<!-- chat-harvest-index {\"turns\":[[1,\"user\",\"abc\"],[2,\"assistant\",\"def\"]]} -->\n\n"
+        '<!-- chat-harvest-index {"turns":[[1,"user","abc"],[2,"assistant","def"]]} -->\n\n'
         "## Turn 1 — user\nhello\n\n"
         "## Turn 2 — assistant\nhi\n",
         encoding="utf-8",
@@ -253,11 +253,45 @@ def test_legacy_md_import_once(
     assert legacy.read_text(encoding="utf-8") == "mutated legacy md"
 
 
-BODY_A = "Five scopes queried, all returned — no nulls.\n\nScope\tQuery\tYield\n…BODY-A…"
+BODY_A = (
+    "Five scopes queried, all returned — no nulls.\n\nScope\tQuery\tYield\n…BODY-A…"
+)
 BODY_B = "It failed. Nothing was produced.\n\n…BODY-B…"
 
 
+def test_claude_badge_lead_matches_clean_lead_message_digest() -> None:
+    """Badge-prefixed assistant msg1 normalizes to the same digest as clean msg1."""
+    from chat_harvest.claude_chat_adapter import _turns_from_dom
+
+    clean_turns = _turns_from_dom(
+        [{"author": "assistant", "ordinal": 1, "text": BODY_A}]
+    )
+    badge_turns = _turns_from_dom(
+        [
+            {
+                "author": "assistant",
+                "ordinal": 1,
+                "text": (
+                    "Used 5 tools\n"
+                    "Used toys integration\n"
+                    "\ue02a\n"
+                    "Used toys integration\n\n"
+                    f"{BODY_A}"
+                ),
+            }
+        ]
+    )
+    clean_messages = turns_to_messages(clean_turns)
+    badge_messages = turns_to_messages(badge_turns)
+    assert clean_messages == badge_messages
+    assert message_digest(clean_messages[0]["content"]) == message_digest(
+        badge_messages[0]["content"]
+    )
+
+
 def test_specimen_13c8eb61_collapses_to_logical_dialogue() -> None:
+    from chat_harvest.claude_chat_adapter import _turns_from_dom
+
     rows = [
         {
             "author": "assistant",
@@ -285,7 +319,8 @@ def test_specimen_13c8eb61_collapses_to_logical_dialogue() -> None:
         },
         {"author": "assistant", "ordinal": 5, "text": BODY_B},
     ]
-    messages = turns_to_messages(rows)
+    turns = _turns_from_dom(rows)
+    messages = turns_to_messages(turns)
     assert messages == [
         {"role": "assistant", "content": BODY_A, "turn_index": 1},
         {"role": "user", "content": "status?", "turn_index": 2},
@@ -380,7 +415,6 @@ def test_window_slide_refuses_with_overlap(
     assert "overlap=1" in exc_info.value.reason
 
 
-
 def test_chrome_doubled_leading_line_stripped() -> None:
     from chat_harvest.claude_chat_adapter import _strip_claude_dom_chrome
 
@@ -407,12 +441,7 @@ def test_chrome_doubled_with_icon_glyph_stripped() -> None:
 def test_chrome_searched_web_icon_glyph_stripped() -> None:
     from chat_harvest.claude_chat_adapter import _strip_claude_dom_chrome
 
-    raw = (
-        "Searched the web\n"
-        "\ue027\n"
-        "Searched the web\n\n"
-        "Probably not off the shelf."
-    )
+    raw = "Searched the web\n\ue027\nSearched the web\n\nProbably not off the shelf."
     assert _strip_claude_dom_chrome(raw) == "Probably not off the shelf."
 
 
@@ -445,10 +474,10 @@ def test_divergent_conflict_reports_first_ordinal(
     assert detail.existing_digest != detail.new_digest
 
 
-
 @pytest.mark.asyncio
 async def test_conflict_emits_event_with_ordinal(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     turns = [ChatTurn(author="user", ordinal=1, text="stored", source="dom")]
@@ -519,25 +548,35 @@ def test_conflict_event_carries_no_snippet() -> None:
         code="archive_conflict",
     )
     payload = dict(event.payload)
-    forbidden = {"snippet", "existing_snippet", "new_snippet", "existing_digest", "new_digest"}
+    forbidden = {
+        "snippet",
+        "existing_snippet",
+        "new_snippet",
+        "existing_digest",
+        "new_digest",
+    }
     assert forbidden.isdisjoint(payload.keys())
     assert payload.get("conflict_ordinal") == 1
 
 
 def test_align_transcripts_enum_cases() -> None:
-    existing = message_index(
-        [{"role": "user", "content": "a", "turn_index": 1}]
-    )
+    existing = message_index([{"role": "user", "content": "a", "turn_index": 1}])
     identical_msgs = [{"role": "user", "content": "a", "turn_index": 1}]
-    assert align_transcripts(existing, message_index(identical_msgs)).value == "identical"
+    assert (
+        align_transcripts(existing, message_index(identical_msgs)).value == "identical"
+    )
 
     extension_msgs = identical_msgs + [
         {"role": "assistant", "content": "b", "turn_index": 1}
     ]
-    assert align_transcripts(existing, message_index(extension_msgs)).value == "extension"
+    assert (
+        align_transcripts(existing, message_index(extension_msgs)).value == "extension"
+    )
 
     assert (
-        align_transcripts(message_index(extension_msgs), message_index(identical_msgs)).value
+        align_transcripts(
+            message_index(extension_msgs), message_index(identical_msgs)
+        ).value
         == "window"
     )
 
@@ -812,7 +851,9 @@ async def test_claude_harvest_cse_only_tabs_opens_instead_of_refuses(
         ],
     }
     cse_page = _FakeClaudePage(url=CSE_URL)
-    context = _FakeContext([cse_page], new_page_result={"evaluate_result": evaluate_result})
+    context = _FakeContext(
+        [cse_page], new_page_result={"evaluate_result": evaluate_result}
+    )
     pw = _FakePlaywright()
 
     async def _fake_connect(_cdp_url: str):
@@ -854,7 +895,9 @@ async def test_claude_harvest_opens_on_demand_when_no_tab(
             {"author": "assistant", "ordinal": 2, "text": "a"},
         ],
     }
-    context = _FakeContext([other], new_page_result={"evaluate_result": evaluate_result})
+    context = _FakeContext(
+        [other], new_page_result={"evaluate_result": evaluate_result}
+    )
     pw = _FakePlaywright()
 
     async def _fake_connect(_cdp_url: str):

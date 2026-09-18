@@ -23,6 +23,7 @@ from chat_harvest.archive import (
     ArchiveRefusalError,
     archive_chat_transcript,
 )
+from chat_harvest.chrome import strip_chrome
 from chat_harvest.grok_adapter import scroll_stabilize
 from chat_harvest.messages import turns_to_messages
 from chat_harvest.models import (
@@ -91,7 +92,9 @@ def _turns_from_dom(raw_turns: list[dict[str, Any]]) -> list[ChatTurn]:
         author = str(item.get("author") or "assistant")
         raw_text = str(item.get("text") or "")
         if author == "assistant":
-            text = strip_thinking_prefix(_strip_claude_dom_chrome(raw_text))
+            text = strip_thinking_prefix(
+                strip_chrome(_strip_claude_dom_chrome(raw_text))
+            )
         else:
             text = raw_text
         turns.append(
@@ -125,7 +128,9 @@ def _live_id(live_url: str, fallback: str = "") -> str:
     )
 
 
-async def _poll_dom(page, *, max_attempts: int = 20, pause_s: float = 0.25) -> dict[str, Any]:
+async def _poll_dom(
+    page, *, max_attempts: int = 20, pause_s: float = 0.25
+) -> dict[str, Any]:
     """Wait for login wall or turns after open-on-demand navigation."""
     raw: dict[str, Any] = {}
     for _ in range(max_attempts):

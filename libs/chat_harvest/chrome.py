@@ -6,7 +6,8 @@ import re
 
 # Tool-badge vocabulary observed in Cowork scrape UI (incl. streaming mid-reply).
 _TOOL_BADGE_SEGMENT = (
-    r"(searched the web|used toys integration|used a skill|used \d+ skills?|loaded tools)"
+    r"(searched the web|used toys integration|used a skill|used \d+ skills?|"
+    r"used \d+ tools?|loaded tools)"
 )
 TOOL_BADGE_LINE_RE = re.compile(
     rf"^{_TOOL_BADGE_SEGMENT}(,\s*{_TOOL_BADGE_SEGMENT})*\.?$",
@@ -42,13 +43,30 @@ _ENVELOPE_METADATA_LINE_RE = re.compile(
 _STATUS_FAILED_LINE_RE = re.compile(r"^status:failed\b", re.I)
 
 
+def _is_badge_line(line: str) -> bool:
+    return bool(TOOL_BADGE_LINE_RE.match(line.strip()))
+
+
+def _is_lone_glyph_adjacent_to_badge(lines: list[str], index: int) -> bool:
+    """True for single-glyph lines sandwiched next to tool-badge rows."""
+    stripped = lines[index].strip()
+    if len(stripped) != 1:
+        return False
+    if index > 0 and _is_badge_line(lines[index - 1]):
+        return True
+    return index + 1 < len(lines) and _is_badge_line(lines[index + 1])
+
+
 def strip_chrome(text: str) -> str:
     """Drop Cowork scrape chrome; keep model prose."""
     lines = text.split("\n")
     if lines and _RESPONDED_LABEL_RE.match(lines[0].strip()):
         lines = lines[1:]
     lines = [
-        line for line in lines if not TOOL_BADGE_LINE_RE.match(line.strip())
+        line
+        for index, line in enumerate(lines)
+        if not _is_badge_line(line)
+        and not _is_lone_glyph_adjacent_to_badge(lines, index)
     ]
     while lines and not lines[0].strip():
         lines.pop(0)
