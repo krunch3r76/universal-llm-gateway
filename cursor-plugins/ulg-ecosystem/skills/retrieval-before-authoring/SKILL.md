@@ -18,16 +18,17 @@ Run one `rag(op="search", ...)` per scope. Do not skip this to save a turn.
 | Scope | What it holds |
 |---|---|
 | `llm_prompting` | persona/framing effects, ICL, long-context, prompt optimization |
-| `llm_writing` | prose quality, register, revision, rhetoric, audience-aware generation |
+| `writing` | human writing craft — cogency, fluency, persuasion, revision, register/audience |
+| `llm_writing_anti` | anti-specimen — how LLMs should not write to humans (named retrieve only) |
 | `suggestion_orientation` | elicitation, free-strategy, Law of Reversed Effort, demand characteristics |
 | `prompt_injection` | spotlighting, instruction hierarchy, post-prompting, provenance |
 | `agent_skills_research` | procedural memory, progressive disclosure, compiled artifacts |
 | `constitutional_ai` | self-report reliability, sycophancy, fluency bias, verification |
 
 `suggestion_orientation` is **not** inside the composite `research` / `all_research`
-scopes — query it by name or the arc under-draws. `llm_writing` is in `research` /
-`all_corpus` but writing commissions still query it **by name** so format-tax
-prompting does not drown the retrieve. Call shape:
+scopes — query it by name or the arc under-draws. Human craft commissions query
+`writing` **by name**; use `llm_writing_anti` only for "what not to sound like."
+Call shape:
 
 ```
 rag(op="search", arguments='{"query":"...","scope":"llm_prompting","top_k":10}')

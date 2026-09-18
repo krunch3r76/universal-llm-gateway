@@ -23,7 +23,7 @@ profiles:
     executor_tier: frontier
     retrieve_scopes:
       - llm_prompting
-      - llm_writing
+      - writing
       - prompt_injection
     elicitation: false
   - contract: implement
@@ -31,7 +31,7 @@ profiles:
     executor_tier: small
     retrieve_scopes:
       - llm_prompting
-      - llm_writing
+      - writing
       - prompt_injection
     elicitation: false
   - contract: "*"

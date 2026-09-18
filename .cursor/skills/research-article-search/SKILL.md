@@ -140,7 +140,8 @@ Run `rag(op="coverage")`; confirm each scope count and `last_indexed` freshness.
 | Subdir | Scope | Content |
 |---|---|---|
 | `llm/prompting` | `llm_prompting` | large-model prompting, format effects, instruction following |
-| `llm/writing` | `llm_writing` | LLM prose quality, register, revision, rhetoric — not instruction-following |
+| `writing` | `writing` | human writing craft — cogency, fluency, persuasion, revision, register |
+| `llm/writing` | `llm_writing_anti` | anti-specimen — how LLMs should not write to humans |
 | `prompting` | `small_llm_prompting` | small/local model prompting |
 | `workflows` | `workflows` | pipeline architecture, orchestration, long-context instruction following |
 | `rag-systems` | `rag_systems` | RAG architecture/eval/benchmarks |

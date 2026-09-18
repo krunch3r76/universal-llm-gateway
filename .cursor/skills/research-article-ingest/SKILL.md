@@ -54,7 +54,8 @@ when hints are fresh. Prefer an explicit `scope=` for precision; do not treat
 | `documentation` | `code_documentation` | Code doc generation/alignment |
 | `prompting` | `small_llm_prompting` | Small/local model prompting |
 | `llm/prompting` | `llm_prompting` | Large/cloud model prompting |
-| `llm/writing` | `llm_writing` | LLM prose quality, register, revision, rhetoric — not instruction-following |
+| `writing` | `writing` | Human writing craft — cogency, fluency, persuasion, revision, register |
+| `llm/writing` | `llm_writing_anti` | Anti-specimen — how LLMs should not write to humans |
 | `open-endedness` | `open_endedness` | ICM/RND, novelty search, MAP-Elites, POET, QD |
 | `world-models` | `world_models` | Dreamer, MuZero, learned dynamics |
 | `nas-meta-learning` | `nas_meta_learning` | NAS, MAML, hypernetworks, learned optimizers |
