@@ -79,9 +79,12 @@ def validate_proof_class(service: str, proof_class: str) -> str | None:
     """Return an error token when ``proof_class`` is unsupported for *service*."""
     slug = service.strip().lower()
     pc = proof_class.strip()
-    if pc not in PROOF_CLASS_VALUES:
-        return f"unknown_proof_class:{pc}"
     legal = legal_proof_classes(slug)
+    if pc not in PROOF_CLASS_VALUES:
+        return (
+            f"unknown_proof_class:{pc}; "
+            f"legal for {slug}: {', '.join(sorted(legal))}"
+        )
     if pc not in legal:
         return (
             f"invalid_proof_class:{pc}; "
