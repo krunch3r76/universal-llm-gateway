@@ -92,7 +92,7 @@ None.
 ## Scoreboard URI
 {SCOREBOARD_URI}
 
-— RESUME (any seat, no command): load checkpoint-discipline (tip resume + author workflow; done/close claims also load agent-bus-discipline § R12 completeness gate; cursor coding arc may add orchestrator-workflow) → read {SCOREBOARD_URI} → this is the latest CHECKPOINT (wave/in-flight/next above). Do not read the thread linearly. empty Next-pickup ≠ arc complete.
+— RESUME (any seat, no command): load checkpoint-discipline (tip resume + fire/verify; done/close claims also load agent-bus-discipline § R12 completeness gate; cursor coding arc may add orchestrator-workflow) → read {SCOREBOARD_URI} → this is the latest CHECKPOINT (wave/in-flight/next above). Do not read the thread linearly. empty Next-pickup ≠ arc complete.
 ```
 
 **Operator-framed todos:** add to the G1 Next pickup row: `operator_framed=true · frame_uri=<cortex://…> · pinned_question=<verbatim>`.

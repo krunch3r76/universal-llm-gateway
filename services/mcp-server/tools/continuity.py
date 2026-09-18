@@ -1,8 +1,8 @@
-"""Continuity MCP tool — first-class consolidate-continuity dispatch.
+"""Continuity MCP tool — checkpoint (lean) plus resume/tape/consolidate relays.
 
-Agents call ``continuity(op=consolidate|replay|status, …)`` instead of
-hand-assembling ``pipeline_options`` or running ``tmp/consolidate_replay.py``.
-Option building reuses ``agent_bus_store.continuity_consolidate_trigger``.
+Cursor checkpoint callers pass ``pre_consolidate=false`` explicitly and fire
+``team_dispatch(op=generate, model=cursor/grok-4.6)`` for the tip. Consolidate
+ops still exist; they are not the checkpoint happy path.
 """
 
 from __future__ import annotations
@@ -286,7 +286,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
         fence_id: str | None = None,
         channel: str | None = None,
     ) -> dict[str, Any]:
-        """Continuity consolidation — dispatch ``consolidate-continuity`` without CLI.
+        """Continuity checkpoint (lean) and resume/tape/consolidate relays.
 
         Ops:
 
@@ -307,10 +307,12 @@ def register_continuity_tools(mcp: FastMCP) -> None:
 
         - ``checkpoint`` — async relay to
           ``POST /api/v1/continuity/checkpoint``. Required: ``thread``,
-          ``surface`` (``cursor`` or ``claude_ai``). Omitted
-          ``pre_consolidate`` is false on ``cursor`` so an IDE hop is not
-          paired with a ``contract=none`` worker (a:33285); ``claude_ai``
-          still defaults true.
+          ``surface`` (``cursor`` or ``claude_ai``). Lean cursor callers
+          pass ``pre_consolidate=false`` explicitly (omitted defaults
+          admit a cursor-sdk residue/card-patch worker except
+          ``channel=hop``). ``transcript_id`` names a Cursor tab; without
+          it, stop — do not guess. Tip author is external generate
+          (``model=cursor/grok-4.6``), not the pre_consolidate worker.
 
         - ``resume`` — sync relay to
           ``POST /threads/{thread}/resume-fence``. Required: ``thread``.

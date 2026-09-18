@@ -1,8 +1,8 @@
 ---
 name: checkpoint-discipline
-description: "Author/resume CHECKPOINTs on standing roots (spine=root): profile pick tick_charter vs orchestrator_continuity, tip supersede + lean resume, role:root stamp, RESUME footer, scoreboard birth."
+description: "Fire/verify CHECKPOINTs on standing roots: lean path (pre_consolidate=false, grok tip author), tip supersede, lean resume, role:root stamp, RESUME footer."
 skill_category: orchestration
-trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "scoreboard birth", "standing root", "Windows log", "myelinate", "unbound checkpoint", "bare checkpoint"]
+trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "orchestrator_continuity", "tip supersede", "lean resume", "role:root", "RESUME footer", "pre_consolidate", "lean checkpoint", "grok tip author", "standing root", "Windows log", "unbound checkpoint", "bare checkpoint"]
 ---
 
 # Checkpoint Discipline
@@ -13,7 +13,7 @@ trigger_match_terms: ["checkpoint-discipline", "CHECKPOINT", "tick_charter", "or
 
 ## When to load
 
-About to post, supersede, or resume a CHECKPOINT; standing-root continuity; charter-runner enroll; operator `resume` / `checkpoint` (bare ∨ `<n|slug>` — § Utterance).
+About to fire, verify, or resume a CHECKPOINT; standing-root continuity; charter-runner enroll; operator `resume` / `checkpoint` (bare ∨ `<n|slug>` — § Utterance).
 
 **Continuity stance (first-class trait — operator 2026-08-25):** `∀ orchestrator_continuity` root: Use the `ulg-for-llms` skill ∧ `## Why this house` on the continuity-doc before Anchor. Birth CHECKPOINT indexes `## Stance` (Use-line + pointer; speech stays on the catch-up file). Resume loads the skill then the preamble, then the index. Footer stays §3.1.1. `tick_charter` skips. Substrate: `root_missing_stance` on birth/bootstrap when either half is missing. `thin_kickoff ∧ starving(why)` is a defect.
 
@@ -31,25 +31,13 @@ Done/close-arc claims: also load `agent-bus-discipline` § R12.
 
 | Utterance | Action |
 |---|---|
-| `checkpoint <n>` / `checkpoint <slug>` | Existing house — § Resume + operator-posture tab title `. {n} {slug}`. |
-| `checkpoint` / `/checkpoint` ∧ **bound** | Segment CP on that house. |
-| `checkpoint` / `/checkpoint` ∧ **unbound** | Session-to-root birth (`orchestration-lanes` § Root birth) — procedure below. |
+| `checkpoint <n>` / `checkpoint <slug>` | House resolved this turn — § Pipeline CHECKPOINT. Tab `. {n} {slug}`. ¬ resume. |
+| `checkpoint` / `/checkpoint` | Same when this tab can name `transcript_id` and resolve `thread` (sidecar, session join, prior Window) — quote both. |
+| ¬`transcript_id` | Say so and stop. ¬ guess · ¬ mint a house · ¬ write a foreign root. |
 
 `bound(tab)` ⇔ a thread id acquired by an **operator verb in this tab** (`resume <n|slug>` · `checkpoint <n|slug>` · `/agent-bus {n|slug}`) **∨** this tab already posted a CHECKPOINT under this `transcript_id`. Cheapest proxy: (i) tab title `{n} {slug}` or `. {n} {slug}`; (ii) a CP posted from this `transcript_id` this session; (iii) `continuity(op=…)` has a `thread=` the seat can name without guessing. **Not binders:** recency · adjacency · a thread this tab merely read · "the only active root" · a thread id that merely appears in context.
 
-On `checkpoint` with no argument ∧ `¬bound(tab)`:
-
-1. **Materiality gate.** This tab holds dialogue worth inheriting (`speech-tape-segment-checkpoint_ulg` § Bind triggers 1–3). **Not met ⇒ one line and stop.** ¬ mint · ¬ quiz · ¬ write any existing house.
-2. Bind one objective sentence from **this** tab.
-3. `create_thread` → new root id `N`, slug from the objective.
-4. Mint `cortex://notes/system/threads/N-continuity-card.md` with `## Objective`, `## Why this house`, empty `## Windows`. No scoreboard.
-5. Birth CHECKPOINT on `N`: indexes the card, `## Stance`, concrete `Next-pickup`, `## Anchor` → `Window: transcript_id=<this tab's uuid> · turns@cp=<K>` (`K` from the seal). Canonical `— RESUME (any seat, no command):` footer.
-6. Stamp `role:root`. **¬ enroll** `charter-runner` (conversation birth has no gated pickup). Enroll only on explicit operator ask for ticks.
-6b. **Graph wire (hygiene, not optional — operator 2026-09-13, `decision:bus-thread-project-tagging` a:33438):** `entity_create thread:N` (type `thread`, `source_uri` = the card) and `relationship_create` to every house this tab operated on / continues / was commissioned by (`elaborates` · `related_to`+`role` · `references` · `sibling_of`), plus pointer turns on those buses. A house nobody can traverse to is a tab that merely moved.
-7. Rename tab → `. {N} {slug}`.
-8. Brief: house `{N} {slug}`, objective, next-pickup. Steps 3–6 fail ⇒ report and stop.
-
-`∀ pre-existing thread T: ¬post(CHECKPOINT, T)`. `/orchestrate` is *a* birth verb, not the only one. Falsifier (a:33200): those three SoTs + bare checkpoint mint a new root and do not write a foreign house.
+`/orchestrate` births a root (`orchestration-lanes` § Root birth). The `checkpoint` verb does not.
 
 ## Spine vs enrollment
 
@@ -65,6 +53,8 @@ On `checkpoint` with no argument ∧ `¬bound(tab)`:
 Enrollment tag is SOT. `tick_charter` = machine consumer (base + T extras; malformed → tick skip). `orchestrator_continuity` = index-thin human/agent index + handoff pointer. ¬ full tick ceremony on non-enrolled roots. Field presence → schema §3/§5/§6.
 
 ## Writer conventions
+
+Happy path is § Pipeline CHECKPOINT. Myelinate, card / sketchboard / continuity-doc / charter scoreboard fold, `consolidate-continuity`, and `card_patch` are off that path.
 
 | Rule | Binding |
 |---|---|
@@ -141,7 +131,7 @@ instrument** shortcut in the commission before parking another episode on accrua
 Watchdog SOT: `scripts/opus-summons-watchdog.py` (`successor_fast` when seq advanced +
 `running_count=0`).
 
-**Vocabulary:** `resume <n>` → this section; `checkpoint <n|slug>` → post per profile + tip hygiene; bare `checkpoint` → § Utterance (bound ⇒ segment CP · unbound ⇒ birth).
+**Vocabulary:** `resume <n>` → this section; `checkpoint` / `checkpoint <n|slug>` → § Pipeline CHECKPOINT.
 
 ## Window anchor (human continuity speech tape)
 
@@ -149,12 +139,9 @@ On CHECKPOINT, under `## Anchor`, cite the posting window:
 
 `Window: transcript_id=<uuid> · turns@cp=<K>`
 
-`K` = `turn_count` from `session_close_preflight` or `assemble_transcript` on that
-window's JSONL in the same turn (hand counts forbidden; **CHECKPOINT-authoring
-only** — resume ¬ loads this JSONL). **Attended IDE seat (resolution a):** when
-authoring a CHECKPOINT via `agent_bus send` (not the pipeline), include the
-`## Anchor` / `Window:` line in the authored body — same template as pipeline
-seals. `K` must come from a same-turn tool observation; hand counts are forbidden.
+`K` comes from the seal payload (`turns@cp`). Hand counts forbidden; resume ¬
+loads this JSONL. **Attended IDE:** the grok generate seat copies `Window:` from
+the seal into the tip. Asking tab ¬ `agent_bus send` the CHECKPOINT body.
 Zero-CP windows:
 `boundary=window_whole`. **On resume:** the Window line is the **anchor citation**
 (which posting window) — execute § Resume step 5 before operator-facing prose;
@@ -185,21 +172,35 @@ Enrolled roots only. Design SOT: `cortex://notes/system/specs/autonomous-path-si
 Prefix must stay `— RESUME (any seat, no command):` (parser T8).
 
 ```
-— RESUME (any seat, no command): load checkpoint-discipline (tip resume + author workflow; done/close claims also load agent-bus-discipline § R12 completeness gate; cursor coding arc may add orchestrator-workflow) → read <continuity-source URI/path> [+ scoreboard gated lane if named] → this is the latest CHECKPOINT (wave/in-flight/next above). Do not read the thread linearly. empty Next-pickup ≠ arc complete.
+— RESUME (any seat, no command): load checkpoint-discipline (tip resume + fire/verify; done/close claims also load agent-bus-discipline § R12 completeness gate; cursor coding arc may add orchestrator-workflow) → read <continuity-source URI/path> [+ scoreboard gated lane if named] → this is the latest CHECKPOINT (wave/in-flight/next above). Do not read the thread linearly. empty Next-pickup ≠ arc complete.
 ```
 
 `<continuity-source URI/path>` = the durable roadmap or reconstitution index named in the CHECKPOINT body (e.g. `cortex://notes/system/roadmaps/<slug>.md` or a workspaces share path). Parameterize per arc — do not hardcode a single global path.
 
-## Pipeline CHECKPOINT (cursor lane)
+## Pipeline CHECKPOINT (cursor lane) — lean / fast happy path
 
-On a `role:root` house with a sealed transcript window, post via MCP:
+Asking tab **fires and verifies**. It does not write the tip body.
 
-`continuity(op=checkpoint, surface=cursor, thread=<root>, transcript_id=<own tab uuid>)`
+`¬transcript_id` (this Cursor tab's UUID) ⇒ say so and stop. ¬ guess · ¬ mint · ¬ foreign root.
+Required checkpoint args: `thread` + `surface`. `thread` is resolved this turn from the
+tab (sidecar, session join, prior Window), then quoted. Seal without `transcript_id`
+can still post and refuse the window — do not take that path.
 
-The pipeline seals, optionally pre-consolidates (`contract: none` cursor-sdk read-only
-packet), and posts the CHECKPOINT. **`Window:` / `Harvest:` lines come from the seal** —
-never hand-count `turns@cp`. Poll `pipeline(op=result, execution_id=…)` then verify the
-new CP anchor with `agent_bus_read(tape, thread=…)`.
+1. **Seal + mechanical post.** `dispatch(tool="continuity")` or
+   `continuity(op=checkpoint, surface=cursor, transcript_id=<tab UUID>, thread=<house resolved this turn>, from_agent=cursor, pre_consolidate=false)`.
+   **`pre_consolidate=false` is explicit.** Do not omit it — the channel default admits a
+   cursor-sdk worker that authors residue and can patch cards; that worker is not the
+   checkpoint author. Pipeline owns seal + mechanical post.
+2. **Tip author.** `team_dispatch(op=generate, model=cursor/grok-4.6, contract=none)`
+   (exactly one of `seat`|`role`; `dispatch_thread_id` resolved this turn). Duty: Window
+   + CHECKPOINT prose + supersede + RESUME footer. ¬ cards · ¬ sketchboard /
+   continuity-doc / charter scoreboard fold · ¬ `consolidate-continuity` · ¬ `card_patch`
+   · ¬ myelinate. Asking tab does not write the tip.
+
+**`Window:` / `Harvest:` lines come from the seal** — never hand-count `turns@cp`.
+Verify from tool payloads: pipeline status/posted, bus turn,
+`Window: transcript_id=… · turns@cp=K`, `open_interval` empty or not.
+CHECKPOINT is a reconstitution index, not completeness authority.
 
 ## Related
 

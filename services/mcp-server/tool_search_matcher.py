@@ -52,6 +52,13 @@ _KEYWORD_BOOSTS: dict[str, set[str]] = {
     "boot_inspect": {"boot", "audit", "card", "briefing"},
     "cortex_brief": {"brief", "session", "warmup", "start"},
     "quality_gate": {"lint", "ruff", "test", "compile", "ci", "format"},
+    "continuity": {
+        "checkpoint",
+        "pre_consolidate",
+        "resume",
+        "tape",
+        "window",
+    },
     "email": {
         "mailbox",
         "imap",
@@ -137,6 +144,18 @@ _MANIFEST_OVERRIDES: dict[str, dict[str, Any]] = {
         "purpose": (
             "Bounded RAG preview (overflow) — for full retrieval prefer primary "
             f"{_RAG_PRIMARY_CALL}."
+        ),
+    },
+    "continuity": {
+        "purpose": (
+            "Continuity checkpoint (lean) and resume/tape relays. "
+            "Cursor checkpoint: pass pre_consolidate=false; grok generate authors the tip."
+        ),
+        "dispatch_template": (
+            'dispatch(tool="continuity", arguments=\'{"op": "checkpoint", '
+            '"surface": "cursor", "thread": "<house resolved this turn>", '
+            '"transcript_id": "<tab UUID>", "from_agent": "cursor", '
+            '"pre_consolidate": false}\')'
         ),
     },
     "email": {

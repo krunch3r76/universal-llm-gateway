@@ -19,7 +19,7 @@ identified by its handle and parent association, never inferred from spine.
 
 ## Root birth
 
-Triggered by `/orchestrate` **or** bare `checkpoint` on an unbound tab (`checkpoint-discipline` § Utterance — sole SoT). `checkpoint <n>|<slug>` names an existing house — not this gate. `∀ pre-existing thread T: ¬post(CHECKPOINT, T)` on this path.
+Triggered by `/orchestrate` only. The `checkpoint` verb is `checkpoint-discipline` lean fire — ¬ this gate, ¬ a birth synonym.
 
 1. Bind one objective sentence describing the topic being continued.
 2. Create the root thread (`create_thread` may precede the card mint so the card is `{id}`-named).

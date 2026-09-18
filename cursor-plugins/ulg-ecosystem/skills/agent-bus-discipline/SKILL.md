@@ -126,7 +126,7 @@ If `fetch(last=1, compact=true)` overflows, do not skip the thread. Use `get(tur
 
 High-turn-count roots fail by many turns, not large bodies. `¬ linearly_read(root_thread) for state`.
 
-**CHECKPOINT author / resume / tip hygiene / profiles:** Use the `checkpoint-discipline` skill (schema field IDs: `cortex://notes/system/specs/checkpoint-schema-profiles.md`). This skill keeps bus mechanics + R12 done/close below.
+**CHECKPOINT fire/verify / resume / tip hygiene / profiles:** Use the `checkpoint-discipline` skill (schema field IDs: `cortex://notes/system/specs/checkpoint-schema-profiles.md`). This skill keeps bus mechanics + R12 done/close below.
 
 State reconstitution default = tip CHECKPOINT + roadmap (+ scoreboard when chartered). Completeness projection = scoreboard (graph canonical). Window history = `## Windows` on the charter surface (schema §3.5) — resume does not load it. `empty(Next-pickup) ⇏ arc_complete`. **Done-claim gate:** § R12. Templates: `charter-scoreboard.md` · `continuity-doc.md`.
 
@@ -254,7 +254,7 @@ section is the unconditional doc bind fallback.
 
 2. **Done / next / close-arc gate.** Before any claim the arc is done, nothing is next, or the root may close: `md_read` the scoreboard (or charter deliverable section if missing — then mint/update scoreboard) and diff against live Cortex cards. `¬` treat CHECKPOINT, empty Next-pickup, or chat WIP as completion authority. Unverified friction/deferred claims are not actionable until re-verified.
 
-3. **Resume / checkpoint vocabulary.** Use the `checkpoint-discipline` skill (tip recipe, profile operator-facing, tip hygiene, § Utterance). This section does **not** own resume step 0.
+3. **Resume / checkpoint vocabulary.** Use the `checkpoint-discipline` skill (lean fire/verify, profile operator-facing, tip hygiene, § Utterance). This section does **not** own resume step 0.
 
 The CHECKPOINT RESUME footer self-bootstraps via `checkpoint-discipline` (+ this § R12 for done/close); see that skill for the canonical string.
 
@@ -403,6 +403,6 @@ Housekeeping: lane chat archive/delete on closeout; dead viz URLs noted on conti
 
 ## Related
 
-- `checkpoint-discipline` — CHECKPOINT author/resume/tip hygiene/profiles (standing roots).
+- `checkpoint-discipline` — CHECKPOINT fire/verify/resume/tip hygiene/profiles (standing roots).
 - `agent_bus` descriptor — send/reply/fetch/wait signatures.
 - Session-close discipline — bus debrief before closing.

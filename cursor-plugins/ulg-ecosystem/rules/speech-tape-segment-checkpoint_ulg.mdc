@@ -35,10 +35,11 @@ the attended tab accumulated judgment dialogue worth handing off.
 
 ## Bind — when to post a segment CHECKPOINT
 
-Presupposes a bound `role:root` house. Unbound tab ⇒ `checkpoint-discipline` § Utterance births one first; § Bind triggers 1–3 are that birth's materiality gate.
+Presupposes a bound `role:root` house and a known `transcript_id`. ¬`transcript_id` ⇒ `checkpoint-discipline` § Utterance (stop). The `checkpoint` verb does not birth a house.
 
 On **`role:root`** houses, attended IDE **orchestrator** tab (pools row: Multitask
-OFF, CHECKPOINT/confer/tab-launch — not WORK implement), post a segment CP **before**
+OFF, CHECKPOINT/confer/tab-launch — not WORK implement), fire `checkpoint-discipline`
+§ Pipeline CHECKPOINT (lean: `pre_consolidate=false` + grok tip author) **before**
 the operator or seat opens a **fresh tab** `resume <root>` (or hop clone) **when any**
 of:
 
@@ -62,16 +63,17 @@ of:
 
 ## Required shape (segment CP)
 
-Every segment CP on a continuity root **must** include:
+Asking tab fires and verifies; grok authors the tip. Verify the posted tip has:
 
-1. **`## Anchor`** with attended window (same turn as post):
+1. **`## Anchor`** with attended window from the **seal**:
    `Window: transcript_id=<this-tab-uuid> · turns@cp=<K>`
-   `K` from `session_close_preflight` / `assemble_transcript` on that JSONL —
-   hand counts forbidden (`checkpoint-discipline` § Window anchor).
+   `K` from the seal payload — hand counts forbidden (`checkpoint-discipline` § Window anchor).
 2. **`Highlight`** — one sentence: segment verdict (what closed on this tab).
 3. **Residue** — bus fold only (commits, binds, next leg); **¬** paste full dialogue
    into CP body — dialogue lives in the tape cell, not the CHECKPOINT prose wall.
 4. **Supersede** prior tip CP when the segment changes Settled/Live/Next for the house.
+
+¬ cards · ¬ sketchboard / continuity-doc / charter scoreboard fold · ¬ `consolidate-continuity` · ¬ `card_patch` · ¬ myelinate on this path.
 
 **Tab title:** `. {id} {slug}` on post (`operator-posture`).
 
@@ -100,8 +102,8 @@ After segment CP on orchestrator tab **T₁** with window **W₁**:
 
 - **Consolidation** (10303 harvest) folds graph claims — **not** verbatim attended dialogue.
 - **FIX-18** (residue in resume bundle) helps bus orientation — **not** full speech persistence.
-- Until async consolidation replaces high-frequency segment seal, **prefer segment CP**
-  over hoping one tip CP covers a long orchestrator session.
+- Consolidation / card fold stay off the checkpoint happy path. Prefer the lean
+  segment fire over hoping one tip CP covers a long orchestrator session.
 
 Skill: Use the `checkpoint-discipline` skill · `continuity-thread-shaping` on inbound.
 Related: `resume-fence_ulg` (structural pickup) · `operator-posture_ulg` Rule 3.
