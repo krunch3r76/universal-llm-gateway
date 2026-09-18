@@ -16,6 +16,7 @@ from chat_harvest.archive import (
     ArchiveRefusalError,
     archive_chat_transcript,
 )
+from chat_harvest.messages import turns_to_messages
 from chat_harvest.models import (
     DEFAULT_RELAY_STATE_FILE,
     ChatHarvestResponse,
@@ -134,12 +135,13 @@ async def execute_grok_harvest(
         live_url = str(raw.get("url") or url)
         live_id = grok_session.conversation_id_from_url(live_url) or conversation_id
         streaming = bool(raw.get("streaming"))
+        messages = turns_to_messages(turns)
         if metadata_only:
             return build_harvest_response(
                 site=site,
                 live_id=live_id,
                 live_url=live_url,
-                turns=turns,
+                messages=messages,
                 streaming=streaming,
                 include_turns=include_turns,
                 limit=limit,
@@ -148,7 +150,7 @@ async def execute_grok_harvest(
 
         harvested_at = datetime.now(UTC).isoformat()
         try:
-            archive_uri, archive_sha256 = archive_chat_transcript(
+            archive_uri, archive_sha256, alignment = archive_chat_transcript(
                 site,
                 live_id,
                 live_url,
@@ -163,7 +165,8 @@ async def execute_grok_harvest(
                 site=site,
                 conversation_id=live_id,
                 url=live_url,
-                turn_count=len(turns),
+                turn_count=max((m["turn_index"] for m in messages), default=0),
+                message_count=len(messages),
                 existing_sha256=exc.existing_sha256,
                 conflict=exc.detail,
                 code="archive_conflict",
@@ -175,7 +178,8 @@ async def execute_grok_harvest(
                 site=site,
                 conversation_id=live_id,
                 url=live_url,
-                turn_count=len(turns),
+                turn_count=max((m["turn_index"] for m in messages), default=0),
+                message_count=len(messages),
                 code=exc.code,
                 reason=exc.reason,
             )
@@ -184,7 +188,7 @@ async def execute_grok_harvest(
             site=site,
             live_id=live_id,
             live_url=live_url,
-            turns=turns,
+            messages=messages,
             streaming=streaming,
             include_turns=include_turns,
             limit=limit,
@@ -192,6 +196,7 @@ async def execute_grok_harvest(
             harvested_at=harvested_at,
             archive_uri=archive_uri,
             archive_sha256=archive_sha256,
+            alignment=alignment,
         )
     except GrokAuthError as exc:
         return ChatHarvestResponse(
@@ -263,7 +268,7 @@ async def execute_grok_paste(
         pasted_at = datetime.now(UTC).isoformat()
         archive_uri = archive_sha256 = None
         if live_id:
-            archive_uri, archive_sha256 = archive_chat_transcript(
+            archive_uri, archive_sha256, _alignment = archive_chat_transcript(
                 "grok",
                 live_id,
                 live_url,

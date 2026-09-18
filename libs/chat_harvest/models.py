@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlparse
 
+from continuity_tape.messages import messages_sha256 as _messages_sha256
 from pydantic import BaseModel, Field
 
 Site = Literal["grok", "claude"]
@@ -33,6 +34,8 @@ class ChatTurn(BaseModel):
 
 
 class ConflictDetail(BaseModel):
+    """Conflict at a 1-based message position in the persisted envelope."""
+
     ordinal: int
     existing_digest: str
     new_digest: str
@@ -62,10 +65,13 @@ class ChatHarvestResponse(BaseModel):
     archive_sha256: str | None = None
     harvested_at: str | None = None
     turn_count: int = 0
-    last_ordinal: int | None = None
+    message_count: int = 0
+    messages_sha256: str | None = None
+    last_turn_index: int | None = None
+    alignment: str | None = None
     streaming: bool = False
     truncated: bool = False
-    turns: list[ChatTurn] = Field(default_factory=list)
+    messages: list[dict[str, Any]] = Field(default_factory=list)
     existing_sha256: str | None = None
     conflict: ConflictDetail | None = None
     code: str | None = None
@@ -146,27 +152,30 @@ def relay_lock_fresh(
     return 0 <= age < max_age_s
 
 
-def project_turns_view(
-    turns: list[ChatTurn],
+def project_messages_view(
+    messages: list[dict[str, Any]],
     *,
     include_turns: IncludeTurns = "none",
     limit: int = 10,
     after_turn: int | None = None,
-) -> tuple[list[ChatTurn], bool]:
-    """Return a view slice of *turns* for inline response projection."""
+) -> tuple[list[dict[str, Any]], bool]:
+    """Return a view slice of *messages* for inline response projection."""
     if include_turns == "none":
         return [], False
-    pool = turns
+    pool = messages
     if after_turn is not None:
-        pool = [t for t in turns if t.ordinal > after_turn]
+        pool = [m for m in messages if int(m.get("turn_index") or 0) > after_turn]
     if include_turns == "last" and pool:
         pool = [pool[-1]]
     truncated = len(pool) > limit
-    view = [
-        ChatTurn(author=t.author, ordinal=t.ordinal, text=t.text, source="archive")
-        for t in pool[:limit]
-    ]
+    view = [dict(m) for m in pool[:limit]]
     return view, truncated
+
+
+def _turn_count_from_messages(messages: list[dict[str, Any]]) -> int:
+    if not messages:
+        return 0
+    return max(int(m.get("turn_index") or 0) for m in messages)
 
 
 def build_harvest_response(
@@ -174,7 +183,7 @@ def build_harvest_response(
     site: str,
     live_id: str,
     live_url: str,
-    turns: list[ChatTurn],
+    messages: list[dict[str, Any]],
     streaming: bool,
     include_turns: IncludeTurns = "none",
     limit: int = 10,
@@ -182,11 +191,14 @@ def build_harvest_response(
     harvested_at: str | None = None,
     archive_uri: str | None = None,
     archive_sha256: str | None = None,
+    alignment: str | None = None,
     opened_on_demand: bool = False,
 ) -> ChatHarvestResponse:
-    view, truncated = project_turns_view(
-        turns, include_turns=include_turns, limit=limit, after_turn=after_turn
+    view, truncated = project_messages_view(
+        messages, include_turns=include_turns, limit=limit, after_turn=after_turn
     )
+    msg_sha = _messages_sha256(messages) if messages else None
+    turn_count = _turn_count_from_messages(messages)
     return ChatHarvestResponse(
         outcome="streaming" if streaming else "harvested",
         site=site,
@@ -195,11 +207,14 @@ def build_harvest_response(
         archive_uri=archive_uri,
         archive_sha256=archive_sha256,
         harvested_at=harvested_at,
-        turn_count=len(turns),
-        last_ordinal=turns[-1].ordinal if turns else None,
+        turn_count=turn_count,
+        message_count=len(messages),
+        messages_sha256=msg_sha,
+        last_turn_index=turn_count if turn_count else None,
+        alignment=alignment,
         streaming=streaming,
         truncated=truncated,
-        turns=view,
+        messages=view,
         opened_on_demand=opened_on_demand,
     )
 

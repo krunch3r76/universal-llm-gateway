@@ -6,9 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from chat_harvest.messages import turns_to_messages
 
 from .seal import ContinuityCheckpointSealHandler
-from .seal_claude_ai import _dedupe_turns, seal_claude_ai
+from .seal_claude_ai import seal_claude_ai
 
 pytestmark = pytest.mark.offline
 
@@ -21,9 +22,64 @@ def test_dedupe_collapses_doubled_assistant_reply() -> None:
         {"author": "assistant", "text": "Hello world", "ordinal": 1},
         {"author": "assistant", "text": "Claude responded: Hello world", "ordinal": 2},
     ]
-    deduped = _dedupe_turns(turns)
-    assert len(deduped) == 1
-    assert deduped[0]["ordinal"] == 1
+    messages = turns_to_messages(turns)
+    assert len(messages) == 1
+    assert messages[0]["role"] == "assistant"
+    assert messages[0]["content"] == "Hello world"
+
+
+@pytest.mark.asyncio
+async def test_seal_claude_ai_messages_only_harvest() -> None:
+    harvest_messages = [
+        {
+            "role": "assistant",
+            "content": "pre-sealed body",
+            "turn_index": 1,
+        }
+    ]
+    harvest = AsyncMock(
+        return_value={
+            "outcome": "harvested",
+            "content_provenance": "cse-dom",
+            "messages": harvest_messages,
+            "truncated": False,
+            "cursor": 1,
+        }
+    )
+    dispatch = AsyncMock(
+        return_value={
+            "session_id": "web-anthropic-2026-09-10-120000-abc",
+            "journal_row_id": 7,
+            "turn_count": 1,
+            "content_hash": "sha256:deadbeef",
+            "transcript_entity_id": "transcript:web-anthropic-2026-09-10-120000-abc",
+        }
+    )
+    with (
+        patch(
+            "cortex_store.session_close_successor_hop.lookup_journaled_by_conversation_uuid",
+            return_value=None,
+        ),
+        patch(
+            "handlers.seal_claude_ai._lookup_session_id_for_transcript",
+            return_value=None,
+        ),
+        patch(
+            "cortex_store.dispatch_ops.ops_transcript_seal._stamp_succession_fields",
+            return_value=None,
+        ),
+    ):
+        payload = await seal_claude_ai(
+            thread="10479",
+            chat_url=_CSE_URL,
+            transcript_id=_CSE_ID,
+            from_agent="cursor",
+            harvest_fn=harvest,
+            cortex_dispatch_fn=dispatch,
+        )
+    assert payload["refused"] is None
+    close_args = dispatch.await_args.args[1]
+    assert close_args["transcript_messages"]["messages"] == harvest_messages
 
 
 @pytest.mark.asyncio

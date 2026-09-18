@@ -24,6 +24,7 @@ from chat_harvest.archive import (
     archive_chat_transcript,
 )
 from chat_harvest.grok_adapter import scroll_stabilize
+from chat_harvest.messages import turns_to_messages
 from chat_harvest.models import (
     ChatHarvestResponse,
     ChatPasteResponse,
@@ -281,11 +282,12 @@ async def execute_claude_harvest(
             _live_id(str(raw.get("url") or url), conversation_id),
             bool(raw.get("streaming")),
         )
+        messages = turns_to_messages(turns)
         kw = dict(
             site=site,
             live_id=live_id,
             live_url=live_url,
-            turns=turns,
+            messages=messages,
             streaming=streaming,
             include_turns=include_turns,
             limit=limit,
@@ -295,7 +297,7 @@ async def execute_claude_harvest(
             return build_harvest_response(**kw, opened_on_demand=minted)
         harvested_at = datetime.now(UTC).isoformat()
         try:
-            archive_uri, archive_sha256 = archive_chat_transcript(
+            archive_uri, archive_sha256, alignment = archive_chat_transcript(
                 site,
                 live_id,
                 live_url,
@@ -310,7 +312,8 @@ async def execute_claude_harvest(
                 site=site,
                 conversation_id=live_id,
                 url=live_url,
-                turn_count=len(turns),
+                turn_count=max((m["turn_index"] for m in messages), default=0),
+                message_count=len(messages),
                 existing_sha256=exc.existing_sha256,
                 conflict=exc.detail,
                 code="archive_conflict",
@@ -323,7 +326,8 @@ async def execute_claude_harvest(
                 site=site,
                 conversation_id=live_id,
                 url=live_url,
-                turn_count=len(turns),
+                turn_count=max((m["turn_index"] for m in messages), default=0),
+                message_count=len(messages),
                 code=exc.code,
                 reason=exc.reason,
                 opened_on_demand=minted,
@@ -333,6 +337,7 @@ async def execute_claude_harvest(
             harvested_at=harvested_at,
             archive_uri=archive_uri,
             archive_sha256=archive_sha256,
+            alignment=alignment,
             opened_on_demand=minted,
         )
     except (RuntimeError, PlaywrightError) as exc:
@@ -392,7 +397,9 @@ async def execute_claude_paste(
         pasted_at = datetime.now(UTC).isoformat()
         archive_uri = archive_sha256 = None
         if live_id:
-            archive_uri, archive_sha256 = archive_chat_transcript("claude", live_id, live_url, turns, harvested_at=pasted_at, streaming=False)
+            archive_uri, archive_sha256, _alignment = archive_chat_transcript(
+                "claude", live_id, live_url, turns, harvested_at=pasted_at, streaming=False
+            )
         return ChatPasteResponse(ok=True, site="claude", conversation_id=live_id, url=live_url, archive_uri=archive_uri, archive_sha256=archive_sha256, send_verified=True, pasted_at=pasted_at)
     except (RuntimeError, TimeoutError) as exc:
         return ChatPasteResponse(ok=False, code="unreachable", reason=str(exc))

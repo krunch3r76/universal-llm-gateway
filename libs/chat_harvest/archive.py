@@ -1,9 +1,8 @@
-"""Persist full chat transcripts under CORTEX_FILES_ROOT."""
+"""Persist chat harvest envelopes under CORTEX_FILES_ROOT."""
 
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import re
 import shutil
@@ -14,15 +13,19 @@ from pathlib import Path
 from durable_io.atomic import durable_write_text
 from universal_logging import get_logger
 
+from chat_harvest.messages import (
+    build_harvest_envelope,
+    envelope_json_text,
+    load_harvest_envelope,
+    message_digest,
+    message_index,
+    turns_to_messages,
+)
 from chat_harvest.models import ChatTurn, ConflictDetail
 
 logger = get_logger(__name__)
 
 _TURN_HEADING_RE = re.compile(r"^## Turn (\d+) — (user|assistant)\s*$", re.MULTILINE)
-_INDEX_RE = re.compile(
-    r"<!-- chat-harvest-index (\{.*?\}) -->",
-    re.DOTALL,
-)
 _CONV12_RE = re.compile(r"[^a-z0-9-]")
 _SNIPPET_MAX = 200
 
@@ -34,10 +37,11 @@ class Alignment(StrEnum):
     HEAD_EXTENSION = "head_extension"
     WINDOW_SLIDE = "window_slide"
     DIVERGENT = "divergent"
+    FIRST_WRITE = "first_write"
 
 
 class ArchiveConflictError(Exception):
-    """Existing archive diverges from the new harvest at a shared turn."""
+    """Existing archive diverges from the new harvest at a shared message."""
 
     def __init__(
         self,
@@ -50,13 +54,13 @@ class ArchiveConflictError(Exception):
         self.existing_sha256 = existing_sha256
         self.detail = detail
         super().__init__(
-            f"archive conflict at {path} turn {detail.ordinal}: "
+            f"archive conflict at {path} message {detail.ordinal}: "
             f"existing digest {detail.existing_digest!r} vs new {detail.new_digest!r}"
         )
 
 
 class ArchiveRefusalError(Exception):
-    """Archive write refused (unindexed legacy file or narrower capture)."""
+    """Archive write refused (narrower capture or window shift)."""
 
     def __init__(self, *, path: Path, code: str, reason: str) -> None:
         self.path = path
@@ -79,6 +83,11 @@ def _base_name(site: str, conversation_id: str) -> str:
     return f"chat-harvest-{site}-{conv12(conversation_id)}"
 
 
+def legacy_md_rel_path(site: str, conversation_id: str) -> str:
+    base = _base_name(site, conversation_id)
+    return f"notes/system/threads/{base}.md"
+
+
 def archive_rel_path(
     site: str,
     conversation_id: str,
@@ -87,8 +96,8 @@ def archive_rel_path(
 ) -> str:
     base = _base_name(site, conversation_id)
     if version is not None and version > 1:
-        return f"notes/system/threads/{base}-v{version}.md"
-    return f"notes/system/threads/{base}.md"
+        return f"notes/system/threads/{base}-v{version}.messages.json"
+    return f"notes/system/threads/{base}.messages.json"
 
 
 def archive_dest(
@@ -102,51 +111,12 @@ def archive_dest(
     )
 
 
-def normalize_turn_body(text: str) -> str:
-    """Normalize turn body text for stable digest comparison."""
-    return text.strip().replace("\r\n", "\n")
-
-
-def turn_digest(text: str) -> str:
-    """SHA-256 hex digest of normalized turn body."""
-    normalized = normalize_turn_body(text)
-    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
-def build_turn_index(turns: list[ChatTurn]) -> list[list[object]]:
-    """Build index rows ``[ordinal, author, digest]`` for each turn."""
-    return [[t.ordinal, t.author, turn_digest(t.text)] for t in turns]
-
-
-def parse_index(content: str) -> list[list[object]] | None:
-    """Parse ``<!-- chat-harvest-index ... -->`` from archive content."""
-    match = _INDEX_RE.search(content)
-    if not match:
-        return None
-    try:
-        payload = json.loads(match.group(1))
-    except json.JSONDecodeError:
-        return None
-    turns = payload.get("turns")
-    if not isinstance(turns, list):
-        return None
-    return turns
-
-
-def _parse_turn_bodies(content: str) -> dict[int, tuple[str, str]]:
-    """Return ``ordinal -> (author, body)`` parsed from archive turn headings."""
-    matches = list(_TURN_HEADING_RE.finditer(content))
-    bodies: dict[int, tuple[str, str]] = {}
-    for idx, match in enumerate(matches):
-        start = match.end()
-        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
-        body = content[start:end].strip("\n")
-        bodies[int(match.group(1))] = (match.group(2), body)
-    return bodies
+def legacy_md_dest(site: str, conversation_id: str) -> Path:
+    return cortex_files_root() / legacy_md_rel_path(site, conversation_id)
 
 
 def _snippet(text: str) -> str:
-    text = normalize_turn_body(text)
+    text = text.strip().replace("\r\n", "\n")
     if len(text) <= _SNIPPET_MAX:
         return text
     return text[: _SNIPPET_MAX - 3] + "..."
@@ -154,11 +124,9 @@ def _snippet(text: str) -> str:
 
 def align_transcripts(
     existing_index: list[list[object]],
-    turns: list[ChatTurn],
+    new_index: list[list[object]],
 ) -> Alignment:
-    """Compare an existing archive index against a new harvest."""
-    new_index = build_turn_index(turns)
-
+    """Compare an existing message index against a freshly mapped harvest."""
     if existing_index == new_index:
         return Alignment.IDENTICAL
 
@@ -187,7 +155,7 @@ def _window_slide_overlap(
     existing_index: list[list[object]],
     new_index: list[list[object]],
 ) -> int | None:
-    """Return k>0 when existing[k:] author+digest rows match new prefix (tail window shift)."""
+    """Return k>0 when existing[k:] author+digest rows match new prefix."""
     if len(existing_index) < 2 or len(new_index) < 2:
         return None
 
@@ -204,29 +172,53 @@ def _window_slide_overlap(
     return None
 
 
+def _parse_turn_bodies(content: str) -> dict[int, tuple[str, str]]:
+    matches = list(_TURN_HEADING_RE.finditer(content))
+    bodies: dict[int, tuple[str, str]] = {}
+    for idx, match in enumerate(matches):
+        start = match.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
+        body = content[start:end].strip("\n")
+        bodies[int(match.group(1))] = (match.group(2), body)
+    return bodies
+
+
+def _legacy_messages_from_md(path: Path, *, site: str) -> list[dict]:
+    content = path.read_text(encoding="utf-8")
+    bodies = _parse_turn_bodies(content)
+    if not bodies:
+        return []
+    turns: list[ChatTurn] = []
+    for ordinal, (author, body) in sorted(bodies.items()):
+        text = body
+        if site == "claude" and author == "assistant":
+            from claude_bundles.project_ask import strip_thinking_prefix
+
+            from chat_harvest.claude_chat_adapter import _strip_claude_dom_chrome
+
+            text = strip_thinking_prefix(_strip_claude_dom_chrome(body))
+        turns.append(
+            ChatTurn(author=author, ordinal=ordinal, text=text, source="archive")
+        )
+    return turns_to_messages(turns)
+
+
 def _conflict_detail(
     existing_index: list[list[object]],
-    turns: list[ChatTurn],
-    existing_content: str,
+    new_index: list[list[object]],
+    existing_messages: list[dict],
+    new_messages: list[dict],
 ) -> ConflictDetail:
-    """Build conflict detail for the first divergent ordinal."""
-    new_index = build_turn_index(turns)
-    existing_bodies = _parse_turn_bodies(existing_content)
-    turn_by_ordinal = {t.ordinal: t for t in turns}
-
     min_len = min(len(existing_index), len(new_index))
     for i in range(min_len):
-        eo, _ea, ed = existing_index[i]
-        no, _na, nd = new_index[i]
-        if [eo, _ea, ed] != [no, _na, nd]:
-            ordinal = int(eo)
-            existing_text = existing_bodies.get(ordinal, ("", ""))[1]
-            new_turn = turn_by_ordinal.get(int(no)) or turn_by_ordinal.get(ordinal)
-            new_text = new_turn.text if new_turn else ""
+        if existing_index[i] != new_index[i]:
+            pos = int(existing_index[i][0])
+            existing_text = str(existing_messages[i].get("content") or "")
+            new_text = str(new_messages[i].get("content") or "")
             return ConflictDetail(
-                ordinal=ordinal,
-                existing_digest=str(ed),
-                new_digest=str(nd),
+                ordinal=pos,
+                existing_digest=str(existing_index[i][2]),
+                new_digest=str(new_index[i][2]),
                 existing_len=len(existing_text),
                 new_len=len(new_text),
                 existing_snippet=_snippet(existing_text),
@@ -234,66 +226,29 @@ def _conflict_detail(
             )
 
     if len(new_index) > len(existing_index):
-        no, _na, nd = new_index[len(existing_index)]
-        ordinal = int(no)
-        new_turn = turn_by_ordinal.get(ordinal)
-        new_text = new_turn.text if new_turn else ""
+        pos = int(new_index[len(existing_index)][0])
+        new_text = str(new_messages[len(existing_index)].get("content") or "")
         return ConflictDetail(
-            ordinal=ordinal,
+            ordinal=pos,
             existing_digest="",
-            new_digest=str(nd),
+            new_digest=str(new_index[len(existing_index)][2]),
             existing_len=0,
             new_len=len(new_text),
             existing_snippet="",
             new_snippet=_snippet(new_text),
         )
 
-    eo, _ea, ed = existing_index[len(new_index)]
-    ordinal = int(eo)
-    existing_text = existing_bodies.get(ordinal, ("", ""))[1]
+    pos = int(existing_index[len(new_index)][0])
+    existing_text = str(existing_messages[len(new_index)].get("content") or "")
     return ConflictDetail(
-        ordinal=ordinal,
-        existing_digest=str(ed),
+        ordinal=pos,
+        existing_digest=str(existing_index[len(new_index)][2]),
         new_digest="",
         existing_len=len(existing_text),
         new_len=0,
         existing_snippet=_snippet(existing_text),
         new_snippet="",
     )
-
-
-def _index_comment(turns: list[ChatTurn]) -> str:
-    payload = {"turns": build_turn_index(turns)}
-    return f"<!-- chat-harvest-index {json.dumps(payload, separators=(',', ':'))} -->"
-
-
-def _format_transcript(
-    *,
-    site: str,
-    conversation_id: str,
-    url: str,
-    turns: list[ChatTurn],
-    harvested_at: str,
-    streaming: bool,
-) -> str:
-    lines = [
-        f"# Chat harvest — {site}",
-        "",
-        f"- site: `{site}`",
-        f"- conversation_id: `{conversation_id}`",
-        f"- url: `{url}`",
-        f"- harvested_at: `{harvested_at}`",
-        f"- turn_count: `{len(turns)}`",
-        f"- streaming_at_harvest: `{str(streaming).lower()}`",
-        "",
-        _index_comment(turns),
-        "",
-    ]
-    for turn in turns:
-        lines.append(f"## Turn {turn.ordinal} — {turn.author}")
-        lines.append(turn.text)
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
 
 
 def _sha256_of_file(path: Path) -> str:
@@ -308,8 +263,8 @@ def _next_supersede_version(site: str, conversation_id: str) -> int:
     base = _base_name(site, conversation_id)
     threads = cortex_files_root() / "notes/system/threads"
     highest = 1
-    for path in threads.glob(f"{base}-v*.md"):
-        match = re.search(r"-v(\d+)\.md$", path.name)
+    for path in threads.glob(f"{base}-v*.messages.json"):
+        match = re.search(r"-v(\d+)\.messages\.json$", path.name)
         if match:
             highest = max(highest, int(match.group(1)))
     return highest + 1
@@ -318,70 +273,6 @@ def _next_supersede_version(site: str, conversation_id: str) -> int:
 def _cortex_uri(path: Path) -> str:
     rel = path.relative_to(cortex_files_root()).as_posix()
     return f"cortex://{rel}"
-
-
-def reindex_archive_file(dest: Path, *, force: bool = False) -> tuple[str, str] | None:
-    """Add or rebuild the machine index on a legacy archive body.
-
-    When *force* is false and an index already exists, returns the current
-    ``(cortex_uri, sha256)`` without rewriting. When *force* is true, rebuilds
-    the index (e.g. after chrome-strip normalization landed post-first-index).
-    """
-    if not dest.is_file():
-        return None
-    content = dest.read_text(encoding="utf-8")
-    if parse_index(content) is not None and not force:
-        return _cortex_uri(dest), _sha256_of_file(dest)
-    bodies = _parse_turn_bodies(content)
-    if not bodies:
-        return None
-    site_match = re.search(r"- site: `([^`]+)`", content)
-    cid_match = re.search(r"- conversation_id: `([^`]+)`", content)
-    url_match = re.search(r"- url: `([^`]+)`", content)
-    harvested_match = re.search(r"- harvested_at: `([^`]+)`", content)
-    streaming_match = re.search(r"- streaming_at_harvest: `(true|false)`", content)
-    if not (site_match and cid_match and url_match):
-        return None
-    site = site_match.group(1)
-    turns = [
-        ChatTurn(
-            author=author,
-            ordinal=ordinal,
-            text=_normalize_archive_turn_body(site, author, body),
-            source="archive",
-        )
-        for ordinal, (author, body) in sorted(bodies.items())
-    ]
-    new_content = _format_transcript(
-        site=site,
-        conversation_id=cid_match.group(1),
-        url=url_match.group(1),
-        turns=turns,
-        harvested_at=harvested_match.group(1)
-        if harvested_match
-        else datetime.now(UTC).isoformat(),
-        streaming=streaming_match.group(1) == "true" if streaming_match else False,
-    )
-    sha256 = durable_write_text(dest, new_content)
-    return _cortex_uri(dest), sha256
-
-
-def _normalize_archive_turn_body(site: str, author: str, body: str) -> str:
-    """Apply the same claude assistant normalization as live DOM harvest."""
-    if site != "claude" or author != "assistant":
-        return body
-    from claude_bundles.project_ask import strip_thinking_prefix
-
-    from chat_harvest.claude_chat_adapter import _strip_claude_dom_chrome
-
-    return strip_thinking_prefix(_strip_claude_dom_chrome(body))
-
-
-def reindex_archive(
-    site: str, conversation_id: str, *, force: bool = False
-) -> tuple[str, str] | None:
-    """Reindex the canonical archive for *site* / *conversation_id*."""
-    return reindex_archive_file(archive_dest(site, conversation_id), force=force)
 
 
 def archive_chat_transcript(
@@ -393,41 +284,56 @@ def archive_chat_transcript(
     harvested_at: str | None = None,
     streaming: bool = False,
     supersede: bool = False,
-) -> tuple[str, str]:
-    """Write a full transcript sidecar; return ``(cortex_uri, sha256)``."""
+) -> tuple[str, str, str]:
+    """Write a messages-v1 sidecar; return ``(cortex_uri, sha256, alignment)``."""
     if not conversation_id:
         raise ValueError("conversation_id must be non-empty to archive")
 
+    messages = turns_to_messages(turns)
+    new_rows = message_index(messages)
     dest = archive_dest(site, conversation_id)
-    write_turns = list(turns)
+    alignment: str | None = None
+
+    existing_rows: list[list[object]] | None = None
+    existing_messages: list[dict] = []
+    existing_sha = ""
+    existing_source: str | None = None
+
+    if dest.is_file():
+        existing = load_harvest_envelope(dest)
+        existing_messages = list(existing.messages)
+        existing_rows = message_index(existing_messages)
+        existing_sha = _sha256_of_file(dest)
+        existing_source = "envelope"
+    else:
+        legacy = legacy_md_dest(site, conversation_id)
+        if legacy.is_file():
+            existing_messages = _legacy_messages_from_md(legacy, site=site)
+            if existing_messages:
+                existing_rows = message_index(existing_messages)
+                existing_sha = _sha256_of_file(legacy)
+                existing_source = "legacy_md"
 
     if dest.is_file() and supersede:
         version = _next_supersede_version(site, conversation_id)
         versioned = archive_dest(site, conversation_id, version=version)
         versioned.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(dest, versioned)
-    elif dest.is_file() and not supersede:
-        existing_content = dest.read_text(encoding="utf-8")
-        existing_index = parse_index(existing_content)
-        if existing_index is None:
-            raise ArchiveRefusalError(
-                path=dest,
-                code="archive_unindexed",
-                reason="existing archive lacks chat-harvest-index header",
-            )
-
-        alignment = align_transcripts(existing_index, write_turns)
+        existing_source = None
+        existing_rows = None
+    elif existing_rows is not None and not supersede:
+        alignment = align_transcripts(existing_rows, new_rows).value
 
         if alignment == Alignment.IDENTICAL:
-            uri = _cortex_uri(dest)
-            sha256 = _sha256_of_file(dest)
-            logger.info(
-                "archive identical — skip rewrite site=%s conversation_id=%s uri=%s",
-                site,
-                conversation_id,
-                uri,
-            )
-            return uri, sha256
+            if existing_source == "envelope":
+                uri = _cortex_uri(dest)
+                logger.info(
+                    "archive identical — skip rewrite site=%s conversation_id=%s uri=%s",
+                    site,
+                    conversation_id,
+                    uri,
+                )
+                return uri, existing_sha, alignment
 
         if alignment == Alignment.WINDOW:
             raise ArchiveRefusalError(
@@ -437,7 +343,7 @@ def archive_chat_transcript(
             )
 
         if alignment == Alignment.WINDOW_SLIDE:
-            overlap = _window_slide_overlap(existing_index, build_turn_index(write_turns))
+            overlap = _window_slide_overlap(existing_rows, new_rows)
             raise ArchiveRefusalError(
                 path=dest,
                 code="window_slide",
@@ -452,31 +358,52 @@ def archive_chat_transcript(
             )
 
         if alignment == Alignment.DIVERGENT:
-            detail = _conflict_detail(existing_index, write_turns, existing_content)
+            detail = _conflict_detail(
+                existing_rows, new_rows, existing_messages, messages
+            )
             raise ArchiveConflictError(
                 path=dest,
-                existing_sha256=_sha256_of_file(dest),
+                existing_sha256=existing_sha,
                 detail=detail,
             )
 
     when = harvested_at or datetime.now(UTC).isoformat()
-    content = _format_transcript(
+    envelope = build_harvest_envelope(
         site=site,
         conversation_id=conversation_id,
         url=url,
-        turns=write_turns,
+        messages=messages,
         harvested_at=when,
         streaming=streaming,
     )
+    content = envelope_json_text(envelope)
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     sha256 = durable_write_text(dest, content)
     uri = _cortex_uri(dest)
+    final_alignment = alignment or Alignment.FIRST_WRITE.value
     logger.info(
-        "archived chat transcript site=%s conversation_id=%s uri=%s sha256=%s",
+        "archived chat transcript site=%s conversation_id=%s uri=%s sha256=%s alignment=%s",
         site,
         conversation_id,
         uri,
         sha256,
+        final_alignment,
     )
-    return uri, sha256
+    return uri, sha256, final_alignment
+
+
+__all__ = [
+    "Alignment",
+    "ArchiveConflictError",
+    "ArchiveRefusalError",
+    "align_transcripts",
+    "archive_chat_transcript",
+    "archive_dest",
+    "archive_rel_path",
+    "conv12",
+    "cortex_files_root",
+    "legacy_md_dest",
+    "legacy_md_rel_path",
+    "message_digest",
+]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -12,16 +13,14 @@ from chat_harvest.archive import (
     align_transcripts,
     archive_chat_transcript,
     archive_dest,
-    build_turn_index,
-    parse_index,
-    reindex_archive,
-    turn_digest,
+    legacy_md_dest,
 )
+from chat_harvest.messages import message_digest, message_index, turns_to_messages
 from chat_harvest.models import (
     ChatTurn,
     ClassifyRefuse,
     classify_chat_url,
-    project_turns_view,
+    project_messages_view,
     relay_lock_fresh,
 )
 from web_chat_relay import cli
@@ -85,7 +84,7 @@ def test_writer_first_write(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
         ChatTurn(author="user", ordinal=1, text="hello", source="dom"),
         ChatTurn(author="assistant", ordinal=2, text="hi", source="dom"),
     ]
-    uri, sha = archive_chat_transcript(
+    uri, sha, alignment = archive_chat_transcript(
         "grok",
         GROK_ID,
         GROK_URL,
@@ -95,12 +94,16 @@ def test_writer_first_write(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     )
     dest = archive_dest("grok", GROK_ID)
     assert dest.is_file()
-    body = dest.read_text(encoding="utf-8")
-    assert "## Turn 1 — user" in body
-    assert "## Turn 2 — assistant" in body
-    assert "chat-harvest-index" in body
+    raw = dest.read_bytes()
+    payload = json.loads(raw.decode("utf-8"))
+    assert payload["schema"] == "ulg.continuity.messages/1"
+    assert len(payload["messages"]) == 2
+    assert payload["messages"][0]["role"] == "user"
+    assert payload["messages"][1]["role"] == "assistant"
+    assert uri.endswith(".messages.json")
     assert uri.startswith("cortex://notes/system/threads/chat-harvest-grok-")
-    assert len(sha) == 64
+    assert sha == hashlib.sha256(raw).hexdigest()
+    assert alignment == "first_write"
 
 
 def test_writer_extension_reharvest(
@@ -115,13 +118,13 @@ def test_writer_extension_reharvest(
     extended = first + [
         ChatTurn(author="user", ordinal=3, text="three", source="dom"),
     ]
-    uri, sha = archive_chat_transcript(
+    uri, sha, _alignment = archive_chat_transcript(
         "grok", GROK_ID, GROK_URL, extended, harvested_at="t2"
     )
-    body = archive_dest("grok", GROK_ID).read_text(encoding="utf-8")
-    assert "## Turn 3 — user" in body
-    assert "chat-harvest-index" in body
-    assert uri.endswith(".md")
+    payload = json.loads(archive_dest("grok", GROK_ID).read_text(encoding="utf-8"))
+    assert len(payload["messages"]) == 3
+    assert payload["messages"][-1]["content"] == "three"
+    assert uri.endswith(".messages.json")
     assert len(sha) == 64
 
 
@@ -148,7 +151,7 @@ def test_writer_supersede_moves_existing_to_v2_and_writes_canonical(
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     turns = [ChatTurn(author="user", ordinal=1, text="x", source="dom")]
     archive_chat_transcript("grok", GROK_ID, GROK_URL, turns, harvested_at="t1")
-    uri, _sha = archive_chat_transcript(
+    uri, _sha, _alignment = archive_chat_transcript(
         "grok",
         GROK_ID,
         GROK_URL,
@@ -160,9 +163,10 @@ def test_writer_supersede_moves_existing_to_v2_and_writes_canonical(
     v2 = archive_dest("grok", GROK_ID, version=2)
     assert canonical.is_file()
     assert v2.is_file()
-    assert canonical.read_text(encoding="utf-8") != v2.read_text(encoding="utf-8")
-    assert "y" in canonical.read_text(encoding="utf-8")
-    assert "x" in v2.read_text(encoding="utf-8")
+    canonical_payload = json.loads(canonical.read_text(encoding="utf-8"))
+    v2_payload = json.loads(v2.read_text(encoding="utf-8"))
+    assert canonical_payload["messages"][0]["content"] == "y"
+    assert v2_payload["messages"][0]["content"] == "x"
     assert uri == f"cortex://{canonical.relative_to(tmp_path).as_posix()}"
 
 
@@ -174,15 +178,24 @@ def test_writer_empty_id_does_not_write(
         archive_chat_transcript("grok", "", "https://grok.com/", [], harvested_at="t")
 
 
-def test_truncated_view_does_not_cap_stored_turns() -> None:
-    turns = [
-        ChatTurn(author="user", ordinal=i, text=f"t{i}", source="dom")
+def test_truncated_view_does_not_cap_stored_messages() -> None:
+    messages = [
+        {"role": "user", "content": f"t{i}", "turn_index": i}
         for i in range(1, 21)
     ]
-    view, truncated = project_turns_view(turns, include_turns="range", limit=5)
+    view, truncated = project_messages_view(messages, include_turns="range", limit=5)
     assert len(view) == 5
     assert truncated is True
-    assert len(turns) == 20
+    assert len(messages) == 20
+
+
+def test_message_digest_equivalence_for_heading_in_body() -> None:
+    body_with_heading = "## Turn 99 — user\nnested heading in body"
+    plain = "plain body"
+    assert message_digest(body_with_heading) != message_digest(plain)
+    rows_a = message_index([{"role": "user", "content": body_with_heading, "turn_index": 1}])
+    rows_b = message_index([{"role": "user", "content": body_with_heading, "turn_index": 1}])
+    assert rows_a == rows_b
 
 
 def test_grok_fixture_user_assistant_ordinals() -> None:
@@ -200,13 +213,86 @@ def test_grok_fixture_user_assistant_ordinals() -> None:
     assert turns[1].text == strip_chrome("Worked for 3s\n\nanswer")
 
 
-def test_index_compare_survives_turn_heading_in_body() -> None:
-    body_with_heading = "## Turn 99 — user\nnested heading in body"
-    plain = "plain body"
-    assert turn_digest(body_with_heading) != turn_digest(plain)
-    turns_a = [ChatTurn(author="user", ordinal=1, text=body_with_heading, source="dom")]
-    turns_b = [ChatTurn(author="user", ordinal=1, text=body_with_heading, source="dom")]
-    assert build_turn_index(turns_a) == build_turn_index(turns_b)
+
+def test_legacy_md_import_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    cid = "47794c69-9fc"
+    legacy = legacy_md_dest("grok", cid)
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.write_text(
+        "# Chat harvest — grok\n\n"
+        "- site: `grok`\n"
+        f"- conversation_id: `{cid}`\n"
+        f"- url: `{GROK_URL}`\n"
+        "- harvested_at: `t0`\n"
+        "- turn_count: `2`\n"
+        "- streaming_at_harvest: `false`\n\n"
+        "<!-- chat-harvest-index {\"turns\":[[1,\"user\",\"abc\"],[2,\"assistant\",\"def\"]]} -->\n\n"
+        "## Turn 1 — user\nhello\n\n"
+        "## Turn 2 — assistant\nhi\n",
+        encoding="utf-8",
+    )
+    turns = [
+        ChatTurn(author="user", ordinal=1, text="hello", source="dom"),
+        ChatTurn(author="assistant", ordinal=2, text="hi", source="dom"),
+    ]
+    _uri, _sha, alignment = archive_chat_transcript(
+        "grok", cid, GROK_URL, turns, harvested_at="t1"
+    )
+    assert alignment == "identical"
+    json_dest = archive_dest("grok", cid)
+    assert json_dest.is_file()
+    assert legacy.read_text(encoding="utf-8").startswith("# Chat harvest")
+    legacy.write_text("mutated legacy md", encoding="utf-8")
+    _uri2, _sha2, alignment2 = archive_chat_transcript(
+        "grok", cid, GROK_URL, turns, harvested_at="t2"
+    )
+    assert alignment2 == "identical"
+    assert legacy.read_text(encoding="utf-8") == "mutated legacy md"
+
+
+BODY_A = "Five scopes queried, all returned — no nulls.\n\nScope\tQuery\tYield\n…BODY-A…"
+BODY_B = "It failed. Nothing was produced.\n\n…BODY-B…"
+
+
+def test_specimen_13c8eb61_collapses_to_logical_dialogue() -> None:
+    rows = [
+        {
+            "author": "assistant",
+            "ordinal": 1,
+            "text": (
+                "Claude responded: Five scopes queried, all returned — no nulls.\n"
+                "Used toys integration\n\nUsed toys integration\n\n"
+                f"{BODY_A}"
+            ),
+        },
+        {
+            "author": "assistant",
+            "ordinal": 2,
+            "text": BODY_A,
+        },
+        {"author": "user", "ordinal": 3, "text": "status?"},
+        {
+            "author": "assistant",
+            "ordinal": 4,
+            "text": (
+                "Claude responded: It failed.\n"
+                "Used toys integration\n\nUsed toys integration\n\n"
+                f"{BODY_B}"
+            ),
+        },
+        {"author": "assistant", "ordinal": 5, "text": BODY_B},
+    ]
+    messages = turns_to_messages(rows)
+    assert messages == [
+        {"role": "assistant", "content": BODY_A, "turn_index": 1},
+        {"role": "user", "content": "status?", "turn_index": 2},
+        {"role": "assistant", "content": BODY_B, "turn_index": 2},
+    ]
+    assert max(m["turn_index"] for m in messages) == 2
+    assert len(messages) == 3
 
 
 def test_identical_reharvest_does_not_rewrite(
@@ -217,17 +303,18 @@ def test_identical_reharvest_does_not_rewrite(
         ChatTurn(author="user", ordinal=1, text="hello", source="dom"),
         ChatTurn(author="assistant", ordinal=2, text="world", source="dom"),
     ]
-    _uri1, sha1 = archive_chat_transcript(
+    _uri1, sha1, _alignment1 = archive_chat_transcript(
         "grok", GROK_ID, GROK_URL, turns, harvested_at="t1"
     )
     dest = archive_dest("grok", GROK_ID)
     mtime_before = dest.stat().st_mtime
-    body_before = dest.read_text(encoding="utf-8")
-    _uri2, sha2 = archive_chat_transcript(
+    body_before = dest.read_bytes()
+    _uri2, sha2, alignment2 = archive_chat_transcript(
         "grok", GROK_ID, GROK_URL, turns, harvested_at="t2"
     )
     assert sha1 == sha2
-    assert dest.read_text(encoding="utf-8") == body_before
+    assert alignment2 == "identical"
+    assert dest.read_bytes() == body_before
     assert dest.stat().st_mtime == mtime_before
 
 
@@ -245,8 +332,8 @@ def test_narrower_capture_does_not_overwrite(
     with pytest.raises(ArchiveRefusalError) as exc_info:
         archive_chat_transcript("grok", GROK_ID, GROK_URL, partial, harvested_at="t2")
     assert exc_info.value.code == "narrower_capture"
-    body = archive_dest("grok", GROK_ID).read_text(encoding="utf-8")
-    assert "## Turn 3 — user" in body
+    payload = json.loads(archive_dest("grok", GROK_ID).read_text(encoding="utf-8"))
+    assert len(payload["messages"]) == 3
 
 
 def test_head_extension_refuses_no_write(
@@ -267,9 +354,9 @@ def test_head_extension_refuses_no_write(
     with pytest.raises(ArchiveRefusalError) as exc_info:
         archive_chat_transcript("grok", GROK_ID, GROK_URL, extended, harvested_at="t2")
     assert exc_info.value.code == "head_extension"
-    body = archive_dest("grok", GROK_ID).read_text(encoding="utf-8")
-    assert "## Turn 3 — user" in body
-    assert "early" not in body
+    payload = json.loads(archive_dest("grok", GROK_ID).read_text(encoding="utf-8"))
+    assert payload["messages"][0]["content"] == "mid"
+    assert all(m["content"] != "early" for m in payload["messages"])
 
 
 def test_window_slide_refuses_with_overlap(
@@ -292,71 +379,6 @@ def test_window_slide_refuses_with_overlap(
     assert exc_info.value.code == "window_slide"
     assert "overlap=1" in exc_info.value.reason
 
-
-def test_reindex_archive_adds_index(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    dest = archive_dest("grok", GROK_ID)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(
-        "# Chat harvest — grok\n\n"
-        "- site: `grok`\n"
-        f"- conversation_id: `{GROK_ID}`\n"
-        f"- url: `{GROK_URL}`\n"
-        "- harvested_at: `t1`\n"
-        "- turn_count: `1`\n"
-        "- streaming_at_harvest: `false`\n\n"
-        "## Turn 1 — user\nlegacy body\n",
-        encoding="utf-8",
-    )
-    result = reindex_archive("grok", GROK_ID)
-    assert result is not None
-    body = dest.read_text(encoding="utf-8")
-    assert parse_index(body) is not None
-    assert "chat-harvest-index" in body
-
-
-def test_reindex_claude_force_rebuilds_stripped_index(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    cid = "a65cb727-bedf-4c75-bcd8-ae8279ca4b4a"
-    dest = archive_dest("claude", cid)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(
-        "# Chat harvest — claude\n\n"
-        "- site: `claude`\n"
-        f"- conversation_id: `{cid}`\n"
-        f"- url: `https://claude.ai/chat/{cid}`\n"
-        "- harvested_at: `t1`\n"
-        "- turn_count: `1`\n"
-        "- streaming_at_harvest: `false`\n\n"
-        "## Turn 1 — assistant\n"
-        "Viewed a file, used toys integration\n\n"
-        "Viewed a file, used toys integration\n\n"
-        "Yes, two places.\n",
-        encoding="utf-8",
-    )
-    first = reindex_archive("claude", cid)
-    assert first is not None
-    first_body = dest.read_text(encoding="utf-8")
-    first_index = parse_index(first_body)
-    assert first_index is not None
-    assert first_index[0][2] == turn_digest("Yes, two places.")
-    noop = reindex_archive("claude", cid, force=False)
-    assert noop == first
-    stale = first_body.replace(
-        turn_digest("Yes, two places."),
-        turn_digest("stale digest"),
-        1,
-    )
-    dest.write_text(stale, encoding="utf-8")
-    second = reindex_archive("claude", cid, force=True)
-    assert second is not None
-    rebuilt_index = parse_index(dest.read_text(encoding="utf-8"))
-    assert rebuilt_index is not None
-    assert rebuilt_index[0][2] == turn_digest("Yes, two places.")
 
 
 def test_chrome_doubled_leading_line_stripped() -> None:
@@ -422,21 +444,6 @@ def test_divergent_conflict_reports_first_ordinal(
     assert detail.new_snippet
     assert detail.existing_digest != detail.new_digest
 
-
-def test_unindexed_archive_refuses_without_supersede(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    dest = archive_dest("grok", GROK_ID)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(
-        "# Chat harvest — grok\n\n## Turn 1 — user\nlegacy without index\n",
-        encoding="utf-8",
-    )
-    turns = [ChatTurn(author="user", ordinal=1, text="legacy without index", source="dom")]
-    with pytest.raises(ArchiveRefusalError) as exc_info:
-        archive_chat_transcript("grok", GROK_ID, GROK_URL, turns, harvested_at="t2")
-    assert exc_info.value.code == "archive_unindexed"
 
 
 @pytest.mark.asyncio
@@ -518,18 +525,21 @@ def test_conflict_event_carries_no_snippet() -> None:
 
 
 def test_align_transcripts_enum_cases() -> None:
-    existing = build_turn_index(
-        [ChatTurn(author="user", ordinal=1, text="a", source="dom")]
+    existing = message_index(
+        [{"role": "user", "content": "a", "turn_index": 1}]
     )
-    identical = [ChatTurn(author="user", ordinal=1, text="a", source="dom")]
-    assert align_transcripts(existing, identical).value == "identical"
+    identical_msgs = [{"role": "user", "content": "a", "turn_index": 1}]
+    assert align_transcripts(existing, message_index(identical_msgs)).value == "identical"
 
-    extension = identical + [
-        ChatTurn(author="assistant", ordinal=2, text="b", source="dom")
+    extension_msgs = identical_msgs + [
+        {"role": "assistant", "content": "b", "turn_index": 1}
     ]
-    assert align_transcripts(existing, extension).value == "extension"
+    assert align_transcripts(existing, message_index(extension_msgs)).value == "extension"
 
-    assert align_transcripts(build_turn_index(extension), identical).value == "window"
+    assert (
+        align_transcripts(message_index(extension_msgs), message_index(identical_msgs)).value
+        == "window"
+    )
 
 
 def test_cli_harvest_json_shape(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -541,7 +551,7 @@ def test_cli_harvest_json_shape(monkeypatch: pytest.MonkeyPatch) -> None:
             site="grok",
             conversation_id=GROK_ID,
             url=GROK_URL,
-            archive_uri="cortex://notes/system/threads/x.md",
+            archive_uri="cortex://notes/system/threads/x.messages.json",
             archive_sha256="abc",
             turn_count=2,
         )
@@ -562,7 +572,7 @@ def test_cli_harvest_json_lacks_last_assistant(
             site="grok",
             conversation_id=GROK_ID,
             url=GROK_URL,
-            archive_uri="cortex://notes/system/threads/x.md",
+            archive_uri="cortex://notes/system/threads/x.messages.json",
             archive_sha256="abc",
             turn_count=2,
         )
@@ -634,6 +644,9 @@ class _FakeClaudePage:
 
     async def close(self) -> None:
         self.closed = True
+
+    async def wait_for_timeout(self, _ms: int) -> None:
+        return None
 
     def get_by_role(self, _role: str, *, name=None):  # noqa: ANN001
         return _FakeLocator(visible=True)
@@ -719,7 +732,6 @@ async def test_claude_harvest_cse_url_refuses_without_connect(
 
 def test_claude_turns_from_dom_strip_thinking_prefix() -> None:
     from chat_harvest.claude_chat_adapter import _turns_from_dom
-    from claude_bundles.project_ask import strip_thinking_prefix
 
     raw_turns = [
         {"author": "user", "ordinal": 1, "text": "question"},
@@ -781,7 +793,8 @@ async def test_claude_harvest_happy_path(
     assert result.conversation_id == CLAUDE_ID
     assert result.archive_uri
     assert result.archive_sha256
-    assert result.turn_count == 2
+    assert result.turn_count == 1
+    assert result.message_count == 2
 
 
 @pytest.mark.asyncio
@@ -819,7 +832,8 @@ async def test_claude_harvest_cse_only_tabs_opens_instead_of_refuses(
     )
     assert result.outcome == "harvested"
     assert result.opened_on_demand is True
-    assert result.turn_count == 2
+    assert result.turn_count == 1
+    assert result.message_count == 2
     minted = [p for p in context.pages if p.url == CLAUDE_URL]
     assert len(minted) == 1
     assert minted[0].closed is True
@@ -860,7 +874,8 @@ async def test_claude_harvest_opens_on_demand_when_no_tab(
     )
     assert result.outcome == "harvested"
     assert result.opened_on_demand is True
-    assert result.turn_count == 2
+    assert result.turn_count == 1
+    assert result.message_count == 2
     minted = context.pages[-1]
     assert minted.closed is True
 
@@ -984,7 +999,8 @@ async def test_claude_harvest_open_on_demand_partial_then_full_transcript(
     )
     assert result.outcome == "harvested"
     assert result.opened_on_demand is True
-    assert result.turn_count == 2
+    assert result.turn_count == 1
+    assert result.message_count == 2
     assert context.pages[-1].closed is True
 
 

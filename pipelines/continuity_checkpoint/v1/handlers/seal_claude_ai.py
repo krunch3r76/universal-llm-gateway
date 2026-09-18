@@ -7,69 +7,16 @@ from datetime import UTC, datetime
 from typing import Any
 
 from agent_seat.session_id import derive_session_id_from_timestamp
+from chat_harvest.messages import ensure_turn_index, turns_to_messages
 from continuity_tape.messages import ContinuityMessagesEnvelope, EnvelopeMeta
 
 _AGENT = "web-anthropic"
-_CLAUDE_RESPONDED_PREFIX = "Claude responded:"
 _SUCCESSION_STUB = (
     "## Session Summary\n\n"
     "**Decisions:** (absent — succession harvest)\n"
     "**Open items:** (absent — succession harvest)\n"
 )
 _SUMMARY = "Succession harvest seal for claude.ai continuity speech tape."
-
-
-def _messages_with_turn_index(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Map harvested turns to messages-v1 rows carrying ``turn_index``.
-
-    ``render_verbatim_md`` pairs messages into ``## Turn N`` blocks by
-    ``turn_index`` and silently skips rows without one — an envelope built
-    without it renders to a bare header and fails the 200-char structure
-    guard (10479 e2e: "composed transcript is 161 chars"). Each user message
-    opens a turn; assistant messages attach to the open turn; a leading
-    assistant reply (tail-only harvest) opens turn 1 on its own.
-    """
-    messages: list[dict[str, Any]] = []
-    turn_index = 0
-    for turn in turns:
-        role = _author_to_role(str(turn.get("author") or ""))
-        if role == "user" or turn_index == 0:
-            turn_index += 1
-        messages.append(
-            {
-                "role": role,
-                "content": str(turn.get("text") or ""),
-                "turn_index": turn_index,
-            }
-        )
-    return messages
-
-
-def _normalize_turn_text(text: str) -> str:
-    t = (text or "").strip()
-    if t.startswith(_CLAUDE_RESPONDED_PREFIX):
-        return t[len(_CLAUDE_RESPONDED_PREFIX) :].strip()
-    return t
-
-
-def _dedupe_turns(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    ordered = sorted(turns, key=lambda t: int(t.get("ordinal") or 0))
-    out: list[dict[str, Any]] = []
-    for turn in ordered:
-        norm = _normalize_turn_text(str(turn.get("text") or ""))
-        if not norm:
-            continue
-        if out and norm == _normalize_turn_text(str(out[-1].get("text") or "")):
-            continue
-        out.append(turn)
-    return out
-
-
-def _author_to_role(author: str) -> str:
-    label = (author or "").lower()
-    if label in {"user", "human"}:
-        return "user"
-    return "assistant"
 
 
 def _coverage_from_harvest(harvest: dict[str, Any], turn_count: int) -> str:
@@ -151,20 +98,24 @@ async def seal_claude_ai(
             "already_closed": False,
         }
 
-    deduped = _dedupe_turns(list(harvest.get("turns") or []))
-    if not deduped:
+    if harvest.get("messages"):
+        messages = ensure_turn_index(harvest["messages"])
+    else:
+        messages = turns_to_messages(harvest.get("turns") or [])
+
+    if not messages:
         return {
             "refused": {
                 "code": "transcript_seal.hollow",
-                "message": "zero turns after dedupe",
+                "message": "zero messages after mapping",
             },
             "already_closed": False,
         }
 
     content_provenance = harvest.get("content_provenance")
-    coverage = _resolve_coverage(harvest, len(deduped))
+    turn_count = max(int(m.get("turn_index") or 0) for m in messages)
+    coverage = _resolve_coverage(harvest, turn_count)
     truncated = bool(harvest.get("truncated"))
-    messages = _messages_with_turn_index(deduped)
 
     from cortex_store.session_close_successor_hop import (
         lookup_journaled_by_conversation_uuid,
@@ -172,7 +123,7 @@ async def seal_claude_ai(
 
     human_closed = lookup_journaled_by_conversation_uuid(transcript_id)
     if human_closed is not None:
-        turn_count = len(messages)
+        turn_count = max(int(m.get("turn_index") or 0) for m in messages)
         messages_sha256, verbatim_codec = _lookup_journal_seal_meta(
             human_closed.session_id
         )
@@ -195,7 +146,7 @@ async def seal_claude_ai(
             surface="claude_ai",
             transcript_id=transcript_id,
             chat_url=chat_url,
-            turn_count=len(messages),
+            turn_count=turn_count,
             message_count=len(messages),
             coverage=coverage,
             truncated=truncated,

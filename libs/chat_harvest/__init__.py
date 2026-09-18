@@ -15,13 +15,11 @@ from chat_harvest.archive import (
     align_transcripts,
     archive_chat_transcript,
     archive_dest,
-    build_turn_index,
     conv12,
     cortex_files_root,
-    parse_index,
-    reindex_archive,
-    reindex_archive_file,
-    turn_digest,
+    legacy_md_dest,
+    legacy_md_rel_path,
+    message_digest,
 )
 from chat_harvest.chrome import (
     RELAY_ENVELOPE_SUBJECT_RE,
@@ -32,6 +30,13 @@ from chat_harvest.chrome import (
     is_relay_envelope_subject,
     strip_chrome,
     substantive_reply_body,
+)
+from chat_harvest.messages import (
+    build_harvest_envelope,
+    ensure_turn_index,
+    load_harvest_envelope,
+    message_index,
+    turns_to_messages,
 )
 from chat_harvest.models import (
     DEFAULT_RELAY_STATE_FILE,
@@ -45,7 +50,7 @@ from chat_harvest.models import (
     ClassifyResult,
     ConflictDetail,
     classify_chat_url,
-    project_turns_view,
+    project_messages_view,
     relay_lock_fresh,
 )
 
@@ -77,9 +82,10 @@ __all__ = [
     "align_transcripts",
     "archive_chat_transcript",
     "archive_dest",
-    "build_turn_index",
+    "build_harvest_envelope",
     "classify_chat_url",
     "conv12",
+    "ensure_turn_index",
     "is_chrome_only",
     "is_failed_relay_envelope_subject",
     "is_prompt_echo",
@@ -94,13 +100,15 @@ __all__ = [
     "execute_grok_harvest",
     "execute_grok_paste",
     "harvest_full_transcript",
-    "parse_index",
-    "reindex_archive",
-    "reindex_archive_file",
-    "project_turns_view",
+    "legacy_md_dest",
+    "legacy_md_rel_path",
+    "load_harvest_envelope",
+    "message_digest",
+    "message_index",
+    "project_messages_view",
     "relay_lock_fresh",
     "scroll_stabilize",
-    "turn_digest",
+    "turns_to_messages",
 ]
 
 
