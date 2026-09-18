@@ -742,7 +742,9 @@ def resolve_code_ref(payload: dict[str, Any]) -> str:
 
 def stamp_liveness_on_row(row: PropagationRow) -> PropagationRow:
     """Probe ``observe_code_ref_live`` and stamp emission-time liveness on *row*."""
-    from charter_runner_store.propagation_liveness import observe_code_ref_live
+    observe_code_ref_live = importlib.import_module(
+        "charter_runner_store.propagation_liveness"
+    ).observe_code_ref_live
 
     live = observe_code_ref_live(row.service, row.code_ref)
     emission = LivenessEmission(
