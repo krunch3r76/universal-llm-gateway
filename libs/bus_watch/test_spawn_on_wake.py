@@ -693,7 +693,11 @@ def test_root_pending_not_terminal_at_max_hop_without_closeout() -> None:
         "policy": {"max_hop_minutes": 30, "pending_stale_backstop_minutes": 180},
     }
     spawned = datetime.fromisoformat("2026-09-16T10:00:22+00:00").timestamp()
-    checker = digest_pending_is_terminal(digest, now=spawned + 1900)
+    checker = digest_pending_is_terminal(
+        digest,
+        now=spawned + 1900,
+        execution_gone_fn=lambda _p: False,
+    )
     assert checker(pending) is False
     assert checker.last_reason == "unresolved_root_pending"
 
@@ -726,6 +730,88 @@ def test_root_pending_terminal_on_successor_closeout_on_root() -> None:
     checker = digest_pending_is_terminal(digest, now=spawned + 1900)
     assert checker(pending) is True
     assert checker.last_reason == "lifecycle"
+
+
+def test_root_pending_terminal_when_uuid_past_compact_body() -> None:
+    """11667-class: CHECKPOINT names pending id after body[:400] truncation."""
+    from bus_watch.spawn_pending import compact_root_turn_summaries
+
+    execution_id = "bf19310b-1976-4500-a3c5-7c325afcc7e7"
+    padding = "x" * 420
+    raw_turn = {
+        "turn_number": 104,
+        "from": "cursor",
+        "subject": "CHECKPOINT 11667",
+        "body": f"{padding}{execution_id}\nTYPE: CHECKPOINT\n",
+        "created_at": "2026-09-18T16:30:00Z",
+    }
+    compact = compact_root_turn_summaries([raw_turn])[0]
+    assert execution_id not in compact["body"]
+    assert execution_id in compact["execution_ids"]
+
+    pending = {
+        "execution_id": execution_id,
+        "thread_id": "11667",
+        "spawned_at": "2026-09-18T16:15:00Z",
+    }
+    digest = {
+        "root": {"id": "11667", "turns": 104, "recent_turns": [compact]},
+        "lanes": [],
+        "attention": [],
+        "policy": {"pending_stale_backstop_minutes": 180},
+    }
+    spawned = datetime.fromisoformat("2026-09-18T16:15:00+00:00").timestamp()
+    checker = digest_pending_is_terminal(
+        digest,
+        now=spawned + 60,
+        execution_gone_fn=lambda _p: False,
+    )
+    assert checker(pending) is True
+    assert checker.last_reason == "lifecycle"
+
+
+def test_root_pending_execution_gone_releases_before_backstop() -> None:
+    pending = {
+        "execution_id": "585b780e-685e-402b-aee4-2abae834c1a3",
+        "thread_id": "10479",
+        "spawned_at": "2026-09-16T10:00:22Z",
+    }
+    digest = {
+        "root": {"id": "10479", "turns": 2634, "recent_turns": []},
+        "lanes": [],
+        "attention": [],
+        "policy": {"pending_stale_backstop_minutes": 180},
+    }
+    spawned = datetime.fromisoformat("2026-09-16T10:00:22+00:00").timestamp()
+    checker = digest_pending_is_terminal(
+        digest,
+        now=spawned + 60,
+        execution_gone_fn=lambda _p: True,
+    )
+    assert checker(pending) is True
+    assert checker.last_reason == "execution_gone"
+
+
+def test_root_pending_execution_gone_probe_error_stays_unresolved() -> None:
+    pending = {
+        "execution_id": "585b780e-685e-402b-aee4-2abae834c1a3",
+        "thread_id": "10479",
+        "spawned_at": "2026-09-16T10:00:22Z",
+    }
+    digest = {
+        "root": {"id": "10479", "turns": 2634, "recent_turns": []},
+        "lanes": [],
+        "attention": [],
+        "policy": {"pending_stale_backstop_minutes": 180},
+    }
+    spawned = datetime.fromisoformat("2026-09-16T10:00:22+00:00").timestamp()
+    checker = digest_pending_is_terminal(
+        digest,
+        now=spawned + 60,
+        execution_gone_fn=lambda _p: False,
+    )
+    assert checker(pending) is False
+    assert checker.last_reason == "unresolved_root_pending"
 
 
 def test_stale_pending_without_lane_is_terminal() -> None:

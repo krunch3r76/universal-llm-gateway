@@ -16,11 +16,23 @@ mill that minted four unasked Opus liaisons on 10534 (2026-09-12).
 
 from __future__ import annotations
 
+import json
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from agent_bus_store.sdk_liveness import (
+    LivenessVerdict,
+    ProbeResult,
+    _worker_base_url,
+    classify_probe,
+    probe_dispatch_status,
+)
 
 from bus_watch.friction_rows import latch_rows
 from bus_watch.ide_budget import (
@@ -50,6 +62,12 @@ _ROOT_SUCCESSOR_TERMINAL_RE = re.compile(
     r"CHECKPOINT|CLOSEOUT|\bSTAY\b|TYPE:\s*(CHECKPOINT|CLOSEOUT|STAY)",
     re.I,
 )
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+    re.I,
+)
+_EXECUTION_IDS_CAP = 8
+_PROBE_TIMEOUT_S = 2.0
 
 
 def _parse_iso_ts(value: str | None) -> float | None:
@@ -481,12 +499,110 @@ def pending_spawn_terminal(
     return is_terminal(pending)
 
 
+def _extract_execution_ids(*parts: str, cap: int = _EXECUTION_IDS_CAP) -> list[str]:
+    """Stable UUID tokens from full turn text before body compaction."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for part in parts:
+        for match in _UUID_RE.finditer(str(part or "")):
+            token = match.group(0).lower()
+            if token in seen:
+                continue
+            seen.add(token)
+            out.append(token)
+            if len(out) >= cap:
+                return out
+    return out
+
+
+def _probe_dispatch_by_id(dispatch_id: str) -> ProbeResult:
+    """HTTP GET dispatch-status keyed by ``dispatch_id`` (GIW admin surface)."""
+    base = _worker_base_url()
+    query = urllib.parse.urlencode({"dispatch_id": dispatch_id})
+    url = f"{base}/api/v1/git/admin/dispatch-status?{query}"
+    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=_PROBE_TIMEOUT_S) as resp:
+            raw = resp.read().decode("utf-8")
+            http_status = resp.status
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return ProbeResult(payload=None, http_status=404, error=None)
+        return ProbeResult(
+            payload=None,
+            http_status=exc.code,
+            error=f"http_error_{exc.code}",
+        )
+    except (TimeoutError, urllib.error.URLError, OSError) as exc:
+        return ProbeResult(
+            payload=None, http_status=None, error=f"probe_unreachable:{exc}"
+        )
+
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return ProbeResult(
+            payload=None, http_status=http_status, error="malformed_json"
+        )
+    if not isinstance(payload, dict):
+        return ProbeResult(
+            payload=None, http_status=http_status, error="malformed_json"
+        )
+    return ProbeResult(payload=payload, http_status=http_status, error=None)
+
+
+def execution_gone(
+    pending: dict[str, Any],
+    *,
+    root_id: str,
+    probe_by_thread: Callable[[str], ProbeResult] | None = None,
+    probe_by_id: Callable[[str], ProbeResult] | None = None,
+) -> bool:
+    """True when GIW says the pending execution is gone (fail-closed on probe error)."""
+    execution_id = str(pending.get("execution_id") or "").strip()
+    if not execution_id:
+        return False
+    thread_probe = probe_by_thread or probe_dispatch_status
+    id_probe = probe_by_id or _probe_dispatch_by_id
+    thread_id = str(pending.get("thread_id") or root_id or "").strip()
+
+    if thread_id:
+        probe = thread_probe(thread_id)
+        if probe.error is None:
+            verdict, _, _ = classify_probe(probe, link_execution_id=execution_id)
+            if verdict is LivenessVerdict.SKIP_LIVE:
+                return False
+            if verdict in (
+                LivenessVerdict.ALLOW_ORPHAN,
+                LivenessVerdict.TERMINAL_BACKFILL,
+            ):
+                return True
+            if verdict is not LivenessVerdict.DEFER:
+                return False
+
+    probe = id_probe(execution_id)
+    if probe.error is not None:
+        return False
+    if probe.http_status == 404:
+        return True
+    payload = probe.payload
+    if payload is None:
+        return False
+    if payload.get("status") is None:
+        return True
+    verdict, _, _ = classify_probe(probe, link_execution_id=execution_id)
+    return verdict in (LivenessVerdict.ALLOW_ORPHAN, LivenessVerdict.TERMINAL_BACKFILL)
+
+
 def _compact_root_turn(turn: dict[str, Any]) -> dict[str, Any]:
+    subject = str(turn.get("subject") or "")
+    body = str(turn.get("body") or "")
     return {
         "turn_number": turn.get("turn_number"),
         "from": turn.get("from") or turn.get("from_agent"),
-        "subject": turn.get("subject"),
-        "body": str(turn.get("body") or "")[:400],
+        "subject": subject,
+        "body": body[:400],
+        "execution_ids": _extract_execution_ids(subject, body),
         "created_at": turn.get("created_at"),
     }
 
@@ -538,6 +654,18 @@ def _turn_text(turn: dict[str, Any]) -> str:
     )
 
 
+def _pending_execution_id_in_turn(pending: dict[str, Any], turn: dict[str, Any]) -> bool:
+    execution_id = str(pending.get("execution_id") or "").strip()
+    if not execution_id:
+        return False
+    ids = turn.get("execution_ids")
+    if isinstance(ids, list) and execution_id.lower() in {
+        str(x).lower() for x in ids
+    }:
+        return True
+    return execution_id in _turn_text(turn)
+
+
 def _successor_terminal_on_root(
     pending: dict[str, Any],
     root_turns: list[dict[str, Any]],
@@ -553,9 +681,9 @@ def _successor_terminal_on_root(
             created = _parse_iso_ts(str(turn.get("created_at") or "") or None)
             if created is not None and created <= spawned_at:
                 continue
-        text = _turn_text(turn)
-        if execution_id not in text:
+        if not _pending_execution_id_in_turn(pending, turn):
             continue
+        text = _turn_text(turn)
         if _ROOT_SUCCESSOR_TERMINAL_RE.search(text):
             return True
     return False
@@ -574,12 +702,16 @@ class PendingTerminalChecker:
         root_turns: list[dict[str, Any]],
         backstop_s: float,
         ts: float,
+        execution_gone_fn: Callable[[dict[str, Any]], bool] | None = None,
     ) -> None:
         self._root_id = root_id
         self._rows = rows
         self._root_turns = root_turns
         self._backstop_s = backstop_s
         self._ts = ts
+        self._execution_gone = execution_gone_fn or (
+            lambda pending: execution_gone(pending, root_id=root_id)
+        )
 
     def __call__(self, pending: dict[str, Any]) -> bool:
         tid = str(pending.get("thread_id") or "").strip()
@@ -598,6 +730,9 @@ class PendingTerminalChecker:
             ):
                 self.last_reason = "lifecycle"
                 return True
+            if self._execution_gone(pending):
+                self.last_reason = "execution_gone"
+                return True
             if spawned is not None and (self._ts - spawned) > self._backstop_s:
                 self.last_reason = "stale_backstop"
                 return True
@@ -608,6 +743,9 @@ class PendingTerminalChecker:
                 pending, self._root_turns, spawned_at=spawned
             ):
                 self.last_reason = "lifecycle"
+                return True
+            if self._execution_gone(pending):
+                self.last_reason = "execution_gone"
                 return True
             if spawned is not None and (self._ts - spawned) > self._backstop_s:
                 self.last_reason = "stale_backstop"
@@ -628,6 +766,7 @@ def digest_pending_is_terminal(
     digest: dict[str, Any],
     *,
     now: float | None = None,
+    execution_gone_fn: Callable[[dict[str, Any]], bool] | None = None,
 ) -> PendingTerminalChecker:
     """Build a checker: pending resolves from lane lifecycle, root evidence, or backstop.
 
@@ -658,6 +797,7 @@ def digest_pending_is_terminal(
         root_turns=[t for t in root_turns if isinstance(t, dict)],
         backstop_s=backstop_s,
         ts=ts,
+        execution_gone_fn=execution_gone_fn,
     )
 
 
@@ -677,6 +817,7 @@ def checkpoint_due_wake(state: dict[str, Any], checkpoint_due: bool) -> bool:
 __all__ = [
     "IDE_IDLE_FORFEIT_S",
     "PendingTerminalChecker",
+    "execution_gone",
     "attention_now_row",
     "actionable_kind",
     "actionable_attention",
