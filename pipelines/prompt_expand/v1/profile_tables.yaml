@@ -1,0 +1,67 @@
+table_version: 1
+profiles:
+  - contract: consult
+    stage: g1
+    executor_tier: frontier
+    retrieve_scopes:
+      - llm_prompting
+      - suggestion_orientation
+      - prompt_injection
+      - agent_skills_research
+    elicitation: true
+  - contract: confer
+    stage: "*"
+    executor_tier: frontier
+    retrieve_scopes:
+      - llm_prompting
+      - suggestion_orientation
+      - prompt_injection
+      - agent_skills_research
+    elicitation: true
+  - contract: implement
+    stage: g5
+    executor_tier: frontier
+    retrieve_scopes:
+      - llm_prompting
+      - llm_writing
+      - prompt_injection
+    elicitation: false
+  - contract: implement
+    stage: g5
+    executor_tier: small
+    retrieve_scopes:
+      - llm_prompting
+      - llm_writing
+      - prompt_injection
+    elicitation: false
+  - contract: "*"
+    stage: "*"
+    executor_tier: frontier
+    retrieve_scopes:
+      - llm_prompting
+      - prompt_injection
+    elicitation: false
+  - contract: "*"
+    stage: "*"
+    executor_tier: small
+    retrieve_scopes:
+      - llm_prompting
+      - prompt_injection
+    elicitation: false
+targets:
+  - id: cdp
+    static: true
+    allowed_doors:
+      - cortex
+      - fs
+      - rag
+      - cdp_ask
+  - id: cursor
+    static: true
+    allowed_doors:
+      - cortex
+      - fs
+      - rag
+      - team_dispatch
+      - manage
+      - pipeline
