@@ -18,7 +18,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from bus_watch.doorbell_skills import doorbell_skills
+from bus_watch.doorbell_skills import (
+    dispatch_skills_for_surface,
+    doorbell_skills,
+    seat_dispatch_surface,
+)
 
 DOORBELL_CAP = 1400
 
@@ -370,6 +374,32 @@ def _successor_liaison_slug(seat: str = "cursor-sdk") -> str:
     return doorbell_skills(_seat_surface(seat))[0]
 
 
+def _inline_successor_dispatch_skills(text: str, seat: str) -> str:
+    """Prepend ``<skills_inline>`` bodies for CDP/CSE successors (not Use-lines)."""
+    surface = seat_dispatch_surface(seat)
+    if not surface:
+        return text
+    slugs = dispatch_skills_for_surface(surface)
+    if not slugs:
+        return text
+    from claude_bundles import catalog as catalog_mod
+    from claude_bundles import cowork_skill_delivery as delivery_mod
+    from claude_bundles.catalog import load_skill_catalog
+    from claude_bundles.cowork_skill_delivery import prepend_cdp_dispatch_skills
+
+    relaxed = lambda: load_skill_catalog(validate_sot=False)
+    old_cat = catalog_mod.get_skill_catalog
+    old_del = delivery_mod.get_skill_catalog
+    catalog_mod.get_skill_catalog = relaxed
+    delivery_mod.get_skill_catalog = relaxed
+    try:
+        merged, _, _ = prepend_cdp_dispatch_skills(text, slugs)
+    finally:
+        catalog_mod.get_skill_catalog = old_cat
+        delivery_mod.get_skill_catalog = old_del
+    return merged
+
+
 def _successor_duty_line(contract: str) -> str:
     if contract != "none":
         return (
@@ -416,9 +446,12 @@ def _compose_successor_wake(
         f"spawn_signal={signal_text}.",
         f"addresses: dispatch(tool=\"continuity\", arguments='{resume_args}'); "
         f"agent_bus_read(thread_get, thread={root_id}); agent-bus:{echo} (echo){extras}",
-        f"Use the {liaison_slug} skill. "
-        f"LOAD the {liaison_slug} skill body; do not skim.",
     ]
+    if seat_dispatch_surface(seat) is None:
+        lines.append(
+            f"Use the {liaison_slug} skill. "
+            f"LOAD the {liaison_slug} skill body; do not skim."
+        )
     if _seat_has_jupiter_shell(seat):
         lines.append("LOAD AND EXECUTE runbook:bus-consult-watcher (legs 1-3).")
     lines.extend(
@@ -533,7 +566,7 @@ def render_successor_wake(
     row_text = row
     message = compose(row_text=row_text, addresses=tuple(planted))
     if len(message.encode("utf-8")) <= cap:
-        return message
+        return _inline_successor_dispatch_skills(message, seat)
 
     def shed() -> bool:
         """Drop the least load-bearing fragment; False when only the ritual is left."""
@@ -559,4 +592,4 @@ def render_successor_wake(
             cap=cap,
         )
         message = compose(row_text=row_text, addresses=())
-    return message
+    return _inline_successor_dispatch_skills(message, seat)

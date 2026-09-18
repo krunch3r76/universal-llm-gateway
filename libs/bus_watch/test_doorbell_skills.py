@@ -11,8 +11,10 @@ from bus_watch.doorbell_skills import (
     LIAISON_PROTOCOL_LOADER,
     dispatch_skills_for_surface,
     doorbell_skills,
+    is_dispatch_skills_surface,
     navigator_doorbell_skills_from_policy,
     primary_liaison_slug,
+    seat_dispatch_surface,
 )
 
 
@@ -43,6 +45,15 @@ def test_navigator_doorbell_skills_from_policy_override() -> None:
 
 
 @pytest.mark.offline
+def test_seat_dispatch_surface_maps_cdp_cse_seats() -> None:
+    assert seat_dispatch_surface("cdp") == "cdp"
+    assert seat_dispatch_surface("cdp/opus-5") == "cdp"
+    assert seat_dispatch_surface("cse") == "cse"
+    assert seat_dispatch_surface("cursor-sdk") is None
+    assert is_dispatch_skills_surface("cdp")
+
+
+@pytest.mark.offline
 def test_dispatch_skills_only_on_cdp_cse_surfaces() -> None:
     assert dispatch_skills_for_surface("cdp") == ["liaison", "reasoning-posture"]
     assert dispatch_skills_for_surface("cse") == ["liaison", "reasoning-posture"]
@@ -68,9 +79,11 @@ def test_cdp_staging_inlines_liaison_protocol_echo(
 
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     clear_skill_catalog_cache()
+    relaxed = lambda: load_skill_catalog(validate_sot=False)
+    monkeypatch.setattr("claude_bundles.catalog.get_skill_catalog", relaxed)
     monkeypatch.setattr(
-        "claude_bundles.catalog.get_skill_catalog",
-        lambda: load_skill_catalog(validate_sot=False),
+        "claude_bundles.cowork_skill_delivery.get_skill_catalog",
+        relaxed,
     )
     staged = stage_cdp_prompt_with_skills(
         execution_id="exec-liaison-protocol",

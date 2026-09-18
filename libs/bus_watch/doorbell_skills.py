@@ -23,8 +23,10 @@ _SURFACE_USE_SKILLS: Final[dict[str, tuple[str, ...]]] = {
     "cse": ("liaison", "reasoning-posture"),
 }
 
-# Non-Cursor surfaces must pass ``skills=`` so ``cursor_only`` bodies inline.
-_DISPATCH_SKILLS_SURFACES: Final[frozenset[str]] = frozenset({"cdp", "cse"})
+# CDP/CSE successors seal ``cursor_only`` bodies via ``prepend_cdp_dispatch_skills``;
+# the composer must not emit Customize self-fetch Use-lines on these surfaces.
+DISPATCH_SKILLS_SURFACES: Final[frozenset[str]] = frozenset({"cdp", "cse"})
+_DISPATCH_SKILLS_SURFACES: Final[frozenset[str]] = DISPATCH_SKILLS_SURFACES
 
 
 def _preflight(slugs: tuple[str, ...]) -> tuple[str, ...]:
@@ -39,6 +41,23 @@ def doorbell_skills(surface: str) -> tuple[str, ...]:
     key = str(surface or "ide").strip().lower()
     slugs = _SURFACE_USE_SKILLS.get(key, _SURFACE_USE_SKILLS["ide"])
     return _preflight(slugs)
+
+
+def seat_dispatch_surface(seat: str) -> str | None:
+    """Map a dispatch seat id to ``cdp`` / ``cse`` when skills must inline, else None."""
+    key = str(seat or "cursor-sdk").strip().lower()
+    if key.startswith("cdp"):
+        return "cdp"
+    if key.startswith("cse"):
+        return "cse"
+    if key in _DISPATCH_SKILLS_SURFACES:
+        return key
+    return None
+
+
+def is_dispatch_skills_surface(seat: str) -> bool:
+    """True when the seat's successor wake must inline SOT bodies, not Use-lines."""
+    return seat_dispatch_surface(seat) is not None
 
 
 def dispatch_skills_for_surface(surface: str) -> list[str]:
@@ -71,11 +90,14 @@ def primary_liaison_slug(surface: str = "ide") -> str:
 
 
 __all__ = [
+    "DISPATCH_SKILLS_SURFACES",
     "LIAISON_PROTOCOL_ECHO",
     "LIAISON_PROTOCOL_LOADER",
     "dispatch_skills_for_surface",
     "doorbell_skills",
+    "is_dispatch_skills_surface",
     "navigator_doorbell_skills_from_policy",
     "navigator_skills_from_policy",
     "primary_liaison_slug",
+    "seat_dispatch_surface",
 ]
