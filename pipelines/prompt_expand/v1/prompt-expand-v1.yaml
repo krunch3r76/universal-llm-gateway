@@ -1,0 +1,100 @@
+# prompt-expand v1 — two-key expand pipeline (contract·stage·tier retrieve, target author).
+#
+# Invocation:
+#   pipeline(op="run", pipeline_id="prompt-expand",
+#            messages=[{"role":"user","content":"<TASK>"}],
+#            options={
+#              "contract": "implement",       # required
+#              "stage": "g5",                 # required
+#              "executor_tier": "frontier",   # default frontier
+#              "target": "cursor",            # required; grok-bot → typed reject
+#              "delivery": "prompt",          # prompt|dispatch (default prompt)
+#              "rag_fail": "abort",           # abort|stamp (default abort)
+#              "follow_up": "none",           # caller hint only
+#            })
+
+schema_version: 6
+id: prompt-expand
+version: "1.0"
+type: prompt_expand
+description: >
+  Two-key prompt expansion: target-invariant RAG retrieve (profile key) then
+  target-variant author (cdp vs cursor). Fire stays outside the DAG.
+output: format_output
+
+options:
+  timeout_seconds: 600
+
+steps:
+  - name: validate_options
+    type: prompt_expand_validate_options_v1
+
+  - name: resolve_profile
+    type: prompt_expand_profile_lookup_v1
+
+  - name: retrieve_context
+    type: prompt_expand_retrieve_v1
+    consumer_model_ref: expand
+    timeout_seconds: 300
+    handler_timeout_seconds: 90
+    retry_policy:
+      max_attempts: 3
+      backoff_strategy: fixed
+      initial_interval_seconds: 2
+      retry_on:
+        - TimeoutException
+        - ReadTimeout
+        - StepTimeoutError
+      dont_retry_on:
+        - PipelineExecutionError
+
+  - name: classify_retrieve
+    type: prompt_expand_classify_retrieve_v1
+
+  - name: author_cdp
+    type: generate
+    condition: "options.target == 'cdp' and classify_retrieve.json.get('proceed') is not False"
+    model_ref: expand
+    prompt_ref: prompt_expand.v1.author_cdp
+    handler_inputs:
+      rag_context: "retrieve_context.raw"
+      text: sourceNs.text
+      contract: "resolve_profile.json.contract"
+      stage: "resolve_profile.json.stage"
+      executor_tier: "resolve_profile.json.executor_tier"
+      elicitation: "resolve_profile.json.elicitation"
+    generation_parameters:
+      temperature: 0.3
+
+  - name: author_cursor
+    type: generate
+    condition: "options.target == 'cursor' and classify_retrieve.json.get('proceed') is not False"
+    model_ref: expand
+    prompt_ref: prompt_expand.v1.author_cursor
+    handler_inputs:
+      rag_context: "retrieve_context.raw"
+      text: sourceNs.text
+      contract: "resolve_profile.json.contract"
+      stage: "resolve_profile.json.stage"
+      executor_tier: "resolve_profile.json.executor_tier"
+      elicitation: "resolve_profile.json.elicitation"
+    generation_parameters:
+      temperature: 0.3
+
+  - name: select_author
+    type: select_output
+    candidates:
+      - author_cdp
+      - author_cursor
+
+  - name: format_output
+    type: prompt_expand_format_output_v1
+    reads_from:
+      - step: validate_options
+        fields: [json]
+      - step: resolve_profile
+        fields: [json]
+      - step: classify_retrieve
+        fields: [json]
+      - step: select_author
+        fields: [raw, json]
