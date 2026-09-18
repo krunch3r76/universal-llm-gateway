@@ -104,6 +104,21 @@ def test_build_closeout_record_11692_specimen() -> None:
     assert record["terminal_status"] == "completed"
 
 
+def test_build_closeout_record_from_sdk_json_envelope() -> None:
+    body = (
+        '{"schema_version":1,"status":"partial","work_outcome":"checks_failed",'
+        '"evidence_uris":{"git_refs":["02b419c62ca06ff0646982e907e8fa0971f8a095"]}}'
+    )
+    record = build_closeout_record(
+        {"id": "11697", "lifecycle": "completed", "status": "closed"},
+        parent_root="11667",
+        worker_closeout_text=body,
+    )
+    assert record["settled"] == "checks_failed"
+    assert record["landed"] == "02b419c62ca06ff0646982e907e8fa0971f8a095"
+    assert record["live"] == "unprobed"
+
+
 def test_post_lane_closeout_emits_event() -> None:
     client = MagicMock()
     resp = MagicMock()

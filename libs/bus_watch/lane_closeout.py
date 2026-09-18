@@ -30,7 +30,7 @@ _STATUS_RE = re.compile(r"^\s*status\s*:\s*(\S+)", re.I | re.MULTILINE)
 _NEXT_RE = re.compile(r"^\s*next\s*:\s*(.+?)\s*$", re.I | re.MULTILINE)
 _SHA_RE = re.compile(r"\b([0-9a-f]{7,40})\b", re.I)
 _LANDED_SHA_RE = re.compile(
-    r"(?:landed|commit|sha|merge)[^\n]{0,40}\b([0-9a-f]{7,40})\b",
+    r"(?:landed|commit|git_refs|git:)[^\n]{0,80}\b([0-9a-f]{7,40})\b",
     re.I,
 )
 _DISPOSITION_RE = re.compile(
@@ -55,9 +55,38 @@ def _terminal_status(row: dict[str, Any]) -> str:
     return str(row.get("status") or "unknown").lower()
 
 
+def _parse_json_closeout_envelope(body: str) -> dict[str, Any] | None:
+    """cursor-sdk CLOSEOUT bodies are a JSON envelope, not ``status:`` prose."""
+    text = body.strip()
+    if not text.startswith("{"):
+        return None
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    settled = str(data.get("work_outcome") or data.get("status") or "").lower()
+    landed = ""
+    evidence = data.get("evidence_uris")
+    if isinstance(evidence, dict):
+        refs = evidence.get("git_refs") or []
+        if isinstance(refs, list) and refs:
+            landed = str(refs[0]).lower()
+    return {
+        "settled": settled,
+        "landed": landed,
+        "next": "",
+        "land_disposition": "landed" if landed else "",
+    }
+
+
 def _parse_lane_worker_closeout(text: str) -> dict[str, Any]:
     """Harvest settled / landed / next from a worker lane's terminal turn body."""
     body = str(text or "")
+    envelope = _parse_json_closeout_envelope(body)
+    if envelope is not None:
+        return envelope
     status_match = _STATUS_RE.search(body)
     settled = status_match.group(1).lower() if status_match else ""
     next_match = _NEXT_RE.search(body)
@@ -192,9 +221,14 @@ def query_lane_closeouts(
     turns = payload.get("turns") if isinstance(payload, dict) else None
     if not isinstance(turns, list):
         return []
+    ordered = sorted(
+        (t for t in turns if isinstance(t, dict)),
+        key=lambda t: int(t.get("turn_number") or 0),
+        reverse=True,
+    )
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for turn in turns:
+    for turn in ordered:
         if not isinstance(turn, dict):
             continue
         record = parse_closeout_turn(turn)
