@@ -1147,6 +1147,7 @@ class CursorDispatchLedger:
         packet_kind: str | None = None,
         lineage_depth: int | None = None,
         work_key_seq: int | None = None,
+        hop_park_release: bool = False,
     ) -> CursorDispatchResponse | None:
         """Durable idempotency (F2). Returns cached admission on hit, None on first
         admitted insert, or a queued ticket when the write-lease is held.
@@ -1189,7 +1190,8 @@ class CursorDispatchLedger:
                 isolation_materialized=isolation_materialized,
             )
         hop_triplet = (hop_seq, hop_from, hop_reason)
-        if any(v is not None for v in hop_triplet):
+        is_conductor_admit = str(contract or "").lower() == "conductor"
+        if any(v is not None for v in hop_triplet) and not is_conductor_admit:
             if not all(v is not None for v in hop_triplet):
                 raise ValueError(
                     "admit hop kwargs require hop_seq, hop_from, and hop_reason together"
@@ -1454,6 +1456,25 @@ class CursorDispatchLedger:
                         )
                     insert_status = _STATUS_QUEUED
                     queued_at = _now()
+            from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
+                refuse_parked_conductor_mission,
+                release_mission_park,
+            )
+
+            if hop_park_release:
+                release_mission_park(
+                    conn,
+                    work_key=effective_work_key,
+                    thread_id=req.thread_id,
+                    caller_agent=str(caller_agent or ""),
+                )
+            refuse_parked_conductor_mission(
+                conn,
+                work_key=effective_work_key,
+                thread_id=req.thread_id,
+                read_only=read_only,
+                contract=contract,
+            )
             if (
                 insert_status == _STATUS_ADMITTED
                 and not nest_under
@@ -1473,6 +1494,46 @@ class CursorDispatchLedger:
                         holder_dispatch_id=occupant["dispatch_id"],
                         holder_thread_id=occupant["thread_id"] or req.thread_id,
                         incoming_dispatch_id=req.dispatch_id,
+                    )
+            if is_conductor_admit and req.thread_id:
+                from services.git_integration_worker.cursor_sdk_conductor_hop_stamp import (
+                    apply_hop_lineage_stamp,
+                    derive_hop_lineage,
+                )
+                from services.git_integration_worker.cursor_sdk_ledger_hop import (
+                    stamp_hop_on_record_json,
+                )
+
+                body_triplet = (
+                    {"hop_from": hop_from, "hop_seq": hop_seq, "hop_reason": hop_reason}
+                    if all(v is not None for v in hop_triplet)
+                    else None
+                )
+                is_spawn_triplet = hop_reason == "spawn" or hop_from == "spawn-parent"
+                if not is_spawn_triplet:
+                    lineage = derive_hop_lineage(
+                        conn,
+                        thread_id=req.thread_id,
+                        work_key=effective_work_key,
+                        caller_agent=caller_agent,
+                        body_triplet=body_triplet,
+                        incoming_dispatch_id=req.dispatch_id,
+                    )
+                    if lineage is not None:
+                        record_json = apply_hop_lineage_stamp(
+                            conn,
+                            incoming_dispatch_id=req.dispatch_id,
+                            thread_id=req.thread_id,
+                            record_json=record_json,
+                            lineage=lineage,
+                        )
+                elif body_triplet and all(v is not None for v in hop_triplet):
+                    record_json = stamp_hop_on_record_json(
+                        record_json,
+                        hop_seq=hop_seq,  # type: ignore[arg-type]
+                        hop_from=hop_from,  # type: ignore[arg-type]
+                        hop_reason=hop_reason,  # type: ignore[arg-type]
+                        hop_declared=hop_declared,
                     )
             conn.execute(
                 "INSERT INTO cursor_sdk_dispatches "

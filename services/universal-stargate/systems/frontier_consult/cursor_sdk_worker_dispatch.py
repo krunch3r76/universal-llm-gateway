@@ -174,6 +174,10 @@ def _parse_worker_error(resp: httpx.Response, *, dispatch_id: str) -> dict[str, 
         "failure_layer": "http",
         "dispatch_id": dispatch_id,
         "detail_summary": str(message),
+        "source": body.get("source"),
+        "retryable": body.get("retryable"),
+        "data": data,
+        "envelope": body,
     }
     if resume_reason is not None:
         detail["resume_reason"] = resume_reason
@@ -226,6 +230,7 @@ async def dispatch_cursor_sdk_worker(
     source_ref: str | None = None,
     force: bool = False,
     force_reason: str | None = None,
+    hop_park_release: bool = False,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
 
@@ -279,6 +284,8 @@ async def dispatch_cursor_sdk_worker(
         payload["force"] = True
     if force_reason:
         payload["force_reason"] = force_reason
+    if hop_park_release:
+        payload["hop_park_release"] = True
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from unittest.mock import AsyncMock, patch
 
@@ -93,7 +94,7 @@ def _terminal_row(
 ) -> dict:
     req = _req(dispatch_id=dispatch_id)
     _admit_conductor(ledger, req)
-    patch: dict = {}
+    patch: dict = {"summoning_thread_id": "9638"}
     if closeout_tokens is not None:
         patch["closeout_stop_tokens"] = closeout_tokens
     if record_patch:
@@ -137,6 +138,79 @@ def test_watchdog_candidate_false_when_successor_stamped() -> None:
         terminal_at_offset_s=-200.0,
     )
     assert conductor_hop_watchdog_candidates(ledger, grace_s=_GRACE_S) == []
+
+
+def test_merge_hop_admit_error_accumulates_attempts() -> None:
+    from services.git_integration_worker.cursor_sdk_ledger_hop import merge_hop_patch
+
+    merged = merge_hop_patch(
+        "",
+        {
+            "hop_admit_error": {
+                "last_error": "422",
+                "last_status_code": 422,
+            }
+        },
+    )
+    merged = merge_hop_patch(
+        merged,
+        {
+            "hop_admit_error": {
+                "last_error": "422 again",
+                "last_status_code": 422,
+            }
+        },
+    )
+    data = json.loads(merged)
+    admit_err = data["hop_admit_error"]
+    assert admit_err["attempts"] == 2
+    assert admit_err["retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_watchdog_skips_permanent_admit_error_without_post() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_admit_error": {
+                "retryable": False,
+                "attempts": 1,
+                "last_status_code": 422,
+                "last_error": "dispatch_thread_id required",
+            }
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
+        AsyncMock(),
+    ) as post_mock:
+        ok = await maybe_fire_conductor_hop_watchdog(dispatch_id="pred-watchdog-1")
+    assert ok is False
+    post_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_watchdog_no_post_when_mission_parked() -> None:
+    ledger = CursorDispatchLedger.instance()
+    _terminal_row(
+        ledger,
+        closeout_tokens=["ROW_HOP"],
+        record_patch={
+            "hop_parked": True,
+            "hop_park_reason": "hop_budget_no_progress_cap",
+        },
+        terminal_at_offset_s=-200.0,
+    )
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
+        AsyncMock(),
+    ) as post_mock:
+        ok = await maybe_fire_conductor_hop_watchdog(dispatch_id="pred-watchdog-1")
+    assert ok is False
+    post_mock.assert_not_called()
 
 
 def test_watchdog_candidate_true_with_hop_admit_error_after_grace() -> None:

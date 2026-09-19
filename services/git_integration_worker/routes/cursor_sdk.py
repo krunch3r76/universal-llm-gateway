@@ -22,6 +22,7 @@ from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.normalize import _files_from_packet
 from universal_logging import get_logger
 from universal_protocol import error_envelope
+from universal_protocol.errors import ProtocolError
 
 from services.git_integration_worker.admission import (
     Draining503,
@@ -113,6 +114,9 @@ from services.git_integration_worker.cursor_sdk_concurrency_posture import (
     lane_b_worktree_missing,
     lease_is_isolated_worktree,
     write_lease_slot_limit,
+)
+from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
+    ConductorMissionParked,
 )
 from services.git_integration_worker.cursor_sdk_context import (
     CursorSdkParityError,
@@ -3331,6 +3335,8 @@ async def admit_cursor_dispatch(
             admit_kwargs["hop_seq"] = req.hop_seq
             admit_kwargs["hop_from"] = req.hop_from
             admit_kwargs["hop_reason"] = req.hop_reason
+        if req.hop_park_release:
+            admit_kwargs["hop_park_release"] = True
         cached = await asyncio.to_thread(ledger.admit, **admit_kwargs)
     except WriteLeaseHeld as exc:
         await _rollback_lane_b_mint_if_needed(
@@ -3505,6 +3511,35 @@ async def admit_cursor_dispatch(
             retryable=False,
             validation_stage="ledger_nest_parent",
         )
+    except ConductorMissionParked as exc:
+        from services.git_integration_worker.cursor_sdk_hop_events import (
+            emit_frontier_sdk_conductor_hop_admit_refused_parked,
+        )
+
+        park = exc.park_state
+        emit_frontier_sdk_conductor_hop_admit_refused_parked(
+            thread_id=req.thread_id,
+            work_key=candidate_work_key,
+            parked_dispatch_id=park.parked_dispatch_id,
+            reason=park.reason,
+        )
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=resolved_source_repo,
+            minted_lane_b=minted_lane_b,
+            reason="conductor_mission_parked",
+        )
+        return JSONResponse(status_code=409, content=exc.to_protocol_error().to_dict())
+    except ProtocolError as exc:
+        await _rollback_lane_b_mint_if_needed(
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
+            source_repo=resolved_source_repo,
+            minted_lane_b=minted_lane_b,
+            reason=str(exc.code),
+        )
+        return JSONResponse(status_code=422, content=exc.to_dict())
     if cached is not None:
         status_code = 202 if cached.status == "queued" else 200
         if cached.status == "queued":

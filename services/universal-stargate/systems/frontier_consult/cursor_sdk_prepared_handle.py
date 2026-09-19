@@ -61,6 +61,7 @@ class PreparedCursorSdkHandle:
     source_ref: str | None = None
     force: bool = False
     force_reason: str | None = None
+    hop_park_release: bool = False
 
 
 def mint_cursor_sdk_ids(*, request_id: str) -> tuple[str, str]:
@@ -130,6 +131,7 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "source_ref": handle.source_ref,
         "force": handle.force,
         "force_reason": handle.force_reason,
+        "hop_park_release": handle.hop_park_release,
     }
 
 
@@ -184,4 +186,5 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         source_ref=data.get("source_ref"),
         force=bool(data.get("force", False)),
         force_reason=data.get("force_reason"),
+        hop_park_release=bool(data.get("hop_park_release", False)),
     )

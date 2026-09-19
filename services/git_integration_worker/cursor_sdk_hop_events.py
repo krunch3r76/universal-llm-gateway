@@ -151,6 +151,72 @@ def FrontierSdkConductorHopParkHarvest(  # noqa: N802
 
 
 @event_factory
+def FrontierSdkConductorHopAdmitRefusedParked(  # noqa: N802
+    thread_id: str,
+    work_key: str | None,
+    parked_dispatch_id: str,
+    reason: str,
+) -> Event:
+    """Park gate refused a conductor admit while mission remains parked."""
+    payload: dict[str, Any] = {
+        "thread_id": thread_id,
+        "parked_dispatch_id": parked_dispatch_id,
+        "reason": reason,
+    }
+    if work_key:
+        payload["work_key"] = work_key
+    return Event(
+        signal="frontier.sdk.conductor.hop.admit_refused_parked",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkConductorHopParkReleased(  # noqa: N802
+    parked_dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    caller_agent: str,
+) -> Event:
+    """Explicit ``hop_park_release`` cleared a mission park hold."""
+    payload: dict[str, Any] = {
+        "parked_dispatch_id": parked_dispatch_id,
+        "thread_id": thread_id,
+        "caller_agent": caller_agent,
+    }
+    if work_key:
+        payload["work_key"] = work_key
+    return Event(
+        signal="frontier.sdk.conductor.hop.park_released",
+        payload=payload,
+        scope="node",
+    )
+
+
+@event_factory
+def FrontierSdkConductorHopLineageStamped(  # noqa: N802
+    dispatch_id: str,
+    predecessor_dispatch_id: str,
+    thread_id: str,
+    hop_seq: int,
+    hop_admitted_by: str,
+) -> Event:
+    """Lineage stamp applied during ledger admit transaction."""
+    return Event(
+        signal="frontier.sdk.conductor.hop.lineage_stamped",
+        payload={
+            "dispatch_id": dispatch_id,
+            "predecessor_dispatch_id": predecessor_dispatch_id,
+            "thread_id": thread_id,
+            "hop_seq": hop_seq,
+            "hop_admitted_by": hop_admitted_by,
+        },
+        scope="node",
+    )
+
+
+@event_factory
 def FrontierSdkConductorHopWatchdogFired(  # noqa: N802
     last_dispatch_id: str,
     thread_id: str,
@@ -286,6 +352,59 @@ def emit_frontier_sdk_conductor_hop_park_harvest(
             thread_id=thread_id,
             summoning_thread_id=summoning_thread_id,
             hop_seq=hop_seq,
+        )
+    )
+
+
+def emit_frontier_sdk_conductor_hop_admit_refused_parked(
+    *,
+    thread_id: str,
+    work_key: str | None,
+    parked_dispatch_id: str,
+    reason: str,
+) -> None:
+    emit_frontier_event(
+        FrontierSdkConductorHopAdmitRefusedParked(
+            thread_id=thread_id,
+            work_key=work_key,
+            parked_dispatch_id=parked_dispatch_id,
+            reason=reason,
+        )
+    )
+
+
+def emit_frontier_sdk_conductor_hop_park_released(
+    *,
+    parked_dispatch_id: str,
+    thread_id: str,
+    work_key: str | None,
+    caller_agent: str,
+) -> None:
+    emit_frontier_event(
+        FrontierSdkConductorHopParkReleased(
+            parked_dispatch_id=parked_dispatch_id,
+            thread_id=thread_id,
+            work_key=work_key,
+            caller_agent=caller_agent,
+        )
+    )
+
+
+def emit_frontier_sdk_conductor_hop_lineage_stamped(
+    *,
+    dispatch_id: str,
+    predecessor_dispatch_id: str,
+    thread_id: str,
+    hop_seq: int,
+    hop_admitted_by: str,
+) -> None:
+    emit_frontier_event(
+        FrontierSdkConductorHopLineageStamped(
+            dispatch_id=dispatch_id,
+            predecessor_dispatch_id=predecessor_dispatch_id,
+            thread_id=thread_id,
+            hop_seq=hop_seq,
+            hop_admitted_by=hop_admitted_by,
         )
     )
 

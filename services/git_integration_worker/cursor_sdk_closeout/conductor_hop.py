@@ -622,6 +622,23 @@ async def post_conductor_hop_team_dispatch(
     return True, payload
 
 
+def _mission_park_blocks_hop(row: dict[str, Any]) -> bool:
+    from services.git_integration_worker.cursor_sdk_conductor_park_gate import (
+        mission_park_state,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        return (
+            mission_park_state(
+                conn,
+                work_key=str(row.get("work_key") or "") or None,
+                thread_id=str(row.get("thread_id") or "") or None,
+            )
+            is not None
+        )
+
+
 async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     """Evaluate ``hop_owed`` and POST successor admit when due (after terminal)."""
     row = _load_row(dispatch_id)
@@ -629,6 +646,9 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
         return
     if not _is_conductor_row(row):
         _emit_hop_skipped(row, gate="not_conductor_row")
+        return
+    if _mission_park_blocks_hop(row):
+        _emit_hop_skipped(row, gate="mission_parked")
         return
     closeout_tokens = _closeout_tokens_from_row(row)
     _write_budget_authority(dispatch_id, row)
@@ -656,11 +676,16 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
         rec = _record_data(row)
         if hop_body_build_refused(row, rec):
             gate = SKIP_GATE_NEXT_ADMIT_BLOCKED
+        elif not str(rec.get("summoning_thread_id") or "").strip():
+            gate = "summoning_unresolved"
         elif not _resolve_source_ref(row, rec):
             gate = "missing_source_ref"
         else:
             gate = "body_build_failed"
         _emit_hop_skipped(row, gate=gate)
+        return
+    if "dispatch_thread_id" not in body:
+        _emit_hop_skipped(row, gate="summoning_unresolved")
         return
     thread_id = str(row.get("thread_id") or "")
     hop_seq = int(body.get("hop_seq") or 1)
@@ -697,8 +722,8 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
         record_json,
         {
             "hop_admit_error": {
-                "error": error_text,
-                "status_code": detail.get("status_code"),
+                "last_error": error_text,
+                "last_status_code": detail.get("status_code"),
             }
         },
     )

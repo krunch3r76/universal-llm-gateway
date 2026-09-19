@@ -66,10 +66,58 @@ def _validate_hop_declared(value: Any) -> bool:
     return value
 
 
-def _validate_hop_admit_error(value: Any) -> dict[str, Any] | str:
-    if isinstance(value, (dict, str)):
-        return value
+def _validate_hop_admit_error(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        return {
+            "retryable": False,
+            "attempts": 1,
+            "last_status_code": None,
+            "last_error": value,
+        }
+    if isinstance(value, dict):
+        return _normalize_hop_admit_error(value)
     raise ValueError(f"hop_admit_error must be dict or str, got {value!r}")
+
+
+def _normalize_hop_admit_error(value: dict[str, Any]) -> dict[str, Any]:
+    status = value.get("last_status_code")
+    if status is None:
+        status = value.get("status_code")
+    retryable = value.get("retryable")
+    if retryable is None and status is not None:
+        retryable = int(status) >= 500 or int(status) == 429
+    if retryable is None:
+        retryable = False
+    attempts = value.get("attempts")
+    if not isinstance(attempts, int):
+        attempts = 1
+    last_error = value.get("last_error") or value.get("error") or ""
+    return {
+        "retryable": bool(retryable),
+        "attempts": attempts,
+        "last_status_code": status,
+        "last_error": str(last_error),
+    }
+
+
+def merge_hop_admit_error(
+    existing: dict[str, Any] | str | None,
+    patch: dict[str, Any],
+) -> dict[str, Any]:
+    """Merge admit-error counters — never overwrite prior attempts on sweep."""
+    base: dict[str, Any] = {}
+    if isinstance(existing, dict):
+        base = _normalize_hop_admit_error(existing)
+    elif isinstance(existing, str):
+        base = _normalize_hop_admit_error({"last_error": existing})
+    merged_patch = dict(patch)
+    if "error" in merged_patch and "last_error" not in merged_patch:
+        merged_patch["last_error"] = merged_patch.pop("error")
+    if "status_code" in merged_patch and "last_status_code" not in merged_patch:
+        merged_patch["last_status_code"] = merged_patch.pop("status_code")
+    attempt = int(base.get("attempts") or 0) + 1
+    normalized = _normalize_hop_admit_error({**base, **merged_patch, "attempts": attempt})
+    return normalized
 
 
 def hop_fields_from_record_json(record_json: str | None) -> dict[str, Any]:
@@ -144,13 +192,18 @@ def merge_hop_patch(record_json: str, patch: dict[str, Any]) -> str:
         elif key == _HOP_SUCCESSOR_KEY:
             data[key] = _validate_hop_id(value, field="hop_successor")
         elif key == _HOP_ADMIT_ERROR_KEY:
-            data[key] = _validate_hop_admit_error(value)
+            prior = data.get(_HOP_ADMIT_ERROR_KEY)
+            if isinstance(value, dict) and prior is not None:
+                data[key] = merge_hop_admit_error(prior, value)
+            else:
+                data[key] = _validate_hop_admit_error(value)
     return json.dumps(data, sort_keys=True, separators=(",", ":"))
 
 
 __all__ = [
     "HOP_REASONS",
     "hop_fields_from_record_json",
+    "merge_hop_admit_error",
     "merge_hop_patch",
     "stamp_hop_on_record_json",
     "validate_hop_reason",

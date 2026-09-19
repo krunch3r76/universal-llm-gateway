@@ -48,6 +48,7 @@ _DEFAULT_REACTOR_GRACE_S = 120.0
 _PARK_REASON_MISSION_CAP = "hop_budget_mission_cap"
 _PARK_REASON_CRASH_CAP = "hop_budget_crash_cap"
 _PARK_REASON_NO_PROGRESS_CAP = "hop_budget_no_progress_cap"
+PARK_REASON_ADMIT_RETRY_CAP = "hop_budget_admit_retry_cap"
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +128,8 @@ def list_mission_terminal_chain(
         rows = conn.execute(
             "SELECT * FROM cursor_sdk_dispatches "
             "WHERE work_key=? AND status IN ('completed','failed','cancelled') "
-            "ORDER BY COALESCE(json_extract(record_json, '$.hop_seq'), 0), "
+            "ORDER BY CASE WHEN json_extract(record_json, '$.hop_seq') IS NULL "
+            "THEN 1 ELSE 0 END, json_extract(record_json, '$.hop_seq'), "
             "COALESCE(terminal_at, queued_at)",
             (work_key,),
         ).fetchall()
@@ -313,6 +315,7 @@ __all__ = [
     "HOP_LAST_TERMINAL_AT_KEY",
     "HOP_PARK_REASON_KEY",
     "HOP_PARKED_KEY",
+    "PARK_REASON_ADMIT_RETRY_CAP",
     "HopBudgetConfig",
     "HopBudgetVerdict",
     "budget_ok_for_hop",

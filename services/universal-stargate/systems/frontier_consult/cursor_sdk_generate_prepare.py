@@ -103,6 +103,7 @@ async def prepare_cursor_sdk_generate(
     work_key: str | None = None,
     force: bool = False,
     force_reason: str | None = None,
+    hop_park_release: bool = False,
 ) -> PreparedCursorSdkHandle:
     """Validate, mint/reuse IDs, create pending thread; do not POST the worker."""
     from .generate_lane_ac_observer import (
@@ -548,4 +549,5 @@ async def prepare_cursor_sdk_generate(
         source_ref=source_ref,
         force=force,
         force_reason=force_reason,
+        hop_park_release=hop_park_release,
     )

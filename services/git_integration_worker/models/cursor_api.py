@@ -74,6 +74,7 @@ class CursorDispatchRequest(BaseModel):
     hop_reason: (
         Literal["spawn", "planned", "crash", "silent", "watchdog", "park_harvest"] | None
     ) = None
+    hop_park_release: bool = False
 
     @model_validator(mode="after")
     def _hop_triplet_consistency(self) -> CursorDispatchRequest:

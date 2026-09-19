@@ -112,14 +112,17 @@ def _terminal_row(
     dispatch_id: str = "pred-hop-1",
     closeout_tokens: list[str] | None = None,
     terminal_status: str = "completed",
+    summoning_thread_id: str | None = None,
 ) -> dict:
     req = _req(dispatch_id=dispatch_id)
     _admit_conductor(ledger, req)
+    patch: dict = {}
     if closeout_tokens is not None:
-        ledger.merge_record_json(
-            dispatch_id=dispatch_id,
-            patch={"closeout_stop_tokens": closeout_tokens},
-        )
+        patch["closeout_stop_tokens"] = closeout_tokens
+    if summoning_thread_id:
+        patch["summoning_thread_id"] = summoning_thread_id
+    if patch:
+        ledger.merge_record_json(dispatch_id=dispatch_id, patch=patch)
     ledger.mark_terminal(dispatch_id=dispatch_id, terminal_status=terminal_status)
     with ledger._connect() as conn:
         row = conn.execute(
@@ -439,7 +442,7 @@ def test_merge_uses_outcome_body_not_json_envelope() -> None:
 @pytest.mark.asyncio
 async def test_maybe_fire_reactor_stamps_successor_on_admit() -> None:
     ledger = CursorDispatchLedger.instance()
-    _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    _terminal_row(ledger, closeout_tokens=["ROW_HOP"], summoning_thread_id="9638")
     with patch(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
         AsyncMock(return_value=(True, {"dispatch_id": "succ-hop-2"})),
@@ -457,7 +460,7 @@ async def test_maybe_fire_reactor_stamps_successor_on_admit() -> None:
 async def test_reactor_exception_does_not_block_second_hop_attempt() -> None:
     """R-4: reactor POST failure is recorded; idempotent re-entry still works."""
     ledger = CursorDispatchLedger.instance()
-    _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    _terminal_row(ledger, closeout_tokens=["ROW_HOP"], summoning_thread_id="9638")
     with patch(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
         AsyncMock(
@@ -511,7 +514,7 @@ async def test_maybe_fire_emits_skipped_when_not_conductor() -> None:
 @pytest.mark.asyncio
 async def test_maybe_fire_reactor_stamps_admit_error_on_failure() -> None:
     ledger = CursorDispatchLedger.instance()
-    _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    _terminal_row(ledger, closeout_tokens=["ROW_HOP"], summoning_thread_id="9638")
     with patch(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
         AsyncMock(return_value=(False, {"status_code": 503, "error": "down"})),
@@ -706,7 +709,7 @@ async def test_ac2_five_terminals_zero_posts_while_external_gate_live() -> None:
 @pytest.mark.asyncio
 async def test_ac8_probe_down_no_gate_owed_hop_proceeds() -> None:
     ledger = CursorDispatchLedger.instance()
-    _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    _terminal_row(ledger, closeout_tokens=["ROW_HOP"], summoning_thread_id="9638")
     ledger.merge_record_json(
         dispatch_id="pred-hop-1",
         patch={"closeout_harvest_owed": False},

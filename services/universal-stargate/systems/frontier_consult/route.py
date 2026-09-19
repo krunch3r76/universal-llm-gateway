@@ -542,6 +542,12 @@ async def _dispatch(
 # ---- dispatch-surface-split Phase 1: op-discriminated routes ----
 
 
+def hop_park_release_requested(generation_options: dict[str, Any] | None) -> bool:
+    """True when generation_options carries hop_park_release=true."""
+    opts = generation_options or {}
+    return bool(opts.get("hop_park_release"))
+
+
 @team_router.post("/dispatch", status_code=202, response_model=None)
 async def team_dispatch(
     body: TeamDispatchBody,

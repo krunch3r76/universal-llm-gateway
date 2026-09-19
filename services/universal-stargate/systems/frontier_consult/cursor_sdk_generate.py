@@ -131,6 +131,7 @@ async def _finish_prepared_dispatch(handle: PreparedCursorSdkHandle) -> dict[str
             source_ref=handle.source_ref,
             force=handle.force,
             force_reason=handle.force_reason,
+            hop_park_release=handle.hop_park_release,
         )
     else:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker_message(
@@ -274,6 +275,7 @@ async def dispatch_cursor_sdk_generate(
     work_key: str | None = None,
     force: bool = False,
     force_reason: str | None = None,
+    hop_park_release: bool = False,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -324,5 +326,6 @@ async def dispatch_cursor_sdk_generate(
         work_key=work_key,
         force=force,
         force_reason=force_reason,
+        hop_park_release=hop_park_release,
     )
     return await dispatch_prepared_cursor_sdk(handle)
