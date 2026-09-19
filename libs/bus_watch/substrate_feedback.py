@@ -26,6 +26,9 @@ _PYTEST_FAIL_SUMMARY_RE = re.compile(
     r"\d+\s+failed\b.*\bin\s+[\d.]+s",
     re.IGNORECASE,
 )
+_PYTEST_FAILED_LINE_RE = re.compile(r"^FAILED\s+", re.IGNORECASE)
+_PYTEST_ERROR_LINE_RE = re.compile(r"^E\s+")
+_PYTEST_CONTEXT_LINE_RE = re.compile(r"^>\s+")
 
 _FAILURE_SEMANTICS_RE = re.compile(
     r"(?:"
@@ -81,12 +84,43 @@ def _line_has_failure_semantics(line: str) -> bool:
     return _FAILURE_SEMANTICS_RE.search(line) is not None
 
 
+def _pytest_line_informativeness(line: str) -> int:
+    """Rank pytest failure lines within one event (higher = more informative)."""
+    if _PYTEST_FAILED_LINE_RE.match(line):
+        return 4
+    if _PYTEST_ERROR_LINE_RE.match(line):
+        return 3
+    if _PYTEST_CONTEXT_LINE_RE.match(line):
+        return 2
+    if _PYTEST_FAIL_SUMMARY_RE.search(line):
+        return 1
+    return 0
+
+
+def _collapse_pytest_findings(findings: list[str]) -> list[str]:
+    """Collapse line-scoped pytest output to one finding per failure event.
+
+    Same-event rule: ``FAILED path::test`` is the event anchor — one anchor, one
+    finding. When no ``FAILED`` line exists, ``>`` / ``E`` / run-summary lines
+    that all describe one failure block are merged by keeping the highest-ranked
+    line. Run-summary lines are dropped when any per-test ``FAILED`` line exists.
+    """
+    failed_lines = [line for line in findings if _PYTEST_FAILED_LINE_RE.match(line)]
+    if failed_lines:
+        return failed_lines
+
+    pytest_lines = [line for line in findings if _pytest_line_informativeness(line) > 0]
+    if not pytest_lines:
+        return findings
+    if len(pytest_lines) == 1:
+        return [pytest_lines[0]]
+    best = max(pytest_lines, key=_pytest_line_informativeness)
+    return [best]
+
+
 def _findings_from_closeout_json(payload: dict[str, Any]) -> list[str] | None:
     """Return findings from a structured closeout envelope, or ``None`` to fall through."""
     status = str(payload.get("status") or "").lower()
-    if status in {"failed", "blocked", "error"}:
-        summary = str(payload.get("summary") or status)
-        return [summary.strip()] if summary.strip() else [status]
 
     verification = payload.get("verification")
     failing: list[str] = []
@@ -104,9 +138,8 @@ def _findings_from_closeout_json(payload: dict[str, Any]) -> list[str] | None:
     if failing:
         return failing
 
-    if status == "partial":
-        summary = str(payload.get("summary") or "status:partial")
-        return [summary.strip()] if summary.strip() else ["status:partial"]
+    if status in {"failed", "blocked", "error", "partial"}:
+        return [status]
 
     if status == "complete":
         return []
@@ -140,10 +173,7 @@ def extract_substrate_findings(text: str | None) -> list[str]:
         cleaned = line.strip()
         if cleaned and cleaned not in findings:
             findings.append(cleaned)
-    summaries = [f for f in findings if _PYTEST_FAIL_SUMMARY_RE.search(f)]
-    if summaries:
-        return [summaries[-1]]
-    return findings
+    return _collapse_pytest_findings(findings)
 
 
 def resolve_substrate_feedback_entity_id(*, subject: str, body: str) -> str | None:

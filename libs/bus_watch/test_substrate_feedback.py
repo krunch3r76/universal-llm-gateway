@@ -62,7 +62,7 @@ def test_genuine_pytest_failure_yields_one_finding(tmp_path: Path) -> None:
     assert proc.returncode == 1, proc.stdout + proc.stderr
     findings = extract_substrate_findings(proc.stdout + "\n" + proc.stderr)
     assert len(findings) == 1
-    assert "failed" in findings[0].lower()
+    assert findings[0].startswith("FAILED ")
 
 
 def test_complete_json_closeout_with_warnings_verification_is_empty() -> None:
@@ -89,4 +89,4 @@ def test_partial_json_closeout_yields_finding() -> None:
     payload = {"schema_version": 1, "status": "partial", "summary": "dispatch auto-x"}
     findings = extract_substrate_findings(json.dumps(payload))
     assert len(findings) == 1
-    assert findings[0] == "dispatch auto-x"
+    assert findings[0] == "partial"
