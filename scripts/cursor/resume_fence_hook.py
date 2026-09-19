@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Cursor hook adapter for structural resume fence enforcement."""
+"""Cursor hook adapter for structural resume fence first-hop nudge.
+
+The house is undenied: this hook never returns ``permission=deny``.
+While a tab is ``armed``, bleed-class discovery tools get an
+``agent_message`` pointing at ``continuity(op=resume)``. Pour (``tape``),
+cortex, rename, and every other call stay allowed. ``sessionStart``
+drops the local marker so a Cursor restart actually unfences the tab.
+"""
 
 from __future__ import annotations
 
@@ -25,15 +32,7 @@ _DENIAL_FALLBACK = _MARKER_DIR / "denied-fallback.jsonl"
 _SOCK = os.environ.get("AGENT_BUS_SOCK", "/tmp/universal-protocol/agent-bus.sock")
 _MCP_YAML = Path.home() / ".gateway/mcp.yaml"
 _IDLE_S = int(os.environ.get("RESUME_FENCE_IDLE_S", "1800"))
-_UNCOVERED_TOOLS = frozenset({"Grep", "Glob", "SearchConversations", "GetDynamicTools"})
-_MCP_WRAPPER_TOOLS = frozenset({"CallDynamicTool", "call_mcp_tool", "Mcp", "mcp"})
-# preToolUse reports MCP tools as ``MCP:<tool_name>`` (cursor.com/docs/hooks);
-# beforeMCPExecution reports the bare name. read_set.mcp_allow rules are bare.
-_MCP_TOOL_PREFIX = "MCP:"
-
-
-class _HookDataError(Exception):
-    """Malformed marker/read_set — deny with hook_error telemetry."""
+_BLEED_TOOLS = frozenset({"Grep", "Glob", "SearchConversations", "GetDynamicTools"})
 
 
 def _agent_bus_token() -> str:
@@ -61,139 +60,19 @@ def _client() -> httpx.Client:
     )
 
 
-def _parse_tool_input(raw: Any) -> dict[str, Any]:
-    if isinstance(raw, dict):
-        tool_input = dict(raw)
-    elif isinstance(raw, str) and raw.strip():
-        try:
-            parsed = json.loads(raw)
-            tool_input = parsed if isinstance(parsed, dict) else {}
-        except json.JSONDecodeError:
-            return {}
-    else:
-        return {}
-
-    args_raw = tool_input.get("arguments")
-    inner: dict[str, Any] | None = None
-    if isinstance(args_raw, str) and args_raw.strip():
-        try:
-            parsed = json.loads(args_raw)
-            inner = parsed if isinstance(parsed, dict) else None
-        except json.JSONDecodeError:
-            inner = None
-    elif isinstance(args_raw, dict):
-        inner = args_raw
-
-    if inner:
-        for key, value in inner.items():
-            if key not in tool_input or tool_input[key] in (None, ""):
-                tool_input[key] = value
-    return tool_input
-
-
-def _coalesce_tool_payload(
-    tool_input: dict[str, Any],
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    """Merge MCP fields Cursor places on the payload root into tool_input (FIX-19)."""
-    merged = dict(tool_input)
-    for key in (
-        "namespace",
-        "toolName",
-        "name",
-        "tool",
-        "arguments",
-        "args",
-        "input",
-    ):
-        val = payload.get(key)
-        if val not in (None, "") and (
-            key not in merged or merged.get(key) in (None, "")
-        ):
-            merged[key] = val
-    nested = payload.get("input")
-    if isinstance(nested, dict):
-        for key, val in nested.items():
-            if val not in (None, "") and (
-                key not in merged or merged.get(key) in (None, "")
-            ):
-                merged[key] = val
-    elif isinstance(nested, str) and nested.strip():
-        try:
-            parsed = json.loads(nested)
-        except json.JSONDecodeError:
-            parsed = None
-        if isinstance(parsed, dict):
-            for key, val in parsed.items():
-                if val not in (None, "") and (
-                    key not in merged or merged.get(key) in (None, "")
-                ):
-                    merged[key] = val
-    return merged
-
-
-def _scoped_thread_match(rule_thread: Any, tool_input: dict[str, Any]) -> bool:
-    if rule_thread is None or rule_thread == "":
-        return True
-    actual = tool_input.get("thread")
-    if actual is None or actual == "":
-        return False
-    return str(actual) == str(rule_thread)
-
-
-def _mcp_call_allowed(
-    *,
-    tool_name: str,
-    tool_input: dict[str, Any],
-    mcp_allow: list[dict[str, Any]],
-) -> bool:
-    inner_tool = str(tool_input.get("tool") or "")
-    inner_op = str(tool_input.get("op") or "")
-    op_candidates = {inner_op, inner_tool, tool_name}
-    for rule in mcp_allow:
-        rule_tool = str(rule.get("tool") or "")
-        if rule_tool not in {tool_name, inner_tool}:
-            continue
-        ops = rule.get("ops") or []
-        if ops and not any(str(op) in ops for op in op_candidates if op):
-            continue
-        if not _scoped_thread_match(rule.get("thread"), tool_input):
-            continue
-        paths = rule.get("paths")
-        if paths:
-            path = str(tool_input.get("path") or "")
-            if isinstance(paths, list) and path not in paths:
-                continue
-        ids = rule.get("ids")
-        id_prefix = rule.get("id_prefix")
-        entity_id = str(
-            tool_input.get("entity_id") or tool_input.get("id") or ""
-        )
-        if id_prefix:
-            if not entity_id.startswith(str(id_prefix)):
-                continue
-        elif ids:
-            if isinstance(ids, list) and entity_id not in ids:
-                continue
-        return True
-    return False
-
-
 def _first_hop_message(*, root: str, fence_id: str, transcript_id: str | None) -> str:
     tid_suffix = ""
     if transcript_id:
         tid_suffix = f", transcript_id={transcript_id}"
-    # continuity is an overflow tool on user-vortex-code (canonical.yaml
-    # surface_primary_domains.code omits it) — reachable only via dispatch.
     return (
-        f"resume fence {fence_id}: call continuity(op=resume, thread={root}{tid_suffix}) "
-        f'via user-vortex-code dispatch(tool="continuity", arguments=\'{{"op": "resume", '
-        f'"thread": "{root}"}}\') — no GetDynamicTools / tool_search; '
-        f"durable send must carry fence_id={fence_id}"
+        f"resume fence {fence_id}: first hop is continuity(op=resume, "
+        f"thread={root}{tid_suffix}) via user-vortex-code "
+        f'dispatch(tool="continuity", arguments=\'{{"op": "resume", '
+        f'"thread": "{root}"}}\') — pour is tape; this hook does not deny'
     )
 
 
-def _deny(
+def _nudge(
     *,
     fence_id: str,
     root: str,
@@ -201,184 +80,10 @@ def _deny(
     journal: dict[str, str],
 ) -> dict[str, Any]:
     return {
-        "permission": "deny",
+        "permission": "allow",
         "agent_message": agent_message,
         "journal": journal,
     }
-
-
-def _readable(marker: dict[str, Any]) -> dict[str, Any]:
-    read_set_raw = marker.get("read_set") or {}
-    if not isinstance(read_set_raw, dict):
-        raise _HookDataError("read_set is not a dict")
-    readable = read_set_raw.get("readable") or {}
-    if not isinstance(readable, dict):
-        raise _HookDataError("read_set.readable is not a dict")
-    return readable
-
-
-def _mcp_allow_tool_names(mcp_allow: list[dict[str, Any]]) -> set[str]:
-    return {str(rule.get("tool") or "") for rule in mcp_allow if rule.get("tool")}
-
-
-def _decide_mcp(
-    *,
-    fence_id: str,
-    root: str,
-    transcript_id: str | None,
-    tool_name: str,
-    tool_input: dict[str, Any],
-    readable: dict[str, Any],
-) -> dict[str, Any]:
-    mcp_allow = readable.get("mcp_allow") or []
-    if _mcp_call_allowed(
-        tool_name=tool_name,
-        tool_input=tool_input,
-        mcp_allow=mcp_allow,
-    ):
-        return {"permission": "allow"}
-    return _deny(
-        fence_id=fence_id,
-        root=root,
-        agent_message=_first_hop_message(
-            root=root,
-            fence_id=fence_id,
-            transcript_id=transcript_id,
-        ),
-        journal={
-            "surface": "mcp",
-            "tool": tool_name,
-            "op": str(tool_input.get("op") or tool_input.get("tool") or ""),
-            "target": json.dumps(tool_input)[:500],
-            "reason": "not_in_mcp_allow",
-        },
-    )
-
-
-def _resolve_mcp_tool(
-    tool_name: str,
-    tool_input: dict[str, Any],
-    *,
-    mcp_allow: list[dict[str, Any]],
-) -> tuple[str, dict[str, Any]]:
-    if tool_name in _MCP_WRAPPER_TOOLS:
-        return _unwrap_dynamic_tool(tool_name, tool_input)
-    if tool_name in _mcp_allow_tool_names(mcp_allow):
-        return tool_name, tool_input
-    return _unwrap_dynamic_tool(tool_name, tool_input)
-
-
-def _decide_mcp_hop(
-    *,
-    fence_id: str,
-    root: str,
-    transcript_id: str | None,
-    tool_name: str,
-    tool_input: dict[str, Any],
-    payload: dict[str, Any],
-    readable: dict[str, Any],
-) -> dict[str, Any]:
-    """Resolve MCP wrapper/direct tool names and enforce read_set."""
-    mcp_allow = readable.get("mcp_allow") or []
-    merged = _coalesce_tool_payload(tool_input, payload)
-    bare_name = tool_name.removeprefix(_MCP_TOOL_PREFIX)
-    mcp_name, mcp_input = _resolve_mcp_tool(bare_name, merged, mcp_allow=mcp_allow)
-    # FIX-19b: wrapper shells may carry {} until execution time.
-    if mcp_name in _MCP_WRAPPER_TOOLS:
-        return {"permission": "allow"}
-    verdict = _decide_mcp(
-        fence_id=fence_id,
-        root=root,
-        transcript_id=transcript_id,
-        tool_name=mcp_name,
-        tool_input=mcp_input,
-        readable=readable,
-    )
-    # FIX-19c: beforeMCPExecution may register tool_name=continuity with args
-    # only at execution time (preToolUse already allowed the hop).
-    if (
-        verdict.get("permission") == "deny"
-        and mcp_name == "continuity"
-        and verdict.get("journal", {}).get("reason") == "not_in_mcp_allow"
-        and not str(mcp_input.get("op") or "")
-    ):
-        return {"permission": "allow"}
-    if verdict.get("permission") == "deny" and tool_name != bare_name:
-        # Journal the wire name as observed so the firing event stays diagnosable.
-        verdict["journal"]["tool"] = tool_name
-    return verdict
-
-
-def _decide_shell(
-    *,
-    fence_id: str,
-    readable: dict[str, Any],
-    command: str,
-) -> dict[str, Any]:
-    if readable.get("shell"):
-        return {"permission": "allow"}
-    return _deny(
-        fence_id=fence_id,
-        root="",
-        agent_message=f"resume fence {fence_id}: shell denied during resume turn",
-        journal={
-            "surface": "shell",
-            "tool": "shell",
-            "op": "exec",
-            "target": command[:500],
-            "reason": "shell_false",
-        },
-    )
-
-
-def _decide_read(
-    *,
-    fence_id: str,
-    path: str,
-    readable: dict[str, Any],
-) -> dict[str, Any]:
-    allowed_paths = readable.get("fs_paths") or []
-    cortex_uris = readable.get("cortex_uris") or []
-    if path in allowed_paths or any(uri in path for uri in cortex_uris):
-        return {"permission": "allow"}
-    return _deny(
-        fence_id=fence_id,
-        root="",
-        agent_message=f"resume fence {fence_id}: file read denied — {path}",
-        journal={
-            "surface": "file",
-            "tool": "read_file",
-            "op": "read",
-            "target": path,
-            "reason": "path_not_in_read_set",
-        },
-    )
-
-
-def _decide_uncovered_tool(
-    *,
-    fence_id: str,
-    root: str,
-    transcript_id: str | None,
-    tool_name: str,
-    tool_input: dict[str, Any],
-) -> dict[str, Any]:
-    return _deny(
-        fence_id=fence_id,
-        root=root,
-        agent_message=_first_hop_message(
-            root=root,
-            fence_id=fence_id,
-            transcript_id=transcript_id,
-        ),
-        journal={
-            "surface": "tool",
-            "tool": tool_name,
-            "op": str(tool_input.get("op") or ""),
-            "target": json.dumps(tool_input)[:500],
-            "reason": "tool_not_in_read_set",
-        },
-    )
 
 
 def decide(
@@ -388,126 +93,48 @@ def decide(
     marker: dict[str, Any] | None,
     fold: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Pure verdict function for unit tests."""
+    """Pure verdict: allow always; nudge bleed tools only while armed."""
     if event == "beforeSubmitPrompt":
         return {"continue": True}
+    if event == "sessionStart":
+        return {"delete_marker": True}
 
     if marker is None:
         return {"permission": "allow"}
 
-    state = str((fold or {}).get("state") or marker.get("state") or "")
-    if state in {"released", "expired"}:
-        return {"permission": "allow", "delete_marker": True}
-
-    fence_id = str(marker.get("fence_id") or "")
-    root = str(marker.get("root") or marker.get("root_thread") or "")
-    transcript_id = str(marker.get("transcript_id") or "")
-
     try:
-        readable = _readable(marker)
+        state = str((fold or {}).get("state") or marker.get("state") or "")
+        if state in {"released", "expired"}:
+            return {"permission": "allow", "delete_marker": True}
 
-        if event == "beforeMCPExecution":
+        if state == "armed" and event in {"preToolUse", "beforeMCPExecution"}:
             tool_name = str(payload.get("tool_name") or "")
-            tool_input = _parse_tool_input(
-                payload.get("tool_input") or payload.get("arguments")
-            )
-            return _decide_mcp_hop(
-                fence_id=fence_id,
-                root=root,
-                transcript_id=transcript_id or None,
-                tool_name=tool_name,
-                tool_input=tool_input,
-                payload=payload,
-                readable=readable,
-            )
-
-        if event == "beforeShellExecution":
-            command = str(payload.get("command") or "")
-            return _decide_shell(
-                fence_id=fence_id,
-                readable=readable,
-                command=command,
-            )
-
-        if event == "beforeReadFile":
-            path = str(payload.get("file_path") or payload.get("path") or "")
-            return _decide_read(fence_id=fence_id, path=path, readable=readable)
-
-        if event == "preToolUse":
-            tool_name = str(payload.get("tool_name") or "")
-            tool_input = _parse_tool_input(
-                payload.get("tool_input") or payload.get("arguments")
-            )
-            if tool_name in _UNCOVERED_TOOLS:
-                return _decide_uncovered_tool(
+            if tool_name in _BLEED_TOOLS:
+                fence_id = str(marker.get("fence_id") or "")
+                root = str(marker.get("root") or marker.get("root_thread") or "")
+                transcript_id = str(marker.get("transcript_id") or "") or None
+                tool_input = payload.get("tool_input")
+                if not isinstance(tool_input, dict):
+                    tool_input = {}
+                return _nudge(
                     fence_id=fence_id,
                     root=root,
-                    transcript_id=transcript_id or None,
-                    tool_name=tool_name,
-                    tool_input=tool_input,
+                    agent_message=_first_hop_message(
+                        root=root,
+                        fence_id=fence_id,
+                        transcript_id=transcript_id,
+                    ),
+                    journal={
+                        "surface": "tool",
+                        "tool": tool_name,
+                        "op": str(tool_input.get("op") or ""),
+                        "target": json.dumps(tool_input)[:500],
+                        "reason": "bleed_nudge",
+                    },
                 )
-            if tool_name in {"Shell", "run_terminal_cmd"}:
-                command = str(
-                    tool_input.get("command")
-                    or payload.get("command")
-                    or ""
-                )
-                return _decide_shell(
-                    fence_id=fence_id,
-                    readable=readable,
-                    command=command,
-                )
-            if tool_name in {"Read", "read_file"}:
-                path = str(
-                    tool_input.get("path")
-                    or tool_input.get("file_path")
-                    or payload.get("file_path")
-                    or ""
-                )
-                return _decide_read(fence_id=fence_id, path=path, readable=readable)
-            if tool_name in _MCP_WRAPPER_TOOLS or payload.get("tool_input"):
-                return _decide_mcp_hop(
-                    fence_id=fence_id,
-                    root=root,
-                    transcript_id=transcript_id or None,
-                    tool_name=tool_name,
-                    tool_input=tool_input,
-                    payload=payload,
-                    readable=readable,
-                )
-            return {"permission": "allow"}
-
-        if event == "sessionStart":
-            return {}
-
-    except _HookDataError as exc:
-        return _deny(
-            fence_id=fence_id,
-            root=root,
-            agent_message=f"resume fence {fence_id}: hook data error — {exc}",
-            journal={
-                "surface": "hook",
-                "tool": event,
-                "op": "error",
-                "target": str(exc)[:500],
-                "reason": "hook_error",
-            },
-        )
+        return {"permission": "allow"}
     except Exception:
-        return _deny(
-            fence_id=fence_id,
-            root=root,
-            agent_message=f"resume fence {fence_id}: fail-closed on hook error",
-            journal={
-                "surface": "hook",
-                "tool": event,
-                "op": "error",
-                "target": "",
-                "reason": "fail_closed",
-            },
-        )
-
-    return {"permission": "allow"}
+        return {"permission": "allow"}
 
 
 def _marker_path(conversation_id: str) -> Path:
@@ -611,39 +238,14 @@ def _arm_fence(
         return None
 
 
-def _unwrap_dynamic_tool(
-    tool_name: str,
-    tool_input: dict[str, Any],
-) -> tuple[str, dict[str, Any]]:
-    if tool_name not in _MCP_WRAPPER_TOOLS:
-        return tool_name, tool_input
-    inner_name = str(
-        tool_input.get("toolName")
-        or tool_input.get("tool")
-        or tool_input.get("name")
-        or tool_input.get("tool_name")
-        or tool_name
-    )
-    inner_raw = (
-        tool_input.get("arguments")
-        or tool_input.get("args")
-        or tool_input.get("input")
-        or {}
-    )
-    if isinstance(inner_raw, str) and inner_raw.strip():
-        try:
-            inner_raw = json.loads(inner_raw)
-        except json.JSONDecodeError:
-            inner_raw = {}
-    if not isinstance(inner_raw, dict):
-        inner_raw = {}
-    merged = _parse_tool_input({"tool": inner_name, "arguments": inner_raw})
-    return inner_name, merged
-
-
 def handle_event(event: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Dispatch one hook event."""
+    """Route one Cursor hook event, persist/clear the tab marker, and journal nudges."""
     conversation_id = str(payload.get("conversation_id") or "")
+
+    if event == "sessionStart":
+        if conversation_id:
+            _delete_marker(conversation_id)
+        return {}
 
     if event == "beforeSubmitPrompt":
         prompt = str(payload.get("prompt") or "")
@@ -686,15 +288,15 @@ def handle_event(event: str, payload: dict[str, Any]) -> dict[str, Any]:
         _delete_marker(conversation_id)
         verdict = {"permission": "allow"}
 
-    if verdict.get("permission") == "deny" and marker:
-        journal = verdict.pop("journal", None)
-        if journal and marker.get("fence_id"):
-            _journal_denied(str(marker["fence_id"]), journal)
+    journal = verdict.pop("journal", None)
+    if journal and marker and marker.get("fence_id"):
+        _journal_denied(str(marker["fence_id"]), journal)
 
     return verdict
 
 
 def main() -> int:
+    """Read one hook payload from stdin and emit the JSON verdict on stdout."""
     parser = argparse.ArgumentParser(description="Resume fence Cursor hook")
     parser.add_argument("--event", required=True)
     args = parser.parse_args()

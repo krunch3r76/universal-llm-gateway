@@ -1,506 +1,183 @@
-"""Unit tests for resume_fence_hook.decide()."""
+"""Unit tests for resume_fence_hook — undenied substrate, bleed nudge only."""
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
-from scripts.cursor.resume_fence_hook import decide
+from scripts.cursor.resume_fence_hook import decide, handle_event
 
 pytestmark = pytest.mark.offline
 
-_MARKER = {
+_ARMED = {
     "fence_id": "rf-deadbeef",
-    "root": "10223",
-    "state": "poured",
-    "read_set": {
-        "readable": {
-            "shell": False,
-            "fs_paths": [],
-            "cortex_uris": ["cortex://notes/system/threads/10223-continuity.md"],
-            "mcp_allow": [
-                {
-                    "tool": "continuity",
-                    "ops": ["resume", "status", "resume_release"],
-                    "thread": "10223",
-                },
-                {
-                    "tool": "agent_bus_read",
-                    "ops": ["get", "thread_get"],
-                    "thread": "10223",
-                },
-                {
-                    "tool": "fs",
-                    "ops": ["read"],
-                    "paths": ["cortex://notes/system/threads/10223-continuity.md"],
-                },
-                {
-                    "tool": "cortex",
-                    "ops": ["entity_get"],
-                    "ids": ["document:10223-continuity"],
-                },
-                {
-                    "tool": "retrieve",
-                    "id_prefix": "rs_",
-                },
-            ],
-        }
-    },
+    "root": "11738",
+    "state": "armed",
+    "transcript_id": "84ec9c52-99e3-4e2b-af35-8a56949c6498",
 }
 
-_WIRE_GET = json.dumps({"tool": "get", "arguments": '{"thread": 10223}'})
-_WIRE_GET_FOREIGN = json.dumps({"tool": "get", "arguments": '{"thread": 9796}'})
-_WIRE_FETCH = json.dumps({"tool": "fetch", "arguments": '{"thread": 10223}'})
-_WIRE_FS_CARD = json.dumps(
-    {
-        "tool": "fs",
-        "arguments": json.dumps(
-            {
-                "op": "read",
-                "path": "cortex://notes/system/threads/10223-continuity.md",
-            }
-        ),
-    }
+_WIRE_TAPE = json.dumps(
+    {"tool": "tape", "arguments": '{"thread": 11738, "harvest": true}'}
 )
-_WIRE_FS_FOREIGN = json.dumps(
-    {
-        "tool": "fs",
-        "arguments": json.dumps(
-            {
-                "op": "read",
-                "path": "cortex://notes/system/threads/9796-continuity.md",
-            }
-        ),
-    }
-)
-_WIRE_ENTITY = json.dumps(
-    {
-        "tool": "entity_get",
-        "arguments": json.dumps({"entity_id": "document:10223-continuity"}),
-    }
-)
-
-_WIRE_FS_DISPATCH = json.dumps(
-    {
-        "tool": "read",
-        "arguments": json.dumps(
-            {
-                "op": "read",
-                "path": "cortex://notes/system/threads/10223-continuity.md",
-            }
-        ),
-    }
+_WIRE_GET = json.dumps({"tool": "get", "arguments": '{"thread": 11738}'})
+_WIRE_CORTEX = json.dumps(
+    {"tool": "search", "arguments": '{"query": "music-lexicon-accord"}'}
 )
 
 
-def test_no_marker_allows_mcp() -> None:
+def test_no_marker_allows() -> None:
     verdict = decide(
         event="beforeMCPExecution",
-        payload={"tool_name": "agent_bus_read", "tool_input": {"tool": "fetch_unread"}},
+        payload={"tool_name": "agent_bus_read", "tool_input": _WIRE_TAPE},
         marker=None,
         fold=None,
     )
     assert verdict["permission"] == "allow"
+    assert "agent_message" not in verdict
 
 
-def test_fetch_denied_when_poured() -> None:
+def test_armed_tape_allowed_no_nudge() -> None:
+    """84ec9c52: pour is tape — hook must not deny or scold it."""
     verdict = decide(
         event="beforeMCPExecution",
-        payload={"tool_name": "agent_bus_read", "tool_input": _WIRE_FETCH},
-        marker=_MARKER,
-        fold={"state": "poured"},
-    )
-    assert verdict["permission"] == "deny"
-
-
-def test_wire_get_allowed_foreign_thread_denied() -> None:
-    allow = decide(
-        event="beforeMCPExecution",
-        payload={"tool_name": "agent_bus_read", "tool_input": _WIRE_GET},
-        marker=_MARKER,
-        fold={"state": "poured"},
-    )
-    assert allow["permission"] == "allow"
-    deny = decide(
-        event="beforeMCPExecution",
-        payload={"tool_name": "agent_bus_read", "tool_input": _WIRE_GET_FOREIGN},
-        marker=_MARKER,
-        fold={"state": "poured"},
-    )
-    assert deny["permission"] == "deny"
-
-
-def test_continuity_resume_allowed_wire_shape() -> None:
-    verdict = decide(
-        event="beforeMCPExecution",
-        payload={
-            "tool_name": "continuity",
-            "tool_input": json.dumps(
-                {
-                    "tool": "continuity",
-                    "arguments": json.dumps({"op": "resume", "thread": "10223"}),
-                }
-            ),
-        },
-        marker=_MARKER,
-        fold={"state": "poured"},
+        payload={"tool_name": "agent_bus_read", "tool_input": _WIRE_TAPE},
+        marker=_ARMED,
+        fold={"state": "armed"},
     )
     assert verdict["permission"] == "allow"
+    assert "agent_message" not in verdict
 
 
-def test_fs_card_uri_wire_shape_allowed_foreign_denied() -> None:
-    allow = decide(
-        event="beforeMCPExecution",
-        payload={"tool_name": "fs", "tool_input": _WIRE_FS_CARD},
-        marker=_MARKER,
-        fold={"state": "poured"},
-    )
-    assert allow["permission"] == "allow"
-    deny = decide(
-        event="beforeMCPExecution",
-        payload={"tool_name": "fs", "tool_input": _WIRE_FS_FOREIGN},
-        marker=_MARKER,
-        fold={"state": "poured"},
-    )
-    assert deny["permission"] == "deny"
-
-
-def test_cortex_entity_get_wire_shape_allowed() -> None:
-    verdict = decide(
-        event="beforeMCPExecution",
-        payload={"tool_name": "cortex", "tool_input": _WIRE_ENTITY},
-        marker=_MARKER,
-        fold={"state": "poured"},
-    )
-    assert verdict["permission"] == "allow"
-
-
-def test_fs_dispatch_wire_shape_allowed() -> None:
-    verdict = decide(
-        event="beforeMCPExecution",
-        payload={"tool_name": "fs", "tool_input": _WIRE_FS_DISPATCH},
-        marker=_MARKER,
-        fold={"state": "poured"},
-    )
-    assert verdict["permission"] == "allow"
-
-
-def test_pre_tool_use_grep_denied() -> None:
+def test_armed_pretool_tape_prefixed_allowed() -> None:
     verdict = decide(
         event="preToolUse",
         payload={
-            "tool_name": "Grep",
-            "tool_input": {"pattern": "treasury-scout"},
+            "tool_name": "MCP:agent_bus_read",
+            "tool_input": {"tool": "tape", "arguments": {"thread": "11738"}},
         },
-        marker=_MARKER,
+        marker=_ARMED,
+        fold={"state": "armed"},
+    )
+    assert verdict["permission"] == "allow"
+    assert "agent_message" not in verdict
+
+
+def test_armed_cortex_search_allowed() -> None:
+    verdict = decide(
+        event="beforeMCPExecution",
+        payload={"tool_name": "cortex", "tool_input": _WIRE_CORTEX},
+        marker=_ARMED,
+        fold={"state": "armed"},
+    )
+    assert verdict["permission"] == "allow"
+    assert "agent_message" not in verdict
+
+
+def test_armed_rename_chat_allowed() -> None:
+    verdict = decide(
+        event="preToolUse",
+        payload={
+            "tool_name": "MCP:rename_chat",
+            "tool_input": {"title": "11738 music-lexicon-accord"},
+        },
+        marker=_ARMED,
+        fold={"state": "armed"},
+    )
+    assert verdict["permission"] == "allow"
+    assert "agent_message" not in verdict
+
+
+def test_armed_read_overflow_allowed() -> None:
+    verdict = decide(
+        event="preToolUse",
+        payload={
+            "tool_name": "Read",
+            "tool_input": {
+                "path": "/home/io/.cursor/projects/mnt-torus-projects-universal-llm-gateway/agent-tools/overflow.txt"
+            },
+        },
+        marker=_ARMED,
+        fold={"state": "armed"},
+    )
+    assert verdict["permission"] == "allow"
+
+
+def test_armed_get_allowed() -> None:
+    verdict = decide(
+        event="beforeMCPExecution",
+        payload={"tool_name": "agent_bus_read", "tool_input": _WIRE_GET},
+        marker=_ARMED,
+        fold={"state": "armed"},
+    )
+    assert verdict["permission"] == "allow"
+
+
+def test_armed_grep_nudges_but_allows() -> None:
+    verdict = decide(
+        event="preToolUse",
+        payload={"tool_name": "Grep", "tool_input": {"pattern": "deaf ear"}},
+        marker=_ARMED,
+        fold={"state": "armed"},
+    )
+    assert verdict["permission"] == "allow"
+    assert "continuity(op=resume" in verdict["agent_message"]
+    assert verdict["journal"]["reason"] == "bleed_nudge"
+    assert verdict["journal"]["tool"] == "Grep"
+
+
+def test_armed_get_dynamic_tools_nudges_but_allows() -> None:
+    verdict = decide(
+        event="beforeMCPExecution",
+        payload={"tool_name": "GetDynamicTools", "tool_input": {}},
+        marker=_ARMED,
+        fold={"state": "armed"},
+    )
+    assert verdict["permission"] == "allow"
+    assert "agent_message" in verdict
+    assert verdict["journal"]["reason"] == "bleed_nudge"
+
+
+def test_poured_grep_silent_allow() -> None:
+    verdict = decide(
+        event="preToolUse",
+        payload={"tool_name": "Grep", "tool_input": {"pattern": "x"}},
+        marker={**_ARMED, "state": "poured"},
         fold={"state": "poured"},
     )
-    assert verdict["permission"] == "deny"
-    assert verdict["journal"]["surface"] == "tool"
-    assert verdict["journal"]["tool"] == "Grep"
+    assert verdict["permission"] == "allow"
+    assert "agent_message" not in verdict
 
 
 def test_released_allows_and_deletes_marker() -> None:
     verdict = decide(
         event="beforeMCPExecution",
-        payload={"tool_name": "agent_bus_read", "tool_input": _WIRE_FETCH},
-        marker=_MARKER,
+        payload={"tool_name": "agent_bus_read", "tool_input": _WIRE_TAPE},
+        marker=_ARMED,
         fold={"state": "released"},
     )
     assert verdict["permission"] == "allow"
     assert verdict.get("delete_marker") is True
 
 
-def test_retrieve_rs_id_allowed_foreign_id_denied() -> None:
-    allow = decide(
-        event="beforeMCPExecution",
-        payload={
-            "tool_name": "retrieve",
-            "tool_input": json.dumps({"id": "rs_34c5e0"}),
-        },
-        marker=_MARKER,
-        fold={"state": "poured"},
-    )
-    assert allow["permission"] == "allow"
-    deny = decide(
-        event="beforeMCPExecution",
-        payload={
-            "tool_name": "retrieve",
-            "tool_input": json.dumps({"id": "document:9796-continuity"}),
-        },
-        marker=_MARKER,
-        fold={"state": "poured"},
-    )
-    assert deny["permission"] == "deny"
-
-
-def test_call_dynamic_tool_retrieve_allowed() -> None:
+def test_malformed_marker_still_allows() -> None:
     verdict = decide(
         event="beforeMCPExecution",
-        payload={
-            "tool_name": "CallDynamicTool",
-            "tool_input": json.dumps(
-                {
-                    "namespace": "project-0-universal-llm-gateway-vortex-code",
-                    "toolName": "retrieve",
-                    "arguments": {"id": "rs_34c5e0"},
-                }
-            ),
-        },
-        marker=_MARKER,
-        fold={"state": "poured"},
-    )
-    assert verdict["permission"] == "allow"
-
-
-def test_get_dynamic_tools_denied() -> None:
-    verdict = decide(
-        event="beforeMCPExecution",
-        payload={"tool_name": "GetDynamicTools", "tool_input": {}},
-        marker={**_MARKER, "transcript_id": "tab-abc"},
-        fold={"state": "armed"},
-    )
-    assert verdict["permission"] == "deny"
-    assert "GetDynamicTools" in verdict["agent_message"] or "server-primary" in verdict["agent_message"]
-
-
-def test_pre_tool_use_mcp_continuity_resume_allowed() -> None:
-    for fold_state in ("armed", "poured"):
-        verdict = decide(
-            event="preToolUse",
-            payload={
-                "tool_name": "Mcp",
-                "tool_input": {
-                    "tool": "continuity",
-                    "arguments": {"op": "resume", "thread": "10223"},
-                },
-            },
-            marker={**_MARKER, "transcript_id": "tab-90489d56"},
-            fold={"state": fold_state},
-        )
-        assert verdict["permission"] == "allow", fold_state
-
-
-def test_pre_tool_use_mcp_continuity_foreign_thread_denied() -> None:
-    verdict = decide(
-        event="preToolUse",
-        payload={
-            "tool_name": "Mcp",
-            "tool_input": {
-                "tool": "continuity",
-                "arguments": {"op": "resume", "thread": "9796"},
-            },
-        },
-        marker={**_MARKER, "transcript_id": "tab-90489d56"},
-        fold={"state": "poured"},
-    )
-    assert verdict["permission"] == "deny"
-
-
-def test_call_dynamic_tool_continuity_resume_allowed() -> None:
-    verdict = decide(
-        event="beforeMCPExecution",
-        payload={
-            "tool_name": "CallDynamicTool",
-            "tool_input": json.dumps(
-                {
-                    "namespace": "user-vortex-code",
-                    "toolName": "continuity",
-                    "arguments": {
-                        "op": "resume",
-                        "thread": "10223",
-                        "transcript_id": "tab-abc",
-                    },
-                }
-            ),
-        },
-        marker={**_MARKER, "transcript_id": "tab-abc"},
+        payload={"tool_name": "fs", "tool_input": {}},
+        marker={"fence_id": "rf-x", "read_set": "not-a-dict"},
         fold={"state": "armed"},
     )
     assert verdict["permission"] == "allow"
 
 
-def test_pre_tool_use_call_dynamic_tool_continuity_resume_allowed() -> None:
-    payload = {
-        "tool_name": "CallDynamicTool",
-        "tool_input": json.dumps(
-            {
-                "namespace": "user-vortex-code",
-                "toolName": "continuity",
-                "arguments": {
-                    "op": "resume",
-                    "thread": "10223",
-                    "transcript_id": "tab-fix19",
-                },
-            }
-        ),
-    }
-    for fold_state in ("armed", "poured"):
-        verdict = decide(
-            event="preToolUse",
-            payload=payload,
-            marker={**_MARKER, "transcript_id": "tab-fix19"},
-            fold={"state": fold_state},
-        )
-        assert verdict["permission"] == "allow", fold_state
+def test_session_start_clears_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import scripts.cursor.resume_fence_hook as hook
 
-
-def test_pre_tool_use_call_dynamic_tool_payload_root_fields_allowed() -> None:
-    """FIX-19: Cursor may send empty tool_input with MCP fields on payload root."""
-    verdict = decide(
-        event="preToolUse",
-        payload={
-            "tool_name": "CallDynamicTool",
-            "tool_input": {},
-            "namespace": "user-vortex-code",
-            "toolName": "continuity",
-            "arguments": {"op": "resume", "thread": "10223"},
-        },
-        marker=_MARKER,
-        fold={"state": "armed"},
-    )
-    assert verdict["permission"] == "allow"
-
-
-def test_before_mcp_execution_continuity_direct_empty_args_allowed() -> None:
-    """FIX-19c: tool_name=continuity with {} on beforeMCPExecution defers to runtime."""
-    verdict = decide(
-        event="beforeMCPExecution",
-        payload={"tool_name": "continuity", "tool_input": {}},
-        marker=_MARKER,
-        fold={"state": "armed"},
-    )
-    assert verdict["permission"] == "allow"
-
-
-def test_pre_tool_use_call_dynamic_tool_empty_payload_deferred() -> None:
-    """FIX-19b: empty preToolUse defers; beforeMCPExecution enforces."""
-    pre = decide(
-        event="preToolUse",
-        payload={"tool_name": "CallDynamicTool", "tool_input": {}},
-        marker=_MARKER,
-        fold={"state": "armed"},
-    )
-    assert pre["permission"] == "allow"
-    mcp = decide(
-        event="beforeMCPExecution",
-        payload={
-            "tool_name": "CallDynamicTool",
-            "tool_input": json.dumps(
-                {
-                    "namespace": "user-vortex-code",
-                    "toolName": "continuity",
-                    "arguments": {"op": "resume", "thread": "10223"},
-                }
-            ),
-        },
-        marker=_MARKER,
-        fold={"state": "armed"},
-    )
-    assert mcp["permission"] == "allow"
-
-
-def test_pre_tool_use_mcp_prefixed_continuity_resume_allowed() -> None:
-    """Observed wire (fence rf-fae36ba7): preToolUse names MCP tools ``MCP:<tool>``."""
-    for fold_state in ("armed", "poured"):
-        verdict = decide(
-            event="preToolUse",
-            payload={
-                "tool_name": "MCP:continuity",
-                "tool_input": {"op": "resume", "thread": 10223},
-                "tool_use_id": "abc123",
-            },
-            marker={**_MARKER, "transcript_id": "16d2d0e3"},
-            fold={"state": fold_state},
-        )
-        assert verdict["permission"] == "allow", fold_state
-
-
-def test_pre_tool_use_mcp_dispatch_continuity_resume_allowed_other_ops_denied() -> None:
-    """continuity is overflow on user-vortex-code: real first hop rides dispatch."""
-    dispatch_input = {
-        "tool": "continuity",
-        "arguments": json.dumps({"op": "resume", "thread": "10223"}),
-    }
-    allow = decide(
-        event="preToolUse",
-        payload={"tool_name": "MCP:dispatch", "tool_input": dispatch_input},
-        marker=_MARKER,
-        fold={"state": "armed"},
-    )
-    assert allow["permission"] == "allow"
-    deny_op = decide(
-        event="preToolUse",
-        payload={
-            "tool_name": "MCP:dispatch",
-            "tool_input": {
-                "tool": "continuity",
-                "arguments": json.dumps({"op": "consolidate", "thread": "10223"}),
-            },
-        },
-        marker=_MARKER,
-        fold={"state": "armed"},
-    )
-    assert deny_op["permission"] == "deny"
-    assert 'dispatch(tool="continuity"' in deny_op["agent_message"]
-    deny_tool = decide(
-        event="preToolUse",
-        payload={
-            "tool_name": "MCP:dispatch",
-            "tool_input": {"tool": "sql", "arguments": json.dumps({"query": "select 1"})},
-        },
-        marker=_MARKER,
-        fold={"state": "armed"},
-    )
-    assert deny_tool["permission"] == "deny"
-
-
-def test_pre_tool_use_mcp_prefixed_foreign_thread_denied_journals_wire_name() -> None:
-    verdict = decide(
-        event="preToolUse",
-        payload={
-            "tool_name": "MCP:continuity",
-            "tool_input": {"op": "resume", "thread": 9796},
-        },
-        marker=_MARKER,
-        fold={"state": "armed"},
-    )
-    assert verdict["permission"] == "deny"
-    assert verdict["journal"]["tool"] == "MCP:continuity"
-
-
-def test_pre_tool_use_mcp_prefixed_second_hop_allowed_rename_denied() -> None:
-    allow = decide(
-        event="preToolUse",
-        payload={
-            "tool_name": "MCP:agent_bus_read",
-            "tool_input": {"op": "thread_get", "thread": 10223},
-        },
-        marker=_MARKER,
-        fold={"state": "poured"},
-    )
-    assert allow["permission"] == "allow"
-    deny = decide(
-        event="preToolUse",
-        payload={
-            "tool_name": "MCP:rename_chat",
-            "tool_input": {"title": "10223"},
-        },
-        marker=_MARKER,
-        fold={"state": "poured"},
-    )
-    assert deny["permission"] == "deny"
-    assert deny["journal"]["tool"] == "MCP:rename_chat"
-
-
-def test_malformed_read_set_hook_error() -> None:
-    bad_marker = {"fence_id": "rf-x", "root": "10223", "read_set": "not-a-dict"}
-    verdict = decide(
-        event="beforeMCPExecution",
-        payload={"tool_name": "fs", "tool_input": _WIRE_FS_CARD},
-        marker=bad_marker,
-        fold={"state": "poured"},
-    )
-    assert verdict["permission"] == "deny"
-    assert verdict["journal"]["reason"] == "hook_error"
+    monkeypatch.setattr(hook, "_MARKER_DIR", tmp_path)
+    cid = "84ec9c52-99e3-4e2b-af35-8a56949c6498"
+    marker = tmp_path / f"{cid}.json"
+    marker.write_text(json.dumps(_ARMED))
+    result = handle_event("sessionStart", {"conversation_id": cid})
+    assert result == {}
+    assert not marker.exists()
