@@ -101,9 +101,8 @@ def _tool_summary(
     return 0, []
 
 
-def _is_conductor_row(dispatch_id: str, contract: str | None) -> bool:
-    if contract is not None:
-        return is_conductor_dispatch_row({"contract": contract})
+def _is_conductor_row(dispatch_id: str) -> bool:
+    """SQL ``contract`` column only — never a caller-supplied wire field."""
     ledger = CursorDispatchLedger.instance()
     with ledger._connect() as conn:
         row = conn.execute(
@@ -409,9 +408,7 @@ async def finalize_parked(
         sidecar_uri=sidecar_uri,
     )
     park = park_row.park if park_row is not None else {}
-    conductor = await asyncio.to_thread(
-        _is_conductor_row, dispatch_id, req.handoff_contract
-    )
+    conductor = await asyncio.to_thread(_is_conductor_row, dispatch_id)
     body = build_parked_body(
         dispatch_id=dispatch_id,
         mark=mark,

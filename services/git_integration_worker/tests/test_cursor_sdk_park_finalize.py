@@ -26,6 +26,7 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest 
     park_harvest_owed,
 )
 from services.git_integration_worker.cursor_sdk_closeout.park_finalize import (
+    _is_conductor_row,
     build_parked_body,
     parked_wake_line,
 )
@@ -166,6 +167,34 @@ def _admit(
             dispatch_id=req.dispatch_id,
             patch={"contract": "conductor", "packet_kind": "conductor"},
         )
+
+
+def test_is_conductor_row_reads_sql_contract_only(tmp_path: Path) -> None:
+    """C1: park identity never consults a caller-supplied wire field."""
+    implement = CursorDispatchRequest(
+        thread_id="9000",
+        model="cursor/composer-2.5",
+        dispatch_id="fin-c1-impl",
+        execution_id="exec-c1-impl",
+        message="do work",
+        handoff_contract="conductor",
+    )
+    _admit(implement, tmp_path=tmp_path, contract="implement")
+    assert _is_conductor_row("fin-c1-impl") is False
+    CursorDispatchLedger.instance().mark_terminal(
+        dispatch_id="fin-c1-impl", terminal_status="completed"
+    )
+
+    conductor = CursorDispatchRequest(
+        thread_id="9000",
+        model="cursor/composer-2.5",
+        dispatch_id="fin-c1-cond",
+        execution_id="exec-c1-cond",
+        message="---\ncontract: conductor\n---\n",
+        handoff_contract="none",
+    )
+    _admit(conductor, tmp_path=tmp_path, contract="conductor")
+    assert _is_conductor_row("fin-c1-cond") is True
 
 
 def _set_mark(

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 
-import pytest
-
 from services.git_integration_worker.cursor_sdk_conductor_identity import (
     is_conductor_dispatch_row,
 )

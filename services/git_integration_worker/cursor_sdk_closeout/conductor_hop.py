@@ -21,6 +21,7 @@ from claude_bundles.conductor_stop import (
     next_admit_payload_matches_entry_gate,
     parse_designed_stop_tokens,
 )
+from implement_admission.conductor_witness_types import row_status_in_tip
 from transport_utils import DEFAULT_STARGATE_URL, make_async_client
 from universal_logging import get_logger
 
@@ -45,7 +46,6 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress 
     HOP_NEXT_ADMIT_KEY,
     next_admit_in_closeout,
 )
-from implement_admission.conductor_witness_types import row_status_in_tip
 from services.git_integration_worker.cursor_sdk_conductor_identity import (
     is_conductor_dispatch_row,
 )
