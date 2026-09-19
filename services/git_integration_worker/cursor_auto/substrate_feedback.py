@@ -3,66 +3,23 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
-from substrate_graph_write import write_claim
+from bus_watch.substrate_feedback import (
+    extract_substrate_findings,
+    resolve_substrate_feedback_entity_id,
+    write_substrate_feedback_claim,
+)
 
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_bus import CursorBusClient
 
-_SUBSTRATE_MARKERS = (
-    "audit",
-    "infra rot",
-    "substrate",
-    "warning",
-    "lint debt",
-    "pre-existing",
-)
-
-_ENTITY_ID_LINE_RE = re.compile(r"(?im)^entity_id:\s*(\S+)")
-_TODO_TOKEN_RE = re.compile(r"\btodo:[a-z0-9][a-z0-9._-]*", re.IGNORECASE)
-
-
-def _line_carries_identical_true(line: str) -> bool:
-    """True when a scraped probe line already carries ``\"identical\": true``."""
-    try:
-        payload = json.loads(line.strip())
-    except json.JSONDecodeError:
-        return False
-    return isinstance(payload, dict) and payload.get("identical") is True
-
-
-def extract_substrate_findings(text: str | None) -> list[str]:
-    """Return plain-language lines that look like substrate rot from closeout text.
-
-    Lines whose JSON already marks ``identical: true`` are not findings — the
-    probe already distinguished byte-identical dirt from rot.
-    """
-    if not text:
-        return []
-    findings: list[str] = []
-    for line in text.splitlines():
-        if _line_carries_identical_true(line):
-            continue
-        low = line.lower()
-        if any(marker in low for marker in _SUBSTRATE_MARKERS):
-            stripped = line.strip()
-            if stripped and stripped not in findings:
-                findings.append(stripped)
-    return findings
-
-
-def resolve_substrate_feedback_entity_id(*, subject: str, body: str) -> str | None:
-    """Resolve a graph-write target from directive subject/body."""
-    blob = "\n".join(part for part in (subject, body) if part)
-    entity_match = _ENTITY_ID_LINE_RE.search(blob)
-    if entity_match:
-        return entity_match.group(1).strip()
-    todo_match = _TODO_TOKEN_RE.search(blob)
-    if todo_match:
-        return todo_match.group(0)
-    return None
+__all__ = [
+    "extract_substrate_findings",
+    "resolve_substrate_feedback_entity_id",
+    "maybe_post_substrate_feedback",
+    "write_substrate_feedback_claim",
+]
 
 
 async def maybe_post_substrate_feedback(
@@ -83,17 +40,23 @@ async def maybe_post_substrate_feedback(
     entity_id = resolve_substrate_feedback_entity_id(subject=job.subject, body=job.body)
     graph_write: dict[str, Any] | None = None
     if entity_id:
-        claim = "Substrate rot observed during implement: " + "; ".join(findings[:5])
-        graph_write = write_claim(
+        graph_write = write_substrate_feedback_claim(
             entity_id=entity_id,
-            claim=claim,
+            findings=findings,
             evidence_uris=[f"agent-bus:{job.thread_id}"],
         )
 
-    if entity_id and graph_write and "error" not in graph_write:
+    if entity_id and graph_write and "error" not in graph_write and not graph_write.get(
+        "blocked"
+    ):
         note = (
             "Substrate rot observed during implement — graph write via "
             "agent_bus(tool=\"substrate_graph_write\")."
+        )
+    elif entity_id and graph_write and graph_write.get("blocked"):
+        note = (
+            "Substrate rot observed during implement — graph write blocked as "
+            f"near-duplicate (score={graph_write.get('score')})."
         )
     elif entity_id:
         note = (

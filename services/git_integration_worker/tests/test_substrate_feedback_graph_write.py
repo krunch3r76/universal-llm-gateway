@@ -53,7 +53,7 @@ async def test_substrate_feedback_writes_claim_when_entity_resolved() -> None:
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
 
     with patch(
-        "services.git_integration_worker.cursor_auto.substrate_feedback.write_claim",
+        "services.git_integration_worker.cursor_auto.substrate_feedback.write_substrate_feedback_claim",
         return_value={"item": {"id": 5}},
     ) as write_claim:
         result = await maybe_post_substrate_feedback(
@@ -87,7 +87,7 @@ async def test_substrate_feedback_names_verb_when_entity_missing() -> None:
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
 
     with patch(
-        "services.git_integration_worker.cursor_auto.substrate_feedback.write_claim",
+        "services.git_integration_worker.cursor_auto.substrate_feedback.write_substrate_feedback_claim",
     ) as write_claim:
         await maybe_post_substrate_feedback(
             job,
