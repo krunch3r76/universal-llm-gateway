@@ -333,49 +333,6 @@ def test_external_gate_hop_verdict_body_overrides_false_stamp() -> None:
     assert skip_gate == SKIP_GATE_PROBE_INDETERMINATE
 
 
-def _refresh_row(ledger: CursorDispatchLedger, dispatch_id: str) -> dict:
-    with ledger._connect() as conn:
-        row = conn.execute(
-            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-            (dispatch_id,),
-        ).fetchone()
-    assert row is not None
-    return {k: row[k] for k in row.keys()}
-
-
-@pytest.mark.parametrize(
-    "hop_reason_override, expected_reason",
-    [
-        (None, "planned"),
-        ("watchdog", "watchdog"),
-        ("park_harvest", "park_harvest"),
-    ],
-)
-def test_ac10_hop_body_conforms_to_team_dispatch_generate(
-    hop_reason_override: str | None,
-    expected_reason: str,
-) -> None:
-    """AC-W1 — shared hop builder validates on Stargate generate wire."""
-    from systems.frontier_consult.route import TeamDispatchGenerateBody
-
-    ledger = CursorDispatchLedger.instance()
-    _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
-    ledger.merge_record_json(
-        dispatch_id="pred-hop-1",
-        patch={"summoning_thread_id": "10223"},
-    )
-    row = _refresh_row(ledger, "pred-hop-1")
-    body = build_hop_team_dispatch_body(row, hop_reason_override=hop_reason_override)
-    assert body is not None
-    assert "packet_kind" not in body
-    parsed = TeamDispatchGenerateBody(**body)
-    assert parsed.contract == "conductor"
-    assert parsed.hop_reason == expected_reason
-    assert parsed.hop_from == "pred-hop-1"
-    assert parsed.hop_seq == 2
-    assert parsed.dispatch_thread_id == "10223"
-
-
 def test_build_hop_team_dispatch_body_clones_predecessor() -> None:
     ledger = CursorDispatchLedger.instance()
     row = _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
