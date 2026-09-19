@@ -69,6 +69,15 @@ class CursorDispatchRequest(BaseModel):
     work_key: str | None = None
     resume_of: str | None = None
     continuity_root_thread_id: str | None = None
+    parent_dispatch_thread_id: str | None = None
+    operator_contract: str | None = Field(
+        default=None,
+        description=(
+            "Original cursor-auto request.contract before handoff_contract mapping. "
+            "Used by prompt-expand admit so implement→pure-mechanical wire map does "
+            "not suppress enrolled-root expand."
+        ),
+    )
     hop_from: str | None = None
     hop_seq: int | None = Field(default=None, ge=0)
     hop_reason: (
@@ -193,3 +202,4 @@ class CursorDispatchResponse(BaseModel):
     identity_class: str | None = None
     work_key_seq: int | None = None
     steer: dict[str, str] | None = None
+    prompt_expand: str | None = None

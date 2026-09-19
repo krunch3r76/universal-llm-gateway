@@ -54,6 +54,9 @@ from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
+from services.git_integration_worker.cursor_sdk_prompt_expand import (
+    resolve_enrolled_root_fields,
+)
 
 logger = get_logger(__name__)
 
@@ -262,6 +265,14 @@ async def submit_nested_dispatch(
     workspace = (job.workspace or "").strip()
     if workspace:
         payload["workspace"] = workspace
+    enrolled_roots = resolve_enrolled_root_fields(job.thread_id)
+    if enrolled_roots.get("continuity_root_thread_id"):
+        payload["continuity_root_thread_id"] = enrolled_roots["continuity_root_thread_id"]
+    if enrolled_roots.get("parent_dispatch_thread_id"):
+        payload["parent_dispatch_thread_id"] = enrolled_roots["parent_dispatch_thread_id"]
+    operator_contract = (job.contract or "").strip()
+    if operator_contract:
+        payload["operator_contract"] = operator_contract
     url = _dispatch_url()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:

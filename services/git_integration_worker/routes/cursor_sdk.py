@@ -2213,6 +2213,16 @@ async def _run_sdk_dispatch_gated(
             )
 
     prompt = _resolve_prompt(req, ctx.hub)
+    from services.git_integration_worker.cursor_sdk_prompt_expand import (
+        maybe_expand_giw_prompt,
+    )
+
+    prompt = await maybe_expand_giw_prompt(
+        req,
+        prompt,
+        handoff_contract=ctx.handoff_contract,
+        resolved_model=req.model,
+    )
 
     live_counter = _LiveToolCallCounter()
     worker_task = controller.create_tracked_task(
@@ -3717,6 +3727,18 @@ async def admit_cursor_dispatch(
     ticket.mark_running()
     await asyncio.to_thread(ledger.mark_running, dispatch_id=req.dispatch_id)
     _maybe_emit_giw_dispatched(req=req, packet_text=packet_text)
+    from services.git_integration_worker.cursor_sdk_prompt_expand import (
+        giw_prompt_expand_pending,
+    )
+
+    resolved_prompt = _resolve_prompt(req, cfg.source_repo)
+    expand_status = giw_prompt_expand_pending(
+        req,
+        resolved_prompt,
+        handoff_contract=contract,
+    )
+    if expand_status:
+        admission = admission.model_copy(update={"prompt_expand": expand_status})
     return JSONResponse(status_code=200, content=admission.model_dump())
 
 
