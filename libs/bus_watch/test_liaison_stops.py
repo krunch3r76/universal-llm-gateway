@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -95,6 +96,8 @@ def test_liaison_tick_now_row_set_does_not_arm_gate(tmp_path: Path) -> None:
     state_path.write_text(
         json.dumps({"policy": {}, "register": "autonomous"}), encoding="utf-8"
     )
+    libs_path = str(_REPO_ROOT / "libs")
+    env = {**os.environ, "PYTHONPATH": libs_path + os.pathsep + os.environ.get("PYTHONPATH", "")}
     proc = subprocess.run(
         [
             sys.executable,
@@ -107,6 +110,7 @@ def test_liaison_tick_now_row_set_does_not_arm_gate(tmp_path: Path) -> None:
             "now_row=R15 parked OPERATOR_GATE credentials",
         ],
         cwd=_REPO_ROOT,
+        env=env,
         capture_output=True,
         text=True,
         check=False,

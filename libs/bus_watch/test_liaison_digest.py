@@ -404,7 +404,7 @@ def test_watchers_exclude_foreign_root_with_fresh_mtime(tmp_path) -> None:  # no
 
 
 def test_liaison_digest_sloc_cap() -> None:
-    """AC-3: liaison_digest.py assembly cap (300 + root turn surface for a:34257)."""
+    """AC-3: liaison_digest.py assembly cap (300 + root turn surface + R-a cache for C-R2-5)."""
     from pathlib import Path
 
     path = Path(__file__).resolve().parent / "liaison_digest.py"
@@ -413,7 +413,7 @@ def test_liaison_digest_sloc_cap() -> None:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     )
-    assert sloc <= 325
+    assert sloc <= 400
 
 
 @patch("bus_watch.liaison_digest.collect_watchers", return_value=[])
