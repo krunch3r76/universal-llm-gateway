@@ -60,6 +60,11 @@ def test_sdk_should_expand_10479_implement() -> None:
 
 
 @pytest.mark.offline
+def test_sdk_should_expand_10479_sketch() -> None:
+    assert sdk_should_expand(_handle(handoff_contract="sketch")) is True
+
+
+@pytest.mark.offline
 def test_sdk_should_not_expand_wake_message() -> None:
     handle = _handle(message="WAKE — liaison headless successor, house agent-bus:10479")
     assert sdk_should_expand(handle) is False

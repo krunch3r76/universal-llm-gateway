@@ -16,11 +16,14 @@ _DEFAULT_ROOTS = "10479"
 _WAKE_PREFIXES = ("WAKE —", "WAKE -", "WAKE ")
 _EXPAND_HEADER = "pipeline: prompt-expand"
 _TICKER_CALLERS = frozenset({"liaison-ticker"})
-_MECHANICAL = frozenset({"wrap", "pure-mechanical", "sketch"})
+# wrap / pure-mechanical have no authoring hop. Sketch is the shape-bind hop —
+# taking the A — so it is not mechanical for this door (enrolled roots only).
+_MECHANICAL = frozenset({"wrap", "pure-mechanical"})
 _VALID_CONTRACTS = frozenset(
     {"consult", "investigate", "implement", "confer", "review", "none"}
 )
-_CONTRACT_ALIASES = {"conductor": "implement"}
+# consult = retired wire name; live hop is contract=sketch. Profile row is g1.
+_CONTRACT_ALIASES = {"conductor": "implement", "sketch": "consult"}
 SkipReason = Literal[
     "liaison_ticker",
     "already_expanded",

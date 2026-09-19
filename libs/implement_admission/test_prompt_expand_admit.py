@@ -79,6 +79,51 @@ def test_already_expanded_skipped() -> None:
 
 
 @pytest.mark.offline
+def test_enrolled_sketch_admits() -> None:
+    decision = should_expand(
+        prompt=_TASK,
+        contract="sketch",
+        caller_agent="cursor",
+        dispatch_thread_id="10479",
+    )
+    assert decision.admit is True
+    assert decision.root == "10479"
+    assert decision.skip_reason is None
+
+
+@pytest.mark.offline
+def test_unenrolled_sketch_still_skipped() -> None:
+    decision = should_expand(
+        prompt=_TASK,
+        contract="sketch",
+        caller_agent="cursor",
+        dispatch_thread_id="11738",
+    )
+    assert decision.admit is False
+    assert decision.skip_reason == "root_not_enrolled"
+
+
+@pytest.mark.offline
+def test_wrap_still_mechanical() -> None:
+    decision = should_expand(
+        prompt=_TASK,
+        contract="wrap",
+        caller_agent="cursor",
+        parent_thread="10479",
+    )
+    assert decision.admit is False
+    assert decision.skip_reason == "mechanical"
+
+
+@pytest.mark.offline
+def test_sketch_maps_to_consult_g1() -> None:
+    opts = expand_options(contract="sketch", seat="cursor-sdk")
+    assert opts["contract"] == "consult"
+    assert opts["stage"] == "g1"
+    assert opts["target"] == "cursor"
+
+
+@pytest.mark.offline
 def test_conductor_maps_to_implement_g5() -> None:
     opts = expand_options(contract="conductor", seat="cursor-sdk")
     assert opts["contract"] == "implement"
