@@ -49,8 +49,8 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
 from services.git_integration_worker.cursor_sdk_closeout_trigger import (
     extract_turn_number,
 )
-from services.git_integration_worker.cursor_sdk_conductor_conflict import (
-    _record_packet_kind,
+from services.git_integration_worker.cursor_sdk_conductor_identity import (
+    is_conductor_dispatch_row,
 )
 from services.git_integration_worker.cursor_sdk_events import terminal_emitted
 from services.git_integration_worker.cursor_sdk_park_events import (
@@ -102,17 +102,17 @@ def _tool_summary(
 
 
 def _is_conductor_row(dispatch_id: str, contract: str | None) -> bool:
-    if (contract or "").lower() == "conductor":
-        return True
+    if contract is not None:
+        return is_conductor_dispatch_row({"contract": contract})
     ledger = CursorDispatchLedger.instance()
     with ledger._connect() as conn:
         row = conn.execute(
-            "SELECT record_json FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            "SELECT contract FROM cursor_sdk_dispatches WHERE dispatch_id=?",
             (dispatch_id,),
         ).fetchone()
     if row is None:
         return False
-    return _record_packet_kind(str(row["record_json"] or "")) == "conductor"
+    return is_conductor_dispatch_row(row)
 
 
 def parked_wake_line(intent_id: str | None) -> str:

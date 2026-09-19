@@ -16,17 +16,6 @@ class OpenConductorHolder:
     work_key: str
 
 
-def _record_packet_kind(record_json: str) -> str | None:
-    try:
-        data = json.loads(record_json or "{}")
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(data, dict):
-        return None
-    kind = data.get("packet_kind") or data.get("contract")
-    return str(kind).strip().lower() if kind else None
-
-
 def find_open_conductor_holder_conn(
     conn: sqlite3.Connection,
     *,
@@ -44,9 +33,11 @@ def find_open_conductor_holder_conn(
     ).fetchone()
     if row is None:
         return None
-    record_json = row["record_json"] if "record_json" in row.keys() else "{}"
-    packet_kind = _record_packet_kind(record_json or "")
-    if packet_kind != "conductor":
+    from services.git_integration_worker.cursor_sdk_conductor_identity import (
+        is_conductor_dispatch_row,
+    )
+
+    if not is_conductor_dispatch_row(row):
         return None
     return OpenConductorHolder(
         dispatch_id=row["dispatch_id"],

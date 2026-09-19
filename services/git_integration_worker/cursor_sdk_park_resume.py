@@ -172,8 +172,11 @@ def _existing_child(parent_id: str) -> str | None:
 
 
 def _is_conductor(row: ParkRow) -> bool:
-    kind = row.record.get("packet_kind") or row.record.get("contract") or row.contract
-    return str(kind or "").strip().lower() == "conductor"
+    from services.git_integration_worker.cursor_sdk_conductor_identity import (
+        is_conductor_dispatch_row,
+    )
+
+    return is_conductor_dispatch_row({"contract": row.contract})
 
 
 def _stamp_hop_successor(parent_id: str, child_id: str) -> None:

@@ -105,12 +105,11 @@ def load_hop_budget_config() -> HopBudgetConfig:
 
 
 def _is_conductor_row(row: dict[str, Any]) -> bool:
-    from services.git_integration_worker.cursor_sdk_conductor_conflict import (
-        _record_packet_kind,
+    from services.git_integration_worker.cursor_sdk_conductor_identity import (
+        is_conductor_dispatch_row,
     )
 
-    record_json = str(row.get("record_json") or "")
-    return _record_packet_kind(record_json) == "conductor"
+    return is_conductor_dispatch_row(row)
 
 
 def list_mission_terminal_chain(

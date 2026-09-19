@@ -46,8 +46,8 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_progress 
     next_admit_in_closeout,
 )
 from implement_admission.conductor_witness_types import row_status_in_tip
-from services.git_integration_worker.cursor_sdk_conductor_conflict import (
-    _record_packet_kind,
+from services.git_integration_worker.cursor_sdk_conductor_identity import (
+    is_conductor_dispatch_row,
 )
 from services.git_integration_worker.cursor_sdk_hop_events import (
     emit_frontier_sdk_conductor_hop_admit_failed,
@@ -86,8 +86,7 @@ def _load_row(dispatch_id: str) -> dict[str, Any] | None:
 
 
 def _is_conductor_row(row: dict[str, Any]) -> bool:
-    record_json = str(row.get("record_json") or "")
-    return _record_packet_kind(record_json) == "conductor"
+    return is_conductor_dispatch_row(row)
 
 
 def _record_data(row: dict[str, Any]) -> dict[str, Any]:

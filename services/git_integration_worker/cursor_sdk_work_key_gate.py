@@ -171,12 +171,13 @@ def count_root_rows_24h(
 
 
 def holder_kind_from_row(row: sqlite3.Row | dict[str, Any]) -> str:
-    packet_kind = row["packet_kind"] if "packet_kind" in row.keys() else None
-    if packet_kind == "conductor":
+    from services.git_integration_worker.cursor_sdk_conductor_identity import (
+        is_conductor_dispatch_row,
+    )
+
+    if is_conductor_dispatch_row(row):
         return "conductor"
     contract = row["contract"] if "contract" in row.keys() else None
-    if contract == "conductor":
-        return "conductor"
     if contract == "implement":
         return "implement"
     return "other"

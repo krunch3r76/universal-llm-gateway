@@ -70,11 +70,11 @@ def _load_row(dispatch_id: str) -> dict[str, Any] | None:
 
 
 def _is_conductor_row(row: dict[str, Any]) -> bool:
-    from services.git_integration_worker.cursor_sdk_conductor_conflict import (
-        _record_packet_kind,
+    from services.git_integration_worker.cursor_sdk_conductor_identity import (
+        is_conductor_dispatch_row,
     )
 
-    return _record_packet_kind(str(row.get("record_json") or "")) == "conductor"
+    return is_conductor_dispatch_row(row)
 
 
 def _closeout_body_from_row(row: dict[str, Any]) -> str:
