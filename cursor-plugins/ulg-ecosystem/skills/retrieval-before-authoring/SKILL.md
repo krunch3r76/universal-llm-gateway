@@ -18,7 +18,8 @@ Run one `rag(op="search", ...)` per scope. Do not skip this to save a turn.
 | Scope | What it holds |
 |---|---|
 | `llm_prompting` | persona/framing effects, ICL, long-context, prompt optimization |
-| `writing` | human writing craft — cogency, fluency, persuasion, revision, register/audience |
+| `writing_exemplars` | exemplary human prose (Gutenberg essays/oratory) — register. Query first on a writing TASK |
+| `writing` | human writing craft — cogency, fluency, persuasion, revision (procedure, not prose to imitate) |
 | `llm_writing_anti` | anti-specimen — how LLMs should not write to humans (named retrieve only) |
 | `suggestion_orientation` | elicitation, free-strategy, Law of Reversed Effort, demand characteristics |
 | `prompt_injection` | spotlighting, instruction hierarchy, post-prompting, provenance |
@@ -26,8 +27,10 @@ Run one `rag(op="search", ...)` per scope. Do not skip this to save a turn.
 | `constitutional_ai` | self-report reliability, sycophancy, fluency bias, verification |
 
 `suggestion_orientation` is **not** inside the composite `research` / `all_research`
-scopes — query it by name or the arc under-draws. Human craft commissions query
-`writing` **by name**; use `llm_writing_anti` only for "what not to sound like."
+scopes — query it by name or the arc under-draws. A writing TASK queries
+`writing_exemplars` **by name** for register (steal rhythm, not period diction);
+query `writing` for craft theory only. Use `llm_writing_anti` only for "what
+not to sound like." Do not treat craft PDFs as prose to sound like.
 Call shape:
 
 ```

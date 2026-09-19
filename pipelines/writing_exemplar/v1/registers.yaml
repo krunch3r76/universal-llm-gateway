@@ -1,0 +1,22 @@
+# Closed register set for en-en-writing-exemplar-v1.
+# Omitted / all → whole writing_exemplars scope (current author-top tree).
+# Named register → rag_source_prefixes under {root}/{dirname}/.
+# Next prepare wave writes {register}/{author}/processed/; do not mint RAG scopes.
+
+root: /mnt/torus/mcp-data/files/writing-exemplars
+
+aliases:
+  essay: familiar
+  essays: familiar
+  speech: oratory
+  speeches: oratory
+  letter: letters
+
+registers:
+  all: null
+  familiar: familiar
+  humor: humor
+  oratory: oratory
+  letters: letters
+  civic: civic
+  travel: travel

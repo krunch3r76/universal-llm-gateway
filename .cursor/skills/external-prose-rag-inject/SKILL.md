@@ -61,7 +61,11 @@ from Customize Skills; keep it in the inject/orchestrator packet.
 
 ## Wire shape
 
-Poetry-pipeline parity (`en-fa-super-romantic-v2` `{poetry_context}`):
+Poetry-pipeline parity (`en-fa-super-romantic-v2` `{poetry_context}`).
+English register twin: `en-en-writing-exemplar-v1` (`retrieve_exemplars` →
+`rag-context` / `writing_exemplars` → `{writing_context}`).
+
+Poetry-pipeline wire (`en-fa-super-romantic-v2` `{poetry_context}`):
 
 1. Optional JSON envelope: `status`, `pipeline: rag-context`, `query`, `retrieval{…}`
 2. Body: `[Source: … | score≈… | Last changed: …]` + `[Body evidence]` per hit

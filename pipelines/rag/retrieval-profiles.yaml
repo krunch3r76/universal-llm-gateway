@@ -83,6 +83,10 @@ scope_defaults:
     rag_recency_weight: 0.0
   architecture:
     rag_recency_weight: 0.0
+  writing_exemplars:
+    rag_recency_weight: 0.0
+  persian_poetry:
+    rag_recency_weight: 0.0
   both:
     rag_recency_weight: 0.1
   all:

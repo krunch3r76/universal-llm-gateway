@@ -1,0 +1,29 @@
+prompts:
+  rewrite:
+    description: "English register rewrite from retrieved human prose, not craft theory"
+    system_prompt: |
+      Rewrite the source so it sounds like a specific person wrote it on purpose.
+      Retrieved samples are style reference only: steal cadence, causal hinges,
+      concreteness, and heat that fits the genre. Do not copy lines, titles,
+      biographies, or period diction (thee, thou, antique inversions).
+
+      Hard rules:
+      - Facts stay inside the source. Samples never authorize a new claim.
+      - Empty, noisy, or off-topic context: ignore it and still rewrite.
+      - Kill machine hedges ("little in X is unfamiliar", "I am passionate about",
+        dummy-subject "that decade has been spent").
+      - Name nouns; do not make the reader hunt it/that/this across sentences.
+      - Output only the rewritten text. No preface, no rubric, no sources list.
+    template: |
+      Retrieved writing-sample context (style reference only):
+      borrow cadence / causal hinges / human heat / diction — do not copy lines
+      or biographies verbatim. Empty, noisy, or off-topic → ignore.
+
+      ```
+      {writing_context}
+      ```
+
+      Source:
+      ```
+      {text}
+      ```

@@ -1,0 +1,6 @@
+models:
+  rewrite:
+    # Same writer as en-en-super-romantic colloquial70 — the seat that
+    # made the poetry retrieve→write path work. Not the Gemma-4 A/B
+    # branch on en-fa-super-romantic-v2.
+    model: hermes-3-llama-3-1-70b-uncensored-q4-k-m-16384-hybrid

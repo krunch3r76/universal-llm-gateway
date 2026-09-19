@@ -1,0 +1,43 @@
+schema_version: 6
+id: en-en-writing-exemplar-v1
+version: "1.0"
+type: writing_exemplar
+description: >
+  Poetry-pipeline twin for English register. Retrieves writing_exemplars via
+  rag-context, then rewrites sourceNs.text with that block bound as
+  {writing_context}. Steal rhythm, not period diction. Not the 4917
+  external_prose judge stack. pipeline_options.register selects a prefix
+  well (humor, oratory, familiar, letters, civic, travel) or all.
+
+output: rewrite
+
+options:
+  timeout_seconds: 240
+  register: all
+
+steps:
+  - name: retrieve_exemplars
+    type: writing_exemplar_retrieve_v1
+    consumer_model_ref: rewrite
+    timeout_seconds: 90
+    pipeline_options:
+      scope_override: writing_exemplars
+      hyde_enabled: false
+      rerank_enabled: false
+      rag_top_k_per_query: 5
+      rag_max_chunks: 5
+      noise_filter_disable: true
+      retrieval_path: general
+
+  - name: rewrite
+    type: generate
+    model_ref: rewrite
+    prompt_ref: writing_exemplar.v1.rewrite
+    handler_inputs:
+      text: sourceNs.text
+      writing_context: retrieve_exemplars.raw
+    handler_outputs:
+      raw: rewrite.raw
+    generation_parameters:
+      temperature: 0.4
+      max_tokens: 2048
