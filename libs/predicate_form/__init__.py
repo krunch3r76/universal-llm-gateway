@@ -214,7 +214,8 @@ def normalize_predicate_domain(
     invention_flag = check_invention(claim_text, p)
     resubjection_flag = check_resubjection(entity_id, p)
 
-    requires_review = class_6_check(entity_id, p)
+    class_6_fired = class_6_check(entity_id, p)
+    requires_review = class_6_fired
     if invention_flag or resubjection_flag:
         requires_review = True
     # A *faithful* decision self-status (state token == the entity's tracked
@@ -231,7 +232,7 @@ def normalize_predicate_domain(
     )
     if requires_review and decision_self_status_faithful:
         requires_review = False
-    if requires_review:
+    if class_6_fired and not decision_self_status_faithful:
         classes_applied.append(6)
 
     canonical_form = unparse(p)

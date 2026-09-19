@@ -244,9 +244,7 @@ def _flag_reasons_from_result(normalize_result: dict) -> list[str]:
 def _suppression_effect(flag_reasons: list[str]) -> str | None:
     if not flag_reasons:
         return None
-    return (
-        "headline_status_withheld; flagged row excluded from predicate_summary join"
-    )
+    return "headline_status_withheld; flagged row excluded from predicate_summary join"
 
 
 def _next_remedy(flag_reasons: list[str]) -> str | None:
@@ -357,7 +355,7 @@ def _flag_predicate_normalize_review(
 ) -> None:
     """Flag row for predicate-normalize review with a distinguishable reason token."""
     reasons = _flag_reasons_from_result(normalize_result)
-    token = reasons[0] if reasons else "predicate_normalize"
+    token = ", ".join(reasons) if reasons else "predicate_normalize"
     _note = f"{_PREDICATE_NORMALIZE_NOTE_PREFIX} {token}: requires_human_review"
     conn.execute(
         "UPDATE assertions SET review_status = 'flagged', "

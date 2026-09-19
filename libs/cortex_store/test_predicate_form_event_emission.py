@@ -24,13 +24,14 @@ import sqlite3
 
 import pytest
 from fastapi import HTTPException
-from predicate_form import normalize_predicate_domain
+from predicate_form import StaticEntityResolver, normalize_predicate_domain
 from predicate_form.entity_resolve import DBEntityResolver
 
 from cortex_store.dispatch_ops._assertions_shared import (
     _emit_predicate_form_normalize_events,
 )
 from cortex_store.routes.assertions import _update_assertion_impl
+from cortex_store.routes.assertions._shared import _build_predicate_form_normalize
 
 from .test_assertion_predicate_form_normalize import (
     _insert_assertion,
@@ -176,6 +177,49 @@ def test_helper_emits_normalized_signal_only(
     assert payload["classes_applied"] == [1, 2, 4]
     assert payload["normalized"] is True
     assert payload["requires_human_review"] is False
+
+
+def test_invention_only_describes_emits_normalized_without_false_class6(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC3 — invention-only describes(...) → events without false Class 6."""
+    captured = _capture_records(monkeypatch)
+    entity_id = "todo:invention-event-fixture"
+    predicate_form_in = f"describes({entity_id}, epistemic_gap_token)"
+    claim_text = "This claim mentions nothing about the invented token."
+
+    normalize_result = normalize_predicate_domain(
+        entity_id,
+        predicate_form_in,
+        claim_text=claim_text,
+        resolver=StaticEntityResolver({}),
+    )
+    assert normalize_result["classes_applied"] == []
+    assert normalize_result["requires_human_review"] is True
+    assert normalize_result["invention_flag"] is True
+
+    envelope = _build_predicate_form_normalize(
+        predicate_form_in, normalize_result
+    ).model_dump(mode="json", by_alias=True)
+    assert envelope["classes_applied"] == []
+    assert envelope["normalized"] is False
+    assert envelope["flag_reasons"] == ["invention"]
+
+    _emit_predicate_form_normalize_events(
+        assertion_id=101,
+        normalize_payload=envelope,
+    )
+    signals = [s for s, _ in captured]
+    assert signals == [
+        "mcp.cortex.predicate.normalized",
+        "mcp.cortex.predicate.review.required",
+    ]
+    normalized_payload = captured[0][1]
+    assert normalized_payload["classes_applied"] == []
+    assert normalized_payload["normalized"] is False
+    assert normalized_payload["reason"] == "invention"
+    review_payload = captured[1][1]
+    assert review_payload["reason"] == "invention"
 
 
 def test_helper_emits_review_required_when_flagged(
