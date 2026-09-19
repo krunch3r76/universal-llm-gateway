@@ -345,12 +345,12 @@ def test_build_hop_team_dispatch_body_clones_predecessor() -> None:
     assert "dispatch_thread_id" not in body
     assert body["generation_options"]["summoning_thread_id_unresolved"] is True
     assert body["source_ref"] == _WORK_KEY
-    assert body["packet_kind"] == "conductor"
+    assert "packet_kind" not in body
     assert body["lane"] == "B"
     assert str(body["model"]).startswith("cursor/")
-    assert body["generation_options"]["idempotency_key"] == build_conductor_hop_idempotency_key(
-        "pred-hop-1"
-    )
+    assert body["generation_options"][
+        "idempotency_key"
+    ] == build_conductor_hop_idempotency_key("pred-hop-1")
     assert body["hop_seq"] == 2
     assert body["hop_reason"] == "planned"
     assert body["hop_from"] == "pred-hop-1"
@@ -460,7 +460,12 @@ async def test_reactor_exception_does_not_block_second_hop_attempt() -> None:
     _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
     with patch(
         "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
-        AsyncMock(side_effect=[RuntimeError("relay down"), (True, {"dispatch_id": "succ-hop-3"})]),
+        AsyncMock(
+            side_effect=[
+                RuntimeError("relay down"),
+                (True, {"dispatch_id": "succ-hop-3"}),
+            ]
+        ),
     ):
         with pytest.raises(RuntimeError):
             await maybe_fire_conductor_hop_reactor(dispatch_id="pred-hop-1")
@@ -559,49 +564,58 @@ def test_live_external_gate_reads_stream_state_not_seat() -> None:
         live_external_gate_for_lane,
     )
 
-    assert live_external_gate_for_lane(
-        {
-            "rows": [],
-            "seated_rows": [
-                {
-                    "execution_id": "exec-seated",
-                    "parent_thread": "9638",
-                    "seat_state": "active",
-                    "stream_state": "none",
-                    "purpose": "review",
-                    "registration_id": "reg-seated",
-                }
-            ],
-        },
-        "9638",
-    ) is False
-    assert live_external_gate_for_lane(
-        {
-            "rows": [
-                {
-                    "execution_id": "exec-live",
-                    "parent_thread": "9638",
-                    "stream_state": "running",
-                    "purpose": "review",
-                }
-            ],
-        },
-        "9638",
-    ) is True
+    assert (
+        live_external_gate_for_lane(
+            {
+                "rows": [],
+                "seated_rows": [
+                    {
+                        "execution_id": "exec-seated",
+                        "parent_thread": "9638",
+                        "seat_state": "active",
+                        "stream_state": "none",
+                        "purpose": "review",
+                        "registration_id": "reg-seated",
+                    }
+                ],
+            },
+            "9638",
+        )
+        is False
+    )
+    assert (
+        live_external_gate_for_lane(
+            {
+                "rows": [
+                    {
+                        "execution_id": "exec-live",
+                        "parent_thread": "9638",
+                        "stream_state": "running",
+                        "purpose": "review",
+                    }
+                ],
+            },
+            "9638",
+        )
+        is True
+    )
     exec_id = "exec-dead"
-    assert live_external_gate_for_lane(
-        {
-            "rows": [
-                {
-                    "execution_id": exec_id,
-                    "parent_thread": "9638",
-                    "stream_state": f"terminal:{exec_id}",
-                    "purpose": "review",
-                }
-            ],
-        },
-        "9638",
-    ) is False
+    assert (
+        live_external_gate_for_lane(
+            {
+                "rows": [
+                    {
+                        "execution_id": exec_id,
+                        "parent_thread": "9638",
+                        "stream_state": f"terminal:{exec_id}",
+                        "purpose": "review",
+                    }
+                ],
+            },
+            "9638",
+        )
+        is False
+    )
 
 
 def test_hop_owed_true_when_seated_only_without_live_stream() -> None:
@@ -841,6 +855,48 @@ def test_ac10_three_hop_post_paths_use_shared_builder() -> None:
         in park_source
     )
     assert "build_hop_team_dispatch_body" in park_source
+
+
+def _refresh_row(ledger: CursorDispatchLedger, dispatch_id: str) -> dict:
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (dispatch_id,),
+        ).fetchone()
+    return {k: row[k] for k in row.keys()}
+
+
+@pytest.mark.parametrize(
+    "hop_reason_override, expected_reason",
+    [
+        (None, "planned"),
+        ("watchdog", "watchdog"),
+        ("park_harvest", "park_harvest"),
+    ],
+)
+def test_ac10_hop_body_conforms_to_team_dispatch_generate(
+    hop_reason_override: str | None,
+    expected_reason: str,
+) -> None:
+    """AC-W1 — shared hop builder validates on Stargate generate wire."""
+    from systems.frontier_consult.route import TeamDispatchGenerateBody
+
+    ledger = CursorDispatchLedger.instance()
+    _terminal_row(ledger, closeout_tokens=["ROW_HOP"])
+    ledger.merge_record_json(
+        dispatch_id="pred-hop-1",
+        patch={"summoning_thread_id": "10223"},
+    )
+    row = _refresh_row(ledger, "pred-hop-1")
+    body = build_hop_team_dispatch_body(row, hop_reason_override=hop_reason_override)
+    assert body is not None
+    assert "packet_kind" not in body
+    parsed = TeamDispatchGenerateBody(**body)
+    assert parsed.contract == "conductor"
+    assert parsed.hop_reason == expected_reason
+    assert parsed.hop_from == "pred-hop-1"
+    assert parsed.hop_seq == 2
+    assert parsed.dispatch_thread_id == "10223"
 
 
 # --- AC-B1–B6 (park-after-skip P2) ---
