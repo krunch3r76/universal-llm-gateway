@@ -69,6 +69,7 @@ from bus_watch.tick_state import (
     absorb_operator_edits,
     load_state,
     save_state,
+    stamp_now_row_set_at,
     update_state,
 )
 
@@ -310,9 +311,11 @@ def main() -> int:
         if friction_mark:
             mark_friction(fresh, *friction_mark, at=_utcnow())
         if set_items:
-            fresh["policy"] = apply_policy_set(
+            merged = apply_policy_set(
                 fresh.get("policy") or {}, set_items, as_of=_utcnow()
             )
+            stamp_now_row_set_at(fresh, merged, as_of=_utcnow())
+            fresh["policy"] = merged
         if args.operator_gate is not None:
             fresh["policy"] = arm_operator_gate(
                 fresh.get("policy") or {}, args.operator_gate, as_of=_utcnow()

@@ -6,8 +6,7 @@ from typing import Any
 
 from bus_watch.doorbell import render_successor_wake
 from bus_watch.fable_lock import current_night_id
-from bus_watch.friction_rows import now_row as friction_now_row
-from bus_watch.spawn_pending import attention_now_row
+from bus_watch.now_row import format_now_line, resolve_now_row
 
 SUCCESSOR_MESSAGE_CAP = 2048
 
@@ -121,15 +120,14 @@ def successor_context_from_digest(
         raw = digest.get("spawn_signal_sources")
         sources = list(raw) if isinstance(raw, list) else []
     tip_cp = root.get("tip_checkpoint_turn")
+    raw_row, row_source = resolve_now_row(digest)
+    if not raw_row:
+        raw_row = str(root.get("last_subject") or "")
+        row_source = "tip" if raw_row else "empty"
     return {
         "gear": policy.get("gear"),
-        # Same precedence as induction NOW: policy ≻ friction ≻ summary_row ≻ attention.
-        "row": str(policy.get("now_row") or "").strip()
-        or friction_now_row(digest)
-        or str(digest.get("summary_row") or "").strip()
-        or attention_now_row(digest)
-        or root.get("last_subject")
-        or "",
+        "row": format_now_line(raw_row, row_source, digest, omit_tip_prefix=True),
+        "row_source": row_source,
         "tip_turn": root.get("turns"),
         "tip_checkpoint_turn": int(tip_cp) if tip_cp is not None else None,
         "spawn_signal_sources": sources,

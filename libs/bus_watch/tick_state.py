@@ -45,6 +45,7 @@ OPERATOR_KEYS: tuple[str, ...] = (
     "last_induction_fingerprint",
     "navigator_commissions_by_night",
     "navigator_commissions_tonight",
+    "now_row_set_at",
 )
 
 
@@ -81,6 +82,16 @@ def update_state(
     return current
 
 
+def stamp_now_row_set_at(
+    state: dict[str, Any], new_policy: dict[str, Any], *, as_of: str
+) -> None:
+    """Record when ``policy.now_row`` last changed (tie-break vs judgment tier)."""
+    old = str((state.get("policy") or {}).get("now_row") or "").strip()
+    new = str(new_policy.get("now_row") or "").strip()
+    if new and new != old:
+        state["now_row_set_at"] = as_of
+
+
 def absorb_operator_edits(state: dict[str, Any], path: Path) -> list[str]:
     """Copy operator-owned keys from disk into the loop's in-memory ``state``.
 
@@ -98,6 +109,7 @@ def absorb_operator_edits(state: dict[str, Any], path: Path) -> list[str]:
 __all__ = [
     "OPERATOR_KEYS",
     "absorb_operator_edits",
+    "stamp_now_row_set_at",
     "load_state",
     "save_state",
     "update_state",

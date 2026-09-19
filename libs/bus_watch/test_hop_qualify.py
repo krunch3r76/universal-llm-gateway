@@ -63,3 +63,8 @@ def test_context_budget_stays_on_hold_merge() -> None:
 def test_context_budget_hops_when_work_remains() -> None:
     q = hop_qualifies(row="G4 implement packet", context_budget=True)
     assert q == {"ok": True, "reason": "context_budget"}
+
+
+def test_judgment_pointer_row_qualifies() -> None:
+    q = hop_qualifies(row="11738#36 — cdp reply — abc123")
+    assert q == {"ok": True, "reason": "dispatchable_now"}

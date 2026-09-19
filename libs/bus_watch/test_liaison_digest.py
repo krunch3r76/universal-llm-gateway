@@ -523,13 +523,13 @@ def test_checkpoint_observed_advances_epoch_and_clears_due(
 ) -> None:
     """AC2.1 — newer tip CHECKPOINT advances epoch; following build not due."""
     _digest_mocks(mock_bus, mock_get, tip_checkpoint_turn=None)
-    mock_root_surface.return_value = ([], None)
+    mock_root_surface.return_value = ([], None, [])
     state: dict = {"ticks": 5, "last_cp_tick": 0, "last_cp_turn": 0, "policy": {}}
     due_before = build_digest(
         "10479", state, register="autonomous", budget_tokens=700000
     )
     assert due_before["checkpoint_due"] is True
-    mock_root_surface.return_value = ([], 50)
+    mock_root_surface.return_value = ([], 50, [])
     due_after = build_digest(
         "10479", state, register="autonomous", budget_tokens=700000
     )
@@ -568,7 +568,7 @@ def test_checkpoint_observed_idempotent_same_turn(
 ) -> None:
     """AC2.2 — unchanged tip CHECKPOINT does not re-emit."""
     _digest_mocks(mock_bus, mock_get, tip_checkpoint_turn=40)
-    mock_root_surface.return_value = ([], 40)
+    mock_root_surface.return_value = ([], 40, [])
     state: dict = {"ticks": 1, "last_cp_turn": 40, "last_cp_tick": 2, "policy": {}}
     before = dict(state)
     build_digest("10479", state, register="autonomous", budget_tokens=700000)
@@ -601,7 +601,7 @@ def test_checkpoint_absent_leaves_epoch_untouched(
 ) -> None:
     """AC2.3 — no tip CHECKPOINT leaves today's behavior."""
     _digest_mocks(mock_bus, mock_get, tip_checkpoint_turn=None)
-    mock_root_surface.return_value = ([], None)
+    mock_root_surface.return_value = ([], None, [])
     state: dict = {"ticks": 3, "last_cp_tick": 1, "policy": {}}
     before = dict(state)
     build_digest("10479", state, register="autonomous", budget_tokens=700000)
@@ -634,7 +634,7 @@ def test_manual_last_cp_tick_not_lowered(
 ) -> None:
     """AC2.4 — manual mark ahead of ticks is preserved via max()."""
     _digest_mocks(mock_bus, mock_get, tip_checkpoint_turn=10)
-    mock_root_surface.return_value = ([], 10)
+    mock_root_surface.return_value = ([], 10, [])
     state: dict = {"ticks": 2, "last_cp_tick": 100, "last_cp_turn": 0, "policy": {}}
     build_digest("10479", state, register="autonomous", budget_tokens=700000)
     assert state["last_cp_tick"] == 100

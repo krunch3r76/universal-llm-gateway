@@ -159,6 +159,31 @@ def test_induction_attention_child_now_when_bind_empty() -> None:
     )
 
 
+def test_induction_judgment_outranks_policy_now_row() -> None:
+    """AC-1: unread cdp reply must beat stale policy.now_row."""
+    digest = _digest(
+        policy={"now_row": "a:35559 stale bind"},
+        root={
+            "id": "10479",
+            "turns": 214,
+            "last_subject": "CHECKPOINT 10479 54b93098",
+            "unread_turns": [
+                {
+                    "turn_number": 36,
+                    "from": "web-anthropic",
+                    "subject": "cdp reply — abc",
+                    "read_at": None,
+                    "status": "open",
+                    "thread": "10479",
+                }
+            ],
+        },
+    )
+    text = build_wake_induction(digest)
+    assert "NOW: 10479#36 — cdp reply" in text
+    assert "a:35559" not in text
+
+
 def test_induction_policy_now_row_wins_over_stale_summary_row() -> None:
     text = build_wake_induction(
         _digest(

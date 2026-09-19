@@ -45,6 +45,7 @@ from bus_watch.ide_budget import (
 from bus_watch.induction import build_wake_induction
 from bus_watch.liaison_watchers import collect_watchers
 from bus_watch.life_digest import build_life_block, project_life_block
+from bus_watch.now_row import harvest_policy_entity_cache
 from bus_watch.spawn_pending import (
     build_attention_lanes,
     digest_root_surface,
@@ -217,7 +218,7 @@ def build_digest(
     """Assemble one digest; mutates ``state`` counters (ticks, est_tokens)."""
     with _bus() as client:
         root = _get(client, f"/threads/{root_id}") or {}
-        recent_turns, tip_checkpoint_turn = digest_root_surface(
+        recent_turns, tip_checkpoint_turn, unread_turns = digest_root_surface(
             client, _get, root_id, root
         )
         lanes = _child_lanes(client, root_id) if "_error" not in root else []
@@ -245,6 +246,8 @@ def build_digest(
         )
 
     policy = effective_policy(state)
+    policy_bind = str(policy.get("now_row") or "").strip()
+    entity_cache = harvest_policy_entity_cache(policy_bind) if policy_bind else {}
     night_id = current_night_id()
     frictions = harvest_frictions(state, policy, night_id=night_id)
     fp = fold_fingerprint(digest_fingerprint(root, lanes), frictions["rows"])
@@ -276,9 +279,12 @@ def build_digest(
             "unread": root.get("unread_count"),
             "last_subject": str(root.get("last_subject") or "")[:_SUBJECT_CAP],
             "recent_turns": recent_turns,
+            "unread_turns": unread_turns,
             "tip_checkpoint_turn": tip_checkpoint_turn,
             "error": root.get("_error"),
         },
+        "now_row_set_at": state.get("now_row_set_at"),
+        "policy_entity_cache": entity_cache,
         "register": register,
         "lanes": lanes,
         # fmt: off

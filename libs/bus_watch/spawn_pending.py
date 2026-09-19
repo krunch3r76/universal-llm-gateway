@@ -594,7 +594,7 @@ def execution_gone(
     return verdict in (LivenessVerdict.ALLOW_ORPHAN, LivenessVerdict.TERMINAL_BACKFILL)
 
 
-def _compact_root_turn(turn: dict[str, Any]) -> dict[str, Any]:
+def _compact_root_turn(turn: dict[str, Any], *, thread: str | None = None) -> dict[str, Any]:
     subject = str(turn.get("subject") or "")
     body = str(turn.get("body") or "")
     return {
@@ -604,14 +604,23 @@ def _compact_root_turn(turn: dict[str, Any]) -> dict[str, Any]:
         "body": body[:400],
         "execution_ids": _extract_execution_ids(subject, body),
         "created_at": turn.get("created_at"),
+        "read_at": turn.get("read_at"),
+        "status": turn.get("status"),
+        "thread": str(turn.get("thread") or thread or ""),
     }
 
 
-def compact_root_turn_summaries(turns: Any) -> list[dict[str, Any]]:
+def compact_root_turn_summaries(
+    turns: Any, *, thread: str | None = None
+) -> list[dict[str, Any]]:
     """Shrink root bus turns for digest pending-spawn lifecycle checks."""
     if not isinstance(turns, list):
         return []
-    return [_compact_root_turn(row) for row in turns if isinstance(row, dict)]
+    return [
+        _compact_root_turn(row, thread=thread)
+        for row in turns
+        if isinstance(row, dict)
+    ]
 
 
 def tip_checkpoint_turn_from_turns(turns: Any) -> int | None:
@@ -631,21 +640,33 @@ def tip_checkpoint_turn_from_turns(turns: Any) -> int | None:
     return int(num) if num is not None else None
 
 
-def root_turn_surface(raw_turns: Any) -> tuple[list[dict[str, Any]], int | None]:
+def root_turn_surface(
+    raw_turns: Any, *, thread: str | None = None
+) -> tuple[list[dict[str, Any]], int | None]:
     """Compact root turns plus tip CHECKPOINT ordinal for digest surfaces."""
-    return compact_root_turn_summaries(raw_turns), tip_checkpoint_turn_from_turns(
-        raw_turns
+    return compact_root_turn_summaries(raw_turns, thread=thread), (
+        tip_checkpoint_turn_from_turns(raw_turns)
     )
 
 
 def digest_root_surface(
     client: Any, get: Callable[..., Any], root_id: str, root: dict[str, Any]
-) -> tuple[list[dict[str, Any]], int | None]:
-    """Fetch compact root turns and tip CHECKPOINT ordinal for digest assembly."""
+) -> tuple[list[dict[str, Any]], int | None, list[dict[str, Any]]]:
+    """Fetch compact root turns, tip CHECKPOINT ordinal, and unread judgment feed."""
     if root.get("_error"):
-        return [], None
+        return [], None, []
     raw = (get(client, "/turns", thread=root_id, last=20) or {}).get("turns") or []
-    return root_turn_surface(raw)
+    recent_turns, tip_cp = root_turn_surface(raw, thread=root_id)
+    unread_raw = (
+        get(client, "/turns", thread=root_id, unread=True, last=25) or {}
+    ).get("turns") or []
+    unread_turns = compact_root_turn_summaries(unread_raw, thread=root_id)
+    if not unread_turns:
+        fallback = (
+            get(client, "/turns", thread=root_id, last=25) or {}
+        ).get("turns") or []
+        unread_turns = compact_root_turn_summaries(fallback, thread=root_id)
+    return recent_turns, tip_cp, unread_turns
 
 
 def _turn_text(turn: dict[str, Any]) -> str:

@@ -23,7 +23,7 @@ import argparse
 import json
 import sys
 
-from bus_watch.digest_budget import effective_policy
+from bus_watch.digest_budget import _bus, _get, effective_policy
 from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.hop_qualify import hop_qualifies
 from bus_watch.ide_hop import (
@@ -36,7 +36,32 @@ from bus_watch.ide_hop import (
     seal_hop_window,
     tick_register,
 )
+from bus_watch.judgment_rows import harvest_judgment_turns
+from bus_watch.liaison_digest import build_digest
+from bus_watch.now_row import format_now_line, resolve_now_row
 from bus_watch.tick_state import load_state
+
+
+def _post_root_checkpoint(root_id: str, body: str) -> bool:
+    with _bus() as client:
+        r = client.post(
+            f"/threads/{root_id}/turns",
+            json={"from": "cursor", "to": "cursor", "subject": "CHECKPOINT", "body": body},
+        )
+        return r.status_code < 400
+
+
+def _mark_turns_read(root_id: str, turn_numbers: list[int]) -> None:
+    with _bus() as client:
+        client.patch(
+            f"/threads/{root_id}/turns/read_state",
+            json={"turn_numbers": turn_numbers, "agent": "cursor"},
+        )
+
+
+def _fetch_turns(root_id: str, **params: object) -> dict:
+    with _bus() as client:
+        return _get(client, "/turns", thread=root_id, **params) or {}
 
 
 def main() -> int:
@@ -120,8 +145,30 @@ def main() -> int:
             if lbl not in labels
         )
     state_path = WATCH_DIR / f"liaison-{args.root}.tick.json"
-    policy = effective_policy(load_state(state_path))
-    qualify = hop_qualifies(row=args.row, arm_labels=labels, policy=policy)
+    state = load_state(state_path)
+    policy = effective_policy(state)
+    now_row_set_at = state.get("now_row_set_at")
+    harvest = harvest_judgment_turns(
+        args.root,
+        get_turns=_fetch_turns,
+        post_checkpoint=_post_root_checkpoint,
+        mark_read=_mark_turns_read,
+        now_row_set_at=str(now_row_set_at or "") or None,
+    )
+    if not harvest.get("ok"):
+        print(json.dumps({"ok": False, "phase": "harvest_failed", **harvest}))
+        return 2
+    digest = build_digest(
+        args.root,
+        state,
+        register=str(state.get("register") or "attended"),
+        budget_tokens=int(policy.get("ide_window_tokens") or 256_000),
+    )
+    raw_row, row_source = resolve_now_row(digest)
+    row = format_now_line(raw_row or args.row, row_source, digest, omit_tip_prefix=True)
+    if not row.strip():
+        row = args.row
+    qualify = hop_qualifies(row=row, arm_labels=labels, policy=policy)
     if not qualify["ok"] and not args.force:
         print(
             json.dumps(
@@ -130,6 +177,7 @@ def main() -> int:
                     "phase": "no_autonomous_followup",
                     "stay": True,
                     "root": args.root,
+                    "harvest": harvest,
                     **qualify,
                 }
             )
@@ -156,7 +204,7 @@ def main() -> int:
         return 2
     message = build_ide_hop_message(
         args.root,
-        row=args.row,
+        row=row,
         arm_labels=labels,
         tip_cp_ordinal=args.tip_cp,
         register=tick_register(args.root),
@@ -172,6 +220,8 @@ def main() -> int:
     out["arm_labels"] = labels
     out["seal"] = seal
     out["message"] = message
+    out["harvest"] = harvest
+    out["row_source"] = row_source
     print(json.dumps(out, indent=2))
     return 0 if out.get("ok") else 2
 
