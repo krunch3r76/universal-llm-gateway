@@ -49,11 +49,11 @@ def test_induction_plants_addresses_not_a_skill_copy() -> None:
     assert "watcher 10479-10586-r9-none complete" in text
     assert "NOW: tip turn #214 on agent-bus:10479 · «CHECKPOINT 10479 54b93098»" in text
     assert (
-        "do not re-read): liaison skill · reasoning-posture skill · git-posture § Land"
+        "do not re-read): reasoning-posture skill · git-posture § Land"
         in text
     )
     assert "register=autonomous · hopper paused (10479#210)" in text
-    assert "cdp/opus-5 first" in text
+    assert "repo→auto" in text or "cdp/fable" in text
     assert len(text.encode("utf-8")) <= INDUCTION_CAP
 
 
@@ -105,8 +105,7 @@ def test_induction_now_row_is_a_dispatch_not_a_note() -> None:
     text = build_wake_induction(
         _digest(attention=[{"id": "10589", "unread": 1, "last_subject": "R11 G3"}])
     )
-    assert text.rstrip().endswith("STAY only when NOW is empty; end turn.")
-    assert "cdp/opus-5 first" in text
+    assert "OPERATOR_GATE" in text
 
 
 def test_induction_headless_budget_keeps_release_step() -> None:

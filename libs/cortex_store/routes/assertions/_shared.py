@@ -14,9 +14,11 @@ names from ``cortex_store.routes.assertions`` (re-exports in ``__init__``).
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import threading
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import ValidationError
@@ -182,6 +184,32 @@ _CLAIM_TRUNC = 200
 
 def _truncate_claim(claim: str) -> str:
     return claim if len(claim) <= _CLAIM_TRUNC else claim[: _CLAIM_TRUNC - 1] + "…"
+
+
+def _parse_summary_attributes(raw: Any) -> dict[str, Any]:
+    """Parse ``attributes`` JSON blob for summary intent projection."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def summary_actionable_fields(attrs: dict[str, Any]) -> tuple[bool, bool]:
+    """Return ``(actionable, defer_enqueue)`` for summary rows.
+
+    Mirrors ``dispatch_ops._friction_enqueue._friction_actionable`` so harvest
+    and enqueue agree on the same gate (a:35418 specimen).
+    """
+    defer_enqueue = bool(attrs.get("defer_enqueue"))
+    actionable = attrs.get("actionable")
+    if defer_enqueue or actionable is False:
+        return False, defer_enqueue
+    return True, defer_enqueue
 
 
 _VALID_CONFIDENCE = {"confirmed", "believed", "suspected", "hypothesized"}

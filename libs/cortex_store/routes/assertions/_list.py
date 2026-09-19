@@ -28,6 +28,8 @@ from ...models import (
 )
 from ._list_filters import append_assertion_list_filters
 from ._shared import (
+    summary_actionable_fields,
+    _parse_summary_attributes,
     _ASSERTION_COLS,
     _ASSERTION_COMPACT_COLS,
     _ASSERTION_SUMMARY_COLS,
@@ -176,6 +178,8 @@ def _list_assertions_summary(
     items: list[AssertionListSummaryItem] = []
     for row in rows:
         d = decode_row(row, _JSON_FIELDS)
+        attrs = _parse_summary_attributes(d.get("attributes"))
+        actionable, defer_enqueue = summary_actionable_fields(attrs)
         items.append(
             AssertionListSummaryItem(
                 id=d["id"],
@@ -193,6 +197,8 @@ def _list_assertions_summary(
                     or d.get("reasoning_summary")
                     or d.get("attributes")
                 ),
+                actionable=actionable,
+                defer_enqueue=defer_enqueue,
                 _deepen=f"cortex(tool=assertion_get, assertion_id={d['id']})",
             )
         )

@@ -414,11 +414,13 @@ def _successor_duty_line(contract: str) -> str:
             "duty: dispatch -> read back -> verify -> CP. Commission the work on a child lane "
             "(cursor_request, parent_thread=<root>, lane_role=sub_mission); read its closeout; "
             "verify against git before any 'landed' word; then checkpoint. "
+            "Repo-write goals ⇒ cursor-auto; design/judgment forks ⇒ cdp/fable — never STAY. "
             "Orienting and writing STAY is not the leg."
         )
     return (
         "duty: run the tick; checkpoint; hop only if hop_qualifies. "
-        "Hop only when autonomous follow-up remains; HOLD_MERGE / empty NOW / quiet tick → STAY."
+        "Repo-write goals ⇒ cursor-auto; design/judgment ⇒ cdp/fable; "
+        "STAY only on empty NOW / quiet tick / OPERATOR_GATE."
     )
 
 

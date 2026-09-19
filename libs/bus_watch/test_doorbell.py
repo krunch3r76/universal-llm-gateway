@@ -442,7 +442,8 @@ _SUCCESSOR_WAKE_GOLDEN = (
     "resume 10479\n\n"
     "WAKE — liaison headless successor, house agent-bus:10479 — contract: none.\n"
     "duty: run the tick; checkpoint; hop only if hop_qualifies. "
-    "Hop only when autonomous follow-up remains; HOLD_MERGE / empty NOW / quiet tick → STAY.\n"
+    "Repo-write goals ⇒ cursor-auto; design/judgment ⇒ cdp/fable; "
+    "STAY only on empty NOW / quiet tick / OPERATOR_GATE.\n"
     "disclosure: orientation ritual; one echo before the first move.\n"
     "objective: tip turn #42 on agent-bus:10479; tip CHECKPOINT #40; "
     "row=Settled · Live · Next; gear: 3-wake-on-attention; spawn_signal=checkpoint_due.\n"
@@ -487,7 +488,7 @@ def test_successor_wake_fitting_input_byte_identical() -> None:
     first = _default_successor_render()
     second = _default_successor_render()
     assert first == second
-    assert len(first.encode("utf-8")) == 1173
+    assert len(first.encode("utf-8")) == 1201
 
 
 @pytest.mark.offline

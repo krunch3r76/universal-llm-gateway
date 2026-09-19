@@ -1173,6 +1173,16 @@
             "title": "Has Enrichment",
             "type": "boolean"
           },
+          "actionable": {
+            "default": true,
+            "title": "Actionable",
+            "type": "boolean"
+          },
+          "defer_enqueue": {
+            "default": false,
+            "title": "Defer Enqueue",
+            "type": "boolean"
+          },
           "has_evidence_uris": {
             "default": false,
             "title": "Has Evidence Uris",

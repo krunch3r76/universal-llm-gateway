@@ -144,8 +144,11 @@ def _cortex_rows(owner: str) -> list[dict[str, Any]]:
 
 def _parse_row(raw: dict[str, Any], owner: str) -> dict[str, Any] | None:
     """One summary assertion → a bare score row, or ``None`` when it is not an
-    open friction on ``owner`` (closure rows, notes, feature asks, foreign owner)."""
+    open friction on ``owner`` (closure rows, notes, feature asks, foreign owner,
+    or non-actionable / defer-enqueue rows per summary projection)."""
     if str(raw.get("entity_id") or owner) != owner or raw.get("superseded_by"):
+        return None
+    if raw.get("defer_enqueue") or raw.get("actionable") is False:
         return None
     match = _CATEGORY_RE.match(str(raw.get("claim") or ""))
     if not match or match.group("category") not in HARVEST_CATEGORIES:
@@ -212,6 +215,23 @@ def dispatched_tonight(state: dict[str, Any], night_id: str) -> int:
     return sum(1 for ts in seen.values() if str(ts).startswith(night_id))
 
 
+def _first_forcing_row(
+    rows: list[dict[str, Any]], *, require_unseen: bool
+) -> dict[str, Any] | None:
+    """Newest-first selector shared by ``promote`` and ``now_row`` (G26/AC7).
+
+    ``require_unseen=True`` skips rows already latched in ``friction_rows_seen``
+    so a promoted row does not remain NOW for a successor tick.
+    """
+    for row in rows:
+        if not row.get("forcing"):
+            continue
+        if require_unseen and row.get("seen_at"):
+            continue
+        return row
+    return None
+
+
 def promote(rows: list[dict[str, Any]], *, cap_remaining: int) -> list[dict[str, Any]]:
     """The attention item for the newest forcing row the ticker has not spawned
     on — one per tick, none once the night's cap is spent.
@@ -222,18 +242,18 @@ def promote(rows: list[dict[str, Any]], *, cap_remaining: int) -> list[dict[str,
     """
     if cap_remaining <= 0:
         return []
-    for row in rows:
-        if row["forcing"] and not row.get("seen_at"):
-            return [
-                {
-                    "kind": "friction",
-                    "id": row["id"],
-                    "owner": row["owner"],
-                    "category": row["category"],
-                    "note": row["note"][:_EVENT_NOTE_CHARS],
-                }
-            ]
-    return []
+    row = _first_forcing_row(rows, require_unseen=True)
+    if row is None:
+        return []
+    return [
+        {
+            "kind": "friction",
+            "id": row["id"],
+            "owner": row["owner"],
+            "category": row["category"],
+            "note": row["note"][:_EVENT_NOTE_CHARS],
+        }
+    ]
 
 
 def harvest_frictions(
@@ -330,15 +350,15 @@ def event_line(item: dict[str, Any]) -> str:
 
 
 def now_row(digest: dict[str, Any]) -> str:
-    """The newest forcing friction as a NOW dispatch row, or ``""``.
+    """The newest unlatched forcing friction as a NOW dispatch row, or ``""``.
 
     Renders the disposition verb and the one-shot that records it, so the seat
     dispatches the row instead of noting it (the 10479 "Next: R12 recon" STAY).
+    Uses the same ``require_unseen`` selector as ``promote`` (G26/AC7).
     """
-    rows = [r for r in digest.get("frictions") or [] if r.get("forcing")]
-    if not rows:
+    row = _first_forcing_row(list(digest.get("frictions") or []), require_unseen=True)
+    if row is None:
         return ""
-    row = rows[0]
     head = f"Friction {row['id']} [{row['category']}] {row['owner']}"
     if row.get("state") == "repeated_failure":
         attempts = int((row.get("disposition") or {}).get("attempts") or 0)

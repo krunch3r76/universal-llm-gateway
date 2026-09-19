@@ -86,7 +86,7 @@ def test_has_booleans_derived_from_row_fields(monkeypatch) -> None:
                 "prospective_summary": "enriched",
                 "events_json": None,
                 "reasoning_summary": None,
-                "attributes": None,
+                "attributes": '{"actionable": false, "defer_enqueue": true}',
             }
         ]
 
@@ -132,6 +132,8 @@ def test_has_booleans_derived_from_row_fields(monkeypatch) -> None:
     item = result.items[0]
     assert item.has_evidence_uris is True
     assert item.has_enrichment is True
+    assert item.actionable is False
+    assert item.defer_enqueue is True
     assert item.model_dump(mode="json", by_alias=True)["_deepen"] == (
         "cortex(tool=assertion_get, assertion_id=42)"
     )

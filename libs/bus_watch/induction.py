@@ -24,9 +24,13 @@ from typing import Any
 from claude_bundles.catalog import load_skill_catalog
 from claude_bundles.cdp_inline_excerpt import _yaml_frontmatter_end, excerpt_skill_body
 
-from bus_watch.doorbell_skills import navigator_doorbell_skills_from_policy
+from bus_watch.doorbell_skills import navigator_doorbell_skills_from_policy, primary_liaison_slug
 from bus_watch.friction_rows import event_line as _friction_event
 from bus_watch.friction_rows import now_row as _friction_now
+from bus_watch.goal_escalation import (
+    classify_goal,
+    format_dispatch_instruction,
+)
 from bus_watch.spawn_pending import attention_now_row
 from bus_watch.spawn_wake.predicate import compute_spawn_signal_sources
 
@@ -43,15 +47,11 @@ _EVENT_ITEMS = 3
 _SUBJECT_CHARS = 56
 _ONE_STEP = (
     "One step: harvest → fold → decide; quote evidence; end turn. "
-    "Judgment bind ⇒ cdp/opus-5 first when below Opus."
+    "Repo→cursor-auto · design→cdp/fable."
 )
 # 10479 tab 12e32c8b (2026-09-13 06:56Z) wrote "Next: R12 recon" and STAYed at
 # 0.7 % of its window: a NOW row is the leg to dispatch this tick, not a note.
-_NOW_STEP = (
-    "One step: harvest → fold → dispatch NOW's first leg (Explore recon · "
-    "cdp/opus-5 first for any bind · cursor-sdk implement); STAY only when NOW is "
-    "empty; end turn."
-)
+_NOW_STEP = "Dispatch NOW (repo→auto · design→fable); STAY iff empty/OPERATOR_GATE; end."
 _HOP_STEP = (
     "One step: CHECKPOINT (residue ≤ 800), run the ide-hop command above, "
     "end turn. ¬ go-under mid-arc — go-under is overnight/departure only."
@@ -315,6 +315,11 @@ def build_wake_induction(
     now_row, now_source = _resolve_now_row(digest)
     events = _events(digest)
     forcing = bool(events or friction_now)
+    goal_kind = (
+        classify_goal(now_row)
+        if now_row and now_source in ("policy", "friction", "attention")
+        else None
+    )
     st = state if state is not None else {}
     lock_now = lock if lock is not None else digest.get("fable_lock") or {}
     spawn_sources = compute_spawn_signal_sources(digest, st, lock=lock_now)
@@ -340,6 +345,9 @@ def build_wake_induction(
     ]
     loaded = list(dict.fromkeys([*nav_labels, *_listed(policy, "induction_loaded")]))
     if surface == "cse":
+        liaison_label = f"{primary_liaison_slug('ide')} skill"
+        loaded = list(dict.fromkeys([liaison_label, *loaded]))
+    if surface == "cse":
         lines.extend(_cse_skill_activation_lines(loaded))
     else:
         lines.append("Loaded already (do not re-read): " + " · ".join(loaded))
@@ -350,6 +358,11 @@ def build_wake_induction(
     lines.append("Standing: " + " · ".join(standing))
     if _tab_at_budget(digest):
         lines.append(_HOP_STEP)
+    elif goal_kind and now_row and root_id:
+        lines.append(
+            "Dispatch: " + format_dispatch_instruction(goal_kind, now_row, root_id=str(root_id))
+        )
+        lines.append(_NOW_STEP)
     elif forcing and now_row:
         lines.append(_NOW_STEP)
     else:

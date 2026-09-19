@@ -195,17 +195,19 @@ def build_ide_hop_message(
         # STAY governs the hop only. Tab 12e32c8b (10479, 2026-09-13 06:56Z) read
         # it as "do not dispatch" and parked at 0.7 % with NOW=R12 undone.
         "NOW non-empty ⇒ dispatch its first leg from this tab (Explore recon · "
-        "cdp/opus-5 first for any bind · cursor-sdk implement) before any STAY "
-        "verdict. STAY = no hop, never = no dispatch.",
+        "repo-write goals → cursor-auto · design/judgment forks → cdp/fable · "
+        "cdp/opus-5 for independent check) before any STAY verdict. "
+        "STAY = no hop, never = no dispatch.",
         "Hop only when autonomous follow-up remains (live watcher, dispatched NOW, "
         "or CONTEXT_BUDGET with remaining work). HOLD_MERGE / empty NOW / quiet tick "
         "→ STAY — do not hop.",
         "LOAD AND EXECUTE: runbook:bus-consult-watcher (legs 1-3 atomic); "
         "runbook:liaison-operator-guide when a ruling or how-to moves; "
         "git-posture § Land on every land (merge, keep both).",
-        "§ Peer-house: isolate; collide ⇒ keep both; cdp/opus-5 → 2nd pool → "
-        "cursor/claude-opus-5; ¬ cursor/claude-fable-5-1; page human only if "
-        "sensitive after that ladder. ¬ hop away unreconciled.",
+        "§ Peer-house: isolate; collide ⇒ keep both; cursor-auto (repo write) → "
+        "cdp/opus-5 (check) → cdp/fable (design/judgment); cursor/claude-opus-5 "
+        "last-resort only; ¬ cursor/claude-fable-5-1; page human only on "
+        "OPERATOR_GATE after that ladder. ¬ hop away unreconciled.",
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
         f"NOW: {row}",
         *arm_lines,

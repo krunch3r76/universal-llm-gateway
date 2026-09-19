@@ -203,6 +203,37 @@ def test_fold_fingerprint_moves_only_with_forcing_rows() -> None:
     assert fold_fingerprint("abc123", quiet) == "abc123"
 
 
+def test_build_rows_drops_non_actionable_harvest_categories() -> None:
+    """AC1/G25: actionable=false drops even when category is in HARVEST_CATEGORIES."""
+    raw = _raw(
+        35418,
+        "[tool_error] headless seat cannot author SEALED segment CHECKPOINT",
+        at="2026-09-13T12:00:00Z",
+    )
+    raw["actionable"] = False
+    raw["defer_enqueue"] = True
+    rows = build_rows({"service:agent-bus": [raw, *_RECORDED[2:4]]}, {})
+    assert "a:35418" not in {r["id"] for r in rows}
+    assert [r["id"] for r in rows] == ["a:33355", "a:32873"]
+
+
+def test_now_row_skips_latched_forcing_rows() -> None:
+    """G26/AC7: latched forcing rows are not NOW; next unlatched row wins."""
+    single = build_rows({"service:agent-bus": _RECORDED[2:3]}, {})
+    state: dict = {}
+    latch_rows(state, promote(single, cap_remaining=3), at=f"{_NIGHT}T08:00:00Z")
+    latched = build_rows({"service:agent-bus": _RECORDED[2:3]}, state)
+    assert now_row({"frictions": latched}) == ""
+    newer = _raw(
+        35420,
+        "[protocol] harvest harness promotes dropped rows",
+        at="2026-09-14T01:00:00Z",
+    )
+    mixed = build_rows({"service:agent-bus": [newer, *_RECORDED[2:3]]}, state)
+    text = now_row({"frictions": mixed})
+    assert text.startswith("Friction a:35420 [protocol]")
+
+
 def test_induction_undispositioned_friction_is_the_now_row() -> None:
     """AC-2: one undispositioned friction, no seat bind ⇒ NOW is a dispatch row,
     the step is the dispatch step, the block fits the 700-byte cap."""
@@ -228,12 +259,18 @@ def test_induction_undispositioned_friction_is_the_now_row() -> None:
         "todo-minted | declined (--mark-friction a:33355:<d>; close-back "
         "friction_close on the assertion)"
     ) in text
-    assert text.rstrip().endswith("STAY only when NOW is empty; end turn.")
+    assert "OPERATOR_GATE" in text
     assert len(text.encode("utf-8")) <= INDUCTION_CAP
-    # A latched, still-open row is no longer an Event but stays the NOW row.
+    # G26: latched forcing rows are no longer NOW once seen_at is set.
     digest["attention"] = []
+    latched_rows = build_rows(
+        {"service:agent-bus": _RECORDED[2:3]},
+        {"friction_rows_seen": {"a:33355": f"{_NIGHT}T08:00:00Z"}},
+    )
+    digest["frictions"] = latched_rows
     still = build_wake_induction(digest)
-    assert "Event: friction" not in still and "NOW: Friction a:33355" in still
+    assert "Event: friction" not in still
+    assert "NOW: Friction a:33355" not in still
     assert still.startswith("WAKE 10534")
 
 

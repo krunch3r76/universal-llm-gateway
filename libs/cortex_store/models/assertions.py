@@ -417,6 +417,8 @@ class AssertionListSummaryItem(BaseModel):
     superseded_by: int | None = None
     has_evidence_uris: bool = False
     has_enrichment: bool = False
+    actionable: bool = True
+    defer_enqueue: bool = False
     deepen: str | None = Field(default=None, alias="_deepen")
 
 
