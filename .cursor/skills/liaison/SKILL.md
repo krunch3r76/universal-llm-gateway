@@ -17,7 +17,7 @@ this skill is the **IDE house seat** on a continuity root.
 
 | Register | Forks | Pages the human | Merges to master |
 |---|---|---|---|
-| **attended** | proceed on every fork with the best-known default (plan / packet target ≻ ladder default); the operator steers post-hoc — never park on a spend or model re-confirm the plan already named (operator 2026-09-11 20:00 PT: "the orchestrator runs without gating on me — I steer as needed") | on designed stops | after operator ack |
+| **attended** | proceed on every fork with the best-known default (plan / packet target ≻ ladder default); the operator steers post-hoc — never park on a spend or model re-confirm the plan already named (operator 2026-09-11 20:00 PT: "the orchestrator runs without gating on me — I steer as needed") | on designed stops | **land on green** (AC met, merge the lane). `HOLD_MERGE` only if the operator **explicitly asked to hold** — ¬ operator ack as land gate (operator 2026-09-19, a:35726 SoT · a:35731) |
 | **autonomous** | bind every fork itself (steelman → bind → act); operator absent | only on `OPERATOR_GATE` / `SPEND_CAP` / `REPEATED_FAILURE` / `CONTEXT_BUDGET` | **land on green** (AC met, merge the lane). `HOLD_MERGE` only if the operator **explicitly asked to hold** — ¬ `auto_land` flag, ¬ missing chat ack (operator 2026-09-12 07:33 PT) |
 
 Flip: `scripts/liaison-tick.py --root R --register autonomous|attended` (state-file field). The operator's
