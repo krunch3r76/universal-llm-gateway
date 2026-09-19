@@ -207,18 +207,14 @@ def compute_tools_available(
 
 
 def segment_codec_counts(segments: list[dict[str, Any]]) -> dict[str, int]:
-    counts: dict[str, int] = {"md-v1": 0, "messages-v1": 0, "none": 0}
+    counts: dict[str, int] = {}
     for seg in segments:
-        codec = str(seg.get("codec_used") or seg.get("verbatim_codec") or "md-v1")
-        if codec not in counts:
-            counts[codec] = 0
-        counts[codec] += 1
-    if counts["messages-v1"] == 0 and counts["none"] == 0:
-        return {"md-v1": counts["md-v1"], "messages-v1": 0}
-    out = {k: v for k, v in counts.items() if v > 0 or k in {"md-v1", "messages-v1"}}
-    if "none" in out and out["none"] == 0:
-        del out["none"]
-    return out
+        if seg.get("codec_used") is None and seg.get("verbatim_codec") is None:
+            codec = "none"
+        else:
+            codec = str(seg.get("codec_used") or seg.get("verbatim_codec") or "md-v1")
+        counts[codec] = counts.get(codec, 0) + 1
+    return counts
 
 
 def render_tape(

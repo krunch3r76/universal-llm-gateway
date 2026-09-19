@@ -40,6 +40,17 @@ def test_segment_codec_counts_messages_v1_nonzero() -> None:
     assert counts["md-v1"] == 1
 
 
+def test_segment_codec_counts_preserves_unknown_codecs() -> None:
+    """AC-3e: unknown codecs are counted, not discarded."""
+    segments = [
+        {"from_sealed": True, "codec_used": "messages-v2"},
+        {"from_sealed": True, "codec_used": "md-v1"},
+    ]
+    counts = segment_codec_counts(segments)
+    assert counts == {"messages-v2": 1, "md-v1": 1}
+    assert sum(counts.values()) == len(segments)
+
+
 def test_build_lane_segments_propagates_verbatim_codec(tmp_path: Path) -> None:
     """AC-1a authority: build_chain_segments copies journal verbatim_codec onto segment."""
     files_root = tmp_path / "files"

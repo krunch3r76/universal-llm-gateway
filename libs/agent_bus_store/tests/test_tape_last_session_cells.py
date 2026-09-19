@@ -331,7 +331,7 @@ def test_counsel_on_root_cp_fixture(
             scope="last_session",
             budget_bytes=budget_bytes,
             tools="none",
-            include_extras=False,
+            include_extras=budget_bytes >= 512_000,
         )
 
     assert foreign_excluded >= 1
@@ -339,3 +339,7 @@ def test_counsel_on_root_cp_fixture(
     contents = [str(m.get("content") or "") for m in messages]
     assert not any("foreign counsel" in c for c in contents)
     assert any("root-owned" in c for c in contents)
+    if budget_bytes >= 512_000:
+        assert all(m.get("transcript_id") != _UUID_B for m in messages)
+    else:
+        assert foreign_excluded == 1

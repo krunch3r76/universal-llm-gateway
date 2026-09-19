@@ -186,7 +186,7 @@ def messages_from_sealed_row(
             return [], "md-v1"
         return parse_verbatim_md(verbatim, seg=seg, session_id=session_id), "md-v1"
     if verbatim is None:
-        return [], "md-v1"
+        return [], "none"
     return parse_verbatim_md(verbatim, seg=seg, session_id=session_id), "md-v1"
 
 
