@@ -6,10 +6,11 @@ import os
 from typing import Any
 
 import httpx
+from agent_bus_store.tape_degrade import TAPE_BUDGET_BYTES_DEFAULT
 from continuity_tape.events import stargate_continuity_tape_read_served
 from continuity_tape.messages import (
-    EnvelopeMeta,
     ContinuityMessagesEnvelope,
+    EnvelopeMeta,
     envelope_wire_dict,
     messages_sha256,
 )
@@ -46,12 +47,13 @@ def _build_sources(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not sid or sid in seen:
             continue
         seen.add(sid)
+        codec = str(seg.get("codec_used") or seg.get("verbatim_codec") or "md-v1")
         sources.append(
             {
                 "session_id": sid,
                 "transcript_id": str(seg.get("transcript_id") or ""),
                 "surface": _agent_surface(str(seg.get("dominant_lane") or "")),
-                "verbatim_codec": "md-v1",
+                "verbatim_codec": codec,
                 "binding": str(seg.get("binding") or ""),
             }
         )
@@ -68,18 +70,6 @@ def _checkpoint_turns(cells: list[dict[str, Any]]) -> list[int]:
         if turn not in turns:
             turns.append(turn)
     return sorted(turns)
-
-
-def _segment_codec_counts(segments: list[dict[str, Any]]) -> dict[str, int]:
-    counts = {"md-v1": 0, "messages-v1": 0}
-    for seg in segments:
-        codec = str(seg.get("verbatim_codec") or "md-v1")
-        if codec not in counts:
-            counts[codec] = 0
-        counts[codec] += 1
-    if counts["md-v1"] == 0 and counts["messages-v1"] == 0 and segments:
-        counts["md-v1"] = len(segments)
-    return counts
 
 
 def _surfaces(segments: list[dict[str, Any]]) -> list[str]:
@@ -120,7 +110,9 @@ def build_envelope_from_tape(
         messages_sha256=sha,
         budget_bytes=int(open_line.get("budget_bytes") or request.get("budget_bytes") or 0),
         payload_bytes=int(open_line.get("payload_bytes") or 0),
-        segment_codec_counts=_segment_codec_counts(segments),
+        segment_codec_counts=open_line.get("segment_codec_counts")
+        if isinstance(open_line.get("segment_codec_counts"), dict)
+        else None,
         surfaces=_surfaces(segments),
         checkpoint_turns=_checkpoint_turns(cells),
         sources=_build_sources(segments),
@@ -146,7 +138,7 @@ async def fetch_tape_envelope(
     prior_cells: int = 1,
     include_extras: bool = False,
     tools: str = "none",
-    budget_bytes: int = 512_000,
+    budget_bytes: int = TAPE_BUDGET_BYTES_DEFAULT,
     harvest: bool = False,
     channel: str = "continuity",
     caller_agent: str = "stargate",

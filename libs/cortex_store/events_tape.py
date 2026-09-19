@@ -95,24 +95,34 @@ def agent_bus_tape_rendered(
     segment_codec_counts: dict[str, int] | None = None,
     surfaces: list[str] | None = None,
     tools_available: bool = False,
+    budget_source: str | None = None,
+    foreign_cells_excluded: int = 0,
+    ownership_unresolved: int = 0,
+    codec_fallback_count: int = 0,
 ) -> Event:
+    payload: dict[str, object] = {
+        "thread_id": thread_id,
+        "segment_count": segment_count,
+        "turn_count": turn_count,
+        "truncated": truncated,
+        "scope": scope,
+        "tools": tools,
+        "include_extras": include_extras,
+        "index_count": index_count,
+        "segment_codec_counts": segment_codec_counts or {},
+        "surfaces": surfaces or [],
+        "tools_available": tools_available,
+        "foreign_cells_excluded": foreign_cells_excluded,
+        "ownership_unresolved": ownership_unresolved,
+        "codec_fallback_count": codec_fallback_count,
+    }
+    if budget_source is not None:
+        payload["budget_source"] = budget_source
     ev = Event(
         signal="agent_bus.tape.rendered",
         role="observation",
         scope="global",
-        payload={
-            "thread_id": thread_id,
-            "segment_count": segment_count,
-            "turn_count": turn_count,
-            "truncated": truncated,
-            "scope": scope,
-            "tools": tools,
-            "include_extras": include_extras,
-            "index_count": index_count,
-            "segment_codec_counts": segment_codec_counts or {},
-            "surfaces": surfaces or [],
-            "tools_available": tools_available,
-        },
+        payload=payload,
     )
     record(ev.signal, **ev.payload)
     return ev

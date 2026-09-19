@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from agent_bus_store.tape_degrade import TAPE_BUDGET_BYTES_DEFAULT
 from continuity_tape.messages import ContinuityMessagesEnvelope, Tools
 from pydantic import BaseModel, Field
 
@@ -15,7 +16,7 @@ class TapeReadRequest(BaseModel):
     prior_cells: int = Field(default=1, ge=0, le=8)
     include_extras: bool = False
     tools: Tools = "none"
-    budget_bytes: int = Field(default=512_000, ge=1024, le=8_000_000)
+    budget_bytes: int = Field(default=TAPE_BUDGET_BYTES_DEFAULT, ge=1024, le=8_000_000)
     harvest: bool = False
     channel: str | None = None
 

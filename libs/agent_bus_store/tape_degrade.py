@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+TAPE_BUDGET_BYTES_DEFAULT = 512_000
+
 
 class TapeBudgetExceeded(Exception):
     """Raised when no viable pour fits within budget_bytes."""
@@ -79,8 +81,9 @@ def build_degraded_basis(
     budget_bytes: int,
     payload_bytes_val: int,
     required_budget_bytes: int,
+    budget_source: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    basis: dict[str, Any] = {
         "kind": "budget_overflow",
         "bodies_kept": bodies_kept,
         "bodies_dropped": bodies_dropped,
@@ -91,6 +94,9 @@ def build_degraded_basis(
         "required_budget_bytes": required_budget_bytes,
         "overflow_uri": overflow_uri(thread_id, required_budget_bytes),
     }
+    if budget_source is not None:
+        basis["budget_source"] = budget_source
+    return basis
 
 
 def degrade_overflow_messages(
@@ -172,6 +178,7 @@ def degrade_overflow_messages(
 
 
 __all__ = [
+    "TAPE_BUDGET_BYTES_DEFAULT",
     "TapeBudgetExceeded",
     "build_degraded_basis",
     "degrade_overflow_messages",

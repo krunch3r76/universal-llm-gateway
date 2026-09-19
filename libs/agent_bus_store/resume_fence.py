@@ -31,6 +31,7 @@ from .resume_fence_store import (
     pour_terminal_release,
     read_set_from_journal,
 )
+from .tape_degrade import TAPE_BUDGET_BYTES_DEFAULT
 
 _BUNDLE_VERSION = "resume-bundle-v2"
 _PROJECTION_URI = "cortex://notes/system/threads/{thread}-transcript-projection.md"
@@ -49,10 +50,16 @@ _TRANSCRIPT_ID_RE = re.compile(
 )
 _SECTION_CHILD = "### Child lanes"
 _SECTION_CITED = "### Cited lanes"
-# Matches the other tape doors (tape_render._DEFAULT_BUDGET_BYTES, GET
-# /threads/{id}/tape). The prior 24000 starved the one door continuity depends
-# on: a 276911-byte window degraded to a single body, oldest popped first.
-RESUME_FENCE_TAPE_BUDGET = int(os.environ.get("RESUME_FENCE_TAPE_BUDGET", "512000"))
+# Matches the other tape doors (TAPE_BUDGET_BYTES_DEFAULT, GET /threads/{id}/tape).
+# RESUME_FENCE_TAPE_BUDGET env overrides only at this resume door.
+def _resume_fence_tape_budget() -> tuple[int, str]:
+    env_val = os.environ.get("RESUME_FENCE_TAPE_BUDGET")
+    if env_val is not None:
+        return int(env_val), "env"
+    return TAPE_BUDGET_BYTES_DEFAULT, "default"
+
+
+RESUME_FENCE_TAPE_BUDGET, RESUME_FENCE_BUDGET_SOURCE = _resume_fence_tape_budget()
 
 
 def _sha256_text(text: str) -> str:
@@ -357,6 +364,7 @@ def assemble_resume_fence(
     envelope = build_resume_envelope(
         thread_id,
         tape_budget_bytes=RESUME_FENCE_TAPE_BUDGET,
+        budget_source=RESUME_FENCE_BUDGET_SOURCE,
     )
     if envelope.get("error"):
         return envelope

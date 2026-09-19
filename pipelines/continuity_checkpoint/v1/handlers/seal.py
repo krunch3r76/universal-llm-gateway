@@ -160,7 +160,7 @@ class ContinuityCheckpointSealHandler(BaseHandler):
                 "transcript_entity_id": seal.get("transcript_entity_id"),
                 "turn_count": int(seal.get("turn_count") or 0),
                 "messages_sha256": seal.get("content_hash"),
-                "verbatim_codec": "messages-v1",
+                "verbatim_codec": str(seal.get("verbatim_codec") or "messages-v1"),
                 "already_closed": False,
                 "refused": None,
             }

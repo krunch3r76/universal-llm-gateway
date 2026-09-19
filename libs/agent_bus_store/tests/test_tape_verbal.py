@@ -82,7 +82,7 @@ def test_last_session_scope_keeps_only_last_cp_interval() -> None:
         {"cp_ordinal": 2, "transcript_id": "a", "turn_lo": 5, "turn_hi": 12, "bus_turn_id": 20},
         {"cp_ordinal": 3, "transcript_id": "a", "turn_lo": 12, "turn_hi": 18, "bus_turn_id": None},
     ]
-    scoped, _skipped = _last_session_cells(cells)
+    scoped, _skipped, _foreign, _unresolved = _last_session_cells(cells, thread_id="10479")
     assert [c["cp_ordinal"] for c in scoped] == [2, 3]
     messages = [
         {"transcript_id": "a", "turn_index": 4, "role": "user", "content": "old"},

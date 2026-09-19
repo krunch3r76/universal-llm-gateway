@@ -9,6 +9,7 @@ from .db.connection import connect
 from .tape_membership import (
     _parse_window_lines,
     build_chain_segments,
+    resolve_cell_ownership,
 )
 
 
@@ -141,6 +142,15 @@ def _cells_for_lane(
                 "channel": "continuity",
             }
         )
+    for cell in cells:
+        tid = str(cell.get("transcript_id") or "")
+        if not tid:
+            continue
+        dominant_lane, ownership_source = resolve_cell_ownership(
+            tid, lane_journals=lane_journals
+        )
+        cell["dominant_lane"] = dominant_lane
+        cell["ownership_source"] = ownership_source
     return cells
 
 
@@ -201,9 +211,10 @@ def _window_segments(
 def _last_session_cells(
     cells: list[dict[str, Any]],
     *,
+    thread_id: str,
     channel: str = "continuity",
-) -> tuple[list[dict[str, Any]], int]:
-    """Select last_session cells; skip hop-channel wall when *channel* is continuity."""
+) -> tuple[list[dict[str, Any]], int, int, int]:
+    """Select last_session cells; skip hop wall; drop foreign dominant_lane cells."""
     skip_hop_wall = channel == "continuity"
     wall_ordinal: int | None = None
     for cell in reversed(cells):
@@ -225,24 +236,38 @@ def _last_session_cells(
                 for c in cells
                 if c.get("bus_turn_id") is not None and c.get("channel") == "hop"
             )
-            return filtered, skipped
-        return list(cells), 0
-    filtered = [
-        cell
-        for cell in cells
-        if cell.get("bus_turn_id") is None
-        or int(cell.get("cp_ordinal") or 0) == wall_ordinal
-    ]
-    if skip_hop_wall:
-        skipped = sum(
-            1
-            for c in cells
-            if c.get("bus_turn_id") is not None
-            and c.get("channel") == "hop"
-            and c not in filtered
-        )
-        return filtered, skipped
-    return filtered, 0
+        else:
+            filtered = list(cells)
+            skipped = 0
+    else:
+        filtered = [
+            cell
+            for cell in cells
+            if cell.get("bus_turn_id") is None
+            or int(cell.get("cp_ordinal") or 0) == wall_ordinal
+        ]
+        if skip_hop_wall:
+            skipped = sum(
+                1
+                for c in cells
+                if c.get("bus_turn_id") is not None
+                and c.get("channel") == "hop"
+                and c not in filtered
+            )
+        else:
+            skipped = 0
+    ownership_unresolved = sum(
+        1 for c in filtered if c.get("ownership_source") == "unresolved"
+    )
+    scoped: list[dict[str, Any]] = []
+    foreign_cells_excluded = 0
+    for cell in filtered:
+        dl = cell.get("dominant_lane")
+        if dl is not None and str(dl) != thread_id:
+            foreign_cells_excluded += 1
+            continue
+        scoped.append(cell)
+    return scoped, skipped, foreign_cells_excluded, ownership_unresolved
 
 
 def _message_in_cell(msg: dict[str, Any], cell: dict[str, Any]) -> bool:

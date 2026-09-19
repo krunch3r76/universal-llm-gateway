@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, override
 
+from agent_bus_store.tape_degrade import TAPE_BUDGET_BYTES_DEFAULT
 from systems.continuity.tape_read import fetch_tape_envelope
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -25,7 +26,7 @@ class ContinuityTapeReadHandler(BaseHandler):
         scope = str(options.get("scope", "full"))
         include_extras = bool(options.get("include_extras", False))
         tools = str(options.get("tools", "none"))
-        budget_bytes = int(options.get("budget_bytes", 512_000))
+        budget_bytes = int(options.get("budget_bytes", TAPE_BUDGET_BYTES_DEFAULT))
         harvest = bool(options.get("harvest", False))
         envelope = options.get("envelope")
         caller_agent = str(options.get("from_agent") or "continuity")

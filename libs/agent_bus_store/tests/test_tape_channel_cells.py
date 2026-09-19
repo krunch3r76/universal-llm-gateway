@@ -78,7 +78,7 @@ def test_wall_skips_hop_under_continuity_channel() -> None:
             "channel": "hop",
         },
     ]
-    scoped, skipped = _last_session_cells(cells, channel="continuity")
+    scoped, skipped, _, _ = _last_session_cells(cells, thread_id="10479", channel="continuity")
     assert len(scoped) == 1
     assert scoped[0]["channel"] == "continuity"
     assert skipped == 1
