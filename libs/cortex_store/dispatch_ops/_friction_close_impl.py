@@ -8,12 +8,13 @@ from datetime import UTC, datetime
 from typing import Any
 
 from deploy_identity.code_ref_relation import resolve_commit_sha
+from fastapi import HTTPException
 from git_integrate.commit_paths import commit_paths_fingerprint
 from universal_logging import get_logger
 from universal_workspace import get_workspace_root
 
 from ..guidance_entity import GUIDANCE_ID_PREFIXES, entity_slug_from_id
-from ..routes.assertions import _supersede_assertion_impl
+from ..routes.assertions import _create_assertion_impl, _supersede_assertion_impl
 from ._shared import record
 from .ops_assertions_update import _op_assertion_get
 
@@ -176,6 +177,98 @@ def _validate_commit_resolution(
     return None
 
 
+def _resolution_note_present(resolution_note: str | None) -> bool:
+    """True when resolution_note is non-empty (None and '' are absent)."""
+    return resolution_note is not None and resolution_note != ""
+
+
+def _persist_already_closed_note(
+    *,
+    entity_id: str,
+    friction_assertion_id: int,
+    fulfillment_assertion_id: int,
+    resolution_note: str,
+    resolution_kind: str,
+    agent: str,
+    session_id: str,
+) -> tuple[int | None, str | None]:
+    """Persist losing-seat disposition note on the fulfillment chain."""
+    body: dict[str, Any] = {
+        "entity_id": entity_id,
+        "claim": resolution_note,
+        "confidence": "confirmed",
+        "evidence": (
+            f"friction_close already_closed disposition note for friction "
+            f"#{friction_assertion_id} (fulfillment #{fulfillment_assertion_id}, "
+            f"resolution_kind={resolution_kind}) at "
+            f"{datetime.now(UTC).isoformat()}"
+        ),
+        "derivation_type": "agent_observation",
+        "confidence_score": 1.0,
+        "fulfillment_assertion_id": fulfillment_assertion_id,
+        "session_id": session_id,
+        "seeded_by": agent,
+        "attributes": {"friction_assertion_id": friction_assertion_id},
+    }
+    try:
+        result = _create_assertion_impl(body)
+    except HTTPException as exc:
+        return None, str(exc.detail)
+    except Exception as exc:
+        return None, str(exc)
+
+    new_item = result.get("item") or {}
+    note_id = new_item.get("id") if isinstance(new_item, dict) else None
+    if not isinstance(note_id, int):
+        return None, "assertion create returned no id"
+    return note_id, None
+
+
+def _already_closed_response(
+    *,
+    assertion_id: int,
+    fulfillment_assertion_id: int,
+    resolution_kind: str,
+    resolution_note: str | None,
+    entity_id: str | None,
+    agent: str,
+    session_id: str,
+) -> dict[str, Any]:
+    """Return already_closed payload; echo and persist non-empty resolution_note."""
+    payload: dict[str, Any] = {
+        "status": "already_closed",
+        "assertion_id": assertion_id,
+        "fulfillment_assertion_id": fulfillment_assertion_id,
+        "resolution_kind": resolution_kind,
+    }
+    if not _resolution_note_present(resolution_note):
+        return payload
+
+    payload["resolution_note"] = resolution_note
+    if not entity_id:
+        payload["note_persisted"] = None
+        payload["note_persist_error"] = (
+            f"Friction assertion {assertion_id} has no entity_id"
+        )
+        return payload
+
+    note_id, persist_err = _persist_already_closed_note(
+        entity_id=entity_id,
+        friction_assertion_id=assertion_id,
+        fulfillment_assertion_id=fulfillment_assertion_id,
+        resolution_note=resolution_note,
+        resolution_kind=resolution_kind,
+        agent=agent,
+        session_id=session_id,
+    )
+    if note_id is not None:
+        payload["note_persisted"] = note_id
+    else:
+        payload["note_persisted"] = None
+        payload["note_persist_error"] = persist_err or "unknown persistence failure"
+    return payload
+
+
 def _promote_friction_to_todo(
     *,
     resolution_kind: str,
@@ -260,12 +353,15 @@ def close_friction_assertion(
 
     superseded_by = existing.get("superseded_by")
     if superseded_by is not None:
-        return {
-            "status": "already_closed",
-            "assertion_id": assertion_id,
-            "fulfillment_assertion_id": superseded_by,
-            "resolution_kind": resolution_kind,
-        }
+        return _already_closed_response(
+            assertion_id=assertion_id,
+            fulfillment_assertion_id=superseded_by,
+            resolution_kind=resolution_kind,
+            resolution_note=resolution_note,
+            entity_id=existing.get("entity_id"),
+            agent=agent,
+            session_id=session_id,
+        )
 
     entity_id = existing.get("entity_id")
     if not entity_id:
