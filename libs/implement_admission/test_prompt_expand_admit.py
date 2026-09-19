@@ -59,7 +59,7 @@ def test_foreign_root_skipped() -> None:
         prompt=_TASK,
         contract="implement",
         caller_agent="cursor",
-        parent_thread="11667",
+        parent_thread="99999",
     )
     assert decision.admit is False
     assert decision.skip_reason == "root_not_enrolled"
@@ -91,6 +91,18 @@ def test_11738_enrolled_by_default() -> None:
 
 
 @pytest.mark.offline
+def test_11667_enrolled_by_default() -> None:
+    decision = should_expand(
+        prompt=_TASK,
+        contract="implement",
+        caller_agent="cursor",
+        dispatch_thread_id="11667",
+    )
+    assert decision.admit is True
+    assert decision.root == "11667"
+
+
+@pytest.mark.offline
 def test_enrolled_sketch_admits() -> None:
     decision = should_expand(
         prompt=_TASK,
@@ -109,7 +121,7 @@ def test_unenrolled_sketch_still_skipped() -> None:
         prompt=_TASK,
         contract="sketch",
         caller_agent="cursor",
-        dispatch_thread_id="11667",
+        dispatch_thread_id="99999",
     )
     assert decision.admit is False
     assert decision.skip_reason == "root_not_enrolled"
