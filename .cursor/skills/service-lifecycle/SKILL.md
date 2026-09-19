@@ -69,6 +69,10 @@ All service operations go through the `manage` MCP tool, which talks to `manage.
 
 ## Post-code-change loop (mandatory)
 
+On **work_complete**, path-explicit-commit session paths **before** this loop
+(land → commit → recycle). The numbered steps below are the recycle/verify
+leg, not a license to skip the commit.
+
 For **host-process services** (cortex_api, agent_bus, event_service, stargate, rag, cloud_proxy):
 1. `quality_gate(files=[...])`
 2. `manage(action="sync_restart", service=X)`
@@ -83,13 +87,14 @@ For **mcp** (container service):
 
 Never skip `wait_healthy` after start/restart/sync_restart.
 
-For an ordinary live claim, the loop above is sufficient. For a
-`live@<sha>` claim, commit the deployment paths path-explicitly **before**
-`sync_restart`, then retain the restart and health payloads and verify live
-`code_ref_satisfied` (equal or ancestor), process identity movement, and
-relevant dirty-path disclosure. A dirty checkout may still be restarted; report
-ordinary `live` plus tree state instead of exact `live@<sha>`. This ordering
-qualifies the claim, not the restart.
+Work-complete ordinary live and `live@<sha>` share one order: path-explicit
+commit of session/deployment paths **before** `sync_restart`. Retain restart
+and health payloads; for `live@<sha>` also verify live `code_ref_satisfied`
+(equal or ancestor), process identity movement, and relevant dirty-path
+disclosure. A dirty-tree restart is **exceptional mid-arc verify**, not the
+ordinary-live default and not work_complete — report ordinary `live` plus tree
+state, and do not emit a done claim until the same-turn commit has landed.
+`work_complete` without quoted commit + recycle payloads is invalid.
 
 ## Invariants (FOL)
 
@@ -118,3 +123,7 @@ the window clears or the deadline passes with no healthy recovery.
 Annotated transport errors include `restart_in_progress`, `retry_after_s`, and
 `window_deadline` (e.g. pipeline/frontier `stargate_unreachable` during fleet restart).
 Bare `*_unreachable` with no window → hard incident (crash / unplanned outage).
+
+**Work-complete finishing (last).** Default: land → path-explicit commit of session paths →
+`sync_restart` + `wait_healthy`. Recycle-from-dirty-tree is exceptional mid-arc verify,
+not the close path. `work_complete` without quoted commit + recycle payloads is invalid.

@@ -92,10 +92,12 @@ a harvested conductor. ¬ leftover-execute.
 `contract=implement` (Composer). Never replay the harvested conductor todo.
 W5 (`reuse_thread` + same `source_ref`) is unfinished-conductor only.
 
-**After land (binding):** prompt go-live for each serving process that loaded
-those paths (hub GIW vs satellite — name the process and what “live” means).
-OR if this liaison chooses not to recycle: announce skip in the same turn —
-process, why skipped, what stays landed-not-live. When the land was a named
+**After land (binding):** path-explicit commit of session paths, then prompt
+go-live (recycle) for each serving process that loaded those paths (hub GIW vs
+satellite — name the process and what “live” means). Do not recycle-and-call-
+finished while session paths are uncommitted. OR if this liaison chooses not to
+recycle: announce skip in the same turn — process, why skipped, what stays
+landed-not-live. When the land was a named
 `todo:`: stamp that entity (`todo-close` or LANDED assertion) in the same
 turn — recycle without stamp leaves the next resume walking an open card.
 Code-live ≠ trading-live (recycle claudeburst ≠ activate
@@ -112,7 +114,7 @@ from CHECKPOINT (reconstitution index, not a follow-up ask).
 |---|---|
 | `follow up` | Harvest what's terminal. One Been / Are / Going paragraph in the summoning IDE chat. ¬ new hop unless the last bind already said to admit. |
 | `follow up on the pager` · `page me when done` · `I'm leaving — follow up` | Same harvest + Use the `pager-notify` skill (awareness; ¬ `COME TO IDE` unless they said come to IDE). Aligns to that skill's “ping me when X”. |
-| `status` | **HOPS / BLOCKERS / PENDING / SCORES / BREAKS / LAND-LIVE**. PENDING = leftovers this liaison already named or still dirty on this arc (Mission/resume WIP, in-seat files, landed-not-live, branch-debt). Land-then-live is the default sequence to report. After any land: prompt recycle of each serving process, or announce skip (process · why · landed-not-live). LAND-LIVE names skipped recycles, not only “not live.” Recon-spawn fills the continuity `## Scores / breaks / land-live` box — ¬ dump tables into this skill. ¬ decide-and-admit. |
+| `status` | **HOPS / BLOCKERS / PENDING / SCORES / BREAKS / LAND-LIVE**. PENDING = leftovers this liaison already named or still dirty on this arc (Mission/resume WIP, in-seat files, landed-not-live, branch-debt). Land → path-explicit commit → recycle is the default sequence to report. After any land: commit session paths, then prompt recycle of each serving process, or announce skip (process · why · landed-not-live). LAND-LIVE names skipped recycles, not only “not live.” Recon-spawn fills the continuity `## Scores / breaks / land-live` box — ¬ dump tables into this skill. ¬ decide-and-admit. |
 
 Named subject (`follow up when hedges land`) is the trigger. Hops still in
 flight → say so; do not invent done. `follow up` ≠ remint conductor ≠
@@ -855,8 +857,10 @@ transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed).
 | Stamp G4 / after-ship `DEFERRED (transport)` and keep driving later G-rows | Same break — transport fail ≡ no harvest ≡ stop past that gate |
 | Treat G4 Skeptic as code review (or collapse both onto one picker) | Skeptic = Fable on spec; code review = Opus on the lane branch diff, before land (G6) |
 | Treat named hop / `` + `source_ref=todo:X` as a recipe when the score is harvested / `NEXT_ADMIT: none` | Liaison-decide; park remints; new remit → sibling todo + Composer implement |
-| Land then stay silent on recycle (or write LAND-LIVE as only “not live”) | Prompt go-live for each serving process, or announce skip in the same turn; LAND-LIVE names the skipped recycle |
+| Land then stay silent on recycle (or write LAND-LIVE as only “not live”) | Path-explicit commit of session paths, then prompt go-live for each serving process, or announce skip in the same turn; LAND-LIVE names the skipped recycle |
 | Land a named `todo:` and leave the card `open` | Stamp `todo-close` / LANDED on that entity in the same turn |
 | Assume `ROW_HOP` ⇒ immediate successor while a CDP gate still streams on the mission lane | Reactor skip `live_external_gate` is correct — harvest the gate first |
 | Self-report "gate clear" in closeout to unblock hop | Occupancy is a substrate read from the CDP lane snap, not closeout prose |
 | Fire a second `cdp/opus-5` review while the first gate is still live on the lane | 409 `cdp_external_gate_live` — wait for harvest |
+
+**Work-complete finishing (last).** Default: land → path-explicit commit of session paths → recycle serving processes. Recycle-from-dirty-tree is exceptional. `work_complete` / terminal DONE without quoted commit + recycle (or named skip) is invalid.

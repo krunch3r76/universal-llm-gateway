@@ -1,5 +1,5 @@
 ---
-description: Restart drain kernel — needed restart fires; busy never skips; force=true permitted on every service except git_integration_worker (drain, never force, never kill); landed ≠ live; finishing work is go-live; commit of complete work auto-triggers go-live, sha-stamps follow the live proof. Recovery tables and history live on the manage envelope and runbook.
+description: Restart drain kernel — needed restart fires; busy never skips; GIW drain-never-force; landed ≠ live; work_complete default is land → path-explicit commit → recycle (dirty-tree recycle exceptional). Recovery tables on the manage envelope and runbook.
 alwaysApply: true
 rule_category: engineering
 apply_tier: required_gate
@@ -9,6 +9,7 @@ apply_tier: required_gate
 **Invariant:** `needed(restart) ⇒ fire(restart)` — busy, in-flight, a peer's stream, a dirty tree, an open
 Cowork tab, or "this IDE session" is never a reason to skip, park, or route the force through the operator.
 `edit(served_path ∨ env_loaded_by_process) ∧ running(process) ⇒ recycle(process)` same turn; `bind_mount ⇏ live`.
+That recycle is **not** a work-complete claim.
 
 ```
 ∀ service ≠ git_integration_worker:  busy defers ⇒ re-fire force=true, announce
@@ -19,9 +20,9 @@ service = git_integration_worker:    arm drain (status=deferred, restart_intent_
   park-first at idle; force only on CANCEL_FAILED / NEST_CHAIN / STATE_ROOT_MISSING.
 ```
 
-Discriminator: what the interruption destroys. Attach handles / retryable requests (`mcp`, `cdp_ask`,
-`stargate`, `gateway`, `rag`, `cortex_api`, `event_service`, `cloud_proxy`, …) reconnect; only GIW holds an
-in-progress durable write. Recycling `mcp`/`cdp_ask` drops attach, not the CSE (`chat_url`) or the IDE chat.
+Discriminator: interruption destroy-set. Attach handles reconnect (`mcp`, `cdp_ask`, `stargate`,
+`gateway`, …); only GIW holds an in-progress durable write. Recycling `mcp`/`cdp_ask` drops attach,
+not the CSE (`chat_url`) or the IDE chat.
 
 ## Forbidden / Required
 
@@ -32,19 +33,29 @@ in-progress durable write. Recycling `mcp`/`cdp_ask` drops attach, not the CSE (
 | Claim `live` from a commit, an import, or `status=deferred` | Process start after served-file **and** env mtime, or a live probe of the changed surface |
 | Report exact `live@<sha>` when served dirt was loaded | Report `live` + tree state; `live@<sha>` needs path-explicit commit **before** restart |
 | Hold graph stamps / todo close for `live@sha` | Close once ACs met and ordinary `live` proven (or `liveness n/a`) |
+| Recycle-as-finished while session paths uncommitted | Commit session paths, **then** recycle; quote both payloads |
 
-**Go-live = finishing.** `work_complete ⇒ recycle(every serving process) ∧ commit(path-explicit) ∧
-stamp(graph)`; "go live / activate / everything live?" are that contract, not a second permission gate.
-Ordinary `live` may recycle from the working tree (MCP `docker cp`, gateway bind-mount) — **then**
-path-explicit commit of session paths **same turn** after live proof; `recycle(work_complete) ∧
-¬commit(session_paths) ⇒ defect`. Cursor IDE agents never close a work-complete slice with served
-paths still uncommitted. When the claim class is `live@<sha>`, commit **before** recycle
-(forbidden-row-4). Mid-arc checkpoint commit and `/session-end` are not work-complete. When a stamp cites the
-landing commit (`resolution_kind=commit:{sha}`, `live@sha` claims), sequence it **after** the recycle+proof
-for that same commit, not before — cheap now that go-live is the default, and consistent with the
-forbidden-row-5 bar (`live` proven is the close condition either way; this is ordering, not a new gate).
-Proof line: services · claim class (`live | live@sha | not_live | drain_pending`) · `restart_intent_id` or
-process start UTC · path probe. Satellites recycle via their repo's deploy script; proof is the same.
+## Go-live = work-complete finishing (last)
 
-Recovery after `mcp`/`cdp_ask` recycle: `manage` deferral envelope + **`runbook:restart-drain`**. Doctrine:
-`decision:go-live-proof-loop` · `services_ws.mdc` § Scripts · `git-posture` (live vs live@sha).
+Default (not a strategy choice):
+
+```
+land the work → path-explicit commit of session paths → recycle serving processes
+```
+
+`work_complete ⇒ commit(path-explicit, session_paths) ≺ recycle(every serving process) ∧ stamp(graph)`.
+"Go live / activate / everything live?" are that contract, not a second permission gate.
+`live@sha` is already this order. **Recycle-from-dirty-tree is retired as the ordinary-live default.**
+Exceptional mid-arc verify (bind-mount / `docker cp`): mark exceptional and commit session paths
+**before any done claim** — not a next-turn sequel. `needed(restart)` mid-arc is not finishing.
+
+`work_complete` ∉ L(x) without quoted commit + recycle payloads. Fluency ≠ the act. Trust tool payloads.
+
+"Only create commits when requested" = opportunistic/unrelated commits; **not** a veto of this
+contract. The seat commits session paths without asking. Checkpoint commit and `/session-end`
+are not work-complete.
+
+Stamp after recycle+proof when the stamp cites that commit. Proof: services ·
+`live|live@sha|not_live|drain_pending` · commit SHA · `restart_intent_id` or process start UTC ·
+path probe. Satellites: same via their deploy script.
+`runbook:restart-drain` · `decision:go-live-proof-loop` · `git-posture`.

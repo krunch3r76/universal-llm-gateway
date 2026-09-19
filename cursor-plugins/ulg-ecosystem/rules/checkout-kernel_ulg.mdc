@@ -14,10 +14,12 @@ get the same rule.
 
 ## Vocabulary
 
-`commit` = repository checkpoint, not activation, **not a completion gate** (never "waiting to commit").
-`deploy` = propagate a tree/commit identity. `activate` / `go live` = finish: recycle every serving
-process + path-explicit commit (same turn after live proof; `live@sha` ⇒ commit before recycle) +
-graph stamp (`restart-drain-discipline`). Liveness proof is `fleet_liveness(code_ref=…)`;
+`commit` = repository checkpoint, not activation, **not a human permission gate** (never "waiting
+to be asked to commit"). On work_complete it is a required finishing act.
+`deploy` = propagate a tree/commit identity. `activate` / `go live` = finish: land → path-explicit
+commit of session paths → recycle every serving process + graph stamp (`restart-drain-discipline`).
+Recycle-from-dirty-tree is exceptional, not the ordinary-live default; `live@sha` is already
+commit-then-recycle. Liveness proof is `fleet_liveness(code_ref=…)`;
 repo timestamps / `recent_commits` are low-confidence fallback.
 
 `land(lane_B) ⇒ git merge cursor-sdk/lane-{thread}` — `checkout <branch> -- <paths>` and `cherry-pick` are

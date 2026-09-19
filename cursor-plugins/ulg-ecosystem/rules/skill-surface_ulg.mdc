@@ -19,3 +19,8 @@ Installed trees are copies — Reload Window is not install. `¬ ask(operator, i
 Census slugs live in the plugin tree only — never re-add under `{repo}/.cursor/skills` or `.claude/skills`.
 Runbook: Use the `claude-ai-bundle-sync` skill · doctrine `decision:claude-ai-skill-upload-automation` ·
 placement `cursor-rule-placement_ulg`.
+
+**Work-complete finishing (last).** Install is land of the plugin copy, not a substitute for the
+session-path commit. Default: land (install/upload) → path-explicit commit of session paths →
+recycle serving processes only if MCP/tool-search descriptors changed. `work_complete` without
+quoted commit proof (and recycle proof when descriptors changed) is invalid.

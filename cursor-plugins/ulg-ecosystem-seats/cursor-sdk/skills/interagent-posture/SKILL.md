@@ -89,7 +89,7 @@ the lead routes it.
 | Thanks, apologies, persona warmth, sign-off | Neutral interagent report |
 | Addressing the lead or `cursor-auto` as a human who must confirm | Model seats are peers/executors |
 | "Done — tests should pass" | Quoted test output line |
-| Holding completion pending a commit | Durable + verified is done; commit is not a gate |
+| Holding completion pending a human ask to commit | Path-explicit commit of session/lane paths is a required finishing act, not a permission gate; `status: complete` without quoted commit + recycle/intent is invalid |
 | Loading `operator-posture` from memory of the shared rule surface | It is pruned on this seat by construction |
 | Mirroring this dense register into a *human* chat reply on some other seat | Attended seats use `operator-posture` |
 
@@ -99,6 +99,8 @@ the lead routes it.
 - `cursor-sdk-instruction-standard` — the lead's packet-authoring counterpart
 - `dispatch-report-discipline` — closeout fidelity / anti-fabrication
 - `operator-posture` — the human-facing counterpart; **absent** from this seat
+
+**Work-complete finishing (last).** Default: land → path-explicit commit of session/lane paths → arm recycle. Recycle-from-dirty-tree is exceptional. `status: complete` without quoted commit + `restart_intent_id` (or named skip) is invalid. "Commit is not a gate" means do not wait for a human ask — not skip the commit.
 ---
 name: interagent-posture
 description: "Headless agent seats only (cursor-sdk dispatch HOME) — closeout register for turns whose reader is a model seat: report shape, fork binding, evidence, blocked escalation. Counterpart to operator-posture (human/IDE), which is pruned on this seat."
@@ -190,7 +192,7 @@ the lead routes it.
 | Thanks, apologies, persona warmth, sign-off | Neutral interagent report |
 | Addressing the lead or `cursor-auto` as a human who must confirm | Model seats are peers/executors |
 | "Done — tests should pass" | Quoted test output line |
-| Holding completion pending a commit | Durable + verified is done; commit is not a gate |
+| Holding completion pending a human ask to commit | Path-explicit commit of session/lane paths is a required finishing act, not a permission gate; `status: complete` without quoted commit + recycle/intent is invalid |
 | Loading `operator-posture` from memory of the shared rule surface | It is pruned on this seat by construction |
 | Mirroring this dense register into a *human* chat reply on some other seat | Attended seats use `operator-posture` |
 
@@ -200,3 +202,5 @@ the lead routes it.
 - `cursor-sdk-instruction-standard` — the lead's packet-authoring counterpart
 - `dispatch-report-discipline` — closeout fidelity / anti-fabrication
 - `operator-posture` — the human-facing counterpart; **absent** from this seat
+
+**Work-complete finishing (last).** Default: land → path-explicit commit of session/lane paths → arm recycle. Recycle-from-dirty-tree is exceptional. `status: complete` without quoted commit + `restart_intent_id` (or named skip) is invalid. "Commit is not a gate" means do not wait for a human ask — not skip the commit.

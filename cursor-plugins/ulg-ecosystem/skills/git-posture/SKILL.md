@@ -1,5 +1,5 @@
 ---
-description: "On coding sessions — file existence, canonicality, authorship, done-ness, git CLI, or cursor-sdk implement substrate truth before inferring state."
+description: "On coding sessions — file existence, canonicality, authorship, done-ness, work-complete finishing (land → commit → recycle), git CLI, or cursor-sdk implement substrate truth before inferring state."
 ---
 
 # Git Posture & Truth Substrate
@@ -115,7 +115,7 @@ Use instead:
 |---|---|
 | Compare current work against a baseline commit | `git diff <base-sha> <head-sha> -- <paths>`, or a **second, throwaway** `git worktree add --detach <sha> <tmp-dir>` — never touch the live worktree's stash |
 | "Did my change break this test?" | Run the test at HEAD, then at `<base-sha>` in a separate detached worktree; diff the two result sets. Delete the throwaway worktree when done (`git worktree remove --force <tmp-dir>`) |
-| Preserve uncommitted edits before a destructive op | Commit them (path-explicit) — commit is cheap and never a gate (see Commit posture below); do not reach for stash as a "cheap commit" |
+| Preserve uncommitted edits before a destructive op | Commit them (path-explicit) — commit is cheap and is never a human permission gate (see Commit posture); do not reach for stash as a "cheap commit" |
 
 ## Shared checkout concurrency (G6 — operator bind 2026-08-04)
 
@@ -145,7 +145,7 @@ Inferring existence/canonicality from git state is a category error. No establis
 
 ## Positive corollaries
 
-- Commit = optional bookkeeping, never a gate. On-disk is done for handoff; commit is load-bearing only for rebuild-persistence of a git-tracked config/source file. `¬gate ∧ ¬wait ∧ ¬handoff_to_commit`.
+- Commit is not the gate between edited and running (disk is executable). On-disk is real for handoff. On work_complete, path-explicit commit of session paths is a required finishing act, not optional bookkeeping and not a human permission ask. `¬wait ∧ ¬handoff_to_human_to_commit`.
 - Liveness = loaded in running process. Verify with load-event + probe, not tree or commit.
 - Probe by reading, never mutating. Decide "mine vs pre-existing" from file/traceback, not `git stash` / `checkout` / `reset`.
 - Revert is scoped + explicit. One owned path per call; never `checkout -- .`, `restore .`, or `reset --hard` in shared checkout. Attended editor ⇒ prefer undo/revert UI.
@@ -179,16 +179,22 @@ deployment paths were committed path-explicitly **before** the attributed
 restart, the restart and health probe completed, and the live probe shows
 `code_ref_satisfied` (equal or ancestor) plus process identity movement. Disclose
 relevant dirty paths or served-ahead-of-HEAD state; do not imply exact clean
-attribution. A dirty-tree restart remains ordinary `live` and remains legal.
+attribution.
+
+A dirty-tree restart may load code (disk is executable). That is **exceptional
+mid-arc verify**, not the ordinary-live default and **not work_complete**.
+Report it as ordinary `live` plus tree state, never `live@<sha>`, and do not
+emit a work-complete claim until the path-explicit commit has landed in the
+**same turn**.
 
 A later commit does not upgrade an earlier dirty-tree `live` to `live@<sha>`.
 That class needs a **new** recycle after the path-explicit commit. Finishing
-work **is** go-live (`restart-drain-discipline` proof loop): recycle of every
-serving process + path-explicit commit of the work paths (same turn after live
-proof; `live@sha` ⇒ commit before recycle) + graph stamp. Cursor IDE agents
-**never** close work-complete with served paths still uncommitted.
-A mid-arc checkpoint `commit` and `/session-end` are not work-complete
-(`decision:go-live-proof-loop`).
+work **is** go-live (`restart-drain-discipline` proof loop): land → path-explicit
+commit of session paths → recycle serving processes + graph stamp. Recycle-from-
+dirty-tree is retired as the ordinary-live default. `live@sha` is already this
+order. Cursor IDE agents **never** close work-complete with served paths still
+uncommitted. A mid-arc checkpoint `commit` and `/session-end` are not
+work-complete (`decision:go-live-proof-loop`).
 
 **Anti-patterns this kills:** treating uncommitted-but-restarted code as illicit
 “live-ahead-of-HEAD”; refusing to propagate because tree is dirty; building FATAL
@@ -207,7 +213,7 @@ In-repo implement uses lane B.
 |---|---|---|
 | cursor-sdk generate (regime on, in-repo, `lane="B"`) | Lane-B worktree (`cursor-sdk/lane-{thread}`) | Commit on the lane branch; declare `land_disposition` on closeout |
 | cursor-sdk generate (`lane="A"` or out-of-repo) | Live shared checkout | Path-explicit commit on `master` when checkpointing |
-| Attended Cursor IDE | Live shared checkout | **Lane A hygiene (operator 2026-08-28):** path-explicit commit of *this-session* authorship often, **or** put *new* implement on `lane="B"`. ¬ leave this-session dirt on shared `master`. ¬ remint work already authored on A onto B (commit A, or leave as peer WIP). On-disk tree = truth. Commit ≠ done / live gate. |
+| Attended Cursor IDE | Live shared checkout | **Lane A hygiene (operator 2026-08-28):** path-explicit commit of *this-session* authorship often, **or** put *new* implement on `lane="B"`. ¬ leave this-session dirt on shared `master`. ¬ remint work already authored on A onto B (commit A, or leave as peer WIP). On-disk tree = truth. Commit ≠ human permission gate; on work_complete it is a required finishing act. |
 
 `lane=` is required on top-level cursor-sdk generate except `nest_under` /
 `resume_of` inherit. Empty `files_expected` + **omit** selects Lane A
@@ -260,8 +266,14 @@ Authority: `decision:lead-agent-git-integration` (atomic gated primitive). Routi
 
 ## Commit posture
 
-Commit is **not** a done / live / restart gate. Absence of commit does not mean
-incomplete, undeployed, or unsafe to build on.
+Commit is **not** a human permission gate and **not** the difference between
+edited and running. Absence of commit does not mean the bytes are unreal.
+On **work_complete**, commit **is** a required finishing act the seat performs
+without asking: land → path-explicit commit of session paths → recycle.
+
+A user rule of the form "only create commits when requested" forbids
+opportunistic or unrelated commits (foreign WIP, `--all`, drive-by cleanup).
+It does **not** veto the work-complete finishing contract.
 
 **IDE / shared-checkout hygiene (operator 2026-08-28):** this-session authored
 paths on Lane A should not sit dirty. Path-explicit commit often, or send
@@ -276,8 +288,10 @@ closeouts carry a fail-closed ``checkpoint:`` disposition
 Commit is the attribution-clearing act: path-explicit from the episode
 authored-path set (dispatch ``wt_baseline`` delta), never ``--all``, never
 foreign WIP. ``tree_residue: N`` counts dirty paths not in that set. Commit
-is disclosure on closeout, not a propagate/restart/done gate; ``deferred:`` stays
-legal forever.
+is disclosure on closeout **and**, when the closeout claims work_complete, a
+required finishing act. ``deferred:`` stays legal for *foreign* WIP and for
+mid-arc checkpoints that are not claiming done — not for skipping the
+session-path commit on a work-complete claim.
 
 ## Land = merge, never copy (operator bind a:29557, re-bound 2026-09-02)
 
@@ -328,7 +342,7 @@ left both lanes carrying branch debt on shipped work.
 
 `∀ Lane-B lane: mint(branch) ⇒ own(branch) until discharged`.
 
-Everything above says commits are not gates. Branches are different: a Lane-B
+Everything above says commits are not human permission gates (on work_complete they are a required finishing act). Branches are different: a Lane-B
 lane's branch is a **standing obligation**, because nothing else can retire it.
 A proper merge discharges it by ancestry; a copy-land does not — that is the
 defect above, not an inevitability, and it is why the branch outlives every
@@ -458,7 +472,10 @@ nested recon per distinct question, not a reusable handle.
 
 ## Git CLI allowed only when
 
-operator asks to commit/branch/PR; a named workflow defines commit/merge/release; or staging deliberate tracked-config/source change for rebuild-persistence. Otherwise do not reach for git.
+a named workflow defines commit/merge/release; staging a deliberate tracked-config/source
+change for rebuild-persistence; **or** work-complete finishing (path-explicit commit of
+session paths, no ask). Opportunistic branch/PR/cleanup git still waits for an operator
+ask. Otherwise do not reach for git.
 
 ## Cursor IDE seat scope (folded from `commit-and-git-scope`)
 
@@ -468,7 +485,7 @@ operator asks to commit/branch/PR; a named workflow defines commit/merge/release
 |---|---|
 | `git stash` / `git checkout -- <file>` to inspect/revert | read traceback; editor undo / revert UI |
 | `git stash` to A/B vs clean HEAD | read the tree; sole shared `master` |
-| `git_commit` / `git_land` mid-session | operator-attended apply; commit only if asked |
+| `git_commit` / `git_land` mid-session | operator-attended apply; work-complete finishing commit of session paths without asking; opportunistic/unrelated commits only if asked |
 | `git checkout cursor-sdk/lane-N -- <paths>` / `cherry-pick` to land a lane | `git merge cursor-sdk/lane-N` (§ Land = merge, never copy) |
 
 `∀ seat: ¬{git checkout -- ., git checkout -- <dir>, git reset --hard, git clean -fd, git stash(unowned_work),
@@ -476,6 +493,12 @@ git checkout <branch> -- <paths>(as_land)}`.
 No-force: `¬push --force` and `¬history_rewrite` on shared branches unless operator explicitly requests.
 
 **Anti-pattern — "uncommitted" as a risk trigger.** Hearing "uncommitted" / "dirty working tree" is NOT a durability signal — on-disk is already real/durable/done. Do NOT reach for `git_status` / `git_diff` / `git_*` to "check working-tree state" on that basis. Read this skill FIRST whenever git state is mentioned, before touching any git tool.
+
+## Work-complete finishing (last)
+
+Default: land → path-explicit commit of session paths → recycle serving processes.
+`work_complete` ∉ L(x) without quoted commit + recycle payloads.
+"Only commit when requested" = no opportunistic or unrelated commits; not a veto of this section.
 
 ## Related skills
 

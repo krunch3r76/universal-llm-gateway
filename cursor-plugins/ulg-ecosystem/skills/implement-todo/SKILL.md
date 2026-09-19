@@ -204,7 +204,9 @@ State the chosen route before any irreversible step.
 `close ⇒ evidence_cited ∧ workflow_state_advanced ∧ graph_coherent`.
 
 **Work complete = go live (BINDING — operator 2026-08-25):**
-`close ⇒ commit(work paths) ∧ (ordinary_live_proven ∨ liveness_n/a) ∧ stamp`.
+`close ⇒ land ≺ commit(work paths) ≺ recycle(serving processes) ∧ (ordinary_live_proven ∨ liveness_n/a) ∧ stamp`.
+Default order is commit then recycle. Recycle-from-dirty-tree is exceptional, not the close path.
+`work_complete` without quoted path-explicit commit + recycle payloads is invalid.
 Finishing the item **is** the loop — not a later "go live" ask.
 `¬live@sha ⇏ withhold`; `¬proven(live) ⇒ prove, ¬park`. Closure assertion
 states claim class and, when `¬live@sha`, the reason (which served paths,
@@ -271,5 +273,7 @@ transport). Background preferred; defer and name it when attended-blocking.
 4. Classify READY/GATED/UNDER-SPEC'D; stop unless READY.
 5. When densifying toward ready: §2b (`doc_template` start → `doc_validate` PASS → then `implement_ready` / Proceed).
 6. Route DIRECT/**LAYER**/SEED/PATH-SIM/DISPATCH/COORDINATE; **LAYER** is default for codework `judgment_required`; PATH-SIM only on §3 trigger set; §3b only when `check_requested`.
-7. Close with evidence and coherent Cortex bookkeeping.
+7. Close with evidence, path-explicit commit of work paths, recycle proof, and coherent Cortex bookkeeping.
 8. Public Python touch ⇒ docstring-quality scan criticals=0 cited (§5) before todo-close.
+
+**Work-complete finishing (last).** Default: land → path-explicit commit of session paths → recycle serving processes. A user rule "only create commits when requested" does not veto this close path.

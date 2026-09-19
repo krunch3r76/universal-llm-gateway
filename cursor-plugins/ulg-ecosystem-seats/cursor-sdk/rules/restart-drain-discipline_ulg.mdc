@@ -27,9 +27,9 @@ process that predates your commit.
 `live` and `live@<sha>` are different claims. A `live@<sha>` claim additionally
 requires a path-explicit commit before restart, equal-or-ancestor
 `code_ref_satisfied` proof, process identity movement, and dirty-path disclosure.
-Dirty-checkout restarts remain legal: report `live` plus tree state, never exact
-`live@<sha>`. This ordering binds the claim, not the restart; never withhold a
-needed restart because the tree is dirty.
+Dirty-checkout restarts remain legal for **mid-arc needed restart** (never withhold
+because the tree is dirty). They are not work_complete. Report `live` plus tree
+state, never exact `live@<sha>`. This ordering binds the claim, not the restart.
 
 ## 2. Arm the restart, then exit
 
@@ -72,3 +72,10 @@ certainly cannot run — say `landed` / `drain_pending` and let the lead verify.
 - `interagent-posture_ulg` — closeout register
 - `presence-discipline_ulg` — evidence before done; landed vs live is exactly this
 - `commit-and-git-scope_ulg` — shared checkout posture
+
+## Work-complete finishing (last)
+
+Default: land → path-explicit commit of session/lane paths → arm recycle.
+Recycle-from-dirty-tree is exceptional, not the ordinary-live default.
+`status: complete` without quoted commit + `restart_intent_id` (or named skip)
+is invalid. Commit is not a human permission gate; do not skip it.
