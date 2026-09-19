@@ -102,21 +102,46 @@ class ProjectionResolvers:
 class CheckpointBodyTooLargeError(Exception):
     """Projected CHECKPOINT exceeds soft spill limit after compression."""
 
-    def __init__(self, *, body_chars: int, limit_chars: int) -> None:
+    def __init__(
+        self,
+        *,
+        body_chars: int,
+        limit_chars: int,
+        authored_chars: int,
+        derived_chars: int,
+        cited_row_count: int,
+        lane_row_count: int,
+        compressed: bool,
+    ) -> None:
+        excess = body_chars - limit_chars
+        residue_shed = excess
+        cited_shed = (
+            min(cited_row_count, max(1, excess // 200))
+            if cited_row_count
+            else 0
+        )
+        message = (
+            f"Projected CHECKPOINT body is {body_chars:,} chars "
+            f"(derived {derived_chars:,} + authored {authored_chars:,} = "
+            f"{derived_chars + authored_chars:,}) over limit {limit_chars:,}; "
+            f"shed ~{residue_shed:,} chars of residue or ~{cited_shed} cited "
+            "rows — load-bearing derived rows are never dropped."
+        )
         self.envelope: dict[str, object] = {
             "code": "checkpoint_body_too_large",
             "reason": "checkpoint_body_too_large",
             "body_chars": body_chars,
             "limit_chars": limit_chars,
-            "message": (
-                f"Projected CHECKPOINT body is {body_chars:,} chars after "
-                f"compression; soft limit is {limit_chars:,}. Trim residue or "
-                "reduce cited rows — load-bearing derived rows are never dropped."
-            ),
+            "authored_chars": authored_chars,
+            "derived_chars": derived_chars,
+            "cited_row_count": cited_row_count,
+            "lane_row_count": lane_row_count,
+            "compressed": compressed,
+            "message": message,
             "retryable": True,
             "source": "agent_bus_store.checkpoint_projection",
         }
-        super().__init__(self.envelope["message"])
+        super().__init__(message)
 
 
 def is_checkpoint_subject(subject: str) -> bool:
@@ -386,7 +411,13 @@ def _assemble_body(
     all_lanes = child_lanes + cited_lanes
     if compress_closed_children or not all_lanes:
         raise CheckpointBodyTooLargeError(
-            body_chars=len(body), limit_chars=MAX_TURN_BODY_CHARS
+            body_chars=len(body),
+            limit_chars=MAX_TURN_BODY_CHARS,
+            authored_chars=len(residue) + len(resume_footer),
+            derived_chars=len(derived),
+            cited_row_count=len(rows),
+            lane_row_count=len(all_lanes),
+            compressed=compress_closed_children,
         )
     return _assemble_body(
         root_thread=root_thread,

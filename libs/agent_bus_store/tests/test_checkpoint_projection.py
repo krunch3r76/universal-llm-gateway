@@ -197,7 +197,19 @@ def test_spill_guard_raises_when_compression_insufficient() -> None:
             residue=residue,
             resolvers=_resolvers(),
         )
-    assert exc.value.envelope["code"] == "checkpoint_body_too_large"
+    env = exc.value.envelope
+    assert env["code"] == "checkpoint_body_too_large"
+    for key in (
+        "authored_chars",
+        "derived_chars",
+        "cited_row_count",
+        "lane_row_count",
+        "compressed",
+    ):
+        assert key in env
+    assert env["body_chars"] >= env["authored_chars"] + env["derived_chars"]
+    framing = env["body_chars"] - env["authored_chars"] - env["derived_chars"]
+    assert 0 < framing < 80
 
 
 def test_unprojected_fail_open_banner() -> None:
@@ -644,7 +656,15 @@ def test_send_continue_checkpoint_body_too_large_413(tmp_path, monkeypatch) -> N
         "agent_bus_store.body_auto_spill.maybe_project_checkpoint_body",
         side_effect=lambda *, thread, subject, body, **kwargs: (
             (_ for _ in ()).throw(
-                CheckpointBodyTooLargeError(body_chars=9000, limit_chars=8000)
+                CheckpointBodyTooLargeError(
+                    body_chars=9000,
+                    limit_chars=8000,
+                    authored_chars=6900,
+                    derived_chars=2100,
+                    cited_row_count=2,
+                    lane_row_count=1,
+                    compressed=True,
+                )
             )
             if subject.upper().startswith("CHECKPOINT")
             else body
@@ -675,7 +695,22 @@ def test_send_continue_checkpoint_body_too_large_413(tmp_path, monkeypatch) -> N
                 },
             )
             assert resp.status_code == 413, resp.text
-            assert resp.json()["detail"]["code"] == "checkpoint_body_too_large"
+            detail = resp.json()["detail"]
+            assert detail["code"] == "checkpoint_body_too_large"
+            for key in (
+                "authored_chars",
+                "derived_chars",
+                "cited_row_count",
+                "lane_row_count",
+                "compressed",
+            ):
+                assert detail[key] == {
+                    "authored_chars": 6900,
+                    "derived_chars": 2100,
+                    "cited_row_count": 2,
+                    "lane_row_count": 1,
+                    "compressed": True,
+                }[key]
 
 
 def test_send_new_slug_checkpoint_body_too_large_413(tmp_path, monkeypatch) -> None:
@@ -685,7 +720,15 @@ def test_send_new_slug_checkpoint_body_too_large_413(tmp_path, monkeypatch) -> N
         "agent_bus_store.body_auto_spill.maybe_project_checkpoint_body",
         side_effect=lambda *, thread, subject, body, **kwargs: (
             (_ for _ in ()).throw(
-                CheckpointBodyTooLargeError(body_chars=9000, limit_chars=8000)
+                CheckpointBodyTooLargeError(
+                    body_chars=9000,
+                    limit_chars=8000,
+                    authored_chars=6900,
+                    derived_chars=2100,
+                    cited_row_count=2,
+                    lane_row_count=1,
+                    compressed=True,
+                )
             )
             if subject.upper().startswith("CHECKPOINT")
             else body
