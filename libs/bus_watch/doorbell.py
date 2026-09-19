@@ -395,7 +395,9 @@ def _inline_successor_dispatch_skills(text: str, seat: str) -> str:
     from claude_bundles.catalog import load_skill_catalog
     from claude_bundles.cowork_skill_delivery import prepend_cdp_dispatch_skills
 
-    relaxed = lambda: load_skill_catalog(validate_sot=False)
+    def relaxed() -> object:
+        return load_skill_catalog(validate_sot=False)
+
     old_cat = catalog_mod.get_skill_catalog
     old_del = delivery_mod.get_skill_catalog
     catalog_mod.get_skill_catalog = relaxed

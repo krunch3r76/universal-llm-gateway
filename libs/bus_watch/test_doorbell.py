@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
-
-import re
 
 from bus_watch.doorbell import (
     DOORBELL_CAP,

@@ -24,7 +24,10 @@ from typing import Any
 from claude_bundles.catalog import load_skill_catalog
 from claude_bundles.cdp_inline_excerpt import _yaml_frontmatter_end, excerpt_skill_body
 
-from bus_watch.doorbell_skills import navigator_doorbell_skills_from_policy, primary_liaison_slug
+from bus_watch.doorbell_skills import (
+    navigator_doorbell_skills_from_policy,
+    primary_liaison_slug,
+)
 from bus_watch.friction_rows import event_line as _friction_event
 from bus_watch.friction_rows import now_row as _friction_now
 from bus_watch.goal_escalation import (

@@ -111,9 +111,11 @@ def declared_services_for_lib(lib_name: str) -> tuple[str, ...]:
     return tuple(sorted(owners))
 
 
-UNSERVED_LIBS: frozenset[str] = frozenset({"foo"})
+UNSERVED_LIBS: frozenset[str] = frozenset({"bus_watch", "foo"})
 """Top-level ``libs/`` names explicitly classified as needing no manage restart.
 
+``bus_watch`` is consumed by auxiliary liaison/watch scripts and IDE-hop
+helpers — no fleet ``manage`` process makes those modules live on restart.
 ``foo`` is the dogfood / mechanical fixture package — test-only, not a
 production behaviour. Absence from every ``serves_libs`` row is still
 ``unmapped`` until a name is listed here or nominated by CONSUMERS/INJECTORS.

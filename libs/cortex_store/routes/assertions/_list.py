@@ -28,16 +28,16 @@ from ...models import (
 )
 from ._list_filters import append_assertion_list_filters
 from ._shared import (
-    summary_actionable_fields,
-    _parse_summary_attributes,
     _ASSERTION_COLS,
     _ASSERTION_COMPACT_COLS,
     _ASSERTION_SUMMARY_COLS,
     _JSON_FIELDS,
     _SESSION_TAG_RE,
+    _parse_summary_attributes,
     _truncate_claim,
     logger,
     router,
+    summary_actionable_fields,
 )
 
 
