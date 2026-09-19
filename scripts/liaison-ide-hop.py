@@ -46,7 +46,12 @@ def _post_root_checkpoint(root_id: str, body: str) -> bool:
     with _bus() as client:
         r = client.post(
             f"/threads/{root_id}/turns",
-            json={"from": "cursor", "to": "cursor", "subject": "CHECKPOINT", "body": body},
+            json={
+                "from": "cursor",
+                "to": "cursor",
+                "subject": f"HARVEST judgment — {root_id}",
+                "body": body,
+            },
         )
         return r.status_code < 400
 
@@ -144,6 +149,18 @@ def main() -> int:
             for lbl in live_watcher_labels(args.root, exclude_threads=args.exclude_lane)
             if lbl not in labels
         )
+    if not args.transcript_id:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "phase": "seal_transcript_unknown",
+                    "root": args.root,
+                    "fix": "pass --transcript-id <departing tab uuid>",
+                }
+            )
+        )
+        return 2
     state_path = WATCH_DIR / f"liaison-{args.root}.tick.json"
     state = load_state(state_path)
     policy = effective_policy(state)
@@ -179,18 +196,6 @@ def main() -> int:
                     "root": args.root,
                     "harvest": harvest,
                     **qualify,
-                }
-            )
-        )
-        return 2
-    if not args.transcript_id:
-        print(
-            json.dumps(
-                {
-                    "ok": False,
-                    "phase": "seal_transcript_unknown",
-                    "root": args.root,
-                    "fix": "pass --transcript-id <departing tab uuid>",
                 }
             )
         )

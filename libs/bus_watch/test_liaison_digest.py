@@ -639,3 +639,50 @@ def test_manual_last_cp_tick_not_lowered(
     build_digest("10479", state, register="autonomous", budget_tokens=700000)
     assert state["last_cp_tick"] == 100
     assert state["last_cp_turn"] == 10
+
+
+def test_digest_root_surface_keeps_cp_tip_with_unread_judgment() -> None:
+    """C-R2-1 — all-turns feed preserves tip CP; unread feed is additive."""
+    from bus_watch.spawn_pending import digest_root_surface
+
+    all_turns = [
+        {
+            "turn_number": 40,
+            "subject": "CHECKPOINT — seal",
+            "read_at": None,
+            "thread": "11738",
+        },
+        {
+            "turn_number": 41,
+            "subject": "DIGEST",
+            "read_at": "2026-09-19T20:00:00Z",
+            "thread": "11738",
+        },
+    ]
+    unread_turns = [
+        {
+            "turn_number": 42,
+            "from": "web-anthropic",
+            "subject": "cdp reply — abc",
+            "read_at": None,
+            "thread": "11738",
+            "status": "open",
+            "created_at": "2026-09-19T21:21:26Z",
+        }
+    ]
+    calls: list[dict] = []
+
+    def fake_get(_client: object, path: str, **params: object) -> dict:
+        calls.append(dict(params))
+        if params.get("unread"):
+            return {"turns": unread_turns}
+        return {"turns": all_turns}
+
+    _recent, tip_cp, unread = digest_root_surface(
+        MagicMock(), fake_get, "11738", {}
+    )
+    assert tip_cp == 40
+    assert any(c.get("unread") for c in calls)
+    assert any(c.get("last") == 20 for c in calls)
+    assert len(unread) == 1
+    assert unread[0]["turn_number"] == 42

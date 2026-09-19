@@ -97,10 +97,22 @@ def absorb_operator_edits(state: dict[str, Any], path: Path) -> list[str]:
 
     Returns the keys whose value changed so the loop can log the steer.
     """
+    from datetime import datetime, timezone
+
     disk = load_state(path)
     changed: list[str] = []
+    stamped_policy = False
     for key in OPERATOR_KEYS:
         if key in disk and disk[key] != state.get(key):
+            if key == "policy" and isinstance(disk[key], dict):
+                stamp_now_row_set_at(
+                    state,
+                    disk[key],
+                    as_of=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                )
+                stamped_policy = True
+            if key == "now_row_set_at" and stamped_policy:
+                continue
             state[key] = disk[key]
             changed.append(key)
     return changed

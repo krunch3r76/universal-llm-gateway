@@ -1,4 +1,4 @@
-"""AC-2: harvest_judgment_turns contract — fetch before qualify in hop script."""
+"""AC-2: harvest_judgment_turns contract — durable write before mark_read."""
 
 from __future__ import annotations
 

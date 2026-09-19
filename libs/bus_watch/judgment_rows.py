@@ -2,6 +2,18 @@
 
 Detects cdp reply, SCORE_RESURFACE, and cursor-sdk CLOSEOUT turns that must
 outrank stale ``policy.now_row`` binds (maestro-deafness-now).
+
+**v1 detected classes:** ``cdp reply``, ``SCORE_RESURFACE``, ``cursor-sdk CLOSEOUT``.
+
+**Documented omissions (v1 — not judgment rows):**
+
+- ``cursor-auto CLOSEOUT`` subjects (different relay shape)
+- ``TYPE: DIRECTIVE`` / ``RULING`` / ``DISPOSITION`` first-line body markers
+- ``consult complete`` harvest subjects
+- ``cdp reply`` on ask-only results (accepted false positive when subject matches)
+- Verdict-prose subjects such as ``G4 SKEPTIC verdict …`` or ``cdp FAILED …``
+- Senders outside ``{web-anthropic, operator, cursor}`` (e.g. ``dispatch``,
+  ``conductor-hop`` relay traffic on the root)
 """
 
 from __future__ import annotations
@@ -139,7 +151,7 @@ def harvest_judgment_turns(
         f"HARVEST judgment {root_id}#{t.get('turn_number')} subject={_turn_subject(t)}"
         for t in harvested
     ]
-    body = "\n".join(["TYPE: CHECKPOINT", *lines])
+    body = "\n".join(lines)
     if not post_checkpoint(root_id, body):
         return {"ok": False, "error": "checkpoint_write_failed", "harvested": []}
     turn_numbers = [int(t["turn_number"]) for t in harvested if t.get("turn_number")]
