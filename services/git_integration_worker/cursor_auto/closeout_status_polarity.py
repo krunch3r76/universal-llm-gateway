@@ -1,8 +1,9 @@
 """Status claim×measure polarity entitlement — P1 incomplete-class split (arc 6655).
 
 Splits polysemous ``partial`` into ``partial:work`` vs ``partial:capture`` so
-claim×measure cells can settle. Routes ``complete×partial`` to ``plane-legend:``
-(not uniform ``plane-discrepancy:``). Authority table is code, not prose.
+claim×measure cells can settle. ``complete×partial:capture`` may annotate as
+``plane-legend:``; ``complete×partial:work`` is ``plane-discrepancy:`` (a:35821).
+Authority table is code, not prose.
 """
 
 from __future__ import annotations
@@ -150,7 +151,13 @@ def status_claim_is_dual_register_honesty(*, claim: str, measurement: str) -> bo
 
 
 def status_claim_is_polysemous_partial_legend(*, claim: str, measurement: str) -> bool:
-    """True for complete-claim vs polysemous partial measure (plane-legend)."""
+    """True for complete-claim vs polysemous partial measure (plane-legend).
+
+    ``partial:work`` is a resolved work-incomplete class — not benign polysemy
+    (operator bind a:35821). Check incomplete class before suffix strip.
+    """
+    if measurement_incomplete_class(measurement) == "work":
+        return False
     claim_norm = normalize_measurement_token(claim)
     measure_norm = normalize_measurement_token(measurement)
     return claim_norm == "complete" and measure_norm == "partial"

@@ -8,6 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
+    annotate_status_claim_discrepancy,
+    merge_plane_discrepancy_markers,
+    status_claim_is_polysemous_partial_legend,
+)
 from services.git_integration_worker.cursor_auto.nested_outcome import (
     relay_closeout_outcome,
 )
@@ -228,6 +233,20 @@ async def test_post_operator_closeout_skips_specimen_on_replay_mode(
     )
 
     assert len(emitted) == 0
+
+
+def test_complete_x_partial_work_emits_plane_discrepancy_not_legend() -> None:
+    """AC4(a) — complete×partial:work is plane-discrepancy after a:35821 reclass."""
+    marker = annotate_status_claim_discrepancy(
+        claim="complete",
+        measurement="partial:work",
+    )
+    assert marker == "status_claim@§2 complete while status@infra partial:work"
+    assert merge_plane_discrepancy_markers(marker) is not None
+    assert status_claim_is_polysemous_partial_legend(
+        claim="complete",
+        measurement="partial:work",
+    ) is False
 
 
 def test_relay_path_partial_work_json_resolves_to_partial_work_status() -> None:

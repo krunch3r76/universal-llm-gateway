@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     _DEVIATION_EFFECTS_ENRICHED,
@@ -228,6 +229,14 @@ def _rewrite_effects_cell(body: str, uris: list[str]) -> str:
 _OVERCLAIM_PARSE_FAILED = "overclaim:parse_failed_field"
 _OVERCLAIM_UNCLASSIFIED = "overclaim:unclassified_field"
 _OVERCLAIM_FALSE_ABSENCE = "overclaim:false_absence_unread_provenance"
+_OVERCLAIM_AC_UNBOUND = "overclaim:ac_pass_unbound"
+_OVERCLAIM_AC_CONTRADICTED = "overclaim:ac_pass_contradicted"
+_OVERCLAIM_STATUS_REGISTER = "overclaim:status_claim_from_register"
+_INVOCATION_ID_RE = re.compile(r"\b((?:test|lint|gate_d):[\w-]+)\b", re.I)
+_PASS_TOKEN_RE = re.compile(r"\bPASS\b", re.I)
+_STATUS_CLAIM_LINE_RE = re.compile(
+    r"(?im)^(?:\*\*)?status_claim(?:\*\*)?\s*[:=]\s*.+$"
+)
 _DEVIATIONS_LINE_RE = re.compile(r"(?im)^deviations:\s*(.*)$")
 _TABLE_CELL_ROW_RE = re.compile(
     r"(?im)^\|\s*(?P<field>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$"
@@ -364,6 +373,96 @@ def _judgment_cells_overclaim(body: str) -> bool:
 _READ_FAILED_CELL_PREFIX = "read_failed — sidecar unavailable:"
 
 
+def _verification_rows(wrapper_text: str | None) -> list[dict[str, Any]]:
+    """Return structured ``verification[]`` rows when *wrapper_text* is a manifest."""
+    if not wrapper_text or not is_wrapper_manifest(wrapper_text):
+        return []
+    try:
+        data = json.loads(wrapper_text.strip())
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    raw = data.get("verification")
+    if not isinstance(raw, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for item in raw:
+        if isinstance(item, dict):
+            rows.append(item)
+    return rows
+
+
+def _verification_register(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    register: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        invocation_id = row.get("invocation_id")
+        if isinstance(invocation_id, str) and invocation_id.strip():
+            register[invocation_id.strip()] = row
+    return register
+
+
+def _register_row_passes(row: dict[str, Any]) -> bool:
+    exit_code = row.get("exit_code")
+    if exit_code is None:
+        return False
+    try:
+        return int(exit_code) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _split_ac_clauses(cell: str) -> list[str]:
+    parts = re.split(r";|\||<br>", cell)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _amend_ac_clause(clause: str, register: dict[str, dict[str, Any]]) -> tuple[str, str | None]:
+    """Rewrite one AC clause; return (amended_clause, relay_note_token|None)."""
+    if not _PASS_TOKEN_RE.search(clause):
+        return clause, None
+    cited_ids = _INVOCATION_ID_RE.findall(clause)
+    if not cited_ids:
+        return _PASS_TOKEN_RE.sub("UNBOUND", clause), _OVERCLAIM_AC_UNBOUND
+    for invocation_id in cited_ids:
+        row = register.get(invocation_id)
+        if row is None:
+            return _PASS_TOKEN_RE.sub("UNBOUND", clause), _OVERCLAIM_AC_UNBOUND
+        if not _register_row_passes(row):
+            return _PASS_TOKEN_RE.sub("CONTRADICTED", clause), _OVERCLAIM_AC_CONTRADICTED
+    return clause, None
+
+
+def _amend_ac_verdict_register_bindings(
+    cell: str,
+    register: dict[str, dict[str, Any]],
+) -> tuple[str, list[str]]:
+    """Bind AC PASS cells to verification register rows (R2 / a:35821)."""
+    if not register or not cell.strip() or not _PASS_TOKEN_RE.search(cell):
+        return cell, []
+    notes: list[str] = []
+    amended_clauses: list[str] = []
+    for clause in _split_ac_clauses(cell):
+        amended, note = _amend_ac_clause(clause, register)
+        amended_clauses.append(amended)
+        if note and note not in notes:
+            notes.append(note)
+    separator = "; " if ";" in cell else " | " if "|" in cell else "; "
+    return separator.join(amended_clauses), notes
+
+
+def _rewrite_status_claim_from_register(body: str, measurement_status: str) -> str:
+    """Harness-owned status_claim when a verification register exists (R3)."""
+    amended = _replace_table_cell(body, "status_claim", measurement_status)
+    if _STATUS_CLAIM_LINE_RE.search(amended):
+        return _STATUS_CLAIM_LINE_RE.sub(
+            f"status_claim: {measurement_status}",
+            amended,
+            count=1,
+        )
+    return amended
+
+
 def amend_completion_overclaim(
     body: str,
     *,
@@ -373,11 +472,26 @@ def amend_completion_overclaim(
     dispatch_id: str = "",
     sidecar_read_succeeded: bool = False,
     sidecar_read_failed_uri: str | None = None,
+    measurement_status: str | None = None,
 ) -> CloseoutRelayPayload:
     """Annotate relay overclaim signals without mutating executor-authored status."""
-    del wrapper_text  # read state is plumbed explicitly; URIs alone are not read proof
     amended_body = body
     relay_note_parts: list[str] = []
+    verification_rows = _verification_rows(wrapper_text)
+    register = _verification_register(verification_rows)
+    if register and measurement_status:
+        amended_body = _rewrite_status_claim_from_register(
+            amended_body,
+            measurement_status,
+        )
+        relay_note_parts.append(_OVERCLAIM_STATUS_REGISTER)
+    if register:
+        ac_cell = _extract_table_cell(amended_body, "ac_verdict")
+        if ac_cell:
+            amended_ac, ac_notes = _amend_ac_verdict_register_bindings(ac_cell, register)
+            if amended_ac != ac_cell:
+                amended_body = _replace_table_cell(amended_body, "ac_verdict", amended_ac)
+                relay_note_parts.extend(ac_notes)
 
     sidecar_uri = (
         sidecar_workspaces_ref(dispatch_id)

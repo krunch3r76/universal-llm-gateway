@@ -364,6 +364,7 @@ def finalize_relay_payload(
         dispatch_id=dispatch_id,
         sidecar_read_succeeded=sidecar_read_succeeded,
         sidecar_read_failed_uri=sidecar_read_failed_uri,
+        measurement_status=measurement_status,
     )
     model_substitution = bool(
         requested_model

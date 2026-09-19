@@ -25,6 +25,7 @@ from services.git_integration_worker.cursor_auto.closeout_status_polarity import
     classify_status_incomplete_class,
     merge_plane_legend_markers,
     resolve_status_disagreement_authority,
+    status_claim_is_polysemous_partial_legend,
 )
 from services.git_integration_worker.cursor_auto.lane_a_status import (
     extract_status_claim,
@@ -183,7 +184,11 @@ def test_specimen_work_driven_complete_x_partial_auto_84c1c42a3720_shape() -> No
         claim="complete",
         measurement="partial:work",
     )
-    assert merge_plane_legend_markers(marker) is not None
+    assert merge_plane_discrepancy_markers(marker) is not None
+    assert status_claim_is_polysemous_partial_legend(
+        claim="complete",
+        measurement="partial:work",
+    ) is False
     authority = resolve_status_disagreement_authority(
         claim="complete",
         measurement="partial:work",

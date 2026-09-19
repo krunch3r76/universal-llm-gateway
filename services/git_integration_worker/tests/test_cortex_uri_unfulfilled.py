@@ -1,8 +1,8 @@
 """Friction 30289 — copy ``cortex:`` host-path leftovers into the share.
 
 Locator functions exist so salvage can find the file. They are not a
-status-claim grader. Arc 6655 ``complete×partial:work → plane-legend``
-is unchanged.
+status-claim grader. Arc 6655 ``complete×partial:work → plane-discrepancy``
+after a:35821 reclass.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
     annotate_status_claim_discrepancy,
     merge_plane_discrepancy_markers,
-    merge_plane_legend_markers,
+    status_claim_is_polysemous_partial_legend,
 )
 from services.git_integration_worker.cursor_sdk_capture_policy import (
     DegradeTarget,
@@ -110,13 +110,16 @@ def test_salvage_token_is_annotate_only() -> None:
     )
 
 
-def test_complete_x_partial_work_stays_plane_legend() -> None:
+def test_complete_x_partial_work_emits_plane_discrepancy() -> None:
     marker = annotate_status_claim_discrepancy(
         claim="complete",
         measurement="partial:work",
     )
-    assert merge_plane_legend_markers(marker) is not None
-    assert merge_plane_discrepancy_markers(marker) is None
+    assert merge_plane_discrepancy_markers(marker) is not None
+    assert status_claim_is_polysemous_partial_legend(
+        claim="complete",
+        measurement="partial:work",
+    ) is False
 
 
 def test_preamble_forbids_cortex_colon_host_path() -> None:

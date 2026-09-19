@@ -18,6 +18,12 @@ from services.git_integration_worker.cursor_sdk_closeout import (
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
+from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+    amend_completion_overclaim,
+)
+from services.git_integration_worker.cursor_auto.lane_a_status import (
+    extract_status_claim,
+)
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,
 )
@@ -273,6 +279,131 @@ def test_build_body_partial_section2_preserves_machine_grade(
         "status_disagreement:authored_partial_vs_machine_complete"
         in payload["deviations"]
     )
+
+
+def _wrapper_with_verification(*rows: dict[str, object]) -> str:
+    return json.dumps(
+        {
+            "schema_version": 1,
+            "status": "partial",
+            "work_outcome": "checks_failed",
+            "capture_status": "partial",
+            "verification": list(rows),
+        }
+    )
+
+
+def test_ac_pass_without_invocation_id_becomes_unbound() -> None:
+    """AC4(b) — AC PASS with no register row citation rewrites to UNBOUND."""
+    body = (
+        "TYPE: CLOSEOUT\nstatus: partial:work\n\n"
+        "| Field | Value |\n|---|---|\n"
+        "| status_claim | complete |\n"
+        "| ac_verdict | AC4 pytest — PASS (10 passed in 0.89s) |\n"
+    )
+    wrapper = _wrapper_with_verification(
+        {
+            "command": "pytest -q services/git_integration_worker/tests/test_foo.py",
+            "exit_code": 1,
+            "invocation_id": "test:specimen-fail",
+            "exit_code_register": "observed",
+        }
+    )
+    payload = amend_completion_overclaim(
+        body,
+        wrapper_text=wrapper,
+        status="complete",
+        source="section2_sidecar",
+        measurement_status="partial:work",
+    )
+    ac_cell = payload.body.split("| ac_verdict | ", 1)[1].split(" |", 1)[0]
+    assert "UNBOUND" in ac_cell
+    assert "PASS" not in ac_cell
+
+
+def test_ac_pass_disagreeing_with_register_becomes_contradicted() -> None:
+    """AC4(c) — AC PASS citing a failing register row rewrites to CONTRADICTED."""
+    body = (
+        "TYPE: CLOSEOUT\nstatus: partial:work\n\n"
+        "| Field | Value |\n|---|---|\n"
+        "| status_claim | complete |\n"
+        "| ac_verdict | AC1 — PASS (test:specimen-fail) |\n"
+    )
+    wrapper = _wrapper_with_verification(
+        {
+            "command": "pytest -q services/git_integration_worker/tests/test_foo.py",
+            "exit_code": 1,
+            "invocation_id": "test:specimen-fail",
+            "exit_code_register": "observed",
+        }
+    )
+    payload = amend_completion_overclaim(
+        body,
+        wrapper_text=wrapper,
+        status="complete",
+        source="section2_sidecar",
+        measurement_status="partial:work",
+    )
+    ac_cell = payload.body.split("| ac_verdict | ", 1)[1].split(" |", 1)[0]
+    assert "CONTRADICTED" in ac_cell
+    assert "PASS" not in ac_cell
+
+
+def test_empty_verification_register_preserves_authored_status_claim() -> None:
+    """AC4(d) — confer/recon with empty verification[] keeps authored status_claim."""
+    body = (
+        "TYPE: CLOSEOUT\nstatus: complete\n\n"
+        "| Field | Value |\n|---|---|\n"
+        "| status_claim | complete |\n"
+        "| ac_verdict | consulted corpus — no AC register |\n"
+    )
+    wrapper = json.dumps(
+        {
+            "schema_version": 1,
+            "status": "complete",
+            "capture_status": "complete",
+            "verification": [],
+        }
+    )
+    payload = amend_completion_overclaim(
+        body,
+        wrapper_text=wrapper,
+        status="complete",
+        source="section2_sidecar",
+        measurement_status="complete",
+    )
+    assert extract_status_claim(payload.body) == "complete"
+    assert "overclaim:status_claim_from_register" not in (payload.relay_note or "")
+
+
+def test_register_bearing_contract_harness_writes_status_claim() -> None:
+    """R3 — non-empty verification[] replaces seat-authored status_claim."""
+    body = (
+        "TYPE: CLOSEOUT\nstatus: partial:work\n\n"
+        "| Field | Value |\n|---|---|\n"
+        "| status_claim | complete |\n"
+        "| ac_verdict | AC1 — PASS (lint:specimen-pass) |\n"
+    )
+    wrapper = _wrapper_with_verification(
+        {
+            "command": "ruff check foo.py",
+            "exit_code": 0,
+            "invocation_id": "lint:specimen-pass",
+            "exit_code_register": "observed",
+        }
+    )
+    payload = amend_completion_overclaim(
+        body,
+        wrapper_text=wrapper,
+        status="complete",
+        source="section2_sidecar",
+        measurement_status="partial:work",
+    )
+    status_cell = payload.body.split("| status_claim | ", 1)[1].split(" |", 1)[0]
+    assert status_cell == "partial:work"
+    assert extract_status_claim(payload.body) == "partial"
+    assert payload.relay_note is not None
+    assert "overclaim:status_claim_from_register" in payload.relay_note
 
 
 def test_build_body_auto40eacccc1b48_absent_section2_records_disagreement(

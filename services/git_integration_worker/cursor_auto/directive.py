@@ -475,10 +475,16 @@ def build_sdk_message(job_body: str, *, contract: str, lane: str | None = None) 
             [
                 "",
                 "## Lane-A checkpoint (mandatory on closeout)",
-                "In §2 emit `status_claim:` — your belief about dispatch outcome:",
+                "When the machine closeout carries a non-empty `verification[]` register, "
+                "do **not** author `status_claim:` — the harness writes status from that register. "
+                "You may emit `seat_dissent:` only when citing an `invocation_id` from that register.",
+                "When `verification[]` is empty (confer/recon/no-register contracts), emit "
+                "`status_claim:` — your belief about dispatch outcome: "
                 "status_claim: complete | status_claim: partial | status_claim: blocked.",
                 "Infrastructure injects the authoritative envelope `status:` measurement line at relay",
                 "assembly. Claim and measurement diverge via `plane-discrepancy:` — not silent sync.",
+                "Every AC PASS in §2 must cite a verification `invocation_id`; relay rewrites "
+                "uncited PASS to UNBOUND and register-disagreeing PASS to CONTRADICTED.",
                 "",
                 "In §2 emit `checkpoint_claim:` — your belief about authorship:",
                 "checkpoint_claim: committed <sha> paths=N (optional `(+M pending)`),",
