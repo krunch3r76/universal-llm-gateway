@@ -7,13 +7,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from agent_bus_store.checkpoint_windows_render import CheckpointTurnRow
 from agent_bus_store.tape_render import (
     _binding_for_journal,
     _cells_for_lane,
     build_chain_segments,
     render_tape,
 )
-from agent_bus_store.checkpoint_windows_render import CheckpointTurnRow
 
 pytestmark = pytest.mark.offline
 

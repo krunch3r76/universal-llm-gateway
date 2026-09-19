@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from agent_bus_store.tape_cells import _cells_for_lane, _last_session_cells
+from agent_bus_store.tape_cells import _last_session_cells
 from agent_bus_store.tape_pour import pour_lane_messages
 
 pytestmark = pytest.mark.offline
