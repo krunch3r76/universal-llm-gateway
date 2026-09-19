@@ -140,6 +140,28 @@ def test_watchdog_candidate_false_when_successor_stamped() -> None:
     assert conductor_hop_watchdog_candidates(ledger, grace_s=_GRACE_S) == []
 
 
+def test_statusless_transport_admit_error_is_not_permanent() -> None:
+    """LB-1 — httpx / stargate_unreachable has no status_code; must stay transient."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog import (
+        _admit_error_permanent,
+    )
+    from services.git_integration_worker.cursor_sdk_ledger_hop import merge_hop_patch
+
+    merged = merge_hop_patch(
+        "",
+        {
+            "hop_admit_error": {
+                "last_error": "ConnectError",
+                "reason": "stargate_unreachable",
+            }
+        },
+    )
+    admit_err = json.loads(merged)["hop_admit_error"]
+    assert admit_err["retryable"] is True
+    assert admit_err["last_status_code"] is None
+    assert _admit_error_permanent({"record_json": merged}) is False
+
+
 def test_merge_hop_admit_error_accumulates_attempts() -> None:
     from services.git_integration_worker.cursor_sdk_ledger_hop import merge_hop_patch
 

@@ -87,7 +87,8 @@ def _normalize_hop_admit_error(value: dict[str, Any]) -> dict[str, Any]:
     if retryable is None and status is not None:
         retryable = int(status) >= 500 or int(status) == 429
     if retryable is None:
-        retryable = False
+        # Status-less transport (httpx, stargate_unreachable) is transient — §E.2.
+        retryable = status is None
     attempts = value.get("attempts")
     if not isinstance(attempts, int):
         attempts = 1

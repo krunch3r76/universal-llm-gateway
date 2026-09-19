@@ -7,8 +7,6 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
-from universal_protocol.errors import ProtocolError
-
 from services.git_integration_worker.cursor_sdk_conductor_identity import (
     is_conductor_dispatch_row,
 )
@@ -18,7 +16,7 @@ from services.git_integration_worker.cursor_sdk_ledger_hop import (
 )
 
 HOP_ADMITTED_BY_KEY = "hop_admitted_by"
-_LINEAGE_MISMATCH_CODE = "CONDUCTOR_HOP_LINEAGE_MISMATCH"
+HOP_LINEAGE_CLAIM_MISMATCH_KEY = "hop_lineage_claim_mismatch"
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,6 +25,7 @@ class HopLineage:
     hop_seq: int
     hop_reason: str
     hop_admitted_by: str
+    claim_mismatch: tuple[dict[str, Any], ...] = ()
 
 
 def derive_hop_admitted_by(*, caller_agent: str | None, hop_reason: str) -> str:
@@ -96,28 +95,25 @@ def derive_hop_lineage(
     if hop_reason not in {"spawn", "planned", "crash", "silent", "watchdog", "park_harvest"}:
         hop_reason = "planned"
     admitted_by = derive_hop_admitted_by(caller_agent=caller_agent, hop_reason=hop_reason)
-    lineage = HopLineage(
+    mismatches: list[dict[str, Any]] = []
+    if body_triplet:
+        for key, derived in (
+            ("hop_from", pred_id),
+            ("hop_seq", next_seq),
+            ("hop_reason", hop_reason),
+        ):
+            claimed = body_triplet.get(key)
+            if claimed is not None and claimed != derived:
+                mismatches.append(
+                    {"field": key, "claimed": claimed, "derived": derived}
+                )
+    return HopLineage(
         hop_from=pred_id,
         hop_seq=next_seq,
         hop_reason=hop_reason,
         hop_admitted_by=admitted_by,
+        claim_mismatch=tuple(mismatches),
     )
-    if body_triplet:
-        for key, derived in (
-            ("hop_from", lineage.hop_from),
-            ("hop_seq", lineage.hop_seq),
-            ("hop_reason", lineage.hop_reason),
-        ):
-            claimed = body_triplet.get(key)
-            if claimed is not None and claimed != derived:
-                raise ProtocolError(
-                    code=_LINEAGE_MISMATCH_CODE,
-                    message=f"hop {key} claim {claimed!r} mismatches derived {derived!r}",
-                    source="git_integration_worker",
-                    retryable=False,
-                    data={"field": key, "claimed": claimed, "derived": derived},
-                )
-    return lineage
 
 
 def apply_hop_lineage_stamp(
@@ -139,6 +135,8 @@ def apply_hop_lineage_stamp(
     if not isinstance(data, dict):
         data = {}
     data[HOP_ADMITTED_BY_KEY] = lineage.hop_admitted_by
+    if lineage.claim_mismatch:
+        data[HOP_LINEAGE_CLAIM_MISMATCH_KEY] = list(lineage.claim_mismatch)
     stamped = json.dumps(data, sort_keys=True, separators=(",", ":"))
 
     from services.git_integration_worker.cursor_sdk_ledger_hop import merge_hop_patch
@@ -172,6 +170,7 @@ def apply_hop_lineage_stamp(
 
 __all__ = [
     "HOP_ADMITTED_BY_KEY",
+    "HOP_LINEAGE_CLAIM_MISMATCH_KEY",
     "HopLineage",
     "apply_hop_lineage_stamp",
     "derive_hop_admitted_by",

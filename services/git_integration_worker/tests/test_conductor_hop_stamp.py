@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 
 import pytest
-from universal_protocol.errors import ProtocolError
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
 )
 from services.git_integration_worker.cursor_sdk_conductor_hop_stamp import (
     HOP_ADMITTED_BY_KEY,
+    HOP_LINEAGE_CLAIM_MISMATCH_KEY,
+    apply_hop_lineage_stamp,
     derive_hop_admitted_by,
     derive_hop_lineage,
 )
@@ -131,22 +132,37 @@ def test_lineage_stamp_sets_predecessor_successor() -> None:
     assert succ_data.get(HOP_ADMITTED_BY_KEY) == "liaison"
 
 
-def test_lineage_refuses_body_triplet_mismatch() -> None:
+def test_lineage_records_body_triplet_mismatch() -> None:
     ledger = CursorDispatchLedger.instance()
     _admit_conductor(ledger, _req(dispatch_id="pred-stamp-1"), hop_seq=1)
     with ledger._connect() as conn:
-        with pytest.raises(ProtocolError):
-            derive_hop_lineage(
-                conn,
-                thread_id="9964",
-                work_key=_WORK_KEY,
-                caller_agent="liaison",
-                body_triplet={
-                    "hop_from": "wrong-id",
-                    "hop_seq": 2,
-                    "hop_reason": "planned",
-                },
-            )
+        lineage = derive_hop_lineage(
+            conn,
+            thread_id="9964",
+            work_key=_WORK_KEY,
+            caller_agent="liaison",
+            body_triplet={
+                "hop_from": "wrong-id",
+                "hop_seq": 2,
+                "hop_reason": "planned",
+            },
+        )
+        assert lineage is not None
+        assert lineage.hop_from == "pred-stamp-1"
+        assert lineage.claim_mismatch == (
+            {"field": "hop_from", "claimed": "wrong-id", "derived": "pred-stamp-1"},
+        )
+        stamped = apply_hop_lineage_stamp(
+            conn,
+            incoming_dispatch_id="succ-stamp-2",
+            thread_id="9964",
+            record_json="{}",
+            lineage=lineage,
+        )
+    data = json.loads(stamped)
+    assert data[HOP_LINEAGE_CLAIM_MISMATCH_KEY] == [
+        {"field": "hop_from", "claimed": "wrong-id", "derived": "pred-stamp-1"}
+    ]
 
 
 def test_list_mission_terminal_chain_orders_by_hop_seq() -> None:
