@@ -10,7 +10,11 @@ from fastapi import HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
 
 from ...checkpoint_auto_stamp_wiring import load_thread_tags
-from ...tape_degrade import TapeBudgetExceeded, tape_budget_exceeded_envelope
+from ...tape_degrade import (
+    TAPE_BUDGET_BYTES_DEFAULT,
+    TapeBudgetExceeded,
+    tape_budget_exceeded_envelope,
+)
 from ...tape_harvest import render_tape_with_harvest
 from ...thread_classification import classify_thread
 from . import router
@@ -24,7 +28,7 @@ _VALID_TAPE_CHANNELS = frozenset({"continuity", "all"})
 )
 async def tape_route(
     thread_id: str,
-    budget_bytes: int = Query(512_000, ge=1024, le=8_000_000),
+    budget_bytes: int = Query(TAPE_BUDGET_BYTES_DEFAULT, ge=1024, le=8_000_000),
     harvest: bool = Query(False),
     max_seals: int = Query(8, ge=0, le=64),
     scope: Literal["last_session", "full", "window"] = Query(

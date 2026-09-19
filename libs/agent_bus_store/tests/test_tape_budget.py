@@ -7,11 +7,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from agent_bus_store.auth import require_token
 from agent_bus_store.server import create_app
+from agent_bus_store.resume_envelope import build_resume_envelope
+from agent_bus_store.resume_fence import RESUME_FENCE_TAPE_BUDGET
+from agent_bus_store.routes.threads import tape as tape_route_mod
 from agent_bus_store.tape_degrade import (
+    TAPE_BUDGET_BYTES_DEFAULT,
     TapeBudgetExceeded,
     degrade_overflow_messages,
     payload_bytes,
 )
+from agent_bus_store.tape_render import render_tape
+from pipelines.continuity_tape_read.v1.handlers import ContinuityTapeReadHandler
+from systems.continuity.models import TapeReadRequest
+from systems.continuity.tape_read import fetch_tape_envelope
 from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.offline
@@ -30,6 +38,37 @@ def _large_messages(count: int = 5, content_len: int = 800) -> list[dict]:
         }
         for i in range(1, count + 1)
     ]
+
+
+def test_tape_budget_default_constant() -> None:
+    assert TAPE_BUDGET_BYTES_DEFAULT == 512_000
+
+
+def test_seven_doors_share_tape_budget_default() -> None:
+    """AC-1b/1d: all seven budget doors equal TAPE_BUDGET_BYTES_DEFAULT."""
+    import inspect
+
+    render_sig = inspect.signature(render_tape)
+    assert render_sig.parameters["budget_bytes"].default == TAPE_BUDGET_BYTES_DEFAULT
+
+    envelope_sig = inspect.signature(build_resume_envelope)
+    assert envelope_sig.parameters["tape_budget_bytes"].default == TAPE_BUDGET_BYTES_DEFAULT
+
+    assert RESUME_FENCE_TAPE_BUDGET == TAPE_BUDGET_BYTES_DEFAULT
+
+    tape_route_params = inspect.signature(tape_route_mod.tape_route).parameters
+    route_budget_default = tape_route_params["budget_bytes"].default
+    if hasattr(route_budget_default, "default"):
+        route_budget_default = route_budget_default.default
+    assert route_budget_default == TAPE_BUDGET_BYTES_DEFAULT
+
+    assert TapeReadRequest.model_fields["budget_bytes"].default == TAPE_BUDGET_BYTES_DEFAULT
+
+    fetch_sig = inspect.signature(fetch_tape_envelope)
+    assert fetch_sig.parameters["budget_bytes"].default == TAPE_BUDGET_BYTES_DEFAULT
+
+    handler_src = inspect.getsource(ContinuityTapeReadHandler.execute)
+    assert "TAPE_BUDGET_BYTES_DEFAULT" in handler_src
 
 
 def test_degrade_raises_when_single_body_exceeds_budget() -> None:

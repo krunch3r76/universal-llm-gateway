@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 from continuity_tape.render_md import _EMPTY_ASSISTANT, _EMPTY_USER
-from continuity_tape.seal_reader import parse_verbatim_md
+from continuity_tape.seal_reader import messages_from_sealed_row, parse_verbatim_md
 
 pytestmark = pytest.mark.offline
 
@@ -82,6 +82,52 @@ def test_parse_verbatim_md_counts_user_marker_hits(mock_event) -> None:
         session_id="sid",
     )
     assert mock_event.call_args.kwargs["user_marker_hits"] == 1
+
+
+@patch("continuity_tape.seal_reader.load_sealed_envelope")
+def test_messages_from_sealed_row_envelope_present(mock_load, tmp_path) -> None:
+    from continuity_tape.messages import ContinuityMessagesEnvelope
+
+    mock_load.return_value = ContinuityMessagesEnvelope.model_validate(
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "hi",
+                    "turn_index": 1,
+                    "source": "cursor-seal-messages",
+                }
+            ],
+            "meta": {"turn_count": 1},
+        }
+    )
+    journal = {"verbatim_codec": "messages-v1", "file_path": "notes/system/transcripts/s.md"}
+    messages, codec = messages_from_sealed_row(
+        journal,
+        seg={"transcript_id": "uuid-1", "turn_lo": 0, "turn_hi": 1},
+        session_id="sid",
+        files_root=tmp_path,
+    )
+    assert codec == "messages-v1"
+    assert len(messages) == 1
+
+
+@patch("continuity_tape.seal_reader.load_sealed_envelope", return_value=None)
+@patch("cortex_store.events_tape.transcript_legacy_md_read")
+def test_messages_from_sealed_row_fallback_when_envelope_missing(
+    mock_event, _mock_load, tmp_path
+) -> None:
+    md = _verbatim_md(("t1", "hello", "ok"))
+    journal = {"verbatim_codec": "messages-v1", "file_path": "notes/system/transcripts/s.md"}
+    messages, codec = messages_from_sealed_row(
+        journal,
+        seg={"transcript_id": "uuid-1", "turn_lo": 0, "turn_hi": 1},
+        session_id="sid",
+        files_root=tmp_path,
+        verbatim=md,
+    )
+    assert codec == "md-v1"
+    assert messages
 
 
 @patch("cortex_store.events_tape.transcript_legacy_md_read")

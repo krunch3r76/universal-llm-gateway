@@ -101,9 +101,10 @@ def _compose_body(
                 f"turns@cp={turn_count}{hop_suffix}"
             )
             harvest_surface = "cursor"
+        codec = str(seal.get("verbatim_codec") or "messages-v1")
         lines.append(
             f"Harvest: transcript:{session_id} · messages_sha256:{sha_token} · "
-            f"codec:messages-v1 · surface:{harvest_surface}"
+            f"codec:{codec} · surface:{harvest_surface}"
         )
     mission_line = (
         mission.strip() or "Mission: resume continuity house from this CHECKPOINT."

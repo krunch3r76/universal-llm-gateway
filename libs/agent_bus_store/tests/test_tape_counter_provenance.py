@@ -30,14 +30,25 @@ def _verbatim_md(turn_count: int, session_id: str) -> str:
 
 
 def test_segment_codec_counts_messages_v1_nonzero() -> None:
-    """AC-1b: messages-v1 codec on segment yields non-zero messages-v1 count."""
+    """AC-3b: codec_used on segment drives segment_codec_counts."""
     segments = [
-        {"from_sealed": True, "verbatim_codec": "messages-v1"},
-        {"from_sealed": True, "verbatim_codec": "md-v1"},
+        {"from_sealed": True, "codec_used": "messages-v1"},
+        {"from_sealed": True, "codec_used": "md-v1"},
     ]
     counts = segment_codec_counts(segments)
     assert counts["messages-v1"] == 1
     assert counts["md-v1"] == 1
+
+
+def test_segment_codec_counts_preserves_unknown_codecs() -> None:
+    """AC-3e: unknown codecs are counted, not discarded."""
+    segments = [
+        {"from_sealed": True, "codec_used": "messages-v2"},
+        {"from_sealed": True, "codec_used": "md-v1"},
+    ]
+    counts = segment_codec_counts(segments)
+    assert counts == {"messages-v2": 1, "md-v1": 1}
+    assert sum(counts.values()) == len(segments)
 
 
 def test_build_lane_segments_propagates_verbatim_codec(tmp_path: Path) -> None:

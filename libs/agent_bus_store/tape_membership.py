@@ -102,6 +102,48 @@ def _parse_window_lines(body: str) -> list[dict[str, Any]]:
     return anchors
 
 
+def lookup_dominant_lane_by_uuid(conversation_uuid: str) -> str | None:
+    """Newest ``session_journals.dominant_lane`` for a tab uuid (unfiltered)."""
+    from cortex_store.db import cortex_conn
+
+    conn = cortex_conn()
+    try:
+        row = conn.execute(
+            "SELECT dominant_lane FROM session_journals "
+            "WHERE conversation_uuid = ? ORDER BY id DESC LIMIT 1",
+            (conversation_uuid,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    dl = row["dominant_lane"]
+    if dl is None:
+        return None
+    stripped = str(dl).strip()
+    return stripped or None
+
+
+def resolve_cell_ownership(
+    transcript_id: str,
+    *,
+    lane_journals: list[dict[str, Any]],
+) -> tuple[str | None, str]:
+    """Resolve dominant_lane and ownership_source for a transcript cell."""
+    for journal in lane_journals:
+        uuid = journal.get("conversation_uuid")
+        if uuid and str(uuid) == transcript_id:
+            dl = journal.get("_dominant_lane") or journal.get("dominant_lane")
+            if isinstance(dl, str):
+                dl = dl.strip() or None
+            if dl:
+                return dl, "lane_journal"
+    dl = lookup_dominant_lane_by_uuid(transcript_id)
+    if dl:
+        return dl, "uuid_lookup"
+    return None, "unresolved"
+
+
 def _binding_for_journal(
     journal: dict[str, Any],
     thread_id: str,
@@ -363,6 +405,8 @@ __all__ = [
     "TapeSegment",
     "build_chain_segments",
     "build_lane_segments",
+    "lookup_dominant_lane_by_uuid",
+    "resolve_cell_ownership",
     "_binding_for_journal",
     "_explicit_uuids_for_lane",
     "_load_sealed_segment",

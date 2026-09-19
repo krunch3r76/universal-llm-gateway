@@ -344,6 +344,10 @@ def test_b8_cells_join_chain_segments_and_bus_turn_id(tmp_path: Path) -> None:
             return_value=(cp1, cp2),
         ),
         patch("agent_bus_store.tape_cells.connect", return_value=_Connect()),
+        patch(
+            "agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid",
+            return_value=None,
+        ),
     ):
         cells = _cells_for_lane(
             thread_id="6341",

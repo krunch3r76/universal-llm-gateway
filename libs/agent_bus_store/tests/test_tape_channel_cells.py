@@ -24,6 +24,10 @@ def test_hop_anchor_advances_turn_lo() -> None:
         patch("agent_bus_store.tape_cells.connect") as mock_connect,
         patch("agent_bus_store.tape_cells.build_chain_segments", return_value=[]),
         patch("agent_bus_store.tape_render.live_jsonl_turn_count", return_value=0),
+        patch(
+            "agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid",
+            return_value=None,
+        ),
     ):
         conn = mock_connect.return_value.__enter__.return_value
         conn.execute.return_value.fetchone.side_effect = [
@@ -51,6 +55,10 @@ def test_from_agent_not_a_discriminator() -> None:
         patch("agent_bus_store.tape_cells.connect") as mock_connect,
         patch("agent_bus_store.tape_cells.build_chain_segments", return_value=[]),
         patch("agent_bus_store.tape_render.live_jsonl_turn_count", return_value=0),
+        patch(
+            "agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid",
+            return_value=None,
+        ),
     ):
         conn = mock_connect.return_value.__enter__.return_value
         conn.execute.return_value.fetchone.return_value = {"body": body}
@@ -78,7 +86,7 @@ def test_wall_skips_hop_under_continuity_channel() -> None:
             "channel": "hop",
         },
     ]
-    scoped, skipped = _last_session_cells(cells, channel="continuity")
+    scoped, skipped, _, _ = _last_session_cells(cells, thread_id="10479", channel="continuity")
     assert len(scoped) == 1
     assert scoped[0]["channel"] == "continuity"
     assert skipped == 1

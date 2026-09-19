@@ -14,6 +14,7 @@ from .tape_cells import (
     _last_session_cells,
     _window_segments,
 )
+from .tape_degrade import TAPE_BUDGET_BYTES_DEFAULT
 from .tape_membership import (
     TapeSegment,
     _binding_for_journal,
@@ -22,8 +23,6 @@ from .tape_membership import (
     filter_lane_journals,
 )
 from .tape_pour import build_open_line, pour_lane_messages
-
-_DEFAULT_BUDGET_BYTES = 512_000
 
 
 def _find_jsonl_for_uuid(conversation_uuid: str) -> Any | None:
@@ -208,17 +207,20 @@ def compute_tools_available(
 
 
 def segment_codec_counts(segments: list[dict[str, Any]]) -> dict[str, int]:
-    md_v1 = sum(1 for s in segments if s.get("from_sealed", True))
-    messages_v1 = sum(1 for s in segments if s.get("verbatim_codec") == "messages-v1")
-    if messages_v1 == 0:
-        return {"md-v1": md_v1, "messages-v1": 0}
-    return {"md-v1": md_v1 - messages_v1, "messages-v1": messages_v1}
+    counts: dict[str, int] = {}
+    for seg in segments:
+        if seg.get("codec_used") is None and seg.get("verbatim_codec") is None:
+            codec = "none"
+        else:
+            codec = str(seg.get("codec_used") or seg.get("verbatim_codec") or "md-v1")
+        counts[codec] = counts.get(codec, 0) + 1
+    return counts
 
 
 def render_tape(
     *,
     thread_id: str,
-    budget_bytes: int = _DEFAULT_BUDGET_BYTES,
+    budget_bytes: int = TAPE_BUDGET_BYTES_DEFAULT,
     harvest_stats: dict[str, Any] | None = None,
     scope: str = "last_session",
     transcript_id: str | None = None,
@@ -226,6 +228,7 @@ def render_tape(
     include_extras: bool = False,
     tools: Tools = "none",
     channel: str = "continuity",
+    budget_source: str | None = None,
 ) -> dict[str, Any]:
     """Render messages+extras dump for a continuity lane (read-only)."""
     from cortex_store.db import cortex_conn, decode_row
@@ -261,6 +264,9 @@ def render_tape(
         tools_available,
         degraded,
         hop_cells_skipped,
+        foreign_cells_excluded,
+        ownership_unresolved,
+        codec_fallback_count,
     ) = pour_lane_messages(
         thread_id=thread_id,
         journals=journals,
@@ -274,6 +280,7 @@ def render_tape(
         tools=tools,
         include_extras=include_extras,
         channel=channel,
+        budget_source=budget_source,
     )
     if scope == "window" and transcript_id:
         segments = _window_segments(segments, cells)
@@ -302,6 +309,10 @@ def render_tape(
         segment_codec_counts=segment_codec_counts(segments),
         surfaces=["cursor"],
         tools_available=tools_available,
+        budget_source=budget_source,
+        foreign_cells_excluded=foreign_cells_excluded,
+        ownership_unresolved=ownership_unresolved,
+        codec_fallback_count=codec_fallback_count,
     )
     if hop_cells_skipped > 0:
         wall_cp_ordinal: int | None = None
@@ -338,6 +349,9 @@ def render_tape(
         tools_available=tools_available,
         degraded=degraded,
         hop_cells_skipped=hop_cells_skipped,
+        foreign_cells_excluded=foreign_cells_excluded,
+        ownership_unresolved=ownership_unresolved,
+        codec_fallback_count=codec_fallback_count,
     )
     meta = {
         "messages_sha256": messages_sha256(messages),

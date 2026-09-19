@@ -56,6 +56,7 @@ def pour_lane_messages(
     tools: Tools,
     include_extras: bool,
     channel: str = "continuity",
+    budget_source: str | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -65,6 +66,9 @@ def pour_lane_messages(
     bool,
     dict[str, Any] | None,
     int,
+    int,
+    int,
+    int,
 ]:
     from agent_bus_store import tape_render as tape_live
     from agent_bus_store.tape_degrade import degrade_overflow_messages, payload_bytes
@@ -73,6 +77,7 @@ def pour_lane_messages(
         thread_id=thread_id, lane_journals=lane_journals, files_root=files_root
     )
     messages: list[dict[str, Any]] = []
+    codec_fallback_count = 0
     for seg in segments:
         sid = seg["session_id"]
         journal = next(j for j in journals if j.get("session_id") == sid)
@@ -83,15 +88,17 @@ def pour_lane_messages(
             verbatim = split_verbatim_layer(
                 full, verbatim_bytes=journal_verbatim_bytes(journal)
             )
-        messages.extend(
-            messages_from_sealed_row(
-                journal,
-                seg=seg,
-                session_id=sid,
-                files_root=files_root,
-                verbatim=verbatim,
-            )
+        row_messages, codec_used = messages_from_sealed_row(
+            journal,
+            seg=seg,
+            session_id=sid,
+            files_root=files_root,
+            verbatim=verbatim,
         )
+        if journal.get("verbatim_codec") == "messages-v1" and codec_used == "md-v1":
+            codec_fallback_count += 1
+        seg["codec_used"] = codec_used
+        messages.extend(row_messages)
         post_lid = int(seg.get("post_lid_turns") or 0)
         if post_lid > 0 and verbatim is not None:
             sealed_full = _turn_count_verbatim(verbatim)
@@ -108,13 +115,17 @@ def pour_lane_messages(
                         messages.append({**msg, "window_whole": False})
     messages.extend(tape_live.anchor_jsonl_messages(thread_id, existing=messages))
     hop_cells_skipped = 0
+    foreign_cells_excluded = 0
+    ownership_unresolved = 0
     if scope == "window" and transcript_id:
         cells = _window_cells(
             cells, transcript_id=transcript_id, prior_cells=prior_cells
         )
         messages = _filter_messages_to_cells(messages, cells)
     elif scope == "last_session":
-        cells, hop_cells_skipped = _last_session_cells(cells, channel=channel)
+        cells, hop_cells_skipped, foreign_cells_excluded, ownership_unresolved = (
+            _last_session_cells(cells, thread_id=thread_id, channel=channel)
+        )
         messages = _filter_messages_to_cells(messages, cells)
     truncated = payload_bytes(messages, []) > budget_bytes
     index_rows: list[dict[str, Any]] = []
@@ -126,6 +137,8 @@ def pour_lane_messages(
             budget_bytes=budget_bytes,
             thread_id=thread_id,
         )
+        if degraded is not None and budget_source is not None:
+            degraded = {**degraded, "budget_source": budget_source}
     tools_available = tape_live.compute_tools_available(
         segments=segments, messages=messages, tools=tools, thread_id=thread_id
     )
@@ -142,6 +155,9 @@ def pour_lane_messages(
         tools_available,
         degraded,
         hop_cells_skipped,
+        foreign_cells_excluded,
+        ownership_unresolved,
+        codec_fallback_count,
     )
 
 
@@ -164,6 +180,9 @@ def build_open_line(
     tools_available: bool,
     degraded: dict[str, Any] | None = None,
     hop_cells_skipped: int = 0,
+    foreign_cells_excluded: int = 0,
+    ownership_unresolved: int = 0,
+    codec_fallback_count: int = 0,
 ) -> dict[str, Any]:
     from agent_bus_store import tape_render as tape_meta
     last_cp: dict[str, Any] | None = None
@@ -211,6 +230,9 @@ def build_open_line(
         "mismatch": mismatch,
         "tools_available": tools_available,
         "hop_cells_skipped": hop_cells_skipped,
+        "foreign_cells_excluded": foreign_cells_excluded,
+        "ownership_unresolved": ownership_unresolved,
+        "codec_fallback_count": codec_fallback_count,
     }
     if truncated and degraded is not None:
         open_line["degraded"] = degraded

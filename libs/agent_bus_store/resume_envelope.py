@@ -11,7 +11,11 @@ from cortex_store.transcript_projection_membership import extract_cp_highlight
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
-from .tape_degrade import TapeBudgetExceeded, tape_budget_exceeded_envelope
+from .tape_degrade import (
+    TAPE_BUDGET_BYTES_DEFAULT,
+    TapeBudgetExceeded,
+    tape_budget_exceeded_envelope,
+)
 from .tape_harvest import render_tape_with_harvest
 from .tape_render import _find_jsonl_for_uuid
 from .tape_verbal import project_role_content_list
@@ -165,7 +169,8 @@ def _resume_summary_row(
 def build_resume_envelope(
     thread_id: str,
     *,
-    tape_budget_bytes: int = 512_000,
+    tape_budget_bytes: int = TAPE_BUDGET_BYTES_DEFAULT,
+    budget_source: str | None = None,
 ) -> dict[str, Any]:
     """Last-session verbal pour + projection pointers (no graph/consolidation).
 
@@ -185,6 +190,7 @@ def build_resume_envelope(
             harvest=False,
             include_extras=False,
             scope="last_session",
+            budget_source=budget_source,
         )
     except TapeBudgetExceeded as exc:
         tape_degraded = tape_budget_exceeded_envelope(exc)

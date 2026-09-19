@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from continuity_tape.messages import TOOL_MARKER_RE, ContinuityMessagesEnvelope
 from continuity_tape.render_md import _EMPTY_ASSISTANT, _EMPTY_USER
@@ -171,16 +172,22 @@ def messages_from_sealed_row(
     session_id: str,
     files_root: Path,
     verbatim: str | None = None,
-) -> list[dict[str, Any]]:
-    """Load speech for a journal row (messages-v1 envelope or md-v1 parse)."""
-    codec = journal.get("verbatim_codec") or "md-v1"
-    if codec == "messages-v1":
+) -> tuple[list[dict[str, Any]], str]:
+    """Load speech for a journal row; return ``(messages, codec_used)``."""
+    row_codec = journal.get("verbatim_codec") or "md-v1"
+    if row_codec == "messages-v1":
         envelope = load_sealed_envelope(journal, files_root=files_root)
         if envelope is not None:
-            return _messages_from_envelope(envelope.messages, seg=seg, session_id=session_id)
+            return (
+                _messages_from_envelope(envelope.messages, seg=seg, session_id=session_id),
+                "messages-v1",
+            )
+        if verbatim is None:
+            return [], "md-v1"
+        return parse_verbatim_md(verbatim, seg=seg, session_id=session_id), "md-v1"
     if verbatim is None:
-        return []
-    return parse_verbatim_md(verbatim, seg=seg, session_id=session_id)
+        return [], "none"
+    return parse_verbatim_md(verbatim, seg=seg, session_id=session_id), "md-v1"
 
 
 def _messages_from_envelope(
