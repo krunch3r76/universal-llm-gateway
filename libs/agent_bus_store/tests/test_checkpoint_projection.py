@@ -18,7 +18,10 @@ from agent_bus_store.checkpoint_projection import (
     extract_authored_residue,
     project_checkpoint_body,
 )
-from agent_bus_store.checkpoint_projection_lanes import CHECKPOINT_MAX_CHILD_ROWS
+from agent_bus_store.checkpoint_projection_lanes import (
+    CHECKPOINT_MAX_CHILD_ROWS,
+    CHECKPOINT_MAX_CITED_ROWS,
+)
 from agent_bus_store.checkpoint_projection_producers import ProducerDispatchRow
 from agent_bus_store.checkpoint_projection_wiring import maybe_project_checkpoint_body
 from agent_bus_store.turns_models import MAX_TURN_BODY_CHARS
@@ -1149,6 +1152,57 @@ def test_summary_caps_active_children_at_eight() -> None:
     ) in body
     assert "agent-bus:10780 · sub_mission · active · turn 2" in body
     assert "child_lanes: 181 active · 0 closed · registry:" in body
+
+
+def test_summary_caps_cited_lanes_at_eight() -> None:
+    """Many citation tokens must not dump every cited lane into derived."""
+    cited = tuple(
+        ChildThreadRow(str(20000 + i), "active", 1, lane_role="dispatch")
+        for i in range(80)
+    )
+    residue = "See " + " ".join(f"agent-bus:{20000 + i}" for i in range(80)) + "."
+    body = project_checkpoint_body(
+        root_thread="10479",
+        residue=residue,
+        resolvers=_resolvers(children=cited),
+    )
+    cited_section = body.split("### Cited lanes")[1].split("### Artifact")[0]
+    cited_rows = [
+        line for line in cited_section.splitlines() if line.startswith("- agent-bus:")
+    ]
+    assert len(body) <= MAX_TURN_BODY_CHARS
+    assert len(cited_rows) == CHECKPOINT_MAX_CITED_ROWS
+    assert (
+        f"_+72 more active cited · cap: "
+        f"checkpoint_projection_lanes.CHECKPOINT_MAX_CITED_ROWS="
+        f"{CHECKPOINT_MAX_CITED_ROWS}_"
+    ) in body
+
+
+def test_summary_caps_entity_rows() -> None:
+    """Many assertion citations must not dump every row into derived."""
+    row_map = {
+        ("assertion", str(i)): EntityAssertionRow(
+            row_id=f"a:{i}",
+            entity=f"todo:row-{i}",
+            claim_head="x" * 80,
+        )
+        for i in range(40)
+    }
+    residue = "See " + " ".join(f"a:{i}" for i in range(40)) + "."
+    body = project_checkpoint_body(
+        root_thread="10479",
+        residue=residue,
+        resolvers=_resolvers(rows=row_map),
+    )
+    entity_section = body.split("### Entity / assertion rows")[1].split("## Residue")[0]
+    entity_rows = [line for line in entity_section.splitlines() if line.startswith("- a:")]
+    assert len(body) <= MAX_TURN_BODY_CHARS
+    assert len(entity_rows) == CHECKPOINT_MAX_CHILD_ROWS
+    assert (
+        f"_+32 more entity/assertion rows · cap: "
+        f"CHECKPOINT_MAX_CHILD_ROWS={CHECKPOINT_MAX_CHILD_ROWS}_"
+    ) in body
 
 
 def test_producers_summary_names_basis() -> None:

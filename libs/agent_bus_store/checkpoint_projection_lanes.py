@@ -9,9 +9,11 @@ from .checkpoint_projection_producers import (
 )
 
 _CLOSED_THREAD_STATUSES = frozenset({"closed"})
-# Summary-mode child listing is capped so 181+ active lanes do not refuse CP post
-# (checkpoint_body_too_large at MAX_TURN_BODY_CHARS=8000; friction a:33437).
+# Summary-mode listings are capped so 181+ active lanes / many cited tokens
+# do not refuse CP post (checkpoint_body_too_large at MAX_TURN_BODY_CHARS=8000;
+# friction a:33437; 10479 lean post 413 after de2e9ff envelope).
 CHECKPOINT_MAX_CHILD_ROWS = 8
+CHECKPOINT_MAX_CITED_ROWS = 8
 
 
 def render_substantiated_child(row, *, compressed: bool) -> str:
@@ -111,8 +113,17 @@ def render_lane_derived_sections(
         parts.append("### Cited lanes")
         if cited_lanes:
             active, closed = _partition_child_lanes(cited_lanes)
-            for cited in active:
+            ordered_active = tuple(sorted(active, key=_active_child_sort_key))
+            visible = ordered_active[:CHECKPOINT_MAX_CITED_ROWS]
+            for cited in visible:
                 parts.append(render_cited_lane(cited, compressed=False))
+            extra = len(active) - CHECKPOINT_MAX_CITED_ROWS
+            if extra > 0:
+                parts.append(
+                    f"_+{extra} more active cited · cap: "
+                    f"checkpoint_projection_lanes.CHECKPOINT_MAX_CITED_ROWS="
+                    f"{CHECKPOINT_MAX_CITED_ROWS}_"
+                )
             if closed:
                 parts.append(f"_+{len(closed)} closed cited lanes_")
         else:
@@ -157,6 +168,7 @@ def render_lane_derived_sections(
 
 __all__ = [
     "CHECKPOINT_MAX_CHILD_ROWS",
+    "CHECKPOINT_MAX_CITED_ROWS",
     "render_cited_lane",
     "render_lane_derived_sections",
     "render_substantiated_child",

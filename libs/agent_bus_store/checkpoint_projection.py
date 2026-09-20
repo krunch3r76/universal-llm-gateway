@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .checkpoint_citation_lint import CitationToken, lint_checkpoint_citations
-from .checkpoint_projection_lanes import render_lane_derived_sections
+from .checkpoint_projection_lanes import (
+    CHECKPOINT_MAX_CHILD_ROWS,
+    render_lane_derived_sections,
+)
 from .checkpoint_projection_producers import ProducerDispatchRow
 from .turns_models import MAX_TURN_BODY_CHARS
 
@@ -296,7 +299,14 @@ def _render_derived_zone(
     parts.append("")
     parts.append("### Entity / assertion rows")
     if rows:
-        parts.extend(_render_entity_row(r, summary_mode=summary_mode) for r in rows)
+        visible = rows[:CHECKPOINT_MAX_CHILD_ROWS] if summary_mode else rows
+        parts.extend(_render_entity_row(r, summary_mode=summary_mode) for r in visible)
+        extra = len(rows) - CHECKPOINT_MAX_CHILD_ROWS
+        if summary_mode and extra > 0:
+            parts.append(
+                f"_+{extra} more entity/assertion rows · cap: "
+                f"CHECKPOINT_MAX_CHILD_ROWS={CHECKPOINT_MAX_CHILD_ROWS}_"
+            )
     else:
         parts.append("_none cited_")
     return "\n".join(parts)
