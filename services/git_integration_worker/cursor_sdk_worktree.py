@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
-    ledger_connection,
+from services.git_integration_worker.cse_nest_parent_lease import (
+    lookup_nest_parent_lease_key as lookup_parent_lease_key,
 )
 from services.git_integration_worker.cursor_sdk_worktree_prune import (
     PruneResult,
@@ -37,9 +37,6 @@ from services.git_integration_worker.cursor_sdk_worktree_registry import (
     release_mint_mutex,
     repo_worktree_subroot,
     touch_lane_worktree_dispatch,
-)
-from services.git_integration_worker.cse_nest_parent_lease import (
-    lookup_nest_parent_lease_key as lookup_parent_lease_key,
 )
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
