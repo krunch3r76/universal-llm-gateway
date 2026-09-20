@@ -25,15 +25,18 @@ from ...db.turns import UnreadTurnsExist
 from ...enrollment_guard import EnrollmentTagError
 from ...resume_fence_citation import check_send_citation_gate, release_on_clean_send
 from ...thread_classification import ThreadClassificationError
-from ...turns_models import TurnSendCreate, TurnSendCreated
+from ...turns_models import TurnSendCreate, TurnSendCreated, slug_exists_detail
 from . import router
 from .crud import _raise_enrollment_denied
 from .detail import _thread_detail
 from .send_prep import (
+    _bind_lane_on_send,
     _maybe_auto_bind_lane_on_send,
+    _raise_if_turn_body_over_limit,
     _raise_spill_http,
     _resolve_send_supersedes,
     _spill_transformer,
+    _validate_lane_bind_pre_mint,
 )
 from .send_sidecar import _send_with_sidecar
 
@@ -99,6 +102,10 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                     "reason": "supersedes_turn_not_valid_on_new_thread",
                 },
             )
+        _validate_lane_bind_pre_mint(body)
+        _raise_if_turn_body_over_limit(
+            body.body, allow_long_body=body.allow_long_body
+        )
         try:
             thread_row, turn_id, ts, turn_number = create_thread_with_turn(
                 slug=body.new_slug,
@@ -133,17 +140,10 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             if isinstance(exc, SlugExists):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "error": "slug_exists",
-                        "slug": exc.slug,
-                        "existing_thread_id": exc.existing_thread_id,
-                        "message": (
-                            f"A thread with slug {exc.slug!r} already exists "
-                            f"(thread {exc.existing_thread_id}). "
-                            "Use send(thread=<id>, ...) to continue it or choose "
-                            "a different new_slug."
-                        ),
-                    },
+                    detail=slug_exists_detail(
+                        slug=exc.slug,
+                        existing_thread_id=exc.existing_thread_id,
+                    ),
                 ) from exc
             if isinstance(exc, UnreadTurnsExist):
                 raise HTTPException(
@@ -156,7 +156,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                 ) from exc
             raise
         prepared = spill_holder.get("prepared")
-        _maybe_auto_bind_lane_on_send(body=body, thread_id=thread_row["id"])
+        _bind_lane_on_send(body=body, thread_id=thread_row["id"])
         thread_row = get_thread(thread_row["id"]) or thread_row
         return TurnSendCreated(
             send_path="new_thread",
@@ -187,6 +187,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         )
 
     thread_id = normalize_thread_id(body.thread)
+    _maybe_auto_bind_lane_on_send(body=body, thread_id=thread_id)
     thread_tags = load_thread_tags(thread_id)
     citation_refusal = check_send_citation_gate(
         thread_id=thread_id,

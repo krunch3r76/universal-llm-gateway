@@ -149,12 +149,18 @@ def structured_slug_exists(result: dict[str, Any]) -> dict[str, Any] | None:
         return None
     slug = detail.get("slug", "")
     existing_id = detail.get("existing_thread_id", "")
-    return {
-        "error": (
+    message = detail.get("message")
+    error_text = (
+        message
+        if isinstance(message, str)
+        else (
             f"send: slug {slug!r} already exists (thread {existing_id}). "
             "Use send(thread=<id>, ...) to continue it or choose a different "
             "new_slug."
-        ),
+        )
+    )
+    return {
+        "error": error_text,
         "reason": "slug_exists",
         "slug": slug,
         "existing_thread_id": existing_id,

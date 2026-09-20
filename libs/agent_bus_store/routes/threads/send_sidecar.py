@@ -16,13 +16,22 @@ from ...thread_classification import ThreadClassificationError
 from ...turns_models import (
     TurnSendCreate,
     TurnSendCreated,
+    post_mint_detail,
     sidecar_content_limit_error,
     sidecar_write_failed_envelope,
+    slug_exists_detail,
     turn_body_limit_error,
 )
 from .crud import _raise_enrollment_denied
 from .detail import _thread_detail
-from .send_prep import _maybe_auto_bind_lane_on_send, _resolve_send_supersedes
+from .send_prep import (
+    _bind_lane_on_send,
+    _maybe_auto_bind_lane_on_send,
+    _raise_if_turn_body_over_limit,
+    _raise_post_mint_http,
+    _resolve_send_supersedes,
+    _validate_lane_bind_pre_mint,
+)
 
 
 def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
@@ -35,7 +44,11 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
 
     from ...db.connection import connect
     from ...db.turns import UnreadTurnsExist, insert_turn, mark_sender_unread_in_thread
-    from ...events.lifecycle import emit_sidecar_orphaned, emit_sidecar_written
+    from ...events.lifecycle import (
+        emit_sidecar_orphaned,
+        emit_sidecar_written,
+        emit_thread_orphaned,
+    )
 
     if error_detail := sidecar_content_limit_error(body.sidecar_content or ""):
         raise HTTPException(
@@ -67,6 +80,10 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
                     "reason": "supersedes_turn_not_valid_on_new_thread",
                 },
             )
+        _validate_lane_bind_pre_mint(body)
+        _raise_if_turn_body_over_limit(
+            body.body, allow_long_body=body.allow_long_body
+        )
         with connect() as conn:
             existing = conn.execute(
                 "SELECT id FROM threads WHERE slug = ? LIMIT 1",
@@ -75,17 +92,10 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             if existing is not None:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "error": "slug_exists",
-                        "slug": body.new_slug,
-                        "existing_thread_id": existing["id"],
-                        "message": (
-                            f"A thread with slug {body.new_slug!r} already exists "
-                            f"(thread {existing['id']}). "
-                            "Use send(thread=<id>, ...) to continue it or choose "
-                            "a different new_slug."
-                        ),
-                    },
+                    detail=slug_exists_detail(
+                        slug=body.new_slug,
+                        existing_thread_id=existing["id"],
+                    ),
                 )
         try:
             thread_row = create_thread(
@@ -106,7 +116,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             )
         thread_id = thread_row["id"]
         send_path = "new_thread"
-        _maybe_auto_bind_lane_on_send(body=body, thread_id=thread_id)
+        _bind_lane_on_send(body=body, thread_id=thread_id)
     else:
         thread_id = normalize_thread_id(body.thread)
         if get_thread(thread_id) is None:
@@ -124,6 +134,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
                     "reason": "lifecycle_state_not_valid_on_continue",
                 },
             )
+        _maybe_auto_bind_lane_on_send(body=body, thread_id=thread_id)
         send_path = "continue"
 
     assert thread_id is not None
@@ -136,12 +147,20 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             sidecar_slug=body.sidecar_slug,
         )
     except SidecarWriteError as exc:
+        detail = sidecar_write_failed_envelope(
+            thread_id=thread_id,
+            error=str(exc),
+        )
+        if send_path == "new_thread":
+            _raise_post_mint_http(
+                thread_id=thread_id,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=detail,
+                orphan_reason="sidecar_write_failed",
+            )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=sidecar_write_failed_envelope(
-                thread_id=thread_id,
-                error=str(exc),
-            ),
+            detail=detail,
         ) from exc
 
     try:
@@ -151,6 +170,13 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             body=body.body,
         )
     except CheckpointBodyTooLargeError as exc:
+        if send_path == "new_thread":
+            _raise_post_mint_http(
+                thread_id=thread_id,
+                status_code=413,
+                detail=exc.envelope,
+                orphan_reason="checkpoint_body_too_large",
+            )
         raise HTTPException(status_code=413, detail=exc.envelope) from exc
 
     final_body = append_sidecar_pointer_line(turn_body, sidecar_uri=sidecar.uri)
@@ -158,6 +184,13 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         final_body,
         allow_long_body=body.allow_long_body,
     ):
+        if send_path == "new_thread":
+            _raise_post_mint_http(
+                thread_id=thread_id,
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=error_detail,
+                orphan_reason="body_too_large",
+            )
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=error_detail,
@@ -185,14 +218,30 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             attachments=att_dicts,
         )
     except UnreadTurnsExist as exc:
+        detail = exc.to_detail()
+        if send_path == "new_thread":
+            _raise_post_mint_http(
+                thread_id=thread_id,
+                status_code=status.HTTP_409_CONFLICT,
+                detail=detail,
+                orphan_reason="unread_turns_exist",
+            )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=exc.to_detail(),
+            detail=detail,
         ) from exc
     except ValueError as exc:
+        detail = {"error": str(exc), "reason": "supersedes_turn_invalid"}
+        if send_path == "new_thread":
+            _raise_post_mint_http(
+                thread_id=thread_id,
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=detail,
+                orphan_reason="supersedes_turn_invalid",
+            )
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"error": str(exc), "reason": "supersedes_turn_invalid"},
+            detail=detail,
         ) from exc
     except Exception as exc:
         emit_sidecar_orphaned(
@@ -200,16 +249,27 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
             error=str(exc),
             thread_id=thread_id,
         )
+        detail = {
+            "code": "turn_insert_failed",
+            "reason": "turn_insert_failed",
+            "message": "Turn insert failed after sidecar write; sidecar file may be orphaned.",
+            "retryable": True,
+            "source": "agent_bus_store.send",
+            "data": {"thread_id": thread_id, "sidecar_uri": sidecar.uri},
+        }
+        if send_path == "new_thread":
+            emit_thread_orphaned(
+                thread_id=thread_id,
+                reason="turn_insert_failed",
+                error="turn_insert_failed",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=post_mint_detail(detail, thread_id=thread_id),
+            ) from exc
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": "turn_insert_failed",
-                "reason": "turn_insert_failed",
-                "message": "Turn insert failed after sidecar write; sidecar file may be orphaned.",
-                "retryable": True,
-                "source": "agent_bus_store.send",
-                "data": {"thread_id": thread_id, "sidecar_uri": sidecar.uri},
-            },
+            detail=detail,
         ) from exc
 
     marked_read = 0

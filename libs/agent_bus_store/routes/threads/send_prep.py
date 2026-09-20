@@ -5,16 +5,19 @@ from __future__ import annotations
 from fastapi import HTTPException, status
 
 from ...body_auto_spill import PreparedBody, prepare_body_for_insert, spill_error_http
+from ...db import get_thread, normalize_thread_id
 from ...db.lane_associations import (
     associate_lane,
     invalid_lane_role_envelope,
     lane_bind_incomplete_envelope,
 )
+from ...events.lifecycle import emit_thread_orphaned
+from ...lane_roles import parse_lane_role
 from ...supersedes_turn_boundary import (
     SupersedesTurnNotFoundError,
     resolve_send_supersedes,
 )
-from ...turns_models import TurnSendCreate
+from ...turns_models import TurnSendCreate, post_mint_detail, turn_body_limit_error
 
 
 def _spill_transformer(
@@ -76,8 +79,8 @@ def _resolve_send_supersedes(
     return resolved.turn_id, resolved.turn_number, resolved.turn_id
 
 
-def _maybe_auto_bind_lane_on_send(*, body: TurnSendCreate, thread_id: str) -> None:
-    """Auto-bind a freshly minted lane when both parent_thread and lane_role are set."""
+def _validate_lane_bind_pre_mint(body: TurnSendCreate) -> None:
+    """Pure lane gates — no ``thread_id`` required; run before thread mint."""
     has_parent = body.parent_thread is not None
     has_role = body.lane_role is not None
     if not has_parent and not has_role:
@@ -86,9 +89,68 @@ def _maybe_auto_bind_lane_on_send(*, body: TurnSendCreate, thread_id: str) -> No
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=lane_bind_incomplete_envelope(
-                provided=[k for k, v in (("parent_thread", has_parent), ("lane_role", has_role)) if v]
+                provided=[
+                    k
+                    for k, v in (
+                        ("parent_thread", has_parent),
+                        ("lane_role", has_role),
+                    )
+                    if v
+                ]
             ),
         )
+    try:
+        parse_lane_role(body.lane_role or "")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=invalid_lane_role_envelope(
+                lane_role=body.lane_role or "",
+                reason=str(exc),
+            ),
+        ) from exc
+    parent_id = normalize_thread_id(body.parent_thread)
+    if get_thread(parent_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Thread {parent_id} not found",
+        )
+
+
+def _raise_if_turn_body_over_limit(
+    body: str, *, allow_long_body: bool = False
+) -> None:
+    if error_detail := turn_body_limit_error(body, allow_long_body=allow_long_body):
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=error_detail,
+        )
+
+
+def _raise_post_mint_http(
+    *,
+    thread_id: str,
+    status_code: int,
+    detail: dict[str, object],
+    orphan_reason: str,
+) -> None:
+    """Refusal after thread mint — name the created row and emit orphan signal."""
+    error_key = detail.get("code") or detail.get("reason") or detail.get("error")
+    emit_thread_orphaned(
+        thread_id=thread_id,
+        reason=orphan_reason,
+        error=str(error_key) if error_key is not None else None,
+    )
+    raise HTTPException(
+        status_code=status_code,
+        detail=post_mint_detail(detail, thread_id=thread_id),
+    )
+
+
+def _bind_lane_on_send(*, body: TurnSendCreate, thread_id: str) -> None:
+    """Associate lane when both parent_thread and lane_role are set."""
+    if body.parent_thread is None and body.lane_role is None:
+        return
     try:
         associate_lane(
             thread_id=thread_id,
@@ -96,20 +158,32 @@ def _maybe_auto_bind_lane_on_send(*, body: TurnSendCreate, thread_id: str) -> No
             lane_role=body.lane_role,
         )
     except LookupError as exc:
-        raise HTTPException(
+        _raise_post_mint_http(
+            thread_id=thread_id,
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(exc),
-        ) from exc
+            detail={"error": str(exc), "reason": "lane_bind_parent_not_found"},
+            orphan_reason="lane_bind_failed",
+        )
     except ValueError as exc:
         if "lane_role" in str(exc):
-            raise HTTPException(
+            _raise_post_mint_http(
+                thread_id=thread_id,
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=invalid_lane_role_envelope(
                     lane_role=body.lane_role or "",
                     reason=str(exc),
                 ),
-            ) from exc
-        raise HTTPException(
+                orphan_reason="lane_bind_failed",
+            )
+        _raise_post_mint_http(
+            thread_id=thread_id,
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"error": str(exc), "reason": "invalid_lane_bind"},
-        ) from exc
+            orphan_reason="lane_bind_failed",
+        )
+
+
+def _maybe_auto_bind_lane_on_send(*, body: TurnSendCreate, thread_id: str) -> None:
+    """Validate lane fields then bind — for continue path or post-mint new_slug."""
+    _validate_lane_bind_pre_mint(body)
+    _bind_lane_on_send(body=body, thread_id=thread_id)

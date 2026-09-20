@@ -139,6 +139,30 @@ def turn_body_limit_error(
     )
 
 
+def slug_exists_detail(*, slug: str, existing_thread_id: str) -> dict[str, object]:
+    """Structured 409 for new_slug collision on send."""
+    return {
+        "error": "slug_exists",
+        "slug": slug,
+        "existing_thread_id": existing_thread_id,
+        "message": (
+            f"A thread with slug {slug!r} already exists "
+            f"(thread {existing_thread_id}). "
+            "Use send(thread=<id>, ...) to continue it or choose "
+            "a different new_slug. If this slug was yours from a prior failed "
+            "send, the existing thread may be a zero-turn orphan with no turns — "
+            "inspect turn_count before assuming another agent owns it."
+        ),
+    }
+
+
+def post_mint_detail(detail: dict[str, object], *, thread_id: str) -> dict[str, object]:
+    """Attach ``created_thread`` so a post-mint refusal names its side effect."""
+    enriched = dict(detail)
+    enriched["created_thread"] = thread_id
+    return enriched
+
+
 def post_continuation_misuse_error(
     slug: str, after_turn: int | None
 ) -> dict[str, object] | None:

@@ -342,3 +342,30 @@ def emit_sidecar_orphaned(
 ) -> None:
     event = AgentBusSidecarOrphaned(uri=uri, error=error, thread_id=thread_id)
     _publish(event.signal, event.payload, role=event.role)
+
+
+@event_factory
+def AgentBusThreadOrphaned(  # noqa: N802
+    thread_id: str,
+    reason: str,
+    error: str | None = None,
+) -> Event:
+    """Signal: mcp.agentbus.thread.orphaned"""
+    payload: dict[str, object] = {"thread_id": thread_id, "reason": reason}
+    if error is not None:
+        payload["error"] = error
+    return Event(
+        signal="mcp.agentbus.thread.orphaned",
+        payload=payload,
+        role="coordination",
+    )
+
+
+def emit_thread_orphaned(
+    *,
+    thread_id: str,
+    reason: str,
+    error: str | None = None,
+) -> None:
+    event = AgentBusThreadOrphaned(thread_id=thread_id, reason=reason, error=error)
+    _publish(event.signal, event.payload, role=event.role)
