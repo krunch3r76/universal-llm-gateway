@@ -124,6 +124,24 @@ def test_claimed_auto_holds_drain_until_mark_done(events: SimpleNamespace) -> No
     assert len(events.completed) == 1
 
 
+def test_parked_nested_sdk_yields_drain_occupancy(
+    events: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Claimed Auto waiting on park_for_restart resume must not hold this drain."""
+    claimed = _claim_propagate_job()
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.drain_parked_nested."
+        "waiting_park_resume_for_intent",
+        lambda **kw: kw.get("job_id") == claimed.job_id,
+    )
+    controller = _controller()
+    epoch = controller.next_epoch()
+    snap = controller.begin_drain(reason="r", intent_id="i-park", drain_epoch=epoch)
+    assert snap["active_count"] == 0
+    assert len(events.completed) == 1
+    assert get_queue()._jobs[claimed.job_id].status == "claimed"
+
+
 def test_queued_auto_job_does_not_make_busy() -> None:
     """Queued-not-claimed Auto work is not executing; drain may still converge."""
     get_queue().enqueue(

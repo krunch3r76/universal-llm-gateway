@@ -1,0 +1,49 @@
+"""Drain occupancy carve-out for Auto jobs waiting on park_for_restart resume.
+
+``claimed_occupancy_ops`` must keep counting a live nested SDK (9470: SIGTERM
+beat CLOSEOUT). A nested SDK already ``cancelled`` + ``park_for_restart`` for
+the *current* drain intent is the opposite: the job is waiting for
+``resume_of``, which only admits after GIW restart. Counting it prevents that
+restart (specimen 2026-09-20 intent 1f0a855c / AutoJob 765c56f3).
+
+Do not treat ledger ``cancelled`` as nested-poll terminal — that drops the
+Auto job before the resume child exists.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from services.git_integration_worker.cursor_sdk_park_ledger import (
+    PARK_KIND_RESTART,
+    ParkRow,
+    load_park_row,
+    park_projection,
+)
+
+
+def waiting_park_resume_for_intent(
+    *,
+    job_id: str,
+    intent_id: str | None,
+    relay_state: dict[str, Any] | None = None,
+    park_row: ParkRow | None = None,
+) -> bool:
+    """True when this claimed Auto job's nested SDK is parked for *intent_id*."""
+    if not intent_id:
+        return False
+    if relay_state is None:
+        from services.git_integration_worker.cursor_auto.job_ledger import get_ledger
+
+        relay_state = get_ledger().read_relay_state(job_id)
+    dispatch_id = str(relay_state.get("dispatch_id") or "").strip()
+    if not dispatch_id:
+        return False
+    if park_row is None:
+        park_row = load_park_row(dispatch_id=dispatch_id)
+    if park_row is None or park_row.park_kind != PARK_KIND_RESTART:
+        return False
+    if park_row.park_intent_id != intent_id:
+        return False
+    proj = park_projection(park_row)
+    return proj is not None and proj.get("state") == "parked"

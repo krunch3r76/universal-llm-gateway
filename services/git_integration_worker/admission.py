@@ -258,11 +258,21 @@ class WorkAdmissionController:
                 continue
             ops.append(proj)
             seen.add(dispatch_id)
+        from services.git_integration_worker.cursor_auto.drain_parked_nested import (
+            waiting_park_resume_for_intent,
+        )
         from services.git_integration_worker.cursor_auto.queue import get_queue
 
+        drain_intent = self._intent_id if self._draining else None
         for auto_op in get_queue().claimed_occupancy_ops():
             op_id = str(auto_op["op_id"])
             if op_id in seen:
+                continue
+            # Parked nested SDK waits for post-restart resume_of — omit from
+            # drain occupancy only. 9470 still counts a live nested SDK.
+            if drain_intent and waiting_park_resume_for_intent(
+                job_id=op_id, intent_id=drain_intent
+            ):
                 continue
             ops.append(auto_op)
             seen.add(op_id)
