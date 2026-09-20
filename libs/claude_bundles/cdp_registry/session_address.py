@@ -75,6 +75,15 @@ def bind_session_address(
                 updated=updated,
                 execution_id=execution_id,
             )
+            from services.git_integration_worker.cse_session_holders import (
+                upsert_holder_remote,
+            )
+
+            upsert_holder_remote(
+                chat_url=url,
+                registration_id=registration_id,
+                execution_id=execution_id,
+            )
             return True
         updated["chat_url"] = url
         if execution_id:

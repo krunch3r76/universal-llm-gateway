@@ -1386,7 +1386,13 @@ class CursorDispatchLedger:
                 ).fetchone()
                 active_count = int(active_row["n"]) if active_row else 0
                 slot_limit = max(1, int(write_lease_slot_limit))
-                conflict = active_count >= slot_limit and not nest_under
+                from claude_bundles.holder_strings import parse_nest_under_cse
+
+                cse_nest_parent_id = (
+                    parse_nest_under_cse(nest_under) if nest_under else None
+                )
+                sdk_nest_bypass = nest_under is not None and cse_nest_parent_id is None
+                conflict = active_count >= slot_limit and not sdk_nest_bypass
                 conflict_holder = None
                 if conflict:
                     conflict_holder = conn.execute(
@@ -1408,21 +1414,16 @@ class CursorDispatchLedger:
                             f"nest_under must not equal child dispatch_id "
                             f"{req.dispatch_id!r}"
                         )
-                    from claude_bundles.holder_strings import parse_nest_under_cse
-
                     from services.git_integration_worker.cse_session_holders import (
                         resolve_nest_parent,
                     )
 
-                    cse_parent_id = parse_nest_under_cse(nest_under)
-                    if cse_parent_id is not None:
-                        if resolve_nest_parent(conn, cse_parent_id) is None:
+                    if cse_nest_parent_id is not None:
+                        if resolve_nest_parent(conn, cse_nest_parent_id) is None:
                             raise NestParentNotLive(
                                 f"nest_under {nest_under!r} CSE parent missing "
                                 f"or not in driving|dormant"
                             )
-                        insert_status = _STATUS_ADMITTED
-                        queued_at = None
                     else:
                         holder_row = conn.execute(
                             "SELECT dispatch_id FROM cursor_sdk_dispatches "
@@ -1461,9 +1462,10 @@ class CursorDispatchLedger:
                         nested_park_parent = nest_under
                         insert_status = _STATUS_ADMITTED
                         queued_at = None
-                elif (
-                    conflict and conflict_holder is not None
-                ) or prior_queued is not None:
+                if nested_park_parent is None and (
+                    (conflict and conflict_holder is not None)
+                    or prior_queued is not None
+                ):
                     if refuse_if_lease_held:
                         holder = _fetch_active_holder_conn(conn, lease_key=writer_key)
                         projection = _holder_projection(holder)

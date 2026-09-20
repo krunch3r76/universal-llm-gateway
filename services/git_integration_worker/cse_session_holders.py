@@ -273,12 +273,14 @@ def occupancy_projections(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 def boot_reconcile(conn: sqlite3.Connection) -> dict[str, Any]:
     """Reconcile holder seat fields from registry; GIW wins lane fields."""
+    from claude_bundles.cdp_registry.dormant import list_dormant
     from claude_bundles.cdp_registry.session_address import (
         chat_url_for_registration,
         list_active,
     )
 
     active_urls: set[str] = set()
+    dormant_urls: set[str] = set()
     registry_by_url: dict[str, dict[str, Any]] = {}
     for reg in list_active():
         url = (chat_url_for_registration(reg.registration_id) or "").strip()
@@ -290,7 +292,20 @@ def boot_reconcile(conn: sqlite3.Connection) -> dict[str, Any]:
             "registration_id": reg.registration_id,
             "execution_id": getattr(reg, "execution_id", None),
         }
-    kept = released = updated = 0
+    for seat in list_dormant():
+        url = normalize_cse_url(str(seat.chat_url or ""))
+        if not url:
+            continue
+        dormant_urls.add(url)
+        registry_by_url.setdefault(
+            url,
+            {
+                "registration_id": seat.registration_id,
+                "execution_id": getattr(seat, "execution_id", None),
+            },
+        )
+    registry_urls = active_urls | dormant_urls
+    kept = released = updated = adopted = 0
     rows = conn.execute("SELECT holder_id, chat_url, seat_state FROM cse_session_holders").fetchall()
     for row in rows:
         url = normalize_cse_url(str(row["chat_url"] or ""))
@@ -309,7 +324,7 @@ def boot_reconcile(conn: sqlite3.Connection) -> dict[str, Any]:
             )
             updated += 1
             kept += 1
-        elif state in _OCCUPANCY_STATES and url not in active_urls:
+        elif state == "driving" and url not in registry_urls:
             transition_seat_state(
                 conn,
                 str(row["holder_id"]),
@@ -319,10 +334,29 @@ def boot_reconcile(conn: sqlite3.Connection) -> dict[str, Any]:
             released += 1
         else:
             kept += 1
+    existing_ids = {
+        str(row["holder_id"])
+        for row in conn.execute("SELECT holder_id FROM cse_session_holders").fetchall()
+    }
+    for url, reg in registry_by_url.items():
+        hid = holder_id_from_chat_url(url)
+        if not hid or hid in existing_ids:
+            continue
+        upsert_holder(
+            conn,
+            chat_url=url,
+            registration_id=reg.get("registration_id"),
+            execution_id=reg.get("execution_id"),
+        )
+        if url in dormant_urls and url not in active_urls:
+            transition_seat_state(conn, hid, to_state="dormant")
+        adopted += 1
+        existing_ids.add(hid)
     summary = {
         "kept": kept,
         "released": released,
         "registry_updated": updated,
+        "adopted": adopted,
     }
     _emit("cse.holder.reconcile", summary)
     return summary

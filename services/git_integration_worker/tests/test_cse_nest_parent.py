@@ -152,6 +152,77 @@ def test_admit_cse_missing_parent_fail_closed(ledger: CursorDispatchLedger) -> N
         )
 
 
+def test_admit_cse_nest_queues_when_unrelated_writer_holds_lease(
+    ledger: CursorDispatchLedger,
+) -> None:
+    lease_key = "/tmp/repo-r7"
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        upsert_holder(
+            conn,
+            chat_url=_CSE_URL,
+            registration_id="reg-n",
+            lane_thread_id="11667",
+        )
+        conn.commit()
+    holder_req = CursorDispatchRequest(
+        thread_id="11667",
+        model="cursor/composer-2.5",
+        dispatch_id="unrelated-writer",
+        execution_id="exec-holder",
+        message="unrelated writer",
+    )
+    holder_admission = CursorDispatchResponse(
+        admitted=True,
+        dispatch_id=holder_req.dispatch_id,
+        thread_id=holder_req.thread_id,
+        model_id="cursor/composer-2.5",
+    )
+    ledger.admit(
+        req=holder_req,
+        fingerprint=ledger.fingerprint(holder_req),
+        execution_id=holder_req.execution_id,
+        caller_agent="cursor-auto",
+        resolved_model="cursor/composer-2.5",
+        admission=holder_admission,
+        source_repo=lease_key,
+        lease_key=lease_key,
+    )
+    child_req = CursorDispatchRequest(
+        thread_id="11668",
+        model="cursor/composer-2.5",
+        dispatch_id="cse-child-queued",
+        execution_id="exec-cse-child",
+        message="nested under cse while lease held",
+        nest_under=format_nest_under_cse("cse_nest1"),
+    )
+    child_admission = CursorDispatchResponse(
+        admitted=True,
+        dispatch_id=child_req.dispatch_id,
+        thread_id=child_req.thread_id,
+        model_id="cursor/composer-2.5",
+    )
+    ledger.admit(
+        req=child_req,
+        fingerprint=ledger.fingerprint(child_req),
+        execution_id=child_req.execution_id,
+        caller_agent="cursor-auto",
+        resolved_model="cursor/composer-2.5",
+        admission=child_admission,
+        source_repo=lease_key,
+        lease_key=lease_key,
+        nest_under=format_nest_under_cse("cse_nest1"),
+    )
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT status, nest_under FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            (child_req.dispatch_id,),
+        ).fetchone()
+    assert row is not None
+    assert row["status"] == "queued"
+    assert row["nest_under"] == format_nest_under_cse("cse_nest1")
+
+
 def test_dormant_cse_valid_nest_parent(ledger: CursorDispatchLedger) -> None:
     with ledger._connect() as conn:
         ensure_schema(conn)

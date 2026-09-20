@@ -11,6 +11,7 @@ from services.git_integration_worker.cse_session_holders import (
     boot_reconcile,
     ensure_schema,
     get_holder,
+    resolve_nest_parent,
     transition_seat_state,
     upsert_holder,
 )
@@ -79,7 +80,9 @@ def test_state_transitions_emit_events(ledger: CursorDispatchLedger) -> None:
     assert "cse.holder.relaunched" in signals
 
 
-def test_boot_reconcile_releases_absent_registry(ledger: CursorDispatchLedger) -> None:
+def test_boot_reconcile_releases_driving_absent_from_registry(
+    ledger: CursorDispatchLedger,
+) -> None:
     with ledger._connect() as conn:
         ensure_schema(conn)
         upsert_holder(conn, chat_url=_CSE_URL, registration_id="reg-x")
@@ -87,8 +90,8 @@ def test_boot_reconcile_releases_absent_registry(ledger: CursorDispatchLedger) -
         "claude_bundles.cdp_registry.session_address.list_active",
         return_value=[],
     ), patch(
-        "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
-        return_value=None,
+        "claude_bundles.cdp_registry.dormant.list_dormant",
+        return_value=[],
     ):
         with ledger._connect() as conn:
             summary = boot_reconcile(conn)
@@ -96,3 +99,57 @@ def test_boot_reconcile_releases_absent_registry(ledger: CursorDispatchLedger) -
     assert summary["released"] == 1
     assert row is not None
     assert row["seat_state"] == "released"
+
+
+def test_boot_reconcile_dormant_holder_survives_restart(
+    ledger: CursorDispatchLedger,
+) -> None:
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        upsert_holder(conn, chat_url=_CSE_URL, registration_id="reg-d")
+        transition_seat_state(conn, "cse_testholder1", to_state="dormant")
+        conn.commit()
+    with patch(
+        "claude_bundles.cdp_registry.session_address.list_active",
+        return_value=[],
+    ), patch(
+        "claude_bundles.cdp_registry.dormant.list_dormant",
+        return_value=[],
+    ):
+        with ledger._connect() as conn:
+            summary = boot_reconcile(conn)
+            row = get_holder(conn, "cse_testholder1")
+            parent = resolve_nest_parent(conn, "cse_testholder1")
+    assert summary["released"] == 0
+    assert row is not None
+    assert row["seat_state"] == "dormant"
+    assert parent is not None
+
+
+def test_boot_reconcile_adopts_registry_without_holder_row(
+    ledger: CursorDispatchLedger,
+) -> None:
+    from types import SimpleNamespace
+
+    reg = SimpleNamespace(
+        registration_id="reg-adopt",
+        execution_id="exec-adopt",
+    )
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+    with patch(
+        "claude_bundles.cdp_registry.session_address.list_active",
+        return_value=[reg],
+    ), patch(
+        "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
+        return_value=_CSE_URL,
+    ), patch(
+        "claude_bundles.cdp_registry.dormant.list_dormant",
+        return_value=[],
+    ):
+        with ledger._connect() as conn:
+            summary = boot_reconcile(conn)
+            row = get_holder(conn, "cse_testholder1")
+    assert summary["adopted"] == 1
+    assert row is not None
+    assert row["registration_id"] == "reg-adopt"

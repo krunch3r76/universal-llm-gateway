@@ -72,6 +72,16 @@ def associate_cse(
             prior_url = str(prior["cse_chat_url"] or "")
             prior_reg = _normalize_registration_id(prior["cse_registration_id"])
             if prior_url == url and prior_reg == registration_id:
+                with contextlib.suppress(Exception):
+                    from services.git_integration_worker.cse_session_holders import (
+                        upsert_holder_remote,
+                    )
+
+                    upsert_holder_remote(
+                        chat_url=url,
+                        registration_id=registration_id,
+                        lane_thread_id=thread_id,
+                    )
                 return None
         prior_id = int(prior["id"]) if prior is not None else None
         with contextlib.suppress(Exception):
