@@ -273,11 +273,16 @@ def test_build_cadence_hop_body_superseded_registration_id_line():
         age_s=2000.0,
         threshold_s=1500.0,
     )
-    body = build_cadence_hop_body(decision, registration_id="reg-incumbent")
+    body = build_cadence_hop_body(
+        decision,
+        registration_id="reg-incumbent",
+        chat_url="https://claude.ai/cowork/cse_incumbent1",
+    )
     lines = body.splitlines()
     assert any(line == "superseded_registration_id: reg-incumbent" for line in lines)
     assert any(line == "parent_thread: 6885" for line in lines)
-    assert any(line.startswith("you_are:") for line in lines)
+    assert any(line.startswith("occupy_target:") for line in lines)
+    assert not any(line.startswith("you_are:") for line in lines)
     assert not any(line.startswith("registration_id:") for line in lines)
     birth_lines = [line for line in lines if line.startswith("successor_birth_id:")]
     assert len(birth_lines) == 1

@@ -32,7 +32,7 @@ def test_cadence_hop_body_forbids_monitor_arm() -> None:
     )
     body = build_cadence_hop_body(decision, registration_id="abc123")
     assert "TYPE: CONTINUITY_HANDOFF" in body
-    assert "you_are:" in body
+    assert "you_are:" not in body
     assert "parent_thread: 6655" in body
     assert "Do NOT arm Monitor" in body
     assert "Arm Monitor + send_later" not in body

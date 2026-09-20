@@ -94,7 +94,7 @@ def _hop_dispatch(
         trigger=trigger,
         source=_VERB_SOURCE,
         handoff=handoff,
-        you_are=(cse_chat_url or "").strip() or None,
+        occupy_target=(cse_chat_url or "").strip() or None,
         superseded_registration_id=cse_registration_id,
     )
     hop_subject = (subject or "").strip() or (

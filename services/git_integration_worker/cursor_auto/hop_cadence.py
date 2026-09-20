@@ -113,7 +113,7 @@ def build_cadence_hop_body(
         trigger=decision.signal or "watch_seated_at",
         source="cursor-auto-hop-cadence",
         handoff=handoff,
-        you_are=(chat_url or "").strip() or None,
+        occupy_target=(chat_url or "").strip() or None,
         age_s=decision.age_s,
         threshold_s=(
             decision.threshold_s

@@ -17,12 +17,10 @@ from datetime import UTC, datetime
 from hop_handoff.consume_protocol import consume_time_wake_protocol
 from hop_handoff.standing_handoff import StandingHandoffFreshness
 
-_DEFAULT_YOU_ARE = (
-    "this successor CSE — session address (chat_url) is descriptive; "
-    "selection key is successor_birth_id on this body"
-)
 _BIRTH_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _BIRTH_ID_PREFIX = "successor_birth_id:"
+_OCCUPY_TARGET_PREFIX = "occupy_target:"
+_SUPSERSED_REG_PREFIX = "superseded_registration_id:"
 
 
 def mint_successor_birth_id() -> str:
@@ -39,6 +37,24 @@ def parse_successor_birth_id(body: str) -> str | None:
     return None
 
 
+def parse_occupy_target(body: str) -> str | None:
+    """Return the ``occupy_target`` header value from a continuity handoff body."""
+    for line in body.splitlines():
+        if line.startswith(_OCCUPY_TARGET_PREFIX):
+            value = line.split(":", 1)[1].strip()
+            return value or None
+    return None
+
+
+def parse_superseded_registration_id(body: str) -> str | None:
+    """Return ``superseded_registration_id`` from a continuity handoff body."""
+    for line in body.splitlines():
+        if line.startswith(_SUPSERSED_REG_PREFIX):
+            value = line.split(":", 1)[1].strip()
+            return value or None
+    return None
+
+
 def is_successor_birth_id(value: str | None) -> bool:
     """True when *value* is a 32-char lowercase hex birth id."""
     return bool(value) and _BIRTH_ID_RE.fullmatch(value or "") is not None
@@ -50,6 +66,7 @@ def build_continuity_handoff_body(
     trigger: str,
     source: str,
     handoff: StandingHandoffFreshness,
+    occupy_target: str | None = None,
     you_are: str | None = None,
     age_s: float | None = None,
     threshold_s: float | None = None,
@@ -75,8 +92,13 @@ def build_continuity_handoff_body(
     ``None``) when no candidate was ever captured — this function never
     invents one. Picked up by ``operator_proxy_hop_status`` as the ``mission``
     field on the successor's This-hop card.
+
+    ``occupy_target`` names the existing holder row the hop must occupy (CSE
+    chat_url). ``you_are`` is intentionally omitted from the handoff — seating
+    confirmation arrives only via ``TYPE: SEAT_REGISTRATION`` after the GIW
+    seating hook runs. Legacy callers passing ``you_are=`` are ignored.
     """
-    resolved_you = (you_are or "").strip() or _DEFAULT_YOU_ARE
+    resolved_occupy = (occupy_target or "").strip() or None
     birth_id = (successor_birth_id or "").strip() or mint_successor_birth_id()
     lines = [
         "TYPE: CONTINUITY_HANDOFF",
@@ -88,9 +110,10 @@ def build_continuity_handoff_body(
     resolved_mission = (mission or "").strip()
     if resolved_mission:
         lines.append(f"mission: {resolved_mission}")
+    if resolved_occupy:
+        lines.append(f"{_OCCUPY_TARGET_PREFIX} {resolved_occupy}")
     lines.extend(
         [
-            f"you_are: {resolved_you}",
             f"parent_thread: {thread_id}",
             f"cse_age_s: {age_s:.1f}" if age_s is not None else "cse_age_s: unknown",
             (
@@ -123,10 +146,12 @@ def build_continuity_handoff_body(
             "Resume as operator-proxy on this private lane.",
             *resume_read,
             "This is a CONTINUITY HOP (seat refresh) — do NOT emit MISSION_CLOSEOUT.",
-            "You are the operator CSE on parent_thread above. Identity key is",
+            "Resume operator-proxy on parent_thread above. Identity key is",
             "successor_birth_id (this structural header). Match TYPE:",
-            "SEAT_REGISTRATION by equality on that field. chat_url on the stamp",
-            "is descriptive. Extras on this lane are predecessors, not peers.",
+            "SEAT_REGISTRATION by equality on that field — that stamp is seating",
+            "confirmation; do not treat occupy_target as your seated identity.",
+            "chat_url on the stamp is descriptive. Extras on this lane are",
+            "predecessors, not peers.",
             "Never touch operator CSEs on other lanes.",
             "Arc continues; predecessor wakes must be torn down only after this",
             "successor launch is confirmed.",

@@ -13,7 +13,9 @@ from hop_handoff.body import (
     build_seat_stand_down_body,
     is_successor_birth_id,
     mint_successor_birth_id,
+    parse_occupy_target,
     parse_successor_birth_id,
+    parse_superseded_registration_id,
 )
 from hop_handoff.consume_protocol import consume_time_wake_protocol
 from hop_handoff.standing_handoff import (
@@ -37,7 +39,9 @@ __all__ = [
     "cse_age_threshold_s",
     "is_successor_birth_id",
     "mint_successor_birth_id",
+    "parse_occupy_target",
     "parse_successor_birth_id",
+    "parse_superseded_registration_id",
     "standing_handoff_path",
     "standing_handoff_uri",
 ]

@@ -319,6 +319,39 @@ async def complete_continuity_hop(
         resolved_effort=str(wire_effort or effort.get("resolved_effort") or ""),
         lane="cursor-auto-continuity-hop",
     )
+    from services.git_integration_worker.cursor_auto.cse_seating_hook import (
+        run_cse_seating_hook,
+    )
+
+    seating = run_cse_seating_hook(job, execution_id=str(execution_id or ""))
+    if seating.get("path") == "refused_live_peer":
+        terminal = await post_terminal_status(
+            job,
+            client=bus,
+            queue=queue,
+            summary=(
+                "continuity hop seating refused: "
+                f"{seating.get('reason')}"
+            ),
+            disposition="failed",
+            contract=job.contract,
+            terminal_status="status:failed",
+            failed=True,
+            payload={
+                "summary": "continuity hop seating refused",
+                "reason": "continuity_hop_seating_refused",
+                "continuity_hop": True,
+                "matched_token": job.continuity_matched_token,
+                "harvest_residual": residual,
+                "commission": commissioned,
+                "seating_hook": seating,
+                "deferred_job_id": deferred_job_id,
+                "deferred_leg_enqueued": deferred_job_id is not None,
+                "hop_phase": "seating_refused",
+                **effort_echo,
+            },
+        )
+        return terminal
     # Admit ≠ harvest. MCP hop verb reports armed; cadence jobs must match.
     # ``dispatched-and-relayed`` waits for generate proof (harvest terminal).
     hop_payload: dict[str, Any] = {
@@ -336,6 +369,7 @@ async def complete_continuity_hop(
         "orientation_inheritance_loop_closed": bool(
             orientation.get("inheritance_loop_closed")
         ),
+        "seating_hook": seating,
         "hop_phase": "armed",
         "generate_harvest": "open",
         **effort_echo,
