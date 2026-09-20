@@ -80,9 +80,14 @@ def test_state_transitions_emit_events(ledger: CursorDispatchLedger) -> None:
     assert "cse.holder.relaunched" in signals
 
 
-def test_boot_reconcile_releases_driving_absent_from_registry(
+def test_boot_reconcile_keeps_driving_on_empty_registry_snapshot(
     ledger: CursorDispatchLedger,
 ) -> None:
+    emitted: list[tuple[str, dict]] = []
+
+    def _capture(signal: str, payload: dict) -> None:
+        emitted.append((signal, payload))
+
     with ledger._connect() as conn:
         ensure_schema(conn)
         upsert_holder(conn, chat_url=_CSE_URL, registration_id="reg-x")
@@ -92,11 +97,53 @@ def test_boot_reconcile_releases_driving_absent_from_registry(
     ), patch(
         "claude_bundles.cdp_registry.dormant.list_dormant",
         return_value=[],
+    ), patch(
+        "services.git_integration_worker.cse_holder_boot_reconcile._emit",
+        side_effect=_capture,
+    ):
+        with ledger._connect() as conn:
+            summary = boot_reconcile(conn)
+            row = get_holder(conn, "cse_testholder1")
+    assert summary["released"] == 0
+    assert summary["skipped_release_empty_snapshot"] == 1
+    assert row is not None
+    assert row["seat_state"] == "driving"
+    skip_signals = [
+        p for s, p in emitted if s == "cse.holder.reconcile_skip_release"
+    ]
+    assert len(skip_signals) == 1
+    assert skip_signals[0]["holder_id"] == "cse_testholder1"
+    assert skip_signals[0]["reason"] == "empty_registry_snapshot"
+
+
+def test_boot_reconcile_releases_driving_absent_from_nonempty_registry(
+    ledger: CursorDispatchLedger,
+) -> None:
+    from types import SimpleNamespace
+
+    other_url = "https://claude.ai/cowork/cse_otherholder"
+    other_reg = SimpleNamespace(
+        registration_id="reg-other",
+        execution_id="exec-other",
+    )
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        upsert_holder(conn, chat_url=_CSE_URL, registration_id="reg-x")
+    with patch(
+        "claude_bundles.cdp_registry.session_address.list_active",
+        return_value=[other_reg],
+    ), patch(
+        "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
+        return_value=other_url,
+    ), patch(
+        "claude_bundles.cdp_registry.dormant.list_dormant",
+        return_value=[],
     ):
         with ledger._connect() as conn:
             summary = boot_reconcile(conn)
             row = get_holder(conn, "cse_testholder1")
     assert summary["released"] == 1
+    assert summary.get("skipped_release_empty_snapshot", 0) == 0
     assert row is not None
     assert row["seat_state"] == "released"
 
