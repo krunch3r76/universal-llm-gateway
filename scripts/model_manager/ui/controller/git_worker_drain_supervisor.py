@@ -47,12 +47,13 @@ from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
 
+from .drain_timeout_keep_await import timeout_affordances
 from .restart_intent_store import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_DRAINED_RESTARTING,
     STATUS_FAILED,
-    STATUS_TIMEOUT,
+    STATUS_FORCE_REQUESTED,
     Intent,
     RestartIntentStore,
 )
@@ -136,7 +137,6 @@ class GitWorkerDrainSupervisor:
     deadline_s: float = _DEFAULT_DEADLINE_S
     reconcile_interval_s: float = _DEFAULT_RECONCILE_INTERVAL_S
     progress_interval_s: float = _DEFAULT_PROGRESS_INTERVAL_S
-    on_timeout_mutex_release: Callable[[], Awaitable[None]] | None = None
     idle_escalate_s: float | None = None
     liveness_state: DrainStateCaller | None = None
     park_for_restart: ParkForRestartCaller | None = None
@@ -148,12 +148,13 @@ class GitWorkerDrainSupervisor:
     _last_probe_snapshot: dict[str, Any] | None = None
 
     async def supervise(self, intent: Intent) -> None:
-        """Drive one intent from begin-drain to SIGTERM (or alert-only timeout).
+        """Drive one intent from begin-drain to SIGTERM.
 
-        Cancel is observed until ``_final_epoch_check`` returns ok; after that the
-        store advances to ``drained_restarting`` (kill committed) so manage cancel
-        refuses. There is no cancel poll between drain.completed emit and kill —
-        the refuse boundary is the final-check ok commit, not a vague "during drain".
+        Deadline is alert-only: ``manage.restart.timeout`` pages once, the row
+        stays ``pending_drain``, and this task keep-awaits until converge,
+        cancel, or force-preempt. Cancel is observed until ``_final_epoch_check``
+        returns ok; after that the store advances to ``drained_restarting``
+        (kill committed) so manage cancel refuses.
         """
         self._settle_boundary_monotonic = None
         self._idle_last_progress = None
@@ -166,22 +167,21 @@ class GitWorkerDrainSupervisor:
         timeout_alerted = False
         try:
             intent = await self._begin_drain(intent)
-            if self._intent_cancelled(intent):
-                await self._on_cancelled(intent)
+            if await self._abort_if_requested(intent):
                 return
             if intent.park_live:
                 await self._park_live(intent)
             while True:
                 outcome = await self._await_drain_completed(intent, deadline, t0)
                 if outcome == _AWAIT_CANCELLED:
+                    if await self._abort_if_requested(intent):
+                        return
                     await self._on_cancelled(intent)
                     return
                 if outcome == _AWAIT_TIMEOUT:
                     if not timeout_alerted:
                         await self._on_timeout(intent)
                         timeout_alerted = True
-                    if self.idle_escalate_s is not None:
-                        return
                     deadline = time.monotonic() + _DEFAULT_DEADLINE_S
                     continue
                 if outcome == _AWAIT_IDLE:
@@ -194,12 +194,10 @@ class GitWorkerDrainSupervisor:
                     await self._resolve_non_kill(intent, snapshot)
                     return
                 break
-            if self._intent_cancelled(intent):
-                await self._on_cancelled(intent)
+            if await self._abort_if_requested(intent):
                 return
             ok, snapshot = await self._final_epoch_check(intent)
-            if self._intent_cancelled(intent):
-                await self._on_cancelled(intent)
+            if await self._abort_if_requested(intent):
                 return
             if not ok:
                 await self._resolve_non_kill(intent, snapshot)
@@ -224,7 +222,10 @@ class GitWorkerDrainSupervisor:
         except Exception as exc:  # noqa: BLE001 — supervisor must not crash the loop
             logger.exception("drain supervisor failed: intent_id=%s", intent.intent_id)
             current = self.store.get(intent.intent_id)
-            if current is not None and current.status == STATUS_CANCELLED:
+            if current is not None and current.status in {
+                STATUS_CANCELLED,
+                STATUS_FORCE_REQUESTED,
+            }:
                 return
             self.store.advance(intent.intent_id, status=STATUS_FAILED)
             await events.emit_manage_restart_failed(
@@ -393,7 +394,7 @@ class GitWorkerDrainSupervisor:
             agen = None
         try:
             while True:
-                if self._intent_cancelled(intent):
+                if self._abort_kind(intent) is not None:
                     return _AWAIT_CANCELLED
                 now = time.monotonic()
                 if now >= deadline:
@@ -471,7 +472,10 @@ class GitWorkerDrainSupervisor:
         from .git_worker_activation_verify import record_kill_boundary_and_arm_verify
 
         current = self.store.get(intent.intent_id)
-        if current is None or current.status == STATUS_CANCELLED:
+        if current is None or current.status in {
+            STATUS_CANCELLED,
+            STATUS_FORCE_REQUESTED,
+        }:
             return
         if current.status != STATUS_DRAINED_RESTARTING:
             self.store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
@@ -574,29 +578,49 @@ class GitWorkerDrainSupervisor:
         return (now - self._idle_last_progress) >= self.idle_escalate_s
 
     async def _on_timeout(self, intent: Intent) -> None:
+        """Page once. Do not terminalize — a later idle must still SIGTERM."""
         snapshot = await self._safe_drain_state() or {}
-        self.store.advance(intent.intent_id, status=STATUS_TIMEOUT)
         await events.emit_manage_restart_timeout(
             intent_id=intent.intent_id,
             service=intent.service,
             deadline_at=intent.deadline_at,
             stuck_ops=self._stuck_ops(snapshot),
-            affordances=[
-                "inspect: manage(action='busy_status')",
-                (
-                    "cancel: manage(action='cancel_restart_intent', "
-                    f"intent_id='{intent.intent_id}')"
-                ),
-                "explicit force: manage(action='restart', service='git_integration_worker', force=true)",
-            ],
+            affordances=timeout_affordances(intent.intent_id),
         )
         logger.warning(
             "deferred git-worker restart timed out (alert-only; keep-await continues): "
             "intent_id=%s",
             intent.intent_id,
         )
-        if self.on_timeout_mutex_release is not None:
-            await self.on_timeout_mutex_release()
+
+    def _abort_kind(self, intent: Intent) -> str | None:
+        current = self.store.get(intent.intent_id)
+        if current is None:
+            return None
+        if current.status == STATUS_FORCE_REQUESTED:
+            return "force"
+        if current.status == STATUS_CANCELLED:
+            return "cancel"
+        return None
+
+    async def _abort_if_requested(self, intent: Intent) -> bool:
+        """True when supervise should return without kill.
+
+        Force-preempt leaves ``_draining`` set so Auto cannot ``claim_next``
+        before the force path SIGTERMs. Cancel still ``release_drain``.
+        """
+        kind = self._abort_kind(intent)
+        if kind == "force":
+            logger.info(
+                "deferred git-worker restart force-preempted (no drain-release): "
+                "intent_id=%s",
+                intent.intent_id,
+            )
+            return True
+        if kind == "cancel":
+            await self._on_cancelled(intent)
+            return True
+        return False
 
     async def _resolve_non_kill(
         self, intent: Intent, snapshot: dict[str, Any] | None
@@ -639,8 +663,7 @@ class GitWorkerDrainSupervisor:
         )
 
     def _intent_cancelled(self, intent: Intent) -> bool:
-        current = self.store.get(intent.intent_id)
-        return current is not None and current.status == STATUS_CANCELLED
+        return self._abort_kind(intent) == "cancel"
 
     def _event_matches(self, ev: dict[str, Any], intent: Intent) -> bool:
         return (

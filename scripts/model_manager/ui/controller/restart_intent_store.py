@@ -379,6 +379,17 @@ class RestartIntentStore:
             ).fetchall()
         return [_row_to_intent(r) for r in rows]
 
+    def intents_with_status(self, status: str) -> list[Intent]:
+        """All rows in one status, oldest first (timeout-gap repair feed)."""
+        if status not in _ALL_STATUSES:
+            raise ValueError(f"unknown intent status: {status!r}")
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM restart_intents WHERE status=? ORDER BY created_at",
+                (status,),
+            ).fetchall()
+        return [_row_to_intent(r) for r in rows]
+
     def active_for_service(self, service: str) -> Intent | None:
         with self._connect() as conn:
             row = conn.execute(

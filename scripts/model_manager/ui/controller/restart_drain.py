@@ -510,7 +510,6 @@ def _spawn_supervised(
             released = True
             await gate.release(service)
 
-        supervisor.on_timeout_mutex_release = release_once
         try:
             await supervisor.supervise(intent)
         finally:
@@ -519,6 +518,9 @@ def _spawn_supervised(
     task = asyncio.create_task(_background())
     _SUPERVISE_TASKS.add(task)
     task.add_done_callback(_SUPERVISE_TASKS.discard)
+    from .drain_timeout_keep_await import register_supervise_task
+
+    register_supervise_task(service, task)
 
 
 @dataclass(slots=True, kw_only=True)
@@ -537,30 +539,26 @@ class LocalServiceDrainSupervisor:
             STATUS_COMPLETED,
             STATUS_DRAINED_RESTARTING,
             STATUS_FAILED,
-            STATUS_TIMEOUT,
         )
 
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self.deadline_s
         intent_id = intent.intent_id
         try:
-            while loop.time() < deadline:
+            while True:
+                if loop.time() >= deadline:
+                    # Alert ceiling only — do not hide the intent from busy_status.
+                    deadline = loop.time() + self.deadline_s
                 work = await self.gate.probe(self.service)
                 if not work.busy:
                     break
                 await asyncio.sleep(self.poll_interval_s)
-            else:
-                self.store.advance(intent_id, status=STATUS_TIMEOUT)
-                return
             self.store.advance(intent_id, status=STATUS_DRAINED_RESTARTING)
             await self.lifecycle()
             self.store.advance(intent_id, status=STATUS_COMPLETED)
         except Exception:
             current = self.store.get(intent_id)
-            if current is not None and current.status not in {
-                STATUS_COMPLETED,
-                STATUS_TIMEOUT,
-            }:
+            if current is not None and current.status != STATUS_COMPLETED:
                 self.store.advance(intent_id, status=STATUS_FAILED)
             raise
 

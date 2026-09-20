@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from deploy_identity.code_version import process_age_s, resolve_code_version
 
+from .controller.drain_timeout_keep_await import preempt_giw_keep_await_if_needed
 from .controller.fleet_liveness import build_snapshot
 from .controller.restart_drain import (
     BackgroundCompleteHook,
@@ -168,6 +169,9 @@ async def execute(
                 return await _git_worker_drain_supervised(
                     ctl, "stop", park_live=bool(params.get("park_live", False))
                 )
+            preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
+            if preempted is not None:
+                return preempted
             return await run_gated(
                 ctl.restart_gate,
                 "stop",
@@ -203,6 +207,11 @@ async def execute(
                     ctl, "restart", park_live=bool(params.get("park_live", False))
                 )
             else:
+                preempted = await preempt_giw_keep_await_if_needed(
+                    ctl, service, force
+                )
+                if preempted is not None:
+                    return preempted
                 result = await run_gated(
                     ctl.restart_gate,
                     "restart",
@@ -296,6 +305,9 @@ async def execute(
                         code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
                         row_id=_optional_attr_str(params, "row_id"),
                     )
+            preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
+            if preempted is not None:
+                return preempted
             return await run_gated(
                 ctl.restart_gate,
                 "sync_restart",

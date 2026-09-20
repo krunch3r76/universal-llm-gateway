@@ -9,6 +9,7 @@ from charter_runner_store.propagation_validation import (
     reconcile_pending_validations_at_boot,
 )
 
+from ..drain_timeout_keep_await import repair_timeout_intent_gap
 from ..git_worker_activation_verify import resume_activation_verify
 from ..giw_recycle import recycle_deadline_s, recycle_idle_s
 from ..restart_drain import resume_drain_supervision
@@ -27,6 +28,14 @@ logger = logging.getLogger(__name__)
 async def reconcile_pending_restart_intents(controller: ServiceController) -> None:
     """Resume persisted restart intents and pending validations at manage boot."""
     store = controller._restart_intent_store
+    try:
+        repairs = repair_timeout_intent_gap(store)
+        if repairs:
+            logger.info(
+                "restart-intent reconcile: timeout gap repairs=%s", repairs
+            )
+    except Exception:
+        logger.exception("restart-intent reconcile: timeout gap repair failed")
     try:
         pending = store.pending_intents()
     except Exception:

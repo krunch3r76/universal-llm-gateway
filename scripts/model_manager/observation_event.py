@@ -432,10 +432,10 @@ async def emit_manage_restart_timeout(
     stuck_ops: list[dict[str, Any]],
     affordances: list[str],
 ) -> None:
-    """Alert-only terminal: the deadline passed before convergence (R-F).
+    """Alert-only: the deadline passed before convergence (R-F).
 
-    NEVER an auto-SIGKILL — the supervisor stops and surfaces the stuck-op
-    identity + the explicit-force affordance for an operator to act.
+    NEVER an auto-SIGKILL and NEVER a status terminal — the supervisor
+    keep-awaits. Surfaces stuck-op identity plus cancel / force-preempt verbs.
     """
     await _emit(
         "manage.restart.timeout",

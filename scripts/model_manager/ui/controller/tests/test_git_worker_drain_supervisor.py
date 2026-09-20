@@ -14,11 +14,18 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from scripts.model_manager.ui.api_dispatch import orchestrate_cancel_restart_intent
+from scripts.model_manager.ui.controller.drain_timeout_keep_await import (
+    cas_force_preempt,
+    preempt_keep_awaiting_giw,
+    repair_timeout_intent_gap,
+    timeout_affordances,
+)
 from scripts.model_manager.ui.controller.git_worker_drain_supervisor import (
     GitWorkerDrainSupervisor,
 )
@@ -27,6 +34,7 @@ from scripts.model_manager.ui.controller.restart_intent_store import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
     STATUS_DRAINED_RESTARTING,
+    STATUS_FORCE_REQUESTED,
     STATUS_PENDING_DRAIN,
     STATUS_TIMEOUT,
     STATUS_VERIFYING_ACTIVATION,
@@ -307,8 +315,63 @@ def test_stale_event_timeout_then_stall_force_kill(
     assert kill.calls == 0
     got = store.get(intent.intent_id)
     assert got is not None
-    assert got.status == STATUS_TIMEOUT
+    assert got.status == STATUS_PENDING_DRAIN
     assert "manage.restart.timeout" in [s for s, _ in events_log]
+
+
+def test_timeout_alert_then_matching_completed_still_kills(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """AC1: page at T, matching idle at T+δ still SIGTERMs; never STATUS_TIMEOUT."""
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    stuck = _snap(
+        draining=True,
+        epoch=1,
+        active=1,
+        ops=[{"op_id": "stuck-ticket"}],
+    )
+    done = _snap(draining=True, epoch=1, active=0)
+
+    class _FlipWorker(_Worker):
+        idle = False
+
+        async def drain_state(self) -> dict[str, Any]:
+            if self.idle:
+                return done
+            if self._states:
+                return self._states.pop(0) if len(self._states) > 1 else self._states[0]
+            return stuck
+
+    worker = _FlipWorker(
+        drain_states=[_snap(draining=False, epoch=0, active=1), stuck],
+        begin_snap=stuck,
+    )
+    kill = _Kill()
+    sup = _supervisor(store, worker, _Feed([]), kill, deadline_s=0.05)
+
+    async def _run_keep_await() -> None:
+        task = asyncio.create_task(sup.supervise(intent))
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if any(s == "manage.restart.timeout" for s, _ in events_log):
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("timeout alert not emitted")
+        got = store.get(intent.intent_id)
+        assert got is not None and got.status == STATUS_PENDING_DRAIN
+        worker.idle = True
+        await asyncio.wait_for(task, timeout=1.0)
+
+    _run(_run_keep_await())
+    assert kill.calls == 1
+    got = store.get(intent.intent_id)
+    assert got is not None
+    assert got.status != STATUS_TIMEOUT
+    assert "manage.restart.completed" in [s for s, _ in events_log]
 
 
 def test_sdk_heartbeat_survives_old_stall_windows(
@@ -810,11 +873,17 @@ def test_idle_gate_does_not_fire_when_auto_heartbeat_fresh(
         store, worker, _Feed([]), kill, deadline_s=0.05, idle_escalate_s=0.2
     )
     sup.liveness_state = _liveness
-    _run(sup.supervise(intent))
+
+    def _timeout_seen() -> bool:
+        return any(s == "manage.restart.timeout" for s, _ in events_log)
+
+    _run(_supervise_until(sup, intent, done=_timeout_seen, hold_s=1.0))
     assert kill.calls == 0
     signals = [s for s, _ in events_log]
     assert "manage.recycle.escalated" not in signals
     assert "manage.restart.timeout" in signals
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_PENDING_DRAIN
 
 
 def test_park_live_runs_step_1b_and_persists_summary(
@@ -1093,3 +1162,177 @@ def test_reconcile_rebuilds_recycle_supervisor_with_idle_and_deadline(
     assert captured[0]["deadline_s"] == 99.0
     assert captured[0]["park_first"] is True
     assert captured[0]["kill"] == "kill:recycle_giw"
+
+
+def test_repair_timeout_gap_cancels_when_live_pending(tmp_path: Any) -> None:
+    """Hidden timeout row must not stay beside a newer pending_drain."""
+    store = _store(tmp_path)
+    hidden = store.create_intent(
+        service=_SERVICE, action="sync_restart", deadline_at="d", reason="old"
+    )
+    store.advance(hidden.intent_id, status=STATUS_TIMEOUT)
+    live = store.create_intent(
+        service=_SERVICE, action="recycle_giw", deadline_at="d", reason="new"
+    )
+    assert store.active_for_service(_SERVICE).intent_id == live.intent_id  # type: ignore[union-attr]
+
+    repaired = repair_timeout_intent_gap(store)
+    assert repaired == [
+        {
+            "intent_id": hidden.intent_id,
+            "action": "cancelled_superseded",
+            "superseded_by": live.intent_id,
+        }
+    ]
+    assert store.get(hidden.intent_id).status == STATUS_CANCELLED  # type: ignore[union-attr]
+    assert store.get(live.intent_id).status == STATUS_PENDING_DRAIN  # type: ignore[union-attr]
+    assert store.active_for_service(_SERVICE).intent_id == live.intent_id  # type: ignore[union-attr]
+
+
+def test_repair_timeout_gap_restores_keep_await_when_alone(tmp_path: Any) -> None:
+    """Sole timeout row returns to pending_drain so busy_status sees it."""
+    store = _store(tmp_path)
+    hidden = store.create_intent(
+        service=_SERVICE, action="sync_restart", deadline_at="d", reason="old"
+    )
+    store.advance(hidden.intent_id, status=STATUS_TIMEOUT)
+    assert store.active_for_service(_SERVICE) is None
+
+    repaired = repair_timeout_intent_gap(store)
+    assert repaired == [{"intent_id": hidden.intent_id, "action": "restored"}]
+    assert store.get(hidden.intent_id).status == STATUS_PENDING_DRAIN  # type: ignore[union-attr]
+    assert store.active_for_service(_SERVICE).intent_id == hidden.intent_id  # type: ignore[union-attr]
+
+
+def test_reconcile_repairs_timeout_then_resumes_recycle(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Boot reconcile restores a lone timeout recycle intent and supervises it."""
+    from types import SimpleNamespace
+
+    from scripts.model_manager.ui.controller.service_ctl.restart_reconcile import (
+        reconcile_pending_restart_intents,
+    )
+
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="recycle_giw", deadline_at="d", reason="r"
+    )
+    store.set_drain_epoch(
+        intent.intent_id, drain_epoch=1, worker_id="w1", worker_started_at="t1"
+    )
+    store.advance(intent.intent_id, status=STATUS_TIMEOUT)
+    resumed: list[str] = []
+
+    def _build(**_kwargs: Any) -> object:
+        return object()
+
+    async def _resume(_gate: Any, _service: str, *, supervisor: Any, intent: Any) -> None:
+        resumed.append(intent.intent_id)
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.service_ctl.restart_reconcile.resume_drain_supervision",
+        _resume,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.service_ctl.restart_reconcile.reconcile_pending_validations_at_boot",
+        lambda **_kw: None,
+    )
+
+    controller = SimpleNamespace(
+        _restart_intent_store=store,
+        _restart_gate=object(),
+        build_git_worker_drain_supervisor=_build,
+        git_worker_kill_for=lambda action: f"kill:{action}",
+    )
+    _run(reconcile_pending_restart_intents(controller))
+
+    assert store.get(intent.intent_id).status == STATUS_PENDING_DRAIN  # type: ignore[union-attr]
+    assert resumed == [intent.intent_id]
+
+
+def test_force_preempt_exits_without_kill_or_cancel_drain(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """E-prime: force-preempt aborts the awaiter; drain epoch stays set."""
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="restart", deadline_at="d", reason="r"
+    )
+    stuck = _snap(
+        draining=True,
+        epoch=1,
+        active=1,
+        ops=[{"op_id": "stuck-ticket"}],
+    )
+    released: list[tuple[str, int]] = []
+
+    async def _cancel_drain(intent_id: str, drain_epoch: int) -> dict[str, Any]:
+        released.append((intent_id, drain_epoch))
+        return {}
+
+    worker = _Worker(
+        drain_states=[_snap(draining=False, epoch=0, active=1), stuck],
+        begin_snap=stuck,
+    )
+    kill = _Kill()
+    sup = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=worker.begin_drain,
+        drain_state=worker.drain_state,
+        subscribe_events=_Feed([]),
+        kill=kill,
+        cancel_drain=_cancel_drain,
+        deadline_s=5.0,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+    )
+
+    async def _preempt() -> None:
+        task = asyncio.create_task(sup.supervise(intent))
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            got = store.get(intent.intent_id)
+            if got is not None and got.drain_epoch is not None:
+                assert cas_force_preempt(store, intent.intent_id)
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("drain epoch never set")
+        await asyncio.wait_for(task, timeout=1.0)
+
+    _run(_preempt())
+    assert kill.calls == 0
+    assert released == []
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_FORCE_REQUESTED
+    assert "manage.restart.cancelled" not in [s for s, _ in events_log]
+
+
+def test_preempt_keep_awaiting_waits_then_clears() -> None:
+    """CAS + wait_exit success returns None so run_gated force may proceed."""
+
+    class _Store:
+        def __init__(self) -> None:
+            self.intent = SimpleNamespace(
+                intent_id="i1",
+                status=STATUS_PENDING_DRAIN,
+                service=_SERVICE,
+            )
+
+        def active_for_service(self, service: str) -> Any:
+            return self.intent if service == _SERVICE else None
+
+        def advance_if_status(self, intent_id: str, **_kw: Any) -> int:
+            assert intent_id == "i1"
+            self.intent.status = STATUS_FORCE_REQUESTED
+            return 1
+
+    async def _wait(service: str) -> bool:
+        assert service == _SERVICE
+        return True
+
+    result = _run(preempt_keep_awaiting_giw(_Store(), wait_exit=_wait))
+    assert result is None
+    assert "intent_id='i1'" in timeout_affordances("i1")[1]
