@@ -129,15 +129,29 @@ def test_enrolled_conductor_skipped() -> None:
 
 
 @pytest.mark.offline
-def test_enrolled_none_still_admits() -> None:
+def test_enrolled_none_skipped_residual() -> None:
     decision = should_expand(
         prompt=_TASK,
         contract="none",
         caller_agent="cursor",
         dispatch_thread_id="10479",
     )
-    assert decision.admit is True
+    assert decision.admit is False
     assert decision.root == "10479"
+    assert decision.skip_reason == "residual"
+
+
+@pytest.mark.offline
+def test_enrolled_unknown_contract_skipped_residual() -> None:
+    decision = should_expand(
+        prompt=_TASK,
+        contract="not-a-real-contract",
+        caller_agent="cursor",
+        dispatch_thread_id="10479",
+    )
+    assert decision.admit is False
+    assert decision.root == "10479"
+    assert decision.skip_reason == "residual"
 
 
 @pytest.mark.offline

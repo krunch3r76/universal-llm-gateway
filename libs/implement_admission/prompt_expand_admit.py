@@ -21,6 +21,8 @@ _TICKER_CALLERS = frozenset({"liaison-ticker"})
 # wrap / pure-mechanical have no authoring hop. Sketch is the shape-bind hop —
 # taking the A — so it is not mechanical for this door (enrolled roots only).
 # implement / conductor (Play) skip: g5 author drops holes (7154e190 / 5c59e467).
+# none is the residual hop (conductor spawn recipe, bind leg, path-sim, unnamed
+# Auto nest) — not a two-key author identity; caller door skips it.
 _MECHANICAL = frozenset({"wrap", "pure-mechanical"})
 _VALID_CONTRACTS = frozenset(
     {"consult", "investigate", "implement", "confer", "review", "none"}
@@ -34,6 +36,7 @@ SkipReason = Literal[
     "root_not_enrolled",
     "mechanical",
     "implement",
+    "residual",
     "empty_prompt",
 ]
 
@@ -113,6 +116,8 @@ def should_expand(
         return ExpandDecision(admit=False, root=root, skip_reason="mechanical")
     if expand_contract(kind) == "implement":
         return ExpandDecision(admit=False, root=root, skip_reason="implement")
+    if expand_contract(kind) == "none":
+        return ExpandDecision(admit=False, root=root, skip_reason="residual")
     return ExpandDecision(admit=True, root=root)
 
 

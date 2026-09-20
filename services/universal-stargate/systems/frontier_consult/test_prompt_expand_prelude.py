@@ -59,8 +59,13 @@ def _handle(**overrides: object) -> PreparedCursorSdkHandle:
 
 
 @pytest.mark.offline
-def test_sdk_should_expand_10479_implement() -> None:
-    assert sdk_should_expand(_handle()) is True
+def test_sdk_should_not_expand_10479_implement() -> None:
+    assert sdk_should_expand(_handle()) is False
+
+
+@pytest.mark.offline
+def test_sdk_should_not_expand_10479_none() -> None:
+    assert sdk_should_expand(_handle(handoff_contract="none")) is False
 
 
 @pytest.mark.offline
@@ -195,7 +200,7 @@ async def test_expand_consume_admit_delivers_in_seat_envelope(
         dispatched.append(handle)
 
     admit = await expand_consume_admit_path(
-        _handle(message="plain commission"),
+        _handle(message="plain commission", handoff_contract="sketch"),
         _dispatch,
     )
     assert admit.deliver_handle is not None
@@ -226,7 +231,9 @@ async def test_expand_consume_admit_dispatches_sdk_background(
     async def _dispatch(handle: PreparedCursorSdkHandle) -> None:
         dispatched.append(handle)
 
-    admit = await expand_consume_admit_path(_handle(), _dispatch)
+    admit = await expand_consume_admit_path(
+        _handle(handoff_contract="sketch"), _dispatch
+    )
     assert admit.scheduled_background is True
     assert admit.deliver_handle is None
     await asyncio.sleep(0.05)
@@ -248,7 +255,7 @@ async def test_expand_consume_admit_returns_in_seat_handle(
         ),
     )
     admit = await expand_consume_admit_path(
-        _handle(message="plain commission"),
+        _handle(message="plain commission", handoff_contract="sketch"),
         pytest.fail,
     )
     assert admit.scheduled_background is False
@@ -356,7 +363,9 @@ async def test_dispatch_prepared_cursor_sdk_delivers_consume_fields(
         lambda **_kwargs: None,
     )
 
-    result = await dispatch_prepared_cursor_sdk(_handle(message="plain commission"))
+    result = await dispatch_prepared_cursor_sdk(
+        _handle(message="plain commission", handoff_contract="sketch")
+    )
     assert result["prompt_expand"] == "complete"
     assert result["consume_branch"] == "in_seat"
     assert "fire_hint: in_seat" in result["task_prime"]
