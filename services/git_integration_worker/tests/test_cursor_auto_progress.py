@@ -94,6 +94,7 @@ async def test_poll_on_tick_does_not_complete_done_waiter_token() -> None:
         "services.git_integration_worker.cursor_auto.nested_sdk.CursorDispatchLedger"
     ) as ledger_cls:
         ledger = ledger_cls.instance.return_value
+        ledger.dispatch_status_by_id = lambda *, dispatch_id: rows[0]
         ledger.dispatch_status_by_thread = fake_status
         with (
             patch(

@@ -49,6 +49,9 @@ from services.git_integration_worker.cursor_auto.job_ledger import (
 from services.git_integration_worker.cursor_auto.lane_a_checkpoint import (
     extract_checkpoint_claim,
 )
+from services.git_integration_worker.cursor_auto.nested_poll_row import (
+    resolve_nested_poll_row,
+)
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_dispatch_ledger import (
@@ -336,13 +339,16 @@ async def poll_dispatch_terminal(
                 "dispatch_id": dispatch_id,
             }
         row = await asyncio.to_thread(
-            ledger.dispatch_status_by_thread, thread_id=thread_id
+            resolve_nested_poll_row,
+            ledger,
+            thread_id=thread_id,
+            dispatch_id=dispatch_id,
         )
         if row is not None:
             last = row
             if on_tick is not None:
                 await on_tick(row)
-            if row.get("dispatch_id") == dispatch_id and row.get("status") in _TERMINAL:
+            if row.get("status") in _TERMINAL:
                 return {
                     "ok": True,
                     "terminal": True,
