@@ -25,6 +25,13 @@ class CursorDispatchRequest(BaseModel):
             "derives attended consume without summon_mode in the commission body."
         ),
     )
+    bus_lifecycle: Literal["persistent", "ephemeral"] | None = Field(
+        default=None,
+        description=(
+            "Agent-bus thread lifecycle for this dispatch; ``persistent`` derives "
+            "durable_session in prompt-expand consume routing (CONDUCTOR_RECOMMEND)."
+        ),
+    )
     packet_path: str | None = None
     message: str | None = None
     handoff_contract: str | None = None

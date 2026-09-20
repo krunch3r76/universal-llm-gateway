@@ -235,3 +235,49 @@ async def test_worker_message_dispatch_omits_lane_when_unset(
     assert ok is True
     assert "lane" not in captured[0]
     assert captured[0]["handoff_contract"] == "none"
+
+
+@pytest.mark.asyncio
+async def test_worker_dispatch_forwards_bus_lifecycle_and_transcript_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[dict[str, object]] = []
+
+    async def _post(_url: str, *, json: dict[str, object]) -> MagicMock:
+        captured.append(json)
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.text = "{}"
+        resp.json.return_value = {"admitted": True}
+        return resp
+
+    client = AsyncMock()
+    client.post = _post
+    client.__aenter__ = AsyncMock(return_value=client)
+    client.__aexit__ = AsyncMock(return_value=False)
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_worker_dispatch.make_async_client",
+        lambda *_a, **_k: client,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_worker_dispatch.worker_base_url",
+        lambda: "http://worker.test",
+    )
+
+    ok, _detail = await dispatch_cursor_sdk_worker(
+        request_id="req-lifecycle",
+        thread_id="thread-1",
+        model="composer-2.5",
+        execution_id="exec-lifecycle",
+        packet_path="tmp/packet.md",
+        handoff_contract="implement",
+        dispatch_id="disp-lifecycle",
+        caller_transcript_id="550e8400-e29b-41d4-a716-446655440000",
+        bus_lifecycle="persistent",
+    )
+    assert ok is True
+    assert captured[0]["caller_transcript_id"] == (
+        "550e8400-e29b-41d4-a716-446655440000"
+    )
+    assert captured[0]["bus_lifecycle"] == "persistent"

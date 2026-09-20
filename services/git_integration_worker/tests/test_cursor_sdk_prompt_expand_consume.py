@@ -132,9 +132,10 @@ def test_result_from_decision_in_seat_skips_dispatch() -> None:
 
 @pytest.mark.offline
 @pytest.mark.asyncio
-async def test_maybe_expand_giw_conductor_advisory_skips_sdk_but_delivers(
+async def test_maybe_expand_giw_conductor_advisory_production_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Production AC: caller_transcript_id + bus_lifecycle only — no kwarg injection."""
     monkeypatch.setattr(
         "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
         lambda task, options: ExpandRun(
@@ -144,17 +145,20 @@ async def test_maybe_expand_giw_conductor_advisory_skips_sdk_but_delivers(
         ),
     )
     result = await maybe_expand_giw_prompt(
-        _req(message="plain commission without hints"),
+        _req(
+            message="plain commission without hints",
+            caller_transcript_id="550e8400-e29b-41d4-a716-446655440000",
+            bus_lifecycle="persistent",
+        ),
         "plain commission without hints",
         handoff_contract="pure-mechanical",
         resolved_model="cursor/composer-2.5",
-        attended=True,
-        durable_session=True,
     )
     assert result.skip_dispatch is True
     assert result.consume_advisory is True
     assert result.decision is not None
     assert result.decision.branch is ConsumeBranch.CONDUCTOR_RECOMMEND
+    assert result.decision.reason == "durable_session_attended_fallback"
     assert "TASK'" in result.prompt
 
 

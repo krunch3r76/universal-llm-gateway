@@ -1,6 +1,6 @@
 """GIW-local prompt-expand prelude for cursor-sdk admits.
 
-Mirrors Stargate ``schedule_sdk_expand_and_dispatch`` gates without routing
+Mirrors Stargate ``expand_consume_admit_path`` gates without routing
 cursor-auto nested work through ``team_dispatch`` generate.
 """
 
@@ -134,9 +134,7 @@ def _giw_consume_context(
             commission_or_packet=prompt,
         )
     if durable_session is None:
-        durable_session = (
-            getattr(req, "bus_lifecycle", None) or ""
-        ).strip() == "persistent"
+        durable_session = (req.bus_lifecycle or "").strip() == "persistent"
     return attended, durable_session
 
 

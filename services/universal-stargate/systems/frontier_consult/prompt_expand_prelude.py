@@ -373,38 +373,6 @@ async def expand_consume_admit_path(
     return ExpandConsumeAdmitResult(deliver_handle=expanded)
 
 
-def schedule_sdk_expand_and_dispatch(
-    handle: PreparedCursorSdkHandle,
-    dispatch: Any,
-    *,
-    transcript_id: str | None = None,
-) -> ExpandConsumeAdmitResult:
-    """Expand synchronously; schedule SDK dispatch or return in-seat handle."""
-    if not sdk_should_expand(handle):
-        return ExpandConsumeAdmitResult()
-
-    expanded = apply_expand_to_handle(handle, transcript_id=transcript_id)
-    if expanded.consume_branch == ConsumeBranch.SDK_BACKGROUND.value:
-
-        async def _run() -> None:
-            try:
-                await dispatch(expanded)
-            except Exception:
-                logger.exception(
-                    "prompt-expand prelude sdk dispatch failed execution_id=%s",
-                    handle.execution_id,
-                )
-
-        task = asyncio.create_task(
-            _run(), name=f"sdk-expand-{handle.execution_id[:8]}"
-        )
-        _SDK_EXPAND_TASKS.add(task)
-        task.add_done_callback(_SDK_EXPAND_TASKS.discard)
-        return ExpandConsumeAdmitResult(scheduled_background=True)
-
-    return ExpandConsumeAdmitResult(deliver_handle=expanded)
-
-
 __all__ = [
     "ExpandConsumeAdmitResult",
     "ExpandRun",
@@ -416,6 +384,5 @@ __all__ = [
     "read_prompt_uri",
     "route_expand_consume_for_handle",
     "run_prompt_expand",
-    "schedule_sdk_expand_and_dispatch",
     "sdk_should_expand",
 ]

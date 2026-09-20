@@ -137,6 +137,7 @@ async def _finish_prepared_dispatch(
             force_reason=handle.force_reason,
             hop_park_release=handle.hop_park_release,
             caller_transcript_id=transcript_id,
+            bus_lifecycle=handle.effective_bus_lifecycle,
         )
     else:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker_message(
@@ -165,6 +166,7 @@ async def _finish_prepared_dispatch(
             force=handle.force,
             force_reason=handle.force_reason,
             caller_transcript_id=transcript_id,
+            bus_lifecycle=handle.effective_bus_lifecycle,
         )
 
     if not worker_ok:

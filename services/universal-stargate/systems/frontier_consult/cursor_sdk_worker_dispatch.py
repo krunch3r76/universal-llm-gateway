@@ -232,6 +232,7 @@ async def dispatch_cursor_sdk_worker(
     force_reason: str | None = None,
     hop_park_release: bool = False,
     caller_transcript_id: str | None = None,
+    bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
 
@@ -289,6 +290,8 @@ async def dispatch_cursor_sdk_worker(
         payload["hop_park_release"] = True
     if caller_transcript_id:
         payload["caller_transcript_id"] = caller_transcript_id
+    if bus_lifecycle is not None:
+        payload["bus_lifecycle"] = bus_lifecycle
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT
@@ -350,6 +353,7 @@ async def dispatch_cursor_sdk_worker_message(
     force: bool = False,
     force_reason: str | None = None,
     caller_transcript_id: str | None = None,
+    bus_lifecycle: Literal["persistent", "ephemeral"] | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (prompt= path)."""
     effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -394,6 +398,8 @@ async def dispatch_cursor_sdk_worker_message(
         payload["force_reason"] = force_reason
     if caller_transcript_id:
         payload["caller_transcript_id"] = caller_transcript_id
+    if bus_lifecycle is not None:
+        payload["bus_lifecycle"] = bus_lifecycle
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

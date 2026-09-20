@@ -19,7 +19,6 @@ from systems.frontier_consult.prompt_expand_prelude import (
     consume_admit_fields,
     expand_consume_admit_path,
     maybe_expand_cdp_prompt,
-    schedule_sdk_expand_and_dispatch,
     sdk_should_expand,
 )
 
@@ -211,7 +210,7 @@ async def test_expand_consume_admit_delivers_in_seat_envelope(
 
 @pytest.mark.offline
 @pytest.mark.asyncio
-async def test_schedule_sdk_expand_dispatches_sdk_background(
+async def test_expand_consume_admit_dispatches_sdk_background(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -227,7 +226,7 @@ async def test_schedule_sdk_expand_dispatches_sdk_background(
     async def _dispatch(handle: PreparedCursorSdkHandle) -> None:
         dispatched.append(handle)
 
-    admit = schedule_sdk_expand_and_dispatch(_handle(), _dispatch)
+    admit = await expand_consume_admit_path(_handle(), _dispatch)
     assert admit.scheduled_background is True
     assert admit.deliver_handle is None
     await asyncio.sleep(0.05)
@@ -236,7 +235,8 @@ async def test_schedule_sdk_expand_dispatches_sdk_background(
 
 
 @pytest.mark.offline
-def test_schedule_sdk_expand_returns_in_seat_handle(
+@pytest.mark.asyncio
+async def test_expand_consume_admit_returns_in_seat_handle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -247,7 +247,7 @@ def test_schedule_sdk_expand_returns_in_seat_handle(
             execution_id="exp-sched-in-seat",
         ),
     )
-    admit = schedule_sdk_expand_and_dispatch(
+    admit = await expand_consume_admit_path(
         _handle(message="plain commission"),
         pytest.fail,
     )
@@ -256,6 +256,33 @@ def test_schedule_sdk_expand_returns_in_seat_handle(
     assert admit.deliver_handle.consume_branch == ConsumeBranch.IN_SEAT.value
     fields = consume_admit_fields(admit.deliver_handle)
     assert "fire_hint: in_seat" in fields["task_prime"]
+
+
+@pytest.mark.offline
+def test_apply_expand_persistent_lifecycle_conductor_recommend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production AC: attended + durable via transcript_id and bus_lifecycle only."""
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
+        lambda task, options: ExpandRun(
+            ok=True,
+            prompt="---\npipeline: prompt-expand\n---\n\nTASK'",
+            execution_id="exp-conductor-prod",
+        ),
+    )
+    handle = _handle(
+        message="plain commission without hints",
+        effective_bus_lifecycle="persistent",
+    )
+    out = apply_expand_to_handle(
+        handle,
+        transcript_id="550e8400-e29b-41d4-a716-446655440000",
+    )
+    assert out.consume_branch == ConsumeBranch.CONDUCTOR_RECOMMEND.value
+    fields = consume_admit_fields(out)
+    assert fields.get("consume_advisory") is True
+    assert fields["consume_branch"] == "conductor_recommend"
 
 
 @pytest.mark.offline
