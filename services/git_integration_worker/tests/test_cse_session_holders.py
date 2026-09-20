@@ -126,6 +126,26 @@ def test_boot_reconcile_dormant_holder_survives_restart(
     assert parent is not None
 
 
+def test_ledger_init_survives_boot_reconcile_registry_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from claude_bundles.cdp_registry_store import RegistryStoreError
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    CursorDispatchLedger._instance = None
+    with patch(
+        "claude_bundles.cdp_registry.session_address.list_active",
+        side_effect=RegistryStoreError("corrupt test registry"),
+    ):
+        ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='cursor_sdk_dispatches'"
+        ).fetchone()
+    assert row is not None
+
+
 def test_boot_reconcile_adopts_registry_without_holder_row(
     ledger: CursorDispatchLedger,
 ) -> None:

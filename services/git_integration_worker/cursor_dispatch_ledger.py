@@ -1055,7 +1055,10 @@ class CursorDispatchLedger:
             )
 
             ensure_cse_holders_schema(conn)
-            boot_reconcile(conn)
+            try:
+                boot_reconcile(conn)
+            except Exception as exc:
+                logger.warning("cse holder boot_reconcile skipped: %s", exc)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_queued "
                 "ON cursor_sdk_dispatches(source_repo, worker_instance, status) "
