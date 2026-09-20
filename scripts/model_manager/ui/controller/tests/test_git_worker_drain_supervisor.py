@@ -815,6 +815,43 @@ def test_claim_kill_one_winner_per_generation(tmp_path: Any) -> None:
     assert store.get(b.intent_id).status == STATUS_PENDING_DRAIN
 
 
+def test_begin_drain_unreachable_idle_escalates(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """Health-dead GIW (begin-drain HTTP timeout) must kill in recycle mode."""
+
+    class _Unreachable:
+        async def drain_state(self) -> dict[str, Any]:
+            raise TimeoutError("GIW HTTP timeout")
+
+        async def begin_drain(self, body: dict[str, Any]) -> dict[str, Any]:
+            raise TimeoutError("GIW HTTP timeout")
+
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="recycle_giw", deadline_at="d", reason="r"
+    )
+    kill = _Kill()
+    worker = _Unreachable()
+    sup = GitWorkerDrainSupervisor(
+        store=store,
+        begin_drain=worker.begin_drain,
+        drain_state=worker.drain_state,
+        subscribe_events=_Feed([]),
+        kill=kill,
+        deadline_s=5.0,
+        reconcile_interval_s=0.01,
+        progress_interval_s=999.0,
+        idle_escalate_s=0.05,
+    )
+    _run(sup.supervise(intent))
+    assert kill.calls == 1
+    signals = [s for s, _ in events_log]
+    assert "manage.recycle.escalated" in signals
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status != "failed"
+
+
 def test_idle_escalate_kills_without_drain_idle(
     tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
 ) -> None:

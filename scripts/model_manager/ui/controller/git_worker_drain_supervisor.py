@@ -227,6 +227,12 @@ class GitWorkerDrainSupervisor:
                 STATUS_FORCE_REQUESTED,
             }:
                 return
+            # Health-dead GIW: begin-drain HTTP never lands (drain_epoch stays
+            # null). Recycle mode must escalate to kill — idle_gate cannot trip
+            # on an empty/missing snap (a:36019, intents 8f882d79 / 3c61a486).
+            if self.idle_escalate_s is not None and intent.drain_epoch is None:
+                await self._on_idle(intent, t0)
+                return
             self.store.advance(intent.intent_id, status=STATUS_FAILED)
             await events.emit_manage_restart_failed(
                 intent_id=intent.intent_id, reason=str(exc)
