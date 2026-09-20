@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from implement_admission.prompt_expand_admit import already_expanded
@@ -35,7 +35,7 @@ _BACKGROUND_VERBS = (
 )
 
 
-class ConsumeBranch(str, Enum):
+class ConsumeBranch(StrEnum):
     """Post-expand delivery branch for TASK′ after prompt-expand completes.
 
     Prelude hooks map each branch to SDK scheduling, tab activation headers, or

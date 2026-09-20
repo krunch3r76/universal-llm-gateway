@@ -226,7 +226,12 @@ def route_expand_consume_for_handle(
             handle.execution_id,
             decision.reason,
         )
-    return _attach_consume_decision(handle, decision)
+    stamped_handle = (
+        replace(handle, message=stamped)
+        if handle.packet_path is None
+        else handle
+    )
+    return _attach_consume_decision(stamped_handle, decision)
 
 
 def consume_admit_fields(handle: PreparedCursorSdkHandle) -> dict[str, Any]:

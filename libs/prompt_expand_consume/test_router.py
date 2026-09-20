@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from implement_admission.prompt_expand_admit import already_expanded, should_expand
+
 from prompt_expand_consume.router import (
     ConsumeBranch,
     build_activation_envelope,

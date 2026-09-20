@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from implement_admission.prompt_expand_admit import PIPELINE_ID
+from prompt_expand_consume.router import ConsumeBranch
 
 from systems.frontier_consult.cursor_sdk_prepared_handle import (
     PreparedCursorSdkHandle,
@@ -21,7 +22,6 @@ from systems.frontier_consult.prompt_expand_prelude import (
     schedule_sdk_expand_and_dispatch,
     sdk_should_expand,
 )
-from prompt_expand_consume.router import ConsumeBranch
 
 
 def _handle(**overrides: object) -> PreparedCursorSdkHandle:
