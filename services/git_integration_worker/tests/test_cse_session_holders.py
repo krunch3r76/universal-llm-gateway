@@ -11,6 +11,7 @@ from services.git_integration_worker.cse_session_holders import (
     boot_reconcile,
     ensure_schema,
     get_holder,
+    occupy_holder_on_hop,
     resolve_nest_parent,
     transition_seat_state,
     upsert_holder,
@@ -220,3 +221,37 @@ def test_boot_reconcile_adopts_registry_without_holder_row(
     assert summary["adopted"] == 1
     assert row is not None
     assert row["registration_id"] == "reg-adopt"
+
+
+def test_occupy_supersedes_same_lane_missed_mint_when_prior_reg_differs(
+    ledger: CursorDispatchLedger,
+) -> None:
+    """AC1b: synthetic driving row (empty reg) must yield to a real occupy_target.
+
+    Hop verb overloads cse_registration_id as superseded_registration_id. If
+    that is the seated CSE's current reg, the missed-mint predecessor still
+    has to be superseded — it is same-lane, not a foreign peer.
+    """
+    synthetic = "https://claude.ai/cowork/cse_01scratchoccupy1"
+    real = "https://claude.ai/cowork/cse_015realpredecessor"
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        upsert_holder(
+            conn,
+            chat_url=synthetic,
+            lane_thread_id="11830",
+        )
+        outcome = occupy_holder_on_hop(
+            conn,
+            occupy_target=real,
+            lane_thread_id="11830",
+            superseded_registration_id="d61ec0c2785741ac925e9ea1c57af1ea",
+            new_registration_id="d61ec0c2785741ac925e9ea1c57af1ea",
+            new_execution_id="exec-ac1b",
+        )
+        synth = get_holder(conn, "cse_01scratchoccupy1")
+        occupied = get_holder(conn, "cse_015realpredecessor")
+    assert outcome["ok"] is True
+    assert "cse_01scratchoccupy1" in outcome["superseded_holder_ids"]
+    assert synth is not None and synth["seat_state"] == "superseded"
+    assert occupied is not None and occupied["seat_state"] == "driving"

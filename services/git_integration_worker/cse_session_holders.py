@@ -263,9 +263,10 @@ def _supersede_lane_predecessors(
         hid = str(row["holder_id"])
         if hid == occupy_holder_id:
             continue
+        # Same-lane driving/dormant rows are predecessors even when they
+        # have no registration_id (AC1 missed-mint). prior_reg only
+        # widens the search off-lane below.
         reg = str(row["registration_id"] or "").strip()
-        if prior_reg and reg != prior_reg:
-            continue
         transition_seat_state(
             conn,
             hid,
