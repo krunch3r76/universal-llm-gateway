@@ -15,12 +15,17 @@ preamble ahead of the unchanged packet so the agent continues rather than
 restarts. Expiry (``CURSOR_SDK_PARK_AUTO_RESUME_TTL_S``) only stops automatic
 re-admission; manual ``team_dispatch(resume_of=…)`` stays possible until the
 resume-retain TTL.
+
+Auto-resume requires ``worker_started_at > parked_at``. A mid-life
+``recycle_giw`` cancel that clears ``_draining`` is not a restart
+(specimen 2026-09-20 ``auto-a479e8e67316-r1`` on PID 1072566).
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from universal_logging import get_logger
@@ -55,6 +60,8 @@ logger = get_logger(__name__)
 
 PARK_RESUME_PREAMBLE_VERSION = 1
 ADMITTED_VIA_PARK_RESUME = "giw_park_resume"
+RESUME_REFUSAL_SAME_PROCESS = "same_process"
+_SAME_PROCESS_SKIPPED: set[str] = set()
 
 _PREAMBLE_TEMPLATE = (
     "PARK-RESUME v{version} — substrate notice, not operator prose.\n"
@@ -95,6 +102,29 @@ def render_park_resume_preamble(row: ParkRow, *, code_version: str) -> str:
         last_tool_calls=rendered_calls,
         sidecar_uri=park.get("sidecar_uri") or "none",
     )
+
+
+def _parse_iso(raw: str | None) -> datetime | None:
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def process_started_after_park(
+    worker_started_at: str | None, parked_at: str | None
+) -> bool:
+    """True only when this GIW boot is strictly after the row was parked."""
+    started = _parse_iso(worker_started_at)
+    parked = _parse_iso(parked_at)
+    if started is None or parked is None:
+        return False
+    return started > parked
 
 
 def child_dispatch_id(row: ParkRow, *, attempt: int) -> str:
@@ -294,6 +324,22 @@ async def resume_parked_dispatches(
             if await _expire(row, bus):
                 summary.expired.append(row.dispatch_id)
             continue
+        if not process_started_after_park(
+            controller.worker_started_at, row.parked_at
+        ):
+            if row.dispatch_id not in _SAME_PROCESS_SKIPPED:
+                _SAME_PROCESS_SKIPPED.add(row.dispatch_id)
+                logger.info(
+                    "cursor-sdk park resume skipped same-process parent=%s "
+                    "worker_started_at=%s parked_at=%s",
+                    row.dispatch_id,
+                    controller.worker_started_at,
+                    row.parked_at,
+                )
+            summary.refused.append(
+                (row.dispatch_id, RESUME_REFUSAL_SAME_PROCESS)
+            )
+            continue
         existing = _existing_child(row.dispatch_id)
         if existing is not None:
             mark_park_resumed(parent_id=row.dispatch_id, child_id=existing)
@@ -354,9 +400,11 @@ async def resume_parked_dispatches(
 __all__ = [
     "ADMITTED_VIA_PARK_RESUME",
     "PARK_RESUME_PREAMBLE_VERSION",
+    "RESUME_REFUSAL_SAME_PROCESS",
     "ParkResumeSummary",
     "build_park_resume_request",
     "child_dispatch_id",
+    "process_started_after_park",
     "render_park_resume_preamble",
     "resume_parked_dispatches",
 ]

@@ -24,7 +24,9 @@ from services.git_integration_worker.cursor_sdk_park_ledger import (
     park_projection,
 )
 from services.git_integration_worker.cursor_sdk_park_resume import (
+    RESUME_REFUSAL_SAME_PROCESS,
     build_park_resume_request,
+    process_started_after_park,
     render_park_resume_preamble,
     resume_parked_dispatches,
 )
@@ -90,12 +92,12 @@ def _bus() -> AsyncMock:
     return bus
 
 
-def _controller() -> WorkAdmissionController:
+def _controller(*, started_at: str | None = None) -> WorkAdmissionController:
     return WorkAdmissionController(
         ledger=CursorDispatchLedger.instance(),
         worker_id="w",
         pid=0,
-        worker_started_at="b",
+        worker_started_at=started_at or datetime.now(UTC).isoformat(),
     )
 
 
@@ -186,6 +188,42 @@ def _row(dispatch_id: str) -> dict[str, Any] | None:
 
 
 # ------------------------------------------------------------------ AC-SR-7
+
+
+def test_process_started_after_park_specimen_11667() -> None:
+    """Drain-cancel on the parking process is not a restart (11667#770)."""
+    assert (
+        process_started_after_park(
+            "2026-09-20T05:02:17.804702+00:00",
+            "2026-09-20T05:16:09.239336+00:00",
+        )
+        is False
+    )
+    assert (
+        process_started_after_park(
+            "2026-09-20T05:40:00+00:00",
+            "2026-09-20T05:16:09.239336+00:00",
+        )
+        is True
+    )
+    assert process_started_after_park("b", "2026-09-20T05:16:09+00:00") is False
+
+
+@pytest.mark.asyncio
+async def test_same_process_park_is_not_auto_resumed(
+    tmp_path: Path, _admit_stubs: MagicMock
+) -> None:
+    _seed_parked("p-live", thread_id="11667", tmp_path=tmp_path, parked_offset_s=0)
+    started = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
+    summary = await resume_parked_dispatches(
+        cfg=load_config(),
+        controller=_controller(started_at=started),
+        code_version="6e1cd6755",
+        bus=_bus(),
+    )
+    assert summary.admitted == []
+    assert summary.refused == [("p-live", RESUME_REFUSAL_SAME_PROCESS)]
+    assert park_projection(load_park_row(dispatch_id="p-live"))["state"] == "parked"
 
 
 @pytest.mark.asyncio
