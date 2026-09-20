@@ -220,6 +220,20 @@ async def maybe_expand_giw_prompt(
         req.dispatch_id,
         decision.branch.value,
     )
+    from events.prompt_expand_consume import emit_expand_consume_routed
+
+    emit_expand_consume_routed(
+        execution_id=req.execution_id,
+        dispatch_id=req.dispatch_id,
+        door="giw",
+        branch=decision.branch.value,
+        reason=decision.reason,
+        fire_hint=decision.fire_hint,
+        operator_verb=decision.operator_verb,
+        attended=attended_flag,
+        durable_session=durable_flag,
+        summoning_thread_id=req.parent_dispatch_thread_id or req.thread_id,
+    )
     return _result_from_decision(task_prime, decision, dispatch_id=req.dispatch_id)
 
 

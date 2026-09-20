@@ -26,6 +26,7 @@ from .handoff_response import (
 from .poll_hint_events import emit_poll_hint_from_handoff
 
 CURSOR_SDK_REPLY_SEAT = "cursor-sdk"
+_CONSUME_POLL_HINT_BRANCHES = frozenset({None, "sdk_background"})
 
 
 def _stamp_model_knobs_requested(
@@ -72,12 +73,13 @@ def _sdk_admit_envelope(
         after_turn=handle.poll_after_turn if handle.poll_after_turn else 1,
         execution_id=handle.execution_id,
     )
-    emit_poll_hint_from_handoff(
-        request_id=handle.request_id,
-        thread_id=handle.thread_id,
-        caller_agent=handle.caller_agent or "cursor",
-        handoff_fields=handoff_fields,
-    )
+    if handle.consume_branch in _CONSUME_POLL_HINT_BRANCHES:
+        emit_poll_hint_from_handoff(
+            request_id=handle.request_id,
+            thread_id=handle.thread_id,
+            caller_agent=handle.caller_agent or "cursor",
+            handoff_fields=handoff_fields,
+        )
     result = build_sdk_generate_result(
         role=handle.role,
         profile=profile,
@@ -216,6 +218,29 @@ async def _finish_prepared_dispatch(
     return result
 
 
+async def _terminalize_prompt_expand_consume(
+    handle: PreparedCursorSdkHandle,
+) -> None:
+    """Close the dispatch-admit link for non-SDK consume delivery (G1 narrowed bind)."""
+    from .handoff import terminate_handoff_dispatch
+    from .prompt_expand_prelude import _consume_context_from_handle
+
+    if not handle.thread_id:
+        return
+    attended, _durable = _consume_context_from_handle(handle)
+    await terminate_handoff_dispatch(
+        request_id=handle.request_id,
+        thread_id=handle.thread_id,
+        execution_id=handle.execution_id,
+        terminal_status="completed",
+        bus_lifecycle=(
+            "persistent"
+            if handle.effective_bus_lifecycle == "persistent" and attended
+            else None
+        ),
+    )
+
+
 async def dispatch_prepared_cursor_sdk(
     handle: PreparedCursorSdkHandle,
     *,
@@ -247,6 +272,7 @@ async def dispatch_prepared_cursor_sdk(
     )
     if admit.deliver_handle is not None:
         delivered = admit.deliver_handle
+        await _terminalize_prompt_expand_consume(delivered)
         result = _sdk_admit_envelope(delivered)
         result["prompt_expand"] = "complete"
         result.update(consume_admit_fields(delivered))

@@ -356,7 +356,7 @@ async def test_dispatch_prepared_cursor_sdk_delivers_consume_fields(
     )
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_generate.emit_poll_hint_from_handoff",
-        lambda **_kwargs: None,
+        lambda **_kwargs: pytest.fail("poll_hint must not fire on in_seat"),
     )
     monkeypatch.setattr(
         "systems.frontier_consult.cursor_sdk_generate.emit_sdk_worker_outcome",
@@ -371,6 +371,57 @@ async def test_dispatch_prepared_cursor_sdk_delivers_consume_fields(
     assert "fire_hint: in_seat" in result["task_prime"]
     assert "pipeline: prompt-expand" in result["task_prime"]
     assert result["activation"]["summoning_thread_id"] == "11690"
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_dispatch_prepared_cursor_sdk_in_seat_terminalizes_admit_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult.cursor_sdk_generate import (
+        dispatch_prepared_cursor_sdk,
+    )
+
+    terminate_calls: list[dict[str, object]] = []
+
+    async def _terminate(**kwargs: object) -> bool:
+        terminate_calls.append(dict(kwargs))
+        return True
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
+        lambda task, options: ExpandRun(
+            ok=True,
+            prompt="fire_hint: in_seat\n\nTASK'",
+            execution_id="exp-terminal",
+        ),
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker",
+        pytest.fail,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
+        pytest.fail,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.emit_poll_hint_from_handoff",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.terminate_handoff_dispatch",
+        _terminate,
+    )
+    monkeypatch.setattr(
+        "events.prompt_expand_consume.emit_expand_consume_routed_for_handle",
+        lambda *args, **kwargs: None,
+    )
+
+    await dispatch_prepared_cursor_sdk(
+        _handle(message="plain commission", handoff_contract="sketch")
+    )
+    assert terminate_calls
+    assert terminate_calls[0]["terminal_status"] == "completed"
 
 
 @pytest.mark.offline

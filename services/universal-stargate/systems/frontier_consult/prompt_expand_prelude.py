@@ -352,6 +352,18 @@ async def expand_consume_admit_path(
     expanded = await asyncio.to_thread(
         apply_expand_to_handle, handle, transcript_id=transcript_id
     )
+    if expanded.consume_branch:
+        attended, durable_session = _consume_context_from_handle(
+            expanded, transcript_id=transcript_id
+        )
+        from events.prompt_expand_consume import emit_expand_consume_routed_for_handle
+
+        emit_expand_consume_routed_for_handle(
+            expanded,
+            door="stargate",
+            attended=attended,
+            durable_session=durable_session,
+        )
     if expanded.consume_branch == ConsumeBranch.SDK_BACKGROUND.value:
 
         async def _run() -> None:

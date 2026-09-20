@@ -2251,12 +2251,12 @@ async def _run_sdk_dispatch_gated(
         await _terminate_link(
             bus,
             thread_id=req.thread_id,
-            terminal_status="finished",
+            terminal_status="completed",
             execution_id=req.execution_id,
         )
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
-            terminal_status="finished",
+            terminal_status="completed",
             controller=controller,
             emit_tag="CURSOR_PROMPT_EXPAND_CONSUME",
         )

@@ -36,6 +36,10 @@ async def test_maybe_expand_giw_prompt_window_transcript_id_in_seat(
 ) -> None:
     """Attended via caller_transcript_id without summon_mode in message body."""
     monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_prompt_expand.giw_should_expand_prompt",
+        lambda *args, **kwargs: True,
+    )
+    monkeypatch.setattr(
         "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
         lambda task, options: ExpandRun(
             ok=True,
@@ -67,6 +71,10 @@ async def test_maybe_expand_giw_prompt_in_seat_short_circuit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_prompt_expand.giw_should_expand_prompt",
+        lambda *args, **kwargs: True,
+    )
+    monkeypatch.setattr(
         "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
         lambda task, options: ExpandRun(
             ok=True,
@@ -92,6 +100,10 @@ async def test_maybe_expand_giw_prompt_in_seat_short_circuit(
 async def test_maybe_expand_giw_prompt_sdk_background(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_prompt_expand.giw_should_expand_prompt",
+        lambda *args, **kwargs: True,
+    )
     monkeypatch.setattr(
         "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
         lambda task, options: ExpandRun(
@@ -136,6 +148,10 @@ async def test_maybe_expand_giw_conductor_advisory_production_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Production AC: caller_transcript_id + bus_lifecycle only — no kwarg injection."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_prompt_expand.giw_should_expand_prompt",
+        lambda *args, **kwargs: True,
+    )
     monkeypatch.setattr(
         "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
         lambda task, options: ExpandRun(

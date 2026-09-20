@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-WALK_ROOTS: tuple[str, ...] = ("services", "libs", "systems")
+WALK_ROOTS: tuple[str, ...] = ("services", "libs", "systems", "events")
 ROLE_DEFAULT = (
     "observation"  # Event.role default (libs/universal_event_bus/events/event.py)
 )
