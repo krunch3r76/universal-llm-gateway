@@ -2213,16 +2213,55 @@ async def _run_sdk_dispatch_gated(
             )
 
     prompt = _resolve_prompt(req, ctx.hub)
+    from services.git_integration_worker.cursor_sdk_gate import release_sdk_dispatch_slot
     from services.git_integration_worker.cursor_sdk_prompt_expand import (
         maybe_expand_giw_prompt,
     )
 
-    prompt = await maybe_expand_giw_prompt(
+    expand_result = await maybe_expand_giw_prompt(
         req,
         prompt,
         handoff_contract=ctx.handoff_contract,
         resolved_model=req.model,
     )
+    if expand_result.skip_dispatch:
+        await release_sdk_dispatch_slot(dispatch_id=req.dispatch_id)
+        consume_payload = {
+            "consume_branch": (
+                expand_result.decision.branch.value if expand_result.decision else None
+            ),
+            "task_prime": expand_result.prompt,
+        }
+        if expand_result.decision is not None:
+            consume_payload["consume_reason"] = expand_result.decision.reason
+        if expand_result.consume_advisory:
+            consume_payload["consume_advisory"] = True
+        if expand_result.activation_envelope:
+            consume_payload["activation"] = {
+                "kind": "prompt_expand_consume",
+                "headers": dict(expand_result.activation_envelope),
+            }
+        await bus.reply(
+            thread_id=req.thread_id,
+            to_agent=reply_to,
+            from_agent="cursor-sdk",
+            subject=f"cursor-sdk dispatch {req.dispatch_id} CONSUME",
+            body=f"```json\n{json.dumps(consume_payload, indent=2)}\n```",
+        )
+        await _terminate_link(
+            bus,
+            thread_id=req.thread_id,
+            terminal_status="finished",
+            execution_id=req.execution_id,
+        )
+        await _mark_terminal_and_promote(
+            dispatch_id=req.dispatch_id,
+            terminal_status="finished",
+            controller=controller,
+            emit_tag="CURSOR_PROMPT_EXPAND_CONSUME",
+        )
+        return
+    prompt = expand_result.prompt
 
     live_counter = _LiveToolCallCounter()
     worker_task = controller.create_tracked_task(
@@ -3114,10 +3153,7 @@ async def admit_cursor_dispatch(
     parent_isolated: bool | None = None
     inherit_parent = req.nest_under or req.resume_of
     if inherit_parent:
-        parent_key = lookup_parent_lease_key(
-            inherit_parent,
-            source_repo=resolved_source_repo,
-        )
+        parent_key = lookup_parent_lease_key(inherit_parent)
         if parent_key is not None:
             parent_isolated = lease_is_isolated_worktree(
                 lease_key=parent_key,
@@ -3204,11 +3240,11 @@ async def admit_cursor_dispatch(
                     thread_id=req.thread_id,
                     branch_name=record.branch_name,
                 )
+        # Nested child inherits parent Lane-B worktree; parent thread holds the pin.
         if selected_lane == "B" and binding.binding_kind in (
             "minted",
             "adopted",
             "reused",
-            "nested",
             "resumed",
         ):
             from services.git_integration_worker.cursor_sdk_worktree import (

@@ -62,6 +62,9 @@ class PreparedCursorSdkHandle:
     force: bool = False
     force_reason: str | None = None
     hop_park_release: bool = False
+    consume_branch: str | None = None
+    consume_activation: dict[str, str] | None = None
+    consume_reason: str | None = None
 
 
 def mint_cursor_sdk_ids(*, request_id: str) -> tuple[str, str]:
@@ -132,6 +135,9 @@ def handle_to_dict(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
         "force": handle.force,
         "force_reason": handle.force_reason,
         "hop_park_release": handle.hop_park_release,
+        "consume_branch": handle.consume_branch,
+        "consume_activation": handle.consume_activation,
+        "consume_reason": handle.consume_reason,
     }
 
 
@@ -187,4 +193,7 @@ def handle_from_dict(data: dict[str, Any]) -> PreparedCursorSdkHandle:
         force=bool(data.get("force", False)),
         force_reason=data.get("force_reason"),
         hop_park_release=bool(data.get("hop_park_release", False)),
+        consume_branch=data.get("consume_branch"),
+        consume_activation=data.get("consume_activation"),
+        consume_reason=data.get("consume_reason"),
     )

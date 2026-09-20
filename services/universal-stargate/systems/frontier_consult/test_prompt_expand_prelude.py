@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from pathlib import Path
 
@@ -14,9 +15,13 @@ from systems.frontier_consult.cursor_sdk_prepared_handle import (
 from systems.frontier_consult.prompt_expand_prelude import (
     ExpandRun,
     apply_expand_to_handle,
+    consume_admit_fields,
+    expand_consume_admit_path,
     maybe_expand_cdp_prompt,
+    schedule_sdk_expand_and_dispatch,
     sdk_should_expand,
 )
+from prompt_expand_consume.router import ConsumeBranch
 
 
 def _handle(**overrides: object) -> PreparedCursorSdkHandle:
@@ -117,5 +122,140 @@ def test_apply_expand_rewrites_message(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda task, options: ExpandRun(ok=True, prompt="TASK'", execution_id="exp-2"),
     )
     out = apply_expand_to_handle(_handle())
-    assert out.message == "TASK'"
+    assert "pipeline: prompt-expand" in (out.message or "")
+    assert out.consume_branch == ConsumeBranch.SDK_BACKGROUND.value
     assert out.execution_id == "exec-1"
+
+
+@pytest.mark.offline
+def test_apply_expand_window_verb_routes_in_seat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
+        lambda task, options: ExpandRun(
+            ok=True,
+            prompt="---\npipeline: prompt-expand\n---\n\nTASK'",
+            execution_id="exp-window",
+        ),
+    )
+    handle = _handle(
+        message="Expand this in the window for 10479.\nsummon_mode: attended",
+    )
+    out = apply_expand_to_handle(handle)
+    assert out.consume_branch == ConsumeBranch.IN_SEAT.value
+    fields = consume_admit_fields(out)
+    assert fields["consume_branch"] == "in_seat"
+    assert fields["activation"]["summoning_thread_id"] == "11690"
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_expand_consume_admit_delivers_in_seat_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
+        lambda task, options: ExpandRun(
+            ok=True,
+            prompt="fire_hint: in_seat\n\nTASK'",
+            execution_id="exp-in-seat",
+        ),
+    )
+    dispatched: list[PreparedCursorSdkHandle] = []
+
+    async def _dispatch(handle: PreparedCursorSdkHandle) -> None:
+        dispatched.append(handle)
+
+    admit = await expand_consume_admit_path(
+        _handle(message="plain commission"),
+        _dispatch,
+    )
+    assert admit.deliver_handle is not None
+    assert admit.deliver_handle.consume_branch == ConsumeBranch.IN_SEAT.value
+    fields = consume_admit_fields(admit.deliver_handle)
+    assert fields["consume_branch"] == "in_seat"
+    assert "fire_hint: in_seat" in fields["task_prime"]
+    assert "pipeline: prompt-expand" in fields["task_prime"]
+    assert fields["activation"]["summoning_thread_id"] == "11690"
+    assert dispatched == []
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_schedule_sdk_expand_dispatches_sdk_background(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
+        lambda task, options: ExpandRun(
+            ok=True,
+            prompt="---\npipeline: prompt-expand\n---\n\nTASK'",
+            execution_id="exp-sdk",
+        ),
+    )
+    dispatched: list[PreparedCursorSdkHandle] = []
+
+    async def _dispatch(handle: PreparedCursorSdkHandle) -> None:
+        dispatched.append(handle)
+
+    scheduled = schedule_sdk_expand_and_dispatch(_handle(), _dispatch)
+    assert scheduled is True
+    await asyncio.sleep(0.05)
+    assert len(dispatched) == 1
+    assert dispatched[0].consume_branch == ConsumeBranch.SDK_BACKGROUND.value
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_dispatch_prepared_cursor_sdk_delivers_consume_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from systems.frontier_consult.cursor_sdk_generate import (
+        dispatch_prepared_cursor_sdk,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
+        lambda task, options: ExpandRun(
+            ok=True,
+            prompt="fire_hint: in_seat\n\nTASK'",
+            execution_id="exp-dispatch",
+        ),
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker",
+        pytest.fail,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.dispatch_cursor_sdk_worker_message",
+        pytest.fail,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.emit_poll_hint_from_handoff",
+        lambda **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cursor_sdk_generate.emit_sdk_worker_outcome",
+        lambda **_kwargs: None,
+    )
+
+    result = await dispatch_prepared_cursor_sdk(_handle(message="plain commission"))
+    assert result["prompt_expand"] == "complete"
+    assert result["consume_branch"] == "in_seat"
+    assert "fire_hint: in_seat" in result["task_prime"]
+    assert "pipeline: prompt-expand" in result["task_prime"]
+    assert result["activation"]["summoning_thread_id"] == "11690"
+
+
+@pytest.mark.offline
+def test_expand_transport_failure_skips_router_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
+        lambda task, options: ExpandRun(ok=False, prompt=task, error="transport"),
+    )
+    out = apply_expand_to_handle(_handle())
+    assert out.consume_branch is None
+    assert out.message == _handle().message

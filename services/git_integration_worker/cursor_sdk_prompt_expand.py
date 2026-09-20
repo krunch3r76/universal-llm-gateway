@@ -7,6 +7,7 @@ cursor-auto nested work through ``team_dispatch`` generate.
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from implement_admission.prompt_expand_admit import (
@@ -14,12 +15,30 @@ from implement_admission.prompt_expand_admit import (
     matching_root,
     should_expand,
 )
+from prompt_expand_consume.router import (
+    ConsumeBranch,
+    ConsumeDecision,
+    derive_attended,
+    route_consume,
+    stamp_expand_provenance,
+)
 from universal_logging import get_logger
 
 if TYPE_CHECKING:
     from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class GiwExpandConsumeResult:
+    """Prompt bytes plus consume routing verdict for GIW admit."""
+
+    prompt: str
+    decision: ConsumeDecision | None = None
+    skip_dispatch: bool = False
+    activation_envelope: dict[str, str] | None = None
+    consume_advisory: bool = False
 
 
 def resolve_enrolled_root_fields(thread_id: str) -> dict[str, str]:
@@ -102,16 +121,67 @@ def giw_prompt_expand_pending(
     return None
 
 
+def _giw_consume_context(
+    req: CursorDispatchRequest,
+    prompt: str,
+    *,
+    attended: bool | None = None,
+    durable_session: bool | None = None,
+) -> tuple[bool, bool]:
+    if attended is None:
+        attended = derive_attended(
+            transcript_id=getattr(req, "caller_transcript_id", None),
+            commission_or_packet=prompt,
+        )
+    if durable_session is None:
+        durable_session = (
+            getattr(req, "bus_lifecycle", None) or ""
+        ).strip() == "persistent"
+    return attended, durable_session
+
+
+def _result_from_decision(
+    prompt: str,
+    decision: ConsumeDecision,
+    *,
+    dispatch_id: str | None = None,
+) -> GiwExpandConsumeResult:
+    skip = decision.branch is not ConsumeBranch.SDK_BACKGROUND
+    advisory = decision.branch is ConsumeBranch.CONDUCTOR_RECOMMEND
+    if advisory:
+        logger.info(
+            "prompt-expand giw consume conductor_recommend dispatch_id=%s reason=%s",
+            dispatch_id,
+            decision.reason,
+        )
+    if decision.branch is ConsumeBranch.IN_SEAT:
+        logger.info(
+            "prompt-expand giw consume in_seat dispatch_id=%s reason=%s",
+            dispatch_id,
+            decision.reason,
+        )
+    return GiwExpandConsumeResult(
+        prompt=prompt,
+        decision=decision,
+        skip_dispatch=skip,
+        activation_envelope=decision.activation_header,
+        consume_advisory=advisory,
+    )
+
+
 async def maybe_expand_giw_prompt(
     req: CursorDispatchRequest,
     prompt: str,
     *,
     handoff_contract: str | None,
     resolved_model: str,
-) -> str:
-    """Run prompt-expand when enrolled; fail-open returns the original *prompt*."""
+    attended: bool | None = None,
+    durable_session: bool | None = None,
+) -> GiwExpandConsumeResult:
+    """Run prompt-expand when enrolled; route consume; fail-open returns original."""
+    original = prompt
     if not giw_should_expand_prompt(req, prompt, handoff_contract=handoff_contract):
-        return prompt
+        return GiwExpandConsumeResult(prompt=prompt)
 
     import asyncio
 
@@ -129,16 +199,34 @@ async def maybe_expand_giw_prompt(
             req.dispatch_id,
             result.error,
         )
-        return prompt
+        return GiwExpandConsumeResult(prompt=original)
+
+    task_prime = stamp_expand_provenance(result.prompt, result.execution_id)
+    attended_flag, durable_flag = _giw_consume_context(
+        req,
+        original,
+        attended=attended,
+        durable_session=durable_session,
+    )
+    decision = route_consume(
+        task_prime=task_prime,
+        original_commission=original,
+        attended=attended_flag,
+        durable_session=durable_flag,
+        summoning_thread_id=req.thread_id,
+        transcript_id=getattr(req, "caller_transcript_id", None),
+    )
     logger.info(
-        "prompt-expand giw expand=%s dispatch_id=%s",
+        "prompt-expand giw expand=%s dispatch_id=%s branch=%s",
         result.execution_id,
         req.dispatch_id,
+        decision.branch.value,
     )
-    return result.prompt
+    return _result_from_decision(task_prime, decision, dispatch_id=req.dispatch_id)
 
 
 __all__ = [
+    "GiwExpandConsumeResult",
     "expand_contract_for_admit",
     "giw_prompt_expand_pending",
     "giw_should_expand_prompt",

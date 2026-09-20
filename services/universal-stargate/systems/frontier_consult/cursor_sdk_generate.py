@@ -203,6 +203,8 @@ async def _finish_prepared_dispatch(handle: PreparedCursorSdkHandle) -> dict[str
 
 async def dispatch_prepared_cursor_sdk(
     handle: PreparedCursorSdkHandle,
+    *,
+    transcript_id: str | None = None,
 ) -> dict[str, Any]:
     """Submit a prepared handle to the worker without reminting identities."""
     if handle.thread_id is None:
@@ -216,9 +218,20 @@ async def dispatch_prepared_cursor_sdk(
             code="CURSOR_PREPARED_HANDLE_INCOMPLETE",
         )
 
-    from .prompt_expand_prelude import schedule_sdk_expand_and_dispatch
+    from .prompt_expand_prelude import consume_admit_fields, expand_consume_admit_path
 
-    if schedule_sdk_expand_and_dispatch(handle, _finish_prepared_dispatch):
+    admit = await expand_consume_admit_path(
+        handle,
+        _finish_prepared_dispatch,
+        transcript_id=transcript_id,
+    )
+    if admit.deliver_handle is not None:
+        delivered = admit.deliver_handle
+        result = _sdk_admit_envelope(delivered)
+        result["prompt_expand"] = "complete"
+        result.update(consume_admit_fields(delivered))
+        return result
+    if admit.scheduled_background:
         result = _sdk_admit_envelope(handle)
         result["prompt_expand"] = "pending"
         return result
@@ -276,6 +289,7 @@ async def dispatch_cursor_sdk_generate(
     force: bool = False,
     force_reason: str | None = None,
     hop_park_release: bool = False,
+    transcript_id: str | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -284,7 +298,9 @@ async def dispatch_cursor_sdk_generate(
     When ``prepared_handle`` is supplied, identities are not reminted.
     """
     if prepared_handle is not None:
-        return await dispatch_prepared_cursor_sdk(prepared_handle)
+        return await dispatch_prepared_cursor_sdk(
+            prepared_handle, transcript_id=transcript_id
+        )
 
     handle = await prepare_cursor_sdk_generate(
         request_id=request_id,
@@ -328,4 +344,4 @@ async def dispatch_cursor_sdk_generate(
         force_reason=force_reason,
         hop_park_release=hop_park_release,
     )
-    return await dispatch_prepared_cursor_sdk(handle)
+    return await dispatch_prepared_cursor_sdk(handle, transcript_id=transcript_id)
