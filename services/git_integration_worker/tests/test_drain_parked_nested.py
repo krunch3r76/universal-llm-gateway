@@ -99,13 +99,42 @@ def test_discard_kind_does_not_wait() -> None:
     )
 
 
-def test_already_resumed_does_not_wait() -> None:
+def test_already_resumed_live_child_does_not_wait() -> None:
+    """9470: resume child still running stays in drain occupancy."""
     assert (
         waiting_park_resume_for_intent(
             job_id="j",
             intent_id="i-1",
             relay_state={"dispatch_id": "auto-x"},
             park_row=_park(park_resumed_by="auto-x-r1"),
+            child_status="admitted",
         )
         is False
+    )
+
+
+def test_resumed_completed_child_yields_drain() -> None:
+    """765c56f3: parent park resumed, -r1 already CLOSEOUT — omit Auto."""
+    assert (
+        waiting_park_resume_for_intent(
+            job_id="j",
+            intent_id="i-1",
+            relay_state={"dispatch_id": "auto-x"},
+            park_row=_park(park_resumed_by="auto-x-r1"),
+            child_status="completed",
+        )
+        is True
+    )
+
+
+def test_resumed_failed_child_yields_drain() -> None:
+    assert (
+        waiting_park_resume_for_intent(
+            job_id="j",
+            intent_id="i-1",
+            relay_state={"dispatch_id": "auto-x"},
+            park_row=_park(park_resumed_by="auto-x-r1"),
+            child_status="failed",
+        )
+        is True
     )

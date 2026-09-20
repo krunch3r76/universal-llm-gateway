@@ -269,8 +269,9 @@ class WorkAdmissionController:
             if op_id in seen:
                 continue
             # Parked nested SDK waits for post-restart resume_of — omit from
-            # drain occupancy only (intent may have been replaced). 9470
-            # still counts a live nested SDK.
+            # drain occupancy only (intent may have been replaced). Resumed
+            # + terminal child also yields (765c56f3 after -r1 CLOSEOUT).
+            # 9470 still counts a live nested SDK.
             if drain_intent and waiting_park_resume_for_intent(
                 job_id=op_id, intent_id=drain_intent
             ):
