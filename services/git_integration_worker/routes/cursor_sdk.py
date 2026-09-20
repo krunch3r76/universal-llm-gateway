@@ -2213,7 +2213,9 @@ async def _run_sdk_dispatch_gated(
             )
 
     prompt = _resolve_prompt(req, ctx.hub)
-    from services.git_integration_worker.cursor_sdk_gate import release_sdk_dispatch_slot
+    from services.git_integration_worker.cursor_sdk_gate import (
+        release_sdk_dispatch_slot,
+    )
     from services.git_integration_worker.cursor_sdk_prompt_expand import (
         maybe_expand_giw_prompt,
     )
