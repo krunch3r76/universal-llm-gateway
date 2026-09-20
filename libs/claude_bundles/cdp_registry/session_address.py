@@ -114,6 +114,13 @@ def bind_session_address(
             execution_id=execution_id,
         )
     _emit_seat_axis_events(bound_row, released_rows)
+    from services.git_integration_worker.cse_session_holders import upsert_holder_remote
+
+    upsert_holder_remote(
+        chat_url=url,
+        registration_id=registration_id,
+        execution_id=execution_id,
+    )
     return True
 
 

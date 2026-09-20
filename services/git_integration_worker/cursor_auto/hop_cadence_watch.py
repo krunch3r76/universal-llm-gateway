@@ -220,15 +220,31 @@ def observe_lane_from_enqueue(
     row["last_seen_at"] = ts
     row["from_agent"] = normalize_bus_address(job.from_agent)
     if not aliased:
-        if job.cse_registration_id:
-            row["registration_id"] = job.cse_registration_id
-        chat_url = (job.cse_chat_url or "").strip() or None
-        if not chat_url and job.cse_registration_id:
-            from claude_bundles.cdp_registry import chat_url_for_registration
+        from services.git_integration_worker.cse_session_holders import (
+            get_driving_holder_for_lane,
+        )
+        from services.git_integration_worker.cursor_dispatch_ledger import (
+            CursorDispatchLedger,
+        )
 
-            chat_url = chat_url_for_registration(job.cse_registration_id)
-        if chat_url:
-            row["chat_url"] = chat_url
+        with CursorDispatchLedger.instance()._connect() as conn:
+            driving = get_driving_holder_for_lane(conn, thread_id)
+        if driving:
+            if driving.get("registration_id"):
+                row["registration_id"] = driving["registration_id"]
+            if driving.get("chat_url"):
+                row["chat_url"] = driving["chat_url"]
+            row["holder_id"] = driving.get("holder_id")
+        else:
+            if job.cse_registration_id:
+                row["registration_id"] = job.cse_registration_id
+            chat_url = (job.cse_chat_url or "").strip() or None
+            if not chat_url and job.cse_registration_id:
+                from claude_bundles.cdp_registry import chat_url_for_registration
+
+                chat_url = chat_url_for_registration(job.cse_registration_id)
+            if chat_url:
+                row["chat_url"] = chat_url
     row["purpose"] = "operator-proxy"
     if not row.get("mission"):
         from services.git_integration_worker.cursor_auto.hop_cadence_mission import (

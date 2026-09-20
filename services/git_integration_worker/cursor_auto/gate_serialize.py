@@ -14,9 +14,49 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from services.git_integration_worker.cursor_auto.hop_cadence_home_lane import (
+    watch_thread_for_job,
+)
+from services.git_integration_worker.cursor_auto.queue import AutoJob
 from services.git_integration_worker.cursor_sdk_gate import sdk_dispatch_gate_stats
 
 NESTED_IN_SEAT_REASON = "nested_in_seat_unsupported"
+
+
+def derive_cse_nest_under(job: AutoJob) -> str | None:
+    """Auto-derive ``cse:<holder_id>`` from the lane driving holder when present."""
+    from claude_bundles.holder_strings import format_nest_under_cse
+
+    from services.git_integration_worker.cse_session_holders import (
+        get_driving_holder_for_lane,
+    )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    lane_key = watch_thread_for_job(job)
+    with CursorDispatchLedger.instance()._connect() as conn:
+        row = get_driving_holder_for_lane(conn, lane_key)
+    if row is None:
+        return None
+    holder_id = str(row.get("holder_id") or "").strip()
+    if not holder_id:
+        return None
+    return format_nest_under_cse(holder_id)
+
+
+def cse_parent_admits_nest_park(job: AutoJob) -> bool:
+    """True when a driving|dormant CSE holder exists for this job's watch lane."""
+    from services.git_integration_worker.cse_session_holders import (
+        get_driving_holder_for_lane,
+    )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    lane_key = watch_thread_for_job(job)
+    with CursorDispatchLedger.instance()._connect() as conn:
+        return get_driving_holder_for_lane(conn, lane_key) is not None
 
 
 def should_run_in_seat(*, gate_limit: int | None = None) -> bool:
@@ -102,6 +142,9 @@ def prefer_dispatch_over_park(
 
         snap = CursorDispatchLedger.instance().lease_snapshot()
         if snap.get("holder_dispatch_id"):
+            return gate_plan
+        # CSE occupant is not write-lease holder — still prefer nest when present.
+        if gate_plan.get("reason") == "nest_park_without_holder":
             return gate_plan
         return {
             **gate_plan,

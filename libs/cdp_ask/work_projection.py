@@ -106,11 +106,22 @@ def active_rows(records: Iterable[Any]) -> tuple[list[dict[str, Any]], list[str]
     rows: list[dict[str, Any]] = []
     for record in active:
         projection = _registry_projection(record.registration_id)
+        holder_value = record.holder
+        chat = projection.get("chat_url")
+        if chat:
+            from claude_bundles.holder_strings import (
+                format_cowork_cse_holder,
+                holder_id_from_chat_url,
+            )
+
+            hid = holder_id_from_chat_url(str(chat))
+            if hid:
+                holder_value = format_cowork_cse_holder(hid)
         rows.append(
             {
                 "execution_id": record.execution_id,
                 "registration_id": record.registration_id,
-                "holder": record.holder,
+                "holder": holder_value,
                 "purpose": record.purpose,
                 "status": record.status,
                 "stream_state": record.status,

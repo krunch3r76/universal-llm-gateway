@@ -83,6 +83,36 @@ class BeginDrainRequest(BaseModel):
     deadline_s: float | None = None
 
 
+class CseHolderUpsertRequest(BaseModel):
+    """Body for idempotent CSE holder registration upsert."""
+
+    chat_url: str
+    registration_id: str | None = None
+    execution_id: str | None = None
+    lane_thread_id: str | None = None
+    work_key: str | None = None
+    score_journal_uri: str | None = None
+
+
+@router.post("/cse-holder/upsert", summary="Register or refresh a CSE session holder.")
+async def cse_holder_upsert(req: CseHolderUpsertRequest) -> dict[str, object]:
+    """Idempotent upsert keyed by ``holder_id`` from ``chat_url``."""
+    from services.git_integration_worker.cse_session_holders import upsert_holder
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        row = upsert_holder(
+            conn,
+            chat_url=req.chat_url,
+            registration_id=req.registration_id,
+            execution_id=req.execution_id,
+            lane_thread_id=req.lane_thread_id,
+            work_key=req.work_key,
+            score_journal_uri=req.score_journal_uri,
+        )
+        conn.commit()
+    return {"ok": True, "holder": row}
+
+
 class CancelDrainRequest(BaseModel):
     """Request body for ``POST .../cancel-drain``.
 

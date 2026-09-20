@@ -494,6 +494,13 @@ async def get_active_work(request: Request):
     lane_fields = await asyncio.to_thread(
         active_work_lane_fields, source_repo=cfg.source_repo
     )
+    from services.git_integration_worker.cse_session_holders import (
+        occupancy_projections,
+    )
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        cse_occupancy = occupancy_projections(conn)
+    cse_holder = cse_occupancy[0] if len(cse_occupancy) == 1 else None
     return JSONResponse(
         status_code=200,
         content={
@@ -504,6 +511,8 @@ async def get_active_work(request: Request):
             "write_lease": lease,
             "active_count": active_count,
             "active_ops": controller.active_ops(),
+            "cse_holders": cse_occupancy,
+            "cse_holder": cse_holder,
             "busy": active_count > 0,
             **lane_fields,
         },

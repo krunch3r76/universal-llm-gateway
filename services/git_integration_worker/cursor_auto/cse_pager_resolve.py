@@ -75,7 +75,29 @@ def _empty_address() -> dict[str, str | None]:
     return {"chat_url": None, "registration_id": None, "source": ""}
 
 
+def _from_holder_table(pager_key: str) -> dict[str, str | None]:
+    from services.git_integration_worker.cse_session_holders import (
+        get_driving_holder_for_lane,
+    )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        row = get_driving_holder_for_lane(conn, pager_key)
+    if row is None:
+        return _empty_address()
+    reg = str(row.get("registration_id") or "").strip() or None
+    url = str(row.get("chat_url") or "").strip() or None
+    if not url and not reg:
+        return _empty_address()
+    return {"chat_url": url, "registration_id": reg, "source": "cse_session_holders"}
+
+
 def _from_hop_watch(pager_key: str) -> dict[str, str | None]:
+    holder_first = _from_holder_table(pager_key)
+    if _has_identity(holder_first):
+        return holder_first
     row = load_watches().get(pager_key) or {}
     reg = str(row.get("registration_id") or "").strip()
     if not reg or not _registration_listable(reg):

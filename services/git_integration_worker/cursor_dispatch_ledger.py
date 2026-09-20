@@ -1047,6 +1047,15 @@ class CursorDispatchLedger:
             )
 
             ensure_land_lease_schema(conn)
+            from services.git_integration_worker.cse_session_holders import (
+                boot_reconcile,
+            )
+            from services.git_integration_worker.cse_session_holders import (
+                ensure_schema as ensure_cse_holders_schema,
+            )
+
+            ensure_cse_holders_schema(conn)
+            boot_reconcile(conn)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_queued "
                 "ON cursor_sdk_dispatches(source_repo, worker_instance, status) "
@@ -1399,40 +1408,59 @@ class CursorDispatchLedger:
                             f"nest_under must not equal child dispatch_id "
                             f"{req.dispatch_id!r}"
                         )
-                    holder_row = conn.execute(
-                        "SELECT dispatch_id FROM cursor_sdk_dispatches "
-                        "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
-                        "AND status IN ('admitted','running') AND dispatch_id<>? "
-                        "LIMIT 1",
-                        (writer_key, req.dispatch_id),
-                    ).fetchone()
-                    if holder_row is None or nest_under != holder_row["dispatch_id"]:
-                        raise NestParentNotLive(
-                            f"nest_under {nest_under!r} is not the live "
-                            f"write-lease holder for lease_key {writer_key!r}"
-                        )
-                    park_stack_depth(
-                        conn,
-                        nest_under=nest_under,
-                        child_dispatch_id=req.dispatch_id,
+                    from claude_bundles.holder_strings import parse_nest_under_cse
+
+                    from services.git_integration_worker.cse_session_holders import (
+                        resolve_nest_parent,
                     )
-                    parked = conn.execute(
-                        "UPDATE cursor_sdk_dispatches SET status=?, "
-                        "park_child_dispatch_id=? "
-                        "WHERE dispatch_id=? AND status IN ('admitted','running')",
-                        (
-                            _STATUS_PARKED_WAITING,
-                            req.dispatch_id,
-                            nest_under,
-                        ),
-                    )
-                    if parked.rowcount != 1:
-                        raise NestParentNotLive(
-                            f"nest_under {nest_under!r} park transition failed"
+
+                    cse_parent_id = parse_nest_under_cse(nest_under)
+                    if cse_parent_id is not None:
+                        if resolve_nest_parent(conn, cse_parent_id) is None:
+                            raise NestParentNotLive(
+                                f"nest_under {nest_under!r} CSE parent missing "
+                                f"or not in driving|dormant"
+                            )
+                        insert_status = _STATUS_ADMITTED
+                        queued_at = None
+                    else:
+                        holder_row = conn.execute(
+                            "SELECT dispatch_id FROM cursor_sdk_dispatches "
+                            "WHERE lease_key=? AND COALESCE(read_only,0)=0 "
+                            "AND status IN ('admitted','running') AND dispatch_id<>? "
+                            "LIMIT 1",
+                            (writer_key, req.dispatch_id),
+                        ).fetchone()
+                        if (
+                            holder_row is None
+                            or nest_under != holder_row["dispatch_id"]
+                        ):
+                            raise NestParentNotLive(
+                                f"nest_under {nest_under!r} is not the live "
+                                f"write-lease holder for lease_key {writer_key!r}"
+                            )
+                        park_stack_depth(
+                            conn,
+                            nest_under=nest_under,
+                            child_dispatch_id=req.dispatch_id,
                         )
-                    nested_park_parent = nest_under
-                    insert_status = _STATUS_ADMITTED
-                    queued_at = None
+                        parked = conn.execute(
+                            "UPDATE cursor_sdk_dispatches SET status=?, "
+                            "park_child_dispatch_id=? "
+                            "WHERE dispatch_id=? AND status IN ('admitted','running')",
+                            (
+                                _STATUS_PARKED_WAITING,
+                                req.dispatch_id,
+                                nest_under,
+                            ),
+                        )
+                        if parked.rowcount != 1:
+                            raise NestParentNotLive(
+                                f"nest_under {nest_under!r} park transition failed"
+                            )
+                        nested_park_parent = nest_under
+                        insert_status = _STATUS_ADMITTED
+                        queued_at = None
                 elif (
                     conflict and conflict_holder is not None
                 ) or prior_queued is not None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from claude_bundles.holder_strings import format_nest_under_cse
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.checkout_lane import (
@@ -11,6 +12,7 @@ from services.git_integration_worker.cursor_auto.checkout_lane import (
     may_nest_under,
 )
 from services.git_integration_worker.cursor_auto.gate_serialize import (
+    derive_cse_nest_under,
     prefer_dispatch_over_park,
 )
 from services.git_integration_worker.cursor_auto.handler_terminal import (
@@ -50,6 +52,18 @@ def _holder_context(holder_dispatch_id: str) -> tuple[Lane | None, str | None]:
     return lane, str(row["thread_id"] or "")
 
 
+def _cse_holder_context(holder_id: str) -> tuple[Lane | None, str | None]:
+    """Return lane thread for a CSE nest parent (no SDK dispatch row)."""
+    from services.git_integration_worker.cse_session_holders import get_holder
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        row = get_holder(conn, holder_id)
+    if row is None:
+        return None, None
+    lane_thread = str(row.get("lane_thread_id") or "").strip() or None
+    return "B", lane_thread
+
+
 async def resolve_nest_under(
     job: AutoJob,
     *,
@@ -62,6 +76,43 @@ async def resolve_nest_under(
     """Resolve the park parent for ``nest_park``; a dict means terminal refusal."""
     if gate_plan["action"] != "nest_park":
         return None
+
+    cse_nest = derive_cse_nest_under(job)
+    if cse_nest:
+        holder_id = cse_nest.removeprefix("cse:")
+        holder_lane, holder_thread_id = _cse_holder_context(holder_id)
+        normalized_contract = (contract or "").strip().lower()
+        if normalized_contract in _IMPLEMENT_CLASS_CONTRACTS and not may_nest_under(
+            holder_lane=holder_lane,
+            holder_thread_id=holder_thread_id,
+            job=job,
+        ):
+            replan = prefer_dispatch_over_park(
+                {
+                    **gate_plan,
+                    "action": "dispatch_now",
+                    "reason": "nest_under_refused_foreign_lane_a",
+                },
+                work_bounded=work_bounded,
+            )
+            gate_plan.update(replan)
+            return None
+        if not may_nest_under(
+            holder_lane=holder_lane,
+            holder_thread_id=holder_thread_id,
+            job=job,
+        ):
+            replan = prefer_dispatch_over_park(
+                {
+                    **gate_plan,
+                    "action": "dispatch_now",
+                    "reason": "nest_under_refused",
+                },
+                work_bounded=work_bounded,
+            )
+            gate_plan.update(replan)
+            return None
+        return cse_nest
 
     snap = CursorDispatchLedger.instance().lease_snapshot()
     holder_dispatch_id = snap.get("holder_dispatch_id")
@@ -136,4 +187,9 @@ async def resolve_nest_under(
     return holder_id
 
 
-__all__ = ["resolve_nest_under"]
+def format_auto_derived_cse_nest(holder_id: str) -> str:
+    """Public helper for tests — typed CSE nest wire value."""
+    return format_nest_under_cse(holder_id)
+
+
+__all__ = ["format_auto_derived_cse_nest", "resolve_nest_under"]

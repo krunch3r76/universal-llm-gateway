@@ -8,6 +8,7 @@ mutate a current-holder pointer. Identity is the Cowork session address
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 
 from claude_bundles.cse_url import normalize_cse_url
@@ -73,6 +74,16 @@ def associate_cse(
             if prior_url == url and prior_reg == registration_id:
                 return None
         prior_id = int(prior["id"]) if prior is not None else None
+        with contextlib.suppress(Exception):
+            from services.git_integration_worker.cse_session_holders import (
+                upsert_holder_remote,
+            )
+
+            upsert_holder_remote(
+                chat_url=url,
+                registration_id=registration_id,
+                lane_thread_id=thread_id,
+            )
         cur = conn.execute(
             "INSERT INTO thread_cse_associations "
             "(thread_id, cse_chat_url, cse_registration_id, bound_by, evidence) "
