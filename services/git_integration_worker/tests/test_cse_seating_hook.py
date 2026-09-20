@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from hop_handoff import StandingHandoffFreshness, build_continuity_handoff_body
+
 from services.git_integration_worker.cse_session_holders import (
     ensure_schema,
     get_holder,

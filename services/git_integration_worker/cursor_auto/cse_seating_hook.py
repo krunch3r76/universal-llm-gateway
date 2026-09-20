@@ -27,13 +27,16 @@ def _resolve_successor_identity(
     if not lane or not exec_id:
         return None, None
     try:
+        from claude_bundles.cdp_registry.session_address import (
+            chat_url_for_registration,
+        )
+
         from services.git_integration_worker.cursor_auto.cdp_escalation import (
             read_cdp_lane_snapshot,
         )
         from services.git_integration_worker.cursor_auto.hop_cadence_predecessor import (
             op_row_for_execution_on_lane,
         )
-        from claude_bundles.cdp_registry.session_address import chat_url_for_registration
 
         snap = read_cdp_lane_snapshot()
         if not isinstance(snap, dict):
