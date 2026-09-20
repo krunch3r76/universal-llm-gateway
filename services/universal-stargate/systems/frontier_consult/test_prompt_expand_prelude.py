@@ -150,6 +150,34 @@ def test_apply_expand_window_verb_routes_in_seat(
 
 
 @pytest.mark.offline
+def test_apply_expand_window_verb_transcript_id_routes_in_seat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Production AC: attended via transcript_id, not summon_mode in body."""
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
+        lambda task, options: ExpandRun(
+            ok=True,
+            prompt="---\npipeline: prompt-expand\n---\n\nTASK'",
+            execution_id="exp-window-tid",
+        ),
+    )
+    handle = _handle(message="Expand this in the window for 10479.")
+    out = apply_expand_to_handle(
+        handle,
+        transcript_id="550e8400-e29b-41d4-a716-446655440000",
+    )
+    assert out.consume_branch == ConsumeBranch.IN_SEAT.value
+    fields = consume_admit_fields(out)
+    assert fields["consume_branch"] == "in_seat"
+    assert "pipeline: prompt-expand" in fields["task_prime"]
+    assert fields["activation"]["transcript_id"] == (
+        "550e8400-e29b-41d4-a716-446655440000"
+    )
+    assert fields["activation"]["summoning_thread_id"] == "11690"
+
+
+@pytest.mark.offline
 @pytest.mark.asyncio
 async def test_expand_consume_admit_delivers_in_seat_envelope(
     monkeypatch: pytest.MonkeyPatch,
@@ -199,11 +227,72 @@ async def test_schedule_sdk_expand_dispatches_sdk_background(
     async def _dispatch(handle: PreparedCursorSdkHandle) -> None:
         dispatched.append(handle)
 
-    scheduled = schedule_sdk_expand_and_dispatch(_handle(), _dispatch)
-    assert scheduled is True
+    admit = schedule_sdk_expand_and_dispatch(_handle(), _dispatch)
+    assert admit.scheduled_background is True
+    assert admit.deliver_handle is None
     await asyncio.sleep(0.05)
     assert len(dispatched) == 1
     assert dispatched[0].consume_branch == ConsumeBranch.SDK_BACKGROUND.value
+
+
+@pytest.mark.offline
+def test_schedule_sdk_expand_returns_in_seat_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
+        lambda task, options: ExpandRun(
+            ok=True,
+            prompt="fire_hint: in_seat\n\nTASK'",
+            execution_id="exp-sched-in-seat",
+        ),
+    )
+    admit = schedule_sdk_expand_and_dispatch(
+        _handle(message="plain commission"),
+        pytest.fail,
+    )
+    assert admit.scheduled_background is False
+    assert admit.deliver_handle is not None
+    assert admit.deliver_handle.consume_branch == ConsumeBranch.IN_SEAT.value
+    fields = consume_admit_fields(admit.deliver_handle)
+    assert "fire_hint: in_seat" in fields["task_prime"]
+
+
+@pytest.mark.offline
+def test_apply_expand_packet_path_emits_task_prime_on_admit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.workspaces_root",
+        lambda: tmp_path,
+    )
+    packet = tmp_path / "packets" / "commission.md"
+    packet.parent.mkdir(parents=True)
+    packet.write_text(
+        "Expand in the window for 10479.\n\n# packet body",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
+        lambda task, options: ExpandRun(
+            ok=True,
+            prompt="---\npipeline: prompt-expand\n---\n\nTASK'",
+            execution_id="exp-packet",
+        ),
+    )
+    handle = _handle(
+        packet_path="packets/commission.md",
+        message=None,
+    )
+    out = apply_expand_to_handle(
+        handle,
+        transcript_id="550e8400-e29b-41d4-a716-446655440000",
+    )
+    assert out.packet_path is not None
+    assert out.consume_branch == ConsumeBranch.IN_SEAT.value
+    fields = consume_admit_fields(out)
+    assert "pipeline: prompt-expand" in fields["task_prime"]
 
 
 @pytest.mark.offline

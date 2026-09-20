@@ -102,7 +102,11 @@ def _sdk_admit_envelope(
     return result
 
 
-async def _finish_prepared_dispatch(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
+async def _finish_prepared_dispatch(
+    handle: PreparedCursorSdkHandle,
+    *,
+    transcript_id: str | None = None,
+) -> dict[str, Any]:
     """POST GIW and emit worker outcome. Used by the sync path and expand task."""
     if handle.packet_path is not None:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker(
@@ -132,6 +136,7 @@ async def _finish_prepared_dispatch(handle: PreparedCursorSdkHandle) -> dict[str
             force=handle.force,
             force_reason=handle.force_reason,
             hop_park_release=handle.hop_park_release,
+            caller_transcript_id=transcript_id,
         )
     else:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker_message(
@@ -159,6 +164,7 @@ async def _finish_prepared_dispatch(handle: PreparedCursorSdkHandle) -> dict[str
             source_ref=handle.source_ref,
             force=handle.force,
             force_reason=handle.force_reason,
+            caller_transcript_id=transcript_id,
         )
 
     if not worker_ok:
@@ -220,9 +226,14 @@ async def dispatch_prepared_cursor_sdk(
 
     from .prompt_expand_prelude import consume_admit_fields, expand_consume_admit_path
 
+    async def _dispatch(expanded: PreparedCursorSdkHandle) -> dict[str, Any]:
+        return await _finish_prepared_dispatch(
+            expanded, transcript_id=transcript_id
+        )
+
     admit = await expand_consume_admit_path(
         handle,
-        _finish_prepared_dispatch,
+        _dispatch,
         transcript_id=transcript_id,
     )
     if admit.deliver_handle is not None:
@@ -235,7 +246,7 @@ async def dispatch_prepared_cursor_sdk(
         result = _sdk_admit_envelope(handle)
         result["prompt_expand"] = "pending"
         return result
-    return await _finish_prepared_dispatch(handle)
+    return await _finish_prepared_dispatch(handle, transcript_id=transcript_id)
 
 
 async def dispatch_cursor_sdk_generate(

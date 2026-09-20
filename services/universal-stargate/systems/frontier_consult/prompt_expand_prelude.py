@@ -226,11 +226,9 @@ def route_expand_consume_for_handle(
             handle.execution_id,
             decision.reason,
         )
-    stamped_handle = (
-        replace(handle, message=stamped)
-        if handle.packet_path is None
-        else handle
-    )
+    # Always stamp message so consume_admit_fields emits task_prime even when
+    # the expanded commission stays on packet_path for GIW dispatch.
+    stamped_handle = replace(handle, message=stamped)
     return _attach_consume_decision(stamped_handle, decision)
 
 
@@ -378,18 +376,33 @@ async def expand_consume_admit_path(
 def schedule_sdk_expand_and_dispatch(
     handle: PreparedCursorSdkHandle,
     dispatch: Any,
-) -> bool:
-    """Start expand+consume off the HTTP path. True when background work was queued."""
+    *,
+    transcript_id: str | None = None,
+) -> ExpandConsumeAdmitResult:
+    """Expand synchronously; schedule SDK dispatch or return in-seat handle."""
     if not sdk_should_expand(handle):
-        return False
+        return ExpandConsumeAdmitResult()
 
-    async def _run() -> None:
-        await expand_consume_admit_path(handle, dispatch)
+    expanded = apply_expand_to_handle(handle, transcript_id=transcript_id)
+    if expanded.consume_branch == ConsumeBranch.SDK_BACKGROUND.value:
 
-    task = asyncio.create_task(_run(), name=f"sdk-expand-{handle.execution_id[:8]}")
-    _SDK_EXPAND_TASKS.add(task)
-    task.add_done_callback(_SDK_EXPAND_TASKS.discard)
-    return True
+        async def _run() -> None:
+            try:
+                await dispatch(expanded)
+            except Exception:
+                logger.exception(
+                    "prompt-expand prelude sdk dispatch failed execution_id=%s",
+                    handle.execution_id,
+                )
+
+        task = asyncio.create_task(
+            _run(), name=f"sdk-expand-{handle.execution_id[:8]}"
+        )
+        _SDK_EXPAND_TASKS.add(task)
+        task.add_done_callback(_SDK_EXPAND_TASKS.discard)
+        return ExpandConsumeAdmitResult(scheduled_background=True)
+
+    return ExpandConsumeAdmitResult(deliver_handle=expanded)
 
 
 __all__ = [

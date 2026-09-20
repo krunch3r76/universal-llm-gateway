@@ -231,6 +231,7 @@ async def dispatch_cursor_sdk_worker(
     force: bool = False,
     force_reason: str | None = None,
     hop_park_release: bool = False,
+    caller_transcript_id: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch``; return structured ``(ok, detail)``.
 
@@ -286,6 +287,8 @@ async def dispatch_cursor_sdk_worker(
         payload["force_reason"] = force_reason
     if hop_park_release:
         payload["hop_park_release"] = True
+    if caller_transcript_id:
+        payload["caller_transcript_id"] = caller_transcript_id
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT
@@ -346,6 +349,7 @@ async def dispatch_cursor_sdk_worker_message(
     source_ref: str | None = None,
     force: bool = False,
     force_reason: str | None = None,
+    caller_transcript_id: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/cursor/dispatch`` with ``message`` (prompt= path)."""
     effective_dispatch_id = dispatch_id or f"{request_id}-{uuid.uuid4().hex[:8]}"
@@ -388,6 +392,8 @@ async def dispatch_cursor_sdk_worker_message(
         payload["force"] = True
     if force_reason:
         payload["force_reason"] = force_reason
+    if caller_transcript_id:
+        payload["caller_transcript_id"] = caller_transcript_id
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT

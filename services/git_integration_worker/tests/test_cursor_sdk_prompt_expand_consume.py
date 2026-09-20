@@ -31,6 +31,38 @@ def _req(**overrides: object) -> CursorDispatchRequest:
 
 @pytest.mark.offline
 @pytest.mark.asyncio
+async def test_maybe_expand_giw_prompt_window_transcript_id_in_seat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attended via caller_transcript_id without summon_mode in message body."""
+    monkeypatch.setattr(
+        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
+        lambda task, options: ExpandRun(
+            ok=True,
+            prompt="---\npipeline: prompt-expand\n---\n\nTASK'",
+            execution_id="exp-giw-tid",
+        ),
+    )
+    result = await maybe_expand_giw_prompt(
+        _req(
+            message="Expand in the window for enrolled root wiring.",
+            caller_transcript_id="550e8400-e29b-41d4-a716-446655440000",
+        ),
+        "Expand in the window for enrolled root wiring.",
+        handoff_contract="pure-mechanical",
+        resolved_model="cursor/composer-2.5",
+    )
+    assert result.skip_dispatch is True
+    assert result.decision is not None
+    assert result.decision.branch is ConsumeBranch.IN_SEAT
+    assert result.activation_envelope is not None
+    assert result.activation_envelope.get("X-ULG-Transcript-Id") == (
+        "550e8400-e29b-41d4-a716-446655440000"
+    )
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
 async def test_maybe_expand_giw_prompt_in_seat_short_circuit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
