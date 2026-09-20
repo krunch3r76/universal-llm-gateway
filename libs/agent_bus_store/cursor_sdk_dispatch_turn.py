@@ -10,6 +10,7 @@ import re
 from typing import Any
 
 _PARKED_OR_RESUMED = re.compile(r"\b(PARKED|RESUMED)\b", re.IGNORECASE)
+_CLOSEOUT_SUBJECT = re.compile(r"^cursor-sdk CLOSEOUT\b")
 
 
 def is_cursor_sdk_dispatch_subject(subject: str) -> bool:
@@ -20,7 +21,7 @@ def is_cursor_sdk_dispatch_terminal_subject(subject: str) -> bool:
     """True when a cursor-sdk seat turn should complete poll_hint / link recovery."""
     if not subject:
         return False
-    if subject.startswith("CLOSEOUT"):
+    if _CLOSEOUT_SUBJECT.match(subject):
         return True
     if not is_cursor_sdk_dispatch_subject(subject):
         return False

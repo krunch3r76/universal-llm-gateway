@@ -280,4 +280,4 @@ async def test_worker_dispatch_forwards_bus_lifecycle_and_transcript_id(
     assert captured[0]["caller_transcript_id"] == (
         "550e8400-e29b-41d4-a716-446655440000"
     )
-    assert captured[0]["bus_lifecycle"] == "persistent"
+    assert "bus_lifecycle" not in captured[0]

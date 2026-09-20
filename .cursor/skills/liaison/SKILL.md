@@ -244,7 +244,7 @@ The successor model is **policy, never a constant**. `scripts/liaison-tick.py --
 
 | Gear | Successor | Cadence | When |
 |---|---|---|---|
-| `1-fable-mvp` | `cursor/claude-fable-5-1` + `cost_intent=deliberate_high_cost` | ≤ 5 ticks / 60 min / poll 600 s | **do not select** — Cursor Fable credit window closed (2026-09-12); use gear 2/3 |
+| `1-fable-mvp` | `cursor/grok-4.6` (orientation hop; SDK Fable default retired) | ≤ 5 ticks / 60 min / poll 600 s | **do not select for overnight** — use gear 3 + explicit `successor_model`; Cursor Fable credit window closed (2026-09-12) |
 | `2-opus-hops` | `cursor/claude-opus-5` (no cost intent); CDP checks stay `cdp/opus-5` | ≤ 6 ticks | next iteration; Fable only in the attended window |
 | `3-wake-on-attention` | **`policy.successor_model` only** — the preset carries no model; `--set successor_model=<slug>` is required or the ticker holds with `successor_model_bound=false` (10534 2026-09-12: the old Opus preset minted four unasked Opus liaisons at 12–24M tokens each). Spawned on the wake sources in § Headless successor (live unread · work closeout once · handoff once · `checkpoint_due` once) | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **armed only by explicit `ready`** (`--set ready=true` or `--go-under`; `ready_source=override`). The register never arms it: an IDE-hop chain runs `register=autonomous` with the ticker policy-only, and a register-armed ticker put a second driver on 10479 (2026-09-13). One driver per house: IDE chain ⇒ `ready=false`; ticker ⇒ `--go-under` |
 

@@ -120,3 +120,27 @@ def test_hop_refuses_without_transcript_id(capsys) -> None:
     seal_mock.assert_not_called()
     payload = json.loads(capsys.readouterr().out)
     assert payload["phase"] == "seal_transcript_unknown"
+
+
+def test_bearer_headers_fall_back_to_mcp_yaml(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bus_watch.digest_budget import agent_bus_bearer_headers
+
+    monkeypatch.delenv("AGENT_BUS_TOKEN", raising=False)
+    yaml_path = tmp_path / "mcp.yaml"
+    yaml_path.write_text("AGENT_BUS_TOKEN: hop-secret\n", encoding="utf-8")
+    monkeypatch.setattr("bus_watch.digest_budget._MCP_YAML", yaml_path)
+    assert agent_bus_bearer_headers() == {"Authorization": "Bearer hop-secret"}
+
+
+def test_bearer_headers_env_wins(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from bus_watch.digest_budget import agent_bus_bearer_headers
+
+    monkeypatch.setenv("AGENT_BUS_TOKEN", "from-env")
+    yaml_path = tmp_path / "mcp.yaml"
+    yaml_path.write_text("AGENT_BUS_TOKEN: from-yaml\n", encoding="utf-8")
+    monkeypatch.setattr("bus_watch.digest_budget._MCP_YAML", yaml_path)
+    assert agent_bus_bearer_headers() == {"Authorization": "Bearer from-env"}

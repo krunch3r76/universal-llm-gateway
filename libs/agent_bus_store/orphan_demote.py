@@ -36,7 +36,7 @@ _SUPERSEDED_NOTE = (
 
 
 def is_cursor_sdk_terminal_subject(subject: str) -> bool:
-    """True for explicit CLOSEOUT or cursor-sdk dispatch terminal forms."""
+    """True for cursor-sdk CLOSEOUT or legacy cursor-sdk dispatch terminal forms."""
     return is_cursor_sdk_dispatch_terminal_subject(subject)
 
 

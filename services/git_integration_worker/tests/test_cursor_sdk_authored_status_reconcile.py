@@ -8,6 +8,12 @@ from pathlib import Path
 from implement_admission.closeout_models import observed_process_verification
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
+from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+    amend_completion_overclaim,
+)
+from services.git_integration_worker.cursor_auto.lane_a_status import (
+    extract_status_claim,
+)
 from services.git_integration_worker.cursor_sdk_authored_status_reconcile import (
     reconcile_structured_with_authored,
 )
@@ -17,12 +23,6 @@ from services.git_integration_worker.cursor_sdk_closeout import (
 )
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
-)
-from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
-    amend_completion_overclaim,
-)
-from services.git_integration_worker.cursor_auto.lane_a_status import (
-    extract_status_claim,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,

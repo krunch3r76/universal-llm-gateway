@@ -13,13 +13,14 @@ from typing import Literal
 
 PIPELINE_ID = "prompt-expand"
 # 10479 = original night-hop dogfood; 11667 = navigator-unification house;
-# 11738 = music-lexicon-accord house.
-_DEFAULT_ROOTS = "10479,11667,11738"
+# 11738 = music-lexicon-accord house; 11834 = direct-dispatch (no CDP modem).
+_DEFAULT_ROOTS = "10479,11667,11738,11834"
 _WAKE_PREFIXES = ("WAKE —", "WAKE -", "WAKE ")
 _EXPAND_HEADER = "pipeline: prompt-expand"
 _TICKER_CALLERS = frozenset({"liaison-ticker"})
 # wrap / pure-mechanical have no authoring hop. Sketch is the shape-bind hop —
 # taking the A — so it is not mechanical for this door (enrolled roots only).
+# implement / conductor (Play) skip: g5 author drops holes (7154e190 / 5c59e467).
 _MECHANICAL = frozenset({"wrap", "pure-mechanical"})
 _VALID_CONTRACTS = frozenset(
     {"consult", "investigate", "implement", "confer", "review", "none"}
@@ -32,6 +33,7 @@ SkipReason = Literal[
     "wake_doorbell",
     "root_not_enrolled",
     "mechanical",
+    "implement",
     "empty_prompt",
 ]
 
@@ -46,15 +48,19 @@ class ExpandDecision:
 
 
 def admit_roots() -> frozenset[str]:
-    """Roots that opt into the caller door. Default is 10479, 11667, and 11738."""
+    """Roots that opt into the caller door. Default is 10479, 11667, 11738, and 11834."""
     raw = os.environ.get("PROMPT_EXPAND_ADMIT_ROOTS", _DEFAULT_ROOTS)
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
 
 
 def already_expanded(prompt: str) -> bool:
-    """True when TASK' provenance header is already on the prompt."""
-    head = (prompt or "")[:800]
-    return _EXPAND_HEADER in head
+    """True when TASK' provenance header is already on the prompt.
+
+    GIW ``_resolve_prompt`` prepends a conductor preamble, so the expand
+    YAML is no longer at byte 0. Scan a bounded prefix (not the whole
+    packet) so a quoted example in TASK cannot skip a first expand.
+    """
+    return _EXPAND_HEADER in (prompt or "")[:8192]
 
 
 def is_wake_prompt(prompt: str) -> bool:
@@ -105,6 +111,8 @@ def should_expand(
     kind = str(contract or "none").strip() or "none"
     if kind in _MECHANICAL:
         return ExpandDecision(admit=False, root=root, skip_reason="mechanical")
+    if expand_contract(kind) == "implement":
+        return ExpandDecision(admit=False, root=root, skip_reason="implement")
     return ExpandDecision(admit=True, root=root)
 
 

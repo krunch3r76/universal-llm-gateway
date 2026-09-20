@@ -10,6 +10,10 @@ from typing import Any, override
 
 import httpx
 import yaml
+from systems.pipeline.core.constants import (
+    RAG_NO_RESULTS_SENTINEL,
+    RAG_NO_RETRIEVAL_SENTINEL,
+)
 from systems.pipeline.core.dag import PipelineExecutionError
 from systems.pipeline.core.events.prompt_expand import (
     ExpandAdmitted,
@@ -46,6 +50,13 @@ _VALID_RAG_FAIL = frozenset({"abort", "stamp"})
 
 _EMPTY_RETRIEVAL_SENTINEL = (
     "Retrieval unavailable — pipeline 'rag-context' returned empty content"
+)
+# rag-context empty bodies use the shared sentinels, not the pipeline_call
+# wrapper string. Classify used to treat those 50-char strings as rag_status=ok.
+_EMPTY_RETRIEVE_MARKERS = (
+    _EMPTY_RETRIEVAL_SENTINEL,
+    RAG_NO_RESULTS_SENTINEL,
+    RAG_NO_RETRIEVAL_SENTINEL,
 )
 
 _tables_cache: dict[str, Any] | None = None
@@ -385,7 +396,7 @@ class PromptExpandClassifyRetrieveHandler(BaseHandler):
             else:
                 provenance_mode = "ABORT"
                 proceed = False
-        elif not raw.strip() or _EMPTY_RETRIEVAL_SENTINEL in raw:
+        elif not raw.strip() or any(marker in raw for marker in _EMPTY_RETRIEVE_MARKERS):
             rag_status = "empty"
             if rag_fail == "stamp":
                 provenance_mode = "PRIORS-ONLY"

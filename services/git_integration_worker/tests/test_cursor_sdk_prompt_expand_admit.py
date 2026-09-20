@@ -50,7 +50,7 @@ def test_expand_contract_preserves_operator_implement() -> None:
             req.message or "",
             handoff_contract="pure-mechanical",
         )
-        is True
+        is False
     )
 
 
@@ -113,12 +113,12 @@ def client(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_cursor_auto_enrolled_implement_admit_records_prompt_expand_pending(
+def test_cursor_auto_enrolled_sketch_admit_records_prompt_expand_pending(
     _mock_task: MagicMock,
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC3 — cursor-auto-shaped admit with parent 10479 + implement reaches prelude."""
+    """AC3 — cursor-auto-shaped admit with parent 10479 + sketch reaches prelude."""
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     expand_calls: list[tuple[str, dict[str, str]]] = []
@@ -153,7 +153,7 @@ def test_cursor_auto_enrolled_implement_admit_records_prompt_expand_pending(
         "execution_id": "exec-expand-admit",
         "message": "# Next-Seat Dispatch Packet\n\nWire prompt-expand into GIW.",
         "handoff_contract": "pure-mechanical",
-        "operator_contract": "implement",
+        "operator_contract": "sketch",
         "continuity_root_thread_id": "10479",
         "parent_dispatch_thread_id": "10479",
         "admitted_via": "cursor-auto",

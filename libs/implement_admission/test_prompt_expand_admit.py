@@ -18,15 +18,16 @@ _WAKE = (
 
 
 @pytest.mark.offline
-def test_10479_implement_admits() -> None:
+def test_10479_implement_skipped() -> None:
     decision = should_expand(
         prompt=_TASK,
         contract="implement",
         caller_agent="web-anthropic",
         parent_thread="10479",
     )
-    assert decision.admit is True
+    assert decision.admit is False
     assert decision.root == "10479"
+    assert decision.skip_reason == "implement"
 
 
 @pytest.mark.offline
@@ -91,15 +92,52 @@ def test_11738_enrolled_by_default() -> None:
 
 
 @pytest.mark.offline
+def test_11834_enrolled_by_default() -> None:
+    decision = should_expand(
+        prompt=_TASK,
+        contract="sketch",
+        caller_agent="cursor",
+        dispatch_thread_id="11834",
+    )
+    assert decision.admit is True
+    assert decision.root == "11834"
+
+
+@pytest.mark.offline
 def test_11667_enrolled_by_default() -> None:
     decision = should_expand(
         prompt=_TASK,
-        contract="implement",
+        contract="sketch",
         caller_agent="cursor",
         dispatch_thread_id="11667",
     )
     assert decision.admit is True
     assert decision.root == "11667"
+
+
+@pytest.mark.offline
+def test_enrolled_conductor_skipped() -> None:
+    decision = should_expand(
+        prompt=_TASK,
+        contract="conductor",
+        caller_agent="cursor",
+        dispatch_thread_id="10479",
+    )
+    assert decision.admit is False
+    assert decision.root == "10479"
+    assert decision.skip_reason == "implement"
+
+
+@pytest.mark.offline
+def test_enrolled_none_still_admits() -> None:
+    decision = should_expand(
+        prompt=_TASK,
+        contract="none",
+        caller_agent="cursor",
+        dispatch_thread_id="10479",
+    )
+    assert decision.admit is True
+    assert decision.root == "10479"
 
 
 @pytest.mark.offline

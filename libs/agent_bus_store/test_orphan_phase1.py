@@ -453,6 +453,83 @@ def test_execution_id_mismatch_allows_orphan(bus_db) -> None:
     assert len(_orphan_turns(thread_id)) == 1
 
 
+def test_execution_id_mismatch_orphans_link_without_closing_thread(bus_db) -> None:
+    """AC-2: stale link is reaped; live thread holder stays open."""
+    thread_id, ghost_exec = _admit_orphan_thread(
+        bus_db, slug="mismatch-live", execution_id="exec-ghost"
+    )
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-live",
+        pipeline_id="cursor-sdk-generate",
+        caller_agent="conductor-hop",
+    )
+
+    def _mismatch_for_ghost(**kwargs: object):
+        if kwargs.get("link_execution_id") == ghost_exec:
+            return LivenessVerdict.ALLOW_ORPHAN, "execution_id_mismatch", None
+        return LivenessVerdict.SKIP_LIVE, "worker_live", None
+
+    with patch("agent_bus_store.reconcile.emit_dispatch_orphaned"):
+        with patch(
+            "agent_bus_store.reconcile.evaluate_link_liveness",
+            side_effect=_mismatch_for_ghost,
+        ):
+            assert reconcile_orphaned_dispatches() == 0
+            count = reconcile_orphaned_dispatches()
+
+    assert count == 1
+    detail = get_thread_with_links(thread_id)
+    assert detail is not None
+    assert detail["status"] != "closed"
+    links = {row["execution_id"]: row for row in detail["dispatch_links"]}
+    assert links["exec-ghost"]["terminal_status"] == "failed"
+    assert links["exec-live"]["terminal_status"] is None
+
+
+def test_parent_mirrored_link_cleared_when_terminated_on_both_threads(bus_db) -> None:
+    """AC-4 floor: dispatch-admit parent mirror must be terminable on both threads."""
+    parent_row, *_ = create_thread_with_turn(
+        slug="parent-coord",
+        from_agent="dispatch",
+        to_agent="conductor-hop",
+        subject="conductor coord",
+        body="coord",
+        lifecycle_state="active",
+    )
+    child_row, *_ = create_thread_with_turn(
+        slug="child-nested",
+        from_agent="dispatch",
+        to_agent="cursor-sdk",
+        subject="nested hop",
+        body="pointer",
+        lifecycle_state="pending",
+    )
+    parent_id = parent_row["id"]
+    child_id = child_row["id"]
+    admit_dispatch(
+        thread_id=child_id,
+        execution_id="exec-refused",
+        pipeline_id="cursor-sdk-generate",
+        caller_agent="conductor-hop",
+        parent_thread_id=parent_id,
+    )
+    terminate_dispatch(
+        thread_id=child_id,
+        terminal_status="failed",
+        execution_id="exec-refused",
+    )
+    terminate_dispatch(
+        thread_id=parent_id,
+        terminal_status="failed",
+        execution_id="exec-refused",
+    )
+    parent_links = get_thread_with_links(parent_id)["dispatch_links"]
+    child_links = get_thread_with_links(child_id)["dispatch_links"]
+    assert parent_links[0]["terminal_status"] == "failed"
+    assert child_links[0]["terminal_status"] == "failed"
+
+
 def test_probe_terminal_backfills_without_orphan_turn(bus_db) -> None:
     thread_id, execution_id = _admit_orphan_thread(
         bus_db, slug="orphan-terminal", execution_id="exec-terminal"

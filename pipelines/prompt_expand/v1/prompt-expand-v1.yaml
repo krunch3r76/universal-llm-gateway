@@ -35,9 +35,11 @@ steps:
   - name: retrieve_context
     type: prompt_expand_retrieve_v1
     consumer_model_ref: expand
-    # Live rag-context retrieve_assemble is ~54s (c22b74c3). 25s (G6r2-1)
-    # killed three in-flight children and returned raw="". Wall ≥ 3×attempt + backoff.
-    per_attempt_timeout_seconds: 90
+    # Live rag-context retrieve_assemble is 126–241s (7154e190 child 455db37b
+    # was 126s / 43k chars). 90s abandoned that child; a later retry returned
+    # the 50-char no-results sentinel and classify stamped rag_status=ok.
+    # per_attempt must outlive one assemble; wall ≥ 1×attempt (retry is timeout-only).
+    per_attempt_timeout_seconds: 260
     timeout_seconds: 280
 
   - name: classify_retrieve

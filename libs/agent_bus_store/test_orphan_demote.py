@@ -14,6 +14,28 @@ from agent_bus_store.db import (
 from agent_bus_store.db.connection import connect
 from agent_bus_store.db.turns import get_turns, insert_turn
 from agent_bus_store.reconcile import reconcile_orphaned_dispatches
+from agent_bus_store.sdk_liveness import LivenessVerdict
+from services.git_integration_worker.cursor_sdk_closeout_subject import (
+    build_sdk_closeout_subject,
+)
+from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
+
+
+def _producer_closeout_subject(
+    *,
+    dispatch_id: str = "disp-false",
+    contract: str = "investigate",
+    caller_agent: str = "dispatch",
+) -> str:
+    req = CursorDispatchRequest(
+        thread_id="1",
+        model="cursor/composer-2.5",
+        dispatch_id=dispatch_id,
+        execution_id=f"exec-{dispatch_id}",
+        message="closeout",
+        caller_agent=caller_agent,
+    )
+    return build_sdk_closeout_subject(req, contract=contract)
 
 
 @pytest.fixture()
@@ -45,9 +67,16 @@ def _seed_orphan_thread(
         pipeline_id="cursor-sdk-generate",
         caller_agent="claude-web",
     )
+    def _allow_orphan(**_kwargs: object):
+        return LivenessVerdict.ALLOW_ORPHAN, "probe_status_null", None
+
     with patch("agent_bus_store.reconcile.emit_dispatch_orphaned"):
-        reconcile_orphaned_dispatches()
-        reconcile_orphaned_dispatches()
+        with patch(
+            "agent_bus_store.reconcile.evaluate_link_liveness",
+            side_effect=_allow_orphan,
+        ):
+            reconcile_orphaned_dispatches()
+            reconcile_orphaned_dispatches()
     return thread_id
 
 
@@ -75,7 +104,7 @@ def test_late_closeout_demotes_orphan(bus_db) -> None:
             thread=thread_id,
             from_agent="cursor-sdk",
             to_agent="dispatch",
-            subject="CLOSEOUT — task complete",
+            subject=_producer_closeout_subject(),
             body="done",
         )
 
@@ -151,14 +180,14 @@ def test_second_terminal_idempotent(bus_db) -> None:
             thread=thread_id,
             from_agent="cursor-sdk",
             to_agent="dispatch",
-            subject="CLOSEOUT first",
+            subject=_producer_closeout_subject(dispatch_id="disp-first"),
             body="done",
         )
         second_id, _, _ = insert_turn(
             thread=thread_id,
             from_agent="cursor-sdk",
             to_agent="dispatch",
-            subject="CLOSEOUT second",
+            subject=_producer_closeout_subject(dispatch_id="disp-second"),
             body="also done",
         )
 
@@ -190,6 +219,37 @@ def test_non_cursor_sdk_closeout_prose_does_not_demote(bus_db) -> None:
     orphan = _orphan_turns(thread_id)[0]
     assert orphan["status"] == "open"
     mock_emit.assert_not_called()
+
+
+def test_producer_closeout_subject_demotes_orphan(bus_db) -> None:
+    """Behavioural falsifier: build_sdk_closeout_subject output demotes open orphans."""
+    thread_id = _seed_orphan_thread(bus_db, slug="producer-falsifier")
+    orphan_id = _orphan_turns(thread_id)[0]["id"]
+    subject = _producer_closeout_subject(
+        dispatch_id="893994c82a61-75be8122",
+        contract="conductor",
+        caller_agent="conductor-hop",
+    )
+
+    with patch(
+        "agent_bus_store.orphan_demote.emit_dispatch_orphan_demoted"
+    ) as mock_emit:
+        closeout_id, _, _ = insert_turn(
+            thread=thread_id,
+            from_agent="cursor-sdk",
+            to_agent="dispatch",
+            subject=subject,
+            body="done",
+        )
+
+    demoted = _orphan_turns(thread_id)[0]
+    assert demoted["status"] == "superseded"
+    assert demoted["supersedes_turn"] == closeout_id
+    mock_emit.assert_called_once_with(
+        thread_id=thread_id,
+        orphan_turn_id=orphan_id,
+        closeout_turn_id=closeout_id,
+    )
 
 
 def test_demotion_via_insert_turn_shared_choke(bus_db) -> None:
@@ -227,7 +287,7 @@ def test_execution_id_mismatch_skips_demotion(bus_db) -> None:
             thread=thread_id,
             from_agent="cursor-sdk",
             to_agent="dispatch",
-            subject="CLOSEOUT late",
+            subject=_producer_closeout_subject(dispatch_id="disp-late"),
             body="done",
         )
 

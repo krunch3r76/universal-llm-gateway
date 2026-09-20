@@ -166,6 +166,28 @@ async def test_classify_abort_blank_raw_stops() -> None:
 
 
 @pytest.mark.asyncio
+async def test_classify_official_no_results_sentinel_is_empty() -> None:
+    """rag-context no-results string must not classify as rag_status=ok."""
+    from systems.pipeline.core.constants import RAG_NO_RESULTS_SENTINEL
+
+    handler = PromptExpandClassifyRetrieveHandler()
+    ctx = _Ctx(
+        _base_options(rag_fail="abort"),
+        {
+            "retrieve_context": _Out(
+                raw=RAG_NO_RESULTS_SENTINEL,
+                json={"attempts": 3, "timed_out": False, "upstream_error": False},
+            ),
+            "resolve_profile": _Out(json={"retrieve_scopes": ["llm_prompting"]}),
+        },
+    )
+    out = await handler.execute(_Step(), ctx)
+    assert out.json["rag_status"] == "empty"
+    assert out.json["provenance_mode"] == "ABORT"
+    assert out.json["proceed"] is False
+
+
+@pytest.mark.asyncio
 async def test_classify_abort_empty_stops() -> None:
     handler = PromptExpandClassifyRetrieveHandler()
     ctx = _Ctx(

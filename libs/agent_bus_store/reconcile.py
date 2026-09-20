@@ -266,6 +266,11 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
         execution_id=execution_id,
     )
 
+    # execution_id_mismatch means a *different* dispatch now holds the thread —
+    # orphan the stale link only; closing the thread would kill the live holder.
+    if reason == "execution_id_mismatch":
+        return True
+
     # insert_turn advances admitted→active; reap from the post-post state.
     target_state = "abandoned" if lifecycle == "admitted" else "failed"
     with connect() as conn:

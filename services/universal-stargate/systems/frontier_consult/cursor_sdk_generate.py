@@ -17,6 +17,7 @@ from .cursor_sdk_worker_dispatch import (
     dispatch_cursor_sdk_worker,
     dispatch_cursor_sdk_worker_message,
 )
+from .handoff import rollback_admitted_dispatch_links
 from .handoff_response import (
     build_handoff_result,
     build_sdk_generate_result,
@@ -184,6 +185,12 @@ async def _finish_prepared_dispatch(
             model_knobs_requested=_stamp_model_knobs_requested(
                 handle.resolved_model, handle.aligned_knobs
             ),
+        )
+        await rollback_admitted_dispatch_links(
+            request_id=handle.request_id,
+            worker_thread_id=handle.thread_id,
+            execution_id=handle.execution_id,
+            parent_dispatch_thread_id=handle.parent_dispatch_thread_id,
         )
         _worker_dispatch_error(request_id=handle.request_id, detail=worker_detail)
 

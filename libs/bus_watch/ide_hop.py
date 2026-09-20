@@ -41,6 +41,7 @@ from transport_utils import (
     make_sync_client,
 )
 
+from bus_watch.digest_budget import agent_bus_bearer_headers
 from bus_watch.doorbell_skills import primary_liaison_slug
 from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.ide_budget import AGENT_TRANSCRIPTS, first_line_matches
@@ -222,8 +223,7 @@ def build_ide_hop_message(
 
 
 def _bus_auth_headers() -> dict[str, str]:
-    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
-    return {"Authorization": f"Bearer {token}"} if token else {}
+    return agent_bus_bearer_headers()
 
 
 def seal_hop_window(
@@ -289,6 +289,13 @@ def seal_hop_window(
     deadline = time.time() + max(timeout_s, 1.0)
     while time.time() < deadline:
         wait_budget = min(_WAIT_SLICE_S, max(1.0, deadline - time.time()))
+        headers = _bus_auth_headers()
+        if not headers:
+            return {
+                "ok": False,
+                "phase": "wait_auth_missing",
+                "error": "AGENT_BUS_TOKEN unset (env and ~/.gateway/mcp.yaml)",
+            }
         try:
             with make_sync_client(
                 DEFAULT_AGENT_BUS_URL, timeout=wait_budget + 10.0
@@ -301,7 +308,7 @@ def seal_hop_window(
                         "completion": completion,
                         "from_agent": wait_from,
                     },
-                    headers=_bus_auth_headers(),
+                    headers=headers,
                 )
         except httpx.HTTPError as exc:
             return {"ok": False, "phase": "wait_unreachable", "error": str(exc)}

@@ -27,8 +27,10 @@ _BUDGET_RATIO_THRESHOLD = 0.80
 
 POLICY_DEFAULTS: dict[str, Any] = {
     "gear": "1-fable-mvp",
-    "successor_model": "cursor/claude-fable-5-1",
-    "successor_cost_intent": "deliberate_high_cost",
+    # House successor is orientation (harvest/fold/classify), not judgment.
+    # SDK Fable is blocked; do not inherit the closed credit-window default.
+    "successor_model": "cursor/grok-4.6",
+    "successor_cost_intent": None,
     "max_ticks_per_hop": 5,
     "max_hop_minutes": 60,
     # Wall-clock backstop for pending_spawn release — strictly longer than max_hop.
@@ -82,6 +84,7 @@ __all__ = [
     "GEAR_PRESETS",
     "POLICY_DEFAULTS",
     "_bus",
+    "agent_bus_bearer_headers",
     "build_budget_block",
     "effective_policy",
     "health_probe",
@@ -90,6 +93,20 @@ __all__ = [
 
 def _utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def agent_bus_bearer_headers() -> dict[str, str]:
+    """Bearer for agent-bus HTTP. Env wins; else ``~/.gateway/mcp.yaml``.
+
+    Agent shells are fresh and often have no ``AGENT_BUS_TOKEN``. The hop
+    seal wait used env-only headers and 401'd (``wait_http_401``). Ticker
+    harvest already reads the yaml file via ``_token``.
+    """
+    token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+    if not token and _MCP_YAML.is_file():
+        cfg = yaml.safe_load(_MCP_YAML.read_text(encoding="utf-8")) or {}
+        token = str(cfg.get("AGENT_BUS_TOKEN") or "").strip()
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
 def _token() -> str:

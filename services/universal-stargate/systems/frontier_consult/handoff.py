@@ -700,6 +700,30 @@ async def admit_handoff_dispatch(
         return AdmitHandoffResult(admitted=False, reason="transport")
 
 
+async def rollback_admitted_dispatch_links(
+    *,
+    request_id: str,
+    worker_thread_id: str,
+    execution_id: str,
+    parent_dispatch_thread_id: str | None,
+) -> None:
+    """Terminate worker + parent-mirrored links after GIW pre-admission refusal."""
+    await terminate_handoff_dispatch(
+        request_id=request_id,
+        thread_id=worker_thread_id,
+        execution_id=execution_id,
+        terminal_status="failed",
+    )
+    parent = (parent_dispatch_thread_id or "").strip()
+    if parent and parent != str(worker_thread_id).strip():
+        await terminate_handoff_dispatch(
+            request_id=request_id,
+            thread_id=parent,
+            execution_id=execution_id,
+            terminal_status="failed",
+        )
+
+
 async def terminate_handoff_dispatch(
     *,
     request_id: str,

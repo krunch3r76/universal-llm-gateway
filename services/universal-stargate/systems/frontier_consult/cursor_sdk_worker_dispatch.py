@@ -290,8 +290,9 @@ async def dispatch_cursor_sdk_worker(
         payload["hop_park_release"] = True
     if caller_transcript_id:
         payload["caller_transcript_id"] = caller_transcript_id
-    if bus_lifecycle is not None:
-        payload["bus_lifecycle"] = bus_lifecycle
+    # bus_lifecycle stays on the bus thread (append_bus_lifecycle_tags).
+    # Running GIW extra=forbid rejects the field until that process reloads
+    # models/cursor_api.py (422 extra_forbidden — 11834 play hop 2853894a).
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT
@@ -398,8 +399,6 @@ async def dispatch_cursor_sdk_worker_message(
         payload["force_reason"] = force_reason
     if caller_transcript_id:
         payload["caller_transcript_id"] = caller_transcript_id
-    if bus_lifecycle is not None:
-        payload["bus_lifecycle"] = bus_lifecycle
     try:
         async with make_async_client(
             worker_base_url(), timeout=_WORKER_TIMEOUT
