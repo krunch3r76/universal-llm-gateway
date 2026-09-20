@@ -262,6 +262,7 @@ async def process_job(
     gate_plan = prefer_dispatch_over_park(
         plan_nested_dispatch(work_bounded=work_bounded),
         work_bounded=work_bounded,
+        job=job,
     )
 
     override_rule = admit_model_override_rule_line(model)

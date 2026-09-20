@@ -119,7 +119,7 @@ def plan_nested_dispatch(
 
 
 def prefer_dispatch_over_park(
-    gate_plan: dict[str, Any], *, work_bounded: bool
+    gate_plan: dict[str, Any], *, work_bounded: bool, job: AutoJob | None = None
 ) -> dict[str, Any]:
     """Holderless bounded work dispatches instead of terminal park (5968 #4).
 
@@ -144,7 +144,11 @@ def prefer_dispatch_over_park(
         if snap.get("holder_dispatch_id"):
             return gate_plan
         # CSE occupant is not write-lease holder — still prefer nest when present.
-        if gate_plan.get("reason") == "nest_park_without_holder":
+        if (
+            gate_plan.get("reason") == "nest_park_without_holder"
+            and job is not None
+            and cse_parent_admits_nest_park(job)
+        ):
             return gate_plan
         return {
             **gate_plan,

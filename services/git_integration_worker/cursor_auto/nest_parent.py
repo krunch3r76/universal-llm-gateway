@@ -94,6 +94,7 @@ async def resolve_nest_under(
                     "reason": "nest_under_refused_foreign_lane_a",
                 },
                 work_bounded=work_bounded,
+                job=job,
             )
             gate_plan.update(replan)
             return None
@@ -109,6 +110,7 @@ async def resolve_nest_under(
                     "reason": "nest_under_refused",
                 },
                 work_bounded=work_bounded,
+                job=job,
             )
             gate_plan.update(replan)
             return None
@@ -120,6 +122,7 @@ async def resolve_nest_under(
         replan = prefer_dispatch_over_park(
             {**gate_plan, "action": "in_seat", "reason": "nest_park_without_holder"},
             work_bounded=work_bounded,
+            job=job,
         )
         gate_plan.update(replan)
         if replan["action"] == "dispatch_now":
@@ -156,6 +159,7 @@ async def resolve_nest_under(
                 "reason": "nest_under_refused_foreign_lane_a",
             },
             work_bounded=work_bounded,
+            job=job,
         )
         gate_plan.update(replan)
         return None
@@ -180,6 +184,7 @@ async def resolve_nest_under(
                 "reason": "nest_under_refused",
             },
             work_bounded=work_bounded,
+            job=job,
         )
         gate_plan.update(replan)
         return None
