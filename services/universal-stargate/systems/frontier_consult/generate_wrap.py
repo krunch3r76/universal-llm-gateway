@@ -524,6 +524,7 @@ async def dispatch_cursor_sdk_generate_route(
                     "hop_park_release"
                 )
             ),
+            transcript_id=getattr(body, "transcript_id", None),
         )
         if isinstance(result, dict):
             split_warning = consolidation_split_warning(

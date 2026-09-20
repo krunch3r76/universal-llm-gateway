@@ -18,6 +18,20 @@ class CursorDispatchRequest(BaseModel):
     execution_id: str
     request_id: str | None = None
     caller_agent: str | None = None
+    caller_transcript_id: str | None = Field(
+        default=None,
+        description=(
+            "Live Cursor tab transcript id from team_dispatch generate; "
+            "derives attended consume without summon_mode in the commission body."
+        ),
+    )
+    bus_lifecycle: Literal["persistent", "ephemeral"] | None = Field(
+        default=None,
+        description=(
+            "Agent-bus thread lifecycle for this dispatch; ``persistent`` derives "
+            "durable_session in prompt-expand consume routing (CONDUCTOR_RECOMMEND)."
+        ),
+    )
     packet_path: str | None = None
     message: str | None = None
     handoff_contract: str | None = None

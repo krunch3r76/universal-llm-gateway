@@ -19,6 +19,13 @@ from implement_admission.prompt_expand_admit import (
     expand_options,
     should_expand,
 )
+from prompt_expand_consume.router import (
+    ConsumeBranch,
+    ConsumeDecision,
+    derive_attended,
+    route_consume,
+    stamp_expand_provenance,
+)
 from transport_utils import DEFAULT_STARGATE_URL, make_sync_client
 from universal_logging import get_logger
 
@@ -154,6 +161,105 @@ def _sdk_prompt(handle: PreparedCursorSdkHandle) -> str:
     return handle.message or ""
 
 
+def _consume_context_from_handle(
+    handle: PreparedCursorSdkHandle,
+    *,
+    attended: bool | None = None,
+    durable_session: bool | None = None,
+    transcript_id: str | None = None,
+    original_commission: str | None = None,
+) -> tuple[bool, bool]:
+    """Derive attended/durable_session when caller did not pass explicit flags."""
+    if attended is None:
+        attended = derive_attended(
+            transcript_id=transcript_id,
+            commission_or_packet=original_commission or _sdk_prompt(handle),
+        )
+    if durable_session is None:
+        durable_session = handle.effective_bus_lifecycle == "persistent"
+    return attended, durable_session
+
+
+def _attach_consume_decision(
+    handle: PreparedCursorSdkHandle,
+    decision: ConsumeDecision,
+) -> PreparedCursorSdkHandle:
+    return replace(
+        handle,
+        consume_branch=decision.branch.value,
+        consume_activation=decision.activation_header,
+        consume_reason=decision.reason,
+    )
+
+
+def route_expand_consume_for_handle(
+    handle: PreparedCursorSdkHandle,
+    *,
+    task_prime: str,
+    original_commission: str,
+    expand_execution_id: str | None = None,
+    attended: bool | None = None,
+    durable_session: bool | None = None,
+    summoning_thread_id: str | None = None,
+    transcript_id: str | None = None,
+) -> PreparedCursorSdkHandle:
+    """Stamp TASK′ provenance and attach consume branch to *handle*."""
+    attended_flag, durable_flag = _consume_context_from_handle(
+        handle,
+        attended=attended,
+        durable_session=durable_session,
+        transcript_id=transcript_id,
+        original_commission=original_commission,
+    )
+    stamped = stamp_expand_provenance(task_prime, expand_execution_id)
+    decision = route_consume(
+        task_prime=stamped,
+        original_commission=original_commission,
+        attended=attended_flag,
+        durable_session=durable_flag,
+        summoning_thread_id=summoning_thread_id or handle.thread_id,
+        transcript_id=transcript_id,
+    )
+    if decision.branch is ConsumeBranch.CONDUCTOR_RECOMMEND:
+        logger.info(
+            "prompt-expand consume conductor_recommend execution_id=%s reason=%s",
+            handle.execution_id,
+            decision.reason,
+        )
+    # Always stamp message so consume_admit_fields emits task_prime even when
+    # the expanded commission stays on packet_path for GIW dispatch.
+    stamped_handle = replace(handle, message=stamped)
+    return _attach_consume_decision(stamped_handle, decision)
+
+
+def consume_admit_fields(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
+    """Serialize consume branch + activation envelope for HTTP admit payloads."""
+    fields: dict[str, Any] = {}
+    if handle.consume_branch:
+        fields["consume_branch"] = handle.consume_branch
+    if handle.consume_reason:
+        fields["consume_reason"] = handle.consume_reason
+    task_prime = handle.message
+    if task_prime:
+        fields["task_prime"] = task_prime
+    if handle.consume_branch == ConsumeBranch.CONDUCTOR_RECOMMEND.value:
+        fields["consume_advisory"] = True
+    if handle.consume_activation:
+        fields["activation"] = {
+            "kind": handle.consume_activation.get(
+                "X-ULG-Activation-Kind", "prompt_expand_consume"
+            ),
+            "headers": dict(handle.consume_activation),
+        }
+        thread = handle.consume_activation.get("X-ULG-Summoning-Thread")
+        if thread:
+            fields["activation"]["summoning_thread_id"] = thread
+        transcript = handle.consume_activation.get("X-ULG-Transcript-Id")
+        if transcript:
+            fields["activation"]["transcript_id"] = transcript
+    return fields
+
+
 def sdk_should_expand(handle: PreparedCursorSdkHandle) -> bool:
     """True when a prepared SDK handle is an enrolled work admit."""
     prompt = _sdk_prompt(handle)
@@ -168,7 +274,11 @@ def sdk_should_expand(handle: PreparedCursorSdkHandle) -> bool:
     return decision.admit
 
 
-def apply_expand_to_handle(handle: PreparedCursorSdkHandle) -> PreparedCursorSdkHandle:
+def apply_expand_to_handle(
+    handle: PreparedCursorSdkHandle,
+    *,
+    transcript_id: str | None = None,
+) -> PreparedCursorSdkHandle:
     """Rewrite packet or message in place on a copy. Fail-open returns handle."""
     prompt = _sdk_prompt(handle)
     result = run_prompt_expand(
@@ -186,6 +296,8 @@ def apply_expand_to_handle(handle: PreparedCursorSdkHandle) -> PreparedCursorSdk
             result.error,
         )
         return handle
+    task_prime = stamp_expand_provenance(result.prompt, result.execution_id)
+    expanded = handle
     if handle.packet_path:
         dest = (
             workspaces_root()
@@ -194,7 +306,7 @@ def apply_expand_to_handle(handle: PreparedCursorSdkHandle) -> PreparedCursorSdk
             / f"prompt-expand-{handle.execution_id}.md"
         )
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(result.prompt, encoding="utf-8")
+        dest.write_text(task_prime, encoding="utf-8")
         rel = f"tmp/prompts/prompt-expand-{handle.execution_id}.md"
         logger.info(
             "prompt-expand prelude sdk expand=%s generate=%s packet=%s",
@@ -202,49 +314,75 @@ def apply_expand_to_handle(handle: PreparedCursorSdkHandle) -> PreparedCursorSdk
             handle.execution_id,
             rel,
         )
-        return replace(handle, packet_path=rel)
-    logger.info(
-        "prompt-expand prelude sdk expand=%s generate=%s message",
-        result.execution_id,
-        handle.execution_id,
+        expanded = replace(handle, packet_path=rel)
+    else:
+        logger.info(
+            "prompt-expand prelude sdk expand=%s generate=%s message",
+            result.execution_id,
+            handle.execution_id,
+        )
+        expanded = replace(handle, message=task_prime)
+    return route_expand_consume_for_handle(
+        expanded,
+        task_prime=task_prime,
+        original_commission=prompt,
+        expand_execution_id=result.execution_id,
+        transcript_id=transcript_id,
     )
-    return replace(handle, message=result.prompt)
 
 
-def schedule_sdk_expand_and_dispatch(
+@dataclass(frozen=True, slots=True)
+class ExpandConsumeAdmitResult:
+    """Outcome of expand+consume routing at the Stargate admit boundary."""
+
+    scheduled_background: bool = False
+    deliver_handle: PreparedCursorSdkHandle | None = None
+
+
+async def expand_consume_admit_path(
     handle: PreparedCursorSdkHandle,
     dispatch: Any,
-) -> bool:
-    """Start expand+GIW off the HTTP path. Return True when scheduled."""
+    *,
+    transcript_id: str | None = None,
+) -> ExpandConsumeAdmitResult:
+    """Expand synchronously; schedule SDK dispatch or return a delivery handle."""
     if not sdk_should_expand(handle):
-        return False
+        return ExpandConsumeAdmitResult()
 
-    async def _run() -> None:
-        try:
-            expanded = await asyncio.to_thread(apply_expand_to_handle, handle)
-            await dispatch(expanded)
-        except Exception:
-            logger.exception(
-                "prompt-expand prelude sdk dispatch failed execution_id=%s",
-                handle.execution_id,
-            )
-            await dispatch(handle)
-
-    task = asyncio.create_task(
-        _run(), name=f"sdk-expand-{handle.execution_id[:8]}"
+    expanded = await asyncio.to_thread(
+        apply_expand_to_handle, handle, transcript_id=transcript_id
     )
-    _SDK_EXPAND_TASKS.add(task)
-    task.add_done_callback(_SDK_EXPAND_TASKS.discard)
-    return True
+    if expanded.consume_branch == ConsumeBranch.SDK_BACKGROUND.value:
+
+        async def _run() -> None:
+            try:
+                await dispatch(expanded)
+            except Exception:
+                logger.exception(
+                    "prompt-expand prelude sdk dispatch failed execution_id=%s",
+                    handle.execution_id,
+                )
+
+        task = asyncio.create_task(
+            _run(), name=f"sdk-expand-{handle.execution_id[:8]}"
+        )
+        _SDK_EXPAND_TASKS.add(task)
+        task.add_done_callback(_SDK_EXPAND_TASKS.discard)
+        return ExpandConsumeAdmitResult(scheduled_background=True)
+
+    return ExpandConsumeAdmitResult(deliver_handle=expanded)
 
 
 __all__ = [
+    "ExpandConsumeAdmitResult",
     "ExpandRun",
     "apply_expand_to_handle",
+    "consume_admit_fields",
+    "expand_consume_admit_path",
     "maybe_expand_cdp_prompt",
     "read_packet_text",
     "read_prompt_uri",
+    "route_expand_consume_for_handle",
     "run_prompt_expand",
-    "schedule_sdk_expand_and_dispatch",
     "sdk_should_expand",
 ]

@@ -102,7 +102,11 @@ def _sdk_admit_envelope(
     return result
 
 
-async def _finish_prepared_dispatch(handle: PreparedCursorSdkHandle) -> dict[str, Any]:
+async def _finish_prepared_dispatch(
+    handle: PreparedCursorSdkHandle,
+    *,
+    transcript_id: str | None = None,
+) -> dict[str, Any]:
     """POST GIW and emit worker outcome. Used by the sync path and expand task."""
     if handle.packet_path is not None:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker(
@@ -132,6 +136,8 @@ async def _finish_prepared_dispatch(handle: PreparedCursorSdkHandle) -> dict[str
             force=handle.force,
             force_reason=handle.force_reason,
             hop_park_release=handle.hop_park_release,
+            caller_transcript_id=transcript_id,
+            bus_lifecycle=handle.effective_bus_lifecycle,
         )
     else:
         worker_ok, worker_detail = await dispatch_cursor_sdk_worker_message(
@@ -159,6 +165,8 @@ async def _finish_prepared_dispatch(handle: PreparedCursorSdkHandle) -> dict[str
             source_ref=handle.source_ref,
             force=handle.force,
             force_reason=handle.force_reason,
+            caller_transcript_id=transcript_id,
+            bus_lifecycle=handle.effective_bus_lifecycle,
         )
 
     if not worker_ok:
@@ -203,6 +211,8 @@ async def _finish_prepared_dispatch(handle: PreparedCursorSdkHandle) -> dict[str
 
 async def dispatch_prepared_cursor_sdk(
     handle: PreparedCursorSdkHandle,
+    *,
+    transcript_id: str | None = None,
 ) -> dict[str, Any]:
     """Submit a prepared handle to the worker without reminting identities."""
     if handle.thread_id is None:
@@ -216,13 +226,29 @@ async def dispatch_prepared_cursor_sdk(
             code="CURSOR_PREPARED_HANDLE_INCOMPLETE",
         )
 
-    from .prompt_expand_prelude import schedule_sdk_expand_and_dispatch
+    from .prompt_expand_prelude import consume_admit_fields, expand_consume_admit_path
 
-    if schedule_sdk_expand_and_dispatch(handle, _finish_prepared_dispatch):
+    async def _dispatch(expanded: PreparedCursorSdkHandle) -> dict[str, Any]:
+        return await _finish_prepared_dispatch(
+            expanded, transcript_id=transcript_id
+        )
+
+    admit = await expand_consume_admit_path(
+        handle,
+        _dispatch,
+        transcript_id=transcript_id,
+    )
+    if admit.deliver_handle is not None:
+        delivered = admit.deliver_handle
+        result = _sdk_admit_envelope(delivered)
+        result["prompt_expand"] = "complete"
+        result.update(consume_admit_fields(delivered))
+        return result
+    if admit.scheduled_background:
         result = _sdk_admit_envelope(handle)
         result["prompt_expand"] = "pending"
         return result
-    return await _finish_prepared_dispatch(handle)
+    return await _finish_prepared_dispatch(handle, transcript_id=transcript_id)
 
 
 async def dispatch_cursor_sdk_generate(
@@ -276,6 +302,7 @@ async def dispatch_cursor_sdk_generate(
     force: bool = False,
     force_reason: str | None = None,
     hop_park_release: bool = False,
+    transcript_id: str | None = None,
 ) -> dict[str, Any]:
     """Execute cursor-sdk generate with to_thread default delivery.
 
@@ -284,7 +311,9 @@ async def dispatch_cursor_sdk_generate(
     When ``prepared_handle`` is supplied, identities are not reminted.
     """
     if prepared_handle is not None:
-        return await dispatch_prepared_cursor_sdk(prepared_handle)
+        return await dispatch_prepared_cursor_sdk(
+            prepared_handle, transcript_id=transcript_id
+        )
 
     handle = await prepare_cursor_sdk_generate(
         request_id=request_id,
@@ -328,4 +357,4 @@ async def dispatch_cursor_sdk_generate(
         force_reason=force_reason,
         hop_park_release=hop_park_release,
     )
-    return await dispatch_prepared_cursor_sdk(handle)
+    return await dispatch_prepared_cursor_sdk(handle, transcript_id=transcript_id)
