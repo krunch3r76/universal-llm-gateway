@@ -71,7 +71,7 @@ def _pin_tree(
     thread_id: str,
     dispatch_id: str,
 ) -> None:
-    lock_reason = lock_lane_worktree(
+    lock_outcome = lock_lane_worktree(
         repo, wt, dispatch_id=dispatch_id, thread_id=thread_id
     )
     with ledger_connection() as conn:
@@ -82,7 +82,7 @@ def _pin_tree(
             thread_id=thread_id,
             dispatch_id=dispatch_id,
             worktree_path=wt,
-            lock_reason=lock_reason,
+            lock_reason=lock_outcome.lock_reason,
         )
 
 

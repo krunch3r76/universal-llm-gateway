@@ -60,4 +60,20 @@ def lookup_nest_parent_lease_key(
     return _lookup_sdk_dispatch_parent_lease_key(parent_id)
 
 
-__all__ = ["lookup_nest_parent_lease_key"]
+def lookup_cse_nest_inherit_lane_thread_id(nest_under: str) -> str | None:
+    """Lane thread id whose pin a ``cse:`` nest child may inherit (not steal)."""
+    holder_id = parse_nest_under_cse(nest_under)
+    if holder_id is None:
+        return None
+    with ledger_connection() as conn:
+        parent = resolve_nest_parent(conn, holder_id)
+    if parent is None:
+        return None
+    lane = str(parent.get("lane_thread_id") or "").strip()
+    return lane or None
+
+
+__all__ = [
+    "lookup_cse_nest_inherit_lane_thread_id",
+    "lookup_nest_parent_lease_key",
+]

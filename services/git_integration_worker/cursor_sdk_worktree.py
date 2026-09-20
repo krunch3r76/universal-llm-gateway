@@ -468,6 +468,7 @@ def pin_lane_worktree_on_admit(
     thread_id: str,
     dispatch_id: str,
     worktree_path: Path,
+    inherit_lane_thread_id: str | None = None,
 ) -> str:
     """Registry pin + git lock after admit binding (S1 Leg B)."""
     from services.git_integration_worker.cursor_sdk_events import emit_sdk_lane_b_pinned
@@ -482,22 +483,25 @@ def pin_lane_worktree_on_admit(
         pin_lane_worktree,
     )
 
-    lock_reason = lock_lane_worktree(
+    lock_outcome = lock_lane_worktree(
         source_repo,
         worktree_path,
         dispatch_id=dispatch_id,
         thread_id=thread_id,
+        inherit_lane_thread_id=inherit_lane_thread_id,
     )
-    with ledger_connection() as conn:
-        ensure_worktree_schema(conn)
-        pin_lane_worktree(
-            conn,
-            source_repo=source_repo,
-            thread_id=thread_id,
-            dispatch_id=dispatch_id,
-            worktree_path=worktree_path,
-            lock_reason=lock_reason,
-        )
+    lock_reason = lock_outcome.lock_reason
+    if not lock_outcome.inherited:
+        with ledger_connection() as conn:
+            ensure_worktree_schema(conn)
+            pin_lane_worktree(
+                conn,
+                source_repo=source_repo,
+                thread_id=thread_id,
+                dispatch_id=dispatch_id,
+                worktree_path=worktree_path,
+                lock_reason=lock_reason,
+            )
     emit_sdk_lane_b_pinned(
         dispatch_id=dispatch_id,
         thread_id=thread_id,

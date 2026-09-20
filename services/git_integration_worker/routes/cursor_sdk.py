@@ -3211,9 +3211,18 @@ async def admit_cursor_dispatch(
             "nested",
             "resumed",
         ):
+            from services.git_integration_worker.cse_nest_parent_lease import (
+                lookup_cse_nest_inherit_lane_thread_id,
+            )
             from services.git_integration_worker.cursor_sdk_worktree import (
                 pin_lane_worktree_on_admit,
             )
+
+            inherit_lane_thread_id: str | None = None
+            if req.nest_under:
+                inherit_lane_thread_id = lookup_cse_nest_inherit_lane_thread_id(
+                    req.nest_under
+                )
 
             try:
                 await asyncio.to_thread(
@@ -3222,6 +3231,7 @@ async def admit_cursor_dispatch(
                     thread_id=req.thread_id,
                     dispatch_id=req.dispatch_id,
                     worktree_path=binding.workspace,
+                    inherit_lane_thread_id=inherit_lane_thread_id,
                 )
             except Exception as exc:
                 await _rollback_lane_b_mint_if_needed(

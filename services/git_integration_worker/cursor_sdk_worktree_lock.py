@@ -34,6 +34,14 @@ class LockedWorktree:
     parsed: ParsedLockReason | None
 
 
+@dataclass(frozen=True, slots=True)
+class LockLaneResult:
+    """Outcome of ``lock_lane_worktree`` — ``inherited`` skips registry supersede."""
+
+    lock_reason: str
+    inherited: bool = False
+
+
 def _format_lock_reason(*, dispatch_id: str, thread_id: str) -> str:
     pinned_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return f"ulg:dispatch={dispatch_id};thread={thread_id};pinned_at={pinned_at}"
@@ -143,8 +151,14 @@ def lock_lane_worktree(
     *,
     dispatch_id: str,
     thread_id: str,
-) -> str:
-    """Lock a lane worktree with the ULG reason grammar (idempotent per thread)."""
+    inherit_lane_thread_id: str | None = None,
+) -> LockLaneResult:
+    """Lock a lane worktree with the ULG reason grammar (idempotent per thread).
+
+    When ``inherit_lane_thread_id`` is set and the worktree is already locked for
+    that lane thread, return the existing reason without re-locking onto
+    ``thread_id`` (CSE nest on the holder's Lane-B tree).
+    """
     repo = source_repo.resolve()
     wt = worktree_path.resolve()
     reason = _current_lock_reason(repo, wt)
@@ -152,6 +166,12 @@ def lock_lane_worktree(
         parsed = parse_lock_reason(reason)
         if parsed is None:
             raise ForeignLockError(f"foreign lock on {wt}: {reason!r}")
+        if (
+            inherit_lane_thread_id is not None
+            and parsed.thread_id == inherit_lane_thread_id
+            and thread_id != inherit_lane_thread_id
+        ):
+            return LockLaneResult(lock_reason=reason, inherited=True)
         if parsed.thread_id == thread_id:
             unlock_lane_worktree(repo, wt, thread_id=thread_id)
         else:
@@ -179,11 +199,12 @@ def lock_lane_worktree(
         raise RuntimeError(
             proc.stderr.strip() or f"git worktree lock failed for {wt}"
         )
-    return lock_reason
+    return LockLaneResult(lock_reason=lock_reason, inherited=False)
 
 
 __all__ = [
     "ForeignLockError",
+    "LockLaneResult",
     "LockedWorktree",
     "ParsedLockReason",
     "list_locked_worktrees",

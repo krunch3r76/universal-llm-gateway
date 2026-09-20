@@ -104,11 +104,53 @@ def test_lock_idempotent_same_thread(git_repo: Path, tmp_path: Path) -> None:
     second = lock_lane_worktree(
         git_repo, wt, dispatch_id="d2", thread_id="t1"
     )
-    assert first != second
+    assert first.lock_reason != second.lock_reason
     locked = list_locked_worktrees(git_repo)
     assert len(locked) == 1
     assert locked[0].parsed is not None
     assert locked[0].parsed.dispatch_id == "d2"
+
+
+def test_lock_inherits_cse_holder_lane_thread(git_repo: Path, tmp_path: Path) -> None:
+    """CSE nest child must not steal pin from holder lane thread."""
+    wt = tmp_path / "lane"
+    _add_worktree(git_repo, wt)
+    parent = lock_lane_worktree(
+        git_repo,
+        wt,
+        dispatch_id="parent-disp",
+        thread_id="11667",
+    )
+    child = lock_lane_worktree(
+        git_repo,
+        wt,
+        dispatch_id="child-disp",
+        thread_id="11828",
+        inherit_lane_thread_id="11667",
+    )
+    assert child.inherited is True
+    assert child.lock_reason == parent.lock_reason
+    locked = list_locked_worktrees(git_repo)
+    assert len(locked) == 1
+    assert locked[0].parsed is not None
+    assert locked[0].parsed.thread_id == "11667"
+    assert locked[0].parsed.dispatch_id == "parent-disp"
+
+
+def test_lock_inherit_does_not_apply_to_unrelated_foreign_thread(
+    git_repo: Path, tmp_path: Path
+) -> None:
+    wt = tmp_path / "lane"
+    _add_worktree(git_repo, wt)
+    lock_lane_worktree(git_repo, wt, dispatch_id="d1", thread_id="9999")
+    with pytest.raises(ForeignLockError):
+        lock_lane_worktree(
+            git_repo,
+            wt,
+            dispatch_id="d2",
+            thread_id="11828",
+            inherit_lane_thread_id="11667",
+        )
 
 
 def test_foreign_lock_raises(git_repo: Path, tmp_path: Path) -> None:

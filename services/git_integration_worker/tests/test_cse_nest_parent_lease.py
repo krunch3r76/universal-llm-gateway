@@ -15,7 +15,13 @@ from services.git_integration_worker.cse_session_holders import (
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_worktree import (
     WorktreeMintError,
+    pin_lane_worktree_on_admit,
     resolve_admit_binding,
+)
+from services.git_integration_worker.cursor_sdk_worktree_lock import (
+    ForeignLockError,
+    list_locked_worktrees,
+    lock_lane_worktree,
 )
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -166,6 +172,119 @@ def test_cse_nest_unknown_parent_raises_mint_error(
             worktree_root=tmp_path / "worktrees",
             dispatch_workspace_default=source_repo.parent,
             lane="A",
+        )
+
+
+def test_cse_nest_pin_inherits_holder_lane_lock(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Lock held by holder lane thread + cse nest child thread does not 503 pin."""
+    ledger = CursorDispatchLedger.instance()
+    lane_thread_id = "11667"
+    child_thread_id = "11828"
+    nest_under = _seed_driving_holder(ledger, lane_thread_id=lane_thread_id)
+    parent_req = CursorDispatchRequest(
+        thread_id=lane_thread_id,
+        model="cursor/composer-2.5",
+        dispatch_id="lane-parent-pin",
+        execution_id="exec-lane-parent-pin",
+        message="lane b parent",
+        lane="B",
+    )
+    parent_binding = resolve_admit_binding(
+        req=parent_req,
+        source_repo=source_repo,
+        hub=source_repo,
+        worktree_root=tmp_path / "worktrees",
+        dispatch_workspace_default=source_repo.parent,
+        lane="B",
+    )
+    parent_lock = lock_lane_worktree(
+        source_repo,
+        parent_binding.workspace,
+        dispatch_id=parent_req.dispatch_id,
+        thread_id=lane_thread_id,
+    )
+    child_binding = resolve_admit_binding(
+        req=CursorDispatchRequest(
+            thread_id=child_thread_id,
+            model="cursor/composer-2.5",
+            dispatch_id="child-cse-pin",
+            execution_id="exec-child-cse-pin",
+            message="nested under cse with lane tree",
+            nest_under=nest_under,
+        ),
+        source_repo=source_repo,
+        hub=source_repo,
+        worktree_root=tmp_path / "worktrees",
+        dispatch_workspace_default=source_repo.parent,
+        lane="B",
+    )
+    assert child_binding.workspace == parent_binding.workspace
+    pin_lane_worktree_on_admit(
+        source_repo=source_repo,
+        thread_id=child_thread_id,
+        dispatch_id="child-cse-pin",
+        worktree_path=child_binding.workspace,
+        inherit_lane_thread_id=lane_thread_id,
+    )
+    locked = list_locked_worktrees(source_repo)
+    assert len(locked) == 1
+    assert locked[0].parsed is not None
+    assert locked[0].parsed.thread_id == lane_thread_id
+    assert locked[0].reason == parent_lock.lock_reason
+
+
+def test_cse_nest_pin_still_refuses_unrelated_foreign_lock(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    ledger = CursorDispatchLedger.instance()
+    lane_thread_id = "11667"
+    nest_under = _seed_driving_holder(ledger, lane_thread_id=lane_thread_id)
+    parent_req = CursorDispatchRequest(
+        thread_id=lane_thread_id,
+        model="cursor/composer-2.5",
+        dispatch_id="lane-parent-foreign",
+        execution_id="exec-lane-parent-foreign",
+        message="lane b parent",
+        lane="B",
+    )
+    parent_binding = resolve_admit_binding(
+        req=parent_req,
+        source_repo=source_repo,
+        hub=source_repo,
+        worktree_root=tmp_path / "worktrees",
+        dispatch_workspace_default=source_repo.parent,
+        lane="B",
+    )
+    lock_lane_worktree(
+        source_repo,
+        parent_binding.workspace,
+        dispatch_id="foreign-disp",
+        thread_id="99999",
+    )
+    child_binding = resolve_admit_binding(
+        req=CursorDispatchRequest(
+            thread_id="11828",
+            model="cursor/composer-2.5",
+            dispatch_id="child-cse-foreign",
+            execution_id="exec-child-cse-foreign",
+            message="nested under cse",
+            nest_under=nest_under,
+        ),
+        source_repo=source_repo,
+        hub=source_repo,
+        worktree_root=tmp_path / "worktrees",
+        dispatch_workspace_default=source_repo.parent,
+        lane="B",
+    )
+    with pytest.raises(ForeignLockError):
+        pin_lane_worktree_on_admit(
+            source_repo=source_repo,
+            thread_id="11828",
+            dispatch_id="child-cse-foreign",
+            worktree_path=child_binding.workspace,
+            inherit_lane_thread_id=lane_thread_id,
         )
 
 
