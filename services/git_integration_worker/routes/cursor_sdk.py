@@ -3114,7 +3114,10 @@ async def admit_cursor_dispatch(
     parent_isolated: bool | None = None
     inherit_parent = req.nest_under or req.resume_of
     if inherit_parent:
-        parent_key = lookup_parent_lease_key(inherit_parent)
+        parent_key = lookup_parent_lease_key(
+            inherit_parent,
+            source_repo=resolved_source_repo,
+        )
         if parent_key is not None:
             parent_isolated = lease_is_isolated_worktree(
                 lease_key=parent_key,

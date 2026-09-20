@@ -38,6 +38,9 @@ from services.git_integration_worker.cursor_sdk_worktree_registry import (
     repo_worktree_subroot,
     touch_lane_worktree_dispatch,
 )
+from services.git_integration_worker.cse_nest_parent_lease import (
+    lookup_nest_parent_lease_key as lookup_parent_lease_key,
+)
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
 _MINT_LOCK_POLL_S = 0.02
@@ -321,17 +324,6 @@ def accept_dispatch_worktree(
     return resolved
 
 
-def lookup_parent_lease_key(parent_id: str) -> str | None:
-    with ledger_connection() as conn:
-        row = conn.execute(
-            "SELECT lease_key, source_repo FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-            (parent_id,),
-        ).fetchone()
-    if row is None:
-        return None
-    return row["lease_key"] or row["source_repo"]
-
-
 def resolve_admit_binding(
     *,
     req: CursorDispatchRequest,
@@ -343,7 +335,7 @@ def resolve_admit_binding(
 ) -> AdmitBindingResult:
     """Return workspace, lease key, and binding kind for ledger admit."""
     if req.resume_of:
-        parent_key = lookup_parent_lease_key(req.resume_of)
+        parent_key = lookup_parent_lease_key(req.resume_of, source_repo=source_repo)
         if parent_key is None:
             raise WorktreeMintError(f"resume parent not found: {req.resume_of!r}")
         # The SDK agent store is HOME- and cwd-keyed (store-A): the child must
@@ -370,7 +362,7 @@ def resolve_admit_binding(
         )
 
     if req.nest_under:
-        parent_key = lookup_parent_lease_key(req.nest_under)
+        parent_key = lookup_parent_lease_key(req.nest_under, source_repo=source_repo)
         if parent_key is None:
             raise WorktreeMintError(f"nest parent not found: {req.nest_under!r}")
         workspace = Path(parent_key).resolve()
