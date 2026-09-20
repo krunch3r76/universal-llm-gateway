@@ -10,6 +10,31 @@ from ._shared import AssertionConfidence
 from .assertions import ActionHint, DerivationType
 
 
+def fulltext_search_action_hints(*, query: str) -> list[ActionHint]:
+    """Hints when hybrid search degraded to FTS-only (vector branch returned nothing).
+
+    total=0 under search_mode=fulltext does not establish absence — vector recall
+    was not exercised. Name alternate recall surfaces the seat can invoke next.
+    """
+    preview = query.strip()[:80] or "(empty query)"
+    return [
+        ActionHint(
+            category="search_recall_degraded",
+            message=(
+                f"search_mode=fulltext: vector recall was unavailable for "
+                f'"{preview}"; zero hits do not establish absence.'
+            ),
+            action=(
+                "Before inferring absence, try another recall surface: "
+                'cortex(op="entity_get", entity_id=...) when the entity is known, '
+                'cortex(op="list", entity_id=...) or GET /assertions with '
+                "entity_type filter, recall_matter/recall_continuity for hub "
+                'orientation, or rag(query=...) for document recall.'
+            ),
+        )
+    ]
+
+
 class AssertionSearchSummaryItem(BaseModel):
     """Compact search hit — projection-aware fetch for agent retrieval."""
 

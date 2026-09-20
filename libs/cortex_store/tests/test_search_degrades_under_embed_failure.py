@@ -103,6 +103,9 @@ def test_search_degrades_to_fulltext_on_embed_failure(
     data = response.json()
     assert data["search_mode"] == "fulltext"
     assert data["total"] >= 1
+    assert data["action_hints"] is not None
+    assert len(data["action_hints"]) == 1
+    assert data["action_hints"][0]["category"] == "search_recall_degraded"
 
     degraded = [item for item in emitted if item[0] == "cortex.search.vector.degraded"]
     assert len(degraded) == 1
@@ -110,3 +113,55 @@ def test_search_degrades_to_fulltext_on_embed_failure(
     assert payload["reason"] in {"vector_embed_timeout", "vector_error"}
     assert payload["duration_s"] <= 3.0
     assert elapsed < 5.0
+
+
+def test_search_fulltext_empty_query_includes_action_hint(
+    client: TestClient,
+) -> None:
+    response = client.get("/assertions/search", params={"q": "   "})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["search_mode"] == "fulltext"
+    assert data["total"] == 0
+    assert data["action_hints"] is not None
+    assert data["action_hints"][0]["category"] == "search_recall_degraded"
+
+
+def test_search_hybrid_result_omits_action_hints(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    keyword = f"hybrid{uuid4().hex[:6]}"
+    _seed_searchable_assertion(client, keyword)
+    assertion_id = client.get("/assertions/search", params={"q": keyword}).json()["items"][
+        0
+    ]["id"]
+
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._search.cortex_embeddings.is_configured",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._search.vector_store.is_initialized",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._search.cortex_embeddings.embed_query",
+        lambda _text: [0.1] * 8,
+    )
+    monkeypatch.setattr(
+        "cortex_store.routes.assertions._search.vector_store.search_similar",
+        lambda _embedding, n_results=20: [
+            {
+                "assertion_id": assertion_id,
+                "cosine_similarity": 0.92,
+                "entity_id": None,
+            }
+        ][:n_results],
+    )
+
+    response = client.get("/assertions/search", params={"q": keyword})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["search_mode"] == "hybrid"
+    assert data["action_hints"] is None

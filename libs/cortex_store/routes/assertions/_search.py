@@ -20,10 +20,12 @@ from ...compaction import filter_compaction_pointers
 from ...db import cortex_conn, decode_row, query
 from ...event_publisher import cortex_search_failed, cortex_search_vector_degraded
 from ...models import (
+    ActionHint,
     AssertionSearchItem,
     AssertionSearchResult,
     AssertionSearchSummaryItem,
 )
+from ...models.search import fulltext_search_action_hints
 from ._shared import (
     _JSON_FIELDS,
     _SEARCH_COLS_WITH_ENTITY,
@@ -246,6 +248,16 @@ def _summary_items(fused: list[dict]) -> list[AssertionSearchSummaryItem]:
     return items
 
 
+def _action_hints_for_search_mode(
+    search_mode: str,
+    *,
+    query: str,
+) -> list[ActionHint] | None:
+    if search_mode != "fulltext":
+        return None
+    return fulltext_search_action_hints(query=query)
+
+
 def _full_items(fused: list[dict]) -> list[AssertionSearchItem]:
     items: list[AssertionSearchItem] = []
     for item in fused:
@@ -330,6 +342,7 @@ def _search_assertions_impl(
             items=[],
             total=0,
             search_mode="fulltext",
+            action_hints=_action_hints_for_search_mode("fulltext", query=q),
         )
 
     fetch_multiplier = 4 if not include_compaction_pointers else 2
@@ -372,6 +385,7 @@ def _search_assertions_impl(
             items=summary,
             total=len(summary),
             search_mode=search_mode,
+            action_hints=_action_hints_for_search_mode(search_mode, query=q),
         )
 
     full = _full_items(fused)
@@ -382,6 +396,7 @@ def _search_assertions_impl(
         items=full,
         total=len(full),
         search_mode=search_mode,
+        action_hints=_action_hints_for_search_mode(search_mode, query=q),
     )
 
 
