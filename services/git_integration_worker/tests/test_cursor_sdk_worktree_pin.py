@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    ledger_connection,
+)
 from services.git_integration_worker.cursor_sdk_worktree_lock import (
     ForeignLockError,
     list_locked_worktrees,
@@ -18,9 +21,6 @@ from services.git_integration_worker.cursor_sdk_worktree_lock import (
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     ensure_worktree_schema,
     pin_lane_worktree,
-)
-from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
-    ledger_connection,
 )
 
 
