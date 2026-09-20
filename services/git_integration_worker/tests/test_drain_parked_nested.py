@@ -74,7 +74,8 @@ def test_matching_open_park_waits() -> None:
     )
 
 
-def test_other_intent_does_not_wait() -> None:
+def test_other_intent_still_waits() -> None:
+    """recycle_giw can replace the drain intent without restamping the park row."""
     assert (
         waiting_park_resume_for_intent(
             job_id="j",
@@ -82,7 +83,7 @@ def test_other_intent_does_not_wait() -> None:
             relay_state={"dispatch_id": "auto-x"},
             park_row=_park(),
         )
-        is False
+        is True
     )
 
 

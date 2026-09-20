@@ -1,10 +1,14 @@
 """Drain occupancy carve-out for Auto jobs waiting on park_for_restart resume.
 
 ``claimed_occupancy_ops`` must keep counting a live nested SDK (9470: SIGTERM
-beat CLOSEOUT). A nested SDK already ``cancelled`` + ``park_for_restart`` for
-the *current* drain intent is the opposite: the job is waiting for
-``resume_of``, which only admits after GIW restart. Counting it prevents that
-restart (specimen 2026-09-20 intent 1f0a855c / AutoJob 765c56f3).
+beat CLOSEOUT). A nested SDK already ``cancelled`` + ``park_for_restart`` is
+the opposite: the job is waiting for ``resume_of``, which only admits after
+GIW restart. Counting it prevents that restart (specimen 2026-09-20
+AutoJob 765c56f3 / nested ``auto-a479e8e67316``).
+
+Do not require ``park_intent_id`` to equal the live drain intent.
+``recycle_giw`` can replace the intent (1f0a855c → e3dc936c, ``park_live``
+false) without restamping the park row; resume_of is still startup-only.
 
 Do not treat ledger ``cancelled`` as nested-poll terminal — that drops the
 Auto job before the resume child exists.
@@ -29,7 +33,11 @@ def waiting_park_resume_for_intent(
     relay_state: dict[str, Any] | None = None,
     park_row: ParkRow | None = None,
 ) -> bool:
-    """True when this claimed Auto job's nested SDK is parked for *intent_id*."""
+    """True when this claimed Auto job's nested SDK is parked for restart.
+
+    *intent_id* is the live drain generation (must be set). The park row may
+    name an earlier intent — recycle can swap the drain without restamping.
+    """
     if not intent_id:
         return False
     if relay_state is None:
@@ -42,8 +50,6 @@ def waiting_park_resume_for_intent(
     if park_row is None:
         park_row = load_park_row(dispatch_id=dispatch_id)
     if park_row is None or park_row.park_kind != PARK_KIND_RESTART:
-        return False
-    if park_row.park_intent_id != intent_id:
         return False
     proj = park_projection(park_row)
     return proj is not None and proj.get("state") == "parked"
