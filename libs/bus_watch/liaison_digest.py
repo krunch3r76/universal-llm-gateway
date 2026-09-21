@@ -51,6 +51,7 @@ from bus_watch.spawn_pending import (
     digest_root_surface,
     observe_terminal_lane_closeouts,
 )
+from bus_watch.spawn_wake.row_class import ready_row_class_attention
 
 _STARGATE_HEALTH = os.environ.get(
     "LIAISON_STARGATE_HEALTH", "http://localhost:9999/health"
@@ -288,7 +289,18 @@ def build_digest(
         "register": register,
         "lanes": lanes,
         # fmt: off
-        "attention": attention + frictions["attention"],
+        "attention": attention
+        + frictions["attention"]
+        + ready_row_class_attention(
+            {
+                "root": {
+                    "recent_turns": recent_turns,
+                    "unread_turns": unread_turns,
+                },
+                "frictions": frictions["rows"],
+            },
+            state,
+        ),
         "attention_nag_excluded": {
             "count": sum(1 for lane in lanes if lane.get("nag")),
             "source": "liaison_digest._NAG_RE",

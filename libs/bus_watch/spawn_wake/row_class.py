@@ -18,6 +18,7 @@ from bus_watch.spawn_wake.play_classify import LEFTOVER_SIT, extract_todo_slug
 ROW_CLASS_LOW = "low"
 ROW_CLASS_TRIO = "trio"
 ROW_CLASS_HOLD = "row_class_hold"
+ROW_CLASS_FIRED = "row_class_fired"
 _KEEP = 200
 
 _ROW_CLASS_RE = re.compile(r"^ROW_CLASS:\s*(low|trio)\s*$", re.I | re.M)
@@ -151,7 +152,10 @@ def todo_slug_for_trio(
 def promote_friction_attention(
     digest: dict[str, Any], friction: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """Attention item shape for ``record_spawn_service`` friction latch."""
+    """Wake item for bind→STOP→fire. ``actionable_attention`` treats kind=friction
+    with no ``turns`` as live (fail-closed wake). ``digest`` is unused; kept so
+    call sites can pass the harvest snapshot they already hold."""
+    del digest
     return [
         {
             "kind": "friction",
@@ -163,15 +167,63 @@ def promote_friction_attention(
     ]
 
 
+def row_class_fired(state: dict[str, Any], friction_id: str) -> bool:
+    """True once LOW/TRIO has been ticker-fired for this friction."""
+    return friction_id in (state.get("row_class_fired") or {})
+
+
+def mark_row_class_fired(
+    state: dict[str, Any], friction_id: str, *, at: str | None = None
+) -> None:
+    """Latch path-fired so a still-open row cannot remint LOW/TRIO."""
+    if not friction_id:
+        return
+    store = dict(state.get("row_class_fired") or {})
+    store[friction_id] = at or _utcnow()
+    state["row_class_fired"] = dict(list(store.items())[-_KEEP:])
+
+
+def ready_to_fire_row_class(state: dict[str, Any], friction_id: str) -> bool:
+    """Bind spawned, class latched, path not yet fired."""
+    return (
+        row_bind_spawned(state, friction_id)
+        and latched_row_class(state, friction_id) is not None
+        and not row_class_fired(state, friction_id)
+    )
+
+
+def ready_row_class_attention(
+    digest: dict[str, Any], state: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Promote latched-but-unfired rows into digest attention (B2 wake edge)."""
+    absorb_row_classes_from_digest(digest, state)
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for row in digest.get("frictions") or []:
+        if not isinstance(row, dict):
+            continue
+        fid = str(row.get("id") or "")
+        if not fid or fid in seen or not ready_to_fire_row_class(state, fid):
+            continue
+        out.extend(promote_friction_attention(digest, row))
+        seen.add(fid)
+    return out
+
+
 __all__ = [
+    "ROW_CLASS_FIRED",
     "ROW_CLASS_HOLD",
     "ROW_CLASS_LOW",
     "ROW_CLASS_TRIO",
     "absorb_row_classes_from_digest",
     "latched_row_class",
+    "mark_row_class_fired",
     "parse_row_class",
     "promote_friction_attention",
+    "ready_row_class_attention",
+    "ready_to_fire_row_class",
     "row_bind_spawned",
+    "row_class_fired",
     "row_class_hold",
     "sit_forcing_friction",
     "todo_slug_for_trio",

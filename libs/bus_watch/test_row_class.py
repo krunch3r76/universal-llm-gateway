@@ -7,7 +7,12 @@ from bus_watch.spawn_wake.row_class import (
     ROW_CLASS_TRIO,
     absorb_row_classes_from_digest,
     latched_row_class,
+    mark_row_class_fired,
     parse_row_class,
+    promote_friction_attention,
+    ready_row_class_attention,
+    ready_to_fire_row_class,
+    row_class_fired,
     row_class_hold,
     undispositioned_forcing_friction,
 )
@@ -98,3 +103,21 @@ def test_latched_trio_class() -> None:
     latched = latched_row_class(state, "a:35997")
     assert latched is not None
     assert latched["class"] == ROW_CLASS_TRIO
+
+
+def test_ready_attention_wires_promote_when_latched_unfired() -> None:
+    friction = _forcing_friction()
+    state = {
+        "friction_rows_seen": {"a:35997": "2026-09-21T06:00:00Z"},
+        "row_class": {
+            "a:35997": {"class": "low", "why": "mechanical", "row_id": "a:35997"}
+        },
+    }
+    digest = {"frictions": [friction], "root": {"recent_turns": []}}
+    items = ready_row_class_attention(digest, state)
+    assert items == promote_friction_attention(digest, friction)
+    assert ready_to_fire_row_class(state, "a:35997") is True
+    mark_row_class_fired(state, "a:35997", at="2026-09-21T06:11:00Z")
+    assert row_class_fired(state, "a:35997") is True
+    assert ready_to_fire_row_class(state, "a:35997") is False
+    assert ready_row_class_attention(digest, state) == []

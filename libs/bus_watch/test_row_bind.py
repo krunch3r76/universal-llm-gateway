@@ -5,9 +5,11 @@ from __future__ import annotations
 from bus_watch.spawn_wake.fire import body_for_leftover
 from bus_watch.spawn_wake.play_classify import LEFTOVER_SIT
 from bus_watch.spawn_wake.row_bind import (
+    body_for_sit_friction,
     build_low_implement_body,
     build_row_bind_body,
     build_trio_fire_body,
+    build_trio_sketch_body,
 )
 from bus_watch.test_spawn_on_wake import _digest
 
@@ -83,6 +85,11 @@ def test_latched_low_is_implement_lane_b() -> None:
     assert body["lane"] == "B"
     assert body["seat"] == "cursor-sdk"
     assert "land on green" in body["prompt"].lower()
+    assert "--mark-friction a:35997:" in body["prompt"]
+    assert "friction_close" in body["prompt"]
+    assert body["work_key"].startswith("row-low:a:35997:night-")
+    assert body["source_ref"] == body["work_key"]
+    assert body["_friction_id"] == "a:35997"
 
 
 def test_latched_trio_with_todo_is_play_body() -> None:
@@ -119,3 +126,39 @@ def test_build_row_bind_body_shape() -> None:
     assert body["model"] == "cdp/opus-5"
     assert "ROW_CLASS:" in body["prompt"]
     assert "do not fire remaining hops" in body["prompt"].lower()
+
+
+def test_trio_sketch_prompt_has_disposition_exit() -> None:
+    body = build_trio_sketch_body(
+        "11960",
+        {"max_hop_minutes": 60},
+        {
+            "id": "a:35997",
+            "category": "regression",
+            "owner": "service:git_integration_worker",
+            "note": "probe",
+        },
+    )
+    assert "--mark-friction a:35997:" in body["prompt"]
+    assert "friction_close" in body["prompt"]
+
+
+def test_fired_fid_does_not_re_fire_low() -> None:
+    friction = {
+        "id": "a:35997",
+        "owner": "service:git_integration_worker",
+        "category": "regression",
+        "note": "probe",
+        "forcing": True,
+        "state": "open",
+    }
+    digest = _forcing_digest()
+    state = {
+        "friction_rows_seen": {"a:35997": "2026-09-21T06:00:00Z"},
+        "row_class": {"a:35997": {"class": "low", "why": "one file", "row_id": "a:35997"}},
+        "row_class_fired": {"a:35997": "2026-09-21T06:10:00Z"},
+    }
+    body = body_for_sit_friction("11960", digest["policy"], friction, state, digest)
+    assert body is not None
+    assert body.get("_row_class_fired") is True
+    assert body.get("_refused") == "row_class_fired"

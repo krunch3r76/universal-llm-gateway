@@ -23,6 +23,12 @@ _ROW_BIND_PROMPT = (
     "«{note}»"
 )
 
+_DISPOSITION_EXIT = (
+    "Close the score row: --mark-friction {friction_id}:direct-first|todo-minted|"
+    "declined then friction_close on the assertion (commit:<sha> at land). "
+    "Do not leave the row forcing."
+)
+
 _LOW_IMPLEMENT_PREAMBLE = (
     "ROW_CLASS LOW (mandatory): Land on green when AC met — merge the lane branch "
     "on green; silence is not a hold-merge gate. CDP review+apply is a separate "
@@ -30,6 +36,8 @@ _LOW_IMPLEMENT_PREAMBLE = (
     "Friction {friction_id} [{category}] {owner}\n"
     "«{note}»\n"
     "{why_line}"
+    + _DISPOSITION_EXIT
+    + "\n"
 )
 
 _TRIO_SKETCH_PROMPT = (
@@ -40,6 +48,8 @@ _TRIO_SKETCH_PROMPT = (
     "Friction {friction_id} [{category}] {owner}\n"
     "«{note}»\n"
     "{why_line}"
+    + _DISPOSITION_EXIT
+    + "\n"
 )
 
 
@@ -74,6 +84,7 @@ def build_row_bind_body(
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
         "_row_bind": True,
+        "_friction_id": fid,
     }
 
 
@@ -97,18 +108,21 @@ def build_low_implement_body(
         why_line=why_line,
     )
     tape = loop_tape_thread(root_id, policy)
+    # Bare a:NNNNN remints until CURSOR_WORK_KEY_REMINT_CAP walls the house (B1).
+    low_key = f"row-low:{fid}:night-{current_night_id()}"
     return {
         "op": "generate",
         "seat": "cursor-sdk",
         "contract": "implement",
         "lane": "B",
-        "source_ref": fid,
-        "work_key": fid,
+        "source_ref": low_key,
+        "work_key": low_key,
         "prompt": prompt,
         "dispatch_thread_id": tape,
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
         "_row_class": ROW_CLASS_LOW,
+        "_friction_id": fid,
     }
 
 
@@ -142,6 +156,7 @@ def build_trio_sketch_body(
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
         "_row_class": ROW_CLASS_TRIO,
+        "_friction_id": fid,
     }
 
 
@@ -157,6 +172,7 @@ def build_trio_fire_body(
     if todo_slug:
         body = build_play_dispatch_body(root_id, policy, todo_slug=todo_slug)
         body["_row_class"] = ROW_CLASS_TRIO
+        body["_friction_id"] = str(friction.get("id") or "")
         return body
     return build_trio_sketch_body(root_id, policy, friction, latched=latched)
 
@@ -170,17 +186,21 @@ def body_for_sit_friction(
 ) -> dict[str, Any] | None:
     """Resolve sit+forcing-friction spawn body: bind, fire, or hold sentinel."""
     from bus_watch.spawn_wake.row_class import (
+        ROW_CLASS_FIRED,
         ROW_CLASS_HOLD,
         ROW_CLASS_LOW,
         ROW_CLASS_TRIO,
         absorb_row_classes_from_digest,
         latched_row_class,
+        row_class_fired,
         row_class_hold,
         todo_slug_for_trio,
     )
 
     absorb_row_classes_from_digest(digest, state)
     fid = str(friction.get("id") or "")
+    if row_class_fired(state, fid):
+        return {"_row_class_fired": True, "_refused": ROW_CLASS_FIRED}
     latched = latched_row_class(state, fid)
     if latched:
         cls = latched["class"]

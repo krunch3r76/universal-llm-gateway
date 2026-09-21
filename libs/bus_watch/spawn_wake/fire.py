@@ -37,7 +37,9 @@ from bus_watch.spawn_wake.play_classify import (
 from bus_watch.spawn_wake.predicate import evaluate_spawn_predicate
 from bus_watch.spawn_wake.row_bind import body_for_sit_friction
 from bus_watch.spawn_wake.row_class import (
+    ROW_CLASS_FIRED,
     ROW_CLASS_HOLD,
+    mark_row_class_fired,
     sit_forcing_friction,
 )
 
@@ -112,6 +114,13 @@ def fire_spawn(
         return {
             "status_code": 0,
             "refused": ROW_CLASS_HOLD,
+            "leftover": verdict,
+            "body": None,
+        }
+    if body and body.get("_row_class_fired"):
+        return {
+            "status_code": 0,
+            "refused": ROW_CLASS_FIRED,
             "leftover": verdict,
             "body": None,
         }
@@ -267,6 +276,13 @@ def tick_spawn_on_wake(
             "refused": ROW_CLASS_HOLD,
             "body": None,
         }
+    if body and body.get("_row_class_fired"):
+        return {
+            "action": "hold",
+            "evaluation": evaluation,
+            "refused": ROW_CLASS_FIRED,
+            "body": None,
+        }
     if dry_run:
         return {
             "action": "would_spawn" if evaluation["spawn"] else "hold",
@@ -295,4 +311,7 @@ def tick_spawn_on_wake(
         if digest.get("checkpoint_due"):
             state["checkpoint_due_spawned_tick"] = int(state.get("last_cp_tick") or 0)
         record_spawn_service(state, digest.get("attention"), root_id=root_id)
+        fired_fid = str((body or {}).get("_friction_id") or "")
+        if fired_fid and (body or {}).get("_row_class"):
+            mark_row_class_fired(state, fired_fid)
     return {"action": "spawned", "evaluation": evaluation, "fire": fired}
