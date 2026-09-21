@@ -109,7 +109,7 @@ async def test_panel_dispatch_member_models_forwarded_per_member(
     by_role = {call["role"]: call for call in relay_calls}
     assert by_role["reviewer"]["model"] == "openai/gpt-5.5"
     assert result["member_models"]["reviewer"] == "openai/gpt-5.5"
-    assert set(result["panel_families"]) == {"grok-4.6@?", "gpt-5.5@?"}
+    assert set(result["panel_families"]) == {"grok-4.7@?", "gpt-5.5@?"}
 
 
 @pytest.mark.asyncio
@@ -124,7 +124,7 @@ async def test_panel_dispatch_rejects_role_keys_in_generation_options(
             messages=[{"role": "user", "content": "review this"}],
             dispatch_thread_id="panel-thread-mm-2",
             poll=False,
-            generation_options={"skeptic": {"model": "xai/grok-4.6"}},
+            generation_options={"skeptic": {"model": "xai/grok-4.7"}},
         )
 
     relay.assert_not_called()
@@ -201,7 +201,7 @@ def _sample_stored_envelope() -> dict[str, Any]:
     return {
         "disposition": "panel",
         "panel_executions": {"skeptic": "exec-skeptic", "reviewer": "exec-reviewer"},
-        "panel_families": ["grok-4.6@?", "gpt-5.6-terra@medium"],
+        "panel_families": ["grok-4.7@?", "gpt-5.6-terra@medium"],
         "status": "dispatched",
         "member_status": {"skeptic": "running", "reviewer": "running"},
     }

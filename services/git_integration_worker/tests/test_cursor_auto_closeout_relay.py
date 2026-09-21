@@ -927,7 +927,7 @@ _TURN8_RELAYED_BODY = """\
 TYPE: CONFER
 status: partial
 dispatch_id: auto-09e744ed67d9
-model: cursor/grok-4.6
+model: cursor/grok-4.7
 request_turn: 2
 
 TYPE: CLOSEOUT

@@ -131,7 +131,7 @@ def measure_ide_tab(
     Returns ``None`` when no tab transcript can be found (headless-only house).
     ``window_limit_tokens`` is ``policy.ide_window_tokens`` — the operator picks the
     tab model in the picker, so the harness cannot read it; the default is the
-    256k class the house has been running on (Grok 4.6).
+    256k class the house has been running on (Grok 4.7).
     """
     transcript_id = ide_holder_transcript(lock) or newest_resume_transcript(
         root_id, transcripts_dir

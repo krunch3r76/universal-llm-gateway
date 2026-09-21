@@ -52,7 +52,7 @@ _PROVIDER_REPRESENTATIVE: dict[str, str] = {
     "anthropic": "anthropic/claude-sonnet-4-6",
     "openai": "openai/gpt-5.5",
     "chatgpt": "chatgpt/gpt-4o",
-    "xai": "xai/grok-4.6",
+    "xai": "xai/grok-4.7",
     "google": "google/gemini-3-pro",
     "perplexity": "perplexity/sonar-deep-research",
 }
@@ -150,7 +150,7 @@ def test_reasoning_value_kind_pre_adaptive_token_budget(model: str) -> None:
 
 @pytest.mark.parametrize(
     "model",
-    ["openai/gpt-5.5", "xai/grok-4.6", "google/gemini-3-pro"],
+    ["openai/gpt-5.5", "xai/grok-4.7", "google/gemini-3-pro"],
 )
 def test_reasoning_value_kind_effort_string(model: str) -> None:
     """Responses and Google surfaces → value_kind='effort_string'."""

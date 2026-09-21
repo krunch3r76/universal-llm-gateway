@@ -193,7 +193,7 @@ def test_gear_three_has_no_implicit_successor_model() -> None:
         {
             "policy": {
                 "gear": "3-wake-on-attention",
-                "successor_model": "cursor/grok-4.6",
+                "successor_model": "cursor/grok-4.7",
             }
         }
     )

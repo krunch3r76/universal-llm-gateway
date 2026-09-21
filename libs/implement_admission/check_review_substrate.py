@@ -37,7 +37,7 @@ CURSOR_CHECK_REVIEW_MODELS = frozenset(
         "cursor/gpt-5.6-terra",
         "cursor/gpt-5.6-sol",
         "cursor/gpt-5.6-luna",
-        "cursor/grok-4.6",
+        "cursor/grok-4.7",
     }
 )
 MECHANICAL_CURSOR_MODELS = frozenset(
@@ -241,7 +241,7 @@ def cursor_delivery_from_role(model: str) -> str | None:
         return "reviewer"
     if bare.startswith("gpt-5.6") or bare == "gpt-5.5":
         return "reviewer"
-    if bare.startswith("grok-4.6"):
+    if bare.startswith("grok-4.7"):
         return "skeptic"
     return None
 

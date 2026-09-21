@@ -28,7 +28,7 @@ _GOVERNED_INSTRUCTION_PROFILES: dict[str, str] = {
     "claude-fable-5-1": "reasoner",
     "gpt-5.5": "reasoner",
     "glm-5.2": "reasoner",
-    "grok-4.6": "reasoner",
+    "grok-4.7": "reasoner",
 }
 
 
@@ -92,28 +92,28 @@ def test_suggest_effort_knobs_accepted_and_empty() -> None:
     assert suggest_effort_knobs("claude-opus-5", "low") == {"effort": "low"}
     assert suggest_effort_knobs("gpt-5.6-sol", "low") == {"reasoning": "low"}
     assert suggest_effort_knobs("gpt-5.6-sol", "xhigh") == {"reasoning": "xhigh"}
-    assert suggest_effort_knobs("grok-4.6", "xhigh") == {"effort": "xhigh"}
-    assert suggest_effort_knobs("grok-4.6", "max") == {}
+    assert suggest_effort_knobs("grok-4.7", "xhigh") == {"effort": "xhigh"}
+    assert suggest_effort_knobs("grok-4.7", "max") == {}
     assert suggest_effort_knobs("composer-2.5", "low") == {}
 
 
 def test_effective_knobs_grok_omit_path_fast_false() -> None:
     """Grok caller omits fast → stamp includes descriptor default fast=false."""
-    assert effective_knobs("grok-4.6", {"effort": "xhigh"}) == {
+    assert effective_knobs("grok-4.7", {"effort": "xhigh"}) == {
         "effort": "xhigh",
         "fast": "false",
     }
 
 
 def test_effective_knobs_explicit_fast_true() -> None:
-    assert effective_knobs("grok-4.6", {"effort": "xhigh", "fast": "true"}) == {
+    assert effective_knobs("grok-4.7", {"effort": "xhigh", "fast": "true"}) == {
         "effort": "xhigh",
         "fast": "true",
     }
 
 
 def test_effective_knobs_drops_invalid_override() -> None:
-    assert effective_knobs("grok-4.6", {"effort": "max", "fast": "true"}) == {
+    assert effective_knobs("grok-4.7", {"effort": "max", "fast": "true"}) == {
         "fast": "true",
     }
 
@@ -122,13 +122,13 @@ def test_effective_knobs_warns_invalid_effort_value(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.WARNING, logger="cursor_capabilities.cursor_capabilities")
-    assert effective_knobs("grok-4.6", {"effort": "max"}) == {
+    assert effective_knobs("grok-4.7", {"effort": "max"}) == {
         "fast": "false",
     }
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     msg = warnings[0].message
-    assert "grok-4.6" in msg
+    assert "grok-4.7" in msg
     assert "effort" in msg
     assert "max" in msg
     assert "high" in msg
@@ -150,7 +150,7 @@ def test_effective_knobs_accepted_values_no_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     caplog.set_level(logging.WARNING, logger="cursor_capabilities.cursor_capabilities")
-    assert effective_knobs("grok-4.6", {"effort": "xhigh", "fast": "true"}) == {
+    assert effective_knobs("grok-4.7", {"effort": "xhigh", "fast": "true"}) == {
         "effort": "xhigh",
         "fast": "true",
     }

@@ -102,7 +102,7 @@ def test_sibling_ops_use_same_coercion() -> None:
                         "ts_unix_ms": _ROW_131701_MS,
                         "timestamp": "2026-08-18T13:17:01Z",
                         "source": "mcp-server",
-                        "payload": {"model_id": "cursor/grok-4.6"},
+                        "payload": {"model_id": "cursor/grok-4.7"},
                     },
                     {
                         "signal": "worker.ok",
@@ -111,7 +111,7 @@ def test_sibling_ops_use_same_coercion() -> None:
                         "ts_unix_ms": _SPECIMEN_SINCE_TS_MS + 60_000,
                         "timestamp": "2026-08-18T13:19:36Z",
                         "source": "mcp-server",
-                        "payload": {"model_id": "cursor/grok-4.6"},
+                        "payload": {"model_id": "cursor/grok-4.7"},
                     },
                 ]
             )
@@ -125,7 +125,7 @@ def test_sibling_ops_use_same_coercion() -> None:
             )
             timeline = await _model_timeline(
                 {
-                    "model_id": "cursor/grok-4.6",
+                    "model_id": "cursor/grok-4.7",
                     "since_ts": _SPECIMEN_SINCE_TS_SECONDS,
                 },
                 store,

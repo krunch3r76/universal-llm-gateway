@@ -60,7 +60,7 @@ def test_load_live_registry_slots_and_roaming() -> None:
         "auto_judgment",
     }
     assert reg.roaming_bare_models() == frozenset(
-        {"composer-2.5", "composer-2.5-fast", "grok-4.6"}
+        {"composer-2.5", "composer-2.5-fast", "grok-4.7"}
     )
 
 
@@ -83,12 +83,12 @@ def test_falsifier_investigate_grok_implement_stays_composer() -> None:
     policy = copy.deepcopy(load_route_policy())
     policy["workflows"]["investigate"] = {
         **policy["workflows"]["investigate"],
-        "model": "cursor/grok-4.6",
+        "model": "cursor/grok-4.7",
     }
     reg = parse_workflow_registry(policy)
     inv = resolve_desired_model("auto", contract="investigate", registry=reg)
     impl = resolve_desired_model("auto", contract="implement", registry=reg)
-    assert inv["resolved_model_id"] == "cursor/grok-4.6"
+    assert inv["resolved_model_id"] == "cursor/grok-4.7"
     assert impl["resolved_model_id"] == "cursor/composer-2.5"
     assert "via workflows.investigate" in inv["notes"]
 

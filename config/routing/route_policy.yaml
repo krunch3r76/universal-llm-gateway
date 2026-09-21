@@ -115,7 +115,7 @@ workflows:
 models:
   composer-2.5:      {roaming: true}
   composer-2.5-fast: {roaming: true}
-  grok-4.6:          {roaming: true}
+  grok-4.7:          {roaming: true}
 
 # Per-contract omit-effort defaults (todo:model-workflow-config-first, P3).
 # Authority for resolve_desired_effort auto/omit — contract-keyed, not workflow-keyed

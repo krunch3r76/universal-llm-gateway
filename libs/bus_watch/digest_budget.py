@@ -29,7 +29,7 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "gear": "1-fable-mvp",
     # House successor is orientation (harvest/fold/classify), not judgment.
     # SDK Fable is blocked; do not inherit the closed credit-window default.
-    "successor_model": "cursor/grok-4.6",
+    "successor_model": "cursor/grok-4.7",
     "successor_cost_intent": None,
     "max_ticks_per_hop": 5,
     "max_hop_minutes": 60,
@@ -48,7 +48,7 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "ready": False,
     "post_digest": False,
     # Attended-tab window class. The operator picks the tab model in the picker,
-    # so the harness cannot read it; 256k is the Grok 4.6 class the houses ran on.
+    # so the harness cannot read it; 256k is the Grok 4.7 class the houses ran on.
     "ide_window_tokens": 256_000,
     # Tool results are not stored in the tab transcript; this stands in for them.
     "ide_tokens_per_tool_call": 1500,

@@ -551,7 +551,7 @@ def test_materializer_contains_stop_contract() -> None:
     assert "## Acceptance criteria" in packet
     assert "window 3" in packet
     assert "5555-charter-scoreboard.md" in packet
-    assert "cursor/grok-4.6" in packet
+    assert "cursor/grok-4.7" in packet
     assert "from=cursor-sdk" in packet
 
 
@@ -572,7 +572,7 @@ def test_default_judgment_body_is_grok_xhigh() -> None:
     )
     assert body["op"] == "generate"
     assert body["seat"] == "cursor-sdk"
-    assert body["model"] == JUDGMENT_MODEL == "cursor/grok-4.6"
+    assert body["model"] == JUDGMENT_MODEL == "cursor/grok-4.7"
     assert body["model_knobs"] == JUDGMENT_MODEL_KNOBS
     assert body["model_knobs"]["effort"] == "xhigh"
     assert body["model_knobs"]["fast"] == "false"
@@ -718,7 +718,7 @@ def test_autonomous_generate_body_matches_default_wire() -> None:
     )
     assert body["op"] == "generate"
     assert body["seat"] == "cursor-sdk"
-    assert body["model"] == JUDGMENT_MODEL == "cursor/grok-4.6"
+    assert body["model"] == JUDGMENT_MODEL == "cursor/grok-4.7"
     assert body["model_knobs"] == JUDGMENT_MODEL_KNOBS
     assert "subject" not in body
     assert "tags" not in body
@@ -793,7 +793,7 @@ def test_fire_window_autonomous_posts_dispatch(
     assert body["op"] == "generate"
     assert "subject" not in body
     assert "tags" not in body
-    assert result["executor"]["model"] == "cursor/grok-4.6"
+    assert result["executor"]["model"] == "cursor/grok-4.7"
 
 
 @pytest.mark.offline

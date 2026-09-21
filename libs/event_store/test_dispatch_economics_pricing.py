@@ -120,23 +120,23 @@ def test_resolve_rate_alias_and_resolved_model() -> None:
 
 def test_grok_fast_is_knob_variant_not_fake_model_id() -> None:
     rows, _aliases = load_manual_rows()
-    assert "cursor/grok-4.6" in rows
-    assert "cursor/grok-4.6-fast" not in rows
+    assert "cursor/grok-4.7" in rows
+    assert "cursor/grok-4.7-fast" not in rows
     assert "cursor/grok-4.5" not in rows
     assert "cursor/grok-4.5-fast" not in rows
-    base = resolve_rate("cursor/grok-4.6")
+    base = resolve_rate("cursor/grok-4.7")
     assert base is not None
     assert base.input_rate_per_m == 2.0
     assert base.output_rate_per_m == 6.0
     assert base.cache_read_rate_per_m == 0.5
-    fast = resolve_rate("cursor/grok-4.6", knobs={"fast": "true"})
+    fast = resolve_rate("cursor/grok-4.7", knobs={"fast": "true"})
     assert fast is not None
     assert fast.input_rate_per_m == 4.0
     assert fast.output_rate_per_m == 12.0
     assert fast.cache_read_rate_per_m == 1.0
     # Extra effort knob is sot_absent — still hits the Fast cell, no multiplier.
     fast_high = resolve_rate(
-        "cursor/grok-4.6", knobs={"fast": "true", "effort": "high"}
+        "cursor/grok-4.7", knobs={"fast": "true", "effort": "high"}
     )
     assert fast_high is not None
     assert fast_high.input_rate_per_m == 4.0
@@ -144,7 +144,7 @@ def test_grok_fast_is_knob_variant_not_fake_model_id() -> None:
 
 def test_price_row_uses_knobs_in_join_key() -> None:
     row = {
-        "model_id": "cursor/grok-4.6",
+        "model_id": "cursor/grok-4.7",
         "model_knobs_requested": {"fast": "true"},
         "prompt_tokens": 1_000_000,
         "completion_tokens": 1_000_000,

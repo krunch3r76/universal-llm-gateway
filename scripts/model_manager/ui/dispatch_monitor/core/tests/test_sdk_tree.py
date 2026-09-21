@@ -56,7 +56,7 @@ def test_family_mislabel_orphan_no_child_glyph_parallel_bar() -> None:
         "orphan-child",
         nest_under="dead-parent",
         thread_id="9676",
-        model="grok-4.6",
+        model="grok-4.7",
     )
     peer = _row("unrelated-peer", root_id="6190", thread_id="9680")
     live = [orphan, peer]
@@ -84,7 +84,7 @@ def test_depth_one_tree_and_paint_target_shape() -> None:
         "5c6ca43b8cbf-9d4c3c7b",
         nest_under="7a7ffee9c2de-645fb167",
         thread_id="9676",
-        model="grok-4.6",
+        model="grok-4.7",
         fast=False,
         elapsed_ms=244_000,
         idle_age_ms=0,
@@ -112,7 +112,7 @@ def test_depth_one_tree_and_paint_target_shape() -> None:
 
 def test_cycle_and_self_ref_degrade() -> None:
     a = _row("child-a", nest_under="child-b", thread_id="1")
-    b = _row("child-b", nest_under="child-a", thread_id="2", model="grok-4.6")
+    b = _row("child-b", nest_under="child-a", thread_id="2", model="grok-4.7")
     live = [a, b]
     edges = nest_under_edges(live)
     assert a.dispatch_id in edges and b.dispatch_id in edges
@@ -165,7 +165,7 @@ def test_fold_grok_omit_path_fast_from_effective_stamp() -> None:
             {
                 "dispatch_id": dispatch_id,
                 "execution_id": dispatch_id,
-                "model": "grok-4.6",
+                "model": "grok-4.7",
                 "model_knobs_requested": {"effort": "xhigh", "fast": "false"},
                 "topic": "Conductor mission",
             },

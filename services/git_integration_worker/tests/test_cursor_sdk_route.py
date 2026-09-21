@@ -2386,7 +2386,7 @@ def test_conductor_explicit_grok_pin_admits(
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
-            model="cursor/grok-4.6",
+            model="cursor/grok-4.7",
             handoff_contract="none",
             message=(
                 "---\npacket_kind: conductor\ncontract: conductor\n---\n"

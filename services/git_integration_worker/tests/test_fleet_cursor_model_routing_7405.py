@@ -15,12 +15,12 @@ from services.git_integration_worker.cursor_models import (
 
 
 def test_grok_omit_path_fast_false() -> None:
-    cfg = resolve_cursor("grok-4.6")
+    cfg = resolve_cursor("grok-4.7")
     selection = build_model_selection(cfg)
     emitted = {p.id: p.value for p in selection.params}
     assert emitted["fast"] == "false"
-    assert default_variant("grok-4.6")["fast"] == "false"
-    assert supported_knobs("grok-4.6")["fast"].default == "false"
+    assert default_variant("grok-4.7")["fast"] == "false"
+    assert supported_knobs("grok-4.7")["fast"].default == "false"
 
 
 def test_anthropic_omit_path_thinking_context_defaults() -> None:
@@ -56,7 +56,7 @@ def test_compose_investigate_sonnet5_knobs() -> None:
 
 def test_compose_confer_grok_xhigh_fast_false() -> None:
     knobs = compose_model_knobs(
-        {"resolved_model_id": "cursor/grok-4.6"},
+        {"resolved_model_id": "cursor/grok-4.7"},
         resolve_desired_effort(None, contract="confer"),
         contract="confer",
     )
@@ -109,7 +109,7 @@ def test_explicit_medium_honored_on_judgment_contract() -> None:
 
 def test_compose_grok_investigate_omit_xhigh() -> None:
     knobs = compose_model_knobs(
-        {"resolved_model_id": "cursor/grok-4.6"},
+        {"resolved_model_id": "cursor/grok-4.7"},
         resolve_desired_effort("auto", contract="investigate"),
         contract="investigate",
     )

@@ -174,7 +174,7 @@ def work_execution_lines(
         lines.append(
             f"1. Read and execute: {work_ref} — WORK **session lead in-seat**. "
             "Spawn W* / slice legs via "
-            "`Task(subagent_type=generalPurpose, model=cursor/grok-4.6-xhigh, run_in_background=true)` "
+            "`Task(subagent_type=generalPurpose, model=cursor/grok-4.7-xhigh, run_in_background=true)` "
             "per the prompt dependency table. **Only the lead** merges, commits, recycles, "
             "and posts CLOSEOUT. Inject task-subagent-parity kernel into every Task prompt."
         )
@@ -198,7 +198,7 @@ def work_execution_lines(
             "result before the next. Mechanical legs: "
             "`Task(subagent_type=generalPurpose, model=composer-2.5)` (or omit `model=`). "
             "Reasoning / review legs: "
-            "`Task(subagent_type=generalPurpose, model=cursor/grok-4.6-xhigh)` — "
+            "`Task(subagent_type=generalPurpose, model=cursor/grok-4.7-xhigh)` — "
             "**`run_in_background=false`** always on hop tabs."
         )
         lines.append(

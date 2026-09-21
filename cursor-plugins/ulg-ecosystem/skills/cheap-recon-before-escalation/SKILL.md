@@ -68,7 +68,7 @@ Skeptic must produce a **decisive falsifier**: concrete measurable test, explici
 
 ### Skeptic dispatch mechanics — dual path (pick by evidence need)
 
-The default `role=skeptic` model (xai/grok-4.6) is **MCP-capable**, and `team_dispatch` omit-`mcp` defaults tools-**on**. Do not cargo-cult `mcp=false` — pick the path by whether the falsifier cites live files.
+The default `role=skeptic` model (xai/grok-4.7) is **MCP-capable**, and `team_dispatch` omit-`mcp` defaults tools-**on**. Do not cargo-cult `mcp=false` — pick the path by whether the falsifier cites live files.
 
 | Situation | Path | `mcp` | Notes |
 |---|---|---|---|

@@ -153,7 +153,7 @@ seat's own, not the house's:
 | Tab model class | Serves as liaison? | What must change |
 |---|---|---|
 | Opus-class (`claude-opus-5`, Fable when affordable) | yes — binds judgment forks inline | nothing |
-| Below Opus (Grok 4.6, Sonnet, Composer, GPT-5.6) | yes for harvest → fold → dispatch → CP → hop | presence-discipline P1–P4 are **explicit obligations**; every judgment bind goes to `cdp/opus-5` first (§ Reasoning recon) unless the criterion is already closed on a **named assertion + Explore locus** — then name the CDP skip as the rejected alternative and bind |
+| Below Opus (Grok 4.7, Sonnet, Composer, GPT-5.6) | yes for harvest → fold → dispatch → CP → hop | presence-discipline P1–P4 are **explicit obligations**; every judgment bind goes to `cdp/opus-5` first (§ Reasoning recon) unless the criterion is already closed on a **named assertion + Explore locus** — then name the CDP skip as the rejected alternative and bind |
 
 Fable on **claude.ai** (`cdp/fable`) is still a product seat; in the IDE it is optional. Gear `1-fable-mvp` and the lock filename remain Fable-named. **Cursor Fable credit window is closed** (operator 2026-09-12 07:48 PT) — ¬ escalate to `cursor/claude-fable-5-1`.
 
@@ -287,7 +287,7 @@ The successor model is **policy, never a constant**. `scripts/liaison-tick.py --
 
 | Gear | Successor | Cadence | When |
 |---|---|---|---|
-| `1-fable-mvp` | `cursor/grok-4.6` (orientation hop; SDK Fable default retired) | ≤ 5 ticks / 60 min / poll 600 s | **do not select for overnight** — use gear 3 + explicit `successor_model`; Cursor Fable credit window closed (2026-09-12) |
+| `1-fable-mvp` | `cursor/grok-4.7` (orientation hop; SDK Fable default retired) | ≤ 5 ticks / 60 min / poll 600 s | **do not select for overnight** — use gear 3 + explicit `successor_model`; Cursor Fable credit window closed (2026-09-12) |
 | `2-opus-hops` | `cursor/claude-opus-5` (no cost intent); CDP checks stay `cdp/opus-5` | ≤ 6 ticks | next iteration; Fable only in the attended window |
 | `3-wake-on-attention` | **`policy.successor_model` only** — the preset carries no model; `--set successor_model=<slug>` is required or the ticker holds with `successor_model_bound=false` (10534 2026-09-12: the old Opus preset minted four unasked Opus liaisons at 12–24M tokens each). Spawned on the wake sources in § Headless successor (live unread · work closeout once · handoff once · `checkpoint_due` once) | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **armed only by explicit `ready`** (`--set ready=true` or `--go-under`; `ready_source=override`). The register never arms it: an IDE-hop chain runs `register=autonomous` with the ticker policy-only, and a register-armed ticker put a second driver on 10479 (2026-09-13). One driver per house: IDE chain ⇒ `ready=false`; ticker ⇒ `--go-under` |
 

@@ -64,13 +64,13 @@ def test_map_sdk_preserves_model_knobs_requested() -> None:
         {
             "dispatch_id": "d1",
             "execution_id": "e1",
-            "resolved_model": "cursor/grok-4.6",
+            "resolved_model": "cursor/grok-4.7",
             "model_knobs_requested": {"fast": "true", "effort": "high"},
             "usage_capture_status": "captured",
             "usage": {"input_tokens": 10, "output_tokens": 5},
         },
     )
-    assert row["model_id"] == "cursor/grok-4.6"
+    assert row["model_id"] == "cursor/grok-4.7"
     assert row["model_knobs_requested"] == {"fast": "true", "effort": "high"}
 
 

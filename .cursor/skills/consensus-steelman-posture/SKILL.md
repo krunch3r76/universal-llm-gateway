@@ -90,7 +90,7 @@ Assert shape:
   "confidence": "believed",
   "attributes": {
     "consensus_disposition": "panel",
-    "panel_families": ["claude-opus-4-7@high", "gpt-5.6-terra@high", "grok-4.6@high"],
+    "panel_families": ["claude-opus-4-7@high", "gpt-5.6-terra@high", "grok-4.7@high"],
     "panel_executions": {"skeptic": "<exec_id>", "reviewer": "<exec_id>"},
     "decisive_falsifier": "<single computable measurement>",
     "panel_adjudication_artifact": "<uri or bus turn>",

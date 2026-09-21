@@ -98,7 +98,7 @@ def build_dispatch_body(
     else:
         model = str(policy.get("successor_model") or "")
         bare_id = model.rsplit("/", 1)[-1] if model else ""
-        if bare_id == "grok-4.6":
+        if bare_id == "grok-4.7":
             body["model_knobs"] = {"fast": "true"}
     return body
 

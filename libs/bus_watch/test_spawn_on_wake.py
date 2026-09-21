@@ -39,7 +39,7 @@ def _digest(*, attention=None, checkpoint_due=False, turns=10, budget=None):  # 
             "wake_on_attention_only": True,
             "gear": "3-wake-on-attention",
             "budget_max_age_s": 300,
-            "successor_model": "cursor/grok-4.6",
+            "successor_model": "cursor/grok-4.7",
         },
     }
 
@@ -875,7 +875,7 @@ def test_remint_cap_refusal_is_a_wall_for_the_night(monkeypatch) -> None:  # noq
         409,
     )
     state: dict = {}
-    policy = {"gear": "3-wake-on-attention", "successor_model": "cursor/grok-4.6"}
+    policy = {"gear": "3-wake-on-attention", "successor_model": "cursor/grok-4.7"}
     first = fire_spawn("10479", policy, state, submit=lambda body: refusal)
     assert first["quiet_refusal"] is True
     assert first["remint_cap_wall"]["night_id"] == current_night_id()
@@ -972,7 +972,7 @@ def test_dispatch_body_grok_successor_pins_fast() -> None:
     """Grok liaison hops pin Fast — omit-path alone is Standard (a:35522)."""
     body = build_dispatch_body(
         "10479",
-        {"successor_model": "cursor/grok-4.6", "max_hop_minutes": 60},
+        {"successor_model": "cursor/grok-4.7", "max_hop_minutes": 60},
     )
     assert body["model_knobs"] == {"fast": "true"}
 
@@ -981,7 +981,7 @@ def test_dispatch_body_successor_model_knobs_override_grok_fast() -> None:
     body = build_dispatch_body(
         "10479",
         {
-            "successor_model": "cursor/grok-4.6",
+            "successor_model": "cursor/grok-4.7",
             "successor_model_knobs": {"fast": "false"},
             "max_hop_minutes": 60,
         },
@@ -1231,7 +1231,7 @@ def test_fire_spawn_row_class_hold_after_bind_without_class() -> None:
     """Missing ROW_CLASS after bind hop ⇒ hold, not grok house generate."""
     posted: list[dict] = []
     digest = _digest(attention=[{"id": "1", "unread": 1}])
-    digest["policy"]["successor_model"] = "cursor/grok-4.6"
+    digest["policy"]["successor_model"] = "cursor/grok-4.7"
     digest["frictions"] = [
         {
             "id": "a:35997",

@@ -130,7 +130,7 @@ profiles:
 
   grok/cursor:
     provider: xai
-    default_model: xai/grok-4.6
+    default_model: xai/grok-4.7
     tool_surface: mcp
     mcp_surface: code
     delivery: manual
@@ -143,13 +143,13 @@ profiles:
       - session-close-markdown-audit
       - session-close-transcript
     allowed_models:
-      - xai/grok-4.6
+      - xai/grok-4.7
       - xai/grok-4.20-0309-reasoning
       - xai/grok-4.20-multi-agent-0309
 
   grok/api:
     provider: xai
-    default_model: xai/grok-4.6
+    default_model: xai/grok-4.7
     tool_surface: mcp
     mcp_surface: code
     delivery: auto
@@ -159,15 +159,15 @@ profiles:
     confirm_and_proceed: true
     addenda: []
     allowed_models:
-      - xai/grok-4.6
+      - xai/grok-4.7
       - xai/grok-4.20-0309-reasoning
       - xai/grok-4.20-multi-agent-0309
 
-  # Legacy platform slug retained for seat identity; model migrated to grok-4.6
+  # Legacy platform slug retained for seat identity; model migrated to grok-4.7
   # standard (tool-loop) card — no multi-agent / inline-only variant exists.
   grok/api-multi:
     provider: xai
-    default_model: xai/grok-4.6
+    default_model: xai/grok-4.7
     tool_surface: mcp
     mcp_surface: code
     delivery: auto
@@ -177,7 +177,7 @@ profiles:
     confirm_and_proceed: true
     addenda: []
     allowed_models:
-      - xai/grok-4.6
+      - xai/grok-4.7
       - xai/grok-4.20-0309-reasoning
       - xai/grok-4.20-multi-agent-0309
 
@@ -388,7 +388,7 @@ roles:
       - cursor/gpt-5.6-terra
       - cursor/gpt-5.6-sol
       - cursor/gpt-5.6-luna
-      - cursor/grok-4.6
+      - cursor/grok-4.7
       - cursor/claude-sonnet-5
       - anthropic/claude-sonnet-5
       - anthropic/claude-sonnet-4-6
@@ -417,22 +417,22 @@ roles:
     description: "Inline reasoning specialist; structured execution at frontier-grade reasoning. Engineering default Grok; PROHIBITED for writing/correspondence — see decision:writing-consult-model-routing."
     default_family: grok
     default_platform: api
-    default_model: xai/grok-4.6
+    default_model: xai/grok-4.7
     allowed_models:
-      - xai/grok-4.6
+      - xai/grok-4.7
 
   skeptic:
     description: "Adversarial / dialectical seat; pushback on consensus framing.
       Engineering panels only (standing panel family with Terra reviewer). Writing
       uses Terra+Gemini, not default panel_dispatch. Family MUST differ from the
-      artifact's author (independence). Default xai/grok-4.6; allowlist carries
+      artifact's author (independence). Default xai/grok-4.7; allowlist carries
       OpenAI/Anthropic for author-dependent selection. gpt-5.5 OPERATOR-GATED on
       this role. MCP-on is inherent to grok/api."
     default_family: grok
     default_platform: api
-    default_model: xai/grok-4.6
+    default_model: xai/grok-4.7
     allowed_models:
-      - xai/grok-4.6
+      - xai/grok-4.7
       - xai/grok-4.20-0309-reasoning
       - openai/gpt-5.6-terra
       - openai/gpt-5.5

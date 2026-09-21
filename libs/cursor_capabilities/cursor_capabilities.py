@@ -280,10 +280,10 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"context": "300k", "effort": "high"},
         instruction_profile="reasoner",
     ),
-    # Cursor Grok 4.6 — effort + fast only (no thinking/context knobs).
+    # Cursor Grok 4.7 — effort + fast only (no thinking/context knobs).
     # KnobSpec.default drives omit-path emit; default_variant may still mirror
     # live ListModels (fast=true there) — descriptor default wins on omit-path.
-    "grok-4.6": ModelCapability(
+    "grok-4.7": ModelCapability(
         knobs={
             "effort": KnobSpec(
                 accepted=("low", "medium", "high", "xhigh"), default="high"

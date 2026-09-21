@@ -93,10 +93,10 @@ def test_conductor_body_kind_omit_model_resolves_composer() -> None:
 def test_conductor_explicit_grok_pin_honored() -> None:
     _, _, _, resolved = resolve_auto_seat_generate_target(
         "cursor-sdk",
-        model="cursor/grok-4.6",
+        model="cursor/grok-4.7",
         request_id="req-conductor-grok-pin",
     )
-    assert resolved == "cursor/grok-4.6"
+    assert resolved == "cursor/grok-4.7"
 
 
 def test_omit_model_without_packet_kind_resolves_composer() -> None:

@@ -47,7 +47,7 @@ def _digest_with_review(turn: dict | None = None) -> dict:
             "max_hop_minutes": 60,
             "wake_on_attention_only": True,
             "gear": "3-wake-on-attention",
-            "successor_model": "cursor/grok-4.6",
+            "successor_model": "cursor/grok-4.7",
             "successor_model_source": "override",
         },
         "register": "autonomous",
@@ -81,12 +81,12 @@ def test_apply_body_is_lane_b_house_generate() -> None:
     assert review is not None
     body = build_review_apply_body(
         "11960",
-        {"max_hop_minutes": 60, "successor_model": "cursor/grok-4.6"},
+        {"max_hop_minutes": 60, "successor_model": "cursor/grok-4.7"},
         review,
     )
     assert body["lane"] == "B"
     assert body["contract"] == "none"
-    assert body["model"] == "cursor/grok-4.6"
+    assert body["model"] == "cursor/grok-4.7"
     assert body["_review_apply"] is True
     assert "prompt" not in body
     assert "source_ref" not in body

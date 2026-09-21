@@ -37,7 +37,7 @@ def test_composer_admit_does_not_echo_resolved_xhigh() -> None:
 
 def test_grok_admit_echoes_resolved_rung() -> None:
     resolved = admit_plane_resolved_effort(
-        "cursor/grok-4.6",
+        "cursor/grok-4.7",
         {"requested": "xhigh", "resolved_effort": "xhigh"},
     )
     assert resolved == "xhigh"

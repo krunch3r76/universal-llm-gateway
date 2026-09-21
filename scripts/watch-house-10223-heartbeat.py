@@ -372,7 +372,7 @@ def _wake_prompt(result: dict[str, Any]) -> str | None:
             parts.append(
                 "WORK_PENDING (implement): launch hop tab — Multitask OFF; "
                 f"execute {work['prompt_path']} in-seat. Sequential Task only "
-                "(composer-2.5 / grok-4.6-xhigh, one at a time). CLOSEOUT 10303 when done."
+                "(composer-2.5 / grok-4.7-xhigh, one at a time). CLOSEOUT 10303 when done."
             )
         else:
             parts.append(

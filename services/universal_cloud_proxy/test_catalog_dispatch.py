@@ -26,7 +26,7 @@ from services.universal_cloud_proxy.native_boundary import (
 )
 
 _OPUS = "anthropic/claude-opus-4-8"
-_GROK = "xai/grok-4.6"
+_GROK = "xai/grok-4.7"
 
 
 def _manager_with(provider: str, model: CatalogModel) -> CatalogManager:
@@ -132,7 +132,7 @@ async def test_fetch_provider_list_pricing_and_non_dict_entries() -> None:
     adapter = _FakeAdapter(
         "xai",
         [
-            {"id": "grok-4.6", "pricing": [{"type": "input", "cost": "0.001"}]},
+            {"id": "grok-4.7", "pricing": [{"type": "input", "cost": "0.001"}]},
             {
                 "id": "grok-4",
                 "pricing": {"prompt": "0.000002", "completion": "0.00001"},
@@ -144,8 +144,8 @@ async def test_fetch_provider_list_pricing_and_non_dict_entries() -> None:
 
     assert await mgr._fetch_provider(cfg)  # noqa: SLF001
     models = {m.id: m for m in mgr._catalogs["xai"].models}  # noqa: SLF001
-    assert set(models) == {"xai/grok-4.6", "xai/grok-4"}
-    assert models["xai/grok-4.6"].prompt_cost_per_m == 0.0
+    assert set(models) == {"xai/grok-4.7", "xai/grok-4"}
+    assert models["xai/grok-4.7"].prompt_cost_per_m == 0.0
     assert models["xai/grok-4"].prompt_cost_per_m == 2.0
 
 
@@ -226,7 +226,7 @@ async def test_refresh_keeps_prior_cache_when_provider_raises() -> None:
     async def _on_fail(provider: str, error: str) -> None:
         failures.append((provider, error))
 
-    adapter = _SucceedThenBoomAdapter("xai", [{"id": "grok-4.6"}])
+    adapter = _SucceedThenBoomAdapter("xai", [{"id": "grok-4.7"}])
     cfg = ProviderConfig(provider="xai", api_key="x")
     mgr = CatalogManager(
         [cfg], {"xai": adapter}, on_provider_catalog_refresh_failed=_on_fail

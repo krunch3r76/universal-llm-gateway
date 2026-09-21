@@ -32,10 +32,10 @@ def test_alias_fold_cdp_fable_vs_cursor_fable_same_effort_not_independent() -> N
 
 
 def test_same_model_different_rung_independent() -> None:
-    explicit = consultant_identity("cursor/grok-4.6", {"effort": "xhigh"})
-    suffix = consultant_identity("cursor/grok-4.6-high")
-    assert explicit.model_identity == "grok-4.6"
-    assert suffix.model_identity == "grok-4.6"
+    explicit = consultant_identity("cursor/grok-4.7", {"effort": "xhigh"})
+    suffix = consultant_identity("cursor/grok-4.7-high")
+    assert explicit.model_identity == "grok-4.7"
+    assert suffix.model_identity == "grok-4.7"
     assert explicit.rung == "xhigh"
     assert suffix.rung == "high"
     assert independently_measured(explicit, suffix) is True
@@ -103,8 +103,8 @@ def test_reasoning_knob_normalizes_to_wire() -> None:
 
 
 def test_non_rung_knobs_ignored() -> None:
-    fast_on = consultant_identity("cursor/grok-4.6", {"fast": "true"})
-    fast_off = consultant_identity("cursor/grok-4.6", {"fast": "false"})
+    fast_on = consultant_identity("cursor/grok-4.7", {"fast": "true"})
+    fast_off = consultant_identity("cursor/grok-4.7", {"fast": "false"})
     assert fast_on.rung == "high"
     assert fast_off.rung == "high"
     assert independently_measured(fast_on, fast_off) is False

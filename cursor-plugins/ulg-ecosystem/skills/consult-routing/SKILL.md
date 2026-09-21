@@ -199,7 +199,7 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 | investigate | cursor-sdk | cursor/composer-2.5 | investigate, recon, seed |
 | mechanical_implement | cursor-sdk | cursor/composer-2.5 | implement |
 
-**Roaming bare ids:** `composer-2.5`, `composer-2.5-fast`, `grok-4.6`
+**Roaming bare ids:** `composer-2.5`, `composer-2.5-fast`, `grok-4.7`
 
 **contract_effort** (omit/auto defaults; contract-keyed, not per-workflow):
 
@@ -282,9 +282,9 @@ Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable` /
 | Path-sim **A** (L1+L2) / closed-detent light consult | Composer enumerate → **`cdp/fable` bind** |
 | Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (CLI `fable-5.1` = IF6 only; path-sim annex A) |
 | Recon+investigate judgment residual | **`seat=cursor-sdk` + `contract=investigate`** (facts + `OPEN FORK:` — never binds) |
-| API `xai/grok-4.6` on coding work | **PROHIBITED** |
-| Engineering skeptic on **codework** | **DORMANT** — `grok-4.6` barred on codework (operator ratified agent-bus:9956). Re-evaluate when a successor model (e.g. grok-5) earns admission. Use CDP judgment slots (M1–M4, `runbook:score-play`) instead. |
-| Non-code adversarial (life/analysis) | `role=skeptic` + `xai/grok-4.6` — life/analysis lane only |
+| API `xai/grok-4.7` on coding work | **PROHIBITED** |
+| Engineering skeptic on **codework** | **DORMANT** — `grok-4.7` barred on codework (operator ratified agent-bus:9956). Re-evaluate when a successor model (e.g. grok-5) earns admission. Use CDP judgment slots (M1–M4, `runbook:score-play`) instead. |
+| Non-code adversarial (life/analysis) | `role=skeptic` + `xai/grok-4.7` — life/analysis lane only |
 | Writing / correspondence | Grok **PROHIBITED** — L3 annex |
 
 ### Skeptic / reviewer substrate matrix (codework, R2)

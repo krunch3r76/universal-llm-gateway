@@ -54,7 +54,7 @@ def test_resolve_cursor_api_key_grok_primary_pool() -> None:
         "CURSOR_API_KEY": "primary-key",
         CURSOR_API_KEY_OTHER_MODELS_ENV: "secondary-key",
     }
-    res = resolve_cursor_api_key("cursor/grok-4.6", env=env)
+    res = resolve_cursor_api_key("cursor/grok-4.7", env=env)
     assert res.provenance == "env:CURSOR_API_KEY"
     assert res.api_key is None
 

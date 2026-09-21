@@ -1,7 +1,7 @@
 """Continuity MCP tool — checkpoint (lean) plus resume/tape/consolidate relays.
 
 Cursor checkpoint callers pass ``pre_consolidate=false`` explicitly and fire
-``team_dispatch(op=generate, model=cursor/grok-4.6)`` for the tip. Consolidate
+``team_dispatch(op=generate, model=cursor/grok-4.7)`` for the tip. Consolidate
 ops still exist; they are not the checkpoint happy path.
 """
 
@@ -312,7 +312,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
           admit a cursor-sdk residue/card-patch worker except
           ``channel=hop``). ``transcript_id`` names a Cursor tab; without
           it, stop — do not guess. Tip author is external generate
-          (``model=cursor/grok-4.6``), not the pre_consolidate worker.
+          (``model=cursor/grok-4.7``), not the pre_consolidate worker.
 
         - ``resume`` — sync relay to
           ``POST /threads/{thread}/resume-fence``. Required: ``thread``.

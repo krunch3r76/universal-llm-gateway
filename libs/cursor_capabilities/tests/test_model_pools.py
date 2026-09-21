@@ -24,7 +24,7 @@ def test_other_models_pool_membership(model_id: str) -> None:
 
 @pytest.mark.parametrize(
     "model_id",
-    ["cursor/grok-4.6", "cursor/composer-2.5", "grok-4.6", "composer-2.5"],
+    ["cursor/grok-4.7", "cursor/composer-2.5", "grok-4.7", "composer-2.5"],
 )
 def test_cursor_models_pool_not_other_models(model_id: str) -> None:
     assert not is_other_models_pool(model_id)

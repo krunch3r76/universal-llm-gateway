@@ -1,5 +1,5 @@
 ---
-description: "When the operator says talk to grok.com, message grok.com, paste into grok, communicate with grok.com, or open grok.com — execute runbook:grok-com-communicate (CDP paste into a signed-in grok.com/c/<id> tab). Not cursor/grok-4.6, not xAI API, not Cowork dispatch."
+description: "When the operator says talk to grok.com, message grok.com, paste into grok, communicate with grok.com, or open grok.com — execute runbook:grok-com-communicate (CDP paste into a signed-in grok.com/c/<id> tab). Not cursor/grok-4.7, not xAI API, not Cowork dispatch."
 alwaysApply: false
 ---
 # grok.com communicate (on demand)
@@ -20,7 +20,7 @@ CLI: on **Jupiter**, `$HOME/.venvs/universal/bin/python -m web_chat_relay.cli` (
 | Bad | Good |
 |---|---|
 | `team_dispatch` / Fable / Cowork to open grok.com | Paste on the attended `:9222` tab |
-| `cursor/grok-4.6` or `xai/grok-*` as grok.com | The website chat at `/c/<uuid>` |
+| `cursor/grok-4.7` or `xai/grok-*` as grok.com | The website chat at `/c/<uuid>` |
 | Fill Sign in / Google / xAI password | Stop; operator authenticates |
 | cursor-ide-browser as the default path | Jupiter `:9222` unless operator confirms a signed-in IDE tab |
 | Pin a default chat uuid | Operator URL or live `--probe` `url` |

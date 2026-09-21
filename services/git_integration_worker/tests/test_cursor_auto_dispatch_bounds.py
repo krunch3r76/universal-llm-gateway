@@ -77,7 +77,7 @@ def _effort(value: str) -> dict[str, object]:
 
 @pytest.mark.parametrize(
     "model_id",
-    ["composer-2.5", "cursor/composer-2.5", "grok-4.6", "cursor/grok-4.6"],
+    ["composer-2.5", "cursor/composer-2.5", "grok-4.7", "cursor/grok-4.7"],
 )
 def test_roaming_tier_membership(model_id: str) -> None:
     assert is_roaming_tier(model_id)
@@ -100,14 +100,14 @@ def test_non_roaming_when_bare_id_not_in_registry() -> None:
     stripped_models = {
         bare: ModelPolicy(bare_id=bare, roaming=False)
         for bare, policy in reg.models.items()
-        if bare != "grok-4.6"
+        if bare != "grok-4.7"
     }
     reg_without_grok = WorkflowRegistry(
         workflows=reg.workflows,
         models=stripped_models,
         contract_effort=reg.contract_effort,
     )
-    assert not is_roaming_tier("cursor/grok-4.6", registry=reg_without_grok)
+    assert not is_roaming_tier("cursor/grok-4.7", registry=reg_without_grok)
 
 
 @pytest.mark.parametrize("requested", ["low", "medium", "high", "xhigh", "max"])
@@ -119,14 +119,14 @@ def test_opus_card_accepts_full_effort_ladder(requested: str) -> None:
 @pytest.mark.parametrize("requested", ["low", "medium", "high", "xhigh"])
 def test_grok_card_accepts_through_xhigh(requested: str) -> None:
     payload = _effort(requested)
-    assert clamp_effort_to_model_card("cursor/grok-4.6", payload) is payload
+    assert clamp_effort_to_model_card("cursor/grok-4.7", payload) is payload
 
 
 def test_grok_max_degrades_to_card_ceiling() -> None:
-    out = clamp_effort_to_model_card("cursor/grok-4.6", _effort("max"))
+    out = clamp_effort_to_model_card("cursor/grok-4.7", _effort("max"))
     assert out["resolved_effort"] == "xhigh"
     assert out["clamped"] is True
-    assert "not on grok-4.6 card" in str(out["notes"])
+    assert "not on grok-4.7 card" in str(out["notes"])
 
 
 @pytest.mark.parametrize(
@@ -145,8 +145,8 @@ def test_off_ladder_effort_falls_to_card_default() -> None:
     )
 
     payload = _effort("none")
-    clamped = clamp_effort_to_model_card("cursor/grok-4.6", payload)
-    knobs = compose_model_knobs({"resolved_model_id": "cursor/grok-4.6"}, payload)
+    clamped = clamp_effort_to_model_card("cursor/grok-4.7", payload)
+    knobs = compose_model_knobs({"resolved_model_id": "cursor/grok-4.7"}, payload)
     assert clamped["resolved_effort"] == "high"
     assert clamped["clamped"] is True
     assert "off-ladder" in str(clamped["notes"])
@@ -161,7 +161,7 @@ def test_sdk_card_clamp_does_not_define_cdp_wire_effort() -> None:
     )
 
     wire = resolve_desired_effort("max")
-    clamped = clamp_effort_to_model_card("cursor/grok-4.6", wire)
+    clamped = clamp_effort_to_model_card("cursor/grok-4.7", wire)
     assert wire["resolved_effort"] == "max"
     assert clamped["resolved_effort"] == "xhigh"
     # Handler must pass wire["resolved_effort"] to CDP, not the sdk card clamp.
@@ -197,7 +197,7 @@ def test_reasoning_model_keeps_the_bind_leg() -> None:
     assert out["resolved_model_id"] == "cursor/claude-opus-5"
 
 
-@pytest.mark.parametrize("requested", ["composer-2.5", "cursor/grok-4.6", "auto"])
+@pytest.mark.parametrize("requested", ["composer-2.5", "cursor/grok-4.7", "auto"])
 def test_roaming_tier_runs_mechanical_work_untouched(requested: str) -> None:
     model = resolve_desired_model(requested, contract="implement")
     before = model["resolved_model_id"]

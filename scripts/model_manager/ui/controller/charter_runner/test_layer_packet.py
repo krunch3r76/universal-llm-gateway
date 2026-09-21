@@ -404,7 +404,7 @@ def test_layer_g5_blocked_without_independence_evidence() -> None:
     )
     assert transition.value == "BLOCK"
     provenance_body = _G5_BLOCK_BODY + _PROVENANCE_BODY + (
-        "\nG3 densifier consultant_model: grok-4.6\n"
+        "\nG3 densifier consultant_model: grok-4.7\n"
         "G4 check consultant_model: gpt-5.6-terra\n"
     )
     assert layer_independence_ok(parsed=parsed, checkpoint_body=provenance_body).ok
@@ -460,7 +460,7 @@ def test_layer_g5_operator_proxy_admitted_without_provenance() -> None:
 def test_layer_independence_reason_consult_provenance() -> None:
     parsed = parse_checkpoint(_G5_BLOCK_BODY)
     body = _G5_BLOCK_BODY + _PROVENANCE_BODY + (
-        "\nG3 densifier consultant_model: grok-4.6\n"
+        "\nG3 densifier consultant_model: grok-4.7\n"
         "G4 check consultant_model: gpt-5.6-terra\n"
     )
     verdict = layer_independence_ok(
@@ -516,8 +516,8 @@ def test_consult_provenance_md_round_trips_model_and_effort() -> None:
 def test_layer_independence_same_model_g3_g4_blocks() -> None:
     parsed = parse_checkpoint(_G5_BLOCK_BODY)
     body = _G5_BLOCK_BODY + _PROVENANCE_BODY + (
-        "\nG3 densifier consultant_model: grok-4.6\n"
-        "G4 check consultant_model: grok-4.6\n"
+        "\nG3 densifier consultant_model: grok-4.7\n"
+        "G4 check consultant_model: grok-4.7\n"
     )
     verdict = layer_independence_ok(
         parsed=parsed,
@@ -531,11 +531,11 @@ def test_layer_independence_same_model_g3_g4_blocks() -> None:
 ## Consult provenance
 - consult_thread: agent-bus:7001
 - verdict: ADMIT
-- consultant_model: grok-4.6
+- consultant_model: grok-4.7
 - consultant_effort: xhigh
 - consultant_substrate: web-anthropic
 - gate_id: G3
-""" + "\nG4 check consultant_model: grok-4.6-high\n"
+""" + "\nG4 check consultant_model: grok-4.7-high\n"
     verdict_rung = layer_independence_ok(
         parsed=parsed,
         checkpoint_body=body_rung_diverse,
@@ -573,9 +573,9 @@ def test_layer_g4_check_identity_diverse_seat_bind() -> None:
     assert layer_g4_check_identity_diverse()
     assert not layer_g4_check_identity_diverse(g3_seat=LAYER_G3_SEAT, g4_seat=LAYER_G3_SEAT)
     assert layer_g4_check_identity_diverse(
-        g3_seat="cursor/grok-4.6",
+        g3_seat="cursor/grok-4.7",
         g3_knobs={"effort": "xhigh"},
-        g4_seat="cursor/grok-4.6-high",
+        g4_seat="cursor/grok-4.7-high",
     )
     assert layer_g4_check_identity_diverse(
         g3_seat=LAYER_G3_SEAT, g4_seat=LAYER_G4_SEAT

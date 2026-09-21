@@ -140,7 +140,7 @@ def compose_model_knobs(
             bare = None
         else:
             if (
-                bare == "grok-4.6"
+                bare == "grok-4.7"
                 and "fast" in supported_knobs(bare)
                 and "fast" not in knobs
             ):

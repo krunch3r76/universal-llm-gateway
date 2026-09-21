@@ -16,7 +16,7 @@ CDP (Fable/Opus) consultation elsewhere, not by this in-seat default.
 ``IMPLEMENT_MODEL`` dispatches at ``IMPLEMENT_CONTRACT`` (``implement``) — no
 skill scaffolding, mechanical execution against a pre-densified packet.
 
-``cursor/grok-4.6`` is an explicit pin only — path-sim A, ``role=skeptic``, and
+``cursor/grok-4.7`` is an explicit pin only — path-sim A, ``role=skeptic``, and
 family-cross checks — never this module's default. Layer-arc G3 keeps its own
 family-diversity locus in ``window_exec.materializer_layer``.
 

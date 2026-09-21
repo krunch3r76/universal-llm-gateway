@@ -19,7 +19,7 @@ def _forcing_digest(
 ) -> dict:
     digest = _digest(attention=[{"id": "1", "unread": 1}])
     digest["policy"]["now_row"] = now_row
-    digest["policy"]["successor_model"] = "cursor/grok-4.6"
+    digest["policy"]["successor_model"] = "cursor/grok-4.7"
     digest["frictions"] = [
         {
             "id": "a:35997",
@@ -51,7 +51,7 @@ def test_sit_forcing_friction_is_row_bind_not_grok() -> None:
     assert body.get("model") == "cdp/opus-5"
     assert "seat" not in body
     assert "lane" not in body
-    assert body.get("model") != "cursor/grok-4.6"
+    assert body.get("model") != "cursor/grok-4.7"
 
 
 def test_sit_forcing_without_friction_in_successor_row() -> None:

@@ -207,14 +207,14 @@ def test_fire_navigator_uses_successor_model_when_navigator_model_is_cdp(
     digest = _digest(
         policy={
             **_digest()["policy"],
-            "successor_model": "cursor/grok-4.6",
+            "successor_model": "cursor/grok-4.7",
         }
     )
     result = fire_navigator_wake(
         "10479", digest, _state(), register="autonomous", dry_run=True
     )
     assert result["body"]["seat"] == "cursor-sdk"
-    assert result["body"]["model"] == "cursor/grok-4.6"
+    assert result["body"]["model"] == "cursor/grok-4.7"
 
 
 @pytest.mark.offline

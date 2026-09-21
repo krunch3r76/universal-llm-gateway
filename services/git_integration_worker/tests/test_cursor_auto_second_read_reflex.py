@@ -105,7 +105,7 @@ def test_effort_within_accepted_range_passes_through() -> None:
     # degradation needed for a value the model already accepts verbatim.
     # Auto omit-path fills fast=false when the knob is absent (ULG default, not Fast).
     knobs = compose_model_knobs(
-        {"resolved_model_id": "cursor/grok-4.6"}, {"resolved_effort": "xhigh"}
+        {"resolved_model_id": "cursor/grok-4.7"}, {"resolved_effort": "xhigh"}
     )
     assert knobs == {"effort": "xhigh", "fast": "false"}
 
@@ -116,14 +116,14 @@ def test_effort_clamps_down_to_model_ceiling() -> None:
     # rather than drop the knob entirely, which would silently hand the
     # bridge a model default that could be far above what was asked for.
     knobs = compose_model_knobs(
-        {"resolved_model_id": "cursor/grok-4.6"}, {"resolved_effort": "max"}
+        {"resolved_model_id": "cursor/grok-4.7"}, {"resolved_effort": "max"}
     )
     assert knobs == {"effort": "xhigh", "fast": "false"}
 
 
 def test_grok_auto_defaults_fast_false_even_without_effort() -> None:
     knobs = compose_model_knobs(
-        {"resolved_model_id": "cursor/grok-4.6"}, {"resolved_effort": ""}
+        {"resolved_model_id": "cursor/grok-4.7"}, {"resolved_effort": ""}
     )
     assert knobs == {"fast": "false"}
 
@@ -132,7 +132,7 @@ def test_grok_explicit_fast_true_is_preserved() -> None:
     """Default is fill-if-absent, not a pin — an explicit fast rides through."""
     knobs = compose_model_knobs(
         {
-            "resolved_model_id": "cursor/grok-4.6",
+            "resolved_model_id": "cursor/grok-4.7",
             "model_knobs": {"fast": "true"},
         },
         {"resolved_effort": "high"},

@@ -27,7 +27,7 @@ Work class: outbound letters, correspondence, prose critique+rewrite. Complement
 
 | Model / path | Rule |
 |---|---|
-| `xai/grok-4.6` / `cursor/grok-4.6` | **PROHIBITED** for writing |
+| `xai/grok-4.7` / `cursor/grok-4.7` | **PROHIBITED** for writing |
 | `openai/gpt-5.5` | **OPERATOR-GATED** |
 | Standing writing multi-model | `role=reviewer` → `openai/gpt-5.6-terra` + `role=synthesizer` → Gemini; ¬ default `panel_dispatch` |
 | Lead / web-anthropic in-seat | OK when corpus staged |

@@ -40,7 +40,7 @@ def test_cursor_reviewer_omits_reasoning_effort() -> None:
     )
     assert "reasoning_effort" not in body
     api_body = build_team_dispatch_body(
-        spec=PanelMemberSpec(role="skeptic", model="xai/grok-4.6"),
+        spec=PanelMemberSpec(role="skeptic", model="xai/grok-4.7"),
         dispatch_thread_id="t1",
         reasoning_effort="high",
     )
@@ -49,11 +49,11 @@ def test_cursor_reviewer_omits_reasoning_effort() -> None:
 
 def test_build_body_keeps_role_for_api_skeptic() -> None:
     body = build_team_dispatch_body(
-        spec=PanelMemberSpec(role="skeptic", model="xai/grok-4.6"),
+        spec=PanelMemberSpec(role="skeptic", model="xai/grok-4.7"),
         dispatch_thread_id="t1",
     )
     assert body["role"] == "skeptic"
-    assert body["model"] == "xai/grok-4.6"
+    assert body["model"] == "xai/grok-4.7"
     assert "seat" not in body
 
 
@@ -64,5 +64,5 @@ def test_default_panel_has_two_distinct_identities() -> None:
     }
     labels = panel_identity_labels(member_models)
     assert any(label.startswith("claude-fable-5-1@") for label in labels)
-    assert any(label.startswith("grok-4.6@") for label in labels)
+    assert any(label.startswith("grok-4.7@") for label in labels)
     assert len(labels) >= 2

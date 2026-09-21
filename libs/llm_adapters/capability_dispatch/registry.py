@@ -113,7 +113,7 @@ _GOOGLE_CONTEXT_WINDOW = 1_000_000
 # Total input+output budget per family. Sources:
 #   - Repo intelligence profiles: gpt-5.2/5.3 = 200k, gpt-5.4 = 1.05M
 #   - OpenAI API model page (gpt-5.5): 1,050,000 context window
-#   - xAI model docs (grok-4.6 / grok-4.5): 500,000
+#   - xAI model docs (grok-4.7 / grok-4.5): 500,000
 #   - older grok-4 / grok-3 family markers retained as fallbacks at 1M
 # Ordered most-specific first; substring match mirrors the Anthropic tables.
 # Manually extend when adding a model (see MODEL_ADD_CHECKLIST.md).
@@ -124,7 +124,7 @@ _RESPONSES_CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
     ("gpt-5.5", 1_050_000),
     ("gpt-5.4", 1_050_000),
     ("grok-4.20", 1_000_000),
-    ("grok-4.6", 500_000),
+    ("grok-4.7", 500_000),
     ("grok-4.5", 500_000),
     ("grok-4.3", 500_000),
     ("grok-4-1", 1_000_000),
@@ -159,7 +159,7 @@ _ANTHROPIC_ADAPTIVE_FAMILIES: frozenset[str] = frozenset(
 _REASONING_BUDGET_MAP: dict[str, int] = {"low": 2048, "medium": 8192, "high": 24000}
 # Implicit default reasoning_effort by ``provider/model`` key.
 _DEFAULT_HIGH_EFFORT: frozenset[str] = frozenset(
-    {"xai/grok-4.6", "xai/grok-4.5", "xai/grok-4.3"}
+    {"xai/grok-4.7", "xai/grok-4.5", "xai/grok-4.3"}
 )
 
 # ── Responses / Google surface-uniform max-output ────────────────────────────
@@ -234,10 +234,10 @@ def _anthropic_uses_adaptive(bare_model: str) -> bool:
 
 
 def xai_supports_reasoning_effort(model: str) -> bool:
-    """grok-3 family, grok-4.6/4.5, and grok-4.20-multi-agent accept reasoning.effort.
+    """grok-3 family, grok-4.7/4.5, and grok-4.20-multi-agent accept reasoning.effort.
 
     Reshaped from the deleted ``reasoning_capabilities`` predicate; primary
-    marker is grok-4.6 (docs.x.ai). grok-4.5 retained for leftover API ids.
+    marker is grok-4.7 (docs.x.ai). grok-4.5 retained for leftover API ids.
     Plain grok-4.20-reasoning is not listed — only explicit multi-agent prefix
     gets effort support.
     """
@@ -247,7 +247,7 @@ def xai_supports_reasoning_effort(model: str) -> bool:
             "grok-3-mini",
             "grok-3",
             "grok-4.3",
-            "grok-4.6",
+            "grok-4.7",
             "grok-4.5",
             "grok-4.20-multi-agent",
         )

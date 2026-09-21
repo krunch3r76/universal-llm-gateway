@@ -127,7 +127,7 @@ seat=cursor-sdk ∧ (recon|investigate-emphasis) ⇒ contract=investigate (facts
 seat=cursor-sdk ∧ pure_mechanical_inventory ⇒ Composer OK
 ```
 
-Origin: GPT-5.4 failed 28/29 tool-loop skill rewrites by budget exhaustion; GPT-5.5 succeeded 28/28 retry. Use 5.4 only for certain no-tools single-shot calls. cursor-sdk model split: implement stays Composer default; recon+investigate judgment overrides to **`contract=investigate`** (not API `xai/grok-4.6`).
+Origin: GPT-5.4 failed 28/29 tool-loop skill rewrites by budget exhaustion; GPT-5.5 succeeded 28/28 retry. Use 5.4 only for certain no-tools single-shot calls. cursor-sdk model split: implement stays Composer default; recon+investigate judgment overrides to **`contract=investigate`** (not API `xai/grok-4.7`).
 
 ## 3. Prompt shape
 

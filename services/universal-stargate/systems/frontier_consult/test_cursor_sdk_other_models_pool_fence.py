@@ -155,7 +155,7 @@ def test_fence_omit_path_other_models_refused(
 @pytest.mark.parametrize(
     "model,resolved",
     [
-        ("cursor/grok-4.6", "cursor/grok-4.6"),
+        ("cursor/grok-4.7", "cursor/grok-4.7"),
         ("cursor/composer-2.5", "cursor/composer-2.5"),
         (None, "cursor/composer-2.5"),
     ],

@@ -42,7 +42,7 @@ submission freeze unless a named CPR INV-6 blocker explicitly requires them.
 
 | Mode | Invocation | Who reasons | Pipeline calls |
 |---|---|---|---|
-| **Gradual** (default) | `/overhaul {directory}` | **Grok 4.6 High** Cursor lead orchestrates; web-claude (Opus) for deep splits / cross-subsystem review / arch-doc; Fable on F1–F4 only | User approves each Stargate call |
+| **Gradual** (default) | `/overhaul {directory}` | **Grok 4.7 High** Cursor lead orchestrates; web-claude (Opus) for deep splits / cross-subsystem review / arch-doc; Fable on F1–F4 only | User approves each Stargate call |
 | **Frontier** | `/overhaul frontier {directory}` | team-generate / Stargate E2E | Automated when frontier dispatch is verified |
 
 **Checkpoint gates** (gradual): stop after scan/vulture, split plans, applied splits,
@@ -82,10 +82,10 @@ Transport column = **code MCP only** (see Surface gate). On life: `agent_bus` �
 
 | Work class | Transport | Threshold |
 |---|---|---|
-| Gradual orchestrator / lead | Cursor IDE — **Grok 4.6 High/on** (fallback Sonnet 5 High) | Default gradual session |
+| Gradual orchestrator / lead | Cursor IDE — **Grok 4.7 High/on** (fallback Sonnet 5 High) | Default gradual session |
 | Deep file splits (complex consumers, PHANTOM symbols) | `team_dispatch(op=handoff, role=web-consult)` modularize packet — **Opus 4.8**; **Fable 5.1** on F1 (Wave 0 ceiling, sub-contingent) | Gradual default |
-| Scoped post-split review | Deep/cross-subsystem → web-consult **Opus**; manual/bulk + single-subsystem → **Grok 4.6 High** permitted; Fable on F2 conflict | Split-tier-follows |
-| Mechanical apply + gates | **`team_dispatch(op=generate, seat=cursor-sdk, packet_path=…, contract=implement)`** (default, auto Composer) · `cursor-implement` handoff (operator-attended fallback) · IDE self when the dispatching seat is already Cursor | Clear split plan, bounded diff; **packet must be dense** (Composer executes mechanically); ¬ `model=cursor/grok-4.6` on settled implement |
+| Scoped post-split review | Deep/cross-subsystem → web-consult **Opus**; manual/bulk + single-subsystem → **Grok 4.7 High** permitted; Fable on F2 conflict | Split-tier-follows |
+| Mechanical apply + gates | **`team_dispatch(op=generate, seat=cursor-sdk, packet_path=…, contract=implement)`** (default, auto Composer) · `cursor-implement` handoff (operator-attended fallback) · IDE self when the dispatching seat is already Cursor | Clear split plan, bounded diff; **packet must be dense** (Composer executes mechanically); ¬ `model=cursor/grok-4.7` on settled implement |
 | Bulk modularize plan | `scripts/modularize plan {file}` | ≤500 SLOC, ≤3 consumers, no event-factory density |
 | Arch-doc review (step 11) | `/review-arch-doc` web Opus; **Fable 5.1** on F3 (Wave 0 once) | Gradual |
 | Automated review / split | `team-generate` via `/consult-review` or `/modularize` | `/overhaul frontier` only |

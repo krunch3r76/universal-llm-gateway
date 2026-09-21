@@ -90,7 +90,7 @@ Primary delivery is an explicit slug line, not a paste. Caller composes:
 
 - **Quality ≠ transport.** “Opus 5 Max / High”, “Fable Max”, “Grok-4.5 High” name **effort**, not a dispatch path.
 - **Anthropic family** (`decision:anthropic-family-dispatch-substrate`): `model=anthropic/*` via Stargate API is **PROHIBITED**; wide consult / R-admit ⇒ **web-anthropic CDP**; `cursor/claude-opus-*` acceptable when live codebase navigation is needed. ¬ unlock API via routine `cost_intent`.
-- **xAI on the code lane** (friction 25081): bundled-arc **A** ⇒ Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks); closed-detent light consult ⇒ **`model=cdp/fable, contract=none`**; bundled-arc **Q** defaults to **CDP Fable**. `role=artisan, model=xai/grok-4.6` on a checkout-present coding consult is **PROHIBITED** (`xai/grok-4.6` stays OK for engineering axis-2 skeptic on specs/design; Grok is **PROHIBITED** for outbound prose).
+- **xAI on the code lane** (friction 25081): bundled-arc **A** ⇒ Composer enumerate → **`cdp/fable` bind** (¬ Composer ranks); closed-detent light consult ⇒ **`model=cdp/fable, contract=none`**; bundled-arc **Q** defaults to **CDP Fable**. `role=artisan, model=xai/grok-4.7` on a checkout-present coding consult is **PROHIBITED** (`xai/grok-4.7` stays OK for engineering axis-2 skeptic on specs/design; Grok is **PROHIBITED** for outbound prose).
 - **Composer** = Stage-B implement only — never the A (L1+L2) leg. Detail: `consult-routing` § Anthropic-family substrate · § xAI coding-substrate · annex C.
 
 ## Dispatch cascade + R positions (essentials — mechanics in annex A)

@@ -40,7 +40,7 @@ Disposition = Literal[
 
 _MODEL_TABLE: dict[str, str] = {
     "composer-2.5": "cursor/composer-2.5",
-    "grok-4.6": "cursor/grok-4.6",
+    "grok-4.7": "cursor/grok-4.7",
     "opus-5": "cursor/claude-opus-5",
     "sonnet-5": "cursor/claude-sonnet-5",
 }
