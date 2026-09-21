@@ -29,7 +29,6 @@ operator-posture_ulg
 outbound-voice-spec_ulg
 presence-discipline_ulg
 python-universal-venv_ulg
-reasoning-posture_ulg
 restart-drain-discipline_ulg
 resume-fence_ulg
 skill-authoring_ulg

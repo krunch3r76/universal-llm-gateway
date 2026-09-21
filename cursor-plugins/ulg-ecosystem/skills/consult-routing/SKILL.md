@@ -96,15 +96,15 @@ Use admit `reply_from_agent` for `wait(from_agent=…)` — ¬ infer from `resol
 
 ## Judgment skill (BINDING)
 
-**Attended IDE:** `reasoning-posture_ulg.mdc` is `alwaysApply` + `required_gate` on
-thinking models — read the skill body on substantive turns.
+**Attended IDE:** skill `reasoning-posture` is `alwaysApply: true` (Cursor
+global-rule promotion). Thin stub `reasoning-posture_ulg.mdc` is retired — a
+pointer rule does not load the body.
 
-**Headless** (`team_dispatch` / `cursor-sdk` / `cursor-auto`): alwaysApply rule
-pruned from the cursor-sdk dispatch HOME; judgment contracts get preamble injection
-only (mechanical/quick skip). `skills=` on cursor-sdk generate mounts as well —
-staged into the dispatch HOME for native discovery, Use-line deduped against the
-fixed preambles, so listing `reasoning-posture` there adds nothing on a contract
-that already injects it.
+**Headless** (`team_dispatch` / `cursor-sdk` / `cursor-auto`): judgment contracts
+get preamble injection only (mechanical/quick skip). `skills=` on cursor-sdk
+generate mounts as well — staged into the dispatch HOME for native discovery,
+Use-line deduped against the fixed preambles, so listing `reasoning-posture`
+there adds nothing on a contract that already injects it.
 
 | Path | How |
 |---|---|

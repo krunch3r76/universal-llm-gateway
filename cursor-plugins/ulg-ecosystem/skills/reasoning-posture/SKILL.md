@@ -22,12 +22,13 @@ discipline, and `srm`.
 `substantive_reasoning_turn ∧ frontier_class_seat ⇒ apply(this)`.
 
 **Attended IDE** (thinking models — currently all sessions): this skill is
-`alwaysApply: true` (Cursor promotes it to a global rule; body is resident).
-Thin stub `reasoning-posture_ulg.mdc` stays `alwaysApply` + `required_gate`.
+`alwaysApply: true` (Cursor promotes it to a global rule). A thin stub does
+**not** load this body — `reasoning-posture_ulg.mdc` is retired. An already-open
+tab keeps its original inject set until Reload Window or a new chat.
 
-**Headless dispatch** (`team_dispatch` → `cursor-sdk`, `cursor-auto` admit/nest): the
-alwaysApply rule is **pruned** from the dispatch HOME; judgment contracts receive the
-shared preamble invoke (`REASONING_POSTURE_PREAMBLE` in `libs/reasoning_posture_contracts.py`)
+**Headless dispatch** (`team_dispatch` → `cursor-sdk`, `cursor-auto` admit/nest):
+judgment contracts receive the shared preamble invoke
+(`REASONING_POSTURE_PREAMBLE` in `libs/reasoning_posture_contracts.py`)
 from GIW `resolve_prompt_preamble` or cursor-auto admit. Mechanical / quick contracts
 skip (`implement` / `pure-mechanical` / `answer` / `ask` / `execute` / `propagate`). The
 skill directory stays in the dispatch HOME for on-demand body reads.
@@ -171,9 +172,9 @@ A short summary renders in non-subagent `cortex_brief` operational context. Scop
 
 | Surface | How the body is invoked |
 |---|---|
-| **Attended IDE** + in-seat Task subagents | this skill `alwaysApply: true` (Cursor global-rule promotion) + stub `reasoning-posture_ulg.mdc` `required_gate` |
+| **Attended IDE** + in-seat Task subagents | this skill `alwaysApply: true` (Cursor global-rule promotion). Thin stub retired. Fresh tab or Reload Window for an already-open chat |
 | CDP generate (`model=cdp/…`, including `panel_dispatch` CDP legs) | Staging always merges `reasoning-posture` into `skills=` (`ensure_cdp_judgment_skills`, including none / omitted `skills`) |
-| `team_dispatch` generate `seat=cursor-sdk` | GIW `resolve_prompt_preamble` prepends `REASONING_POSTURE_PREAMBLE` on judgment contracts; skip mechanical/quick. `skills=` mount is a no-op. alwaysApply rule pruned from dispatch HOME |
+| `team_dispatch` generate `seat=cursor-sdk` | GIW `resolve_prompt_preamble` prepends `REASONING_POSTURE_PREAMBLE` on judgment contracts; skip mechanical/quick. `skills=` mount is a no-op |
 | `team_dispatch` `op=handoff` consult / none | Stargate enrich inserts the same Use-line into `<invariants>`; skip implement / `cursor-implement` |
 | `cursor-auto` admit (first episode) | Admit report appends `REASONING_POSTURE_PREAMBLE` when `handoff_contract` warrants; nested cursor-sdk also gets GIW preamble |
 
