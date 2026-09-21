@@ -28,6 +28,38 @@ _CATALOG_ORDER = (
     "substrate_event_read",
 )
 
+# Advisory JSON Schema for substrate tool results. execute callbacks still return
+# json.dumps(str); cursor-sdk 1.0.31 does not validate against output_schema.
+_CORTEX_READ_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": True,
+    "properties": {
+        "error": {"type": "string"},
+        "status_code": {"type": ["integer", "null"]},
+        "entity_id": {"type": "string"},
+        "name": {"type": "string"},
+    },
+}
+_BUS_TIP_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": True,
+    "properties": {
+        "error": {"type": "string"},
+        "thread_id": {"type": "string"},
+        "latest_turn": {"type": ["object", "null"]},
+        "thread_error": {"type": "string"},
+        "turns_error": {"type": "string"},
+    },
+}
+_EVENT_READ_OUTPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": True,
+    "properties": {
+        "error": {"type": "string"},
+        "operations": {"type": "array"},
+    },
+}
+
 
 @dataclass(frozen=True, slots=True)
 class SubstrateDispatchContext:
@@ -180,6 +212,7 @@ def build_substrate_custom_tools(
                 },
                 "required": ["entity_id"],
             },
+            output_schema=_CORTEX_READ_OUTPUT_SCHEMA,
         ),
         "substrate_bus_tip": CustomTool(
             execute=bus_tip,
@@ -193,6 +226,7 @@ def build_substrate_custom_tools(
                     "thread_id": {"type": "string"},
                 },
             },
+            output_schema=_BUS_TIP_OUTPUT_SCHEMA,
         ),
         "substrate_event_read": CustomTool(
             execute=event_read,
@@ -208,6 +242,7 @@ def build_substrate_custom_tools(
                 },
                 "required": ["operation"],
             },
+            output_schema=_EVENT_READ_OUTPUT_SCHEMA,
         ),
     }
 

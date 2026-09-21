@@ -28,6 +28,20 @@ def test_catalog_has_three_read_only_ops_in_rank_order() -> None:
     ]
 
 
+def test_substrate_tools_advertise_output_schema() -> None:
+    tools = build_substrate_custom_tools(
+        SubstrateDispatchContext(dispatch_id="disp-test", thread_id="6661")
+    )
+    opts = LocalAgentOptions(cwd="/tmp/ws", custom_tools=tools)
+    payload = opts.to_json()
+    for name in (
+        "substrate_cortex_read",
+        "substrate_bus_tip",
+        "substrate_event_read",
+    ):
+        assert payload["customTools"][name]["outputSchema"]["type"] == "object"
+
+
 def test_substrate_cortex_read_execute_returns_json() -> None:
     tools = build_substrate_custom_tools(_CTX)
     tool = tools["substrate_cortex_read"]
