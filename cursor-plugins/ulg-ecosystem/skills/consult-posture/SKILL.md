@@ -68,7 +68,7 @@ Do **not** treat `consult me` / `consult the operator` as exempt without operato
 
 | Concern | Defers to | Non-resident fallback |
 |---|---|---|
-| Resident Question/OOS/detent/cascade rails (thinking-off non-waiver) + epistemic quality (steelman / calibration / courage) | `agent_skill:reasoning-posture` | skill `alwaysApply: true` (IDE); GIW preamble (headless); cortex_brief opcontext block |
+| Resident Question/OOS/detent/cascade rails (thinking-off non-waiver) + epistemic quality (steelman / calibration / courage) | `agent_skill:reasoning-posture` | skill `alwaysApply: true` (Cursor IDE only); GIW preamble (headless); Claude = chip + Use-line + CDP `skills=` + cortex_brief — ¬ alwaysApply |
 | Rival fill / simulation | `agent_skill:hypothesize-simulate` | answering-seat procedure |
 | Path-sim machinery · detents · header grammar · checklist · per-family window params | `agent_skill:path-sim` | `cortex://notes/system/templates/fable-path-sim-prompt.md` |
 | Seat/transport/densify/implement_ready | `consult-routing` | `agent_bus` ask code lead |

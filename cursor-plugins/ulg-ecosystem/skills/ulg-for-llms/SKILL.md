@@ -98,7 +98,7 @@ Prefer these when a fork is otherwise tied.
 | `cortex_brief` / web boot | Short opcontext block; this file is the full body |
 | CDP `model=cdp/…` | Staging merges this slug into `skills=` (with `reasoning-posture`) — Customize chip + floor |
 | cursor-sdk non-mechanical | GIW preamble Use-line (same skip set as reasoning-posture) |
-| claude.ai Customize | `shared_sync` upload — available on life / Cowork |
+| claude.ai Customize | **¬ alwaysApply** — Claude has no always-apply section. `shared_sync` upload is a catalog chip (life / Cowork), not a global inject. `render_bundle` drops Cursor-only frontmatter |
 
 Mechanical / `pure-mechanical` / implement compose legs skip the Use-line; you are still landing **for the fleet, on the same graph**.
 

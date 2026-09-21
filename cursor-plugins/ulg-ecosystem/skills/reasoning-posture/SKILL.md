@@ -33,8 +33,11 @@ from GIW `resolve_prompt_preamble` or cursor-auto admit. Mechanical / quick cont
 skip (`implement` / `pure-mechanical` / `answer` / `ask` / `execute` / `propagate`). The
 skill directory stays in the dispatch HOME for on-demand body reads.
 
-On claude.ai: Customize Skills / `Use the reasoning-posture skill` when material
-judgment, consult, path-sim, or proposal review is live.
+On claude.ai: there is **no** always-apply rule section. Customize Skills is a
+catalog chip (description-gated / Use-line), not a global inject. CDP generate
+merges this slug into `skills=`; `cortex_brief` carries the short opcontext
+block. `alwaysApply` on this file is Cursor-only — `render_bundle` emits
+`name` + `description` only.
 
 Lead, reviewer, skeptic, artisan, and gatherer seats all apply it. Not
 load-bearing for purely mechanical subagent execution against a pre-staged
@@ -173,6 +176,7 @@ A short summary renders in non-subagent `cortex_brief` operational context. Scop
 | Surface | How the body is invoked |
 |---|---|
 | **Attended IDE** + in-seat Task subagents | this skill `alwaysApply: true` (Cursor global-rule promotion). Thin stub retired. Fresh tab or Reload Window for an already-open chat |
+| **claude.ai** (Customize / life / Cowork) | **¬ alwaysApply** — no such section. Catalog chip + Use-line; CDP `skills=` merge; `cortex_brief` opcontext |
 | CDP generate (`model=cdp/…`, including `panel_dispatch` CDP legs) | Staging always merges `reasoning-posture` into `skills=` (`ensure_cdp_judgment_skills`, including none / omitted `skills`) |
 | `team_dispatch` generate `seat=cursor-sdk` | GIW `resolve_prompt_preamble` prepends `REASONING_POSTURE_PREAMBLE` on judgment contracts; skip mechanical/quick. `skills=` mount is a no-op |
 | `team_dispatch` `op=handoff` consult / none | Stargate enrich inserts the same Use-line into `<invariants>`; skip implement / `cursor-implement` |

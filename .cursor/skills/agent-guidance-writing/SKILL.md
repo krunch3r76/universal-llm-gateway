@@ -78,12 +78,17 @@ Resident `skill-surface_ulg` forbids fs-reading skill SOT into context. A stub
 whose body is an `fs(read SOT)` instruction contradicts it and will not be
 followed. `cursor_stub.lines > 15 ⇒ convert_to_thin_stub` is retired.
 
-**AlwaysApply residency:** `alwaysApply ∧ (body ≡ pointer_to_skill ∨ restatement+pointer) ⇒ retire(rule)`.
+**AlwaysApply residency (Cursor only):** `alwaysApply ∧ (body ≡ pointer_to_skill ∨ restatement+pointer) ⇒ retire(rule)`.
 Residency is `SKILL.md` `alwaysApply: true` (Cursor promotes it to a global rule)
 or the invariants themselves. A well-written pointer reads as sufficient and
 never hops. Description-gated kernels that cite a skill for annex detail are
 not this class. Fleet: `reasoning-posture_ulg.mdc` and `ulg-for-llms_ulg.mdc`
 retired.
+
+**claude.ai has no always-apply section.** Customize Skills is a catalog chip.
+`render_bundle` emits `name` + `description` only — Cursor `alwaysApply` does
+not cross that surface. Claude inject is chip + Use-line + CDP `skills=` +
+`cortex_brief`, never a global rule flag.
 
 ## Correct vs anti-pattern
 

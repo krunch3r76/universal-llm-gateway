@@ -106,6 +106,9 @@ generate mounts as well — staged into the dispatch HOME for native discovery,
 Use-line deduped against the fixed preambles, so listing `reasoning-posture`
 there adds nothing on a contract that already injects it.
 
+**claude.ai:** no always-apply section. Catalog chip + Use-line; CDP `skills=`
+merge. Cursor `alwaysApply` does not cross that surface.
+
 | Path | How |
 |---|---|
 | `op=generate` `seat=cursor-sdk` | GIW `resolve_prompt_preamble` on judgment `handoff_contract`; skip mechanical/quick. Caller `skills=` staged into HOME `.cursor/skills/` + Use-line (`cursor_sdk_skills_mount`) |
