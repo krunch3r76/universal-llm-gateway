@@ -26,8 +26,8 @@ These rules bind unless the operator directs otherwise.
 working tree and **¬intersecting parallel writers**. Do **not** `git stash`
 or otherwise isolate the tree to A/B against clean HEAD or to “protect”
 phantom peers — read the on-disk tree; treat out-of-scope test/git noise as
-pre-existing. The **one** permitted stash use is pre-land path preservation
-(§ Pre-land dirty tree — stash-first), which is push-only and never pops.
+pre-existing. Land uses merge + conflict resolution (§ Pre-land dirty tree).
+There is **no** stash exception.
 
 ## Destructive narrowing — forbidden (dispatch seats)
 
@@ -46,43 +46,48 @@ when the bytes at risk are not yours to discard:
 | `git reset --hard` | Wipes index and working tree |
 | `git clean` (any flags) | Deletes untracked files permanently |
 
-**Substitute required:** when a seat needs a clean tree to `git merge --ff-only`
-and foreign WIP blocks the path, § Pre-land dirty tree — stash-first is the
-**only** legal narrowing move. Prohibition without substitute invites worse
-improvisation (lane-10391, below).
+**Substitute required:** when incoming lane paths collide with dirty WIP,
+§ Pre-land dirty tree — commit overlapping, then `git merge`, resolve keep-both.
+**Never stash instead of merge.** Prohibition without substitute invites
+`checkout HEAD --` improvisation (lane-10391, below).
 
-## Pre-land dirty tree — stash-first (required substitute)
+## Pre-land dirty tree — merge, resolve keep-both
 
 When landing a Lane-B branch onto a dirty shared `master` checkout, **never**
-discard foreign WIP to clear merge paths. **Stash-first, merge second.**
+discard foreign WIP and **never** stash to clear merge paths.
 
-```bash
-git stash push -u -m "pre-land <lane> <utc>" -- <paths>
-git merge --ff-only <branch>
-# stash retained; never `stash pop`, never `stash drop`
 ```
+dirty ∩ incoming:
+  commit overlapping paths (path-explicit) ≺ git merge cursor-sdk/lane-{thread}
+  conflict ⇒ keep both
+¬ stash
+¬ checkout HEAD -- / restore / reset --hard
+peer ∩ ¬incoming: leave it (isolate); merge proceeds
+```
+
+FF only when those incoming paths are clean. A collide is a merge commit with
+an explicit keep-both resolution, not an FF after hiding dirt.
 
 | Bind | Statement |
 |---|---|
-| **Push-only** | This exception **never pops**. The repo-global hazard below is a `pop` hazard — a push that is never popped cannot grab another lane's entry |
-| **Stash ref in closeout** | The stash ref (`stash@{N}`) **MUST** appear in the landing seat's CLOSEOUT so the operator can recover preserved WIP |
-| **¬stash drop / ¬stash clear** | Dropping or clearing any stash entry is **forbidden outright** — preserved WIP is operator property |
-| **Scope the paths** | `-- <paths>` limits the stash to merge-blocking paths only; do not stash the whole tree unless required |
+| **Merge, don't hide** | `git merge` is the land. Stash is not a land path and not a substitute for a conflict |
+| **Keep both** | On conflict, keep lane bytes and peer bytes. Do not `--ours` / `--theirs` a collide |
+| **This-seat stash** | If this seat created a stash (forbidden): `stash pop` same turn and resolve keep-both. Never leave it unpopped |
+| **¬ pop foreign** | Do not `stash pop` an unknown or other-lane entry onto the live tree (9882). List it; recover via throwaway worktree if the operator wants those bytes |
 
 **Worked example — lane-10391 (agent-bus:10391, dispatch `auto-f403825296d3`,
 landing `29ea5af5` onto master, 2026-09-08):** shared checkout
 `/mnt/torus/projects/universal-llm-gateway` was dirty across ~20 paths. The
-seat needed `git merge --ff-only` and ran `git checkout HEAD --
+seat needed a clean merge and ran `git checkout HEAD --
 libs/orchestrator_handoff/queue.py libs/orchestrator_handoff/test_orchestrator_handoff.py`
 **twice** to clear the way. Evidence of loss: pytest before the reset
 reported **10 passed**; after, **4 passed**. Six tests plus associated
 `queue.py` integration WIP, authored in an attended IDE session (test file
-mtime `19:03:49Z`), were destroyed. `git stash push -u -m "pre-land …" --
-<paths>` would have cleared the path and preserved all of it. The seat
-**did** honour its no-widen-scope AC — the failure was a **missing rule**,
-not a disobeyed one.
+mtime `19:03:49Z`), were destroyed. The missing rule was **commit overlapping
+then merge, keep both** — not stash. The seat honoured its no-widen-scope AC;
+the failure was a missing substitute, not a disobeyed one.
 
-## `git stash` — repo-global; banned on every substrate except pre-land preservation
+## `git stash` — repo-global; banned on every substrate
 
 `refs/stash` lives in the repository's **common** `.git` dir, shared by
 **every** worktree — the attended shared checkout, every Lane-A dispatch,
@@ -107,8 +112,7 @@ This is the **second** dispatch in the same arc bitten by stash
 (`agent-bus:9882` crashed inside the pop the first time).
 
 `∀ substrate ∈ {Cursor IDE, cursor-sdk Lane A, cursor-sdk Lane B}: ¬git_stash`
-for A/B, verification, or "protect my edits" purposes — **except** the
-push-only pre-land preservation recipe (§ Pre-land dirty tree — stash-first).
+for A/B, verification, land, or "protect my edits". No pre-land exception.
 Use instead:
 
 | Need | Use |
@@ -295,8 +299,9 @@ session-path commit on a work-complete claim.
 
 ## Land = merge, never copy (operator bind a:29557, re-bound 2026-09-02)
 
-`∀ land(lane_B): git merge cursor-sdk/lane-{thread}` — FF when master is clean,
-merge commit with explicit conflict resolution when it is not.
+`∀ land(lane_B): git merge cursor-sdk/lane-{thread}` — FF when incoming paths
+are clean on master; otherwise commit overlapping dirty paths, merge, and
+resolve keep-both. **Never stash instead of merge. Never leave a stash unpopped.**
 
 Authority: **a:29557** (`confirmed`, `user_statement`, 2026-08-15, ring
 agent-bus:7281) — *"lane work reaches master by MERGING the lane branch … not by
@@ -318,8 +323,8 @@ two things a land is for:
 
 1. `git status --short <paths>` — is the dirt yours, traceable peer WIP, or unknown?
 2. Attribute before touching it (`checkout-kernel`: unattributed ⇒ leave + flag).
-3. Reconcile — commit this-session authorship path-explicit **then** merge, or
-   merge and resolve the conflict keeping **both** sides.
+3. Reconcile — commit overlapping dirty paths path-explicit **then** merge, and
+   resolve the conflict keeping **both** sides. Do not stash.
 4. Verify on master: the row's AC probes, then `git merge-base --is-ancestor
    cursor-sdk/lane-{thread} master`.
 
@@ -488,7 +493,7 @@ ask. Otherwise do not reach for git.
 | `git_commit` / `git_land` mid-session | operator-attended apply; work-complete finishing commit of session paths without asking; opportunistic/unrelated commits only if asked |
 | `git checkout cursor-sdk/lane-N -- <paths>` / `cherry-pick` to land a lane | `git merge cursor-sdk/lane-N` (§ Land = merge, never copy) |
 
-`∀ seat: ¬{git checkout -- ., git checkout -- <dir>, git reset --hard, git clean -fd, git stash(unowned_work),
+`∀ seat: ¬{git checkout -- ., git checkout -- <dir>, git reset --hard, git clean -fd, git stash,
 git checkout <branch> -- <paths>(as_land)}`.
 No-force: `¬push --force` and `¬history_rewrite` on shared branches unless operator explicitly requests.
 
