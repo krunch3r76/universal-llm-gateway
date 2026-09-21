@@ -34,8 +34,8 @@ from bus_watch.fable_lock import (
     read_ticker_lock,
     release_fable_lock,
 )
-from bus_watch.spawn_wake.play_classify import MODE_AWARE, MODE_SIT, plant_play_state
 from bus_watch.loop_tape_mint import ensure_loop_tape
+from bus_watch.spawn_wake.play_classify import MODE_AWARE, MODE_SIT, plant_play_state
 from bus_watch.tick_state import save_state
 
 _TICK_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "liaison-tick.py"
