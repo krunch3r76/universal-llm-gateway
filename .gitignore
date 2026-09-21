@@ -116,11 +116,6 @@ scripts/model_manager/ui/controller/service_ctl/local/
 # Personal-life helpers/workflows: nested git here. Rule: personal-workflow-local-tracking_ulg
 scripts.local/
 
-# Local PYTHONPATH shim so `import services` resolves via libs/; the real
-# package is /services/. Do not track — a committed symlink would look like a
-# second package and keep every checkout dirty once it appears.
-/libs/services
-
 # RAG scope vocabulary (auto-generated, per-machine)
 scope_vocabulary.yaml
 
