@@ -1845,6 +1845,33 @@ async def _deliver_sdk_closeout(
         worktree_isolated=worktree_isolated,
         resolved_model=req.model,
     )
+    from services.git_integration_worker.cursor_sdk_closeout.liaison_successor_checkout import (
+        apply_liaison_successor_checkout_refusal,
+    )
+
+    # Closeout already shows whether a commit reached the checkout. A liaison
+    # successor (contract=none, caller=liaison-ticker) that shows one is refused
+    # here — after that evidence, before the hop is marked completed.
+    refused_body, refusal = apply_liaison_successor_checkout_refusal(
+        delivery.body,
+        caller_agent=req.caller_agent,
+        contract=req.handoff_contract,
+    )
+    if refusal is not None:
+        from implement_admission.spec import CloseoutStatus
+
+        from services.git_integration_worker.cursor_sdk_closeout.closeout_records import (
+            CloseoutDelivery,
+        )
+
+        delivery = CloseoutDelivery(
+            body=refused_body,
+            sidecar_ref=delivery.sidecar_ref,
+            sidecar_path=delivery.sidecar_path,
+            full_result_bytes=delivery.full_result_bytes,
+            closeout_status=CloseoutStatus.FAILED,
+        )
+        degraded_reason = refusal
     run_outcome = resolve_run_outcome_label(degraded_reason)
     if delivery.closeout_status.value == "failed":
         run_outcome = "degraded"
@@ -1971,10 +1998,11 @@ async def _deliver_sdk_closeout(
                 turn_number=turn_number,
             ),
         )
+        hop_terminal = "failed" if refusal is not None else "completed"
         await _terminate_link(
             bus,
             thread_id=req.thread_id,
-            terminal_status="completed",
+            terminal_status=hop_terminal,
             execution_id=req.execution_id,
         )
         await asyncio.to_thread(
@@ -1986,9 +2014,13 @@ async def _deliver_sdk_closeout(
         )
         await _mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
-            terminal_status="completed",
+            terminal_status=hop_terminal,
             controller=controller,
-            emit_tag="CURSOR_CLOSEOUT_COMPLETED",
+            emit_tag=(
+                "CURSOR_CLOSEOUT_REFUSED"
+                if refusal is not None
+                else "CURSOR_CLOSEOUT_COMPLETED"
+            ),
         )
         if closeout_qualifies_for_resume_retain(
             closeout_body=delivery.body,
