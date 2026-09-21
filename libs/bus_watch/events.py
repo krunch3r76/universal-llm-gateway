@@ -151,3 +151,57 @@ def LiaisonLaneCloseoutObserved(  # noqa: N802
 
 def emit_lane_closeout_observed(**kwargs: Any) -> None:
     _emit(LiaisonLaneCloseoutObserved(**kwargs))
+
+
+@event_factory
+def LiaisonNowRowBound(  # noqa: N802
+    *,
+    root_id: str,
+    row: str,
+    tier: str,
+    lane_id: str,
+    superseded: str | None,
+    as_of: str,
+) -> Event:
+    return Event(
+        signal="liaison.now_row.bound",
+        payload={
+            "root_id": root_id,
+            "row": row,
+            "tier": tier,
+            "lane_id": lane_id,
+            "superseded": superseded,
+            "as_of": as_of,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def LiaisonNowRowReleased(  # noqa: N802
+    *,
+    root_id: str,
+    row: str,
+    lane_id: str,
+    reason: str,
+    as_of: str,
+) -> Event:
+    return Event(
+        signal="liaison.now_row.released",
+        payload={
+            "root_id": root_id,
+            "row": row,
+            "lane_id": lane_id,
+            "reason": reason,
+            "as_of": as_of,
+        },
+        scope="global",
+    )
+
+
+def emit_now_row_bound(**kwargs: Any) -> None:
+    _emit(LiaisonNowRowBound(**kwargs))
+
+
+def emit_now_row_released(**kwargs: Any) -> None:
+    _emit(LiaisonNowRowReleased(**kwargs))

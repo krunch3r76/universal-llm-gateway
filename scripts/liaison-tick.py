@@ -65,6 +65,7 @@ from bus_watch.liaison_stops import (
     arm_operator_gate,
 )
 from bus_watch.loop_tape_mint import ensure_loop_tape
+from bus_watch.now_row_bind import maybe_bind_now_row
 from bus_watch.spawn_on_wake import tick_spawn_on_wake
 from bus_watch.tick_state import (
     absorb_operator_edits,
@@ -469,6 +470,9 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
                 )
                 time.sleep(poll_s)
                 continue
+            bind = maybe_bind_now_row(
+                digest, state, state_path, as_of=_utcnow()
+            )
             spawn_result = tick_spawn_on_wake(digest, state, root, dry_run=args.dry_run)
             prior_fp = state.get("fingerprint")
             publish_outcome = publish_if_enabled(
@@ -479,6 +483,7 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
             save_state(state_path, state)
             line = {
                 "spawn": spawn_result,
+                "now_row_bind": bind,
                 "digest_ts": digest.get("ts"),
                 "attention": digest.get("attention"),
                 "checkpoint_due": digest.get("checkpoint_due"),

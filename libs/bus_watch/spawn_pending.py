@@ -58,7 +58,7 @@ _PROGRESS_JSON_RE = re.compile(
     r'^\s*\{\s*"summary"\s*:\s*"Still running',
     re.M,
 )
-_ROOT_SUCCESSOR_TERMINAL_RE = re.compile(
+ROOT_SUCCESSOR_TERMINAL_RE = re.compile(
     r"CHECKPOINT|CLOSEOUT|\bSTAY\b|TYPE:\s*(CHECKPOINT|CLOSEOUT|STAY)",
     re.I,
 )
@@ -81,16 +81,11 @@ def _parse_iso_ts(value: str | None) -> float | None:
 
 
 _SUBJECT_CHARS = 56
-_LAND_RESULT_RE = re.compile(r"\bG\d+\s+LAND\b", re.I)
+LAND_RESULT_RE = re.compile(r"\bG\d+\s+LAND\b", re.I)
 
 
-def attention_now_row(digest: dict[str, Any]) -> str:
-    """Newest non-terminal ``sub_mission`` in digest attention (11693#4).
-
-    The continuity root is often tagged ``sub_mission`` with a fresh CLOSEOUT
-    subject. That is harvest residue, not a play row — skip it so an unset
-    NOW still picks a commissioned child (11667#51).
-    """
+def attention_now_lane(digest: dict[str, Any]) -> dict[str, Any] | None:
+    """Newest non-terminal ``sub_mission`` lane in digest attention (11693#4)."""
     root_id = str((digest.get("root") or {}).get("id") or "").strip()
     candidates: list[tuple[str, dict[str, Any]]] = []
     for item in digest.get("attention") or []:
@@ -102,22 +97,26 @@ def attention_now_row(digest: dict[str, Any]) -> str:
             continue
         if item.get("lane_role") != "sub_mission":
             continue
-        # Digest ``terminal`` is subject-class (CLOSEOUT / …). Status/lifecycle
-        # stay open on leftover children. Gated LAND results are spent even
-        # when the thread was never closed (11667 sit mill on 11806).
         subject = str(item.get("last_subject") or "")
         if (
             row_is_terminal(item)
             or item.get("terminal")
-            or _LAND_RESULT_RE.search(subject)
+            or LAND_RESULT_RE.search(subject)
         ):
             continue
         updated = str(item.get("updated_at") or "")
         candidates.append((updated, item))
     if not candidates:
-        return ""
+        return None
     candidates.sort(key=lambda pair: pair[0])
-    lane = candidates[-1][1]
+    return candidates[-1][1]
+
+
+def attention_now_row(digest: dict[str, Any]) -> str:
+    """Formatted NOW row from ``attention_now_lane``."""
+    lane = attention_now_lane(digest)
+    if lane is None:
+        return ""
     subject = str(lane.get("last_subject") or "")[:_SUBJECT_CHARS]
     lane_id = lane["id"]
     if subject:
@@ -722,7 +721,7 @@ def _successor_terminal_on_root(
         if not _pending_execution_id_in_turn(pending, turn):
             continue
         text = _turn_text(turn)
-        if _ROOT_SUCCESSOR_TERMINAL_RE.search(text):
+        if ROOT_SUCCESSOR_TERMINAL_RE.search(text):
             return True
     return False
 
@@ -854,8 +853,11 @@ def checkpoint_due_wake(state: dict[str, Any], checkpoint_due: bool) -> bool:
 
 __all__ = [
     "IDE_IDLE_FORFEIT_S",
+    "LAND_RESULT_RE",
     "PendingTerminalChecker",
+    "ROOT_SUCCESSOR_TERMINAL_RE",
     "execution_gone",
+    "attention_now_lane",
     "attention_now_row",
     "actionable_kind",
     "actionable_attention",

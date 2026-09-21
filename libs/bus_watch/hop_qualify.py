@@ -54,12 +54,12 @@ def hop_qualifies(
         return {"ok": False, "reason": "hold_merge"}
     if context_budget:
         return {"ok": True, "reason": "context_budget"}
-    if _quiet_row(text):
+    if quiet_row(text):
         return {"ok": False, "reason": "no_autonomous_followup"}
     return {"ok": True, "reason": "dispatchable_now"}
 
 
-def _quiet_row(text: str) -> bool:
+def quiet_row(text: str) -> bool:
     """Plan-from-digest / parked-only rows are not follow-up."""
     compact = " ".join(text.lower().split())
     return compact in {"none", "quiet", "empty"} or compact.startswith("arm: none")

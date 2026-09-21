@@ -46,6 +46,7 @@ from bus_watch.induction import build_wake_induction
 from bus_watch.liaison_watchers import collect_watchers
 from bus_watch.life_digest import build_life_block, project_life_block
 from bus_watch.now_row import harvest_policy_entity_cache
+from bus_watch.now_row_bind import ticker_owns_bind
 from bus_watch.spawn_pending import (
     build_attention_lanes,
     digest_root_surface,
@@ -286,6 +287,11 @@ def build_digest(
             "error": root.get("_error"),
         },
         "now_row_set_at": state.get("now_row_set_at"),
+        **(
+            {"now_row_bind": state.get("now_row_bind")}
+            if ticker_owns_bind(state)
+            else {}
+        ),
         "policy_entity_cache": entity_cache,
         "register": register,
         "lanes": lanes,

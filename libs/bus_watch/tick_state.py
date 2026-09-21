@@ -8,6 +8,11 @@ shell. Without a merge the loop's next ``save_state`` silently reverts the
 operator's edit (observed 2026-09-12 03:04Z: ``ready=true`` and the hop cap were
 lost within one poll). ``absorb_operator_edits`` re-reads the operator-owned keys
 before each tick so the loop's write carries them forward.
+
+``policy.now_row`` has a second writer: the gear-3 bind hook
+(``bus_watch.now_row_bind.maybe_bind_now_row``) via ``update_state``, mirrored to
+memory on the same tick. ``now_row_bind`` is loop-owned provenance and is **not**
+in ``OPERATOR_KEYS`` — only the ticker writes it.
 """
 
 from __future__ import annotations
@@ -97,7 +102,7 @@ def absorb_operator_edits(state: dict[str, Any], path: Path) -> list[str]:
 
     Returns the keys whose value changed so the loop can log the steer.
     """
-    from datetime import datetime, timezone
+    from datetime import UTC, datetime
 
     disk = load_state(path)
     changed: list[str] = []
@@ -108,7 +113,7 @@ def absorb_operator_edits(state: dict[str, Any], path: Path) -> list[str]:
                 stamp_now_row_set_at(
                     state,
                     disk[key],
-                    as_of=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    as_of=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
                 )
                 stamped_policy = True
             if key == "now_row_set_at" and stamped_policy:

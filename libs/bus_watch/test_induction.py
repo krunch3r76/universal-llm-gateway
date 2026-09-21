@@ -334,6 +334,54 @@ def test_induction_cse_cap_trims_use_lines_last() -> None:
     assert CSE_INLINE_TRUNCATION_MARKER in text
 
 
+def test_induction_now_from_ticker_bind_after_persist(tmp_path) -> None:  # noqa: ANN001
+    from bus_watch.now_row import format_now_line
+    from bus_watch.now_row_bind import maybe_bind_now_row
+
+    lane_id = "12045"
+    subject = "G3 generate admitted"
+    row = f"agent-bus:{lane_id} · «{subject}»"
+    digest = {
+        "ts": "2026-09-21T10:00:00Z",
+        "root": {"id": "12043", "turns": 33, "last_subject": "CHECKPOINT 12043"},
+        "register": "autonomous",
+        "attention": [
+            {
+                "id": lane_id,
+                "lane_role": "sub_mission",
+                "unread": 1,
+                "last_subject": subject,
+                "updated_at": "2026-09-21T09:00:00Z",
+            }
+        ],
+        "lanes": [
+            {
+                "id": lane_id,
+                "lane_role": "sub_mission",
+                "unread": 1,
+                "last_subject": subject,
+                "updated_at": "2026-09-21T09:00:00Z",
+                "status": "active",
+                "lifecycle": "admitted",
+            }
+        ],
+        "policy": {},
+        "policy_entity_cache": {},
+        "summary_row": "",
+        "watchers_complete_unrelayed": [],
+        "budget": {"stop_class": None},
+        "checkpoint_due": False,
+        "changed_since_last_tick": True,
+    }
+    state: dict = {"policy": {}}
+    state_path = tmp_path / "tick.json"
+    state_path.write_text("{}", encoding="utf-8")
+    maybe_bind_now_row(digest, state, state_path, as_of="2026-09-21T10:00:00Z")
+    text = build_wake_induction(digest)
+    expected = format_now_line(row, "policy", digest)
+    assert f"NOW: {expected}" in text
+
+
 def test_induction_spawn_signal_survives_cap() -> None:
     digest = _digest(
         spawn_signal_sources=["actionable_attention", "checkpoint_due"],
