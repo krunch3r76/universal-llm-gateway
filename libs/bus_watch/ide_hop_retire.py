@@ -26,8 +26,11 @@ from bus_watch.fable_lock import WATCH_DIR, release_fable_lock
 from bus_watch.go_under import stop_attended_loops
 
 GOAL_RELEASE = (
-    "UpdateGoal(status=complete) now — tab-goal release, not house close. "
-    "Successor CreateGoal."
+    "LIAISON_HOP_TAB_GOAL_RELEASE: CallDynamicTool namespace=cursor toolName=UpdateGoal "
+    'arguments={"status":"complete"} in this same turn (after liaison-ide-hop.py ok, before '
+    "RETIRED line). Tab-goal release only — house objective may stay open; successor "
+    "CreateGoal on pickup. Do not refuse complete because the house is unfinished "
+    "(11912 / 12088 2026-09-21: skipping this re-wakes the retired tab)."
 )
 
 

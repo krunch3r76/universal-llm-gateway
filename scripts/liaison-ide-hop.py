@@ -242,6 +242,9 @@ def main() -> int:
                 holder=f"ide:{args.transcript_id}",
             )
     print(json.dumps(out, indent=2))
+    if out.get("ok"):
+        # Seat obligation — not inferable from JSON alone in long hop turns.
+        print(GOAL_RELEASE, file=sys.stderr)
     return 0 if out.get("ok") else 2
 
 

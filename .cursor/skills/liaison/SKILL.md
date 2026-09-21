@@ -132,8 +132,11 @@ Never complete mid-wait without hop or arc close. Re-check after every CHECKPOIN
       attended `--loop`s; SIGTERM `watch-supervise.sh tail --label` for every label that
       belongs to the root; `--release` the `ide:<transcript_id>` seat. Pollers stay so the
       successor's ARM `tail` can attach; `--forever` debug tails stay.
-   2. Seat (Cursor-native; harness cannot): `UpdateGoal(status=complete)` as **tab-goal
-      release** — ¬ house-objective met. Successor `CreateGoal` (step 0) + re-arm ARM labels.
+   2. Seat (Cursor-native; harness cannot): **`UpdateGoal(status=complete)`** as **tab-goal
+      release** — ¬ house-objective met. Same turn, after `liaison-ide-hop.py` prints
+      `ok` (stderr carries `LIAISON_HOP_TAB_GOAL_RELEASE`). Tool:
+      `CallDynamicTool(namespace="cursor", toolName="UpdateGoal", arguments={"status":"complete"})`.
+      Successor `CreateGoal` (step 0) + re-arm ARM labels. Load `liaison-hop-retire_ulg` when unsure.
    3. Answer `RETIRED → <landed_transcript_id>` in one line and never harvest
       (10479 hops 1→2, 2026-09-13 03:04Z: two tabs harvested 10584, CP #198 + #201, MCP
       recycled under the successor's read; 11912 2026-09-21: goal + loop survived land).

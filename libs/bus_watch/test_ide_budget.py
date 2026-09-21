@@ -198,6 +198,7 @@ def test_gear_three_presets_composer_successor() -> None:
     )
     preset_only = effective_policy({"policy": {"gear": "3-wake-on-attention"}})
     assert preset_only["successor_model"] == "cursor/composer-2.5"
+    assert preset_only["successor_model_knobs"] == {"fast": "false"}
     assert preset_only["successor_model_source"] == "gear_preset"
     bound = effective_policy(
         {

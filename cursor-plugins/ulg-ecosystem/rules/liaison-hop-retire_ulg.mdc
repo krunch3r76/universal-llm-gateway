@@ -1,0 +1,36 @@
+---
+description: After attended liaison IDE hop (liaison-ide-hop.py ok) — same turn must CallDynamicTool UpdateGoal status=complete for tab-goal release; not house close; successor CreateGoal. Load on hop retire, LIAISON_HOP_TAB_GOAL_RELEASE, or retired tab still waking.
+alwaysApply: false
+rule_category: workflow
+apply_tier: catalog
+trigger_match_terms:
+  - liaison-ide-hop
+  - LIAISON_HOP_TAB_GOAL_RELEASE
+  - goal_release
+  - tab-goal release
+  - RETIRED
+  - ide hop
+  - liaison hop
+---
+# Liaison IDE hop — tab goal release
+
+**Invariant:** `liaison_ide_hop.ok ∧ departing_attended_tab ⇒ UpdateGoal(complete)` same turn — **before**
+the `RETIRED → <transcript_id>` line. Harness `retire_departing_tab` cannot do this (Cursor-native).
+
+| Meaning | `UpdateGoal(complete)` on hop? |
+|---|---|
+| House arc / scoreboard fully closed | Yes (arc close) |
+| Hop landed; house still open on bus | **Yes (tab-goal release)** |
+| Loop stopped; no hop | Only if objective met; else leave active |
+
+**Tool (verbatim):** `CallDynamicTool(namespace="cursor", toolName="UpdateGoal", arguments={"status":"complete"})`.
+
+**Script cues:** `liaison-ide-hop.py` JSON field `goal_release`; stderr `LIAISON_HOP_TAB_GOAL_RELEASE` (see
+`libs/bus_watch/ide_hop_retire.GOAL_RELEASE`).
+
+**Successor:** `CreateGoal` with same house objective from tip CHECKPOINT (liaison skill step 0).
+
+**Anti-pattern:** Refusing `complete` because Gate-1 / scoreboard rows remain open — that blocks tab retire
+and re-injects the goal on the departing tab (11912, 12088 2026-09-21).
+
+Playbook: Use the `liaison` skill § Hop step 2 · command `.cursor/commands/liaison.md` Hop section.

@@ -191,11 +191,34 @@ can still post and refuse the window — do not take that path.
    **`pre_consolidate=false` is explicit.** Do not omit it — the channel default admits a
    cursor-sdk worker that authors residue and can patch cards; that worker is not the
    checkpoint author. Pipeline owns seal + mechanical post.
-2. **Tip author.** `team_dispatch(op=generate, model=cursor/grok-4.7, contract=none, model_knobs={"fast":"true"})`
-   (exactly one of `seat`|`role`; `dispatch_thread_id` resolved this turn). Duty: Window
-   + CHECKPOINT prose + supersede + RESUME footer. ¬ cards · ¬ sketchboard /
-   continuity-doc / charter scoreboard fold · ¬ `consolidate-continuity` · ¬ `card_patch`
-   · ¬ myelinate. Asking tab does not write the tip.
+2. **Tip author (cursor-sdk substrate — not handoff `seat=cursor`).** Pre-stage a brief
+   on `dispatch_thread_id` (house thread or a side thread) **or** pass atomic `prompt=`.
+   Then:
+
+   ```text
+   team_dispatch(
+     op=generate,
+     seat=cursor-sdk,
+     model=cursor/grok-4.7,
+     contract=none,
+     dispatch_thread_id=<same thread as brief>,
+     lane=A,
+     model_knobs={"fast":"true"},
+   )
+   ```
+
+   `model=cursor/grok-4.7` alone also admits the SDK path — **`lane=` is still required**
+   on top-level generate (422 `lane_required` if omitted). **`lane=A`** = bind-only CHECKPOINT
+   tip (bus post + prose; empty `files_expected`). Poll `poll_hint` / `agent_bus(wait)`.
+   Duty: copy seal `Window:` / `Harvest:` verbatim + CHECKPOINT prose + `supersedes_turn`
+   + RESUME footer. ¬ cards · ¬ sketchboard / continuity-doc / charter scoreboard fold ·
+   ¬ `consolidate-continuity` · ¬ `card_patch` · ¬ myelinate. Asking tab does not write the tip.
+
+   | Bad | Good |
+   |---|---|
+   | `seat=cursor` on `op=generate` (handoff seat → frontier TypeError / 422) | `seat=cursor-sdk` + `model=cursor/grok-4.7` |
+   | `model=cursor/grok-4.7` without `lane=` | `lane=A` + one-line reason in prompt (“CHECKPOINT tip → bus only”) |
+   | `op=handoff, seat=cursor` to author the tip | SDK generate as above; handoff delivers packets, not Stargate workers |
 
 **`Window:` / `Harvest:` lines come from the seal** — never hand-count `turns@cp`.
 Verify from tool payloads: pipeline status/posted, bus turn,

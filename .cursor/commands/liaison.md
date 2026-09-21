@@ -33,9 +33,10 @@ Seat this tab as the house liaison on continuity root `<root>` and arm the tick 
 6. **First tick now** — run § Tick protocol on the `--once` digest from step 3 so the first server tick is
    not cold. End the turn; wakes arrive as `AGENT_LOOP_TICK_liaison` notifications.
 
-Stop: kill the loop PID, post a segment CHECKPOINT, `UpdateGoal(status=complete)` only if the objective is
-actually met (otherwise leave active), say why the loop stopped.
+Stop (loop kill / park, **no hop**): kill the loop PID, post CHECKPOINT, leave the goal **active** unless
+the house objective is actually met — then `UpdateGoal(status=complete)`.
 
 Hop (`liaison-ide-hop.py` `ok`): harness retires this tab's `--loop`, `watch-supervise` tails, and `ide:`
-lock (`retire_departing_tab`). Then `UpdateGoal(status=complete)` as **tab-goal release** (house stays
-open). Successor `CreateGoal` + ARM tails. Answer `RETIRED → <id>`; never harvest.
+lock (`retire_departing_tab`); JSON + stderr emit `LIAISON_HOP_TAB_GOAL_RELEASE`. **Same turn, before
+`RETIRED →`:** `CallDynamicTool(cursor, UpdateGoal, {"status":"complete"})` — **tab-goal release** (house
+stays open; ¬ arc close). Successor `CreateGoal` + ARM tails. Answer `RETIRED → <id>`; never harvest.

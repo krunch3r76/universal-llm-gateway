@@ -1,8 +1,11 @@
 """Continuity MCP tool — checkpoint (lean) plus resume/tape/consolidate relays.
 
-Cursor checkpoint callers pass ``pre_consolidate=false`` explicitly and fire
-``team_dispatch(op=generate, model=cursor/grok-4.7)`` for the tip. Consolidate
-ops still exist; they are not the checkpoint happy path.
+Cursor checkpoint callers pass ``pre_consolidate=false`` explicitly, then fire the
+**tip author** via ``team_dispatch(op=generate, seat=cursor-sdk,
+model=cursor/grok-4.7, contract=none, dispatch_thread_id=…, lane=A)`` — not
+``seat=cursor`` (handoff-only) and not model-only without ``lane=`` (422
+``lane_required``). See skill ``checkpoint-discipline`` § Pipeline CHECKPOINT step 2.
+Consolidate ops still exist; they are not the checkpoint happy path.
 """
 
 from __future__ import annotations
@@ -311,8 +314,10 @@ def register_continuity_tools(mcp: FastMCP) -> None:
           pass ``pre_consolidate=false`` explicitly (omitted defaults
           admit a cursor-sdk residue/card-patch worker except
           ``channel=hop``). ``transcript_id`` names a Cursor tab; without
-          it, stop — do not guess. Tip author is external generate
-          (``model=cursor/grok-4.7``), not the pre_consolidate worker.
+          it, stop — do not guess. Tip author is external
+          ``team_dispatch(op=generate, seat=cursor-sdk, model=cursor/grok-4.7,
+          contract=none, dispatch_thread_id=…, lane=A)`` — not the pre_consolidate
+          worker and not ``seat=cursor`` on generate.
 
         - ``resume`` — sync relay to
           ``POST /threads/{thread}/resume-fence``. Required: ``thread``.

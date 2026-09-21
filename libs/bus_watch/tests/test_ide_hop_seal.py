@@ -71,9 +71,11 @@ def test_hop_retires_departing_tab_after_land(capsys) -> None:
         code = hop_mod.main()
     assert code == 0
     assert call_order == ["fire", "retire"]
-    payload = json.loads(capsys.readouterr().out)
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
     assert payload["retire"]["stopped_loops"] == [1]
-    assert "tab-goal release" in payload["goal_release"]
+    assert "LIAISON_HOP_TAB_GOAL_RELEASE" in payload["goal_release"]
+    assert "UpdateGoal" in captured.err
 
 
 def test_hop_seals_with_channel_hop_before_keystroke(capsys) -> None:

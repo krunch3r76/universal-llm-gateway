@@ -100,6 +100,10 @@ def build_dispatch_body(
         bare_id = model.rsplit("/", 1)[-1] if model else ""
         if bare_id == "grok-4.7":
             body["model_knobs"] = {"fast": "true"}
+        elif bare_id == "composer-2.5":
+            # Card default is Fast. Gear-3 preset pins Standard; this covers a
+            # composer successor whose policy never stored the knobs.
+            body["model_knobs"] = {"fast": "false"}
     return body
 
 

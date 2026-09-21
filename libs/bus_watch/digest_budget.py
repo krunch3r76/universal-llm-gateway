@@ -69,6 +69,8 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         # Cheap orchestration default — spawn predicate still rejects premium
         # models sourced only from gear_preset (10534 Opus incident).
         "successor_model": "cursor/composer-2.5",
+        # Card default is Fast. Pin Standard so a gear-3 hop does not inherit it.
+        "successor_model_knobs": {"fast": "false"},
         "successor_cost_intent": None,
         "wake_on_attention_only": True,
         "poll_seconds": 120,
