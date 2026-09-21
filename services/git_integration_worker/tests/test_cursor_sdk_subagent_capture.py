@@ -185,6 +185,43 @@ def test_merge_stream_subagent_calls_adds_missing_task() -> None:
     assert entries[0].target == "generalPurpose"
 
 
+def test_merge_stream_subagent_calls_folds_completed_task_result() -> None:
+    """Shape from a live local Task tool_call: result.value, no type=task."""
+    manifest = build_effects_manifest(
+        dispatch_id="dispatch-1",
+        thread_id="thread-1",
+        turns=[],
+    )
+    merged = merge_stream_subagent_calls(
+        manifest,
+        (
+            ToolCallObservation(
+                call_id="tool_b686cbe7-dbef-4ac7-9c31-760dd5ba62a",
+                tool_name="task",
+                status="completed",
+                arg_bytes=40,
+                result_bytes=80,
+                truncated_fields=(),
+                result={
+                    "status": "success",
+                    "value": {
+                        "isBackground": False,
+                        "backgroundReason": "unspecified",
+                        "durationMs": 1691,
+                        "conversationSteps": [{"thinkingMessage": {}}],
+                    },
+                },
+            ),
+        ),
+    )
+    assert merged is not None
+    detail = merged.surfaces[SUBAGENTS_SURFACE].entries[0].detail
+    assert detail is not None
+    assert detail["is_background"] is False
+    assert detail["background_reason"] == "unspecified"
+    assert detail["conversation_steps"] == 1
+
+
 def test_closeout_subagents_explicit_empty_is_pass() -> None:
     manifest = build_effects_manifest(
         dispatch_id="dispatch-1",

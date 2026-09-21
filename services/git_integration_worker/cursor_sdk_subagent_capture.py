@@ -46,6 +46,30 @@ def _subagent_kind_from_args(args: Mapping[str, Any]) -> str | None:
     return None
 
 
+def _task_result_report(result: object) -> dict[str, Any]:
+    """Copy the Task result fields a local stream actually carries.
+
+    Live Composer runs finish the Task on the same ``tool_call`` (``result.value``
+    with ``isBackground``, ``backgroundReason``, and ``conversationSteps``).
+    They did not emit a later ``type=task`` message.
+    """
+    if not isinstance(result, Mapping):
+        return {}
+    value = result.get("value")
+    if not isinstance(value, Mapping):
+        return {}
+    report: dict[str, Any] = {}
+    if "isBackground" in value:
+        report["is_background"] = bool(value.get("isBackground"))
+    reason = value.get("backgroundReason")
+    if isinstance(reason, str) and reason:
+        report["background_reason"] = reason
+    steps = value.get("conversationSteps")
+    if isinstance(steps, list):
+        report["conversation_steps"] = len(steps)
+    return report
+
+
 def subagent_type_from_stream_args(tool_name: str, args: Any) -> str | None:
     if not is_subagent_tool_call(tool_name=tool_name):
         return None
@@ -144,6 +168,9 @@ def merge_stream_subagent_calls(
             detail = {"subagent_type": tc.subagent_type}
         if tc.status:
             detail = {**(detail or {}), "status": tc.status}
+        report = _task_result_report(tc.result)
+        if report:
+            detail = {**(detail or {}), **report}
         new_entries.append(
             EffectEntry(
                 op="Task",
