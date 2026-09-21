@@ -247,7 +247,12 @@ def main() -> int:
         action="store_true",
         help="hand this house to the gear-3 ticker: register autonomous, drop a stale "
         "ready=false, release the ide: seat (--holder), stop attended loops, ensure a "
-        "ticker, arm one handoff wake; prints the UNDER line to paste",
+        "ticker, arm one handoff wake; leftover hold|play|sit (default play-aware)",
+    )
+    p.add_argument(
+        "--sit",
+        action="store_true",
+        help="with --go-under, force the 10534 headless-liaison chain (leftover=sit)",
     )
     args = p.parse_args()
 
@@ -324,7 +329,13 @@ def main() -> int:
     _operator_edits(state)
     register = state["register"]
     if args.go_under:
-        result = go_under(root, state, state_path=state_path, holder=args.holder)
+        result = go_under(
+            root,
+            state,
+            state_path=state_path,
+            holder=args.holder,
+            leftover_mode="sit" if args.sit else "aware",
+        )
         print(json.dumps(result, default=str))
         print(result["under_line"], flush=True)
         return 0 if result.get("ok") else 3

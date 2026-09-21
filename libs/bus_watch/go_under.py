@@ -34,6 +34,7 @@ from bus_watch.fable_lock import (
     read_ticker_lock,
     release_fable_lock,
 )
+from bus_watch.spawn_wake.play_classify import MODE_AWARE, MODE_SIT, plant_play_state
 from bus_watch.tick_state import save_state
 
 _TICK_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "liaison-tick.py"
@@ -119,9 +120,10 @@ def ensure_ticker(
 
 def under_line(root: str, policy: dict[str, Any]) -> str:
     """The one-line reply the tab pastes before ending its turn."""
+    play = policy.get("play") or MODE_AWARE
     return (
         f"UNDER → liaison-ticker-{root} · successor_model={policy.get('successor_model')} "
-        f"· spawns on handoff / attention / CP-due · take back: resume {root}"
+        f"· leftover={play} · spawns hold|play|sit · check-in: resume {root} · come up: I'm back"
     )
 
 
@@ -131,6 +133,7 @@ def go_under(
     *,
     state_path: Path,
     holder: str = "",
+    leftover_mode: str = MODE_AWARE,
     stop_loops: Callable[[str], list[int]] = stop_attended_loops,
     ensure: Callable[[str], dict[str, Any]] = ensure_ticker,
     release: Callable[..., dict[str, Any]] = release_fable_lock,
@@ -157,6 +160,10 @@ def go_under(
     if model.startswith("cdp/") and "successor_seat" not in policy:
         policy["successor_seat"] = "cdp"
     state["policy"] = policy
+    # Classifier default — never successor_contract=conductor as the play path.
+    mode = MODE_SIT if leftover_mode == MODE_SIT else MODE_AWARE
+    planted = plant_play_state(state, mode=mode, as_of=_utcnow())
+    policy = dict(state.get("policy") or {})
     seq = int((state.get("handoff") or {}).get("seq") or 0) + 1
     state["handoff"] = {
         "seq": seq,
@@ -171,6 +178,7 @@ def go_under(
         "register": {"from": previous, "to": "autonomous"},
         "handoff_seq": seq,
         "ready": {"before": ready_before, "after": True},
+        "play": planted,
         "state": str(state_path),
     }
     lock = read_lock(root)

@@ -27,6 +27,13 @@ from bus_watch.spawn_wake.packet import (
     build_dispatch_body,
     successor_context_from_digest,
 )
+from bus_watch.spawn_wake.play_classify import (
+    LEFTOVER_HOLD,
+    LEFTOVER_PLAY,
+    PLAY_HOLD,
+    build_play_dispatch_body,
+    classify_leftover,
+)
 from bus_watch.spawn_wake.predicate import evaluate_spawn_predicate
 
 _WORK_KEY_IN_FLIGHT = "CURSOR_SOURCE_REF_IN_FLIGHT"
@@ -34,6 +41,22 @@ _WORK_KEY_IN_FLIGHT = "CURSOR_SOURCE_REF_IN_FLIGHT"
 
 def _utcnow() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def body_for_leftover(
+    root_id: str,
+    policy: dict[str, Any],
+    leftover: dict[str, Any],
+    *,
+    successor_context: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Hold mints nothing. Play rematerializes the todo. Sit is today's house generate."""
+    if leftover.get("leftover") == LEFTOVER_HOLD:
+        return None
+    todo = leftover.get("todo")
+    if leftover.get("leftover") == LEFTOVER_PLAY and todo:
+        return build_play_dispatch_body(root_id, policy, todo_slug=str(todo))
+    return build_dispatch_body(root_id, policy, successor_context=successor_context)
 
 
 def fire_spawn(
@@ -44,25 +67,55 @@ def fire_spawn(
     dry_run: bool = False,
     submit: Callable[..., tuple[dict[str, Any], int]] | None = None,
     successor_context: dict[str, Any] | None = None,
+    digest: dict[str, Any] | None = None,
+    leftover: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """POST one successor generate and record pending_spawn plus tonight's counters."""
-    body = build_dispatch_body(root_id, policy, successor_context=successor_context)
-    if not body.get("model"):
-        # Never let the wire pick a model: an unset successor is a hold, not a default.
-        return {"status_code": 0, "refused": "successor_model_unset", "body": body}
+    snap = digest or {
+        "policy": policy,
+        "attention": [],
+        "budget": {},
+        "root": {"id": root_id},
+        "lanes": [],
+    }
+    verdict = leftover or classify_leftover(snap, state)
+    body = body_for_leftover(
+        root_id, policy, verdict, successor_context=successor_context
+    )
+    if verdict.get("leftover") == LEFTOVER_HOLD:
+        return {
+            "status_code": 0,
+            "refused": PLAY_HOLD,
+            "leftover": verdict,
+            "body": None,
+        }
+    if body is not None and not body.get("model") and verdict.get("leftover") != LEFTOVER_PLAY:
+        # Sit/house generate: never let the wire pick a model.
+        return {
+            "status_code": 0,
+            "refused": "successor_model_unset",
+            "body": body,
+            "leftover": verdict,
+        }
     evaluation = evaluate_spawn_predicate(
         {"policy": policy, "attention": [], "budget": {}, "root": {}, "lanes": []},
         state,
     )
     if dry_run:
-        return {"dry_run": True, "body": body, "evaluation": evaluation}
+        return {
+            "dry_run": True,
+            "body": body,
+            "evaluation": evaluation,
+            "leftover": verdict,
+        }
     poster = submit or submit_team_dispatch
-    payload, status = poster(_wire_submit_body(body))
+    payload, status = poster(_wire_submit_body(body or {}))
     night_id = current_night_id()
     result: dict[str, Any] = {
         "status_code": status,
         "payload": payload,
         "body": body,
+        "leftover": verdict,
     }
     if status >= 400:
         err = payload.get("error") or {}
@@ -157,7 +210,19 @@ def tick_spawn_on_wake(
         digest,
         spawn_signal_sources=evaluation.get("spawn_signal_sources"),
     )
-    body = build_dispatch_body(root_id, policy, successor_context=successor_context)
+    leftover = evaluation.get("leftover") or classify_leftover(
+        digest, state, lock=lock
+    )
+    body = body_for_leftover(
+        root_id, policy, leftover, successor_context=successor_context
+    )
+    if leftover.get("leftover") == LEFTOVER_HOLD:
+        return {
+            "action": "hold",
+            "evaluation": evaluation,
+            "refused": PLAY_HOLD,
+            "body": None,
+        }
     if dry_run:
         return {
             "action": "would_spawn" if evaluation["spawn"] else "hold",
@@ -178,6 +243,8 @@ def tick_spawn_on_wake(
         dry_run=False,
         submit=submit,
         successor_context=successor_context,
+        digest=digest,
+        leftover=leftover,
     )
     status = int(fired.get("status_code") or 0)
     if 0 < status < 400:

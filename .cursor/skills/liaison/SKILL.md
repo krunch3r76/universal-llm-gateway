@@ -36,12 +36,21 @@ return ("I'm back") flips to attended; the operator's departure ("running overni
 **When:** operator departure ("running overnight" · "hand off to ticker") — **not** attended
 `CONTEXT_BUDGET` mid-arc (that path is § Tick step 7 **ide-hop**). PARK is not a step while `NOW` or
 unread lanes remain.
+Overnight leftover is **hold | play | sit** (`spawn_wake.play_classify`), not “ticker always
+wakes a liaison.” Hold = a live conductor already owns the addressed `todo:{slug}` (doorbell
+only). Play = `now_row` names `todo:{slug}` and no live owner → admit that conductor
+(`source_ref=todo:{slug}`, `lane=B`); GIW `ROW_HOP` is the inner rotation. Sit = house
+attention and no addressed todo → today's headless liaison. Default `--go-under` is
+play-aware; `--go-under --sit` is the old 10534 chain on purpose. `successor_contract=conductor`
+on the house generate is not the play path.
 
-**Come up from under** (operator "I'm back" · resume hopping in IDE): (1) SIGTERM this root's
+**Come up from under** (operator "I'm back" / "come up" / "stop the ticker" / "take the house" —
+**not** `resume R`, which is liaison↔operator check-in and leaves the ticker driving): (1) SIGTERM this root's
 `liaison-tick.py --loop --spawn-on-wake` ticker; (2) `liaison-tick.py --root R --register attended
---set ready=false`; (3) drop any `induction_binds` row that forbids IDE hop; (4) `resume R` in the
-attended tab — the `ide:` claim preempts any lingering `sdk:` holder. One driver: IDE-hop chain ⇒
-`ready=false`; ticker ⇒ `--go-under` only when the operator names overnight/departure.
+--set ready=false`; (3) drop any `induction_binds` row that forbids IDE hop; (4) then `resume R` may
+`--take-over` — the `ide:` claim preempts any lingering `sdk:` holder. One driver: IDE-hop chain ⇒
+`ready=false`; ticker ⇒ `--go-under` only when the operator names overnight/departure. Check-in
+`resume R` while UNDER must not run this sequence.
 
 **Operator guide (living).** "How do I use …" / "what changed" / a new ruling or phase move ⇒ **LOAD AND
 EXECUTE** `runbook:liaison-operator-guide` (`cortex://notes/runbooks/liaison-operator-guide.md`) — `cite(runbook)
@@ -67,8 +76,11 @@ transport; `cse_session(op=followup)` is the claude.ai transport — both are op
 pickup **must verify** a Cursor goal exists before harvest. Empty Goals panel ⇒ `CreateGoal` immediately with
 the house objective from tip CHECKPOINT Residue (`SETTLED`/`LIVE`/`NEXT`) + `register=<register>` +
 `root=agent-bus:<R>`. The native CreateGoal descriptor's "explicitly requested" wall is **waived** on liaison
-seat claim — this skill is the standing request. `UpdateGoal(status=complete)` only when the house objective
-is fully met (arc close), **never** on hop or mid-wait. Re-check after every CHECKPOINT if the panel went empty
+seat claim — this skill is the standing request. `UpdateGoal(status=complete)` when the house objective is
+fully met (arc close) **or** when an IDE hop has landed (`liaison-ide-hop.py` `ok`) — that second case is
+**tab-goal release**, not house-close (11912 hop 2026-09-21: land `7484bed2-…`, goal kept waking the
+retired tab 5m45s). The house stays open; the successor `CreateGoal`s the same objective on pickup.
+Never complete mid-wait without hop or arc close. Re-check after every CHECKPOINT if the panel went empty
 (hop successor, tab refresh).
 
 0. **Goal check** — before step 1: if no active goal ∨ objective stale vs tip NOW ⇒ `CreateGoal` (above).
@@ -112,11 +124,16 @@ is fully met (arc close), **never** on hop or mid-wait. Re-check after every CHE
    cap is `policy.max_hops_per_night` on `liaison-fable-<root>.lock`. Attended hop is the
    last action **only when hopping** (`policy.gui_host` required; `ok` = landed transcript).
    Autonomous hop-qualifying CP: kill the loop → `--release` → one successor. One tab live.
-   **`ok` retires this tab**: `watch-supervise.sh tail` is one-tailer-per-label — the
-   successor's re-arm kills the predecessor's tail — so a later wake here is a dead tail,
-   not a closeout; answer `RETIRED → <landed_transcript_id>` in one line and never harvest
-   (10479 hops 1→2, 2026-09-13 03:04Z: two tabs harvested 10584, CP #198 + #201, MCP
-   recycled under the successor's read).
+   **`ok` retires this tab (structural — do not rely on successor re-arm to quiet this tab):**
+   1. Harness (`retire_departing_tab`, `liaison-ide-hop.py` after `ok`): SIGTERM this root's
+      attended `--loop`s; SIGTERM `watch-supervise.sh tail --label` for every label that
+      belongs to the root; `--release` the `ide:<transcript_id>` seat. Pollers stay so the
+      successor's ARM `tail` can attach; `--forever` debug tails stay.
+   2. Seat (Cursor-native; harness cannot): `UpdateGoal(status=complete)` as **tab-goal
+      release** — ¬ house-objective met. Successor `CreateGoal` (step 0) + re-arm ARM labels.
+   3. Answer `RETIRED → <landed_transcript_id>` in one line and never harvest
+      (10479 hops 1→2, 2026-09-13 03:04Z: two tabs harvested 10584, CP #198 + #201, MCP
+      recycled under the successor's read; 11912 2026-09-21: goal + loop survived land).
 8. **Stop classes** — `CONTEXT_BUDGET` on an attended tab with remaining work (live watcher ·
    dispatchable NOW): CHECKPOINT → **`liaison-ide-hop.py`** (§ Dispatch ladder Successor row) — fresh
    tab ~40k orient; **`--go-under` is wrong here** (ticker path is slower/heavier). `CONTEXT_BUDGET`

@@ -19,6 +19,11 @@ from bus_watch.spawn_pending import (
     pending_spawn_terminal,
     remint_cap_wall,
 )
+from bus_watch.spawn_wake.play_classify import (
+    LEFTOVER_HOLD,
+    LEFTOVER_PLAY,
+    classify_leftover,
+)
 
 
 def _parse_iso_ts(value: str | None) -> float | None:
@@ -87,6 +92,31 @@ def _under_dispatch_cap(dispatches: int, policy: dict[str, Any]) -> bool:
     return cap <= 0 or dispatches < cap
 
 
+def _under_hop_cap(hops: int, policy: dict[str, Any]) -> bool:
+    """True while tonight's hop count is below the ceiling, or the ceiling is off.
+
+    Non-positive ``max_hops_per_night`` means no hop cap (operator 2026-09-20:
+    work does not stop at 8). Absent/None still uses the historical default 8.
+    """
+    raw = policy.get("max_hops_per_night")
+    if raw is None:
+        return hops < 8
+    cap = int(raw)
+    return cap <= 0 or hops < cap
+
+
+def _hops_tonight(lock: dict[str, Any], night_id: str) -> int:
+    """Count hops for *this* night only.
+
+    Falling back to ``lock.hops`` re-applied yesterday's 8 after UTC rolled
+    (11667 2026-09-21T01:17Z: hops_by_night had only 2026-09-20).
+    """
+    by_night = lock.get("hops_by_night") or {}
+    if night_id in by_night:
+        return int(by_night.get(night_id) or 0)
+    return 0
+
+
 def compute_spawn_signal_sources(
     digest: dict[str, Any],
     state: dict[str, Any],
@@ -147,7 +177,7 @@ def evaluate_spawn_predicate(
     last_spawn_at = float(state.get("last_spawn_at") or 0.0)
     last_fp = state.get("last_spawn_fingerprint")
     fp = spawn_fingerprint(digest.get("root") or {}, digest.get("lanes") or [])
-    hops = int((lock.get("hops_by_night") or {}).get(night_id) or lock.get("hops") or 0)
+    hops = _hops_tonight(lock, night_id)
     dispatches = int(
         (state.get("dispatches_tonight_by_night") or {}).get(night_id)
         or state.get("dispatches_tonight")
@@ -168,7 +198,7 @@ def evaluate_spawn_predicate(
         or budget_replaces_holder
         or idle_forfeit is not None,
         "pending_spawn_terminal": pending_spawn_terminal(pending, is_terminal=checker),
-        "hops_under_cap": hops < int(policy.get("max_hops_per_night") or 8),
+        "hops_under_cap": _under_hop_cap(hops, policy),
         "dispatches_under_cap": _under_dispatch_cap(dispatches, policy),
         "policy_ready": bool(policy.get("ready")),
         # A preset default is not a choice: only an operator-bound successor
@@ -178,6 +208,11 @@ def evaluate_spawn_predicate(
         "grace_elapsed": (ts - last_spawn_at) > grace,
         "remint_cap_clear": not remint_cap_wall(state, night_id),
     }
+    leftover = classify_leftover(digest, state, lock=lock)
+    # Play admits via source_ref rematerialize — Composer omit, not successor_model.
+    if leftover["leftover"] == LEFTOVER_PLAY:
+        clauses["successor_model_bound"] = True
+    clauses["leftover_not_hold"] = leftover["leftover"] != LEFTOVER_HOLD
     spawn = all(clauses.values())
     result: dict[str, Any] = {
         "spawn": spawn,
@@ -187,6 +222,7 @@ def evaluate_spawn_predicate(
         "night_id": night_id,
         "hops": hops,
         "dispatches_tonight": dispatches,
+        "leftover": leftover,
     }
     if budget.get("stop_class") == "CONTEXT_BUDGET":
         result["context_budget"] = {
