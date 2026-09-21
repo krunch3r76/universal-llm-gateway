@@ -5,9 +5,20 @@ from __future__ import annotations
 from typing import Any
 
 from bus_watch.fable_lock import current_night_id
+from bus_watch.liaison_pager import page_liaison
 from bus_watch.loop_tape import loop_tape_thread
 from bus_watch.spawn_wake.play_classify import build_play_dispatch_body
-from bus_watch.spawn_wake.row_class import ROW_CLASS_LOW, ROW_CLASS_TRIO
+from bus_watch.spawn_wake.row_class import (
+    ROW_CLASS_FIRED,
+    ROW_CLASS_HOLD,
+    ROW_CLASS_LOW,
+    ROW_CLASS_TRIO,
+    absorb_row_classes_from_digest,
+    latched_row_class,
+    row_class_fired,
+    row_class_hold,
+    todo_slug_for_trio,
+)
 
 _ROW_BIND_PROMPT = (
     "ROW-BIND (mandatory, bind-only): Classify this forcing friction score row "
@@ -35,9 +46,7 @@ _LOW_IMPLEMENT_PREAMBLE = (
     "ticker-fired hop; this dispatch is mechanical implement only.\n\n"
     "Friction {friction_id} [{category}] {owner}\n"
     "«{note}»\n"
-    "{why_line}"
-    + _DISPOSITION_EXIT
-    + "\n"
+    "{why_line}" + _DISPOSITION_EXIT + "\n"
 )
 
 _TRIO_SKETCH_PROMPT = (
@@ -47,9 +56,7 @@ _TRIO_SKETCH_PROMPT = (
     "and Conductor after you STOP.\n\n"
     "Friction {friction_id} [{category}] {owner}\n"
     "«{note}»\n"
-    "{why_line}"
-    + _DISPOSITION_EXIT
-    + "\n"
+    "{why_line}" + _DISPOSITION_EXIT + "\n"
 )
 
 
@@ -108,7 +115,7 @@ def build_low_implement_body(
         why_line=why_line,
     )
     tape = loop_tape_thread(root_id, policy)
-    # Bare a:NNNNN remints until CURSOR_WORK_KEY_REMINT_CAP walls the house (B1).
+    # Night-scope the work_key so a still-open row cannot remint-cap the house (B1).
     low_key = f"row-low:{fid}:night-{current_night_id()}"
     return {
         "op": "generate",
@@ -148,7 +155,7 @@ def build_trio_sketch_body(
     tape = loop_tape_thread(root_id, policy)
     return {
         "op": "generate",
-        "model": "cdp/opus-5",
+        "model": row_bind_model(policy),
         "contract": "none",
         "prompt": prompt,
         "dispatch_thread_id": tape,
@@ -171,8 +178,12 @@ def build_trio_fire_body(
     """TRIO: play conductor when ``todo:{slug}`` is named; else CDP sketch consult."""
     if todo_slug:
         body = build_play_dispatch_body(root_id, policy, todo_slug=todo_slug)
+        fid = str(friction.get("id") or "")
         body["_row_class"] = ROW_CLASS_TRIO
-        body["_friction_id"] = str(friction.get("id") or "")
+        body["_friction_id"] = fid
+        exit_line = _DISPOSITION_EXIT.format(friction_id=fid)
+        prior = str(body.get("prompt") or "").rstrip()
+        body["prompt"] = f"{prior}\n{exit_line}" if prior else exit_line
         return body
     return build_trio_sketch_body(root_id, policy, friction, latched=latched)
 
@@ -185,29 +196,16 @@ def body_for_sit_friction(
     digest: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Resolve sit+forcing-friction spawn body: bind, fire, or hold sentinel."""
-    from bus_watch.spawn_wake.row_class import (
-        ROW_CLASS_FIRED,
-        ROW_CLASS_HOLD,
-        ROW_CLASS_LOW,
-        ROW_CLASS_TRIO,
-        absorb_row_classes_from_digest,
-        latched_row_class,
-        row_class_fired,
-        row_class_hold,
-        todo_slug_for_trio,
-    )
-
     absorb_row_classes_from_digest(digest, state)
     fid = str(friction.get("id") or "")
     if row_class_fired(state, fid):
+        _page_row_class_park(root_id, state, fid, ROW_CLASS_FIRED)
         return {"_row_class_fired": True, "_refused": ROW_CLASS_FIRED}
     latched = latched_row_class(state, fid)
     if latched:
         cls = latched["class"]
         if cls == ROW_CLASS_LOW:
-            return build_low_implement_body(
-                root_id, policy, friction, latched=latched
-            )
+            return build_low_implement_body(root_id, policy, friction, latched=latched)
         if cls == ROW_CLASS_TRIO:
             slug = todo_slug_for_trio(latched, friction)
             return build_trio_fire_body(
@@ -218,8 +216,29 @@ def body_for_sit_friction(
                 todo_slug=slug,
             )
     if row_class_hold(state, fid):
+        _page_row_class_park(root_id, state, fid, ROW_CLASS_HOLD)
         return {"_row_class_hold": True, "_refused": ROW_CLASS_HOLD}
     return build_row_bind_body(root_id, policy, friction)
+
+
+def _page_row_class_park(
+    root_id: str, state: dict[str, Any], friction_id: str, refused: str
+) -> None:
+    """Page once per fid+sentinel so FIRED/HOLD are designed stops, not silent parks."""
+    if not friction_id:
+        return
+    store = dict(state.get("row_class_paged") or {})
+    stamp = f"{refused}:{friction_id}"
+    if stamp in store:
+        return
+    page_liaison(
+        root_id,
+        f"liaison {root_id} — {refused} {friction_id}",
+        f"Sit leftover parked: {refused} on {friction_id}. "
+        "Mark the row (--mark-friction) or the sit path stays held.",
+    )
+    store[stamp] = True
+    state["row_class_paged"] = dict(list(store.items())[-200:])
 
 
 __all__ = [

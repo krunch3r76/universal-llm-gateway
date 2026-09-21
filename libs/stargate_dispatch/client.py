@@ -35,6 +35,7 @@ _ALLOWED_FIELDS = frozenset(
         "system",
         "parent_thread",
         "skills",
+        "model_knobs",
     }
 )
 

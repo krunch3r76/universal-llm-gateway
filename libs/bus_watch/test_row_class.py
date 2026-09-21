@@ -41,7 +41,8 @@ def test_parse_row_class_trio() -> None:
 
 
 def test_parse_row_class_ambiguous() -> None:
-    assert parse_row_class("ROW_CLASS: maybe\n") is None
+    parsed = parse_row_class("ROW_CLASS: maybe\nROW_ID: a:35997\n")
+    assert parsed == {"class": ROW_CLASS_HOLD, "row_id": "a:35997"}
     assert parse_row_class("no class here") is None
 
 
@@ -79,15 +80,106 @@ def test_row_class_hold_not_before_bind() -> None:
 
 
 def test_undispositioned_forcing_skips_close_pending() -> None:
+    """Producer rows set forcing from state; close_pending is not forcing."""
     digest = {
         "frictions": [
-            {**_forcing_friction(), "state": "close_pending", "forcing": True},
+            {**_forcing_friction(), "state": "close_pending", "forcing": False},
             _forcing_friction(36073),
         ]
     }
     row = undispositioned_forcing_friction(digest)
     assert row is not None
     assert row["id"] == "a:36073"
+
+
+def test_absorb_newest_turn_number_wins_over_feed_order() -> None:
+    """S3 — sort on turn_number, not transport list order."""
+    state: dict = {}
+    digest = {
+        "frictions": [_forcing_friction()],
+        "root": {
+            "unread_turns": [
+                {
+                    "turn_number": 56,
+                    "body": "ROW_CLASS: trio\nROW_ID: a:35997\n",
+                },
+                {
+                    "turn_number": 57,
+                    "body": "ROW_CLASS: low\nROW_ID: a:35997\n",
+                },
+            ]
+        },
+    }
+    absorb_row_classes_from_digest(digest, state)
+    latched = latched_row_class(state, "a:35997")
+    assert latched is not None
+    assert latched["class"] == "low"
+
+
+def test_absorb_row_id_wins_over_why_mention() -> None:
+    """S2 — ROW_WHY naming another a: must not steal the latch."""
+    state: dict = {}
+    digest = {
+        "frictions": [_forcing_friction(), _forcing_friction(36073)],
+        "root": {
+            "recent_turns": [
+                {
+                    "turn_number": 60,
+                    "body": (
+                        "ROW_CLASS: low\n"
+                        "ROW_WHY: same shape as a:36073\n"
+                        "ROW_ID: a:35997\n"
+                    ),
+                }
+            ]
+        },
+    }
+    absorb_row_classes_from_digest(digest, state)
+    assert latched_row_class(state, "a:35997") is not None
+    assert latched_row_class(state, "a:36073") is None
+
+
+def test_absorb_unattributed_does_not_fallback_to_newest_forcing() -> None:
+    """S6 — no a: in ROW_ID or subject ⇒ skip; do not pin newest-forcing."""
+    state: dict = {}
+    digest = {
+        "frictions": [_forcing_friction()],
+        "root": {
+            "recent_turns": [
+                {
+                    "turn_number": 61,
+                    "subject": "ROW_CLASS bind",
+                    "body": "ROW_CLASS: low\nROW_WHY: same shape as a:36073\n",
+                }
+            ]
+        },
+    }
+    absorb_row_classes_from_digest(digest, state)
+    assert latched_row_class(state, "a:35997") is None
+    assert latched_row_class(state, "a:36073") is None
+    assert not state.get("row_class")
+
+
+def test_ambiguous_class_holds_instead_of_rebinding() -> None:
+    state = {"friction_rows_seen": {"a:35997": "2026-09-21T06:00:00Z"}}
+    digest = {
+        "frictions": [_forcing_friction()],
+        "root": {
+            "recent_turns": [
+                {
+                    "turn_number": 70,
+                    "body": "ROW_CLASS: low\nROW_ID: a:35997\n",
+                },
+                {
+                    "turn_number": 71,
+                    "body": "ROW_CLASS: maybe\nROW_ID: a:35997\n",
+                },
+            ]
+        },
+    }
+    absorb_row_classes_from_digest(digest, state)
+    assert latched_row_class(state, "a:35997") is None
+    assert row_class_hold(state, "a:35997") is True
 
 
 def test_fire_spawn_refused_hold_constant() -> None:
@@ -97,7 +189,11 @@ def test_fire_spawn_refused_hold_constant() -> None:
 def test_latched_trio_class() -> None:
     state = {
         "row_class": {
-            "a:35997": {"class": ROW_CLASS_TRIO, "why": "sketch path", "row_id": "a:35997"}
+            "a:35997": {
+                "class": ROW_CLASS_TRIO,
+                "why": "sketch path",
+                "row_id": "a:35997",
+            }
         }
     }
     latched = latched_row_class(state, "a:35997")

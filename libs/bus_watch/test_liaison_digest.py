@@ -678,11 +678,65 @@ def test_digest_root_surface_keeps_cp_tip_with_unread_judgment() -> None:
             return {"turns": unread_turns}
         return {"turns": all_turns}
 
-    _recent, tip_cp, unread = digest_root_surface(
-        MagicMock(), fake_get, "11738", {}
-    )
+    _recent, tip_cp, unread = digest_root_surface(MagicMock(), fake_get, "11738", {})
     assert tip_cp == 40
     assert any(c.get("unread") for c in calls)
     assert any(c.get("last") == 20 for c in calls)
     assert len(unread) == 1
     assert unread[0]["turn_number"] == 42
+
+
+@patch("bus_watch.liaison_digest.harvest_frictions")
+@patch("bus_watch.liaison_digest.collect_watchers", return_value=[])
+@patch("bus_watch.liaison_digest._health", return_value="ok")
+@patch("bus_watch.liaison_digest._unread_toc", return_value=[])
+@patch("bus_watch.liaison_digest._child_lanes")
+@patch("bus_watch.liaison_digest._get")
+@patch("bus_watch.liaison_digest._bus")
+def test_digest_attention_includes_ready_row_class(
+    mock_bus: MagicMock,
+    mock_get: MagicMock,
+    mock_child: MagicMock,
+    _toc: MagicMock,
+    _health: MagicMock,
+    _watchers: MagicMock,
+    mock_harvest: MagicMock,
+) -> None:
+    """S5 — ready_row_class_attention must land in digest['attention'] (B2 wire)."""
+    friction = {
+        "id": "a:35997",
+        "owner": "service:git_integration_worker",
+        "category": "regression",
+        "note": "GIW HTTP probe false-unhealthy",
+        "state": "open",
+        "forcing": True,
+    }
+    mock_harvest.return_value = {
+        "rows": [friction],
+        "attention": [],
+        "summary": {
+            "owners": [],
+            "open": 1,
+            "forcing": 1,
+            "promoted": 0,
+            "dispatch_cap": 2,
+            "dispatched_tonight": 0,
+            "night_id": "test",
+            "window_per_owner": 20,
+        },
+    }
+    mock_bus.return_value.__enter__.return_value = MagicMock()
+    mock_get.return_value = {"id": "11960", "turn_count": 10, "status": "active"}
+    mock_child.return_value = []
+    state: dict = {
+        "policy": {},
+        "friction_rows_seen": {"a:35997": "2026-09-21T06:00:00Z"},
+        "row_class": {
+            "a:35997": {"class": "low", "why": "mechanical", "row_id": "a:35997"}
+        },
+    }
+    digest = build_digest("11960", state, register="autonomous", budget_tokens=700000)
+    assert any(
+        item.get("kind") == "friction" and item.get("id") == "a:35997"
+        for item in digest["attention"]
+    )

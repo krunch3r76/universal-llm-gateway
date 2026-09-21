@@ -1266,3 +1266,85 @@ def test_record_spawn_service_latches_live_lane_turns() -> None:
     assert state["served_lanes"] == {"11570": 5}
     assert actionable_attention([_LIVE_LANE], state=state) == []
     assert state["successor_threads"] == ["10601"]
+
+
+def test_tick_spawn_writes_fired_latch_on_low_success(monkeypatch) -> None:  # noqa: ANN001
+    """S5 — mark_row_class_fired write path: successful LOW fire latches fid."""
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.read_lock", lambda *_a, **_k: {"holder": None}
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.maybe_forfeit_expired_lease", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr("bus_watch.spawn_wake.fire.page_liaison", lambda *a: None)
+    monkeypatch.setattr("bus_watch.spawn_wake.row_bind.page_liaison", lambda *a: None)
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["policy"]["now_row"] = "manage recycle git_integration_worker landed"
+    digest["frictions"] = [
+        {
+            "id": "a:35997",
+            "owner": "service:git_integration_worker",
+            "category": "regression",
+            "note": "probe",
+            "state": "open",
+            "forcing": True,
+        }
+    ]
+    digest["lanes"] = []
+    state = {
+        "friction_rows_seen": {"a:35997": "2026-09-21T06:00:00Z"},
+        "row_class": {
+            "a:35997": {"class": "low", "why": "one file", "row_id": "a:35997"}
+        },
+    }
+    posted: list[dict] = []
+    out = tick_spawn_on_wake(
+        digest,
+        state,
+        "11960",
+        submit=lambda body: (
+            posted.append(body)
+            or ({"execution_id": "e-low", "thread_id": "12099"}, 200)
+        ),
+    )
+    assert out["action"] == "spawned"
+    assert "a:35997" in (state.get("row_class_fired") or {})
+    assert posted[0]["contract"] == "implement"
+    assert posted[0]["_friction_id"] == "a:35997"
+
+
+def test_tick_spawn_does_not_latch_fired_on_http_error(monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.read_lock", lambda *_a, **_k: {"holder": None}
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.maybe_forfeit_expired_lease", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr("bus_watch.spawn_wake.fire.page_liaison", lambda *a: None)
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["policy"]["now_row"] = "manage recycle git_integration_worker landed"
+    digest["frictions"] = [
+        {
+            "id": "a:35997",
+            "owner": "service:git_integration_worker",
+            "category": "regression",
+            "note": "probe",
+            "state": "open",
+            "forcing": True,
+        }
+    ]
+    digest["lanes"] = []
+    state = {
+        "friction_rows_seen": {"a:35997": "2026-09-21T06:00:00Z"},
+        "row_class": {
+            "a:35997": {"class": "low", "why": "one file", "row_id": "a:35997"}
+        },
+    }
+    out = tick_spawn_on_wake(
+        digest,
+        state,
+        "11960",
+        submit=lambda _body: ({"error": {"code": "boom", "message": "fail"}}, 500),
+    )
+    assert "a:35997" not in (state.get("row_class_fired") or {})
+    assert out["fire"]["status_code"] == 500

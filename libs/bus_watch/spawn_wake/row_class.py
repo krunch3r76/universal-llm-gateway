@@ -53,14 +53,19 @@ def sit_forcing_friction(
 
 
 def parse_row_class(text: object) -> dict[str, str] | None:
-    """Parse one ROW_CLASS block. Ambiguous or missing class ⇒ ``None``."""
+    """Parse one ROW_CLASS block.
+
+    Valid ``low|trio`` ⇒ class dict. Ambiguous ``ROW_CLASS:`` line ⇒
+    ``class=ROW_CLASS_HOLD`` (ticker parks, does not re-bind). Missing ⇒ ``None``.
+    """
     body = str(text or "")
     match = _ROW_CLASS_RE.search(body)
-    if not match:
-        if _AMBIGUOUS_CLASS_RE.search(body):
-            return None
+    if match:
+        parsed: dict[str, str] = {"class": match.group(1).lower()}
+    elif _AMBIGUOUS_CLASS_RE.search(body):
+        parsed = {"class": ROW_CLASS_HOLD}
+    else:
         return None
-    parsed: dict[str, str] = {"class": match.group(1).lower()}
     why = _ROW_WHY_RE.search(body)
     if why:
         parsed["why"] = why.group(1).strip()
@@ -71,26 +76,43 @@ def parse_row_class(text: object) -> dict[str, str] | None:
 
 
 def _root_turns(digest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Unread + recent, unique by ``turn_number``, ascending.
+
+    Caller reverses for newest-first. Unread wins when the same number appears
+    in both lists. Turns without a number trail in encounter order.
+    """
     root = digest.get("root") or {}
-    raw = root.get("unread_turns")
-    if isinstance(raw, list) and raw:
-        return [t for t in raw if isinstance(t, dict)]
-    recent = root.get("recent_turns") or []
-    return [t for t in recent if isinstance(t, dict)]
+    by_num: dict[int, dict[str, Any]] = {}
+    unnumbered: list[dict[str, Any]] = []
+    for key in ("unread_turns", "recent_turns"):
+        for turn in root.get(key) or []:
+            if not isinstance(turn, dict):
+                continue
+            num = turn.get("turn_number")
+            if isinstance(num, int):
+                by_num.setdefault(num, turn)
+            else:
+                unnumbered.append(turn)
+    return [by_num[n] for n in sorted(by_num)] + unnumbered
 
 
-def absorb_row_classes_from_digest(digest: dict[str, Any], state: dict[str, Any]) -> None:
-    """Scan root turns newest-first; latch the first valid ROW_CLASS per friction id."""
+def absorb_row_classes_from_digest(
+    digest: dict[str, Any], state: dict[str, Any]
+) -> None:
+    """Scan root turns newest-first; latch the first ROW_CLASS per explicit ``a:`` id.
+
+    Attribution is ``ROW_ID`` (must be ``a:N``) or an ``a:`` token in the turn
+    **subject** only — never body/ROW_WHY, never newest-forcing fallback. A
+    turn that cannot be attributed is skipped; bind-spawned + no latch is HOLD.
+    """
     store = dict(state.get("row_class") or {})
     for turn in reversed(_root_turns(digest)):
-        body = turn.get("body") or turn.get("subject") or ""
-        parsed = parse_row_class(body)
+        parsed = parse_row_class(turn.get("body") or "") or parse_row_class(
+            turn.get("subject") or ""
+        )
         if not parsed:
             continue
-        fid = parsed.get("row_id") or _friction_id_from_turn(turn, body)
-        if not fid or not str(fid).startswith("a:"):
-            friction = undispositioned_forcing_friction(digest)
-            fid = friction["id"] if friction else None
+        fid = _explicit_friction_id(parsed, turn)
         if not fid:
             continue
         if fid in store and store[fid].get("class"):
@@ -106,12 +128,15 @@ def absorb_row_classes_from_digest(digest: dict[str, Any], state: dict[str, Any]
         state["row_class"] = dict(list(store.items())[-_KEEP:])
 
 
-def _friction_id_from_turn(turn: dict[str, Any], body: str) -> str | None:
+def _explicit_friction_id(parsed: dict[str, str], turn: dict[str, Any]) -> str | None:
+    """ROW_ID when it is ``a:N``, else the turn subject. Never body / digest fallback."""
+    row_id = str(parsed.get("row_id") or "").strip()
+    if row_id.startswith("a:"):
+        return row_id.split()[0]
     subject = str(turn.get("subject") or "")
-    for blob in (body, subject):
-        match = re.search(r"\ba:(\d+)\b", blob)
-        if match:
-            return f"a:{match.group(1)}"
+    match = re.search(r"\ba:(\d+)\b", subject)
+    if match:
+        return f"a:{match.group(1)}"
     return None
 
 
@@ -138,9 +163,7 @@ def row_class_hold(state: dict[str, Any], friction_id: str) -> bool:
     return latched_row_class(state, friction_id) is None
 
 
-def todo_slug_for_trio(
-    latched: dict[str, Any], friction: dict[str, Any]
-) -> str | None:
+def todo_slug_for_trio(latched: dict[str, Any], friction: dict[str, Any]) -> str | None:
     """Resolve todo slug for TRIO play path from ROW_ID or friction context."""
     for blob in (latched.get("row_id"), latched.get("why")):
         slug = extract_todo_slug(blob)

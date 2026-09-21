@@ -33,6 +33,7 @@ def test_posts_team_dispatch_fields(mock_post: MagicMock) -> None:
         "work_key": "agent-bus:10479",
         "timeout_seconds": 5400,
         "tags": ["liaison-headless"],
+        "model_knobs": {"fast": "true"},
         "extra_ignored": "drop",
     }
     payload, status = submit_team_dispatch(body, base_url="http://localhost:9999")
@@ -40,6 +41,7 @@ def test_posts_team_dispatch_fields(mock_post: MagicMock) -> None:
     assert payload["execution_id"] == "abc"
     sent = mock_post.call_args.kwargs["json"]
     assert sent["work_key"] == "agent-bus:10479"
+    assert sent["model_knobs"] == {"fast": "true"}
     assert "extra_ignored" not in sent
     assert mock_post.call_args.args[0].endswith("/api/v1/team/dispatch")
 
@@ -74,3 +76,4 @@ def test_allowed_fields_parent_thread_not_purpose() -> None:
     assert "parent_thread" in _ALLOWED_FIELDS
     assert "skills" in _ALLOWED_FIELDS
     assert "purpose" not in _ALLOWED_FIELDS
+    assert "model_knobs" in _ALLOWED_FIELDS

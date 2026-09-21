@@ -69,9 +69,7 @@ def body_for_leftover(
     if digest is not None and state is not None:
         friction = sit_forcing_friction(digest, leftover)
         if friction:
-            return body_for_sit_friction(
-                root_id, policy, friction, state, digest
-            )
+            return body_for_sit_friction(root_id, policy, friction, state, digest)
     return build_dispatch_body(root_id, policy, successor_context=successor_context)
 
 
@@ -128,7 +126,6 @@ def fire_spawn(
         body is not None
         and not body.get("model")
         and verdict.get("leftover") != LEFTOVER_PLAY
-        and not body.get("_row_bind")
         and body.get("contract") != "implement"
     ):
         # Sit/house generate: never let the wire pick a model.
@@ -251,9 +248,7 @@ def tick_spawn_on_wake(
         digest,
         spawn_signal_sources=evaluation.get("spawn_signal_sources"),
     )
-    leftover = evaluation.get("leftover") or classify_leftover(
-        digest, state, lock=lock
-    )
+    leftover = evaluation.get("leftover") or classify_leftover(digest, state, lock=lock)
     body = body_for_leftover(
         root_id,
         policy,
