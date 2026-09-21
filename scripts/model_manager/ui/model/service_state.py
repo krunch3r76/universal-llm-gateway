@@ -26,6 +26,7 @@ from ..controller.service_config import (
 logger = logging.getLogger(__name__)
 
 _SERVICE_HEALTH_TIMEOUT = 2.0
+_GIW_PROBE_TIMEOUT = 3.0
 
 
 class ServiceStatus(StrEnum):
@@ -671,24 +672,28 @@ class ServiceState:
             pid_note = self._merge_notes(
                 pid_note, "PID file refreshed from live listener"
             )
-        healthy = (
-            self._git_integration_worker_probe_http(host, port) if port_open else False
-        )
+        if port_open:
+            healthy, probe_note = self._git_integration_worker_probe_http(host, port)
+        else:
+            healthy, probe_note = False, None
         health_url = f"http://{host}:{port}/health"
         if pid is not None:
             uptime = self._proc_uptime_str(pid)
             uptime_str = f" ({uptime})" if uptime else ""
+            fail_suffix = self._probe_fail_suffix(healthy, probe_note)
+            if port_open and not healthy and self._pid_alive(pid):
+                status = ServiceStatus.RUNNING
+            elif port_open and not healthy:
+                status = ServiceStatus.UNHEALTHY
+            else:
+                status = ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY
             return ServiceInfo(
                 name="git-integration-worker",
-                status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
+                status=status,
                 port=port,
                 pid=pid,
                 health_url=health_url,
-                detail=self._with_note(
-                    f"PID {pid}{uptime_str}"
-                    + ("" if healthy else ", health probe failed"),
-                    pid_note,
-                ),
+                detail=self._with_note(f"PID {pid}{uptime_str}{fail_suffix}", pid_note),
             )
         if healthy:
             return ServiceInfo(
@@ -705,26 +710,47 @@ class ServiceState:
             detail=pid_note or "",
         )
 
-    def _git_integration_worker_probe_http(self, host: str, port: int) -> bool:
-        """Probe ``GET /health``; healthy when status is ``ok``."""
+    def _git_integration_worker_probe_http(
+        self, host: str, port: int
+    ) -> tuple[bool, str | None]:
+        """Probe ``GET /health``; healthy when status is ``ok``.
+
+        Returns ``(True, None)`` on success. Failures name the class (non-200 status
+        line, JSON mismatch, or ``type(exc).__name__``). Retries once on transport/
+        timeout errors only.
+        """
         import http.client
         import json as _json
 
-        try:
-            conn = http.client.HTTPConnection(
-                host, port, timeout=_SERVICE_HEALTH_TIMEOUT
-            )
+        _retryable = (TimeoutError, ConnectionRefusedError, OSError)
+
+        def _once() -> tuple[bool, str | None]:
             try:
-                conn.request("GET", "/health")
-                resp = conn.getresponse()
-                if resp.status != 200:
-                    return False
-                body = _json.loads(resp.read().decode("utf-8", errors="replace"))
-                return body.get("status") == "ok"
-            finally:
-                conn.close()
-        except Exception:
-            return False
+                conn = http.client.HTTPConnection(
+                    host, port, timeout=_GIW_PROBE_TIMEOUT
+                )
+                try:
+                    conn.request("GET", "/health")
+                    resp = conn.getresponse()
+                    if resp.status != 200:
+                        return False, f"/health returned {resp.status}"
+                    body = _json.loads(resp.read().decode("utf-8", errors="replace"))
+                    if body.get("status") == "ok":
+                        return True, None
+                    return False, f"status={body.get('status')}"
+                finally:
+                    conn.close()
+            except Exception as exc:
+                return False, type(exc).__name__
+
+        healthy, note = _once()
+        if healthy:
+            return healthy, note
+        if note is not None and (
+            note in {cls.__name__ for cls in _retryable} or note == "timeout"
+        ):
+            return _once()
+        return healthy, note
 
     EVENT_SERVICE_PID_FILE: Path = Path.home() / ".gateway" / "event-service.pid"
     EVENT_SERVICE_QUERY_SOCK: Path = Path(
