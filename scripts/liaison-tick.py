@@ -51,6 +51,7 @@ from bus_watch.fable_lock import (
 )
 from bus_watch.friction_rows import mark_friction, parse_mark
 from bus_watch.go_under import go_under
+from bus_watch.loop_tape_mint import ensure_loop_tape
 from bus_watch.lane_closeout import query_lane_closeouts
 from bus_watch.liaison_digest import (
     TICK_OVERHEAD_TOKENS as _TICK_OVERHEAD_TOKENS,
@@ -327,6 +328,11 @@ def main() -> int:
             )
 
     _operator_edits(state)
+    child = ensure_loop_tape(root, state, state_path)
+    if child:
+        policy = dict(state.get("policy") or {})
+        policy["loop_thread"] = child
+        state["policy"] = policy
     register = state["register"]
     if args.go_under:
         result = go_under(

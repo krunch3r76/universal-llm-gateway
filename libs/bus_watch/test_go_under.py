@@ -103,6 +103,58 @@ def test_go_under_leaves_sdk_holder_and_refuses_unbound_model(
     assert state["register"] == "autonomous"
 
 
+def test_go_under_sets_loop_thread(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr("bus_watch.go_under.read_lock", lambda *_a, **_k: {})
+    mint_calls: list[tuple] = []
+
+    def fake_mint(root: str, state: dict, state_path: Path) -> str:
+        mint_calls.append((root, state_path))
+        state.setdefault("policy", {})["loop_thread"] = "12022"
+        return "12022"
+
+    state = _state()
+    go_under(
+        "11960",
+        state,
+        state_path=tmp_path / "s.json",
+        stop_loops=lambda root: [],
+        ensure=lambda root: {"alive": True},
+        release=lambda *_a, **_k: {"ok": True},
+        mint=fake_mint,
+    )
+    assert mint_calls == [("11960", tmp_path / "s.json")]
+    assert state["policy"]["loop_thread"] == "12022"
+    saved = json.loads((tmp_path / "s.json").read_text())
+    assert saved["policy"]["loop_thread"] == "12022"
+
+
+def test_second_go_under_does_not_remint(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr("bus_watch.go_under.read_lock", lambda *_a, **_k: {})
+    mint_calls = 0
+
+    def counting_mint(root: str, state: dict, state_path: Path) -> str:
+        nonlocal mint_calls
+        mint_calls += 1
+        existing = str((state.get("policy") or {}).get("loop_thread") or "")
+        if existing:
+            return existing
+        state.setdefault("policy", {})["loop_thread"] = "12022"
+        return "12022"
+
+    state = {**_state(), "policy": {**_state()["policy"], "loop_thread": "12022"}}
+    go_under(
+        "11960",
+        state,
+        state_path=tmp_path / "s.json",
+        stop_loops=lambda root: [],
+        ensure=lambda root: {"alive": True},
+        release=lambda *_a, **_k: {"ok": True},
+        mint=counting_mint,
+    )
+    assert mint_calls == 1
+    assert state["policy"]["loop_thread"] == "12022"
+
+
 def test_second_go_under_bumps_seq_and_spawn_latches_it(
     tmp_path: Path, monkeypatch
 ) -> None:  # noqa: ANN001

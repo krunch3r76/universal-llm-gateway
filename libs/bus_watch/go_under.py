@@ -35,6 +35,7 @@ from bus_watch.fable_lock import (
     release_fable_lock,
 )
 from bus_watch.spawn_wake.play_classify import MODE_AWARE, MODE_SIT, plant_play_state
+from bus_watch.loop_tape_mint import ensure_loop_tape
 from bus_watch.tick_state import save_state
 
 _TICK_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "liaison-tick.py"
@@ -137,6 +138,7 @@ def go_under(
     stop_loops: Callable[[str], list[int]] = stop_attended_loops,
     ensure: Callable[[str], dict[str, Any]] = ensure_ticker,
     release: Callable[..., dict[str, Any]] = release_fable_lock,
+    mint: Callable[..., str | None] = ensure_loop_tape,
 ) -> dict[str, Any]:
     """Flip, persist, free the seat, retire the tab's loops, guarantee a ticker.
 
@@ -171,6 +173,11 @@ def go_under(
         "holder": holder or None,
         "from_register": previous,
     }
+    child = mint(root, state, state_path)
+    if child:
+        policy = dict(state.get("policy") or {})
+        policy["loop_thread"] = child
+        state["policy"] = policy
     save_state(state_path, state)
     result: dict[str, Any] = {
         "ok": True,

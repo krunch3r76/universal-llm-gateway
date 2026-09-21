@@ -320,10 +320,22 @@ def publish_if_enabled(
     the root's newest turn is the digest we posted and the lanes/attention we
     published from are unchanged — nothing happened, so nothing is published.
     """
-    if not effective_policy(state).get("post_digest"):
+    policy = effective_policy(state)
+    if not policy.get("post_digest"):
         _publish_skipped("post_digest_off")
         return "skipped"
-    tape = loop_tape_thread(root_id, effective_policy(state), digest.get("policy"))
+    loop_thread = str(policy.get("loop_thread") or "").strip()
+    if not loop_thread:
+        _publish_skipped("loop_thread_unset")
+        if str(policy.get("gear") or "") == "3-wake-on-attention":
+            ticks = int(state.get("loop_thread_unset_since") or 0) + 1
+            state["loop_thread_unset_since"] = ticks
+            if ticks >= 4:
+                _publish_failed(root_id, state, "loop_thread_unset")
+                return "failed"
+        return "skipped"
+    state.pop("loop_thread_unset_since", None)
+    tape = loop_tape_thread(root_id, policy, digest.get("policy"))
     dest_moved = str(state.get("digest_publish_thread") or root_id) != tape
     # own_echo compares root.turns to our last DIGEST turn. After a root-era
     # publish those numbers match, so the first tape post would skip forever.
