@@ -38,6 +38,7 @@ def test_go_under_arms_and_frees_the_seat(tmp_path: Path, monkeypatch) -> None: 
         stop_loops=lambda root: [4242],
         ensure=lambda root: {"alive": False, "started": True, "pid": 1},
         release=lambda h, **kw: released.append((h, kw)) or {"ok": True},
+        mint=lambda *_a, **_k: None,
     )
     assert result["ok"] is True and result["armed"] is True
     assert state["register"] == "autonomous"
@@ -71,6 +72,7 @@ def test_go_under_plants_gear_three_on_fresh_policy(
         stop_loops=lambda root: [],
         ensure=lambda root: {"alive": True, "started": False},
         release=lambda *_a, **_k: {"ok": True},
+        mint=lambda *_a, **_k: None,
     )
     assert result["ok"] is True
     assert state["policy"]["gear"] == "3-wake-on-attention"
@@ -97,6 +99,7 @@ def test_go_under_leaves_sdk_holder_and_refuses_unbound_model(
         stop_loops=lambda root: [],
         ensure=lambda root: {"alive": True, "started": False},
         release=lambda *_a, **_k: {"ok": True},
+        mint=lambda *_a, **_k: None,
     )
     assert result["seat_release"]["reason"] == "not_ide_holder"
     assert result["ok"] is False and "successor_model_unset" in result["refused"]
@@ -168,6 +171,7 @@ def test_second_go_under_bumps_seq_and_spawn_latches_it(
         stop_loops=lambda root: [],
         ensure=lambda root: {"alive": True},
         release=lambda *_a, **_k: {"ok": True},
+        mint=lambda *_a, **_k: None,
     )
     assert state["handoff"]["seq"] == 4 and handoff_wake(state) is True
     state["pending_spawn"] = {"thread_id": "10601", "execution_id": "x"}
