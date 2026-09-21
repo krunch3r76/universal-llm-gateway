@@ -35,7 +35,7 @@ Body:
 
 | Guidance type | Target |
 |---|---|
-| Thin stub | ≤15 lines |
+| Thin alwaysApply pointer stub | **retired** — skill `alwaysApply: true` or inline the invariants. `thin_content ∧ thick_orientation` is untested and is not a keep |
 | Simple routing/invariant | ≤30 lines |
 | Medium procedural skill/rule | ≤80 lines |
 | Complex multi-step/reference tables | ≤150 lines |
@@ -77,6 +77,13 @@ Order of preference when a body is too large:
 Resident `skill-surface_ulg` forbids fs-reading skill SOT into context. A stub
 whose body is an `fs(read SOT)` instruction contradicts it and will not be
 followed. `cursor_stub.lines > 15 ⇒ convert_to_thin_stub` is retired.
+
+**AlwaysApply residency:** `alwaysApply ∧ (body ≡ pointer_to_skill ∨ restatement+pointer) ⇒ retire(rule)`.
+Residency is `SKILL.md` `alwaysApply: true` (Cursor promotes it to a global rule)
+or the invariants themselves. A well-written pointer reads as sufficient and
+never hops. Description-gated kernels that cite a skill for annex detail are
+not this class. Fleet: `reasoning-posture_ulg.mdc` and `ulg-for-llms_ulg.mdc`
+retired.
 
 ## Correct vs anti-pattern
 

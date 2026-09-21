@@ -85,6 +85,7 @@ Canonical skeleton (skip what does not apply; do not invent low-information head
 
 | Bad | Good |
 |---|---|
+| `alwaysApply` pointer stub ("Full body: Use the skill") | Skill `alwaysApply: true`, or inline the invariants. `thin∧orientation` is untested — not a keep |
 | New rule defaults to `alwaysApply:true` | Triage; default situational rules to `false` + strong trigger |
 | `alwaysApply:false` rule with a topic-only description | Imperative trigger sentence; it is the entire dispatch |
 | Always-applied rule re-stating what boot already surfaces | Demote; reference the boot signal |
@@ -99,6 +100,7 @@ Canonical skeleton (skip what does not apply; do not invent low-information head
 ## Minimal operating summary
 
 - `alwaysApply:true` iff needed-most-turns AND not trigger-describable; else `false` + imperative trigger description.
+- `alwaysApply` pointer-to-skill stubs are retired (`reasoning-posture_ulg`, `ulg-for-llms_ulg`).
 - Always-on bytes cost turns × sessions × seats — budget them tightest.
 - Keep a stable, information-carrying section skeleton so `md_read(section)` resolves.
 - Prose, compression discipline, and the guardrail compression floor live in `frontier-model-instructions` — load it first; this skill is the `.mdc` file mechanics only.

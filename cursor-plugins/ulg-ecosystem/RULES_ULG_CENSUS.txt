@@ -37,6 +37,5 @@ skill-surface-sync_ulg
 speech-tape-segment-checkpoint_ulg
 task-subagent-parity_ulg
 todo_ulg
-ulg-for-llms_ulg
 web-anthropic-canvas-dialogue_ulg
 status-basis-invariant_ulg

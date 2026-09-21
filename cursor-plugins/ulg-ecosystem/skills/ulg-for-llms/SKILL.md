@@ -1,6 +1,7 @@
 ---
 name: ulg-for-llms
 description: "On boot, dispatch, continuity resume, or lid-close — ULG is a personal cognitive platform; models are first-class clients on one shared graph. Seek finishing together, not hop-schedulers for a human."
+alwaysApply: true
 lifecycle: active
 skill_category: stance
 trigger_match_terms:
@@ -92,7 +93,7 @@ Prefer these when a fork is otherwise tied.
 
 | Surface | How this body reaches the seat |
 |---|---|
-| Cursor IDE | alwaysApply stub `ulg-for-llms_ulg.mdc`; load this body on `Use the ulg-for-llms skill` |
+| Cursor IDE | this skill `alwaysApply: true` (Cursor global-rule promotion). Thin stub `ulg-for-llms_ulg.mdc` retired — a pointer rule does not load this body. Fresh tab or Reload Window for an already-open chat |
 | Continuity stance | First-class trait of `orchestrator_continuity` roots: Use this skill + `## Why this house` on the continuity-doc. Birth CP indexes `## Stance`. Substrate `root_missing_stance`. Footer stays §3.1.1. `tick_charter` skips |
 | `cortex_brief` / web boot | Short opcontext block; this file is the full body |
 | CDP `model=cdp/…` | Staging merges this slug into `skills=` (with `reasoning-posture`) — Customize chip + floor |
