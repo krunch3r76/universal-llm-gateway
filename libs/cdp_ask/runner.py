@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import subprocess
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,38 @@ from cdp_ask.unverifiable import (
 )
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
+_TMP_FALLBACK_HARVEST_ROOT = Path("/tmp/cdp-ask-files")
+_NFS_CORTEX_FILES_ROOT = Path("/mnt/torus/mcp-data/files")
+
+
+class HarvestRootMismatchError(RuntimeError):
+    """CORTEX_FILES_ROOT pinned to /tmp while the NFS cortex files mount is live."""
+
+    def __init__(self, detail: str = "") -> None:
+        base = "harvest_root_mismatch"
+        super().__init__(f"{base}: {detail}" if detail else base)
+
+
+def _is_tmp_fallback_harvest_root(root: Path) -> bool:
+    return root.resolve() == _TMP_FALLBACK_HARVEST_ROOT.resolve()
+
+
+def _nfs_cortex_files_accessible() -> bool:
+    """Probe NFS mount with wall-clock timeout — never bare ``Path.is_dir``."""
+    completed = subprocess.run(
+        ["timeout", "2", "test", "-d", str(_NFS_CORTEX_FILES_ROOT)],
+        check=False,
+        capture_output=True,
+        timeout=3,
+    )
+    return completed.returncode == 0
+
+
+def _raise_harvest_root_mismatch_if_misconfigured(root: Path) -> None:
+    if _is_tmp_fallback_harvest_root(root) and _nfs_cortex_files_accessible():
+        raise HarvestRootMismatchError(
+            f"CORTEX_FILES_ROOT={root} while {_NFS_CORTEX_FILES_ROOT} is reachable"
+        )
 
 
 def _compose_witness_satellite_id(error: str | None, execution_id: str) -> str | None:
@@ -170,6 +203,7 @@ def verify_harvest_root() -> Path:
             f"({root}). Set CORTEX_FILES_ROOT to the live cortex files mount "
             "(doc shorthand /mcp-data/files/ is not a Jupiter path)."
         )
+    _raise_harvest_root_mismatch_if_misconfigured(root)
     return root
 
 
@@ -289,6 +323,10 @@ def _load_prompt_uri(uri: str) -> str:
     except ValueError as exc:
         raise ValueError(f"prompt_uri {uri!r} escapes CORTEX_FILES_ROOT") from exc
     if not path.is_file():
+        if _is_tmp_fallback_harvest_root(root):
+            raise HarvestRootMismatchError(
+                f"prompt missing under tmp harvest root: {uri!r} -> {path}"
+            )
         raise ValueError(f"prompt_uri not found: {uri!r} -> {path}")
     return path.read_text(encoding="utf-8")
 

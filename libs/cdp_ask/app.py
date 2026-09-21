@@ -56,6 +56,7 @@ from cdp_ask.occupancy_projection import CdpOccupancyProjection
 from cdp_ask.page_liveness import LadderCallbacks
 from cdp_ask.registry_hygiene_loop import RegistryHygieneLoop
 from cdp_ask.runner import (
+    HarvestRootMismatchError,
     run_execution,
     verify_harvest_root,
 )
@@ -509,6 +510,16 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                     stall_stage="mark_terminal",
                 )
                 raise
+            except HarvestRootMismatchError as exc:
+                logger.exception(
+                    "execution %s harvest root mismatch", record.execution_id
+                )
+                await execution_store.mark_terminal(
+                    record.execution_id,
+                    status="failed",
+                    error=str(exc),
+                    stall_stage="mark_terminal",
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("execution %s failed", record.execution_id)
                 await execution_store.mark_terminal(
