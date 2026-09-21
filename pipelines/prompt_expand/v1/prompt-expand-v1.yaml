@@ -2,18 +2,22 @@
 # Authorship is outside the DAG: the prelude renders author_* prompts and
 # dispatches read-only cursor/grok-4.7 (Cursor substrate, not chat completions).
 #
-# Invocation:
+# Invocation (operator TASK that does not name a contract):
 #   pipeline(op="run", pipeline_id="prompt-expand",
 #            messages=[{"role":"user","content":"<TASK>"}],
 #            options={
-#              "contract": "implement",       # required
-#              "stage": "g5",                 # required
+#              "contract": "none",            # unnamed operator TASK → none
+#              "stage": "none",               # pair with contract=none
 #              "executor_tier": "frontier",   # default frontier
-#              "target": "cursor",            # required; grok-bot → typed reject
+#              "target": "cursor",            # required; cdp|cursor (grok-bot → typed reject)
 #              "delivery": "prompt",          # prompt|dispatch (default prompt)
 #              "rag_fail": "abort",           # abort|stamp (default abort)
 #              "follow_up": "none",           # caller hint only
 #            })
+# A TASK that already names a contract is not this door — do not copy
+# implement/g5 as the default recipe. should_expand still skips generate
+# contract=none (author/residual recurse-prevention); that skip is not
+# this invocation.
 
 schema_version: 6
 id: prompt-expand

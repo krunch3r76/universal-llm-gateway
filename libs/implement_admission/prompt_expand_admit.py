@@ -21,8 +21,10 @@ _TICKER_CALLERS = frozenset({"liaison-ticker"})
 # wrap / pure-mechanical have no authoring hop. Sketch is the shape-bind hop —
 # taking the A — so it is not mechanical for this door (enrolled roots only).
 # implement / conductor (Play) skip: g5 author drops holes (7154e190 / 5c59e467).
-# none is the residual hop (conductor spawn recipe, bind leg, path-sim, unnamed
-# Auto nest) — not a two-key author identity; caller door skips it.
+# should_expand skip of contract=none is author/residual generate (AUTHOR_CONTRACT,
+# conductor spawn, bind leg, path-sim, unnamed Auto nest) so expand does not
+# recurse. An unspecified operator TASK still uses pipeline options
+# contract=none / stage=none — that seat door is not this skip.
 _MECHANICAL = frozenset({"wrap", "pure-mechanical"})
 _VALID_CONTRACTS = frozenset(
     {"consult", "investigate", "implement", "confer", "review", "none"}

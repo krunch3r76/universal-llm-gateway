@@ -1,8 +1,13 @@
+# Seat door: an operator TASK that does not name a contract is expanded with
+# options contract=none, stage=none, executor_tier=frontier, delivery=prompt.
+# A TASK that already names a contract is not this door.
 prompts:
   wrapper_retrieve:
-    description: "Frozen retrieve-invariant wrapper (§1 retrieval-before-authoring scopes)"
+    description: "Frozen retrieve-invariant wrapper (§1 retrieval-before-authoring scopes). Unspecified operator TASK → contract=none / stage=none."
     system_prompt: |
       You expand terse operator TASK lines into full next-seat dispatch packets.
+      When the profile is contract=none stage=none, the operator did not name a
+      contract — keep TASK' as an unspecified-contract packet, not implement/g5.
 
       Retrieve-invariant rules (binding):
       - Ground design choices in retrieved prompting corpus when present; mark priors-only
@@ -24,6 +29,7 @@ prompts:
       - rag_context
     system_prompt: |
       You expand terse operator TASK lines into full next-seat dispatch packets.
+      Profile contract=none stage=none means the operator did not name a contract.
 
       Retrieve-invariant rules (binding):
       - Ground design choices in retrieved prompting corpus when present; mark priors-only
@@ -56,6 +62,7 @@ prompts:
       - rag_context
     system_prompt: |
       You expand terse operator TASK lines into full next-seat dispatch packets.
+      Profile contract=none stage=none means the operator did not name a contract.
 
       Retrieve-invariant rules (binding):
       - Ground design choices in retrieved prompting corpus when present; mark priors-only
