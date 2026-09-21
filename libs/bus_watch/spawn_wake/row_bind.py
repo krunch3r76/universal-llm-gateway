@@ -42,8 +42,10 @@ _DISPOSITION_EXIT = (
 
 _LOW_IMPLEMENT_PREAMBLE = (
     "ROW_CLASS LOW (mandatory): Land on green when AC met — merge the lane branch "
-    "on green; silence is not a hold-merge gate. CDP review+apply is a separate "
-    "ticker-fired hop; this dispatch is mechanical implement only.\n\n"
+    "on green; silence is not a hold-merge gate. CDP review is a separate "
+    "ticker-fired hop; the ticker then applies ALL review suggestions (SHOULD-FIX, "
+    "nits, unused-code, adjacent) — do not page or come up. This dispatch is "
+    "mechanical implement only.\n\n"
     "Friction {friction_id} [{category}] {owner}\n"
     "«{note}»\n"
     "{why_line}" + _DISPOSITION_EXIT + "\n"

@@ -208,14 +208,34 @@ touch the same files. `¬ discard(peer_work)` — a blocked merge is reconcile, 
 
 ## Headless successor (resume-fence pull)
 
-The hop target is a **message dispatch**, not a packet file — `contract=none` always:
+The hop target is a **message dispatch**, not a packet file. Sit leftover on a
+**friction/disposition score row** is not grok house generate: the ticker spawns a
+**reasoning agent** (`cdp/opus-5`, or `cdp/fable` when `policy.row_bind_model` names it)
+to bind `ROW_CLASS: low|trio`. That seat does **not** edit the repo (bind then STOP;
+remaining hops are ticker-fired — § Friction score rows).
+
+```
+# friction NOW / sit leftover — ticker, not the grok successor
+team_dispatch(
+  op=generate,
+  model=cdp/opus-5,          # ¬ seat=cursor-sdk (cdp_cursor_sdk_seat_rejected)
+  contract=none,
+  prompt=<row-bind wake>,    # BIND ROW_CLASS: low|trio before nested dispatch
+  dispatch_thread_id=<R>,
+  parent_thread=<R>,
+  work_key=agent-bus:<R>:row-bind:<night>,
+)
+```
+
+Other sit wakes (checkpoint / hop, no friction row) stay `contract=none` `lane="B"`
+`model=<policy.successor_model>`:
 
 ```
 team_dispatch(
   op=generate,
   seat=cursor-sdk,
   contract=none,
-  lane="A",  # bind-only hop (empty files_expected). In-repo implement uses lane B.
+  lane="B",  # sit/house generate: Lane A is 1 write-lease slot; do not queue overnight successors behind shared-master grok. Bind-only cortex hops remain the named A exception.
   model=<policy.successor_model>,
   prompt=<build_successor_message>,
   dispatch_thread_id=<R>,
@@ -296,12 +316,12 @@ closed on the assertion. Same driver as everything else — no second loop.
 | Charter | `--set owned_services=agent-bus,cortex` (bare slug ⇒ `service:`; `agent_skill:` / `ai_agent:` allowed). **Declared, never inferred** — empty ⇒ nothing enters. Frictions on non-owned services never enter |
 | Harvest | `digest.frictions` (≤ 12, newest first: `id=a:<n>` · `owner` · `category` · `note` · `state` · `forcing`) + `digest.friction_summary` (`open` · `forcing` · `promoted` · `dispatch_cap` · `dispatched_tonight` · `error`). Read path: Cortex UDS `assertions` on the owner, non-superseded bracketed claims, 100-row window; `[feature]` asks and `[resolved:…]` closure rows are not rows |
 | NOW | no seat bind (`summary_row` / `policy.now_row` empty) ⇒ the newest `forcing` row **is** NOW (`Friction a:<n> [cat] owner «note» → disposition …`), so STAY-on-empty-NOW cannot fire while a charter friction waits. A seat bind outranks it; the row stays an `Event:` |
-| Disposition | `direct-first` (fix it now; in-seat ≤20 lines or a cursor-sdk implement lane) · `todo-minted` (`work-item-seed-path` S4a mint; no liaison-authored plan) · `declined` (wontfix, reason). Record: `liaison-tick.py --root R --mark-friction a:<n>:<disposition>` (operator key `friction_dispositions`; a live loop absorbs it next poll) |
+| Disposition | **Ticker first spawn = CDP row-bind**, not grok `direct-first`. Agent posts `ROW_CLASS: low\|trio` then STOP; ticker fires remaining hops (LOW = implement lane B + later apply-all review; TRIO = Sketch → Mission Composer → Conductor). `--mark-friction` still records `direct-first` / `todo-minted` / `declined`. In-seat ≤20-line `direct-first` only after `ROW_CLASS: low`, and does not skip review+apply+land. Record: `liaison-tick.py --root R --mark-friction a:<n>:<disposition>` (operator key `friction_dispositions`; a live loop absorbs it next poll) |
 | Close-back | **on the assertion**: `cortex(tool="friction_close", assertion_id=<n>, resolution_kind=todo:<slug> \| wontfix \| commit:<sha>)` — `todo-minted` / `declined` the same turn; `direct-first` when the fix lands. Superseded ⇒ the row leaves on the next harvest. A `todo-minted`/`declined` row still open = `state=close_pending` — you forgot the close |
 | Ticker | the newest forcing ∧ unlatched row is promoted into `attention` (`kind=friction`) — **one per tick**, none once `policy.friction_dispatch_cap` (default 3) spawns are latched tonight; a successful spawn latches it in `state.friction_rows_seen` — **one spawn per assertion id**, a re-opened friction carries a new id. Latched-but-open rows remain NOW for the seat that woke. **Sit leftover on a forcing friction:** CDP row-bind posts `ROW_CLASS: low|trio` then **STOP** (bind-only — CDP does not fire remaining hops); the ticker latches the class and fires LOW (`contract=implement` lane B) or TRIO (`build_play_dispatch_body` when `todo:{slug}` else CDP sketch consult) — never grok house generate. **Review harvest:** ticker applies ALL suggestions (SHOULD-FIX, nits, unused-code, adjacent) as one lane-B house generate (`contract=none` + apply-all message — ¬ `contract=implement`+`prompt`, wire-rejected) — ¬ page ¬ come-up ¬ park for the next resume; frozen `ready=false` and an attended `ide:` check-in do not hold that apply (`a:36093`) |
 | REPEATED_FAILURE | a **second** `direct-first` mark on the same row ⇒ `state=repeated_failure`: NOW reads "consult, then todo-minted \| declined; never a third variant" (`cdp/opus-5` first below Opus) |
 
-Not owned: spawn predicates (`spawn_on_wake.py` unchanged), pipelines, seat locks. The IDE hop takes the friction
+Not owned: pipelines, seat locks. Sit friction spawn is `spawn_wake.row_bind` (CDP), not grok house generate. The IDE hop takes the friction
 NOW verbatim as `--row`; a headless successor gets it as `row=`.
 
 ## Stops (designed, not "continue?")

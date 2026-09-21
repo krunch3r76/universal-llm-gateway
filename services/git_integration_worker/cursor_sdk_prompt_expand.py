@@ -185,7 +185,15 @@ async def maybe_expand_giw_prompt(
 
     from systems.frontier_consult.prompt_expand_prelude import run_prompt_expand
 
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
     contract = expand_contract_for_admit(req, handoff_contract=handoff_contract)
+    # Arming reap keys on null last_heartbeat_at (CURSOR_SDK_ARM_TIMEOUT=300s).
+    # prompt-expand retrieve can run 280s before the bridge heartbeats; stamp
+    # here so the prelude is armed work, not a pre-arm wedge (11788 hop1).
+    CursorDispatchLedger.instance().bump_heartbeat(dispatch_id=req.dispatch_id)
     result = await asyncio.to_thread(
         run_prompt_expand,
         prompt,
