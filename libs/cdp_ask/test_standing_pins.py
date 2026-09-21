@@ -21,11 +21,11 @@ from cdp_ask.standing_pins import (
 _REPO = Path(__file__).resolve().parents[2]
 _PINS = _REPO / "services" / "jupiter-cdp" / "pins.toml"
 
-_EXPECTED_LANES = frozenset({"fleet", "messages", "ess", "gopuff", "uber"})
+_EXPECTED_LANES = frozenset({"fleet", "messages", "ess", "calendar", "gopuff", "uber"})
 _REQUIRED_KEYS = frozenset(
     {"port", "display", "profile", "standing", "lapsed_url_prefixes", "extra_args"}
 )
-_STANDING_LANES = frozenset({"fleet", "messages", "ess"})
+_STANDING_LANES = frozenset({"fleet", "messages", "ess", "calendar"})
 
 
 @pytest.mark.offline
