@@ -28,6 +28,9 @@ logger = get_logger(__name__)
 AUTHOR_MODEL = "cursor/grok-4.7"
 # residual hop — should_expand skips contract=none (and no enrolled root stamp).
 AUTHOR_CONTRACT = "none"
+# GIW's admit schema only accepts cursor-auto, stargate, or giw_park_resume.
+# This call is the Stargate prelude, so the registered door is stargate.
+AUTHOR_ADMITTED_VIA = "stargate"
 AUTHOR_TIMEOUT_S = 360.0
 _POLL_INTERVAL_S = 2.0
 _TERMINAL = frozenset({"completed", "failed"})
@@ -212,7 +215,7 @@ async def author_task_prime_async(
         "message": message,
         "handoff_contract": AUTHOR_CONTRACT,
         "read_only": True,
-        "admitted_via": "prompt-expand-author",
+        "admitted_via": AUTHOR_ADMITTED_VIA,
         "close_contract": "auto",
     }
     if nest_under:

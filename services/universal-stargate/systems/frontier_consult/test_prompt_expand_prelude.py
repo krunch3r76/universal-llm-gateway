@@ -440,6 +440,7 @@ def test_expand_transport_failure_skips_router_crash(
 @pytest.mark.offline
 def test_author_render_uses_prompts_yaml_cursor_key() -> None:
     from systems.frontier_consult.prompt_expand_cursor_author import (
+        AUTHOR_ADMITTED_VIA,
         AUTHOR_CONTRACT,
         AUTHOR_MODEL,
         cdp_forbidden_door,
@@ -448,6 +449,7 @@ def test_author_render_uses_prompts_yaml_cursor_key() -> None:
 
     assert AUTHOR_MODEL == "cursor/grok-4.7"
     assert AUTHOR_CONTRACT == "none"
+    assert AUTHOR_ADMITTED_VIA == "stargate"
     msg = render_author_message(
         {
             "prompt_key": "author_cursor",
