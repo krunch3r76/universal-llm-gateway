@@ -123,7 +123,7 @@ def test_cursor_auto_enrolled_sketch_admit_records_prompt_expand_pending(
 
     expand_calls: list[tuple[str, dict[str, str]]] = []
 
-    def _fake_expand(task: str, options: dict[str, str]) -> ExpandRun:
+    def _fake_expand(task: str, options: dict[str, str], **_kwargs: object) -> ExpandRun:
         expand_calls.append((task, options))
         return ExpandRun(ok=True, prompt="TASK'", execution_id="exp-admit-test")
 

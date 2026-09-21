@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 from prompt_expand_consume.router import ConsumeBranch
 from systems.frontier_consult.prompt_expand_prelude import ExpandRun
@@ -29,24 +31,36 @@ def _req(**overrides: object) -> CursorDispatchRequest:
     return CursorDispatchRequest(**base)
 
 
-@pytest.mark.offline
-@pytest.mark.asyncio
-async def test_maybe_expand_giw_prompt_window_transcript_id_in_seat(
+def _stub_expand(
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    prompt: str = "---\npipeline: prompt-expand\n---\n\nTASK'",
+    execution_id: str = "exp-giw",
 ) -> None:
-    """Attended via caller_transcript_id without summon_mode in message body."""
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_sdk_prompt_expand.giw_should_expand_prompt",
         lambda *args, **kwargs: True,
     )
     monkeypatch.setattr(
         "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
-        lambda task, options: ExpandRun(
-            ok=True,
-            prompt="---\npipeline: prompt-expand\n---\n\nTASK'",
-            execution_id="exp-giw-tid",
+        lambda task, options, **_kwargs: ExpandRun(
+            ok=True, prompt=prompt, execution_id=execution_id
         ),
     )
+    ledger = MagicMock()
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_dispatch_ledger.CursorDispatchLedger.instance",
+        classmethod(lambda cls: ledger),
+    )
+
+
+@pytest.mark.offline
+@pytest.mark.asyncio
+async def test_maybe_expand_giw_prompt_window_transcript_id_in_seat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attended via caller_transcript_id without summon_mode in message body."""
+    _stub_expand(monkeypatch, execution_id="exp-giw-tid")
     result = await maybe_expand_giw_prompt(
         _req(
             message="Expand in the window for enrolled root wiring.",
@@ -70,18 +84,7 @@ async def test_maybe_expand_giw_prompt_window_transcript_id_in_seat(
 async def test_maybe_expand_giw_prompt_in_seat_short_circuit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_prompt_expand.giw_should_expand_prompt",
-        lambda *args, **kwargs: True,
-    )
-    monkeypatch.setattr(
-        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
-        lambda task, options: ExpandRun(
-            ok=True,
-            prompt="---\npipeline: prompt-expand\n---\n\nTASK'",
-            execution_id="exp-giw",
-        ),
-    )
+    _stub_expand(monkeypatch)
     result = await maybe_expand_giw_prompt(
         _req(),
         _req().message or "",
@@ -100,18 +103,7 @@ async def test_maybe_expand_giw_prompt_in_seat_short_circuit(
 async def test_maybe_expand_giw_prompt_sdk_background(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_prompt_expand.giw_should_expand_prompt",
-        lambda *args, **kwargs: True,
-    )
-    monkeypatch.setattr(
-        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
-        lambda task, options: ExpandRun(
-            ok=True,
-            prompt="---\npipeline: prompt-expand\n---\n\nTASK'",
-            execution_id="exp-giw-bg",
-        ),
-    )
+    _stub_expand(monkeypatch, execution_id="exp-giw-bg")
     result = await maybe_expand_giw_prompt(
         _req(message="plain commission without window verb"),
         "plain commission without window verb",
@@ -148,18 +140,7 @@ async def test_maybe_expand_giw_conductor_advisory_production_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Production AC: caller_transcript_id + bus_lifecycle only — no kwarg injection."""
-    monkeypatch.setattr(
-        "services.git_integration_worker.cursor_sdk_prompt_expand.giw_should_expand_prompt",
-        lambda *args, **kwargs: True,
-    )
-    monkeypatch.setattr(
-        "systems.frontier_consult.prompt_expand_prelude.run_prompt_expand",
-        lambda task, options: ExpandRun(
-            ok=True,
-            prompt="---\npipeline: prompt-expand\n---\n\nTASK'",
-            execution_id="exp-giw-conductor",
-        ),
-    )
+    _stub_expand(monkeypatch, execution_id="exp-giw-conductor")
     result = await maybe_expand_giw_prompt(
         _req(
             message="plain commission without hints",

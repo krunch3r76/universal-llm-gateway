@@ -191,13 +191,20 @@ async def maybe_expand_giw_prompt(
 
     contract = expand_contract_for_admit(req, handoff_contract=handoff_contract)
     # Arming reap keys on null last_heartbeat_at (CURSOR_SDK_ARM_TIMEOUT=300s).
-    # prompt-expand retrieve can run 280s before the bridge heartbeats; stamp
-    # here so the prelude is armed work, not a pre-arm wedge (11788 hop1).
-    CursorDispatchLedger.instance().bump_heartbeat(dispatch_id=req.dispatch_id)
+    # Retrieve ≤280s + cursor author ≤360s; stamp before and during the wait so
+    # the parent admit stays armed work, not a pre-arm wedge (11788 hop1).
+    ledger = CursorDispatchLedger.instance()
+
+    def _heartbeat() -> None:
+        ledger.bump_heartbeat(dispatch_id=req.dispatch_id)
+
+    _heartbeat()
     result = await asyncio.to_thread(
         run_prompt_expand,
         prompt,
         expand_options(contract=contract, model=resolved_model),
+        heartbeat_fn=_heartbeat,
+        nest_under=req.dispatch_id,
     )
     if not result.ok:
         logger.warning(

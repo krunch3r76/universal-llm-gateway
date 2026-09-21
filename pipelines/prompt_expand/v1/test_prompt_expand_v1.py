@@ -231,7 +231,14 @@ async def test_format_dispatch_json_envelope_no_bus_fields() -> None:
     ctx = _Ctx(
         _base_options(delivery="dispatch"),
         {
-            "classify_retrieve": _Out(json={"rag_status": "ok", "provenance_mode": "NORMAL", "proceed": True, "attempts": 1}),
+            "classify_retrieve": _Out(
+                json={
+                    "rag_status": "ok",
+                    "provenance_mode": "NORMAL",
+                    "proceed": True,
+                    "attempts": 1,
+                }
+            ),
             "resolve_profile": _Out(
                 json={
                     "contract": "implement",
@@ -243,17 +250,60 @@ async def test_format_dispatch_json_envelope_no_bus_fields() -> None:
                     "elicitation": False,
                 }
             ),
-            "select_author": _Out(raw="Expanded TASK prime"),
+            "retrieve_context": _Out(raw="rag chunk for author"),
         },
     )
     out = await handler.execute(_Step(), ctx)
     assert "fire_plan" in out.json
     assert out.json["fire_plan"]["delivery"] == "dispatch"
+    assert "author_bundle" in out.json
+    assert out.json["author_bundle"]["rag_context"] == "rag chunk for author"
     assert "team_dispatch" not in json.dumps(out.json.get("fire_plan", {}))
 
 
 @pytest.mark.asyncio
-async def test_format_cdp_rejects_code_extra_in_rendered_output() -> None:
+async def test_format_returns_author_bundle_for_prelude() -> None:
+    handler = PromptExpandFormatOutputHandler()
+    ctx = _Ctx(
+        _base_options(target="cursor"),
+        {
+            "classify_retrieve": _Out(
+                json={
+                    "rag_status": "ok",
+                    "provenance_mode": "NORMAL",
+                    "proceed": True,
+                    "attempts": 1,
+                }
+            ),
+            "resolve_profile": _Out(
+                json={
+                    "contract": "consult",
+                    "stage": "g1",
+                    "executor_tier": "frontier",
+                    "retrieve_scopes": ["llm_prompting"],
+                    "target_static": True,
+                    "allowed_doors": ["cortex", "team_dispatch"],
+                    "elicitation": True,
+                }
+            ),
+            "retrieve_context": _Out(raw="retrieved prompting corpus"),
+        },
+    )
+    out = await handler.execute(_Step(), ctx)
+    assert out.error is None
+    assert out.json["ok"] is True
+    assert out.json["prompt_key"] == "author_cursor"
+    assert out.json["rag_context"] == "retrieved prompting corpus"
+    assert out.json["text"] == "Expand this TASK"
+    assert out.json["contract"] == "consult"
+    assert out.json["elicitation"] is True
+    parsed = json.loads(out.raw)
+    assert parsed["prompt_ref"] == "prompt_expand.v1.author_cursor"
+
+
+@pytest.mark.asyncio
+async def test_format_cdp_bundle_keeps_code_extra_check_out_of_dag() -> None:
+    """CDP CODE_EXTRA rejection is post-author in the prelude, not format."""
     handler = PromptExpandFormatOutputHandler()
     ctx = _Ctx(
         _base_options(target="cdp"),
@@ -277,49 +327,17 @@ async def test_format_cdp_rejects_code_extra_in_rendered_output() -> None:
                     "elicitation": False,
                 }
             ),
-            "select_author": _Out(raw="Fire via team_dispatch on the bus"),
-        },
-    )
-    out = await handler.execute(_Step(), ctx)
-    assert out.json["error"]["code"] == "expand.cdp_code_extra_doors"
-    assert out.error
-
-
-@pytest.mark.asyncio
-async def test_format_cdp_passes_clean_rendered_output() -> None:
-    handler = PromptExpandFormatOutputHandler()
-    ctx = _Ctx(
-        _base_options(target="cdp"),
-        {
-            "classify_retrieve": _Out(
-                json={
-                    "rag_status": "ok",
-                    "provenance_mode": "NORMAL",
-                    "proceed": True,
-                    "attempts": 1,
-                }
-            ),
-            "resolve_profile": _Out(
-                json={
-                    "contract": "implement",
-                    "stage": "g5",
-                    "executor_tier": "frontier",
-                    "retrieve_scopes": ["llm_prompting"],
-                    "target_static": True,
-                    "allowed_doors": ["cortex", "fs", "cdp_ask"],
-                    "elicitation": False,
-                }
-            ),
-            "select_author": _Out(raw="Use cortex and cdp_ask only"),
+            "retrieve_context": _Out(raw="ctx"),
         },
     )
     out = await handler.execute(_Step(), ctx)
     assert out.error is None
-    assert "cdp_ask" in out.raw
+    assert out.json["prompt_key"] == "author_cdp"
+    assert out.json["ok"] is True
 
 
 @pytest.mark.asyncio
-async def test_format_cursor_allows_team_dispatch_in_rendered_output() -> None:
+async def test_format_cursor_bundle_includes_rag_and_profile() -> None:
     handler = PromptExpandFormatOutputHandler()
     ctx = _Ctx(
         _base_options(target="cursor"),
@@ -343,12 +361,13 @@ async def test_format_cursor_allows_team_dispatch_in_rendered_output() -> None:
                     "elicitation": False,
                 }
             ),
-            "select_author": _Out(raw="Chain team_dispatch for the code lane"),
+            "retrieve_context": _Out(raw="chunk"),
         },
     )
     out = await handler.execute(_Step(), ctx)
     assert out.error is None
-    assert "team_dispatch" in out.raw
+    assert out.json["target"] == "cursor"
+    assert "team_dispatch" in out.json["header"]["allowed_doors"]
 
 
 def test_profile_tables_no_top_level_version_key() -> None:

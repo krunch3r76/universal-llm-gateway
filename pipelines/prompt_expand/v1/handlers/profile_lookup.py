@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from pathlib import Path
 from typing import Any, override
 
@@ -17,7 +16,6 @@ from systems.pipeline.core.constants import (
 from systems.pipeline.core.dag import PipelineExecutionError
 from systems.pipeline.core.events.prompt_expand import (
     ExpandAdmitted,
-    ExpandAuthorCompleted,
     ExpandCompleted,
     ExpandRetrieveCompleted,
 )
@@ -33,10 +31,6 @@ _PROFILE_TABLES_PATH = Path(__file__).resolve().parent.parent / "profile_tables.
 _RETRIEVE_MAX_ATTEMPTS = 3
 _RETRIEVE_BACKOFF_SECONDS = 2.0
 _PIPELINE_CALL_HANDLER = PipelineCallHandler()
-
-_CDP_CODE_EXTRA_RE = re.compile(
-    r"team_dispatch|manage|pipeline|panel_dispatch|quality_gate"
-)
 
 _VALID_CONTRACTS = frozenset(
     {"consult", "investigate", "implement", "confer", "review", "none"}
@@ -133,11 +127,6 @@ def _is_timeout_exception(exc: BaseException) -> bool:
         "StepTimeoutError",
         "HandlerTimeoutError",
     }
-
-
-def _cdp_forbidden_door(authored: str) -> str | None:
-    match = _CDP_CODE_EXTRA_RE.search(authored)
-    return match.group(0) if match else None
 
 
 def _build_retrieve_pipeline_options(
@@ -439,7 +428,11 @@ class PromptExpandClassifyRetrieveHandler(BaseHandler):
 
 
 class PromptExpandFormatOutputHandler(BaseHandler):
-    """Map delivery mode to prompt markdown or dispatch JSON envelope."""
+    """Emit the retrieval author-bundle for the prelude Cursor-substrate author.
+
+    Authorship is not a DAG generate step — cursor/ models stay off chat
+    completions. CDP door checks run after the author returns TASK′.
+    """
 
     step_type = "prompt_expand_format_output_v1"
 
@@ -450,13 +443,14 @@ class PromptExpandFormatOutputHandler(BaseHandler):
         target = str(opts.get("target", ""))
         classify_out = context.get_output("classify_retrieve")
         profile_out = context.get_output("resolve_profile")
-        author_out = context.get_output("select_author")
+        retrieve_out = context.get_output("retrieve_context")
 
         classify_json = (classify_out.json if classify_out else {}) or {}
         profile_json = (profile_out.json if profile_out else {}) or {}
         rag_status = str(classify_json.get("rag_status", "unknown"))
         provenance_mode = str(classify_json.get("provenance_mode", "NORMAL"))
         attempts = int(classify_json.get("attempts") or 1)
+        rag_context = (retrieve_out.raw if retrieve_out else "") or ""
 
         if classify_json.get("proceed") is False:
             err_payload = {
@@ -469,15 +463,6 @@ class PromptExpandFormatOutputHandler(BaseHandler):
                 json=err_payload,
                 error=f"retrieve leg aborted: rag_status={rag_status}",
             )
-
-        authored = (author_out.raw if author_out else "") or ""
-        if target == "cdp" and authored.strip():
-            forbidden = _cdp_forbidden_door(authored)
-            if forbidden:
-                return _typed_reject(
-                    "expand.cdp_code_extra_doors",
-                    f"cdp TASK' names forbidden door {forbidden!r}",
-                )
 
         header = {
             "pipeline": "prompt-expand",
@@ -493,26 +478,32 @@ class PromptExpandFormatOutputHandler(BaseHandler):
             "elicitation": profile_json.get("elicitation"),
             "allowed_doors": profile_json.get("allowed_doors"),
         }
+        prompt_key = "author_cdp" if target == "cdp" else "author_cursor"
+        bundle = {
+            "ok": True,
+            "delivery": delivery,
+            "rag_context": rag_context,
+            "text": getattr(context, "source_text", "") or "",
+            "contract": profile_json.get("contract"),
+            "stage": profile_json.get("stage"),
+            "executor_tier": profile_json.get("executor_tier"),
+            "elicitation": profile_json.get("elicitation"),
+            "target": target,
+            "prompt_key": prompt_key,
+            "prompt_ref": f"prompt_expand.v1.{prompt_key}",
+            "header": header,
+            "rag_status": rag_status,
+            "provenance_mode": provenance_mode,
+            "proceed": True,
+        }
 
         pipeline_id, execution_id = _pipeline_meta(context)
-        author_step = "author_cdp" if target == "cdp" else "author_cursor"
-        if authored.strip():
-            self._publish_bus_event(
-                context,
-                ExpandAuthorCompleted(
-                    pipeline_id=pipeline_id,
-                    execution_id=execution_id,
-                    step_name=author_step,
-                    target=target,
-                ),
-            )
-
         if delivery == "dispatch":
             envelope = {
                 "fire_plan": {
                     "target": target,
                     "delivery": delivery,
-                    "prompt_ref": f"prompt_expand.v1.author_{target}",
+                    "prompt_ref": bundle["prompt_ref"],
                     "options": {
                         k: opts[k]
                         for k in (
@@ -526,7 +517,7 @@ class PromptExpandFormatOutputHandler(BaseHandler):
                     },
                 },
                 "header": header,
-                "prompt": authored,
+                "author_bundle": bundle,
                 "rag_status": rag_status,
                 "degraded": provenance_mode == "DEGRADED",
             }
@@ -544,8 +535,7 @@ class PromptExpandFormatOutputHandler(BaseHandler):
             )
             return StepOutput(raw=raw, json=envelope)
 
-        front_matter = yaml.safe_dump(header, sort_keys=False).strip()
-        raw = f"---\n{front_matter}\n---\n\n{authored}"
+        raw = json.dumps(bundle)
         self._publish_bus_event(
             context,
             ExpandCompleted(
@@ -557,4 +547,4 @@ class PromptExpandFormatOutputHandler(BaseHandler):
                 provenance_mode=provenance_mode,
             ),
         )
-        return StepOutput(raw=raw, json={"header": header, "delivery": delivery})
+        return StepOutput(raw=raw, json=bundle)

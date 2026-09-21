@@ -1,4 +1,6 @@
-# prompt-expand v1 — two-key expand pipeline (contract·stage·tier retrieve, target author).
+# prompt-expand v1 — two-key expand pipeline (contract·stage·tier retrieve).
+# Authorship is outside the DAG: the prelude renders author_* prompts and
+# dispatches read-only cursor/grok-4.7 (Cursor substrate, not chat completions).
 #
 # Invocation:
 #   pipeline(op="run", pipeline_id="prompt-expand",
@@ -18,8 +20,9 @@ id: prompt-expand
 version: "1.0"
 type: prompt_expand
 description: >
-  Two-key prompt expansion: target-invariant RAG retrieve (profile key) then
-  target-variant author (cdp vs cursor). Fire stays outside the DAG.
+  Two-key prompt expansion retrieve leg: target-invariant RAG (profile key)
+  then a structured author bundle for the prelude Cursor-substrate author.
+  Fire and authorship stay outside the DAG.
 output: format_output
 
 options:
@@ -48,44 +51,6 @@ steps:
       retrieve_raw: retrieve_context.raw
       retrieve_json: retrieve_context.json
 
-  - name: author_cdp
-    type: generate
-    timeout_seconds: 360
-    condition: "options.target == 'cdp' and classify_retrieve.json.get('proceed') is True"
-    model_ref: expand
-    prompt_ref: prompt_expand.v1.author_cdp
-    handler_inputs:
-      rag_context: "retrieve_context.raw"
-      text: sourceNs.text
-      contract: "resolve_profile.json.contract"
-      stage: "resolve_profile.json.stage"
-      executor_tier: "resolve_profile.json.executor_tier"
-      elicitation: "resolve_profile.json.elicitation"
-    generation_parameters:
-      temperature: 0.3
-
-  - name: author_cursor
-    type: generate
-    timeout_seconds: 360
-    condition: "options.target == 'cursor' and classify_retrieve.json.get('proceed') is True"
-    model_ref: expand
-    prompt_ref: prompt_expand.v1.author_cursor
-    handler_inputs:
-      rag_context: "retrieve_context.raw"
-      text: sourceNs.text
-      contract: "resolve_profile.json.contract"
-      stage: "resolve_profile.json.stage"
-      executor_tier: "resolve_profile.json.executor_tier"
-      elicitation: "resolve_profile.json.elicitation"
-    generation_parameters:
-      temperature: 0.3
-
-  - name: select_author
-    type: select_output
-    candidates:
-      - author_cdp
-      - author_cursor
-
   - name: format_output
     type: prompt_expand_format_output_v1
     reads_from:
@@ -93,7 +58,7 @@ steps:
         fields: [json]
       - step: resolve_profile
         fields: [json]
+      - step: retrieve_context
+        fields: [raw]
       - step: classify_retrieve
         fields: [json]
-      - step: select_author
-        fields: [raw, json]

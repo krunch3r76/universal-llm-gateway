@@ -435,3 +435,32 @@ def test_expand_transport_failure_skips_router_crash(
     out = apply_expand_to_handle(_handle())
     assert out.consume_branch is None
     assert out.message == _handle().message
+
+
+@pytest.mark.offline
+def test_author_render_uses_prompts_yaml_cursor_key() -> None:
+    from systems.frontier_consult.prompt_expand_cursor_author import (
+        AUTHOR_CONTRACT,
+        AUTHOR_MODEL,
+        cdp_forbidden_door,
+        render_author_message,
+    )
+
+    assert AUTHOR_MODEL == "cursor/grok-4.7"
+    assert AUTHOR_CONTRACT == "none"
+    msg = render_author_message(
+        {
+            "prompt_key": "author_cursor",
+            "rag_context": "corpus bit",
+            "text": "Do the thing",
+            "contract": "consult",
+            "stage": "g1",
+            "executor_tier": "frontier",
+            "elicitation": True,
+        }
+    )
+    assert "corpus bit" in msg
+    assert "Do the thing" in msg
+    assert "contract=consult" in msg
+    assert cdp_forbidden_door("use team_dispatch please") == "team_dispatch"
+    assert cdp_forbidden_door("use cortex only") is None

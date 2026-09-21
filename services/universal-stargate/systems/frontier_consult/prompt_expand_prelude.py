@@ -2,13 +2,19 @@
 
 HTTP ``team_dispatch`` still returns 202 immediately. CDP already has a
 background worker; cursor-sdk schedules expand+GIW on that same pattern.
-Self-HTTP uses ``/v1/chat/completions`` (the sync MCP run path) from a
-worker thread so the admit loop is not blocked.
+
+Retrieve posts ``/v1/chat/completions`` with ``model: prompt-expand`` (RAG
+bundle only). Authorship is a separate read-only ``cursor/grok-4.7`` GIW
+dispatch — never chat completions for ``cursor/`` catalog ids.
+
+Wall budget: ``_EXPAND_TIMEOUT_S`` = 600s covers retrieve (≤280) + author
+(≤360, see ``AUTHOR_TIMEOUT_S`` in prompt_expand_cursor_author).
 """
 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -74,8 +80,18 @@ def read_packet_text(packet_path: str) -> str:
     return (workspaces_root() / raw).read_text(encoding="utf-8")
 
 
-def run_prompt_expand(task: str, options: dict[str, str]) -> ExpandRun:
-    """POST prompt-expand on the local Stargate completions door."""
+def run_prompt_expand(
+    task: str,
+    options: dict[str, str],
+    *,
+    heartbeat_fn: Callable[[], None] | None = None,
+    nest_under: str | None = None,
+) -> ExpandRun:
+    """Retrieve via prompt-expand pipeline, then author on cursor/grok-4.7.
+
+    Fail-open: transport / empty / author failure returns the original *task*
+    (never an error string as TASK′).
+    """
     body = {
         "model": PIPELINE_ID,
         "messages": [{"role": "user", "content": task}],
@@ -96,12 +112,37 @@ def run_prompt_expand(task: str, options: dict[str, str]) -> ExpandRun:
     if choices:
         content = str((choices[0].get("message") or {}).get("content") or "")
     exec_id = resp.headers.get("x-pipeline-execution-id") or data.get("id")
+    exec_s = str(exec_id) if exec_id else None
     if not content.strip():
         return ExpandRun(
-            ok=False, prompt=task, execution_id=exec_id, error="empty"
+            ok=False, prompt=task, execution_id=exec_s, error="empty"
         )
-    exec_s = str(exec_id) if exec_id else None
-    return ExpandRun(ok=True, prompt=content, execution_id=exec_s)
+
+    from systems.frontier_consult.prompt_expand_cursor_author import (
+        author_from_pipeline_content,
+        parse_author_bundle,
+    )
+
+    bundle = parse_author_bundle(content)
+    if bundle is None or not bundle.get("ok") or bundle.get("proceed") is False:
+        return ExpandRun(
+            ok=False,
+            prompt=task,
+            execution_id=exec_s,
+            error="retrieve_bundle",
+        )
+    if heartbeat_fn is not None:
+        heartbeat_fn()
+    authored = author_from_pipeline_content(
+        content,
+        heartbeat_fn=heartbeat_fn,
+        nest_under=nest_under,
+    )
+    if not (authored or "").strip():
+        return ExpandRun(
+            ok=False, prompt=task, execution_id=exec_s, error="author"
+        )
+    return ExpandRun(ok=True, prompt=authored, execution_id=exec_s)
 
 
 def maybe_expand_cdp_prompt(

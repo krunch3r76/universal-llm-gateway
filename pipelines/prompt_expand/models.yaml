@@ -1,4 +1,4 @@
 models:
+  # Author and retrieval consumer. grok is the Cursor card; the live id is grok-4.7.
   expand:
-    model: qwen3-5-27b-q8-0-16384
-    profile: qwen3-instruct
+    model: cursor/grok-4.7
