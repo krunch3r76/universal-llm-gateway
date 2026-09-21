@@ -12,7 +12,12 @@ import pytest
 from bus_watch.now_row import resolve_now_row
 from bus_watch.now_row_bind import maybe_bind_now_row
 from bus_watch.spawn_wake.play_classify import classify_leftover
-from bus_watch.tick_state import absorb_operator_edits, load_state, save_state, update_state
+from bus_watch.tick_state import (
+    absorb_operator_edits,
+    load_state,
+    save_state,
+    update_state,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -135,7 +140,6 @@ def test_spent_subject_gate_negatives(
     before = load_state(state_path)
     digest = _digest(attention=[_lane(LANE_A, subject=subject)])
     state = _state()
-    events: list[str] = []
     with patch("bus_watch.now_row_bind.emit_now_row_bound") as bound, patch(
         "bus_watch.now_row_bind.emit_now_row_released"
     ) as released:
@@ -315,7 +319,6 @@ def test_empty_tick_writes_nothing(state_path: Path) -> None:
 
 
 def test_play_gate_unchanged(state_path: Path) -> None:
-    row = f"agent-bus:{LANE_A} · «G3 generate admitted»"
     digest = _digest(attention=[_lane(LANE_A)])
     state = _state()
     maybe_bind_now_row(digest, state, state_path, as_of=AS_OF)
