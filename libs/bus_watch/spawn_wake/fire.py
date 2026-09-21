@@ -35,6 +35,11 @@ from bus_watch.spawn_wake.play_classify import (
     classify_leftover,
 )
 from bus_watch.spawn_wake.predicate import evaluate_spawn_predicate
+from bus_watch.spawn_wake.row_bind import body_for_sit_friction
+from bus_watch.spawn_wake.row_class import (
+    ROW_CLASS_HOLD,
+    sit_forcing_friction,
+)
 
 _WORK_KEY_IN_FLIGHT = "CURSOR_SOURCE_REF_IN_FLIGHT"
 
@@ -49,13 +54,22 @@ def body_for_leftover(
     leftover: dict[str, Any],
     *,
     successor_context: dict[str, Any] | None = None,
+    digest: dict[str, Any] | None = None,
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Hold mints nothing. Play rematerializes the todo. Sit is today's house generate."""
+    """Hold mints nothing. Play rematerializes the todo. Sit on a forcing friction
+    score row binds CDP ROW_CLASS; otherwise sit is today's house generate."""
     if leftover.get("leftover") == LEFTOVER_HOLD:
         return None
     todo = leftover.get("todo")
     if leftover.get("leftover") == LEFTOVER_PLAY and todo:
         return build_play_dispatch_body(root_id, policy, todo_slug=str(todo))
+    if digest is not None and state is not None:
+        friction = sit_forcing_friction(digest, leftover)
+        if friction:
+            return body_for_sit_friction(
+                root_id, policy, friction, state, digest
+            )
     return build_dispatch_body(root_id, policy, successor_context=successor_context)
 
 
@@ -80,7 +94,12 @@ def fire_spawn(
     }
     verdict = leftover or classify_leftover(snap, state)
     body = body_for_leftover(
-        root_id, policy, verdict, successor_context=successor_context
+        root_id,
+        policy,
+        verdict,
+        successor_context=successor_context,
+        digest=snap,
+        state=state,
     )
     if verdict.get("leftover") == LEFTOVER_HOLD:
         return {
@@ -89,7 +108,20 @@ def fire_spawn(
             "leftover": verdict,
             "body": None,
         }
-    if body is not None and not body.get("model") and verdict.get("leftover") != LEFTOVER_PLAY:
+    if body and body.get("_row_class_hold"):
+        return {
+            "status_code": 0,
+            "refused": ROW_CLASS_HOLD,
+            "leftover": verdict,
+            "body": None,
+        }
+    if (
+        body is not None
+        and not body.get("model")
+        and verdict.get("leftover") != LEFTOVER_PLAY
+        and not body.get("_row_bind")
+        and body.get("contract") != "implement"
+    ):
         # Sit/house generate: never let the wire pick a model.
         return {
             "status_code": 0,
@@ -214,13 +246,25 @@ def tick_spawn_on_wake(
         digest, state, lock=lock
     )
     body = body_for_leftover(
-        root_id, policy, leftover, successor_context=successor_context
+        root_id,
+        policy,
+        leftover,
+        successor_context=successor_context,
+        digest=digest,
+        state=state,
     )
     if leftover.get("leftover") == LEFTOVER_HOLD:
         return {
             "action": "hold",
             "evaluation": evaluation,
             "refused": PLAY_HOLD,
+            "body": None,
+        }
+    if body and body.get("_row_class_hold"):
+        return {
+            "action": "hold",
+            "evaluation": evaluation,
+            "refused": ROW_CLASS_HOLD,
             "body": None,
         }
     if dry_run:

@@ -242,7 +242,7 @@ def test_dispatch_body_message_not_packet() -> None:
         "spawn_signal=",
         "contract: none",
         "LOAD the liaison skill",
-        "Hop only when autonomous follow-up remains",
+        "hop only if hop_qualifies",
         "STAY",
         "runbook:bus-consult-watcher",
         "§ Peer-house",
@@ -1225,6 +1225,35 @@ def test_frozen_fingerprint_latched_live_lane_no_spawn() -> None:
     assert ev["clauses"]["spawn_signal"] is False
     assert ev["clauses"]["fingerprint_changed"] is False
     assert ev["spawn"] is False
+
+
+def test_fire_spawn_row_class_hold_after_bind_without_class() -> None:
+    """Missing ROW_CLASS after bind hop ⇒ hold, not grok house generate."""
+    posted: list[dict] = []
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["policy"]["successor_model"] = "cursor/grok-4.6"
+    digest["frictions"] = [
+        {
+            "id": "a:35997",
+            "owner": "service:git_integration_worker",
+            "category": "regression",
+            "note": "GIW probe",
+            "state": "open",
+            "forcing": True,
+        }
+    ]
+    digest["lanes"] = []
+    state = {"friction_rows_seen": {"a:35997": "2026-09-21T06:00:00Z"}}
+    result = fire_spawn(
+        "11960",
+        digest["policy"],
+        state,
+        digest=digest,
+        leftover={"leftover": "sit", "reason": "sit_no_todo", "todo": None},
+        submit=lambda body: posted.append(body) or ({}, 200),
+    )
+    assert result["refused"] == "row_class_hold"
+    assert posted == []
 
 
 def test_record_spawn_service_latches_live_lane_turns() -> None:

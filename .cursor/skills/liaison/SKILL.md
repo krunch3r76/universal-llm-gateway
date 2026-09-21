@@ -231,7 +231,7 @@ this body on: an unread **live** lane · a finished **work** lane's closeout, on
 (`state.served_closeouts`; a successor's own closeout never wakes the next — `caller=liaison-ticker` /
 `state.successor_threads`) · a `--go-under` handoff, once (`handoff.seq`) · `checkpoint_due`, once per CP epoch ·
 an undispositioned friction on a charter-owned service, once per assertion id (`state.friction_rows_seen`, ≤
-`policy.friction_dispatch_cap` per night; § Friction score rows) ·
+`policy.friction_dispatch_cap` per night; § Friction score rows) — sit leftover on forcing friction binds CDP `ROW_CLASS` first; remaining hops are **ticker-fired**, not CDP-implemented ·
 a fresh `CONTEXT_BUDGET` from the `sdk:` holder's own stream. Hold reasons are the per-clause booleans on the
 ticker's stdout line (`tmp/watchers/liaison-ticker-<R>.log` when started by `--go-under`). The successor claims
 the lock with `--hop`, runs ≤ 5 ticks / 60 min, checkpoints, releases, spawns the next. Composer implement
@@ -298,7 +298,7 @@ closed on the assertion. Same driver as everything else — no second loop.
 | NOW | no seat bind (`summary_row` / `policy.now_row` empty) ⇒ the newest `forcing` row **is** NOW (`Friction a:<n> [cat] owner «note» → disposition …`), so STAY-on-empty-NOW cannot fire while a charter friction waits. A seat bind outranks it; the row stays an `Event:` |
 | Disposition | `direct-first` (fix it now; in-seat ≤20 lines or a cursor-sdk implement lane) · `todo-minted` (`work-item-seed-path` S4a mint; no liaison-authored plan) · `declined` (wontfix, reason). Record: `liaison-tick.py --root R --mark-friction a:<n>:<disposition>` (operator key `friction_dispositions`; a live loop absorbs it next poll) |
 | Close-back | **on the assertion**: `cortex(tool="friction_close", assertion_id=<n>, resolution_kind=todo:<slug> \| wontfix \| commit:<sha>)` — `todo-minted` / `declined` the same turn; `direct-first` when the fix lands. Superseded ⇒ the row leaves on the next harvest. A `todo-minted`/`declined` row still open = `state=close_pending` — you forgot the close |
-| Ticker | the newest forcing ∧ unlatched row is promoted into `attention` (`kind=friction`) — **one per tick**, none once `policy.friction_dispatch_cap` (default 3) spawns are latched tonight; a successful spawn latches it in `state.friction_rows_seen` — **one spawn per assertion id**, a re-opened friction carries a new id. Latched-but-open rows remain NOW for the seat that woke |
+| Ticker | the newest forcing ∧ unlatched row is promoted into `attention` (`kind=friction`) — **one per tick**, none once `policy.friction_dispatch_cap` (default 3) spawns are latched tonight; a successful spawn latches it in `state.friction_rows_seen` — **one spawn per assertion id**, a re-opened friction carries a new id. Latched-but-open rows remain NOW for the seat that woke. **Sit leftover on a forcing friction:** CDP row-bind posts `ROW_CLASS: low|trio` then **STOP** (bind-only — CDP does not fire remaining hops); the ticker latches the class and fires LOW (`contract=implement` lane B) or TRIO (`build_play_dispatch_body` when `todo:{slug}` else CDP sketch consult) — never grok house generate |
 | REPEATED_FAILURE | a **second** `direct-first` mark on the same row ⇒ `state=repeated_failure`: NOW reads "consult, then todo-minted \| declined; never a third variant" (`cdp/opus-5` first below Opus) |
 
 Not owned: spawn predicates (`spawn_on_wake.py` unchanged), pipelines, seat locks. The IDE hop takes the friction
