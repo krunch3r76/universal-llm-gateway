@@ -150,11 +150,11 @@ def test_enrich_injects_reasoning_posture_on_consult() -> None:
 
 
 def test_enrich_skips_judgment_skills_on_freeform_none() -> None:
-    """``none`` is freeform — caller packet is sole authority."""
+    """``none`` is freeform for harness/hypothesize; posture still attaches."""
     packet = _THIN_WEB_PACKET.replace("contract: consult", "contract: none")
     cortex = _StubCortex()
     result = enrich_handoff_packet(packet, cortex=cortex)
-    assert "reasoning-posture" not in result.skills_added
+    assert "reasoning-posture" in result.skills_added
     assert "hypothesize-simulate" not in result.skills_added
 
 
@@ -168,8 +168,8 @@ def test_enrich_injects_reasoning_posture_from_route_contract() -> None:
     injected = enrich_handoff_packet(
         packet, cortex=cortex, handoff_contract="none"
     )
-    assert "reasoning-posture" not in injected.skills_added
-    assert "ulg-for-llms" not in injected.skills_added
+    assert "reasoning-posture" in injected.skills_added
+    assert "ulg-for-llms" in injected.skills_added
 
 
 def test_enrich_skips_reasoning_posture_on_implement() -> None:

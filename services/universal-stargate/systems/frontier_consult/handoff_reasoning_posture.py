@@ -1,7 +1,8 @@
 """Judgment-skill gate for MCP-seat handoff enrich.
 
-Same skip/freeform sets as GIW ``resolve_prompt_preamble``: consult
-handoffs get judgment Use-lines; ``none`` is freeform; mechanical/quick skip.
+Same skip set as GIW ``resolve_prompt_preamble``: judgment contracts
+(including freeform ``none``) get the posture Use-line; mechanical/quick skip.
+``none`` still skips hypothesize-simulate and the harness stack.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from reasoning_posture_contracts import (
     FREEFORM_CONTRACTS,
     HYPOTHESIZE_SIMULATE_CONTRACTS,
     REASONING_POSTURE_SKIP_CONTRACTS,
+    reasoning_posture_warrants_injection,
 )
 
 REASONING_POSTURE_SLUG = "reasoning-posture"
@@ -28,14 +30,12 @@ def handoff_wants_reasoning_posture(text: str, handoff_contract: str | None) -> 
     Uses the derived *handoff_contract* when the route passed one; otherwise
     packet frontmatter. Missing contract does not inject — implement packets
     often omit ``contract:`` and must stay on the mechanical skip path.
+    ``none`` is freeform for the harness stack but still warrants posture.
     """
     raw = (handoff_contract or frontmatter_value(text, "contract") or "").strip()
     if not raw:
         return False
-    lowered = raw.lower()
-    if lowered in FREEFORM_CONTRACTS:
-        return False
-    return lowered not in REASONING_POSTURE_SKIP_CONTRACTS
+    return reasoning_posture_warrants_injection(raw)
 
 
 def handoff_wants_hypothesize_simulate(text: str, handoff_contract: str | None) -> bool:

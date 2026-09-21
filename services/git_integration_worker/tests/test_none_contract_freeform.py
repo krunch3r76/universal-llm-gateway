@@ -23,7 +23,11 @@ def test_none_freeform_skips_harness_preamble_stack() -> None:
         lane_branch="cursor-sdk/lane-probe",
         continuity_root_thread_id="11650",
     )
-    assert preamble == ""
+    assert preamble.startswith("/reasoning-posture")
+    assert "Use the `reasoning-posture` skill" in preamble
+    assert "DURABLE DELIVERABLE ROUTING" not in preamble
+    assert "LANE-B BRANCH CONTRACT" not in preamble
+    assert "ulg-for-llms" not in preamble
 
 
 def test_none_freeform_honors_explicit_caller_skills() -> None:
@@ -33,6 +37,7 @@ def test_none_freeform_honors_explicit_caller_skills() -> None:
         inferred_contract=None,
         skills=["architecture-invariants"],
     )
+    assert preamble.startswith("/reasoning-posture")
     assert "Use the `architecture-invariants` skill" in preamble
     assert "DURABLE DELIVERABLE ROUTING" not in preamble
 

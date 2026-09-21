@@ -8,12 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from cursor_capabilities import effort_knob_name
 from reasoning_posture_contracts import (
-    REASONING_POSTURE_PREAMBLE,
+    reasoning_posture_invoke_parts,
     reasoning_posture_warrants_injection,
 )
-
-from cursor_capabilities import effort_knob_name
 
 from services.git_integration_worker.cursor_auto.field_parity import (
     FieldParityReport,
@@ -93,5 +92,6 @@ def build_admit_report_body(
     if field_parity_report is not None:
         body += "\n" + render_field_parity_line(field_parity_report)
     if reasoning_posture_warrants_injection(handoff_contract):
-        body += f"\n{REASONING_POSTURE_PREAMBLE}"
+        for part in reasoning_posture_invoke_parts(body):
+            body += f"\n{part}"
     return body

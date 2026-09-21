@@ -111,7 +111,7 @@ merge. Cursor `alwaysApply` does not cross that surface.
 
 | Path | How |
 |---|---|
-| `op=generate` `seat=cursor-sdk` | GIW `resolve_prompt_preamble` on judgment `handoff_contract`; skip mechanical/quick. Caller `skills=` staged into HOME `.cursor/skills/` + Use-line (`cursor_sdk_skills_mount`) |
+| `op=generate` `seat=cursor-sdk` | GIW `resolve_prompt_preamble` prepends `/reasoning-posture` + Use-line on judgment `handoff_contract` including `none`; skip mechanical/quick. Caller `skills=` staged into HOME `.cursor/skills/` + Use-line (`cursor_sdk_skills_mount`) |
 | `cursor-auto` admit | Admit report appends `REASONING_POSTURE_PREAMBLE` when `handoff_contract` warrants |
 | `op=handoff` consult / none | Enrich Block 2 `Use the reasoning-posture skill`; skip implement / `cursor-implement` |
 | CDP `model=cdp/…` generate | `skills=` merge (`ensure_cdp_judgment_skills`, purpose-keyed — § CDP transport) |

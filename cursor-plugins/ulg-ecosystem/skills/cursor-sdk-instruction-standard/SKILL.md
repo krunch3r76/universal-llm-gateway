@@ -91,12 +91,14 @@ When the packet owes **breadth recon** (loci unknown, ≥3 files / unfamiliar su
 
 ## D-judgment — reasoning-posture auto-invoke (non-mechanical)
 
-GIW `resolve_prompt_preamble` prepends `Use the reasoning-posture skill` on every
-non-mechanical cursor-sdk **generate** (`none` / `consult`) — `team_dispatch`
-from IDE, charter-runner, or Auto nested. Skip `implement` / `pure-mechanical` and
-quick (`answer` / `execute` / `propagate`). Authors may omit the line; do not strip
-it. Consult handoff enrich inserts the same
-Use-line into `<invariants>`. SOT: skill `reasoning-posture` § Always-on injection.
+GIW `resolve_prompt_preamble` prepends `/reasoning-posture` then
+`Use the reasoning-posture skill` on every non-mechanical cursor-sdk **generate**
+(`none` / `consult` / `investigate` / `conductor`) — `team_dispatch` from IDE,
+charter-runner, or Auto nested. The slash is the Cursor skill-fire cue (load-bearing
+on grok-4.7). Skip `implement` / `pure-mechanical` and quick (`answer` / `execute` /
+`propagate` / `ask`). Authors may omit the line; do not strip it. Consult handoff
+enrich inserts the Use-line into `<invariants>`. SOT: skill `reasoning-posture`
+§ Always-on injection.
 
 `skills=` mounts on cursor-sdk and composes with the above: Stargate resolves each
 slug to a body at admit (422 `skills_cursor_unresolvable` on unknown / body-less),

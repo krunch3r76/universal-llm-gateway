@@ -14,9 +14,9 @@ from collections.abc import Sequence
 
 from reasoning_posture_contracts import (
     HYPOTHESIZE_SIMULATE_CONTRACTS,
-    REASONING_POSTURE_PREAMBLE,
     REASONING_POSTURE_SKIP_CONTRACTS,
     contract_is_freeform,
+    reasoning_posture_invoke_parts,
     reasoning_posture_warrants_injection,
 )
 
@@ -237,10 +237,6 @@ _ULG_FOR_LLMS_PREAMBLE = (
 # Shared with Stargate ``handoff_reasoning_posture.REASONING_POSTURE_SKIP_CONTRACTS``.
 _REASONING_POSTURE_SKIP_CONTRACTS = REASONING_POSTURE_SKIP_CONTRACTS
 _HYPOTHESIZE_SIMULATE_CONTRACTS = HYPOTHESIZE_SIMULATE_CONTRACTS
-_REASONING_POSTURE_INVOKE_RE = re.compile(
-    r"Use the `?reasoning-posture`? skill",
-    re.IGNORECASE,
-)
 _HYPOTHESIZE_SIMULATE_INVOKE_RE = re.compile(
     r"Use the `?hypothesize-simulate`? skill",
     re.IGNORECASE,
@@ -432,9 +428,13 @@ def extract_source_ref_from_packet(text: str) -> str | None:
     return None
 
 
-def _already_invokes_reasoning_posture(*texts: str | None) -> bool:
-    """True when any text already carries the Cursor invoke cue."""
-    return any(bool(t) and _REASONING_POSTURE_INVOKE_RE.search(t) for t in texts)
+def _prefix_reasoning_posture(
+    contract: str, parts: list[str], *texts: str | None
+) -> list[str]:
+    """Put slash + Use-line first on judgment contracts; skip cues already present."""
+    if not reasoning_posture_warrants_injection(contract):
+        return parts
+    return [*reasoning_posture_invoke_parts(*texts, *parts), *parts]
 
 
 def _already_invokes_hypothesize_simulate(*texts: str | None) -> bool:
@@ -509,8 +509,9 @@ def resolve_prompt_preamble(
 ) -> str:
     """Assemble the worker prompt prefix for one cursor-sdk dispatch.
 
-    Non-mechanical contracts get a ``reasoning-posture`` invoke line unless
-    *prompt_preamble* or *existing_text* already carries one (idempotent).
+    Non-mechanical contracts get ``/reasoning-posture`` plus the Use-line unless
+    *prompt_preamble* or *existing_text* already carries those cues (idempotent).
+    Freeform ``none`` still skips the harness stack; posture is the judgment floor.
 
     Lane-B dispatches additionally carry the branch contract: the obligation to
     declare a land disposition arrives with the work rather than after residue
@@ -561,6 +562,9 @@ def resolve_prompt_preamble(
             parts.append(skill_block)
         if preamble:
             parts.append(preamble.strip())
+        parts = _prefix_reasoning_posture(
+            contract, parts, prompt_preamble, existing_text
+        )
         if not parts:
             return ""
         return "\n\n".join(parts) + "\n\n"
@@ -644,10 +648,6 @@ def resolve_prompt_preamble(
                 )
     if reasoning_posture_warrants_injection(
         contract
-    ) and not _already_invokes_reasoning_posture(prompt_preamble, existing_text):
-        parts.append(REASONING_POSTURE_PREAMBLE)
-    if reasoning_posture_warrants_injection(
-        contract
     ) and not _already_invokes_ulg_for_llms(prompt_preamble, existing_text):
         parts.append(_ULG_FOR_LLMS_PREAMBLE)
     if (
@@ -680,4 +680,7 @@ def resolve_prompt_preamble(
         parts.append(skill_block)
     if preamble:
         parts.append(preamble.strip())
+    parts = _prefix_reasoning_posture(
+        contract, parts, prompt_preamble, existing_text
+    )
     return "\n\n".join(parts) + "\n\n"

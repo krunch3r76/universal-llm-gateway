@@ -43,7 +43,7 @@ def test_packet_preamble_includes_breadth_recon_block() -> None:
 
 
 def test_packet_preamble_none_is_freeform() -> None:
-    """``contract=none``: caller prompt is sole authority — no harness steering."""
+    """``contract=none``: no harness stack; posture slash is the judgment floor."""
     preamble = resolve_prompt_preamble(
         handoff_contract="none",
         prompt_preamble=None,
@@ -51,10 +51,10 @@ def test_packet_preamble_none_is_freeform() -> None:
         lane="B",
         lane_branch="cursor-sdk/lane-11651",
     )
-    assert preamble == ""
+    assert preamble.startswith("/reasoning-posture")
+    assert "Use the `reasoning-posture` skill" in preamble
     assert "BREADTH RECON — EXPLORE DEFAULT" not in preamble
     assert "DURABLE DELIVERABLE ROUTING" not in preamble
-    assert "Use the `reasoning-posture` skill" not in preamble
     assert "LANE-B BRANCH CONTRACT" not in preamble
 
 

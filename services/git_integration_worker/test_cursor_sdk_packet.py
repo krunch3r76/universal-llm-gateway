@@ -19,7 +19,8 @@ def test_resolve_prompt_preamble_none_inferred_is_freeform() -> None:
         prompt_preamble=None,
         inferred_contract="none",
     )
-    assert text == ""
+    assert text.startswith("/reasoning-posture")
+    assert "Use the `reasoning-posture` skill" in text
     assert "DURABLE DELIVERABLE ROUTING" not in text
 
 
@@ -67,9 +68,11 @@ def test_resolve_prompt_preamble_none_skips_judgment_stack() -> None:
         prompt_preamble=None,
         inferred_contract=None,
     )
-    assert text == ""
-    assert "reasoning-posture" not in text
+    assert text.startswith("/reasoning-posture")
+    assert "Use the `reasoning-posture` skill" in text
     assert "ulg-for-llms" not in text
+    assert "hypothesize-simulate" not in text
+    assert "DURABLE DELIVERABLE ROUTING" not in text
 
 
 def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
@@ -78,6 +81,7 @@ def test_resolve_prompt_preamble_injects_reasoning_posture_on_consult() -> None:
         prompt_preamble=None,
         inferred_contract=None,
     )
+    assert text.startswith("/reasoning-posture")
     assert "Use the `reasoning-posture` skill" in text
     assert "Use the `ulg-for-llms` skill" in text
     assert "Use the `hypothesize-simulate` skill" in text
@@ -128,7 +132,7 @@ def test_resolve_prompt_preamble_none_freeform_preserves_packet_text() -> None:
         inferred_contract=None,
         existing_text=existing,
     )
-    assert text == ""
+    assert text.startswith("/reasoning-posture")
     combined = text + existing
     assert combined.count("Use the `reasoning-posture` skill") == 1
 
@@ -146,7 +150,7 @@ def test_resolve_prompt_preamble_reasoning_posture_idempotent_custom_preamble() 
 def test_conductor_seat_identity_block_only_under_three_condition_gate() -> None:
     dispatch_id = "conductor-dispatch-abc123"
     gated = resolve_prompt_preamble(
-        handoff_contract="none",
+        handoff_contract="conductor",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -190,7 +194,7 @@ def test_conductor_seat_identity_block_only_under_three_condition_gate() -> None
 def test_conductor_seat_identity_uses_req_dispatch_id() -> None:
     dispatch_id = "98836b38"
     text = resolve_prompt_preamble(
-        handoff_contract="none",
+        handoff_contract="conductor",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -210,7 +214,7 @@ _CONDUCTOR_USE_LINE = (
 def test_conductor_seat_identity_fires_on_message_body_with_conductor_marker() -> None:
     dispatch_id = "auto-abc123def456"
     text = resolve_prompt_preamble(
-        handoff_contract="none",
+        handoff_contract="conductor",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -241,7 +245,7 @@ def test_conductor_seat_identity_absent_on_message_body_without_conductor_marker
 def test_conductor_run_to_completion_present_under_three_condition_gate() -> None:
     dispatch_id = "conductor-dispatch-abc123"
     gated = resolve_prompt_preamble(
-        handoff_contract="none",
+        handoff_contract="conductor",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -282,7 +286,7 @@ def test_conductor_run_to_completion_present_under_three_condition_gate() -> Non
 def test_conductor_run_to_completion_fires_on_message_body_marker() -> None:
     dispatch_id = "auto-abc123def456"
     text = resolve_prompt_preamble(
-        handoff_contract="none",
+        handoff_contract="conductor",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -299,7 +303,7 @@ def test_conductor_hop_preamble_first_spawn() -> None:
     dispatch_id = "hop-dispatch-1"
     thread_id = "9968"
     text = resolve_prompt_preamble(
-        handoff_contract="none",
+        handoff_contract="conductor",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",
@@ -321,7 +325,7 @@ def test_conductor_hop_preamble_successor_lineage() -> None:
     predecessor = "hop-dispatch-1"
     thread_id = "9968"
     text = resolve_prompt_preamble(
-        handoff_contract="none",
+        handoff_contract="conductor",
         prompt_preamble=None,
         inferred_contract=None,
         lane="B",

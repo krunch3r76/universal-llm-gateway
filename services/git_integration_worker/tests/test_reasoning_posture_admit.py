@@ -27,6 +27,7 @@ def _minimal_admit_kwargs(**overrides: object) -> dict:
 
 def test_admit_injects_reasoning_posture_on_judgment_handoff() -> None:
     body = build_admit_report_body(**_minimal_admit_kwargs())
+    assert "/reasoning-posture" in body
     assert REASONING_POSTURE_PREAMBLE in body
 
 
