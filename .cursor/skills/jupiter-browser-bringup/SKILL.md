@@ -276,10 +276,43 @@ and `browse-waf-and-pagination-gotchas` instead — this table covers only
 
 ---
 
+## io seat — SSH CDP tunnels
+
+From the **io IDE seat**, Jupiter CDP ports are reached via SSH `-L` forwards.
+Local port convention: `local_port = 10000 + jupiter_port` (fleet → **19222**, messages → **19250**, ess → **19260**, calendar → **19290**).
+
+**Config (authoritative):** `~/.gateway/cdp-tunnels.toml` — lane names, Jupiter ports, local ports, purpose, consumers. Mirrors `services/jupiter-cdp/pins.toml` standing lanes.
+
+**Ensure / status:**
+
+```bash
+scripts.local/cdp/tunnel-ensure.sh status              # local + remote per lane
+scripts.local/cdp/tunnel-ensure.sh status --drift      # compare config vs pins.toml
+scripts.local/cdp/tunnel-ensure.sh ensure fleet        # repair :19222 tunnel
+scripts.local/cdp/tunnel-ensure.sh ensure all          # all standing lanes
+scripts.local/cdp/tunnel-ensure.sh ensure fleet --remote   # cdp-lane-ensure on Jupiter if remote down
+```
+
+Verify after ensure:
+
+```bash
+curl -sf http://127.0.0.1:19222/json/version   # fleet
+curl -sf http://127.0.0.1:19250/json/version   # messages OTP
+```
+
+**Partial tunnel symptom:** Messages `:19250` up but fleet `:19222` missing → issuer `chase.py --probe` fails while operator sees “CDP up”. Fix with `ensure fleet`, not a hand-typed one-off `ssh -L`.
+
+Runbook: `cortex://notes/runbooks/cdp-io-tunnels.md` · issuer OTP: `runbook:issuer-portal-login`.
+
+---
+
 ## Related Files
 
 | Path | Purpose |
 |---|---|
+| `~/.gateway/cdp-tunnels.toml` | **io tunnel registry** — local/Jupiter port map per lane |
+| `scripts.local/cdp/tunnel-ensure.sh` | Status + ensure SSH forwards from io |
+| `services/jupiter-cdp/pins.toml` | Jupiter lane SoT (ports, profiles, standing) |
 | `services/jupiter-cdp/jupiter-cdp.target` | **Systemd target** — standing Xvfb + lanes + web-fetcher + cdp-ask |
 | `services/jupiter-cdp/cdp-lane-ensure` | Ensure one lane unit is active and CDP listens |
 | `scripts/cdp-ask` | cdp-ask satellite entry point (port 8770) |
