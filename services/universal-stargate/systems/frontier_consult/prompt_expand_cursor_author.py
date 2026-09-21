@@ -26,7 +26,8 @@ from universal_logging import get_logger
 logger = get_logger(__name__)
 
 AUTHOR_MODEL = "cursor/grok-4.7"
-# residual hop — should_expand skips contract=none (and no enrolled root stamp).
+# Author generate uses contract=none so should_expand does not re-enter expand.
+# Recurse-prevention only — not “do not expand unspecified operator tasks”.
 AUTHOR_CONTRACT = "none"
 # GIW's admit schema only accepts cursor-auto, stargate, or giw_park_resume.
 # This call is the Stargate prelude, so the registered door is stargate.
@@ -205,7 +206,7 @@ async def author_task_prime_async(
 
     dispatch_id = f"pe-author-{uuid.uuid4().hex[:12]}"
     execution_id = f"exec-{dispatch_id}"
-    # Fresh thread + residual contract: should_expand cannot re-admit expand.
+    # Fresh thread + AUTHOR_CONTRACT=none: should_expand cannot re-admit expand.
     thread_id = f"pe-author-{uuid.uuid4().hex[:10]}"
     payload: dict[str, Any] = {
         "thread_id": thread_id,
