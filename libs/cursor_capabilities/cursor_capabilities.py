@@ -280,23 +280,23 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"context": "300k", "effort": "high"},
         instruction_profile="reasoner",
     ),
-    # Cursor Grok 4.7 — effort + fast only (no thinking/context knobs).
-    # KnobSpec.default drives omit-path emit; default_variant may still mirror
-    # live ListModels (fast=true there) — descriptor default wins on omit-path.
+    # Cursor Grok 4.7 — effort, fast, and a 500k context knob.
+    # KnobSpec.default drives omit-path emit; 500k is the operator default.
     "grok-4.7": ModelCapability(
         knobs={
+            "context": KnobSpec(accepted=("500k",), default="500k"),
             "effort": KnobSpec(
                 accepted=("low", "medium", "high", "xhigh"), default="high"
             ),
             "fast": KnobSpec(accepted=("false", "true"), default="false"),
         },
         default_variant={
+            "context": "500k",
             "effort": "high",
             "fast": "false",
         },
         instruction_profile="reasoner",
-        # Operator-stated 2026-09-12 (the 10534 tab saturated and compacted on it).
-        context_window_tokens=256_000,
+        context_window_tokens=500_000,
     ),
     "gemini-3.5-flash": ModelCapability(
         knobs={},

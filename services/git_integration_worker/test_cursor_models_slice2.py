@@ -28,11 +28,17 @@ def test_resolve_cursor_grok_46_omit_fast_false() -> None:
 
     cfg = resolve_cursor("cursor/grok-4.7")
     assert cfg.model_id == "grok-4.7"
-    assert {spec.name for spec in cfg.params} == {"effort", "fast"}
-    assert default_variant("grok-4.7") == {"effort": "high", "fast": "false"}
+    assert {spec.name for spec in cfg.params} == {"context", "effort", "fast"}
+    assert default_variant("grok-4.7") == {
+        "context": "500k",
+        "effort": "high",
+        "fast": "false",
+    }
+    assert supported_knobs("grok-4.7")["context"].default == "500k"
     assert supported_knobs("grok-4.7")["fast"].default == "false"
     selection = build_model_selection(cfg)
     by_id = {p.id: p.value for p in selection.params}
+    assert by_id["context"] == "500k"
     assert by_id["fast"] == "false"
     assert by_id["effort"] == "high"
 
