@@ -2,9 +2,9 @@
 
 Wire resolution (``desired_model`` / ``desired_effort`` / contract) lives in
 ``wire_map``. This module is the second hop: map a resolved effort onto the
-model card, and fill ``fast=false`` when the caller omitted ``fast`` on Grok
-and Composer (ListModels/catalog defaults are speed-biased; headless SDK runs
-pay per token).
+model card, and fill an omitted ``fast`` knob — ``true`` on Grok 4.7 (speed
+tier) and ``false`` on Composer (ListModels defaults are speed-biased;
+headless Composer runs pay per token).
 Both ``clamp_effort_to_model_card`` and ``compose_model_knobs`` share
 ``resolve_card_effort`` so off-ladder tokens cannot fail open on one surface
 and drop the knob on the other.
@@ -126,9 +126,11 @@ def compose_model_knobs(
     reaches the bridge, so every Auto-bound reasoner ran at its catalog default.
 
     Grok and Composer ListModels defaults are ``fast=true`` (speed over quality).
-    Auto fills ``fast=false`` when the knob is absent so headless SDK dispatches
-    stay on the Standard tier (~3× cheaper on cache-read billing) unless the
-    caller explicitly pins ``fast=true``. This is a **default, not a pin**.
+    Auto fills ``fast=true`` when Grok omits the knob (speed tier). Composer
+    still fills ``fast=false`` when the knob is absent so headless Composer
+    dispatches stay on the Standard tier (~3× cheaper on cache-read billing)
+    unless the caller explicitly pins ``fast=true``. Either fill is a
+    **default, not a pin**: an explicit ``fast`` value wins.
     """
     knobs: dict[str, str] = dict(model.get("model_knobs") or {})
     model_id = str(model.get("resolved_model_id") or "").strip()
@@ -144,7 +146,7 @@ def compose_model_knobs(
                 and "fast" in supported_knobs(bare)
                 and "fast" not in knobs
             ):
-                knobs["fast"] = "false"
+                knobs["fast"] = "true"
             if (
                 bare == "composer-2.5"
                 and "fast" in supported_knobs(bare)

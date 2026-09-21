@@ -14,13 +14,13 @@ from services.git_integration_worker.cursor_models import (
 )
 
 
-def test_grok_omit_path_fast_false() -> None:
+def test_grok_omit_path_fast_true() -> None:
     cfg = resolve_cursor("grok-4.7")
     selection = build_model_selection(cfg)
     emitted = {p.id: p.value for p in selection.params}
-    assert emitted["fast"] == "false"
-    assert default_variant("grok-4.7")["fast"] == "false"
-    assert supported_knobs("grok-4.7")["fast"].default == "false"
+    assert emitted["fast"] == "true"
+    assert default_variant("grok-4.7")["fast"] == "true"
+    assert supported_knobs("grok-4.7")["fast"].default == "true"
 
 
 def test_anthropic_omit_path_thinking_context_defaults() -> None:
@@ -54,13 +54,13 @@ def test_compose_investigate_sonnet5_knobs() -> None:
     }
 
 
-def test_compose_confer_grok_xhigh_fast_false() -> None:
+def test_compose_confer_grok_xhigh_fast_true() -> None:
     knobs = compose_model_knobs(
         {"resolved_model_id": "cursor/grok-4.7"},
         resolve_desired_effort(None, contract="confer"),
         contract="confer",
     )
-    assert knobs == {"effort": "xhigh", "fast": "false"}
+    assert knobs == {"effort": "xhigh", "fast": "true"}
 
 
 def test_omit_effort_answer_stays_medium() -> None:
@@ -113,7 +113,7 @@ def test_compose_grok_investigate_omit_xhigh() -> None:
         resolve_desired_effort("auto", contract="investigate"),
         contract="investigate",
     )
-    assert knobs == {"effort": "xhigh", "fast": "false"}
+    assert knobs == {"effort": "xhigh", "fast": "true"}
 
 
 def test_compose_composer_omit_path_fast_false() -> None:

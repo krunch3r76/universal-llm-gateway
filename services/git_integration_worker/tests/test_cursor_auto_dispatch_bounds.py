@@ -151,7 +151,7 @@ def test_off_ladder_effort_falls_to_card_default() -> None:
     assert clamped["clamped"] is True
     assert "off-ladder" in str(clamped["notes"])
     assert knobs["effort"] == "high"
-    assert knobs["fast"] == "false"
+    assert knobs["fast"] == "true"
 
 
 def test_sdk_card_clamp_does_not_define_cdp_wire_effort() -> None:

@@ -21,8 +21,8 @@ def test_resolve_cursor_still_returns_descriptor_knobs() -> None:
     assert {spec.name for spec in cfg.params} == {"fast"}
 
 
-def test_resolve_cursor_grok_46_omit_fast_false() -> None:
-    """Grok 4.7 omit-path emits fast=false (descriptor default, not ListModels)."""
+def test_resolve_cursor_grok_omit_fast_true() -> None:
+    """Grok 4.7 omit-path emits fast=true (descriptor default, not ListModels)."""
     from cursor_capabilities import default_variant, supported_knobs
     from services.git_integration_worker.cursor_models import build_model_selection
 
@@ -32,14 +32,14 @@ def test_resolve_cursor_grok_46_omit_fast_false() -> None:
     assert default_variant("grok-4.7") == {
         "context": "500k",
         "effort": "high",
-        "fast": "false",
+        "fast": "true",
     }
     assert supported_knobs("grok-4.7")["context"].default == "500k"
-    assert supported_knobs("grok-4.7")["fast"].default == "false"
+    assert supported_knobs("grok-4.7")["fast"].default == "true"
     selection = build_model_selection(cfg)
     by_id = {p.id: p.value for p in selection.params}
     assert by_id["context"] == "500k"
-    assert by_id["fast"] == "false"
+    assert by_id["fast"] == "true"
     assert by_id["effort"] == "high"
 
 

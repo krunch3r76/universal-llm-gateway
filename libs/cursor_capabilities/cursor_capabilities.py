@@ -282,18 +282,19 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
     ),
     # Cursor Grok 4.7 — effort, fast, and a 500k context knob.
     # KnobSpec.default drives omit-path emit; 500k is the operator default.
+    # Omitted fast is the speed tier; callers pin fast=false explicitly.
     "grok-4.7": ModelCapability(
         knobs={
             "context": KnobSpec(accepted=("500k",), default="500k"),
             "effort": KnobSpec(
                 accepted=("low", "medium", "high", "xhigh"), default="high"
             ),
-            "fast": KnobSpec(accepted=("false", "true"), default="false"),
+            "fast": KnobSpec(accepted=("false", "true"), default="true"),
         },
         default_variant={
             "context": "500k",
             "effort": "high",
-            "fast": "false",
+            "fast": "true",
         },
         instruction_profile="reasoner",
         context_window_tokens=500_000,

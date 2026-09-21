@@ -103,11 +103,11 @@ def test_effort_merges_onto_opus_and_preserves_base_knobs() -> None:
 def test_effort_within_accepted_range_passes_through() -> None:
     # grok's own accepted range includes xhigh (cursor_capabilities.py) — no
     # degradation needed for a value the model already accepts verbatim.
-    # Auto omit-path fills fast=false when the knob is absent (ULG default, not Fast).
+    # Auto omit-path fills fast=true when the knob is absent (speed tier).
     knobs = compose_model_knobs(
         {"resolved_model_id": "cursor/grok-4.7"}, {"resolved_effort": "xhigh"}
     )
-    assert knobs == {"effort": "xhigh", "fast": "false"}
+    assert knobs == {"effort": "xhigh", "fast": "true"}
 
 
 def test_effort_clamps_down_to_model_ceiling() -> None:
@@ -118,14 +118,14 @@ def test_effort_clamps_down_to_model_ceiling() -> None:
     knobs = compose_model_knobs(
         {"resolved_model_id": "cursor/grok-4.7"}, {"resolved_effort": "max"}
     )
-    assert knobs == {"effort": "xhigh", "fast": "false"}
+    assert knobs == {"effort": "xhigh", "fast": "true"}
 
 
-def test_grok_auto_defaults_fast_false_even_without_effort() -> None:
+def test_grok_auto_defaults_fast_true_even_without_effort() -> None:
     knobs = compose_model_knobs(
         {"resolved_model_id": "cursor/grok-4.7"}, {"resolved_effort": ""}
     )
-    assert knobs == {"fast": "false"}
+    assert knobs == {"fast": "true"}
 
 
 def test_grok_explicit_fast_true_is_preserved() -> None:
@@ -138,6 +138,18 @@ def test_grok_explicit_fast_true_is_preserved() -> None:
         {"resolved_effort": "high"},
     )
     assert knobs == {"effort": "high", "fast": "true"}
+
+
+def test_grok_explicit_fast_false_still_wins() -> None:
+    """Fill is absent-only; an explicit fast=false pin is not overwritten."""
+    knobs = compose_model_knobs(
+        {
+            "resolved_model_id": "cursor/grok-4.7",
+            "model_knobs": {"fast": "false"},
+        },
+        {"resolved_effort": "high"},
+    )
+    assert knobs == {"effort": "high", "fast": "false"}
 
 
 def test_model_without_effort_knob_gets_none() -> None:
