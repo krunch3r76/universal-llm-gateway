@@ -24,7 +24,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from bus_watch.loop_tape import loop_tape_thread
 from bus_watch.now_row import resolve_now_row
 
 LEFTOVER_HOLD = "hold"
@@ -152,10 +151,18 @@ def live_conductor_owner(
         if not isinstance(lane, dict):
             continue
         todos = _lane_todos(lane)
-        if slug not in todos:
-            continue
         live = _lane_live(lane)
         conductor = _conductor_signal(lane)
+        # Digest lanes often omit work_key (12032 on 12029). A live
+        # contract=conductor child of this root still owns NOW.
+        if slug not in todos:
+            if live is True and conductor is True:
+                return {
+                    "lane": lane,
+                    "unsure": False,
+                    "reason": "live_conductor_on_root",
+                }
+            continue
         if live is False:
             continue
         if live is True and conductor is True:
@@ -223,9 +230,12 @@ def build_play_dispatch_body(
     *,
     todo_slug: str,
 ) -> dict[str, Any]:
-    """Admit one conductor on the addressed todo. Lane B; no house-generate paste."""
+    """Admit one conductor on the addressed todo. Lane B; no house-generate paste.
+
+    Coord parent is the resume root. ``loop_thread`` is occupancy (DIGEST),
+    not conductor mailbox (a:36103 — 12029 play 422'd on tape 12030).
+    """
     max_hop = int(policy.get("max_hop_minutes") or 60)
-    tape = loop_tape_thread(root_id, policy)
     work_key = f"todo:{todo_slug}"
     body: dict[str, Any] = {
         "op": "generate",
@@ -234,7 +244,7 @@ def build_play_dispatch_body(
         "lane": "B",
         "source_ref": work_key,
         "work_key": work_key,
-        "dispatch_thread_id": tape,
+        "dispatch_thread_id": str(root_id),
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
         "model_knobs": {"fast": "true"},

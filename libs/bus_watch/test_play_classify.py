@@ -10,6 +10,7 @@ from bus_watch.spawn_wake.play_classify import (
     LEFTOVER_SIT,
     MODE_AWARE,
     PLAY_HOLD,
+    build_play_dispatch_body,
     classify_leftover,
 )
 from bus_watch.test_spawn_on_wake import _digest
@@ -40,6 +41,35 @@ def test_classify_hold_when_live_conductor_owns_todo() -> None:
     assert verdict["leftover"] == LEFTOVER_HOLD
     assert verdict["reason"] == PLAY_HOLD
     assert verdict["todo"] == "music-lexicon-accord"
+
+
+def test_classify_hold_live_conductor_without_work_key() -> None:
+    """12032 class: tags/contract present, digest omitted work_key."""
+    digest = _digest()
+    digest["policy"]["now_row"] = "todo:liaison-loop-tape-birth G4"
+    digest["lanes"] = [
+        {
+            "id": "12032",
+            "status": "active",
+            "lifecycle": "admitted",
+            "contract": "conductor",
+            "slug": "cursor-sdk-generate-150cfca0",
+            "last_subject": "cursor-sdk generate — 150cfca0",
+        }
+    ]
+    verdict = classify_leftover(digest, {})
+    assert verdict["leftover"] == LEFTOVER_HOLD
+    assert verdict["owner"]["reason"] == "live_conductor_on_root"
+
+
+def test_play_dispatch_body_uses_resume_root_not_tape() -> None:
+    body = build_play_dispatch_body(
+        "12029",
+        {"loop_thread": "12030", "max_hop_minutes": 60},
+        todo_slug="liaison-loop-tape-birth",
+    )
+    assert body["dispatch_thread_id"] == "12029"
+    assert body["source_ref"] == "todo:liaison-loop-tape-birth"
 
 
 def test_classify_hold_when_lanes_unobserved_and_todo_named() -> None:
@@ -114,6 +144,7 @@ def test_dry_run_play_admits_conductor_not_liaison(
     assert body["source_ref"] == "todo:alpha"
     assert body["work_key"] == "todo:alpha"
     assert body["lane"] == "B"
+    assert body["dispatch_thread_id"] == "10479"
     assert not str(body.get("work_key")).startswith("agent-bus:")
     message = str(body.get("message") or body.get("prompt") or "")
     assert "WAKE — liaison headless successor" not in message

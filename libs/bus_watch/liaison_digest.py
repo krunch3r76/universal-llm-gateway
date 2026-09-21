@@ -79,6 +79,17 @@ _fingerprint = digest_fingerprint
 _measure_ide_tab = measure_ide_tab
 
 
+def _contract_from_thread(t: dict[str, Any]) -> str:
+    raw = t.get("contract")
+    if raw:
+        return str(raw).strip().lower()
+    for tag in t.get("tags") or []:
+        token = str(tag)
+        if token.startswith("contract:"):
+            return token.split(":", 1)[1].strip().lower()
+    return ""
+
+
 def _lane_row(t: dict[str, Any]) -> dict[str, Any]:
     subject = str(t.get("last_subject") or "")[:_SUBJECT_CAP]
     return {
@@ -91,6 +102,7 @@ def _lane_row(t: dict[str, Any]) -> dict[str, Any]:
         "unread": t.get("unread_count"),
         "last_from": t.get("last_turn_from"),
         "last_subject": subject,
+        "contract": _contract_from_thread(t),
         "terminal": bool(_TERMINAL_RE.search(subject)),
         "nag": bool(_NAG_RE.search(subject))
         and t.get("last_turn_from") in _NAG_SENDERS,
