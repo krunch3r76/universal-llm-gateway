@@ -25,6 +25,10 @@ discipline, and `srm`.
 `alwaysApply: true` (Cursor promotes it to a global rule). A thin stub does
 **not** load this body — `reasoning-posture_ulg.mdc` is retired. An already-open
 tab keeps its original inject set until Reload Window or a new chat.
+Native IDE `Task` subagents do not inherit that promotion — they start cold.
+Parent prompt opens with `/reasoning-posture` then `Use the reasoning-posture skill`
+unless the dispatch is purely mechanical (`native-subagent-reasoning-posture_ulg`).
+`team_dispatch` is a different surface (GIW / enrich preamble), not this inject.
 
 **Headless dispatch** (`team_dispatch` → `cursor-sdk`, `cursor-auto` admit/nest):
 judgment contracts receive the shared preamble invoke
@@ -167,6 +171,7 @@ Scope-lock field shape (consult/path-sim): `cortex://notes/system/specs/consult-
 | Gate alwaysApply on thinking knobs | `thinking_off ⇏ waive` |
 | Copy path-sim machinery here | Defer by reference |
 | Launch mutating Task without injecting parent kernel (orders/reviews/bus) | Paste kernel per `task-subagent-parity_ulg` — incident agent-bus:9758 turn 71 (Salt & Straw wrong review) |
+| Native Task with no invoke because "they inherit the skill" | Prompt opens with `/reasoning-posture` + Use-line; cold start does not inherit `alwaysApply` (`native-subagent-reasoning-posture_ulg`) |
 
 ## Always-on injection
 
@@ -175,7 +180,8 @@ A short summary renders in non-subagent `cortex_brief` operational context. Scop
 
 | Surface | How the body is invoked |
 |---|---|
-| **Attended IDE** + in-seat Task subagents | this skill `alwaysApply: true` (Cursor global-rule promotion). Thin stub retired. Fresh tab or Reload Window for an already-open chat |
+| **Attended IDE** (parent seat) | this skill `alwaysApply: true` (Cursor global-rule promotion). Thin stub retired. Fresh tab or Reload Window for an already-open chat |
+| **Cursor IDE native Task** | Parent prompt opens `/reasoning-posture` + `Use the reasoning-posture skill` unless purely mechanical (`native-subagent-reasoning-posture_ulg`). Promotion does not cross into the subagent. ¬ `team_dispatch` |
 | **claude.ai** (Customize / life / Cowork) | **¬ alwaysApply** — no such section. Catalog chip + Use-line; CDP `skills=` merge; `cortex_brief` opcontext |
 | CDP generate (`model=cdp/…`, including `panel_dispatch` CDP legs) | Staging always merges `reasoning-posture` into `skills=` (`ensure_cdp_judgment_skills`, including none / omitted `skills`) |
 | `team_dispatch` generate `seat=cursor-sdk` | GIW `resolve_prompt_preamble` prepends `/reasoning-posture` then the Use-line on judgment contracts including `none` (grok-4.7 recipes); skip mechanical/quick. `skills=` mount is a no-op |

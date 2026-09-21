@@ -22,6 +22,7 @@ mcp-debugging-ux_ulg
 mcp-selector-naming_ulg
 mcp-tool-awareness_ulg
 mcp-tool-param-types_ulg
+native-subagent-reasoning-posture_ulg
 pager-notify_ulg
 personal-workflow-local-tracking_ulg
 plan-slug-coherence_ulg

@@ -115,6 +115,7 @@ merge. Cursor `alwaysApply` does not cross that surface.
 | `cursor-auto` admit | Admit report appends `REASONING_POSTURE_PREAMBLE` when `handoff_contract` warrants |
 | `op=handoff` consult / none | Enrich Block 2 `Use the reasoning-posture skill`; skip implement / `cursor-implement` |
 | CDP `model=cdp/…` generate | `skills=` merge (`ensure_cdp_judgment_skills`, purpose-keyed — § CDP transport) |
+| Cursor IDE native `Task` | Parent prompt opens `/reasoning-posture` + `Use the reasoning-posture skill` unless purely mechanical (`native-subagent-reasoning-posture_ulg`). ¬ inherit parent alwaysApply. ¬ the team_dispatch preamble rows above |
 
 Packet MAY still open with the invoke as belt-and-suspenders. SOT: skill `reasoning-posture` § Always-on injection.
 

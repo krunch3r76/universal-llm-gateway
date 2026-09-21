@@ -1,0 +1,53 @@
+---
+description: Before any Cursor IDE native Task/subagent dispatch (explore, generalPurpose, shell, cursor-guide, ci-investigator, bugbot, security-review, best-of-n-runner) — not team_dispatch — open the prompt with /reasoning-posture and Use the reasoning-posture skill unless the dispatch is purely mechanical.
+alwaysApply: false
+rule_category: workflow
+apply_tier: required_gate
+---
+# Native subagent reasoning-posture
+
+**Invariant:** Task(Cursor IDE) ∧ ¬team_dispatch ∧ ¬purely_mechanical ⇒ prompt opens with `/reasoning-posture` then `Use the reasoning-posture skill`.
+
+Native Task subagents start cold. Parent `alwaysApply` promotion does not reach them.
+
+## Scope
+
+Applies: Cursor IDE `Task(...)` — `explore`, `generalPurpose`, `shell`, `cursor-guide`, `ci-investigator`, `bugbot`, `security-review`, `best-of-n-runner`.
+
+Does not apply: `team_dispatch` (generate, handoff, `cursor-sdk`, `cursor-auto`, CDP, panel). Those surfaces inject via GIW `resolve_prompt_preamble` or Stargate enrich. A second invoke there is out of scope.
+
+## Purely mechanical
+
+`purely_mechanical ⇔` the prompt is a closed procedure and the subagent does not choose, rank, interpret, or design:
+
+- run this exact command
+- apply this exact patch
+- rename, format, or compileall
+- single-anchor lookup (one named symbol; return the path)
+
+`purely_mechanical ⇒` prompt states `mechanical: <closed procedure>` and omits the invoke.
+
+Inject anyway: Explore that explains, compares, or recommends; investigate; review; draft; decide; any open question; bugbot; security-review; ci-investigator. Read-only is not mechanical.
+
+## Prompt
+
+Non-mechanical Task prompt opens with:
+
+```
+/reasoning-posture
+Use the reasoning-posture skill
+```
+
+Subagent loads the skill before acting. Parent does not paste the skill body.
+
+Mutating external state still pastes the rest of the kernel after this invoke (`task-subagent-parity_ulg`).
+
+## Anti-patterns
+
+| Bad | Good |
+|---|---|
+| Task prompt is only the task | Opens with `/reasoning-posture` + `Use the reasoning-posture skill` |
+| Skip because subagents inherit `alwaysApply` | They start cold; the parent writes the invoke |
+| Call Explore mechanical because it is read-only | Interpreting Explore still gets the invoke |
+| Add the invoke on `team_dispatch` generate | GIW/enrich already injects; this rule is native Task only |
+| Omit the invoke with no marker | Exempt only with `mechanical: <closed procedure>` |
