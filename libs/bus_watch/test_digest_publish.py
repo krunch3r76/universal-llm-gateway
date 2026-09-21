@@ -70,7 +70,8 @@ def _full_digest(**overrides: object) -> dict:
 
 
 def test_projection_drops_unlisted_keys_and_filters_terminal() -> None:
-    proj = project_digest(_full_digest())
+    with patch("bus_watch.digest_publish.query_lane_closeouts", return_value=[]):
+        proj = project_digest(_full_digest())
     assert "register" not in proj
     assert "fingerprint" not in proj
     assert "fleet" not in proj
@@ -268,7 +269,7 @@ def test_publish_if_enabled_skips_echo_of_own_digest_turn() -> None:
     resp.status_code = 201
     resp.json.return_value = {"turn": {"turn_number": 11, "id": 1001}}
     client.post.return_value = resp
-    state = {"policy": {"gear": "3-wake-on-attention"}}
+    state = {"policy": {"gear": "3-wake-on-attention", "loop_thread": "10479"}}
     budget = {"kind": "budget_estimate", "used_tokens": 1, "pct": 0.1}
     first = _full_digest(changed_since_last_tick=True, attention=[{"id": "2"}, budget])
     assert publish_if_enabled("10479", first, state, client=client) == "published"
@@ -407,7 +408,7 @@ def test_stale_retry_bypasses_require_change(monkeypatch: pytest.MonkeyPatch) ->
     resp.json.return_value = {"turn": {"turn_number": 2680, "id": 7000}}
     client.post.return_value = resp
     state = {
-        "policy": {"gear": "3-wake-on-attention"},
+        "policy": {"gear": "3-wake-on-attention", "loop_thread": "10479"},
         "digest_turn_number": 2679,
     }
     digest = _full_digest(
@@ -426,7 +427,10 @@ def test_stale_retry_bypasses_require_change(monkeypatch: pytest.MonkeyPatch) ->
 def test_publish_skipped_require_change_emits_reason(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    state = {"policy": {"gear": "3-wake-on-attention"}, "digest_turn_number": 99}
+    state = {
+        "policy": {"gear": "3-wake-on-attention", "loop_thread": "10479"},
+        "digest_turn_number": 99,
+    }
     digest = _full_digest(
         changed_since_last_tick=False,
         root={"id": "10479", "turns": 99, "unread": 0, "last_subject": "x"},
@@ -546,6 +550,64 @@ def test_render_body_nag_lanes_drop_first() -> None:
     assert "nag-1" not in lane_ids or parsed.get("lanes_omitted", 0) >= 1
     if "live-1" in lane_ids:
         assert "nag-1" not in lane_ids
+
+
+def test_publish_skipped_loop_thread_unset_at_gear_three(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    state = {
+        "policy": {
+            "gear": "3-wake-on-attention",
+            "post_digest": True,
+            "loop_thread": "",
+        }
+    }
+    digest = _full_digest()
+    assert publish_if_enabled("10479", digest, state) == "skipped"
+    captured = capsys.readouterr()
+    assert (
+        '{"loop": "digest_publish_skipped", "reason": "loop_thread_unset"}'
+        in captured.out
+    )
+    assert state["loop_thread_unset_since"] == 1
+
+
+def test_loop_thread_unset_escalates_on_fourth_tick(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pages: list[tuple] = []
+    monkeypatch.setattr(
+        "bus_watch.digest_publish.page_liaison", lambda *a: pages.append(a)
+    )
+    state = {
+        "policy": {
+            "gear": "3-wake-on-attention",
+            "post_digest": True,
+        },
+        "loop_thread_unset_since": 3,
+    }
+    digest = _full_digest()
+    assert publish_if_enabled("10479", digest, state) == "failed"
+    assert state["loop_thread_unset_since"] == 4
+    assert state["last_publish_error"] == "loop_thread_unset"
+    assert len(pages) == 1
+    captured = capsys.readouterr()
+    assert '"loop": "digest_publish_failed"' in captured.out
+
+
+def test_loop_thread_unset_resets_when_bound() -> None:
+    client = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 201
+    resp.json.return_value = {"turn": {"turn_number": 2, "id": 8801}}
+    client.post.return_value = resp
+    state = {
+        "policy": {"loop_thread": "11876", "gear": "3-wake-on-attention"},
+        "loop_thread_unset_since": 2,
+        "digest_publish_thread": "10479",
+    }
+    publish_if_enabled("10479", _full_digest(), state, client=client)
+    assert "loop_thread_unset_since" not in state
 
 
 def test_post_digest_policy_gear_three_and_default() -> None:

@@ -64,6 +64,7 @@ from bus_watch.liaison_stops import (
     apply_policy_set,
     arm_operator_gate,
 )
+from bus_watch.loop_tape_mint import ensure_loop_tape
 from bus_watch.spawn_on_wake import tick_spawn_on_wake
 from bus_watch.tick_state import (
     absorb_operator_edits,
@@ -327,6 +328,11 @@ def main() -> int:
             )
 
     _operator_edits(state)
+    child = ensure_loop_tape(root, state, state_path)
+    if child:
+        policy = dict(state.get("policy") or {})
+        policy["loop_thread"] = child
+        state["policy"] = policy
     register = state["register"]
     if args.go_under:
         result = go_under(
