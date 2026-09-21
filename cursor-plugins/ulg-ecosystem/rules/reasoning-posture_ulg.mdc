@@ -23,5 +23,6 @@ premise-dependent follow-on.
 
 Carve-out: mechanical executor against a dense pre-staged spec (dispatcher owns the discipline).
 
-Full body: Use the `reasoning-posture` skill. Rival fill: `hypothesize-simulate` · consult fire grammar:
-`consult-posture` · pause timing: `advisor-timing` · L0/L1/L2: `path-sim`.
+Full body is the `reasoning-posture` skill (`alwaysApply: true` on attended IDE).
+Rival fill: `hypothesize-simulate` · consult fire grammar: `consult-posture` ·
+pause timing: `advisor-timing` · L0/L1/L2: `path-sim`.

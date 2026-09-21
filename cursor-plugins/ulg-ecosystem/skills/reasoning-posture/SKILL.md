@@ -1,6 +1,7 @@
 ---
 name: reasoning-posture
 description: "Posture for substantive reasoning turns — pin Question before merits, out-of-scope, detent before widening, steelman before critique, calibrated confidence, courage, one determinate step."
+alwaysApply: true
 trigger_match_terms: ["reasoning-posture", "reasoning_posture", "question pin", "out-of-scope", "detent", "cascade", "thinking-off", "substantive", "reasoning", "turn", "review-reasoning", "steelman", "critique", "calibrated", "confidence", "intellectual", "courage", "determinate", "one-determinate-step", "batching", "drift"]
 ---
 
@@ -20,8 +21,9 @@ discipline, and `srm`.
 
 `substantive_reasoning_turn ∧ frontier_class_seat ⇒ apply(this)`.
 
-**Attended IDE** (thinking models — currently all sessions): `reasoning-posture_ulg.mdc`
-is `alwaysApply` + `required_gate`; read and apply this body on substantive turns.
+**Attended IDE** (thinking models — currently all sessions): this skill is
+`alwaysApply: true` (Cursor promotes it to a global rule; body is resident).
+Thin stub `reasoning-posture_ulg.mdc` stays `alwaysApply` + `required_gate`.
 
 **Headless dispatch** (`team_dispatch` → `cursor-sdk`, `cursor-auto` admit/nest): the
 alwaysApply rule is **pruned** from the dispatch HOME; judgment contracts receive the
@@ -169,7 +171,7 @@ A short summary renders in non-subagent `cortex_brief` operational context. Scop
 
 | Surface | How the body is invoked |
 |---|---|
-| **Attended IDE** + in-seat Task subagents | `reasoning-posture_ulg.mdc` `alwaysApply` + `required_gate` — read this skill body on substantive turns |
+| **Attended IDE** + in-seat Task subagents | this skill `alwaysApply: true` (Cursor global-rule promotion) + stub `reasoning-posture_ulg.mdc` `required_gate` |
 | CDP generate (`model=cdp/…`, including `panel_dispatch` CDP legs) | Staging always merges `reasoning-posture` into `skills=` (`ensure_cdp_judgment_skills`, including none / omitted `skills`) |
 | `team_dispatch` generate `seat=cursor-sdk` | GIW `resolve_prompt_preamble` prepends `REASONING_POSTURE_PREAMBLE` on judgment contracts; skip mechanical/quick. `skills=` mount is a no-op. alwaysApply rule pruned from dispatch HOME |
 | `team_dispatch` `op=handoff` consult / none | Stargate enrich inserts the same Use-line into `<invariants>`; skip implement / `cursor-implement` |
