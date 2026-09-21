@@ -13,7 +13,10 @@ Seat this tab as the house liaison on continuity root `<root>` and arm the tick 
 5. **Arm the loop** (monitored shell, `block_until_ms: 0`, `notify_on_output` pattern `^AGENT_LOOP_TICK_liaison`,
    reason `liaison <root> tick`, debounce 15000). Any tab model may seat the liaison (skill § Seat model).
    This tab becomes the one liaison seat: the loop claims the seat lock as `ide:<transcript_id>` — resolve it
-   with `scripts/liaison-ide-hop.py --find-transcript "/liaison <root>"` (the tab's first user message).
+   with `scripts/liaison-ide-hop.py --find-transcript` on the tab's **first user message**. That is
+   `resume <root>` when the operator typed resume first (this tab's specimen: `931b214d…`);
+   `"/liaison <root>"` only when that slash line is the first turn — bare `"/liaison"` can resolve a
+   **foreign** tab (specimen `866948bb…`).
    `"loop": "refused"` with `reason=held_preempt_requested` ⇒ a headless successor holds it and will park
    within one poll — re-arm after ~60 s; `reason=held` ⇒ another **attended tab** holds the seat — stay a
    worker tab (own legs and turns; no loop, no scoreboard Rows fold, no CHECKPOINT on the root) unless the
@@ -32,3 +35,7 @@ Seat this tab as the house liaison on continuity root `<root>` and arm the tick 
 
 Stop: kill the loop PID, post a segment CHECKPOINT, `UpdateGoal(status=complete)` only if the objective is
 actually met (otherwise leave active), say why the loop stopped.
+
+Hop (`liaison-ide-hop.py` `ok`): harness retires this tab's `--loop`, `watch-supervise` tails, and `ide:`
+lock (`retire_departing_tab`). Then `UpdateGoal(status=complete)` as **tab-goal release** (house stays
+open). Successor `CreateGoal` + ARM tails. Answer `RETIRED → <id>`; never harvest.
