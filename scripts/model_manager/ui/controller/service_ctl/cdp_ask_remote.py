@@ -3,9 +3,9 @@
 Exports hub ``EVENTS_INGEST_TCP`` on remote start so Jupiter followup observation
 events reach the hub Event Service (UDS is local-only on the satellite).
 
-Also exports ``ULG_CODE_VERSION`` from the shared NFS checkout HEAD at start so
-``resolve_code_version`` seals an attributable SHA instead of falling through to
-``unknown`` (no deploy stamp on the satellite host process).
+Also exports ``ULG_CODE_VERSION`` from the *hub* checkout HEAD at start so
+``resolve_code_version`` seals an attributable SHA. Remote ``git -C`` on a
+hard-hung NFS mount pins SSH until the lifecycle timeout.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import os
 import socket
+import subprocess
 from pathlib import Path
 
 from universal_logging import get_logger
@@ -33,10 +34,15 @@ _REMOTE_FILES_ROOT = "/mnt/torus/mcp-data/files"
 _CDP_ASK_PATHS = (
     "libs/cdp_ask/",
     "scripts/cdp-ask",
+    "scripts/cdp-ask-start",
     "services/cdp-ask/",
+    "services/jupiter-cdp/",
 )
+_HOME_REPO = "$HOME/universal-llm-gateway"
+_LOCAL_FILES_FALLBACK = "/tmp/cdp-ask-files"
 # Bound remote lifecycle SSH so a stuck session cannot pin fleet_deploy forever.
 _SSH_TIMEOUT_S = 30.0
+_NFS_PROBE_S = 2
 _DEFAULT_INGEST_TCP_PORT = 7101
 
 
@@ -138,52 +144,157 @@ def _port() -> int:
     return cfg[1] if cfg else 8770
 
 
-async def start_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
-    """Start cdp-ask on the remote CDP host from the shared NFS checkout.
+def _hub_code_version(root: Path) -> str:
+    """Seal ULG_CODE_VERSION from the hub tree — never ``git -C`` a remote NFS mount."""
+    try:
+        out = subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return ""
+    return out.strip()
 
-    Writes ``~/.gateway/cdp-ask.env`` (incl. ``ULG_REPO``) then starts the
-    user unit via ``systemctl --user`` so Type=forking owns the MainPID cgroup
-    (direct script invoke left the unit inactive / failed on adopt).
+
+async def _nfs_checkout_ready() -> bool:
+    """True only when the remote NFS checkout answers within ``_NFS_PROBE_S``."""
+    code, text = await _run_ssh(
+        f"timeout {_NFS_PROBE_S} test -f {_REMOTE_REPO}/scripts/cdp-ask-start "
+        "&& echo nfs_ok"
+    )
+    return code == 0 and "nfs_ok" in text
+
+
+async def _rsync_home_checkout(root: Path) -> str | None:
+    """Push satellite paths into ``~/universal-llm-gateway``. None = ok."""
+    target = _ssh_target()
+    if target is None:
+        return f"{_SERVICE_NAME} remote target could not be resolved."
+    ssh_target, _ = target
+    for rel in _CDP_ASK_PATHS:
+        src = root / rel
+        if not src.exists():
+            continue
+        if src.is_file():
+            src_arg = str(src)
+            dest = f"{ssh_target}:~/universal-llm-gateway/{rel}"
+        else:
+            src_arg = f"{str(src).rstrip('/')}/"
+            dest = f"{ssh_target}:~/universal-llm-gateway/{rel.rstrip('/')}/"
+        proc = await asyncio.create_subprocess_exec(
+            "rsync",
+            "-az",
+            "--timeout=15",
+            "-e",
+            "ssh -o BatchMode=yes -o ConnectTimeout=10",
+            src_arg,
+            dest,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=_SSH_TIMEOUT_S)
+        except TimeoutError:
+            proc.kill()
+            with contextlib.suppress(Exception):
+                await proc.communicate()
+            return (
+                f"{_SERVICE_NAME} remote rsync timed out for {rel} "
+                f"after {_SSH_TIMEOUT_S:.0f}s."
+            )
+        text = out.decode(errors="replace") if out else ""
+        if proc.returncode != 0:
+            return (
+                f"{_SERVICE_NAME} remote rsync failed for {rel} "
+                f"(exit {proc.returncode}).\n{text}"
+            )
+    return None
+
+
+async def start_cdp_ask_remote(root: Path) -> str:
+    """Start cdp-ask on the remote CDP host.
+
+    Prefers the shared NFS checkout. When NFS is hung (hard mount), rsync the
+    home copy and point ``ULG_REPO`` / harvest root at local paths so start
+    cannot D-state on ``git -C`` or ``verify_harvest_root``.
     """
     port = _port()
     ingest_tcp = resolve_hub_events_ingest_tcp()
+    version = _hub_code_version(root)
+    nfs = await _nfs_checkout_ready()
+    if not nfs:
+        rsync_err = await _rsync_home_checkout(root)
+        if rsync_err:
+            return rsync_err
+        repo = _HOME_REPO
+        files_root = _LOCAL_FILES_FALLBACK
+    else:
+        repo = _REMOTE_REPO
+        files_root = _REMOTE_FILES_ROOT
     cmd = (
-        "mkdir -p /tmp/logs/cdp-ask ~/.gateway; "
-        f"REPO={_REMOTE_REPO}; "
-        'test -f "$REPO/scripts/cdp-ask-start" || exit 1; '
-        'ULG_CODE_VERSION=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true); '
+        "mkdir -p /tmp/logs/cdp-ask /tmp/cdp-ask-files ~/.gateway; "
+        f"REPO={repo}; "
+        "if test -f ~/.gateway/cdp-ask.pid; then "
+        "kill -9 $(cat ~/.gateway/cdp-ask.pid) 2>/dev/null || true; fi; "
+        f"fuser -k -9 {port}/tcp 2>/dev/null || true; "
         f"cat > ~/.gateway/cdp-ask.env <<EOF\n"
         f"EVENTS_INGEST_TCP={ingest_tcp}\n"
-        f"CORTEX_FILES_ROOT={_REMOTE_FILES_ROOT}\n"
-        "ULG_CODE_VERSION=$ULG_CODE_VERSION\n"
+        f"CORTEX_FILES_ROOT={files_root}\n"
+        f"ULG_CODE_VERSION={version}\n"
         "ULG_REPO=$REPO\n"
         f"PORT={port}\n"
+        "PROJECT_ROOT=$REPO\n"
         "EOF\n"
-        # Unit ExecStart → scripts/cdp-ask-start (setsid under INVOCATION_ID).
         "systemctl --user reset-failed cdp-ask.service 2>/dev/null || true; "
-        "systemctl --user start cdp-ask.service; "
-        "systemctl --user is-active cdp-ask.service; "
+        "systemctl --user start --no-block cdp-ask.service; "
+        "timeout 3 systemctl --user is-active cdp-ask.service || true; "
         "echo started"
     )
-    code, text = await _run_ssh(cmd)
+    # Unit + ExecStart are NFS symlinks; systemctl re-reads them and hangs.
+    fallback_cmd = (
+        "mkdir -p /tmp/logs/cdp-ask /tmp/cdp-ask-files ~/.gateway; "
+        f"REPO={_HOME_REPO}; "
+        "if test -f ~/.gateway/cdp-ask.pid; then "
+        "kill -9 $(cat ~/.gateway/cdp-ask.pid) 2>/dev/null || true; fi; "
+        f"fuser -k -9 {port}/tcp 2>/dev/null || true; "
+        f"cat > ~/.gateway/cdp-ask.env <<EOF\n"
+        f"EVENTS_INGEST_TCP={ingest_tcp}\n"
+        f"CORTEX_FILES_ROOT={_LOCAL_FILES_FALLBACK}\n"
+        f"ULG_CODE_VERSION={version}\n"
+        "ULG_REPO=$REPO\n"
+        f"PORT={port}\n"
+        "PROJECT_ROOT=$REPO\n"
+        "EOF\n"
+        "set -a; . ~/.gateway/cdp-ask.env; set +a; "
+        "mkdir -p \"$CORTEX_FILES_ROOT\"; "
+        "cd \"$ULG_REPO\" || exit 1; "
+        "nohup $HOME/.venvs/universal/bin/python "
+        "\"$ULG_REPO/scripts/cdp-ask\" --port \"$PORT\" "
+        "</dev/null >/tmp/logs/cdp-ask/start.log 2>&1 & "
+        "echo $! > ~/.gateway/cdp-ask.pid; "
+        "echo started"
+    )
+    code, text = await _run_ssh(cmd if nfs else fallback_cmd)
     if code == 0:
         return f"{_SERVICE_NAME} remote start ok.\n{text}"
     return f"{_SERVICE_NAME} remote start failed.\n{text}"
 
 
 async def stop_cdp_ask_remote(root: Path) -> str:  # noqa: ARG001
-    """Stop remote cdp-ask via systemctl kill, then pidfile/port fallback."""
+    """Stop remote cdp-ask: pidfile/port first so a hung unit cannot pin SSH."""
     port = _port()
     cmd = (
-        # RefuseManualStop blocks `systemctl stop`; kill still reaches MainPID.
-        "systemctl --user kill -s SIGTERM cdp-ask.service 2>/dev/null || true; "
-        "sleep 0.5; "
         "if test -f ~/.gateway/cdp-ask.pid; then "
-        "kill $(cat ~/.gateway/cdp-ask.pid) 2>/dev/null || true; "
+        "kill -9 $(cat ~/.gateway/cdp-ask.pid) 2>/dev/null || true; "
         "rm -f ~/.gateway/cdp-ask.pid; "
         "fi; "
-        f"fuser -k {port}/tcp 2>/dev/null || true; "
-        "systemctl --user reset-failed cdp-ask.service 2>/dev/null || true; "
+        f"fuser -k -9 {port}/tcp 2>/dev/null || true; "
+        "timeout 3 systemctl --user kill -s SIGKILL cdp-ask.service "
+        "2>/dev/null || true; "
+        "timeout 3 systemctl --user reset-failed cdp-ask.service "
+        "2>/dev/null || true; "
         "echo stopped"
     )
     code, text = await _run_ssh(cmd)
@@ -204,61 +315,19 @@ async def sync_restart_cdp_ask_remote(root: Path) -> str:
     """Restart remote cdp-ask.
 
     Prefer shared NFS checkout (no rsync). Fall back to per-path rsync into
-    ``~/universal-llm-gateway`` only when the NFS repo is absent remotely.
+    ``~/universal-llm-gateway`` when the NFS probe times out or is absent.
     """
     target = _ssh_target()
     if target is None:
         return f"{_SERVICE_NAME} remote target could not be resolved."
     _ssh_user_host, address = target
 
-    nfs_code, nfs_text = await _run_ssh(
-        f"test -f {_REMOTE_REPO}/scripts/cdp-ask-start && echo nfs_ok"
-    )
-    if nfs_code == 0 and "nfs_ok" in nfs_text:
+    if await _nfs_checkout_ready():
         restart_msg = await restart_cdp_ask_remote(root)
         return f"{_SERVICE_NAME} restarted on {address} (shared NFS).\n{restart_msg}"
 
-    # Non-NFS fallback: rsync into home checkout then restart (home path).
-    ssh_target, _ = target
-    for rel in _CDP_ASK_PATHS:
-        src = root / rel
-        if not src.exists():
-            continue
-        if src.is_file():
-            src_arg = str(src)
-            dest = f"{ssh_target}:~/universal-llm-gateway/{rel}"
-        else:
-            src_arg = f"{str(src).rstrip('/')}/"
-            dest = f"{ssh_target}:~/universal-llm-gateway/{rel.rstrip('/')}/"
-        proc = await asyncio.create_subprocess_exec(
-            "rsync",
-            "-az",
-            "--delete",
-            "-e",
-            "ssh -o BatchMode=yes -o ConnectTimeout=10",
-            src_arg,
-            dest,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=_SSH_TIMEOUT_S)
-        except TimeoutError:
-            proc.kill()
-            try:
-                await proc.communicate()
-            except Exception:  # noqa: BLE001 — best-effort reap after kill
-                pass
-            return (
-                f"{_SERVICE_NAME} remote rsync timed out for {rel} "
-                f"after {_SSH_TIMEOUT_S:.0f}s."
-            )
-        text = out.decode(errors="replace") if out else ""
-        if proc.returncode != 0:
-            return (
-                f"{_SERVICE_NAME} remote rsync failed for {rel} "
-                f"(exit {proc.returncode}).\n{text}"
-            )
+    rsync_err = await _rsync_home_checkout(root)
+    if rsync_err:
+        return rsync_err
     restart_msg = await restart_cdp_ask_remote(root)
     return f"{_SERVICE_NAME} synced+restarted on {address}.\n{restart_msg}"

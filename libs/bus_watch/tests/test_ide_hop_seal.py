@@ -34,6 +34,48 @@ def _load_hop_module():
     return mod
 
 
+def test_hop_retires_departing_tab_after_land(capsys) -> None:
+    hop_mod = _load_hop_module()
+    call_order: list[str] = []
+    args = [a for a in _HOP_ARGS if a != "--dry-run"]
+
+    def fake_fire(*_a, **_k):
+        call_order.append("fire")
+        return {"ok": True, "root": "10479"}
+
+    def fake_retire(root, holder, **_k):
+        call_order.append("retire")
+        assert root == "10479"
+        assert holder == "ide:94b2a901-7807-460e-8102-2e83bb5b96c7"
+        return {"ok": True, "stopped_loops": [1], "stopped_tails": []}
+
+    with (
+        patch.object(hop_mod, "harvest_judgment_turns", return_value={"ok": True}),
+        patch.object(hop_mod, "load_state", return_value={}),
+        patch.object(hop_mod, "effective_policy", return_value={}),
+        patch.object(hop_mod, "build_digest", return_value={}),
+        patch.object(hop_mod, "resolve_now_row", return_value=("R16 test", "arg")),
+        patch.object(hop_mod, "format_now_line", return_value="R16 test"),
+        patch.object(
+            hop_mod, "seal_hop_window", return_value={"ok": True, "phase": "sealed"}
+        ),
+        patch.object(hop_mod, "fire_ide_hop", side_effect=fake_fire),
+        patch.object(hop_mod, "retire_departing_tab", side_effect=fake_retire),
+        patch.object(hop_mod, "hop_qualifies", return_value={"ok": True}),
+        patch.object(hop_mod, "live_watcher_labels", return_value=[]),
+        patch.object(hop_mod, "tick_register", return_value="attended"),
+        patch.object(hop_mod, "policy_gui_host", return_value="jupiter"),
+        patch.object(hop_mod, "build_ide_hop_message", return_value="resume 10479\n"),
+        patch.object(sys, "argv", args),
+    ):
+        code = hop_mod.main()
+    assert code == 0
+    assert call_order == ["fire", "retire"]
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["retire"]["stopped_loops"] == [1]
+    assert "tab-goal release" in payload["goal_release"]
+
+
 def test_hop_seals_with_channel_hop_before_keystroke(capsys) -> None:
     call_order: list[str] = []
     hop_mod = _load_hop_module()

@@ -1,4 +1,4 @@
-"""Tests for navigator CDP transport clauses and self-expiring wire guards."""
+"""Tests for navigator wake clauses and cursor-sdk / cursor-auto dispatch."""
 
 from __future__ import annotations
 
@@ -174,9 +174,12 @@ def test_fire_navigator_doorbell_and_body_carry_skill_activation(
         dry_run=True,
     )
     doorbell = result["evaluation"]["doorbell"]
+    assert result["body"]["seat"] == "cursor-sdk"
+    assert result["body"].get("model") != "cdp/opus-5-high"
+    assert not str(result["body"].get("model") or "").startswith("cdp/")
     assert "Use the liaison skill." in doorbell
     assert "Use the reasoning-posture skill." in doorbell
-    assert result["body"]["skills"] == ["liaison", "reasoning-posture"]
+    assert "skills" not in result["body"]
 
 
 @pytest.mark.offline
@@ -190,7 +193,63 @@ def test_fire_navigator_body_carries_parent_thread(tmp_path: Path, monkeypatch) 
         dry_run=True,
     )
     assert result["body"]["parent_thread"] == "10479"
+    assert result["body"]["dispatch_thread_id"] == "10479"
+    assert result["body"]["seat"] == "cursor-sdk"
+    assert result["body"]["work_key"].startswith("agent-bus:10479:navigator:")
     assert result["evaluation"]["clauses"]["navigator_lane_bound"] is True
+
+
+@pytest.mark.offline
+def test_fire_navigator_uses_successor_model_when_navigator_model_is_cdp(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("bus_watch.navigator_wake.WATCH_DIR", tmp_path)
+    digest = _digest(
+        policy={
+            **_digest()["policy"],
+            "successor_model": "cursor/grok-4.6",
+        }
+    )
+    result = fire_navigator_wake(
+        "10479", digest, _state(), register="autonomous", dry_run=True
+    )
+    assert result["body"]["seat"] == "cursor-sdk"
+    assert result["body"]["model"] == "cursor/grok-4.6"
+
+
+@pytest.mark.offline
+def test_fire_navigator_life_register_builds_cursor_auto_request(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("bus_watch.navigator_wake.WATCH_DIR", tmp_path)
+    result = fire_navigator_wake(
+        "10479", _digest(), _state(), register="life", dry_run=True
+    )
+    assert result["body"]["seat"] == "cursor-auto"
+    assert result["body"]["op"] == "request"
+    assert result["body"]["to"] == "cursor"
+    assert result["body"]["thread"] == "10479"
+    assert result["body"]["contract"] == "recon"
+    assert "cdp" not in str(result["body"].get("desired_model") or "")
+
+
+@pytest.mark.offline
+def test_fire_navigator_loop_thread_leaves_resume_root(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("bus_watch.navigator_wake.WATCH_DIR", tmp_path)
+    digest = _digest(policy={**_digest()["policy"], "loop_thread": "11876"})
+    result = fire_navigator_wake(
+        "10479",
+        digest,
+        _state(),
+        register="autonomous",
+        dry_run=True,
+    )
+    assert result["body"]["parent_thread"] == "11876"
+    assert result["body"]["dispatch_thread_id"] == "11876"
+    assert "agent-bus:11876 (echo)" in result["evaluation"]["doorbell"]
+    assert "thread=11876" in result["evaluation"]["doorbell"]
 
 
 @pytest.mark.offline
@@ -205,7 +264,8 @@ def test_fire_navigator_body_carries_surface_derived_skills(
         register="autonomous",
         dry_run=True,
     )
-    assert result["body"]["skills"] == ["liaison", "reasoning-posture"]
+    assert result["body"]["seat"] == "cursor-sdk"
+    assert "skills" not in result["body"]
     doorbell = result["evaluation"]["doorbell"]
     assert "Use the liaison skill." in doorbell
     assert "Use the reasoning-posture skill." in doorbell

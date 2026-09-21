@@ -40,6 +40,7 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     assert "Hop only when autonomous follow-up remains" in message
     assert "STAY" in message
     assert "LOAD the liaison skill (do not skim)" in message
+    assert "CreateGoal (tab-goal; house open)" in message
     assert "runbook:bus-consult-watcher" in message
     assert "§ Peer-house" in message
     assert "Hop after harvest is the rule" not in message

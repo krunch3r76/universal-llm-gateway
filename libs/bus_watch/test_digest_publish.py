@@ -10,6 +10,7 @@ import pytest
 
 from bus_watch.digest_publish import (
     _BODY_CAP,
+    _lanes_fingerprint,
     project_digest,
     publish_digest,
     publish_if_enabled,
@@ -312,6 +313,91 @@ def test_publish_failure_is_loud_and_persisted(
     )
     assert "DIGEST_PUBLISH_FAILED root=10479 error=body_exceeds_cap" in captured.err
     assert len(pages) == 1
+
+
+def test_publish_digest_uses_loop_thread() -> None:
+    client = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 201
+    resp.json.return_value = {"turn": {"turn_number": 2, "id": 8801}}
+    client.post.return_value = resp
+    state = {
+        "policy": {"loop_thread": "11876"},
+        "digest_turn_number": 4650,
+        "digest_publish_thread": "10479",
+    }
+    result = publish_digest("10479", _full_digest(), state, client=client)
+    assert result == {"turn_number": 2, "turn_id": 8801}
+    payload = client.post.call_args.kwargs["json"]
+    assert payload["thread"] == "11876"
+    assert payload["subject"] == "DIGEST 10479 2026-09-11T12:00:00Z"
+    assert "supersedes_turn" not in payload
+    assert state["digest_publish_thread"] == "11876"
+
+
+def test_own_echo_does_not_block_first_tape_post() -> None:
+    """Root-era DIGEST makes root.turns == digest_turn_number; tape move still publishes."""
+    client = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 201
+    resp.json.return_value = {"turn": {"turn_number": 2, "id": 8803}}
+    client.post.return_value = resp
+    state = {
+        "policy": {"loop_thread": "11851", "gear": "3-wake-on-attention"},
+        "digest_turn_number": 11,
+        "digest_lanes_fp": None,
+    }
+    first = _full_digest(changed_since_last_tick=False)
+    first["root"] = {**first["root"], "turns": 11, "last_subject": "DIGEST 11667 …"}
+    state["digest_lanes_fp"] = _lanes_fingerprint(first)
+    assert (
+        publish_if_enabled("11667", first, state, require_change=True, client=client)
+        == "published"
+    )
+    assert client.post.call_args.kwargs["json"]["thread"] == "11851"
+
+
+def test_publish_if_enabled_forces_when_occupancy_thread_moves() -> None:
+    """First post onto loop_thread is a destination change, not a root-turn change."""
+    client = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 201
+    resp.json.return_value = {"turn": {"turn_number": 3, "id": 8802}}
+    client.post.return_value = resp
+    state = {
+        "policy": {"loop_thread": "11876", "gear": "3-wake-on-attention"},
+        "digest_turn_number": 4650,
+        "digest_publish_thread": "10479",
+    }
+    digest = _full_digest(
+        changed_since_last_tick=False,
+        root={"id": "10479", "turns": 4654, "unread": 0, "last_subject": "x"},
+    )
+    assert (
+        publish_if_enabled("10479", digest, state, require_change=True, client=client)
+        == "published"
+    )
+    assert client.post.call_args.kwargs["json"]["thread"] == "11876"
+    assert "supersedes_turn" not in client.post.call_args.kwargs["json"]
+
+
+def test_stale_retry_skipped_when_digest_leaves_root() -> None:
+    """Root.turns >> digest_turn_number must not republish onto the hop child."""
+    client = MagicMock()
+    state = {
+        "policy": {"loop_thread": "11876", "gear": "3-wake-on-attention"},
+        "digest_turn_number": 2,
+        "digest_publish_thread": "11876",
+    }
+    digest = _full_digest(
+        changed_since_last_tick=False,
+        root={"id": "10479", "turns": 4653, "unread": 0, "last_subject": "x"},
+    )
+    assert (
+        publish_if_enabled("10479", digest, state, require_change=True, client=client)
+        == "skipped"
+    )
+    client.post.assert_not_called()
 
 
 def test_stale_retry_bypasses_require_change(monkeypatch: pytest.MonkeyPatch) -> None:

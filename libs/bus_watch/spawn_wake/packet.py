@@ -6,6 +6,7 @@ from typing import Any
 
 from bus_watch.doorbell import render_successor_wake
 from bus_watch.fable_lock import current_night_id
+from bus_watch.loop_tape import loop_tape_thread
 from bus_watch.now_row import format_now_line, resolve_now_row
 
 SUCCESSOR_MESSAGE_CAP = 2048
@@ -54,6 +55,8 @@ def build_dispatch_body(
     extras = ctx.get("extra_addresses") or policy.get("successor_extra_addresses") or ()
     seat = policy.get("successor_seat") or "cursor-sdk"
     contract = str(policy.get("successor_contract") or "none")
+    tape = loop_tape_thread(root_id, policy)
+    tape_ring = tape if tape != str(root_id) else None
     message = build_successor_message(
         root_id,
         gear=str(ctx.get("gear") or policy.get("gear") or "1-fable-mvp"),
@@ -62,7 +65,7 @@ def build_dispatch_body(
         tip_turn=ctx.get("tip_turn"),
         tip_checkpoint_turn=ctx.get("tip_checkpoint_turn"),
         spawn_signal_sources=list(ctx.get("spawn_signal_sources") or []),
-        ring=ctx.get("ring") or policy.get("wake_ring"),
+        ring=ctx.get("ring") or policy.get("wake_ring") or tape_ring,
         extra_addresses=tuple(extras),
         contract=contract,
     )
@@ -73,7 +76,7 @@ def build_dispatch_body(
         "lane": "A",
         "model": policy.get("successor_model"),
         "message": message,
-        "dispatch_thread_id": root_id,
+        "dispatch_thread_id": tape,
         # Per-night work identity: GIW's remint cap counts admits per work_key, so a
         # root-wide key runs out after one night (a:33139 — hop 9 refused at seq 9 >
         # cap 8). Keying by night_id resets the sequence with the night, not by hand.

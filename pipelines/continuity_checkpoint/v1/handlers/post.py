@@ -202,7 +202,10 @@ class ContinuityCheckpointPostHandler(BaseHandler):
             channel=checkpoint_channel,
         )
         scoreboard_pin = tail.get("scoreboard_pin")
-        live_tail_pin = bool(scoreboard_pin)
+        # Charter projection_only sets a pin + fold_row_lines while folded=False.
+        # Treating the pin as a live fold dumped the whole board into authored
+        # residue (10479 lean post 413: authored 85k / 8k).
+        live_tail_pin = bool(tail.get("folded"))
         if not scoreboard_pin and score.get("tip_sha"):
             scoreboard_pin = (
                 f"Scoreboard: {score.get('tip_uri')} · sha256:{score['tip_sha']}"

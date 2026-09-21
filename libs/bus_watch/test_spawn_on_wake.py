@@ -108,6 +108,34 @@ def test_predicate_refuses_hop_cap(monkeypatch) -> None:  # noqa: ANN001
     assert ev["clauses"]["hops_under_cap"] is False
 
 
+def test_predicate_new_night_does_not_inherit_yesterdays_hops(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.predicate.current_night_id", lambda: "2026-09-21"
+    )
+    lock = {
+        "holder": None,
+        "hops_by_night": {"2026-09-20": 8},
+        "hops": 8,
+        "night_id": "2026-09-20",
+    }
+    ev = evaluate_spawn_predicate(_digest(attention=[{"id": "1"}]), {}, lock=lock)
+    assert ev["clauses"]["hops_under_cap"] is True
+    assert ev["hops"] == 0
+
+
+def test_predicate_zero_hop_cap_is_uncapped() -> None:
+    digest = _digest(attention=[{"id": "1"}])
+    digest["policy"]["max_hops_per_night"] = 0
+    ev = evaluate_spawn_predicate(
+        digest,
+        {},
+        lock={"holder": None, "hops_by_night": {"2026-09-11": 99}, "hops": 99},
+    )
+    assert ev["clauses"]["hops_under_cap"] is True
+
+
 def test_budget_estimate_alone_is_not_spawn_signal() -> None:
     ev = evaluate_spawn_predicate(
         _digest(attention=[{"kind": "budget_estimate", "pct": 0.1}]),

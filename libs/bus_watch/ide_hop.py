@@ -212,8 +212,9 @@ def build_ide_hop_message(
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
         f"NOW: {row}",
         *arm_lines,
-        "Then: harvest every wake -> fold scoreboard -> Plan -> Dispatch (+watcher) -> "
-        "CHECKPOINT. Hop only if hop_qualifies; else STAY.",
+        "Then: CreateGoal (tab-goal; house open) -> harvest every wake -> fold "
+        "scoreboard -> Plan -> Dispatch (+watcher) -> CHECKPOINT. "
+        "Hop only if hop_qualifies; else STAY.",
     ]
     message = "\n".join(lines) + "\n"
     encoded = message.encode("utf-8")
@@ -490,6 +491,8 @@ def fire_ide_hop(
     owns that scheme (10588). ``no_raise`` skips activate only when the operator
     is on the window and says so. ``ok`` means **landed**: a new agent transcript
     carrying the hop header appeared after the keystrokes — sent keys are not a hop.
+    After ``ok`` the hop script must ``retire_departing_tab`` (loops, tails, ``ide:``
+    lock). UpdateGoal is Cursor-native — tab-goal release, not house close.
     """
     if not gui_host:
         return {

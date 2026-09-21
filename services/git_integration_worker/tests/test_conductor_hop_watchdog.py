@@ -373,3 +373,15 @@ async def test_watchdog_parks_on_budget_exhaustion() -> None:
         ok = await maybe_fire_conductor_hop_watchdog(dispatch_id="pred-cap-0")
     assert ok is False
     park_mock.assert_awaited_once()
+
+
+def test_watchdog_hops_owed_off_event_loop() -> None:
+    """hop_owed does sync CDP HTTP — must not run on the GIW asyncio thread."""
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "cursor_sdk_closeout"
+        / "conductor_hop_watchdog.py"
+    ).read_text(encoding="utf-8")
+    assert "await asyncio.to_thread(hop_owed," in source

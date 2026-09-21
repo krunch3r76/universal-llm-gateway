@@ -176,7 +176,7 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
     if verdict.park and verdict.reason:
         await park_conductor_hop_mission(row, reason=verdict.reason)
         return False
-    if not hop_owed(row, closeout_tokens=closeout_tokens):
+    if not await asyncio.to_thread(hop_owed, row, closeout_tokens=closeout_tokens):
         return False
     if not _backoff_elapsed(row, backoff_s=verdict.backoff_s):
         return False

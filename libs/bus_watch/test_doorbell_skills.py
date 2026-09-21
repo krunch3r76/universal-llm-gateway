@@ -59,7 +59,7 @@ def test_navigator_doorbell_skills_from_policy_override() -> None:
         "architecture-invariants",
         "ulg-architecture",
     )
-    assert navigator_doorbell_skills_from_policy({}) == doorbell_skills("cdp")
+    assert navigator_doorbell_skills_from_policy({}) == doorbell_skills("cursor-sdk")
 
 
 @pytest.mark.offline

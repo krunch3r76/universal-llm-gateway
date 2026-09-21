@@ -9,11 +9,15 @@ Run after the CHECKPOINT lands (same turn), as the last action of the old tab:
 
 The message the new tab receives is ``resume <R>`` plus NOW row and one ARM line per
 live poller (auto-discovered from tmp/watchers, or ``--arm LABEL`` explicitly); the
-successor re-arms those tails, harvests, and plans. ``--find-transcript`` prints the
-transcript id of the tab whose first user message contains the text — the value the
-common checkpoint needs (``continuity(op=checkpoint, surface=cursor, transcript_id=...)``).
+successor re-arms those tails, harvests, and plans. ``ok`` then retires this tab's
+``--loop``, ``watch-supervise`` tails, and ``ide:`` lock
+(``bus_watch.ide_hop_retire``). UpdateGoal is the seat's job (tab-goal release).
+``--find-transcript`` prints the transcript id of the tab whose first user message
+contains the text — the value the common checkpoint needs
+(``continuity(op=checkpoint, surface=cursor, transcript_id=...)``).
 
-Substrate: libs/bus_watch/ide_hop.py (message + SSH keystroke on the GUI host) and
+Substrate: libs/bus_watch/ide_hop.py (message + SSH keystroke on the GUI host),
+libs/bus_watch/ide_hop_retire.py (departing-tab teardown), and
 scripts/orchestrator_tab_keystroke.py (evdev/Wayland, runs on the GUI host over NFS).
 """
 
@@ -36,6 +40,7 @@ from bus_watch.ide_hop import (
     seal_hop_window,
     tick_register,
 )
+from bus_watch.ide_hop_retire import GOAL_RELEASE, retire_departing_tab
 from bus_watch.judgment_rows import harvest_judgment_turns
 from bus_watch.liaison_digest import build_digest
 from bus_watch.now_row import format_now_line, resolve_now_row
@@ -227,6 +232,15 @@ def main() -> int:
     out["message"] = message
     out["harvest"] = harvest
     out["row_source"] = row_source
+    if out.get("ok"):
+        out["goal_release"] = GOAL_RELEASE
+        if args.dry_run:
+            out["retire"] = {"ok": True, "skipped": "dry_run"}
+        else:
+            out["retire"] = retire_departing_tab(
+                args.root,
+                holder=f"ide:{args.transcript_id}",
+            )
     print(json.dumps(out, indent=2))
     return 0 if out.get("ok") else 2
 

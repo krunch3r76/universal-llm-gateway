@@ -1,4 +1,4 @@
-"""Navigator CDP transport — clause evaluation, single-flight lease, and fire leg.
+"""Navigator wake transport — clause evaluation, single-flight lease, and fire leg.
 
 Clause 1 — navigator_single_flight (binder text, verbatim):
 
@@ -9,11 +9,13 @@ Clause 1 — navigator_single_flight (binder text, verbatim):
     (done|failed|timeout) or TTL expiry, whichever is first.
 
 1b  The navigator generate MUST carry
-    work_key=navigator:<root>:<night>. A second emit under the same
-    work_key is a defect, not a retry.
+    work_key=agent-bus:<root>:navigator:<night> (GIW-parseable ``agent-bus:``
+    scheme; the ``navigator:<night>`` suffix is the night identity). A
+    second emit under the same work_key is a defect, not a retry.
 
-1c  The navigator generate MUST carry parent_thread=<root>. seat_cap
-    enforces per-lane admission for bound callers; the global ceiling
+1c  The navigator generate MUST carry parent_thread=<occupancy>. That is
+    policy.loop_thread when set, else the resume root. seat_cap enforces
+    per-lane admission for bound callers; the global ceiling
     (evaluate_new_admission) remains advisory until implemented.
     1a/1b remain as defence-in-depth and are not retired.
 """
@@ -29,14 +31,21 @@ from pathlib import Path
 from typing import Any
 
 from durable_io.atomic import durable_write_text, path_flock
-from stargate_dispatch.client import submit_team_dispatch
 
 from bus_watch.doorbell import render_doorbell
 from bus_watch.doorbell_skills import (
     navigator_doorbell_skills_from_policy,
     navigator_skills_from_policy,
+    seat_doorbell_surface,
 )
 from bus_watch.fable_lock import WATCH_DIR, current_night_id
+from bus_watch.loop_tape import loop_tape_thread
+from bus_watch.navigator_dispatch import (
+    build_navigator_body,
+    navigator_lane_id,
+    resolve_navigator_seat,
+    submit_navigator,
+)
 
 _NAVIGATOR_LEASE_PREFIX = "navigator-"
 
@@ -209,6 +218,7 @@ def render_navigator_doorbell(
     *,
     root_id: str,
     include_commission: bool,
+    register: str = "autonomous",
 ) -> str:
     """Render the navigator doorbell with the status quintuple when digest is in hand."""
     root = digest.get("root") or {}
@@ -217,15 +227,23 @@ def render_navigator_doorbell(
         root.get("slug") or policy.get("navigator_slug") or "claude-ai-navigator-seat"
     )
     ring = policy.get("wake_ring")
+    tape = loop_tape_thread(root_id, policy)
     extras = tuple(policy.get("navigator_extra_addresses") or ())
-    fired_by = policy.get("navigator_fired_by") or "cdp generate via liaison-ticker"
+    seat = resolve_navigator_seat(policy, register=register)
+    default_fire = (
+        "cursor-auto request via liaison-ticker"
+        if seat == "cursor-auto"
+        else "cursor-sdk generate via liaison-ticker"
+    )
+    fired_by = policy.get("navigator_fired_by") or default_fire
     fp = str(digest.get("fingerprint") or "")
     return render_doorbell(
         root_id,
         slug,
         ring=str(ring) if ring else None,
-        surface="cdp",
-        skills=navigator_doorbell_skills_from_policy(policy),
+        loop_thread=tape if tape != str(root_id) else None,
+        surface=seat_doorbell_surface(seat),
+        skills=navigator_doorbell_skills_from_policy(policy, seat=seat),
         extra_addresses=extras,
         fired_by=str(fired_by),
         include_commission=include_commission,
@@ -281,14 +299,17 @@ def evaluate_navigator_wake(
     elif not clauses["register_not_attended"]:
         skip_reason = "register_attended"
     doorbell = render_navigator_doorbell(
-        digest, root_id=root_id, include_commission=include_commission
+        digest,
+        root_id=root_id,
+        include_commission=include_commission,
+        register=register,
     )
     return {
         "fire": fire,
         "clauses": clauses,
         "skip_reason": skip_reason,
         "night_id": night_id,
-        "work_key": f"navigator:{root_id}:{night_id}",
+        "work_key": f"agent-bus:{root_id}:navigator:{night_id}",
         "include_commission": include_commission,
         "commissions_tonight": commissions,
         "doorbell": doorbell,
@@ -305,7 +326,7 @@ def fire_navigator_wake(
     dry_run: bool = False,
     submit: Callable[..., tuple[dict[str, Any], int]] | None = None,
 ) -> dict[str, Any]:
-    """Evaluate clauses, acquire lease, and POST one navigator generate."""
+    """Evaluate clauses, acquire lease, and POST one navigator wake."""
     evaluation = evaluate_navigator_wake(digest, state, register=register)
     policy = digest.get("policy") or {}
     night_id = evaluation["night_id"]
@@ -314,22 +335,20 @@ def fire_navigator_wake(
     wake_timeout = _wake_timeout_seconds(policy)
     grace = float(policy.get("navigator_grace_seconds") or 900)
     ttl = wake_timeout + grace
-    nav_skills = navigator_skills_from_policy(policy)
-    body = {
-        "op": "generate",
-        "seat": "cdp",
-        "contract": "none",
-        "model": policy.get("navigator_model"),
-        "prompt": doorbell,
-        "dispatch_thread_id": root_id,
-        "parent_thread": root_id,
-        "work_key": work_key,
-        "timeout_seconds": int(wake_timeout),
-        "caller_agent": "liaison-ticker",
-    }
-    if nav_skills:
-        body["skills"] = nav_skills
-    evaluation["clauses"]["navigator_lane_bound"] = bool(body.get("parent_thread"))
+    seat = resolve_navigator_seat(policy, register=register)
+    nav_skills = navigator_skills_from_policy(policy, seat=seat)
+    tape = loop_tape_thread(root_id, policy)
+    body = build_navigator_body(
+        root_id=root_id,
+        tape=tape,
+        doorbell=doorbell,
+        work_key=work_key,
+        wake_timeout=wake_timeout,
+        policy=policy,
+        register=register,
+        skills=nav_skills,
+    )
+    evaluation["clauses"]["navigator_lane_bound"] = bool(navigator_lane_id(body))
     if not evaluation["clauses"]["navigator_lane_bound"]:
         return {
             "ok": False,
@@ -360,7 +379,7 @@ def fire_navigator_wake(
             "refused": lease.get("reason"),
             "evaluation": evaluation,
         }
-    poster = submit or submit_team_dispatch
+    poster = submit or submit_navigator
     payload, status = poster(body)
     result: dict[str, Any] = {
         "ok": 0 < status < 400,

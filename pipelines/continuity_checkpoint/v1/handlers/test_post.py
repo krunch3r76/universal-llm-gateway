@@ -519,3 +519,34 @@ async def test_carried_scoreboard_pin_does_not_append_fold_rows() -> None:
     body = send.await_args.kwargs["body"]
     assert f"{prior_pin} · carried" in body
     assert "| G2 |" not in body
+
+
+@pytest.mark.asyncio
+async def test_charter_pin_without_fold_does_not_append_g_rows() -> None:
+    """Charter projection_only emits a pin + fold lines; only folded=True appends."""
+    pin = (
+        "Scoreboard: cortex://notes/system/threads/10479-charter-scoreboard.md "
+        "· sha256:bdbe3629"
+    )
+    ctx = _Ctx()
+    ctx.outputs["tail_mechanical"] = {
+        "json": {
+            "folded": False,
+            "scoreboard_pin": pin,
+            "fold_row_lines": ["| G1 | must not land in authored residue |"],
+        }
+    }
+    ctx.outputs["score"] = {"json": {}}
+    send = AsyncMock(return_value=({"turn_number": 11}, 201))
+    handler = ContinuityCheckpointPostHandler()
+    with (
+        patch(
+            "handlers.post.bus_get",
+            new=AsyncMock(return_value=({"turn_number": 10, "body": ""}, 200)),
+        ),
+        patch("handlers.post.bus_send", new=send),
+    ):
+        await handler.execute(_Step(), ctx)
+    body = send.await_args.kwargs["body"]
+    assert pin in body
+    assert "| G1 |" not in body

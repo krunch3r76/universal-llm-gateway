@@ -73,12 +73,14 @@ def live_external_gate_for_lane(
 
 
 def read_external_gate_lane_snapshot() -> dict[str, Any]:
-    """Shared CDP lane snap for conductor external-gate occupancy (P1.2)."""
-    from services.git_integration_worker.cursor_auto.cdp_escalation import (
-        read_cdp_lane_snapshot,
-    )
+    """Shared CDP lane snap for conductor external-gate occupancy (P1.2).
 
-    return read_cdp_lane_snapshot()
+    Uses the 2s control-plane timeout: this runs from GIW background sweeps
+    on the asyncio thread, and a 30s connect to a down cdp-ask wedges /health.
+    """
+    from cdp_ask.lane_snapshot import read_cdp_lane_snapshot_brief
+
+    return read_cdp_lane_snapshot_brief()
 
 
 def external_gate_hop_verdict(row: dict[str, Any]) -> tuple[str, str | None]:

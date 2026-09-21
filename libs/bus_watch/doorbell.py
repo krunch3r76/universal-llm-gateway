@@ -263,6 +263,7 @@ def render_doorbell(
     slug: str,
     *,
     ring: str | None = None,
+    loop_thread: str | None = None,
     seat: str = "web-anthropic",
     surface: str = "ide",
     skills: tuple[str, ...] | None = None,
@@ -276,7 +277,10 @@ def render_doorbell(
     scope_lanes: tuple[str, ...] | None = None,
     fingerprint: str | None = None,
 ) -> str:
-    """Static doorbell text for ``root``; echoes go to ``ring`` (the root when None).
+    """Static doorbell text for ``root``; echoes go to ``ring`` (tape/root when None).
+
+    ``loop_thread`` is Phase-2 occupancy (DIGEST fetch + default echo). ``ring``
+    remains the 10532 decoy and wins the echo when set.
 
     Identical for equal arguments (F2 M5) and capped so extra ``md_read`` addresses
     cannot grow the paste into a dump. A planted address outranks a placeholder: over
@@ -296,9 +300,11 @@ def render_doorbell(
     """
     effective_surface = _seat_surface(seat)
     skill_slugs = skills if skills is not None else doorbell_skills(effective_surface)
-    echo = ring if ring else root
+    tape = str(loop_thread).strip() if loop_thread else ""
+    echo = ring if ring else (tape or root)
+    fetch = tape or root
     address_parts = [
-        f"agent_bus_read(fetch, thread={root}, last=10, compact=true)",
+        f"agent_bus_read(fetch, thread={fetch}, last=10, compact=true)",
         f"agent-bus:{echo} (echo)",
     ]
     if skills is None and seat_dispatch_surface(seat) == "life":

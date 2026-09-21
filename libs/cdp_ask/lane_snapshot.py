@@ -13,7 +13,11 @@ from typing import Any
 
 from claude_bundles.hop_cadence_seat_snap import attach_registry_seated_rows
 
-from cdp_ask.client import CdpAskClient
+from cdp_ask.client import CdpAskClient, CdpAskClientError
+
+# GIW background loops share the asyncio thread with /health. A 30s connect
+# to a down cdp-ask starves the socket (Recv-Q climb) and fails fleet drain.
+CONTROL_PLANE_TIMEOUT_S = 2.0
 
 
 def _stamp_snap_read(snap: dict[str, Any]) -> dict[str, Any]:
@@ -43,3 +47,18 @@ def read_cdp_lane_snapshot(*, client: CdpAskClient | None = None) -> dict[str, A
     if not isinstance(snap, dict):
         return {}
     return attach_registry_seated_rows(_stamp_snap_read(snap))
+
+
+def read_cdp_lane_snapshot_brief() -> dict[str, Any]:
+    """Active-work GET with a control-plane timeout for GIW background loops.
+
+    Empty mapping on transport/config failure so callers keep fail-open /
+    fail-closed around a falsy snap. Never use the 30s default client timeout
+    on the GIW asyncio thread.
+    """
+    try:
+        return read_cdp_lane_snapshot(
+            client=CdpAskClient(timeout_s=CONTROL_PLANE_TIMEOUT_S)
+        )
+    except CdpAskClientError:
+        return {}

@@ -123,20 +123,25 @@ def liaison_protocol_sot_uri() -> str:
     return load_skill_catalog(validate_sot=False).source_uri_for("liaison")
 
 
-def navigator_skills_from_policy(policy: dict[str, object]) -> list[str]:
-    """Policy ``navigator_skills`` override ≻ surface-derived CDP delivery list."""
+def navigator_skills_from_policy(
+    policy: dict[str, object], *, seat: str = "cursor-sdk"
+) -> list[str]:
+    """Policy ``navigator_skills`` override ≻ surface-derived delivery list."""
     raw = policy.get("navigator_skills")
     if isinstance(raw, (list, tuple)):
         return [str(s) for s in raw if str(s).strip()]
-    return dispatch_skills_for_surface("cdp")
+    surface = seat_dispatch_surface(seat) or seat_doorbell_surface(seat)
+    return dispatch_skills_for_surface(surface)
 
 
-def navigator_doorbell_skills_from_policy(policy: dict[str, object]) -> tuple[str, ...]:
+def navigator_doorbell_skills_from_policy(
+    policy: dict[str, object], *, seat: str = "cursor-sdk"
+) -> tuple[str, ...]:
     """Policy ``navigator_skills`` override ≻ surface-derived Use-line slugs."""
     raw = policy.get("navigator_skills")
     if isinstance(raw, (list, tuple)):
         return tuple(str(s) for s in raw if str(s).strip())
-    return doorbell_skills("cdp")
+    return doorbell_skills(seat_doorbell_surface(seat))
 
 
 def primary_liaison_slug(surface: str = "ide") -> str:

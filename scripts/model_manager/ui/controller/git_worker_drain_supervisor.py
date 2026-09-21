@@ -228,9 +228,10 @@ class GitWorkerDrainSupervisor:
             }:
                 return
             # Health-dead GIW: begin-drain HTTP never lands (drain_epoch stays
-            # null). Recycle mode must escalate to kill — idle_gate cannot trip
-            # on an empty/missing snap (a:36019, intents 8f882d79 / 3c61a486).
-            if self.idle_escalate_s is not None and intent.drain_epoch is None:
+            # null). Cooperative drain cannot start — SIGTERM. Recycle already
+            # killed here (a:36019); fleet stop used to mark failed and abort
+            # Sync+Restart All after the 10s HTTP timeout.
+            if intent.drain_epoch is None:
                 await self._on_idle(intent, t0)
                 return
             self.store.advance(intent.intent_id, status=STATUS_FAILED)
@@ -526,32 +527,40 @@ class GitWorkerDrainSupervisor:
         await events.emit_manage_restart_cancelled(intent_id=intent.intent_id)
 
     async def _on_idle(self, intent: Intent, t0: float) -> None:
-        """Occupant progress idled and park could not free it; force-kill."""
+        """Force-kill when recycle occupants idle, or begin-drain never lands."""
         snapshot = await self._safe_drain_state() or {}
         idle_s = float(self.idle_escalate_s or 0.0)
         park_summary = self._last_park_summary
-        await events.emit_manage_recycle_escalated(
-            intent_id=intent.intent_id,
-            idle_s=idle_s,
-            active_count=int(snapshot.get("active_count", 0) or 0),
-            stuck_ops=self._stuck_ops(snapshot),
-            park_attempted=self._park_idle_attempts > 0,
-            park_refusals=(
-                list(park_summary.get("refused") or []) if park_summary else []
-            ),
-        )
-        logger.warning(
-            "recycle_giw idle-escalate to force kill: intent_id=%s active_count=%s",
-            intent.intent_id,
-            snapshot.get("active_count"),
-        )
+        if self.idle_escalate_s is not None:
+            await events.emit_manage_recycle_escalated(
+                intent_id=intent.intent_id,
+                idle_s=idle_s,
+                active_count=int(snapshot.get("active_count", 0) or 0),
+                stuck_ops=self._stuck_ops(snapshot),
+                park_attempted=self._park_idle_attempts > 0,
+                park_refusals=(
+                    list(park_summary.get("refused") or []) if park_summary else []
+                ),
+            )
+            logger.warning(
+                "recycle_giw idle-escalate to force kill: intent_id=%s active_count=%s",
+                intent.intent_id,
+                snapshot.get("active_count"),
+            )
+        else:
+            logger.warning(
+                "git-worker begin-drain unreachable; SIGTERM without epoch: "
+                "intent_id=%s",
+                intent.intent_id,
+            )
         self.store.advance(intent.intent_id, status=STATUS_DRAINED_RESTARTING)
         await self._sigterm(intent, t0)
-        await events.emit_manage_recycle_completed(
-            intent_id=intent.intent_id,
-            escalated=True,
-            duration_s=time.monotonic() - t0,
-        )
+        if self.idle_escalate_s is not None:
+            await events.emit_manage_recycle_completed(
+                intent_id=intent.intent_id,
+                escalated=True,
+                duration_s=time.monotonic() - t0,
+            )
 
     async def _idle_gate_tripped(
         self, snapshot: dict[str, Any], now: float, start: float

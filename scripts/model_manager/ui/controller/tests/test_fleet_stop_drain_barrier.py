@@ -7,9 +7,15 @@ services remain up until drain completes — then stop together.
 from __future__ import annotations
 
 import ast
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
+
+from scripts.model_manager.ui.controller.fleet_local_drain import drain_stop_git_worker
+from scripts.model_manager.ui.model.service_state import ServiceStatus
 
 _CTL = Path(__file__).resolve().parents[1]
 _FLEET_PY = _CTL / "fleet.py"
@@ -72,3 +78,28 @@ def test_drain_module_documents_peers_stay_up_invariant() -> None:
     source = _FLEET_DRAIN_PY.read_text(encoding="utf-8")
     assert "peers stay up" in source.lower() or "remain up" in source.lower()
     assert "drain_local_barriers_before_stop" in source
+    assert "ServiceStatus.UNHEALTHY" in source
+    assert "git_worker_kill_for" in source
+
+
+@pytest.mark.offline
+def test_unhealthy_giw_kills_without_supervised_drain() -> None:
+    """Wedged GIW (health probe failed) must SIGTERM, not start begin-drain."""
+
+    kill = AsyncMock(return_value="git-integration-worker stopped (PID 1, 0.1s).")
+    ctl = SimpleNamespace(
+        service_state=SimpleNamespace(
+            check_git_integration_worker=lambda: SimpleNamespace(
+                status=ServiceStatus.UNHEALTHY
+            )
+        ),
+        git_worker_kill_for=lambda action: kill,
+        restart_gate=object(),
+        restart_intent_store=object(),
+        build_git_worker_drain_supervisor=lambda **_kw: (_ for _ in ()).throw(
+            AssertionError("supervised drain must not start")
+        ),
+    )
+    msg = asyncio.run(drain_stop_git_worker(ctl))
+    assert "stopped" in msg.lower()
+    kill.assert_awaited_once()

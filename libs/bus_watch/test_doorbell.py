@@ -189,6 +189,30 @@ def test_ring_none_echoes_root() -> None:
 
 
 @pytest.mark.offline
+def test_loop_thread_moves_fetch_and_echo() -> None:
+    text = render_doorbell(
+        "10479", "liaison-autonomous-night", loop_thread="11876"
+    )
+    assert "thread=11876" in text
+    assert "agent-bus:11876 (echo)" in text
+    assert 'subject="ORIENTED 10479"' in text
+    assert "agent-bus:10479 (echo)" not in text
+
+
+@pytest.mark.offline
+def test_wake_ring_wins_echo_loop_thread_wins_fetch() -> None:
+    text = render_doorbell(
+        "10479",
+        "liaison-autonomous-night",
+        ring="10532",
+        loop_thread="11876",
+    )
+    assert "thread=11876" in text
+    assert "agent-bus:10532 (echo)" in text
+    assert "agent-bus:11876 (echo)" not in text
+
+
+@pytest.mark.offline
 def test_determinism_and_headroom() -> None:
     first = _default_render()
     second = _default_render()

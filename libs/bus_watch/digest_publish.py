@@ -19,6 +19,7 @@ from bus_watch.digest_budget import _utcnow
 from bus_watch.lane_closeout import lane_status_query_pointer, query_lane_closeouts
 from bus_watch.liaison_digest import _bus, effective_policy
 from bus_watch.liaison_pager import page_liaison
+from bus_watch.loop_tape import loop_tape_thread
 from bus_watch.spawn_pending import row_is_terminal
 
 _BODY_CAP = 4096
@@ -247,21 +248,25 @@ def publish_digest(
     *,
     client: httpx.Client | None = None,
 ) -> dict[str, Any] | None:
-    """Post ``DIGEST <root> <ts>`` on the root; supersede the prior digest turn."""
+    """Post ``DIGEST <root> <ts>`` on the occupancy thread; supersede prior digest."""
     body = render_body(project_digest(digest))
     if body is None:
         _publish_failed(root_id, state, "body_exceeds_cap")
         return None
     ts = digest.get("ts") or ""
+    tape = loop_tape_thread(root_id, effective_policy(state), digest.get("policy"))
     payload: dict[str, Any] = {
-        "thread": root_id,
+        "thread": tape,
         "to": "web-anthropic",
         "from": "cursor",
         "subject": f"DIGEST {root_id} {ts}",
         "body": body,
     }
     prior = state.get("digest_turn_number")
-    if prior is not None:
+    prior_thread = str(state.get("digest_publish_thread") or root_id)
+    # Turn numbers are per-thread. A 10479 DIGEST turn cannot supersede on 11876
+    # (http_422 on the first Phase-2 post, 2026-09-20T16:41Z).
+    if prior is not None and prior_thread == tape:
         payload["supersedes_turn"] = prior
 
     def _post(c: httpx.Client) -> httpx.Response:
@@ -291,6 +296,7 @@ def publish_digest(
         _publish_failed(root_id, state, "missing_turn_number")
         return None
     state["digest_turn_number"] = turn_number
+    state["digest_publish_thread"] = tape
     if turn_id is not None:
         state["digest_turn_id"] = turn_id
     state["last_publish_error"] = None
@@ -317,13 +323,18 @@ def publish_if_enabled(
     if not effective_policy(state).get("post_digest"):
         _publish_skipped("post_digest_off")
         return "skipped"
-    if is_own_digest_echo(digest, state):
+    tape = loop_tape_thread(root_id, effective_policy(state), digest.get("policy"))
+    dest_moved = str(state.get("digest_publish_thread") or root_id) != tape
+    # own_echo compares root.turns to our last DIGEST turn. After a root-era
+    # publish those numbers match, so the first tape post would skip forever.
+    if not dest_moved and is_own_digest_echo(digest, state):
         _publish_skipped("own_echo")
         return "skipped"
     changed = bool(digest.get("changed_since_last_tick"))
-    stale = _digest_is_stale(digest, state)
+    # Root turn-count stale heuristic is false once DIGEST leaves the resume root.
+    stale = _digest_is_stale(digest, state) if tape == str(root_id) else False
     force_stale = stale and _stale_retry_due(state)
-    if require_change and not changed and not force_stale:
+    if require_change and not changed and not force_stale and not dest_moved:
         _publish_skipped("require_change")
         return "skipped"
     if force_stale:

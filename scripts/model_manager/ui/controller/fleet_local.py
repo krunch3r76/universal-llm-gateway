@@ -239,7 +239,8 @@ async def stop_local_services(
     if is_email_bridge_configured():
         stop_ops.append(("email_bridge", ctl.stop_email_bridge))
     # GIW is drain-gated — never parallel with peers (see fleet_local_drain).
-    if is_cdp_ask_manage_enabled() and ctl._cdp_ask_runs_local():  # noqa: SLF001
+    # start/stop_cdp_ask already SSH when PROJECT_ASK_URL is remote (F-1).
+    if is_cdp_ask_manage_enabled():
         stop_ops.append(("cdp_ask", ctl.stop_cdp_ask))
 
     peer_results = await run_ops_parallel(stop_ops)
@@ -318,7 +319,7 @@ def _build_start_ops(
         start_ops.append(("email_bridge", email_bridge_op))
     if is_rag_configured():
         start_ops.append(("rag", ctl.start_rag))
-    if is_cdp_ask_manage_enabled() and ctl._cdp_ask_runs_local():  # noqa: SLF001
+    if is_cdp_ask_manage_enabled():
         start_ops.append(("cdp_ask", ctl.start_cdp_ask))
     return start_ops
 

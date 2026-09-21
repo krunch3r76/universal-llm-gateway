@@ -41,6 +41,10 @@ async def drain_stop_git_worker(ctl: ServiceController) -> str:
         # Drain gate probes /health and defers with probe_error when down —
         # that would fail-closed the fleet cycle even though nothing to drain.
         return "git-integration-worker is not running."
+    if info.status is ServiceStatus.UNHEALTHY:
+        # Control plane dead (Recv-Q climb / loop starve). begin-drain HTTP
+        # cannot land — skip the 10s supervised timeout and SIGTERM.
+        return await ctl.git_worker_kill_for("stop")()
 
     supervisor = ctl.build_git_worker_drain_supervisor(
         kill=ctl.git_worker_kill_for("stop")

@@ -338,17 +338,18 @@ async def _maybe_restart_remote_cdp_ask(
     if remote_hostname != hostname:
         return
     _host, _port, base = cfg
+    work = None
     try:
         work = await HttpActiveWorkProbe(
             base, "/v1/project-ask/drain-state"
         ).snapshot()
     except Exception as exc:
+        # Down / hung satellite has nothing to drain — start it with the fleet.
         sink.line(
             hostname,
-            f"  ⚠ cdp_ask sync_restart deferred (drain-state probe failed: {exc})",
+            f"  ○ cdp_ask drain-state unreachable ({exc}); starting",
         )
-        return
-    if work.busy:
+    if work is not None and work.busy:
         running_count = work.detail.get("running_count", 0)
         sink.line(
             hostname,

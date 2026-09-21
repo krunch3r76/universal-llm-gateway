@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from cdp_ask.lane_snapshot import read_cdp_lane_snapshot_brief
 from claude_bundles.hop_seat_cutover import refuse_cadence_hop_for_live_seat
 from hop_handoff import build_continuity_handoff_body
 from universal_logging import get_logger
@@ -462,9 +463,15 @@ async def hop_cadence_loop(app: Any) -> None:
     )
     while True:
         try:
-            reconcile_stall_revocations()
-            reconcile_succession_confirmations(snapshot_reader=read_cdp_lane_snapshot)
-            outcomes = await scan_and_fire(queue=get_queue())
+            await asyncio.to_thread(reconcile_stall_revocations)
+            await asyncio.to_thread(
+                reconcile_succession_confirmations,
+                snapshot_reader=read_cdp_lane_snapshot_brief,
+            )
+            outcomes = await scan_and_fire(
+                queue=get_queue(),
+                snapshot_reader=read_cdp_lane_snapshot_brief,
+            )
             due = [
                 o
                 for o in outcomes

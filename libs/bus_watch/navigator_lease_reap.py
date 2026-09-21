@@ -50,9 +50,13 @@ _MIN_ID_PREFIX = 8
 
 
 def execution_reply_landed(
-    root_id: str, execution_id: str, *, last: int = REPLY_SCAN_TURNS
+    root_id: str,
+    execution_id: str,
+    *,
+    last: int = REPLY_SCAN_TURNS,
+    thread: str | None = None,
 ) -> bool | None:
-    """Has ``execution_id`` reported back on ``root_id``?
+    """Has ``execution_id`` reported back on ``root_id`` (or occupancy ``thread``)?
 
     ``True`` when a turn subject names the execution, ``False`` when the scan
     completed and found none, ``None`` when the bus could not be read. The
@@ -63,19 +67,30 @@ def execution_reply_landed(
     if len(ident) < _MIN_ID_PREFIX:
         return None
     needle = ident[:_MIN_ID_PREFIX]
+    threads = [str(root_id)]
+    extra = str(thread or "").strip()
+    if extra and extra not in threads:
+        threads.append(extra)
+    saw_scan = False
     try:
         with digest_budget._bus() as client:
-            payload = digest_budget._get(client, "/turns", thread=root_id, last=last)
+            for tid in threads:
+                payload = digest_budget._get(client, "/turns", thread=tid, last=last)
+                if not isinstance(payload, dict) or "_error" in payload:
+                    continue
+                turns = payload.get("turns")
+                if not isinstance(turns, list):
+                    continue
+                saw_scan = True
+                for turn in turns:
+                    if isinstance(turn, dict) and needle in str(
+                        turn.get("subject") or ""
+                    ):
+                        return True
     except Exception:  # noqa: BLE001 — an unreadable bus must never reap a lease
         return None
-    if not isinstance(payload, dict) or "_error" in payload:
+    if not saw_scan:
         return None
-    turns = payload.get("turns")
-    if not isinstance(turns, list):
-        return None
-    for turn in turns:
-        if isinstance(turn, dict) and needle in str(turn.get("subject") or ""):
-            return True
     return False
 
 
@@ -102,7 +117,19 @@ def reap_navigator_lease(root_id: str, *, dry_run: bool = False) -> dict[str, An
         # A lease claimed but never stamped with its execution id cannot be
         # judged; the TTL is the only safe release for it.
         return {"reaped": False, "reason": "no_execution_id", "holder": holder}
-    landed = execution_reply_landed(root_id, execution_id)
+    tape = None
+    try:
+        from bus_watch.fable_lock import WATCH_DIR
+        from bus_watch.loop_tape import loop_tape_thread
+        from bus_watch.tick_state import load_state
+
+        state = load_state(WATCH_DIR / f"liaison-{root_id}.tick.json")
+        tape = loop_tape_thread(root_id, state.get("policy") or {})
+    except Exception:  # noqa: BLE001 — occupancy miss falls back to root scan
+        tape = None
+    landed = execution_reply_landed(
+        root_id, execution_id, thread=tape if tape != root_id else None
+    )
     if landed is None:
         return {"reaped": False, "reason": "bus_unreadable", "holder": holder}
     if landed is False:

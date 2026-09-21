@@ -36,7 +36,7 @@ def test_start_command_goes_through_user_unit() -> None:
     """Start must systemctl --user the unit (setsid lives in cdp-ask-start under INVOCATION_ID)."""
     cmd = _start_cmd_static_text()
     # Direct script/& daemon in the SSH cmd pins fleet_deploy and leaves the unit inactive.
-    assert "systemctl --user start cdp-ask.service" in cmd
+    assert "systemctl --user start --no-block cdp-ask.service" in cmd
     assert "systemctl --user is-active cdp-ask.service" in cmd
     assert "nohup" not in cmd
     # Existence check is fine; direct ExecStart of the script (bypassing the unit) is not.
@@ -45,7 +45,24 @@ def test_start_command_goes_through_user_unit() -> None:
     assert "EVENTS_INGEST_TCP=" in cmd
     # Seal process code_version at start so /health is not permanently unknown.
     assert "ULG_CODE_VERSION=" in cmd
-    assert 'git -C "$REPO" rev-parse HEAD' in cmd
+    # Remote git on a hung NFS mount pinned SSH; version is sealed on the hub.
+    assert "git -C" not in cmd
+    assert "kill -9" in cmd
+
+
+def test_nfs_probe_is_time_bounded() -> None:
+    src = Path(cdp_ask_remote.__file__).read_text(encoding="utf-8")
+    assert "timeout" in src
+    assert cdp_ask_remote._NFS_PROBE_S <= 5
+
+
+def test_fleet_remote_starts_when_drain_probe_fails() -> None:
+    """A down satellite is idle — Sync+Restart All must start it, not defer."""
+    from scripts.model_manager.ui.controller import fleet_remote
+
+    src = Path(fleet_remote.__file__).read_text(encoding="utf-8")
+    assert "drain-state unreachable" in src
+    assert "deferred (drain-state probe failed" not in src
 
 
 def test_run_ssh_has_bounded_timeout_constant() -> None:
