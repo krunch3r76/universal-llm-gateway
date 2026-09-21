@@ -1,15 +1,16 @@
-"""Per-connection watermarks, resume_from reconnect, GX1 truncation (G5.1 slice 3)."""
+"""Per-connection watermarks, resume_from reconnect, GX1 cost-warn (G5.1 slice 3)."""
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
 
-from scripts.model_manager.ui.dispatch_monitor.core import fingerprint as fingerprint_mod
+from scripts.model_manager.ui.dispatch_monitor.core import (
+    fingerprint as fingerprint_mod,
+)
 from scripts.model_manager.ui.dispatch_monitor.core import signals
-from scripts.model_manager.ui.dispatch_monitor.core.model import Model, hints_after_drop
+from scripts.model_manager.ui.dispatch_monitor.core.model import Model
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import Event
 from scripts.model_manager.ui.dispatch_monitor.core.replay import JsonlEventSource
 from scripts.model_manager.ui.dispatch_monitor.core.tests.conftest import fixture_path
@@ -24,7 +25,6 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.subscribe_session import (
     consume_connection,
 )
 from scripts.model_manager.ui.dispatch_monitor.ulg.transport_events import (
-    fold_status_transport_event,
     replay_truncated_event,
 )
 
@@ -156,8 +156,8 @@ async def test_reconnect_resubscribes_one_connection_with_its_watermark() -> Non
 
 
 @pytest.mark.asyncio
-async def test_gx1_seq_gap_detects_truncation_and_stops_replay() -> None:
-    """AC3 — seq gap marks reseeding + attention; replay batch is not fully folded."""
+async def test_gx1_seq_gap_warns_and_keeps_folding() -> None:
+    """AC3 — seq gap warns; every delivered event is still folded."""
     model = Model()
     watermarks = ConnectionWatermarks.fresh()
     watermarks.advance("frontier.sdk.*", 100)
@@ -192,7 +192,7 @@ async def test_gx1_seq_gap_detects_truncation_and_stops_replay() -> None:
         on_truncated=on_truncated,
     )
     assert result.truncated is True
-    assert result.events_applied == 0
+    assert result.events_applied == 2
     assert truncated == [("frontier.sdk.*", 100, {"reason": "seq_gap", "first_seq": 105})]
 
     ts = 2_000
@@ -205,54 +205,39 @@ async def test_gx1_seq_gap_detects_truncation_and_stops_replay() -> None:
             ts_unix_ms=ts,
         )
     )
-    model.apply(
-        fold_status_transport_event(
-            fold_status="reseeding",
-            reason="seq_gap",
-            connection="frontier.sdk.*",
-            ts_unix_ms=ts,
+    frame = model.derive(ts + 1)
+    assert frame.health.fold_status == "live"
+    items = [item for item in frame.attention if item.kind == "monitor.transport.replay_truncated"]
+    assert items
+    assert items[0].severity == "warn"
+
+
+@pytest.mark.asyncio
+async def test_truncation_handler_keeps_fold_live() -> None:
+    """AC4 — cost warning does not wipe or reseed the fold."""
+    controller = MonitorController(seed_minutes=60)
+    controller.model.apply(
+        Event(
+            signals.CHARTER_SCANNED,
+            1_000,
+            {"roots": 1},
+            seq=11,
         )
     )
-    frame = model.derive(ts + 1)
-    assert frame.health.fold_status == "reseeding"
+    await controller._handle_truncation(
+        "manage.charter.tick.*",
+        10,
+        {"reason": "seq_gap", "first_seq": 12},
+    )
+    frame = controller.model.derive(controller.clock.now_ms())
+    assert frame.health.fold_status == "live"
     assert any(
         item.kind == "monitor.transport.replay_truncated" for item in frame.attention
     )
 
 
-@pytest.mark.asyncio
-async def test_truncation_recovery_reseed_returns_fold_status_live(monkeypatch) -> None:
-    """AC4 — after truncation, re-seed path restores fold_status to live."""
-    controller = MonitorController(seed_minutes=60)
-
-    def _fake_seed(apply, **kwargs):  # noqa: ANN001, ARG001
-        apply(
-            Event(
-                signals.CHARTER_SCANNED,
-                1_000,
-                {"roots": 1},
-                seq=11,
-            )
-        )
-        return 1
-
-    monkeypatch.setattr(
-        "scripts.model_manager.ui.dispatch_monitor.ulg.controller.seed_model",
-        _fake_seed,
-    )
-
-    await controller._reseed_after_truncation("manage.charter.tick.*")
-    frame = controller.model.derive(controller.clock.now_ms())
-    assert frame.health.fold_status == "live"
-    assert watermarks_ok(controller) is True
-
-
-def watermarks_ok(controller: MonitorController) -> bool:
-    return controller.watermarks.get("manage.charter.tick.*") == 11
-
-
 def test_truncation_meta_events_enter_model_not_controller_mutation() -> None:
-    """AC5 — fold_status and truncation surface only via apply()."""
+    """AC5 — truncation attention surfaces only via apply(); fold stays live."""
     model = Model()
     model.apply(
         replay_truncated_event(
@@ -263,17 +248,10 @@ def test_truncation_meta_events_enter_model_not_controller_mutation() -> None:
             ts_unix_ms=1_000,
         )
     )
-    model.apply(
-        fold_status_transport_event(
-            fold_status="reseeding",
-            reason="seq_gap",
-            connection="cdp.generate.*",
-            ts_unix_ms=1_000,
-        )
-    )
     frame = model.derive(2_000)
-    assert frame.health.fold_status == "reseeding"
+    assert frame.health.fold_status == "live"
     assert frame.attention[0].kind == "monitor.transport.replay_truncated"
+    assert frame.attention[0].severity == "warn"
 
 
 def test_overlap_idempotent_for_terminal_keyed_sdk_events() -> None:

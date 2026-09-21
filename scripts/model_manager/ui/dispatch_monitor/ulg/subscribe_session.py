@@ -1,22 +1,24 @@
-"""Per-connection subscribe consume loop — watermark advance, GX1 truncation, reconnect."""
+"""Per-connection subscribe consume loop — watermark advance, cost warn, reconnect."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from libs.event_store.client import subscribe_events
-
 from scripts.model_manager.ui.dispatch_monitor.core.protocols import EventRecord
 from scripts.model_manager.ui.dispatch_monitor.ulg.connection_watermarks import (
     ConnectionWatermarks,
     filter_key,
 )
 from scripts.model_manager.ui.dispatch_monitor.ulg.event_query import query_sock
-from scripts.model_manager.ui.dispatch_monitor.ulg.subscribe_filters import LIVE_FILTERS
 from scripts.model_manager.ui.dispatch_monitor.ulg.records import event_from_row
+from scripts.model_manager.ui.dispatch_monitor.ulg.subscribe_filters import LIVE_FILTERS
+
+_PAYLOAD_WARN_BYTES = 64_000
 
 Handler = Callable[[EventRecord], Awaitable[None]]
 TruncationHandler = Callable[[str, int | None, dict[str, Any]], Awaitable[None]]
@@ -49,6 +51,20 @@ def _is_truncation_notice(raw: dict[str, Any]) -> bool:
     return bool(raw.get("replay_truncated"))
 
 
+def _payload_bytes(raw: dict[str, Any]) -> int:
+    payload = raw.get("payload")
+    if isinstance(payload, str):
+        return len(payload.encode())
+    if isinstance(payload, (bytes, bytearray)):
+        return len(payload)
+    if payload is None:
+        return 0
+    try:
+        return len(json.dumps(payload, default=str).encode())
+    except (TypeError, ValueError):
+        return 0
+
+
 async def consume_connection(
     raw_stream: AsyncIterator[dict[str, Any]],
     *,
@@ -57,39 +73,46 @@ async def consume_connection(
     handler: Handler,
     on_truncated: TruncationHandler | None = None,
 ) -> ConsumeResult:
-    """Fold one connection's stream; stop replay on GX1 truncation."""
+    """Fold one connection's stream. Gaps and large payloads warn; nothing is dropped."""
     key = filter_key(event_filter)
     resume_from = watermarks.get(key)
-    truncated = False
+    warned = False
+    payload_warned = False
     applied = 0
     saw_seq = False
+
+    async def _warn(detail: dict[str, Any]) -> None:
+        nonlocal warned
+        warned = True
+        if on_truncated is not None:
+            await on_truncated(key, resume_from, detail)
 
     async for raw in raw_stream:
         if not isinstance(raw, dict):
             continue
         if _is_truncation_notice(raw):
-            truncated = True
-            if on_truncated is not None:
-                await on_truncated(key, resume_from, dict(raw))
-            break
+            notice = dict(raw)
+            notice.setdefault("reason", "replay_notice")
+            await _warn(notice)
+            continue
         msg_type = raw.get("type")
         if msg_type in _META_TYPES:
             continue
 
         seq = raw.get("seq")
         if (
-            not truncated
-            and not saw_seq
+            not saw_seq
             and isinstance(seq, int)
             and not isinstance(seq, bool)
             and resume_from is not None
             and seq > resume_from + 1
         ):
-            truncated = True
-            detail = {"reason": "seq_gap", "first_seq": seq}
-            if on_truncated is not None:
-                await on_truncated(key, resume_from, detail)
-            break
+            await _warn({"reason": "seq_gap", "first_seq": seq})
+
+        size = _payload_bytes(raw)
+        if size >= _PAYLOAD_WARN_BYTES and not payload_warned:
+            payload_warned = True
+            await _warn({"reason": "payload_costly", "payload_bytes": size})
 
         if not _matches_filter(raw, event_filter):
             continue
@@ -105,7 +128,7 @@ async def consume_connection(
         watermarks.advance(key, event.seq if event.seq is not None else seq)
         applied += 1
 
-    return ConsumeResult(truncated=truncated, events_applied=applied)
+    return ConsumeResult(truncated=warned, events_applied=applied)
 
 
 async def _connection_loop(
@@ -129,16 +152,13 @@ async def _connection_loop(
                 ):
                     yield raw
 
-            result = await consume_connection(
+            await consume_connection(
                 _stream(),
                 event_filter=event_filter,
                 watermarks=watermarks,
                 handler=handler,
                 on_truncated=on_truncated,
             )
-            if result.truncated:
-                delay = backoff_s
-                continue
             delay = backoff_s
         except asyncio.CancelledError:
             raise

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -21,6 +22,8 @@ from .store import EventStore
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SUBSCRIBER_QUEUE_SIZE = 1000
+# Page size only — never a replay cap. Catch-up walks until the window is empty.
+_REPLAY_PAGE_SIZE = 10000
 
 
 def _matches_filter(event: dict[str, Any], filt: dict[str, str]) -> bool:
@@ -109,11 +112,7 @@ def create_subscribe_router(
                             await ws.send_json(item)
 
                     if resume_seq is not None:
-                        rows = await store.query(
-                            "SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT 10000",
-                            (resume_seq,),
-                        )
-                        for row in rows:
+                        async for row in _iter_replay_rows(store, resume_seq):
                             await _send_if_matches(row)
 
                     realtime_filter = event_filter.get("role") in (
@@ -162,6 +161,28 @@ def create_subscribe_router(
             )
 
     return router
+
+
+async def _iter_replay_rows(
+    store: EventStore, resume_seq: object
+) -> AsyncIterator[dict[str, Any]]:
+    """Yield every row with seq > resume_seq. Pages; does not truncate the window."""
+    last = resume_seq
+    while True:
+        rows = await store.query(
+            "SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?",
+            (last, _REPLAY_PAGE_SIZE),
+            limit=_REPLAY_PAGE_SIZE,
+        )
+        if not rows:
+            return
+        for row in rows:
+            yield row
+            seq = row.get("seq")
+            if seq is not None:
+                last = seq
+        if len(rows) < _REPLAY_PAGE_SIZE:
+            return
 
 
 async def _push_loop(

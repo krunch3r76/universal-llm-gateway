@@ -32,7 +32,6 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.terminal_backfill import (
     lease_released_without_terminal_ids,
 )
 from scripts.model_manager.ui.dispatch_monitor.ulg.transport_events import (
-    fold_status_transport_event,
     replay_truncated_event,
 )
 
@@ -63,7 +62,6 @@ class MonitorController:
         self._last_fingerprint: str | None = None
         self._last_frame = None
         self._apply_lock = asyncio.Lock()
-        self._reseed_lock = asyncio.Lock()
         self._pending_drop_hint = False
 
     def _apply(self, record: EventRecord) -> None:
@@ -119,8 +117,9 @@ class MonitorController:
         requested_seq: int | None,
         detail: dict[str, Any],
     ) -> None:
+        """Cost warning only — keep the live fold; never drop or reseed the window."""
         ts = self.clock.now_ms()
-        reason = str(detail.get("reason") or "truncated")
+        reason = str(detail.get("reason") or "costly")
         first_seq = detail.get("first_seq")
         first = first_seq if isinstance(first_seq, int) and not isinstance(first_seq, bool) else None
         async with self._apply_lock:
@@ -133,53 +132,7 @@ class MonitorController:
                     ts_unix_ms=ts,
                 )
             )
-            self._apply(
-                fold_status_transport_event(
-                    fold_status="reseeding",
-                    reason=reason,
-                    connection=connection,
-                    ts_unix_ms=ts,
-                )
-            )
         self.tick()
-        await self._reseed_after_truncation(connection)
-
-    async def _reseed_after_truncation(self, connection: str) -> None:
-        async with self._reseed_lock:
-            thresholds = self.model.thresholds
-            async with self._apply_lock:
-                self.model = Model(thresholds)
-                self.model.replay_truncations.clear()
-                self._last_fingerprint = None
-                self._last_frame = None
-                self.watermarks = ConnectionWatermarks.fresh()
-                seeded = seed_model(
-                    self._apply,
-                    minutes=self.seed_minutes,
-                    sdk_fold=self.model.sdk,
-                    backfill_minutes=max(self.seed_minutes, 24 * 60),
-                )
-                ts = self.clock.now_ms()
-                self._apply(
-                    fold_status_transport_event(
-                        fold_status="live",
-                        reason="reseed_complete",
-                        connection=connection,
-                        ts_unix_ms=ts,
-                    )
-                )
-            self.tick()
-            if seeded == 0:
-                async with self._apply_lock:
-                    self._apply(
-                        fold_status_transport_event(
-                            fold_status="suspect",
-                            reason="reseed_empty",
-                            connection=connection,
-                            ts_unix_ms=self.clock.now_ms(),
-                        )
-                    )
-                self.tick()
 
     def trigger_reconcile(self, subject: str) -> dict[str, object]:
         """Explicit operator reconcile for one subject ref; never called from tick."""

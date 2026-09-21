@@ -30,9 +30,9 @@ def transport_truncation_items(
             AttentionItem(
                 key=f"monitor.transport.replay_truncated:{connection}",
                 kind="monitor.transport.replay_truncated",
-                severity="crit",
+                severity="warn",
                 subject=connection,
-                title="Replay window truncated — fold may be incomplete",
+                title="Long subscribe replay — delivered in full (cost warning)",
                 detail=detail,
                 since_ms=since_ms,
                 age_ms=age_ms,
