@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 from claude_bundles.conductor_stop import parse_stop_tokens
 from cursor_sdk import Client
-from cursor_sdk.types import AgentOptions
+from cursor_sdk.types import AgentOptions, LocalSendOptions, SendOptions
 from fastapi.responses import JSONResponse
 from universal_logging import get_logger
 from universal_protocol import error_envelope
@@ -526,7 +526,12 @@ def start_or_resume_agent(
     """Create or resume an SDK agent, then send the continuation turn."""
     if resume_ctx is not None:
         agent = client.resume_agent(resume_ctx.sdk_agent_id, agent_options)
+        # Resume children exist only when the parent ledger row is terminal, so
+        # unconditional force on resume is the deliberate superset of that done-when.
+        run = agent.send(
+            prompt, SendOptions(local=LocalSendOptions(force=True))
+        )
     else:
         agent = client.create_agent(agent_options)
-    run = agent.send(prompt)
+        run = agent.send(prompt)
     return agent, run

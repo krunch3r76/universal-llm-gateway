@@ -386,16 +386,21 @@ def test_lane_worktree_reuse_updates_last_dispatch(tmp_path: Path) -> None:
 
 
 def test_start_or_resume_agent_branches() -> None:
+    from cursor_sdk.types import LocalSendOptions, SendOptions
+
+    from services.git_integration_worker.cursor_sdk_resume import ResumeRunContext
+
     client = MagicMock()
     resume_agent = MagicMock(return_value=MagicMock(agent_id="agent-1"))
     create_agent = MagicMock(return_value=MagicMock(agent_id="agent-2"))
     client.resume_agent = resume_agent
     client.create_agent = create_agent
     run = MagicMock(id="run-1")
-    resume_agent.return_value.send = MagicMock(return_value=run)
-    create_agent.return_value.send = MagicMock(return_value=run)
+    resume_send = MagicMock(return_value=run)
+    create_send = MagicMock(return_value=run)
+    resume_agent.return_value.send = resume_send
+    create_agent.return_value.send = create_send
     options = MagicMock()
-    from services.git_integration_worker.cursor_sdk_resume import ResumeRunContext
 
     ctx = ResumeRunContext(
         resume_of="parent",
@@ -410,10 +415,15 @@ def test_start_or_resume_agent_branches() -> None:
     )
     resume_agent.assert_called_once_with("agent-parent", options)
     create_agent.assert_not_called()
+    resume_send.assert_called_once_with(
+        "continue", SendOptions(local=LocalSendOptions(force=True))
+    )
     assert got_run is run
 
     create_agent.reset_mock()
     resume_agent.reset_mock()
+    resume_send.reset_mock()
+    create_send.reset_mock()
     start_or_resume_agent(
         client=client,
         agent_options=options,
@@ -422,6 +432,7 @@ def test_start_or_resume_agent_branches() -> None:
     )
     create_agent.assert_called_once_with(options)
     resume_agent.assert_not_called()
+    create_send.assert_called_once_with("fresh")
 
 
 def test_load_resume_run_context() -> None:
