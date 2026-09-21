@@ -35,6 +35,10 @@ from bus_watch.spawn_wake.play_classify import (
     classify_leftover,
 )
 from bus_watch.spawn_wake.predicate import evaluate_spawn_predicate
+from bus_watch.spawn_wake.review_apply import (
+    mark_review_apply_fired,
+    maybe_review_apply_body,
+)
 from bus_watch.spawn_wake.row_bind import body_for_sit_friction
 from bus_watch.spawn_wake.row_class import (
     ROW_CLASS_FIRED,
@@ -59,13 +63,17 @@ def body_for_leftover(
     digest: dict[str, Any] | None = None,
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
-    """Hold mints nothing. Play rematerializes the todo. Sit on a forcing friction
-    score row binds CDP ROW_CLASS; otherwise sit is today's house generate."""
+    """Hold mints nothing unless a review owes apply. Play rematerializes the
+    todo. An owing review outranks sit (including ROW_CLASS bind). Else sit on a
+    forcing friction binds CDP ROW_CLASS; remaining sit is house generate."""
+    review_body = maybe_review_apply_body(root_id, policy, digest, state)
     if leftover.get("leftover") == LEFTOVER_HOLD:
-        return None
+        return review_body
     todo = leftover.get("todo")
     if leftover.get("leftover") == LEFTOVER_PLAY and todo:
         return build_play_dispatch_body(root_id, policy, todo_slug=str(todo))
+    if review_body:
+        return review_body
     if digest is not None and state is not None:
         friction = sit_forcing_friction(digest, leftover)
         if friction:
@@ -101,7 +109,9 @@ def fire_spawn(
         digest=snap,
         state=state,
     )
-    if verdict.get("leftover") == LEFTOVER_HOLD:
+    if verdict.get("leftover") == LEFTOVER_HOLD and not (body or {}).get(
+        "_review_apply"
+    ):
         return {
             "status_code": 0,
             "refused": PLAY_HOLD,
@@ -184,7 +194,7 @@ def fire_spawn(
     state["dispatches_tonight"] = count
     state["last_spawn_at"] = time.time()
     paged_nights = set(state.get("spawn_paged_nights") or [])
-    if night_id not in paged_nights:
+    if night_id not in paged_nights and not (body or {}).get("_review_apply"):
         page_liaison(
             root_id,
             f"liaison {root_id} — first spawn {night_id}",
@@ -257,7 +267,9 @@ def tick_spawn_on_wake(
         digest=digest,
         state=state,
     )
-    if leftover.get("leftover") == LEFTOVER_HOLD:
+    if leftover.get("leftover") == LEFTOVER_HOLD and not (body or {}).get(
+        "_review_apply"
+    ):
         return {
             "action": "hold",
             "evaluation": evaluation,
@@ -309,4 +321,7 @@ def tick_spawn_on_wake(
         fired_fid = str((body or {}).get("_friction_id") or "")
         if fired_fid and (body or {}).get("_row_class"):
             mark_row_class_fired(state, fired_fid)
+        review_key = str((body or {}).get("_review_key") or "")
+        if (body or {}).get("_review_apply") and review_key:
+            mark_review_apply_fired(state, review_key)
     return {"action": "spawned", "evaluation": evaluation, "fire": fired}

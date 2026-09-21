@@ -1310,7 +1310,8 @@ def test_tick_spawn_writes_fired_latch_on_low_success(monkeypatch) -> None:  # n
     assert out["action"] == "spawned"
     assert "a:35997" in (state.get("row_class_fired") or {})
     assert posted[0]["contract"] == "implement"
-    assert posted[0]["_friction_id"] == "a:35997"
+    assert "_friction_id" not in posted[0]
+    assert (out.get("fire") or {}).get("body", {}).get("_friction_id") == "a:35997"
 
 
 def test_tick_spawn_does_not_latch_fired_on_http_error(monkeypatch) -> None:  # noqa: ANN001

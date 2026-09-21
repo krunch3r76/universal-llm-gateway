@@ -51,6 +51,7 @@ from bus_watch.spawn_pending import (
     digest_root_surface,
     observe_terminal_lane_closeouts,
 )
+from bus_watch.spawn_wake.review_apply import ready_review_apply_attention
 from bus_watch.spawn_wake.row_class import ready_row_class_attention
 
 _STARGATE_HEALTH = os.environ.get(
@@ -298,6 +299,16 @@ def build_digest(
                     "unread_turns": unread_turns,
                 },
                 "frictions": frictions["rows"],
+            },
+            state,
+        )
+        + ready_review_apply_attention(
+            {
+                "root": {
+                    "id": root_id,
+                    "recent_turns": recent_turns,
+                    "unread_turns": unread_turns,
+                },
             },
             state,
         ),

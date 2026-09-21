@@ -21,7 +21,9 @@ Row lifecycle (one row = one friction assertion, id ``a:<assertion_id>``)
    key) is written when the ticker spawns on a row, so a friction enters the
    spawn channel once per assertion id. A re-opened friction carries a new id
    and enters again. The row stays a NOW candidate until dispositioned.
-3. **Disposition** — the seat binds ``direct-first | todo-minted | declined``
+3. **Disposition** — sit leftover on a friction NOW is a CDP row-bind
+   (``cdp/opus-5``) that chooses LOW vs TRIO; grok house generate is not the
+   judge. The seat then records ``direct-first | todo-minted | declined``
    with ``liaison-tick.py --mark-friction a:<id>:<disposition>`` (operator key
    ``friction_dispositions``) and writes back on the assertion with
    ``cortex(tool="friction_close")`` (``todo:<slug>`` · ``wontfix`` · at landing

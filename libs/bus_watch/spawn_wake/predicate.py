@@ -24,6 +24,10 @@ from bus_watch.spawn_wake.play_classify import (
     LEFTOVER_PLAY,
     classify_leftover,
 )
+from bus_watch.spawn_wake.review_apply import (
+    owing_review_apply,
+    ready_review_apply_attention,
+)
 
 
 def _parse_iso_ts(value: str | None) -> float | None:
@@ -138,6 +142,8 @@ def compute_spawn_signal_sources(
     sources: list[str] = []
     if actionable_attention(attention, state=state):
         sources.append("actionable_attention")
+    if ready_review_apply_attention(digest, state):
+        sources.append("review_apply")
     if checkpoint_due_wake(state, checkpoint_due):
         sources.append("checkpoint_due")
     if handoff_wake(state):
@@ -213,6 +219,17 @@ def evaluate_spawn_predicate(
     if leftover["leftover"] == LEFTOVER_PLAY:
         clauses["successor_model_bound"] = True
     clauses["leftover_not_hold"] = leftover["leftover"] != LEFTOVER_HOLD
+    if owing_review_apply(digest, state):
+        # Apply-all under: frozen ready, ide: check-in, or leftover HOLD must
+        # not park suggestions for the operator (11960).
+        clauses["policy_ready"] = True
+        clauses["successor_model_bound"] = True
+        clauses["leftover_not_hold"] = True
+        clauses["seat_lock_free"] = True
+        if "review_apply" not in spawn_signal_sources:
+            spawn_signal_sources.append("review_apply")
+        clauses["spawn_signal"] = True
+        clauses["fingerprint_changed"] = True
     spawn = all(clauses.values())
     result: dict[str, Any] = {
         "spawn": spawn,

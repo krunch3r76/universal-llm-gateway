@@ -73,7 +73,10 @@ def build_dispatch_body(
         "op": "generate",
         "seat": seat,
         "contract": contract,
-        "lane": "A",
+        # Sit/house generate is not bind-only: a successor that dispositions
+        # friction or dispatches implement must not serialize on Lane A's
+        # 1-slot write lease (11960 sit queued behind 11959 grok, 2026-09-21).
+        "lane": "B",
         "model": policy.get("successor_model"),
         "message": message,
         "dispatch_thread_id": tape,
@@ -106,6 +109,9 @@ def _wire_submit_body(body: dict[str, Any]) -> dict[str, Any]:
     if wired.get("message") and not wired.get("prompt"):
         wired["prompt"] = wired.pop("message")
     wired.pop("tags", None)
+    for key in list(wired):
+        if key.startswith("_"):
+            wired.pop(key, None)
     return wired
 
 
