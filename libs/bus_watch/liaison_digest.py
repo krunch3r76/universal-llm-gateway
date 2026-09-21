@@ -21,7 +21,6 @@ from typing import Any
 import httpx
 
 from bus_watch.digest_budget import (
-    _BUDGET_SCOPE,
     GEAR_PRESETS,
     POLICY_DEFAULTS,
     _bus,
@@ -29,19 +28,15 @@ from bus_watch.digest_budget import (
     _holder_dispatch_id,
     _read_sdk_usage_live,
     _utcnow,
-    build_budget_block,
     digest_fingerprint,
     effective_policy,
     health_probe,
+    seat_budget,
 )
 from bus_watch.events import emit_checkpoint_observed
 from bus_watch.fable_lock import WATCH_DIR, current_night_id, read_lock
 from bus_watch.friction_rows import fold_fingerprint, harvest_frictions
-from bus_watch.ide_budget import (
-    IDE_BUDGET_SOURCE,
-    ide_holder_transcript,
-    measure_ide_tab,
-)
+from bus_watch.ide_budget import measure_ide_tab
 from bus_watch.induction import build_wake_induction
 from bus_watch.liaison_watchers import collect_watchers
 from bus_watch.life_digest import build_life_block, project_life_block
@@ -365,58 +360,24 @@ def build_digest(
         + TICK_OVERHEAD_TOKENS
         + len(json.dumps(digest)) // 4
     )
-    pct = round(100.0 * est / max(budget_tokens, 1), 1)
+    pct = 0.0
     last_cp_tick = int(state.get("last_cp_tick") or 0)
     model = str(policy.get("successor_model") or "")
     lock = digest.get("fable_lock") or read_lock(root_id)
     holder_dispatch = _holder_dispatch_id(str(lock.get("holder") or ""))
     usage_live = _read_sdk_usage_live(holder_dispatch) if holder_dispatch else None
-    if usage_live:
-        used_tokens = int(usage_live.get("used_tokens") or 0)
-        budget = build_budget_block(
-            used_tokens=used_tokens,
-            window_limit_tokens=int(
-                usage_live.get("window_limit_tokens") or budget_tokens
-            ),
-            model=str(usage_live.get("model") or model),
-            source="giw.sdk_stream",
-            scope=_BUDGET_SCOPE,
-            epoch=str(usage_live.get("epoch") or holder_dispatch or ""),
-            as_of=str(usage_live.get("as_of") or digest_ts),
-        )
-    elif (register != "autonomous" or ide_holder_transcript(lock)) and (
-        ide := _measure_ide_tab(root_id, lock, policy)
-    ):
-        # Attended seat: the tab transcript is the only window reading the hub
-        # has; without it an IDE liaison never sees CONTEXT_BUDGET (10534 tab,
-        # 852 tool calls on a 256k model, 2026-09-12). Once the house is under
-        # (autonomous, no ``ide:`` holder) the retired tab's 99 % reading is not
-        # the seat's window and must not tell a headless successor to PARK.
-        pct = round(100.0 * ide["used_tokens"] / max(ide["window_limit_tokens"], 1), 1)
-        budget = build_budget_block(
-            used_tokens=ide["used_tokens"],
-            window_limit_tokens=ide["window_limit_tokens"],
-            model=str(policy.get("ide_model") or "ide-tab"),
-            source=IDE_BUDGET_SOURCE,
-            scope=_BUDGET_SCOPE,
-            epoch=ide["transcript_id"],
-            as_of=digest_ts,
-            transcript_id=ide["transcript_id"],
-            holder_basis=ide["holder_basis"],
-            tool_calls=ide["tool_calls"],
-            transcript_bytes=ide["bytes"],
-            tokens_per_tool_call=ide["tokens_per_tool_call"],
-        )
-    else:
-        budget = build_budget_block(
-            used_tokens=est,
-            window_limit_tokens=budget_tokens,
-            model=model,
-            source="digest.estimate",
-            scope=_BUDGET_SCOPE,
-            epoch=str(state.get("budget_epoch") or fp),
-            as_of=digest_ts,
-        )
+    budget, pct = seat_budget(
+        est=est,
+        successor_model=model,
+        usage_live=usage_live,
+        holder_dispatch=holder_dispatch,
+        register=register,
+        lock=lock,
+        policy=policy,
+        root_id=root_id,
+        digest_ts=digest_ts,
+        epoch=str(state.get("budget_epoch") or fp),
+    )
     if budget["source"] != "giw.sdk_stream":
         # fmt: off
         attention = [i for i in (digest.get("attention") or []) if i.get("kind") != "budget_estimate"]

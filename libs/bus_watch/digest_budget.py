@@ -189,10 +189,92 @@ def _read_sdk_usage_live(dispatch_id: str) -> dict[str, Any] | None:
     return usage_live
 
 
+def card_window_tokens(model_id: str) -> int | None:
+    """Verified Cursor-card window for ``model_id``. No flat stand-in."""
+    token = str(model_id or "").strip()
+    if not token or token == "ide-tab":
+        return None
+    from cursor_capabilities import context_window_tokens
+
+    return context_window_tokens(token)
+
+
+def seat_budget(
+    *,
+    est: int,
+    successor_model: str,
+    usage_live: dict[str, Any] | None,
+    holder_dispatch: str,
+    register: str,
+    lock: dict[str, Any],
+    policy: dict[str, Any],
+    root_id: str,
+    digest_ts: str,
+    epoch: str,
+) -> tuple[dict[str, Any], float]:
+    """Window from the model card for an sdk hop; 256k only for an unread picker."""
+    from bus_watch.ide_budget import IDE_BUDGET_SOURCE, ide_holder_transcript
+
+    if usage_live:
+        live_model = str(usage_live.get("model") or successor_model)
+        return (
+            build_budget_block(
+                used_tokens=int(usage_live.get("used_tokens") or 0),
+                window_limit_tokens=card_window_tokens(live_model),
+                model=live_model,
+                source="giw.sdk_stream",
+                scope=_BUDGET_SCOPE,
+                epoch=str(usage_live.get("epoch") or holder_dispatch or ""),
+                as_of=str(usage_live.get("as_of") or digest_ts),
+            ),
+            0.0,
+        )
+    # Patch point stays on liaison_digest._measure_ide_tab.
+    from bus_watch.liaison_digest import _measure_ide_tab
+
+    if (register != "autonomous" or ide_holder_transcript(lock)) and (
+        ide := _measure_ide_tab(root_id, lock, policy)
+    ):
+        pct = round(
+            100.0 * ide["used_tokens"] / max(ide["window_limit_tokens"], 1), 1
+        )
+        return (
+            build_budget_block(
+                used_tokens=ide["used_tokens"],
+                window_limit_tokens=ide["window_limit_tokens"],
+                model=str(policy.get("ide_model") or "ide-tab"),
+                source=IDE_BUDGET_SOURCE,
+                scope=_BUDGET_SCOPE,
+                epoch=ide["transcript_id"],
+                as_of=digest_ts,
+                transcript_id=ide["transcript_id"],
+                holder_basis=ide["holder_basis"],
+                tool_calls=ide["tool_calls"],
+                transcript_bytes=ide["bytes"],
+                tokens_per_tool_call=ide["tokens_per_tool_call"],
+            ),
+            pct,
+        )
+    window = card_window_tokens(successor_model)
+    pct = round(100.0 * est / window, 1) if window else 0.0
+    return (
+        build_budget_block(
+            used_tokens=est,
+            window_limit_tokens=window,
+            model=successor_model,
+            source="digest.estimate",
+            scope=_BUDGET_SCOPE,
+            epoch=epoch,
+            as_of=digest_ts,
+        ),
+        pct,
+    )
+
+
 def build_budget_block(
     *,
     used_tokens: int,
-    window_limit_tokens: int,
+    window_limit_tokens: int | None,
     model: str,
     source: str,
     scope: str,
@@ -207,10 +289,16 @@ def build_budget_block(
     never for the cumulative ``digest.estimate``. Extra ``basis`` fields
     (transcript id, tool calls, …) ride along so a reader can audit the number.
     """
-    ratio = used_tokens / max(window_limit_tokens, 1)
+    ratio = (
+        used_tokens / window_limit_tokens
+        if window_limit_tokens
+        else 0.0
+    )
     stop_class = (
         "CONTEXT_BUDGET"
-        if source in _SEAT_SCOPED_SOURCES and ratio >= _BUDGET_RATIO_THRESHOLD
+        if window_limit_tokens
+        and source in _SEAT_SCOPED_SOURCES
+        and ratio >= _BUDGET_RATIO_THRESHOLD
         else None
     )
     return {

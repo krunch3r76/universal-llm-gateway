@@ -893,7 +893,7 @@ def _usage_live_from_raw(
     *,
     dispatch_id: str,
     resolved_model: str,
-    window_limit_tokens: int,
+    window_limit_tokens: int | None,
 ) -> dict[str, Any] | None:
     from datetime import UTC, datetime
 
@@ -1040,14 +1040,11 @@ def _run_sdk_sync(
             live_counter = _LiveToolCallCounter()
         outer_idle_s = _outer_idle_budget_s(contract=ctx.handoff_contract or "none")
 
-        # The model card's verified window governs the headless CONTEXT_BUDGET
-        # stop; the env cap only stands in when the card carries none (a flat
-        # 700k never fired for a 200k Composer or 256k Grok successor).
+        # The model card's verified window is the headless CONTEXT_BUDGET stop.
+        # No flat stand-in when the card carries none.
         from cursor_capabilities import context_window_tokens
 
-        budget_window = context_window_tokens(resolved_model) or int(
-            os.environ.get("LIAISON_BUDGET_TOKENS", "700000")
-        )
+        budget_window = context_window_tokens(resolved_model)
         run_started = time.monotonic()
 
         def _on_tool_call(observation: object = None) -> None:

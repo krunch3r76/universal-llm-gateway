@@ -36,6 +36,7 @@ from pathlib import Path
 
 import bus_watch.doorbell as doorbell_module
 import httpx
+from bus_watch.digest_budget import POLICY_DEFAULTS
 from bus_watch.digest_publish import is_own_digest_echo, publish_if_enabled
 from bus_watch.fable_lock import (
     WATCH_DIR as _WATCH_DIR,
@@ -158,7 +159,13 @@ def main() -> int:
     p.add_argument(
         "--budget-tokens",
         type=int,
-        default=int(os.environ.get("LIAISON_BUDGET_TOKENS", "700000")),
+        default=int(
+            os.environ.get(
+                "LIAISON_BUDGET_TOKENS",
+                str(POLICY_DEFAULTS["ide_window_tokens"]),
+            )
+        ),
+        help="ignored for the window; the successor model card sets that",
     )
     p.add_argument("--state-file", default="")
     p.add_argument("--once", action="store_true")

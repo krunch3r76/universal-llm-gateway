@@ -50,8 +50,8 @@ class ModelCapability:
     fixed_params: Mapping[str, str] = field(default_factory=dict)
     instruction_profile: str = "mechanical"
     # Context window of the served model, when operator-verified. Drives the
-    # headless CONTEXT_BUDGET stop (GIW usage_live.window_limit_tokens); ``None``
-    # falls back to LIAISON_BUDGET_TOKENS rather than inventing a number.
+    # headless CONTEXT_BUDGET stop. ``None`` means no verified window — callers
+    # do not substitute a flat token default.
     context_window_tokens: int | None = None
 
 
