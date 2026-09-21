@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from unittest.mock import MagicMock
 
 import pytest
+from cursor_sdk import BadRequestError
+from cursor_sdk.types import UsageCost
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
@@ -12,6 +15,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import StreamCapture
 from services.git_integration_worker.cursor_sdk_usage_extract import (
+    capture_local_get_usage,
     extract_post_wait_usage,
     finalize_dispatch_usage,
     persist_dispatch_usage,
@@ -80,6 +84,46 @@ def test_finalize_dispatch_usage_reconciles_stream() -> None:
     assert record.usage_capture_status == "reconciled_delta"
     assert record.usage is not None
     assert record.usage["total_tokens"] == 150
+
+
+def test_capture_local_get_usage_captured() -> None:
+    agent = MagicMock()
+    agent.get_usage.return_value = MagicMock(
+        cost=UsageCost(raw_cost_cents=12.5, charged_cents=10.0),
+    )
+    result = capture_local_get_usage(agent)
+    assert result == {
+        "cost_status": "captured",
+        "charged_cents": 10.0,
+        "raw_cost_cents": 12.5,
+    }
+    agent.get_usage.assert_called_once_with()
+
+
+def test_capture_local_get_usage_cost_pending() -> None:
+    agent = MagicMock()
+    agent.get_usage.return_value = MagicMock(cost=None)
+    result = capture_local_get_usage(agent)
+    assert result == {
+        "cost_status": "cost_pending",
+        "charged_cents": None,
+        "raw_cost_cents": None,
+    }
+
+
+def test_capture_local_get_usage_account_gate() -> None:
+    agent = MagicMock()
+    agent.get_usage.side_effect = BadRequestError("walled", code="invalid_argument")
+    result = capture_local_get_usage(agent)
+    assert result["cost_status"] == "account_gate"
+    assert result["error_type"] == "BadRequestError"
+    assert "walled" in result["error"]
+
+    agent.get_usage.side_effect = RuntimeError("transient")
+    result = capture_local_get_usage(agent)
+    assert result["cost_status"] == "account_gate"
+    assert result["error_type"] == "RuntimeError"
+    assert result["error"] == "transient"
 
 
 def test_persist_dispatch_usage_roundtrip() -> None:

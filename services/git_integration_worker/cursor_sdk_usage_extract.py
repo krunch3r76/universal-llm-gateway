@@ -1,9 +1,10 @@
 """Extract and persist per-dispatch token usage from cursor-sdk runs.
 
 Post-wait ``run.usage`` / ``result.usage`` is authoritative on local runs
-(probe 6655 A1 OBSERVED). ``Agent.get_usage`` is cloud-only — local raises
-``BadRequestError(code='invalid_argument')``, not ``ConfigurationError``
-(OBSERVED probe 6655; SDK docstring stale).
+(probe 6655 A1 OBSERVED). ``Agent.get_usage`` is an additional cost probe on
+1.0.31+ local agents — it returns ``AgentUsage``; ``cost`` is ``None`` when the
+backend has not reported cost yet. Client-minted ``run-<uuid>`` labels raise
+``BadRequestError``; probe failures must not fail dispatch closeout.
 
 Consumer-facing emit: ``frontier.sdk.worker.completed`` payload fields
 ``usage`` + ``usage_capture_status``. Closeout assembly carries the same
@@ -80,6 +81,33 @@ def usage_event_fields(record: DispatchUsageRecord) -> dict[str, Any]:
         "usage": record.usage,
         "usage_capture_status": record.usage_capture_status,
     }
+
+
+def capture_local_get_usage(agent: Any) -> dict[str, Any]:
+    """Probe ``agent.get_usage()`` after ``run.wait()`` for dollar cost.
+
+    Calls with no ``run_id``. Never raises — exceptions become ``account_gate``.
+    """
+    try:
+        agent_usage = agent.get_usage()
+        cost = agent_usage.cost
+        if cost is not None:
+            return {
+                "cost_status": "captured",
+                "charged_cents": cost.charged_cents,
+                "raw_cost_cents": cost.raw_cost_cents,
+            }
+        return {
+            "cost_status": "cost_pending",
+            "charged_cents": None,
+            "raw_cost_cents": None,
+        }
+    except Exception as exc:
+        return {
+            "cost_status": "account_gate",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
 
 
 def persist_dispatch_usage(

@@ -278,6 +278,7 @@ from services.git_integration_worker.cursor_sdk_supersede import (
 )
 from services.git_integration_worker.cursor_sdk_transcript import resolve_run_body
 from services.git_integration_worker.cursor_sdk_usage_extract import (
+    capture_local_get_usage,
     finalize_dispatch_usage,
     persist_dispatch_usage,
 )
@@ -1165,6 +1166,12 @@ def _run_sdk_sync(
             result = run.wait()
             usage_record = finalize_dispatch_usage(
                 stream_capture, run=run, result=result
+            )
+            CursorDispatchLedger.instance().merge_record_json(
+                dispatch_id=ctx.dispatch_id,
+                patch={
+                    "get_usage": capture_local_get_usage(agent),
+                },
             )
             stream_capture = StreamCapture(
                 tool_calls=stream_capture.tool_calls,
