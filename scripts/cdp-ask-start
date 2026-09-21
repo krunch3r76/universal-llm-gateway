@@ -134,11 +134,18 @@ fi
 
 mkdir -p /tmp/logs/cdp-ask "${HOME}/.gateway"
 
+# Repo root before libs so import services resolves (a:36041).
+_PYTHONPATH="${REPO}:${REPO}/libs"
+if [ -n "${PYTHONPATH:-}" ]; then
+  _PYTHONPATH="${_PYTHONPATH}:${PYTHONPATH}"
+fi
+
 setsid env \
   CORTEX_FILES_ROOT="${CORTEX_FILES_ROOT:?}" \
   EVENTS_INGEST_TCP="${EVENTS_INGEST_TCP:?}" \
   ULG_CODE_VERSION="${ULG_CODE_VERSION:-}" \
   ULG_REPO="$REPO" \
+  PYTHONPATH="$_PYTHONPATH" \
   "$HOME/.venvs/universal/bin/python" "$REPO/scripts/cdp-ask" --port "$PORT" \
   </dev/null >/tmp/logs/cdp-ask/start.log 2>&1 &
 

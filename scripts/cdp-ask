@@ -15,8 +15,11 @@ import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
-if str(_REPO / "libs") not in sys.path:
-    sys.path.insert(0, str(_REPO / "libs"))
+# Repo root before libs: session_address lazy-imports services.* (a:36041).
+# Jupiter sitecustomize injects libs only.
+for _p in (str(_REPO / "libs"), str(_REPO)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 
 def main() -> None:

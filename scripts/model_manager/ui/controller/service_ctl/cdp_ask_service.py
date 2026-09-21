@@ -83,10 +83,15 @@ async def start_cdp_ask(
     code_version = _spawn_code_version(root)
     if code_version:
         env["ULG_CODE_VERSION"] = code_version
+    # Repo root must precede libs: Jupiter sitecustomize does not inject
+    # PROJECT_ROOT, and session_address lazy-imports services.* at CSE bind
+    # (a:36041 No module named 'services' / mark_terminal).
+    root_path = str(root)
     libs_path = str(root / "libs")
     existing_pythonpath = env.get("PYTHONPATH", "")
+    prefix = f"{root_path}:{libs_path}"
     env["PYTHONPATH"] = (
-        f"{libs_path}:{existing_pythonpath}" if existing_pythonpath else libs_path
+        f"{prefix}:{existing_pythonpath}" if existing_pythonpath else prefix
     )
 
     venv_python = Path.home() / ".venvs" / "universal" / "bin" / "python"
