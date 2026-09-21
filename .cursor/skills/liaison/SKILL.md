@@ -209,21 +209,23 @@ touch the same files. `¬ discard(peer_work)` — a blocked merge is reconcile, 
 ## Headless successor (resume-fence pull)
 
 The hop target is a **message dispatch**, not a packet file. Sit leftover on a
-**friction/disposition score row** is not grok house generate: the ticker spawns a
-**reasoning agent** (`cdp/opus-5`, or `cdp/fable` when `policy.row_bind_model` names it)
-to bind `ROW_CLASS: low|trio`. That seat does **not** edit the repo (bind then STOP;
-remaining hops are ticker-fired — § Friction score rows).
+**friction/disposition score row** is not the Composer house successor: the ticker spawns a
+**row-bind hop** (default `cursor/grok-4.7` Standard + high effort via
+`policy.row_bind_model` / `row_bind_model_knobs`; override with `cdp/opus-5` or
+`cdp/fable` when needed) to bind `ROW_CLASS: low|trio`. That seat does **not** edit the
+repo (bind then STOP; remaining hops are ticker-fired — § Friction score rows).
 
 ```
-# friction NOW / sit leftover — ticker, not the grok successor
+# friction NOW / sit leftover — ticker, not the house successor
 team_dispatch(
   op=generate,
-  model=cdp/opus-5,          # ¬ seat=cursor-sdk (cdp_cursor_sdk_seat_rejected)
+  seat=cursor-sdk,
+  lane="B",
+  model=cursor/grok-4.7,     # policy.row_bind_model; model_knobs effort=high fast=false
   contract=none,
   prompt=<row-bind wake>,    # BIND ROW_CLASS: low|trio before nested dispatch
   dispatch_thread_id=<R>,
-  parent_thread=<R>,
-  work_key=agent-bus:<R>:row-bind:<night>,
+  work_key=row-bind:<fid>:night-<night>,
 )
 ```
 
@@ -262,7 +264,7 @@ dispatches (`contract=implement`, omit `model=`) run **alongside** — they are 
 | Work | Executor | Bind / review |
 |---|---|---|
 | Read / recon / ≥3 files | `Task(subagent_type="explore")` in-tab | none |
-| Trivial / local edit (<20 lines, no served path) | in-seat | none — commit path-explicit same turn |
+| Trivial / local edit (<20 lines, no served path) | in-seat (Opus-class only by default; Composer successor **dispatches** instead) | none — commit path-explicit same turn |
 | Mechanical implement with dense spec (`files_expected` + ACs) | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement\|pure-mechanical, lane="B", source_ref=todo:…, packet_path=…, dispatch_thread_id=R)` | none — Fable-densified packets skip skeptic |
 | Repo write / mechanical edit (this seat lacks checkout authority) | **`agent_bus.request(to=cursor, …)` via cursor-auto** — never STAY, never needs-attended | nest_under when a holder lease is live |
 | Design / judgment fork (discriminator, architecture, bind table) | **`team_dispatch(model=cdp/fable)`** — decider of last resort; never STAY | one round; disagreement ⇒ CONSULT_PENDING |
@@ -287,9 +289,9 @@ The successor model is **policy, never a constant**. `scripts/liaison-tick.py --
 
 | Gear | Successor | Cadence | When |
 |---|---|---|---|
-| `1-fable-mvp` | `cursor/grok-4.7` (orientation hop; SDK Fable default retired) | ≤ 5 ticks / 60 min / poll 600 s | **do not select for overnight** — use gear 3 + explicit `successor_model`; Cursor Fable credit window closed (2026-09-12) |
+| `1-fable-mvp` | `cursor/composer-2.5` (orchestration hop; judgment via CDP) | ≤ 5 ticks / 60 min / poll 600 s | **do not select for overnight** — use gear 3 + explicit `successor_model=cursor/composer-2.5`; Cursor Fable credit window closed (2026-09-12) |
 | `2-opus-hops` | `cursor/claude-opus-5` (no cost intent); CDP checks stay `cdp/opus-5` | ≤ 6 ticks | next iteration; Fable only in the attended window |
-| `3-wake-on-attention` | **`policy.successor_model` only** — the preset carries no model; `--set successor_model=<slug>` is required or the ticker holds with `successor_model_bound=false` (10534 2026-09-12: the old Opus preset minted four unasked Opus liaisons at 12–24M tokens each). Spawned on the wake sources in § Headless successor (live unread · work closeout once · handoff once · `checkpoint_due` once) | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **armed only by explicit `ready`** (`--set ready=true` or `--go-under`; `ready_source=override`). The register never arms it: an IDE-hop chain runs `register=autonomous` with the ticker policy-only, and a register-armed ticker put a second driver on 10479 (2026-09-13). One driver per house: IDE chain ⇒ `ready=false`; ticker ⇒ `--go-under` |
+| `3-wake-on-attention` | **`cursor/composer-2.5`** from the gear preset (spawn predicate allowlists only cheap orchestration models from preset/default — premium presets still blocked, 10534). Override anytime with **`--set successor_model=<slug>`**. Spawned on the wake sources in § Headless successor (live unread · work closeout once · handoff once · `checkpoint_due` once) | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **armed only by explicit `ready`** (`--set ready=true` or `--go-under`; `ready_source=override`). The register never arms it: an IDE-hop chain runs `register=autonomous` with the ticker policy-only, and a register-armed ticker put a second driver on 10479 (2026-09-13). One driver per house: IDE chain ⇒ `ready=false`; ticker ⇒ `--go-under` |
 
 Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). A live
 `--loop` absorbs `--set` / `--mark-*` edits from another shell on its next poll (`libs/bus_watch/tick_state.py`
@@ -316,12 +318,12 @@ closed on the assertion. Same driver as everything else — no second loop.
 | Charter | `--set owned_services=agent-bus,cortex` (bare slug ⇒ `service:`; `agent_skill:` / `ai_agent:` allowed). **Declared, never inferred** — empty ⇒ nothing enters. Frictions on non-owned services never enter |
 | Harvest | `digest.frictions` (≤ 12, newest first: `id=a:<n>` · `owner` · `category` · `note` · `state` · `forcing`) + `digest.friction_summary` (`open` · `forcing` · `promoted` · `dispatch_cap` · `dispatched_tonight` · `error`). Read path: Cortex UDS `assertions` on the owner, non-superseded bracketed claims, 100-row window; `[feature]` asks and `[resolved:…]` closure rows are not rows |
 | NOW | no seat bind (`summary_row` / `policy.now_row` empty) ⇒ the newest `forcing` row **is** NOW (`Friction a:<n> [cat] owner «note» → disposition …`), so STAY-on-empty-NOW cannot fire while a charter friction waits. A seat bind outranks it; the row stays an `Event:` |
-| Disposition | **Ticker first spawn = CDP row-bind**, not grok `direct-first`. Agent posts `ROW_CLASS: low\|trio` then STOP; ticker fires remaining hops (LOW = implement lane B + later apply-all review; TRIO = Sketch → Mission Composer → Conductor). `--mark-friction` still records `direct-first` / `todo-minted` / `declined`. In-seat ≤20-line `direct-first` only after `ROW_CLASS: low`, and does not skip review+apply+land. Record: `liaison-tick.py --root R --mark-friction a:<n>:<disposition>` (operator key `friction_dispositions`; a live loop absorbs it next poll) |
+| Disposition | **Ticker first spawn = row-bind hop** (default `cursor/grok-4.7` Standard + high effort), not Composer house generate. Agent posts `ROW_CLASS: low\|trio` then STOP; ticker fires remaining hops (LOW = implement lane B + later apply-all review; TRIO sketch default `cdp/opus-5` when no `todo:{slug}`). `--mark-friction` still records `direct-first` / `todo-minted` / `declined`. In-seat ≤20-line `direct-first` only after `ROW_CLASS: low`, and does not skip review+apply+land. Record: `liaison-tick.py --root R --mark-friction a:<n>:<disposition>` (operator key `friction_dispositions`; a live loop absorbs it next poll) |
 | Close-back | **on the assertion**: `cortex(tool="friction_close", assertion_id=<n>, resolution_kind=todo:<slug> \| wontfix \| commit:<sha>)` — `todo-minted` / `declined` the same turn; `direct-first` when the fix lands. Superseded ⇒ the row leaves on the next harvest. A `todo-minted`/`declined` row still open = `state=close_pending` — you forgot the close |
-| Ticker | the newest forcing ∧ unlatched row is promoted into `attention` (`kind=friction`) — **one per tick**, none once `policy.friction_dispatch_cap` (default 3) spawns are latched tonight; a successful spawn latches it in `state.friction_rows_seen` — **one spawn per assertion id**, a re-opened friction carries a new id. Latched-but-open rows remain NOW for the seat that woke. **Sit leftover on a forcing friction:** CDP row-bind posts `ROW_CLASS: low|trio` then **STOP** (bind-only — CDP does not fire remaining hops); the ticker latches the class and fires LOW (`contract=implement` lane B) or TRIO (`build_play_dispatch_body` when `todo:{slug}` else CDP sketch consult) — never grok house generate. **Review harvest:** ticker applies ALL suggestions (SHOULD-FIX, nits, unused-code, adjacent) as one lane-B house generate (`contract=none` + apply-all message — ¬ `contract=implement`+`prompt`, wire-rejected) — ¬ page ¬ come-up ¬ park for the next resume; frozen `ready=false` and an attended `ide:` check-in do not hold that apply (`a:36093`) |
+| Ticker | the newest forcing ∧ unlatched row is promoted into `attention` (`kind=friction`) — **one per tick**, none once `policy.friction_dispatch_cap` (default 3) spawns are latched tonight; a successful spawn latches it in `state.friction_rows_seen` — **one spawn per assertion id**, a re-opened friction carries a new id. Latched-but-open rows remain NOW for the seat that woke. **Sit leftover on a forcing friction:** row-bind posts `ROW_CLASS: low|trio` then **STOP** (bind-only); the ticker latches the class and fires LOW (`contract=implement` lane B) or TRIO (`build_play_dispatch_body` when `todo:{slug}` else `trio_sketch_model` consult) — never the Composer house successor on the bind leg. **Review harvest:** ticker applies ALL suggestions (SHOULD-FIX, nits, unused-code, adjacent) as one lane-B house generate (`contract=none` + apply-all message — ¬ `contract=implement`+`prompt`, wire-rejected) — ¬ page ¬ come-up ¬ park for the next resume; frozen `ready=false` and an attended `ide:` check-in do not hold that apply (`a:36093`) |
 | REPEATED_FAILURE | a **second** `direct-first` mark on the same row ⇒ `state=repeated_failure`: NOW reads "consult, then todo-minted \| declined; never a third variant" (`cdp/opus-5` first below Opus) |
 
-Not owned: pipelines, seat locks. Sit friction spawn is `spawn_wake.row_bind` (CDP), not grok house generate. The IDE hop takes the friction
+Not owned: pipelines, seat locks. Sit friction spawn is `spawn_wake.row_bind` (default Grok row-bind), not Composer house generate. Headless successors must **not** land repo edits on the hop — dispatch implement/conductor/cursor-auto; **`cdp/opus-5`** for judgment binds (doorbell duty line + § Reasoning recon). The IDE hop takes the friction
 NOW verbatim as `--row`; a headless successor gets it as `row=`.
 
 ## Stops (designed, not "continue?")

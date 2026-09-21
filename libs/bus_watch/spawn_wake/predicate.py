@@ -9,6 +9,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from bus_watch.digest_budget import GEAR3_SPAWNABLE_PRESET_SUCCESSORS
 from bus_watch.fable_lock import current_night_id, read_lock, seat_lock_free
 from bus_watch.spawn_pending import (
     actionable_attention,
@@ -79,11 +80,24 @@ def _context_budget_spawn_allowed(
 
 
 def _successor_model_bound(policy: dict[str, Any]) -> bool:
-    """True when a successor model is set and, if its layer is stamped, bound by
-    an operator override rather than inherited from a gear preset."""
-    if not policy.get("successor_model"):
+    """True when a successor model may spawn on gear-3 tickers.
+
+    Operator ``--set successor_model`` always wins. Preset/default layers spawn
+    only for allowlisted cheap orchestration models (Composer); premium presets
+    stay blocked (10534).
+    """
+    model = str(policy.get("successor_model") or "")
+    if not model:
         return False
-    return policy.get("successor_model_source", "override") == "override"
+    source = str(policy.get("successor_model_source") or "override")
+    if source == "override":
+        return True
+    if model in GEAR3_SPAWNABLE_PRESET_SUCCESSORS and source in (
+        "gear_preset",
+        "default",
+    ):
+        return True
+    return False
 
 
 def _under_dispatch_cap(dispatches: int, policy: dict[str, Any]) -> bool:

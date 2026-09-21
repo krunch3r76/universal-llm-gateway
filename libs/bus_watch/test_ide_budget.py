@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from bus_watch.digest_budget import GEAR_PRESETS, build_budget_block, effective_policy
+from bus_watch.digest_budget import GEAR_PRESETS, POLICY_DEFAULTS, build_budget_block, effective_policy
 from bus_watch.ide_budget import (
     IDE_BUDGET_SOURCE,
     ide_holder_idle_s,
@@ -184,10 +184,20 @@ def test_live_transcript_probe_allows_idle_forfeit(tmp_path: Path) -> None:
     assert idle["holder"] == lock["holder"]
 
 
-def test_gear_three_has_no_implicit_successor_model() -> None:
-    assert GEAR_PRESETS["3-wake-on-attention"]["successor_model"] is None
+def test_policy_defaults_composer_successor_and_grok_row_bind() -> None:
+    policy = effective_policy({"policy": {}})
+    assert policy["successor_model"] == POLICY_DEFAULTS["successor_model"]
+    assert policy["successor_model"] == "cursor/composer-2.5"
+    assert policy["row_bind_model"] == "cursor/grok-4.7"
+    assert policy["row_bind_model_knobs"] == {"effort": "high", "fast": "false"}
+
+
+def test_gear_three_presets_composer_successor() -> None:
+    assert (
+        GEAR_PRESETS["3-wake-on-attention"]["successor_model"] == "cursor/composer-2.5"
+    )
     preset_only = effective_policy({"policy": {"gear": "3-wake-on-attention"}})
-    assert preset_only["successor_model"] is None
+    assert preset_only["successor_model"] == "cursor/composer-2.5"
     assert preset_only["successor_model_source"] == "gear_preset"
     bound = effective_policy(
         {

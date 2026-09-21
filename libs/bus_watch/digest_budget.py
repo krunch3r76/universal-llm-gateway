@@ -25,11 +25,16 @@ _GIW_USAGE_LIVE = os.environ.get(
 _BUDGET_SCOPE = "liaison_seat"
 _BUDGET_RATIO_THRESHOLD = 0.80
 
+# Gear-3 preset successors allowed to spawn without an operator --set override
+# (10534 blocked implicit *premium* models; Composer is the orchestration default).
+GEAR3_SPAWNABLE_PRESET_SUCCESSORS: frozenset[str] = frozenset({"cursor/composer-2.5"})
+
 POLICY_DEFAULTS: dict[str, Any] = {
     "gear": "1-fable-mvp",
-    # House successor is orientation (harvest/fold/classify), not judgment.
-    # SDK Fable is blocked; do not inherit the closed credit-window default.
-    "successor_model": "cursor/grok-4.7",
+    # House successor orchestrates (harvest/fold/dispatch); judgment stays CDP.
+    "successor_model": "cursor/composer-2.5",
+    "row_bind_model": "cursor/grok-4.7",
+    "row_bind_model_knobs": {"effort": "high", "fast": "false"},
     "successor_cost_intent": None,
     "max_ticks_per_hop": 5,
     "max_hop_minutes": 60,
@@ -61,10 +66,9 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         "max_ticks_per_hop": 6,
     },
     "3-wake-on-attention": {
-        # No implicit premium successor: the ticker spawns only a model the
-        # operator bound with --set successor_model=… (10534 2026-09-12 minted
-        # four unasked Opus liaisons at 12–24M tokens each on this preset).
-        "successor_model": None,
+        # Cheap orchestration default — spawn predicate still rejects premium
+        # models sourced only from gear_preset (10534 Opus incident).
+        "successor_model": "cursor/composer-2.5",
         "successor_cost_intent": None,
         "wake_on_attention_only": True,
         "poll_seconds": 120,
@@ -81,6 +85,7 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
 }
 
 __all__ = [
+    "GEAR3_SPAWNABLE_PRESET_SUCCESSORS",
     "GEAR_PRESETS",
     "POLICY_DEFAULTS",
     "_bus",

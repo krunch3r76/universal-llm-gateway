@@ -63,9 +63,39 @@ _TRIO_SKETCH_PROMPT = (
 
 
 def row_bind_model(policy: dict[str, Any]) -> str:
-    """CDP model for row-bind hops — ``policy.row_bind_model`` or ``cdp/opus-5``."""
+    """Model for ROW_CLASS bind hops — ``policy.row_bind_model`` or ``cursor/grok-4.7``."""
     raw = str(policy.get("row_bind_model") or "").strip()
-    return raw if raw.startswith("cdp/") else "cdp/opus-5"
+    if raw.startswith(("cursor/", "cdp/")):
+        return raw
+    return "cursor/grok-4.7"
+
+
+def trio_sketch_model(policy: dict[str, Any]) -> str:
+    """TRIO sketch consult when no ``todo:{slug}`` — default ``cdp/opus-5``."""
+    raw = str(policy.get("trio_sketch_model") or "").strip()
+    if raw.startswith(("cursor/", "cdp/")):
+        return raw
+    return "cdp/opus-5"
+
+
+def _row_bind_model_knobs(policy: dict[str, Any], model: str) -> dict[str, str] | None:
+    knobs = policy.get("row_bind_model_knobs")
+    if isinstance(knobs, dict):
+        return {str(k): str(v) for k, v in knobs.items()}
+    bare = model.rsplit("/", 1)[-1] if model else ""
+    if model.startswith("cursor/") and bare == "grok-4.7":
+        return {"effort": "high", "fast": "false"}
+    return None
+
+
+def _wire_cursor_row_bind(body: dict[str, Any], policy: dict[str, Any], model: str) -> None:
+    if not model.startswith("cursor/"):
+        return
+    body["seat"] = "cursor-sdk"
+    body["lane"] = "B"
+    mk = _row_bind_model_knobs(policy, model)
+    if mk:
+        body["model_knobs"] = mk
 
 
 def build_row_bind_body(
@@ -83,9 +113,10 @@ def build_row_bind_body(
         note=str(friction.get("note") or "")[:160],
     )
     tape = loop_tape_thread(root_id, policy)
-    return {
+    model = row_bind_model(policy)
+    body: dict[str, Any] = {
         "op": "generate",
-        "model": row_bind_model(policy),
+        "model": model,
         "contract": "none",
         "prompt": prompt,
         "dispatch_thread_id": tape,
@@ -95,6 +126,8 @@ def build_row_bind_body(
         "_row_bind": True,
         "_friction_id": fid,
     }
+    _wire_cursor_row_bind(body, policy, model)
+    return body
 
 
 def build_low_implement_body(
@@ -155,9 +188,10 @@ def build_trio_sketch_body(
         why_line=why_line,
     )
     tape = loop_tape_thread(root_id, policy)
-    return {
+    model = trio_sketch_model(policy)
+    body: dict[str, Any] = {
         "op": "generate",
-        "model": row_bind_model(policy),
+        "model": model,
         "contract": "none",
         "prompt": prompt,
         "dispatch_thread_id": tape,
@@ -167,6 +201,8 @@ def build_trio_sketch_body(
         "_row_class": ROW_CLASS_TRIO,
         "_friction_id": fid,
     }
+    _wire_cursor_row_bind(body, policy, model)
+    return body
 
 
 def build_trio_fire_body(
@@ -250,4 +286,5 @@ __all__ = [
     "build_trio_fire_body",
     "build_trio_sketch_body",
     "row_bind_model",
+    "trio_sketch_model",
 ]

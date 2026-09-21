@@ -34,9 +34,10 @@ def _forcing_digest(
     return digest
 
 
-def test_sit_forcing_friction_is_row_bind_not_grok() -> None:
-    """AC — sit + recycle now_row + forcing friction ⇒ CDP row-bind, no grok."""
+def test_sit_forcing_friction_is_row_bind_not_house_successor() -> None:
+    """AC — sit + forcing friction ⇒ row-bind hop, not house generate."""
     digest = _forcing_digest()
+    digest["policy"]["successor_model"] = "cursor/composer-2.5"
     leftover = {"leftover": LEFTOVER_SIT, "reason": "sit_no_todo", "todo": None}
     body = body_for_leftover(
         "11960",
@@ -48,10 +49,10 @@ def test_sit_forcing_friction_is_row_bind_not_grok() -> None:
     )
     assert body is not None
     assert body.get("_row_bind") is True
-    assert body.get("model") == "cdp/opus-5"
-    assert "seat" not in body
-    assert "lane" not in body
-    assert body.get("model") != "cursor/grok-4.7"
+    assert body.get("model") == "cursor/grok-4.7"
+    assert body.get("seat") == "cursor-sdk"
+    assert body.get("model_knobs") == {"effort": "high", "fast": "false"}
+    assert body.get("model") != digest["policy"]["successor_model"]
 
 
 def test_sit_forcing_without_friction_in_successor_row() -> None:
@@ -127,7 +128,8 @@ def test_build_row_bind_body_shape() -> None:
             "note": "probe",
         },
     )
-    assert body["model"] == "cdp/opus-5"
+    assert body["model"] == "cursor/grok-4.7"
+    assert body["seat"] == "cursor-sdk"
     assert "ROW_CLASS:" in body["prompt"]
     assert "do not fire remaining hops" in body["prompt"].lower()
 
@@ -170,10 +172,25 @@ def test_fired_fid_does_not_re_fire_low() -> None:
     assert body.get("_refused") == "row_class_fired"
 
 
-def test_trio_sketch_honours_row_bind_model() -> None:
+def test_trio_sketch_default_cdp() -> None:
     body = build_trio_sketch_body(
         "11960",
-        {"max_hop_minutes": 60, "row_bind_model": "cdp/fable"},
+        {"max_hop_minutes": 60, "row_bind_model": "cursor/grok-4.7"},
+        {
+            "id": "a:35997",
+            "category": "regression",
+            "owner": "service:git_integration_worker",
+            "note": "probe",
+        },
+    )
+    assert body["model"] == "cdp/opus-5"
+    assert "seat" not in body
+
+
+def test_trio_sketch_honours_trio_sketch_model() -> None:
+    body = build_trio_sketch_body(
+        "11960",
+        {"max_hop_minutes": 60, "trio_sketch_model": "cdp/fable"},
         {
             "id": "a:35997",
             "category": "regression",

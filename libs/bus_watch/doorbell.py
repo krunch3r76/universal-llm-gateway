@@ -427,7 +427,9 @@ def _successor_duty_line(contract: str) -> str:
         )
     return (
         "duty: run the tick; checkpoint; hop only if hop_qualifies. "
-        "Repo-write goals ⇒ cursor-auto; design/judgment ⇒ cdp/fable; "
+        "This hop orchestrates — do not land repo edits here (≤20 lines, no served "
+        "path, liaison ladder only); repo work ⇒ dispatch implement/conductor or "
+        "cursor-auto; design/judgment/invariant forks ⇒ cdp/opus-5 consult before bind; "
         "STAY only on empty NOW / quiet tick / OPERATOR_GATE."
     )
 

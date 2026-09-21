@@ -54,6 +54,15 @@ def test_predicate_refuses_preset_sourced_successor_model() -> None:
     assert ev["spawn"] is False
 
 
+def test_predicate_allows_composer_gear_preset() -> None:
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["policy"]["successor_model"] = "cursor/composer-2.5"
+    digest["policy"]["successor_model_source"] = "gear_preset"
+    digest["policy"]["ready"] = True
+    ev = evaluate_spawn_predicate(digest, {}, lock={})
+    assert ev["clauses"]["successor_model_bound"] is True
+
+
 def test_predicate_refuses_unset_successor_model() -> None:
     digest = _digest(attention=[{"id": "1", "unread": 1}])
     digest["policy"]["successor_model"] = None
