@@ -41,6 +41,71 @@ def _worker_closeout(*, sha: str = "0e6653cdf") -> str:
     )
 
 
+def test_attention_now_row_skips_root_closeout_residue() -> None:
+    """Unset NOW must not play the house's own LANE CLOSEOUT subject."""
+    digest = {
+        "root": {"id": "11667"},
+        "attention": [
+            {
+                "id": "11667",
+                "lane_role": "sub_mission",
+                "status": "active",
+                "terminal": True,
+                "last_subject": "LANE CLOSEOUT agent-bus:12014 completed",
+                "updated_at": "2026-09-21T07:33:31Z",
+            },
+            {
+                "id": "11693",
+                "lane_role": "sub_mission",
+                "status": "active",
+                "last_subject": "COMMISSION — OLN lane status/debrief harness",
+                "updated_at": "2026-09-18T16:00:00Z",
+            },
+        ],
+    }
+    assert (
+        attention_now_row(digest)
+        == "agent-bus:11693 · «COMMISSION — OLN lane status/debrief harness»"
+    )
+
+
+def test_attention_now_row_skips_land_leftover() -> None:
+    """Finished G1 LAND must not fill empty NOW (11667 sit mill on 11806)."""
+    land = {
+        "id": "11806",
+        "lane_role": "sub_mission",
+        "status": "active",
+        "lifecycle": None,
+        "terminal": False,
+        "last_subject": "G1 LAND lane-11894 — consume ledger seam",
+        "updated_at": "2026-09-20T21:13:31Z",
+    }
+    digest = {
+        "root": {"id": "11667"},
+        "attention": [
+            land,
+            {
+                "id": "11693",
+                "lane_role": "sub_mission",
+                "status": "active",
+                "last_subject": "COMMISSION — OLN lane status/debrief harness",
+                "updated_at": "2026-09-18T16:00:00Z",
+            },
+        ],
+    }
+    assert (
+        attention_now_row(digest)
+        == "agent-bus:11693 · «COMMISSION — OLN lane status/debrief harness»"
+    )
+    assert attention_now_row({"root": {"id": "11667"}, "attention": [land]}) == ""
+    owed = {
+        **land,
+        "id": "10561",
+        "last_subject": "LAND OWED 10561 after AC-9",
+    }
+    assert attention_now_row({"attention": [owed]}).startswith("agent-bus:10561")
+
+
 def test_attention_now_row_newest_non_terminal_sub_mission() -> None:
     digest = {
         "attention": [

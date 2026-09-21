@@ -81,19 +81,36 @@ def _parse_iso_ts(value: str | None) -> float | None:
 
 
 _SUBJECT_CHARS = 56
+_LAND_RESULT_RE = re.compile(r"\bG\d+\s+LAND\b", re.I)
 
 
 def attention_now_row(digest: dict[str, Any]) -> str:
-    """Newest non-terminal ``sub_mission`` in digest attention (11693#4)."""
+    """Newest non-terminal ``sub_mission`` in digest attention (11693#4).
+
+    The continuity root is often tagged ``sub_mission`` with a fresh CLOSEOUT
+    subject. That is harvest residue, not a play row — skip it so an unset
+    NOW still picks a commissioned child (11667#51).
+    """
+    root_id = str((digest.get("root") or {}).get("id") or "").strip()
     candidates: list[tuple[str, dict[str, Any]]] = []
     for item in digest.get("attention") or []:
         if not isinstance(item, dict) or "id" not in item:
+            continue
+        if root_id and str(item.get("id")) == root_id:
             continue
         if item.get("kind") in ("friction", "budget_estimate"):
             continue
         if item.get("lane_role") != "sub_mission":
             continue
-        if row_is_terminal(item):
+        # Digest ``terminal`` is subject-class (CLOSEOUT / …). Status/lifecycle
+        # stay open on leftover children. Gated LAND results are spent even
+        # when the thread was never closed (11667 sit mill on 11806).
+        subject = str(item.get("last_subject") or "")
+        if (
+            row_is_terminal(item)
+            or item.get("terminal")
+            or _LAND_RESULT_RE.search(subject)
+        ):
             continue
         updated = str(item.get("updated_at") or "")
         candidates.append((updated, item))
@@ -594,7 +611,9 @@ def execution_gone(
     return verdict in (LivenessVerdict.ALLOW_ORPHAN, LivenessVerdict.TERMINAL_BACKFILL)
 
 
-def _compact_root_turn(turn: dict[str, Any], *, thread: str | None = None) -> dict[str, Any]:
+def _compact_root_turn(
+    turn: dict[str, Any], *, thread: str | None = None
+) -> dict[str, Any]:
     subject = str(turn.get("subject") or "")
     body = str(turn.get("body") or "")
     return {
@@ -617,9 +636,7 @@ def compact_root_turn_summaries(
     if not isinstance(turns, list):
         return []
     return [
-        _compact_root_turn(row, thread=thread)
-        for row in turns
-        if isinstance(row, dict)
+        _compact_root_turn(row, thread=thread) for row in turns if isinstance(row, dict)
     ]
 
 
@@ -662,9 +679,9 @@ def digest_root_surface(
     ).get("turns") or []
     unread_turns = compact_root_turn_summaries(unread_raw, thread=root_id)
     if not unread_turns:
-        fallback = (
-            get(client, "/turns", thread=root_id, last=25) or {}
-        ).get("turns") or []
+        fallback = (get(client, "/turns", thread=root_id, last=25) or {}).get(
+            "turns"
+        ) or []
         unread_turns = compact_root_turn_summaries(fallback, thread=root_id)
     return recent_turns, tip_cp, unread_turns
 
@@ -675,14 +692,14 @@ def _turn_text(turn: dict[str, Any]) -> str:
     )
 
 
-def _pending_execution_id_in_turn(pending: dict[str, Any], turn: dict[str, Any]) -> bool:
+def _pending_execution_id_in_turn(
+    pending: dict[str, Any], turn: dict[str, Any]
+) -> bool:
     execution_id = str(pending.get("execution_id") or "").strip()
     if not execution_id:
         return False
     ids = turn.get("execution_ids")
-    if isinstance(ids, list) and execution_id.lower() in {
-        str(x).lower() for x in ids
-    }:
+    if isinstance(ids, list) and execution_id.lower() in {str(x).lower() for x in ids}:
         return True
     return execution_id in _turn_text(turn)
 
