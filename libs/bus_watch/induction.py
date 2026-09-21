@@ -104,7 +104,10 @@ def _events(digest: dict[str, Any]) -> list[str]:
         items.append("CHECKPOINT due (segment CP, supersedes tip)")
     for watcher in digest.get("watchers_complete_unrelayed") or []:
         label = watcher.get("label") or watcher.get("file")
-        items.append(f"watcher {label} complete → harvest, --mark-relayed")
+        basename = watcher.get("file") or label
+        items.append(
+            f"watcher {label} complete → harvest, --mark-relayed {basename} (path.name)"
+        )
     lanes: list[str] = []
     for lane in digest.get("attention") or []:
         if lane.get("kind") == "budget_estimate" or "id" not in lane:

@@ -55,9 +55,10 @@ on the house generate is not the play path.
 **Operator guide (living).** "How do I use …" / "what changed" / a new ruling or phase move ⇒ **LOAD AND
 EXECUTE** `runbook:liaison-operator-guide` (`cortex://notes/runbooks/liaison-operator-guide.md`) — `cite(runbook)
 ⇒ load(cited_section*) ∧ execute(seat-bound_steps)` this turn: read the root's `…/<root>-operator-guide.md`,
-answer from it in plain language, patch it the same turn. Default liaison pattern
-per operator ruling 10479#105: claude.ai scheduled wake (phase-3 of `plan:life-orchestrator-navigator`, root-
-agnostic `liaison_digest(root)`); the attended IDE tab is the override; gear-3 headless successor is fallback.
+answer from it in plain language, patch it the same turn. Today's liaison pattern: the attended IDE tab is the
+override; gear-3 headless successor is the fallback. claude.ai scheduled wake is **planned** (phase-3 of
+`plan:life-orchestrator-navigator`, root-agnostic `liaison_digest(root)`); not yet the present-tense default
+(operator ruling 10479#105).
 
 ## Tick protocol (one wake = one digest)
 
@@ -69,8 +70,8 @@ one step; ≤ 700 bytes, `libs/bus_watch/induction.py`, operator bind 10479 #82/
 first key of every `DIGEST <root>` bus turn, so a woken claude.ai liaison reads the same address. Bind NOW
 for the next wake with `liaison-tick.py --root R --set now_row="<row>"`; standing operator binds go in
 `--set induction_binds='["hopper paused (10479#210)"]'`, already-loaded skills in `induction_loaded`.
-Keystroke paste of this block into the live tab (same uinput path as the hop, no Ctrl+n) is the IDE
-transport; `cse_session(op=followup)` is the claude.ai transport — both are open work, not yet wired.
+Keystroke paste of this block into the live tab (same uinput path as the hop, no Ctrl+n) is the planned IDE
+transport; `cse_session(op=followup)` is the planned claude.ai transport — both are **planned / not yet wired**.
 
 **Goal (standing authorization — operator 2026-09-15, a:34037):** Every resume, `/liaison` arm, or hop
 pickup **must verify** a Cursor goal exists before harvest. Empty Goals panel ⇒ `CreateGoal` immediately with
@@ -89,7 +90,9 @@ Never complete mid-wait without hop or arc close. Re-check after every CHECKPOIN
 2. **Harvest** — ∀ lane ∈ `attention`: `terminal=true` ⇒ `agent_bus_read(get, thread, "latest")` (one turn);
    read the CLOSEOUT/SCORE_RESURFACE, quote its evidence, `mark_read`. Non-terminal unread ⇒ latest turn only.
    `watchers_complete_unrelayed` ⇒ read the state file's `thread`, harvest, then
-   `liaison-tick.py --root R --mark-relayed <file>`. `kind=friction` items and `digest.frictions` ⇒ § Friction
+   `liaison-tick.py --root R --mark-relayed <basename>` (`path.name` only — e.g. `11924-foo.state.json`, not
+   `tmp/watchers/11924-foo.state.json`; a prefixed path stays `watchers_complete_unrelayed`). `kind=friction`
+   items and `digest.frictions` ⇒ § Friction
    score rows (one `assertion_get` deepen at most; the row already carries category · note · state).
 3. **Fold** — update the scoreboard (`fs md_replace` on the cortex scoreboard URI in the tip CHECKPOINT): row
    status ← observed (quote sha / pytest line / execution_id). Landed ≠ live: a slice whose paths serve a
@@ -160,7 +163,10 @@ Woken claude.ai liaisons read the house through the latest `DIGEST <root>` turn 
 
 `liaison_seats(IDE ∪ cursor-sdk) ≤ 1` per root, enforced by `tmp/watchers/liaison-fable-<root>.lock` via
 `scripts/liaison-tick.py`: `--claim --holder ide:<transcript_id>|sdk:<dispatch_id> [--hop]` ·
-`--release --holder …`. **Holder identity is the tab, not the root** — two attended tabs that both claim
+`--release --holder …`. When arming `/liaison` or claiming the seat, resolve `ide:<transcript_id>` with
+`liaison-ide-hop.py --find-transcript` from the tab's **first user message**: `resume <root>` when that was
+first; `"/liaison <root>"` only when the slash line is first. Bare `"/liaison"` can hit a **foreign** tab.
+**Holder identity is the tab, not the root** — two attended tabs that both claim
 `ide:<root>` silently co-hold (same string ⇒ re-claim succeeds); with `ide:<transcript_id>` the second tab is
 `refused` (`reason=held`) and runs as a **worker tab**: its own legs and turns, no loop, no Rows fold, no
 CHECKPOINT on the root. Taking the seat from a live attended holder needs the operator's word: `resume <root>`
