@@ -151,11 +151,12 @@ def test_spent_subject_gate_negatives(
 
 
 @pytest.mark.parametrize(
-    ("subject", "terminal", "lifecycle"),
+    ("subject", "terminal", "lifecycle", "attention_is_lane"),
     [
-        ("G3 LAND abc123", False, "admitted"),
-        ("G3 generate", True, "admitted"),
-        ("G3 generate", False, "completed"),
+        ("G3 LAND abc123", False, "admitted", False),
+        ("G3 generate", True, "admitted", False),
+        ("G3 generate", False, "completed", False),
+        ("HOLD_MERGE 10561", False, "admitted", True),
     ],
 )
 def test_release_on_spent_lane(
@@ -163,27 +164,51 @@ def test_release_on_spent_lane(
     subject: str,
     terminal: bool,
     lifecycle: str,
+    attention_is_lane: bool,
 ) -> None:
     row = f"agent-bus:{LANE_A} · «G3 generate admitted»"
+    lane = _lane(
+        LANE_A,
+        subject=subject,
+        unread=1 if attention_is_lane else 0,
+        terminal=terminal,
+        lifecycle=lifecycle,
+    )
     digest = _digest(
-        attention=[],
-        lanes=[_lane(LANE_A, subject=subject, unread=0, terminal=terminal, lifecycle=lifecycle)],
+        attention=[lane] if attention_is_lane else [],
+        lanes=[lane],
     )
     state = _state(
         policy={"now_row": row},
         bind={"row": row, "lane_id": LANE_A, "tier": "attention"},
     )
     _write_state(state_path, state)
-    with patch("bus_watch.now_row_bind.emit_now_row_released") as released:
+    update_calls: list[int] = []
+
+    def _count_update(path, mutate):  # noqa: ANN001
+        update_calls.append(1)
+        return update_state(path, mutate)
+
+    with patch("bus_watch.now_row_bind.emit_now_row_released") as released, patch(
+        "bus_watch.now_row_bind.update_state", side_effect=_count_update
+    ):
         result = maybe_bind_now_row(digest, state, state_path, as_of=AS_OF)
-    assert result["action"] == "none"
-    assert result.get("released")
+    if attention_is_lane:
+        assert result["action"] == "refused"
+        assert result["reason"] == "hold_marker"
+        assert result.get("released") == "hold_marker"
+    else:
+        assert result["action"] == "none"
+        assert result.get("released")
     disk = load_state(state_path)
     assert disk["policy"]["now_row"] == ""
     assert "now_row_bind" not in disk
     assert state["policy"]["now_row"] == ""
     assert "now_row_bind" not in state
+    assert len(update_calls) == 1
     released.assert_called_once()
+    if attention_is_lane:
+        assert released.call_args.kwargs["reason"] == "hold_marker"
 
 
 def test_release_then_rebind_same_tick(state_path: Path) -> None:

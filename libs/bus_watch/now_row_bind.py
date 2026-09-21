@@ -99,12 +99,18 @@ def maybe_bind_now_row(
         return {"action": "none", "source": source}
 
     lane: dict[str, Any] | None = None
+    refused_reason: str | None = None
     if source == "attention":
         lane = attention_now_lane(digest)
         if lane:
             spent = lane_spent(lane)
             if spent:
-                return {"action": "refused", "reason": spent}
+                if release_reason:
+                    release_only = True
+                    refused_reason = spent
+                    lane = None
+                else:
+                    return {"action": "refused", "reason": spent}
         if raw == expected_prior and not release_reason:
             return {"action": "unchanged"}
 
@@ -177,6 +183,12 @@ def maybe_bind_now_row(
                 result["released"] = release_reason
             return result
 
+        if refused_reason:
+            return {
+                "action": "refused",
+                "reason": refused_reason,
+                "released": release_reason,
+            }
         return {
             "action": "none",
             "source": source,
