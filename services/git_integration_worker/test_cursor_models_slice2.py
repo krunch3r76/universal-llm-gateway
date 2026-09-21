@@ -28,19 +28,18 @@ def test_resolve_cursor_grok_omit_fast_true() -> None:
 
     cfg = resolve_cursor("cursor/grok-4.7")
     assert cfg.model_id == "grok-4.7"
-    assert {spec.name for spec in cfg.params} == {"context", "effort", "fast"}
+    assert {spec.name for spec in cfg.params} == {"effort", "fast"}
     assert default_variant("grok-4.7") == {
-        "context": "500k",
         "effort": "high",
         "fast": "true",
     }
-    assert supported_knobs("grok-4.7")["context"].default == "500k"
+    assert "context" not in supported_knobs("grok-4.7")
     assert supported_knobs("grok-4.7")["fast"].default == "true"
     selection = build_model_selection(cfg)
     by_id = {p.id: p.value for p in selection.params}
-    assert by_id["context"] == "500k"
+    assert "context" not in by_id
     assert by_id["fast"] == "true"
-    assert by_id["effort"] == "high"
+    assert by_id["reasoning_effort"] == "high"
 
 
 def test_resolve_cursor_denies_canonicalized_denylist_entry(

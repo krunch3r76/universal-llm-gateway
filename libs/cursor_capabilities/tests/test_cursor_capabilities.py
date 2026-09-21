@@ -100,7 +100,6 @@ def test_suggest_effort_knobs_accepted_and_empty() -> None:
 def test_effective_knobs_grok_omit_path_fast_true() -> None:
     """Grok caller omits fast → stamp includes descriptor default fast=true."""
     assert effective_knobs("grok-4.7", {"effort": "xhigh"}) == {
-        "context": "500k",
         "effort": "xhigh",
         "fast": "true",
     }
@@ -109,7 +108,6 @@ def test_effective_knobs_grok_omit_path_fast_true() -> None:
 def test_effective_knobs_explicit_fast_false() -> None:
     """Caller pin fast=false wins over the omit-path speed default."""
     assert effective_knobs("grok-4.7", {"effort": "xhigh", "fast": "false"}) == {
-        "context": "500k",
         "effort": "xhigh",
         "fast": "false",
     }
@@ -117,7 +115,6 @@ def test_effective_knobs_explicit_fast_false() -> None:
 
 def test_effective_knobs_explicit_fast_true() -> None:
     assert effective_knobs("grok-4.7", {"effort": "xhigh", "fast": "true"}) == {
-        "context": "500k",
         "effort": "xhigh",
         "fast": "true",
     }
@@ -125,7 +122,6 @@ def test_effective_knobs_explicit_fast_true() -> None:
 
 def test_effective_knobs_drops_invalid_override() -> None:
     assert effective_knobs("grok-4.7", {"effort": "max", "fast": "true"}) == {
-        "context": "500k",
         "fast": "true",
     }
 
@@ -135,7 +131,6 @@ def test_effective_knobs_warns_invalid_effort_value(
 ) -> None:
     caplog.set_level(logging.WARNING, logger="cursor_capabilities.cursor_capabilities")
     assert effective_knobs("grok-4.7", {"effort": "max"}) == {
-        "context": "500k",
         "fast": "true",
     }
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
@@ -164,7 +159,6 @@ def test_effective_knobs_accepted_values_no_warning(
 ) -> None:
     caplog.set_level(logging.WARNING, logger="cursor_capabilities.cursor_capabilities")
     assert effective_knobs("grok-4.7", {"effort": "xhigh", "fast": "true"}) == {
-        "context": "500k",
         "effort": "xhigh",
         "fast": "true",
     }

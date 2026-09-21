@@ -120,6 +120,15 @@ def validate_knobs(config: CursorSdkModelConfig, overrides: Mapping[str, str]) -
         raise ValueError("; ".join(errors))
 
 
+# Live ListModels names this knob reasoning_effort. Sending effort makes the
+# SDK status ERROR: Invalid parameters for registry model "grok-4.7".
+_PARAM_WIRE_ID = {("grok-4.7", "effort"): "reasoning_effort"}
+
+
+def _wire_param_id(model_id: str, name: str) -> str:
+    return _PARAM_WIRE_ID.get((model_id, name), name)
+
+
 def build_model_selection(
     config: CursorSdkModelConfig,
     overrides: Mapping[str, str] | None = None,
@@ -129,10 +138,11 @@ def build_model_selection(
     validate_knobs(config, knob_overrides)
     params: list[ModelParameterValue] = []
     for spec in config.params:
+        wire_id = _wire_param_id(config.model_id, spec.name)
         if spec.name in knob_overrides:
             params.append(
-                ModelParameterValue(id=spec.name, value=knob_overrides[spec.name])
+                ModelParameterValue(id=wire_id, value=knob_overrides[spec.name])
             )
         elif spec.default is not None:
-            params.append(ModelParameterValue(id=spec.name, value=spec.default))
+            params.append(ModelParameterValue(id=wire_id, value=spec.default))
     return ModelSelection(id=config.model_id, params=tuple(params))

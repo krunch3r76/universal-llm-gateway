@@ -53,6 +53,17 @@ def _prompts_path() -> Path:
     return _repo_root() / "pipelines" / "prompt_expand" / "v1" / "prompts.yaml"
 
 
+def _sidecar_author_text(dispatch_id: str) -> str:
+    """GIW writes the run body to the closeout sidecar even when the bus thread 404s."""
+    path = _repo_root() / "tmp" / "reviews" / "closeouts" / f"{dispatch_id}.md"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    prose, _, _rest = raw.partition("\n## effects_manifest")
+    return prose.strip()
+
+
 def _worker_base_url() -> str:
     from systems.frontier_consult.cursor_sdk_worker_dispatch import worker_base_url
 
@@ -270,6 +281,8 @@ async def author_task_prime_async(
     body = await fetch_sdk_closeout_body(
         thread_id=thread_id, dispatch_id=dispatch_id
     )
+    if not (body or "").strip():
+        body = _sidecar_author_text(dispatch_id)
     text = full_result_text(body or "", None).strip()
     if not text:
         logger.warning(

@@ -280,19 +280,18 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"context": "300k", "effort": "high"},
         instruction_profile="reasoner",
     ),
-    # Cursor Grok 4.7 — effort, fast, and a 500k context knob.
-    # KnobSpec.default drives omit-path emit; 500k is the operator default.
-    # Omitted fast is the speed tier; callers pin fast=false explicitly.
+    # Cursor Grok 4.7. ListModels also advertises context=500k, but a run that
+    # sends that parameter returns status ERROR: Invalid parameters for registry
+    # model "grok-4.7". Omitting context lets the SDK default succeed.
+    # The live parameter id for effort is reasoning_effort (see cursor_models).
     "grok-4.7": ModelCapability(
         knobs={
-            "context": KnobSpec(accepted=("500k",), default="500k"),
             "effort": KnobSpec(
                 accepted=("low", "medium", "high", "xhigh"), default="high"
             ),
             "fast": KnobSpec(accepted=("false", "true"), default="true"),
         },
         default_variant={
-            "context": "500k",
             "effort": "high",
             "fast": "true",
         },
