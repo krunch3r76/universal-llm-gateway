@@ -25,6 +25,7 @@ import re
 from typing import Any
 
 from bus_watch.now_row import resolve_now_row
+from bus_watch.spawn_wake.packet import successor_model_fields
 
 LEFTOVER_HOLD = "hold"
 LEFTOVER_PLAY = "play"
@@ -70,9 +71,11 @@ def addressed_todo(digest: dict[str, Any]) -> str | None:
 
 def leftover_mode(digest: dict[str, Any], state: dict[str, Any]) -> str:
     """``aware`` unless the operator forced ``--sit`` onto state/policy."""
-    planted = (state.get("play") or {}).get("mode") if isinstance(
-        state.get("play"), dict
-    ) else None
+    planted = (
+        (state.get("play") or {}).get("mode")
+        if isinstance(state.get("play"), dict)
+        else None
+    )
     policy = digest.get("policy") or state.get("policy") or {}
     raw = planted or policy.get("play") or MODE_AWARE
     return MODE_SIT if str(raw) == MODE_SIT else MODE_AWARE
@@ -104,13 +107,19 @@ def _hopping(lane: dict[str, Any]) -> bool:
 
 def _conductor_signal(lane: dict[str, Any]) -> bool | None:
     """True = conductor, False = known other, None = unsure."""
-    contract = str(lane.get("contract") or lane.get("packet_kind") or "").strip().lower()
+    contract = (
+        str(lane.get("contract") or lane.get("packet_kind") or "").strip().lower()
+    )
     if contract == "conductor":
         return True
     if contract:
         return False
     subject = str(lane.get("last_subject") or "")
-    if _hopping(lane) or "ROW_HOP" in subject or "contract=conductor" in subject.lower():
+    if (
+        _hopping(lane)
+        or "ROW_HOP" in subject
+        or "contract=conductor" in subject.lower()
+    ):
         return True
     if _lane_todos(lane):
         return None
@@ -123,8 +132,10 @@ def _lane_live(lane: dict[str, Any]) -> bool | None:
         return True
     lifecycle = str(lane.get("lifecycle") or "").strip().lower()
     status = str(lane.get("status") or "").strip().lower()
-    if lifecycle in _TERMINAL_LIFECYCLES or status in _TERMINAL_STATUSES or lane.get(
-        "terminal"
+    if (
+        lifecycle in _TERMINAL_LIFECYCLES
+        or status in _TERMINAL_STATUSES
+        or lane.get("terminal")
     ):
         return False
     if status in _LIVE_STATUSES or lifecycle in _LIVE_LIFECYCLES:
@@ -232,6 +243,10 @@ def build_play_dispatch_body(
 ) -> dict[str, Any]:
     """Admit one conductor on the addressed todo. Lane B; no house-generate paste.
 
+    The conductor model is ``policy.successor_model``, the same slug later
+    wakes use. Omitting ``model=`` here used to resolve Composer Fast and
+    split the house driver from the ticker successor.
+
     Coord parent is the resume root. ``loop_thread`` is occupancy (DIGEST),
     not conductor mailbox (a:36103 — 12029 play 422'd on tape 12030).
     """
@@ -247,7 +262,7 @@ def build_play_dispatch_body(
         "dispatch_thread_id": str(root_id),
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
-        "model_knobs": {"fast": "true"},
+        **successor_model_fields(policy),
     }
     return body
 

@@ -312,7 +312,8 @@ Rates: `config/model_rates.yaml`.
 
 | Seat | Model / contract | Use when |
 |---|---|---|
-| **Composer (cursor_sdk)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | The only cursor_sdk seat. Judgment vs implement is carried by `contract` (`conductor` \| `investigate` vs `implement` \| `pure-mechanical`), never by model. Multi-G orchestrate, scoreboard drive, enumerate (returns `OPEN FORK:` lines, never binds). |
+| **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — `effort=high`, `fast=false`; same slug as the ticker successor | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
+| **Composer (nested implement)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. |
 | **CDP width** | **`cdp/fable`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. |
 | **CDP bind / review** | **`cdp/opus-5`** (`purpose=review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. |
 | **Explicit pins (never standing)** | `cursor/claude-opus-5` premium live-checkout (inform-then-proceed) · `cursor/gpt-5.6-terra\|sol` only when operator/packet names Other Models · `cursor/claude-sonnet-5` last resort (CDP lane unavailable) | Named per leg only — never a default, never a tier row. |

@@ -34,11 +34,11 @@ _CONDUCTOR_USE_LINE = (
     "Use the conductor skill — nest specialists; ¬ hand-code mechanical G-rows."
 )
 _SCORE_PLAY_SEAT_LINES = (
-    "- Enumerate · implement · drive: `cursor/composer-2.5` — omit `model=`; "
-    "only cursor_sdk seat.",
+    "- Enumerate · implement · drive: `cursor/grok-4.7` — `effort=high`, "
+    "`fast=false`; same slug as the ticker successor.",
     "- Intelligence (architecture, ranking, fork resolution): CDP "
     "`cdp/opus-5`, `cdp/fable`.",
-    "- Composer enumerates and does not rank rival designs — write "
+    "- The house driver enumerates and does not rank rival designs — write "
     "`OPEN FORK:` and stop.",
     "- BIND is one CDP turn; a second CDP turn on one row means ENUMERATE "
     "was underspecified.",
@@ -363,8 +363,8 @@ def _render_mcp_capabilities(ctx: ConductorMaterializeContext) -> str:
             "Use the `work-item-seed-path` skill",
             "Use the `architecture-invariants` skill",
             "Use the `ulg-architecture` skill",
-            f"Scoreboard tip: fs(op=\"read\", path=\"{scoreboard_tip_uri(ctx.slug)}\")",
-            f"Journal: fs(op=\"read\", path=\"cortex://notes/system/scoreboards/{ctx.slug}-score-journal.md\")",
+            f'Scoreboard tip: fs(op="read", path="{scoreboard_tip_uri(ctx.slug)}")',
+            f'Journal: fs(op="read", path="cortex://notes/system/scoreboards/{ctx.slug}-score-journal.md")',
         ]
     )
 
@@ -439,13 +439,15 @@ def conductor_packet_contains_use_line(text: str) -> bool:
 
 def conductor_packet_has_lane_b(text: str) -> bool:
     """True when frontmatter or invariants name Lane B."""
-    return bool(re.search(r'lane:\s*B\b', text, re.IGNORECASE))
+    return bool(re.search(r"lane:\s*B\b", text, re.IGNORECASE))
 
 
 def extract_scoreboard_uri(text: str) -> str | None:
     """Pull scoreboard tip URI from a materialized conductor packet."""
     block = _extract_block(text, "task_guidance") or text
-    match = re.search(r"cortex://notes/system/scoreboards/[^\s`\"']+-scoreboard\.md", block)
+    match = re.search(
+        r"cortex://notes/system/scoreboards/[^\s`\"']+-scoreboard\.md", block
+    )
     return match.group(0) if match else None
 
 

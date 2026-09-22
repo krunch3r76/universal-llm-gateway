@@ -70,6 +70,18 @@ def test_play_dispatch_body_uses_resume_root_not_tape() -> None:
     )
     assert body["dispatch_thread_id"] == "12029"
     assert body["source_ref"] == "todo:liaison-loop-tape-birth"
+    assert "model" not in body
+
+
+def test_play_dispatch_body_uses_successor_model() -> None:
+    body = build_play_dispatch_body(
+        "12557",
+        {"successor_model": "cursor/grok-4.7", "max_hop_minutes": 60},
+        todo_slug="cse-attachment-hop",
+    )
+    assert body["model"] == "cursor/grok-4.7"
+    assert body["model_knobs"] == {"effort": "high", "fast": "false"}
+    assert body["contract"] == "conductor"
 
 
 def test_classify_hold_when_lanes_unobserved_and_todo_named() -> None:

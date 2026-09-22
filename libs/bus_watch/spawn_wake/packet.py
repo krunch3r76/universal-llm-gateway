@@ -47,6 +47,29 @@ def build_successor_message(
     )
 
 
+def successor_model_fields(policy: dict[str, Any]) -> dict[str, Any]:
+    """Model and knobs shared by the first play admit and later successor wakes.
+
+    The house driver starts as ``policy.successor_model``. A missing knob map
+    still pins Grok to high / non-fast so the start cannot fall through to
+    Composer Fast.
+    """
+    fields: dict[str, Any] = {}
+    successor = str(policy.get("successor_model") or "")
+    if successor:
+        fields["model"] = successor
+    policy_knobs = policy.get("successor_model_knobs")
+    if isinstance(policy_knobs, dict):
+        fields["model_knobs"] = {str(k): str(v) for k, v in policy_knobs.items()}
+        return fields
+    bare_id = successor.rsplit("/", 1)[-1] if successor else ""
+    if bare_id == "grok-4.7":
+        fields["model_knobs"] = {"effort": "high", "fast": "false"}
+    elif bare_id == "composer-2.5":
+        fields["model_knobs"] = {"fast": "false"}
+    return fields
+
+
 def build_dispatch_body(
     root_id: str,
     policy: dict[str, Any],
@@ -87,7 +110,6 @@ def build_dispatch_body(
         # friction or dispatches implement must not serialize on Lane A's
         # 1-slot write lease (11960 sit queued behind 11959 grok, 2026-09-21).
         "lane": "B",
-        "model": policy.get("successor_model"),
         "message": message,
         "dispatch_thread_id": tape,
         # Per-night work identity: GIW's remint cap counts admits per work_key, so a
@@ -96,25 +118,13 @@ def build_dispatch_body(
         "work_key": work_key or f"agent-bus:{root_id}:night-{current_night_id()}",
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
+        **successor_model_fields(policy),
         **(
             {"cost_intent": policy["successor_cost_intent"]}
             if policy.get("successor_cost_intent")
             else {}
         ),
     }
-    policy_knobs = policy.get("successor_model_knobs")
-    if isinstance(policy_knobs, dict):
-        body["model_knobs"] = {str(k): str(v) for k, v in policy_knobs.items()}
-    else:
-        model = str(policy.get("successor_model") or "")
-        bare_id = model.rsplit("/", 1)[-1] if model else ""
-        if bare_id == "grok-4.7":
-            # Judgment hop. Fast is the card's cheap path; this hop needs high / non-fast.
-            body["model_knobs"] = {"effort": "high", "fast": "false"}
-        elif bare_id == "composer-2.5":
-            # Card default is Fast. Gear-3 preset pins Standard; this covers a
-            # composer successor whose policy never stored the knobs.
-            body["model_knobs"] = {"fast": "false"}
     return body
 
 

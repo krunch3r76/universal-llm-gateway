@@ -22,7 +22,6 @@ from bus_watch.spawn_pending import (
 )
 from bus_watch.spawn_wake.play_classify import (
     LEFTOVER_HOLD,
-    LEFTOVER_PLAY,
     classify_leftover,
 )
 from bus_watch.spawn_wake.review_apply import (
@@ -232,9 +231,8 @@ def evaluate_spawn_predicate(
         "remint_cap_clear": not remint_cap_wall(state, night_id),
     }
     leftover = classify_leftover(digest, state, lock=lock)
-    # Play admits via source_ref rematerialize — Composer omit, not successor_model.
-    if leftover["leftover"] == LEFTOVER_PLAY:
-        clauses["successor_model_bound"] = True
+    # Play admits the same successor_model as later wakes. An unbound model
+    # must not start the house as Composer omit.
     clauses["leftover_not_hold"] = leftover["leftover"] != LEFTOVER_HOLD
     if owing_review_apply(digest, state):
         # Apply-all under: frozen ready, ide: check-in, or leftover HOLD must

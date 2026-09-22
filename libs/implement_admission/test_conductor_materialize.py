@@ -173,6 +173,7 @@ def test_materialize_score_play_seat_language_no_tier_pointer(tmp_path: Path) ->
     assert "cursor-model-economics" not in mp.text
     assert "`cdp/opus-5`" in mp.text
     assert "`cdp/fable`" in mp.text
+    assert "`cursor/grok-4.7`" in mp.text
     assert "`OPEN FORK:`" in mp.text
     assert "score-play" in mp.text
     assert "runbook:score-play" not in mp.text  # inline URI, not a pointer phrase
