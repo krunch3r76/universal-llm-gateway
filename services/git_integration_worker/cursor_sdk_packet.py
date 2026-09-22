@@ -19,6 +19,8 @@ from reasoning_posture_contracts import (
     reasoning_posture_invoke_parts,
     reasoning_posture_warrants_injection,
 )
+from work_key_grammar import WORK_ITEM_SCHEMES as _WORK_ITEM_SCHEMES
+from work_key_grammar import is_valid_work_key_scheme
 
 _LARGE_CONTENT_CHUNK_CHARS = 40_000
 
@@ -311,9 +313,6 @@ _SOURCE_REF_FRONTMATTER_RE = re.compile(
 _WORK_ITEM_KEY_RE = re.compile(
     r"^(?:todo|plan|plan_phase|packet):\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
 )
-from work_key_grammar import ADHOC_SCHEME as _ADHOC_SCHEME
-from work_key_grammar import WORK_ITEM_SCHEMES as _WORK_ITEM_SCHEMES
-
 
 _WORK_KEY_FRONTMATTER_RE = re.compile(
     r"^work_key:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
@@ -321,9 +320,6 @@ _WORK_KEY_FRONTMATTER_RE = re.compile(
 _PACKET_KIND_FRONTMATTER_RE = re.compile(
     r"^packet_kind:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
 )
-
-
-from work_key_grammar import is_valid_work_key_scheme  # noqa: F401 — re-export
 
 
 def extract_work_key_from_packet(text: str) -> str | None:
