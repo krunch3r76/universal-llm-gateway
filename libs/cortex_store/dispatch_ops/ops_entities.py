@@ -698,7 +698,7 @@ def _op_entity_update(
             updates["content_hash"] = computed
     if not updates:
         return {"error": "No fields to update"}
-    _, _, _, _, _update_entity_impl = _impls()
+    _, get_entity_card, _, _, _update_entity_impl = _impls()
     with cortex_conn() as conn:
         try:
             canonical_id = _resolve_read_entity_id(
@@ -709,6 +709,17 @@ def _op_entity_update(
             )
         except HTTPException as exc:
             return _http_error_dict(exc)
+        prior_triage: str | None = None
+        patch_attrs = updates.get("attributes")
+        if isinstance(patch_attrs, dict) and "density_triage" in patch_attrs:
+            try:
+                prior_card = get_entity_card(conn, entity_id=canonical_id)
+                prior_attrs = prior_card.get("attributes") or {}
+                if isinstance(prior_attrs, dict):
+                    raw_prior = prior_attrs.get("density_triage")
+                    prior_triage = str(raw_prior).strip() if raw_prior else None
+            except HTTPException:
+                prior_triage = None
         try:
             result = _update_entity_impl(
                 conn,
@@ -720,6 +731,30 @@ def _op_entity_update(
             return _http_error_dict(exc)
         if "error" not in result:
             logger.info("cortex entity_update: %s", entity_id)
+            if isinstance(patch_attrs, dict) and "density_triage" in patch_attrs:
+                new_triage = str(patch_attrs.get("density_triage") or "").strip()
+                if new_triage and new_triage != (prior_triage or ""):
+                    from implement_admission.events_density_readiness import (
+                        emit_density_triage_elevated,
+                    )
+
+                    _rank = {
+                        "trivial": 0,
+                        "recon_pending": 1,
+                        "admission_path": 2,
+                        "dispatch_surface": 2,
+                        "mechanical": 3,
+                        "cross_cutting": 4,
+                        "judgment_required": 5,
+                    }
+                    old_r = _rank.get((prior_triage or "").lower(), -1)
+                    new_r = _rank.get(new_triage.lower(), -1)
+                    if new_r > old_r:
+                        emit_density_triage_elevated(
+                            entity_id=str(canonical_id),
+                            prior=prior_triage,
+                            current=new_triage,
+                        )
             try:
                 attrs = updates.get("attributes")
                 entity_type = str(result.get("type") or "")

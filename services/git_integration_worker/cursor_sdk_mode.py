@@ -3,27 +3,20 @@
 from __future__ import annotations
 
 import json
-import re
-from typing import Literal
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
-from services.git_integration_worker.cursor_sdk_packet import extract_sdk_mode_from_packet
+from services.git_integration_worker.cursor_sdk_packet import (
+    extract_sdk_mode_from_packet,
+)
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
 SdkMode = Literal["agent", "plan"]
 
 _IMPLEMENT_CLASS_CONTRACTS = frozenset({"implement", "pure-mechanical", "conductor"})
 _PLAN_CLOSEOUT_VERDICT = "plan:closeout_verdict"
-_IMPLEMENT_READY_RE = re.compile(
-    r"^density(?:_triage)?:\s*implement[_-]?ready\b",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-
-def body_implement_ready(body: str | None) -> bool:
-    """True when directive/packet body stamps implement-ready density."""
-    return bool(_IMPLEMENT_READY_RE.search(body or ""))
 
 
 def explicit_sdk_mode(req: CursorDispatchRequest) -> SdkMode | None:
@@ -74,20 +67,6 @@ def enforce_plan_read_only(sdk_mode: SdkMode, effective_read_only: bool) -> bool
     return effective_read_only
 
 
-def nested_auto_sdk_mode(
-    *,
-    contract: str,
-    body: str,
-    implement_ready: bool | None = None,
-) -> SdkMode | None:
-    """cursor-auto nested POST: plan-first for sparse recon legs only."""
-    if contract not in {"ask", "recon", "seed"}:
-        return None
-    if implement_ready if implement_ready is not None else body_implement_ready(body):
-        return None
-    return "plan"
-
-
 def sdk_mode_from_record_json(record_json: str | None) -> SdkMode | None:
     """Read resolved ``sdk_mode`` stamped at admit."""
     if not record_json:
@@ -119,6 +98,34 @@ def sdk_mode_for_dispatch(dispatch_id: str) -> SdkMode | None:
     return sdk_mode_from_record_json(str(row["record_json"] or ""))
 
 
+@dataclass(frozen=True, slots=True)
+class PlanCloseoutPredicate:
+    """Inputs for R1 §5 PLAN_COMPLETE conjuncts."""
+
+    has_artifacts: bool
+    open_forks_key_present: bool
+    open_forks: list[Any]
+    spec_sha256: str | None
+    dense_spec_valid: bool | None
+    files_expected: list[str] | None
+    acceptance_criteria: list[str] | None
+
+
+def plan_closeout_verdict(inputs: PlanCloseoutPredicate) -> str:
+    """Return PLAN_COMPLETE or PARTIAL per six §5 conjuncts."""
+    if not inputs.open_forks_key_present:
+        return "PARTIAL"
+    complete = (
+        inputs.has_artifacts
+        and inputs.open_forks == []
+        and bool(inputs.spec_sha256)
+        and inputs.dense_spec_valid is True
+        and bool(inputs.files_expected)
+        and bool(inputs.acceptance_criteria)
+    )
+    return "PLAN_COMPLETE" if complete else "PARTIAL"
+
+
 def apply_plan_mode_closeout_gate(
     *,
     sdk_mode: SdkMode | None,
@@ -128,6 +135,11 @@ def apply_plan_mode_closeout_gate(
     deviations: list[str] | None,
     artifact_paths: list[str],
     offgit_deliverable_uris: list[str] | None,
+    open_forks: list[dict[str, Any]] | None = ...,
+    spec_sha256: str | None = None,
+    dense_spec_valid: bool | None = None,
+    files_expected: list[str] | None = None,
+    acceptance_criteria: list[str] | None = None,
 ) -> tuple[CloseoutStatus, WorkOutcome | None, bool | None, list[str], str | None]:
     """Plan dispatches never land; verdict is PLAN_COMPLETE or PARTIAL only."""
     if sdk_mode != "plan":
@@ -138,13 +150,25 @@ def apply_plan_mode_closeout_gate(
         if "plan:land_claim_forbidden" not in out_devs:
             out_devs.append("plan:land_claim_forbidden")
 
-    has_artifacts = bool(artifact_paths or offgit_deliverable_uris)
     if status == CloseoutStatus.COMPLETE:
         status = CloseoutStatus.PARTIAL
     if work_outcome == WorkOutcome.SHIPPED:
         work_outcome = WorkOutcome.UNVERIFIED
 
-    verdict = "PLAN_COMPLETE" if has_artifacts else "PARTIAL"
+    open_forks_key_present = open_forks is not ...
+    forks_list = [] if open_forks is ... else list(open_forks or [])
+    has_artifacts = bool(artifact_paths or offgit_deliverable_uris)
+    verdict = plan_closeout_verdict(
+        PlanCloseoutPredicate(
+            has_artifacts=has_artifacts,
+            open_forks_key_present=open_forks_key_present,
+            open_forks=forks_list,
+            spec_sha256=spec_sha256,
+            dense_spec_valid=dense_spec_valid,
+            files_expected=files_expected,
+            acceptance_criteria=acceptance_criteria,
+        )
+    )
     if f"{_PLAN_CLOSEOUT_VERDICT}={verdict}" not in out_devs:
         out_devs.append(f"{_PLAN_CLOSEOUT_VERDICT}={verdict}")
 
@@ -152,12 +176,12 @@ def apply_plan_mode_closeout_gate(
 
 
 __all__ = [
+    "PlanCloseoutPredicate",
     "SdkMode",
     "apply_plan_mode_closeout_gate",
-    "body_implement_ready",
     "enforce_plan_read_only",
     "explicit_sdk_mode",
-    "nested_auto_sdk_mode",
+    "plan_closeout_verdict",
     "resolve_sdk_mode",
     "sdk_mode_for_dispatch",
     "sdk_mode_from_record_json",

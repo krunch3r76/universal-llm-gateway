@@ -44,8 +44,8 @@ When the work thread or scoreboard shows a terminal plan dispatch on this
 4. **Nest shape** — implement admit uses `nest_under=<plan_dispatch_id>`,
    `sdk_mode: agent` (or omit — implement-class defaults agent). **`sdk_mode=plan`
    on `contract=implement` → 422** (`validate_sdk_mode_at_admit`).
-5. **W3 nest hint** — `cursor-auto` nested `ask|recon|seed` without
-   `implement_ready` auto-stamps plan via `nested_auto_sdk_mode`; the conductor
+5. **W3 plan leg** — nested `ask|recon|seed` legs declare `sdk_mode: plan` on
+   the wire or in the packet when read-only plan mode is intended; the conductor
    (or lead) still fires the explicit implement nest after `PLAN_COMPLETE`.
 
 | Prior verdict | Implement pickup |
