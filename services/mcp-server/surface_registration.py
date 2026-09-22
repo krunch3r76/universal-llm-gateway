@@ -98,7 +98,8 @@ def register_tools_for_surface(mcp: FastMCP, surface: Surface) -> None:
     register_agent_bus_read_tool(mcp)
     register_cse_session_tool(mcp)
     register_chat_session_tool(mcp)
-    register_cursor_request_tool(mcp)
+    if surface == "life":
+        register_cursor_request_tool(mcp)
     register_fleet_liveness_tools(mcp)
     register_cortex_tools(mcp, surface=surface)
     register_cortex_named_tools(mcp, surface=surface)

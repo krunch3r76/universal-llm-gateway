@@ -81,6 +81,7 @@ LIFE_SURFACE_FORBIDDEN_TOOLS: frozenset[str] = frozenset(
         "manage",
         "observability",
         "panel_dispatch",
+        "claudeburst",
     }
 )
 

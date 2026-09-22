@@ -300,7 +300,7 @@ def test_from_omitted_reaches_dispatch_autofilled_on_life_surface() -> None:
     assert captured[0]["from_agent"] == "web-anthropic"
 
 
-def test_surface_registration_includes_cursor_request_call() -> None:
+def test_surface_registration_registers_cursor_request_on_life_only() -> None:
     source = (
         Path(__file__)
         .resolve()
@@ -309,22 +309,36 @@ def test_surface_registration_includes_cursor_request_call() -> None:
         .read_text(encoding="utf-8")
     )
     assert "register_cursor_request_tool" in source
-    assert "register_cursor_request_tool(mcp)" in source
+    assert 'if surface == "life":' in source
+    life_block = source.split('if surface == "life":', 1)[1]
+    assert "register_cursor_request_tool(mcp)" in life_block.split("register_fleet_liveness_tools", 1)[0]
 
 
-@pytest.mark.parametrize("surface", ["life", "code"])
-def test_cursor_request_present_on_surface_tool_list(surface: str) -> None:
+def test_cursor_request_present_on_life_surface_tool_list() -> None:
     from endpoint_surface import derive_surface_primary_tools
     from server import _build_server
 
-    mcp, _, _ = _build_server(surface)  # type: ignore[arg-type]
+    mcp, _, _ = _build_server("life")
     tools = asyncio.run(mcp.list_tools())
     tool_names = {t.name for t in tools}
     assert "cursor_request" in tool_names
-    assert "cursor_request" in derive_surface_primary_tools(surface)  # type: ignore[arg-type]
+    assert "cursor_request" in derive_surface_primary_tools("life")
     cursor_request = next(tool for tool in tools if tool.name == "cursor_request")
     description = cursor_request.description or ""
     assert description, "schema compaction dropped cursor_request description"
     for record in RECORDS:
         assert record.name in description, record.name
         assert record.closeout_shape in description, record.closeout_shape
+
+
+def test_cursor_request_absent_on_code_surface_tool_list() -> None:
+    from endpoint_surface import derive_surface_primary_tools
+    from server import _build_server
+
+    mcp, _, _ = _build_server("code")
+    tools = asyncio.run(mcp.list_tools())
+    tool_names = {t.name for t in tools}
+    assert "cursor_request" not in tool_names
+    assert "cursor_request" not in derive_surface_primary_tools("code")
+    assert "operator_request" not in tool_names
+    assert "operator_request" not in derive_surface_primary_tools("code")

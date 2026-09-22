@@ -51,12 +51,28 @@ CODE_EXTRA = frozenset(
         "panel_dispatch",
     }
 )
-# imprint/delegate/notify/recall are life-only (canonical domain_endpoints); trigger is
-# overflow/relay, never surface_primary (d946 test overclaim; a505 promoted
-# cursor_request into both primaries without updating this gate).
+# Declared on /mcp/code in canonical.yaml before a dedicated MCP registration lands.
+CODE_CANONICAL_ONLY = frozenset({"claudeburst"})
+# imprint/delegate/notify/recall and cursor_request/operator_request are life-only
+# (canonical domain_endpoints); trigger is overflow/relay, never surface_primary.
 CODE_PRIMARY = (
-    LIFE_PRIMARY - frozenset({"imprint", "delegate", "notify", "life_dispatch", "recall", "recycle_giw"})
+    LIFE_PRIMARY
+    - frozenset(
+        {
+            "imprint",
+            "delegate",
+            "notify",
+            "life_dispatch",
+            "recall",
+            "recycle_giw",
+            "cursor_request",
+            "operator_request",
+        }
+    )
 ) | CODE_EXTRA
+
+
+CODE_PRIMARY_CANONICAL = CODE_PRIMARY | CODE_CANONICAL_ONLY
 
 
 @pytest.fixture(scope="module")
@@ -114,7 +130,7 @@ def test_life_tools_list_exact_primary_set(life_server: dict) -> None:
 
 def test_code_tools_list_exact_primary_set(code_server: dict) -> None:
     assert code_server["tool_names"] == set(CODE_PRIMARY)
-    assert code_server["primary"] == CODE_PRIMARY
+    assert code_server["primary"] == CODE_PRIMARY_CANONICAL
 
 
 def test_skill_suggest_absent_from_both_surfaces(

@@ -155,6 +155,11 @@ House wakes, cheapest first:
 
 ## Seat model (operator 2026-09-11 20:37 PT: "Fable on IDE may not always be practical")
 
+**MCP surfaces (cursor-auto admit):** the attended liaison tab uses **`/mcp/code`**. Code no longer mounts
+the narrow `cursor_request` / `operator_request` tools — repo writes and mechanical work enqueue via
+**`agent_bus(tool="request", to=cursor, …)`** (same GIW admit path). Life Cowork (`/mcp/life`) still mounts
+`cursor_request` for implement/directive lanes because life has no `team_dispatch` generate door.
+
 The liaison mechanics are **model-agnostic** — nothing in the tick loop, digest, resume fence, CHECKPOINT,
 hop, or lock reads the tab model. Pick the IDE tab model in the picker; the discipline that changes is the
 seat's own, not the house's:
