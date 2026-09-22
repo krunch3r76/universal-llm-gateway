@@ -60,28 +60,30 @@ def _link_table_blocks_orphan_post(*, thread_id: str, execution_id: str) -> bool
     with delivery proof.
     """
     with connect() as conn:
-        row = conn.execute(
-            "SELECT terminal_status, delivery_at, linked_at "
+        rows = conn.execute(
+            "SELECT execution_id, terminal_status, delivery_at, rowid "
             "FROM thread_dispatch_links "
-            "WHERE thread_id = ? AND execution_id = ?",
-            (thread_id, execution_id),
-        ).fetchone()
-        if row is None:
+            "WHERE thread_id = ? "
+            "ORDER BY linked_at ASC, rowid ASC",
+            (thread_id,),
+        ).fetchall()
+    current = next(
+        (dict(row) for row in rows if row["execution_id"] == execution_id),
+        None,
+    )
+    if current is None:
+        return True
+    if current["terminal_status"] is not None:
+        return True
+    if current["delivery_at"] is not None:
+        return True
+    cur_rowid = int(current["rowid"])
+    for row in rows:
+        if int(row["rowid"]) >= cur_rowid:
+            continue
+        if row["terminal_status"] is not None and row["delivery_at"] is not None:
             return True
-        if row["terminal_status"] is not None:
-            return True
-        if row["delivery_at"] is not None:
-            return True
-        pred = conn.execute(
-            "SELECT 1 FROM thread_dispatch_links "
-            "WHERE thread_id = ? AND execution_id != ? "
-            "  AND terminal_status IS NOT NULL "
-            "  AND delivery_at IS NOT NULL "
-            "  AND linked_at < ? "
-            "LIMIT 1",
-            (thread_id, execution_id, row["linked_at"]),
-        ).fetchone()
-    return pred is not None
+    return False
 
 
 def _orphan_body_for_reason(reason: str, execution_id: str) -> str:

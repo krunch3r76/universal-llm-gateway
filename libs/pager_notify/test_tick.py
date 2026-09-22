@@ -263,6 +263,31 @@ def test_resolve_so_what_from_body() -> None:
     assert resolve_so_what_summary("explicit", "so_what: ignored") == "explicit"
 
 
+def test_resolve_so_what_ignores_dispatch_body_on_role_root() -> None:
+    orphan_body = (
+        "Dispatch orphaned — worker terminated before completion "
+        "(probe_not_found); no terminal turn was received."
+    )
+    assert (
+        resolve_so_what_summary(
+            None,
+            orphan_body,
+            from_agent="dispatch",
+            thread_tags=["role:root", "project:ulg"],
+        )
+        is None
+    )
+    assert (
+        resolve_so_what_summary(
+            "Standing house so-what",
+            orphan_body,
+            from_agent="dispatch",
+            thread_tags=["role:root"],
+        )
+        == "Standing house so-what"
+    )
+
+
 def test_format_closeout_pager_leads_with_so_what() -> None:
     subject, body = format_closeout_pager(
         status="complete",

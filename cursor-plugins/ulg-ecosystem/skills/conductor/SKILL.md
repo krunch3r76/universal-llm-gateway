@@ -513,6 +513,20 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
 - **`CONSULT_PENDING` wait:** the generate session waits or hands off — it does
   not end. `agent_bus.wait` until `archive_uri` or `from=web-anthropic` harvest
   turn; chrome-only continues wait (bounded under remaining wall).
+- **Literal closeout wrapper (mandatory):** emit exactly this block (fill
+  placeholders; GIW preamble `_CONDUCTOR_CONSULT_PENDING_TEMPLATE` repeats at
+  admit):
+
+  ```text
+  status: partial
+  consult: <what you waited for>
+  execution_id: <this dispatch_id>
+  NEXT_ADMIT: <web-anthropic|none>
+  stop: CONSULT_PENDING
+  ```
+
+  Score journal appends require real UTC timestamps (`datetime.now(UTC)` on
+  write — authority: `implement_admission.conductor_score_io`).
 - G3→G5 default: in-process CDP score-ratify (do-not-fight / likely-optimal).
   Explicit see-score → `ROW_PINNED` + ping.
 - **Stronger-model gates (a:32146 · a:32226):** Conductor **MUST break** (halt /

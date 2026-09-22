@@ -211,6 +211,21 @@ _CONDUCTOR_USE_LINE = (
 )
 
 
+def test_conductor_preamble_includes_consult_pending_wrapper() -> None:
+    text = resolve_prompt_preamble(
+        handoff_contract="conductor",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        dispatch_id="disp-consult-wrap",
+        has_packet_path=True,
+        existing_text=_CONDUCTOR_USE_LINE,
+    )
+    assert "stop: CONSULT_PENDING" in text
+    assert "status: partial" in text
+    assert "NEXT_ADMIT:" in text
+
+
 def test_conductor_seat_identity_fires_on_message_body_with_conductor_marker() -> None:
     dispatch_id = "auto-abc123def456"
     text = resolve_prompt_preamble(
