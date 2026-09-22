@@ -73,7 +73,12 @@ Models options; we **block** both for cost — do not pin either. Use `cdp/fable
 | **Cursor Models** | Composer 2.5 | G3 densify / G5 implement / conductor orchestrate / CDP-stuck 2b default — **after** Fable harvest |
 | **Other Models (secondary)** | Sonnet 5, Opus-in-cursor, Terra, Sol, Luna, `cursor/claude-fable-5{,-1}` | **Explicit pin only** (cost). Includes Terra. `cursor/claude-fable-5{,-1}` **blocked** (cost) → `cdp/fable`. ¬ silent G4 / ladder 2c / reviewer / hop-5 default. |
 
-G2 frame is **Fable followup** in the G1 CSE (else `cdp/opus-5` fresh), not the Other Models pool. Other Models quota is not a reason to skip CDP Fable G1 or to spend T3 Opus as a Fable substitute. T2/T3 and hop-4 live-checkout Opus still need their **named** trigger — they are not silent defaults.
+G2 frame is **Fable followup** in the G1 CSE (else `cdp/opus-5` fresh; **when
+`conductor_profile=fable-scarce`:** `cdp/opus-5` fresh, `extra`/`xhigh`,
+`purpose=ask`, **¬** Fable followup in G1 CSE), not the Other Models pool.
+Other Models quota is not a reason to skip CDP Fable G1 or to spend T3 Opus as a
+Fable substitute. T2/T3 and hop-4 live-checkout Opus still need their **named**
+trigger — they are not silent defaults.
 
 ## When
 
@@ -290,7 +295,7 @@ CDP rows (G1/G2/G4/G6) are out of scope — they use `team_dispatch(model=cdp/�
 | G-row | Leg | Default `contract` | Default `sdk_mode` | When to override |
 |---|---|---|---|---|
 | **G1** | Architecture consult | — (CDP `purpose=ask`) | — | Never cursor-sdk plan |
-| **G2** | Frame | — (CDP followup) | — | — |
+| **G2** | Frame | — (CDP; transport per conductor profile) | — | — |
 | **G3** | Sparse recon / bind / densify-before-ready | `none` \| `recon` \| `seed` \| `consult` | **`plan`** | `density_triage: implement_ready` or dense packet ⇒ **`agent`** + `contract=implement` |
 | **G4** | Skeptic | — (CDP) | — | — |
 | **G5** | Implement | `implement` \| `pure-mechanical` | **`agent`** | `sdk_mode=plan` **422** at admit (`validate_sdk_mode_at_admit`) |

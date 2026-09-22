@@ -339,6 +339,26 @@ Terra is **not** a standing conductor seat (Other Models + mid GPT rate). Cross-
 
 `/conductor` asks standing seat / pin (Q7) when unbound; operator may pin a slug.
 
+### Profile fable-scarce
+
+**Selector precedence:** packet profile line (`conductor_profile: fable-scarce` in
+packet frontmatter) ≻ todo attr `conductor_profile=fable-scarce` ≻ house default.
+Absent the selector ⇒ house G-row pickers below, not this table. Scoreboard rows
+**G2 / G4 / G6** annotate `profile=fable-scarce` and track **`cdp_fable_legs_arc`**
+(harvested G4/M2 `cdp/fable` legs only — G1 Fable and cursor-sdk `check_review`
+Fable-5.1 are not counted).
+
+| G-row | Picker | Effort pin | Transport | `purpose` |
+|---|---|---|---|---|
+| **G2 Frame** | `cdp/opus-5` **fresh** | **`extra`** (picker) ≡ **`xhigh`** (wire; `libs/effort_vocabulary/core.py`) — one rung, two spellings | Fresh `team_dispatch(model=cdp/opus-5)`. **¬** Fable followup into G1 CSE | **`ask`** |
+| **G4 Skeptic** | **≤1 `cdp/fable` leg per arc** (incl. `panel_dispatch` members) | `high`; **`max` only when bind gates a wave** — not the G4 default | Fresh. **No automatic Opus re-pass** when Fable bound; second CDP needs M2 invariant attr or operator/packet pin on the scoreboard row | `ask` \| `review` |
+| **G6 Pre-land review** | `cdp/opus-5` | **`extra`/`xhigh` floor**; **`max` when invariant-touching** | Lane branch diff; **`review harvest ≺ land ≺ DONE`** unchanged | **`review`** |
+
+Fresh Opus G2 under this profile is the **house G2 falsifier discharging**
+(assertion:36248), not a standing exception to followup-first. **Refused effort
+pin** on admit ⇒ report and halt — never silent substitute to another rung or seat
+(S7-I).
+
 ## Role split
 
 | Seat | Does |
@@ -384,8 +404,10 @@ Required in `<scope>` / `<invariants>`:
 - **G-row contract honesty** — do not mark a G-row conductor-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
 - **Class reservation (A1 §13′ #2)** — under `work_key=todo:{slug}`, only the admitted conductor (`contract=conductor`, cursor-sdk) may author G-rows and mutate the scoreboard. Liaison and IDE seats compute Address but spawn/re-admit the conductor for codework LAYER/DISPATCH — they do not substitute as G-row authors.
 - **Scoreboard G6/G7 (binding)** — **`review harvest ≺ land ≺ DONE`**. After G5
-  implement, **G6** = `cdp/opus-5` `purpose=review` `reasoning_effort="high"` on
-  the **lane branch diff** (sidecar **R1**). **G7** = merge/land (sidecar **L1**).
+  implement, **G6** = `cdp/opus-5` `purpose=review` `reasoning_effort="high"`
+  (**`extra`/`xhigh` floor, `max` if invariant-touching, under
+  `conductor_profile=fable-scarce`**) on the **lane branch diff** (sidecar **R1**).
+  **G7** = merge/land (sidecar **L1**).
   Witness fold must clear G6 before G7; terminal DONE requires both. **¬**
   land-then-background-review; **¬** terminal DONE without R1 harvest
   (`a:32146` · `a:32226`).
@@ -532,8 +554,13 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
 - **Stronger-model gates (a:32146 · a:32226):** Conductor **MUST break** (halt /
   refuse nest of the next gated G-row · refuse land · refuse terminal `DONE`)
   without the owed stronger-model **harvest**. Two pickers, not one:
-  **G4 Skeptic** (pre-implement, on the G3 **spec**) = `cdp/fable` (high/max);
-  **after-ship code review** (post-implement, on the **lane branch**, before land) = `cdp/opus-5`
+  **G4 Skeptic** (pre-implement, on the G3 **spec**) = `cdp/fable` (high/max).
+  **Under `conductor_profile=fable-scarce`:** ≤1 `cdp/fable` leg in the G4/M2
+  skeptic slot per arc, `panel_dispatch` members count as legs, effort `high`
+  (`max` only when the bind gates a wave — not the default); no automatic Opus
+  re-pass when Fable bound — a second CDP needs an M2 invariant attr or an
+  operator/packet pin written on the scoreboard row. **After-ship code review**
+  (post-implement, on the **lane branch**, before land) = `cdp/opus-5`
   (xhigh/Extra). Skeptic ≠ code review. Composer cannot self-certify either.
   Same-family effort bumps are **not** the gate.
   **Transport failure ≡ missing harvest (BINDING):** `cdp-ask` down · Chrome
@@ -569,7 +596,12 @@ prior hop CHECKPOINT, `mark_read=true`, self→self). Order: journal append ≺
 sidecar write ≺ bus tip ≺ closeout.
 
 Ten fields, index-thin: `Anchor` · `Hop` · `Mission` · `Rows` · `In-flight` ·
-`Judgment` · `Next-pickup` · `NEXT_ADMIT` · `Stop` · RESUME footer. Field-level
+`Judgment` · `Next-pickup` · `NEXT_ADMIT` · `Stop` · RESUME footer. Optional row
+field under profile **`cdp_fable_legs_arc`**: counts **harvested** G4/M2
+`cdp/fable` legs only (G1 Fable and cursor-sdk `check_review` Fable-5.1 are not
+counted). Empty / `FAILED body_len=0` leg ⇒ record `attempt=<execution_id>` on
+the row; does not consume the cap; one retry allowed; second empty ⇒ HARD STOP or
+operator pin — never silent Opus substitute. Field-level
 content and the why-a-cold-successor-needs-it column:
 `cortex://notes/system/threads/9638-hop-architecture-bind-web-anthropic-20260901T13.md`
 §3. **Not** in it: prose narrative of the row's work (that is the journal), the
@@ -819,7 +851,8 @@ draft charter/scoreboard/packet → confirm → admit. Skill body does not re-as
 when the operator already bound the answers in chat. Scoreboard mint includes
 stronger-model gates (a:32146 · a:32226): G4 Skeptic = `cdp/fable`; after-ship
 code review = `cdp/opus-5` — hard, ¬ optional, ¬ Composer self-cert; CDP
-transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed).
+transport fail ≡ stop past that gate (¬ DEFERRED-and-proceed). Profile
+`fable-scarce` ⇒ see § Profile fable-scarce.
 
 ## Composes with
 
