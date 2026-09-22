@@ -71,7 +71,7 @@ def _land_disposition_from_envelope(data: dict[str, Any]) -> str:
         except (TypeError, ValueError):
             commits = 0
         if commits >= 1:
-            return "discard"
+            return "unlanded"
         return "discard"
     return ""
 
@@ -94,12 +94,19 @@ def _parse_json_closeout_envelope(body: str) -> dict[str, Any] | None:
         refs = evidence.get("git_refs") or []
         if isinstance(refs, list) and refs:
             landed_sha = str(refs[0]).lower()
-    return {
+    parsed: dict[str, Any] = {
         "settled": settled,
         "landed": landed_sha,
         "next": "",
         "land_disposition": _land_disposition_from_envelope(data),
     }
+    commits_raw = data.get("commits_ahead")
+    if commits_raw is not None:
+        try:
+            parsed["commits_ahead"] = int(commits_raw)
+        except (TypeError, ValueError):
+            pass
+    return parsed
 
 
 def _parse_lane_worker_closeout(text: str) -> dict[str, Any]:
@@ -186,6 +193,8 @@ def build_closeout_record(
     }
     if parsed["land_disposition"]:
         record["land_disposition"] = parsed["land_disposition"]
+    if "commits_ahead" in parsed:
+        record["commits_ahead"] = parsed["commits_ahead"]
     return record
 
 

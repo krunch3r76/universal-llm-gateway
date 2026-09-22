@@ -197,6 +197,22 @@ def test_build_closeout_record_from_sdk_json_envelope() -> None:
     assert record["live"] == "unprobed"
 
 
+def test_build_closeout_record_lane_b_unlanded_not_discard() -> None:
+    """12527: landed:false + commits_ahead — lane did not merge, cited SHA may be on master."""
+    body = (
+        '{"schema_version":1,"work_outcome":"shipped","landed":false,"commits_ahead":1,'
+        '"evidence_uris":{"git_refs":["339fa9e0bff9f5fd8417d2da65dc46ca25977fb3"]}}'
+    )
+    record = build_closeout_record(
+        {"id": "12527", "lifecycle": "completed", "status": "closed"},
+        parent_root="12286",
+        worker_closeout_text=body,
+    )
+    assert record["land_disposition"] == "unlanded"
+    assert record["commits_ahead"] == 1
+    assert record["landed"] == "339fa9e0bff9f5fd8417d2da65dc46ca25977fb3"
+
+
 def test_find_worker_closeout_turn_max_turn_newest_first() -> None:
     """API newest-first must not pick an earlier CLOSEOUT (12527)."""
     turns = [
