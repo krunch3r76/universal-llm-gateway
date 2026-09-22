@@ -132,11 +132,21 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
 
 **lane:** in-repo implement passes `B`. Omit plus empty `files_expected` selects Lane A. Distinct from `lane_role`. `workspace` omit = hub. `parent_thread`+`lane_role` are both-or-neither.
 
-**Admit:** `implement`|`investigate` need body `vision:` else **`vision_field_missing`**. `require_attended` → **`status:needs-attended`**. Implement is `pure-mechanical` unless the body has a line-start `RULING` / `RULING AC`. Confer negotiation fields stay in the body: `negotiation_phase`∈{`proposal`,`counter`,`agree`,`ratify`}.
+**Admit:** `implement`|`investigate` need body `vision:` else **`vision_field_missing`**. `require_attended` → **`status:needs-attended`**. Implement is `pure-mechanical` unless the body has a line-start `RULING` / `RULING AC`. Judgment marker (implement admit): `agent_skill:directive-authoring-standard`. Confer negotiation fields stay in the body: `negotiation_phase`∈{`proposal`,`counter`,`agree`,`ratify`}.
+
+**Standing seat posture:** ∀ clear DIRECTIVE: front-door Q1/Q2 bind silently ∧ execute — ¬route/ack poll. ∀ confer/explicit ask: advise with codebase judgment. ∀ operator-only gate: `status:needs-attended`. SOT: `decision:operator-request-front-door`.
+
+**Life coding aperture:** coding interest → `contract=ask` first (omit `desired_model`/`escalation`/`workspace` unless satellite). ¬ sequential `fs`/`rag` as unknown-loci hunter — use `cursor_request(ask|recon)`. In-seat `answer` executes nothing — re-issue `ask`. Index: `document:life-coding-playbook`.
+
+**CDP window (web-anthropic):** life ¬`team_dispatch` — commission cursor-auto via this tool; Auto fires `team_dispatch(model=cdp/opus-5, …)` on **same** private request lane. ¬ mint second private request lane. ¬ `cse_session(followup)` for Customize skill refresh. CLOSEOUT quotes `execution_id` + `poll_hint`.
+
+**Conductor commission:** `investigate` + `lane=B` — packet/nest table: `agent_skill:conductor`.
+
+**Deploy/live:** landed≠live = process ¬restarted, never ¬committed; live@<sha> needs commit-before-restart + code_ref_satisfied + dirty disclosure. SOT: decision:checkout-disk-is-executable.
+
+**CLOSEOUT shape (by contract):** answer→disposition:answered + inline relay; confer→codebase-grounded recommendation; ask→how-it-works in ≤12 lines + file:line anchors; investigate→findings / nested dispatch summary; implement→file changes + AC evidence (codework: ``abstraction-layering`` lane); verify→verification verdict + evidence (codework: ``abstraction-layering`` G6); execute→one tier-M op raw payload (body: tool_op + effects_expected); propagate→propagation ledger + drain-gated restart status; seed→todo slug + consult URI (if any) + ``abstraction-layering`` entry gate; recon→recon_core findings (+ optional recon_extra).
 
 **Second read (advisory):** `implement`|`investigate`|`verify` may append `## SECOND READ` by `cursor/claude-opus-5`. Observation only, not a gate. Knobs: `CURSOR_AUTO_REFLEX_ENABLED`, `_BUDGET`, `_SAMPLE_EVERY`, `_MODEL`, `_EFFORT`, `_TIMEOUT_S`.
-
-Life coding: `contract=ask` first. Same private lane for CDP; do not mint a second one. Conductor: `investigate` + `lane=B`.
 
 Depth: `agent_skill:cdp-operator-proxy` · `agent_skill:life-coding-playbook` · `agent_skill:conductor` · `agent_skill:directive-authoring-standard`.
         """

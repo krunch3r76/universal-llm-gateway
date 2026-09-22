@@ -211,17 +211,17 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
 **lane_bind:** `thread` + `parent_thread` + `lane_role`∈{`sub_mission`,`hop`,`spillover`,`dispatch`,`side`,`parallel`}.
 
-**lane_current** · **thread_get** · **threads** (`last` default 50) · **create_thread** · **fetch_unread** (needs `to` and/or `thread`) · **fetch** (`compact=true` nulls bodies) · **get** (`turn_number` or `"latest"`).
+**lane_current** · **thread_get** · **threads** — filter by `status`∈{`active`,`blocked`,`waiting`,`closed`,`all`} (default active), `tags` AND, `lifecycle_state`, `last` default **50** · **create_thread** · **fetch_unread** (needs `to` and/or `thread`) · **fetch** (`compact=true` nulls bodies) · **get** (`turn_number` or `"latest"`).
 
 **update:** only while unread; else **409 `turn_already_acknowledged`**.
 
-**mark_read:** XOR `turn_numbers`|`through_turn`.
+**mark_read:** `turn_numbers[]` **XOR** `through_turn` (+ `agent` if through_turn).
 
 **wait:** block ≤60s. `completion`∈{`first_reply_from`,`thread_closed`,`status:done|failed|needs-attended`}.
 
 **update_thread:** `tags` omit=keep, `[]`=clear, `[…]`=replace. **close** marks all read by default. **delete_turn** / **delete_thread** take optional `force`.
 
-**triage:** `dry_run=true` + `confirm_token` previews; floors mark_read ≥24h, close ≥7d; cap 50. Bad token → **409 `confirm_token_invalid|expired|filter_mismatch`**.
+**triage:** `older_than` + `action`∈{`mark_read`,`close`}; preview `dry_run=true` + `confirm_token`; execute `dry_run=false`; floors mark_read ≥**24h**, close ≥**7d**; cap **50** threads/call; bad token → **409 `confirm_token_invalid|expired|filter_mismatch`**. agent_bus only.
 
 **Legacy:** `post`/`reply` are not on the wire enum. Use `send`. Other `role:*` than `role:root` → **422 `unknown_role_tag`**.
 
