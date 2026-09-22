@@ -41,8 +41,18 @@ def extract_so_what_from_body(body: str) -> str | None:
 def resolve_so_what_summary(
     summary: str | None,
     body: str = "",
+    *,
+    from_agent: str | None = None,
+    thread_tags: list[str] | None = None,
 ) -> str | None:
-    """Prefer explicit summary; else body ``so_what:`` / ``ulg_gain:``."""
+    """Prefer explicit summary; else body ``so_what:`` / ``ulg_gain:``.
+
+    On ``role:root`` houses, machine ``from=dispatch`` relay/orphan notices must
+    not rewrite the standing summary (friction a:36210 / house 12286).
+    """
+    if from_agent == "dispatch" and thread_tags and "role:root" in thread_tags:
+        explicit = (summary or "").strip()
+        return clip(explicit, SMS_SUBJECT_MAX) if explicit else None
     explicit = (summary or "").strip()
     if explicit:
         return clip(explicit, SMS_SUBJECT_MAX)

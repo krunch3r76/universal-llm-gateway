@@ -270,13 +270,21 @@ def _render_gates_strip(selected: frozenset[str]) -> str:
     return f"\n{body}"
 
 
-# inject-channel block key: capability-verify-block
+# inject-channel block key: capability-verify-block (code MCP surface)
 _SEAT_CAPABILITY_VERIFY_BLOCK = """\
 ## Seat capability verify — verification is shell-free on web (probe before refusing)
 Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y" claim, run `tool_search("Y")` and bind to the catalog row (deferred PRIMARY tools load by name; OVERFLOW tools run via `dispatch(tool="…")`).
 - code gate → `dispatch(tool="quality_gate", arguments='{"files": ["path/a.py"]}')` (ruff + compileall + import-check; +Lane-A offline pytest when edits touch `libs/llm_adapters/` or `libs/model_id/`). Security replay (`http_replay`/`http_request`/`http_diff`/`session_store`/`js_analyze`) — call by EXACT name (¬ reliably keyworded in `tool_search`).
 - **This seat closes verification on-seat (`lead_seats` config)** — `quality_gate` + liveness (`manage(action="sync_restart")`, `wait_healthy`). ¬ dispatch cursor for verify-only.
 Arbitrary pytest paths (`services/rag/`, integration) + `tools/pipeline_test replay` are shell/CLI-only → hand off. Full catalog: `.cursor/rules/handoff-dispatchers.mdc` § Seat capability verify + skill `consult-routing`."""
+
+# Life MCP (`/mcp/life`) — quality_gate is code-surface overflow only; verify via cursor-auto.
+_SEAT_CAPABILITY_VERIFY_BLOCK_LIFE = """\
+## Seat capability verify — life MCP (probe before refusing)
+Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y" claim, run `tool_search("Y")` and bind to the catalog row for **this endpoint** — `/mcp/life` does not expose `quality_gate` (code-surface overflow only).
+- **Code verification on this seat** → commission cursor-auto: `cursor_request(contract=verify, subject=…, body=…)` (or `agent_bus.request` with `contract=verify`) — cursor executes `quality_gate` + liveness on the code MCP surface; harvest via `poll_hint` / bus closeout. ¬ claim `quality_gate` is callable here.
+- Security replay and deep pytest paths remain code-seat or handoff work — same as code surface routing.
+Full catalog: skill `lead-seat-boot` § Surface gate + skill `consult-routing`."""
 
 
 # inject-channel block key: operator-posture-block
@@ -359,7 +367,11 @@ def _orientation_block_bodies(surface: Literal["life", "code"]) -> dict[str, str
         "liveness-block": _LIVENESS_BLOCK,
         "cursor-model-economics-block": _CURSOR_MODEL_ECONOMICS_BLOCK,
         "entity-hierarchy-block": _ENTITY_HIERARCHY_BLOCK,
-        "capability-verify-block": _SEAT_CAPABILITY_VERIFY_BLOCK,
+        "capability-verify-block": (
+            _SEAT_CAPABILITY_VERIFY_BLOCK_LIFE
+            if surface == "life"
+            else _SEAT_CAPABILITY_VERIFY_BLOCK
+        ),
         "session-close-web-block": _session_close_web_body(),
         "terminal-facts-pointer-block": _TERMINAL_FACTS_POINTER,
     }

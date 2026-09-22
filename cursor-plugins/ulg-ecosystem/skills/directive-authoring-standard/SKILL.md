@@ -126,7 +126,7 @@ DIRECTIVE names: conductor role, a root thread (`new_slug` or existing `role:roo
 - Name CDP escalation model (`cdp/fable` or `cdp/opus-5`) in the directive when the leg needs independent intelligence beyond Composer enumerate.
 - In-repo implement uses lane B — pass `lane="B"` on the wire (`cursor_request` / nested `team_dispatch`). `lane=` is a **wire parameter**, not packet prose. Omit on `agent_bus.request` + empty `files_expected` selects Lane A; `team_dispatch` top-level omit is 422 `lane_required`, not A. Name `lane="A"` only with a one-line reason (bind-only / empty scope / out-of-repo).
 
-Full recipe (mandatory conductor Use-line, six-block packet): `cursor_request` docstring `COMMISSION_CONDUCTOR` — read live, this skill does not duplicate it. Packet shape + tier table: `conductor`.
+Full recipe (mandatory conductor Use-line, six-block packet): `agent_skill:conductor` § **First-utterance spawn** — this skill does not duplicate it. Wire shape: `cursor_request(contract=investigate, lane="B", …)` → cursor-auto → nested `team_dispatch(seat=cursor-sdk, contract=conductor, …)`. Packet tier table: `conductor`.
 
 This seat: frame the Question, ratify conductor Leg-boundary DISPOSITIONs, hold true operator-only gates — ¬ personally drive each nested admit/poll/harvest.
 
@@ -152,7 +152,7 @@ Live field contract: `cursor_request` **Mission negotiation** clause + `cortex:/
 | `allow_long_body=true` on `agent_bus.request` | Rejected on `request`; `sidecar_content`; keep the ten §2 fields in `body` |
 | cdp/opus drives a framed 5-G-row mission turn-by-turn over the DIRECTIVE loop | Commission a conductor (D4) once the Question is framed; adjudicate Legs, don't drive them |
 | `lane="B"` only in packet prose | Wire `lane="B"` on `cursor_request` / `agent_bus.request` |
-| Restating `COMMISSION_CONDUCTOR` / negotiation field lists in `cdp-operator-proxy` | Point here; recipe of record stays on `cursor_request` |
+| Restating conductor first-utterance spawn / negotiation field lists in `cdp-operator-proxy` | Point here; recipe of record stays on `agent_skill:conductor` § First-utterance spawn |
 | Bolded "rule on this fork" AC with no `RULING` token (`contract: implement`) | `AC<n> — RULING:` then the fork. Turn 343 AC2 was a genuine withheld-lean judgment AC and still admitted mechanical |
 
 ## Pre-author checklist
@@ -164,4 +164,4 @@ Live field contract: `cursor_request` **Mission negotiation** clause + `cortex:/
 - [ ] Mint-then-quote: every id in the body was read from a tool payload this turn
 - [ ] Framed multi-step (≥3 G-row or bind-then-compose) ⇒ D4 conductor, not a G-row loop
 - [ ] Pre-frame shape talk ⇒ D5 `negotiation_phase` on `contract: confer`, then D4
-- [ ] Conductor: `contract=investigate` + omit `model=` + `model_knobs={"fast":"true"}` + wire `lane="B"` + live `COMMISSION_CONDUCTOR` recipe
+- [ ] Conductor: `contract=investigate` + omit `model=` + `model_knobs={"fast":"true"}` + wire `lane="B"` + `agent_skill:conductor` § First-utterance spawn (not a retired docstring token)

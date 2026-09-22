@@ -50,6 +50,40 @@ def _pending_orphan_reason(reason: str) -> str:
     return f"pending_orphan:{reason}"
 
 
+def _link_table_blocks_orphan_post(*, thread_id: str, execution_id: str) -> bool:
+    """True when ``thread_dispatch_links`` authority forbids an orphan turn.
+
+    Consult ``terminal_status`` and ``delivery_at`` before posting "no terminal
+    turn was received" (friction a:36207). A delivered link waits for terminal
+    backfill; a ``reuse_thread`` successor must not inherit a stale predecessor
+    probe as orphan when an earlier link on the same thread already completed
+    with delivery proof.
+    """
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT terminal_status, delivery_at, linked_at "
+            "FROM thread_dispatch_links "
+            "WHERE thread_id = ? AND execution_id = ?",
+            (thread_id, execution_id),
+        ).fetchone()
+        if row is None:
+            return True
+        if row["terminal_status"] is not None:
+            return True
+        if row["delivery_at"] is not None:
+            return True
+        pred = conn.execute(
+            "SELECT 1 FROM thread_dispatch_links "
+            "WHERE thread_id = ? AND execution_id != ? "
+            "  AND terminal_status IS NOT NULL "
+            "  AND delivery_at IS NOT NULL "
+            "  AND linked_at < ? "
+            "LIMIT 1",
+            (thread_id, execution_id, row["linked_at"]),
+        ).fetchone()
+    return pred is not None
+
+
 def _orphan_body_for_reason(reason: str, execution_id: str) -> str:
     """Build the orphan-turn body from the probe reason; never guess restart."""
     details = {
@@ -229,6 +263,12 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
             link,
             status=terminal_status,
         )
+
+    if _link_table_blocks_orphan_post(
+        thread_id=thread_id, execution_id=execution_id
+    ):
+        _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
+        return False
 
     pending = _pending_orphan_reason(reason)
     if prior_deferred_reason != pending:

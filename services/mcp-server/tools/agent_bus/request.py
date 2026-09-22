@@ -125,7 +125,19 @@ def _request_impl(
     from .lifecycle import _update_thread_impl
 
     merged_tags = _merge_lane_tags(tags)
-    resolved_summary = resolve_so_what_summary(summary, body)
+    thread_tags_for_summary: list[str] | None = list(merged_tags) if new_slug else None
+    if thread and not new_slug:
+        from agent_bus_store.db.threads import get_thread
+
+        detail = get_thread(thread)
+        if detail and isinstance(detail.get("tags"), list):
+            thread_tags_for_summary = list(detail["tags"])
+    resolved_summary = resolve_so_what_summary(
+        summary,
+        body,
+        from_agent=from_agent,
+        thread_tags=thread_tags_for_summary,
+    )
     # Mission / operator-proxy private lanes must enter A′ candidacy at birth.
     # NULL bus_lifecycle_state means unenrolled; with-turn birth → active
     # (legal None→active). Do not use pending — that path expects dispatch-admit.
