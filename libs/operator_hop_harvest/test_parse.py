@@ -22,7 +22,7 @@ def _load(name: str) -> str:
 
 
 def test_parse_turn7_row_hop_stop_tokens() -> None:
-    body = _load("12263_turn7_closeout.md")
+    body = _load("12263_turn7_closeout.txt")
     out = parse_conductor_closeout(
         body=body,
         dispatch_id="aabc385580a4-daf128a9",
@@ -41,7 +41,7 @@ def test_parse_turn7_row_hop_stop_tokens() -> None:
 
 
 def test_parse_turn11_from_fixture_file() -> None:
-    path = _FIXTURES / "12263_turn11_closeout.md"
+    path = _FIXTURES / "12263_turn11_closeout.txt"
     if not path.is_file():
         pytest.skip("turn 11 sidecar fixture unavailable")
     body = path.read_text(encoding="utf-8")

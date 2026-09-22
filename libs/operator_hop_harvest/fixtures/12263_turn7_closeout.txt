@@ -1,0 +1,28 @@
+```json
+{
+  "status": "complete",
+  "dispatch_id": "aabc385580a4-daf128a9",
+  "work_key": "todo:crcl-gate1-191-509-followon",
+  "g_row_progress": {
+    "G1": "DONE",
+    "G2": "DONE",
+    "G3": "OPEN",
+    "G4": "OPEN",
+    "G5": "OPEN",
+    "G6": "OPEN",
+    "G7": "OPEN"
+  },
+  "entry_gate_next": "G3",
+  "scoreboard_tip_sha256": "235f7e0e52593c0789d47343b81b89e6f4912a25d6413ee1ef4716ffda00fa17",
+  "journal_record_id": "d051b08a77636000e9f8689999abccf9c61f947351f69488ea7238e4e71e45b3",
+  "witness_f1_sha256": "876207c00346d691ff1aaa5acddfa0f70e7dc6ae41d5f6c5cb19690417003738",
+  "recon_method": "in-seat — scoreboard/journal/F1 already enumerated G2 loci; no breadth explore owed",
+  "land_disposition": "discard",
+  "land_reason": "Hop2 cortex/bus only; ULG lane-12263 commits_ahead=0; claudeburst implement deferred to G5",
+  "next_admit": "G3 densify — nest cursor-sdk plan leg (sdk_mode=plan), corpus F1 + 12263-conductor"
+}
+```
+
+stop: ROW_HOP  
+hop_seq: 2
+

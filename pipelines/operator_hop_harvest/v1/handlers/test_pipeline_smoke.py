@@ -26,7 +26,7 @@ def test_fixture_assemble_smoke() -> None:
         / "libs"
         / "operator_hop_harvest"
         / "fixtures"
-        / "12263_turn7_closeout.md"
+        / "12263_turn7_closeout.txt"
     )
     body = fixture.read_text(encoding="utf-8")
     conductor = parse_conductor_closeout(

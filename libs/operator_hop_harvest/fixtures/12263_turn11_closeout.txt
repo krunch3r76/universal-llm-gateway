@@ -1,0 +1,28 @@
+```json
+{
+  "status": "partial",
+  "reason": "attended G3→G5 — SCORE_RESURFACE posted; ROW_PINNED for summoning IDE discussion",
+  "dispatch_id": "0e048a74c604-eb383ae1",
+  "hop_seq": 3,
+  "g_rows": {
+    "G1": "DONE",
+    "G2": "DONE",
+    "G3": "DONE",
+    "G4": "OPEN (entry gate)",
+    "G5": "OPEN",
+    "G6": "OPEN",
+    "G7": "OPEN"
+  },
+  "scoreboard_tip_sha256": "175469f2ec3de9e873b70b977b1db79752c0817d2519b896dcb2e372c22579eb",
+  "journal_record": "G3 close delta dispatch_id=0e048a74c604-eb383ae1",
+  "next_admit": "G4 cdp/fable skeptic on S9; then G5 nest implement (spec patch, nest_under conductor)",
+  "recon_method": "waived — packet scoreboard tip + 12263-conductor + F1; in-seat claudeburst head probe only"
+}
+```
+
+**land_disposition:** discard  
+**land_reason:** no commits on `cursor-sdk/lane-12263` vs master; G3 cortex-only; G5 lands later on Lane B.
+
+**Residual:** G4 skeptic harvest → G5 Composer implement per S9 → G6 opus review → G7 land.
+
+stop: ROW_PINNED
