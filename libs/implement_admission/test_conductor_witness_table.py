@@ -461,9 +461,9 @@ def test_g3_witness_from_spec_artifact_ignores_density_triage(tmp_path: Path) ->
         tip_body=tip_body,
         deps=_deps(tmp_path, triage="implement_ready"),
         files_root=files_root,
-        rows=("G3",),
+        rows=G_ROWS,
     )
     g3 = witnesses.get("G3")
     assert g3 is not None
-    assert g3.source in {"artifact:S4b", "witness:BIND:S4b"}
+    assert g3.source == "artifact:S4b"
     assert g3.detail == spec_uri
