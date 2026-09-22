@@ -21,14 +21,13 @@ from claude_bundles.skills_ui_menu import (
     stability_guarded_add_click,
 )
 
-SKILLS_URL = "https://claude.ai/new#settings/customize-skills"
+SKILLS_URL = "https://claude.ai/customize/skills"
 DEFAULT_CDP_URL = os.environ.get("BROWSER_CDP_URL", "http://127.0.0.1:9222")
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _BROWSE_LABEL = re.compile(r"browse", re.I)
-# Customize → Skills "Add" only — ¬ Cowork composer "Add files, connectors, and more"
+# Customize → Skills "Add skill" only — ¬ Cowork composer "Add files, connectors, and more"
 # (friction a:27143 upload residue 2026-07-30: ^add\b matched composer Add).
-_ADD_LABEL = re.compile(r"add skill|^add$", re.I)
 _COMPOSER_ADD_NOISE = re.compile(
     r"files|connectors|photos|screenshot|plugins|more$", re.I
 )
@@ -113,36 +112,35 @@ async def _is_composer_add(btn: Locator) -> bool:
     return bool(_COMPOSER_ADD_NOISE.search(blob))
 
 
+async def _visible_skills_add_button(page: Page) -> Locator | None:
+    """Customize → Skills Add (accessible name Add skill), ¬ composer Add."""
+    for loc in (
+        page.get_by_role("button", name=re.compile(r"add skill", re.I)),
+        page.locator('button[aria-label="Add skill"]'),
+        await _visible_buttons(page, re.compile(r"add skill", re.I)),
+    ):
+        btn = await _first_visible(loc)
+        if btn and not await _is_composer_add(btn):
+            return btn
+    return None
+
+
 async def _skills_panel_visible(page: Page) -> bool:
-    browse = await _first_visible(await _visible_buttons(page, _BROWSE_LABEL))
-    add = await _first_visible(await _visible_buttons(page, _ADD_LABEL))
-    if add and await _is_composer_add(add):
-        add = None
-    if browse and add:
-        return True
-    # Cowork CSE tabs often carry #settings/customize-skills + unrelated tables /
-    # session-skill chips — do not treat that as the Customize Skills library.
-    if "/cowork/" in page.url.lower() and not browse:
+    add = await _visible_skills_add_button(page)
+    if add is None:
         return False
-    return _is_skills_url(page.url) and await _skills_table_has_slugs(page)
+    url = page.url.lower()
+    # Cowork CSE tabs often carry skills hash/chrome without the library panel.
+    if "/cowork/" in url:
+        browse = await _first_visible(await _visible_buttons(page, _BROWSE_LABEL))
+        return browse is not None
+    return _is_skills_url(page.url)
 
 
 async def _find_add_button(page: Page) -> Locator | None:
     if not await _skills_panel_visible(page):
         return None
-    for loc in (
-        page.get_by_role("button", name=re.compile(r"add skill", re.I)),
-        page.locator('button[aria-label="Add skill"]'),
-        await _visible_buttons(page, _ADD_LABEL),
-    ):
-        for i in range(await loc.count()):
-            btn = loc.nth(i)
-            if not await btn.is_visible():
-                continue
-            if await _is_composer_add(btn):
-                continue
-            return btn
-    return None
+    return await _visible_skills_add_button(page)
 
 
 async def _find_browse_button(page: Page) -> Locator | None:
@@ -327,12 +325,10 @@ async def _hash_cycle(page: Page) -> None:
 
 
 async def _remount_skills(page: Page) -> None:
-    await page.goto("https://claude.ai/new", wait_until="domcontentloaded")
-    await page.wait_for_timeout(1500)
     await page.goto(SKILLS_URL, wait_until="domcontentloaded")
     await page.wait_for_timeout(2500)
-    # Hash URL alone no longer mounts the Settings dialog — click Customize→Skills.
-    await _reopen_skills_from_hash(page)
+    if not await _skills_panel_visible(page):
+        await _reopen_skills_from_hash(page)
 
 
 async def open_skills_panel(
@@ -379,8 +375,8 @@ async def open_skills_panel(
             return tab
 
     raise RuntimeError(
-        "Skills panel not open (need Browse+Add or skills table with slugs).\n"
-        "In Chrome: Customize → Skills — keep modal open, then re-run.\n"
+        "Skills panel not open (need visible Add skill on Customize → Skills).\n"
+        "In Chrome: open https://claude.ai/customize/skills — keep panel open, then re-run.\n"
         f"Open tabs:\n{_tab_list(context)}"
     )
 
@@ -516,7 +512,7 @@ async def prepare_session(cdp_url: str) -> None:
     try:
         print(f"Connected to Chrome via {cdp_url}", file=sys.stderr)
         print(
-            "Open Customize → Skills (Browse + Add visible), then press Enter...",
+            "Open Customize → Skills (Add skill visible), then press Enter...",
             file=sys.stderr,
         )
         loop = asyncio.get_running_loop()

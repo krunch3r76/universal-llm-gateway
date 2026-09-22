@@ -368,7 +368,6 @@ Zip `mirrored` ≠ Cowork `+` → Skills attach-ready.
 | `CDP connect failed 127.0.0.1:9222` on Cursor seat | Upload run locally, not on Jupiter | Use `claude-ai-sync-jupiter` |
 | `CDP connect failed` on Jupiter | Chrome not running | `claude-ai-sync-jupiter ensure-chrome` |
 | `ModuleNotFoundError: universal_logging` on Jupiter | System `sitecustomize` wins; venv hook never injects `libs/` | Wrapper must set `PYTHONPATH=$REPO/libs` (and `PROJECT_ROOT`) |
-| Preflight: hash URL but “Skills panel not open” | Hash alone no longer mounts Settings; Customize is a **button**, not a link | `_reopen_skills_from_hash` must click Customize button then Skills |
 | `Add → Upload a skill menu item not found` | Portal timing, label drift, or nested menu; Add-only preflight was a false green | `diagnose-upload-menu`, attach `menu.json` / `preflight.json` to the friction |
 | Zip `in_match` but Cowork attach `undelivered` | Zip is library-only; picker label may be a pre-normalize H1 (a:30502) | Regen + upload/replace so Customize gets `normalize_first_h1`; stall `click_errors` carries `items[:30]` |
 | WebSocket 403 from Playwright | Missing `--remote-allow-origins=*` | Restart Chrome with flags in runbook |
