@@ -262,6 +262,34 @@ def test_derived_from_edge_reads_consult_kind_from_description() -> None:
     assert witnesses["G1"].source == "derived_from:8442"
 
 
+def test_f1_bare_cortex_uri_witnesses_g2(tmp_path: Path) -> None:
+    files_root = tmp_path / "cortex"
+    specs = files_root / "notes/system/specs"
+    specs.mkdir(parents=True)
+    (specs / "slug-g2-frame.md").write_text("frame", encoding="utf-8")
+    tip_body = (
+        "## Sidecars\n\n"
+        "| ID | Artifact URI | What it is |\n"
+        "|---|---|---|\n"
+        "| F1 | cortex://notes/system/specs/slug-g2-frame.md | G2 frame witness |\n"
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        repo=tmp_path / "repo",
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=files_root,
+    )
+    assert witnesses["G2"] is not None
+    assert witnesses["G2"].source == "artifact:F1"
+
+
 def test_s7_frame_witnesses_g2(tmp_path: Path) -> None:
     files_root = tmp_path / "cortex"
     frames = files_root / "notes/system/frames"

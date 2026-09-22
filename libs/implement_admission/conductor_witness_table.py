@@ -24,6 +24,7 @@ from implement_admission.plan_implement_handoff import plan_implement_handoff_el
 
 _ARTIFACT_URI_RE = re.compile(
     r"^\|\s*(?P<id>[^|`\n]+?)\s*\|\s*(?:`(?P<cortex>cortex://[^`]+)`"
+    r"|(?P<cortex_bare>cortex://[^\s|`]+)"
     r"|`?(?P<sha>[0-9a-f]{7,40})`?\s+on\s+master)",
     re.MULTILINE | re.IGNORECASE,
 )
@@ -96,8 +97,9 @@ def _artifact_map(tip_body: str) -> dict[str, str]:
     artifacts: dict[str, str] = {}
     for match in _ARTIFACT_URI_RE.finditer(tip_body):
         artifact_id = match.group("id").strip()
-        if match.group("cortex"):
-            artifacts[artifact_id] = match.group("cortex")
+        cortex_uri = match.group("cortex") or match.group("cortex_bare")
+        if cortex_uri:
+            artifacts[artifact_id] = cortex_uri
         elif match.group("sha"):
             artifacts[artifact_id] = match.group("sha").lower()
     return artifacts
@@ -229,6 +231,12 @@ def _witness_g1(*, source_ref: str, cortex: WitnessCortex) -> Witness | None:
         doc = cortex.entity_get(target, intent="card")
         attrs = doc.get("attributes") or {}
         kind = str(attrs.get("consult_kind") or doc.get("consult_kind") or "").strip().lower()
+        if kind != "architecture":
+            full = cortex.entity_get(target, intent="full")
+            full_attrs = full.get("attributes") or {}
+            kind = str(
+                full_attrs.get("consult_kind") or full.get("consult_kind") or kind
+            ).strip().lower()
         if kind != "architecture":
             blob = " ".join(
                 (
