@@ -18,6 +18,8 @@ from services.git_integration_worker.cursor_sdk_usage_extract import (
     capture_local_get_usage,
     extract_post_wait_usage,
     finalize_dispatch_usage,
+    local_usage_agent_id,
+    mint_local_agent_id,
     persist_dispatch_usage,
     read_persisted_usage,
     usage_event_fields,
@@ -109,6 +111,15 @@ def test_capture_local_get_usage_cost_pending() -> None:
         "charged_cents": None,
         "raw_cost_cents": None,
     }
+
+
+def test_mint_local_agent_id_is_get_usage_form() -> None:
+    minted = mint_local_agent_id()
+    assert minted.startswith("agent-")
+    assert local_usage_agent_id(minted) == minted
+    bare = "02846760-684b-4867-a178-7ae6862033ef"
+    assert local_usage_agent_id(bare) == f"agent-{bare}"
+    assert local_usage_agent_id("bc-" + bare) == "bc-" + bare
 
 
 def test_capture_local_get_usage_account_gate() -> None:

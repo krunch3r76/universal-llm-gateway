@@ -46,6 +46,15 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     assert "Hop after harvest is the rule" not in message
 
 
+def test_ide_hop_message_keeps_text_past_old_2048_cap() -> None:
+    """Paste path used to refuse >2048 bytes so SSH/evdev stays short; that cap is gone."""
+    row = "NOW " + ("x" * 5000)
+    message = build_ide_hop_message("12088", row=row, arm_labels=["long-label" * 40])
+    assert row in message
+    assert hop_header_line(message).startswith("Liaison IDE hop")
+    assert len(message.encode("utf-8")) > 2048
+
+
 def test_remote_launch_command_locks_compositor_activate() -> None:
     cmd = remote_launch_command(
         "/repo/tmp/watchers/handoff-messages/m.md",

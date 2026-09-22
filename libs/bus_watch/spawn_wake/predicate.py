@@ -83,7 +83,7 @@ def _successor_model_bound(policy: dict[str, Any]) -> bool:
     """True when a successor model may spawn on gear-3 tickers.
 
     Operator ``--set successor_model`` always wins. Preset/default layers spawn
-    only for allowlisted cheap orchestration models (Composer); premium presets
+    only for allowlisted models (Grok 4.7 high / non-fast); premium presets
     stay blocked (10534).
     """
     model = str(policy.get("successor_model") or "")

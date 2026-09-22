@@ -4,7 +4,10 @@ Post-wait ``run.usage`` / ``result.usage`` is authoritative on local runs
 (probe 6655 A1 OBSERVED). ``Agent.get_usage`` is an additional cost probe on
 1.0.31+ local agents — it returns ``AgentUsage``; ``cost`` is ``None`` when the
 backend has not reported cost yet. Client-minted ``run-<uuid>`` labels raise
-``BadRequestError``; probe failures must not fail dispatch closeout.
+``BadRequestError``. A bare UUID ``agentId`` (custom-tool mint) fails
+``GetUsage`` validation; ``build_agent_options`` mints ``agent-<uuid>`` so
+the probe can reach the entitlement wall. Probe failures must not fail
+dispatch closeout.
 
 Consumer-facing emit: ``frontier.sdk.worker.completed`` payload fields
 ``usage`` + ``usage_capture_status``. Closeout assembly carries the same
@@ -14,6 +17,8 @@ fields on ``ImplementCloseout`` when post-wait usage is captured.
 from __future__ import annotations
 
 import json
+import re
+import uuid
 from dataclasses import dataclass
 from typing import Any
 
@@ -81,6 +86,37 @@ def usage_event_fields(record: DispatchUsageRecord) -> dict[str, Any]:
         "usage": record.usage,
         "usage_capture_status": record.usage_capture_status,
     }
+
+
+_BARE_UUID = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def mint_local_agent_id() -> str:
+    """Local ``agentId`` that ``GetUsage`` will accept.
+
+    The SDK's custom-tool path mints a bare UUID. ``GetUsage`` rejects that
+    form. Prefixing after create returns ``Unknown agent``. Mint ``agent-``
+    before ``create_agent``.
+    """
+    return f"agent-{uuid.uuid4()}"
+
+
+def local_usage_agent_id(agent_id: object) -> str | None:
+    """Normalize a stored id to the ``GetUsage`` local form.
+
+    Does not prove the agent exists under that name. Prefixing a bare UUID
+    after create is not a live agent.
+    """
+    if not isinstance(agent_id, str) or not agent_id:
+        return None
+    if agent_id.startswith(("agent-", "bc-")):
+        return agent_id
+    if _BARE_UUID.fullmatch(agent_id):
+        return f"agent-{agent_id}"
+    return agent_id
 
 
 def capture_local_get_usage(agent: Any) -> dict[str, Any]:

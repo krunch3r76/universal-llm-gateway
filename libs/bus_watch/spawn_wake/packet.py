@@ -99,7 +99,8 @@ def build_dispatch_body(
         model = str(policy.get("successor_model") or "")
         bare_id = model.rsplit("/", 1)[-1] if model else ""
         if bare_id == "grok-4.7":
-            body["model_knobs"] = {"fast": "true"}
+            # Judgment hop. Fast is the card's cheap path; this hop needs high / non-fast.
+            body["model_knobs"] = {"effort": "high", "fast": "false"}
         elif bare_id == "composer-2.5":
             # Card default is Fast. Gear-3 preset pins Standard; this covers a
             # composer successor whose policy never stored the knobs.

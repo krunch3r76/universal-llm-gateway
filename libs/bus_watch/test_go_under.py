@@ -91,7 +91,8 @@ def test_go_under_leaves_sdk_holder_and_refuses_unbound_model(
         "bus_watch.go_under.read_lock", lambda *_a, **_k: {"holder": "sdk:abc123"}
     )
     state = _state()
-    state["policy"].pop("successor_model")
+    # Gear-3 preset now supplies grok. Only an explicit empty override is unset.
+    state["policy"]["successor_model"] = ""
     result = go_under(
         "10479",
         state,

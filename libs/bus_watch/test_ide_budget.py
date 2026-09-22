@@ -184,21 +184,22 @@ def test_live_transcript_probe_allows_idle_forfeit(tmp_path: Path) -> None:
     assert idle["holder"] == lock["holder"]
 
 
-def test_policy_defaults_composer_successor_and_grok_row_bind() -> None:
+def test_policy_defaults_grok_successor_and_row_bind() -> None:
     policy = effective_policy({"policy": {}})
     assert policy["successor_model"] == POLICY_DEFAULTS["successor_model"]
-    assert policy["successor_model"] == "cursor/composer-2.5"
+    assert policy["successor_model"] == "cursor/grok-4.7"
+    assert policy["successor_model_knobs"] == {"effort": "high", "fast": "false"}
     assert policy["row_bind_model"] == "cursor/grok-4.7"
     assert policy["row_bind_model_knobs"] == {"effort": "high", "fast": "false"}
 
 
-def test_gear_three_presets_composer_successor() -> None:
+def test_gear_three_presets_grok_successor() -> None:
     assert (
-        GEAR_PRESETS["3-wake-on-attention"]["successor_model"] == "cursor/composer-2.5"
+        GEAR_PRESETS["3-wake-on-attention"]["successor_model"] == "cursor/grok-4.7"
     )
     preset_only = effective_policy({"policy": {"gear": "3-wake-on-attention"}})
-    assert preset_only["successor_model"] == "cursor/composer-2.5"
-    assert preset_only["successor_model_knobs"] == {"fast": "false"}
+    assert preset_only["successor_model"] == "cursor/grok-4.7"
+    assert preset_only["successor_model_knobs"] == {"effort": "high", "fast": "false"}
     assert preset_only["successor_model_source"] == "gear_preset"
     bound = effective_policy(
         {

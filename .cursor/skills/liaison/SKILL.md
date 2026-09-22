@@ -212,7 +212,7 @@ touch the same files. `¬ discard(peer_work)` — a blocked merge is reconcile, 
 ## Headless successor (resume-fence pull)
 
 The hop target is a **message dispatch**, not a packet file. Sit leftover on a
-**friction/disposition score row** is not the Composer house successor: the ticker spawns a
+**friction/disposition score row** is not the house successor: the ticker spawns a
 **row-bind hop** (default `cursor/grok-4.7` Standard + high effort via
 `policy.row_bind_model` / `row_bind_model_knobs`; override with `cdp/opus-5` or
 `cdp/fable` when needed) to bind `ROW_CLASS: low|trio`. That seat does **not** edit the
@@ -267,7 +267,7 @@ dispatches (`contract=implement`, omit `model=`) run **alongside** — they are 
 | Work | Executor | Bind / review |
 |---|---|---|
 | Read / recon / ≥3 files | `Task(subagent_type="explore")` in-tab | none |
-| Trivial / local edit (<20 lines, no served path) | in-seat (Opus-class only by default; Composer successor **dispatches** instead) | none — commit path-explicit same turn |
+| Trivial / local edit (<20 lines, no served path) | in-seat (Opus-class only by default; the successor **dispatches** instead) | none — commit path-explicit same turn |
 | Mechanical implement with dense spec (`files_expected` + ACs) | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement\|pure-mechanical, lane="B", source_ref=todo:…, packet_path=…, dispatch_thread_id=R)` | none — Fable-densified packets skip skeptic |
 | Repo write / mechanical edit (this seat lacks checkout authority) | **`agent_bus.request(to=cursor, …)` via cursor-auto** — never STAY, never needs-attended | nest_under when a holder lease is live |
 | Design / judgment fork (discriminator, architecture, bind table) | **`team_dispatch(model=cdp/fable)`** — decider of last resort; never STAY | one round; disagreement ⇒ CONSULT_PENDING |
@@ -292,9 +292,9 @@ The successor model is **policy, never a constant**. `scripts/liaison-tick.py --
 
 | Gear | Successor | Cadence | When |
 |---|---|---|---|
-| `1-fable-mvp` | `cursor/composer-2.5` (orchestration hop; judgment via CDP) | ≤ 5 ticks / 60 min / poll 600 s | **do not select for overnight** — use gear 3 + explicit `successor_model=cursor/composer-2.5`; Cursor Fable credit window closed (2026-09-12) |
+| `1-fable-mvp` | `cursor/grok-4.7` (`effort=high`, `fast=false`; judgment hop, CDP for design forks) | ≤ 5 ticks / 60 min / poll 600 s | **do not select for overnight** — use gear 3; Cursor Fable credit window closed (2026-09-12) |
 | `2-opus-hops` | `cursor/claude-opus-5` (no cost intent); CDP checks stay `cdp/opus-5` | ≤ 6 ticks | next iteration; Fable only in the attended window |
-| `3-wake-on-attention` | **`cursor/composer-2.5`** from the gear preset (spawn predicate allowlists only cheap orchestration models from preset/default — premium presets still blocked, 10534). Override anytime with **`--set successor_model=<slug>`**. Spawned on the wake sources in § Headless successor (live unread · work closeout once · handoff once · `checkpoint_due` once) | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **armed only by explicit `ready`** (`--set ready=true` or `--go-under`; `ready_source=override`). The register never arms it: an IDE-hop chain runs `register=autonomous` with the ticker policy-only, and a register-armed ticker put a second driver on 10479 (2026-09-13). One driver per house: IDE chain ⇒ `ready=false`; ticker ⇒ `--go-under` |
+| `3-wake-on-attention` | **`cursor/grok-4.7`** (`effort=high`, `fast=false`) from the gear preset. Preset/default spawn allowlists that model only — premium presets still blocked (10534); Composer is not allowlisted until a mechanical hop exists. Override anytime with **`--set successor_model=<slug>`**. Spawned on the wake sources in § Headless successor (live unread · work closeout once · handoff once · `checkpoint_due` once) | poll 120 s via `scripts/liaison-tick.py --loop --spawn-on-wake`; ticker holds `liaison-ticker-<root>.lock`, **not** the seat mutex | **armed only by explicit `ready`** (`--set ready=true` or `--go-under`; `ready_source=override`). The register never arms it: an IDE-hop chain runs `register=autonomous` with the ticker policy-only, and a register-armed ticker put a second driver on 10479 (2026-09-13). One driver per house: IDE chain ⇒ `ready=false`; ticker ⇒ `--go-under` |
 
 Shift = one command; takes effect at the **next** hop (a running successor keeps the gear it read). A live
 `--loop` absorbs `--set` / `--mark-*` edits from another shell on its next poll (`libs/bus_watch/tick_state.py`

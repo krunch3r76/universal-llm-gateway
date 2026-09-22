@@ -25,14 +25,16 @@ _GIW_USAGE_LIVE = os.environ.get(
 _BUDGET_SCOPE = "liaison_seat"
 _BUDGET_RATIO_THRESHOLD = 0.80
 
-# Gear-3 preset successors allowed to spawn without an operator --set override
-# (10534 blocked implicit *premium* models; Composer is the orchestration default).
-GEAR3_SPAWNABLE_PRESET_SUCCESSORS: frozenset[str] = frozenset({"cursor/composer-2.5"})
+# Gear-3 preset successors allowed to spawn without an operator --set override.
+# 10534 blocked implicit *premium* models. Grok 4.7 high / non-fast is the
+# judgment hop (f44e71b1); Composer stays off this list until a mechanical hop exists.
+GEAR3_SPAWNABLE_PRESET_SUCCESSORS: frozenset[str] = frozenset({"cursor/grok-4.7"})
 
 POLICY_DEFAULTS: dict[str, Any] = {
     "gear": "1-fable-mvp",
-    # House successor orchestrates (harvest/fold/dispatch); judgment stays CDP.
-    "successor_model": "cursor/composer-2.5",
+    # House successor still judges (STAY / classify / dispatch). High, non-fast.
+    "successor_model": "cursor/grok-4.7",
+    "successor_model_knobs": {"effort": "high", "fast": "false"},
     "row_bind_model": "cursor/grok-4.7",
     "row_bind_model_knobs": {"effort": "high", "fast": "false"},
     "successor_cost_intent": None,
@@ -66,11 +68,10 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
         "max_ticks_per_hop": 6,
     },
     "3-wake-on-attention": {
-        # Cheap orchestration default — spawn predicate still rejects premium
-        # models sourced only from gear_preset (10534 Opus incident).
-        "successor_model": "cursor/composer-2.5",
-        # Card default is Fast. Pin Standard so a gear-3 hop does not inherit it.
-        "successor_model_knobs": {"fast": "false"},
+        # Judgment hop. Premium presets stay blocked (10534). Composer is not
+        # allowlisted until a mechanical hop exists.
+        "successor_model": "cursor/grok-4.7",
+        "successor_model_knobs": {"effort": "high", "fast": "false"},
         "successor_cost_intent": None,
         "wake_on_attention_only": True,
         "poll_seconds": 120,

@@ -54,13 +54,23 @@ def test_predicate_refuses_preset_sourced_successor_model() -> None:
     assert ev["spawn"] is False
 
 
-def test_predicate_allows_composer_gear_preset() -> None:
+def test_predicate_allows_grok_gear_preset() -> None:
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["policy"]["successor_model"] = "cursor/grok-4.7"
+    digest["policy"]["successor_model_source"] = "gear_preset"
+    digest["policy"]["ready"] = True
+    ev = evaluate_spawn_predicate(digest, {}, lock={})
+    assert ev["clauses"]["successor_model_bound"] is True
+
+
+def test_predicate_refuses_composer_gear_preset() -> None:
+    """Composer is not a preset successor until a mechanical hop exists."""
     digest = _digest(attention=[{"id": "1", "unread": 1}])
     digest["policy"]["successor_model"] = "cursor/composer-2.5"
     digest["policy"]["successor_model_source"] = "gear_preset"
     digest["policy"]["ready"] = True
     ev = evaluate_spawn_predicate(digest, {}, lock={})
-    assert ev["clauses"]["successor_model_bound"] is True
+    assert ev["clauses"]["successor_model_bound"] is False
 
 
 def test_predicate_refuses_unset_successor_model() -> None:
@@ -977,13 +987,13 @@ def test_dispatch_body_contract_defaults_none_when_absent() -> None:
     assert body["contract"] == "none"
 
 
-def test_dispatch_body_grok_successor_pins_fast() -> None:
-    """Grok liaison hops pin Fast — omit-path alone is Standard (a:35522)."""
+def test_dispatch_body_grok_successor_pins_high_non_fast() -> None:
+    """Judgment hop: high effort, not Fast."""
     body = build_dispatch_body(
         "10479",
         {"successor_model": "cursor/grok-4.7", "max_hop_minutes": 60},
     )
-    assert body["model_knobs"] == {"fast": "true"}
+    assert body["model_knobs"] == {"effort": "high", "fast": "false"}
 
 
 def test_dispatch_body_successor_model_knobs_override_grok_fast() -> None:

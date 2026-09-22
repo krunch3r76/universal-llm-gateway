@@ -57,7 +57,6 @@ from bus_watch.state import read_state
 _REPO = Path(__file__).resolve().parents[2]
 HANDOFF_MSG_DIR = WATCH_DIR / "handoff-messages"
 KEYSTROKE_SCRIPT = "scripts/orchestrator_tab_keystroke.py"
-MESSAGE_CAP = 2048
 # predicate_unmet is not terminal — CDP consults sit there until the first
 # qualifying reply (a:33284; hop 15 ARM: none live while G6 was in_flight).
 LIVE_WATCHER_STATUSES = frozenset({"polling", "running", "predicate_unmet"})
@@ -175,7 +174,6 @@ def build_ide_hop_message(
     arm_labels: list[str],
     tip_cp_ordinal: int | None = None,
     workspace: str = "universal-llm-gateway",
-    cap: int = MESSAGE_CAP,
     register: str = "attended",
 ) -> str:
     """First user message of the successor tab; ``resume <R>`` first so the fence hook fires.
@@ -216,11 +214,7 @@ def build_ide_hop_message(
         "scoreboard -> Plan -> Dispatch (+watcher) -> CHECKPOINT. "
         "Hop only if hop_qualifies; else STAY.",
     ]
-    message = "\n".join(lines) + "\n"
-    encoded = message.encode("utf-8")
-    if len(encoded) > cap:
-        raise ValueError(f"ide hop message exceeds {cap} bytes ({len(encoded)})")
-    return message
+    return "\n".join(lines) + "\n"
 
 
 def _bus_auth_headers() -> dict[str, str]:

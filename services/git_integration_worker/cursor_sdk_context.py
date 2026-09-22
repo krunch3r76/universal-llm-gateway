@@ -33,6 +33,9 @@ from services.git_integration_worker.cursor_sdk_substrate_tools import (
     SubstrateDispatchContext,
     merge_substrate_tools,
 )
+from services.git_integration_worker.cursor_sdk_usage_extract import (
+    mint_local_agent_id,
+)
 
 _VORTEX_MCP_SERVER = "user-vortex"
 # IDE/docs name for the same code mount. Copied mcp.json registers this
@@ -356,6 +359,7 @@ def build_agent_options(
     )
     local = merge_substrate_tools(local, substrate_ctx)
     return AgentOptions(
+        agent_id=mint_local_agent_id(),
         model=model,
         api_key=api_key,
         mode=sdk_mode,
