@@ -321,6 +321,40 @@ async def test_sweep_emits_watchdog_fired_event() -> None:
 
 
 @pytest.mark.asyncio
+async def test_watchdog_fires_consult_pending_before_park_harvest_continue() -> None:
+    """D3: consult continue branch fires before park_harvest continue."""
+    ledger = CursorDispatchLedger.instance()
+    req = _req(dispatch_id="pred-consult-watch-1")
+    _admit_conductor(ledger, req)
+    ledger.merge_record_json(
+        dispatch_id=req.dispatch_id,
+        patch={"closeout_turn": 3, "closeout_stop_tokens": ["CONSULT_PENDING"]},
+    )
+    ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
+
+    consult_mock = AsyncMock(return_value=True)
+    continue_mock = AsyncMock(return_value=True)
+
+    with patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.consult_pending_continue_owed",
+        return_value=True,
+    ), patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.fire_consult_pending_continue",
+        consult_mock,
+    ), patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.park_harvest_continue_owed",
+        return_value=True,
+    ), patch(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.fire_park_harvest_continue",
+        continue_mock,
+    ):
+        ok = await maybe_fire_conductor_hop_watchdog(dispatch_id=req.dispatch_id)
+    assert ok is True
+    consult_mock.assert_awaited_once()
+    continue_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_watchdog_fires_park_harvest_continue_before_arm_recipe() -> None:
     """R-6: continue branch fires before park_harvest arm-recipe."""
     ledger = CursorDispatchLedger.instance()

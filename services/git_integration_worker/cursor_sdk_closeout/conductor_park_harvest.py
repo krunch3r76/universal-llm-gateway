@@ -32,6 +32,7 @@ logger = get_logger(__name__)
 
 _HOP_PARK_HARVEST_FIRED_KEY = "hop_park_harvest_fired_at"
 _HOP_PARK_HARVEST_CONTINUED_KEY = "hop_park_harvest_continued_at"
+_CONSULT_PENDING_CONTINUED_KEY = "hop_consult_harvest_continued_at"
 
 
 def _closeout_tokens_from_row(row: dict[str, Any]) -> frozenset[str]:
@@ -321,6 +322,153 @@ def reply_arrived_on_thread(
         return False
 
 
+def consult_pending_continue_owed(
+    row: dict[str, Any],
+    *,
+    closeout_tokens: frozenset[str] | None = None,
+    reply_fn: Any | None = None,
+) -> bool:
+    """D3: terminal + bare CONSULT_PENDING wait + web-anthropic reply + mission open."""
+    from claude_bundles.conductor_stop import is_consult_pending_wait
+
+    status = str(row.get("status") or "")
+    if status not in ("completed", "failed", "cancelled"):
+        return False
+    tokens = closeout_tokens or _closeout_tokens_from_row(row)
+    rec = _record_data(row)
+    if rec.get(_CONSULT_PENDING_CONTINUED_KEY):
+        return False
+    if rec.get("hop_parked") or rec.get("park"):
+        return False
+    body = _closeout_body_from_row(row)
+    if not is_consult_pending_wait(body):
+        return False
+    from services.git_integration_worker.cursor_sdk_park import _successor_admitted
+
+    dispatch_id = str(row.get("dispatch_id") or "")
+    record_json = str(row.get("record_json") or "")
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        if _successor_admitted(
+            conn, predecessor_id=dispatch_id, record_json=record_json
+        ):
+            return False
+    thread_id = str(row.get("thread_id") or "")
+    closeout_turn = rec.get("closeout_turn")
+    if not thread_id or not isinstance(closeout_turn, int):
+        return False
+    snapshot = reply_fn or (
+        lambda tid, turn, agent: reply_arrived_on_thread(
+            thread_id=tid, after_turn=turn, from_agent=agent
+        )
+    )
+    if not snapshot(thread_id, closeout_turn, "web-anthropic"):
+        return False
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        conductor_has_live_nested,
+        live_conductor_row_on_thread,
+        mission_open_for_row,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        evaluate_hop_budget,
+    )
+
+    if live_conductor_row_on_thread(
+        thread_id=thread_id, exclude_dispatch_id=dispatch_id
+    ):
+        return False
+    if conductor_has_live_nested(dispatch_id=dispatch_id):
+        return False
+    if not mission_open_for_row(row, closeout_tokens=tokens):
+        return False
+    verdict = evaluate_hop_budget(row, closeout_tokens=tokens)
+    if not verdict.ok or verdict.park:
+        return False
+    return True
+
+
+async def fire_consult_pending_continue(row: dict[str, Any]) -> bool:
+    """Admit consult-harvest successor via hop path (D3)."""
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        build_hop_team_dispatch_body,
+        post_conductor_hop_team_dispatch,
+    )
+    from services.git_integration_worker.cursor_sdk_hop_events import (
+        emit_frontier_sdk_conductor_hop_admit_failed,
+        emit_frontier_sdk_conductor_hop_admitted,
+    )
+    from services.git_integration_worker.cursor_sdk_ledger_hop import merge_hop_patch
+
+    dispatch_id = str(row.get("dispatch_id") or "")
+    thread_id = str(row.get("thread_id") or "")
+    body = build_hop_team_dispatch_body(row, hop_reason_override="consult_harvest")
+    if body is None:
+        return False
+    hop_seq = int(body.get("hop_seq") or 1)
+    ok, detail = await post_conductor_hop_team_dispatch(body)
+    record_json = str(row.get("record_json") or "")
+    if ok:
+        successor = (
+            str(detail.get("dispatch_id") or "")
+            or str(detail.get("execution_id") or "")
+        )
+        if not successor:
+            logger.warning(
+                "consult pending continue admit ok but no successor id "
+                "dispatch_id=%s detail=%s",
+                dispatch_id,
+                detail,
+            )
+            return False
+        merged = merge_hop_patch(record_json, {"hop_successor": successor})
+        try:
+            data = json.loads(merged) if merged else {}
+        except json.JSONDecodeError:
+            data = {}
+        if isinstance(data, dict):
+            data[_CONSULT_PENDING_CONTINUED_KEY] = time.time()
+            merged = json.dumps(data, sort_keys=True, separators=(",", ":"))
+        ledger = CursorDispatchLedger.instance()
+        with ledger._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+                (merged, dispatch_id),
+            )
+        emit_frontier_sdk_conductor_hop_admitted(
+            predecessor_dispatch_id=dispatch_id,
+            successor_dispatch_id=successor,
+            thread_id=thread_id,
+            hop_seq=hop_seq,
+            hop_reason="consult_harvest",
+        )
+        return True
+    error_text = json.dumps(detail, sort_keys=True)[:500]
+    merged = merge_hop_patch(
+        record_json,
+        {
+            "hop_admit_error": {
+                "error": error_text,
+                "status_code": detail.get("status_code"),
+            }
+        },
+    )
+    ledger = CursorDispatchLedger.instance()
+    with ledger._connect() as conn:
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET record_json=? WHERE dispatch_id=?",
+            (merged, dispatch_id),
+        )
+    emit_frontier_sdk_conductor_hop_admit_failed(
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+        hop_seq=hop_seq,
+        hop_reason="consult_harvest",
+        error=error_text,
+        status_code=detail.get("status_code"),
+    )
+    return False
+
+
 def park_harvest_continue_owed(
     row: dict[str, Any],
     *,
@@ -469,6 +617,8 @@ async def fire_park_harvest_continue(row: dict[str, Any]) -> bool:
 
 __all__ = [
     "build_park_harvest_arm_recipe",
+    "consult_pending_continue_owed",
+    "fire_consult_pending_continue",
     "fire_park_harvest",
     "fire_park_harvest_continue",
     "maybe_fire_conductor_park_harvest",

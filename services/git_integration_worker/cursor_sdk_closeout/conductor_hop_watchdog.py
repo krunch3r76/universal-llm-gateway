@@ -36,6 +36,8 @@ from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_park impo
     park_conductor_hop_mission,
 )
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
+    consult_pending_continue_owed,
+    fire_consult_pending_continue,
     fire_park_harvest_continue,
     maybe_fire_conductor_park_harvest,
     park_harvest_continue_owed,
@@ -165,6 +167,8 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
     closeout_tokens = _closeout_tokens_from_row(row)
     if _mission_park_blocks_hop(row):
         return False
+    if consult_pending_continue_owed(row, closeout_tokens=closeout_tokens):
+        return await fire_consult_pending_continue(row)
     if park_harvest_continue_owed(row, closeout_tokens=closeout_tokens):
         return await fire_park_harvest_continue(row)
     if park_harvest_owed(row, closeout_tokens=closeout_tokens):

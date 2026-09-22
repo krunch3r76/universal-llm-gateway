@@ -1,0 +1,91 @@
+# operator-hop-harvest — compact operator view at a conductor hop boundary
+#
+# Invocation:
+#   pipeline(op="run", pipeline_id="operator-hop-harvest",
+#            messages=[{"role":"user","content":"harvest"}],
+#            options={
+#              "thread": "<worker lane>",
+#              "summoning_thread": "<root>",
+#              "include_summary": false
+#            })
+
+schema_version: 6
+id: operator-hop-harvest
+version: "1.0"
+type: operator_hop_harvest
+description: >
+  Mechanical harvest view: conductor closeout, scoreboard tip, CONSULT_PENDING
+  wait, harvest recipe, continuation posture. Optional one-paragraph summary.
+output: emit
+
+options:
+  timeout_seconds: 30
+
+steps:
+  - name: resolve
+    type: operator_hop_harvest_resolve_v1
+
+  - name: fetch_ledger
+    type: operator_hop_harvest_fetch_ledger_v1
+    reads_from:
+      - step: resolve
+        fields: [json]
+
+  - name: fetch_bus
+    type: operator_hop_harvest_fetch_bus_v1
+    reads_from:
+      - step: resolve
+        fields: [json]
+      - step: fetch_ledger
+        fields: [json]
+
+  - name: fetch_scoreboard
+    type: operator_hop_harvest_fetch_scoreboard_v1
+    reads_from:
+      - step: fetch_ledger
+        fields: [json]
+
+  - name: fetch_wait
+    type: operator_hop_harvest_fetch_wait_v1
+    reads_from:
+      - step: fetch_bus
+        fields: [json]
+      - step: fetch_ledger
+        fields: [json]
+
+  - name: parse
+    type: operator_hop_harvest_parse_v1
+    reads_from:
+      - step: fetch_bus
+        fields: [json]
+      - step: fetch_scoreboard
+        fields: [json]
+      - step: fetch_wait
+        fields: [json]
+      - step: fetch_ledger
+        fields: [json]
+
+  - name: assemble
+    type: operator_hop_harvest_assemble_v1
+    reads_from:
+      - step: parse
+        fields: [json]
+      - step: resolve
+        fields: [json]
+      - step: fetch_ledger
+        fields: [json]
+
+  - name: summarize
+    type: operator_hop_harvest_summarize_v1
+    condition: "options.get('include_summary') is True"
+    reads_from:
+      - step: assemble
+        fields: [json]
+
+  - name: emit
+    type: operator_hop_harvest_emit_v1
+    reads_from:
+      - step: assemble
+        fields: [json]
+      - step: summarize
+        fields: [json]
