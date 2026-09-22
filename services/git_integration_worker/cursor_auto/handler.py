@@ -476,6 +476,13 @@ async def process_job(
         contract=contract,
         lane=resolved_lane,
     )
+    from services.git_integration_worker.cursor_sdk_packet import (
+        extract_sdk_mode_from_packet,
+    )
+
+    nested_sdk_mode = extract_sdk_mode_from_packet(message)
+    if nested_sdk_mode == "plan":
+        read_only = True
     if settlement is not None:
         message = f"{compose_supersede_preamble(settlement)}\n\n{message}"
     if queue.is_superseded(job.job_id):

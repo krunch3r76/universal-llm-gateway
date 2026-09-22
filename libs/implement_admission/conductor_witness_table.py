@@ -20,6 +20,7 @@ from implement_admission.conductor_witness_types import (
     stops_block_reason,
 )
 from implement_admission.evidence_verify import resolve_artifact_path
+
 _ARTIFACT_URI_RE = re.compile(
     r"^\|\s*(?P<id>[^|`\n]+?)\s*\|\s*(?:`(?P<cortex>cortex://[^`]+)`"
     r"|`?(?P<sha>[0-9a-f]{7,40})`?\s+on\s+master)",

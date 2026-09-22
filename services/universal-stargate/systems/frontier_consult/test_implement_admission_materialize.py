@@ -209,6 +209,7 @@ def test_conductor_resolve_passes_fold_deps(
         cortex=_MaterializeStubCortex(),
         workspaces_root=tmp_path,
         summoning_thread_id="9638",
+        contract="conductor",
     )
     assert result.gated is False
     assert captured["fold_deps"] is not None

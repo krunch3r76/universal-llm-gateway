@@ -428,10 +428,11 @@ SoT: `services/git_integration_worker/cursor_sdk_mode.py` ·
 
 ### cursor-auto nested hook (W3)
 
-`nested_auto_sdk_mode`: nested `contract ∈ {ask, recon, seed}` without
-`density_triage: implement_ready` in body → auto **`plan`** + `read_only=true`.
-Does **not** auto-fire implement — conductor `NEXT_ADMIT` nests implement after
-harvest (`conductor` § Scoreboard `sdk_mode` column).
+Nested `contract ∈ {ask, recon, seed}` legs declare **`sdk_mode: plan`** on the
+wire or in packet frontmatter when read-only plan mode is intended; otherwise
+admit resolves **`agent`**. Does **not** auto-fire implement — conductor
+`NEXT_ADMIT` nests implement after plan harvest (`conductor` § Scoreboard
+`sdk_mode` column).
 
 ### Closeout
 

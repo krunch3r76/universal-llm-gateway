@@ -38,9 +38,9 @@ When the work thread or scoreboard shows a terminal plan dispatch on this
    `PARTIAL` (not `COMPLETE` / not land claims).
 2. **Harvest plan artifacts** — every URI in plan closeout `artifact_paths` /
    sidecar `<corpus>`; load into working context before scope bind.
-3. **Verify implement gate** — `density_triage: implement_ready` (or mechanical
-   with dense `files_expected`) stamped on the todo; plan leg alone does not
-   satisfy implement admission.
+3. **Verify implement gate** — active **`implement_ready` assertion** on the todo
+   (or `density_triage=mechanical` with dense `files_expected`); plan leg alone
+   does not satisfy implement admission.
 4. **Nest shape** — implement admit uses `nest_under=<plan_dispatch_id>`,
    `sdk_mode: agent` (or omit — implement-class defaults agent). **`sdk_mode=plan`
    on `contract=implement` → 422** (`validate_sdk_mode_at_admit`).
