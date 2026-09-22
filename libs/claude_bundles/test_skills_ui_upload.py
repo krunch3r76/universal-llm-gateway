@@ -225,6 +225,7 @@ async def test_modal_file_input_resolves_scoped_input_on_drop_zone_overlay() -> 
 @pytest.mark.asyncio
 async def test_open_upload_dialog_succeeds_when_drop_zone_modal_detected() -> None:
     page = MagicMock()
+    _wire_page_playwright_stubs(page)
     page.url = "https://claude.ai/new#settings/customize-skills"
     page.keyboard = MagicMock()
     page.keyboard.press = AsyncMock()
@@ -289,6 +290,7 @@ async def test_open_upload_dialog_succeeds_when_drop_zone_modal_detected() -> No
 @pytest.mark.asyncio
 async def test_open_upload_dialog_modal_timeout_is_upload_modal_missing() -> None:
     page = MagicMock()
+    _wire_page_playwright_stubs(page)
     page.url = "https://claude.ai/new#settings/customize-skills"
     page.keyboard = MagicMock()
     page.keyboard.press = AsyncMock()
@@ -332,6 +334,11 @@ async def test_open_upload_dialog_modal_timeout_is_upload_modal_missing() -> Non
             "claude_bundles.skills_ui_open._upload_modal_open",
             new_callable=AsyncMock,
             return_value=False,
+        ),
+        patch(
+            "claude_bundles.skills_ui_open.panel_state_summary",
+            new_callable=AsyncMock,
+            return_value="",
         ),
         pytest.raises(UploadModalMissingError, match="did not open within 15s"),
     ):
@@ -386,6 +393,18 @@ def _mock_locator(*, count: int = 0, visible: bool = False) -> MagicMock:
     loc.nth = MagicMock(return_value=nth)
     loc.first = nth if count else loc
     return loc
+
+
+def _wire_page_playwright_stubs(page: MagicMock) -> None:
+    """Panel helpers await locator.count(); bare MagicMock page must mimic Playwright."""
+
+    def _locator(_sel: str) -> MagicMock:
+        loc = _mock_locator()
+        loc.filter = MagicMock(return_value=_mock_locator())
+        return loc
+
+    page.get_by_role = MagicMock(side_effect=lambda *_a, **_k: _mock_locator())
+    page.locator = MagicMock(side_effect=_locator)
 
 
 def _mock_page(locator_map: dict[str, MagicMock]) -> MagicMock:
