@@ -33,6 +33,7 @@ _COMPOSER_ADD_NOISE = re.compile(
 )
 _SKILLS_NAV = re.compile(r"skills", re.I)
 _UPLOAD_TITLE = re.compile(r"upload\s+skill", re.I)
+_UPLOAD_DROP_ZONE = re.compile(r"drag and drop or click to upload", re.I)
 _CF_MARKERS = (
     "Performing security verification",
     "Verify you are human",
@@ -411,6 +412,19 @@ async def run_preflight(page: Page, context: BrowserContext) -> None:
         )
 
 
+def _upload_overlay_text_matches(text: str) -> bool:
+    return bool(_UPLOAD_TITLE.search(text) or _UPLOAD_DROP_ZONE.search(text))
+
+
+async def _overlay_is_upload_modal(ov: Locator) -> bool:
+    text = await ov.inner_text()
+    if not _upload_overlay_text_matches(text):
+        return False
+    if _UPLOAD_TITLE.search(text):
+        return True
+    return await ov.locator('input[type="file"]').count() > 0
+
+
 async def _upload_modal_root(page: Page) -> Locator | None:
     # Base UI uses data-popup-open; Radix dialogs still use data-state=open.
     overlays = page.locator(
@@ -420,15 +434,16 @@ async def _upload_modal_root(page: Page) -> Locator | None:
         ov = overlays.nth(i)
         if not await ov.is_visible():
             continue
-        if _UPLOAD_TITLE.search(await ov.inner_text()):
+        if await _overlay_is_upload_modal(ov):
             return ov
-    title = page.get_by_text(_UPLOAD_TITLE)
-    if await title.count() and await title.first.is_visible():
-        parent = title.first.locator(
-            "xpath=ancestor::*[@data-popup-open or @data-state='open' or @role='dialog'][1]"
-        )
-        if await parent.count():
-            return parent.first
+    for pattern in (_UPLOAD_TITLE, _UPLOAD_DROP_ZONE):
+        title = page.get_by_text(pattern)
+        if await title.count() and await title.first.is_visible():
+            parent = title.first.locator(
+                "xpath=ancestor::*[@data-popup-open or @data-state='open' or @role='dialog'][1]"
+            )
+            if await parent.count() and await _overlay_is_upload_modal(parent.first):
+                return parent.first
     return None
 
 

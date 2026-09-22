@@ -124,7 +124,11 @@ async def _open_upload_dialog(
                 if await _upload_modal_open(page):
                     return await _modal_file_input(page)
                 await page.wait_for_timeout(500)
-            raise RuntimeError("Upload modal did not open within 15s")
+            raise UploadModalMissingError(
+                "Upload modal did not open within 15s after menu selection"
+            )
+        except UploadModalMissingError:
+            raise
         except Exception as exc:
             last_err = exc
             if isinstance(exc, MenuDiscoveryError):

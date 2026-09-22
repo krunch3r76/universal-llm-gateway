@@ -21,13 +21,11 @@ from claude_bundles.skills_ui_panel import (
     _find_add_button,
     _skills_panel_visible,
     _skills_table_rows,
+    _upload_modal_open,
 )
 
 if TYPE_CHECKING:
     from claude_bundles.skills_ui_network import UploadNetworkOracle
-
-_UPLOAD_TITLE = __import__("re").compile(r"upload\s+skill", __import__("re").I)
-
 
 class ComposerPollutedError(RuntimeError):
     """Chat composer has attachment chips — upload path must not mutate operator chat."""
@@ -69,21 +67,6 @@ async def _table_row_texts(page: Page) -> list[str]:
     for i in range(n):
         out.append((await rows.nth(i).inner_text()).strip())
     return out
-
-
-async def _upload_modal_open(page: Page) -> bool:
-    # Base UI portals use data-popup-open; Radix dialogs still use data-state=open.
-    overlays = page.locator(
-        '[data-popup-open], [role="dialog"], [data-state="open"].fixed'
-    )
-    for i in range(await overlays.count()):
-        ov = overlays.nth(i)
-        if not await ov.is_visible():
-            continue
-        text = await ov.inner_text()
-        if _UPLOAD_TITLE.search(text):
-            return True
-    return False
 
 
 async def _overlay_html(page: Page) -> str:
