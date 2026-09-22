@@ -138,11 +138,11 @@ Evidence: agent-bus:7244 (cdp/opus DIRECTIVE loop, 8h44m then dead gap, IDE stan
 
 ## D5 — Mission negotiation
 
-Before the mission is framed enough for D4, this seat and cursor-auto MAY negotiate shape headlessly — no live chat, no human mediation. Same `TYPE: DIRECTIVE` / `contract: confer` envelope; add `negotiation_phase: proposal|counter|agree|ratify` plus `negotiation_id` / `revision` / `in_reply_to_turn` / `proposal_hash` / `idle_deadline` in body. Auto replies `TYPE: DISPOSITION` with closed `negotiation.*` vocabulary.
+Before the mission is framed enough for D4, this seat and cursor-auto MAY negotiate shape headlessly — no live chat, no human mediation. Same `TYPE: DIRECTIVE` / `contract: confer` envelope; add `negotiation_phase: proposal|counter|agree|ratify` plus closed 12-field set: negotiation_phase, negotiation_id, revision, in_reply_to_turn, proposal_hash, parent_thread, objective, scope, out_of_scope, acceptance, vision, idle_deadline (explicit `parent_thread:` as a body line, distinct from the tool argument `parent_thread`). Include the one-line `proposal_hash` rule (same as `cursor_request` **Mission negotiation** clause). Auto replies `TYPE: DISPOSITION` with closed `negotiation.*` vocabulary.
 
 Ordinary DIRECTIVEs without `negotiation_phase` are unaffected. Additive — not a replacement for attended charter-birth (`cortex://notes/system/playbooks/attended-charter-birth-with-cursor.md`) when a human is in chat.
 
-Live field contract: `cursor_request` **Mission negotiation** clause + `cortex://notes/system/specs/directive-loop-mission-negotiation.md`. Once `agree`/`ratify` closes, D4 takes over.
+Live field contract: full grammar in `cortex://notes/system/specs/directive-loop-mission-negotiation.md`; the tool **Mission negotiation** clause is the MCP discoverability mirror of the 12-field list above. Once `agree`/`ratify` closes, D4 takes over.
 
 ## Anti-patterns
 

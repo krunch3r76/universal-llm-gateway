@@ -40,6 +40,36 @@ class _ToolNameRecorder:
         return decorator
 
 
+def test_cursor_request_negotiation_descriptor_parity() -> None:
+    """Repo-root pytest required (pytest.ini pythonpath)."""
+    from services.git_integration_worker.cursor_auto.mission_negotiation_wire import (
+        _EXECUTION_FIELDS,
+        _PAYLOAD_FIELDS,
+        _REQUIRED_FIELDS,
+    )
+
+    recorder = _ToolNameRecorder()
+    register_cursor_request_tool(recorder)  # type: ignore[arg-type]
+    description = recorder.kwargs["cursor_request"].get("description") or ""
+    assert "**Mission negotiation:**" in description
+    start = description.index("closed 12-field set:")
+    end = description.index(".", start)
+    enum_run = description[start + len("closed 12-field set:") : end]
+    enum_fields = {part.strip() for part in enum_run.split(",") if part.strip()}
+    assert enum_fields == set(_REQUIRED_FIELDS)
+    assert enum_fields != set(_REQUIRED_FIELDS) - {"parent_thread"}
+    payload_start = description.index("six payload fields (") + len("six payload fields (")
+    payload_end = description.index(")", payload_start)
+    payload_run = description[payload_start:payload_end]
+    payload_fields = {part.strip() for part in payload_run.split(",") if part.strip()}
+    assert payload_fields == set(_PAYLOAD_FIELDS)
+    exec_start = description.index("Execution fields (") + len("Execution fields (")
+    exec_end = description.index(")", exec_start)
+    exec_run = description[exec_start:exec_end]
+    exec_fields = {part.strip() for part in exec_run.split(",") if part.strip()}
+    assert exec_fields == set(_EXECUTION_FIELDS)
+
+
 def test_cursor_request_registers_without_error() -> None:
     recorder = _ToolNameRecorder()
     register_cursor_request_tool(recorder)  # type: ignore[arg-type]
