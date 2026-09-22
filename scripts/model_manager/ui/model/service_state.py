@@ -16,8 +16,6 @@ from enum import StrEnum
 from pathlib import Path
 
 from ..controller.service_config import (
-    cdp_ask_manage_state,
-    cdp_ask_url_config,
     read_cloud_proxy_socket_path,
     read_rag_socket_path,
     read_rag_tcp_config,
@@ -541,123 +539,19 @@ class ServiceState:
     CDP_ASK_PID_FILE: Path = Path.home() / ".gateway" / "cdp-ask.pid"
 
     def check_cdp_ask(self) -> ServiceInfo:
-        """Check cdp-ask satellite status via TCP /health when URL is configured."""
-        manage_state = cdp_ask_manage_state()
-        if manage_state == "not_enabled":
-            return ServiceInfo(
-                name="cdp-ask",
-                status=ServiceStatus.NOT_ENABLED,
-                detail="PROJECT_ASK_URL unset",
-            )
+        """Return cdp-ask status; remote misses that still accept TCP stay unhealthy."""
+        from .cdp_ask_status import check_cdp_ask as probe_cdp_ask
 
-        url_cfg = cdp_ask_url_config()
-        if url_cfg is None:
-            return ServiceInfo(
-                name="cdp-ask",
-                status=ServiceStatus.NOT_ENABLED,
-                detail="PROJECT_ASK_URL unset",
-            )
-        host, port, base_url = url_cfg
-        health_url = f"{base_url}/health"
-        probe_host = "127.0.0.1" if host in {"localhost", "127.0.0.1", "::1"} else host
-
-        if manage_state == "disabled":
-            healthy, health_detail = self._cdp_ask_health_observation(probe_host, port)
-            observed = "process running" if healthy else "process stopped/unhealthy"
-            detail = f"disabled; {observed}"
-            if health_detail:
-                detail = f"{detail} ({health_detail})"
-            return ServiceInfo(
-                name="cdp-ask",
-                status=ServiceStatus.DISABLED,
-                port=port,
-                health_url=health_url,
-                detail=detail,
-                ownership=ServiceOwnership.UNKNOWN,
-            )
-
-        pid, pid_note = self._resolve_pid_file(self.CDP_ASK_PID_FILE)
-        port_open = self._port_open(port, probe_host)
-        listener_pid = self._find_listener_pid(port) if port_open else None
-        if listener_pid is not None and listener_pid != pid:
-            self._write_pid_file(self.CDP_ASK_PID_FILE, listener_pid)
-            pid = listener_pid
-            pid_note = self._merge_notes(
-                pid_note, "PID file refreshed from live listener"
-            )
-        healthy, health_detail = (
-            self._cdp_ask_health_observation(probe_host, port)
-            if port_open
-            else (False, None)
-        )
-        if pid is not None:
-            uptime = self._proc_uptime_str(pid)
-            uptime_str = f" ({uptime})" if uptime else ""
-            detail = self._with_note(
-                f"PID {pid}{uptime_str}"
-                + ("" if healthy else f", {health_detail or 'health probe failed'}"),
-                pid_note,
-            )
-            if healthy and health_detail:
-                detail = self._with_note(detail, health_detail)
-            return ServiceInfo(
-                name="cdp-ask",
-                status=ServiceStatus.RUNNING if healthy else ServiceStatus.UNHEALTHY,
-                port=port,
-                pid=pid,
-                health_url=health_url,
-                detail=detail,
-                ownership=ServiceOwnership.MANAGED,
-            )
-        if healthy:
-            detail = self._with_note(
-                self._merge_notes("Port open (PID file missing)", health_detail) or "",
-                pid_note,
-            )
-            return ServiceInfo(
-                name="cdp-ask",
-                status=ServiceStatus.RUNNING,
-                port=port,
-                health_url=health_url,
-                detail=detail or "Port open (PID file missing)",
-                ownership=ServiceOwnership.MANAGED,
-            )
-        return ServiceInfo(
-            name="cdp-ask",
-            status=ServiceStatus.STOPPED,
-            port=port,
-            health_url=health_url,
-            detail=pid_note or "",
-            ownership=ServiceOwnership.MANAGED,
-        )
+        return probe_cdp_ask(self)
 
     def _cdp_ask_health_observation(
         self, host: str, port: int
     ) -> tuple[bool, str | None]:
-        """Probe ``GET /health``; return healthy flag and optional detail."""
-        import http.client
-        import json as _json
+        """Probe ``GET /health``; return the ok flag and the observation detail."""
+        from .cdp_ask_status import observe_cdp_ask_health
 
-        try:
-            conn = http.client.HTTPConnection(
-                host, port, timeout=_SERVICE_HEALTH_TIMEOUT
-            )
-            try:
-                conn.request("GET", "/health")
-                resp = conn.getresponse()
-                if resp.status != 200:
-                    return False, f"/health returned {resp.status}"
-                body = _json.loads(resp.read().decode("utf-8", errors="replace"))
-                if body.get("status") != "ok":
-                    return False, f"status={body.get('status')}"
-                hygiene = body.get("registry_hygiene")
-                if hygiene:
-                    return True, f"registry_hygiene={hygiene}"
-                return True, None
-            finally:
-                conn.close()
-        except Exception as exc:
-            return False, f"health probe failed: {type(exc).__name__}"
+        obs = observe_cdp_ask_health(host, port)
+        return obs.ok, obs.detail
 
     def check_git_integration_worker(self) -> ServiceInfo:
         """Check git-integration-worker status via PID file + TCP /health probe."""
