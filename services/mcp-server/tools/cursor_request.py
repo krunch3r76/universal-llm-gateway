@@ -8,7 +8,8 @@ the sanctioned unattended cursor-auto lane. This module registers
 ``cursor_request``, exposing ONLY the ``request`` op and delegating to
 ``_request_dispatch`` — no logic is duplicated.
 
-Registered on life and code surfaces alongside ``agent_bus_read``.
+Registered on the life MCP surface only (paired ``operator_request``); code AutoJob
+admit uses ``agent_bus(tool="request")``.
 """
 
 from __future__ import annotations

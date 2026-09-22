@@ -37,7 +37,6 @@ HIDDEN_FROM_IMPLEMENT = frozenset(
     {
         "rag",
         "retrieve",
-        "cursor_request",
         "pipeline",
         "team_dispatch",
         "panel_dispatch",

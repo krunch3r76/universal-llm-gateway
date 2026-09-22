@@ -2100,7 +2100,7 @@ tools:
     enqueue_failed} + job_admission + poll_hint.\nDedicated narrow
     registration of agent_bus request — recipient to=cursor fixed; ¬ exposed as caller param.\n\
     Injects lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat.\ncontract
-    ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon|ask. Mutating. Life+code
+    ∈ answer|confer|investigate|implement|verify|execute|propagate|seed|recon|ask. Mutating. Life-only
     callable.\nimplement|investigate DIRECTIVE body requires vision: else admit blocks vision_field_missing
     (pre-model). See agent_skill:cdp-operator-proxy.\n"
   json_schema:
@@ -2273,7 +2273,7 @@ tools:
     approval-gated operator request lane — the operator is a role, not a model.\nparent_thread
     + lane_role=operator_proxy (both-or-neither) births a parented mission lane.\nInjects
     lane:cursor-auto (dedupe). Arm predicate = live Auto handler heartbeat.\ncontract ∈ answer|confer|ask|investigate|implement|verify|execute|propagate|seed|recon.
-    Mutating. Life+code callable.\nimplement|investigate DIRECTIVE body requires vision: else
+    Mutating. Life-only callable.\nimplement|investigate DIRECTIVE body requires vision: else
     admit blocks vision_field_missing (pre-model). See agent_skill:mission-operator.\n"
   json_schema:
     type: object
@@ -5886,13 +5886,11 @@ domain_endpoints:
     - code
     cursor_request:
     - life
-    - code
     fleet_liveness:
     - life
     - code
     operator_request:
     - life
-    - code
     imprint:
     - life
     recall:
@@ -5934,7 +5932,6 @@ surface_primary_domains:
   - cortex_brief
   - agent_bus
   - agent_bus_read
-  - cursor_request
   - cursor_bridge
   - fs
   - rag
@@ -5947,7 +5944,6 @@ surface_primary_domains:
   - team_dispatch
   - panel_dispatch
   - fleet_liveness
-  - operator_request
   - cse_session
   - chat_session
   - claudeburst
