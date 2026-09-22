@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from implement_admission.spec import CloseoutStatus, WorkOutcome
 
 from services.git_integration_worker.cursor_sdk_mode import (
