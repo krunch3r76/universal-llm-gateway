@@ -152,10 +152,10 @@ def test_format_tick_sms_body_truncates_to_budget() -> None:
             gid=f"G{i}",
             executor_slug="cursor/grok-4.7",
             root_id=str(6000 + i),
-            thread_slug=f"very-long-charter-slug-name-{i}" * 3,
-            task_hint="implement " * 20,
+            thread_slug=f"very-long-charter-slug-name-{i}" * 40,
+            task_hint="implement " * 120,
         )
-        for i in range(8)
+        for i in range(48)
     ]
     body = format_tick_sms_body(
         roots=40,
@@ -261,6 +261,31 @@ def test_resolve_so_what_from_body() -> None:
         == "ULG gains X"
     )
     assert resolve_so_what_summary("explicit", "so_what: ignored") == "explicit"
+
+
+def test_resolve_so_what_ignores_dispatch_body_on_role_root() -> None:
+    orphan_body = (
+        "Dispatch orphaned — worker terminated before completion "
+        "(probe_not_found); no terminal turn was received."
+    )
+    assert (
+        resolve_so_what_summary(
+            None,
+            orphan_body,
+            from_agent="dispatch",
+            thread_tags=["role:root", "project:ulg"],
+        )
+        is None
+    )
+    assert (
+        resolve_so_what_summary(
+            "Standing house so-what",
+            orphan_body,
+            from_agent="dispatch",
+            thread_tags=["role:root"],
+        )
+        == "Standing house so-what"
+    )
 
 
 def test_format_closeout_pager_leads_with_so_what() -> None:

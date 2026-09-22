@@ -142,7 +142,10 @@ def format_tick_sms_body(
             budget = max_chars - len(suffix)
             if budget > 20:
                 trimmed = clip(" | ".join(closed_lines), budget)
-                return trimmed + suffix
+                combined = trimmed + suffix
+                if len(combined) > max_chars:
+                    return combined[:max_chars]
+                return combined
         return body[:max_chars]
     return body
 

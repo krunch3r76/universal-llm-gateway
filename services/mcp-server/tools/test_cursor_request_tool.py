@@ -220,9 +220,10 @@ def test_cursor_request_descriptor_has_ask_first_and_playbook_pointer() -> None:
     posture = description.index("Standing seat posture")
     aperture = description.index("Life coding aperture")
     playbook = description.index("document:life-coding-playbook")
-    conductor = description.index("COMMISSION_CONDUCTOR")
+    conductor = description.index("Conductor commission")
     assert posture < aperture < playbook < conductor
     assert "agent_skill:conductor" in description
+    assert "COMMISSION_CONDUCTOR" not in description
     assert "six-block conductor packet" not in description
     assert "unknown-loci" in description
 

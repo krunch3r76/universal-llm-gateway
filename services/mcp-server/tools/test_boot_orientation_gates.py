@@ -344,6 +344,13 @@ def test_code_seat_dispatch_block_keeps_direct_call_form() -> None:
     assert "delegate, ¬ dispatch" not in joined
 
 
+def test_life_capability_verify_names_cursor_request_not_quality_gate() -> None:
+    joined = "\n".join(render_orientation_blocks(family="claude", agent="claude-web"))
+    assert "## Seat capability verify — life MCP" in joined
+    assert "cursor_request(contract=verify" in joined
+    assert "does not expose `quality_gate`" in joined
+
+
 def test_life_card_carries_no_direct_dispatch_instruction() -> None:
     # Acceptance-level: the delivered web card, not just the block list.
     card, _ = render_briefing_card(family="claude", agent="claude-web", domain="life")

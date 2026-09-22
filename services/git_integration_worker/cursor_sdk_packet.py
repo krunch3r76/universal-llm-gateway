@@ -110,6 +110,18 @@ _CONDUCTOR_SEAT_IDENTITY_TEMPLATE = (
     "that work-identity — repeating it 409s `CURSOR_SOURCE_REF_IN_FLIGHT`."
 )
 
+_CONDUCTOR_CONSULT_PENDING_TEMPLATE = (
+    "CONDUCTOR CONSULT_PENDING WRAPPER (mandatory on consult waits): "
+    "Honest closeout shape — copy literally:\n"
+    "status: partial\n"
+    "consult: <what you waited for>\n"
+    "execution_id: <this dispatch_id>\n"
+    "NEXT_ADMIT: <web-anthropic|none>\n"
+    "stop: CONSULT_PENDING\n"
+    "Journal append before closeout; ``written_at`` must be real UTC "
+    "(``datetime.now(UTC)`` — see ``implement_admission.conductor_score_io``)."
+)
+
 _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE = (
     "CONDUCTOR RUN TO COMPLETION (mandatory): This admit (dispatch_id={dispatch_id}) "
     "is standing authorization for the whole mission, including landing your own "
@@ -607,6 +619,7 @@ def resolve_prompt_preamble(
         parts.append(
             _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE.format(dispatch_id=dispatch_id)
         )
+        parts.append(_CONDUCTOR_CONSULT_PENDING_TEMPLATE)
         if extract_summon_mode_from_packet(existing_text or "") == "attended":
             summoning = extract_summoning_thread_id_from_packet(
                 existing_text or ""

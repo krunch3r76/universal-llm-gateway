@@ -50,6 +50,42 @@ def _pending_orphan_reason(reason: str) -> str:
     return f"pending_orphan:{reason}"
 
 
+def _link_table_blocks_orphan_post(*, thread_id: str, execution_id: str) -> bool:
+    """True when ``thread_dispatch_links`` authority forbids an orphan turn.
+
+    Consult ``terminal_status`` and ``delivery_at`` before posting "no terminal
+    turn was received" (friction a:36207). A delivered link waits for terminal
+    backfill; a ``reuse_thread`` successor must not inherit a stale predecessor
+    probe as orphan when an earlier link on the same thread already completed
+    with delivery proof.
+    """
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT execution_id, terminal_status, delivery_at, rowid "
+            "FROM thread_dispatch_links "
+            "WHERE thread_id = ? "
+            "ORDER BY linked_at ASC, rowid ASC",
+            (thread_id,),
+        ).fetchall()
+    current = next(
+        (dict(row) for row in rows if row["execution_id"] == execution_id),
+        None,
+    )
+    if current is None:
+        return True
+    if current["terminal_status"] is not None:
+        return True
+    if current["delivery_at"] is not None:
+        return True
+    cur_rowid = int(current["rowid"])
+    for row in rows:
+        if int(row["rowid"]) >= cur_rowid:
+            continue
+        if row["terminal_status"] is not None and row["delivery_at"] is not None:
+            return True
+    return False
+
+
 def _orphan_body_for_reason(reason: str, execution_id: str) -> str:
     """Build the orphan-turn body from the probe reason; never guess restart."""
     details = {
@@ -229,6 +265,12 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
             link,
             status=terminal_status,
         )
+
+    if _link_table_blocks_orphan_post(
+        thread_id=thread_id, execution_id=execution_id
+    ):
+        _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
+        return False
 
     pending = _pending_orphan_reason(reason)
     if prior_deferred_reason != pending:

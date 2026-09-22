@@ -792,6 +792,49 @@ def test_cdp_generate_link_untouched_after_mismatch_probes(bus_db) -> None:
     assert link["terminal_status"] is None
 
 
+def test_reuse_thread_successor_skips_orphan_when_predecessor_delivered(bus_db) -> None:
+    """12291-class: terminal predecessor + new link must not post orphan on stale probe."""
+    thread_row, *_ = create_thread_with_turn(
+        slug="reuse-predecessor",
+        from_agent="dispatch",
+        to_agent="cursor-sdk",
+        subject="cursor-sdk generate",
+        body="pointer",
+        lifecycle_state="active",
+    )
+    thread_id = thread_row["id"]
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-pred-a721",
+        pipeline_id="cursor-sdk-generate",
+        caller_agent="cursor",
+    )
+    terminate_dispatch(
+        thread_id=thread_id,
+        terminal_status="completed",
+        execution_id="exec-pred-a721",
+    )
+    admit_dispatch(
+        thread_id=thread_id,
+        execution_id="exec-succ-fb1b",
+        pipeline_id="cursor-sdk-generate",
+        caller_agent="cursor",
+    )
+
+    def _null(**_kwargs: object):
+        return LivenessVerdict.ALLOW_ORPHAN, "probe_status_null", None
+
+    with patch("agent_bus_store.reconcile.emit_dispatch_orphaned") as mock_orphan:
+        with patch(
+            "agent_bus_store.reconcile.evaluate_link_liveness", side_effect=_null
+        ):
+            assert reconcile_orphaned_dispatches() == 0
+            assert reconcile_orphaned_dispatches() == 0
+
+    mock_orphan.assert_not_called()
+    assert _orphan_turns(thread_id) == []
+
+
 def test_dispatch_admit_on_active_completed_lifecycle(bus_db) -> None:
     """L1-AC-g: dispatch-admit succeeds when status=active and lifecycle=completed."""
     thread_row, *_ = create_thread_with_turn(
