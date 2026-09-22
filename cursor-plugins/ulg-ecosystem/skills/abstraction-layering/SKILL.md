@@ -228,8 +228,7 @@ Tier-1 → `cortex://notes/system/recon/{slug}/tier1-anchors.md`.
    envelope **R1** (semantic locator: registry URI + row id; ¬ row sha — W7); ¬ restate envelope vocabulary.
    **Exit also stamps** the architecture-consult document + `derived_from` edge (§ Stage 0 attach)
    before G1→2 — that edge is the standing skip signal for later `/layer` entry.
-2. **G2** — Fable followup in the G1 CSE (else Opus fresh; **fresh Opus when
-   `conductor_profile=fable-scarce`**) → densifier instructions ≤120L; ¬ dense
+2. **G2** — Fable followup in the G1 CSE (else Opus fresh; **`conductor_profile=fable-scarce` ⇒ fresh Opus**) → densifier instructions ≤120L; ¬ dense
    spec. **Inherit arch skill floor**.
 3. **G3** — Grok dense spec; Gate-2 (`doc_validate`, attrs, `implement_ready`, STOP).
    **VISION-ALIGN emit (Gate-2):** when `density_triage = judgment_required` ∨

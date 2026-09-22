@@ -350,7 +350,7 @@ Fable-5.1 are not counted).
 
 | G-row | Picker | Effort pin | Transport | `purpose` |
 |---|---|---|---|---|
-| **G2 Frame** | `cdp/opus-5` **fresh** | **`extra`** (picker) ≡ **`xhigh`** (wire; `libs/effort_vocabulary/core.py`) — one rung, two spellings | Fresh `team_dispatch(model=cdp/opus-5)`. **¬** Fable followup into G1 CSE | **`ask`** |
+| **G2 Frame** | `cdp/opus-5` **fresh** | **`extra`** (picker) ≡ **`xhigh`** (wire; `libs/effort_vocabulary/core.py`) — one rung, two spellings | Fresh `team_dispatch(model=cdp/opus-5)`. **¬** Fable followup into G1 CSE (`fable-scarce`) | **`ask`** |
 | **G4 Skeptic** | **≤1 `cdp/fable` leg per arc** (incl. `panel_dispatch` members) | `high`; **`max` only when bind gates a wave** — not the G4 default | Fresh. **No automatic Opus re-pass** when Fable bound; second CDP needs M2 invariant attr or operator/packet pin on the scoreboard row | `ask` \| `review` |
 | **G6 Pre-land review** | `cdp/opus-5` | **`extra`/`xhigh` floor**; **`max` when invariant-touching** | Lane branch diff; **`review harvest ≺ land ≺ DONE`** unchanged | **`review`** |
 
