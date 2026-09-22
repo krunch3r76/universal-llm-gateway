@@ -129,7 +129,7 @@ def test_life_tools_list_exact_primary_set(life_server: dict) -> None:
 
 
 def test_code_tools_list_exact_primary_set(code_server: dict) -> None:
-    assert code_server["tool_names"] == set(CODE_PRIMARY)
+    assert code_server["tool_names"] == set(CODE_PRIMARY_CANONICAL)
     assert code_server["primary"] == CODE_PRIMARY_CANONICAL
 
 

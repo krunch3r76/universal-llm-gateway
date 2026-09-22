@@ -88,7 +88,7 @@ House wakes, cheapest first:
 
 Binds. Later prose that conflicts with them loses.
 
-1. **cursor-sdk directly.** This seat holds `team_dispatch` and the checkout. Repo write, script, and upload go to `team_dispatch(op=generate, seat=cursor-sdk, contract=implement|pure-mechanical|none, lane=B)`. `cursor_request` is mounted on code and life. Life implement uses it because life has no `team_dispatch`. On code it is the AutoJob admit door (conductor commission, mission negotiation, unattended enqueue), not this seat's implement path.
+1. **cursor-sdk directly.** This seat holds `team_dispatch` and the checkout. Repo write, script, and upload go to `team_dispatch(op=generate, seat=cursor-sdk, contract=implement|pure-mechanical|none, lane=B)`. `cursor_request` is life-only. Life implement uses it because life has no `team_dispatch`. On code the AutoJob admit door is `agent_bus(tool="request")` (conductor commission, mission negotiation, unattended enqueue), not this seat's implement path.
 2. **Do not close the house on a dead tail or an empty wake.** A conductor whose closeout is already relayed, while its tail still prints `stall-pop:`, is finished: `watch-supervise.sh stop --label <label>`. That tail is not a watcher, not a hop, and not a reason to end the seat. No playable next row and no live watcher ⇒ do not arm `--loop`, and SIGTERM this root's `--loop` if it is running. A tick that only repeats this tab's CHECKPOINT is not an instruction to play. The house stays. The wake stops.
 3. **File the friction, add the house row, play a gate.** A row that cannot proceed: `friction()` on the owner the same turn, and a row on the continuity card `## Rows`. A **gate** is a friction the current row cannot pass until it is resolved. A gate swaps into NOW (`--set now_row=` `Friction a:<n> …`). The blocked row becomes the next row. Play the gate the same turn on the ladder in (1). Do not STAY on the blocked row. Do not page unless the gate is an armed `OPERATOR_GATE`.
 4. **When a row has been played, add the next one.** A finished row does not empty the house. Same turn, add every next deliverable that is not gated on another row, to `## Rows` and `--set now_row=`, then play it. Adding that row clears `now_row=quiet` and re-arms `--loop --heartbeat 1200` if the loop is down. Ungated rows may run at the same time. A row that waits on some other row having been played first stays off NOW until that condition is true. `now_row=quiet` and an empty NOW are legal only when the house program has no open deliverable.
@@ -289,7 +289,7 @@ dispatches (`contract=implement`, omit `model=`) run **alongside** — they are 
 
 ## Dispatch ladder (cost ↓, cycle time ↓)
 
-`attended IDE ∧ team_dispatch ∧ checkout ⇒ implement = team_dispatch(op=generate, seat=cursor-sdk, contract=implement|pure-mechanical, lane=B)`. `cursor_request` stays on the code server as the AutoJob admit door. Life implement uses it because life has no `team_dispatch`.
+`attended IDE ∧ team_dispatch ∧ checkout ⇒ implement = team_dispatch(op=generate, seat=cursor-sdk, contract=implement|pure-mechanical, lane=B)`. Code AutoJob admit is `agent_bus(tool="request")`. Life implement uses `cursor_request` because life has no `team_dispatch`.
 
 | Work | Executor | Bind / review |
 |---|---|---|
