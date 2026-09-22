@@ -1,7 +1,8 @@
 """Standing-handoff sidecar freshness — shared by cadence and the hop verb.
 
 Classifies the per-lane ``cortex://notes/system/threads/{id}-standing-handoff.md``
-file from filesystem mtime. Observed only: missing/stale/current. Cadence and
+file from filesystem mtime. Observed only: missing/stale/current/unreachable.
+Cadence and
 ``agent_bus.hop`` both call this so a verb-fired hop sees the same freshness
 token the successor will read.
 """
@@ -13,9 +14,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from implement_admission.closeout_helpers import cortex_files_root
+
 _DEFAULT_AGE_THRESHOLD_S = 1800.0
 _STANDING_HANDOFF_STALE_FACTOR = 2.0
-_MCP_FILES_ROOT = Path("/mnt/torus/mcp-data/files")
 
 
 def cse_age_threshold_s() -> float:
@@ -36,7 +38,7 @@ def cse_age_threshold_s() -> float:
 def standing_handoff_path(thread_id: str) -> Path:
     """On-disk path for the standing-handoff cortex note of a private lane."""
     return (
-        _MCP_FILES_ROOT
+        cortex_files_root()
         / "notes"
         / "system"
         / "threads"
@@ -53,7 +55,7 @@ def standing_handoff_uri(thread_id: str) -> str:
 class StandingHandoffFreshness:
     """Observed freshness of the standing handoff sidecar for one lane."""
 
-    status: str  # current | stale | missing
+    status: str  # current | stale | missing | unreachable
     uri: str
     mtime_epoch: float | None
     age_s: float | None
@@ -62,12 +64,15 @@ class StandingHandoffFreshness:
 def assess_standing_handoff(
     thread_id: str, *, now: float | None = None, stale_after_s: float | None = None
 ) -> StandingHandoffFreshness:
-    """Classify the standing-handoff sidecar as current, stale, or missing.
+    """Classify the standing-handoff sidecar as current, stale, missing, or unreachable.
 
     Observed from filesystem mtime only — never inferred from bus prose.
-    Default stale window is twice the CSE hop-age threshold.
+    ``unreachable`` means this process cannot see the cortex files sandbox root
+    (not the same as a missing sidecar under a visible root). Default stale
+    window is twice the CSE hop-age threshold.
     """
     uri = standing_handoff_uri(thread_id)
+    root = cortex_files_root()
     path = standing_handoff_path(thread_id)
     ts = time.time() if now is None else now
     limit = (
@@ -75,6 +80,8 @@ def assess_standing_handoff(
         if stale_after_s is not None
         else cse_age_threshold_s() * _STANDING_HANDOFF_STALE_FACTOR
     )
+    if not root.is_dir():
+        return StandingHandoffFreshness("unreachable", uri, None, None)
     if not path.is_file():
         return StandingHandoffFreshness("missing", uri, None, None)
     mtime = path.stat().st_mtime

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+from pathlib import Path
 
 import pytest
 
@@ -36,8 +37,8 @@ def _handoff(status: str) -> StandingHandoffFreshness:
     return StandingHandoffFreshness(
         status=status,
         uri=_URI,
-        mtime_epoch=None if status == "missing" else 1.0,
-        age_s=None if status == "missing" else 10.0,
+        mtime_epoch=None if status in ("missing", "unreachable") else 1.0,
+        age_s=None if status in ("missing", "unreachable") else 10.0,
     )
 
 
@@ -101,7 +102,7 @@ def test_pinned_birth_id_is_byte_stable_for_adapter_parity() -> None:
     assert body == again
 
 
-@pytest.mark.parametrize("status", ["current", "stale", "missing"])
+@pytest.mark.parametrize("status", ["current", "stale", "missing", "unreachable"])
 def test_missing_vs_current_handoff_branch(status: str) -> None:
     body = build_continuity_handoff_body(
         thread_id=_THREAD,
@@ -119,7 +120,14 @@ def test_missing_vs_current_handoff_branch(status: str) -> None:
             "Read the standing handoff URI above before trusting any wake prose."
             not in body
         )
-        assert "missing (file absent): default STAND_DOWN" in body
+        assert "missing (file absent under a visible root): default STAND_DOWN" in body
+    elif status == "unreachable":
+        assert "The S7 standing-handoff state file is absent." not in body
+        assert (
+            "Read the standing handoff URI above before trusting any wake prose."
+            in body
+        )
+        assert "do not STAND_DOWN on this token alone" in body
     else:
         assert (
             "Read the standing handoff URI above before trusting any wake prose."
@@ -206,6 +214,41 @@ def test_seat_stand_down_body_still_classifies_as_bare_non_ack() -> None:
     assert marker_type(body) is None
 
 
+def test_assess_standing_handoff_unreachable_not_same_as_missing_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A visible root with no sidecar is missing; an absent sandbox root is unreachable."""
+    visible = tmp_path / "visible-root"
+    visible.mkdir()
+    monkeypatch.setattr(
+        "hop_handoff.standing_handoff.cortex_files_root",
+        lambda: visible,
+    )
+    assert assess_standing_handoff(_THREAD).status == "missing"
+
+    absent = tmp_path / "no-such-root"
+    monkeypatch.setattr(
+        "hop_handoff.standing_handoff.cortex_files_root",
+        lambda: absent,
+    )
+    assert assess_standing_handoff(_THREAD).status == "unreachable"
+    assert assess_standing_handoff(_THREAD).status != "missing"
+
+
+def test_assess_standing_handoff_uses_cortex_files_root_not_host_absolute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MCP mount at CORTEX_FILES_ROOT must win over unreachable host shorthand."""
+    data_files = tmp_path / "data-files"
+    thread_dir = data_files / "notes/system/threads"
+    thread_dir.mkdir(parents=True)
+    sidecar = thread_dir / f"{_THREAD}-standing-handoff.md"
+    sidecar.write_text("holder\n", encoding="utf-8")
+    os.utime(sidecar, (900.0, 900.0))
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(data_files))
+    assert assess_standing_handoff(_THREAD, now=950.0, stale_after_s=100.0).status == "current"
+
+
 def test_assess_standing_handoff_distinguishes_missing_stale_current(
     tmp_path, monkeypatch
 ) -> None:
@@ -226,12 +269,18 @@ def test_assess_standing_handoff_distinguishes_missing_stale_current(
     assert stale.status == "stale"
 
 
+def test_consume_time_protocol_unreachable_is_not_stand_down() -> None:
+    text = consume_time_wake_protocol(thread_id=_THREAD)
+    assert "unreachable" in text
+    assert "do not STAND_DOWN on this token alone" in text
+
+
 def test_consume_time_protocol_missing_is_stand_down_not_permission() -> None:
     """Re-rank vs S2: absent sidecar defaults STAND_DOWN unless bus tip confirms."""
     text = consume_time_wake_protocol(thread_id=_THREAD)
     assert "STAND_DOWN" in text
     assert "Absence is not permission" in text
-    assert "missing (file absent)" in text
+    assert "missing (file absent under a visible root)" in text
     assert "stale: same as missing" in text
     assert _URI in text
 
