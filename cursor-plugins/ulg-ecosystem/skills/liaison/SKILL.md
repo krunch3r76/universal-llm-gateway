@@ -124,7 +124,12 @@ Binds. Later prose that conflicts with them loses.
    supersedes hop-after-harvest). The hop opener is **paste-induction** (10479#82): a
    user-turn that steers attention, not a second copy of the skill. `¬` call that
    **hypnosis** until the attention-induction paradigm is defined (10158 / a:33210);
-   hop FOL restatement is not it. Qualifies: live watcher tails — **¬** the ticker's
+   hop FOL restatement is not it. **Skill transfer:** the opener names every skill
+   the successor must load before it acts. The minimum is this skill — the line
+   `LOAD the liaison skill (do not skim)`. Add any other skill the row needs in
+   that same opener. A hop message that omits the liaison load is incomplete.
+   The successor loads those skills; this tab's context does not carry over.
+   Qualifies: live watcher tails — **¬** the ticker's
    closeout watcher on **your own** lane (`--exclude-lane <lane>`; waiting on
    yourself is not follow-up, and acting on it chains premium seats) · dispatchable NOW ·
    `CONTEXT_BUDGET` with remaining work. **STAY** (write `STAY: <reason>`): empty NOW ·
