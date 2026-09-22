@@ -128,6 +128,21 @@ def test_positive_skills_upload_with_slug_in_body() -> None:
     assert result.ok
 
 
+def test_upload_modal_missing_error_str_includes_probe_keys() -> None:
+    probe = {
+        "overlay_shell": False,
+        "text_loose_or_strict_match": True,
+        "drop_zone_text": True,
+        "file_input_in_overlay": False,
+    }
+    exc = UploadModalMissingError("Upload modal did not open", probe=probe)
+    text = str(exc)
+    for key in probe:
+        assert key in text
+    assert "overlay_shell" in text
+    assert "file_input_in_overlay" in text
+
+
 @pytest.mark.asyncio
 async def test_modal_file_input_raises_when_modal_absent() -> None:
     page = AsyncMock()
@@ -400,6 +415,73 @@ async def test_open_upload_dialog_modal_timeout_is_upload_modal_missing() -> Non
         "drop_zone_text",
         "file_input_in_overlay",
     }
+    err_text = str(exc_info.value)
+    assert "overlay_shell" in err_text
+    assert "file_input_in_overlay" in err_text
+
+
+@pytest.mark.asyncio
+async def test_open_upload_dialog_upload_route_file_input_without_overlay() -> None:
+    page = MagicMock()
+    _wire_page_playwright_stubs(page)
+    page.url = "https://claude.ai/customize/skills/new/upload"
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    add_btn = AsyncMock()
+    inv = _menu_inventory(page.url)
+    sel = UploadSelection(status="found", index=0, text="Upload a skill")
+    file_inp = _mock_locator(count=1, visible=True)
+
+    def _locator(sel_str: str) -> MagicMock:
+        if sel_str == 'input[type="file"]':
+            return file_inp
+        loc = _mock_locator()
+        loc.filter = MagicMock(return_value=_mock_locator())
+        return loc
+
+    page.locator = MagicMock(side_effect=_locator)
+
+    with (
+        patch(
+            "claude_bundles.skills_ui_open._find_add_button",
+            new_callable=AsyncMock,
+            return_value=add_btn,
+        ),
+        patch("claude_bundles.skills_ui_open._dismiss_modals", new_callable=AsyncMock),
+        patch(
+            "claude_bundles.skills_ui_open.stability_guarded_add_click",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "claude_bundles.skills_ui_open.wait_menu_idle",
+            new_callable=AsyncMock,
+            return_value=inv,
+        ),
+        patch(
+            "claude_bundles.skills_ui_open.resolve_upload_selection",
+            new_callable=AsyncMock,
+            return_value=(sel, inv),
+        ),
+        patch(
+            "claude_bundles.skills_ui_open.js_click_menuitem_at",
+            new_callable=AsyncMock,
+            return_value={"ok": True},
+        ),
+        patch(
+            "claude_bundles.skills_ui_open._panel_lost_mid_attempt",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "claude_bundles.skills_ui_open._upload_modal_open",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as modal_open,
+    ):
+        got = await _open_upload_dialog(page, MagicMock(), nav_gate=None)
+    assert got is file_inp.first
+    modal_open.assert_not_called()
 
 
 @pytest.mark.asyncio

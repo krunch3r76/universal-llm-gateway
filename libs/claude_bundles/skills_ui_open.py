@@ -6,7 +6,9 @@ the same loop as before inventory-first discovery; no extra sleep/retry layer.
 
 from __future__ import annotations
 
+import json
 import sys
+from urllib.parse import urlparse
 
 from playwright.async_api import Locator, Page
 
@@ -40,6 +42,12 @@ class UploadModalMissingError(RuntimeError):
         super().__init__(message)
         self.probe: dict[str, bool] = dict(probe or {})
 
+    def __str__(self) -> str:
+        base = super().__str__()
+        if not self.probe:
+            return base
+        return f"{base} probe={json.dumps(self.probe, sort_keys=True)}"
+
 
 async def _assert_upload_modal_scoped(page: Page) -> Locator:
     if not _is_skills_url(page.url):
@@ -62,6 +70,24 @@ async def _modal_file_input(page: Page) -> Locator:
     return inp.first
 
 
+def _is_skills_upload_route(url: str) -> bool:
+    path = urlparse(url).path.rstrip("/")
+    return path.endswith("/customize/skills/new/upload")
+
+
+async def _upload_route_file_input(page: Page) -> Locator | None:
+    """Return a visible page file input on the dedicated upload route (no overlay)."""
+    if not _is_skills_upload_route(page.url):
+        return None
+    inp = page.locator('input[type="file"]')
+    if not await inp.count():
+        return None
+    first = inp.first
+    if await first.is_visible():
+        return first
+    return None
+
+
 async def _open_upload_dialog(
     page: Page,
     context,
@@ -69,6 +95,9 @@ async def _open_upload_dialog(
     nav_gate: NavigationGate | None,
 ) -> Locator:
     """Click Add → Upload (inventory select) and return the modal file input."""
+    route_inp = await _upload_route_file_input(page)
+    if route_inp is not None:
+        return route_inp
     if await _upload_modal_open(page):
         return await _modal_file_input(page)
 
@@ -128,6 +157,9 @@ async def _open_upload_dialog(
             for _ in range(30):
                 if await _upload_modal_open(page):
                     return await _modal_file_input(page)
+                route_inp = await _upload_route_file_input(page)
+                if route_inp is not None:
+                    return route_inp
                 await page.wait_for_timeout(500)
             raise UploadModalMissingError(
                 "Upload modal did not open within 15s after menu selection",
