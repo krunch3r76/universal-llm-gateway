@@ -30,7 +30,7 @@ from services.git_integration_worker.cursor_auto.directive import (
     split_continuity_hop_legs,
 )
 from services.git_integration_worker.cursor_auto.execution_mode import (
-    declared_execution_mode,
+    resolve_execution_mode_at_enqueue,
 )
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
@@ -50,6 +50,9 @@ from services.git_integration_worker.cursor_auto.mission_negotiation_wire import
     negotiation_hop_conflict,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob, get_queue
+from services.git_integration_worker.cursor_auto.queue_health_events import (
+    emit_execution_mode_declared,
+)
 from services.git_integration_worker.cursor_auto.static_pin_refusal import (
     assess_static_pin_refusal,
 )
@@ -66,6 +69,7 @@ from services.git_integration_worker.cursor_bus import CursorBusClient
 from services.git_integration_worker.cursor_sdk_events import (
     emit_frontier_sdk_auto_job_admission_projected,
 )
+from services.git_integration_worker.cursor_sdk_packet import is_valid_work_key_scheme
 
 logger = get_logger(__name__)
 
@@ -99,6 +103,8 @@ class EnqueueBody(BaseModel):
     lane: Literal["A", "B"] | None = None
     # Satellite repo name under the projects root; omit for hub ULG.
     workspace: str | None = None
+    # D4 work identity for lane-B conductor concurrent admission (optional).
+    work_key: str | None = None
     # Declared execution mode (S-3). Claim paths never infer from contract;
     # enqueue maps ``contract:propagate`` via ``declared_execution_mode``.
     execution_mode: str = "serial"
@@ -203,6 +209,16 @@ async def enqueue(body: EnqueueBody, request: Request):
         if body.request_id
         else f"thread:{body.thread_id}"
     )
+    if body.work_key is not None and str(body.work_key).strip():
+        if not is_valid_work_key_scheme(str(body.work_key).strip()):
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "ok": False,
+                    "error": "work_key_unparseable",
+                    "reason": "work_key_unparseable",
+                },
+            )
     if not registry.is_live():
         return JSONResponse(
             status_code=503,
@@ -305,6 +321,13 @@ async def enqueue(body: EnqueueBody, request: Request):
         hop_body, deferred_body = split_continuity_hop_legs(
             body.body, matched_token=matched_token
         )
+    mode_resolution = resolve_execution_mode_at_enqueue(
+        contract=body.contract,
+        requested=body.execution_mode,
+        continuity_hop=is_hop,
+        lane=body.lane,
+        work_key=body.work_key,
+    )
     job = queue.enqueue(
         thread_id=body.thread_id,
         turn_number=body.turn_number,
@@ -327,11 +350,17 @@ async def enqueue(body: EnqueueBody, request: Request):
         advisor_brief=body.advisor_brief,
         lane=body.lane,
         workspace=body.workspace,
-        execution_mode=declared_execution_mode(
-            contract=body.contract,
-            requested=body.execution_mode,
-            continuity_hop=is_hop,
-        ),
+        work_key=body.work_key,
+        execution_mode=mode_resolution.mode,
+        execution_mode_declare_reason=mode_resolution.reason,
+    )
+    emit_execution_mode_declared(
+        job_id=job.job_id,
+        execution_mode=mode_resolution.mode,
+        reason=mode_resolution.reason,
+        work_key=body.work_key,
+        lane=body.lane,
+        contract=body.contract,
     )
     deferred_job_id: str | None = None
     if deferred_body is not None:
@@ -357,11 +386,14 @@ async def enqueue(body: EnqueueBody, request: Request):
             advisor_brief=None,
             lane=body.lane,
             workspace=body.workspace,
-            execution_mode=declared_execution_mode(
+            work_key=body.work_key,
+            execution_mode=resolve_execution_mode_at_enqueue(
                 contract=body.contract,
                 requested=body.execution_mode,
                 continuity_hop=False,
-            ),
+                lane=body.lane,
+                work_key=body.work_key,
+            ).mode,
         )
         deferred_job_id = deferred.job_id
         logger.info(

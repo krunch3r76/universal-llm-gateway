@@ -276,6 +276,12 @@ async def process_job(
         envelope=envelope_values_from_job(job),
         wire_dropped=tuple(job.wire_dropped_fields),
     )
+    mode_declined: str | None = None
+    if (
+        job.execution_mode_declare_reason
+        == "predicate_unmet_requested_declined"
+    ):
+        mode_declined = job.execution_mode_declare_reason
     base_admit_body = build_admit_report_body(
         model=model,
         effort=effort,
@@ -293,6 +299,8 @@ async def process_job(
         effort_rule=effort_rule,
         pin_flags=pin_flags,
         field_parity_report=parity_report,
+        execution_mode=job.execution_mode,
+        execution_mode_declined=mode_declined,
     )
     briefing = await maybe_briefing_for_admit(job.thread_id, contract=contract)
     admit = await client.reply(

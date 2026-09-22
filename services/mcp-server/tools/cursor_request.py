@@ -56,6 +56,7 @@ CALLER_FIELDS: frozenset[str] = frozenset(
         "request_id",
         "cse_registration_id",
         "cse_chat_url",
+        "work_key",
     }
 )
 
@@ -125,6 +126,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         request_id: str | None = None,
         cse_registration_id: str | None = None,
         cse_chat_url: str | None = None,
+        work_key: str | None = None,
     ) -> Any:
         """Sanctioned unattended cursor-auto lane — `agent_bus` `request` only; `to=cursor` fixed (¬caller param). Exactly one of `new_slug`|`thread` required.
 
@@ -135,6 +137,8 @@ Returns `{thread, turn, auto_handler_status, job_admission, poll_hint}` — `aut
 **`desired_effort`:** omit/`auto` → judgment contracts `xhigh`, mechanical `medium`; explicit rung honored.
 
 **`lane`:** optional GIW checkout. In-repo implement uses lane B — pass `B`. Omit is not the implement default: empty `files_expected` + omit → `select_lane` Lane A (`opt_out`). Distinct from `lane_role`. **`workspace`:** optional satellite (`SATELLITES.txt`); omit = hub. **`parent_thread`+`lane_role`:** both required when either supplied.
+
+**`work_key`:** optional D4 identity (`todo:…`, `agent-bus:…`, `friction:…`). With `lane=B` and a lane-conductor contract (`investigate`, `recon`, `verify`) GIW selects concurrent Auto admission; omit ⇒ serial on that path.
 
 **Admit gates:** `contract`∈{`implement`,`investigate`} ⇒ DIRECTIVE body MUST include `vision:` else **`vision_field_missing`** at admit (pre-model). `require_attended` (wire or body OR) ⇒ terminal **`status:needs-attended`** + one recommended answer.
 
@@ -189,6 +193,8 @@ Depth: `agent_skill:cdp-operator-proxy` · `agent_skill:life-coding-playbook` ·
                 parsed["cse_registration_id"] = cse_registration_id
             if cse_chat_url is not None:
                 parsed["cse_chat_url"] = cse_chat_url
+            if work_key is not None:
+                parsed["work_key"] = work_key
             if new_slug is not None:
                 parsed["new_slug"] = new_slug
             if thread is not None:

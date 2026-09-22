@@ -218,6 +218,7 @@ def enqueue_auto_job(
     workspace: str | None = None,
     prompt_uri: str | None = None,
     advisor_brief: str | None = None,
+    work_key: str | None = None,
     base_url: str | None = None,
     timeout_s: float = 10.0,
 ) -> dict[str, Any]:
@@ -258,6 +259,8 @@ def enqueue_auto_job(
         payload["prompt_uri"] = prompt_uri
     if advisor_brief:
         payload["advisor_brief"] = advisor_brief
+    if work_key:
+        payload["work_key"] = work_key
     try:
         with httpx.Client(timeout=timeout_s) as client:
             resp = client.post(url, json=payload)

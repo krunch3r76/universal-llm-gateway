@@ -8,6 +8,7 @@ import pytest
 
 from services.git_integration_worker.cursor_auto.execution_mode import (
     _CONCURRENT_EXECUTION_MODES,
+    ISOLATED_LANE_CONDUCTOR_MODE,
     LEASE_FREE_PROPAGATE_MODE,
     declared_execution_mode,
     is_concurrent_execution_mode,
@@ -73,8 +74,10 @@ def test_default_execution_mode_is_serial_and_denied() -> None:
     assert job.execution_mode == "serial"
 
 
-def test_production_allowlist_is_lease_free_propagate() -> None:
-    assert _CONCURRENT_EXECUTION_MODES == frozenset({LEASE_FREE_PROPAGATE_MODE})
+def test_production_allowlist_includes_isolated_lane_conductor() -> None:
+    assert _CONCURRENT_EXECUTION_MODES == frozenset(
+        {LEASE_FREE_PROPAGATE_MODE, ISOLATED_LANE_CONDUCTOR_MODE}
+    )
     assert is_concurrent_execution_mode(LEASE_FREE_PROPAGATE_MODE) is True
     assert is_concurrent_execution_mode("serial") is False
 

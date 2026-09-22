@@ -41,7 +41,9 @@ def job_record(job: AutoJob) -> dict[str, Any]:
         "advisor_brief": job.advisor_brief,
         "lane": job.lane,
         "workspace": job.workspace,
+        "work_key": job.work_key,
         "execution_mode": job.execution_mode,
+        "execution_mode_declare_reason": job.execution_mode_declare_reason,
         "cse_chat_url": job.cse_chat_url,
         "cse_registration_id": job.cse_registration_id,
     }
@@ -80,7 +82,10 @@ def job_from_row(row: sqlite3.Row) -> AutoJob:
         advisor_brief=data.get("advisor_brief") or None,
         lane=data.get("lane") or None,
         workspace=data.get("workspace") or None,
+        work_key=data.get("work_key") or None,
         execution_mode=str(data.get("execution_mode") or "serial"),
+        execution_mode_declare_reason=data.get("execution_mode_declare_reason")
+        or None,
         cse_chat_url=data.get("cse_chat_url") or None,
         cse_registration_id=data.get("cse_registration_id") or None,
     )
