@@ -310,7 +310,7 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
             f"- G1 CLOSED by derived_from:{ctx.derived_from}. Do not re-derive architecture."
         )
     if ctx.density_triage:
-        lines.append(f"- density_triage: {ctx.density_triage} (≠ implement_ready until G5).")
+        lines.append(f"- density_triage: {ctx.density_triage}.")
     return "\n".join(lines)
 
 
