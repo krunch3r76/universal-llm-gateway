@@ -195,67 +195,35 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(title="Agent Bus")
     def agent_bus(tool: str, arguments: JsonArgStr = "{}") -> Any:
-        """Inter-agent bus — `tool` op + JSON `arguments` string.
+        """Inter-agent bus. `tool` = op name. `arguments` = JSON object string. Prefer `from=`. Bodies target <2KB; use `sidecar_content` (cap 256KB) or auto-spill. Hard ceiling / spill failure → **413**. `allow_long_body=true` opts out of spill. Omitted author: life→`web-anthropic`, code→`cursor`.
 
-**Wire:** `tool` = op name · `arguments` = JSON object string.
+**send** (primary write): XOR `new_slug`|`thread` + `to` + `subject` + `body`. Slug collision → **409 `slug_exists`** (body includes `created_thread`). `charter-runner` needs `enroll_charter_runner=true` else **422 `reserved_enrollment_tag`**. `parent_thread`+`lane_role` are both-or-neither.
 
-**Sidecar-first bodies:** turn bodies target <2KB. Prefer `sidecar_content` (+ optional `sidecar_slug`) on send — server writes `cortex://notes/system/threads/<thread_id>-<slug>.md` atomically, appends `Sidecar:` pointer; returns `sidecar_uri` + `sidecar_sha256` (cap **256KB**). Soft overflow without caller sidecar → auto-spill HTTP 200; **413** = hard ceiling / spill failure / sidecar too large / `allow_long_body` ceiling breach. `allow_long_body=true` opts out of auto-spill.
+**request:** XOR `new_slug`|`thread`, `to` literal `cursor`. Returns `{thread, turn, auto_handler_status, job_admission, poll_hint}`. `auto_handler_status` is the handler heartbeat; `job_admission.outcome` is this job. Unknown contract → **422 `request_contract_unknown`** (`consult` aliases `confer`). `implement`|`investigate` need body `vision:` else **`vision_field_missing`**. `require_attended` → `status:needs-attended`. Replay → **422 `duplicate_request_id`**. Narrow path: `cursor_request`.
 
-**Author autofill:** prefer `from=`; `from_agent` alias permanent. Omitted on `/mcp/life` → `web-anthropic`; `/mcp/code` → `cursor`.
+**hop:** `thread` + `reason`. Returns `successor`, not `status:done`.
 
----
+**substrate_graph_write:** `entity_id` + `claim` or **422 `graph_write_entity_required`|`graph_write_claim_required`**.
 
-**Ops (primary — use `send`, not post/reply):**
+**substrate_friction_file:** (`owner`|`service`) + (`note`|`claim`) or **422 `friction_file_owner_required`|`friction_file_note_required`**.
 
-`send` — **primary write**. `(new_slug XOR thread)` + `to` + `subject` + `body` + optional fields. `new_slug` collision → **409 `slug_exists`** (existing row may be a zero-turn orphan from your own prior failed send). Post-mint refusals on `new_slug` include **`created_thread`** + `mcp.agentbus.thread.orphaned` event. `supersedes_turn` continue-only (alias `supersedes_turn_id` deprecated one cycle). Tag `charter-runner` reserved — newly add requires `enroll_charter_runner=true` else **422 `reserved_enrollment_tag`**. Enrollment auto-stamps `role:root`. `parent_thread`+`lane_role` bind on continue when both supplied.
+**substrate_entity_mint:** (`id`|`entity_id`) + (`type`|`entity_type`) + (`name`|`title`).
 
-`request` — `(new_slug XOR thread)` + `to='cursor'` (must be literal `cursor`, never `cursor-auto`) + `subject` + `body` + optional `prompt_uri`|`advisor_brief`. Injects `lane:cursor-auto`; arms when Auto handler heartbeats (else `auto_handler_status=no-auto-handler`); returns `{thread, turn, auto_handler_status, job_admission, poll_hint}`. `auto_handler_status` ∈ {`auto-handler-live`,`no-auto-handler`,`static-pin-refused`,`enqueue_failed`} is the **handler's** heartbeat, never a job verdict; `job_admission` is **this job's** admit-gate verdict (`outcome` ∈ `refused`|`deferred`|`waived`|`admitted`|`not_applicable`, plus `coverage` naming asserted/deferred gates, and `fix_hint`+`missed_tokens` on refusal). `agent_bus_read(job_state)` stays authority-of-record. `lane`∈{`A`,`B`} GIW checkout isolation (in-repo implement uses lane B; omit + empty `files_expected` → A); `workspace` satellite name; `parent_thread`+`lane_role` both required when either supplied. `desired_effort` omit/`auto` → judgment `xhigh`, mechanical `medium`. `contract`∈{`answer`,`confer`,`ask`,`investigate`,`implement`,`verify`,`execute`,`propagate`,`seed`,`recon`} — unknown → **422 `request_contract_unknown`**; `consult` aliases `confer`. `implement`|`investigate` body requires `vision:` else admit **`vision_field_missing`**. `require_attended` → terminal `status:needs-attended`. `execute`: body `tool_op:` + `effects_expected:` + optional `tool_args:`. `propagate`: ledger + drain-gated `sync_restart`. `request_id` idempotency — replay → **422 `duplicate_request_id`**. `deadline:` in DIRECTIVE → queued job `status:failed reason=expired`. Narrow harness: dedicated `cursor_request` tool.
+**lane_bind:** `thread` + `parent_thread` + `lane_role`∈{`sub_mission`,`hop`,`spillover`,`dispatch`,`side`,`parallel`}.
 
-`hop` — `thread` + `reason` + optional `cse_chat_url`|`cse_registration_id`|`desired_model`|`desired_effort`|`request_id`|`after_turn`|`subject`; TYPE:CONTINUITY_HANDOFF; `continuity_hop=true`; returns armed receipt + `successor` (¬`status:done`). Hop-before-healthy → degrade not arm.
+**lane_current** · **thread_get** · **threads** (`last` default 50) · **create_thread** · **fetch_unread** (needs `to` and/or `thread`) · **fetch** (`compact=true` nulls bodies) · **get** (`turn_number` or `"latest"`).
 
-`substrate_graph_write` — `entity_id` + `claim` → assert payload; **422 `graph_write_entity_required`|`graph_write_claim_required`**; ¬mint 404 · ¬bus turn · ¬contract token.
+**update:** only while unread; else **409 `turn_already_acknowledged`**.
 
-`substrate_friction_file` — (`owner`|`service`) + (`note`|`claim`) → friction payload; **422 `friction_file_owner_required`|`friction_file_note_required`**; ¬mint 404 · ¬contract token.
+**mark_read:** XOR `turn_numbers`|`through_turn`.
 
-`substrate_entity_mint` — (`id`|`entity_id`) + (`type`|`entity_type`) + (`name`|`title`); retention/Option-C/density_triage → named **422**; ¬rich-seed · ¬contract token.
+**wait:** block ≤60s. `completion`∈{`first_reply_from`,`thread_closed`,`status:done|failed|needs-attended`}.
 
-`lane_bind` — `thread` + `parent_thread` + `lane_role`; roles∈{`sub_mission`,`hop`,`spillover`,`dispatch`,`side`,`parallel`} (no root); ¬contract token.
+**update_thread:** `tags` omit=keep, `[]`=clear, `[…]`=replace. **close** marks all read by default. **delete_turn** / **delete_thread** take optional `force`.
 
-`lane_current` — `thread` → current parentage; `state=none` if never bound.
+**triage:** `dry_run=true` + `confirm_token` previews; floors mark_read ≥24h, close ≥7d; cap 50. Bad token → **409 `confirm_token_invalid|expired|filter_mismatch`**.
 
-`thread_get` — `thread` → ThreadDetail.
-
-`threads` — filter by `status`∈{`active`,`blocked`,`waiting`,`closed`,`all`} (default active), `tags` AND, `lifecycle_state`, `last` default **50**; returns `limit_applied`, `truncated`.
-
-`create_thread` — `slug` + optional; `lifecycle_state=pending` for dispatch-managed; `enroll_charter_runner` for `charter-runner` tag.
-
-`fetch_unread` — requires `to` and/or `thread`; recipient scope default 14d window limit **50**; thread scope uncapped list.
-
-`fetch` — requires `to` and/or `thread`; `last` default **10**; `unread=true` ignores `last`; `all=true` no cap; `compact=true` nulls bodies (metadata-only).
-
-`get` — `thread` + `turn_number` (int or `"latest"`).
-
-`update` — edit while `read_at` null; **409 `turn_already_acknowledged`** once read.
-
-`mark_read` — `turn_numbers[]` **XOR** `through_turn` (+ `agent` if through_turn).
-
-`wait` — server block ≤**60**s (`wait_seconds` clamped); `completion`∈{`first_reply_from`,`thread_closed`,`status:done|failed|needs-attended`}; returns `{complete, status, push_required, suggested_next, …}`.
-
-`update_thread` — patch metadata; `tags` omit=keep, `[]`=clear, `[…]`=replace; `add_tags`/`remove_tags` XOR `tags` replace.
-
-`close` — atomic; `mark_all_read` default true.
-
-`delete_turn` / `delete_thread` — optional `force`.
-
-`triage` — `older_than` + `action`∈{`mark_read`,`close`}; preview `dry_run=true` + `confirm_token`; execute `dry_run=false`; floors mark_read ≥**24h**, close ≥**7d**; cap **50** threads/call; bad token → **409 `confirm_token_invalid|expired|filter_mismatch`**. agent_bus only.
-
-**Legacy (deprecated 2026-06-14, omitted from wire enum, remove 2026-09-01):** `post` → `send(new_slug=…)` · `reply` → `send(thread=…, after_turn=…)`.
-
----
-
-**Enums:** TurnStatus (per-turn): `open`|`resolved`|`superseded`|`waiting`. ThreadStatus: `active`|`blocked`|`waiting`|`closed`. Tags: spine `role:root` reserved — other `role:*` → **422 `unknown_role_tag`**. Facets suggested: `project:`|`type:`|`agent:`|`priority:`.
-
-**ThreadDetail fields:** `id, slug, status, summary, turn_count, unread_count, tags, created_at, updated_at, bus_lifecycle_state, dispatch_links` (detail only).
+**Legacy:** `post`/`reply` are not on the wire enum. Use `send`. Other `role:*` than `role:root` → **422 `unknown_role_tag`**.
 
 Depth: `agent_skill:agent-bus-discipline`.
         """
