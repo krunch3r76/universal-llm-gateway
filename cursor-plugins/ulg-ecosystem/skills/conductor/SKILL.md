@@ -717,7 +717,7 @@ root CHECKPOINT. ¬ nest_under an unrelated mission's lease.
 
 **Post-admit check (binding — default regime is Lane B):** quote `active_by_lane` /
 `holder_source_repo` from `busy_status`. Expected: `B≥1`, worktree under
-`ulg-arc-worktrees/lane-*`, branch `cursor-sdk/lane-*`. Substrate **refuses**
+`ulg-arc-worktrees/{repo_basename}/lane-*`, branch `cursor-sdk/lane-*`. Substrate **refuses**
 `lane="B"` without a materialized worktree (`422 CURSOR_LANE_B_WORKTREE_MISSING`)
 instead of silently admitting on shared master. If you see `A=1` and
 `holder_source_repo=…/universal-llm-gateway` without a named Lane-A reason, the

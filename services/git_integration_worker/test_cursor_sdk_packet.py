@@ -1,5 +1,7 @@
 """Tests for cursor-sdk packet preamble assembly."""
 
+from pathlib import Path
+
 import pytest
 
 from services.git_integration_worker.cursor_sdk_packet import (
@@ -388,3 +390,86 @@ def test_continuity_root_thread_id_absent_by_default() -> None:
         inferred_contract=None,
     )
     assert "CONTINUITY THREAD" not in text
+
+
+_LANE_B_WORKTREE_PATH = (
+    "/x/ulg-arc-worktrees/universal-llm-gateway/lane-12494"
+)
+
+
+def test_lane_b_worktree_preamble_present_when_path_set() -> None:
+    text = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_worktree=_LANE_B_WORKTREE_PATH,
+    )
+    assert "LANE-B WORKTREE (mandatory)" in text
+    assert text.count(_LANE_B_WORKTREE_PATH) == 1
+    assert "git worktree add" in text
+    assert "Never" in text
+    assert "spawn /bin/bash ENOENT" in text
+
+
+def test_lane_b_worktree_preamble_absent_without_lane_or_path() -> None:
+    no_lane = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane_worktree=_LANE_B_WORKTREE_PATH,
+    )
+    assert "LANE-B WORKTREE (mandatory)" not in no_lane
+
+    lane_b_no_path = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+    )
+    assert "LANE-B WORKTREE (mandatory)" not in lane_b_no_path
+
+
+def test_lane_b_worktree_preamble_absent_on_freeform() -> None:
+    text = resolve_prompt_preamble(
+        handoff_contract=None,
+        prompt_preamble=None,
+        inferred_contract="none",
+        lane="B",
+        lane_worktree=_LANE_B_WORKTREE_PATH,
+    )
+    assert "LANE-B WORKTREE (mandatory)" not in text
+
+
+def test_lane_b_worktree_preamble_idempotent_when_packet_has_block() -> None:
+    packet = "LANE-B WORKTREE (mandatory): already in packet\n\nbody"
+    text = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        existing_text=packet,
+        lane_worktree=_LANE_B_WORKTREE_PATH,
+    )
+    assert text.count("LANE-B WORKTREE (mandatory)") == 1
+
+
+def test_lane_b_worktree_path_matches_lane_worktree_dir(tmp_path: Path) -> None:
+    from services.git_integration_worker.cursor_sdk_worktree import lane_worktree_dir
+
+    worktree_root = tmp_path / "ulg-arc-worktrees"
+    source_repo = tmp_path / "universal-llm-gateway"
+    source_repo.mkdir(parents=True)
+    thread_id = "12494"
+    expected = lane_worktree_dir(
+        worktree_root, thread_id, source_repo=source_repo
+    )
+    text = resolve_prompt_preamble(
+        handoff_contract="implement",
+        prompt_preamble=None,
+        inferred_contract=None,
+        lane="B",
+        lane_worktree=str(expected),
+    )
+    assert str(expected) in text
+    assert text.count("universal-llm-gateway") == 1

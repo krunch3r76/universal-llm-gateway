@@ -19,6 +19,8 @@ from reasoning_posture_contracts import (
     reasoning_posture_invoke_parts,
     reasoning_posture_warrants_injection,
 )
+from work_key_grammar import WORK_ITEM_SCHEMES as _WORK_ITEM_SCHEMES
+from work_key_grammar import is_valid_work_key_scheme
 
 _LARGE_CONTENT_CHUNK_CHARS = 40_000
 
@@ -92,6 +94,18 @@ _LANE_B_REPO_EDIT_PREAMBLE = (
     'fs(op="write"|"append"|"replace"|...) on workspaces:// paths (those writes '
     "hard-fail capture). Use cortex:// via fs only for durable deliverables "
     "(sidecars, specs, reviews)."
+)
+
+_LANE_B_WORKTREE_TEMPLATE = (
+    "LANE-B WORKTREE (mandatory): Your isolated worktree is {lane_worktree}\n"
+    "(formula: GIT_INTEGRATION_WORKTREE_ROOT/{{repo_basename}}/lane-{{thread_id}}; "
+    "the repo name appears exactly once). It is your Shell cwd — keep it there. "
+    "Do NOT `git worktree add` or `git worktree remove` scratch trees of your own: "
+    "GIW owns worktree lifecycle and this tree is already isolated. Never `cd` the "
+    "Shell into a directory you will later delete — a removed cwd kills the bridge "
+    "(`spawn /bin/bash ENOENT`) and aborts the dispatch. For scratch experiments "
+    "use a branch or `git stash` inside this tree, or `git -C <path>` without "
+    "changing cwd."
 )
 
 _CONDUCTOR_SEAT_IDENTITY_TEMPLATE = (
@@ -299,9 +313,6 @@ _SOURCE_REF_FRONTMATTER_RE = re.compile(
 _WORK_ITEM_KEY_RE = re.compile(
     r"^(?:todo|plan|plan_phase|packet):\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
 )
-from work_key_grammar import ADHOC_SCHEME as _ADHOC_SCHEME
-from work_key_grammar import WORK_ITEM_SCHEMES as _WORK_ITEM_SCHEMES
-
 
 _WORK_KEY_FRONTMATTER_RE = re.compile(
     r"^work_key:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
@@ -309,9 +320,6 @@ _WORK_KEY_FRONTMATTER_RE = re.compile(
 _PACKET_KIND_FRONTMATTER_RE = re.compile(
     r"^packet_kind:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
 )
-
-
-from work_key_grammar import is_valid_work_key_scheme  # noqa: F401 — re-export
 
 
 def extract_work_key_from_packet(text: str) -> str | None:
@@ -518,6 +526,7 @@ def resolve_prompt_preamble(
     hop_reason: str | None = None,
     continuity_root_thread_id: str | None = None,
     skills: Sequence[str] | None = None,
+    lane_worktree: str | None = None,
 ) -> str:
     """Assemble the worker prompt prefix for one cursor-sdk dispatch.
 
@@ -602,6 +611,10 @@ def resolve_prompt_preamble(
                 branch=lane_branch or "your lane branch"
             )
         )
+        if lane_worktree and "LANE-B WORKTREE" not in (existing_text or ""):
+            parts.append(
+                _LANE_B_WORKTREE_TEMPLATE.format(lane_worktree=lane_worktree)
+            )
     is_conductor_packet = contract == "conductor" or (
         has_packet_path
         and bool(existing_text)
