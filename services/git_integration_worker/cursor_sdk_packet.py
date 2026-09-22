@@ -94,6 +94,18 @@ _LANE_B_REPO_EDIT_PREAMBLE = (
     "(sidecars, specs, reviews)."
 )
 
+_LANE_B_WORKTREE_TEMPLATE = (
+    "LANE-B WORKTREE (mandatory): Your isolated worktree is {lane_worktree}\n"
+    "(formula: GIT_INTEGRATION_WORKTREE_ROOT/{{repo_basename}}/lane-{{thread_id}}; "
+    "the repo name appears exactly once). It is your Shell cwd — keep it there. "
+    "Do NOT `git worktree add` or `git worktree remove` scratch trees of your own: "
+    "GIW owns worktree lifecycle and this tree is already isolated. Never `cd` the "
+    "Shell into a directory you will later delete — a removed cwd kills the bridge "
+    "(`spawn /bin/bash ENOENT`) and aborts the dispatch. For scratch experiments "
+    "use a branch or `git stash` inside this tree, or `git -C <path>` without "
+    "changing cwd."
+)
+
 _CONDUCTOR_SEAT_IDENTITY_TEMPLATE = (
     "CONDUCTOR SEAT IDENTITY (mandatory): Your GIW dispatch_id is {dispatch_id}. "
     "When nesting cursor-sdk legs from this Lane-B conductor seat:\n"
@@ -518,6 +530,7 @@ def resolve_prompt_preamble(
     hop_reason: str | None = None,
     continuity_root_thread_id: str | None = None,
     skills: Sequence[str] | None = None,
+    lane_worktree: str | None = None,
 ) -> str:
     """Assemble the worker prompt prefix for one cursor-sdk dispatch.
 
@@ -602,6 +615,10 @@ def resolve_prompt_preamble(
                 branch=lane_branch or "your lane branch"
             )
         )
+        if lane_worktree and "LANE-B WORKTREE" not in (existing_text or ""):
+            parts.append(
+                _LANE_B_WORKTREE_TEMPLATE.format(lane_worktree=lane_worktree)
+            )
     is_conductor_packet = contract == "conductor" or (
         has_packet_path
         and bool(existing_text)

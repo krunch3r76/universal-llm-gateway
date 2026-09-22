@@ -696,7 +696,24 @@ def _lane_branch_standing(req: CursorDispatchRequest) -> dict[str, Any]:
     }
 
 
-def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
+def _preview_lane_worktree_path(
+    req: CursorDispatchRequest, cfg: WorkerConfig
+) -> Path | None:
+    if wire_lane_explicit(req) != "B" or not req.thread_id:
+        return None
+    from services.git_integration_worker.cursor_sdk_worktree import lane_worktree_dir
+
+    return lane_worktree_dir(
+        cfg.worktree_root, req.thread_id, source_repo=cfg.source_repo
+    )
+
+
+def _resolve_prompt(
+    req: CursorDispatchRequest,
+    source_repo: Path,
+    *,
+    lane_worktree: Path | None = None,
+) -> str:
     packet_text = _read_packet_text(req, source_repo)
     inferred_contract = None if req.message else infer_contract_from_text(packet_text)
     lane = "B" if wire_lane_explicit(req) == "B" else None
@@ -707,6 +724,7 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
         )
 
         lane_branch = lane_branch_name(req.thread_id)
+    lane_worktree_str = str(lane_worktree.resolve()) if lane_worktree else None
     preamble = resolve_prompt_preamble(
         handoff_contract=req.handoff_contract,
         prompt_preamble=req.prompt_preamble,
@@ -723,6 +741,7 @@ def _resolve_prompt(req: CursorDispatchRequest, source_repo: Path) -> str:
         hop_reason=req.hop_reason,
         continuity_root_thread_id=req.continuity_root_thread_id,
         skills=req.skills,
+        lane_worktree=lane_worktree_str,
     )
     return f"{preamble}{packet_text}"
 
@@ -2248,7 +2267,13 @@ async def _run_sdk_dispatch_gated(
                 wt_baseline=json.dumps(baseline_map),
             )
 
-    prompt = _resolve_prompt(req, ctx.hub)
+    prompt = _resolve_prompt(
+        req,
+        ctx.hub,
+        lane_worktree=(
+            ctx.dispatch_workspace if wire_lane_explicit(req) == "B" else None
+        ),
+    )
     from services.git_integration_worker.cursor_sdk_gate import (
         release_sdk_dispatch_slot,
     )
@@ -2954,7 +2979,11 @@ async def admit_cursor_dispatch(
             validation_stage="model_resolution",
         )
     try:
-        _resolve_prompt(req, cfg.source_repo)
+        _resolve_prompt(
+            req,
+            cfg.source_repo,
+            lane_worktree=_preview_lane_worktree_path(req, cfg),
+        )
     except ValueError as exc:
         return _reject_pre_admission(
             req,
@@ -3818,7 +3847,11 @@ async def admit_cursor_dispatch(
         giw_prompt_expand_pending,
     )
 
-    resolved_prompt = _resolve_prompt(req, cfg.source_repo)
+    resolved_prompt = _resolve_prompt(
+        req,
+        cfg.source_repo,
+        lane_worktree=_preview_lane_worktree_path(req, cfg),
+    )
     expand_status = giw_prompt_expand_pending(
         req,
         resolved_prompt,
