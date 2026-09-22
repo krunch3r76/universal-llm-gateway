@@ -34,6 +34,7 @@ from claude_bundles.skills_ui_open import (
 from claude_bundles.skills_ui_panel import (
     _upload_modal_open,
     _upload_modal_root,
+    probe_upload_modal_mismatch,
 )
 from claude_bundles.skills_ui_upload import (
     _select_file_in_modal,
@@ -211,6 +212,45 @@ async def test_upload_modal_drop_zone_without_file_input_is_not_open() -> None:
 
 
 @pytest.mark.asyncio
+async def test_probe_upload_modal_mismatch_text_outside_overlay_shell() -> None:
+    """Drop-zone copy on page without a popup/dialog ancestor."""
+    loose = MagicMock()
+    loose.count = AsyncMock(return_value=1)
+    loose.first.is_visible = AsyncMock(return_value=True)
+    loose.first.locator = MagicMock(return_value=_mock_locator(count=0))
+    empty_overlays = MagicMock()
+    empty_overlays.count = AsyncMock(return_value=0)
+    page = MagicMock()
+    page.url = "https://claude.ai/new#settings/customize-skills"
+    page.get_by_text = MagicMock(return_value=loose)
+
+    def _locator(sel: str) -> MagicMock:
+        if "data-popup-open" in sel or 'role="dialog"' in sel:
+            return empty_overlays
+        return _mock_locator()
+
+    page.locator = MagicMock(side_effect=_locator)
+
+    probe = await probe_upload_modal_mismatch(page)
+    assert probe["text_loose_or_strict_match"] is True
+    assert probe["overlay_shell"] is False
+    assert probe["drop_zone_text"] is True
+    assert not await _upload_modal_open(page)
+
+
+@pytest.mark.asyncio
+async def test_probe_upload_modal_mismatch_drop_zone_overlay_no_file_input() -> None:
+    page = _mock_page_with_upload_overlay(
+        "Drag and drop or click to upload", file_input_count=0
+    )
+    probe = await probe_upload_modal_mismatch(page)
+    assert probe["drop_zone_text"] is True
+    assert probe["file_input_in_overlay"] is False
+    assert probe["overlay_shell"] is True
+    assert not await _upload_modal_open(page)
+
+
+@pytest.mark.asyncio
 async def test_modal_file_input_resolves_scoped_input_on_drop_zone_overlay() -> None:
     page = _mock_page_with_upload_overlay("Drag and drop or click to upload")
     with patch(
@@ -336,13 +376,30 @@ async def test_open_upload_dialog_modal_timeout_is_upload_modal_missing() -> Non
             return_value=False,
         ),
         patch(
+            "claude_bundles.skills_ui_open.probe_upload_modal_mismatch",
+            new_callable=AsyncMock,
+            return_value={
+                "overlay_shell": False,
+                "text_loose_or_strict_match": True,
+                "drop_zone_text": True,
+                "file_input_in_overlay": False,
+            },
+        ),
+        patch(
             "claude_bundles.skills_ui_open.panel_state_summary",
             new_callable=AsyncMock,
             return_value="",
         ),
-        pytest.raises(UploadModalMissingError, match="did not open within 15s"),
+        pytest.raises(UploadModalMissingError, match="did not open within 15s") as exc_info,
     ):
         await _open_upload_dialog(page, MagicMock(), nav_gate=None)
+    probe = exc_info.value.probe
+    assert set(probe) == {
+        "overlay_shell",
+        "text_loose_or_strict_match",
+        "drop_zone_text",
+        "file_input_in_overlay",
+    }
 
 
 @pytest.mark.asyncio

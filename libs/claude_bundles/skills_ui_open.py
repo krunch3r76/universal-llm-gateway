@@ -29,11 +29,16 @@ from claude_bundles.skills_ui_panel import (
     _upload_modal_open,
     _upload_modal_root,
     panel_state_summary,
+    probe_upload_modal_mismatch,
 )
 
 
 class UploadModalMissingError(RuntimeError):
     """Upload modal absent or off the Skills URL — refuse a page-wide file chooser."""
+
+    def __init__(self, message: str, *, probe: dict[str, bool] | None = None) -> None:
+        super().__init__(message)
+        self.probe: dict[str, bool] = dict(probe or {})
 
 
 async def _assert_upload_modal_scoped(page: Page) -> Locator:
@@ -125,7 +130,8 @@ async def _open_upload_dialog(
                     return await _modal_file_input(page)
                 await page.wait_for_timeout(500)
             raise UploadModalMissingError(
-                "Upload modal did not open within 15s after menu selection"
+                "Upload modal did not open within 15s after menu selection",
+                probe=await probe_upload_modal_mismatch(page),
             )
         except UploadModalMissingError:
             raise

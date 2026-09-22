@@ -469,6 +469,59 @@ async def _panel_lost_mid_attempt(page: Page) -> bool:
     return not await _skills_panel_visible(page)
 
 
+async def _upload_overlay_shell_with_upload_text(page: Page) -> Locator | None:
+    """Visible popup/dialog whose inner text matches upload title or drop-zone copy."""
+    overlays = page.locator(
+        '[data-popup-open], [role="dialog"], [data-state="open"].fixed'
+    )
+    for i in range(await overlays.count()):
+        ov = overlays.nth(i)
+        if not await ov.is_visible():
+            continue
+        if _upload_overlay_text_matches(await ov.inner_text()):
+            return ov
+    for pattern in (_UPLOAD_TITLE, _UPLOAD_DROP_ZONE):
+        title = page.get_by_text(pattern)
+        if await title.count() and await title.first.is_visible():
+            parent = title.first.locator(
+                "xpath=ancestor::*[@data-popup-open or @data-state='open' or @role='dialog'][1]"
+            )
+            if await parent.count() and await parent.first.is_visible():
+                if _upload_overlay_text_matches(await parent.first.inner_text()):
+                    return parent.first
+    return None
+
+
+async def probe_upload_modal_mismatch(page: Page) -> dict[str, bool]:
+    """Classify why ``_upload_modal_open`` is false (selector vs absent-modal)."""
+    text_loose_or_strict_match = False
+    drop_zone_text = False
+    for pattern in (_UPLOAD_TITLE, _UPLOAD_DROP_ZONE):
+        loc = page.get_by_text(pattern)
+        if await loc.count() and await loc.first.is_visible():
+            text_loose_or_strict_match = True
+            break
+    dz = page.get_by_text(_UPLOAD_DROP_ZONE)
+    if await dz.count() and await dz.first.is_visible():
+        drop_zone_text = True
+
+    shell = await _upload_overlay_shell_with_upload_text(page)
+    overlay_shell = shell is not None
+    file_input_in_overlay = False
+    if shell is not None:
+        shell_text = await shell.inner_text()
+        if _UPLOAD_DROP_ZONE.search(shell_text):
+            drop_zone_text = True
+        file_input_in_overlay = await shell.locator('input[type="file"]').count() > 0
+
+    return {
+        "overlay_shell": overlay_shell,
+        "text_loose_or_strict_match": text_loose_or_strict_match,
+        "drop_zone_text": drop_zone_text,
+        "file_input_in_overlay": file_input_in_overlay,
+    }
+
+
 async def _upload_modal_open(page: Page) -> bool:
     return await _upload_modal_root(page) is not None
 
