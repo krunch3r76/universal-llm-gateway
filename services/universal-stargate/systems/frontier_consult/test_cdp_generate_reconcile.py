@@ -152,6 +152,96 @@ def test_max_open_leg_s_floor() -> None:
 
 
 @pytest.mark.asyncio
+async def test_finalize_unconfirmed_wall_leaves_proof_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unconfirmed wall abort must not stamp proof_emitted; confirmed wall does."""
+    from cdp_ask.unverifiable import WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED
+
+    published: list[str] = []
+
+    def _capture(factory: Any, **_kwargs: Any) -> None:
+        published.append(factory.__name__)
+
+    async def _terminate(**_kwargs: object) -> bool:
+        return True
+
+    monkeypatch.setattr(reconcile, "publish_cdp_kwargs", _capture)
+    monkeypatch.setattr(reconcile, "terminal_event_exists", lambda _eid: False)
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.terminate_handoff_dispatch",
+        _terminate,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        AsyncMock(return_value=True),
+    )
+
+    upsert_inflight_leg(
+        execution_id="exec-wall-unconfirmed",
+        request_id="req-wall-u",
+        thread_id="12286",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_cdp_generate(
+        result=CdpGenerateResult(
+            ok=False,
+            body="",
+            execution_id="exec-wall-unconfirmed",
+            satellite_execution_id="sat-wall-u",
+            prompt_uri="cortex://p.md",
+            picker_model="opus-5",
+            stall_stage=WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED,
+            error="CDP generate no progress for max_wall_s=10",
+        ),
+        request_id="req-wall-u",
+        thread_id="12286",
+        to_agent="dispatch",
+        pointer_turn=1,
+        via="worker",
+    )
+    leg = reconcile.read_inflight_leg("exec-wall-unconfirmed")
+    assert leg is not None
+    assert leg.proof_emitted is False
+    assert "CdpGenerateStalled" in published
+
+    upsert_inflight_leg(
+        execution_id="exec-wall-confirmed",
+        request_id="req-wall-c",
+        thread_id="12286",
+        pointer_turn=2,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    await finalize_cdp_generate(
+        result=CdpGenerateResult(
+            ok=False,
+            body="",
+            execution_id="exec-wall-confirmed",
+            satellite_execution_id="sat-wall-c",
+            prompt_uri="cortex://p.md",
+            picker_model="opus-5",
+            stall_stage="wall_clock_exceeded",
+            error="CDP generate no progress for max_wall_s=10",
+        ),
+        request_id="req-wall-c",
+        thread_id="12286",
+        to_agent="dispatch",
+        pointer_turn=2,
+        via="worker",
+    )
+    confirmed = reconcile.read_inflight_leg("exec-wall-confirmed")
+    assert confirmed is not None
+    assert confirmed.proof_emitted is True
+
+
+@pytest.mark.asyncio
 async def test_reconcile_emits_proof_without_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

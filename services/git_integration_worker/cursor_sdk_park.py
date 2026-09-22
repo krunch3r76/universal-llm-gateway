@@ -32,6 +32,10 @@ from services.git_integration_worker.cursor_sdk_gate import (
 from services.git_integration_worker.cursor_sdk_ledger_hop import (
     hop_fields_from_record_json,
 )
+from services.git_integration_worker.cursor_sdk_orphan import (
+    abort_orphaned_bridge,
+    reap_orphan_bridge_os,
+)
 from services.git_integration_worker.cursor_sdk_restart_orphan import load_ledger_row
 
 logger = get_logger(__name__)
@@ -61,9 +65,7 @@ def _child_status_map(
     conn: sqlite3.Connection, rows: list[sqlite3.Row]
 ) -> dict[str, str]:
     child_ids = [
-        r["park_child_dispatch_id"]
-        for r in rows
-        if r["park_child_dispatch_id"]
+        r["park_child_dispatch_id"] for r in rows if r["park_child_dispatch_id"]
     ]
     if not child_ids:
         return {}
@@ -194,7 +196,9 @@ def queue_stall_lease_keys(ledger: CursorDispatchLedger) -> list[str]:
         if r["dispatch_id"] in live
         and _resolve_key(lease_key=r["lease_key"], source_repo=r["source_repo"])
     }
-    return [key for key, depth in depth_by_key.items() if depth > 0 and key not in live_keys]
+    return [
+        key for key, depth in depth_by_key.items() if depth > 0 and key not in live_keys
+    ]
 
 
 def _terminal_epoch(row: dict) -> float | None:
@@ -263,9 +267,9 @@ def _latest_terminal_conductor_rows(
         existing_seq = hop_fields_from_record_json(
             str(existing_map.get("record_json") or "")
         ).get("hop_seq")
-        row_seq = hop_fields_from_record_json(
-            str(mapped.get("record_json") or "")
-        ).get("hop_seq")
+        row_seq = hop_fields_from_record_json(str(mapped.get("record_json") or "")).get(
+            "hop_seq"
+        )
         existing_seq_i = int(existing_seq) if isinstance(existing_seq, int) else 0
         row_seq_i = int(row_seq) if isinstance(row_seq, int) else 0
         if row_seq_i > existing_seq_i:
@@ -472,9 +476,7 @@ def release_or_restore_for_child_sync(
     if parked is not None:
         parent_id, source_repo = parked
         try:
-            transfer_sdk_dispatch_slot_sync(
-                loop, from_id=dispatch_id, to_id=parent_id
-            )
+            transfer_sdk_dispatch_slot_sync(loop, from_id=dispatch_id, to_id=parent_id)
         except Exception:
             logger.warning(
                 "park restore sync transfer failed: child=%s parent=%s",
@@ -496,10 +498,28 @@ def release_or_restore_for_child_sync(
     return "released"
 
 
+async def _stop_orphan_bridge(dispatch_id: str) -> bool:
+    """Abort the in-process bridge, then OS-reap an env-matched survivor.
+
+    Returns whether ``abort_orphaned_bridge`` closed without error. The
+    ``frontier.sdk.worker.orphaned`` ``bridge_aborted`` stamp is that bool.
+    Both calls finish before the caller marks the row failed or force-releases
+    the capacity slot.
+    """
+    aborted = await asyncio.to_thread(abort_orphaned_bridge, dispatch_id=dispatch_id)
+    await asyncio.to_thread(reap_orphan_bridge_os, dispatch_id)
+    return bool(aborted)
+
+
 async def reclaim_orphan_holder(
     ledger: CursorDispatchLedger, *, dispatch_id: str
 ) -> str | None:
-    """Reap one orphan blocking holder; return lease_key for FIFO promotion."""
+    """Stop an orphan holder's bridge, then fail the row and free its lease.
+
+    Parked and non-parked holders both abort then OS-reap before the row is
+    marked failed or the slot is force-released. Returns the lease key for
+    FIFO promotion, or None when the row is missing or already terminal.
+    """
     with ledger._connect() as conn:
         row = conn.execute(
             "SELECT dispatch_id, status, lease_key, source_repo, "
@@ -518,6 +538,7 @@ async def reclaim_orphan_holder(
                     (child_id,),
                 ).fetchone()
             if child is not None and child["status"] not in _TERMINAL:
+                bridge_aborted = await _stop_orphan_bridge(child_id)
                 child_row = load_ledger_row(ledger, dispatch_id=child_id)
                 if child_row is not None:
                     execution_id = child_row.execution_id or child_id
@@ -527,7 +548,7 @@ async def reclaim_orphan_holder(
                         execution_id=execution_id,
                         resolved_model=child_row.resolved_model,
                         timeout_s=0.0,
-                        bridge_aborted=False,
+                        bridge_aborted=bridge_aborted,
                     )
                 await asyncio.to_thread(
                     ledger.mark_terminal,
@@ -536,6 +557,7 @@ async def reclaim_orphan_holder(
                 )
             await release_or_restore_for_child(dispatch_id=child_id)
         elif ledger.restore_from_park(parent_id=dispatch_id) is None:
+            bridge_aborted = await _stop_orphan_bridge(dispatch_id)
             parent_row = load_ledger_row(ledger, dispatch_id=dispatch_id)
             if parent_row is not None:
                 execution_id = parent_row.execution_id or dispatch_id
@@ -545,7 +567,7 @@ async def reclaim_orphan_holder(
                     execution_id=execution_id,
                     resolved_model=parent_row.resolved_model,
                     timeout_s=0.0,
-                    bridge_aborted=False,
+                    bridge_aborted=bridge_aborted,
                 )
             await asyncio.to_thread(
                 ledger.mark_terminal,
@@ -553,6 +575,17 @@ async def reclaim_orphan_holder(
                 terminal_status="failed",
             )
         return key
+    bridge_aborted = await _stop_orphan_bridge(dispatch_id)
+    holder = load_ledger_row(ledger, dispatch_id=dispatch_id)
+    if holder is not None:
+        emit_sdk_worker_orphaned(
+            dispatch_id=dispatch_id,
+            thread_id=holder.thread_id,
+            execution_id=holder.execution_id or dispatch_id,
+            resolved_model=holder.resolved_model,
+            timeout_s=0.0,
+            bridge_aborted=bridge_aborted,
+        )
     await force_release_sdk_dispatch_slot(dispatch_id=dispatch_id)
     return await asyncio.to_thread(
         ledger.release_stale_writer, dispatch_id=dispatch_id, force=True

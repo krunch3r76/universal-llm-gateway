@@ -18,8 +18,10 @@ from cdp_ask.client import CdpAskClient, CdpAskClientError, project_ask_base_url
 from cdp_ask.models import SubmitProjectAskRequest
 from cdp_ask.unverifiable import (
     _CSE_URL_MARKER,
+    WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED,
     failed_snapshot_fields,
     transport_miss_fields,
+    wall_abort_unconfirmed,
 )
 from chat_harvest.chrome import is_chrome_only, is_prompt_echo
 
@@ -51,7 +53,9 @@ CDP_REPLY_FROM = "web-anthropic"
 # Output download, archive write) and emits no per-sample progress, so the
 # no-progress fingerprint necessarily freezes. ``max_wall_s`` bounds these as
 # seconds since the last observed fingerprint progress (not cumulative elapsed).
-POST_IDLE_PHASES = frozenset({"turn_idle", "content_proof", "archiving", "awaiting_wake"})
+POST_IDLE_PHASES = frozenset(
+    {"turn_idle", "content_proof", "archiving", "awaiting_wake"}
+)
 
 RETRYABLE_OVERLOAD_STATUS = frozenset({529, 503})
 SUBMIT_RETRY_BACKOFF_S = 5.0
@@ -288,7 +292,9 @@ def _missing_proof_error(snapshot: dict[str, Any]) -> str:
             "outputs harvest lacks content_proof_uri "
             "(harvest_provenance=output-file|cortex-uri)"
         )
-    return "chat harvest lacks attested_model (archive_uri alone insufficient — AC-S1-b)"
+    return (
+        "chat harvest lacks attested_model (archive_uri alone insufficient — AC-S1-b)"
+    )
 
 
 def _deliverable_unproven_extras(carry: dict[str, str | None]) -> dict[str, Any]:
@@ -315,12 +321,18 @@ def _abort_then_sweep(
     client: httpx.Client | None = None,
     retain_cse: bool = False,
     retain_reason: str | None = None,
+    wall_expiry: bool = False,
 ) -> dict[str, Any]:
     """Abort satellite (Stop-click) then sweep staging — unless *retain_cse*.
 
     When ``retain_cse`` is true (operator-proxy / mission, or unverifiable-class
     stall after compose-attest), skip ``abort`` so the Cowork page keeps
     streaming; only ephemeral prompt staging is swept.
+
+    ``wall_expiry`` still attempts Stop-click. An unconfirmed abort (error,
+    non-2xx, or empty body while *satellite_id* is set) stamps ``retain_cse``
+    and ``abort_unconfirmed`` so the caller keeps the CSE and does not grade
+    the wall as death.
     """
     abort_info: dict[str, Any] = {}
     if retain_cse:
@@ -336,6 +348,13 @@ def _abort_then_sweep(
             abort_info = relay.abort(satellite_id, client=client)
         except CdpAskClientError as exc:
             abort_info = _client_error_dict(exc)
+    if wall_expiry and wall_abort_unconfirmed(abort_info, sat_id=satellite_id):
+        abort_info = {
+            **abort_info,
+            "retain_cse": True,
+            "abort_unconfirmed": True,
+            "reason": abort_info.get("reason") or "abort_unconfirmed",
+        }
     sweep_ephemeral(execution_id)
     return abort_info
 
@@ -656,7 +675,9 @@ def run_cdp_generate(
         parent_thread=parent_thread,
         model=picker,
         converse=converse,
-        no_project_uuid=no_project_uuid if project_uuid is None else not bool(project_uuid),
+        no_project_uuid=no_project_uuid
+        if project_uuid is None
+        else not bool(project_uuid),
         project_uuid=project_uuid or "",
         harvest_source=harvest_source,
         expected_size=expected_size,
@@ -742,9 +763,18 @@ def run_cdp_generate(
                 last_progress_at = clock()
                 continue
             abort_info = _abort_then_sweep(
-                sat_id, execution_id, ask_client=relay, client=client
+                sat_id,
+                execution_id,
+                ask_client=relay,
+                client=client,
+                wall_expiry=True,
             )
             since_last_progress_s = clock() - last_progress_at
+            stall_stage = (
+                WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED
+                if abort_info.get("abort_unconfirmed")
+                else "wall_clock_exceeded"
+            )
             return CdpGenerateResult(
                 ok=False,
                 body="",
@@ -752,7 +782,7 @@ def run_cdp_generate(
                 satellite_execution_id=sat_id,
                 prompt_uri=staged.prompt_uri,
                 picker_model=picker,
-                stall_stage="wall_clock_exceeded",
+                stall_stage=stall_stage,
                 error=(
                     f"CDP generate no progress for max_wall_s={max_wall_s} "
                     f"(since_last_progress_s={since_last_progress_s:.1f})"
@@ -782,17 +812,30 @@ def run_cdp_generate(
                     continue
                 since_last_progress_s = clock() - last_progress_at
                 fields = transport_miss_fields(
-                    str(snapshot.get("error")), proof_carry.url, satellite_execution_id=sat_id
+                    str(snapshot.get("error")),
+                    proof_carry.url,
+                    satellite_execution_id=sat_id,
                 )
                 abort_info = _abort_then_sweep(
-                    sat_id, execution_id, ask_client=relay, client=client,
+                    sat_id,
+                    execution_id,
+                    ask_client=relay,
+                    client=client,
                     retain_cse=bool(fields["unverifiable"]) or mission_retain,
-                    retain_reason="operator_proxy_cse_retain" if mission_retain else fields["retain_reason"],
+                    retain_reason="operator_proxy_cse_retain"
+                    if mission_retain
+                    else fields["retain_reason"],
                 )
                 return CdpGenerateResult(
-                    ok=False, body="", execution_id=execution_id, satellite_execution_id=sat_id,
-                    prompt_uri=staged.prompt_uri, picker_model=picker,
-                    stall_stage=fields["stall_stage"], error=fields["error"], poll_snapshots=polls,
+                    ok=False,
+                    body="",
+                    execution_id=execution_id,
+                    satellite_execution_id=sat_id,
+                    prompt_uri=staged.prompt_uri,
+                    picker_model=picker,
+                    stall_stage=fields["stall_stage"],
+                    error=fields["error"],
+                    poll_snapshots=polls,
                     extras={
                         "abort": abort_info,
                         "since_last_progress_s": since_last_progress_s,

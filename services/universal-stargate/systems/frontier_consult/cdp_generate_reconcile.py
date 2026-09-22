@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from cdp_ask.client import CdpAskClient, CdpAskClientError
+from cdp_ask.unverifiable import WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED
 from claude_bundles.cdp_model_endpoint import (
     CdpGenerateResult,
     picker_from_model_id,
@@ -220,7 +221,11 @@ async def finalize_cdp_generate(
     via: FinalizeVia = "worker",
     attested_by: str | None = None,
 ) -> None:
-    """Publish proof/stalled once, then attempt on-behalf delivery (AC8/AC9)."""
+    """Publish proof or stalled once, then attempt on-behalf delivery.
+
+    An unconfirmed wall-expiry stall (``wall_clock_exceeded_abort_unconfirmed``)
+    returns without setting ``proof_emitted``, so reconcile horizon decides death.
+    """
     from .cdp_dispatch_envelope import (
         get_cdp_dispatch_envelope,
         record_cdp_dispatch_link_terminal,
@@ -299,6 +304,8 @@ async def finalize_cdp_generate(
         return
 
     if terminal_event_exists(result.execution_id):
+        if result.stall_stage == WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED:
+            return
         mark_proof_emitted(result.execution_id)
         if not try_claim_delivery(execution_id=result.execution_id):
             return
@@ -370,6 +377,9 @@ async def finalize_cdp_generate(
                 thread_id=thread_id,
                 result=result,
             )
+
+    if result.stall_stage == WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED:
+        return
 
     mark_proof_emitted(result.execution_id)
     if via == "reconcile":

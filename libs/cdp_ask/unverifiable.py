@@ -1,10 +1,16 @@
-"""Unverifiable vs CSE-death stall classification (a:30678 / a:28790)."""
+"""Unverifiable vs CSE-death stall classification (a:30678 / a:28790).
+
+Poller wall expiry whose Stop-click is unconfirmed stays in the unverifiable
+set so reconcile horizon, not the poller, decides whether the CSE is dead.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
 from cdp_ask.models import StallStage, classify_stall_stage
+
+WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED = "wall_clock_exceeded_abort_unconfirmed"
 
 UNVERIFIABLE_STALL_STAGES = frozenset(
     {
@@ -13,6 +19,7 @@ UNVERIFIABLE_STALL_STAGES = frozenset(
         "reconcile_abandoned_unverifiable",
         "archive_write",
         "post_terminal_poll",
+        WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED,
     }
 )
 
@@ -44,6 +51,33 @@ _DEATH_ERROR_TOKENS = (
 )
 
 
+def wall_abort_unconfirmed(
+    abort_info: dict[str, Any] | None,
+    *,
+    sat_id: str | None,
+) -> bool:
+    """True when a wall-expiry Stop-click was not confirmed.
+
+    Unconfirmed when *abort_info* carries ``error``, a non-2xx ``status_code``,
+    or *sat_id* is set and *abort_info* is empty. A confirmed abort (no error,
+    missing or 2xx status, non-empty body) stays on the ``wall_clock_exceeded``
+    death path. Callers then stamp ``retain_cse`` and leave proof unset so
+    reconcile horizon decides death.
+    """
+    info = abort_info or {}
+    if info.get("error"):
+        return True
+    status = info.get("status_code")
+    if status is not None:
+        try:
+            code = int(status)
+        except (TypeError, ValueError):
+            return True
+        if code < 200 or code >= 300:
+            return True
+    return bool(sat_id) and not info
+
+
 def is_unverifiable_stall(
     stall_stage: str | None,
     error: str | None = None,
@@ -73,9 +107,7 @@ def converse_fail_error(last_error: str | None) -> str:
     return raw if raw else "conversation failed"
 
 
-def converse_stall_stage(
-    last_error: str | None, *, conv_ok: bool
-) -> StallStage | None:
+def converse_stall_stage(last_error: str | None, *, conv_ok: bool) -> StallStage | None:
     """Stall for a converse payload — generic unknown becomes observer_unverified."""
     if conv_ok:
         return None

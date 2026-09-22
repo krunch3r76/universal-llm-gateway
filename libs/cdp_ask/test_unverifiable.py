@@ -7,11 +7,14 @@ import pytest
 from cdp_ask.models import classify_stall_stage
 from cdp_ask.unverifiable import (
     DEATH_STALL_STAGES,
+    UNVERIFIABLE_STALL_STAGES,
+    WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED,
     converse_fail_error,
     converse_stall_stage,
     failed_snapshot_fields,
     is_unverifiable_stall,
     transport_miss_fields,
+    wall_abort_unconfirmed,
 )
 
 pytestmark = pytest.mark.offline
@@ -44,7 +47,9 @@ def test_is_unverifiable_stall_death_vs_observer() -> None:
     assert is_unverifiable_stall("unknown", "aborted") is False
     assert is_unverifiable_stall("archive_write", url=cse) is True
     assert is_unverifiable_stall("completion_detection") is False
-    assert is_unverifiable_stall("unknown", url=cse, satellite_execution_id=None) is False
+    assert (
+        is_unverifiable_stall("unknown", url=cse, satellite_execution_id=None) is False
+    )
 
 
 def test_failed_snapshot_fields_coerces_unknown() -> None:
@@ -78,7 +83,9 @@ def test_failed_snapshot_fields_skips_new_as_chat_url() -> None:
 
 def test_transport_miss_fields_witness() -> None:
     cse = "https://claude.ai/cowork/cse_x"
-    fields = transport_miss_fields("connection reset", cse, satellite_execution_id="sat")
+    fields = transport_miss_fields(
+        "connection reset", cse, satellite_execution_id="sat"
+    )
     assert fields["stall_stage"] == "observer_unverified"
     assert fields["unverifiable"] is True
     assert fields["extras"]["chat_url"] == cse
@@ -87,3 +94,20 @@ def test_transport_miss_fields_witness() -> None:
 def test_no_progress_in_death_stages() -> None:
     assert "no_progress" in DEATH_STALL_STAGES
     assert "wall_clock_exceeded" in DEATH_STALL_STAGES
+
+
+def test_wall_abort_unconfirmed_predicate() -> None:
+    stage = WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED
+    assert stage in UNVERIFIABLE_STALL_STAGES
+    assert stage not in DEATH_STALL_STAGES
+    assert wall_abort_unconfirmed({"error": "stop missed"}, sat_id="sat") is True
+    assert wall_abort_unconfirmed({"status_code": 409}, sat_id="sat") is True
+    assert wall_abort_unconfirmed({}, sat_id="sat") is True
+    assert wall_abort_unconfirmed(None, sat_id="sat") is True
+    assert (
+        wall_abort_unconfirmed({"ok": True, "status": "aborted"}, sat_id="sat") is False
+    )
+    assert (
+        wall_abort_unconfirmed({"ok": True, "status_code": 200}, sat_id="sat") is False
+    )
+    assert wall_abort_unconfirmed({}, sat_id=None) is False

@@ -460,8 +460,7 @@ def test_run_cdp_generate_parent_thread_on_submit_request(
 def test_run_cdp_generate_stall_wall_clock(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    monkeypatch.setenv("PROJECT_ASK_URL", "http://satellite.test")
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-2")
     client = _FakeClient(
         [
             {"execution_id": "sat-2", "status": "running"},
@@ -489,6 +488,65 @@ def test_run_cdp_generate_stall_wall_clock(
     )
     assert result.ok is False
     assert result.stall_stage == "wall_clock_exceeded"
+    assert not (result.extras or {}).get("abort", {}).get("abort_unconfirmed")
+
+
+@pytest.mark.parametrize(
+    "abort_body",
+    [
+        {"error": "stop click unconfirmed", "status_code": 500},
+        {},
+        {"status_code": 409},
+    ],
+)
+def test_wall_expiry_unconfirmed_abort_retains_cse(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    abort_body: dict[str, Any],
+) -> None:
+    """Unconfirmed Stop-click is unverifiable retain, not wall-clock death."""
+    from cdp_ask.unverifiable import (
+        DEATH_STALL_STAGES,
+        UNVERIFIABLE_STALL_STAGES,
+        WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED,
+    )
+
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-wall-unconfirmed")
+
+    class _Ask:
+        def submit(self, _req: Any, **_kwargs: Any) -> dict[str, Any]:
+            return {"execution_id": "sat-unconfirmed", "status": "running"}
+
+        def poll(self, execution_id: str, **_kwargs: Any) -> dict[str, Any]:
+            return {"execution_id": execution_id, "status": "running"}
+
+        def abort(self, _execution_id: str, **_kwargs: Any) -> dict[str, Any]:
+            return abort_body
+
+    clock = {"t": 0.0}
+
+    def _now() -> float:
+        return clock["t"]
+
+    def _sleep(_s: float) -> None:
+        clock["t"] = 50.0
+
+    result = run_cdp_generate(
+        execution_id="dispatch-wall-unconfirmed",
+        model_id="cdp/opus-4.8",
+        prompt_text="ping",
+        max_wall_s=10,
+        poll_interval_s=0,
+        ask_client=_Ask(),  # type: ignore[arg-type]
+        sleep=_sleep,
+        now=_now,
+    )
+    assert result.stall_stage == WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED
+    assert result.stall_stage in UNVERIFIABLE_STALL_STAGES
+    assert result.stall_stage not in DEATH_STALL_STAGES
+    abort = (result.extras or {}).get("abort") or {}
+    assert abort.get("retain_cse") is True
+    assert abort.get("abort_unconfirmed") is True
 
 
 def test_run_cdp_generate_progress_resets_wall_clock(
