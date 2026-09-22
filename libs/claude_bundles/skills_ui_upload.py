@@ -6,7 +6,7 @@ import re
 import sys
 from pathlib import Path
 
-from playwright.async_api import Page
+from playwright.async_api import Locator, Page
 
 from claude_bundles.bundle_description import MAX_CLAUDE_AI_DESCRIPTION_LEN
 from claude_bundles.skills_ui_confirm import (
@@ -20,6 +20,7 @@ from claude_bundles.skills_ui_network import UploadNetworkOracle, UploadResult
 from claude_bundles.skills_ui_open import (
     UploadModalMissingError,
     _assert_upload_modal_scoped,
+    _is_skills_upload_route,
     _open_upload_dialog,
 )
 from claude_bundles.skills_ui_panel import (
@@ -101,6 +102,17 @@ async def _modal_error_text(page: Page) -> str | None:
     return None
 
 
+async def _apply_skill_file_to_input(inp: Locator, skill_path: Path) -> None:
+    resolved = str(skill_path.resolve())
+    await inp.set_input_files(resolved)
+    await inp.evaluate(
+        """el => {
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        }"""
+    )
+
+
 async def _select_file_in_modal(page: Page, skill_path: Path) -> None:
     root = await _assert_upload_modal_scoped(page)
 
@@ -155,6 +167,9 @@ async def _click_upload_submit(page: Page) -> None:
         return
     modal = await _upload_modal_root(page)
     if modal is None:
+        if _is_skills_upload_route(page.url):
+            if await click_labeled_button(page, _UPLOAD_BTN, label="Upload"):
+                return
         return
     if await click_labeled_button(page, _UPLOAD_BTN, label="Upload", scope=modal):
         return
@@ -315,8 +330,8 @@ async def upload_one_skill(
         oracle.expect_slug(slug)
         oracle.attach()
 
-    await _open_upload_dialog(page, context, nav_gate=nav_gate)
-    await _select_file_in_modal(page, skill_path)
+    file_inp = await _open_upload_dialog(page, context, nav_gate=nav_gate)
+    await _apply_skill_file_to_input(file_inp, skill_path)
     await _wait_file_selected(page, skill_path)
     replace_confirmed = await _click_submit_if_present(page, replacing=replacing)
 
