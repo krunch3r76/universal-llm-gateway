@@ -28,6 +28,9 @@ def FrontierSdkBridgeExited(  # noqa: N802
     exit_code: int | None = None,
     signal_name: str | None = None,
     bridge_death_class: str | None = None,
+    bridge_spawn_cwd: str | None = None,
+    bridge_spawn_cwd_exists: bool | None = None,
+    bridge_process_cwd: str | None = None,
 ) -> Event:
     # Distinct from frontier.sdk.worker.failed, which reports what the HTTP
     # client saw after the fact (connection refused). This reports why the
@@ -47,6 +50,12 @@ def FrontierSdkBridgeExited(  # noqa: N802
         payload["signal_name"] = signal_name
     if bridge_death_class is not None:
         payload["bridge_death_class"] = bridge_death_class
+    if bridge_spawn_cwd is not None:
+        payload["bridge_spawn_cwd"] = bridge_spawn_cwd
+    if bridge_spawn_cwd_exists is not None:
+        payload["bridge_spawn_cwd_exists"] = bridge_spawn_cwd_exists
+    if bridge_process_cwd is not None:
+        payload["bridge_process_cwd"] = bridge_process_cwd
     return Event(
         signal="frontier.sdk.bridge.exited",
         payload=payload,
@@ -65,6 +74,9 @@ def emit_sdk_bridge_exited(
     exit_code: int | None = None,
     signal_name: str | None = None,
     bridge_death_class: str | None = None,
+    bridge_spawn_cwd: str | None = None,
+    bridge_spawn_cwd_exists: bool | None = None,
+    bridge_process_cwd: str | None = None,
 ) -> None:
     """Publish an unexpected bridge subprocess exit with its captured stderr tail."""
     emit_frontier_event(
@@ -78,16 +90,23 @@ def emit_sdk_bridge_exited(
             exit_code=exit_code,
             signal_name=signal_name,
             bridge_death_class=bridge_death_class,
+            bridge_spawn_cwd=bridge_spawn_cwd,
+            bridge_spawn_cwd_exists=bridge_spawn_cwd_exists,
+            bridge_process_cwd=bridge_process_cwd,
         )
     )
     logger.error(
         "cursor sdk bridge exited unexpectedly: dispatch_id=%s thread_id=%s "
-        "exit_code=%s signal=%s bridge_death_class=%s elapsed_s=%s stderr_bytes=%s log=%s",
+        "exit_code=%s signal=%s bridge_death_class=%s spawn_cwd=%s "
+        "spawn_cwd_exists=%s process_cwd=%s elapsed_s=%s stderr_bytes=%s log=%s",
         dispatch_id,
         thread_id,
         exit_code,
         signal_name,
         bridge_death_class,
+        bridge_spawn_cwd,
+        bridge_spawn_cwd_exists,
+        bridge_process_cwd,
         elapsed_s,
         stderr_bytes,
         log_path,

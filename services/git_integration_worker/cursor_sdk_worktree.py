@@ -10,6 +10,7 @@ it has no live writer and the branch has merged.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import time
@@ -76,6 +77,24 @@ def is_managed_worktree(path: Path, worktree_root: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def collapse_doubled_worktree_root(path: Path, worktree_root: Path) -> Path:
+    """Collapse accidental ``worktree_root`` duplication in an absolute path.
+
+    When a scratch cwd or caller-supplied path re-embeds the shared arc root,
+    mint/launch would otherwise target a non-existent doubled directory.
+    """
+    resolved = path.expanduser().resolve()
+    root = worktree_root.resolve()
+    root_s = str(root)
+    text = str(resolved)
+    if text.count(root_s) <= 1:
+        return resolved
+    suffix = text.split(root_s, 1)[1].lstrip(os.sep)
+    while root_s in suffix:
+        suffix = suffix.split(root_s, 1)[-1].lstrip(os.sep)
+    return (root / suffix).resolve() if suffix else root
 
 
 def lane_branch_name(thread_id: str) -> str:
@@ -241,7 +260,10 @@ def mint_dispatch_worktree(
     lane_id = thread_id or dispatch_id
     subroot = repo_worktree_subroot(worktree_root, source_repo)
     subroot.mkdir(parents=True, exist_ok=True)
-    wt_path = _worktree_dir(worktree_root, lane_id, source_repo=source_repo)
+    wt_path = collapse_doubled_worktree_root(
+        _worktree_dir(worktree_root, lane_id, source_repo=source_repo),
+        worktree_root,
+    )
     if wt_path.exists():
         raise WorktreeMintError(f"worktree path already exists: {wt_path}")
     branch = _branch_name(lane_id)
@@ -287,7 +309,7 @@ def accept_dispatch_worktree(
 ) -> Path:
     """Validate and register a caller-supplied Lane-B worktree path."""
     lane_id = thread_id or dispatch_id
-    resolved = worktree_path.resolve()
+    resolved = collapse_doubled_worktree_root(worktree_path, worktree_root)
     if not is_managed_worktree(resolved, worktree_root):
         raise WorktreeMintError(
             f"worktree_path {resolved!r} is not under worktree_root {worktree_root!r}"
@@ -457,7 +479,7 @@ def workspace_from_promoted_lease(
 ) -> Path:
     """Resolve launch workspace for a promoted queued dispatch."""
     if lease_key and is_managed_worktree(Path(lease_key), worktree_root):
-        return Path(lease_key).resolve()
+        return collapse_doubled_worktree_root(Path(lease_key), worktree_root)
     _ = source_repo
     return dispatch_workspace_default
 
@@ -519,6 +541,7 @@ __all__ = [
     "ReapSweepResult",
     "WorktreeMintError",
     "accept_dispatch_worktree",
+    "collapse_doubled_worktree_root",
     "is_managed_worktree",
     "lane_branch_name",
     "lane_worktree_dir",

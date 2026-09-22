@@ -227,12 +227,35 @@ def test_ac_e_2_bridge_exit_event_carries_death_class(
     proc = _spawn(
         "import sys; sys.stderr.write('Error: spawn /bin/bash ENOENT\\n'); sys.exit(1)"
     )
+    spawn_cwd = "/tmp/bridge-spawn-cwd-missing"
     tap = start_bridge_stderr_drain(
-        dispatch_id="d-enoent", thread_id="t-7", client=_FakeClient(proc)
+        dispatch_id="d-enoent",
+        thread_id="t-7",
+        client=_FakeClient(proc),
+        spawn_cwd=spawn_cwd,
     )
     assert tap is not None
     _await_drain(tap)
     assert _captured_exits[0]["bridge_death_class"] == "spawn_enoent_missing_cwd"
+    assert _captured_exits[0]["bridge_spawn_cwd"] == spawn_cwd
+    assert _captured_exits[0]["bridge_spawn_cwd_exists"] is False
+
+
+def test_bridge_death_snapshot_requires_spawn_cwd_fields() -> None:
+    """Fails the arc if bridge death forensics omit configured cwd + exists bit."""
+    proc = _spawn("import sys; sys.stderr.write('dying\\n'); sys.exit(2)")
+    spawn_cwd = "/tmp/bridge-snapshot-cwd"
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-cwd",
+        thread_id="t-cwd",
+        client=_FakeClient(proc),
+        spawn_cwd=spawn_cwd,
+    )
+    assert tap is not None
+    _await_drain(tap)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_spawn_cwd"] == spawn_cwd
+    assert snapshot["bridge_spawn_cwd_exists"] is False
 
 
 def test_ac_e_2_spawn_enoent_degraded_reason_before_sdk_network() -> None:

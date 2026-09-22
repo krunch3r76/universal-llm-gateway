@@ -86,6 +86,7 @@ class BridgeStderrTap:
     log_path: Path
     process: subprocess.Popen[str]
     started_at: float
+    spawn_cwd: str | None = None
     thread: threading.Thread | None = None
     expected_exit: bool = False
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -116,6 +117,24 @@ def _resolve_bridge_process(client: Any) -> subprocess.Popen[str] | None:
     if not isinstance(process, subprocess.Popen) or process.stderr is None:
         return None
     return process
+
+
+def bridge_spawn_cwd_forensics(tap: BridgeStderrTap | None) -> dict[str, Any]:
+    """Observed spawn cwd fields at capture time (configured path + process cwd)."""
+    if tap is None or not tap.spawn_cwd:
+        return {}
+    snapshot: dict[str, Any] = {
+        "bridge_spawn_cwd": tap.spawn_cwd,
+        "bridge_spawn_cwd_exists": os.path.isdir(tap.spawn_cwd),
+    }
+    try:
+        proc_cwd = tap.process.cwd()
+    except Exception:  # noqa: BLE001 — process may be gone
+        proc_cwd = None
+    if proc_cwd is not None:
+        if os.path.normpath(proc_cwd) != os.path.normpath(tap.spawn_cwd):
+            snapshot["bridge_process_cwd"] = proc_cwd
+    return snapshot
 
 
 def _decode_exit(returncode: int | None) -> tuple[int | None, str | None]:
@@ -195,6 +214,7 @@ def _on_eof(tap: BridgeStderrTap) -> None:
         return
     exit_code, signal_name = _decode_exit(tap.process.returncode)
     death_class = classify_bridge_stderr(tail=tap.tail())
+    cwd_fields = bridge_spawn_cwd_forensics(tap)
     emit_sdk_bridge_exited(
         dispatch_id=tap.dispatch_id,
         thread_id=tap.thread_id,
@@ -205,6 +225,9 @@ def _on_eof(tap: BridgeStderrTap) -> None:
         stderr_tail=tap.tail(),
         log_path=str(tap.log_path),
         bridge_death_class=death_class,
+        bridge_spawn_cwd=cwd_fields.get("bridge_spawn_cwd"),
+        bridge_spawn_cwd_exists=cwd_fields.get("bridge_spawn_cwd_exists"),
+        bridge_process_cwd=cwd_fields.get("bridge_process_cwd"),
     )
 
 
@@ -213,6 +236,7 @@ def start_bridge_stderr_drain(
     dispatch_id: str,
     thread_id: str,
     client: Any,
+    spawn_cwd: str | None = None,
 ) -> BridgeStderrTap | None:
     """Begin draining the bridge stderr pipe for *dispatch_id*.
 
@@ -237,6 +261,7 @@ def start_bridge_stderr_drain(
         log_path=_STDERR_DIR / f"{dispatch_id}.log",
         process=process,
         started_at=time.monotonic(),
+        spawn_cwd=spawn_cwd,
     )
     thread = threading.Thread(
         target=_drain,
@@ -265,6 +290,7 @@ def bridge_exit_snapshot(tap: BridgeStderrTap | None) -> dict[str, Any]:
     if tail:
         snapshot["bridge_stderr_tail"] = tail
     snapshot["bridge_death_class"] = classify_bridge_stderr(tail=tail)
+    snapshot.update(bridge_spawn_cwd_forensics(tap))
     return snapshot
 
 

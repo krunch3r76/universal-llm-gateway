@@ -92,6 +92,9 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     resolve_run_outcome_label,
     stream_only_effect_deviations,
 )
+from services.git_integration_worker.cursor_sdk_closeout.bridge_caller_error import (
+    bridge_failure_delivery_from_forensics,
+)
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
     merge_conductor_closeout_hop_authority,
 )
@@ -287,6 +290,7 @@ from services.git_integration_worker.cursor_sdk_workspace import (
 )
 from services.git_integration_worker.cursor_sdk_worktree import (
     WorktreeMintError,
+    collapse_doubled_worktree_root,
     lookup_parent_lease_key,
     maybe_prune_worktree_on_terminal,
     reap_orphan_worktrees,
@@ -1035,6 +1039,7 @@ def _run_sdk_sync(
             dispatch_id=ctx.dispatch_id,
             thread_id=ctx.thread_id,
             client=client,
+            spawn_cwd=str(ctx.dispatch_workspace.resolve()),
         )
         if live_counter is None:
             live_counter = _LiveToolCallCounter()
@@ -2640,12 +2645,21 @@ async def _finalize_bridge_abort_partial(
         write_repo_sidecar, source_repo, req.dispatch_id, sidecar_body
     )
     degraded_reasons = degraded_reasons_from_exception(exc)
+    delivery = bridge_failure_delivery_from_forensics(
+        forensics=forensics,
+        exc=exc,
+        default_code="CURSOR_SDK_BRIDGE_ABORT",
+    )
+    fail_code = delivery.code if delivery else "CURSOR_SDK_BRIDGE_ABORT"
+    fail_message = delivery.message if delivery else str(exc)
+    fail_retryable = delivery.retryable if delivery else True
+    fail_error = delivery.worker_error if delivery else f"{type(exc).__name__}: {exc}"
     emit_sdk_worker_failed(
         dispatch_id=req.dispatch_id,
         thread_id=req.thread_id,
         execution_id=req.execution_id,
-        error=f"{type(exc).__name__}: {exc}",
-        worker_error_code="CURSOR_SDK_BRIDGE_ABORT",
+        error=fail_error,
+        worker_error_code=fail_code,
         degraded_reasons=list(degraded_reasons) if degraded_reasons else None,
     )
     env_data: dict[str, Any] = {
@@ -2658,10 +2672,10 @@ async def _finalize_bridge_abort_partial(
     if degraded_reasons:
         env_data["degraded_reasons"] = list(degraded_reasons)
     env = error_envelope(
-        code="CURSOR_SDK_BRIDGE_ABORT",
-        message=str(exc),
+        code=fail_code,
+        message=fail_message,
         source="gateway",
-        retryable=True,
+        retryable=fail_retryable,
         data=env_data,
     )
     await _terminate_link(
@@ -2708,24 +2722,41 @@ async def _finalize_failed(
     two steps cannot leave ``thread_dispatch_links.terminal_status`` NULL while
     a FAILED turn exists (O14 ghost projection; friction a:32612).
     """
-    effective_error = error if error is not None else f"{code}: {message}"
+    forensics = data if isinstance(data, dict) else None
+    delivery = (
+        bridge_failure_delivery_from_forensics(
+            forensics=forensics,
+            exc=exc,
+            default_code=code,
+        )
+        if forensics is not None
+        else None
+    )
+    effective_code = delivery.code if delivery else code
+    effective_message = delivery.message if delivery else message
+    effective_retryable = delivery.retryable if delivery else retryable
+    effective_error = (
+        delivery.worker_error
+        if delivery
+        else (error if error is not None else f"{code}: {message}")
+    )
     degraded_reasons = degraded_reasons_from_exception(exc) if exc is not None else ()
     emit_sdk_worker_failed(
         dispatch_id=req.dispatch_id,
         thread_id=req.thread_id,
         execution_id=req.execution_id,
         error=effective_error,
-        worker_error_code=code,
+        worker_error_code=effective_code,
         degraded_reasons=list(degraded_reasons) if degraded_reasons else None,
     )
     env_data = dict(data) if data else {}
     if degraded_reasons:
         env_data["degraded_reasons"] = list(degraded_reasons)
     env = error_envelope(
-        code=code,
-        message=message,
+        code=effective_code,
+        message=effective_message,
         source="gateway",
-        retryable=retryable,
+        retryable=effective_retryable,
         data=env_data if env_data else None,
     )
     await _terminate_link(
@@ -3242,8 +3273,15 @@ async def admit_cursor_dispatch(
             lane=selected_lane,
         )
         mint_wait_ms = (time.monotonic() - mint_started) * 1000.0
-        dispatch_workspace = binding.workspace
-        lease_key = binding.lease_key
+        dispatch_workspace = collapse_doubled_worktree_root(
+            binding.workspace, cfg.worktree_root
+        )
+        lease_key = str(dispatch_workspace)
+        binding = type(binding)(
+            workspace=dispatch_workspace,
+            lease_key=lease_key,
+            binding_kind=binding.binding_kind,
+        )
         minted_lane_b = binding.binding_kind == "minted"
         isolation_materialized = b_worktree_materialized(
             admit_lane=selected_lane,
