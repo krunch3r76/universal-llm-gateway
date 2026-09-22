@@ -138,7 +138,7 @@ Returns `{thread, turn, auto_handler_status, job_admission, poll_hint}` — `aut
 
 **Admit gates:** `contract`∈{`implement`,`investigate`} ⇒ DIRECTIVE body MUST include `vision:` else **`vision_field_missing`** at admit (pre-model). `require_attended` (wire or body OR) ⇒ terminal **`status:needs-attended`** + one recommended answer.
 
-**`contract=implement` admit:** `handoff=pure-mechanical` unless body has line-start `RULING` / `RULING AC` (optional `AC<n> —` prefix) — mid-sentence `RULING` ¬ sufficient. SOT: `agent_skill:directive-authoring-standard`.
+**`contract=implement` admit:** `handoff=pure-mechanical` unless body has line-start `RULING` / `RULING AC` (optional `AC<n> —` prefix) — mid-sentence `RULING` ¬ sufficient. Judgment marker (implement admit): `agent_skill:directive-authoring-standard`.
 
 **Mission negotiation (`contract=confer` only):** TYPE:DIRECTIVE + closed `negotiation_phase`∈{`proposal`,`counter`,`agree`,`ratify`} + `negotiation_id`, `revision`, `in_reply_to_turn`, `proposal_hash`, mission fields, `idle_deadline` in **body** only; Auto replies TYPE:DISPOSITION + closed `negotiation.*` vocab.
 
@@ -154,7 +154,7 @@ Returns `{thread, turn, auto_handler_status, job_admission, poll_hint}` — `aut
 
 **Codework lanes:** slash commands = attended IDE wrappers only; headless loads skill from DIRECTIVE. `contract=seed` → `work-item-seed-path`; todo codework → `implement`|`investigate`|`verify` + `abstraction-layering` at highest open G1–G6.
 
-**CLOSEOUT shape (by contract):** answer→disposition:answered; confer→recommendation; ask→≤12 lines + file:line; investigate→findings; implement→changes+AC; verify→verdict; execute→tier-M payload; propagate→ledger+restart; seed→todo slug; recon→recon_core.
+**CLOSEOUT shape (by contract):** answer→disposition:answered + inline relay; confer→codebase-grounded recommendation; ask→how-it-works in ≤12 lines + file:line anchors; investigate→findings / nested dispatch summary; implement→file changes + AC evidence (codework: ``abstraction-layering`` lane); verify→verification verdict + evidence (codework: ``abstraction-layering`` G6); execute→one tier-M op raw payload (body: tool_op + effects_expected); propagate→propagation ledger + drain-gated restart status; seed→todo slug + consult URI (if any) + ``abstraction-layering`` entry gate; recon→recon_core findings (+ optional recon_extra).
 
 **Second read (advisory):** implement|investigate|verify may append `## SECOND READ` by `cursor/claude-opus-5` — OBSERVATION only, ¬gate authority. Knobs: `CURSOR_AUTO_REFLEX_ENABLED`, `_BUDGET`, `_SAMPLE_EVERY`, `_MODEL`, `_EFFORT`, `_TIMEOUT_S`.
 

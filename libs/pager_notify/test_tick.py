@@ -152,10 +152,10 @@ def test_format_tick_sms_body_truncates_to_budget() -> None:
             gid=f"G{i}",
             executor_slug="cursor/grok-4.7",
             root_id=str(6000 + i),
-            thread_slug=f"very-long-charter-slug-name-{i}" * 3,
-            task_hint="implement " * 20,
+            thread_slug=f"very-long-charter-slug-name-{i}" * 40,
+            task_hint="implement " * 120,
         )
-        for i in range(8)
+        for i in range(48)
     ]
     body = format_tick_sms_body(
         roots=40,
