@@ -1,4 +1,4 @@
-"""Render the static WAKE doorbell prompt for claude.ai scheduled liaison tasks.
+"""Render the static WAKE doorbell prompt for ticker-seated liaison wakes.
 
 The paste is the doorbell (F2): addresses + episodic frame only; payload stays
 on the bus/graph. Amendment A1 digest delivery; memos 10479#118 (plant an
@@ -312,9 +312,17 @@ def render_doorbell(
         address_parts.append(render_address(liaison_protocol_sot_uri()))
     address_parts.extend(render_address(addr) for addr in extra_addresses)
     addresses = "; ".join(address_parts)
-    # Default keeps the scheduled-task frame (R15). CDP/live seating passes fired_by
-    # so the episodic frame stays true (10158 M2) instead of a false ritual label.
-    fire = fired_by if fired_by is not None else f"scheduled task liaison-wake-{root}"
+    # An omitted caller must not claim a claude.ai scheduled task. That label
+    # sent source hunts at the wrong scheduler after liaison-schedule-wake was
+    # retired. Live seating passes fired_by (10158 M2).
+    fire = (
+        fired_by
+        if fired_by is not None
+        else (
+            f"fired_by unset; liaison-schedule-wake retired; "
+            f"ticker is the house wake ({root})"
+        )
+    )
     quintuple = _quintuple_requested(
         attention_row_ids=attention_row_ids,
         as_of=as_of,

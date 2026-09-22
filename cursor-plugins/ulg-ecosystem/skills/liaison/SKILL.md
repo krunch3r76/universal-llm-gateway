@@ -56,9 +56,8 @@ on the house generate is not the play path.
 EXECUTE** `runbook:liaison-operator-guide` (`cortex://notes/runbooks/liaison-operator-guide.md`) — `cite(runbook)
 ⇒ load(cited_section*) ∧ execute(seat-bound_steps)` this turn: read the root's `…/<root>-operator-guide.md`,
 answer from it in plain language, patch it the same turn. Today's liaison pattern: the attended IDE tab is the
-override; gear-3 headless successor is the fallback. claude.ai scheduled wake is **planned** (phase-3 of
-`plan:life-orchestrator-navigator`, root-agnostic `liaison_digest(root)`); not yet the present-tense default
-(operator ruling 10479#105).
+override; gear-3 headless successor is the fallback. The GIW doorbell schedule
+(`scripts/liaison-schedule-wake.py`) is retired and refuses. The ticker is the only house wake.
 
 ## Tick protocol (one wake = one digest)
 
