@@ -121,6 +121,8 @@ def build_implement_closeout_body(
     resolved_model: str | None = None,
     sdk_mode: Literal["agent", "plan"] | None = None,
     packet_text: str | None = None,
+    worker_open_forks: list[dict[str, Any]] | None = None,
+    acceptance_criteria: list[str] | None = None,
 ) -> str:
     """Build a compact, valid ImplementCloseout JSON turn body.
 
@@ -236,10 +238,22 @@ def build_implement_closeout_body(
         commits_ahead=commits_ahead,
         deviations=deviations,
     )
+    from implement_admission.plan_closeout_fields import (
+        authority_fork_from_open_forks,
+        merge_open_forks,
+        plan_spec_fields,
+    )
+
     from services.git_integration_worker.cursor_sdk_mode import (
         apply_plan_mode_closeout_gate,
-        body_implement_ready,
     )
+
+    spec_text = (sidecar_markdown or packet_text or "").strip() or None
+    merged_open_forks = merge_open_forks(worker_open_forks, spec_text)
+    spec_sha256, dense_spec_valid = plan_spec_fields(spec_text or "")
+    plan_files_expected = list(files_expected or [])
+    plan_acceptance = list(acceptance_criteria or [])
+    authority_fork = authority_fork_from_open_forks(merged_open_forks)
 
     status, resolved_work_outcome, landed, deviations, plan_verdict = (
         apply_plan_mode_closeout_gate(
@@ -250,18 +264,14 @@ def build_implement_closeout_body(
             deviations=deviations,
             artifact_paths=artifact_paths,
             offgit_deliverable_uris=offgit_deliverable_uris,
+            open_forks=merged_open_forks if sdk_mode == "plan" else ...,
+            spec_sha256=spec_sha256 if sdk_mode == "plan" else None,
+            dense_spec_valid=dense_spec_valid if sdk_mode == "plan" else None,
+            files_expected=plan_files_expected if sdk_mode == "plan" else None,
+            acceptance_criteria=plan_acceptance if sdk_mode == "plan" else None,
         )
     )
-    from implement_admission.plan_implement_handoff import build_nest_implement_hint
-
-    nest_implement_hint = build_nest_implement_hint(
-        plan_verdict=plan_verdict,
-        implement_ready=body_implement_ready(packet_text or sidecar_markdown),
-        thread_id=thread_id,
-        dispatch_id=dispatch_id,
-        source_ref=work_item_ref,
-        artifact_paths=artifact_paths,
-    )
+    _ = plan_verdict
     from services.git_integration_worker.cursor_auto.closeout_status_polarity import (
         classify_status_incomplete_class,
     )
@@ -434,8 +444,17 @@ def build_implement_closeout_body(
             payload["landed_resolution_reason"] = landed_resolution_reason
         if sdk_mode is not None and sdk_mode != "agent":
             payload["sdk_mode"] = sdk_mode
-        if nest_implement_hint is not None:
-            payload["nest_implement_hint"] = nest_implement_hint
+        payload["open_forks"] = merged_open_forks
+        payload["authority_fork"] = authority_fork
+        if sdk_mode == "plan":
+            if spec_sha256:
+                payload["spec_sha256"] = spec_sha256
+            if dense_spec_valid is not None:
+                payload["dense_spec_valid"] = dense_spec_valid
+            if plan_files_expected:
+                payload["files_expected"] = plan_files_expected
+            if plan_acceptance:
+                payload["acceptance_criteria"] = plan_acceptance
         effects = attribution_effects_paths(
             created=repo_files.created,
             modified=repo_files.modified,

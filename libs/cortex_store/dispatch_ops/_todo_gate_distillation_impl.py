@@ -691,6 +691,21 @@ def distill_todo_implement_gate(
             todo_id=resolved.entity_id,
             assertion_id=assertion_id,
         )
+        from implement_admission.events_density_readiness import (
+            emit_implement_ready_asserted,
+        )
+
+        spec_digest = None
+        if prepared.spec_text:
+            from implement_admission.dense_spec_schema import dense_spec_sha256
+
+            spec_digest = dense_spec_sha256(prepared.spec_text)
+        emit_implement_ready_asserted(
+            entity_id=resolved.entity_id,
+            assertion_id=assertion_id,
+            spec_sha256=spec_digest,
+            evidence_uri=prepared.spec_path,
+        )
         if incoming_waiver is not None:
             cortex_implement_recon_waived(
                 todo_id=resolved.entity_id,

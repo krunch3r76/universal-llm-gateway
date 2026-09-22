@@ -34,8 +34,11 @@ _SOURCE_REF = "todo:conductor-hop-wait-protocol"
 
 
 class _StubCortex:
+    def __init__(self, *, triage: str = "judgment_required") -> None:
+        self._triage = triage
+
     def entity_get(self, entity_id: str, **kwargs: Any) -> dict[str, Any]:  # noqa: ANN003, ARG002
-        return {"id": entity_id, "attributes": {"density_triage": "judgment_required"}}
+        return {"id": entity_id, "attributes": {"density_triage": self._triage}}
 
     def list_relationships(
         self,
@@ -89,9 +92,9 @@ def _write_review(files_root: Path, body: str) -> str:
     return "cortex://notes/system/reviews/conductor-hop-wait-protocol-g6-verdict.md"
 
 
-def _deps(tmp_path: Path) -> FoldDeps:
+def _deps(tmp_path: Path, *, triage: str = "judgment_required") -> FoldDeps:
     return FoldDeps(
-        cortex=_StubCortex(),
+        cortex=_StubCortex(triage=triage),
         bus=_StubBus(),
         git=_StubGit(),
         source_ref=_SOURCE_REF,
@@ -438,3 +441,29 @@ def test_r2_c3_bare_sha40_sidecar_witnesses_g2_g3_g4(
     assert witness is not None
     assert witness.source == expected_source
     assert witness.detail == _BARE_SHA40
+
+
+def test_g3_witness_from_spec_artifact_ignores_density_triage(tmp_path: Path) -> None:
+    """G3 witness resolves from spec artifact only (AC4)."""
+    files_root = tmp_path / "cortex"
+    spec_uri = "cortex://notes/system/specs/conductor-hop-wait-protocol-s4b.md"
+    spec_path = files_root / "notes/system/specs/conductor-hop-wait-protocol-s4b.md"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("# spec\n", encoding="utf-8")
+    tip_body = (
+        "## Sidecars\n\n"
+        "| ID | Artifact URI | What it is |\n"
+        "|---|---|---|\n"
+        f"| S4b | `{spec_uri}` | G3 spec |\n"
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path, triage="implement_ready"),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    g3 = witnesses.get("G3")
+    assert g3 is not None
+    assert g3.source == "artifact:S4b"
+    assert g3.detail == spec_uri

@@ -50,14 +50,6 @@ class WitnessNestedImplement(Protocol):
     def nested_implement_has_commits(self, *, nest_under_dispatch_id: str) -> bool: ...
 
 
-class WitnessPlanHandoff(Protocol):
-    """Ledger read surface for G3 plan-mode nest_implement_hint witness."""
-
-    def plan_handoff_for_conductor(
-        self, *, nest_under_dispatch_id: str
-    ) -> dict[str, Any] | None: ...
-
-
 class WitnessGit(Protocol):
     """Git read surface for G7 landed-sha witness."""
 
@@ -80,7 +72,6 @@ class FoldDeps:
     cortex: WitnessCortex
     bus: WitnessBus | None = None
     nested_implement: WitnessNestedImplement | None = None
-    plan_handoff: WitnessPlanHandoff | None = None
     git: WitnessGit | None = None
     source_ref: str | None = None
     summon_mode: str | None = None

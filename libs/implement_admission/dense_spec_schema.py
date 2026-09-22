@@ -131,6 +131,11 @@ def _has_stray_fence(text: str) -> bool:
     return all_count > anchored_count
 
 
+def dense_spec_visible_text(text: str) -> str:
+    """Code-stripped visible text (same predicate as validate_dense_spec)."""
+    return _strip_code(text)
+
+
 def dense_spec_sha256(text: str) -> str:
     """Bare lowercase hex digest of the spec bytes (no prefix)."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -196,6 +201,7 @@ __all__ = [
     "DenseSpecVerdict",
     "dense_spec_hash_uri",
     "dense_spec_sha256",
+    "dense_spec_visible_text",
     "spec_basename",
     "validate_dense_spec",
 ]
