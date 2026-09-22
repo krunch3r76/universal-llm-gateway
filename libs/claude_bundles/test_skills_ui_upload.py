@@ -13,6 +13,13 @@ from claude_bundles.skills_ui_landed import (
     confirm_skill_upload_ui,
     toast_names_slug,
 )
+from claude_bundles.skills_ui_menu import (
+    MenuInventory,
+    MenuItem,
+    MenuPopup,
+    MenuTrigger,
+    UploadSelection,
+)
 from claude_bundles.skills_ui_network import (
     UploadResult,
     _is_noise_url,
@@ -22,6 +29,11 @@ from claude_bundles.skills_ui_network import (
 from claude_bundles.skills_ui_open import (
     UploadModalMissingError,
     _modal_file_input,
+    _open_upload_dialog,
+)
+from claude_bundles.skills_ui_panel import (
+    _upload_modal_open,
+    _upload_modal_root,
 )
 from claude_bundles.skills_ui_upload import (
     _select_file_in_modal,
@@ -141,6 +153,198 @@ async def test_select_file_in_modal_raises_when_modal_absent() -> None:
             await _select_file_in_modal(page, Path("/tmp/fake-skill.md"))
 
 
+def _mock_upload_overlay(
+    inner_text: str,
+    *,
+    file_input_count: int = 1,
+    visible: bool = True,
+) -> MagicMock:
+    file_inp = _mock_locator(count=file_input_count)
+    ov = MagicMock()
+    ov.is_visible = AsyncMock(return_value=visible)
+    ov.inner_text = AsyncMock(return_value=inner_text)
+
+    def _locator(sel: str) -> MagicMock:
+        if sel == 'input[type="file"]':
+            return file_inp
+        return _mock_locator()
+
+    ov.locator = MagicMock(side_effect=_locator)
+    return ov
+
+
+def _mock_page_with_upload_overlay(inner_text: str, *, file_input_count: int = 1) -> MagicMock:
+    overlay = _mock_upload_overlay(inner_text, file_input_count=file_input_count)
+    overlays = MagicMock()
+    overlays.count = AsyncMock(return_value=1)
+    overlays.nth = MagicMock(return_value=overlay)
+    title = _mock_locator(count=0)
+    page = MagicMock()
+    page.url = "https://claude.ai/new#settings/customize-skills"
+    page.get_by_text = MagicMock(return_value=title)
+
+    def _locator(sel: str) -> MagicMock:
+        if "data-popup-open" in sel or "role=\"dialog\"" in sel:
+            return overlays
+        return _mock_locator()
+
+    page.locator = MagicMock(side_effect=_locator)
+    return page
+
+
+@pytest.mark.asyncio
+async def test_upload_modal_detects_drop_zone_only_overlay() -> None:
+    page = _mock_page_with_upload_overlay("Drag and drop or click to upload")
+    assert await _upload_modal_open(page)
+    root = await _upload_modal_root(page)
+    assert root is not None
+    inp = root.locator('input[type="file"]')
+    assert await inp.count() == 1
+
+
+@pytest.mark.asyncio
+async def test_upload_modal_drop_zone_without_file_input_is_not_open() -> None:
+    page = _mock_page_with_upload_overlay(
+        "Drag and drop or click to upload", file_input_count=0
+    )
+    assert not await _upload_modal_open(page)
+
+
+@pytest.mark.asyncio
+async def test_modal_file_input_resolves_scoped_input_on_drop_zone_overlay() -> None:
+    page = _mock_page_with_upload_overlay("Drag and drop or click to upload")
+    with patch(
+        "claude_bundles.skills_ui_open._upload_modal_root",
+        new_callable=AsyncMock,
+        side_effect=lambda _p: _mock_upload_overlay("Drag and drop or click to upload"),
+    ):
+        inp = await _modal_file_input(page)
+    assert inp is not None
+
+
+@pytest.mark.asyncio
+async def test_open_upload_dialog_succeeds_when_drop_zone_modal_detected() -> None:
+    page = MagicMock()
+    _wire_page_playwright_stubs(page)
+    page.url = "https://claude.ai/new#settings/customize-skills"
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    add_btn = AsyncMock()
+    inv = _menu_inventory(page.url)
+    sel = UploadSelection(status="found", index=0, text="Upload a skill")
+    file_inp = _mock_locator(count=1)
+    file_root = _mock_upload_overlay("Drag and drop or click to upload")
+    file_root.locator = MagicMock(return_value=file_inp)
+
+    open_flags = iter([False, True])
+
+    async def _modal_open(_page) -> bool:
+        return next(open_flags, True)
+
+    with (
+        patch(
+            "claude_bundles.skills_ui_open._find_add_button",
+            new_callable=AsyncMock,
+            return_value=add_btn,
+        ),
+        patch("claude_bundles.skills_ui_open._dismiss_modals", new_callable=AsyncMock),
+        patch(
+            "claude_bundles.skills_ui_open.stability_guarded_add_click",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "claude_bundles.skills_ui_open.wait_menu_idle",
+            new_callable=AsyncMock,
+            return_value=inv,
+        ),
+        patch(
+            "claude_bundles.skills_ui_open.resolve_upload_selection",
+            new_callable=AsyncMock,
+            return_value=(sel, inv),
+        ),
+        patch(
+            "claude_bundles.skills_ui_open.js_click_menuitem_at",
+            new_callable=AsyncMock,
+            return_value={"ok": True},
+        ),
+        patch(
+            "claude_bundles.skills_ui_open._panel_lost_mid_attempt",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "claude_bundles.skills_ui_open._upload_modal_open",
+            side_effect=_modal_open,
+        ),
+        patch(
+            "claude_bundles.skills_ui_open._upload_modal_root",
+            new_callable=AsyncMock,
+            return_value=file_root,
+        ),
+    ):
+        got = await _open_upload_dialog(page, MagicMock(), nav_gate=None)
+    assert got is file_inp.first
+
+
+@pytest.mark.asyncio
+async def test_open_upload_dialog_modal_timeout_is_upload_modal_missing() -> None:
+    page = MagicMock()
+    _wire_page_playwright_stubs(page)
+    page.url = "https://claude.ai/new#settings/customize-skills"
+    page.keyboard = MagicMock()
+    page.keyboard.press = AsyncMock()
+    page.wait_for_timeout = AsyncMock()
+    add_btn = AsyncMock()
+    inv = _menu_inventory(page.url)
+    sel = UploadSelection(status="found", index=0, text="Upload a skill")
+
+    with (
+        patch(
+            "claude_bundles.skills_ui_open._find_add_button",
+            new_callable=AsyncMock,
+            return_value=add_btn,
+        ),
+        patch("claude_bundles.skills_ui_open._dismiss_modals", new_callable=AsyncMock),
+        patch(
+            "claude_bundles.skills_ui_open.stability_guarded_add_click",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "claude_bundles.skills_ui_open.wait_menu_idle",
+            new_callable=AsyncMock,
+            return_value=inv,
+        ),
+        patch(
+            "claude_bundles.skills_ui_open.resolve_upload_selection",
+            new_callable=AsyncMock,
+            return_value=(sel, inv),
+        ),
+        patch(
+            "claude_bundles.skills_ui_open.js_click_menuitem_at",
+            new_callable=AsyncMock,
+            return_value={"ok": True},
+        ),
+        patch(
+            "claude_bundles.skills_ui_open._panel_lost_mid_attempt",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "claude_bundles.skills_ui_open._upload_modal_open",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "claude_bundles.skills_ui_open.panel_state_summary",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        pytest.raises(UploadModalMissingError, match="did not open within 15s"),
+    ):
+        await _open_upload_dialog(page, MagicMock(), nav_gate=None)
+
+
 @pytest.mark.asyncio
 async def test_modal_file_input_raises_when_not_on_skills_url() -> None:
     page = AsyncMock()
@@ -162,13 +366,45 @@ async def test_stability_guarded_add_click_skips_when_expanded() -> None:
     add_btn.click.assert_not_called()
 
 
+def _menu_inventory(url: str) -> MenuInventory:
+    return MenuInventory(
+        url=url,
+        trigger=MenuTrigger(found=True, aria_expanded="true"),
+        popup=MenuPopup(found_by="test", mounted=True, visible=True, menuitem_count=1),
+        items=[
+            MenuItem(
+                index=0,
+                text="Upload a skill",
+                role="menuitem",
+                aria_haspopup="",
+                aria_disabled="",
+                visible=True,
+                id="",
+            )
+        ],
+    )
+
+
 def _mock_locator(*, count: int = 0, visible: bool = False) -> MagicMock:
     loc = MagicMock()
     loc.count = AsyncMock(return_value=count)
     nth = MagicMock()
     nth.is_visible = AsyncMock(return_value=visible)
     loc.nth = MagicMock(return_value=nth)
+    loc.first = nth if count else loc
     return loc
+
+
+def _wire_page_playwright_stubs(page: MagicMock) -> None:
+    """Panel helpers await locator.count(); bare MagicMock page must mimic Playwright."""
+
+    def _locator(_sel: str) -> MagicMock:
+        loc = _mock_locator()
+        loc.filter = MagicMock(return_value=_mock_locator())
+        return loc
+
+    page.get_by_role = MagicMock(side_effect=lambda *_a, **_k: _mock_locator())
+    page.locator = MagicMock(side_effect=_locator)
 
 
 def _mock_page(locator_map: dict[str, MagicMock]) -> MagicMock:
