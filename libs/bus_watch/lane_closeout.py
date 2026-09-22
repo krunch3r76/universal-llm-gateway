@@ -56,6 +56,26 @@ def _terminal_status(row: dict[str, Any]) -> str:
     return str(row.get("status") or "unknown").lower()
 
 
+def _land_disposition_from_envelope(data: dict[str, Any]) -> str:
+    """Lane merge action — not whether a cited SHA is already on master."""
+    explicit = str(data.get("land_disposition") or "").strip().lower()
+    if explicit:
+        return explicit
+    landed_flag = data.get("landed")
+    if landed_flag is True:
+        return "landed"
+    if landed_flag is False:
+        commits_raw = data.get("commits_ahead")
+        try:
+            commits = int(commits_raw) if commits_raw is not None else 0
+        except (TypeError, ValueError):
+            commits = 0
+        if commits >= 1:
+            return "discard"
+        return "discard"
+    return ""
+
+
 def _parse_json_closeout_envelope(body: str) -> dict[str, Any] | None:
     """cursor-sdk CLOSEOUT bodies are a JSON envelope, not ``status:`` prose."""
     text = body.strip()
@@ -68,17 +88,17 @@ def _parse_json_closeout_envelope(body: str) -> dict[str, Any] | None:
     if not isinstance(data, dict):
         return None
     settled = str(data.get("work_outcome") or data.get("status") or "").lower()
-    landed = ""
+    landed_sha = ""
     evidence = data.get("evidence_uris")
     if isinstance(evidence, dict):
         refs = evidence.get("git_refs") or []
         if isinstance(refs, list) and refs:
-            landed = str(refs[0]).lower()
+            landed_sha = str(refs[0]).lower()
     return {
         "settled": settled,
-        "landed": landed,
+        "landed": landed_sha,
         "next": "",
-        "land_disposition": "landed" if landed else "",
+        "land_disposition": _land_disposition_from_envelope(data),
     }
 
 
@@ -112,20 +132,30 @@ def _parse_lane_worker_closeout(text: str) -> dict[str, Any]:
     }
 
 
+def _turn_is_worker_closeout(turn: dict[str, Any]) -> bool:
+    subject = str(turn.get("subject") or "")
+    body = str(turn.get("body") or "")
+    upper = subject.upper()
+    if "CLOSEOUT" in upper or "status:done" in upper.lower():
+        return True
+    if _STATUS_RE.search(body) and (
+        "closeout" in upper.lower() or "TYPE: CLOSEOUT" in body.upper()
+    ):
+        return True
+    return False
+
+
 def _find_worker_closeout_turn(turns: list[dict[str, Any]]) -> dict[str, Any] | None:
-    for turn in reversed(turns):
+    """Return the CLOSEOUT turn with the greatest ``turn_number`` (API order agnostic)."""
+    candidates: list[dict[str, Any]] = []
+    for turn in turns:
         if not isinstance(turn, dict):
             continue
-        subject = str(turn.get("subject") or "")
-        body = str(turn.get("body") or "")
-        upper = subject.upper()
-        if "CLOSEOUT" in upper or "status:done" in upper.lower():
-            return turn
-        if _STATUS_RE.search(body) and (
-            "closeout" in upper.lower() or "TYPE: CLOSEOUT" in body.upper()
-        ):
-            return turn
-    return None
+        if _turn_is_worker_closeout(turn):
+            candidates.append(turn)
+    if not candidates:
+        return None
+    return max(candidates, key=lambda t: int(t.get("turn_number") or 0))
 
 
 def build_closeout_record(
@@ -250,6 +280,22 @@ def _already_emitted(state: dict[str, Any], key: str) -> bool:
     return bool(emitted.get(key))
 
 
+def _projected_worker_turn(state: dict[str, Any], lane_id: str) -> int:
+    raw = (state.get("lane_closeout_worker_turn") or {}).get(lane_id)
+    try:
+        return int(raw) if raw is not None else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _mark_projected_worker_turn(
+    state: dict[str, Any], lane_id: str, worker_turn: int
+) -> None:
+    projected = dict(state.get("lane_closeout_worker_turn") or {})
+    projected[lane_id] = worker_turn
+    state["lane_closeout_worker_turn"] = projected
+
+
 def _mark_emitted(state: dict[str, Any], key: str) -> None:
     emitted = dict(state.get("lane_closeouts_emitted") or {})
     emitted[key] = _utcnow_iso()
@@ -314,8 +360,6 @@ def observe_terminal_lane_closeouts(
             continue
         terminal_status = _terminal_status(lane)
         key = closeout_idempotency_key(lane_id, terminal_status)
-        if _already_emitted(state, key):
-            continue
         abandoned = terminal_status == "abandoned"
         worker_text = ""
         turns_raw = fetch_turns(lane_id)
@@ -323,6 +367,14 @@ def observe_terminal_lane_closeouts(
         closeout_turn = _find_worker_closeout_turn(
             [t for t in turns if isinstance(t, dict)]
         )
+        worker_turn = (
+            int(closeout_turn.get("turn_number") or 0) if closeout_turn else 0
+        )
+        if worker_turn > 0:
+            if _projected_worker_turn(state, lane_id) >= worker_turn:
+                continue
+        elif _already_emitted(state, key):
+            continue
         if closeout_turn is not None:
             worker_text = str(closeout_turn.get("body") or "")
         record = build_closeout_record(
@@ -339,6 +391,8 @@ def observe_terminal_lane_closeouts(
         )
         if result and result.get("ok"):
             _mark_emitted(state, key)
+            if worker_turn > 0:
+                _mark_projected_worker_turn(state, lane_id, worker_turn)
             posted.append(record)
     return posted
 

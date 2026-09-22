@@ -9,6 +9,7 @@ import pytest
 from bus_watch.events import LiaisonLaneCloseoutObserved
 from bus_watch.induction import build_wake_induction
 from bus_watch.lane_closeout import (
+    _find_worker_closeout_turn,
     build_closeout_record,
     closeout_idempotency_key,
     format_closeout_body,
@@ -182,6 +183,7 @@ def test_build_closeout_record_11692_specimen() -> None:
 def test_build_closeout_record_from_sdk_json_envelope() -> None:
     body = (
         '{"schema_version":1,"status":"partial","work_outcome":"checks_failed",'
+        '"landed":false,"commits_ahead":0,'
         '"evidence_uris":{"git_refs":["02b419c62ca06ff0646982e907e8fa0971f8a095"]}}'
     )
     record = build_closeout_record(
@@ -191,7 +193,81 @@ def test_build_closeout_record_from_sdk_json_envelope() -> None:
     )
     assert record["settled"] == "checks_failed"
     assert record["landed"] == "02b419c62ca06ff0646982e907e8fa0971f8a095"
+    assert record.get("land_disposition") == "discard"
     assert record["live"] == "unprobed"
+
+
+def test_find_worker_closeout_turn_max_turn_newest_first() -> None:
+    """API newest-first must not pick an earlier CLOSEOUT (12527)."""
+    turns = [
+        {
+            "turn_number": 4,
+            "subject": "cursor-sdk CLOSEOUT",
+            "body": '{"work_outcome":"shipped","landed":true}',
+        },
+        {"turn_number": 3, "subject": "progress", "body": "working"},
+        {
+            "turn_number": 2,
+            "subject": "cursor-sdk CLOSEOUT",
+            "body": '{"work_outcome":"checks_failed","landed":false}',
+        },
+    ]
+    picked = _find_worker_closeout_turn(turns)
+    assert picked is not None
+    assert picked["turn_number"] == 4
+
+
+def test_observe_refreshes_root_row_when_later_worker_closeout() -> None:
+    """12527: turn 2 checks_failed then turn 4 shipped — second projection posts."""
+    client = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 201
+    resp.json.return_value = {"turn": {"turn_number": 99}}
+    client.post.return_value = resp
+    lane = {
+        "id": "12527",
+        "slug": "lane-closeout-integrity",
+        "lifecycle": "completed",
+        "status": "closed",
+    }
+    state: dict = {}
+    turns_after_first = [
+        {
+            "turn_number": 2,
+            "subject": "cursor-sdk CLOSEOUT",
+            "body": '{"work_outcome":"checks_failed","landed":false}',
+        },
+    ]
+    turns_after_second = [
+        {
+            "turn_number": 4,
+            "subject": "cursor-sdk CLOSEOUT",
+            "body": '{"work_outcome":"shipped","landed":true}',
+        },
+        {
+            "turn_number": 2,
+            "subject": "cursor-sdk CLOSEOUT",
+            "body": '{"work_outcome":"checks_failed","landed":false}',
+        },
+    ]
+    current = {"turns": turns_after_first}
+
+    def fetch(_tid: str) -> list[dict]:
+        return current["turns"]
+
+    with patch("bus_watch.lane_closeout.emit_lane_closeout_observed"):
+        first = observe_terminal_lane_closeouts(
+            "12286", [lane], state, client, fetch_turns=fetch
+        )
+        assert len(first) == 1
+        assert first[0]["settled"] == "checks_failed"
+        current["turns"] = turns_after_second
+        second = observe_terminal_lane_closeouts(
+            "12286", [lane], state, client, fetch_turns=fetch
+        )
+    assert len(second) == 1
+    assert second[0]["settled"] == "shipped"
+    assert client.post.call_count == 2
 
 
 def test_post_lane_closeout_emits_event() -> None:
@@ -230,7 +306,9 @@ def test_observe_terminal_lane_closeouts_idempotent() -> None:
         "status": "closed",
     }
     state: dict = {}
-    turns = [{"subject": "cursor-sdk CLOSEOUT", "body": _worker_closeout()}]
+    turns = [
+        {"turn_number": 1, "subject": "cursor-sdk CLOSEOUT", "body": _worker_closeout()}
+    ]
 
     def fetch(_tid: str) -> list[dict]:
         return turns
