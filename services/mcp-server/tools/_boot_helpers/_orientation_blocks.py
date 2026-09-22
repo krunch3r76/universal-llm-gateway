@@ -276,7 +276,7 @@ _SEAT_CAPABILITY_VERIFY_BLOCK = """\
 Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y" claim, run `tool_search("Y")` and bind to the catalog row (deferred PRIMARY tools load by name; OVERFLOW tools run via `dispatch(tool="…")`).
 - code gate → `dispatch(tool="quality_gate", arguments='{"files": ["path/a.py"]}')` (ruff + compileall + import-check; +Lane-A offline pytest when edits touch `libs/llm_adapters/` or `libs/model_id/`). Security replay (`http_replay`/`http_request`/`http_diff`/`session_store`/`js_analyze`) — call by EXACT name (¬ reliably keyworded in `tool_search`).
 - **This seat closes verification on-seat (`lead_seats` config)** — `quality_gate` + liveness (`manage(action="sync_restart")`, `wait_healthy`). ¬ dispatch cursor for verify-only.
-Arbitrary pytest paths (`services/rag/`, integration) + `tools/pipeline_test replay` are shell/CLI-only → hand off. Full catalog: `.cursor/rules/handoff-dispatchers.mdc` § Seat capability verify + skill `consult-routing`."""
+Arbitrary pytest paths (`services/rag/`, integration) + `tools/pipeline_test replay` are shell/CLI-only → hand off. Full catalog: skill `lead-seat-boot` § Surface gate + skill `consult-routing`."""
 
 # Life MCP (`/mcp/life`) — quality_gate is code-surface overflow only; verify via cursor-auto.
 _SEAT_CAPABILITY_VERIFY_BLOCK_LIFE = """\
