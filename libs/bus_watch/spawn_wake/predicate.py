@@ -224,7 +224,10 @@ def evaluate_spawn_predicate(
         # A preset default is not a choice: only an operator-bound successor
         # model spawns (10534 2026-09-12 — four unasked Opus liaisons).
         "successor_model_bound": _successor_model_bound(policy),
-        "fingerprint_changed": fp != last_fp or bool(spawn_signal_sources),
+        # Attention is spawn_signal. It must not also force this clause true:
+        # a forcing friction with a frozen lane fingerprint re-fired the 10479
+        # mill every poll (a:35207 kept the chain moving by defeating the latch).
+        "fingerprint_changed": fp != last_fp,
         "grace_elapsed": (ts - last_spawn_at) > grace,
         "remint_cap_clear": not remint_cap_wall(state, night_id),
     }

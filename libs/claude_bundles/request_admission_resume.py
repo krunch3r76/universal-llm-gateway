@@ -32,9 +32,7 @@ def home_lane_from_mailbox(from_agent: str | None) -> str | None:
     return match.group(1) if match else None
 
 
-def _watch_holder_registration(
-    watches: dict[str, dict], thread_key: str
-) -> str | None:
+def _watch_holder_registration(watches: dict[str, dict], thread_key: str) -> str | None:
     """Current watch holder only — never ``superseded_registration_id``."""
     row = watches.get(thread_key)
     if not isinstance(row, dict):
@@ -44,15 +42,27 @@ def _watch_holder_registration(
 
 
 def _resolve_bus_cse_registration(thread_id: str) -> str | None:
-    """Last bus CSE association for *thread_id* (fail-soft)."""
-    try:
-        from agent_bus_store.db.cse_associations import get_current_cse
+    """Last bus CSE association for *thread_id* (fail-soft).
 
-        row = get_current_cse(thread_id=thread_id)
-    except (ImportError, LookupError, OSError, ValueError):
-        return None
+    Reads the host agent-bus socket. Opening messages.db here fails inside
+    the MCP container (default path ``/data/messages.db``).
+    """
+    try:
+        import os
+
+        from transport_utils import DEFAULT_AGENT_BUS_URL, make_sync_client
+
+        token = os.environ.get("AGENT_BUS_TOKEN", "").strip()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=5.0) as client:
+            response = client.get(
+                f"/threads/{thread_id}/cse-current",
+                headers=headers,
+            )
+        if response.status_code >= 400:
+            return None
+        row = response.json()
     except Exception:
-        # Hermetic tests and offline seats may lack agent_bus_store DB.
         return None
     if not isinstance(row, dict):
         return None

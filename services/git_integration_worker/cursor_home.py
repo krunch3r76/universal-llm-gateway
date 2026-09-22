@@ -37,7 +37,7 @@ GITCONFIG_FILENAME = ".gitconfig"
 DISPATCH_GIT_EMAIL_DOMAIN = "dispatch.git-integration-worker"
 # Copied operator mcp.json registers these as HTTP/OAuth names. Local SDK runs
 # reject mcp_auth, so the copies stay discovery-red. SDK injects the same
-# code-mount via build_mcp_servers (user-vortex + vortex-code).
+# code-mount via build_mcp_servers (single vortex-code server).
 _COPIED_OAUTH_MCP_SERVERS = frozenset({"vortex-code", "vortex-life"})
 
 

@@ -218,6 +218,29 @@ def test_fire_navigator_uses_successor_model_when_navigator_model_is_cdp(
 
 
 @pytest.mark.offline
+def test_paused_opus_navigator_refuses_instead_of_grok(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A paused cdp/opus-5-high pin must not become a grok wake."""
+    monkeypatch.setattr("bus_watch.navigator_wake.WATCH_DIR", tmp_path)
+    digest = _digest(
+        policy={
+            **_digest()["policy"],
+            "successor_model": "cursor/grok-4.7",
+            "paused_models": ["cdp/opus-5", "cursor/claude-opus-5"],
+        }
+    )
+    result = fire_navigator_wake(
+        "10479", digest, _state(), register="autonomous", dry_run=True
+    )
+    assert result["would_fire"] is False
+    assert result["refused"] == "model_paused"
+    assert result["evaluation"]["skip_reason"] == "model_paused"
+    assert result["body"].get("model") != "cursor/grok-4.7"
+    assert not str(result["body"].get("model") or "").startswith("cdp/")
+
+
+@pytest.mark.offline
 def test_fire_navigator_life_register_builds_cursor_auto_request(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -27,6 +27,7 @@ from bus_watch.doorbell_skills import (
     seat_dispatch_surface,
     seat_doorbell_surface,
 )
+from bus_watch.model_pause import model_paused
 
 DOORBELL_CAP = 2048
 
@@ -416,7 +417,37 @@ def _inline_successor_dispatch_skills(text: str, seat: str) -> str:
     return merged
 
 
-def _successor_duty_line(contract: str) -> str:
+def _judgment_consult(policy: dict | None, successor_model: str | None) -> str:
+    """Who a below-Opus hop asks before it binds.
+
+    When ``cdp/opus-5`` is paused, name the house successor. The wake must not
+    tell that hop to open Opus.
+    """
+    if model_paused(policy, "cdp/opus-5"):
+        named = str(successor_model or "").strip() or "the house successor"
+        return named
+    return "cdp/opus-5"
+
+
+def _peer_house_line(policy: dict | None, successor_model: str | None) -> str:
+    if model_paused(policy, "cdp/opus-5"):
+        named = _judgment_consult(policy, successor_model)
+        return (
+            f"§ Peer-house: keep both; judgment consult ⇒ {named} (Opus paused); "
+            "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled."
+        )
+    return (
+        "§ Peer-house: keep both; cdp/opus-5 → 2nd pool → cursor/claude-opus-5; "
+        "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled."
+    )
+
+
+def _successor_duty_line(
+    contract: str,
+    *,
+    policy: dict | None = None,
+    successor_model: str | None = None,
+) -> str:
     if contract != "none":
         return (
             "duty: dispatch -> read back -> verify -> CP. Commission the work on a child lane "
@@ -425,11 +456,12 @@ def _successor_duty_line(contract: str) -> str:
             "Repo-write goals ⇒ cursor-auto; design/judgment forks ⇒ cdp/fable — never STAY. "
             "Orienting and writing STAY is not the leg."
         )
+    consult = _judgment_consult(policy, successor_model)
     return (
         "duty: run the tick; checkpoint; hop only if hop_qualifies. "
         "This hop orchestrates — do not land repo edits here (≤20 lines, no served "
         "path, liaison ladder only); repo work ⇒ dispatch implement/conductor or "
-        "cursor-auto; design/judgment/invariant forks ⇒ cdp/opus-5 consult before bind; "
+        f"cursor-auto; design/judgment/invariant forks ⇒ {consult} consult before bind; "
         "STAY only on empty NOW / quiet tick / OPERATOR_GATE."
     )
 
@@ -446,6 +478,8 @@ def _compose_successor_wake(
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
     contract: str = "none",
+    policy: dict | None = None,
+    successor_model: str | None = None,
 ) -> str:
     """Compose successor paste without cap shedding (for validation and render)."""
     echo = ring if ring else root_id
@@ -459,7 +493,7 @@ def _compose_successor_wake(
         f"resume {root_id}",
         "",
         f"WAKE — liaison headless successor, house agent-bus:{root_id} — contract: {contract}.",
-        _successor_duty_line(contract),
+        _successor_duty_line(contract, policy=policy, successor_model=successor_model),
         "disclosure: orientation ritual; one echo before the first move.",
         f"objective: tip turn #{tip_turn_val} on agent-bus:{root_id}; "
         f"tip CHECKPOINT #{tip_cp_val}; row={row}; gear: {gear}; "
@@ -478,8 +512,7 @@ def _compose_successor_wake(
         [
             f"frame: spawned by liaison-ticker gear {gear}; seat {seat}; "
             f"predecessor = prior lease holder on agent-bus:{root_id}. "
-            "§ Peer-house: keep both; cdp/opus-5 → 2nd pool → cursor/claude-opus-5; "
-            "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled.",
+            + _peer_house_line(policy, successor_model),
             f'echo: agent_bus(send, thread={echo}, subject="ORIENTED {root_id}", '
             f'body="ORIENTED / tip: <CHECKPOINT subject> cp_ordinal=<n> / row: <row> / seat: {seat}") '
             "before the first mutating move.",
@@ -500,6 +533,8 @@ def successor_wake_unshed_byte_length(
     ring: str | None = None,
     extra_addresses: tuple[str, ...] = (),
     contract: str = "none",
+    policy: dict | None = None,
+    successor_model: str | None = None,
 ) -> int:
     """Byte length of the successor paste before cap shedding (``--set`` validation)."""
     return len(
@@ -514,6 +549,8 @@ def successor_wake_unshed_byte_length(
             ring=ring,
             extra_addresses=extra_addresses,
             contract=contract,
+            policy=policy,
+            successor_model=successor_model,
         ).encode("utf-8")
     )
 
@@ -556,6 +593,8 @@ def render_successor_wake(
     extra_addresses: tuple[str, ...] = (),
     contract: str = "none",
     cap: int = SUCCESSOR_WAKE_CAP,
+    policy: dict | None = None,
+    successor_model: str | None = None,
 ) -> str:
     """Doorbell-shaped successor paste. Line 1 stays ``resume {root}`` (GIW fence).
 
@@ -581,6 +620,8 @@ def render_successor_wake(
             ring=ring,
             extra_addresses=addresses,
             contract=contract,
+            policy=policy,
+            successor_model=successor_model,
         )
 
     row_text = row

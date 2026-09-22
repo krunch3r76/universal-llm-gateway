@@ -52,9 +52,32 @@ _ONE_STEP = (
     "One step: harvest → fold → decide; quote evidence; end turn. "
     "Repo→cursor-auto · design→cdp/fable."
 )
+_IDE_SURFACES = frozenset({"ide", "cursor-sdk"})
+_ONE_STEP_IDE = (
+    "One step: harvest → fold → decide; quote evidence; end turn. "
+    "Repo→cursor-sdk · design→cdp/fable. Load liaison-cursor."
+)
+_NOW_STEP_IDE = (
+    "Dispatch NOW (repo→cursor-sdk lane=B · design→fable); "
+    "STAY iff empty/OPERATOR_GATE; end."
+)
 # 10479 tab 12e32c8b (2026-09-13 06:56Z) wrote "Next: R12 recon" and STAYed at
 # 0.7 % of its window: a NOW row is the leg to dispatch this tick, not a note.
 _NOW_STEP = "Dispatch NOW (repo→auto · design→fable); STAY iff empty/OPERATOR_GATE; end."
+
+
+def _one_step(surface: str) -> str:
+    if surface in _IDE_SURFACES:
+        return _ONE_STEP_IDE
+    return _ONE_STEP
+
+
+def _now_step(surface: str) -> str:
+    if surface in _IDE_SURFACES:
+        return _NOW_STEP_IDE
+    return _NOW_STEP
+
+
 _HOP_STEP = (
     "One step: CHECKPOINT (residue ≤ 800), run the ide-hop command above, "
     "end turn. ¬ go-under mid-arc — go-under is overnight/departure only."
@@ -319,14 +342,21 @@ def build_wake_induction(
     if _tab_at_budget(digest):
         lines.append(_HOP_STEP)
     elif goal_kind and now_row and root_id:
-        lines.append(
-            "Dispatch: " + format_dispatch_instruction(goal_kind, now_row, root_id=str(root_id))
-        )
-        lines.append(_NOW_STEP)
+        if surface in _IDE_SURFACES and goal_kind == "repo_write":
+            lines.append(
+                "Dispatch: team_dispatch cursor-sdk implement lane=B "
+                f"(parent_thread={root_id})"
+            )
+        else:
+            lines.append(
+                "Dispatch: "
+                + format_dispatch_instruction(goal_kind, now_row, root_id=str(root_id))
+            )
+        lines.append(_now_step(surface))
     elif forcing and now_row:
-        lines.append(_NOW_STEP)
+        lines.append(_now_step(surface))
     else:
-        lines.append(_ONE_STEP if forcing else _QUIET_STEP)
+        lines.append(_one_step(surface) if forcing else _QUIET_STEP)
     fit = _fit_cse if surface == "cse" else _fit
     return fit(lines, cap)
 

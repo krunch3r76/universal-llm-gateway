@@ -210,7 +210,8 @@ def test_grace_and_fingerprint_clauses() -> None:
         "last_spawn_at": time.time(),
     }
     ev = evaluate_spawn_predicate(digest, state, lock={"holder": None}, now=time.time())
-    assert ev["clauses"]["fingerprint_changed"] is True
+    assert ev["clauses"]["fingerprint_changed"] is False
+    assert ev["clauses"]["spawn_signal"] is True
     assert ev["clauses"]["grace_elapsed"] is False
     assert ev["spawn"] is False
 
@@ -434,7 +435,11 @@ def test_unparseable_work_key_is_not_posted_twice() -> None:
 
     def submit(body: dict) -> tuple[dict, int]:
         calls["n"] += 1
-        assert str(body.get("work_key") or "").startswith("row-bind:a:36215:night-")
+        from work_key_grammar import is_valid_work_key_scheme
+
+        key = str(body.get("work_key") or "")
+        assert key.startswith("friction:a:36215:night-")
+        assert is_valid_work_key_scheme(key)
         return ({"error": {"code": "work_key_unparseable", "message": "nope"}}, 422)
 
     first = fire_spawn(
@@ -459,6 +464,71 @@ def test_unparseable_work_key_is_not_posted_twice() -> None:
     assert second["status_code"] == 0
     assert second["refused"] == "work_key_unparseable"
     assert calls["n"] == 1
+
+
+def test_tick_holds_latched_unparseable_work_key(monkeypatch) -> None:  # noqa: ANN001
+    """A latched refusal is a hold, not another spawned log line."""
+    from bus_watch.spawn_wake.row_bind import friction_night_key
+
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.read_lock", lambda *_a, **_k: {"holder": None}
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.maybe_forfeit_expired_lease", lambda *_a, **_k: False
+    )
+    monkeypatch.setattr("bus_watch.spawn_wake.fire.page_liaison", lambda *a: None)
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["frictions"] = [
+        {
+            "id": "a:36249",
+            "forcing": True,
+            "category": "tool_error",
+            "owner": "service:cdp-ask",
+            "note": "stall",
+            "state": "open",
+        }
+    ]
+    key = friction_night_key("a:36249")
+    state = {"refused_work_keys": [key], "last_spawn_at": 0.0}
+    calls = {"n": 0}
+
+    def submit(body: dict) -> tuple[dict, int]:
+        calls["n"] += 1
+        return ({"execution_id": "should-not-post"}, 202)
+
+    out = tick_spawn_on_wake(digest, state, "10479", submit=submit)
+    assert out["action"] == "hold"
+    assert out["refused"] == "work_key_unparseable"
+    assert calls["n"] == 0
+
+
+def test_paused_opus_wake_names_successor_not_opus() -> None:
+    body = build_dispatch_body(
+        "10479",
+        {
+            "successor_model": "cursor/grok-4.7",
+            "paused_models": ["cdp/opus-5", "cursor/claude-opus-5"],
+            "max_hop_minutes": 60,
+            "gear": "3-wake-on-attention",
+        },
+        successor_context={"gear": "3-wake-on-attention", "row": "STAY"},
+    )
+    message = body["message"]
+    assert "cdp/opus-5" not in message
+    assert "cursor/claude-opus-5" not in message
+    assert "cursor/grok-4.7 consult before bind" in message
+
+
+def test_paused_successor_model_holds() -> None:
+    body = build_dispatch_body(
+        "10479",
+        {
+            "successor_model": "cursor/claude-opus-5",
+            "paused_models": ["cursor/claude-opus-5"],
+            "max_hop_minutes": 60,
+        },
+    )
+    assert body["_refused"] == "model_paused"
 
 
 def test_context_budget_fresh_spawn() -> None:
@@ -1278,15 +1348,19 @@ def test_frozen_fingerprint_no_unlatched_source_no_spawn() -> None:
     assert ev["spawn"] is False
 
 
-def test_frozen_fingerprint_unlatched_source_spawns() -> None:
-    """AC4(iv) — a:35207 regression: unlatched attention must not freeze the chain."""
+def test_frozen_fingerprint_unlatched_source_does_not_spawn() -> None:
+    """Unlatched attention stays a spawn signal and does not defeat the latch.
+
+    a:35207 re-fired by OR-ing the signal into fingerprint_changed. That is the
+    10479 mill: the same lane fingerprint spawned on every poll.
+    """
     digest = _digest(attention=[_LIVE_LANE])
     fp = spawn_fingerprint(digest["root"], digest["lanes"])
     state = {"last_spawn_fingerprint": fp, "last_spawn_at": 0.0}
     ev = evaluate_spawn_predicate(digest, state, lock={"holder": None}, now=time.time())
     assert ev["clauses"]["spawn_signal"] is True
-    assert ev["clauses"]["fingerprint_changed"] is True
-    assert ev["spawn"] is True
+    assert ev["clauses"]["fingerprint_changed"] is False
+    assert ev["spawn"] is False
 
 
 def test_frozen_fingerprint_latched_live_lane_no_spawn() -> None:

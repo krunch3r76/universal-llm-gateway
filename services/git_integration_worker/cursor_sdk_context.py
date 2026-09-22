@@ -37,10 +37,7 @@ from services.git_integration_worker.cursor_sdk_usage_extract import (
     mint_local_agent_id,
 )
 
-_VORTEX_MCP_SERVER = "user-vortex"
-# IDE/docs name for the same code mount. Copied mcp.json registers this
-# without a bearer and Cursor then offers mcp_auth (unsupported in SDK).
-_VORTEX_MCP_ALIAS_SERVERS: tuple[str, ...] = ("vortex-code",)
+_VORTEX_MCP_SERVER = "vortex-code"
 _MCP_BRIDGE_RELPATH = Path("scripts/mcp-fastmcp-remote-bridge.py")
 _FASTMCP_REMOTE_CMD = "fastmcp-remote"
 _SETTING_SOURCES: tuple[str, ...] = ("all",)
@@ -313,10 +310,10 @@ def build_mcp_servers(
 ) -> dict[str, StdioMcpServerConfig]:
     """Stdio vortex MCP via ``fastmcp-remote`` bridge (see module docstring).
 
-    Registers ``user-vortex`` and the IDE alias ``vortex-code`` on the same
-    bearer-injected stdio transport so seats that call either name reach
-    the code mount. ``vortex-life`` is not aliased (life mount is out of
-    the SDK contract).
+    Registers one bearer-injected ``vortex-code`` server on ``/mcp/code``.
+    ``vortex-life`` is out of the SDK contract. Copied HOME ``mcp.json``
+    strips the IDE ``vortex-code`` entry so Cursor does not offer mcp_auth;
+    this map is what adds the code server back.
     """
     bridge = resolve_mcp_bridge(source_repo)
     env = dict(_resolve_mcp_token_env(real_home=real_home))
@@ -326,15 +323,13 @@ def build_mcp_servers(
     if substrate_ctx is not None:
         env[CURSOR_SDK_DISPATCH_ID_ENV] = substrate_ctx.dispatch_id
         env[ULG_STEER_SPOOL_DIR_ENV] = str(steer_spool_dir())
-    names = (_VORTEX_MCP_SERVER, *_VORTEX_MCP_ALIAS_SERVERS)
     return {
-        name: StdioMcpServerConfig(
+        _VORTEX_MCP_SERVER: StdioMcpServerConfig(
             command=sys.executable,
             args=[str(bridge)],
             env=dict(env) or None,
             cwd=str(source_repo.resolve()),
         )
-        for name in names
     }
 
 

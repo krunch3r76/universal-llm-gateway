@@ -16,6 +16,7 @@ router = APIRouter(dependencies=[Depends(require_token)])
 from . import (  # noqa: E402,F401
     associations,
     crud,
+    cse,
     detail,
     dispatch,
     lineage,

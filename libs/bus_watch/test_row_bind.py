@@ -187,6 +187,34 @@ def test_trio_sketch_default_cdp() -> None:
     assert "seat" not in body
 
 
+def test_trio_sketch_paused_opus_holds() -> None:
+    from work_key_grammar import is_valid_work_key_scheme
+
+    from bus_watch.spawn_wake.row_bind import friction_night_key
+
+    body = build_trio_sketch_body(
+        "10479",
+        {
+            "max_hop_minutes": 60,
+            "paused_models": ["cdp/opus-5", "cursor/claude-opus-5"],
+        },
+        {
+            "id": "a:36249",
+            "category": "tool_error",
+            "owner": "service:cdp-ask",
+            "note": "stall",
+        },
+    )
+    assert body["_refused"] == "model_paused"
+    assert "model" not in body
+    key = friction_night_key("a:36249")
+    assert key.startswith("friction:a:36249:night-")
+    assert is_valid_work_key_scheme(key)
+    trio = friction_night_key("a:36249", role="trio")
+    assert trio != key
+    assert is_valid_work_key_scheme(trio)
+
+
 def test_trio_sketch_honours_trio_sketch_model() -> None:
     body = build_trio_sketch_body(
         "11960",

@@ -14,6 +14,7 @@ from cdp_ask.execution_store import (
     ExecutionStore,
 )
 from cdp_ask.lane_admission import (
+    ADMISSION_COUNT_SCOPE,
     ADVISOR_RESERVE,
     admission_regime,
     count_by_purpose_class,
@@ -47,7 +48,7 @@ def _capacity(
         "running_count_scope": "cdp_ask execution store, pending/running streams",
         "running_count_authority": "recorded",
         "admission_count": admission_count,
-        "admission_count_scope": "running/stream admissions, this host (soft=2 hard=3)",
+        "admission_count_scope": ADMISSION_COUNT_SCOPE,
         "admission_count_authority": "recorded",
         "execution_ids": execution_ids,
         "rows": rows or [],
@@ -63,6 +64,11 @@ def _capacity(
         "effective_abs_hard": abs_hard_effective,
         "seated_rows": [],
         "seat_rows": [],
+        "execution_streams": {
+            str(row["execution_id"]): str(row["status"])
+            for row in rows_list
+            if row.get("execution_id") and row.get("status")
+        },
         **x_display_wire_fields(probe_x_display()),
     }
 
@@ -93,6 +99,7 @@ async def test_sealed_snapshot_wire_identical_for_qualified_fields(
     for key, expected in _QUALIFIED_FIELD_GOLDEN.items():
         assert snap[key] == expected, f"{key}: {snap[key]!r} != {expected!r}"
     assert snap["running_count"] == 1
+    assert snap.pop("observed_at", None)
     assert snap == _capacity(
         busy=True,
         running_count=1,
@@ -104,6 +111,7 @@ async def test_sealed_snapshot_wire_identical_for_qualified_fields(
                 "holder": "test",
                 "purpose": "ask",
                 "status": "pending",
+                "stream_state": "pending",
                 "cdp_url": None,
                 "chat_url": None,
                 "source": None,

@@ -9,6 +9,7 @@ import pytest
 from cdp_ask.lane_admission import (
     ADVISOR_RESERVE,
     LANE_HARD_LIMIT,
+    LANE_SOFT_LIMIT,
     SEAT_FLOOR,
     admission_regime,
     count_by_purpose_class,
@@ -37,7 +38,7 @@ def _snap(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "effective_abs_hard": abs_hard,
         "admission_count": total,
         "free_slots": max(0, abs_hard - total),
-        "at_soft_limit": total >= 2,
+        "at_soft_limit": total >= LANE_SOFT_LIMIT,
         "at_hard_limit": total >= abs_hard,
     }
 
@@ -49,10 +50,11 @@ def test_unknown_purpose_fail_closes_as_seat() -> None:
 
 
 def test_admission_regime_boundary() -> None:
-    assert admission_regime(3) == "additive"
-    assert admission_regime(2) == "carved"
-    assert effective_abs_hard(3) == LANE_HARD_LIMIT + ADVISOR_RESERVE
-    assert effective_abs_hard(2) == LANE_HARD_LIMIT
+    carve = LANE_HARD_LIMIT - ADVISOR_RESERVE
+    assert admission_regime(carve + 1) == "additive"
+    assert admission_regime(carve) == "carved"
+    assert effective_abs_hard(carve + 1) == LANE_HARD_LIMIT + ADVISOR_RESERVE
+    assert effective_abs_hard(carve) == LANE_HARD_LIMIT
 
 
 # --- sixteen-state table (carved regime unless noted) ---
@@ -108,14 +110,15 @@ def test_state_table_row(
 
 def test_row8_additive_only_changes_verdict() -> None:
     """Global hard ceiling is advisory — carved and additive both admit."""
+    carve = LANE_HARD_LIMIT - ADVISOR_RESERVE
     steady_admit, steady_ref = evaluate_new_admission(
-        "ask", seat_count=2, other_count=1, unattended=True
+        "ask", seat_count=carve, other_count=1, unattended=True
     )
     assert steady_admit is True
     assert steady_ref is None
-    assert admission_regime(3) == "additive"
+    assert admission_regime(carve + 1) == "additive"
     additive_admit, additive_ref = evaluate_new_admission(
-        "ask", seat_count=3, other_count=0, unattended=True
+        "ask", seat_count=carve + 1, other_count=0, unattended=True
     )
     assert additive_admit is True
     assert additive_ref is None
@@ -142,39 +145,40 @@ def test_boundary_walk_occupancy_convergence() -> None:
         steps.append((seat, other, admit, regime))
         return admit, label
 
-    admit, label = _probe(3, 0)
+    carve = LANE_HARD_LIMIT - ADVISOR_RESERVE
+    admit, label = _probe(carve + 1, 0)
     assert admit is True
-    assert admission_regime(3) == "additive"
+    assert admission_regime(carve + 1) == "additive"
 
-    admit, label = _probe(3, 1)
-    assert admit is True
-    assert label is None
-
-    admit, label = _probe(2, 1)
-    assert admission_regime(2) == "carved"
+    admit, label = _probe(carve + 1, 1)
     assert admit is True
     assert label is None
 
-    admit, label = _probe(2, 0)
-    assert admission_regime(2) == "carved"
+    admit, label = _probe(carve, 1)
+    assert admission_regime(carve) == "carved"
+    assert admit is True
+    assert label is None
+
+    admit, label = _probe(carve, 0)
+    assert admission_regime(carve) == "carved"
     assert admit is True
 
     seat_admit, seat_label = evaluate_new_admission(
-        "operator-proxy", seat_count=2, other_count=0, unattended=True
+        "operator-proxy", seat_count=carve, other_count=0, unattended=True
     )
     assert seat_admit is True
     assert seat_label is None
     adv_admit, _ = evaluate_new_admission(
-        "ask", seat_count=2, other_count=0, unattended=True
+        "ask", seat_count=carve, other_count=0, unattended=True
     )
     assert adv_admit is True
 
-    # No discontinuity: at boundary seat=2 carved vs seat=3 additive
+    # No discontinuity across the carve line (carved) and one seat above it (additive).
     at_boundary_carved, _ = evaluate_new_admission(
-        "ask", seat_count=2, other_count=0, unattended=True
+        "ask", seat_count=carve, other_count=0, unattended=True
     )
     at_boundary_additive, _ = evaluate_new_admission(
-        "ask", seat_count=3, other_count=0, unattended=True
+        "ask", seat_count=carve + 1, other_count=0, unattended=True
     )
     assert at_boundary_carved is True
     assert at_boundary_additive is True
@@ -271,8 +275,9 @@ def test_unbound_legacy_row_skips_same_lane_cap() -> None:
 
 
 def test_effective_abs_hard_raises_by_exactly_reserve() -> None:
-    assert effective_abs_hard(3) - LANE_HARD_LIMIT == ADVISOR_RESERVE
-    assert effective_abs_hard(2) == LANE_HARD_LIMIT
+    carve = LANE_HARD_LIMIT - ADVISOR_RESERVE
+    assert effective_abs_hard(carve + 1) - LANE_HARD_LIMIT == ADVISOR_RESERVE
+    assert effective_abs_hard(carve) == LANE_HARD_LIMIT
 
 
 def test_count_by_purpose_class_from_rows() -> None:

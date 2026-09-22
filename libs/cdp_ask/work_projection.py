@@ -20,6 +20,7 @@ from admission_common.qualified_scalar import (
 )
 
 from cdp_ask.lane_admission import (
+    ADMISSION_COUNT_SCOPE,
     ADVISOR_RESERVE,
     LANE_HARD_LIMIT,
     LANE_SOFT_LIMIT,
@@ -41,7 +42,7 @@ _LIVE_PORT_COUNT_SCOPE = (
 _LIVE_CSE_COUNT_SCOPE = (
     "unique normalized CSE session URLs on qualifying page targets, this host"
 )
-_ADMISSION_COUNT_SCOPE = "running/stream admissions, this host (soft=2 hard=3)"
+_ADMISSION_COUNT_SCOPE = ADMISSION_COUNT_SCOPE
 _REGISTRY_CAPACITY_SCOPE = (
     "active+retained registry Chrome hosts (ports/profiles), this host"
 )

@@ -118,8 +118,8 @@ def test_mcp_bridge_anchors_to_source_repo(tmp_path: Path) -> None:
     bridge = bridge_dir / "mcp-fastmcp-remote-bridge.py"
     bridge.touch()
     servers = build_mcp_servers(source_repo)
-    assert "user-vortex" in servers
-    assert str(bridge.resolve()) in servers["user-vortex"].args
+    assert "vortex-code" in servers
+    assert str(bridge.resolve()) in servers["vortex-code"].args
 
 
 def test_green_gate_cmd_independent_of_dispatch_workspace(
@@ -140,13 +140,12 @@ def test_mcp_servers_use_stdio_bridge(tmp_path: Path) -> None:
     bridge = repo / "scripts" / "mcp-fastmcp-remote-bridge.py"
 
     servers = build_mcp_servers(repo, real_home=tmp_path / "home")
-    assert "user-vortex" in servers
-    assert "vortex-code" in servers
+    assert set(servers) == {"vortex-code"}
+    assert "user-vortex" not in servers
     assert "vortex-life" not in servers
-    cfg = servers["user-vortex"]
+    cfg = servers["vortex-code"]
     assert cfg.args == [str(bridge.resolve())]
-    assert servers["vortex-code"].args == cfg.args
-    assert servers["vortex-code"].env == cfg.env
+    assert cfg.env is not None
 
 
 def test_mcp_servers_missing_bridge_raises(tmp_path: Path) -> None:
@@ -203,7 +202,7 @@ def test_mcp_token_env_mirrors_auth_token(
     monkeypatch.setenv("MCP_AUTH_TOKEN", "tok-from-auth")
     monkeypatch.setenv("PROBE_PARENT_ENV", "parent-survives")
 
-    env = build_mcp_servers(repo)["user-vortex"].env or {}
+    env = build_mcp_servers(repo)["vortex-code"].env or {}
     assert env.get("MCP_TOKEN") == "tok-from-auth"
     assert env.get("PROBE_PARENT_ENV") == "parent-survives"
 
@@ -303,7 +302,7 @@ def test_build_agent_options_wires_model_and_local(
     assert opts.agent_id is not None and opts.agent_id.startswith("agent-")
     assert opts.local is not None
     assert opts.mcp_servers is not None
-    assert "user-vortex" in opts.mcp_servers
+    assert "vortex-code" in opts.mcp_servers
 
 
 def test_build_agent_options_plan_mode_wired(
@@ -334,14 +333,14 @@ def test_build_agent_options_plan_mode_wired(
 
 def test_mcp_servers_set_contract_env_for_implement(tmp_path: Path) -> None:
     repo = _stub_repo(tmp_path)
-    env = build_mcp_servers(repo, handoff_contract="implement")["user-vortex"].env or {}
+    env = build_mcp_servers(repo, handoff_contract="implement")["vortex-code"].env or {}
     assert env.get("ULG_MCP_CONTRACT") == "implement"
 
 
 def test_mcp_servers_set_contract_env_for_pure_mechanical(tmp_path: Path) -> None:
     repo = _stub_repo(tmp_path)
     env = (
-        build_mcp_servers(repo, handoff_contract="pure-mechanical")["user-vortex"].env
+        build_mcp_servers(repo, handoff_contract="pure-mechanical")["vortex-code"].env
         or {}
     )
     assert env.get("ULG_MCP_CONTRACT") == "pure-mechanical"
@@ -349,13 +348,13 @@ def test_mcp_servers_set_contract_env_for_pure_mechanical(tmp_path: Path) -> Non
 
 def test_mcp_servers_omit_contract_env_for_residual(tmp_path: Path) -> None:
     repo = _stub_repo(tmp_path)
-    env = build_mcp_servers(repo, handoff_contract="none")["user-vortex"].env or {}
+    env = build_mcp_servers(repo, handoff_contract="none")["vortex-code"].env or {}
     assert "ULG_MCP_CONTRACT" not in env
 
 
 def test_mcp_servers_omit_contract_env_when_unset(tmp_path: Path) -> None:
     repo = _stub_repo(tmp_path)
-    env = build_mcp_servers(repo)["user-vortex"].env or {}
+    env = build_mcp_servers(repo)["vortex-code"].env or {}
     assert "ULG_MCP_CONTRACT" not in env
 
 
@@ -365,7 +364,7 @@ def test_mcp_servers_stamp_steer_env_from_substrate_ctx(
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     repo = _stub_repo(tmp_path)
     ctx = SubstrateDispatchContext(dispatch_id="disp-steer", thread_id="10479")
-    env = build_mcp_servers(repo, substrate_ctx=ctx)["user-vortex"].env or {}
+    env = build_mcp_servers(repo, substrate_ctx=ctx)["vortex-code"].env or {}
     assert env.get(CURSOR_SDK_DISPATCH_ID_ENV) == "disp-steer"
     assert env.get(ULG_STEER_SPOOL_DIR_ENV) == str(tmp_path / "steer-spool")
 
@@ -386,5 +385,5 @@ def test_build_agent_options_passes_substrate_to_mcp_servers(
         workspace_root=repo,
         substrate_ctx=ctx,
     )
-    env = opts.mcp_servers["user-vortex"].env or {}
+    env = opts.mcp_servers["vortex-code"].env or {}
     assert env.get(CURSOR_SDK_DISPATCH_ID_ENV) == "disp-agent"

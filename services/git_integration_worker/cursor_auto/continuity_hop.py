@@ -71,6 +71,8 @@ logger = get_logger(__name__)
 
 _FROM_AUTO = "cursor-auto"
 _DEFAULT_CDP_MODEL = "cdp/opus-5"
+# Hop cadence refuses before enqueue when the root's tick policy pauses this
+# id (cadence_escalation_for_root). Callers that omit escalation still land here.
 # Schema default on agent_bus.request / AutoJob; CDP sealed-ask defaults Opus to High.
 _UNPINNED_EFFORT = "medium"
 
@@ -116,9 +118,7 @@ async def _post_hop_admit_report(
                 "requested": job.escalation or cdp_model,
                 "resolved_escalation": cdp_model,
             }
-        handoff = resolve_handoff_contract(
-            job.contract or "none", body=job.body
-        )
+        handoff = resolve_handoff_contract(job.contract or "none", body=job.body)
         contract = job.contract or "none"
         propagate_admission = None
         if contract.strip().lower() == PROPAGATE_CONTRACT:
@@ -329,10 +329,7 @@ async def complete_continuity_hop(
             job,
             client=bus,
             queue=queue,
-            summary=(
-                "continuity hop seating refused: "
-                f"{seating.get('reason')}"
-            ),
+            summary=(f"continuity hop seating refused: {seating.get('reason')}"),
             disposition="failed",
             contract=job.contract,
             terminal_status="status:failed",

@@ -143,6 +143,22 @@ def test_occupy_upserts_existing_holder_and_supersedes_predecessor(
     assert pred["seat_state"] == "superseded"
 
 
+def test_occupy_records_wire_registration_when_successor_has_none(
+    ledger: CursorDispatchLedger,
+) -> None:
+    with patch(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._resolve_successor_identity",
+        return_value=(None, None),
+    ):
+        outcome = run_cse_seating_hook(_job(), execution_id="exec-new")
+    assert outcome["ok"] is True
+    assert outcome["registration_id"] == "reg-old"
+    with ledger._connect() as conn:
+        row = get_holder(conn, "cse_occupyhop1")
+    assert row is not None
+    assert row["registration_id"] == "reg-old"
+
+
 def test_occupy_missed_mints_when_row_absent(ledger: CursorDispatchLedger) -> None:
     with patch(
         "services.git_integration_worker.cursor_auto.cse_seating_hook._resolve_successor_identity",
@@ -215,7 +231,13 @@ async def test_complete_continuity_hop_runs_seating_hook_path(
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.continuity_hop.build_hop_orientation",
-        AsyncMock(return_value={"generated": False, "block": "", "inheritance_loop_closed": False}),
+        AsyncMock(
+            return_value={
+                "generated": False,
+                "block": "",
+                "inheritance_loop_closed": False,
+            }
+        ),
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.continuity_hop.post_harvest_residual",
@@ -287,7 +309,13 @@ async def test_ac4_bypass_hook_leaves_holder_stale(
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.continuity_hop.build_hop_orientation",
-        AsyncMock(return_value={"generated": False, "block": "", "inheritance_loop_closed": False}),
+        AsyncMock(
+            return_value={
+                "generated": False,
+                "block": "",
+                "inheritance_loop_closed": False,
+            }
+        ),
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.continuity_hop.post_harvest_residual",

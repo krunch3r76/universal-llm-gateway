@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from bus_watch.model_pause import model_paused, read_liaison_policy
 from cdp_ask.lane_snapshot import read_cdp_lane_snapshot_brief
 from claude_bundles.hop_seat_cutover import refuse_cadence_hop_for_live_seat
 from hop_handoff import build_continuity_handoff_body
@@ -202,6 +203,24 @@ def capacity_blocks_hop(
     return evaluate_capacity_gate(snap)
 
 
+_CADENCE_OPUS = "cdp/opus-5"
+
+
+def cadence_escalation_for_root(root_id: str) -> str | None:
+    """Opus escalation for a cadence hop, or None when that root pauses it.
+
+    No tick file keeps the historical ``cdp/opus-5`` default. A present policy
+    that pauses Opus must not enqueue that escalation — continuity hop would
+    otherwise fill the omitted field with the same default.
+    """
+    policy = read_liaison_policy(root_id)
+    if policy is None:
+        return _CADENCE_OPUS
+    if model_paused(policy, _CADENCE_OPUS):
+        return None
+    return _CADENCE_OPUS
+
+
 async def fire_hop_for_decision(
     decision: HopDecision,
     *,
@@ -288,6 +307,13 @@ async def fire_hop_for_decision(
             "refusal": refuse_evidence,
             "liveness_probe": liveness_probe,
         }
+    escalation = cadence_escalation_for_root(decision.thread_id)
+    if escalation is None:
+        return {
+            "ok": False,
+            "reason": "model_paused",
+            "thread_id": decision.thread_id,
+        }
     body = build_cadence_hop_body(
         decision,
         registration_id=str(row.get("registration_id") or "") or None,
@@ -304,7 +330,7 @@ async def fire_hop_for_decision(
         to_agent="cursor-auto",
         desired_model="auto",
         desired_effort="high",
-        escalation="cdp/opus-5",
+        escalation=escalation,
         contract="none",
         require_attended=False,
         request_id=f"hop-cadence:{decision.thread_id}:{int(time.time())}",

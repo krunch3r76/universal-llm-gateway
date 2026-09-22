@@ -1,7 +1,8 @@
 """X11/Xvfb client occupancy for CDP Chrome mint — a distinct capacity axis.
 
-``free_slots`` on active-work counts recorded project-ask *streams* (soft=2,
-hard=3). Xvfb ``-maxclients`` counts unix connections on the display. A
+``free_slots`` on active-work counts recorded project-ask *streams* against
+the advisory ceilings in ``cdp_ask.lane_admission``. Xvfb ``-maxclients``
+counts unix connections on the display. A
 registry that still has a TCP port, and a satellite that still has stream
 slots, can both report room while the display cannot host another multiprocess
 Chrome. This module is the X axis: probe ``/proc/net/unix`` the same way the

@@ -13,6 +13,7 @@ cursor-model-economics
 claude-ai-cdp-navigation
 conductor
 liaison
+liaison-cursor
 completion-provenance-discipline
 consult-posture
 consult-routing

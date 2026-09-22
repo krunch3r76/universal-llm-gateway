@@ -127,10 +127,16 @@ def _request_impl(
     merged_tags = _merge_lane_tags(tags)
     thread_tags_for_summary: list[str] | None = list(merged_tags) if new_slug else None
     if thread and not new_slug:
-        from agent_bus_store.db.threads import get_thread
+        # Host agent-bus owns messages.db. MCP in the container relays;
+        # a local get_thread opens /data/messages.db and fails the hop.
+        from ._shared import relay
 
-        detail = get_thread(thread)
-        if detail and isinstance(detail.get("tags"), list):
+        detail = relay("agent-bus", "GET", f"/threads/{thread}/summary?recent=1")
+        if (
+            isinstance(detail, dict)
+            and "error" not in detail
+            and isinstance(detail.get("tags"), list)
+        ):
             thread_tags_for_summary = list(detail["tags"])
     resolved_summary = resolve_so_what_summary(
         summary,
@@ -195,6 +201,7 @@ def _request_impl(
         from_agent=from_agent,
         cse_chat_url=cse_chat_url,
         cse_registration_id=cse_registration_id,
+        continuity_hop=continuity_hop,
     )
 
     admission_scope = (
@@ -245,7 +252,7 @@ def _request_impl(
             degraded["request_id"] = request_id
         return degraded
 
-    capture_identity = is_chat_delivery_capable(from_agent)
+    capture_identity = is_chat_delivery_capable(from_agent) or continuity_hop
     enq = enqueue_auto_job(
         thread_id=thread_id,
         turn_number=turn_number,
@@ -333,7 +340,11 @@ def _request_impl(
     if request_id:
         posted_kw["request_id"] = request_id
     record("mcp.agentbus.request.posted", **posted_kw)
-    if capture_identity and (cse_chat_url or cse_registration_id) and not continuity_hop:
+    if (
+        capture_identity
+        and (cse_chat_url or cse_registration_id)
+        and not continuity_hop
+    ):
         from claude_bundles.cse_session_obligations import stamp_session_ids
 
         stamp_session_ids(

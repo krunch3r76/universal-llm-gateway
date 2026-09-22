@@ -97,7 +97,10 @@ REBUILD_RECIPE = (
 )
 LOOP_REBUILD = (
     "LOOP: rebuild `scripts/liaison-tick.py --root {root} --loop --heartbeat 1200 "
-    "--holder ide:<this-tab-uuid>` (20 min backup: re-arm / watcher health)"
+    "--holder ide:<this-tab-uuid>` only while a watcher is live or a row is playable "
+    "(20 min backup: re-arm / watcher health). No playable row and no live watcher "
+    "→ do not arm; SIGTERM this root's --loop. A harvested conductor tail printing "
+    "stall-pop is not a watcher: watch-supervise.sh stop --label <label>."
 )
 # Pickup used to ARM tail-only (pollers stayed). Hop now tears pollers down.
 TAIL_RECIPE = REBUILD_RECIPE
@@ -202,9 +205,12 @@ def build_ide_hop_message(
         f"LOAD the {primary_liaison_slug('ide')} skill (do not skim).",
         # STAY governs the hop only. Tab 12e32c8b (10479, 2026-09-13 06:56Z) read
         # it as "do not dispatch" and parked at 0.7 % with NOW=R12 undone.
-        "NOW non-empty ⇒ dispatch its first leg from this tab (Explore recon · "
-        "repo-write goals → cursor-auto · design/judgment forks → cdp/fable · "
-        "cdp/opus-5 for independent check) before any STAY verdict. "
+        "NOW non-empty ⇒ dispatch its first leg from this tab. "
+        "LOAD liaison-cursor. Repo write on this seat → "
+        "team_dispatch(seat=cursor-sdk, contract=implement, lane=B). "
+        "cursor-auto implement is the life seat (no team_dispatch). "
+        "Explore recon in-tab · design/judgment → cdp/fable · "
+        "independent check → cdp/opus-5. Before any STAY verdict. "
         "STAY = no hop, never = no dispatch.",
         "Hop only when autonomous follow-up remains (live watcher, dispatched NOW, "
         "or CONTEXT_BUDGET with remaining work). HOLD_MERGE / empty NOW / quiet tick "
@@ -212,8 +218,9 @@ def build_ide_hop_message(
         "LOAD AND EXECUTE: runbook:bus-consult-watcher (legs 1-3 atomic); "
         "runbook:liaison-operator-guide when a ruling or how-to moves; "
         "git-posture § Land on every land (merge, keep both).",
-        "§ Peer-house: isolate; collide ⇒ keep both; cursor-auto (repo write) → "
-        "cdp/opus-5 (check) → cdp/fable (design/judgment); cursor/claude-opus-5 "
+        "§ Peer-house: isolate; collide ⇒ keep both; this seat repo-write → "
+        "cursor-sdk; life repo-write → cursor-auto; then cdp/opus-5 (check) → "
+        "cdp/fable (design/judgment); cursor/claude-opus-5 "
         "last-resort only; ¬ cursor/claude-fable-5-1; page human only on "
         "OPERATOR_GATE after that ladder. ¬ hop away unreconciled.",
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
@@ -222,9 +229,9 @@ def build_ide_hop_message(
         LOOP_REBUILD.format(root=root_id),
         "Then: harvest watcher wakes -> fold scoreboard -> Plan -> Dispatch "
         "(+watcher) -> CHECKPOINT. Skip CreateGoal. Rebuild watcher start+tail "
-        "from argv.json (departing tab tore pollers down). Backup wake: "
-        "`liaison-tick.py --loop --heartbeat 1200` (re-arm / watcher health). "
-        "Hop only if hop_qualifies; else STAY.",
+        "from argv.json (departing tab tore pollers down). "
+        "Hop only if hop_qualifies; else STAY. "
+        "STAY with no playable row and no live watcher: do not leave the loop running.",
     ]
     return "\n".join(lines) + "\n"
 

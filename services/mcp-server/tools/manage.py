@@ -283,8 +283,12 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              For cdp_ask, busy=true means any in-flight
                                              project-ask (restart drain) — NOT lane-full.
                                              Admission uses active_work.{free_slots,
-                                             at_soft_limit, at_hard_limit} with soft=2
-                                             hard=3 (friction a:25814).
+                                             at_soft_limit, at_hard_limit}. Those
+                                             ceilings are advisory stream telemetry
+                                             (cdp_ask.lane_admission); Cowork does
+                                             not cap sessions at that count.
+                                             Friction a:25814 is the live CSE
+                                             count axis, not this ceiling.
                                              restart_intent is null when
                                              no live non-terminal intent exists;
                                              otherwise {restart_intent_id, status,

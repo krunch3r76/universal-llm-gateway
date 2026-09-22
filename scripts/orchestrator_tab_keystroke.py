@@ -33,17 +33,41 @@ def _require_display() -> None:
         )
 
 
-def _wl_copy(text: str) -> None:
-    proc = subprocess.run(
-        ["wl-copy", "--paste-once", "--trim-newline", text],
-        env=os.environ,
-        stdin=subprocess.DEVNULL,
+def _wl_copy(text: str) -> subprocess.Popen[bytes]:
+    """Hold the clipboard until the caller pastes.
+
+    ``--paste-once`` exits on the first read. A manager or the shell consumes
+    it during the new-tab wait, so Ctrl+V then inserts nothing. Do not call
+    this between Ctrl+N and Ctrl+V — that gap is a sleep only.
+    """
+    proc = subprocess.Popen(
+        ["wl-copy", "--foreground", "--trim-newline"],
+        stdin=subprocess.PIPE,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        timeout=10,
+        env=os.environ,
     )
-    if proc.returncode != 0:
-        raise SystemExit(f"wl-copy failed rc={proc.returncode}")
+    if proc.stdin is None:
+        raise SystemExit("wl-copy stdin missing")
+    proc.stdin.write(text.encode())
+    proc.stdin.close()
+    time.sleep(0.3)
+    check = subprocess.run(
+        ["wl-paste", "--no-newline"],
+        capture_output=True,
+        env=os.environ,
+        timeout=5,
+    )
+    got = check.stdout.decode(errors="replace")
+    if check.returncode != 0 or not got:
+        proc.kill()
+        raise SystemExit(f"clipboard empty after wl-copy rc={check.returncode}")
+    return proc
+
+
+def _release_clipboard(proc: subprocess.Popen[bytes] | None) -> None:
+    if proc is not None and proc.poll() is None:
+        proc.kill()
 
 
 def _raise_cursor(repo: str) -> None:
@@ -91,6 +115,66 @@ def _focus_window(title_substr: str, app_id: str, *, settle_s: float = 0.6) -> d
         raise SystemExit(json.dumps({"ok": False, "phase": "focus", **verdict}))
     time.sleep(settle_s)
     return verdict
+
+
+def _is_glass_title(title: str) -> bool:
+    """Glass and the IDE are separate toplevels. Their titles are not one string."""
+    return "glass" in title.lower()
+
+
+def _list_cursor_toplevels() -> list[dict]:
+    helper = Path(__file__).with_name("cosmic_focus_window.py")
+    proc = subprocess.run(
+        [sys.executable, str(helper), "list"],
+        env=os.environ,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    try:
+        data = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        raise SystemExit(
+            json.dumps({"ok": False, "phase": "focus", "raw": proc.stdout[-400:]})
+        ) from None
+    rows = data.get("toplevels") or []
+    return [r for r in rows if "cursor" in str(r.get("app_id") or "").lower()]
+
+
+def _pick_cursor_window(role: str, title_substr: str | None, repo: str) -> dict:
+    """Pick the IDE window or the Glass window. Never treat them as the same title.
+
+    Either may be open. A loose ``cursor`` match is ambiguous. IDE defaults to
+    the toplevel whose title contains the repo name. Glass is a title that
+    contains ``Glass``. Zero or several matches abort before any key.
+    """
+    rows = _list_cursor_toplevels()
+    if role == "glass":
+        pool = [r for r in rows if _is_glass_title(str(r.get("title") or ""))]
+    else:
+        pool = [r for r in rows if not _is_glass_title(str(r.get("title") or ""))]
+    if title_substr:
+        needle = title_substr.lower()
+        pool = [r for r in pool if needle in str(r.get("title") or "").lower()]
+    elif role == "ide":
+        repo_name = Path(repo).name.lower()
+        named = [r for r in pool if repo_name in str(r.get("title") or "").lower()]
+        if named:
+            pool = named
+    if len(pool) != 1:
+        raise SystemExit(
+            json.dumps(
+                {
+                    "ok": False,
+                    "phase": "focus",
+                    "role": role,
+                    "reason": "window_not_unique",
+                    "note": "Glass and the IDE have different titles.",
+                    "titles": [r.get("title") for r in rows],
+                }
+            )
+        )
+    return pool[0]
 
 
 def _ui() -> UInput:
@@ -159,7 +243,14 @@ def _chord(ui: UInput, *keys: int) -> None:
 
 
 def _paste(ui: UInput) -> None:
-    _chord(ui, e.KEY_LEFTCTRL, e.KEY_V)
+    """Ctrl+V slow enough for a composer that just took focus."""
+    _key_down(ui, e.KEY_LEFTCTRL)
+    time.sleep(0.18)
+    _key_down(ui, e.KEY_V)
+    time.sleep(0.15)
+    _key_up(ui, e.KEY_V)
+    time.sleep(0.08)
+    _key_up(ui, e.KEY_LEFTCTRL)
 
 
 def _command_palette(ui: UInput) -> None:
@@ -180,9 +271,12 @@ def _quick_command(ui: UInput, query: str, *, opener: str = "ctrl_slash") -> Non
         _command_palette(ui)
     else:
         raise ValueError(f"unknown opener: {opener}")
-    _wl_copy(query)
-    time.sleep(0.05)
-    _paste(ui)
+    clip = _wl_copy(query)
+    try:
+        time.sleep(0.05)
+        _paste(ui)
+    finally:
+        _release_clipboard(clip)
     time.sleep(0.25)
     _tap(ui, e.KEY_ENTER)
     time.sleep(0.45)
@@ -235,20 +329,19 @@ def followup_existing_chat_with_message(
             "message_preview": message[:120],
         }
     focused: dict = {}
-    if focus_title:
-        focused = _focus_window(focus_title, focus_app_id)
-    elif raise_window:
-        _raise_cursor(repo)
-        time.sleep(0.9)
+    if focus_title or raise_window:
+        chosen = _pick_cursor_window("ide", focus_title, repo)
+        focused = _focus_window(str(chosen["title"]), focus_app_id)
+    clip = _wl_copy(message)
     ui = _ui()
     try:
-        _wl_copy(message)
         time.sleep(0.08)
         _paste(ui)
         time.sleep(0.25)
         _submit_composer(ui)
     finally:
         ui.close()
+        _release_clipboard(clip)
     return {
         "ok": True,
         "steps": ["paste", "ctrl_enter"],
@@ -269,39 +362,38 @@ def launch_new_chat_with_message(
 ) -> dict[str, object]:
     """Focus Agents, Ctrl+n (same-window tab), paste ``message``, Ctrl+Enter.
 
-    Ctrl+Shift+N is a new Cursor window — not a tab. Release Shift first.
-    Compositor activate on ``focus_title`` precedes keys so we do not type into
-    Firefox. ``--folder-uri`` / ``vscode-remote://`` is refused at the CLI.
+    Clipboard is armed before Ctrl+N. The only step between Ctrl+N and Ctrl+V
+    is a wait — a ``wl-copy`` in that gap empties ``--paste-once`` before the
+    new composer reads it. Ctrl+Shift+N is a new window, not a tab.
     """
     _require_display()
     if dry_run:
         return {
             "dry_run": True,
             "repo": repo,
-            "steps": ["ctrl_n", "paste", "ctrl_enter"],
+            "steps": ["clipboard", "ctrl_n", "wait", "paste", "ctrl_enter"],
             "raise_window": raise_window,
             "focus_title": focus_title,
             "message_preview": message[:120],
         }
     focused: dict = {}
-    if focus_title:
-        focused = _focus_window(focus_title, focus_app_id)
-    elif raise_window:
-        _raise_cursor(repo)
-        time.sleep(0.9)
+    if focus_title or raise_window:
+        chosen = _pick_cursor_window("ide", focus_title, repo)
+        focused = _focus_window(str(chosen["title"]), focus_app_id)
+    clip = _wl_copy(message)
     ui = _ui()
     try:
         _new_chat(ui)
-        _wl_copy(message)
-        time.sleep(0.08)
+        time.sleep(1.5)
         _paste(ui)
-        time.sleep(0.25)
+        time.sleep(0.4)
         _submit_composer(ui)
     finally:
         ui.close()
+        _release_clipboard(clip)
     return {
         "ok": True,
-        "steps": ["ctrl_n", "paste", "ctrl_enter"],
+        "steps": ["clipboard", "ctrl_n", "wait", "paste", "ctrl_enter"],
         "focus_title": focus_title,
         "focused": focused.get("activated"),
         "message_len": len(message),
@@ -315,7 +407,7 @@ def glass_quick_command(
     opener: str = "ctrl_slash",
     dry_run: bool = False,
 ) -> dict[str, object]:
-    """Raise Cursor, open Glass quick command (ctrl-/ or palette), run query."""
+    """Focus the Glass window, then ctrl-/ (or palette). Not the IDE title."""
     _require_display()
     if dry_run:
         return {
@@ -323,9 +415,10 @@ def glass_quick_command(
             "repo": repo,
             "opener": opener,
             "query": query,
+            "window": "glass",
         }
-    _raise_cursor(repo)
-    time.sleep(0.9)
+    chosen = _pick_cursor_window("glass", None, repo)
+    _focus_window(str(chosen["title"]), "cursor")
     ui = _ui()
     try:
         _quick_command(ui, query, opener=opener)
@@ -348,8 +441,8 @@ def select_composer_model(
             "repo": repo,
             "steps": ["ctrl-/", "composer", "enter", f"filter:{model_query}", "enter"],
         }
-    _raise_cursor(repo)
-    time.sleep(0.9)
+    chosen = _pick_cursor_window("glass", None, repo)
+    _focus_window(str(chosen["title"]), "cursor")
     ui = _ui()
     try:
         _quick_command(ui, "composer", opener="ctrl_slash")
@@ -386,8 +479,8 @@ def main() -> int:
     lp.add_argument(
         "--focus-title",
         default=None,
-        help="Focus the toplevel whose title contains this (compositor activate, "
-        "verified) before typing — e.g. 'Cursor Agents'",
+        help="IDE window title substring only. Glass is a different title; "
+        "do not pass the Glass title here.",
     )
     lp.add_argument(
         "--focus-app-id",
@@ -414,7 +507,7 @@ def main() -> int:
     fp.add_argument(
         "--focus-title",
         default=None,
-        help="Focus the toplevel whose title contains this before typing",
+        help="IDE window title substring. Glass uses a different title and is not selected here.",
     )
     fp.add_argument(
         "--focus-app-id",
@@ -422,7 +515,8 @@ def main() -> int:
         help="app_id substring the focused toplevel must carry (default: cursor)",
     )
     gq = sub.add_parser(
-        "glass-cmd", help="Raise Cursor, ctrl-/ (or palette), run query"
+        "glass-cmd",
+        help="Focus the Glass window (title contains Glass, not the IDE title), then ctrl-/",
     )
     gq.add_argument("query", help="Filter text after opening quick command")
     gq.add_argument(

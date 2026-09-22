@@ -338,6 +338,11 @@ skills:
     # SOT parity and blocked every CDP generate (liaison hop 2, 2026-09-11).
     surface_class: cursor_only
     mcp_surface_required: code
+  liaison-cursor:
+    # Attended IDE dispatch register. Life has no team_dispatch; it stays on
+    # cursor_request. Hop paste loads this slug beside liaison.
+    surface_class: cursor_only
+    mcp_surface_required: code
   markdown-navigation:
     surface_class: cursor_only
     mcp_surface_required: life

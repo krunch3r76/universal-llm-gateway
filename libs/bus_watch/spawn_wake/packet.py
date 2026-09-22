@@ -7,6 +7,7 @@ from typing import Any
 from bus_watch.doorbell import render_successor_wake
 from bus_watch.fable_lock import current_night_id
 from bus_watch.loop_tape import loop_tape_thread
+from bus_watch.model_pause import model_paused
 from bus_watch.now_row import format_now_line, resolve_now_row
 
 SUCCESSOR_MESSAGE_CAP = 2048
@@ -25,6 +26,8 @@ def build_successor_message(
     extra_addresses: tuple[str, ...] = (),
     contract: str = "none",
     cap: int = SUCCESSOR_MESSAGE_CAP,
+    policy: dict[str, Any] | None = None,
+    successor_model: str | None = None,
 ) -> str:
     """Inline resume-fence pull recipe for a headless liaison successor."""
     return render_successor_wake(
@@ -39,6 +42,8 @@ def build_successor_message(
         extra_addresses=tuple(extra_addresses),
         contract=contract,
         cap=cap,
+        policy=policy,
+        successor_model=successor_model,
     )
 
 
@@ -57,6 +62,9 @@ def build_dispatch_body(
     contract = str(policy.get("successor_contract") or "none")
     tape = loop_tape_thread(root_id, policy)
     tape_ring = tape if tape != str(root_id) else None
+    successor = str(policy.get("successor_model") or "")
+    if successor and model_paused(policy, successor):
+        return {"_refused": "model_paused", "model": successor}
     message = build_successor_message(
         root_id,
         gear=str(ctx.get("gear") or policy.get("gear") or "1-fable-mvp"),
@@ -68,6 +76,8 @@ def build_dispatch_body(
         ring=ctx.get("ring") or policy.get("wake_ring") or tape_ring,
         extra_addresses=tuple(extras),
         contract=contract,
+        policy=policy,
+        successor_model=successor,
     )
     body: dict[str, Any] = {
         "op": "generate",

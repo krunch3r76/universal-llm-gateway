@@ -133,6 +133,14 @@ def fire_spawn(
             "leftover": verdict,
             "body": None,
         }
+    if body and body.get("_refused") == "model_paused":
+        return {
+            "status_code": 0,
+            "refused": "model_paused",
+            "quiet_refusal": True,
+            "body": body,
+            "leftover": verdict,
+        }
     if (
         body is not None
         and not body.get("model")
@@ -308,6 +316,22 @@ def tick_spawn_on_wake(
             "refused": ROW_CLASS_FIRED,
             "body": None,
         }
+    work_key = str((body or {}).get("work_key") or "")
+    refused_keys = {str(key) for key in (state.get("refused_work_keys") or []) if key}
+    if work_key and work_key in refused_keys:
+        return {
+            "action": "hold",
+            "evaluation": evaluation,
+            "refused": _WORK_KEY_UNPARSEABLE,
+            "body": body,
+        }
+    if body and body.get("_refused") == "model_paused":
+        return {
+            "action": "hold",
+            "evaluation": evaluation,
+            "refused": "model_paused",
+            "body": body,
+        }
     if dry_run:
         return {
             "action": "would_spawn" if evaluation["spawn"] else "hold",
@@ -342,4 +366,11 @@ def tick_spawn_on_wake(
         review_key = str((body or {}).get("_review_key") or "")
         if (body or {}).get("_review_apply") and review_key:
             mark_review_apply_fired(state, review_key)
+    if fired.get("quiet_refusal") or fired.get("refused"):
+        return {
+            "action": "hold",
+            "evaluation": evaluation,
+            "fire": fired,
+            "refused": fired.get("refused"),
+        }
     return {"action": "spawned", "evaluation": evaluation, "fire": fired}

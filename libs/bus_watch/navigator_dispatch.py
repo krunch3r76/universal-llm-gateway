@@ -10,14 +10,14 @@ from typing import Any
 
 from stargate_dispatch.client import submit_team_dispatch
 
+from bus_watch.model_pause import model_paused
+
 _LIFE_REGISTERS = frozenset({"cse", "life"})
 _LIFE_SEATS = frozenset({"cursor-auto", "life"})
 _CODE_SEATS = frozenset({"cursor-sdk", "cursor"})
 
 
-def resolve_navigator_seat(
-    policy: dict[str, Any] | None, *, register: str
-) -> str:
+def resolve_navigator_seat(policy: dict[str, Any] | None, *, register: str) -> str:
     """Return ``cursor-sdk`` or ``cursor-auto``. Never ``cdp``."""
     raw = str((policy or {}).get("navigator_seat") or "").strip().lower()
     if raw in _CODE_SEATS:
@@ -29,11 +29,15 @@ def resolve_navigator_seat(
     return "cursor-sdk"
 
 
-def model_for_navigator_seat(
-    policy: dict[str, Any] | None, seat: str
-) -> str | None:
-    """Cursor-family model only. ``cdp/*`` is dropped, not remapped to CDP."""
+def model_for_navigator_seat(policy: dict[str, Any] | None, seat: str) -> str | None:
+    """Cursor-family model only. ``cdp/*`` is dropped, not remapped to CDP.
+
+    A paused navigator pin is not rewritten onto ``successor_model``. That
+    substitution hid an Opus policy behind a grok wake.
+    """
     raw = str((policy or {}).get("navigator_model") or "").strip()
+    if model_paused(policy, raw):
+        return None
     if seat == "cursor-sdk":
         if raw.startswith("cursor/"):
             return raw

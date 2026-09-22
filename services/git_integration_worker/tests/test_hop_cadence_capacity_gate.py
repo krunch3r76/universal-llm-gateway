@@ -10,7 +10,6 @@ from services.git_integration_worker.cursor_auto.cdp_escalation import (
     escalation_lane_refusal,
 )
 from services.git_integration_worker.cursor_auto.hop_cadence import (
-    CapacityGateResult,
     capacity_blocks_hop,
     evaluate_capacity_gate,
     fire_hop_for_decision,
@@ -118,6 +117,42 @@ async def test_fire_hop_admit_carries_capacity_in_decision(monkeypatch) -> None:
     assert outcome["decision"]["at_soft_limit"] is True
     assert outcome["decision"]["at_hard_limit"] is False
     assert outcome["decision"]["label"] is None
+
+
+@pytest.mark.asyncio
+async def test_fire_hop_refuses_when_root_pauses_opus(tmp_path, monkeypatch) -> None:
+    """Paused Opus must not enqueue the cadence default escalation."""
+    import json
+
+    from services.git_integration_worker.cursor_auto import hop_cadence as cadence_mod
+
+    monkeypatch.setattr("bus_watch.model_pause.WATCH_DIR", tmp_path)
+    (tmp_path / "liaison-6655.tick.json").write_text(
+        json.dumps({"policy": {"paused_models": ["cdp/opus-5"]}}),
+        encoding="utf-8",
+    )
+    hop = AsyncMock(return_value={"ok": True, "execution_id": "exec-1"})
+    monkeypatch.setattr(cadence_mod, "run_continuity_hop_concurrent", hop)
+    monkeypatch.setattr(
+        cadence_mod,
+        "refuse_cadence_hop_for_live_seat",
+        lambda row, s: (False, None, {}),
+    )
+    outcome = await fire_hop_for_decision(
+        _fire_decision(),
+        queue=reset_queue_for_tests(durable=False),
+        row={"from_agent": "web-anthropic", "registration_id": "reg-1"},
+        snapshot_reader=lambda: {
+            "at_hard_limit": False,
+            "at_soft_limit": False,
+            "free_slots": 2,
+            "running_count": 0,
+        },
+    )
+    assert outcome["ok"] is False
+    assert outcome["reason"] == "model_paused"
+    hop.assert_not_called()
+    assert cadence_mod.cadence_escalation_for_root("no-such-root") == "cdp/opus-5"
 
 
 def test_escalation_lane_refusal_soft_is_advisory() -> None:

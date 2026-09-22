@@ -40,6 +40,7 @@ from bus_watch.doorbell_skills import (
 )
 from bus_watch.fable_lock import WATCH_DIR, current_night_id
 from bus_watch.loop_tape import loop_tape_thread
+from bus_watch.model_pause import model_paused
 from bus_watch.navigator_dispatch import (
     build_navigator_body,
     navigator_lane_id,
@@ -283,6 +284,9 @@ def evaluate_navigator_wake(
         # omits ``commission:`` entirely while this clause stays True.
         "navigator_commission_cap": True,
         "navigator_model_bound": _navigator_model_bound(policy),
+        "navigator_model_not_paused": not model_paused(
+            policy, str(policy.get("navigator_model") or "")
+        ),
         "navigator_lane_bound": bool(root_id),
         "register_not_attended": register != "attended",
     }
@@ -294,6 +298,8 @@ def evaluate_navigator_wake(
         skip_reason = "grace_not_elapsed"
     elif not clauses["navigator_model_bound"]:
         skip_reason = "navigator_model_unbound"
+    elif not clauses["navigator_model_not_paused"]:
+        skip_reason = "model_paused"
     elif not clauses["navigator_lane_bound"]:
         skip_reason = "navigator_lane_unbound"
     elif not clauses["register_not_attended"]:

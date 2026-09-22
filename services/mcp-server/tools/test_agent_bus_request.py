@@ -586,6 +586,10 @@ def test_request_continue_does_not_pass_lifecycle_state():
             "tools.agent_bus.request.probe_auto_liveness",
             return_value={"live": False, "reason": "no_live_handler"},
         ),
+        patch(
+            "tools.agent_bus._shared.relay",
+            return_value={"id": "6885", "tags": []},
+        ),
     ):
         _request_impl(
             new_slug=None,
@@ -606,6 +610,57 @@ def test_request_continue_does_not_pass_lifecycle_state():
             summary=None,
         )
     assert captured.get("lifecycle_state") is None
+
+
+def test_request_continue_loads_role_root_tags_via_relay():
+    """Continue/hop must read tags from the host socket, not messages.db."""
+    captured: dict[str, object] = {}
+    paths: list[str] = []
+
+    def fake_send(**kwargs):
+        captured.update(kwargs)
+        return {
+            "send_path": "continue",
+            "thread": {"id": "12286", "slug": "operator-ear-house"},
+            "turn": {"id": 75, "thread": "12286", "turn_number": 75},
+        }
+
+    def fake_relay(service, method, path, **kwargs):
+        assert service == "agent-bus"
+        assert method == "GET"
+        paths.append(path)
+        return {"id": "12286", "tags": ["role:root", "type:continuity"]}
+
+    with (
+        patch("tools.agent_bus.request._send_dispatch", side_effect=fake_send),
+        patch(
+            "tools.agent_bus.request.probe_auto_liveness",
+            return_value={"live": False, "reason": "no_live_handler"},
+        ),
+        patch("tools.agent_bus._shared.relay", side_effect=fake_relay),
+        patch("agent_bus_store.db.threads.get_thread") as get_thread,
+    ):
+        _request_impl(
+            new_slug=None,
+            thread="12286",
+            to="cursor",
+            subject="follow-up",
+            body="so_what: must not replace the house summary",
+            from_agent="dispatch",
+            tags=None,
+            sidecar_content=None,
+            sidecar_slug=None,
+            desired_model="auto",
+            desired_effort="medium",
+            contract="answer",
+            require_attended=False,
+            request_id=None,
+            after_turn=74,
+            summary=None,
+        )
+    assert paths == ["/threads/12286/summary?recent=1"]
+    assert captured.get("summary") is None
+    get_thread.assert_not_called()
 
 
 def test_enqueue_omits_lane_when_unset() -> None:
@@ -809,7 +864,7 @@ def test_request_binds_cse_when_liveness_dead():
             "tools.agent_bus.request.probe_auto_liveness",
             return_value=liveness_exhausted,
         ),
-        patch("agent_bus_store.db.cse_associations.associate_cse") as bind,
+        patch("tools.agent_bus.request_cse_bind.relay") as bind,
         patch("claude_bundles.cse_session_obligations.stamp_session_ids") as stamp,
         patch("tools.agent_bus.request.record"),
     ):
@@ -835,9 +890,11 @@ def test_request_binds_cse_when_liveness_dead():
         )
     assert result["thread"]["id"] == "9501"
     bind.assert_called_once()
-    assert bind.call_args.kwargs["thread_id"] == "9501"
-    assert bind.call_args.kwargs["cse_chat_url"] == _CSE_URL
-    assert bind.call_args.kwargs["cse_registration_id"] == "reg-a"
+    assert bind.call_args.args[0] == "agent-bus"
+    assert bind.call_args.args[1] == "POST"
+    assert bind.call_args.args[2] == "/threads/9501/cse-associate"
+    assert bind.call_args.kwargs["body"]["cse_chat_url"] == _CSE_URL
+    assert bind.call_args.kwargs["body"]["cse_registration_id"] == "reg-a"
     stamp.assert_not_called()
 
 
@@ -853,7 +910,7 @@ def test_request_registration_only_does_not_bind_cse():
             "tools.agent_bus.request.probe_auto_liveness",
             return_value={"live": False, "reason": "no_live_handler", "attempts": 1},
         ),
-        patch("agent_bus_store.db.cse_associations.associate_cse") as bind,
+        patch("tools.agent_bus.request_cse_bind.relay") as bind,
         patch("tools.agent_bus.request.record"),
     ):
         _request_impl(
@@ -926,7 +983,7 @@ def test_request_cursor_author_does_not_bind_cse():
             "tools.agent_bus.request.probe_auto_liveness",
             return_value={"live": False, "reason": "no_live_handler", "attempts": 1},
         ),
-        patch("agent_bus_store.db.cse_associations.associate_cse") as bind,
+        patch("tools.agent_bus.request_cse_bind.relay") as bind,
         patch("tools.agent_bus.request.record"),
     ):
         _request_impl(
@@ -950,3 +1007,55 @@ def test_request_cursor_author_does_not_bind_cse():
             cse_registration_id="reg-a",
         )
     bind.assert_not_called()
+
+
+def test_continuity_hop_from_cursor_binds_registration():
+    """IDE hop must record the wire registration. Census reads that row."""
+    send_payload = {
+        "send_path": "continue",
+        "thread": {"id": "12286", "slug": "operator-ear-house"},
+        "turn": {"id": 144, "thread": "12286", "turn_number": 144},
+    }
+    with (
+        patch("tools.agent_bus.request._send_dispatch", return_value=send_payload),
+        patch(
+            "tools.agent_bus.request.probe_auto_liveness",
+            return_value={"live": True, "attempts": 1, "elapsed_s": 0.0},
+        ),
+        patch("tools.agent_bus.request_cse_bind.relay") as bind,
+        patch(
+            "tools.agent_bus.request.enqueue_auto_job",
+            return_value={
+                "ok": True,
+                "auto_handler_status": "auto-handler-live",
+                "job_admission": {"outcome": "not_applicable"},
+            },
+        ) as enqueue,
+        patch("claude_bundles.cse_session_obligations.stamp_session_ids") as stamp,
+        patch("tools.agent_bus.request.record"),
+    ):
+        _request_impl(
+            new_slug=None,
+            thread="12286",
+            to="cursor",
+            subject="CONTINUITY HANDOFF",
+            body="TYPE: CONTINUITY_HANDOFF",
+            from_agent="cursor",
+            tags=None,
+            sidecar_content=None,
+            sidecar_slug=None,
+            desired_model="auto",
+            desired_effort="auto",
+            contract="answer",
+            require_attended=False,
+            request_id="req-hop",
+            after_turn=138,
+            summary=None,
+            cse_chat_url=_CSE_URL,
+            cse_registration_id="reg-a",
+            continuity_hop=True,
+        )
+    bind.assert_called_once()
+    assert bind.call_args.kwargs["body"]["cse_registration_id"] == "reg-a"
+    assert enqueue.call_args.kwargs["cse_registration_id"] == "reg-a"
+    stamp.assert_not_called()

@@ -20,8 +20,14 @@ from typing import Any
 
 from claude_bundles.operator_proxy_mission import OPERATOR_PROXY_MISSION_PURPOSES
 
-LANE_SOFT_LIMIT = 2
-LANE_HARD_LIMIT = 3
+# Advisory stream telemetry only. Cowork does not cap concurrent sessions at a
+# small integer; 2/3 read as "full" while the product still had room. The
+# ceilings stay finite so ``free_slots`` remains an int. They do not refuse mint.
+LANE_SOFT_LIMIT = 32
+LANE_HARD_LIMIT = 64
+ADMISSION_COUNT_SCOPE = (
+    f"running/stream admissions, this host (soft={LANE_SOFT_LIMIT} hard={LANE_HARD_LIMIT})"
+)
 ADVISOR_RESERVE = 1
 SEAT_FLOOR = 1
 

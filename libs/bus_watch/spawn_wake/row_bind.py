@@ -7,6 +7,7 @@ from typing import Any
 from bus_watch.fable_lock import current_night_id
 from bus_watch.liaison_pager import page_liaison
 from bus_watch.loop_tape import loop_tape_thread
+from bus_watch.model_pause import model_paused
 from bus_watch.spawn_wake.play_classify import build_play_dispatch_body
 from bus_watch.spawn_wake.row_class import (
     ROW_CLASS_FIRED,
@@ -70,12 +71,40 @@ def row_bind_model(policy: dict[str, Any]) -> str:
     return "cursor/grok-4.7"
 
 
-def trio_sketch_model(policy: dict[str, Any]) -> str:
-    """TRIO sketch consult when no ``todo:{slug}`` — default ``cdp/opus-5``."""
+def friction_night_key(friction_id: str, *, role: str | None = None) -> str:
+    """Admitted ``friction:`` work identity for one row on one night.
+
+    Row-bind uses ``friction:<id>:night-<night>``. A later TRIO sketch adds
+    ``:trio`` so it does not remint the bind key. ``row-bind:`` is not a GIW
+    scheme and was the 10479 mill (422, then a lane, then the same poll again).
+    """
+    night = current_night_id()
+    fid = str(friction_id or "").strip()
+    if role:
+        return f"friction:{fid}:{role}:night-{night}"
+    return f"friction:{fid}:night-{night}"
+
+
+def trio_sketch_model(policy: dict[str, Any]) -> str | None:
+    """TRIO sketch consult when no ``todo:{slug}`` — default ``cdp/opus-5``.
+
+    A paused default or override yields None. The caller holds; it does not
+    substitute another model.
+    """
     raw = str(policy.get("trio_sketch_model") or "").strip()
-    if raw.startswith(("cursor/", "cdp/")):
-        return raw
-    return "cdp/opus-5"
+    model = raw if raw.startswith(("cursor/", "cdp/")) else "cdp/opus-5"
+    if model_paused(policy, model):
+        return None
+    return model
+
+
+def _paused_model_body(friction_id: str, **extra: Any) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "_refused": "model_paused",
+        "_friction_id": str(friction_id or ""),
+    }
+    body.update(extra)
+    return body
 
 
 def _row_bind_model_knobs(policy: dict[str, Any], model: str) -> dict[str, str] | None:
@@ -88,7 +117,9 @@ def _row_bind_model_knobs(policy: dict[str, Any], model: str) -> dict[str, str] 
     return None
 
 
-def _wire_cursor_row_bind(body: dict[str, Any], policy: dict[str, Any], model: str) -> None:
+def _wire_cursor_row_bind(
+    body: dict[str, Any], policy: dict[str, Any], model: str
+) -> None:
     if not model.startswith("cursor/"):
         return
     body["seat"] = "cursor-sdk"
@@ -114,13 +145,15 @@ def build_row_bind_body(
     )
     tape = loop_tape_thread(root_id, policy)
     model = row_bind_model(policy)
+    if model_paused(policy, model):
+        return _paused_model_body(fid, _row_bind=True)
     body: dict[str, Any] = {
         "op": "generate",
         "model": model,
         "contract": "none",
         "prompt": prompt,
         "dispatch_thread_id": tape,
-        "work_key": f"row-bind:{fid}:night-{current_night_id()}",
+        "work_key": friction_night_key(fid),
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
         "_row_bind": True,
@@ -189,13 +222,15 @@ def build_trio_sketch_body(
     )
     tape = loop_tape_thread(root_id, policy)
     model = trio_sketch_model(policy)
+    if not model:
+        return _paused_model_body(fid, _row_class=ROW_CLASS_TRIO)
     body: dict[str, Any] = {
         "op": "generate",
         "model": model,
         "contract": "none",
         "prompt": prompt,
         "dispatch_thread_id": tape,
-        "work_key": f"row-trio-sketch:{fid}:night-{current_night_id()}",
+        "work_key": friction_night_key(fid, role="trio"),
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
         "_row_class": ROW_CLASS_TRIO,
@@ -285,6 +320,7 @@ __all__ = [
     "build_row_bind_body",
     "build_trio_fire_body",
     "build_trio_sketch_body",
+    "friction_night_key",
     "row_bind_model",
     "trio_sketch_model",
 ]

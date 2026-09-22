@@ -153,8 +153,10 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         """Return recorded executions, stream-admission capacity, and listable seats.
 
         ``busy`` describes pending/running satellite executions only. Lane
-        ``soft_limit`` / ``hard_limit`` (2/3) and ``free_slots`` / ``at_hard_limit``
-        are **advisory** stream-admission metrics — they do not refuse submits.
+        ``soft_limit`` / ``hard_limit`` (``LANE_SOFT_LIMIT`` / ``LANE_HARD_LIMIT``)
+        and ``free_slots`` / ``at_hard_limit`` are **advisory** stream-admission
+        metrics — they do not refuse submits. Cowork itself is not capped at
+        those integers.
         ``x_exhausted`` on the same snapshot are the display-capacity axis. ``rows`` lists
         per-flight ``registration_id`` / ``holder`` / ``purpose``. ``seated_rows``
         is always a list (including ``[]``) from this host's registry

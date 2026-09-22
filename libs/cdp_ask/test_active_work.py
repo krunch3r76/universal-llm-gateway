@@ -15,6 +15,7 @@ from cdp_ask.execution_store import (
     ExecutionStore,
 )
 from cdp_ask.lane_admission import (
+    ADMISSION_COUNT_SCOPE,
     ADVISOR_RESERVE,
     admission_regime,
     count_by_purpose_class,
@@ -78,7 +79,7 @@ def _capacity(
         "running_count_scope": "cdp_ask execution store, pending/running streams",
         "running_count_authority": "recorded",
         "admission_count": admission_count,
-        "admission_count_scope": "running/stream admissions, this host (soft=2 hard=3)",
+        "admission_count_scope": ADMISSION_COUNT_SCOPE,
         "admission_count_authority": "recorded",
         "execution_ids": execution_ids,
         "rows": rows or [],
@@ -155,7 +156,7 @@ async def test_active_work_snapshot_pending_execution(
             ],
         ),
     )
-    # One stream in flight must NOT read as admission-full (soft=2, hard=3).
+    # One stream in flight must NOT read as admission-full.
     assert snap["at_soft_limit"] is False
     assert snap["at_hard_limit"] is False
     assert snap["free_slots"] == LANE_HARD_LIMIT - 1

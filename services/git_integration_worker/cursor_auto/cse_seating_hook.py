@@ -69,11 +69,7 @@ def run_cse_seating_hook(
     ``giw.cursor_auto.cse_seating_hook`` for path-scoped regression tests.
     """
     lane = watch_thread_for_job(job)
-    occupy = (
-        parse_occupy_target(job.body)
-        or (job.cse_chat_url or "").strip()
-        or None
-    )
+    occupy = parse_occupy_target(job.body) or (job.cse_chat_url or "").strip() or None
     superseded = (
         parse_superseded_registration_id(job.body)
         or (job.cse_registration_id or "").strip()
@@ -90,6 +86,14 @@ def run_cse_seating_hook(
         return outcome
 
     new_reg, _new_chat = _resolve_successor_identity(job, execution_id)
+    # No successor CSE yet (IDE hop). The wire id is the admission identity;
+    # leaving the holder null makes the next census miss the seat we just named.
+    if new_reg:
+        occupy_reg: str | None = new_reg
+        prior = superseded
+    else:
+        occupy_reg = superseded
+        prior = None
     from services.git_integration_worker.cse_session_holders import (
         ensure_schema,
         occupy_holder_on_hop,
@@ -104,8 +108,8 @@ def run_cse_seating_hook(
             conn,
             occupy_target=occupy,
             lane_thread_id=lane,
-            superseded_registration_id=superseded,
-            new_registration_id=new_reg,
+            superseded_registration_id=prior,
+            new_registration_id=occupy_reg,
             new_execution_id=(execution_id or "").strip() or None,
         )
         conn.commit()

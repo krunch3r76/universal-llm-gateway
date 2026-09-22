@@ -267,11 +267,13 @@ body + `cortex://`* explicitly so the seat does not answer into an artifact card
 
 ## Parallel Chrome (BINDING)
 
-**DEFAULT:** `register_lane` / `project-ask --register`. Soft=**2**, hard=**3**
-are **advisory** metrics on recorded **stream** admission (`at_soft_limit`,
-`at_hard_limit`, `free_slots`) — they do **not** refuse submit-path or hop-cadence
-admission (operator directive 2026-09-01). Per-lane seat uniqueness still applies
-(one holder per `parent_thread`, plus one hop-succession overlap).
+**DEFAULT:** `register_lane` / `project-ask --register`. Soft=**32**, hard=**64**
+(`cdp_ask.lane_admission`) are **advisory** metrics on recorded **stream**
+admission (`at_soft_limit`, `at_hard_limit`, `free_slots`) — they do **not**
+refuse submit-path or hop-cadence admission (operator directive 2026-09-01).
+Cowork itself allows far more concurrent sessions than the old 2/3 host policy;
+do not pace as if three streams fill the product. Per-lane seat uniqueness
+still applies (one holder per `parent_thread`, plus one hop-succession overlap).
 
 **purpose=ask:** `other_count` / `advisor_reserve` describe occupancy class — global
 count ceilings no longer block mint. Use `free_slots` / `at_hard_limit` as **signals**
