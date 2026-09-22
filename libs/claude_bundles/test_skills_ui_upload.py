@@ -410,15 +410,21 @@ async def test_modal_file_input_raises_when_not_on_skills_url() -> None:
         await _modal_file_input(page)
 
 
+def _add_btn_stub(*, expanded: str = "false") -> AsyncMock:
+    add_btn = AsyncMock()
+    add_btn.page = AsyncMock()
+    add_btn.get_attribute = AsyncMock(return_value=expanded)
+    add_btn.scroll_into_view_if_needed = AsyncMock()
+    add_btn.wait_for = AsyncMock()
+    add_btn.click = AsyncMock()
+    return add_btn
+
+
 @pytest.mark.asyncio
 async def test_stability_guarded_add_click_skips_when_expanded() -> None:
     from claude_bundles.skills_ui_menu import stability_guarded_add_click
 
-    add_btn = AsyncMock()
-    add_btn.get_attribute = AsyncMock(return_value="true")
-    add_btn.scroll_into_view_if_needed = AsyncMock()
-    add_btn.wait_for = AsyncMock()
-    add_btn.click = AsyncMock()
+    add_btn = _add_btn_stub(expanded="true")
     await stability_guarded_add_click(add_btn)
     add_btn.click.assert_not_called()
 
@@ -569,10 +575,39 @@ async def test_confirm_skill_upload_ui_raises_without_toast_or_row() -> None:
 async def test_stability_guarded_add_click_clicks_when_closed() -> None:
     from claude_bundles.skills_ui_menu import stability_guarded_add_click
 
-    add_btn = AsyncMock()
-    add_btn.get_attribute = AsyncMock(return_value="false")
-    add_btn.scroll_into_view_if_needed = AsyncMock()
-    add_btn.wait_for = AsyncMock()
-    add_btn.click = AsyncMock()
-    await stability_guarded_add_click(add_btn)
-    add_btn.click.assert_awaited_once()
+    add_btn = _add_btn_stub(expanded="false")
+    with (
+        patch(
+            "claude_bundles.skills_ui_menu.dismiss_base_ui_inert_portal",
+            new_callable=AsyncMock,
+        ) as dismiss,
+        patch(
+            "claude_bundles.skills_ui_menu.base_ui_inert_portal_blocks",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+    ):
+        await stability_guarded_add_click(add_btn)
+    dismiss.assert_awaited_once_with(add_btn.page)
+    add_btn.click.assert_awaited_once_with(timeout=3_000)
+
+
+@pytest.mark.asyncio
+async def test_stability_guarded_add_click_force_when_inert_portal_remains() -> None:
+    from claude_bundles.skills_ui_menu import stability_guarded_add_click
+
+    add_btn = _add_btn_stub(expanded="false")
+    with (
+        patch(
+            "claude_bundles.skills_ui_menu.dismiss_base_ui_inert_portal",
+            new_callable=AsyncMock,
+        ) as dismiss,
+        patch(
+            "claude_bundles.skills_ui_menu.base_ui_inert_portal_blocks",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+    ):
+        await stability_guarded_add_click(add_btn)
+    dismiss.assert_awaited_once_with(add_btn.page)
+    add_btn.click.assert_awaited_once_with(timeout=3_000, force=True)

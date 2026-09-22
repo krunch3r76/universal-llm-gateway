@@ -320,13 +320,50 @@ async def add_menu_expanded(add_btn: Locator) -> bool:
     return (expanded or "").lower() == "true"
 
 
+_INERT_PORTAL = '#portal-root [role="presentation"][data-base-ui-inert]'
+
+
+async def base_ui_inert_portal_blocks(page: Page) -> bool:
+    """True when Base UI left a pointer-blocking inert layer under ``#portal-root``."""
+    loc = page.locator(_INERT_PORTAL)
+    if not await loc.count():
+        return False
+    try:
+        return await loc.first.is_visible()
+    except Exception:
+        return False
+
+
+async def dismiss_base_ui_inert_portal(page: Page) -> None:
+    """Dismiss one blocking Base UI inert presentation (Escape and/or Close)."""
+    if not await base_ui_inert_portal_blocks(page):
+        return
+    loc = page.locator(_INERT_PORTAL)
+    for close in (
+        loc.locator('button[aria-label="Close"]'),
+        loc.locator('button[aria-label="close"]'),
+        page.get_by_role("button", name=re.compile(r"^close$", re.I)),
+    ):
+        if await close.count() and await close.first.is_visible():
+            await close.first.click(force=True)
+            await page.wait_for_timeout(300)
+            return
+    await page.keyboard.press("Escape")
+    await page.wait_for_timeout(300)
+
+
 async def stability_guarded_add_click(add_btn: Locator) -> None:
     """Open Add menu; skip click when already expanded (re-click toggles shut)."""
+    page = add_btn.page
     await add_btn.scroll_into_view_if_needed()
     await add_btn.wait_for(state="visible", timeout=3_000)
     if await add_menu_expanded(add_btn):
         return
-    await add_btn.click(timeout=3_000)
+    await dismiss_base_ui_inert_portal(page)
+    if await base_ui_inert_portal_blocks(page):
+        await add_btn.click(timeout=3_000, force=True)
+    else:
+        await add_btn.click(timeout=3_000)
 
 
 async def snapshot_add_menu(page: Page, add_btn: Locator | None) -> MenuInventory:
