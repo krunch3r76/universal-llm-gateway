@@ -32,8 +32,11 @@ _COMPOSER_ADD_NOISE = re.compile(
     r"files|connectors|photos|screenshot|plugins|more$", re.I
 )
 _SKILLS_NAV = re.compile(r"skills", re.I)
-_UPLOAD_TITLE = re.compile(r"upload\s+skill", re.I)
-_UPLOAD_DROP_ZONE = re.compile(r"drag and drop or click to upload", re.I)
+_UPLOAD_TITLE = re.compile(r"upload\s+(?:a\s+)?skill", re.I)
+_UPLOAD_DROP_ZONE = re.compile(
+    r"drag\s+and\s+drop\s+(?:skill\s+files\s+here|or\s+click\s+to\s+upload)",
+    re.I,
+)
 _CF_MARKERS = (
     "Performing security verification",
     "Verify you are human",

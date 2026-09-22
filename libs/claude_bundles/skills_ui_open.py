@@ -76,16 +76,13 @@ def _is_skills_upload_route(url: str) -> bool:
 
 
 async def _upload_route_file_input(page: Page) -> Locator | None:
-    """Return a visible page file input on the dedicated upload route (no overlay)."""
+    """Return the page file input on /customize/skills/new/upload (hidden input OK)."""
     if not _is_skills_upload_route(page.url):
         return None
     inp = page.locator('input[type="file"]')
     if not await inp.count():
         return None
-    first = inp.first
-    if await first.is_visible():
-        return first
-    return None
+    return inp.first
 
 
 async def _open_upload_dialog(

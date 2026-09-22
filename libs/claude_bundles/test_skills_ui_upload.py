@@ -30,8 +30,10 @@ from claude_bundles.skills_ui_open import (
     UploadModalMissingError,
     _modal_file_input,
     _open_upload_dialog,
+    _upload_route_file_input,
 )
 from claude_bundles.skills_ui_panel import (
+    _upload_overlay_text_matches,
     _upload_modal_open,
     _upload_modal_root,
     probe_upload_modal_mismatch,
@@ -206,6 +208,66 @@ def _mock_page_with_upload_overlay(inner_text: str, *, file_input_count: int = 1
 
     page.locator = MagicMock(side_effect=_locator)
     return page
+
+
+def test_upload_overlay_text_matches_live_upload_page_copy() -> None:
+    assert _upload_overlay_text_matches("Upload a skill")
+    assert _upload_overlay_text_matches(
+        "Drag and drop skill files here, or browse…"
+    )
+    assert _upload_overlay_text_matches("Drag and drop or click to upload")
+
+
+@pytest.mark.asyncio
+async def test_probe_upload_modal_mismatch_new_upload_route_copy() -> None:
+    """Dedicated /new/upload page: heading + drop zone, no popup shell."""
+    title_loc = MagicMock()
+    title_loc.count = AsyncMock(return_value=1)
+    title_loc.first.is_visible = AsyncMock(return_value=True)
+    title_loc.first.locator = MagicMock(return_value=_mock_locator(count=0))
+    empty_overlays = MagicMock()
+    empty_overlays.count = AsyncMock(return_value=0)
+    page = MagicMock()
+    page.url = "https://claude.ai/customize/skills/new/upload"
+
+    def _get_by_text(pattern) -> MagicMock:
+        pat = getattr(pattern, "pattern", str(pattern))
+        if "upload" in pat.lower() and "skill" in pat.lower():
+            return title_loc
+        if "drag" in pat.lower():
+            return title_loc
+        return _mock_locator()
+
+    page.get_by_text = MagicMock(side_effect=_get_by_text)
+
+    def _locator(sel: str) -> MagicMock:
+        if "data-popup-open" in sel or 'role="dialog"' in sel:
+            return empty_overlays
+        return _mock_locator()
+
+    page.locator = MagicMock(side_effect=_locator)
+
+    probe = await probe_upload_modal_mismatch(page)
+    assert probe["text_loose_or_strict_match"] is True
+    assert probe["drop_zone_text"] is True
+    assert probe["overlay_shell"] is False
+
+
+@pytest.mark.asyncio
+async def test_upload_route_file_input_returns_hidden_input() -> None:
+    page = MagicMock()
+    page.url = "https://claude.ai/customize/skills/new/upload"
+    file_inp = _mock_locator(count=1, visible=False)
+
+    def _locator(sel: str) -> MagicMock:
+        if sel == 'input[type="file"]':
+            return file_inp
+        return _mock_locator()
+
+    page.locator = MagicMock(side_effect=_locator)
+    got = await _upload_route_file_input(page)
+    assert got is file_inp.first
+    file_inp.first.is_visible.assert_not_called()
 
 
 @pytest.mark.asyncio
