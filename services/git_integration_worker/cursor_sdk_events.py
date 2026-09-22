@@ -1801,6 +1801,69 @@ def emit_sdk_lane_b_worktree_missing_observed(
 
 
 @event_factory
+def SdkLaneBWorktreeRootCollapsed(  # noqa: N802
+    call_site: str,
+    path_before: str,
+    path_after: str,
+    worktree_root: str,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "call_site": call_site,
+        "path_before": path_before,
+        "path_after": path_after,
+        "worktree_root": worktree_root,
+    }
+    if dispatch_id is not None:
+        payload["dispatch_id"] = dispatch_id
+    if thread_id is not None:
+        payload["thread_id"] = thread_id
+    return Event(
+        signal="sdk.lane_b.worktree_root_collapsed",
+        payload=payload,
+        scope="node",
+    )
+
+
+def emit_sdk_lane_b_worktree_root_collapsed(
+    *,
+    call_site: str,
+    path_before: str,
+    path_after: str,
+    worktree_root: str,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
+) -> None:
+    """Observe when a doubled ``worktree_root`` segment is collapsed in a path.
+
+    Event bus first for 3am fleet queries (``query-events`` / observability);
+    structured log second for host grep. Skipping the event leaves only logs —
+    unreachable for dispatch-scoped forensics without log access.
+    """
+    _emit(
+        SdkLaneBWorktreeRootCollapsed(
+            call_site=call_site,
+            path_before=path_before,
+            path_after=path_after,
+            worktree_root=worktree_root,
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+        )
+    )
+    logger.warning(
+        "cursor sdk lane-b worktree root collapsed: call_site=%s "
+        "path_before=%s path_after=%s worktree_root=%s dispatch_id=%s thread_id=%s",
+        call_site,
+        path_before,
+        path_after,
+        worktree_root,
+        dispatch_id,
+        thread_id,
+    )
+
+
+@event_factory
 def SdkLaneBReapSkippedLiveBridge(  # noqa: N802
     worktree_path: str,
     pid: int | None = None,

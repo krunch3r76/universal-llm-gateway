@@ -3274,7 +3274,11 @@ async def admit_cursor_dispatch(
         )
         mint_wait_ms = (time.monotonic() - mint_started) * 1000.0
         dispatch_workspace = collapse_doubled_worktree_root(
-            binding.workspace, cfg.worktree_root
+            binding.workspace,
+            cfg.worktree_root,
+            call_site="admit_dispatch_workspace",
+            dispatch_id=req.dispatch_id,
+            thread_id=req.thread_id,
         )
         lease_key = str(dispatch_workspace)
         binding = type(binding)(

@@ -79,11 +79,20 @@ def is_managed_worktree(path: Path, worktree_root: Path) -> bool:
         return False
 
 
-def collapse_doubled_worktree_root(path: Path, worktree_root: Path) -> Path:
+def collapse_doubled_worktree_root(
+    path: Path,
+    worktree_root: Path,
+    *,
+    call_site: str,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
+) -> Path:
     """Collapse accidental ``worktree_root`` duplication in an absolute path.
 
     When a scratch cwd or caller-supplied path re-embeds the shared arc root,
     mint/launch would otherwise target a non-existent doubled directory.
+    Every collapse emits ``sdk.lane_b.worktree_root_collapsed`` (see
+    ``emit_sdk_lane_b_worktree_root_collapsed``).
     """
     resolved = path.expanduser().resolve()
     root = worktree_root.resolve()
@@ -94,7 +103,39 @@ def collapse_doubled_worktree_root(path: Path, worktree_root: Path) -> Path:
     suffix = text.split(root_s, 1)[1].lstrip(os.sep)
     while root_s in suffix:
         suffix = suffix.split(root_s, 1)[-1].lstrip(os.sep)
-    return (root / suffix).resolve() if suffix else root
+    collapsed = (root / suffix).resolve() if suffix else root
+    _emit_worktree_root_collapsed(
+        call_site=call_site,
+        path_before=text,
+        path_after=str(collapsed),
+        worktree_root=root_s,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
+    return collapsed
+
+
+def _emit_worktree_root_collapsed(
+    *,
+    call_site: str,
+    path_before: str,
+    path_after: str,
+    worktree_root: str,
+    dispatch_id: str | None = None,
+    thread_id: str | None = None,
+) -> None:
+    from services.git_integration_worker.cursor_sdk_events import (
+        emit_sdk_lane_b_worktree_root_collapsed,
+    )
+
+    emit_sdk_lane_b_worktree_root_collapsed(
+        call_site=call_site,
+        path_before=path_before,
+        path_after=path_after,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
 
 
 def lane_branch_name(thread_id: str) -> str:
@@ -263,6 +304,9 @@ def mint_dispatch_worktree(
     wt_path = collapse_doubled_worktree_root(
         _worktree_dir(worktree_root, lane_id, source_repo=source_repo),
         worktree_root,
+        call_site="mint_dispatch_worktree",
+        dispatch_id=dispatch_id,
+        thread_id=lane_id,
     )
     if wt_path.exists():
         raise WorktreeMintError(f"worktree path already exists: {wt_path}")
@@ -309,7 +353,13 @@ def accept_dispatch_worktree(
 ) -> Path:
     """Validate and register a caller-supplied Lane-B worktree path."""
     lane_id = thread_id or dispatch_id
-    resolved = collapse_doubled_worktree_root(worktree_path, worktree_root)
+    resolved = collapse_doubled_worktree_root(
+        worktree_path,
+        worktree_root,
+        call_site="accept_dispatch_worktree",
+        dispatch_id=dispatch_id,
+        thread_id=lane_id,
+    )
     if not is_managed_worktree(resolved, worktree_root):
         raise WorktreeMintError(
             f"worktree_path {resolved!r} is not under worktree_root {worktree_root!r}"
@@ -479,7 +529,11 @@ def workspace_from_promoted_lease(
 ) -> Path:
     """Resolve launch workspace for a promoted queued dispatch."""
     if lease_key and is_managed_worktree(Path(lease_key), worktree_root):
-        return collapse_doubled_worktree_root(Path(lease_key), worktree_root)
+        return collapse_doubled_worktree_root(
+            Path(lease_key),
+            worktree_root,
+            call_site="workspace_from_promoted_lease",
+        )
     _ = source_repo
     return dispatch_workspace_default
 
