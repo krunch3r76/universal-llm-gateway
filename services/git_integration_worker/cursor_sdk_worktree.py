@@ -39,6 +39,9 @@ from services.git_integration_worker.cursor_sdk_worktree_registry import (
     repo_worktree_subroot,
     touch_lane_worktree_dispatch,
 )
+from services.git_integration_worker.lane_skill_tree_materialize import (
+    materialize_hub_skill_trees_for_lane,
+)
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
 _MINT_LOCK_POLL_S = 0.02
@@ -337,6 +340,10 @@ def mint_dispatch_worktree(
             branch_name=branch,
             branch_point=commit,
             last_dispatch_id=dispatch_id,
+        )
+        materialize_hub_skill_trees_for_lane(
+            hub_root=source_repo,
+            lane_root=wt_path,
         )
         return wt_path.resolve()
     finally:
