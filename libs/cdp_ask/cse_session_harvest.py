@@ -71,14 +71,7 @@ async def _resolve_target(
                     registration_id=dormant.registration_id,
                     host_listable=is_row_present,
                 )
-                if req.reattach:
-                    return dormant.registration_id, dormant.chat_url, prov, None
-                return (
-                    dormant.registration_id,
-                    dormant.chat_url,
-                    prov,
-                    HarvestResponse(outcome="dormant", provenance=prov),
-                )
+                return dormant.registration_id, dormant.chat_url, prov, None
         return (
             None,
             None,

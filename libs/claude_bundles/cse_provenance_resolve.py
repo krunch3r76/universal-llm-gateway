@@ -238,14 +238,18 @@ def resolve(
             candidate for candidate in candidates if candidate.get("state") == "current"
         ]
         if len(current_regs) > 1:
-            _emit_conflict(target, len(current_regs), episodes[-1].correlation_id)
-            return {
-                "state": "conflict",
-                "chat_url": target,
-                "reason": "multiple_current_hosts",
-                "candidate_count": len(current_regs),
-                "candidates": candidates,
-            }
+            listable_current = [
+                candidate
+                for candidate in current_regs
+                if candidate.get("host_state") == "listable"
+            ]
+            if len(listable_current) > 1:
+                newest_reg_id = episodes[-1].registration_id
+                episodes = [
+                    episode
+                    for episode in episodes
+                    if episode.registration_id == newest_reg_id
+                ]
 
     current = episodes[-1]
 

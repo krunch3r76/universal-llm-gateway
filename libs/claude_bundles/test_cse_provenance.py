@@ -232,6 +232,40 @@ def test_stale_host_claiming_url_resolves_conflict(monkeypatch, tmp_path: Path) 
     assert [s[0] for s in signals] == ["cdp.provenance.conflict"]
 
 
+def test_two_listable_current_registrations_bind_newest_row(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Two still-listable rows on one URL resolve to the newest registration."""
+    log = tmp_path / "registry.jsonl"
+    monkeypatch.setattr(cse_provenance.store, "REGISTRY_LOG", log)
+    monkeypatch.setattr(cse_provenance.store, "REGISTRY_DIR", tmp_path)
+    monkeypatch.setattr(
+        "claude_bundles.cse_provenance_resolve.is_row_present",
+        lambda _rid: True,
+    )
+    cse = "https://claude.ai/cowork/cse_dual_listable"
+    cse_provenance.append_episode(
+        chat_url=cse,
+        registration_id="reg-old",
+        cdp_url="http://127.0.0.1:9223",
+        lane_thread="thread-a",
+    )
+    cse_provenance.append_episode(
+        chat_url=cse,
+        registration_id="reg-new",
+        cdp_url="http://127.0.0.1:9224",
+        lane_thread="thread-b",
+    )
+    signals = _capture_signals(monkeypatch)
+
+    resolved = cse_provenance.resolve(chat_url=cse, host_listable=lambda _rid: True)
+
+    assert resolved["state"] != "conflict"
+    assert resolved.get("reason") != "multiple_current_hosts"
+    assert resolved["registration_id"] == "reg-new"
+    assert not [s for s in signals if s[0] == "cdp.provenance.conflict"]
+
+
 def test_missing_lineage_reports_unresolved_signal(monkeypatch, tmp_path: Path) -> None:
     """Evidence that cannot complete a lineage join is reported, not silent."""
     log = tmp_path / "registry.jsonl"

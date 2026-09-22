@@ -130,17 +130,33 @@ async def test_unattached_without_url_does_not_open() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dormant_seat_without_reattach_does_not_open() -> None:
-    """Default harvest on a dormant seat stays read-only — no Chrome wake."""
+async def test_dormant_seat_without_reattach_opens_and_scrapes() -> None:
+    """Default harvest on a dormant seat opens the URL, scrapes, and tears down."""
     from claude_bundles.cdp_registry.models import DormantSeat
 
     store = ExecutionStore()
+    chat = "https://claude.ai/cowork/cse_x"
     dormant = DormantSeat(
         registration_id="reg-dormant",
-        chat_url="https://claude.ai/cowork/cse_x",
+        chat_url=chat,
         profile_suffix="s",
         profile=Path("/tmp/p"),
         holder="h",
+    )
+    opened = HarvestResponse(
+        outcome="harvested",
+        turns=[
+            CseSessionTurn(
+                author="assistant",
+                text="harvested reply body long enough.",
+                source="cse-dom",
+                ordinal=1,
+            )
+        ],
+        provenance={
+            "evidence_class": "observed",
+            "opened_on_demand": True,
+        },
     )
     with (
         patch(
@@ -157,17 +173,15 @@ async def test_dormant_seat_without_reattach_does_not_open() -> None:
         ),
         patch(
             "cdp_ask.cse_session_harvest.harvest_by_opening_url",
-            AsyncMock(),
+            AsyncMock(return_value=opened),
         ) as opener,
         patch("cdp_ask.cse_session_harvest.emit", lambda _event: None),
     ):
-        result = await execute_harvest(
-            HarvestRequest(chat_url="https://claude.ai/cowork/cse_x"),
-            store,
-        )
-    opener.assert_not_awaited()
-    assert result.outcome == "dormant"
-    assert result.chat_url == "https://claude.ai/cowork/cse_x"
+        result = await execute_harvest(HarvestRequest(chat_url=chat), store)
+    opener.assert_awaited_once()
+    assert result.outcome == "harvested"
+    assert result.outcome != "dormant"
+    assert result.chat_url == chat
 
 
 @pytest.mark.asyncio
