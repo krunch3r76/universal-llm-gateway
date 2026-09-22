@@ -157,6 +157,14 @@ cmd_start() {
   if [[ $has_state -eq 0 ]]; then
     argv+=(--state-file "$state_file")
   fi
+  # Hop successor rebuilds start+tail after departing-tab teardown.
+  if [[ -x "$UNIVERSAL_PYTHON" ]]; then
+    "$UNIVERSAL_PYTHON" -c '
+import json, sys
+from pathlib import Path
+Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]), encoding="utf-8")
+' "$WATCH_DIR/${safe}.argv.json" "${argv[@]}"
+  fi
   (
     cd "$REPO"
     setsid nohup "${argv[@]}" >>"$log_file" 2>&1 &

@@ -11,7 +11,7 @@ from typing import Final
 
 from claude_bundles.catalog import load_skill_catalog
 
-# Body-only echo marker — exists in ``.cursor/skills/liaison/SKILL.md`` § Registers,
+# Body-only echo marker — exists in the liaison skill § Registers,
 # not in doorbell paste text; proves ``stage_cdp_prompt_with_skills`` inlined delivery.
 LIAISON_PROTOCOL_ECHO: Final = "decision:conductor-attended-vs-unattended-routing"
 LIAISON_PROTOCOL_LOADER: Final = "stage_cdp_prompt_with_skills"

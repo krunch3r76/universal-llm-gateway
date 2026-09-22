@@ -7,11 +7,12 @@ Run after the CHECKPOINT lands (same turn), as the last action of the old tab:
     --transcript-id <departing-tab-uuid> [--dry-run]
   python scripts/liaison-ide-hop.py --root 10479 --find-transcript "resume 10479"
 
-The message the new tab receives is ``resume <R>`` plus NOW row and one ARM line per
-live poller (auto-discovered from tmp/watchers, or ``--arm LABEL`` explicitly); the
-successor re-arms those tails, harvests, and plans. ``ok`` then retires this tab's
-``--loop``, ``watch-supervise`` tails, and ``ide:`` lock
-(``bus_watch.ide_hop_retire``). UpdateGoal is the seat's job (tab-goal release).
+The message the new tab receives is ``resume <R>`` plus NOW row and one ARM rebuild
+line per live poller (auto-discovered from tmp/watchers, or ``--arm LABEL`` explicitly);
+the successor rebuilds ``start`` + ``tail`` from ``<label>.argv.json``, harvests, and
+plans. ``ok`` then retires this tab's ``--loop``, pollers, ``watch-supervise`` tails,
+and ``ide:`` lock (``bus_watch.ide_hop_retire``). UpdateGoal only if a leftover native
+goal is active.
 ``--find-transcript`` prints the transcript id of the tab whose first user message
 contains the text — the value the common checkpoint needs
 (``continuity(op=checkpoint, surface=cursor, transcript_id=...)``).
@@ -48,10 +49,13 @@ from bus_watch.tick_state import load_state
 
 
 def _post_root_checkpoint(root_id: str, body: str) -> bool:
+    # agent-bus posts turns at POST /turns with thread in the body — not
+    # /threads/{id}/turns (that path 404s and blocked CONTEXT_BUDGET hops).
     with _bus() as client:
         r = client.post(
-            f"/threads/{root_id}/turns",
+            "/turns",
             json={
+                "thread": root_id,
                 "from": "cursor",
                 "to": "cursor",
                 "subject": f"HARVEST judgment — {root_id}",
@@ -62,9 +66,10 @@ def _post_root_checkpoint(root_id: str, body: str) -> bool:
 
 
 def _mark_turns_read(root_id: str, turn_numbers: list[int]) -> None:
+    # OpenAPI: PATCH /threads/{thread_id}/turns/read-state (hyphen).
     with _bus() as client:
         client.patch(
-            f"/threads/{root_id}/turns/read_state",
+            f"/threads/{root_id}/turns/read-state",
             json={"turn_numbers": turn_numbers, "agent": "cursor"},
         )
 

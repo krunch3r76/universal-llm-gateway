@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from bus_watch.digest_budget import digest_fingerprint
 from bus_watch.digest_publish import (
     _BODY_CAP,
     _lanes_fingerprint,
@@ -380,6 +381,74 @@ def test_publish_if_enabled_forces_when_occupancy_thread_moves() -> None:
     )
     assert client.post.call_args.kwargs["json"]["thread"] == "11876"
     assert "supersedes_turn" not in client.post.call_args.kwargs["json"]
+
+
+def test_tape_turn_is_not_a_digest_change() -> None:
+    """11876's own DIGEST must not look like a new house event."""
+    root = {"id": "10479", "turn_count": 4697, "status": "active"}
+    lanes = [
+        {"id": "11876", "turns": 1194, "status": "active", "lifecycle": "open"},
+        {"id": "9", "turns": 4, "status": "active", "lifecycle": "open"},
+    ]
+    base = digest_fingerprint(root, lanes, occupancy_thread="11876")
+    bumped = digest_fingerprint(
+        root,
+        [{**lanes[0], "turns": 1195}, lanes[1]],
+        occupancy_thread="11876",
+    )
+    assert base == bumped
+    other = digest_fingerprint(
+        root,
+        [lanes[0], {**lanes[1], "turns": 5}],
+        occupancy_thread="11876",
+    )
+    assert other != base
+    assert digest_fingerprint(root, list(reversed(lanes)), occupancy_thread="11876") == base
+    # Occupancy that is the root itself still counts that lane's turns.
+    root_lane = digest_fingerprint(root, lanes, occupancy_thread="10479")
+    root_bumped = digest_fingerprint(
+        root, [{**lanes[0], "turns": 1195}, lanes[1]], occupancy_thread="10479"
+    )
+    assert root_lane != root_bumped
+
+
+def test_tape_echo_skips_republish_when_only_our_digest_landed() -> None:
+    """Root stays at 4697; the tape turn is our DIGEST. Do not wake Cowork again."""
+    client = MagicMock()
+    state = {
+        "policy": {"loop_thread": "11876", "gear": "3-wake-on-attention"},
+        "digest_turn_number": 1194,
+        "digest_publish_thread": "11876",
+    }
+    policy = {
+        "gear": "3-wake-on-attention",
+        "post_digest": True,
+        "ready": False,
+        "loop_thread": "11876",
+    }
+    lanes = [
+        {"id": "11876", "turns": 1194, "status": "active", "lifecycle": "open"},
+        {"id": "9", "turns": 4, "status": "active", "lifecycle": "open"},
+    ]
+    # Stored hash is the pre-fix shape: tape turns from the digest built
+    # before the post (1193), while digest_turn_number is the post (1194).
+    legacy = _full_digest(
+        policy=policy,
+        lanes=[{**lanes[0], "turns": 1193}, lanes[1]],
+        root={"id": "10479", "turns": 4697, "unread": 0, "last_subject": "CHECKPOINT"},
+    )
+    state["digest_lanes_fp"] = _lanes_fingerprint(legacy)
+    echo = _full_digest(
+        changed_since_last_tick=True,
+        policy=policy,
+        lanes=[{**lanes[0], "turns": 1194}, lanes[1]],
+        root={"id": "10479", "turns": 4697, "unread": 0, "last_subject": "CHECKPOINT"},
+    )
+    assert (
+        publish_if_enabled("10479", echo, state, require_change=True, client=client)
+        == "skipped"
+    )
+    client.post.assert_not_called()
 
 
 def test_stale_retry_skipped_when_digest_leaves_root() -> None:

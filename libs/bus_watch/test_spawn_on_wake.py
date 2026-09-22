@@ -412,6 +412,55 @@ def test_work_key_in_flight_refusal_recorded() -> None:
     assert result.get("quiet_refusal") is True
 
 
+def test_unparseable_work_key_is_not_posted_twice() -> None:
+    """A 422 still opens a generate lane. A second post wakes the digest CSE."""
+    from bus_watch.spawn_on_wake import fire_spawn
+
+    state: dict = {}
+    digest = {
+        "frictions": [
+            {
+                "id": "a:36215",
+                "forcing": True,
+                "category": "regression",
+                "owner": "service:git_integration_worker",
+                "note": "orphaned nests",
+            }
+        ]
+    }
+    policy = {"loop_thread": "11876", "max_hop_minutes": 60}
+    leftover = {"leftover": "sit", "reason": "sit_no_todo"}
+    calls = {"n": 0}
+
+    def submit(body: dict) -> tuple[dict, int]:
+        calls["n"] += 1
+        assert str(body.get("work_key") or "").startswith("row-bind:a:36215:night-")
+        return ({"error": {"code": "work_key_unparseable", "message": "nope"}}, 422)
+
+    first = fire_spawn(
+        "10479",
+        policy,
+        state,
+        submit=submit,
+        digest=digest,
+        leftover=leftover,
+    )
+    assert first["status_code"] == 422
+    assert calls["n"] == 1
+    assert state["refused_work_keys"]
+    second = fire_spawn(
+        "10479",
+        policy,
+        state,
+        submit=submit,
+        digest=digest,
+        leftover=leftover,
+    )
+    assert second["status_code"] == 0
+    assert second["refused"] == "work_key_unparseable"
+    assert calls["n"] == 1
+
+
 def test_context_budget_fresh_spawn() -> None:
     now = time.time()
     digest = _digest(

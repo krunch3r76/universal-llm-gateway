@@ -156,11 +156,33 @@ def health_probe(url: str) -> str:
     return "ok" if r.status_code < 400 else f"http_{r.status_code}"
 
 
-def digest_fingerprint(root: dict[str, Any], lanes: list[dict[str, Any]]) -> str:
-    key = [(root.get("id"), root.get("turn_count"), root.get("status"))]
-    key += [
-        (lane["id"], lane["turns"], lane["status"], lane["lifecycle"]) for lane in lanes
+def digest_fingerprint(
+    root: dict[str, Any],
+    lanes: list[dict[str, Any]],
+    *,
+    occupancy_thread: str = "",
+) -> str:
+    """Hash root + lanes. The occupancy tape's own turn count is not a change.
+
+    DIGEST posts land on ``occupancy_thread``. Counting that lane's turns makes
+    the next tick look new and republishes into the Cowork wake.
+    """
+    occ = str(occupancy_thread or "").strip()
+    root_id = str(root.get("id") or "").strip()
+    quiet = occ if occ and occ != root_id else ""
+    # Lane listing order follows the thread index, which moves when the tape
+    # is touched. Order is not a house change.
+    lanes_key = [
+        (
+            str(lane["id"]),
+            None if quiet and str(lane.get("id") or "") == quiet else lane["turns"],
+            lane["status"],
+            lane["lifecycle"],
+        )
+        for lane in lanes
     ]
+    lanes_key.sort()
+    key = [(root.get("id"), root.get("turn_count"), root.get("status")), *lanes_key]
     return hashlib.sha256(
         json.dumps(key, sort_keys=True, default=str).encode()
     ).hexdigest()[:16]

@@ -12,6 +12,7 @@ directive-authoring-standard
 cursor-model-economics
 claude-ai-cdp-navigation
 conductor
+liaison
 completion-provenance-discipline
 consult-posture
 consult-routing

@@ -40,8 +40,19 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     assert "Hop only when autonomous follow-up remains" in message
     assert "STAY" in message
     assert "LOAD the liaison skill (do not skim)" in message
-    assert "CreateGoal (tab-goal; house open)" in message
+    assert "Skip CreateGoal" in message
+    assert "--heartbeat 1200" in message
+    assert "LOOP: rebuild" in message
     assert "runbook:bus-consult-watcher" in message
+
+
+def test_hop_arm_line_rebuilds_start_and_tail() -> None:
+    message = build_ide_hop_message(
+        "10479", row="x", arm_labels=["10479-r1-closeout"]
+    )
+    assert "ARM: rebuild 10479-r1-closeout" in message
+    assert "start --label 10479-r1-closeout -- <tmp/watchers/10479-r1-closeout.argv.json>" in message
+    assert "then tail --label 10479-r1-closeout" in message
     assert "§ Peer-house" in message
     assert "Hop after harvest is the rule" not in message
 

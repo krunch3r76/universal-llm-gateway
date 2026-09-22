@@ -186,8 +186,8 @@ def main() -> int:
     p.add_argument(
         "--heartbeat",
         type=int,
-        default=1800,
-        help="max seconds between sentinels in --loop",
+        default=1200,
+        help="max seconds between sentinels in --loop (20 min: re-arm / watcher health)",
     )
     p.add_argument(
         "--mark-checkpoint",

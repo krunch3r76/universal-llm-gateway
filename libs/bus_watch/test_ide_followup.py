@@ -44,6 +44,8 @@ def test_fire_ide_followup_refuses_unset_gui_host() -> None:
     )
     assert out["ok"] is False
     assert out["phase"] == "gui_host_unset"
+    assert "Ask the operator which node" in out["fix"]
+    assert "Do not default to jupiter" in out["fix"]
 
 
 def test_fire_ide_followup_refuses_non_ide_holder(tmp_path: Path) -> None:

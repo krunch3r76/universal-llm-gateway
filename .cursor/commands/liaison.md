@@ -2,14 +2,16 @@
 
 Seat this tab as the house liaison on continuity root `<root>` and arm the tick loop.
 
-1. **Load** `Use the liaison skill` (`.cursor/skills/liaison/SKILL.md`) and `checkpoint-discipline`.
+1. **Load** `Use the liaison skill` (`cursor-plugins/ulg-ecosystem/skills/liaison/SKILL.md`) and `checkpoint-discipline`.
 2. **Orient** — `agent_bus_read(thread_get, thread=<root>)` → read the tip CHECKPOINT (latest turn with
    `TYPE: CHECKPOINT`), open its scoreboard URI via `fs(sandbox="cortex", op="read")`. Do not read the thread
    linearly. If the operator wrote `resume <root>` first, the fence already poured — skip.
 3. **Register** — `~/.venvs/universal/bin/python scripts/liaison-tick.py --root <root> --register <register> --once`
    and quote `budget`, `lanes`, `attention`. Default register: `attended`.
-4. **Goal** — call `CreateGoal` once with the objective from the tip CHECKPOINT `## Objective` (append
-   "register=<register>; root=agent-bus:<root>"). Goal-layer persistence only — **never** `work_key` / `source_ref`.
+4. **Wakes — skip `CreateGoal`.** Native goals have no interval and inject continuation wakes that
+   are not the house ticker. Primary wake = watcher tails on in-flight lanes. Backup = `--loop`
+   heartbeat **1200s (20 min)** to re-arm dead tails / check watcher health. `--interval S` overrides
+   that heartbeat only.
 5. **Arm the loop** (monitored shell, `block_until_ms: 0`, `notify_on_output` pattern `^AGENT_LOOP_TICK_liaison`,
    reason `liaison <root> tick`, debounce 15000). Any tab model may seat the liaison (skill § Seat model).
    This tab becomes the one liaison seat: the loop claims the seat lock as `ide:<transcript_id>` — resolve it
@@ -25,7 +27,7 @@ Seat this tab as the house liaison on continuity root `<root>` and arm the tick 
 
    ```bash
    cd /mnt/torus/projects/universal-llm-gateway && ~/.venvs/universal/bin/python scripts/liaison-tick.py \
-     --root <root> --register <register> --holder ide:<transcript_id> --loop --poll 60 --heartbeat ${INTERVAL:-900}
+     --root <root> --register <register> --holder ide:<transcript_id> --loop --poll 60 --heartbeat ${INTERVAL:-1200}
    ```
 
    Title the shell `Loop liaison <root>: tick`. Record the PID in the scoreboard `## Loop` row.
@@ -33,10 +35,13 @@ Seat this tab as the house liaison on continuity root `<root>` and arm the tick 
 6. **First tick now** — run § Tick protocol on the `--once` digest from step 3 so the first server tick is
    not cold. End the turn; wakes arrive as `AGENT_LOOP_TICK_liaison` notifications.
 
-Stop (loop kill / park, **no hop**): kill the loop PID, post CHECKPOINT, leave the goal **active** unless
-the house objective is actually met — then `UpdateGoal(status=complete)`.
+Stop (loop kill / park, **no hop**): kill the loop PID, post CHECKPOINT. `UpdateGoal(complete)` only if
+a leftover native goal is still injecting wakes, or the house objective is actually met.
 
-Hop (`liaison-ide-hop.py` `ok`): harness retires this tab's `--loop`, `watch-supervise` tails, and `ide:`
-lock (`retire_departing_tab`); JSON + stderr emit `LIAISON_HOP_TAB_GOAL_RELEASE`. **Same turn, before
-`RETIRED →`:** `CallDynamicTool(cursor, UpdateGoal, {"status":"complete"})` — **tab-goal release** (house
-stays open; ¬ arc close). Successor `CreateGoal` + ARM tails. Answer `RETIRED → <id>`; never harvest.
+Hop (`liaison-ide-hop.py` `ok`): harness retires this tab's `--loop`, watcher **pollers**,
+`watch-supervise` tails, and `ide:` lock (`retire_departing_tab`); snapshots
+`tmp/watchers/<label>.argv.json` before the poller SIGTERM. JSON + stderr emit
+`LIAISON_HOP_TAB_GOAL_RELEASE`. **Same turn, before `RETIRED →`:** if a native goal is
+active, `CallDynamicTool(cursor, UpdateGoal, {"status":"complete"})` (legacy
+continuation-wake). Successor **rebuilds** start+tail from argv.json +
+`--loop --heartbeat 1200`; skip `CreateGoal`. Answer `RETIRED → <id>`; never harvest.

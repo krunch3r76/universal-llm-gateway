@@ -73,19 +73,22 @@ for the next wake with `liaison-tick.py --root R --set now_row="<row>"`; standin
 Keystroke paste of this block into the live tab (same uinput path as the hop, no Ctrl+n) is the planned IDE
 transport; `cse_session(op=followup)` is the planned claude.ai transport — both are **planned / not yet wired**.
 
-**Goal (standing authorization — operator 2026-09-15, a:34037):** Every resume, `/liaison` arm, or hop
-pickup **must verify** a Cursor goal exists before harvest. Empty Goals panel ⇒ `CreateGoal` immediately with
-the house objective from tip CHECKPOINT Residue (`SETTLED`/`LIVE`/`NEXT`) + `register=<register>` +
-`root=agent-bus:<R>`. The native CreateGoal descriptor's "explicitly requested" wall is **waived** on liaison
-seat claim — this skill is the standing request. `UpdateGoal(status=complete)` when the house objective is
-fully met (arc close) **or** when an IDE hop has landed (`liaison-ide-hop.py` `ok`) — that second case is
-**tab-goal release**, not house-close (11912 hop 2026-09-21: land `7484bed2-…`, goal kept waking the
-retired tab 5m45s). The house stays open; the successor `CreateGoal`s the same objective on pickup.
-Never complete mid-wait without hop or arc close. Re-check after every CHECKPOINT if the panel went empty
-(hop successor, tab refresh).
+**Wakes (operator 2026-09-21):** Native `CreateGoal` is a Goals-panel label plus an unthrottled
+continuation injector (no interval field). It is **not** the house ticker. Skip `CreateGoal` on
+`/liaison`, resume, and hop pickup unless the operator asks for a panel pin. If a leftover goal is
+still active on this tab at hop `ok` or arc close ⇒ `UpdateGoal(status=complete)` so Cursor stops
+injecting (11912: goal kept waking a retired tab 5m45s). Do not mint a successor goal.
 
-0. **Goal check** — before step 1: if no active goal ∨ objective stale vs tip NOW ⇒ `CreateGoal` (above).
-   `/liaison` command step 4 is the same bind for cold start.
+House wakes, cheapest first:
+1. Watcher tails (`notify_on_output` `closeout turn=` / `consult complete` / `stall-pop:`) — primary
+2. `liaison-tick.py --loop` when `changed_since_last_tick` (attention moved)
+3. Heartbeat **1200s (20 min)** — backup only: re-arm dead tails and check watcher health, not a work
+   ticker. Lengthen further when the house is gardening (`--heartbeat 3600`). Never a 5-minute
+   busy-loop while watchers are live.
+
+0. **Wake check** — before harvest: watcher **start+tail** rebuilt for in-flight lanes (hop tore
+   pollers down — tail-only ARM attaches to a dead pid); `--loop --heartbeat 1200` is the backup.
+   Skip `CreateGoal`. `/liaison` command step 4 is the same bind.
 1. **Quiet tick** — `changed_since_last_tick=false ∧ attention=[] ∧ ¬checkpoint_due` ⇒ one line, end turn.
 2. **Harvest** — ∀ lane ∈ `attention`: `terminal=true` ⇒ `agent_bus_read(get, thread, "latest")` (one turn);
    read the CLOSEOUT/SCORE_RESURFACE, quote its evidence, `mark_read`. Non-terminal unread ⇒ latest turn only.
@@ -129,14 +132,17 @@ Never complete mid-wait without hop or arc close. Re-check after every CHECKPOIN
    Autonomous hop-qualifying CP: kill the loop → `--release` → one successor. One tab live.
    **`ok` retires this tab (structural — do not rely on successor re-arm to quiet this tab):**
    1. Harness (`retire_departing_tab`, `liaison-ide-hop.py` after `ok`): SIGTERM this root's
-      attended `--loop`s; SIGTERM `watch-supervise.sh tail --label` for every label that
-      belongs to the root; `--release` the `ide:<transcript_id>` seat. Pollers stay so the
-      successor's ARM `tail` can attach; `--forever` debug tails stay.
-   2. Seat (Cursor-native; harness cannot): **`UpdateGoal(status=complete)`** as **tab-goal
-      release** — ¬ house-objective met. Same turn, after `liaison-ide-hop.py` prints
-      `ok` (stderr carries `LIAISON_HOP_TAB_GOAL_RELEASE`). Tool:
-      `CallDynamicTool(namespace="cursor", toolName="UpdateGoal", arguments={"status":"complete"})`.
-      Successor `CreateGoal` (step 0) + re-arm ARM labels. Load `liaison-hop-retire_ulg` when unsure.
+      attended `--loop`s; snapshot each poller's argv to `tmp/watchers/<label>.argv.json`
+      then SIGTERM the poller (`watch-supervise.sh start` / pid file); SIGTERM
+      `watch-supervise.sh tail --label` for every label that belongs to the root;
+      `--release` the `ide:<transcript_id>` seat. `--forever` debug tails stay.
+   2. Seat (Cursor-native; harness cannot): **`UpdateGoal(status=complete)`** only if a
+      leftover native goal is still injecting wakes — ¬ mint a successor goal. Same turn,
+      after `liaison-ide-hop.py` prints `ok` (stderr carries `LIAISON_HOP_TAB_GOAL_RELEASE`).
+      Tool: `CallDynamicTool(namespace="cursor", toolName="UpdateGoal", arguments={"status":"complete"})`.
+      Successor **rebuilds** ARM labels (`stop` leftover → `start -- <argv.json>` → `tail`)
+      + `--loop --heartbeat 1200`. Skip `CreateGoal`.
+      Load `liaison-hop-retire_ulg` when unsure.
    3. Answer `RETIRED → <landed_transcript_id>` in one line and never harvest
       (10479 hops 1→2, 2026-09-13 03:04Z: two tabs harvested 10584, CP #198 + #201, MCP
       recycled under the successor's read; 11912 2026-09-21: goal + loop survived land).

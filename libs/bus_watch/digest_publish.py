@@ -353,22 +353,26 @@ def publish_if_enabled(
         state["last_stale_publish_attempt_at"] = _utcnow()
     published = publish_digest(root_id, digest, state, client=client)
     if published is not None:
-        state["digest_lanes_fp"] = _lanes_fingerprint(digest)
+        state["digest_lanes_fp"] = _lanes_fingerprint(
+            digest, ignore_turn_for=tape if tape != str(root_id) else ""
+        )
         return "published"
     return "failed"
 
 
-def _lanes_fingerprint(digest: dict[str, Any]) -> str:
+def _lanes_fingerprint(digest: dict[str, Any], *, ignore_turn_for: str = "") -> str:
     """Hash of what a reader would act on: lanes, attention, checkpoint_due, watchers.
 
     Attention items are reduced to their identity (lane id or kind): the budget
     estimate carries token counts that move every tick and would defeat the guard.
+    ``ignore_turn_for`` drops the occupancy tape's turn count for the same reason.
     """
+    quiet = str(ignore_turn_for or "")
     key = {
         "lanes": [
             (
                 lane.get("id"),
-                lane.get("turns"),
+                None if quiet and str(lane.get("id") or "") == quiet else lane.get("turns"),
                 lane.get("status"),
                 lane.get("lifecycle"),
             )
@@ -385,18 +389,55 @@ def _lanes_fingerprint(digest: dict[str, Any]) -> str:
     return json.dumps(key, sort_keys=True, default=str)
 
 
-def is_own_digest_echo(digest: dict[str, Any], state: dict[str, Any]) -> bool:
-    """True when the only thing that changed since the last tick is our own DIGEST turn.
+def _tape_lane_turns(digest: dict[str, Any], tape: str) -> Any:
+    for lane in digest.get("lanes") or []:
+        if isinstance(lane, dict) and str(lane.get("id") or "") == tape:
+            return lane.get("turns")
+    return None
 
-    Shared by the publisher (no republish) and the attended loop's wake condition
-    (no sentinel for our own echo — each publish would otherwise cost the IDE seat
-    a wake turn one poll later).
+
+def _lanes_at_turn(digest: dict[str, Any], tape: str, turns: int) -> list[Any]:
+    """Copy of ``lanes`` with the tape's turn count rewound to a prior digest."""
+    out = []
+    for lane in digest.get("lanes") or []:
+        if isinstance(lane, dict) and str(lane.get("id") or "") == tape:
+            out.append({**lane, "turns": turns})
+        else:
+            out.append(lane)
+    return out
+
+
+def is_own_digest_echo(digest: dict[str, Any], state: dict[str, Any]) -> bool:
+    """True when the only movement since the last tick is our own DIGEST turn.
+
+    On the resume root that turn is ``root.turns``. On the occupancy tape the
+    root stays put and the tape lane's turn count is the post we just made.
+    Shared by the publisher and the attended loop so an echo does not buy
+    another Cowork wake.
     """
-    root_turns = (digest.get("root") or {}).get("turns")
     prior = state.get("digest_turn_number")
-    if prior is None or root_turns != prior:
+    if prior is None:
         return False
-    return _lanes_fingerprint(digest) == state.get("digest_lanes_fp")
+    root = digest.get("root") or {}
+    root_id = str(root.get("id") or "")
+    policy = digest.get("policy") if isinstance(digest.get("policy"), dict) else {}
+    tape = loop_tape_thread(root_id, policy)
+    on_tape = bool(tape) and tape != root_id
+    if on_tape:
+        if _tape_lane_turns(digest, tape) != prior:
+            return False
+    elif root.get("turns") != prior:
+        return False
+    stored = state.get("digest_lanes_fp")
+    if _lanes_fingerprint(digest, ignore_turn_for=tape if on_tape else "") == stored:
+        return True
+    # Hashes saved before the tape turn was omitted used the pre-post count.
+    if not on_tape or not isinstance(prior, int) or prior < 1:
+        return False
+    return (
+        _lanes_fingerprint({**digest, "lanes": _lanes_at_turn(digest, tape, prior - 1)})
+        == stored
+    )
 
 
 __all__ = [

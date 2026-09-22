@@ -332,9 +332,10 @@ skills:
     surface_class: shared_sync
     mcp_surface_required: life
   liaison:
-    # Checkout-local house-liaison seat (IDE tab or headless cursor-sdk successor);
-    # landed 310b1d74 without a catalog row, which failed SOT parity and blocked
-    # every CDP generate (liaison hop 2, 2026-09-11).
+    # House-liaison seat (IDE tab or headless cursor-sdk successor).
+    # cursor_only: IDE/plugin census; satellites discover the body via
+    # ulg-ecosystem. Landed 310b1d74 without a catalog row, which failed
+    # SOT parity and blocked every CDP generate (liaison hop 2, 2026-09-11).
     surface_class: cursor_only
     mcp_surface_required: code
   markdown-navigation:

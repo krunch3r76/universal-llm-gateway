@@ -83,7 +83,9 @@ def test_dispatch_skills_only_on_cdp_cse_life_surfaces() -> None:
 @pytest.mark.offline
 def test_liaison_protocol_echo_marker_in_skill_body() -> None:
     repo = Path(__file__).resolve().parents[2]
-    body = (repo / ".cursor/skills/liaison/SKILL.md").read_text(encoding="utf-8")
+    body = (
+        repo / "cursor-plugins/ulg-ecosystem/skills/liaison/SKILL.md"
+    ).read_text(encoding="utf-8")
     assert LIAISON_PROTOCOL_ECHO in body
     assert LIAISON_PROTOCOL_LOADER == "stage_cdp_prompt_with_skills"
 

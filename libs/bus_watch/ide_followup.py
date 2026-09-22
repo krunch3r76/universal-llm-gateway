@@ -15,6 +15,7 @@ from bus_watch.ide_budget import AGENT_TRANSCRIPTS, ide_holder_transcript
 from bus_watch.ide_hop import (
     _REPO,
     DEFAULT_REMOTE_REPO,
+    GUI_HOST_UNSET_FIX,
     HANDOFF_MSG_DIR,
     KEYSTROKE_SCRIPT,
     policy_focus_title,
@@ -91,7 +92,7 @@ def fire_ide_followup(
             "ok": False,
             "phase": "gui_host_unset",
             "root": root_id,
-            "fix": f"scripts/liaison-tick.py --root {root_id} --set gui_host=<ssh host>",
+            "fix": GUI_HOST_UNSET_FIX,
         }
     lock = read_lock(root_id)
     transcript_id = ide_holder_transcript(lock)
@@ -193,6 +194,7 @@ def fire_transcript_followup(
             "ok": False,
             "phase": "gui_host_unset",
             "transcript_id": transcript_id,
+            "fix": GUI_HOST_UNSET_FIX,
         }
     HANDOFF_MSG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())

@@ -3,8 +3,9 @@
 The attended liaison lives in one Cursor IDE tab whose context grows every
 turn, and every turn re-sends that context. A hop ends the tab right after a
 CHECKPOINT and opens a fresh tab on the graphical host that resumes the same
-root (``resume <R>``), re-arms the wake tails the old tab held, and continues
-the cadence Plan -> Dispatch -> Hop -> Arm -> Harvest.
+root (``resume <R>``), rebuilds watcher start+tail (pollers torn down on the
+departing tab) plus the ``--loop --heartbeat 1200``, and continues the cadence
+Plan -> Dispatch -> Hop -> Arm -> Harvest.
 
 This is a third rotation next to the conductor row-hop and the headless
 cursor-sdk successor in ``spawn_on_wake``: it is seat-level, attended, and
@@ -88,10 +89,18 @@ def policy_focus_title(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
     return str(title) if title else None
 
 
-TAIL_RECIPE = (
-    "watch-supervise.sh tail --label {label}  (background Shell, block_until_ms 0, "
+REBUILD_RECIPE = (
+    "rebuild {label}: watch-supervise.sh stop --label {label}; "
+    "start --label {label} -- <tmp/watchers/{label}.argv.json>; "
+    "then tail --label {label} (background Shell, block_until_ms 0, "
     "notify_on_output: closeout turn=|consult complete|stall-pop:)"
 )
+LOOP_REBUILD = (
+    "LOOP: rebuild `scripts/liaison-tick.py --root {root} --loop --heartbeat 1200 "
+    "--holder ide:<this-tab-uuid>` (20 min backup: re-arm / watcher health)"
+)
+# Pickup used to ARM tail-only (pollers stayed). Hop now tears pollers down.
+TAIL_RECIPE = REBUILD_RECIPE
 
 
 def _pid_alive(pid: Any) -> bool:
@@ -182,7 +191,7 @@ def build_ide_hop_message(
     tell the successor it is autonomous (bind forks itself, page only on designed
     stops, hop itself) in the first line, not leave it to a digest field it may skim.
     """
-    arm_lines = [f"ARM: {TAIL_RECIPE.format(label=label)}" for label in arm_labels] or [
+    arm_lines = [f"ARM: {REBUILD_RECIPE.format(label=label)}" for label in arm_labels] or [
         "ARM: none live — Plan from the digest (`scripts/liaison-tick.py --root R --once`)."
     ]
     tip = f" tip_cp={tip_cp_ordinal}" if tip_cp_ordinal is not None else ""
@@ -210,8 +219,11 @@ def build_ide_hop_message(
         f"Guard: workspace must be `{workspace}` — otherwise stop and say so.",
         f"NOW: {row}",
         *arm_lines,
-        "Then: CreateGoal (tab-goal; house open) -> harvest every wake -> fold "
-        "scoreboard -> Plan -> Dispatch (+watcher) -> CHECKPOINT. "
+        LOOP_REBUILD.format(root=root_id),
+        "Then: harvest watcher wakes -> fold scoreboard -> Plan -> Dispatch "
+        "(+watcher) -> CHECKPOINT. Skip CreateGoal. Rebuild watcher start+tail "
+        "from argv.json (departing tab tore pollers down). Backup wake: "
+        "`liaison-tick.py --loop --heartbeat 1200` (re-arm / watcher health). "
         "Hop only if hop_qualifies; else STAY.",
     ]
     return "\n".join(lines) + "\n"
@@ -466,6 +478,17 @@ def session_unreachable(gui_host: str) -> dict[str, Any] | None:
     }
 
 
+# Seats were filling an unset host from specimen tests (jupiter) while the
+# operator was on another node. The refusal text is the reminder; there is
+# no default host.
+GUI_HOST_UNSET_FIX = (
+    "Ask the operator which node they are on before any keystroke. "
+    "Do not default to jupiter or copy a specimen host. "
+    "After they name it: --set gui_host=<ssh host> on the house, "
+    "or pass --gui-host for this hop only."
+)
+
+
 def fire_ide_hop(
     message: str,
     *,
@@ -478,22 +501,23 @@ def fire_ide_hop(
 ) -> dict[str, Any]:
     """Write the hop message where the GUI host sees it (NFS) and keystroke it into a new chat.
 
-    Refuses when ``gui_host`` is unset (no fallback host). The agents window
+    Refuses when ``gui_host`` is unset (no fallback host). The refusal tells
+    the seat to ask the operator which node, not to invent jupiter. The agents window
     (``app_id=cursor``, title ``Cursor Agents``) is focused through
     ``zcosmic_toplevel_manager_v1`` and verified activated before any key is
     sent. ``cursor --folder-uri`` / ``vscode-remote://`` is not used — Firefox
     owns that scheme (10588). ``no_raise`` skips activate only when the operator
     is on the window and says so. ``ok`` means **landed**: a new agent transcript
     carrying the hop header appeared after the keystrokes — sent keys are not a hop.
-    After ``ok`` the hop script must ``retire_departing_tab`` (loops, tails, ``ide:``
-    lock). UpdateGoal is Cursor-native — tab-goal release, not house close.
+    After ``ok`` the hop script must ``retire_departing_tab`` (loops, pollers, tails, ``ide:``
+    lock). UpdateGoal only if a leftover native goal is still injecting wakes.
     """
     if not gui_host:
         return {
             "ok": False,
             "phase": "gui_host_unset",
             "root": root_id,
-            "fix": f"scripts/liaison-tick.py --root {root_id} --set gui_host=<ssh host>",
+            "fix": GUI_HOST_UNSET_FIX,
         }
     focus_title = None if no_raise else focus_title_for(policy_focus_title(root_id))
     HANDOFF_MSG_DIR.mkdir(parents=True, exist_ok=True)

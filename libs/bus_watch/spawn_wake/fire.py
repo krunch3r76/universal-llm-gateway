@@ -48,6 +48,7 @@ from bus_watch.spawn_wake.row_class import (
 )
 
 _WORK_KEY_IN_FLIGHT = "CURSOR_SOURCE_REF_IN_FLIGHT"
+_WORK_KEY_UNPARSEABLE = "work_key_unparseable"
 
 
 def _utcnow() -> str:
@@ -156,6 +157,17 @@ def fire_spawn(
             "evaluation": evaluation,
             "leftover": verdict,
         }
+    work_key = str((body or {}).get("work_key") or "")
+    if work_key and work_key in set(state.get("refused_work_keys") or []):
+        # A 422 of this shape still mints a generate lane. Retrying it every
+        # poll changes the digest and wakes the Cowork session again.
+        return {
+            "status_code": 0,
+            "refused": _WORK_KEY_UNPARSEABLE,
+            "quiet_refusal": True,
+            "body": body,
+            "leftover": verdict,
+        }
     poster = submit or submit_team_dispatch
     payload, status = poster(_wire_submit_body(body or {}))
     night_id = current_night_id()
@@ -169,6 +181,12 @@ def fire_spawn(
         err = payload.get("error") or {}
         code = err.get("code") if isinstance(err, dict) else None
         if code == _WORK_KEY_IN_FLIGHT or status == 409:
+            result["quiet_refusal"] = True
+        if code == _WORK_KEY_UNPARSEABLE and work_key:
+            seen = [str(k) for k in (state.get("refused_work_keys") or []) if k]
+            if work_key not in seen:
+                seen.append(work_key)
+            state["refused_work_keys"] = seen[-32:]
             result["quiet_refusal"] = True
         if wall := record_remint_cap(state, payload, night_id=night_id, at=_utcnow()):
             # A designed stop, not a transient: hold for the night and page once.

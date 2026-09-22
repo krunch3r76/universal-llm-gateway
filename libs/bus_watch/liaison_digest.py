@@ -40,6 +40,7 @@ from bus_watch.ide_budget import measure_ide_tab
 from bus_watch.induction import build_wake_induction
 from bus_watch.liaison_watchers import collect_watchers
 from bus_watch.life_digest import build_life_block, project_life_block
+from bus_watch.loop_tape import loop_tape_thread
 from bus_watch.now_row import harvest_policy_entity_cache
 from bus_watch.now_row_bind import ticker_owns_bind
 from bus_watch.spawn_pending import (
@@ -260,7 +261,10 @@ def build_digest(
     entity_cache = harvest_policy_entity_cache(policy_bind) if policy_bind else {}
     night_id = current_night_id()
     frictions = harvest_frictions(state, policy, night_id=night_id)
-    fp = fold_fingerprint(digest_fingerprint(root, lanes), frictions["rows"])
+    tape = loop_tape_thread(root_id, policy)
+    fp = fold_fingerprint(
+        digest_fingerprint(root, lanes, occupancy_thread=tape), frictions["rows"]
+    )
     changed = fp != state.get("fingerprint")
     ticks = int(state.get("ticks") or 0) + 1
     prior_cp_turn = int(state.get("last_cp_turn") or 0)
