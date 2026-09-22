@@ -16,7 +16,7 @@ from threading import Thread
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, FastAPI, Query, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.normalize import _files_from_packet
@@ -3916,6 +3916,24 @@ async def park_for_restart_sweep_route(req: ParkForRestartRequest, request: Requ
         controller=_controller(request),
     )
     return JSONResponse(status_code=status_code, content=body)
+
+
+@router.get("/dispatch/latest-terminal-conductor")
+async def cursor_dispatch_latest_terminal_conductor(
+    thread_id: str = Query(..., min_length=1),
+) -> dict[str, Any]:
+    """Read-only latest terminal conductor row for a worker thread."""
+    from services.git_integration_worker.cursor_dispatch_read import (
+        latest_terminal_conductor_api_payload,
+    )
+
+    payload = latest_terminal_conductor_api_payload(thread_id=thread_id)
+    if payload is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"found": False, "thread_id": thread_id},
+        )
+    return {"found": True, **payload}
 
 
 @router.get("/dispatch-usage-live")

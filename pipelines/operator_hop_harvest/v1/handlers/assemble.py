@@ -12,10 +12,6 @@ from operator_hop_harvest.assemble import (
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
-from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
-    consult_pending_continue_owed,
-)
-
 from ._clients import step_output_json
 
 
@@ -31,22 +27,21 @@ class OperatorHopHarvestAssembleHandler(BaseHandler):
 
         worker_id = str(resolved.get("worker_thread_id") or "")
         summoning_id = str(resolved.get("summoning_thread_id") or "")
-        auto = False
-        reason = "bare_consult_pending_no_auto_continue"
-        manual = (
-            "team_dispatch(reuse_thread=<worker>, contract=conductor, lane=B, "
-            "source_ref=<work_key>)"
+        ledger_out = step_output_json(outputs, "fetch_ledger")
+        auto = bool(ledger_out.get("consult_pending_continue_owed"))
+        reason = (
+            "consult_pending_continue_owed"
+            if auto
+            else "bare_consult_pending_no_auto_continue"
         )
-        try:
-            from operator_hop_harvest.ledger import latest_terminal_conductor_for_thread
-
-            live = latest_terminal_conductor_for_thread(worker_id)
-            if live and consult_pending_continue_owed(live):
-                auto = True
-                reason = "consult_pending_continue_owed"
-                manual = ""
-        except Exception:  # noqa: BLE001
-            pass
+        manual = (
+            ""
+            if auto
+            else (
+                "team_dispatch(reuse_thread=<worker>, contract=conductor, lane=B, "
+                "source_ref=<work_key>)"
+            )
+        )
 
         view = assemble_operator_hop_view(
             worker_thread={"id": worker_id, "slug": f"agent-bus:{worker_id}"},

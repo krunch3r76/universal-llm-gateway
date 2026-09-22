@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from libs.claude_bundles.conductor_stop import is_consult_pending_wait
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_closeout.conductor_park_harvest import (
     consult_pending_continue_owed,
@@ -67,6 +67,10 @@ def _admit_conductor(ledger: CursorDispatchLedger, req: CursorDispatchRequest) -
         source_ref=_WORK_KEY,
         hop_seq=1,
     )
+
+
+def test_real_closeout_body_is_consult_pending_wait() -> None:
+    assert is_consult_pending_wait(_CLOSEOUT)
 
 
 def test_consult_pending_continue_owed_true_with_reply_fn() -> None:

@@ -1,48 +1,60 @@
-"""Read latest terminal conductor dispatch row for a worker thread."""
+"""Read latest terminal conductor dispatch row via GIW HTTP (read-only)."""
 
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
 
-from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
-from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
-    _is_conductor_row,
-)
-from services.git_integration_worker.cursor_sdk_ledger_hop import (
-    hop_fields_from_record_json,
-)
+import httpx
+
+_GIW_BASE_URL = os.getenv("GIW_BASE_URL", "http://127.0.0.1:8091").rstrip("/")
+_TIMEOUT_S = 5.0
+_ROUTE = "/api/v1/cursor/dispatch/latest-terminal-conductor"
 
 
 def latest_terminal_conductor_for_thread(thread_id: str) -> dict[str, Any] | None:
-    """Return the latest terminal conductor row on *thread_id*, or None."""
-    ledger = CursorDispatchLedger.instance()
-    best: dict[str, Any] | None = None
-    best_seq = -1
-    with ledger._connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM cursor_sdk_dispatches "
-            "WHERE thread_id=? AND status IN ('completed','failed','cancelled')",
-            (thread_id,),
-        ).fetchall()
-    for row in rows:
-        mapped = {k: row[k] for k in row.keys()}
-        if not _is_conductor_row(mapped):
-            continue
-        hop_seq = hop_fields_from_record_json(str(mapped.get("record_json") or "")).get(
-            "hop_seq"
-        )
-        seq_i = int(hop_seq) if isinstance(hop_seq, int) else 0
-        if seq_i >= best_seq:
-            best_seq = seq_i
-            best = mapped
-    return best
+    """Return the latest terminal conductor payload for *thread_id*, or None."""
+    result = fetch_latest_terminal_conductor(thread_id)
+    if result.get("ledger_unreachable"):
+        return None
+    row = result.get("row")
+    return row if isinstance(row, dict) else None
+
+
+def fetch_latest_terminal_conductor(thread_id: str) -> dict[str, Any]:
+    """Fetch terminal conductor row; fail-closed with ``ledger_unreachable``."""
+    if not thread_id:
+        return {"row": None, "ledger_unreachable": True}
+    url = f"{_GIW_BASE_URL}{_ROUTE}"
+    try:
+        with httpx.Client(timeout=_TIMEOUT_S) as client:
+            resp = client.get(url, params={"thread_id": thread_id})
+    except httpx.HTTPError:
+        return {"row": None, "ledger_unreachable": True}
+    if resp.status_code == 404:
+        return {"row": None, "ledger_unreachable": False}
+    if resp.status_code >= 400:
+        return {"row": None, "ledger_unreachable": True}
+    try:
+        payload = resp.json()
+    except json.JSONDecodeError:
+        return {"row": None, "ledger_unreachable": True}
+    if not isinstance(payload, dict):
+        return {"row": None, "ledger_unreachable": True}
+    if payload.get("found") is False:
+        return {"row": None, "ledger_unreachable": False}
+    row = {k: v for k, v in payload.items() if k != "found"}
+    return {"row": row, "ledger_unreachable": False}
 
 
 def record_json_dict(row: dict[str, Any]) -> dict[str, Any]:
-    raw = str(row.get("record_json") or "")
+    raw = row.get("record_json")
+    if isinstance(raw, dict):
+        return raw
+    raw_str = str(raw or "")
     try:
-        data = json.loads(raw) if raw else {}
+        data = json.loads(raw_str) if raw_str else {}
     except json.JSONDecodeError:
         data = {}
     return data if isinstance(data, dict) else {}

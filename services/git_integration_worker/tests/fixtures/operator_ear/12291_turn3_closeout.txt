@@ -1,3 +1,56 @@
+# Source: GIW cursor_sdk_dispatches record_json.closeout_body
+# dispatch_id=219be9039b88-bfee1f79 (hop 1 conductor on agent-bus:12291)
+# Captured from live ledger at ~/.gateway/cursor-sdk-dispatch.db
+
+## Spawn receipt
+
+| Field | Value |
+|---|---|
+| `dispatch_id` | `219be9039b88-bfee1f79` |
+| Scoreboard | `cortex://notes/system/scoreboards/operator-ear-by-token-scoreboard.md` |
+| Checkout | Lane B (`cursor-sdk/lane-12291`) |
+
+## G-row progress
+
+| Row | Status | Evidence |
+|---|---|---|
+| **G1** | **DONE** (witnessed) | Recon `cortex://notes/system/recon/operator-ear-by-token/consult-pending-loop.md` (sha256 `c4c99d1d…`) · architecture `cortex://notes/system/architecture/operator-ear-by-token-consult-pending.md` · `derived_from` rel id **9810** `todo:operator-ear-by-token` → `document:operator-ear-by-token-consult-pending` |
+| G2–G7 | OPEN | Entry gate **G2** |
+
+**Scoreboard tip sha256:** `9fe466de5c45d3995b8332915b197c2168cc11813ef800098e6310390ff75584`  
+**Journal record:** `written_at=2026-09-22T01:40:01.012123+00:00`, `delta=G1 DONE`, `dispatch_id=219be9039b88-bfee1f79`
+
+**Worker CHECKPOINT:** agent-bus:12291 turn **2** (`NEXT_ADMIT: harvest G2`)
+
+**recon_method:** `in-seat` — spec seeded loci (`conductor_stop`, GIW closeout, `bus_watch`); single targeted grep pass, no second speculative round.
+
+**land_disposition:** `discard`  
+**land_reason:** G1 was cortex-only (recon + scoreboard); no lane-B source edits this hop; branch tip unchanged at `a2beb8c07`.
+
+---
+
+### Ear harvest recipe (G2 — binds AC1 OPEN FORKs)
+
+```text
+agent_bus.send(
+  thread="12291",
+  from_agent="web-anthropic",
+  subject="HARVEST — G2 ear bind",
+  body="""
+RULING: <one line per OPEN FORK in G1-R § OPEN FORK>
+NEXT_ADMIT: Conductor — entry gate G3 densify (nest plan, sdk_mode plan)
+"""
+)
+```
+
+Summoning lead poll (after this closeout):
+
+```json
+{"tool":"wait","arguments":{"thread":"12291","after_turn":2,"wait_seconds":60,"completion":"first_reply_from","from_agent":"web-anthropic"}}
+```
+
+---
+
 ```json
 {
   "status": "partial",
@@ -21,4 +74,3 @@ poll_hint: agent_bus.wait thread=12291 after_turn=2 from_agent=web-anthropic com
 NEXT_ADMIT: harvest G2  
 
 stop: CONSULT_PENDING
-
