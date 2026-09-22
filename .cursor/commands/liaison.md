@@ -9,9 +9,10 @@ Seat this tab as the house liaison on continuity root `<root>` and arm the tick 
 3. **Register** — `~/.venvs/universal/bin/python scripts/liaison-tick.py --root <root> --register <register> --once`
    and quote `budget`, `lanes`, `attention`. Default register: `attended`.
 4. **Wakes — skip `CreateGoal`.** Native goals have no interval and inject continuation wakes that
-   are not the house ticker. Primary wake = watcher tails on in-flight lanes. Backup = `--loop`
-   heartbeat **1200s (20 min)** to re-arm dead tails / check watcher health. `--interval S` overrides
-   that heartbeat only.
+   are not the house ticker. Do not arm a turn-by-turn watcher on in-flight lanes. A finish signal
+   (`closeout turn=` / `consult complete`) is one harvest. Backup = `--loop` heartbeat **1200s
+   (20 min)** only while a finish watcher is already live or a row is playable. `--interval S`
+   overrides that heartbeat only.
 5. **Arm the loop** (monitored shell, `block_until_ms: 0`, `notify_on_output` pattern `^AGENT_LOOP_TICK_liaison`,
    reason `liaison <root> tick`, debounce 15000). Any tab model may seat the liaison (skill § Seat model).
    This tab becomes the one liaison seat: the loop claims the seat lock as `ide:<transcript_id>` — resolve it

@@ -14,6 +14,8 @@
 #   scripts/watch-supervise.sh status --label L
 #   scripts/watch-supervise.sh stop --label L
 #   scripts/watch-supervise.sh tail --label L          # exit when state status=complete
+#   scripts/watch-supervise.sh tail --label L --until-finish
+#       # stdout is one line: closeout turn= or stall-pop:; ordinary turns stay in the log
 #   scripts/watch-supervise.sh tail --label L --forever  # debug: never exit
 #
 # SoT arm recipe: runbook:bus-consult-watcher
@@ -26,13 +28,14 @@ UNIVERSAL_PYTHON="${HOME}/.venvs/universal/bin/python"
 mkdir -p "$WATCH_DIR"
 
 usage() {
-  sed -n '2,17p' "$0"
+  sed -n '2,21p' "$0"
   exit 2
 }
 
 label=""
 cmd=""
 tail_forever=0
+until_finish=0
 if [[ $# -lt 1 ]]; then usage; fi
 cmd="$1"
 shift
@@ -45,6 +48,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --forever)
       tail_forever=1
+      shift
+      ;;
+    --until-finish)
+      until_finish=1
       shift
       ;;
     --)
@@ -211,9 +218,17 @@ supersede_sibling_tails() {
 }
 
 cmd_tail() {
+  if [[ "$tail_forever" -eq 1 && "$until_finish" -eq 1 ]]; then
+    echo "watch-supervise: --forever and --until-finish are different tails" >&2
+    exit 2
+  fi
   if [[ ! -f "$log_file" ]]; then
     echo "no log yet: $log_file" >&2
     exit 1
+  fi
+  if [[ "$until_finish" -eq 1 ]]; then
+    cd "$REPO"
+    exec "$UNIVERSAL_PYTHON" -m bus_watch.finish_tail --log "$log_file" --state "$state_file"
   fi
   if [[ "$tail_forever" -eq 1 ]]; then
     exec tail -n +1 -F "$log_file"

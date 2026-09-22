@@ -5,7 +5,9 @@ mode on ``--go-under``):
 
 - **hold** — a live ``contract=conductor`` child (or a GIW row still hopping)
   already owns the addressed ``todo:{slug}``. Ticker doorbells. ``fire_spawn``
-  refuses ``play_hold``.
+  refuses ``play_hold``. A consult reply on a terminal conductor is not that
+  child: the bus thread stays open so the reply has a home, and ``seat_empty``
+  clears the false owner so play can admit.
 - **play** — ``now_row`` / induction / tip NEXT names ``todo:{slug}`` and no
   live conductor owns it. Admit that conductor via ``source_ref`` rematerialize.
   Not ``successor_contract=conductor`` on a house generate.
@@ -126,10 +128,60 @@ def _conductor_signal(lane: dict[str, Any]) -> bool | None:
     return False
 
 
+def _consult_reply_lane(lane: dict[str, Any]) -> bool:
+    """Latest turn is the consult answer, not a conductor still speaking."""
+    if str(lane.get("last_from") or "") != "web-anthropic":
+        return False
+    subject = str(lane.get("last_subject") or "").strip().lower()
+    return subject.startswith("cdp reply")
+
+
+def consult_reply_seat_empty(thread_id: str) -> bool:
+    """True when the terminal conductor still owes a consult continuation.
+
+    Fail closed. An unreachable ledger leaves the lane looking live so the
+    ticker holds instead of minting a second conductor.
+    """
+    from operator_hop_harvest.ledger import fetch_latest_terminal_conductor
+
+    fetched = fetch_latest_terminal_conductor(thread_id)
+    if not isinstance(fetched, dict) or fetched.get("ledger_unreachable"):
+        return False
+    row = fetched.get("row")
+    if not isinstance(row, dict) or not row.get("consult_pending_continue_owed"):
+        return False
+    record = row.get("record_json")
+    if isinstance(record, dict) and record.get("hop_successor"):
+        return False
+    return True
+
+
+def mark_consult_reply_seats_empty(digest: dict[str, Any]) -> None:
+    """Stamp ``seat_empty`` on conductor lanes whose consult reply is in.
+
+    While the reply is still out, the lane is not a consult-reply lane, so
+    the ticker keeps holding. Hopping stays live even if a stamp is present.
+    """
+    lanes = digest.get("lanes")
+    if not isinstance(lanes, list):
+        return
+    for lane in lanes:
+        if not isinstance(lane, dict) or lane.get("seat_empty") is True:
+            continue
+        if _conductor_signal(lane) is not True or not _consult_reply_lane(lane):
+            continue
+        thread_id = str(lane.get("id") or "")
+        if thread_id and consult_reply_seat_empty(thread_id):
+            lane["seat_empty"] = True
+
+
 def _lane_live(lane: dict[str, Any]) -> bool | None:
     """True = live, False = terminal, None = unsure."""
     if _hopping(lane):
         return True
+    # Open bus thread after a consult reply: the seat is empty, the chat is not.
+    if lane.get("seat_empty") is True:
+        return False
     lifecycle = str(lane.get("lifecycle") or "").strip().lower()
     status = str(lane.get("status") or "").strip().lower()
     if (
@@ -157,6 +209,7 @@ def live_conductor_owner(
     lanes = digest.get("lanes")
     if lanes is None:
         return {"unsure": True, "reason": "lanes_unobserved"}
+    mark_consult_reply_seats_empty(digest)
     slug = todo_slug.lower()
     for lane in lanes:
         if not isinstance(lane, dict):
@@ -277,6 +330,8 @@ __all__ = [
     "addressed_todo",
     "build_play_dispatch_body",
     "classify_leftover",
+    "consult_reply_seat_empty",
+    "mark_consult_reply_seats_empty",
     "extract_todo_slug",
     "leftover_mode",
     "live_conductor_owner",

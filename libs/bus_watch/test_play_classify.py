@@ -12,6 +12,7 @@ from bus_watch.spawn_wake.play_classify import (
     PLAY_HOLD,
     build_play_dispatch_body,
     classify_leftover,
+    consult_reply_seat_empty,
 )
 from bus_watch.test_spawn_on_wake import _digest
 
@@ -141,6 +142,73 @@ def test_dry_run_live_conductor_refuses_house_generate(
     assert out["evaluation"]["leftover"]["leftover"] == LEFTOVER_HOLD
 
 
+def _open_consult_reply_lane() -> dict[str, object]:
+    """Bus thread still active; the latest turn is the consult reply."""
+    return {
+        "id": "12558",
+        "turns": 5,
+        "status": "active",
+        "lifecycle": "active",
+        "contract": "conductor",
+        "lane_role": "sub_mission",
+        "last_from": "web-anthropic",
+        "last_subject": "cdp reply — 2b3801a2",
+        "terminal": False,
+    }
+
+
+def test_consult_reply_on_terminal_conductor_open_thread_admits(
+    monkeypatch,
+) -> None:
+    """Owed consult reply on an open thread admits the house conductor."""
+    _free_lock(monkeypatch)
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.play_classify.consult_reply_seat_empty",
+        lambda thread_id: thread_id == "12558",
+    )
+    digest = _digest(attention=[{"id": "12558", "unread": 1}])
+    digest["policy"]["now_row"] = "todo:cse-attachment-hop"
+    digest["lanes"] = [_open_consult_reply_lane()]
+    out = tick_spawn_on_wake(digest, {}, "12557", dry_run=True)
+    assert out["action"] == "would_spawn"
+    body = out["body"]
+    assert body["contract"] == "conductor"
+    assert body["source_ref"] == "todo:cse-attachment-hop"
+    assert body["model"] == "cursor/grok-4.7"
+    assert body["model_knobs"] == {"effort": "high", "fast": "false"}
+    assert digest["lanes"][0]["seat_empty"] is True
+
+
+def test_consult_reply_without_owed_row_stays_hold(monkeypatch) -> None:
+    """Reply text alone is not an empty seat while the ledger still owes nothing."""
+    _free_lock(monkeypatch)
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.play_classify.consult_reply_seat_empty",
+        lambda _thread_id: False,
+    )
+    digest = _digest(attention=[{"id": "12558", "unread": 1}])
+    digest["policy"]["now_row"] = "todo:cse-attachment-hop"
+    digest["lanes"] = [_open_consult_reply_lane()]
+    out = tick_spawn_on_wake(digest, {}, "12557", dry_run=True)
+    assert out["action"] == "hold"
+    assert out["refused"] == PLAY_HOLD
+    assert "seat_empty" not in digest["lanes"][0]
+
+
+def test_consult_reply_seat_empty_follows_owed_flag(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "operator_hop_harvest.ledger.fetch_latest_terminal_conductor",
+        lambda _thread_id: {
+            "ledger_unreachable": False,
+            "row": {
+                "consult_pending_continue_owed": True,
+                "record_json": {},
+            },
+        },
+    )
+    assert consult_reply_seat_empty("12558") is True
+
+
 def test_dry_run_play_admits_conductor_not_liaison(
     monkeypatch,
 ) -> None:  # noqa: ANN001
@@ -176,9 +244,7 @@ def test_dry_run_sit_keeps_liaison_successor(monkeypatch) -> None:  # noqa: ANN0
     assert out["evaluation"]["leftover"]["leftover"] == LEFTOVER_SIT
 
 
-def test_go_under_plants_aware_not_successor_contract(
-    tmp_path, monkeypatch
-) -> None:  # noqa: ANN001
+def test_go_under_plants_aware_not_successor_contract(tmp_path, monkeypatch) -> None:  # noqa: ANN001
     """AC4 — classifier default; play is not successor_contract=conductor."""
     monkeypatch.setattr("bus_watch.go_under.read_lock", lambda *_a, **_k: {})
     state = {
@@ -203,9 +269,7 @@ def test_go_under_plants_aware_not_successor_contract(
     assert "leftover=aware" in result["under_line"]
 
 
-def test_go_under_sit_plants_forced_liaison_chain(
-    tmp_path, monkeypatch
-) -> None:  # noqa: ANN001
+def test_go_under_sit_plants_forced_liaison_chain(tmp_path, monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr("bus_watch.go_under.read_lock", lambda *_a, **_k: {})
     state = {
         "register": "attended",

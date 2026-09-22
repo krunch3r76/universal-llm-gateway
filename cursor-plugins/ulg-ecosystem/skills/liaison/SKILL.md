@@ -79,8 +79,8 @@ still active on this tab at hop `ok` or arc close ⇒ `UpdateGoal(status=complet
 injecting (11912: goal kept waking a retired tab 5m45s). Do not mint a successor goal.
 
 House wakes, cheapest first:
-1. Watcher tails (`notify_on_output` `closeout turn=` / `consult complete` / `stall-pop:`) — primary
-2. `liaison-tick.py --loop` only while a watcher is live or a row is playable. A tick that only repeats this tab's CHECKPOINT is not a wake
+1. Finish signals (`closeout turn=` / `consult complete`) — one harvest, not each conductor turn. A conductor tail is `watch-supervise.sh tail --until-finish`: it returns on `closeout turn=` or `stall-pop:` and drops ordinary turns. `stall-pop:` on an already-relayed closeout is not a wake (§ Seat stays)
+2. `liaison-tick.py --loop` only while a finish watcher is already live or a row is playable. A tick that only repeats this tab's CHECKPOINT is not a wake
 3. Heartbeat **1200s (20 min)** — backup only while (2) holds: re-arm dead tails and check watcher health. No playable row and no live watcher ⇒ SIGTERM the loop. The house stays
 
 ## Seat stays (operator 2026-09-22)
@@ -91,12 +91,16 @@ Binds. Later prose that conflicts with them loses.
 2. **Do not close the house on a dead tail or an empty wake.** A conductor whose closeout is already relayed, while its tail still prints `stall-pop:`, is finished: `watch-supervise.sh stop --label <label>`. That tail is not a watcher, not a hop, and not a reason to end the seat. No playable next row and no live watcher ⇒ do not arm `--loop`, and SIGTERM this root's `--loop` if it is running. A tick that only repeats this tab's CHECKPOINT is not an instruction to play. The house stays. The wake stops.
 3. **File the friction, add the house row, play a gate.** A row that cannot proceed: `friction()` on the owner the same turn, and a row on the continuity card `## Rows`. A **gate** is a friction the current row cannot pass until it is resolved. A gate swaps into NOW (`--set now_row=` `Friction a:<n> …`). The blocked row becomes the next row. Play the gate the same turn on the ladder in (1). Do not STAY on the blocked row. Do not page unless the gate is an armed `OPERATOR_GATE`.
 4. **When a row has been played, add the next one.** A finished row does not empty the house. Same turn, add every next deliverable that is not gated on another row, to `## Rows` and `--set now_row=`, then play it. Adding that row clears `now_row=quiet` and re-arms `--loop --heartbeat 1200` if the loop is down. Ungated rows may run at the same time. A row that waits on some other row having been played first stays off NOW until that condition is true. `now_row=quiet` and an empty NOW are legal only when the house program has no open deliverable.
+5. **No turn-by-turn watch.** `conductor_live ⇒ ¬arm(turn_watcher)`. A conductor posts many turns before it finishes. Review the closeout, or a designed stop (`CONSULT_PENDING`, stale heartbeat, empty seat). Turn-by-turn watch only when the operator names that run. `closeout turn=` is one harvest, not a turn stream. Rebuilding start+tail for every in-flight lane on wake is not the default.
+
+| Bad | Good |
+|---|---|
+| Arm a tail and read each conductor turn | `tail --until-finish` — returns on closeout or stall-pop |
+| Rebuild start+tail for every in-flight lane at wake | Leave those turns on the bus until the finish |
 
 ## Tick steps
 
-0. **Wake check** — before harvest: watcher **start+tail** rebuilt for in-flight lanes (hop tore
-   pollers down — tail-only ARM attaches to a dead pid). Arm `--loop --heartbeat 1200` only while a watcher is live or a row is playable (§ Seat stays).
-   Skip `CreateGoal`. `/liaison` command step 4 is the same bind.
+0. **Wake check** — do not arm a turn-by-turn watcher on in-flight lanes (§ Seat stays 5). Arm `--loop --heartbeat 1200` only while a finish watcher is already live or a row is playable. Skip `CreateGoal`. `/liaison` command step 4 is the same bind.
 1. **Quiet tick** — `changed_since_last_tick=false ∧ attention=[] ∧ ¬checkpoint_due` ⇒ one line, end turn.
 2. **Harvest** — ∀ lane ∈ `attention`: `terminal=true` ⇒ `agent_bus_read(get, thread, "latest")` (one turn);
    read the CLOSEOUT/SCORE_RESURFACE, quote its evidence, `mark_read`. Non-terminal unread ⇒ latest turn only.
@@ -112,7 +116,8 @@ Binds. Later prose that conflicts with them loses.
 4. **Decide** — **Archived as G-row picker** — liaison computes Address. Spawn or re-admit a conductor only for Address rows 3 and 5. Row 6 DISPATCH (`mechanical`, or `implement_ready` and stamped) goes to Composer and does not spawn a conductor; conductor owns scoreboard NOW under `work_key=todo:{slug}`. With no seat bind the induction's NOW **is** the newest undispositioned friction (§ Friction score rows). Gear 3 (`--spawn-on-wake`) pins the attention-tier NOW into `policy.now_row` and releases it when the lane is spent (`now_row_bind` provenance in tick.json). `--set now_row=…` always wins while satisfied; `--set now_row=quiet` holds the field. `reasoning-posture`: pin the question, bind, one determinate step.
 5. **Dispatch** — by the ladder below; every dispatch gets a lane on the root (`dispatch_thread_id=R`) and an
    **in-session watcher**: **LOAD AND EXECUTE** `runbook:bus-consult-watcher` (all legs 1–3 — arm, wake,
-   relay — before turn end; start-only / skipped tail / hold-turn = mis-arm).
+   relay — before turn end; start-only / skipped tail / hold-turn = mis-arm). That watcher relays one
+   consult reply or closeout. It is not a feed of the conductor's intermediate turns (§ Seat stays 5).
    cursor-sdk closeout: **exactly one** of `--dispatch-id` or `--execution-id` (script exits if both; prefer
    `--dispatch-id`). CDP consult: `--execution-id` from admit. CDP producers: `cdp.generate.proof` carries
    `archive_uri`; on `delivery_failed`

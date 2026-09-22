@@ -27,7 +27,7 @@ Gear-3 `goal_escalation` still names cursor-auto for repo-write. That rung is li
 
 ## Wake
 
-A watcher line `closeout turn=` is the harvest. Arm `--loop --heartbeat 1200` only while a watcher is live or a row is playable. No playable row and no live watcher ⇒ SIGTERM this root's `--loop`. An `AGENT_LOOP_TICK_liaison` that only repeats this tab's CHECKPOINT is not an instruction to play.
+A watcher line `closeout turn=` is the harvest, once. `conductor_live ⇒ ¬arm(turn_watcher)`. When a conductor tail is armed, use `watch-supervise.sh tail --until-finish`: it returns on `closeout turn=` or `stall-pop:` and does not surface ordinary turns. Turn-by-turn watch only when the operator names that run. Arm `--loop --heartbeat 1200` only while a finish watcher is already live or a row is playable. No playable row and no live watcher ⇒ SIGTERM this root's `--loop`. An `AGENT_LOOP_TICK_liaison` that only repeats this tab's CHECKPOINT is not an instruction to play.
 
 A conductor whose closeout is already relayed, while its tail still prints `stall-pop:`, is finished. `watch-supervise.sh stop --label <label>`. That tail is not a watcher and not a close.
 
@@ -35,5 +35,6 @@ A conductor whose closeout is already relayed, while its tail still prints `stal
 
 | Bad | Good |
 |---|---|
+| Arm a tail and read each conductor turn | Wait for the closeout or a designed stop |
 | Hop line "repo-write → cursor-auto" on this tab | `team_dispatch` cursor-sdk, then land here |
 | Another `--replace` after the same quoted error | A new gate, or stop `REPEATED_FAILURE` |
