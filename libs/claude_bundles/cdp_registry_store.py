@@ -15,7 +15,8 @@ from typing import Any
 
 from universal_protocol.errors import ProtocolError
 
-from claude_bundles.cdp_registry.models import seat_open
+from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES, seat_open
+from claude_bundles.cse_url import normalize_cse_url
 
 # Same directory name as cursor_home._default_dispatch_home_root. Libs must
 # not import GIW; keep this fingerprint aligned if that root is renamed.
@@ -275,6 +276,220 @@ def open_seats_per_lane(active: dict[str, dict[str, Any]]) -> dict[str, list[str
         if lane:
             by_lane.setdefault(lane, []).append(str(rid))
     return by_lane
+
+
+def _host_listable_ids_for_norm_url(
+    active: dict[str, dict[str, Any]],
+    norm_url: str,
+    *,
+    exclude_registration_id: str | None = None,
+) -> list[str]:
+    """Registration ids whose host-listable row carries *norm_url*."""
+    out: list[str] = []
+    for rid, row in active.items():
+        if not isinstance(row, dict):
+            continue
+        if row.get("status") not in _HOST_LISTABLE_STATUSES:
+            continue
+        if exclude_registration_id and rid == exclude_registration_id:
+            continue
+        bound = str(row.get("chat_url") or "").strip()
+        if bound and normalize_cse_url(bound) == norm_url:
+            out.append(str(rid))
+    return out
+
+
+def assert_attachment_unique(
+    active: dict[str, dict[str, Any]],
+    chat_url: str,
+    *,
+    registration_id: str,
+) -> None:
+    """U-scan: refuse when another host-listable row already holds *chat_url*."""
+    norm = normalize_cse_url(chat_url)
+    if not norm:
+        return
+    conflicts = _host_listable_ids_for_norm_url(
+        active, norm, exclude_registration_id=registration_id
+    )
+    if conflicts:
+        raise ProtocolError(
+            code="attachment.conflict",
+            message=(
+                f"chat_url already attached to {conflicts!r}; "
+                f"refusing bind for {registration_id!r}"
+            ),
+            source="rpc",
+            retryable=False,
+            data={"chat_url": chat_url, "registration_ids": conflicts},
+        )
+
+
+def append_attachment_journal(
+    *,
+    registration_id: str,
+    chat_url: str,
+    attach_proof: str,
+    execution_id: str | None = None,
+) -> None:
+    """Append one ungated ``attachment_observed`` line."""
+    append_log(
+        "attachment_observed",
+        {
+            "registration_id": registration_id,
+            "chat_url": chat_url,
+            "attach_proof": attach_proof,
+            "execution_id": execution_id,
+            "observed_at": time.time(),
+        },
+    )
+
+
+def _apply_attachment_observed(
+    active: dict[str, dict[str, Any]], record: dict[str, Any]
+) -> None:
+    """Replay one ``attachment_observed`` line onto *active* (chat_url only)."""
+    reg_id = str(record.get("registration_id") or "").strip()
+    url = str(record.get("chat_url") or "").strip()
+    if not reg_id or not url:
+        return
+    assert_attachment_unique(active, url, registration_id=reg_id)
+    row = dict(active.get(reg_id) or {})
+    row["registration_id"] = reg_id
+    row["chat_url"] = url
+    if record.get("execution_id"):
+        row["execution_id"] = record.get("execution_id")
+    active[reg_id] = row
+
+
+def _apply_attachment_bound(
+    active: dict[str, dict[str, Any]], record: dict[str, Any]
+) -> None:
+    reg_id = str(record.get("registration_id") or "").strip()
+    if not reg_id or reg_id not in active:
+        return
+    row = dict(active[reg_id])
+    if record.get("attached_at") is not None:
+        row["attached_at"] = record.get("attached_at")
+    if record.get("attach_proof"):
+        row["attach_proof"] = record.get("attach_proof")
+    active[reg_id] = row
+
+
+def _apply_standdown_pasted(
+    active: dict[str, dict[str, Any]], record: dict[str, Any]
+) -> None:
+    reg_id = str(record.get("registration_id") or "").strip()
+    if not reg_id or reg_id not in active:
+        return
+    row = dict(active[reg_id])
+    row["standdown_pasted_at"] = record.get("pasted_at") or record.get("ts")
+    active[reg_id] = row
+
+
+def _detached_after_ts(registration_id: str, ts: float) -> bool:
+    for record in read_registry_log():
+        if str(record.get("registration_id") or "") != registration_id:
+            continue
+        if str(record.get("event") or "") != "detached":
+            continue
+        detached_ts = record.get("detached_at") or record.get("ts") or 0.0
+        try:
+            if float(detached_ts) >= float(ts):
+                return True
+        except (TypeError, ValueError):
+            return True
+    return False
+
+
+def _has_attachment_observed(registration_id: str, chat_url: str) -> bool:
+    norm = normalize_cse_url(chat_url)
+    for record in read_registry_log():
+        if str(record.get("event") or "") != "attachment_observed":
+            continue
+        if str(record.get("registration_id") or "") != registration_id:
+            continue
+        url = str(record.get("chat_url") or "").strip()
+        if url and normalize_cse_url(url) == norm:
+            return True
+    return False
+
+
+def has_standdown_token(registration_id: str) -> bool:
+    """True when paste appended ``standdown_pasted`` or ``standdown_unreachable``."""
+    rid = str(registration_id or "").strip()
+    if not rid:
+        return False
+    for record in read_registry_log():
+        if str(record.get("registration_id") or "") != rid:
+            continue
+        ev = str(record.get("event") or "")
+        if ev in {"standdown_pasted", "standdown_unreachable"}:
+            return True
+    return False
+
+
+def fold_attachment_journal(
+    active: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Replay attachment journal lines; stamp authority fields when permitted."""
+    from claude_bundles import cdp_registry_events as _events
+
+    with ports_lock():
+        state = dict(load_active() if active is None else active)
+        last_observation: dict[str, dict[str, Any]] = {}
+
+        for record in read_registry_log():
+            ev = str(record.get("event") or "")
+            reg_id = str(record.get("registration_id") or "").strip()
+            if ev == "detached":
+                state.pop(reg_id, None)
+                last_observation.pop(reg_id, None)
+                continue
+            if ev == "attachment_observed" and reg_id:
+                last_observation[reg_id] = record
+                _apply_attachment_observed(state, record)
+            elif ev == "attachment_bound" and reg_id:
+                _apply_attachment_bound(state, record)
+            elif ev == "standdown_pasted" and reg_id:
+                _apply_standdown_pasted(state, record)
+
+        for reg_id, obs in last_observation.items():
+            if reg_id not in state:
+                continue
+            row = state[reg_id]
+            if row.get("attached_at"):
+                continue
+            obs_ts = obs.get("observed_at") or obs.get("ts") or time.time()
+            if _detached_after_ts(reg_id, float(obs_ts)):
+                continue
+            if not is_seat_authority():
+                continue
+            updated = dict(row)
+            updated["attached_at"] = obs_ts
+            updated["attach_proof"] = obs.get("attach_proof")
+            state[reg_id] = updated
+            append_log(
+                "attachment_bound",
+                {
+                    "registration_id": reg_id,
+                    "chat_url": obs.get("chat_url"),
+                    "attach_proof": obs.get("attach_proof"),
+                    "attached_at": obs_ts,
+                },
+            )
+            with contextlib.suppress(Exception):
+                _events.emit(
+                    _events.cdp_attachment_bound(
+                        registration_id=reg_id,
+                        chat_url=str(obs.get("chat_url") or ""),
+                        attach_proof=str(obs.get("attach_proof") or ""),
+                        parent_thread=str(row.get("parent_thread") or "") or None,
+                    )
+                )
+
+        write_active(state)
+        return state
 
 
 def verify_seat_fold_invariant() -> None:

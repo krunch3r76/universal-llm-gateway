@@ -1,7 +1,8 @@
 """Seat-axis-first driving operator seat: relaunch a dormant open seat; mint only when none exists.
 
 ``list_active()`` uniqueness is a host-allocation guard, not the seat census.
-Hop satellites (``mission_kind == hop``) never take the driving seat.
+The driving seat is the attachment that most recently proved a turn on the lane,
+regardless of ``mission_kind`` (hops bind via ``register_lane``, not this entry).
 """
 
 from __future__ import annotations
@@ -22,8 +23,9 @@ _ROOT_KIND = "root"
 
 
 def _is_driving_kind(mission_kind: str | None) -> bool:
-    kind = str(mission_kind or _ROOT_KIND).strip().lower()
-    return kind != _HOP_KIND
+    """Host-listable rows on a lane count toward the single-host guard (4A)."""
+    _ = mission_kind
+    return True
 
 
 def _row_registration(row: dict[str, Any]) -> Registration:

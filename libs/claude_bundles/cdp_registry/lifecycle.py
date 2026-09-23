@@ -9,12 +9,14 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from universal_protocol.errors import ProtocolError
+
 from claude_bundles import cdp_lane
 from claude_bundles import cdp_registry_events as _events
 from claude_bundles import cdp_registry_store as _store
 
 from .driver_locks import _claim_driver_lock, _release_driver_lock
-from .hygiene import reclaim_best_effort
+from .hygiene import reclaim_best_effort, reclaim_profile_for_detached_row
 from .models import (
     MISSION_KINDS,
     STATUS_DORMANT,
@@ -322,3 +324,95 @@ def _kill_listener(port: int) -> None:
             with contextlib.suppress(ValueError, ProcessLookupError, PermissionError):
                 os.kill(int(tok.split("=", 1)[1].split(",")[0]), 15)
             return
+
+
+def detach(registration_id: str, *, reason: str) -> dict[str, Any]:
+    """Pop a superseded hop row after stand-down token and Chrome kill."""
+    rid = (registration_id or "").strip()
+    if not rid:
+        raise ProtocolError(
+            code="attachment.not_attached",
+            message="registration_id required",
+            source="rpc",
+            retryable=False,
+            data={},
+        )
+    _store.require_seat_authority(operation="detach")
+    listen = cdp_lane.is_listening
+    chat_url: str | None = None
+    profile_outcome: str | None = None
+    with _store.ports_lock():
+        active = _store.load_active()
+        row = active.get(rid)
+        if not isinstance(row, dict):
+            raise ProtocolError(
+                code="attachment.not_attached",
+                message=f"unknown registration_id: {rid!r}",
+                source="rpc",
+                retryable=False,
+                data={"registration_id": rid},
+            )
+        if seat_open(row):
+            raise ProtocolError(
+                code="seat.open_on_detach",
+                message=f"seat still open on {rid!r}",
+                source="rpc",
+                retryable=False,
+                data={"registration_id": rid, "seat_lane": row.get("seat_lane")},
+            )
+        if row.get("superseded_by") and not _store.has_standdown_token(rid):
+            raise ProtocolError(
+                code="standdown.missing",
+                message="stand-down token required before detach",
+                source="rpc",
+                retryable=False,
+                data={"registration_id": rid},
+            )
+        chat_url = str(row.get("chat_url") or "").strip() or None
+        row_copy = dict(row)
+        port = row.get("port")
+        if isinstance(port, int) and listen(port):
+            registry_package()._kill_listener(port)
+        profile_outcome = reclaim_profile_for_detached_row(rid, row_copy)
+        detached_at = time.time()
+        log_row = {
+            **row_copy,
+            "detached_at": detached_at,
+            "detach_reason": reason,
+        }
+        if profile_outcome not in ("success", "missing"):
+            log_row["profile_reclaim_outcome"] = profile_outcome
+            log_row["profile_suffix"] = row_copy.get("profile_suffix")
+        _store.append_log("detached", log_row)
+        from claude_bundles.cse_provenance import append_episode
+
+        if chat_url:
+            append_episode(
+                chat_url=chat_url,
+                registration_id=rid,
+                cdp_url=f"http://127.0.0.1:{port}" if isinstance(port, int) else "",
+                state="detached",
+                reason=reason,
+            )
+        active.pop(rid, None)
+        _store.write_active(active)
+    from services.git_integration_worker.cse_session_holders import (
+        release_holder_remote,
+    )
+
+    if chat_url:
+        release_holder_remote(chat_url=chat_url, registration_id=rid, reason=reason)
+    with contextlib.suppress(Exception):
+        _events.emit(
+            _events.cdp_attachment_detached(
+                registration_id=rid,
+                chat_url=chat_url,
+                reason=reason,
+            )
+        )
+    return {
+        "registration_id": rid,
+        "chat_url": chat_url,
+        "reason": reason,
+        "profile_reclaim": profile_outcome,
+    }

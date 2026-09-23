@@ -241,9 +241,8 @@ def relaunch_dormant(
     from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 
     purpose = str(row.get("purpose") or "").strip()
-    kind = str(row.get("mission_kind") or "root").strip().lower() or "root"
     parent = str(row.get("parent_thread") or "").strip()
-    if parent and purpose in OPERATOR_PURPOSES and kind != "hop":
+    if parent and purpose in OPERATOR_PURPOSES:
         from claude_bundles.cdp_registry.session_address import bind_driving_seat
 
         bind_driving_seat(registration_id)

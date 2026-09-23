@@ -43,6 +43,35 @@ def _reg(
     )
 
 
+def _patch_attachment(
+    monkeypatch: pytest.MonkeyPatch,
+    reg: _FakeReg | None,
+    *,
+    conflict_ids: list[str] | None = None,
+) -> None:
+    if conflict_ids is not None:
+        from universal_protocol.errors import ProtocolError
+
+        def _conflict(_url: str) -> _FakeReg:
+            raise ProtocolError(
+                code="attachment.conflict",
+                message="conflict",
+                source="rpc",
+                retryable=False,
+                data={"registration_ids": conflict_ids},
+            )
+
+        monkeypatch.setattr(
+            "cdp_ask.followup_resolve.attachment_for_chat_url", _conflict
+        )
+        return
+
+    monkeypatch.setattr(
+        "cdp_ask.followup_resolve.attachment_for_chat_url",
+        lambda _url: reg,
+    )
+
+
 @pytest.mark.asyncio
 async def test_identity_omitted_resolver_success(
     monkeypatch: pytest.MonkeyPatch,
@@ -128,6 +157,7 @@ async def test_stale_registration_id_two_ports_same_chat_url_not_waived(
         "cdp_ask.followup_resolve.cdp_registry.chat_url_for_registration",
         lambda rid: CSE_A,
     )
+    _patch_attachment(monkeypatch, None, conflict_ids=["reg-1", "reg-2"])
     req = FollowupProjectAskRequest(
         chat_url=CSE_A,
         registration_id="reg-stale",
@@ -240,6 +270,7 @@ async def test_stale_registration_id_proceeds_when_chat_url_unique(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
         AsyncMock(return_value=[CSE_A]),
     )
+    _patch_attachment(monkeypatch, _reg("reg-live"))
     req = FollowupProjectAskRequest(
         chat_url=CSE_A,
         registration_id="reg-stale-arm-time",
@@ -271,6 +302,7 @@ async def test_same_lane_extra_does_not_block_explicit_holder_chat_url(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
         AsyncMock(return_value=[CSE_A]),
     )
+    _patch_attachment(monkeypatch, _reg("reg-hop"))
     req = FollowupProjectAskRequest(chat_url=CSE_A, prompt_text="x")
     target, err, path, _binding = await resolve_followup_target(req, store)
     assert err is None
@@ -299,6 +331,7 @@ async def test_execution_id_registration_conflict_still_fail_closed(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
         AsyncMock(return_value=[CSE_A]),
     )
+    _patch_attachment(monkeypatch, _reg("reg-live"))
     req = FollowupProjectAskRequest(
         chat_url=CSE_A,
         registration_id="reg-other",
@@ -446,6 +479,7 @@ async def test_stale_registration_id_execute_followup_proceeds(
         "cdp_ask.followup_resolve.scan_lane_cse_urls",
         AsyncMock(return_value=[CSE_A]),
     )
+    _patch_attachment(monkeypatch, reg)
     page = MagicMock()
     page.url = CSE_A
     pw = AsyncMock()

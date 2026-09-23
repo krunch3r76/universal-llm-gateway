@@ -128,20 +128,45 @@ def _persist_session_address(
     )
 
 
+def _latch_streaming_attachment(
+    registration_id: str,
+    url: str | None,
+    *,
+    execution_id: str = "",
+) -> None:
+    """Append ``attachment_observed`` on first streaming sample, then fold."""
+    from claude_bundles import cdp_registry_store as store
+
+    raw = (url or "").strip()
+    if not raw or _CSE_URL_MARKER not in raw:
+        return
+    if store._has_attachment_observed(registration_id, raw):
+        store.fold_attachment_journal()
+        return
+    store.append_attachment_journal(
+        registration_id=registration_id,
+        chat_url=raw,
+        attach_proof="streaming",
+        execution_id=execution_id or None,
+    )
+    store.fold_attachment_journal()
+
+
 def _wrap_harvest_with_address(
     on_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None,
     *,
     registration_id: str,
     execution_id: str,
 ) -> Callable[[dict[str, Any]], Awaitable[None]]:
-    """Compose harvest hook so first CSE URL binds at birth (not only terminal)."""
+    """Compose harvest hook: latch attachment only when ``streaming`` is true."""
 
     async def _hook(state: dict[str, Any]) -> None:
-        _persist_session_address(
-            registration_id,
-            str(state.get("url") or "") or None,
-            execution_id=execution_id,
-        )
+        if state.get("streaming") is True:
+            _latch_streaming_attachment(
+                registration_id,
+                str(state.get("url") or "") or None,
+                execution_id=execution_id,
+            )
         if on_harvest is not None:
             await on_harvest(state)
 

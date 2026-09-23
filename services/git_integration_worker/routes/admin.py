@@ -94,6 +94,31 @@ class CseHolderUpsertRequest(BaseModel):
     score_journal_uri: str | None = None
 
 
+class CseHolderReleaseRequest(BaseModel):
+    """Body for releasing a holder row after registry detach."""
+
+    chat_url: str
+    registration_id: str | None = None
+    reason: str | None = None
+
+
+@router.post("/cse-holder/release", summary="Release a CSE session holder after detach.")
+async def cse_holder_release(req: CseHolderReleaseRequest) -> dict[str, object]:
+    from services.git_integration_worker.cse_session_holders import (
+        release_holder_for_registration,
+    )
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        row = release_holder_for_registration(
+            conn,
+            chat_url=req.chat_url,
+            registration_id=req.registration_id,
+            reason=req.reason,
+        )
+        conn.commit()
+    return {"ok": True, "holder": row}
+
+
 @router.post("/cse-holder/upsert", summary="Register or refresh a CSE session holder.")
 async def cse_holder_upsert(req: CseHolderUpsertRequest) -> dict[str, object]:
     """Idempotent upsert keyed by ``holder_id`` from ``chat_url``."""

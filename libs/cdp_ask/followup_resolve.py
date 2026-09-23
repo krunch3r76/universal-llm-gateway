@@ -13,6 +13,7 @@ side effect stays in ``followup_reattach`` — this module remains pure.
 from __future__ import annotations
 
 from claude_bundles import cdp_registry
+from claude_bundles.cdp_registry.session_address import attachment_for_chat_url
 from claude_bundles.cse_provenance import resolve as resolve_provenance
 from claude_bundles.cse_provenance_resolve import is_row_present
 from claude_bundles.cse_url import normalize_cse_url
@@ -69,30 +70,63 @@ def _registry_pairs_for_chat_url(
     cdp_url: str | None = None,
 ) -> list[FollowupCandidate]:
     """Registry rows whose durable ``chat_url`` matches (optional ``cdp_url`` filter)."""
-    target = normalize_cse_url(chat_url)
-    out: list[FollowupCandidate] = []
-    for lane in cdp_registry.list_active():
-        if cdp_url and lane.cdp_url != cdp_url:
-            continue
-        bound = cdp_registry.chat_url_for_registration(lane.registration_id)
-        if not bound or normalize_cse_url(bound) != target:
-            continue
-        out.append(
-            FollowupCandidate(
-                registration_id=lane.registration_id,
-                chat_url=bound,
-                holder=lane.holder,
-                purpose=lane.purpose,
-                cdp_url=lane.cdp_url,
-                target_binding="explicit",
-                provenance=resolve_provenance(
-                    chat_url=bound,
-                    registration_id=lane.registration_id,
-                    host_listable=is_row_present,
-                ),
+    from universal_protocol.errors import ProtocolError
+
+    try:
+        reg = attachment_for_chat_url(chat_url)
+    except ProtocolError as exc:
+        if exc.code != "attachment.conflict":
+            raise
+        conflict_ids = [
+            str(rid) for rid in (exc.data or {}).get("registration_ids") or []
+        ]
+        out: list[FollowupCandidate] = []
+        for rid in conflict_ids:
+            bound = cdp_registry.chat_url_for_registration(rid) or chat_url
+            lane = cdp_registry.list_active()
+            cdp = next(
+                (r.cdp_url for r in lane if r.registration_id == rid),
+                None,
             )
+            if cdp_url and cdp and cdp != cdp_url:
+                continue
+            out.append(
+                FollowupCandidate(
+                    registration_id=rid,
+                    chat_url=bound,
+                    holder="",
+                    purpose=None,
+                    cdp_url=cdp or cdp_url or "",
+                    target_binding="explicit",
+                    provenance=resolve_provenance(
+                        chat_url=bound,
+                        registration_id=rid,
+                        host_listable=is_row_present,
+                    ),
+                )
+            )
+        return out
+
+    if reg is None:
+        return []
+    if cdp_url and reg.cdp_url != cdp_url:
+        return []
+    bound = cdp_registry.chat_url_for_registration(reg.registration_id) or chat_url
+    return [
+        FollowupCandidate(
+            registration_id=reg.registration_id,
+            chat_url=bound,
+            holder=reg.holder,
+            purpose=reg.purpose,
+            cdp_url=reg.cdp_url,
+            target_binding="explicit",
+            provenance=resolve_provenance(
+                chat_url=bound,
+                registration_id=reg.registration_id,
+                host_listable=is_row_present,
+            ),
         )
-    return out
+    ]
 
 
 async def discover_candidates(
