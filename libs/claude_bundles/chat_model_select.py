@@ -26,15 +26,19 @@ from claude_bundles.chat_model_effort import (
 )
 from claude_bundles.chat_model_match import (
     PREDICTED_MODEL_LABELS,
+    family_attested,
     family_nested_in_more_models,
     family_pattern,
+    index_for_named_radio,
     is_leave_request,
     label_satisfies_request,
     match_effort_qualified_radio,
     match_model_request,
     normalize_picker_request,
     parse_model_request,
+    prefer_model_name_index,
     sealed_ask_default_effort,
+    select_no_attest_status,
 )
 
 # Re-export pure helpers for existing callers / tests.
@@ -121,40 +125,83 @@ async def list_picker_radios(page) -> list[str]:
     return [str(x) for x in (labels or []) if str(x).strip()]
 
 
-async def _click_family_radio(page, family: str) -> str | None:
-    """Click a family radio by pattern. Return matched label hint or None."""
-    pat = family_pattern(family)
-    item = page.locator("[role=menuitemradio]").filter(
-        has_text=re.compile(pat.pattern, re.I)
-    )
-    if not await item.count():
-        item = page.get_by_role("menuitemradio", name=re.compile(pat.pattern, re.I))
-    if not await item.count():
-        item = page.get_by_text(pat)
-    if not await item.count():
-        return None
-    text = ""
-    try:
-        text = (await item.first.inner_text() or "").strip()
-    except Exception:
-        text = family
-    await item.first.click(force=True)
+# Own label is the first line, with nested radios removed. ``textContent``
+# glues a subtitle onto the model name and a parent group concatenates rows.
+# ``el.click()`` fires the radio; a coordinate click on ``locator.first``
+# lands on the already-selected row's effort control.
+_LIST_RADIOS_JS = """() => {
+  function ownLabel(el) {
+    const aria = (el.getAttribute('aria-label') || '').trim();
+    if (aria) return aria;
+    const clone = el.cloneNode(true);
+    clone.querySelectorAll('[role="menuitemradio"]').forEach((n) => n.remove());
+    const raw = (clone.innerText || clone.textContent || '').trim();
+    return raw.split(/\\n/).map((s) => s.trim()).filter(Boolean)[0] || '';
+  }
+  return [...document.querySelectorAll('[role=menuitemradio]')].map((el) => ({
+    own: ownLabel(el),
+    full: ((el.getAttribute('aria-label') || el.textContent || '')).trim(),
+  }));
+}"""
+
+_CLICK_INDEX_JS = """(index) => {
+  const radios = [...document.querySelectorAll('[role=menuitemradio]')];
+  const el = radios[index];
+  if (!el) return false;
+  el.click();
+  return true;
+}"""
+
+
+async def _radio_rows(page) -> list[dict[str, str]]:
+    raw = await page.evaluate(_LIST_RADIOS_JS)
+    rows: list[dict[str, str]] = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "own": str(item.get("own") or "").strip(),
+                "full": str(item.get("full") or "").strip(),
+            }
+        )
+    return rows
+
+
+async def _click_radio_index(page, index: int) -> bool:
+    clicked = await page.evaluate(_CLICK_INDEX_JS, index)
+    if clicked is not True:
+        return False
     await page.wait_for_timeout(800)
-    return text or family
+    return True
+
+
+async def _click_family_radio(page, family: str) -> str | None:
+    """Click the radio whose own label is the model name.
+
+    ``locator.first`` on a family substring matches the parent group first.
+    That click changes effort on the selected model and leaves the chip.
+    """
+    rows = await _radio_rows(page)
+    index = prefer_model_name_index(family, rows)
+    if index is None or not await _click_radio_index(page, index):
+        return None
+    return rows[index]["own"] or family
 
 
 async def _click_radio_named(page, label: str) -> str | None:
-    """Click a live menuitemradio by its visible label (effort-qualified SKU)."""
+    """Click the radio whose own or full label equals ``label``.
+
+    A parent row contains that label as a substring. Exact equality plus
+    ``el.click()`` selects the named SKU instead of the group's center.
+    """
     text = (label or "").strip()
     if not text:
         return None
-    item = page.locator("[role=menuitemradio]").filter(
-        has_text=re.compile(re.escape(text), re.I)
-    )
-    if not await item.count():
+    rows = await _radio_rows(page)
+    index = index_for_named_radio(rows, text)
+    if index is None or not await _click_radio_index(page, index):
         return None
-    await item.first.click(force=True)
-    await page.wait_for_timeout(800)
     return text
 
 
@@ -191,7 +238,8 @@ async def _discover_and_click(
                 "predicted": predicted,
             },
         )
-    if await _click_family_radio(page, family) is None:
+    clicked = await _click_family_radio(page, family)
+    if clicked is None:
         return (
             matched,
             available,
@@ -203,7 +251,7 @@ async def _discover_and_click(
                 "available_models": available,
             },
         )
-    return matched, available, None
+    return clicked, available, None
 
 
 async def select_from_ui(
@@ -277,6 +325,34 @@ async def select_from_ui(
         if err is not None:
             return err
 
+    after_click = await current_model_label(page)
+    if not family_attested(requested, after_click) and path in {
+        "predicted",
+        "effort_qualified_radio",
+    }:
+        matched, available, err = await _discover_and_click(
+            page,
+            family=family,
+            before=before,
+            requested=requested,
+            predicted=predicted,
+            effort=effort,
+        )
+        if err is not None:
+            return err
+        path = "discover_after_predict_miss"
+        after_click = await current_model_label(page)
+
+    if not family_attested(requested, after_click):
+        return select_no_attest_status(
+            requested=requested,
+            before=before,
+            after=after_click,
+            matched=matched,
+            path=path,
+            available=available,
+        )
+
     effort_result, effort_err = await _effort_after_click(
         page,
         requested=requested,
@@ -289,49 +365,15 @@ async def select_from_ui(
 
     after = await current_model_label(page)
     if not label_satisfies_request(requested, after, effort=effort):
-        if path in {"predicted", "effort_qualified_radio"}:
-            matched, available, err = await _discover_and_click(
-                page,
-                family=family,
-                before=before,
-                requested=requested,
-                predicted=predicted,
-                effort=effort,
-            )
-            if err is not None:
-                return err
-            path = "discover_after_predict_miss"
-            effort_result, effort_err = await _effort_after_click(
-                page,
-                requested=requested,
-                effort=effort,
-                matched=matched,
-                before=before,
-            )
-            if effort_err is not None:
-                return effort_err
-            after = await current_model_label(page)
-            if label_satisfies_request(requested, after, effort=effort):
-                return {
-                    "ok": True,
-                    "step": path,
-                    "current_model": after,
-                    "matched": matched,
-                    "requested": requested,
-                    "family": family,
-                    "effort": effort_result,
-                    "available_models": available,
-                }
-        return {
-            "ok": False,
-            "step": "select_no_attest",
-            "before": before,
-            "after": after,
-            "matched": matched,
-            "effort": effort_result,
-            "available_models": available,
-            "path": path,
-        }
+        return select_no_attest_status(
+            requested=requested,
+            before=before,
+            after=after,
+            matched=matched,
+            path=path,
+            available=available,
+            effort=effort_result if isinstance(effort_result, dict) else None,
+        )
     return {
         "ok": True,
         "step": path,

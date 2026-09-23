@@ -270,7 +270,11 @@ async def test_predicted_family_click_skipped_when_effort_differs() -> None:
         patch(
             "claude_bundles.chat_model_select.current_model_label",
             new_callable=AsyncMock,
-            side_effect=["Model: Fable 5 High", "Model: Fable 5 Max"],
+            side_effect=[
+                "Model: Fable 5 High",
+                "Model: Fable 5 Max",
+                "Model: Fable 5 Max",
+            ],
         ),
         patch(
             "claude_bundles.chat_model_select._ensure_picker",

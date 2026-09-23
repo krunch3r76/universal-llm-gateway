@@ -7,6 +7,7 @@ Prediction list = try-first hints only; live UI remains availability SOT
 from __future__ import annotations
 
 import re
+from datetime import UTC, datetime
 
 from effort_vocabulary import EFFORT_TOKENS, to_picker_suffix
 
@@ -63,9 +64,7 @@ def normalize_picker_request(model: str) -> str:
     return key
 
 
-def compose_cdp_model_with_effort(
-    model: str, reasoning_effort: str | None
-) -> str:
+def compose_cdp_model_with_effort(model: str, reasoning_effort: str | None) -> str:
     """Fold ``reasoning_effort`` into ``cdp/<family>-<effort>`` for the picker.
 
     Bare ``cdp/opus-5`` + ``reasoning_effort=max`` must become ``cdp/opus-5-max``
@@ -210,3 +209,168 @@ def is_leave_request(requested: str) -> bool:
 def family_nested_in_more_models(family: str) -> bool:
     """True when the live Cowork picker nests the family under More models."""
     return (family or "").strip().lower().startswith("fable")
+
+
+_OTHER_FAMILY_WORDS = ("opus", "sonnet", "haiku", "fable")
+_CHIP_FAMILY = re.compile(r"\b(fable|opus|sonnet|haiku)\b", re.I)
+_CHIP_EFFORT = re.compile(r"\b(max|extra|high|medium|low)\b", re.I)
+_GLUED_SUBTITLE = re.compile(r"\d(?:\.\d+)?(?=[A-Za-z])")
+
+
+def radio_own_name(label: str) -> str:
+    """Model-name line of a picker radio.
+
+    Cowork puts the subtitle on the next line. ``textContent`` drops that
+    break, so a title and a subtitle become one string.
+    """
+    text = (label or "").strip()
+    if not text:
+        return ""
+    return text.splitlines()[0].strip()
+
+
+def menu_label_glued(label: str) -> bool:
+    """True when a version token is glued to the following subtitle word."""
+    return bool(_GLUED_SUBTITLE.search(label or ""))
+
+
+def _family_word(family: str) -> str:
+    match = re.match(r"[a-z]+", (family or "").strip().lower())
+    return match.group(0) if match else ""
+
+
+def _names_other_family(family: str, label: str) -> bool:
+    """True when ``label`` also names a different model family.
+
+    A parent menuitemradio concatenates every row. That string matches the
+    requested family and the already-selected one.
+    """
+    mine = _family_word(family)
+    low = (label or "").lower()
+    return any(other != mine and other in low for other in _OTHER_FAMILY_WORDS)
+
+
+def prefer_model_name_index(family: str, rows: list[dict[str, str]]) -> int | None:
+    """Index of the radio whose own label is the model name.
+
+    Parent groups match a family substring and sort first in the DOM.
+    ``locator.first`` then clicks that group; the hit lands on the
+    already-selected row's effort control. Sibling versions stay in DOM
+    order so an Opus 5.5 row ahead of an older Opus row is unchanged.
+    A glued subtitle loses to the same family's name-only label.
+    """
+    pat = family_pattern(family)
+    candidates: list[int] = []
+    for index, row in enumerate(rows):
+        own = radio_own_name(str(row.get("own") or ""))
+        if not own or _names_other_family(family, own) or not pat.search(own):
+            continue
+        candidates.append(index)
+    if not candidates:
+        return None
+    named = [
+        index
+        for index in candidates
+        if not menu_label_glued(str(rows[index].get("own") or ""))
+    ]
+    return (named or candidates)[0]
+
+
+def index_for_named_radio(rows: list[dict[str, str]], label: str) -> int | None:
+    """Index of the radio whose own or full label equals ``label``.
+
+    Exact equality skips a parent whose text merely contains the label.
+    The shortest full text wins when a name and a glued copy both exist.
+    """
+    wanted = (label or "").strip()
+    if not wanted:
+        return None
+    hits = [
+        index
+        for index, row in enumerate(rows)
+        if str(row.get("full") or "") == wanted or str(row.get("own") or "") == wanted
+    ]
+    if not hits:
+        return None
+    hits.sort(key=lambda index: len(str(rows[index].get("full") or "")))
+    return hits[0]
+
+
+def family_attested(requested: str, label: str) -> bool:
+    """True when ``label`` names the requested family, effort ignored.
+
+    Effort is a second step. A chip that only changed effort on the previous
+    family does not attest the click.
+    """
+    family, _effort = parse_model_request(requested)
+    if family in _LEAVE:
+        return True
+    return bool(family_pattern(family).search(label or ""))
+
+
+def matched_label_is_chip(matched: str, chip: str) -> bool:
+    """True when the chip text contains the radio's own model name."""
+    name = radio_own_name(matched)
+    if not name or not (chip or "").strip():
+        return False
+    return name.lower() in chip.lower()
+
+
+def effort_only_chip_change(before: str, after: str) -> bool:
+    """True when the chip kept its family and only the effort token moved."""
+    before_family = _CHIP_FAMILY.search(before or "")
+    after_family = _CHIP_FAMILY.search(after or "")
+    if (
+        not before_family
+        or not after_family
+        or before_family.group(1).lower() != after_family.group(1).lower()
+    ):
+        return False
+    before_effort = _CHIP_EFFORT.search(before or "")
+    after_effort = _CHIP_EFFORT.search(after or "")
+    before_token = before_effort.group(1).lower() if before_effort else ""
+    after_token = after_effort.group(1).lower() if after_effort else ""
+    return before_token != after_token
+
+
+def select_no_attest_status(
+    *,
+    requested: str,
+    before: str,
+    after: str,
+    matched: str | None,
+    path: str,
+    available: list[str] | None = None,
+    effort: dict | None = None,
+    as_of: str | None = None,
+) -> dict:
+    """Status for a click that did not leave the chip on the requested model.
+
+    Menu glue, a matched label that is not the chip, and an effort-only chip
+    change stay separate fields. Callers branch on ``step`` instead of parsing
+    them out of an unverified stall.
+    """
+    labels = list(available or [])
+    matched_text = matched or ""
+    glued = menu_label_glued(matched_text) or any(
+        menu_label_glued(item) for item in labels
+    )
+    return {
+        "ok": False,
+        "value": "select_no_attest",
+        "step": "select_no_attest",
+        "before": before,
+        "after": after,
+        "matched": matched,
+        "requested": requested,
+        "path": path,
+        "as_of": as_of or datetime.now(UTC).isoformat(),
+        "source": "cdp.model_select",
+        "scope": requested,
+        "epoch": path,
+        "menu_label_glued": glued,
+        "matched_is_chip": matched_label_is_chip(matched_text, after),
+        "effort_only_chip_change": effort_only_chip_change(before, after),
+        "available_models": labels,
+        "effort": effort,
+    }

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from cdp_ask.unverifiable import is_unverifiable_stall
+from cdp_ask.unverifiable import is_unverifiable_stall, model_select_status_lines
 from claude_bundles.cdp_model_endpoint import (
     CDP_REPLY_FROM,
     DEFAULT_MAX_WALL_S,
@@ -132,6 +132,7 @@ def format_cdp_result_body(
         recovery = extras.get("recovery")
         if recovery:
             lines.append(f"- recovery: {recovery}")
+    lines.extend(model_select_status_lines(result.error))
     if _upstream_overloaded(result):
         lines.extend(
             [

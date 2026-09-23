@@ -6,6 +6,7 @@ set so reconcile horizon, not the poller, decides whether the CSE is dead.
 
 from __future__ import annotations
 
+import ast
 from typing import Any
 
 from cdp_ask.models import StallStage, classify_stall_stage
@@ -91,6 +92,8 @@ def is_unverifiable_stall(
     Explicit ``satellite_execution_id=None`` means pre-submit death (``cdp FAILED``).
     """
     stage = (stall_stage or "").strip()
+    if stage == "select_no_attest" or "select_no_attest" in (error or "").lower():
+        return False
     if stage in DEATH_STALL_STAGES:
         return False
     err = (error or "").lower()
@@ -142,6 +145,58 @@ def transport_miss_fields(
     }
 
 
+def select_record_from_error(error: str | None) -> dict[str, Any] | None:
+    """Parse the ``model select failed:`` dict when it is a select record."""
+    raw = error or ""
+    marker = "model select failed:"
+    idx = raw.lower().find(marker)
+    if idx < 0:
+        return None
+    payload = raw[idx + len(marker) :].strip()
+    if not payload.startswith("{"):
+        return None
+    try:
+        record = ast.literal_eval(payload)
+    except (SyntaxError, ValueError):
+        return None
+    if not isinstance(record, dict) or "step" not in record:
+        return None
+    return record
+
+
+def model_select_status_lines(error: str | None) -> list[str]:
+    """Render a select miss for the CDP failure body.
+
+    ``observer_unverified`` is the empty-CSE class. A select record keeps
+    ``step``, the chip pair, the menu label, and the request as their own lines.
+    """
+    record = select_record_from_error(error)
+    if not record or record.get("step") != "select_no_attest":
+        return []
+    keys = (
+        "value",
+        "step",
+        "before",
+        "after",
+        "matched",
+        "requested",
+        "path",
+        "as_of",
+        "source",
+        "scope",
+        "epoch",
+        "menu_label_glued",
+        "matched_is_chip",
+        "effort_only_chip_change",
+    )
+    lines = ["", "model_select:"]
+    for key in keys:
+        if key not in record:
+            continue
+        lines.append(f"- {key}: `{record[key]}`")
+    return lines
+
+
 def failed_snapshot_fields(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Project a failed satellite snapshot onto stall, error, and extras."""
     stall = snapshot.get("stall_stage")
@@ -150,9 +205,16 @@ def failed_snapshot_fields(snapshot: dict[str, Any]) -> dict[str, Any]:
     sat_kw: dict[str, Any] = {}
     if "satellite_execution_id" in snapshot:
         sat_kw["satellite_execution_id"] = snapshot.get("satellite_execution_id")
-    unverifiable = is_unverifiable_stall(stall, error, url=url, **sat_kw)
-    if unverifiable and (not stall or stall == "unknown"):
-        stall = "observer_unverified"
+    select_miss = (
+        stall or ""
+    ) == "select_no_attest" or "select_no_attest" in error.lower()
+    if select_miss:
+        stall = "select_no_attest"
+        unverifiable = False
+    else:
+        unverifiable = is_unverifiable_stall(stall, error, url=url, **sat_kw)
+        if unverifiable and (not stall or stall == "unknown"):
+            stall = "observer_unverified"
     extras: dict[str, Any] = {}
     raw = str(url or "").strip()
     if raw and _CSE_URL_MARKER in raw:

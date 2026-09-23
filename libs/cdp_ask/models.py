@@ -24,6 +24,7 @@ StallStage = Literal[
     "mark_terminal",
     "post_terminal_poll",
     "observer_unverified",
+    "select_no_attest",
     "unknown",
 ]
 
@@ -50,6 +51,8 @@ def classify_stall_stage(error: str | None) -> StallStage:
         return "mark_terminal"
     if "conversation failed" in low:
         return "observer_unverified"
+    if "select_no_attest" in low:
+        return "select_no_attest"
     return "unknown"
 
 
@@ -260,7 +263,9 @@ class ExecutionPollResponse(BaseModel):
             "Enum: `completion_detection` — wait/harvest/banner timeout; `archive_write` — "
             "archive_harvest or path failure; `mark_terminal` — runner/satellite exception; "
             "`post_terminal_poll` — late poll mismatch; `observer_unverified` — harness "
-            "fail after compose-attest without CSE-death proof (a:30678); "
+            "fail after compose-attest without CSE-death proof and without a select "
+            "record (a:30678); `select_no_attest` — picker click did not leave the "
+            "chip on the requested model; "
             "`unknown` — unclassified. "
             "Non-null on failed terminals so consumers distinguish stall from dual-completion lag."
         ),

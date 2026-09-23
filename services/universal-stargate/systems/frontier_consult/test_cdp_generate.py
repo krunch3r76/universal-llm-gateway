@@ -569,6 +569,40 @@ def test_format_cdp_result_body_completed_without_proof_honest() -> None:
     assert "without archive_uri" not in text
 
 
+def test_format_cdp_result_body_select_no_attest() -> None:
+    from claude_bundles.chat_model_match import select_no_attest_status
+
+    record = select_no_attest_status(
+        requested="fable-5.1",
+        before="Model: Opus 5.5 Medium",
+        after="Model: Opus 5.5 High",
+        matched="Fable 5.1For your toughest challenges",
+        path="discover",
+        available=["Fable 5.1For your toughest challenges"],
+        as_of="2026-09-22T00:00:00+00:00",
+    )
+    result = CdpGenerateResult(
+        ok=False,
+        body="",
+        execution_id="ae28e25aa80a46bb",
+        satellite_execution_id=None,
+        prompt_uri="cortex://p.md",
+        picker_model="fable-5.1",
+        stall_stage="select_no_attest",
+        error=f"model select failed: {record}",
+        extras={"chat_url": "https://claude.ai/cowork/cse_abc"},
+    )
+    assert cdp_result_subject(result).startswith("cdp FAILED")
+    text = format_cdp_result_body(result)
+    assert "# CDP generate FAILED" in text
+    assert "- stall_stage: `select_no_attest`" in text
+    assert "- source: `cdp.model_select`" in text
+    assert "- step: `select_no_attest`" in text
+    assert "- before: `Model: Opus 5.5 Medium`" in text
+    assert "- after: `Model: Opus 5.5 High`" in text
+    assert "observer_unverified" not in text
+
+
 def test_cdp_result_subject_unverified_not_failed() -> None:
     result = CdpGenerateResult(
         ok=False,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from claude_bundles.chat_model_match import select_no_attest_status
 
 from cdp_ask.models import classify_stall_stage
 from cdp_ask.unverifiable import (
@@ -13,6 +14,7 @@ from cdp_ask.unverifiable import (
     converse_stall_stage,
     failed_snapshot_fields,
     is_unverifiable_stall,
+    model_select_status_lines,
     transport_miss_fields,
     wall_abort_unconfirmed,
 )
@@ -36,6 +38,54 @@ def test_converse_stall_unknown_becomes_observer_unverified() -> None:
 
 def test_classify_conversation_failed_token() -> None:
     assert classify_stall_stage("conversation failed") == "observer_unverified"
+
+
+def test_select_no_attest_record_is_not_observer_unverified() -> None:
+    record = select_no_attest_status(
+        requested="fable-5.1",
+        before="Model: Opus 5.5 Medium",
+        after="Model: Opus 5.5 High",
+        matched="Fable 5.1For your toughest challenges",
+        path="discover",
+        available=["Fable 5.1For your toughest challenges"],
+        as_of="2026-09-22T00:00:00+00:00",
+    )
+    error = f"model select failed: {record}"
+    assert classify_stall_stage(error) == "select_no_attest"
+    assert converse_stall_stage(error, conv_ok=False) == "select_no_attest"
+    assert converse_stall_stage("model select failed: x", conv_ok=False) == (
+        "observer_unverified"
+    )
+    fields = failed_snapshot_fields(
+        {
+            "status": "failed",
+            "stall_stage": "unknown",
+            "error": error,
+            "url": "https://claude.ai/cowork/cse_abc",
+            "satellite_execution_id": "sat-1",
+        }
+    )
+    assert fields["stall_stage"] == "select_no_attest"
+    assert fields["unverifiable"] is False
+    assert fields["retain_reason"] is None
+    text = "\n".join(model_select_status_lines(error))
+    assert "- step: `select_no_attest`" in text
+    assert "- before: `Model: Opus 5.5 Medium`" in text
+    assert "- after: `Model: Opus 5.5 High`" in text
+    assert "- matched: `Fable 5.1For your toughest challenges`" in text
+    assert "- requested: `fable-5.1`" in text
+    assert "- path: `discover`" in text
+    assert "- as_of: `2026-09-22T00:00:00+00:00`" in text
+    assert "- source: `cdp.model_select`" in text
+    assert "- menu_label_glued: `True`" in text
+    assert "- matched_is_chip: `False`" in text
+    assert "- effort_only_chip_change: `True`" in text
+    assert (
+        is_unverifiable_stall(
+            "select_no_attest", error, url=fields["extras"]["chat_url"]
+        )
+        is False
+    )
 
 
 def test_is_unverifiable_stall_death_vs_observer() -> None:

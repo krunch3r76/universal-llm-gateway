@@ -6,11 +6,15 @@ import pytest
 
 from claude_bundles.chat_model_match import (
     compose_cdp_model_with_effort,
+    effort_only_chip_change,
+    family_attested,
     family_nested_in_more_models,
     label_satisfies_request,
     match_effort_qualified_radio,
+    menu_label_glued,
     normalize_picker_request,
     parse_model_request,
+    prefer_model_name_index,
     sealed_ask_default_effort,
 )
 
@@ -129,6 +133,49 @@ def test_match_effort_qualified_radio_clicks_high_sku() -> None:
     )
     assert match_effort_qualified_radio("opus-5", labels, effort="max") == "Opus 5 Max"
     assert match_effort_qualified_radio("opus-5", labels, effort=None) is None
+    assert match_effort_qualified_radio("opus-5", ["Opus 5"], effort="high") is None
+
+
+@pytest.mark.offline
+def test_prefer_fable_name_over_parent_and_glued_subtitle() -> None:
+    rows = [
+        {
+            "own": (
+                "Opus 5.5Most capable for ambitious work"
+                "Fable 5.1For your toughest challenges"
+            ),
+            "full": "parent",
+        },
+        {
+            "own": "Fable 5.1For your toughest challenges",
+            "full": "Fable 5.1For your toughest challenges",
+        },
+        {"own": "Fable 5.1", "full": "Fable 5.1"},
+    ]
+    assert prefer_model_name_index("fable-5.1", rows) == 2
+    assert menu_label_glued(rows[1]["own"]) is True
+    assert menu_label_glued("Fable 5.1") is False
+
+
+@pytest.mark.offline
+def test_prefer_opus_keeps_first_dom_name() -> None:
+    """Same click bug must not reorder Opus 5.5 ahead of an older Opus row."""
+    rows = [
+        {"own": "Opus 5.5", "full": "Opus 5.5Most capable for ambitious work"},
+        {"own": "Opus 5", "full": "Opus 5"},
+    ]
+    assert prefer_model_name_index("opus-5", rows) == 0
+
+
+@pytest.mark.offline
+def test_family_attest_ignores_effort_only_opus_change() -> None:
+    assert family_attested("fable-5.1", "Model: Opus 5.5 High") is False
+    assert family_attested("fable-5.1", "Model: Fable 5.1") is True
     assert (
-        match_effort_qualified_radio("opus-5", ["Opus 5"], effort="high") is None
+        effort_only_chip_change("Model: Opus 5.5 Medium", "Model: Opus 5.5 High")
+        is True
+    )
+    assert (
+        label_satisfies_request("fable-5.1", "Model: Opus 5.5 High", effort="high")
+        is False
     )
