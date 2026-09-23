@@ -215,6 +215,52 @@ def test_fold_replay_skips_u_scan_on_historical_attachment_observed(
     assert reg._load_active()[z_id].get("attached_at")
 
 
+def test_fold_replay_session_address_bound_wins_over_earlier_observation(
+    isolated_registry: Path,
+) -> None:
+    """G5r: later session_address_bound must not lose chat_url to earlier observation."""
+    row = _mint()
+    rid = row.registration_id
+    url_observed = _CSE
+    url_bound = _CSE + "2"
+    reg._store.append_log(
+        "attachment_observed",
+        {
+            "registration_id": rid,
+            "chat_url": url_observed,
+            "attach_proof": "streaming",
+            "observed_at": 1.0,
+        },
+    )
+    reg._store.append_log(
+        "session_address_bound",
+        {
+            "registration_id": rid,
+            "chat_url": url_bound,
+            "execution_id": "exec-bound",
+        },
+    )
+    fold_attachment_journal()
+    replayed = reg._load_active()[rid]
+    assert replayed.get("chat_url") == url_bound
+
+
+def test_fold_replay_observation_only_retains_chat_url(isolated_registry: Path) -> None:
+    row = _mint()
+    rid = row.registration_id
+    reg._store.append_log(
+        "attachment_observed",
+        {
+            "registration_id": rid,
+            "chat_url": _CSE,
+            "attach_proof": "streaming",
+            "observed_at": 1.0,
+        },
+    )
+    fold_attachment_journal()
+    assert reg._load_active()[rid].get("chat_url") == _CSE
+
+
 def test_ac14_attachment_fold_replay(isolated_registry: Path) -> None:
     row = _mint()
     rid = row.registration_id

@@ -348,10 +348,45 @@ def append_attachment_journal(
         )
 
 
+def _has_later_session_address_bound(
+    log: list[dict[str, Any]], registration_id: str, after_index: int
+) -> bool:
+    """True when *registration_id* has ``session_address_bound`` after *after_index*."""
+    rid = str(registration_id or "").strip()
+    if not rid:
+        return False
+    for record in log[after_index + 1 :]:
+        if str(record.get("registration_id") or "").strip() != rid:
+            continue
+        if str(record.get("event") or "") == "session_address_bound":
+            return True
+    return False
+
+
 def _apply_attachment_observed(
-    active: dict[str, dict[str, Any]], record: dict[str, Any]
+    active: dict[str, dict[str, Any]],
+    record: dict[str, Any],
+    *,
+    skip_chat_url: bool = False,
 ) -> None:
     """Replay one ``attachment_observed`` line onto *active* (chat_url only)."""
+    reg_id = str(record.get("registration_id") or "").strip()
+    url = str(record.get("chat_url") or "").strip()
+    if not reg_id or not url:
+        return
+    row = dict(active.get(reg_id) or {})
+    row["registration_id"] = reg_id
+    if not skip_chat_url:
+        row["chat_url"] = url
+    if record.get("execution_id"):
+        row["execution_id"] = record.get("execution_id")
+    active[reg_id] = row
+
+
+def _apply_session_address_bound(
+    active: dict[str, dict[str, Any]], record: dict[str, Any]
+) -> None:
+    """Replay one ``session_address_bound`` journal line (authoritative chat_url)."""
     reg_id = str(record.get("registration_id") or "").strip()
     url = str(record.get("chat_url") or "").strip()
     if not reg_id or not url:
@@ -361,6 +396,8 @@ def _apply_attachment_observed(
     row["chat_url"] = url
     if record.get("execution_id"):
         row["execution_id"] = record.get("execution_id")
+    if record.get("target_id"):
+        row["target_id"] = record.get("target_id")
     active[reg_id] = row
 
 
@@ -440,8 +477,9 @@ def fold_attachment_journal(
     with ports_lock():
         state = dict(load_active() if active is None else active)
         last_observation: dict[str, dict[str, Any]] = {}
+        log = read_registry_log()
 
-        for record in read_registry_log():
+        for idx, record in enumerate(log):
             ev = str(record.get("event") or "")
             reg_id = str(record.get("registration_id") or "").strip()
             if ev == "detached":
@@ -450,7 +488,10 @@ def fold_attachment_journal(
                 continue
             if ev == "attachment_observed" and reg_id:
                 last_observation[reg_id] = record
-                _apply_attachment_observed(state, record)
+                skip_url = _has_later_session_address_bound(log, reg_id, idx)
+                _apply_attachment_observed(state, record, skip_chat_url=skip_url)
+            elif ev == "session_address_bound" and reg_id:
+                _apply_session_address_bound(state, record)
             elif ev == "attachment_bound" and reg_id:
                 _apply_attachment_bound(state, record)
             elif ev == "standdown_pasted" and reg_id:
