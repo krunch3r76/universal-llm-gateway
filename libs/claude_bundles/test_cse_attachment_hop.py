@@ -150,6 +150,44 @@ def test_ac5_observation_survives_non_authority(
     assert active.get("attached_at")
 
 
+def test_fold_replay_skips_u_scan_on_historical_attachment_observed(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Released row's journal line must not conflict with today's live bind (G6 withhold)."""
+    from cdp_ask.runner import _latch_streaming_attachment
+
+    monkeypatch.setattr(reg, "_kill_listener", lambda _p: None)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.upsert_holder_remote",
+        lambda **_k: None,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cse_session_holders.release_holder_remote",
+        lambda **_k: True,
+    )
+
+    x = _mint(holder="x")
+    x_id = x.registration_id
+    _latch_streaming_attachment(x_id, _CSE, execution_id="ex")
+    assert reg._load_active()[x_id].get("attached_at")
+
+    reg.deregister_lane(x_id, kill=True, reason="released")
+
+    y = _mint(holder="y")
+    y_id = y.registration_id
+    assert reg.bind_session_address(y_id, chat_url=_CSE)
+    _latch_streaming_attachment(y_id, _CSE, execution_id="ey")
+    y_row = reg._load_active()[y_id]
+    assert y_row.get("attached_at")
+
+    z = _mint(holder="z")
+    z_id = z.registration_id
+    other = _CSE + "2"
+    assert reg.bind_session_address(z_id, chat_url=other)
+    _latch_streaming_attachment(z_id, other, execution_id="ez")
+    assert reg._load_active()[z_id].get("attached_at")
+
+
 def test_ac14_attachment_fold_replay(isolated_registry: Path) -> None:
     row = _mint()
     rid = row.registration_id

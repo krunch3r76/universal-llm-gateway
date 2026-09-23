@@ -353,7 +353,6 @@ def _apply_attachment_observed(
     url = str(record.get("chat_url") or "").strip()
     if not reg_id or not url:
         return
-    assert_attachment_unique(active, url, registration_id=reg_id)
     row = dict(active.get(reg_id) or {})
     row["registration_id"] = reg_id
     row["chat_url"] = url
