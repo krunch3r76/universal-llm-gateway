@@ -845,6 +845,42 @@ def test_pending_clears_when_digest_shows_closed_worker(
     assert result["action"] == "hold"
 
 
+def test_child_lane_open_thread_releases_when_execution_gone() -> None:
+    """CLOSEOUT leaves the bus thread active; the GIW execution is the mutex."""
+    pending = {
+        "execution_id": "32e8402a-ac49-4b85-aeb6-9764cbcd81a6",
+        "thread_id": "12594",
+        "spawned_at": "2026-09-23T13:49:14Z",
+    }
+    digest = {
+        "root": {"id": "12586", "turns": 23, "recent_turns": []},
+        "lanes": [
+            {
+                "id": "12594",
+                "status": "active",
+                "lifecycle": "active",
+                "contract": "conductor",
+            }
+        ],
+        "attention": [],
+        "policy": {"pending_stale_backstop_minutes": 180},
+    }
+    checker = digest_pending_is_terminal(
+        digest,
+        now=datetime.fromisoformat("2026-09-23T23:50:00+00:00").timestamp(),
+        execution_gone_fn=lambda _p: True,
+    )
+    assert checker(pending) is True
+    assert checker.last_reason == "execution_gone"
+    still_live = digest_pending_is_terminal(
+        digest,
+        now=datetime.fromisoformat("2026-09-23T23:50:00+00:00").timestamp(),
+        execution_gone_fn=lambda _p: False,
+    )
+    assert still_live(pending) is False
+    assert still_live.last_reason == "pending_live"
+
+
 def test_root_pending_not_terminal_at_max_hop_without_closeout() -> None:
     """a:34257 specimen — ROOT thread_id must not release at max_hop_minutes."""
     pending = {

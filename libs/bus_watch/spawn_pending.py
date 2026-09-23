@@ -759,6 +759,11 @@ class PendingTerminalChecker:
                 if row_is_terminal(row):
                     self.last_reason = "lane_lifecycle"
                     return True
+                # The bus thread stays open after CLOSEOUT so a consult reply
+                # has a home. The mutex is the GIW execution, not that thread.
+                if self._execution_gone(pending):
+                    self.last_reason = "execution_gone"
+                    return True
                 self.last_reason = "pending_live"
                 return False
         elif tid and tid == self._root_id:

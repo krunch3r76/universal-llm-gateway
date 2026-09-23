@@ -30,6 +30,7 @@ def _friction_gate_id(raw: str) -> str | None:
     match = _FRICTION_NOW_RE.search(str(raw or ""))
     return f"a:{match.group(1)}" if match else None
 
+
 _ROW_ID_SAFE = re.compile(r"[^a-z0-9_-]+", re.I)
 
 HIRE_AUTO = "auto"
@@ -379,11 +380,19 @@ def classify_row(
     roster = digest.get("roster") or []
 
     if hire == HIRE_HOLD:
-        return {"decision": DECISION_HOLD, "reason": "hire_hold", "row_id": row.get("row_id")}
+        return {
+            "decision": DECISION_HOLD,
+            "reason": "hire_hold",
+            "row_id": row.get("row_id"),
+        }
 
     slug = _todo_slug_from_row(row)
     if not slug:
-        return {"decision": DECISION_UNSURE, "reason": "no_todo", "row_id": row.get("row_id")}
+        return {
+            "decision": DECISION_UNSURE,
+            "reason": "no_todo",
+            "row_id": row.get("row_id"),
+        }
 
     owner = live_conductor_owner(digest, slug)
     if isinstance(owner, dict) and owner.get("unsure"):
@@ -392,8 +401,10 @@ def classify_row(
             "reason": "unsure_live",
             "row_id": row.get("row_id"),
         }
-    if isinstance(owner, dict) and owner.get("lane") is not None and not owner.get(
-        "unsure"
+    if (
+        isinstance(owner, dict)
+        and owner.get("lane") is not None
+        and not owner.get("unsure")
     ):
         return {
             "decision": DECISION_HOLD,
@@ -417,11 +428,14 @@ def classify_row(
 
     latched = str(row.get("last_hire_dispatch_id") or "").strip()
     if latched and row.get("live") is not True and owner is None:
-        return {
-            "decision": DECISION_HOLD,
-            "reason": "hire_latched",
-            "row_id": row.get("row_id"),
-        }
+        from bus_watch.spawn_wake.play_classify import hire_latch_released
+
+        if not hire_latch_released(digest, latched):
+            return {
+                "decision": DECISION_HOLD,
+                "reason": "hire_latched",
+                "row_id": row.get("row_id"),
+            }
 
     overlap_id = _path_overlap_blocker(row, roster if roster else [row], scheduled)
     if overlap_id:
@@ -431,9 +445,7 @@ def classify_row(
             "row_id": row.get("row_id"),
         }
 
-    conductor_count = _scheduled_conductor_count(
-        roster if roster else [row], scheduled
-    )
+    conductor_count = _scheduled_conductor_count(roster if roster else [row], scheduled)
     live_keys = _live_conductor_keys(roster if roster else [row])
     if conductor_count >= max_conductors and work_key not in live_keys:
         return {
@@ -442,7 +454,11 @@ def classify_row(
             "row_id": row.get("row_id"),
         }
 
-    return {"decision": DECISION_PLAY, "reason": "play_row", "row_id": row.get("row_id")}
+    return {
+        "decision": DECISION_PLAY,
+        "reason": "play_row",
+        "row_id": row.get("row_id"),
+    }
 
 
 def classify_roster_rows(digest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -473,7 +489,9 @@ def roster_play_rows(
     return found
 
 
-def roster_play_todo(digest: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
+def roster_play_todo(
+    digest: dict[str, Any],
+) -> tuple[str | None, dict[str, Any] | None]:
     """First roster row that classifies ``play``; None when none."""
     for row, verdict in roster_play_rows(digest):
         slug = _todo_slug_from_row(row)

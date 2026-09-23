@@ -153,8 +153,20 @@ def test_empty_journal_now_row_seeds_once(tmp_path: Path, monkeypatch) -> None:
 
 def test_merge_by_row_id_last_line_wins() -> None:
     rows = [
-        {"row_id": "r1", "work_key": "todo:a", "hire": "auto", "gate": "", "text": "v1"},
-        {"row_id": "r1", "work_key": "todo:a", "hire": "hold", "gate": "", "text": "v2"},
+        {
+            "row_id": "r1",
+            "work_key": "todo:a",
+            "hire": "auto",
+            "gate": "",
+            "text": "v1",
+        },
+        {
+            "row_id": "r1",
+            "work_key": "todo:a",
+            "hire": "hold",
+            "gate": "",
+            "text": "v2",
+        },
     ]
     merged = merge_by_row_id(rows)
     assert len(merged) == 1
@@ -196,6 +208,49 @@ def test_path_overlap_holds_with_other_row_id() -> None:
     verdict_b = classify_row(digest, digest["roster"][1])
     assert verdict_b["decision"] == "hold"
     assert verdict_b["reason"] == "path_overlap:row-a"
+
+
+def test_hire_latch_releases_when_consult_continuation_owed(monkeypatch) -> None:
+    """Open thread plus a quiet alarm is not a finished hire."""
+    rows = [
+        _row(
+            "row-a",
+            "a",
+            paths=["libs/bus_watch/roster.py"],
+            last_hire_dispatch_id="disp-once",
+        ),
+    ]
+    digest = _digest_with_roster(
+        rows,
+        lanes=[
+            {
+                "id": "12594",
+                "status": "active",
+                "lifecycle": "active",
+                "contract": "conductor",
+                "last_from": "dispatch",
+                "last_subject": "Quiet with work in flight",
+            }
+        ],
+    )
+
+    def _fetch(thread_id: str) -> dict:
+        assert thread_id == "12594"
+        return {
+            "ledger_unreachable": False,
+            "row": {
+                "dispatch_id": "disp-once",
+                "consult_pending_continue_owed": True,
+                "record_json": {},
+            },
+        }
+
+    monkeypatch.setattr(
+        "operator_hop_harvest.ledger.fetch_latest_terminal_conductor",
+        _fetch,
+    )
+    verdict = classify_row(digest, digest["roster"][0])
+    assert verdict["decision"] == "play"
 
 
 def test_hire_latch_holds_after_dispatch_recorded() -> None:

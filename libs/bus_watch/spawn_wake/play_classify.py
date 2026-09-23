@@ -144,6 +144,18 @@ def _consult_reply_lane(lane: dict[str, Any]) -> bool:
     return subject.startswith("cdp reply")
 
 
+def _quiet_work_lane(lane: dict[str, Any]) -> bool:
+    """Dispatch quiet-alarm after a conductor closeout, not the seat speaking."""
+    if str(lane.get("last_from") or "") != "dispatch":
+        return False
+    subject = str(lane.get("last_subject") or "").strip().lower()
+    return subject.startswith("quiet with work in flight")
+
+
+def _continuation_surface(lane: dict[str, Any]) -> bool:
+    return _consult_reply_lane(lane) or _quiet_work_lane(lane)
+
+
 def consult_reply_seat_empty(thread_id: str) -> bool:
     """True when the terminal conductor still owes a consult continuation.
 
@@ -164,6 +176,40 @@ def consult_reply_seat_empty(thread_id: str) -> bool:
     return True
 
 
+def hire_latch_released(digest: dict[str, Any], dispatch_id: str) -> bool:
+    """True when *dispatch_id* is a terminal conductor that still owes a continuation.
+
+    A quiet-alarm or consult-reply on the open bus thread is that surface.
+    The hire latch must not block the re-admit.
+    """
+    target = str(dispatch_id or "").strip()
+    if not target:
+        return False
+    from operator_hop_harvest.ledger import fetch_latest_terminal_conductor
+
+    lanes = digest.get("lanes")
+    if not isinstance(lanes, list):
+        return False
+    for lane in lanes:
+        if not isinstance(lane, dict) or not _continuation_surface(lane):
+            continue
+        thread_id = str(lane.get("id") or "")
+        if not thread_id:
+            continue
+        fetched = fetch_latest_terminal_conductor(thread_id)
+        if not isinstance(fetched, dict) or fetched.get("ledger_unreachable"):
+            continue
+        row = fetched.get("row")
+        if not isinstance(row, dict) or not row.get("consult_pending_continue_owed"):
+            continue
+        record = row.get("record_json")
+        if isinstance(record, dict) and record.get("hop_successor"):
+            continue
+        if str(row.get("dispatch_id") or "").strip() == target:
+            return True
+    return False
+
+
 def mark_consult_reply_seats_empty(digest: dict[str, Any]) -> None:
     """Stamp ``seat_empty`` on conductor lanes whose consult reply is in.
 
@@ -176,7 +222,7 @@ def mark_consult_reply_seats_empty(digest: dict[str, Any]) -> None:
     for lane in lanes:
         if not isinstance(lane, dict) or lane.get("seat_empty") is True:
             continue
-        if _conductor_signal(lane) is not True or not _consult_reply_lane(lane):
+        if _conductor_signal(lane) is not True or not _continuation_surface(lane):
             continue
         thread_id = str(lane.get("id") or "")
         if thread_id and consult_reply_seat_empty(thread_id):
@@ -275,8 +321,7 @@ def classify_leftover(
                 result["todo"] = extract_todo_slug(first_row.get("work_key"))
                 return result
             if any(
-                v.get("decision") == DECISION_HOLD
-                for v in classify_roster_rows(digest)
+                v.get("decision") == DECISION_HOLD for v in classify_roster_rows(digest)
             ):
                 result["leftover"] = LEFTOVER_HOLD
                 result["reason"] = PLAY_HOLD
@@ -356,6 +401,7 @@ __all__ = [
     "build_play_dispatch_body",
     "classify_leftover",
     "consult_reply_seat_empty",
+    "hire_latch_released",
     "mark_consult_reply_seats_empty",
     "extract_todo_slug",
     "leftover_mode",
