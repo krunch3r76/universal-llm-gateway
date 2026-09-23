@@ -106,6 +106,17 @@ def maybe_steer_friction_gate(
         return None
     raw_now, _source = resolve_now_row(digest)
     friction_id = friction_gate_id_from_now_row(raw_now)
+    roster = digest.get("roster") or []
+    if roster:
+        todo_slug = str(todo or "").lower()
+        gated = [
+            row
+            for row in roster
+            if str(row.get("gate") or "") == friction_id
+            and str(row.get("work_key") or "").lower() == f"todo:{todo_slug}"
+        ]
+        if friction_id and not gated:
+            return None
     if not friction_id:
         return None
     sent = state.get("gate_steers_sent")

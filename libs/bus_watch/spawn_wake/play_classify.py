@@ -50,7 +50,15 @@ def extract_todo_slug(text: object) -> str | None:
 
 
 def addressed_todo(digest: dict[str, Any]) -> str | None:
-    """Todo slug named by NOW / policy / tip NEXT. Thin scoreboard still counts."""
+    """Todo slug for ticker play — roster rows first, then legacy NOW stack."""
+    roster = digest.get("roster")
+    if isinstance(roster, list) and roster:
+        from bus_watch.roster import roster_play_todo
+
+        slug, _verdict = roster_play_todo(digest)
+        if slug:
+            return slug
+        return None
     raw, _source = resolve_now_row(digest)
     slug = extract_todo_slug(raw)
     if slug:
@@ -251,6 +259,26 @@ def classify_leftover(
         result["reason"] = "sit_forced"
         return result
     if not todo:
+        roster = digest.get("roster") or []
+        if roster:
+            from bus_watch.roster import classify_row, DECISION_HOLD, DECISION_PLAY
+
+            any_play = any(
+                classify_row(digest, row).get("decision") == DECISION_PLAY
+                for row in roster
+            )
+            if any_play:
+                result["leftover"] = LEFTOVER_PLAY
+                result["reason"] = "play_roster_row"
+                result["todo"] = todo
+                return result
+            if any(
+                classify_row(digest, row).get("decision") == DECISION_HOLD
+                for row in roster
+            ):
+                result["leftover"] = LEFTOVER_HOLD
+                result["reason"] = PLAY_HOLD
+            return result
         return result
     owner = live_conductor_owner(digest, todo)
     result["owner"] = owner

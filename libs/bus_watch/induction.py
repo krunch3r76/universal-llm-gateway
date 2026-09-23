@@ -35,6 +35,7 @@ from bus_watch.goal_escalation import (
     format_dispatch_instruction,
 )
 from bus_watch.now_row import format_now_line, resolve_now_row
+from bus_watch.roster import roster_classifications
 from bus_watch.spawn_wake.predicate import compute_spawn_signal_sources
 
 INDUCTION_CAP = 700
@@ -323,6 +324,13 @@ def build_wake_induction(
         else "NOW: (empty — pull the next objective per liaison skill § Objectives; "
         "empty NOW is not a stop)"
     )
+    roster_lines = roster_classifications(digest)
+    if roster_lines:
+        parts = [
+            f"{item['row_id']} hire={item['hire']} reason={item['reason']}"
+            for item in roster_lines
+        ]
+        lines.append("ROSTER: " + " · ".join(parts))
     nav_labels = [
         f"{slug} skill" for slug in navigator_doorbell_skills_from_policy(policy)
     ]

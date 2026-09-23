@@ -59,6 +59,8 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "ide_window_tokens": 256_000,
     # Tool results are not stored in the tab transcript; this stands in for them.
     "ide_tokens_per_tool_call": 1500,
+    # Cost knob: how many live conductors may run before extra roster rows hold.
+    "max_conductors": 2,
 }
 GEAR_PRESETS: dict[str, dict[str, Any]] = {
     "1-fable-mvp": {},
