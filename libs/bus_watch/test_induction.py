@@ -57,6 +57,38 @@ def test_induction_plants_addresses_not_a_skill_copy() -> None:
     assert len(text.encode("utf-8")) <= INDUCTION_CAP
 
 
+def test_induction_attended_context_budget_emits_hop_line() -> None:
+    text = build_wake_induction(
+        _digest(
+            register="attended",
+            budget={
+                "stop_class": "CONTEXT_BUDGET",
+                "used_tokens": 305_000,
+                "window_limit_tokens": 500_000,
+                "source": "ide.transcript",
+            },
+        )
+    )
+    assert "HOP liaison-ide-hop.py --root " in text
+    assert " · 61% · ide.transcript" in text
+
+
+def test_induction_attended_under_budget_harvest_not_hop() -> None:
+    text = build_wake_induction(
+        _digest(
+            register="attended",
+            budget={
+                "stop_class": None,
+                "used_tokens": 200_000,
+                "window_limit_tokens": 500_000,
+                "source": "ide.transcript",
+            },
+        )
+    )
+    assert "HARVEST" in text
+    assert "HOP " not in text
+
+
 def test_induction_names_context_budget_and_checkpoint() -> None:
     text = build_wake_induction(
         _digest(

@@ -103,27 +103,62 @@ def _tab_at_budget(digest: dict[str, Any]) -> bool:
     return bool(budget.get("stop_class")) and budget.get("source") == "ide.transcript"
 
 
+def _budget_pct(budget: dict[str, Any]) -> int:
+    used = int(budget.get("used_tokens") or 0)
+    limit = max(int(budget.get("window_limit_tokens") or 1), 1)
+    return round(100 * used / limit)
+
+
+def _attended_ide_budget(digest: dict[str, Any]) -> bool:
+    budget = digest.get("budget") or {}
+    return (
+        digest.get("register") == "attended"
+        and budget.get("source") == "ide.transcript"
+    )
+
+
+def _ide_hop_event_line(digest: dict[str, Any], now_row: str) -> str | None:
+    """Attended CONTEXT_BUDGET hop address — command, percent, source (P1b)."""
+    budget = digest.get("budget") or {}
+    if not budget.get("stop_class") or not _attended_ide_budget(digest):
+        return None
+    if not str(now_row or "").strip():
+        return None
+    root_id = (digest.get("root") or {}).get("id")
+    cmd = ide_hop_command(root_id, now_row)
+    return f"HOP {cmd} · {_budget_pct(budget)}% · ide.transcript"
+
+
 def _events(digest: dict[str, Any]) -> list[str]:
     """Designed stops first — they must survive the item cap; lanes after."""
     items: list[str] = []
     budget = digest.get("budget") or {}
+    now_row, _ = resolve_now_row(digest)
     if budget.get("stop_class"):
-        used = int(budget.get("used_tokens") or 0)
-        limit = max(int(budget.get("window_limit_tokens") or 1), 1)
+        pct = _budget_pct(budget)
         # The address is the command, not the verb's name: on 10534 the tab
         # wrote prose into its CP and parked; mid-arc attended budget ⇒ ide-hop.
-        step = (
-            "→ CHECKPOINT, then "
-            + ide_hop_command(
-                (digest.get("root") or {}).get("id"), resolve_now_row(digest)[0]
+        if _tab_at_budget(digest) and _attended_ide_budget(digest):
+            step = "→ CHECKPOINT"
+        elif _tab_at_budget(digest):
+            step = (
+                "→ CHECKPOINT, then "
+                + ide_hop_command((digest.get("root") or {}).get("id"), now_row)
             )
-            if _tab_at_budget(digest)
-            else "→ CHECKPOINT, release the seat; the ticker spawns the successor"
-        )
+        else:
+            step = "→ CHECKPOINT, release the seat; the ticker spawns the successor"
         items.append(
-            f"{budget['stop_class']} {round(100 * used / limit)}% "
-            f"({budget.get('source')}) {step}"
+            f"{budget['stop_class']} {pct}% ({budget.get('source')}) {step}"
         )
+        hop_line = _ide_hop_event_line(digest, now_row)
+        if hop_line:
+            items.append(hop_line)
+    elif (
+        _attended_ide_budget(digest)
+        and not digest.get("checkpoint_due")
+        and budget.get("used_tokens") is not None
+    ):
+        items.append("HARVEST")
     if digest.get("checkpoint_due"):
         items.append("CHECKPOINT due (segment CP, supersedes tip)")
     for watcher in digest.get("watchers_complete_unrelayed") or []:
