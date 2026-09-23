@@ -190,6 +190,10 @@ def test_materialize_lists_missing_witnesses(live_fixture: tuple[Path, Path], tm
     assert "G5 CLAIMED:" in mp.text
     assert "attach witnesses, do not re-derive" in mp.text
     assert "DONE is rendered from witnesses" in mp.text
+    assert (
+        "The continuity card ## Skills lists slugs. After resume, read that section "
+        "and Use each slug before the first move."
+    ) in mp.text
 
 
 def test_raw_done_renders_claimed_on_read_tip(live_fixture: tuple[Path, Path]) -> None:

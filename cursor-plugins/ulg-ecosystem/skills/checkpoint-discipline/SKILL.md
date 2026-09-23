@@ -94,6 +94,8 @@ Happy path is § Pipeline CHECKPOINT. Myelinate, card / sketchboard / continuity
 
 `resume_envelope` carries Highlight / summary_row / sealed pour — **not** a layer above tip CP. ¬ competing orderings.
 
+**Attended resume:** The continuity card ## Skills lists slugs. After resume, read that section and Use each slug before the first move.
+
 1. Detect root: `role:root` ∨ legacy CHECKPOINT read ∨ enrollment.
 2. Pour bundle via layer 0; tip body is inlined. **¬** `fetch_unread` / ambient widen before bundle. **¬** `last=1` as tip (latest turn may be closeout).
 3. Other unread: compact subjects only; ¬ auto-widen on `has_earlier_turns`.

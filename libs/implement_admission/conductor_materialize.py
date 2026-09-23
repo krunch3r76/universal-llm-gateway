@@ -286,6 +286,10 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
         _CONDUCTOR_USE_LINE,
         *list(_SCORE_PLAY_SEAT_LINES),
         "- DONE is rendered from witnesses; you hang witnesses, you do not write DONE.",
+        (
+            "- The continuity card ## Skills lists slugs. After resume, read that section "
+            "and Use each slug before the first move."
+        ),
         "- Run to completion: admit authorizes landing this mission Lane-B branch on green.",
         "- Nest Composer for mechanical G-rows (`nest_under` this conductor dispatch_id).",
         "- Forward-only score mutation; journal every tip write.",

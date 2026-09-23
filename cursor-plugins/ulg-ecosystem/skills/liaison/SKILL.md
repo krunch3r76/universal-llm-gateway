@@ -72,6 +72,10 @@ for the next wake with `liaison-tick.py --root R --set now_row="<row>"`; standin
 Keystroke paste of this block into the live tab (same uinput path as the hop, no Ctrl+n) is the planned IDE
 transport; `cse_session(op=followup)` is the planned claude.ai transport — both are **planned / not yet wired**.
 
+**After resume, before the first move:** The continuity card ## Skills lists slugs. After resume, read that
+section and Use each slug before the first move. Skip a slug named in the induction line `Loaded already
+(do not re-read)`.
+
 **Wakes (operator 2026-09-21):** Native `CreateGoal` is a Goals-panel label plus an unthrottled
 continuation injector (no interval field). It is **not** the house ticker. Skip `CreateGoal` on
 `/liaison`, resume, and hop pickup unless the operator asks for a panel pin. If a leftover goal is
