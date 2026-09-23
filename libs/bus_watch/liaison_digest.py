@@ -42,8 +42,8 @@ from bus_watch.liaison_watchers import collect_watchers
 from bus_watch.life_digest import build_life_block, project_life_block
 from bus_watch.loop_tape import loop_tape_thread
 from bus_watch.now_row import harvest_policy_entity_cache
-from bus_watch.roster import fold_roster
 from bus_watch.now_row_bind import ticker_owns_bind
+from bus_watch.roster import fold_roster
 from bus_watch.spawn_pending import (
     build_attention_lanes,
     digest_root_surface,

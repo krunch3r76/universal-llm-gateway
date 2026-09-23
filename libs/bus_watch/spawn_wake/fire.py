@@ -17,6 +17,7 @@ from bus_watch.fable_lock import (
     release_fable_lock,
 )
 from bus_watch.liaison_pager import maybe_forfeit_expired_lease, page_liaison
+from bus_watch.now_row import resolve_now_row
 from bus_watch.spawn_pending import (
     dead_sdk_holder,
     digest_pending_is_terminal,
@@ -28,7 +29,6 @@ from bus_watch.spawn_wake.packet import (
     build_dispatch_body,
     successor_context_from_digest,
 )
-from bus_watch.now_row import resolve_now_row
 from bus_watch.spawn_wake.play_classify import (
     LEFTOVER_HOLD,
     LEFTOVER_PLAY,

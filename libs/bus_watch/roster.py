@@ -12,12 +12,12 @@ from typing import Any
 import httpx
 
 from bus_watch.fable_lock import WATCH_DIR
+from bus_watch.now_row import resolve_now_row
 from bus_watch.spawn_wake.play_classify import (
     extract_todo_slug,
     live_conductor_owner,
     mark_consult_reply_seats_empty,
 )
-from bus_watch.now_row import resolve_now_row
 
 _GIW_ACTIVE_WORK = os.environ.get(
     "LIAISON_GIW_ACTIVE_WORK",
@@ -178,7 +178,11 @@ def _bus_live_work_keys(digest: dict[str, Any]) -> dict[str, bool | None]:
     for lane in lanes or []:
         if not isinstance(lane, dict):
             continue
-        from bus_watch.spawn_wake.play_classify import _lane_live, _lane_todos, _conductor_signal
+        from bus_watch.spawn_wake.play_classify import (
+            _conductor_signal,
+            _lane_live,
+            _lane_todos,
+        )
 
         live = _lane_live(lane)
         conductor = _conductor_signal(lane)
