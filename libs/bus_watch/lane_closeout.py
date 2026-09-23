@@ -39,10 +39,85 @@ _DISPOSITION_RE = re.compile(
     re.I | re.MULTILINE,
 )
 _LIVE_TRISTATE = frozenset({"unprobed", "live", "stale"})
+_ASSERTION_ID_IN_TEXT_RE = re.compile(r"\ba:\d+\b", re.I)
+_OWNER_LINE_RE = re.compile(r"^\s*owner\s*:\s*(\S+)", re.I | re.MULTILINE)
+_DEFECT_LINE_RE = re.compile(r"^\s*DEFECT:\s*(.+?)\s*$", re.I | re.MULTILINE)
 
 
 def _utcnow_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def closeout_text_has_assertion_id(text: str) -> bool:
+    """True when worker closeout prose already cites a friction assertion id."""
+    return bool(_ASSERTION_ID_IN_TEXT_RE.search(str(text or "")))
+
+
+def closeout_needs_friction_file(text: str) -> bool:
+    """True for CONSULT_PENDING or a ``DEFECT:`` line without an existing ``a:<id>``."""
+    body = str(text or "")
+    if closeout_text_has_assertion_id(body):
+        return False
+    if "CONSULT_PENDING" in body:
+        return True
+    return bool(_DEFECT_LINE_RE.search(body))
+
+
+def friction_owner_from_closeout(text: str) -> str:
+    """Resolve friction owner from ``owner:`` token or default ``service:bus_watch``."""
+    match = _OWNER_LINE_RE.search(str(text or ""))
+    if match:
+        token = match.group(1).strip()
+        if token.startswith("service:") or token.startswith("agent_skill:"):
+            return token
+    return "service:bus_watch"
+
+
+def friction_note_from_closeout(text: str) -> str:
+    """Build a filing note from DEFECT line or CONSULT_PENDING closeout residue."""
+    body = str(text or "").strip()
+    defect = _DEFECT_LINE_RE.search(body)
+    if defect:
+        return defect.group(1).strip()[:500]
+    if "CONSULT_PENDING" in body:
+        return "lane closeout CONSULT_PENDING without assertion id"
+    return body[:500] or "lane closeout defect"
+
+
+def file_closeout_friction(
+    *,
+    worker_text: str,
+    lane_id: str,
+    worker_turn: int,
+) -> tuple[str | None, str | None]:
+    """File friction for a terminal closeout; return ``(friction_id, friction_error)``."""
+    from bus_watch.friction_rows import row_id as friction_row_id
+    from substrate_friction_file import file_friction
+
+    owner = friction_owner_from_closeout(worker_text)
+    note = friction_note_from_closeout(worker_text)
+    evidence = f"agent-bus:{lane_id}#{worker_turn}" if worker_turn else f"agent-bus:{lane_id}"
+    try:
+        result = file_friction(
+            owner=owner,
+            note=note,
+            category="bug",
+            evidence_uris=[evidence],
+            agent="bus_watch",
+        )
+    except Exception as exc:  # noqa: BLE001 — connection errors must not abort harvest
+        return None, f"{type(exc).__name__}: {exc}"[:200]
+    if result.get("error"):
+        err = str(result.get("error") or "friction_error")[:200]
+        return None, err
+    item = result.get("item") if isinstance(result.get("item"), dict) else {}
+    raw_id = item.get("id") or result.get("assertion_id")
+    if raw_id is None:
+        return None, "friction_missing_assertion_id"
+    try:
+        return friction_row_id(raw_id), None
+    except ValueError:
+        return str(raw_id), None
 
 
 def closeout_idempotency_key(lane_id: str, terminal_status: str) -> str:
@@ -392,6 +467,16 @@ def observe_terminal_lane_closeouts(
             worker_closeout_text=worker_text,
             abandoned=abandoned,
         )
+        if worker_text and closeout_needs_friction_file(worker_text):
+            friction_id, friction_error = file_closeout_friction(
+                worker_text=worker_text,
+                lane_id=lane_id,
+                worker_turn=worker_turn,
+            )
+            if friction_id:
+                record["friction_id"] = friction_id
+            if friction_error:
+                record["friction_error"] = friction_error
         result = post_lane_closeout(
             client,
             parent_root=parent_root,

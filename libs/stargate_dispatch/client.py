@@ -36,6 +36,11 @@ _ALLOWED_FIELDS = frozenset(
         "parent_thread",
         "skills",
         "model_knobs",
+        "dispatch_id",
+        "steer",
+        "directive",
+        "reason",
+        "ttl_s",
     }
 )
 

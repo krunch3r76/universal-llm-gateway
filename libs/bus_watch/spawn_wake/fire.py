@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -27,12 +28,14 @@ from bus_watch.spawn_wake.packet import (
     build_dispatch_body,
     successor_context_from_digest,
 )
+from bus_watch.now_row import resolve_now_row
 from bus_watch.spawn_wake.play_classify import (
     LEFTOVER_HOLD,
     LEFTOVER_PLAY,
     PLAY_HOLD,
     build_play_dispatch_body,
     classify_leftover,
+    extract_todo_slug,
 )
 from bus_watch.spawn_wake.predicate import evaluate_spawn_predicate
 from bus_watch.spawn_wake.review_apply import (
@@ -49,6 +52,90 @@ from bus_watch.spawn_wake.row_class import (
 
 _WORK_KEY_IN_FLIGHT = "CURSOR_SOURCE_REF_IN_FLIGHT"
 _WORK_KEY_UNPARSEABLE = "work_key_unparseable"
+_FRICTION_NOW_RE = re.compile(r"Friction\s+a:(\d+)", re.I)
+
+
+def friction_gate_id_from_now_row(raw: str) -> str | None:
+    """Return ``a:<digits>`` when ``raw`` is a friction NOW gate line, else None."""
+    match = _FRICTION_NOW_RE.search(str(raw or ""))
+    if not match:
+        return None
+    return f"a:{match.group(1)}"
+
+
+def _lane_todo_slugs(lane: dict[str, Any]) -> set[str]:
+    found: set[str] = set()
+    for blob in (
+        lane.get("work_key"),
+        lane.get("source_ref"),
+        lane.get("last_subject"),
+        lane.get("slug"),
+    ):
+        slug = extract_todo_slug(blob)
+        if slug:
+            found.add(slug)
+        elif blob and str(blob).lower().startswith("todo:"):
+            found.add(str(blob).split(":", 1)[1].lower())
+    return found
+
+
+def maybe_steer_friction_gate(
+    digest: dict[str, Any],
+    state: dict[str, Any],
+    leftover: dict[str, Any],
+    *,
+    submit: Callable[..., tuple[dict[str, Any], int]] | None = None,
+) -> dict[str, Any] | None:
+    """Inject one CHECKPOINT steer when HOLD is gated by friction NOW on the same todo.
+
+    Latches ``state['gate_steers_sent'][a:<id>]`` so the next tick does not re-inject.
+    Returns steer metadata when a POST was attempted; None when not applicable.
+    """
+    if leftover.get("leftover") != LEFTOVER_HOLD:
+        return None
+    todo = leftover.get("todo")
+    if not todo:
+        return None
+    owner = leftover.get("owner")
+    if not isinstance(owner, dict):
+        return None
+    lane = owner.get("lane")
+    if not isinstance(lane, dict):
+        return None
+    if str(todo).lower() not in _lane_todo_slugs(lane):
+        return None
+    raw_now, _source = resolve_now_row(digest)
+    friction_id = friction_gate_id_from_now_row(raw_now)
+    if not friction_id:
+        return None
+    sent = state.get("gate_steers_sent")
+    if not isinstance(sent, dict):
+        sent = {}
+    if sent.get(friction_id):
+        return {"steered": False, "friction_id": friction_id, "reason": "latched"}
+    dispatch_id = str(lane.get("dispatch_id") or "").strip()
+    if not dispatch_id:
+        return {"steered": False, "friction_id": friction_id, "reason": "no_dispatch_id"}
+    body = {
+        "op": "steer",
+        "seat": "cursor-sdk",
+        "steer": "inject",
+        "dispatch_id": dispatch_id,
+        "reason": "friction-gate",
+        "directive": f"CHECKPOINT. Stop this row. Gate is {friction_id}.",
+        "caller_agent": "liaison-ticker",
+    }
+    poster = submit or submit_team_dispatch
+    _payload, status = poster(body)
+    sent = dict(sent)
+    sent[friction_id] = _utcnow()
+    state["gate_steers_sent"] = sent
+    return {
+        "steered": True,
+        "friction_id": friction_id,
+        "dispatch_id": dispatch_id,
+        "status_code": status,
+    }
 
 
 def _utcnow() -> str:
@@ -296,12 +383,18 @@ def tick_spawn_on_wake(
     if leftover.get("leftover") == LEFTOVER_HOLD and not (body or {}).get(
         "_review_apply"
     ):
-        return {
+        steer_meta = maybe_steer_friction_gate(
+            digest, state, leftover, submit=submit
+        )
+        out: dict[str, Any] = {
             "action": "hold",
             "evaluation": evaluation,
             "refused": PLAY_HOLD,
             "body": None,
         }
+        if steer_meta is not None:
+            out["friction_gate_steer"] = steer_meta
+        return out
     if body and body.get("_row_class_hold"):
         return {
             "action": "hold",

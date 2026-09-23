@@ -45,7 +45,7 @@ def test_classify_hold_when_live_conductor_owns_todo() -> None:
 
 
 def test_classify_hold_live_conductor_without_work_key() -> None:
-    """12032 class: tags/contract present, digest omitted work_key."""
+    """Live conductor on the root whose todo does not match addressed slug is not HOLD."""
     digest = _digest()
     digest["policy"]["now_row"] = "todo:liaison-loop-tape-birth G4"
     digest["lanes"] = [
@@ -59,8 +59,8 @@ def test_classify_hold_live_conductor_without_work_key() -> None:
         }
     ]
     verdict = classify_leftover(digest, {})
-    assert verdict["leftover"] == LEFTOVER_HOLD
-    assert verdict["owner"]["reason"] == "live_conductor_on_root"
+    assert verdict["leftover"] == LEFTOVER_PLAY
+    assert verdict["reason"] == "play_addressed_todo"
 
 
 def test_play_dispatch_body_uses_resume_root_not_tape() -> None:
@@ -179,8 +179,10 @@ def test_consult_reply_on_terminal_conductor_open_thread_admits(
     assert digest["lanes"][0]["seat_empty"] is True
 
 
-def test_consult_reply_without_owed_row_stays_hold(monkeypatch) -> None:
-    """Reply text alone is not an empty seat while the ledger still owes nothing."""
+def test_consult_reply_without_owed_row_does_not_hold_unmatched_conductor(
+    monkeypatch,
+) -> None:
+    """Consult reply lane without matching todo does not HOLD (no live_conductor_on_root)."""
     _free_lock(monkeypatch)
     monkeypatch.setattr(
         "bus_watch.spawn_wake.play_classify.consult_reply_seat_empty",
@@ -190,8 +192,8 @@ def test_consult_reply_without_owed_row_stays_hold(monkeypatch) -> None:
     digest["policy"]["now_row"] = "todo:cse-attachment-hop"
     digest["lanes"] = [_open_consult_reply_lane()]
     out = tick_spawn_on_wake(digest, {}, "12557", dry_run=True)
-    assert out["action"] == "hold"
-    assert out["refused"] == PLAY_HOLD
+    assert out["action"] == "would_spawn"
+    assert out["evaluation"]["leftover"]["leftover"] == LEFTOVER_PLAY
     assert "seat_empty" not in digest["lanes"][0]
 
 

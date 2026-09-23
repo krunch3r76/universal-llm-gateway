@@ -217,15 +217,7 @@ def live_conductor_owner(
         todos = _lane_todos(lane)
         live = _lane_live(lane)
         conductor = _conductor_signal(lane)
-        # Digest lanes often omit work_key (12032 on 12029). A live
-        # contract=conductor child of this root still owns NOW.
         if slug not in todos:
-            if live is True and conductor is True:
-                return {
-                    "lane": lane,
-                    "unsure": False,
-                    "reason": "live_conductor_on_root",
-                }
             continue
         if live is False:
             continue
