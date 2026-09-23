@@ -332,17 +332,20 @@ def append_attachment_journal(
     attach_proof: str,
     execution_id: str | None = None,
 ) -> None:
-    """Append one ungated ``attachment_observed`` line."""
-    append_log(
-        "attachment_observed",
-        {
-            "registration_id": registration_id,
-            "chat_url": chat_url,
-            "attach_proof": attach_proof,
-            "execution_id": execution_id,
-            "observed_at": time.time(),
-        },
-    )
+    """Append one ``attachment_observed`` line after U-scan on the live snapshot."""
+    with ports_lock():
+        active = load_active()
+        assert_attachment_unique(active, chat_url, registration_id=registration_id)
+        append_log(
+            "attachment_observed",
+            {
+                "registration_id": registration_id,
+                "chat_url": chat_url,
+                "attach_proof": attach_proof,
+                "execution_id": execution_id,
+                "observed_at": time.time(),
+            },
+        )
 
 
 def _apply_attachment_observed(

@@ -78,6 +78,33 @@ def test_ac1_attachment_conflict(isolated_registry: Path) -> None:
     assert second.registration_id in reg._load_active()
 
 
+def test_ac1_streaming_latch_conflict(isolated_registry: Path) -> None:
+    from cdp_ask.runner import _latch_streaming_attachment
+
+    a = _mint(holder="a")
+    b = _mint(holder="b")
+    a_id = a.registration_id
+    b_id = b.registration_id
+    assert reg.bind_session_address(a_id, chat_url=_CSE)
+    before_log = (
+        (isolated_registry / "registry.jsonl").read_text()
+        if (isolated_registry / "registry.jsonl").exists()
+        else ""
+    )
+    with pytest.raises(ProtocolError) as exc:
+        _latch_streaming_attachment(b_id, _CSE, execution_id="eb")
+    assert exc.value.code == "attachment.conflict"
+    b_row = reg._load_active()[b_id]
+    assert not b_row.get("chat_url")
+    assert not b_row.get("attached_at")
+    after_log = (
+        (isolated_registry / "registry.jsonl").read_text()
+        if (isolated_registry / "registry.jsonl").exists()
+        else ""
+    )
+    assert after_log == before_log
+
+
 def test_ac2_normalization_conflict(isolated_registry: Path) -> None:
     first = _mint()
     second = _mint(holder="b")
