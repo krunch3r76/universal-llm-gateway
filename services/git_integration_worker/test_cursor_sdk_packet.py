@@ -213,7 +213,7 @@ _CONDUCTOR_USE_LINE = (
 )
 
 
-def test_conductor_preamble_includes_consult_pending_wrapper() -> None:
+def test_conductor_preamble_orients_to_skill_and_waits_on_consult() -> None:
     text = resolve_prompt_preamble(
         handoff_contract="conductor",
         prompt_preamble=None,
@@ -223,9 +223,10 @@ def test_conductor_preamble_includes_consult_pending_wrapper() -> None:
         has_packet_path=True,
         existing_text=_CONDUCTOR_USE_LINE,
     )
-    assert "stop: CONSULT_PENDING" in text
-    assert "status: partial" in text
-    assert "NEXT_ADMIT:" in text
+    assert text.index("Use the conductor skill") < text.index("CONDUCTOR SEAT IDENTITY")
+    assert "An unanswered consult is an owed stop" in text
+    assert "copy literally" not in text
+    assert "does not end the dispatch" in text
 
 
 def test_conductor_seat_identity_fires_on_message_body_with_conductor_marker() -> None:
@@ -245,7 +246,9 @@ def test_conductor_seat_identity_fires_on_message_body_with_conductor_marker() -
     assert f"nest_under={dispatch_id}" in text
 
 
-def test_conductor_seat_identity_absent_on_message_body_without_conductor_marker() -> None:
+def test_conductor_seat_identity_absent_on_message_body_without_conductor_marker() -> (
+    None
+):
     dispatch_id = "auto-abc123def456"
     text = resolve_prompt_preamble(
         handoff_contract="none",
@@ -330,6 +333,8 @@ def test_conductor_hop_preamble_first_spawn() -> None:
         hop_seq=1,
     )
     assert "CONDUCTOR HOP (mandatory)" in text
+    assert text.index("Use the conductor skill") < text.index("CONDUCTOR HOP")
+    assert "An unanswered consult is an owed stop" in text
     assert f"You are hop 1 of this mission on worker thread {thread_id}" in text
     assert "first dispatch of this mission" in text
     assert f"reuse_thread={thread_id}" in text
@@ -392,9 +397,7 @@ def test_continuity_root_thread_id_absent_by_default() -> None:
     assert "CONTINUITY THREAD" not in text
 
 
-_LANE_B_WORKTREE_PATH = (
-    "/x/ulg-arc-worktrees/universal-llm-gateway/lane-12494"
-)
+_LANE_B_WORKTREE_PATH = "/x/ulg-arc-worktrees/universal-llm-gateway/lane-12494"
 
 
 def test_lane_b_worktree_preamble_present_when_path_set() -> None:
@@ -461,9 +464,7 @@ def test_lane_b_worktree_path_matches_lane_worktree_dir(tmp_path: Path) -> None:
     source_repo = tmp_path / "universal-llm-gateway"
     source_repo.mkdir(parents=True)
     thread_id = "12494"
-    expected = lane_worktree_dir(
-        worktree_root, thread_id, source_repo=source_repo
-    )
+    expected = lane_worktree_dir(worktree_root, thread_id, source_repo=source_repo)
     text = resolve_prompt_preamble(
         handoff_contract="implement",
         prompt_preamble=None,

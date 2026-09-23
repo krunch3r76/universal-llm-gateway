@@ -124,16 +124,21 @@ _CONDUCTOR_SEAT_IDENTITY_TEMPLATE = (
     "that work-identity — repeating it 409s `CURSOR_SOURCE_REF_IN_FLIGHT`."
 )
 
+_CONDUCTOR_SKILL_ORIENT = (
+    "Use the conductor skill. It is the procedure for this hop. "
+    "An unanswered consult is an owed stop: wait in this dispatch for the "
+    "harvest (archive_uri or from=web-anthropic), then keep driving. "
+    "The skill's CONSULT_PENDING block records that wait; it does not end "
+    "the dispatch."
+)
+
 _CONDUCTOR_CONSULT_PENDING_TEMPLATE = (
-    "CONDUCTOR CONSULT_PENDING WRAPPER (mandatory on consult waits): "
-    "Honest closeout shape — copy literally:\n"
-    "status: partial\n"
-    "consult: <what you waited for>\n"
-    "execution_id: <this dispatch_id>\n"
-    "NEXT_ADMIT: <web-anthropic|none>\n"
-    "stop: CONSULT_PENDING\n"
-    "Journal append before closeout; ``written_at`` must be real UTC "
-    "(``datetime.now(UTC)`` — see ``implement_admission.conductor_score_io``)."
+    "CONDUCTOR CONSULT_PENDING (mandatory): An unanswered consult is an owed "
+    "stop. Wait in this dispatch until the harvest arrives, then keep driving. "
+    "Do not end the dispatch on that wait, and do not make stop: CONSULT_PENDING "
+    "the last line while the reply is outstanding. Journal the wait with a real "
+    "UTC written_at (datetime.now(UTC) — implement_admission.conductor_score_io) "
+    "and stay up."
 )
 
 _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE = (
@@ -142,7 +147,9 @@ _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE = (
     "verified Lane-B branch. Do NOT stop to lay out a plan, flag a merge step, or "
     "wait for a continue/merge ack before executing -- judging the mission large, "
     "doctrine-touching, or risky does not create an exception (agent_skill:conductor "
-    "Run to completion section). Nest Composer (`nest_under={dispatch_id}`) for every "
+    "Run to completion section). An unanswered consult is an owed stop, not that "
+    "ack: wait in this dispatch for its harvest. Nest Composer "
+    "(`nest_under={dispatch_id}`) for every "
     "mechanical G-row and drive to green now; only withhold the merge when this "
     "packet's own <invariants> name a specific hold-merge exception -- silence means "
     "land on green."
@@ -150,10 +157,13 @@ _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE = (
 
 _CONDUCTOR_HOP_TEMPLATE = (
     "CONDUCTOR HOP (mandatory): You are hop {hop_seq} of this mission on worker thread "
-    "{thread_id}{lineage}. You have NO memory of earlier hops: before acting, read the "
-    "scoreboard tip, its journal, and the latest CHECKPOINT on thread {thread_id}; rows "
-    "the fold shows DONE are done -- attach missing witnesses, never re-derive. Drive from "
-    "the entry gate. When the current gated G-row closes (its witness hangs) and no designed "
+    "{thread_id}{lineage}. You have NO memory of earlier hops: before acting, Use the "
+    "conductor skill, then read the scoreboard tip, its journal, and the latest "
+    "CHECKPOINT on thread {thread_id}; rows the fold shows DONE are done -- attach "
+    "missing witnesses, never re-derive. Drive from the entry gate. An unanswered "
+    "consult is an owed stop: wait in this dispatch for the harvest and do not take "
+    "the ROW_HOP ending while that reply is outstanding. When the current gated "
+    "G-row closes (its witness hangs) and no designed "
     "stop is owed, do exactly this, in order: (1) append the score journal; (2) write the "
     "hop CHECKPOINT as a tip supersede on thread {thread_id} (Anchor, Hop, Mission, Rows, "
     "In-flight, Judgment, Next-pickup, NEXT_ADMIT, RESUME footer); (3) end this dispatch "
@@ -282,9 +292,7 @@ _CONDUCTOR_PACKET_MARKER_RE = re.compile(
     r"Use the `?conductor`? skill",
     re.IGNORECASE,
 )
-_SUMMON_MODE_RE = re.compile(
-    r"(?i)summon_mode:\s*(attended|confer[_-]and[_-]finish)\b"
-)
+_SUMMON_MODE_RE = re.compile(r"(?i)summon_mode:\s*(attended|confer[_-]and[_-]finish)\b")
 _SUMMONING_THREAD_RE = re.compile(r"(?i)summoning_thread_id:\s*(\d+)\b")
 
 _CONTRACT_FRONTMATTER_RE = re.compile(
@@ -545,7 +553,9 @@ def resolve_prompt_preamble(
     (message-body ``COMMISSION_CONDUCTOR`` dispatches from cursor-auto). The same
     gate also restates run-to-completion: the admit already authorizes driving
     every G-row and landing on green without an interim plan/merge pause
-    (friction 29694/29693).
+    (friction 29694/29693). The first conductor line names the conductor skill.
+    An unanswered consult is an owed stop inside that procedure, not a dispatch
+    ending.
 
     ``thread_id`` / ``hop_seq`` / ``hop_from`` / ``hop_reason`` stamp the conductor hop
     preamble when the admit is a Lane-B conductor packet (bind ``a:31807`` §2.4).
@@ -612,23 +622,15 @@ def resolve_prompt_preamble(
             )
         )
         if lane_worktree and "LANE-B WORKTREE" not in (existing_text or ""):
-            parts.append(
-                _LANE_B_WORKTREE_TEMPLATE.format(lane_worktree=lane_worktree)
-            )
+            parts.append(_LANE_B_WORKTREE_TEMPLATE.format(lane_worktree=lane_worktree))
     is_conductor_packet = contract == "conductor" or (
         has_packet_path
         and bool(existing_text)
         and _CONDUCTOR_PACKET_MARKER_RE.search(existing_text) is not None
     )
-    if (
-        lane == "B"
-        and contract == "conductor"
-        and is_conductor_packet
-        and dispatch_id
-    ):
-        parts.append(
-            _CONDUCTOR_SEAT_IDENTITY_TEMPLATE.format(dispatch_id=dispatch_id)
-        )
+    if lane == "B" and contract == "conductor" and is_conductor_packet and dispatch_id:
+        parts.append(_CONDUCTOR_SKILL_ORIENT)
+        parts.append(_CONDUCTOR_SEAT_IDENTITY_TEMPLATE.format(dispatch_id=dispatch_id))
         parts.append(
             _CONDUCTOR_RUN_TO_COMPLETION_TEMPLATE.format(dispatch_id=dispatch_id)
         )
@@ -706,7 +708,5 @@ def resolve_prompt_preamble(
         parts.append(skill_block)
     if preamble:
         parts.append(preamble.strip())
-    parts = _prefix_reasoning_posture(
-        contract, parts, prompt_preamble, existing_text
-    )
+    parts = _prefix_reasoning_posture(contract, parts, prompt_preamble, existing_text)
     return "\n\n".join(parts) + "\n\n"
