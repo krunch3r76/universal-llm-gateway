@@ -252,6 +252,11 @@ def main() -> int:
         help="query OLN lane closeout journal on the parent root (bus turns only)",
     )
     p.add_argument(
+        "--hire-view",
+        action="store_true",
+        help="print roster row_id, hire decision, and reason without dispatching",
+    )
+    p.add_argument(
         "--go-under",
         action="store_true",
         help="hand this house to the gear-3 ticker: register autonomous, drop a stale "
@@ -379,6 +384,25 @@ def main() -> int:
         with _bus() as client:
             rows = query_lane_closeouts(client, root, last=200)
         print(json.dumps({"root": root, "lanes": rows}, default=str))
+        return 0
+
+    if args.hire_view:
+        from bus_watch.roster import roster_classifications
+
+        digest = build_digest(
+            root, state, register=register, budget_tokens=args.budget_tokens
+        )
+        for row in roster_classifications(digest):
+            print(
+                json.dumps(
+                    {
+                        "row_id": row.get("row_id"),
+                        "hire": row.get("hire"),
+                        "reason": row.get("reason"),
+                    },
+                    sort_keys=True,
+                )
+            )
         return 0
 
     if not args.loop:

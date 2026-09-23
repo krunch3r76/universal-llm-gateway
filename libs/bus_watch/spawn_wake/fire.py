@@ -170,7 +170,22 @@ def body_for_leftover(
         return review_body
     todo = leftover.get("todo")
     if leftover.get("leftover") == LEFTOVER_PLAY and todo:
-        return build_play_dispatch_body(root_id, policy, todo_slug=str(todo))
+        roster_row_id = leftover.get("roster_row_id")
+        if digest is not None and not roster_row_id:
+            from bus_watch.roster import roster_play_rows
+            from bus_watch.spawn_wake.play_classify import extract_todo_slug
+
+            slug = str(todo).lower()
+            for row, _verdict in roster_play_rows(digest):
+                if extract_todo_slug(row.get("work_key")) == slug:
+                    roster_row_id = str(row.get("row_id") or "")
+                    break
+        return build_play_dispatch_body(
+            root_id,
+            policy,
+            todo_slug=str(todo),
+            roster_row_id=roster_row_id or None,
+        )
     if review_body:
         return review_body
     if digest is not None and state is not None:
@@ -306,6 +321,14 @@ def fire_spawn(
         return result
     execution_id = str(payload.get("execution_id") or "").strip()
     thread_id = str(payload.get("thread_id") or payload.get("thread") or "").strip()
+    roster_row_id = str((body or {}).get("_roster_row_id") or "").strip()
+    dispatch_id = str(
+        payload.get("dispatch_id") or execution_id or thread_id or ""
+    ).strip()
+    if roster_row_id and dispatch_id:
+        from bus_watch.roster import record_row_hire
+
+        record_row_hire(root_id, roster_row_id, dispatch_id)
     state["pending_spawn"] = {
         "execution_id": execution_id,
         "thread_id": thread_id,

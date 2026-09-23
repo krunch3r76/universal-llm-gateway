@@ -65,13 +65,25 @@ def _parse_line(raw: str) -> dict[str, Any] | None:
         hire = HIRE_AUTO
     gate = str(row.get("gate") or "").strip()
     text = str(row.get("text") or "").strip()
-    return {
+    paths_raw = row.get("paths")
+    paths: list[str] = []
+    if isinstance(paths_raw, str) and paths_raw.strip():
+        paths = [paths_raw.strip()]
+    elif isinstance(paths_raw, list):
+        paths = [str(p).strip() for p in paths_raw if str(p).strip()]
+    last_hire = str(row.get("last_hire_dispatch_id") or "").strip()
+    parsed: dict[str, Any] = {
         "row_id": row_id,
         "work_key": work_key,
         "hire": hire,
         "gate": gate,
         "text": text,
     }
+    if paths:
+        parsed["paths"] = paths
+    if last_hire:
+        parsed["last_hire_dispatch_id"] = last_hire
+    return parsed
 
 
 def read_journal(path: Path) -> list[dict[str, Any]]:
@@ -258,12 +270,90 @@ def fold_roster(
     return [enrich_row_liveness(row, digest, giw_map) for row in merged]
 
 
+def _normalize_repo_path(raw: str) -> str:
+    text = str(raw or "").strip().replace("\\", "/").lstrip("./")
+    return text.rstrip("/")
+
+
+def row_paths(row: dict[str, Any]) -> list[str]:
+    raw = row.get("paths")
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        norm = _normalize_repo_path(raw)
+        return [norm] if norm else []
+    if isinstance(raw, list):
+        out: list[str] = []
+        for item in raw:
+            norm = _normalize_repo_path(str(item))
+            if norm:
+                out.append(norm)
+        return out
+    return []
+
+
+def paths_share_prefix(left: str, right: str) -> bool:
+    a = _normalize_repo_path(left)
+    b = _normalize_repo_path(right)
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return a.startswith(f"{b}/") or b.startswith(f"{a}/")
+
+
+def paths_overlap_between(row_a: dict[str, Any], row_b: dict[str, Any]) -> bool:
+    pa = row_paths(row_a)
+    pb = row_paths(row_b)
+    if not pa or not pb:
+        return False
+    return any(paths_share_prefix(x, y) for x in pa for y in pb)
+
+
 def _live_conductor_keys(roster: list[dict[str, Any]]) -> set[str]:
     keys: set[str] = set()
     for row in roster:
         if row.get("live") is True:
             keys.add(str(row.get("work_key") or "").lower())
     return keys
+
+
+def _scheduled_conductor_count(
+    roster: list[dict[str, Any]], scheduled_plays: list[dict[str, Any]]
+) -> int:
+    live_keys = _live_conductor_keys(roster)
+    scheduled_keys = {
+        str(row.get("work_key") or "").lower()
+        for row in scheduled_plays
+        if str(row.get("work_key") or "")
+    }
+    return len(live_keys | scheduled_keys)
+
+
+def _path_overlap_blocker(
+    row: dict[str, Any],
+    roster: list[dict[str, Any]],
+    scheduled_plays: list[dict[str, Any]],
+) -> str | None:
+    for other in roster:
+        if other.get("row_id") == row.get("row_id"):
+            continue
+        if other.get("live") is not True and other not in scheduled_plays:
+            continue
+        if paths_overlap_between(row, other):
+            return str(other.get("row_id") or "")
+    return None
+
+
+def record_row_hire(root_id: str, row_id: str, dispatch_id: str) -> None:
+    """Append a journal line latching ``last_hire_dispatch_id`` for crash re-admit."""
+    path = roster_path(root_id)
+    journal = merge_by_row_id(read_journal(path))
+    base = next((r for r in journal if r.get("row_id") == row_id), None)
+    if not base:
+        return
+    updated = {**base, "last_hire_dispatch_id": str(dispatch_id).strip()}
+    append_row(path, updated)
 
 
 def _friction_gate_active_for_row(digest: dict[str, Any], row: dict[str, Any]) -> bool:
@@ -274,12 +364,19 @@ def _friction_gate_active_for_row(digest: dict[str, Any], row: dict[str, Any]) -
     return _friction_gate_id(raw_now) == gate
 
 
-def classify_row(digest: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+def classify_row(
+    digest: dict[str, Any],
+    row: dict[str, Any],
+    *,
+    scheduled_plays: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Per-row play / hold / unsure — holds only this row, not siblings."""
     hire = str(row.get("hire") or HIRE_AUTO).strip().lower()
     work_key = str(row.get("work_key") or "").lower()
     policy = digest.get("policy") or {}
     max_conductors = int(policy.get("max_conductors") or 2)
+    scheduled = list(scheduled_plays or [])
+    roster = digest.get("roster") or []
 
     if hire == HIRE_HOLD:
         return {"decision": DECISION_HOLD, "reason": "hire_hold", "row_id": row.get("row_id")}
@@ -287,9 +384,6 @@ def classify_row(digest: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
     slug = _todo_slug_from_row(row)
     if not slug:
         return {"decision": DECISION_UNSURE, "reason": "no_todo", "row_id": row.get("row_id")}
-
-    roster = digest.get("roster") or []
-    live_keys = _live_conductor_keys(roster if roster else [row])
 
     owner = live_conductor_owner(digest, slug)
     if isinstance(owner, dict) and owner.get("unsure"):
@@ -321,7 +415,27 @@ def classify_row(digest: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
             "row_id": row.get("row_id"),
         }
 
-    if len(live_keys) >= max_conductors and work_key not in live_keys:
+    latched = str(row.get("last_hire_dispatch_id") or "").strip()
+    if latched and row.get("live") is not True and owner is None:
+        return {
+            "decision": DECISION_HOLD,
+            "reason": "hire_latched",
+            "row_id": row.get("row_id"),
+        }
+
+    overlap_id = _path_overlap_blocker(row, roster if roster else [row], scheduled)
+    if overlap_id:
+        return {
+            "decision": DECISION_HOLD,
+            "reason": f"path_overlap:{overlap_id}",
+            "row_id": row.get("row_id"),
+        }
+
+    conductor_count = _scheduled_conductor_count(
+        roster if roster else [row], scheduled
+    )
+    live_keys = _live_conductor_keys(roster if roster else [row])
+    if conductor_count >= max_conductors and work_key not in live_keys:
         return {
             "decision": DECISION_HOLD,
             "reason": "max_conductors",
@@ -331,28 +445,53 @@ def classify_row(digest: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
     return {"decision": DECISION_PLAY, "reason": "play_row", "row_id": row.get("row_id")}
 
 
+def classify_roster_rows(digest: dict[str, Any]) -> list[dict[str, Any]]:
+    """Classify every roster row; earlier ``play`` rows count toward sibling caps."""
+    roster = digest.get("roster") or []
+    scheduled: list[dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
+    for row in roster:
+        verdict = classify_row(digest, row, scheduled_plays=scheduled)
+        if verdict.get("decision") == DECISION_PLAY:
+            scheduled.append(row)
+        out.append(verdict)
+    return out
+
+
+def roster_play_rows(
+    digest: dict[str, Any],
+) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """All roster rows that classify ``play``, in journal order."""
+    roster = digest.get("roster") or []
+    scheduled: list[dict[str, Any]] = []
+    found: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for row in roster:
+        verdict = classify_row(digest, row, scheduled_plays=scheduled)
+        if verdict.get("decision") == DECISION_PLAY:
+            scheduled.append(row)
+            found.append((row, verdict))
+    return found
+
+
 def roster_play_todo(digest: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
     """First roster row that classifies ``play``; None when none."""
-    roster = digest.get("roster") or []
-    for row in roster:
-        verdict = classify_row(digest, row)
-        if verdict.get("decision") == DECISION_PLAY:
-            slug = _todo_slug_from_row(row)
-            return slug, verdict
+    for row, verdict in roster_play_rows(digest):
+        slug = _todo_slug_from_row(row)
+        return slug, verdict
     return None, None
 
 
 def roster_classifications(digest: dict[str, Any]) -> list[dict[str, Any]]:
+    verdicts = classify_roster_rows(digest)
     roster = digest.get("roster") or []
     out: list[dict[str, Any]] = []
-    for row in roster:
-        v = classify_row(digest, row)
+    for row, verdict in zip(roster, verdicts, strict=False):
         out.append(
             {
                 "row_id": row.get("row_id"),
-                "hire": row.get("hire"),
-                "reason": v.get("reason"),
-                "decision": v.get("decision"),
+                "hire": verdict.get("decision"),
+                "reason": verdict.get("reason"),
+                "decision": verdict.get("decision"),
             }
         )
     return out
@@ -361,12 +500,17 @@ def roster_classifications(digest: dict[str, Any]) -> list[dict[str, Any]]:
 __all__ = [
     "append_row",
     "classify_row",
+    "classify_roster_rows",
     "fold_roster",
     "merge_by_row_id",
+    "paths_overlap_between",
     "read_journal",
+    "record_row_hire",
     "roster_classifications",
     "roster_path",
+    "roster_play_rows",
     "roster_play_todo",
+    "row_paths",
     "seed_row_from_now_row",
     "fetch_giw_live_work_keys",
 ]

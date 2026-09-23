@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from bus_watch.roster import (
-    append_row,
+    classify_roster_rows,
     classify_row,
     fold_roster,
     merge_by_row_id,
     read_journal,
     roster_path,
+    roster_play_rows,
     roster_play_todo,
     seed_row_from_now_row,
 )
@@ -45,14 +44,27 @@ def _unsure_lane(todo: str) -> dict:
     }
 
 
-def _row(row_id: str, todo: str, *, hire: str = "auto", gate: str = "") -> dict:
-    return {
+def _row(
+    row_id: str,
+    todo: str,
+    *,
+    hire: str = "auto",
+    gate: str = "",
+    paths: list[str] | None = None,
+    last_hire_dispatch_id: str = "",
+) -> dict:
+    out = {
         "row_id": row_id,
         "work_key": f"todo:{todo}",
         "hire": hire,
         "gate": gate,
         "text": f"todo:{todo} row",
     }
+    if paths:
+        out["paths"] = paths
+    if last_hire_dispatch_id:
+        out["last_hire_dispatch_id"] = last_hire_dispatch_id
+    return out
 
 
 def _digest_with_roster(
@@ -161,3 +173,41 @@ def test_all_roster_rows_hold_yields_play_hold_leftover() -> None:
     verdict = classify_leftover(digest, {})
     assert verdict["leftover"] == LEFTOVER_HOLD
     assert verdict["reason"] == PLAY_HOLD
+
+
+def test_disjoint_path_siblings_both_play() -> None:
+    rows = [
+        _row("row-a", "a", paths=["libs/bus_watch/roster.py"]),
+        _row("row-b", "b", paths=["libs/bus_watch/induction.py"]),
+    ]
+    digest = _digest_with_roster(rows, lanes=[])
+    verdicts = classify_roster_rows(digest)
+    assert verdicts[0]["decision"] == "play"
+    assert verdicts[1]["decision"] == "play"
+    assert len(roster_play_rows(digest)) == 2
+
+
+def test_path_overlap_holds_with_other_row_id() -> None:
+    rows = [
+        _row("row-a", "a", paths=["libs/bus_watch/roster.py"]),
+        _row("row-b", "b", paths=["libs/bus_watch/roster.py"]),
+    ]
+    digest = _digest_with_roster(rows, lanes=[_live_lane("a", lane_id="live-a")])
+    verdict_b = classify_row(digest, digest["roster"][1])
+    assert verdict_b["decision"] == "hold"
+    assert verdict_b["reason"] == "path_overlap:row-a"
+
+
+def test_hire_latch_holds_after_dispatch_recorded() -> None:
+    rows = [
+        _row(
+            "row-a",
+            "a",
+            paths=["libs/bus_watch/roster.py"],
+            last_hire_dispatch_id="disp-once",
+        ),
+    ]
+    digest = _digest_with_roster(rows, lanes=[])
+    verdict = classify_row(digest, digest["roster"][0])
+    assert verdict["decision"] == "hold"
+    assert verdict["reason"] == "hire_latched"

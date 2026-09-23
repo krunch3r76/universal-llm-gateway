@@ -261,20 +261,22 @@ def classify_leftover(
     if not todo:
         roster = digest.get("roster") or []
         if roster:
-            from bus_watch.roster import classify_row, DECISION_HOLD, DECISION_PLAY
-
-            any_play = any(
-                classify_row(digest, row).get("decision") == DECISION_PLAY
-                for row in roster
+            from bus_watch.roster import (
+                DECISION_HOLD,
+                classify_roster_rows,
+                roster_play_rows,
             )
-            if any_play:
+
+            play_rows = roster_play_rows(digest)
+            if play_rows:
+                first_row, _verdict = play_rows[0]
                 result["leftover"] = LEFTOVER_PLAY
                 result["reason"] = "play_roster_row"
-                result["todo"] = todo
+                result["todo"] = extract_todo_slug(first_row.get("work_key"))
                 return result
             if any(
-                classify_row(digest, row).get("decision") == DECISION_HOLD
-                for row in roster
+                v.get("decision") == DECISION_HOLD
+                for v in classify_roster_rows(digest)
             ):
                 result["leftover"] = LEFTOVER_HOLD
                 result["reason"] = PLAY_HOLD
@@ -313,6 +315,7 @@ def build_play_dispatch_body(
     policy: dict[str, Any],
     *,
     todo_slug: str,
+    roster_row_id: str | None = None,
 ) -> dict[str, Any]:
     """Admit one conductor on the addressed todo. Lane B; no house-generate paste.
 
@@ -337,6 +340,8 @@ def build_play_dispatch_body(
         "caller_agent": "liaison-ticker",
         **successor_model_fields(policy),
     }
+    if roster_row_id:
+        body["_roster_row_id"] = str(roster_row_id)
     return body
 
 
