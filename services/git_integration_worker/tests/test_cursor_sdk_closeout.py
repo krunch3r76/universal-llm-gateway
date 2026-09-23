@@ -3722,6 +3722,40 @@ def test_closeout_seal_refuses_undeclared_bare_scalar() -> None:
         seal_closeout_payload(payload)
 
 
+def test_closeout_seal_qualifies_dense_spec_valid() -> None:
+    """Plan closeouts publish dense_spec_valid without a 15th plain slot."""
+    from services.git_integration_worker.cursor_sdk_closeout_seal import (
+        seal_closeout_payload,
+    )
+
+    payload = {
+        "schema_version": 1,
+        "public_api_changed": False,
+        "dense_spec_valid": False,
+    }
+    sealed = seal_closeout_payload(payload)
+    assert sealed["dense_spec_valid"] is False
+    assert sealed["dense_spec_valid_authority"] == "derived"
+    assert "plan closeout" in sealed["dense_spec_valid_scope"]
+
+
+def test_closeout_seal_qualifies_authority_fork_bool() -> None:
+    """authority_fork is derived, not a 15th plain slot, and must still publish."""
+    from services.git_integration_worker.cursor_sdk_closeout_seal import (
+        seal_closeout_payload,
+    )
+
+    payload = {
+        "schema_version": 1,
+        "public_api_changed": False,
+        "authority_fork": False,
+    }
+    sealed = seal_closeout_payload(payload)
+    assert sealed["authority_fork"] is False
+    assert sealed["authority_fork_authority"] == "derived"
+    assert "open_forks" in sealed["authority_fork_scope"]
+
+
 def test_closeout_seal_allows_unobserved_exit_row() -> None:
     """exit_code null is not a bare scalar — unobserved rows publish."""
     from services.git_integration_worker.cursor_sdk_closeout_seal import (

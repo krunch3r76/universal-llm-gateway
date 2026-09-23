@@ -100,6 +100,39 @@ def _qualify_usage_tokens(payload: dict[str, Any]) -> None:
         _qualify_bare_ints(usage, scope=_USAGE_SCOPE, authority=_USAGE_AUTHORITY)
 
 
+def _qualify_dense_spec_valid(payload: dict[str, Any]) -> None:
+    """Qualify the plan-mode density bit. A bare bool is not a plain-census slot.
+
+    Plan closeouts attach ``dense_spec_valid`` after model_dump. The plain list
+    stays at 14, so the bit carries scope and authority siblings, same as
+    ``authority_fork``.
+    """
+    value = payload.get("dense_spec_valid")
+    if not isinstance(value, bool):
+        return
+    payload.setdefault(
+        "dense_spec_valid_scope",
+        "plan closeout spec density bit",
+    )
+    payload.setdefault("dense_spec_valid_authority", "derived")
+
+
+def _qualify_authority_fork(payload: dict[str, Any]) -> None:
+    """Qualify the authority-fork bit. A bare bool is not a plain-census slot.
+
+    The plain list is held at 14 (slice-2 halt ~15). This flag is derived from
+    open_forks, so it carries scope and authority siblings instead of a census row.
+    """
+    value = payload.get("authority_fork")
+    if not isinstance(value, bool):
+        return
+    payload.setdefault(
+        "authority_fork_scope",
+        "open_forks kind=authority on this closeout",
+    )
+    payload.setdefault("authority_fork_authority", "derived")
+
+
 def _qualify_surface_counts(payload: dict[str, Any]) -> None:
     """Qualify dynamic surface_counts keys — the map is unbounded, so not plain."""
     manifest = payload.get("effects_manifest")
@@ -135,6 +168,8 @@ def seal_closeout_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
     _qualify_usage_tokens(payload)
     _qualify_surface_counts(payload)
+    _qualify_authority_fork(payload)
+    _qualify_dense_spec_valid(payload)
     try:
         return seal(payload, closeout_surface_decl())
     except UnqualifiedScalarError as exc:
