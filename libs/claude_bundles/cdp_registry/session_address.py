@@ -7,8 +7,11 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from universal_protocol.errors import ProtocolError
+
 from claude_bundles import cdp_registry_events as _events
 from claude_bundles import cdp_registry_store as _store
+from claude_bundles.cse_url import normalize_cse_url
 
 from .models import (
     _CAPACITY_STATUSES,
@@ -19,6 +22,53 @@ from .models import (
 )
 
 _CSE_URL_MARKER = "claude.ai/cowork/cse_"
+
+
+def attachment_for_chat_url(chat_url: str) -> Registration | None:
+    """Return the sole host-listable row for *chat_url*, or None."""
+    norm = normalize_cse_url(chat_url or "")
+    if not norm:
+        return None
+    active = _store.load_active()
+    matches = _store._host_listable_ids_for_norm_url(active, norm)
+    if len(matches) > 1:
+        raise ProtocolError(
+            code="attachment.conflict",
+            message=f"multiple host-listable rows for chat_url: {matches!r}",
+            source="rpc",
+            retryable=False,
+            data={"chat_url": chat_url, "registration_ids": matches},
+        )
+    if not matches:
+        return None
+    row = active.get(matches[0])
+    if not isinstance(row, dict):
+        return None
+    return _row_to_registration(row)
+
+
+def backfill_attachment_from_chat_url(
+    registration_id: str,
+    *,
+    chat_url: str,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Migration helper: journal ``backfill_url_bound`` without seat changes."""
+    url = (chat_url or "").strip()
+    if not url or _CSE_URL_MARKER not in url:
+        return {"dry_run": dry_run, "skipped": "not_cse_url"}
+    if dry_run:
+        return {"dry_run": True, "would_bind": registration_id, "chat_url": url}
+    if _store._has_attachment_observed(registration_id, url):
+        _store.fold_attachment_journal()
+        return {"dry_run": False, "registration_id": registration_id, "idempotent": True}
+    _store.append_attachment_journal(
+        registration_id=registration_id,
+        chat_url=url,
+        attach_proof="backfill_url_bound",
+    )
+    _store.fold_attachment_journal()
+    return {"dry_run": False, "registration_id": registration_id, "bound": True}
 
 
 def _append_lane_less_episode(
@@ -85,6 +135,7 @@ def bind_session_address(
                 execution_id=execution_id,
             )
             return True
+        _store.assert_attachment_unique(active, url, registration_id=registration_id)
         updated["chat_url"] = url
         if execution_id:
             updated["execution_id"] = execution_id
@@ -92,20 +143,11 @@ def bind_session_address(
             updated["target_id"] = target_id
         updated["chat_url_bound_at"] = time.time()
         active[registration_id] = updated
+        _store.write_active(active)
         bound_row, released_rows = apply_driving_seat_bind(active, registration_id)
         if bound_row is not None or released_rows:
             _store.require_seat_authority(operation="bind_session_address")
-        _store.write_active(active)
-        _store.append_log(
-            "session_address_bound",
-            {
-                "registration_id": registration_id,
-                "chat_url": url,
-                "execution_id": execution_id,
-                "target_id": target_id,
-            },
-        )
-        if bound_row is not None or released_rows:
+            _store.write_active(active)
             _store.append_seat_transition_journal(
                 registration_id=registration_id,
                 seat_lane=str((bound_row or {}).get("seat_lane") or ""),
@@ -116,6 +158,15 @@ def bind_session_address(
                     if r.get("registration_id")
                 ],
             )
+        _store.append_log(
+            "session_address_bound",
+            {
+                "registration_id": registration_id,
+                "chat_url": url,
+                "execution_id": execution_id,
+                "target_id": target_id,
+            },
+        )
         _append_lane_less_episode(
             url=url,
             registration_id=registration_id,
@@ -167,9 +218,8 @@ def apply_driving_seat_bind(
     if not isinstance(row, dict):
         return None, []
     purpose = str(row.get("purpose") or "").strip()
-    kind = str(row.get("mission_kind") or "root").strip().lower() or "root"
     lane = str(row.get("parent_thread") or "").strip()
-    if not lane or purpose not in OPERATOR_PURPOSES or kind == "hop":
+    if not lane or purpose not in OPERATOR_PURPOSES:
         return None, []
     ts = time.time() if now is None else now
     updated = dict(row)

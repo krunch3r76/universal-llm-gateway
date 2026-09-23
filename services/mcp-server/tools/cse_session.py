@@ -25,7 +25,10 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
 
     @mcp.tool(title="CSE Session")
     def cse_session(
-        op: Literal["provenance", "harvest", "paste", "followup", "resolve_attended"],
+        op: Literal[
+            "provenance", "harvest", "paste", "followup", "resolve_attended", "detach"
+        ],
+        reason: str | None = None,
         chat_url: str | None = None,
         registration_id: str | None = None,
         execution_id: str | None = None,
@@ -117,6 +120,31 @@ def register_cse_session_tool(mcp: FastMCP) -> None:
                 "mcp.cse_session.harvest",
                 outcome=result.get("outcome"),
                 ack_class=result.get("ack_class"),
+            )
+            return result
+
+        if op == "detach":
+            if not registration_id:
+                return {
+                    "ok": False,
+                    "code": "identity_required",
+                    "error": "detach requires registration_id",
+                }
+            body = {
+                "registration_id": registration_id,
+                "reason": (reason or "hop_detach").strip() or "hop_detach",
+            }
+            result = _relay(
+                "POST",
+                "/v1/cse-session/detach",
+                json_body=body,
+                failure_signal=_CSE_RELAY_FAILURE,
+                error_prefix="cse-session",
+            )
+            record(
+                "mcp.cse_session.detach",
+                registration_id=registration_id,
+                ok=result.get("registration_id") == registration_id,
             )
             return result
 

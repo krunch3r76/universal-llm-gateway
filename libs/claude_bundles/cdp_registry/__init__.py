@@ -85,7 +85,13 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "bind_session_address": (".session_address", "bind_session_address"),
     "bind_driving_seat": (".session_address", "bind_driving_seat"),
     "apply_driving_seat_bind": (".session_address", "apply_driving_seat_bind"),
+    "attachment_for_chat_url": (".session_address", "attachment_for_chat_url"),
+    "backfill_attachment_from_chat_url": (
+        ".session_address",
+        "backfill_attachment_from_chat_url",
+    ),
     "chat_url_for_registration": (".session_address", "chat_url_for_registration"),
+    "detach": (".lifecycle", "detach"),
     "count_capacity_lanes": (".session_address", "count_capacity_lanes"),
     "list_active": (".session_address", "list_active"),
     "list_capacity": (".session_address", "list_capacity"),

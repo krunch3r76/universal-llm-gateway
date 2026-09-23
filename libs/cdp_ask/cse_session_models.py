@@ -140,6 +140,20 @@ class PasteRequest(BaseModel):
     min_receipt: MinReceipt = "dom_paste"
 
 
+class DetachRequest(BaseModel):
+    """Authority-side registry detach after stand-down token."""
+
+    registration_id: str
+    reason: str = "hop_detach"
+
+
+class DetachResponse(BaseModel):
+    registration_id: str
+    chat_url: str | None = None
+    reason: str
+    profile_reclaim: str | None = None
+
+
 class PasteResponse(BaseModel):
     """Paste receipt — never implies ACK, harvest, or release."""
 

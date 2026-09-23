@@ -467,6 +467,90 @@ def cdp_seat_lane_reconciled(
 
 
 @event_factory
+def cdp_attachment_observed(
+    *,
+    registration_id: str,
+    chat_url: str,
+    attach_proof: str,
+) -> Event:
+    return Event(
+        signal="cdp.attachment.observed",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "chat_url": chat_url,
+            "attach_proof": attach_proof,
+        },
+    )
+
+
+@event_factory
+def cdp_attachment_bound(
+    *,
+    registration_id: str,
+    chat_url: str,
+    attach_proof: str,
+    parent_thread: str | None = None,
+) -> Event:
+    payload: dict[str, Any] = {
+        "registration_id": registration_id,
+        "chat_url": chat_url,
+        "attach_proof": attach_proof,
+    }
+    if parent_thread:
+        payload["parent_thread"] = parent_thread
+    return Event(
+        signal="cdp.attachment.bound",
+        role="coordination",
+        scope="node",
+        payload=payload,
+    )
+
+
+@event_factory
+def cdp_attachment_detached(
+    *, registration_id: str, chat_url: str | None, reason: str
+) -> Event:
+    return Event(
+        signal="cdp.attachment.detached",
+        role="coordination",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "chat_url": chat_url,
+            "reason": reason,
+        },
+    )
+
+
+@event_factory
+def cdp_attachment_conflict(*, chat_url: str, registration_ids: list[str]) -> Event:
+    return Event(
+        signal="cdp.attachment.conflict",
+        role="observation",
+        scope="node",
+        payload={"chat_url": chat_url, "registration_ids": registration_ids},
+    )
+
+
+@event_factory
+def cdp_parent_thread_conflict(
+    *, registration_id: str, from_row: str | None, request: str | None
+) -> Event:
+    return Event(
+        signal="cdp.parent_thread.conflict",
+        role="observation",
+        scope="node",
+        payload={
+            "registration_id": registration_id,
+            "from_row": from_row,
+            "request": request,
+        },
+    )
+
+
+@event_factory
 def cdp_occupancy_overlap(*, lane: str, execution_ids: list[str]) -> Event:
     """Census OVERLAP: ≥2 operator-purpose streams on one recorded lane."""
     return Event(

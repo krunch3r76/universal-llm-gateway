@@ -16,6 +16,7 @@ from deploy_identity.tree_state import resolve_tree_state
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from universal_protocol.errors import ProtocolError
 
 from cdp_ask.attended_operator import (
     AttendedResolveDormant,
@@ -31,7 +32,12 @@ from cdp_ask.chat_session_harvest import execute_probe as execute_chat_session_p
 from cdp_ask.chat_session_models import ChatHarvestRequest, ChatPasteRequest
 from cdp_ask.chat_session_paste import execute_paste as execute_chat_session_paste
 from cdp_ask.cse_session_harvest import execute_harvest
-from cdp_ask.cse_session_models import HarvestRequest, PasteRequest, ProvenanceQuery
+from cdp_ask.cse_session_models import (
+    DetachRequest,
+    HarvestRequest,
+    PasteRequest,
+    ProvenanceQuery,
+)
 from cdp_ask.cse_session_paste import execute_paste
 from cdp_ask.cse_session_provenance import resolve_public_provenance
 from cdp_ask.execution_store import ExecutionStore
@@ -264,6 +270,17 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         verify_harvest_root()
         result = await execute_harvest(req, execution_store)
         return result.model_dump(exclude_none=True)
+
+    @app.post("/v1/cse-session/detach")
+    async def cse_session_detach(req: DetachRequest) -> JSONResponse:
+        """Authority-side detach relay — pops registry row after stand-down."""
+        from claude_bundles import cdp_registry
+
+        try:
+            result = cdp_registry.detach(req.registration_id, reason=req.reason)
+        except ProtocolError as exc:
+            return JSONResponse(status_code=409, content=exc.to_dict())
+        return JSONResponse(status_code=200, content=result)
 
     @app.post("/v1/cse-session/paste")
     async def cse_session_paste(req: PasteRequest) -> JSONResponse:

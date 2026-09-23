@@ -425,6 +425,64 @@ def occupancy_projections(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return out
 
 
+def release_holder_for_registration(
+    conn: sqlite3.Connection,
+    *,
+    chat_url: str,
+    registration_id: str | None = None,
+    reason: str | None = None,
+) -> dict[str, Any] | None:
+    """Transition holder row to ``released`` for a detached registration."""
+    url = normalize_cse_url(chat_url)
+    hid = holder_id_from_chat_url(url)
+    if not hid:
+        return None
+    row = get_holder(conn, hid)
+    if row is None:
+        return None
+    reg = (registration_id or "").strip() or None
+    if reg and str(row.get("registration_id") or "").strip() not in {"", reg}:
+        return row
+    return transition_seat_state(
+        conn,
+        hid,
+        to_state="released",
+        reason=reason or "detach",
+        registration_id=reg,
+    )
+
+
+def release_holder_remote(
+    *,
+    chat_url: str,
+    registration_id: str | None = None,
+    reason: str | None = None,
+) -> bool:
+    """Fail-open HTTP release for out-of-process ``detach``."""
+    base = os.environ.get(
+        "GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091"
+    ).rstrip("/")
+    body = json.dumps(
+        {
+            "chat_url": chat_url,
+            "registration_id": registration_id,
+            "reason": reason,
+        }
+    ).encode()
+    req = urllib.request.Request(
+        f"{base}/api/v1/git/admin/cse-holder/release",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            return 200 <= resp.status < 300
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        logger.debug("cse holder remote release fail-open: %s", exc)
+        return False
+
+
 def upsert_holder_remote(
     *,
     chat_url: str,
@@ -471,6 +529,8 @@ __all__ = [
     "occupancy_projections",
     "resolve_nest_parent",
     "transition_seat_state",
+    "release_holder_for_registration",
+    "release_holder_remote",
     "upsert_holder",
     "upsert_holder_remote",
 ]

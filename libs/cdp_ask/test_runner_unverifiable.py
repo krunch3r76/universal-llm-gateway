@@ -148,9 +148,13 @@ async def test_run_execution_retries_opus_high_before_unverified() -> None:
             ],
         ]
     )
+    archived = (
+        "cortex://notes/system/threads/cdp-ask-archive-cdp-opus-sat-retry.md"
+    )
     with (
         patch("cdp_ask.runner.bind_execution_lane", return_value=reg),
         patch("cdp_ask.runner.run_project_conversation", new=converse),
+        patch("cdp_ask.runner.archive_harvest", return_value=archived),
         patch("cdp_ask.runner.deregister_on_exit"),
         patch("cdp_ask.runner.registration_has_wake_debt", return_value=False),
         patch("cdp_ask.runner.cdp_registry.bind_session_address"),

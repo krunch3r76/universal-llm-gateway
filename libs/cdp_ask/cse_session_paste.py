@@ -29,6 +29,62 @@ from cdp_ask.models import FollowupProjectAskRequest
 
 _IDEMPOTENCY: dict[tuple[str, str], dict[str, Any]] = {}
 
+_STANDDOWN_UNREACHABLE_ERRORS = frozenset(
+    {
+        "target_unreachable",
+        "cdp_ask_unreachable",
+        "lane_not_attached",
+        "not_attached",
+    }
+)
+
+
+def _append_standdown_token(
+    *,
+    registration_id: str,
+    chat_url: str | None,
+    envelope: str,
+    pasted: bool,
+    receipt: dict[str, Any] | None,
+    error: str | None,
+    detail: str | None,
+) -> None:
+    from claude_bundles import cdp_registry_store as store
+
+    url = (chat_url or "").strip()
+    if not url:
+        return
+    if pasted:
+        store.append_log(
+            "standdown_pasted",
+            {
+                "registration_id": registration_id,
+                "chat_url": url,
+                "receipt": receipt,
+                "pasted_at": time.time(),
+            },
+        )
+        store.fold_attachment_journal()
+        return
+    if envelope != "stand_down":
+        return
+    err = (error or "").strip()
+    det = (detail or "").strip()
+    unreachable = err in _STANDDOWN_UNREACHABLE_ERRORS or "unreachable" in err.lower()
+    if not unreachable and det:
+        unreachable = "unreachable" in det.lower()
+    if not unreachable:
+        return
+    store.append_log(
+        "standdown_unreachable",
+        {
+            "registration_id": registration_id,
+            "chat_url": url,
+            "error": err or det or "unreachable",
+        },
+    )
+    store.fold_attachment_journal()
+
 
 def _idempotency_key(req: PasteRequest, *, target_registration_id: str) -> str:
     explicit = (req.idempotency_key or "").strip()
@@ -219,7 +275,17 @@ async def execute_paste(
         min_receipt=req.min_receipt,
     )
     result = await execute_followup(followup_req, store)
+    envelope = (req.envelope or "").strip().lower()
     if not result.ok:
+        _append_standdown_token(
+            registration_id=target_reg,
+            chat_url=chat_url or str(target_prov.get("chat_url") or ""),
+            envelope=envelope,
+            pasted=False,
+            receipt=None,
+            error=result.error,
+            detail=result.detail,
+        )
         return PasteResponse(
             ok=False,
             error=result.error,
@@ -243,6 +309,16 @@ async def execute_paste(
         chat_url=result.url or chat_url,
     )
     _IDEMPOTENCY[cache_key] = response.model_dump()
+    if envelope == "stand_down" and send_verified:
+        _append_standdown_token(
+            registration_id=target_reg,
+            chat_url=response.chat_url or chat_url,
+            envelope=envelope,
+            pasted=True,
+            receipt=receipt,
+            error=None,
+            detail=None,
+        )
     emit(
         mcp_cse_session_pasted(
             registration_id=target_reg,

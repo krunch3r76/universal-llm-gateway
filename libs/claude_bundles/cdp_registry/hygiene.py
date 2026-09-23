@@ -145,6 +145,21 @@ def _reap_stale_active_rows(
     return reaped
 
 
+def reclaim_profile_for_detached_row(
+    registration_id: str,
+    row: dict[str, Any],
+    *,
+    chrome_port_for_profile: Callable[[Path], int | None] | None = None,
+) -> str:
+    """Best-effort profile reclaim after ``detach`` (R7). Returns outcome token."""
+    outcome, _profile = _reclaim_row_profile(
+        registration_id,
+        row,
+        chrome_port_for_profile=chrome_port_for_profile,
+    )
+    return outcome
+
+
 def _reclaim_row_profile(
     rid: str,
     row: dict[str, Any],
