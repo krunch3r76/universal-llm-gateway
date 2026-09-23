@@ -231,8 +231,9 @@ def archive_harvest(
             existing_text = ""
         existing_body = _archive_body_section(existing_text)
         if existing_body:
+            stored = existing_body.rstrip("\n")
             same_body = (
-                hashlib.sha256(existing_body.encode()).digest()
+                hashlib.sha256(stored.encode()).digest()
                 == hashlib.sha256(body.encode()).digest()
             )
             same_exec = (
