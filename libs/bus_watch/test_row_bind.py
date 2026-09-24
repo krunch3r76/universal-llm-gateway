@@ -109,7 +109,8 @@ def test_latched_trio_with_todo_is_play_body() -> None:
         latched={"class": "trio", "row_id": "todo:foo"},
         todo_slug="foo",
     )
-    assert body["contract"] == "conductor"
+    assert body["contract"] == "none"
+    assert "liaison-sdk-driver" in body["subject"]
     assert body["source_ref"] == "todo:foo"
     assert body["lane"] == "B"
     assert body.get("_row_class") == "trio"

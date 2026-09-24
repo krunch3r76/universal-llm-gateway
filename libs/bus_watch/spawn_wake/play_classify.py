@@ -9,8 +9,8 @@ mode on ``--go-under``):
   child: the bus thread stays open so the reply has a home, and ``seat_empty``
   clears the false owner so play can admit.
 - **play** — ``now_row`` / induction / tip NEXT names ``todo:{slug}`` and no
-  live conductor owns it. Admit that conductor via ``source_ref`` rematerialize.
-  Not ``successor_contract=conductor`` on a house generate.
+  live conductor owns it. Admit the liaison once. The liaison admits the
+  conductor. A live liaison dispatch is held. Not a house generate.
 - **sit** — house attention remains and there is no addressed todo. Today's
   headless liaison successor (10534). ``--go-under --sit`` forces this class.
 
@@ -33,6 +33,8 @@ LEFTOVER_HOLD = "hold"
 LEFTOVER_PLAY = "play"
 LEFTOVER_SIT = "sit"
 PLAY_HOLD = "play_hold"
+LIAISON_DRIVER_MARK = "liaison-sdk-driver"
+LIAISON_TURN_SPEC = "cortex://notes/system/specs/liaison-sdk-driver-turn.md"
 MODE_AWARE = "aware"
 MODE_SIT = "sit"
 
@@ -418,6 +420,10 @@ def classify_leftover(
     if mode == MODE_SIT:
         result["reason"] = "sit_forced"
         return result
+    if live_liaison_lane(digest) is not None:
+        result["leftover"] = LEFTOVER_HOLD
+        result["reason"] = "live_liaison"
+        return result
     if not todo:
         roster = digest.get("roster") or []
         if roster:
@@ -465,6 +471,26 @@ def classify_leftover(
     return result
 
 
+def live_liaison_lane(digest: dict[str, Any]) -> dict[str, Any] | None:
+    """Lane whose subject still names the liaison driver, when it is not finished.
+
+    The admit subject is the marker the next tick can see. A closeout replaces
+    that subject, so a finished liaison does not keep the seat.
+    """
+    lanes = digest.get("lanes")
+    if not isinstance(lanes, list):
+        return None
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        blob = f"{lane.get('last_subject') or ''} {lane.get('slug') or ''}"
+        if LIAISON_DRIVER_MARK not in blob:
+            continue
+        if _lane_live(lane) is not False:
+            return lane
+    return None
+
+
 def plant_play_state(
     state: dict[str, Any],
     *,
@@ -490,11 +516,11 @@ def build_play_dispatch_body(
     reuse_thread: str | None = None,
     hop_from: str | None = None,
 ) -> dict[str, Any]:
-    """Admit one conductor on the addressed todo. Lane B; no house-generate paste.
+    """Admit the liaison once on an empty seat. The liaison admits the conductor.
 
-    The conductor model is ``policy.successor_model``, the same slug later
-    wakes use. Omitting ``model=`` here used to resolve Composer Fast and
-    split the house driver from the ticker successor.
+    ``contract`` stays ``none`` so this dispatch does not implement the row.
+    The subject carries ``liaison-sdk-driver`` because the digest lane keeps
+    ``last_subject``, and the next tick holds on that mark.
 
     Coord parent is the resume root. ``loop_thread`` is occupancy (DIGEST),
     not conductor mailbox (a:36103 — 12029 play 422'd on tape 12030).
@@ -504,11 +530,17 @@ def build_play_dispatch_body(
     body: dict[str, Any] = {
         "op": "generate",
         "seat": "cursor-sdk",
-        "contract": "conductor",
+        "contract": "none",
         "lane": "B",
         "source_ref": work_key,
         "work_key": work_key,
         "dispatch_thread_id": str(root_id),
+        "subject": f"{LIAISON_DRIVER_MARK} todo:{todo_slug}",
+        "prompt": (
+            f"Execute the liaison turn at {LIAISON_TURN_SPEC}. "
+            "Do not implement the row. Admit one conductor. "
+            "If this dispatch is already live, stop."
+        ),
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
         **successor_model_fields(policy),
@@ -532,8 +564,10 @@ __all__ = [
     "MODE_SIT",
     "PLAY_HOLD",
     "addressed_todo",
+    "LIAISON_DRIVER_MARK",
     "build_play_dispatch_body",
     "classify_leftover",
+    "live_liaison_lane",
     "consult_reply_seat_empty",
     "hire_latch_released",
     "mark_consult_reply_seats_empty",
