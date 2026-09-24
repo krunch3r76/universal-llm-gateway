@@ -9,6 +9,7 @@ from claude_bundles.chat_model_match import (
     effort_only_chip_change,
     family_attested,
     family_nested_in_more_models,
+    family_pattern,
     label_satisfies_request,
     match_effort_qualified_radio,
     menu_label_glued,
@@ -45,6 +46,9 @@ def test_label_satisfies_request_effort_rungs(
 @pytest.mark.offline
 def test_normalize_picker_request_strips_cdp_prefix() -> None:
     assert normalize_picker_request("cdp/opus-5") == "opus-5"
+    assert normalize_picker_request("cdp/opus-5.5") == "opus-5.5"
+    assert normalize_picker_request("cdp/opus") == "opus-5.5"
+    assert normalize_picker_request("opus") == "opus-5.5"
     assert normalize_picker_request("cdp/fable-5") == "fable-5"
     assert normalize_picker_request("cdp/fable-5.1") == "fable-5.1"
     assert normalize_picker_request("cdp/fable") == "fable-5.1"
@@ -60,6 +64,8 @@ def test_normalize_picker_request_strips_cdp_prefix() -> None:
         ("cdp/opus-5", "extra", "cdp/opus-5-extra"),
         ("cdp/opus-5", "xhigh", "cdp/opus-5-extra"),
         ("cdp/opus-5", "high", "cdp/opus-5-high"),
+        ("cdp/opus", "high", "cdp/opus-5.5-high"),
+        ("opus", "high", "opus-5.5-high"),
         ("cdp/opus-5", None, "cdp/opus-5"),
         ("cdp/opus-5", "", "cdp/opus-5"),
         ("cdp/opus-5-max", "high", "cdp/opus-5-max"),
@@ -158,13 +164,27 @@ def test_prefer_fable_name_over_parent_and_glued_subtitle() -> None:
 
 
 @pytest.mark.offline
-def test_prefer_opus_keeps_first_dom_name() -> None:
-    """Same click bug must not reorder Opus 5.5 ahead of an older Opus row."""
+def test_prefer_opus_5_skips_leading_opus_5_5() -> None:
+    """opus-5 clicks Opus 5 when Opus 5.5 is the first radio in the DOM."""
     rows = [
         {"own": "Opus 5.5", "full": "Opus 5.5Most capable for ambitious work"},
         {"own": "Opus 5", "full": "Opus 5"},
     ]
-    assert prefer_model_name_index("opus-5", rows) == 0
+    assert prefer_model_name_index("opus-5", rows) == 1
+    assert prefer_model_name_index("opus-5.5", rows) == 0
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize("effort", ["high", "extra", "max", None])
+def test_opus_5_does_not_satisfy_opus_5_5(effort: str | None) -> None:
+    assert label_satisfies_request("opus-5", "Opus 5.5 High", effort=effort) is False
+    assert label_satisfies_request("opus-5", "Opus 5 High", effort="high") is True
+    assert family_pattern("opus-5").search("Opus 5.5") is None
+    assert family_pattern("opus-5.5").search("Opus 5.5")
+    assert family_pattern("opus-5.5").search("Opus 5") is None
+    assert family_pattern("fable-5").search("Fable 5.1") is None
+    assert family_pattern("fable-5").search("Fable 5")
+    assert family_pattern("fable-5.1").search("Fable 5.1")
 
 
 @pytest.mark.offline

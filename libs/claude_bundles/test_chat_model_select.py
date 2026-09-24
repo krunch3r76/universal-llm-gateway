@@ -15,6 +15,7 @@ from claude_bundles.chat_model_select import (
     parse_model_request,
     select_fable_5_1,
     select_from_ui,
+    select_opus_5,
 )
 
 
@@ -29,7 +30,12 @@ def test_family_pattern_matches_live_ui_labels() -> None:
     assert family_pattern("sonnet-5").search("Sonnet 5")
     assert family_pattern("sonnet-5").search("Sonnet 5 High")
     assert family_pattern("opus-5").search("Opus 5 Extra")
+    assert family_pattern("opus-5").search("Opus 5.5") is None
+    assert family_pattern("opus-5.5").search("Opus 5.5")
+    assert family_pattern("opus-5.5").search("Opus 5") is None
     assert family_pattern("fable-5").search("Fable 5")
+    assert family_pattern("fable-5").search("Fable 5.1") is None
+    assert family_pattern("fable-5.1").search("Fable 5.1")
     assert not family_pattern("sonnet-5").search("Opus 5")
 
 
@@ -50,6 +56,8 @@ def test_prediction_list_is_try_first_not_availability_gate() -> None:
     """Predicted labels cover common SKUs; unknown names still discover via UI."""
     assert match_model_request("sonnet-5", list(PREDICTED_MODEL_LABELS)) == "Sonnet 5"
     assert match_model_request("opus-5", list(PREDICTED_MODEL_LABELS)) == "Opus 5"
+    assert match_model_request("opus-5.5", list(PREDICTED_MODEL_LABELS)) == "Opus 5.5"
+    assert "Opus 5.5" in PREDICTED_MODEL_LABELS
     assert "Sonnet 5" in PREDICTED_MODEL_LABELS
     # Not in prediction list ⇒ None here; select_from_ui falls through to live radios.
     assert match_model_request("glorp-9", list(PREDICTED_MODEL_LABELS)) is None
@@ -79,6 +87,19 @@ async def test_select_fable_5_1_delegates_to_select_model() -> None:
     ) as select_model:
         result = await select_fable_5_1(page)
     select_model.assert_awaited_once_with(page, "fable-5.1")
+    assert result == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_select_opus_5_stays_on_opus_5() -> None:
+    page = object()
+    with patch(
+        "claude_bundles.chat_model_select.select_from_ui",
+        new_callable=AsyncMock,
+        return_value={"ok": True},
+    ) as select_from_ui:
+        result = await select_opus_5(page)
+    select_from_ui.assert_awaited_once_with(page, "opus-5", effort="high")
     assert result == {"ok": True}
 
 

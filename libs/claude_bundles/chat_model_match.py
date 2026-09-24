@@ -17,6 +17,7 @@ _EFFORT_TOKENS = EFFORT_TOKENS - {"none", "minimal"}  # picker/family strip set
 # Pipeline prediction — try-first labels only. Miss ⇒ live UI discovery (SOT).
 # Operator-authorized 2026-07-16; keep in sync with common picker SKUs.
 PREDICTED_MODEL_LABELS: tuple[str, ...] = (
+    "Opus 5.5",
     "Opus 5",
     "Sonnet 5",
     "Haiku 4.5",
@@ -43,15 +44,18 @@ def sealed_ask_default_effort(family: str) -> str | None:
 # Fable 5.1 launched 2026-09-01 (Anthropic ``claude-fable-5-1``, same headline
 # $/M as Fable 5 — cache reads only). Bare alias tracks the recommended
 # current release; pin ``cdp/fable-5`` explicitly for the prior generation.
+# Bare ``cdp/opus`` tracks Opus 5.5 the same way; pin ``cdp/opus-5`` for Opus 5.
 _PICKER_FAMILY_ALIASES: dict[str, str] = {
     "fable": "fable-5.1",
+    "opus": "opus-5.5",
 }
 
 
 def normalize_picker_request(model: str) -> str:
     """Strip ``cdp/<picker>`` and canonicalize bare aliases for UI selection.
 
-    Examples: ``cdp/fable`` → ``fable-5.1``, ``cdp/opus-5`` → ``opus-5``.
+    Examples: ``cdp/fable`` → ``fable-5.1``, ``cdp/opus`` → ``opus-5.5``,
+    ``cdp/opus-5`` → ``opus-5``, ``cdp/opus-5.5`` → ``opus-5.5``.
     """
     key = (model or "opus-5").strip()
     if "/" in key:
@@ -110,14 +114,24 @@ def parse_model_request(requested: str) -> tuple[str, str | None]:
 
 
 def family_pattern(family_request: str) -> re.Pattern[str]:
-    """Build a UI-label regex from a short name (``sonnet-5`` → ``sonnet\\s*5``)."""
+    """Build a UI-label regex from a short name (``sonnet-5`` → Sonnet 5).
+
+    A version chunk is a whole token. ``opus-5`` matches ``Opus 5`` and not
+    ``Opus 5.5``; ``fable-5`` matches ``Fable 5`` and not ``Fable 5.1``.
+    The dotted wire (``opus-5.5``, ``fable-5.1``) still matches that label.
+    ``.`` stays a separator between chunks, so the version also refuses a
+    match that reached its digits by consuming the minor-version dot.
+    """
     s = (family_request or "").strip().lower().replace("_", "-")
     chunks = re.findall(r"[a-z]+|\d+(?:\.\d+)*", s)
     if not chunks:
         return re.compile(re.escape(s), re.I)
     parts: list[str] = []
     for i, chunk in enumerate(chunks):
-        parts.append(re.escape(chunk))
+        if re.fullmatch(r"\d+(?:\.\d+)*", chunk):
+            parts.append(rf"(?<![\d.]){re.escape(chunk)}(?![\d.])")
+        else:
+            parts.append(re.escape(chunk))
         if i < len(chunks) - 1:
             parts.append(r"[\s\-_.]*")
     return re.compile("".join(parts), re.I)
@@ -255,9 +269,10 @@ def prefer_model_name_index(family: str, rows: list[dict[str, str]]) -> int | No
 
     Parent groups match a family substring and sort first in the DOM.
     ``locator.first`` then clicks that group; the hit lands on the
-    already-selected row's effort control. Sibling versions stay in DOM
-    order so an Opus 5.5 row ahead of an older Opus row is unchanged.
-    A glued subtitle loses to the same family's name-only label.
+    already-selected row's effort control. Version identity is
+    ``family_pattern``: ``opus-5`` is not a candidate for an Opus 5.5 row.
+    Among true name matches, DOM order stands. A glued subtitle loses to
+    the same family's name-only label.
     """
     pat = family_pattern(family)
     candidates: list[int] = []
