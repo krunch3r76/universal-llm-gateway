@@ -93,6 +93,31 @@ def test_classify_hold_when_lanes_unobserved_and_todo_named() -> None:
     assert verdict["unsure_live"] is True
 
 
+def test_hold_when_admit_has_no_worker_even_without_todo_on_lane() -> None:
+    digest = _digest()
+    digest["policy"]["now_row"] = "todo:steer"
+    digest["policy"]["max_conductors"] = 2
+    digest["lanes"] = [
+        {"id": "12632", "lifecycle": "admitted", "status": "active", "turns": 1}
+    ]
+    verdict = classify_leftover(digest, {})
+    assert verdict["leftover"] == LEFTOVER_HOLD
+    assert verdict["reason"] == "admit_not_worker"
+
+
+def test_hold_when_open_conductors_meet_cap() -> None:
+    digest = _digest()
+    digest["policy"]["now_row"] = "todo:steer"
+    digest["policy"]["max_conductors"] = 2
+    digest["lanes"] = [
+        {"id": "1", "lifecycle": "running", "status": "active"},
+        {"id": "2", "lifecycle": "running", "status": "active"},
+    ]
+    verdict = classify_leftover(digest, {})
+    assert verdict["leftover"] == LEFTOVER_HOLD
+    assert verdict["reason"] == "conductor_cap"
+
+
 def test_classify_play_when_todo_named_and_no_owner() -> None:
     digest = _digest()
     digest["policy"]["now_row"] = "todo:alpha — thin scoreboard"

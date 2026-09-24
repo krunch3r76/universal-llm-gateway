@@ -41,6 +41,7 @@ _TERMINAL_LIFECYCLES = frozenset({"completed", "abandoned", "failed"})
 _TERMINAL_STATUSES = frozenset({"closed", "failed"})
 _LIVE_STATUSES = frozenset({"active", "waiting", "blocked"})
 _LIVE_LIFECYCLES = frozenset({"admitted", "running", "in_flight", "hopping"})
+_OPEN_CONDUCTOR_LIFECYCLES = _LIVE_LIFECYCLES
 
 
 def extract_todo_slug(text: object) -> str | None:
@@ -337,6 +338,33 @@ def _lane_live(lane: dict[str, Any]) -> bool | None:
     return None
 
 
+def open_conductor_lanes(digest: dict[str, Any]) -> list[dict[str, Any]]:
+    """House lanes whose lifecycle is still an admit or a running conductor.
+
+    ``lifecycle=active`` is not enough. Stale bus rows sit there with no worker.
+    ``admitted`` is a generate the ledger has not taken.
+    """
+    lanes = digest.get("lanes")
+    if not isinstance(lanes, list):
+        return []
+    open_lanes: list[dict[str, Any]] = []
+    for lane in lanes:
+        if not isinstance(lane, dict):
+            continue
+        lifecycle = str(lane.get("lifecycle") or "").strip().lower()
+        if lifecycle in _OPEN_CONDUCTOR_LIFECYCLES:
+            open_lanes.append(lane)
+    return open_lanes
+
+
+def conductor_cap(policy: dict[str, Any] | None) -> int:
+    """``policy.max_conductors``, default 2. A bad value stays at 2."""
+    try:
+        return max(int((policy or {}).get("max_conductors") or 2), 1)
+    except (TypeError, ValueError):
+        return 2
+
+
 def live_conductor_owner(
     digest: dict[str, Any], todo_slug: str
 ) -> dict[str, Any] | None:
@@ -416,6 +444,18 @@ def classify_leftover(
     owner = live_conductor_owner(digest, todo)
     result["owner"] = owner
     if owner is None:
+        open_lanes = open_conductor_lanes(digest)
+        cap = conductor_cap(digest.get("policy") if isinstance(digest.get("policy"), dict) else {})
+        admitted = [
+            lane
+            for lane in open_lanes
+            if str(lane.get("lifecycle") or "").lower() == "admitted"
+        ]
+        if admitted or len(open_lanes) >= cap:
+            result["leftover"] = LEFTOVER_HOLD
+            result["reason"] = "admit_not_worker" if admitted else "conductor_cap"
+            result["open_conductors"] = len(open_lanes)
+            return result
         result["leftover"] = LEFTOVER_PLAY
         result["reason"] = "play_addressed_todo"
         return result
