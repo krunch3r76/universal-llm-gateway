@@ -1,8 +1,19 @@
-"""Charter-runner periodic sweep — enqueue missed ``consolidate-continuity`` runs.
+"""Missed-closeout sweep for ``consolidate-continuity``.
 
 Scans active ``role:root`` houses whose hub WATERMARK lags behind a CLOSEOUT
 on the root or any depth-1 child lane, then dispatches through the same
 debounced path as ``continuity_consolidate_trigger`` (not a replay script).
+
+Not called from the charter tick. That postamble retried the same failed fold
+on every floor interval, including paused houses, after charter admission had
+gone dormant. A CLOSEOUT insert is the live trigger.
+
+Do not re-hook this onto any clock without two fixes. (a) Cap attempts per
+(root, trigger): a failed fold never advances the WATERMARK, so the same
+trigger is re-selected on every pass. (b) Fix cross-lane ordering:
+``_trigger_is_stale`` only compares a same-lane watermark, and
+``find_stale_closeout`` ranks turn numbers across different threads, so a
+house with CLOSEOUTs on two lanes alternates between them indefinitely.
 
 Kill switch: ``AGENT_BUS_CONTINUITY_SWEEP=0``. Dry-run logs candidates only when
 ``CONTINUITY_SWEEP_DRY_RUN=1``. Rate limit: ``CONTINUITY_SWEEP_MAX_ROOTS`` (default 5).
@@ -38,7 +49,7 @@ _MAX_ROOTS_DEFAULT = 5
 
 
 def sweep_enabled() -> bool:
-    """Kill switch — ``AGENT_BUS_CONTINUITY_SWEEP=0`` disables the charter leg."""
+    """Kill switch — ``AGENT_BUS_CONTINUITY_SWEEP=0`` no-ops ``run_continuity_sweep``. No production caller since 2026-09-22."""
     return os.environ.get("AGENT_BUS_CONTINUITY_SWEEP", "1") not in {
         "0",
         "false",

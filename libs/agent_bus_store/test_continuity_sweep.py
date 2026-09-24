@@ -1,4 +1,4 @@
-"""Offline tests for charter periodic continuity sweep."""
+"""Offline tests for the continuity sweep library (no charter-tick caller since 2026-09-22)."""
 
 from __future__ import annotations
 
