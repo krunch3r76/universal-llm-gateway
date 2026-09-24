@@ -272,7 +272,13 @@ per-G-row one. Default posture once running:
   CDP down or stall (`Chrome on :9225 did not reach CDP`, empty body,
   `stall_stage=mark_terminal`) ≡ **no harvest** ≡ **HARD STOP** — restore the
   ask lane or explicit operator rebind; ¬ label DEFERRED/transport-debt and
-  continue; ¬ Composer/self substitute. Optional Sidecar overlays that the
+  continue; ¬ Composer/self substitute. **Exception:** `body_len=0` with
+  `stall_stage=mark_terminal` and an undelivered skill chip is a delivery
+  failure, not a review verdict, and it does not consume the second-strike
+  stop. Retry that review once, naming the missing slugs in the prompt. If
+  the body is still empty, `git_land` the lane that holds the commits and
+  close `land_disposition: landed`. Do not `PARKED_TRANSPORT`. Do not discard
+  that lane. Optional Sidecar overlays that the
   scoreboard marks non-blocking remain commentary only — they do not replace
   the gated after-ship picker. Does not replace path-sim R-after (Grok).
   **Reader (BINDING):** `fired(gate) ⇒ reader = summoning-thread lead at harvest`.
