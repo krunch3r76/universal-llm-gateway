@@ -77,3 +77,6 @@ def test_allowed_fields_parent_thread_not_purpose() -> None:
     assert "skills" in _ALLOWED_FIELDS
     assert "purpose" not in _ALLOWED_FIELDS
     assert "model_knobs" in _ALLOWED_FIELDS
+    assert "reuse_thread" in _ALLOWED_FIELDS
+    assert "hop_from" in _ALLOWED_FIELDS
+    assert "hop_reason" in _ALLOWED_FIELDS

@@ -41,6 +41,10 @@ _ALLOWED_FIELDS = frozenset(
         "directive",
         "reason",
         "ttl_s",
+        "reuse_thread",
+        "hop_from",
+        "hop_seq",
+        "hop_reason",
     }
 )
 
