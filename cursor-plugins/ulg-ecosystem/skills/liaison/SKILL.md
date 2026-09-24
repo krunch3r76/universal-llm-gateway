@@ -159,16 +159,15 @@ Binds. Later prose that conflicts with them loses.
    Autonomous hop-qualifying CP: kill the loop → `--release` → one successor. One tab live.
    **`ok` retires this tab (structural — do not rely on successor re-arm to quiet this tab):**
    1. Harness (`retire_departing_tab`, `liaison-ide-hop.py` after `ok`): SIGTERM this root's
-      attended `--loop`s; snapshot each poller's argv to `tmp/watchers/<label>.argv.json`
-      then SIGTERM the poller (`watch-supervise.sh start` / pid file); SIGTERM
-      `watch-supervise.sh tail --label` for every label that belongs to the root;
-      `--release` the `ide:<transcript_id>` seat. `--forever` debug tails stay.
+      attended `--loop`s; SIGTERM `watch-supervise.sh tail --label` for every tab tail that
+      belongs to the root (house pollers survive); `--release` the `ide:<transcript_id>` seat.
+      `--forever` debug tails stay.
    2. Seat (Cursor-native; harness cannot): **`UpdateGoal(status=complete)`** only if a
       leftover native goal is still injecting wakes — ¬ mint a successor goal. Same turn,
       after `liaison-ide-hop.py` prints `ok` (stderr carries `LIAISON_HOP_TAB_GOAL_RELEASE`).
       Tool: `CallDynamicTool(namespace="cursor", toolName="UpdateGoal", arguments={"status":"complete"})`.
-      Successor **rebuilds** ARM labels (`stop` leftover → `start -- <argv.json>` → `tail`)
-      and arms `--loop --heartbeat 1200` only while a watcher is live or a row is playable. Skip `CreateGoal`.
+      Successor **attaches** `tail --label` per ARM label and arms `--loop --heartbeat 1200`
+      only while a watcher is live or a row is playable. Skip `CreateGoal`.
       Load `liaison-hop-retire_ulg` when unsure.
    3. Answer `RETIRED → <landed_transcript_id>` in one line and never harvest
       (10479 hops 1→2, 2026-09-13 03:04Z: two tabs harvested 10584, CP #198 + #201, MCP

@@ -16,6 +16,7 @@ from bus_watch.events import emit_night_id_reset
 
 _REPO = Path(__file__).resolve().parents[2]
 WATCH_DIR = _REPO / "tmp" / "watchers"
+HOUSE_LABEL_PREFIX = "house-"
 FABLE_LOCK = WATCH_DIR / "liaison-fable.lock"  # legacy constant; never read or written
 TICKER_LOCK = WATCH_DIR / "liaison-ticker.lock"  # legacy; live ticker uses ticker_lock_path
 LOCK_STALE_S = 1800.0
@@ -322,6 +323,7 @@ def release_ticker_lease(root: str) -> dict[str, Any]:
 
 __all__ = [
     "FABLE_LOCK",
+    "HOUSE_LABEL_PREFIX",
     "LOCK_STALE_S",
     "MAX_HOPS_PER_NIGHT",
     "TICKER_LOCK",

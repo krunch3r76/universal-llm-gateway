@@ -516,6 +516,10 @@ def _compose_successor_wake(
         )
     if _seat_has_jupiter_shell(seat):
         lines.append("LOAD AND EXECUTE runbook:bus-consult-watcher (legs 1-3).")
+        lines.append(
+            f"ARM house finish pollers as house-{root_id}-<dispatch_id> (both --label "
+            "occurrences); <dispatch_id> is the auto id you mint at dispatch."
+        )
     lines.extend(
         [
             f"frame: spawned by liaison-ticker gear {gear}; seat {seat}; "
