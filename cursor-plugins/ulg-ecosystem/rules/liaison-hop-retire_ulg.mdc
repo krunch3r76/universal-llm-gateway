@@ -1,5 +1,5 @@
 ---
-description: After attended liaison IDE hop (liaison-ide-hop.py ok) — complete a leftover native Cursor goal if one is still injecting wakes; successor skips CreateGoal; rebuild watcher start+tail from argv.json + 20 min heartbeat. Load on hop retire, LIAISON_HOP_TAB_GOAL_RELEASE, or retired tab still waking.
+description: After attended liaison IDE hop (liaison-ide-hop.py ok) — complete a leftover native Cursor goal if one is still injecting wakes; successor skips CreateGoal; attach watcher tail per ARM label + 20 min heartbeat. Load on hop retire, LIAISON_HOP_TAB_GOAL_RELEASE, or retired tab still waking.
 alwaysApply: false
 rule_category: workflow
 apply_tier: catalog
@@ -30,10 +30,10 @@ same turn — **before** the `RETIRED → <transcript_id>` line. Skip `CreateGoa
 **Script cues:** `liaison-ide-hop.py` JSON field `goal_release`; stderr `LIAISON_HOP_TAB_GOAL_RELEASE` (see
 `libs/bus_watch/ide_hop_retire.GOAL_RELEASE`).
 
-**Successor:** rebuild each ARM label (`watch-supervise.sh stop --label L`; `start --label L --`
-from `tmp/watchers/<L>.argv.json`; then `tail --label L`) + `liaison-tick.py --loop --heartbeat 1200`
-(20 min backup to re-arm / check watcher health). Do not `CreateGoal`. Departing tab tore the
-pollers down — a tail-only ARM would attach to a dead pid.
+**Successor:** attach each ARM label (`watch-supervise.sh tail --label L`, background Shell,
+`block_until_ms 0`, notify on wake lines) + `liaison-tick.py --loop --heartbeat 1200`
+(20 min backup to re-arm / check watcher health). Do not `CreateGoal`. House pollers survive
+retire; tab tails die with the departing tab.
 
 **Anti-pattern:** Minting `CreateGoal` so the Goals panel is non-empty — Cursor then injects unthrottled
 continuation wakes. Primary house wake is watcher `notify_on_output`.

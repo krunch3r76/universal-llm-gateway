@@ -39,10 +39,9 @@ Seat this tab as the house liaison on continuity root `<root>` and arm the tick 
 Stop (loop kill / park, **no hop**): kill the loop PID, post CHECKPOINT. `UpdateGoal(complete)` only if
 a leftover native goal is still injecting wakes, or the house objective is actually met.
 
-Hop (`liaison-ide-hop.py` `ok`): harness retires this tab's `--loop`, watcher **pollers**,
-`watch-supervise` tails, and `ide:` lock (`retire_departing_tab`); snapshots
-`tmp/watchers/<label>.argv.json` before the poller SIGTERM. JSON + stderr emit
+Hop (`liaison-ide-hop.py` `ok`): harness retires this tab's `--loop`, `watch-supervise`
+tails, and `ide:` lock (`retire_departing_tab`); house pollers survive. JSON + stderr emit
 `LIAISON_HOP_TAB_GOAL_RELEASE`. **Same turn, before `RETIRED →`:** if a native goal is
 active, `CallDynamicTool(cursor, UpdateGoal, {"status":"complete"})` (legacy
-continuation-wake). Successor **rebuilds** start+tail from argv.json +
+continuation-wake). Successor **attaches** `tail --label` per ARM label +
 `--loop --heartbeat 1200`; skip `CreateGoal`. Answer `RETIRED → <id>`; never harvest.

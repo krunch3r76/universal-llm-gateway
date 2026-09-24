@@ -44,7 +44,7 @@ from transport_utils import (
 
 from bus_watch.digest_budget import agent_bus_bearer_headers
 from bus_watch.doorbell_skills import primary_liaison_slug
-from bus_watch.fable_lock import WATCH_DIR
+from bus_watch.fable_lock import HOUSE_LABEL_PREFIX, WATCH_DIR
 from bus_watch.ide_budget import AGENT_TRANSCRIPTS, first_line_matches
 from bus_watch.ide_hop_landing import (
     AGENTS_WINDOW_APP_ID,
@@ -89,11 +89,9 @@ def policy_focus_title(root_id: str, watch_dir: Path = WATCH_DIR) -> str | None:
     return str(title) if title else None
 
 
-REBUILD_RECIPE = (
-    "rebuild {label}: watch-supervise.sh stop --label {label}; "
-    "start --label {label} -- <tmp/watchers/{label}.argv.json>; "
-    "then tail --label {label} (background Shell, block_until_ms 0, "
-    "notify_on_output: closeout turn=|consult complete|stall-pop:)"
+TAIL_RECIPE = (
+    "tail {label}: watch-supervise.sh tail --label {label} (background Shell, "
+    "block_until_ms 0, notify_on_output: closeout turn=|consult complete|stall-pop:)"
 )
 LOOP_REBUILD = (
     "LOOP: rebuild `scripts/liaison-tick.py --root {root} --loop --heartbeat 1200 "
@@ -102,10 +100,6 @@ LOOP_REBUILD = (
     "→ do not arm; SIGTERM this root's --loop. A harvested conductor tail printing "
     "stall-pop is not a watcher: watch-supervise.sh stop --label <label>."
 )
-# Pickup used to ARM tail-only (pollers stayed). Hop now tears pollers down.
-TAIL_RECIPE = REBUILD_RECIPE
-
-
 def _pid_alive(pid: Any) -> bool:
     try:
         n = int(pid)
@@ -170,6 +164,8 @@ def live_watcher_labels(
         ):
             continue
         stem = path.name.removesuffix(".state.json")
+        if stem.startswith(HOUSE_LABEL_PREFIX):
+            continue
         if str(state.get("thread")) in excluded:
             continue
         if not _poller_alive(stem, state, watch_dir):
@@ -194,7 +190,7 @@ def build_ide_hop_message(
     tell the successor it is autonomous (bind forks itself, page only on designed
     stops, hop itself) in the first line, not leave it to a digest field it may skim.
     """
-    arm_lines = [f"ARM: {REBUILD_RECIPE.format(label=label)}" for label in arm_labels] or [
+    arm_lines = [f"ARM: {TAIL_RECIPE.format(label=label)}" for label in arm_labels] or [
         "ARM: none live — Plan from the digest (`scripts/liaison-tick.py --root R --once`)."
     ]
     tip = f" tip_cp={tip_cp_ordinal}" if tip_cp_ordinal is not None else ""
@@ -228,8 +224,8 @@ def build_ide_hop_message(
         *arm_lines,
         LOOP_REBUILD.format(root=root_id),
         "Then: harvest watcher wakes -> fold scoreboard -> Plan -> Dispatch "
-        "(+watcher) -> CHECKPOINT. Skip CreateGoal. Rebuild watcher start+tail "
-        "from argv.json (departing tab tore pollers down). "
+        "(+watcher) -> CHECKPOINT. Skip CreateGoal. Attach `tail --label` per ARM "
+        "label (pollers survive retire). "
         "Hop only if hop_qualifies; else STAY. "
         "STAY with no playable row and no live watcher: do not leave the loop running.",
     ]

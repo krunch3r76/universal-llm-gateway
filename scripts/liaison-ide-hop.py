@@ -7,12 +7,11 @@ Run after the CHECKPOINT lands (same turn), as the last action of the old tab:
     --transcript-id <departing-tab-uuid> [--dry-run]
   python scripts/liaison-ide-hop.py --root 10479 --find-transcript "resume 10479"
 
-The message the new tab receives is ``resume <R>`` plus NOW row and one ARM rebuild
+The message the new tab receives is ``resume <R>`` plus NOW row and one ARM tail attach
 line per live poller (auto-discovered from tmp/watchers, or ``--arm LABEL`` explicitly);
-the successor rebuilds ``start`` + ``tail`` from ``<label>.argv.json``, harvests, and
-plans. ``ok`` then retires this tab's ``--loop``, pollers, ``watch-supervise`` tails,
-and ``ide:`` lock (``bus_watch.ide_hop_retire``). UpdateGoal only if a leftover native
-goal is active.
+the successor attaches ``tail --label``, harvests, and plans. ``ok`` then retires this
+tab's ``--loop``, ``watch-supervise`` tails, and ``ide:`` lock (``bus_watch.ide_hop_retire``).
+UpdateGoal only if a leftover native goal is active.
 ``--find-transcript`` prints the transcript id of the tab whose first user message
 contains the text — the value the common checkpoint needs
 (``continuity(op=checkpoint, surface=cursor, transcript_id=...)``).

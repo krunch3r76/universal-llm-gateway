@@ -49,13 +49,13 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     assert "runbook:bus-consult-watcher" in message
 
 
-def test_hop_arm_line_rebuilds_start_and_tail() -> None:
+def test_hop_arm_line_attaches_tail() -> None:
     message = build_ide_hop_message(
         "10479", row="x", arm_labels=["10479-r1-closeout"]
     )
-    assert "ARM: rebuild 10479-r1-closeout" in message
-    assert "start --label 10479-r1-closeout -- <tmp/watchers/10479-r1-closeout.argv.json>" in message
-    assert "then tail --label 10479-r1-closeout" in message
+    assert "ARM: tail 10479-r1-closeout" in message
+    assert "watch-supervise.sh tail --label 10479-r1-closeout" in message
+    assert "start --label" not in message
     assert "§ Peer-house" in message
     assert "Hop after harvest is the rule" not in message
 
@@ -145,6 +145,23 @@ def test_live_watcher_labels_treats_predicate_unmet_as_live(tmp_path: Path) -> N
     (tmp_path / "other-root.pid").write_text(str(live), encoding="utf-8")
     labels = live_watcher_labels("10534", watch_dir=tmp_path)
     assert labels == ["10534-cdp", "10534-run"]
+
+
+def test_live_watcher_labels_excludes_house_prefix(tmp_path: Path) -> None:
+    live = os.getpid()
+    (tmp_path / "house-12586-a1b2c3.state.json").write_text(
+        json.dumps({"status": "polling", "thread": "12586", "pid": live}),
+        encoding="utf-8",
+    )
+    (tmp_path / "house-12586-a1b2c3.pid").write_text(str(live), encoding="utf-8")
+    (tmp_path / "12586-r1-closeout.state.json").write_text(
+        json.dumps({"status": "polling", "thread": "12586", "pid": live}),
+        encoding="utf-8",
+    )
+    (tmp_path / "12586-r1-closeout.pid").write_text(str(live), encoding="utf-8")
+    assert live_watcher_labels("12586", watch_dir=tmp_path) == [
+        "12586-r1-closeout",
+    ]
 
 
 def test_live_watcher_labels_excludes_own_lane(tmp_path: Path) -> None:
