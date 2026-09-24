@@ -3,8 +3,9 @@ the gear-3 ticker, kept out of the spawn predicate module.
 
 ``page_liaison`` posts to the email-bridge pager socket (Fi SMS relay; no
 personal endpoint in code). ``maybe_forfeit_expired_lease`` is the designed
-stop for a seat whose lease ran out without a release: emit the event, page,
-and let the caller's predicate treat the seat as free.
+stop for a seat whose lease ran out without a release: emit the event, page
+once, and clear the holder so the next poll does not text the same turn again.
+A live holder is not a forfeit — the ticker calls this every poll.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import subprocess
 from typing import Any
 
 from bus_watch.events import emit_lease_forfeited
-from bus_watch.fable_lock import read_lock, seat_lock_free
+from bus_watch.fable_lock import read_lock, release_fable_lock, seat_lock_free
 
 _EMAIL_BRIDGE_SOCK = os.environ.get(
     "EMAIL_BRIDGE_SOCK", "/tmp/universal-protocol/email-bridge.sock"
@@ -55,12 +56,20 @@ def maybe_forfeit_expired_lease(
     lock: dict[str, Any] | None = None,
     last_holder_turn: int | None = None,
 ) -> bool:
-    """Emit lease-forfeit and page when the seat lock is expired; True if forfeited."""
+    """Page once and clear the seat when its lease has already elapsed.
+
+    ``seat_lock_free`` is true both for an empty seat and for a holder past
+    ``expires_at``. Only the second case is a forfeit. A live holder returns
+    false with no SMS: the gear-3 poll used to take that branch and text the
+    same ``last_holder_turn`` every ``poll_seconds`` while the IDE heartbeat
+    kept sliding ``expires_at`` forward.
+
+    Returns true after the forfeit. Side effects: ``liaison.lease.forfeited``,
+    one pager post, and ``release_fable_lock`` so the next poll sees no holder.
+    """
     lock = lock if lock is not None else read_lock(root_id)
-    if seat_lock_free(lock, root_id=root_id):
-        return False
     holder = str(lock.get("holder") or "")
-    if not holder:
+    if not holder or not seat_lock_free(lock, root_id=root_id):
         return False
     emit_lease_forfeited(
         root_id=root_id,
@@ -74,6 +83,7 @@ def maybe_forfeit_expired_lease(
         f"Holder {holder} lease expired at {lock.get('expires_at')}; "
         f"last holder turn={last_holder_turn}.",
     )
+    release_fable_lock(holder, pid=None, root_id=root_id)
     return True
 
 

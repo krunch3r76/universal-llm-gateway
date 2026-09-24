@@ -74,12 +74,21 @@ _OP_PURPOSES = frozenset({"operator-proxy", "mission", "operator_proxy"})
 
 
 def _row_incumbent_execution_id(row: dict[str, Any]) -> str | None:
-    """Live stream execution id or seated-no-stream sentinel for one union row."""
+    """Live stream execution id or seated-no-stream sentinel for one union row.
+
+    ``stream_state`` wins when the snap carries it. Store rows in the cadence
+    fixtures (and older active-work snaps) record liveness only as ``status``.
+    """
     stream_state = str(row.get("stream_state") or "")
     exec_id = str(row.get("execution_id") or "").strip()
     if is_live_stream_state(stream_state) and exec_id:
         return exec_id
     if exec_id == SEATED_NO_STREAM_EXECUTION:
+        return exec_id
+    if stream_state or not exec_id:
+        return None
+    status = str(row.get("status") or "").strip().lower()
+    if status in {"running", "pending"}:
         return exec_id
     return None
 

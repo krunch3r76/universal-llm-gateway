@@ -720,11 +720,19 @@ def reconcile_succession_confirmations(
                 new_registration_id=new_reg,
                 superseded_execution_id=superseded_exec,
             )
+            from services.git_integration_worker.cursor_auto.cse_seating_hook import (
+                record_seated_registration,
+            )
             from services.git_integration_worker.cursor_auto.hop_cadence_seat_stamp import (
                 post_seat_registration_if_keyed,
             )
 
             aw = aw_row if isinstance(aw_row, dict) else {}
+            record_seated_registration(
+                chat_url=str(aw.get("chat_url") or "") or None,
+                registration_id=new_reg,
+                execution_id=matched_key,
+            )
             post_seat_registration_if_keyed(
                 thread_id=thread_id,
                 successor_birth_id=str(updated.get("successor_birth_id") or ""),

@@ -14,7 +14,11 @@ Sources = Literal[
 ]
 
 _ENTITY_TOKEN_RE = re.compile(r"\b(?:todo|task|plan):[a-z0-9_-]+\b", re.I)
-_TERMINAL_STATES = frozenset({"closed", "discharged", "terminal", "completed"})
+# ``done`` is what pipeline todo-close writes. Leaving it out kept a landed
+# row bound, so the ticker admitted another conductor for a finished card.
+_TERMINAL_STATES = frozenset(
+    {"closed", "discharged", "terminal", "completed", "done"}
+)
 _SUBJECT_CHARS = 56
 
 

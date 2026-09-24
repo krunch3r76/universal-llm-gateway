@@ -279,6 +279,18 @@ def test_set_overrides_and_ticker_backs_off(state_path: Path) -> None:
     assert load_state(state_path)["policy"]["now_row"] == "quiet"
 
 
+def test_done_todo_bind_is_released(state_path: Path) -> None:
+    """todo-close writes workflow_state=done. That must drop the policy row."""
+    digest = _digest(entity_cache={"todo:x": "done"})
+    state = _state(policy={"now_row": "todo:x"})
+    _write_state(state_path, state)
+    with patch("bus_watch.now_row_bind.emit_now_row_bound") as bound:
+        result = maybe_bind_now_row(digest, state, state_path, as_of=AS_OF)
+    assert result["action"] == "bound"
+    assert result["superseded"] == "todo:x"
+    bound.assert_called_once()
+
+
 def test_unsatisfied_todo_bind_is_released(state_path: Path) -> None:
     digest = _digest(entity_cache={"todo:x": "closed"})
     state = _state(policy={"now_row": "todo:x"})

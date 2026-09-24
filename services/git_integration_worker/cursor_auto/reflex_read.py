@@ -25,6 +25,7 @@ from typing import Any
 from cursor_capabilities import (
     canonical_cursor_bare_id,
     default_variant,
+    is_other_models_pool,
     supported_knobs,
 )
 from universal_logging import get_logger
@@ -47,13 +48,10 @@ from services.git_integration_worker.cursor_bus import CursorBusClient
 
 logger = get_logger(__name__)
 
-# Nano-tier default (agent-bus:7372, 2026-08-16): a short read-only closeout
-# check is exactly Luna's documented niche (cheap, high-volume, narrow task) —
-# not a bind-leg judgment seat, and one of the two structural Grok-4.6 cost
-# centers found that session (the other, wire_map's per-contract auto-default,
-# was deliberately left alone — investigate/recon/seed still need real
-# reasoning depth). Grok-4.6 and Opus remain available via CURSOR_AUTO_REFLEX_MODEL.
-_DEFAULT_MODEL = "cursor/gpt-5.6-luna"
+# Standing default stays on Cursor Models. A second-pool id (Luna, Terra, Sol,
+# Opus, …) draws the capped Other Models pool and is not a workflow default;
+# CURSOR_AUTO_REFLEX_MODEL is the operator pin that authorizes one.
+_DEFAULT_MODEL = "cursor/composer-2.5"
 # effort=max, not the prior low: a nano-tier model's max reasoning is still
 # cheap in absolute terms, and the independent-read's value (catching a
 # confidently-wrong self-report, per the Composer false-closeout incident this
@@ -90,8 +88,21 @@ class ReflexOutcome:
 
 
 def reflex_model() -> str:
-    """Return the reflex model id, env override then Luna default."""
+    """Return the reflex model id, env pin then the Cursor Models default."""
     return os.environ.get("CURSOR_AUTO_REFLEX_MODEL", "").strip() or _DEFAULT_MODEL
+
+
+def reflex_model_for_dispatch() -> str | None:
+    """Model to submit, or None when a standing default is on the second pool.
+
+    ``CURSOR_AUTO_REFLEX_MODEL`` is the authorization. A second-pool id baked
+    into ``_DEFAULT_MODEL`` does not dispatch.
+    """
+    explicit = os.environ.get("CURSOR_AUTO_REFLEX_MODEL", "").strip()
+    chosen = explicit or _DEFAULT_MODEL
+    if is_other_models_pool(chosen) and not explicit:
+        return None
+    return chosen
 
 
 def reflex_effort() -> str:
@@ -117,8 +128,8 @@ def reflex_knobs(model_id: str) -> dict[str, str]:
     """Lean knobs the target model actually accepts, with reflex effort merged.
 
     Name-filter alone is not enough: Anthropic lean ``context=300k`` is not on
-    the GPT allowlist (``272k``/``1m``). Value-clamp to the card so Luna (the
-    default reflex model) does not fail admission.
+    the GPT allowlist (``272k``/``1m``). Value-clamp to the card so a pinned
+    GPT reflex model does not fail admission.
     """
     try:
         bare = canonical_cursor_bare_id(model_id)
@@ -238,7 +249,18 @@ async def _maybe_run_second_read(
         )
         return None
 
-    model_id = reflex_model()
+    model_id = reflex_model_for_dispatch()
+    if model_id is None:
+        emit_second_read(
+            thread_id=job.thread_id,
+            executor_dispatch_id=executor_dispatch_id,
+            reflex_dispatch_id=None,
+            fired=False,
+            reason="other_models_pool_unauthorized",
+            model=reflex_model(),
+            contract=contract,
+        )
+        return None
     return await _run_reflex_dispatch(
         job,
         contract=contract,
@@ -431,5 +453,6 @@ __all__ = [
     "reflex_effort",
     "reflex_knobs",
     "reflex_model",
+    "reflex_model_for_dispatch",
     "reflex_timeout_s",
 ]

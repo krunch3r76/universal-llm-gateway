@@ -27,12 +27,16 @@ from services.git_integration_worker.cursor_auto.reflex_policy import (
     evaluate_reflex,
     reflex_sample_every,
 )
+from cursor_capabilities import is_other_models_pool
+
+from services.git_integration_worker.cursor_auto import reflex_read
 from services.git_integration_worker.cursor_auto.reflex_read import (
     _DEFAULT_EFFORT,
     _DEFAULT_MODEL,
     reflex_effort,
     reflex_knobs,
     reflex_model,
+    reflex_model_for_dispatch,
 )
 
 THREAD = "t-reflex"
@@ -61,12 +65,22 @@ def _clean_body(status: str = "complete") -> str:
 # --- default model ----------------------------------------------------------
 
 
-def test_default_reflex_model_is_luna_not_opus(
+def test_default_reflex_model_stays_on_cursor_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CURSOR_AUTO_REFLEX_MODEL", raising=False)
-    assert _DEFAULT_MODEL == "cursor/gpt-5.6-luna"
-    assert reflex_model() == "cursor/gpt-5.6-luna"
+    assert _DEFAULT_MODEL == "cursor/composer-2.5"
+    assert reflex_model() == "cursor/composer-2.5"
+    assert reflex_model_for_dispatch() == "cursor/composer-2.5"
+    assert not is_other_models_pool(reflex_model())
+
+
+def test_standing_second_pool_default_does_not_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CURSOR_AUTO_REFLEX_MODEL", raising=False)
+    monkeypatch.setattr(reflex_read, "_DEFAULT_MODEL", "cursor/gpt-5.6-luna")
+    assert reflex_model_for_dispatch() is None
 
 
 def test_default_reflex_effort_is_max(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -173,7 +187,7 @@ def test_unknown_model_does_not_raise() -> None:
 def test_reflex_knobs_luna_uses_gpt_context_not_anthropic_300k(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Default reflex model is Luna; 300k is Anthropic-only and must not ship."""
+    """A pinned Luna reflex uses the GPT context card; 300k is Anthropic-only."""
     monkeypatch.delenv("CURSOR_AUTO_REFLEX_EFFORT", raising=False)
     knobs = reflex_knobs("cursor/gpt-5.6-luna")
     assert knobs.get("context") == "272k"

@@ -143,7 +143,7 @@ def test_occupy_upserts_existing_holder_and_supersedes_predecessor(
     assert pred["seat_state"] == "superseded"
 
 
-def test_occupy_records_wire_registration_when_successor_has_none(
+def test_occupy_leaves_registration_null_when_successor_has_none(
     ledger: CursorDispatchLedger,
 ) -> None:
     with patch(
@@ -152,11 +152,34 @@ def test_occupy_records_wire_registration_when_successor_has_none(
     ):
         outcome = run_cse_seating_hook(_job(), execution_id="exec-new")
     assert outcome["ok"] is True
-    assert outcome["registration_id"] == "reg-old"
+    assert outcome["registration_id"] is None
+    assert outcome["superseded_registration_id"] == "reg-old"
     with ledger._connect() as conn:
         row = get_holder(conn, "cse_occupyhop1")
     assert row is not None
-    assert row["registration_id"] == "reg-old"
+    assert row["registration_id"] is None
+
+
+def test_record_seated_registration_writes_observed_id(
+    ledger: CursorDispatchLedger,
+) -> None:
+    from services.git_integration_worker.cursor_auto.cse_seating_hook import (
+        record_seated_registration,
+    )
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._resolve_successor_identity",
+        return_value=(None, None),
+    ):
+        run_cse_seating_hook(_job(), execution_id="exec-new")
+    written = record_seated_registration(
+        chat_url=_OCCUPY_URL,
+        registration_id="reg-successor",
+        execution_id="exec-seated",
+    )
+    assert written is not None
+    assert written["registration_id"] == "reg-successor"
+    assert written["execution_id"] == "exec-seated"
 
 
 def test_occupy_missed_mints_when_row_absent(ledger: CursorDispatchLedger) -> None:

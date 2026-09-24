@@ -14,7 +14,7 @@ from services.git_integration_worker.cursor_auto.queue import AutoJob
 
 logger = get_logger(__name__)
 
-__all__ = ["run_cse_seating_hook"]
+__all__ = ["record_seated_registration", "run_cse_seating_hook"]
 
 
 def _resolve_successor_identity(
@@ -86,14 +86,6 @@ def run_cse_seating_hook(
         return outcome
 
     new_reg, _new_chat = _resolve_successor_identity(job, execution_id)
-    # No successor CSE yet (IDE hop). The wire id is the admission identity;
-    # leaving the holder null makes the next census miss the seat we just named.
-    if new_reg:
-        occupy_reg: str | None = new_reg
-        prior = superseded
-    else:
-        occupy_reg = superseded
-        prior = None
     from services.git_integration_worker.cse_session_holders import (
         ensure_schema,
         occupy_holder_on_hop,
@@ -108,8 +100,8 @@ def run_cse_seating_hook(
             conn,
             occupy_target=occupy,
             lane_thread_id=lane,
-            superseded_registration_id=prior,
-            new_registration_id=occupy_reg,
+            superseded_registration_id=superseded,
+            new_registration_id=new_reg,
             new_execution_id=(execution_id or "").strip() or None,
         )
         conn.commit()
@@ -118,6 +110,51 @@ def run_cse_seating_hook(
     outcome["superseded_registration_id"] = superseded
     _emit_hook(outcome)
     return outcome
+
+
+def record_seated_registration(
+    *,
+    chat_url: str | None,
+    registration_id: str | None,
+    execution_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Write a registration confirm actually observed onto an existing holder.
+
+    Arm-time seating leaves ``registration_id`` null when the successor
+    execution is not in the snapshot yet. The hop wire id is admission
+    identity, not proof of who sat down.
+    """
+    url = (chat_url or "").strip()
+    reg = (registration_id or "").strip()
+    if not url or not reg:
+        return None
+    from claude_bundles.cse_url import normalize_cse_url
+    from claude_bundles.holder_strings import holder_id_from_chat_url
+
+    from services.git_integration_worker.cse_session_holders import (
+        ensure_schema,
+        get_holder,
+        upsert_holder,
+    )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    hid = holder_id_from_chat_url(normalize_cse_url(url))
+    if not hid:
+        return None
+    with CursorDispatchLedger.instance()._connect() as conn:
+        ensure_schema(conn)
+        if get_holder(conn, hid) is None:
+            return None
+        row = upsert_holder(
+            conn,
+            chat_url=url,
+            registration_id=reg,
+            execution_id=(execution_id or "").strip() or None,
+        )
+        conn.commit()
+    return row or None
 
 
 def _emit_hook(payload: dict[str, Any]) -> None:
