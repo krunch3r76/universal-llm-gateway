@@ -102,9 +102,11 @@ def nested_implement_has_commits(*, nest_under_dispatch_id: str) -> bool:
         return False
     with ledger._connect() as conn:
         for child_id in child_ids:
+            # worktree_path is a record_json field, not a ledger column.
+            # Selecting it raises OperationalError and hides commits_ahead.
             row = conn.execute(
                 "SELECT dispatch_id, contract, status, record_json, wt_baseline, "
-                "source_repo, worktree_path FROM cursor_sdk_dispatches "
+                "source_repo FROM cursor_sdk_dispatches "
                 "WHERE dispatch_id=?",
                 (child_id,),
             ).fetchone()
@@ -117,7 +119,7 @@ def nested_implement_has_commits(*, nest_under_dispatch_id: str) -> bool:
                 record_json=row["record_json"],
                 wt_baseline=row["wt_baseline"],
                 source_repo=row["source_repo"],
-                worktree_path=row["worktree_path"],
+                worktree_path=None,
             ):
                 return True
     return False

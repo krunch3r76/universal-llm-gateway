@@ -65,7 +65,6 @@ def test_nested_implement_has_commits_reads_ledger_children() -> None:
         ),
         "wt_baseline": json.dumps({"admit_head": "deadbeef"}),
         "source_repo": None,
-        "worktree_path": None,
     }
     conn = MagicMock()
     conn.execute.return_value.fetchone.return_value = row
@@ -82,3 +81,5 @@ def test_nested_implement_has_commits_reads_ledger_children() -> None:
             nested_implement_has_commits(nest_under_dispatch_id="parent-conductor-sf1")
             is True
         )
+    sql = conn.execute.call_args[0][0]
+    assert "worktree_path" not in sql
