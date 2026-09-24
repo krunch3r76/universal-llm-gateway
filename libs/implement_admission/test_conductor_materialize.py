@@ -221,6 +221,7 @@ def test_materialize_conductor_hop_contract(tmp_path: Path) -> None:
     assert "stop: ROW_HOP" in mp.text
     assert "422 CURSOR_WORKER_THREAD_OCCUPIED" in mp.text
     assert "stop: ROW_HOP | ROW_PINNED | HOLD_MERGE" in mp.text
+    assert "repeating the same refusal is a gate" in mp.text
     assert "hop_seq: <n>" in mp.text
 
 

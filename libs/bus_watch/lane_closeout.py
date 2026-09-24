@@ -175,6 +175,10 @@ def _parse_json_closeout_envelope(body: str) -> dict[str, Any] | None:
         "next": "",
         "land_disposition": _land_disposition_from_envelope(data),
     }
+    reason = str(data.get("degraded_reason") or "")
+    summary = str(data.get("summary") or "")
+    if reason == "conductor_row_pinned" or "ROW_PINNED" in summary:
+        parsed["stop"] = "ROW_PINNED"
     commits_raw = data.get("commits_ahead")
     if commits_raw is not None:
         try:
@@ -268,6 +272,8 @@ def build_closeout_record(
     }
     if parsed["land_disposition"]:
         record["land_disposition"] = parsed["land_disposition"]
+    if parsed.get("stop"):
+        record["stop"] = parsed["stop"]
     if "commits_ahead" in parsed:
         record["commits_ahead"] = parsed["commits_ahead"]
     return record

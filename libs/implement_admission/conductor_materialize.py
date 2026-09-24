@@ -308,6 +308,12 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
             "attended G3→G5 ⇒ SCORE_RESURFACE + ROW_PINNED; a live nested child "
             "forbids the hop — harvest first."
         ),
+        (
+            "- A block this row cannot pass by repeating the same refusal is a gate, "
+            "not `stop: ROW_PINNED`. File the friction, clear the pin, and continue "
+            "the row. Do not end the hop on that same unpaid gate. Do not revert "
+            "lands already on master outside this todo's files_expected."
+        ),
     ]
     if ctx.derived_from:
         lines.append(

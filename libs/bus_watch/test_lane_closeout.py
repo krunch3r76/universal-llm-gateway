@@ -452,3 +452,16 @@ def test_query_survives_without_tick_json(tmp_path) -> None:
     tick = tmp_path / "liaison-11667.tick.json"
     assert not tick.exists()
     assert rows[0]["landed"] == "0e6653cdf"
+
+
+def test_pinned_conductor_closeout_records_stop() -> None:
+    text = (
+        '{"status":"partial","degraded_reason":"conductor_row_pinned",'
+        '"work_outcome":"unverified","commits_ahead":0,"landed":false}'
+    )
+    record = build_closeout_record(
+        {"id": "12614", "lifecycle": "completed"},
+        parent_root="12586",
+        worker_closeout_text=text,
+    )
+    assert record["stop"] == "ROW_PINNED"
