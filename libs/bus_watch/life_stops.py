@@ -20,7 +20,7 @@ LIFE_KNOB_DEFAULTS: dict[str, Any] = {
     "deadline_near_days": 3,
     "let_drive_ttl_days": 30,
     "digest_max_age_s": 900,
-    "check_model": "cdp/opus-5",
+    "check_model": "cdp/opus-5.5",
 }
 
 

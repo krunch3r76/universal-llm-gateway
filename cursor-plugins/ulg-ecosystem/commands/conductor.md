@@ -56,7 +56,7 @@ Ask in one batch; skip any already bound in chat:
    separate ask (skill § Run to completion). Name an exception here if this
    mission needs its merge held for review.
 7. **Explicit seat pin?** — default none (Composer — omit `model=`, `{fast:true}`);
-   judgment nests `cdp/fable` / `cdp/opus-5` escalation or an Other-Models pin only
+   judgment nests `cdp/fable-5.1` / `cdp/opus-5.5` escalation or an Other-Models pin only
    with a named trigger. Sonnet/Opus/Terra remain explicit-pin facts only — never implicit defaults.
 8. **Admit now?** — draft packet only vs admit after confirm.
 
@@ -128,4 +128,4 @@ closeout, not a mid-mission pause. Codify residuals on the root entity.
 Ring **7310** (`7244-ide-resolution`): Lane A finish of 7186 residual; packet
 `tmp/reviews/7310-conductor-packet.md`; sibling 7281 cite-only. Early dogfood
 admitted Opus — standing seat is Composer (omit `model=`); judgment nests CDP
-(`cdp/fable` / `cdp/opus-5`) unless an Other-Models pin names a trigger.
+(`cdp/fable-5.1` / `cdp/opus-5.5`) unless an Other-Models pin names a trigger.

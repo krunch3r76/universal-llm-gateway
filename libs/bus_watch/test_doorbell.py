@@ -469,7 +469,7 @@ _SUCCESSOR_WAKE_GOLDEN = (
     "duty: run the tick; checkpoint; hop only if hop_qualifies. "
     "This hop orchestrates — do not land repo edits here (≤20 lines, no served "
     "path, liaison ladder only); repo work ⇒ dispatch implement/conductor or "
-    "cursor-auto; design/judgment/invariant forks ⇒ cdp/opus-5 consult before bind; "
+    "cursor-auto; design/judgment/invariant forks ⇒ cdp/opus-5.5 consult before bind; "
     "STAY only on empty NOW / quiet tick / OPERATOR_GATE.\n"
     "disclosure: orientation ritual; one echo before the first move.\n"
     "objective: tip turn #42 on agent-bus:10479; tip CHECKPOINT #40; "
@@ -480,7 +480,7 @@ _SUCCESSOR_WAKE_GOLDEN = (
     "LOAD AND EXECUTE runbook:bus-consult-watcher (legs 1-3).\n"
     "frame: spawned by liaison-ticker gear 3-wake-on-attention; seat cursor-sdk; "
     "predecessor = prior lease holder on agent-bus:10479. "
-    "§ Peer-house: keep both; cdp/opus-5 → 2nd pool → cursor/claude-opus-5; "
+    "§ Peer-house: keep both; cdp/opus-5.5 → 2nd pool → cursor/claude-opus-5-5; "
     "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled.\n"
     'echo: agent_bus(send, thread=10479, subject="ORIENTED 10479", '
     'body="ORIENTED / tip: <CHECKPOINT subject> cp_ordinal=<n> / row: <row> / seat: cursor-sdk") '

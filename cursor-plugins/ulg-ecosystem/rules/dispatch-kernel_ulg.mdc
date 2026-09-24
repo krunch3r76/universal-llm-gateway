@@ -25,16 +25,15 @@ is current state while G1–G3 open. Bugfix on pattern P ⇒ service sweep (`[qu
 |---|---|---|
 | Mechanical implement | `team_dispatch(op=generate, seat=cursor-sdk, lane="B")` → Composer (omit `model=`). In-repo implement uses lane B; `lane="A"` only with a one-line reason | autonomous |
 | Investigate residual · conductor drive | Composer (omit `model=`, `contract=conductor\|investigate`) — returns `OPEN FORK:` lines, never binds | autonomous |
-| Greater reasoning / independent check | **`cdp/fable`** width · **`cdp/opus-5`** bind/review — announce `CDP: <trigger> — <why>`, then proceed | autonomous on trigger |
-| Premium live checkout | `cursor/claude-opus-5` — inform-then-proceed (wait only if premium spend paused) | announce |
+| Greater reasoning / independent check | **`cdp/fable-5.1`** width · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, then proceed | autonomous on trigger |
+| Premium live checkout | `cursor/claude-opus-5-5` — inform-then-proceed (wait only if premium spend paused) | announce |
 
-Binder order: `cdp/opus-5` → **`cdp/fable`** → `cursor/gpt-5.6-terra|sol` **explicit pin only**.
-`cursor/claude-opus-5` is step 1, not ladder-top. `seat_unsure ⇒ consult(independent_binder)`;
+Binder order is reasoning strength, low → high: `cdp/opus-5.5` → `cdp/opus-5` → **`cdp/fable-5.1`** → `cdp/fable-5` → `cursor/gpt-5.6-terra|sol` **explicit pin only**. `seat_unsure ⇒ consult(independent_binder)`;
 `binder_unsure ⇒ human`. CDP operator stuck ⇒ `cursor-auto` → nested `cursor-sdk`, never Cowork Ask.
 
 ## Hard walls
 
-- `anthropic/*` **PROHIBITED**; `cursor/claude-fable-5{,-1}` blocked — Fable is `cdp/fable` only.
+- `anthropic/*` **PROHIBITED**; `cursor/claude-fable-5{,-1}` blocked — Fable is `cdp/fable-5.1` or `cdp/fable-5`.
 - Non-primary `cursor/*` bind ⇒ **operator-gated** unless a standing rule/skill names the default.
 - `judgment_closed ∧ mechanical_remainder ⇒ split`: bind (`none`) → nested `cursor-sdk` implement (`nest_under` lease holder).
 - Before **any** `team_dispatch`: consult-routing gate; `busy_status` shows `agent_bus`+`stargate`+`git_integration_worker` up.

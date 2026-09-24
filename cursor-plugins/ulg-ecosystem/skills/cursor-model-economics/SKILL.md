@@ -27,8 +27,8 @@ usage shape:
 | Surface | Verdict | Why |
 |---|---|---|
 | `cursor/claude-fable-5{,-1}` (Other Models) — judgment / `none` / implement binds | **Block stands on cost alone** | Short, low-repeat-context — no sustained cached prefix to discount; $10/$50 base still dominates |
-| `cursor/claude-fable-5-1` — **`workflows.check_review` standing default (operator window)** | **Admitted on Other Models pool** | Operator direction 2026-09-11: lean on Fable while the window favors it; code-lane merged mechanical check is the cache-amortizing shape here. **Revert = edit `route_policy.yaml` only** — never silent terra/opus substitution |
-| `cdp/fable` (claude.ai/Cowork) | **Real structural win, not just a promo** | Our usage (staged skill-floor + `--converse` N-turn) is the cache-heavy long-agentic shape the discount targets (Anthropic: ~45% cheaper on highly-agentic workloads). Shows up mainly as **weekly-usage stretch** — a cache-heavy session burns less of the shared Fable/All-models weekly pool per turn, so the same weekly cap covers more real work, independent of usage-credits mode or any temporary promo |
+| `workflows.check_review` standing default | **Primary pool** `cursor/composer-2.5` | Operator 2026-09-22: the Other Models window is closed. Second-pool ids are explicit pins only. A switch that uses the second pool when usage is open is not built. |
+| `cdp/fable-5.1` (claude.ai/Cowork) | **Real structural win, not just a promo** | Our usage (staged skill-floor + `--converse` N-turn) is the cache-heavy long-agentic shape the discount targets (Anthropic: ~45% cheaper on highly-agentic workloads). Shows up mainly as **weekly-usage stretch** — a cache-heavy session burns less of the shared Fable/All-models weekly pool per turn, so the same weekly cap covers more real work, independent of usage-credits mode or any temporary promo |
 
 Rates (both Fable ids): `$10 / $50 / $0.25 / $12.50` input/output/cache-read/cache-write per M — pinned in `config/model_rates.yaml`.
 
@@ -43,17 +43,17 @@ once the second pool is empty.
 |---|---|---|
 | **House driver (cursor_sdk)** | **`cursor/grok-4.7`** — `effort=high`, `fast=false`; same slug as the ticker successor | Conductor start and later successor. Enumerate, drive, return `OPEN FORK:` lines; does not rank. |
 | **Composer (nested implement)** | **`cursor/composer-2.5`** — omit `model=`; `model_knobs={"fast":"true"}` | Mechanical G-rows and `implement` \| `pure-mechanical`. |
-| **CDP width** | **`cdp/fable`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. |
-| **CDP bind / review** | **`cdp/opus-5`** (`purpose=review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. |
-| **Check/review (standing window)** | **`cursor/claude-fable-5-1`** via `workflows.check_review.model` | Code-lane merged mechanical check only — operator window; explicit `cursor/gpt-5.6-terra\|sol` pins remain 2c-only |
-| **Explicit pins (never standing)** | `cursor/claude-opus-5` premium live-checkout (inform-then-proceed) · `cursor/gpt-5.6-terra\|sol` only when operator/packet names Other Models · `cursor/claude-sonnet-5` last resort (CDP lane unavailable) | Named per leg only — never a default outside check_review, never a tier row. |
+| **CDP width** | **`cdp/fable-5.1`** | Explore, hypotheses, Q, L0–L2, enumerate-fork resolution when forks are open-ended. Stronger Fable is explicit `cdp/fable-5`. |
+| **CDP bind / review** | **`cdp/opus-5.5`** (`purpose=review` when reviewing) | Bind, independent check, architecture-suitability, ≥2 co-primary unranked, invariant-touching / cross-agent bind, recurrence ≥2, external check. Execution needs → Composer `pure-mechanical` limb. Stronger Opus is explicit `cdp/opus-5`. |
+| **Check/review** | **`cursor/composer-2.5`** via `workflows.check_review.model` | Primary pool. Second-pool pins (`terra`/`sol`/`luna`/`muse`/`fable`) only when the operator names them |
+| **Explicit pins (never standing)** | `cursor/claude-opus-5-5` premium live-checkout (inform-then-proceed) · `cursor/gpt-5.6-terra\|sol` only when operator/packet names Other Models · `cursor/claude-sonnet-5` last resort (CDP lane unavailable) | Named per leg only — never a standing default, never a tier row. |
 
 > `cursor/claude-sonnet-5` — last resort, explicit `model=` pin only: fire when the CDP lane is unavailable and the leg cannot wait; CDP is preferred; never the first line of a recipe.
 
 Nested legs: mechanical → Composer · investigate densify → Composer `contract=investigate` returning `OPEN FORK:` lines
-· Other Models (Sonnet / Opus-in-cursor / Terra / Sol / Luna) only on an **explicit
+· Other Models (Sonnet / Opus-in-cursor / Terra / Sol / Luna / Muse / Fable) only on an **explicit
 pin** · `cursor/claude-fable-5{,-1}` **blocked on judgment/implement** (cost) —
-**except** standing `check_review` window default above — use `cdp/fable` for width/bind · binder when
+use `cdp/fable-5.1` for width/bind · binder when
 unsure → CDP per trigger list (2c Terra is explicit-only).
 
 Detail + admit shapes: Use the `conductor` skill.

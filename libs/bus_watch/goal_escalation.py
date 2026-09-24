@@ -2,8 +2,8 @@
 
 When an open goal needs a repo write or a design/judgment fork the liaison
 seat cannot bind, escalate down the ladder instead of STAY or needs-attended.
-Ladder: cursor-auto (repo write) → cdp/opus-5 (independent check) →
-cdp/fable (design/judgment last resort). Human operator is not a routine rung.
+Ladder: cursor-auto (repo write) → cdp/opus-5.5 (independent check) →
+cdp/fable-5.1 (design/judgment last resort). Human operator is not a routine rung.
 Only an explicit ``OPERATOR_GATE`` may terminate as needs-attended.
 """
 
@@ -55,14 +55,14 @@ def escalation_target(kind: GoalKind) -> str:
     """Map a classified goal to its first ladder rung."""
     if kind == "repo_write":
         return "cursor-auto"
-    return "cdp/fable"
+    return "cdp/fable-5.1"
 
 
 def format_dispatch_instruction(kind: GoalKind, row: str, *, root_id: str) -> str:
     """One-line dispatch recipe the successor must fire instead of STAY."""
     if kind == "repo_write":
         return f"Dispatch cursor-auto (parent_thread={root_id})"
-    return "Dispatch cdp/fable (judgment fork)"
+    return "Dispatch cdp/fable-5.1 (judgment fork)"
 
 
 def needs_escalation_dispatch(row: str) -> bool:

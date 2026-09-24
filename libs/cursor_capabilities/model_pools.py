@@ -7,6 +7,7 @@ from .cursor_capabilities import canonical_cursor_bare_id
 OTHER_MODELS_BARE: frozenset[str] = frozenset(
     {
         "claude-opus-5",
+        "claude-opus-5-5",
         "claude-opus-4-8",
         "claude-sonnet-5",
         "claude-sonnet-4-6",

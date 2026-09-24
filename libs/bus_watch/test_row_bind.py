@@ -183,7 +183,7 @@ def test_trio_sketch_default_cdp() -> None:
             "note": "probe",
         },
     )
-    assert body["model"] == "cdp/opus-5"
+    assert body["model"] == "cdp/opus-5.5"
     assert "seat" not in body
 
 
@@ -196,7 +196,7 @@ def test_trio_sketch_paused_opus_holds() -> None:
         "10479",
         {
             "max_hop_minutes": 60,
-            "paused_models": ["cdp/opus-5", "cursor/claude-opus-5"],
+            "paused_models": ["cdp/opus-5.5", "cursor/claude-opus-5-5"],
         },
         {
             "id": "a:36249",

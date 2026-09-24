@@ -428,24 +428,24 @@ def _inline_successor_dispatch_skills(text: str, seat: str) -> str:
 def _judgment_consult(policy: dict | None, successor_model: str | None) -> str:
     """Who a below-Opus hop asks before it binds.
 
-    When ``cdp/opus-5`` is paused, name the house successor. The wake must not
+    When ``cdp/opus-5.5`` is paused, name the house successor. The wake must not
     tell that hop to open Opus.
     """
-    if model_paused(policy, "cdp/opus-5"):
+    if model_paused(policy, "cdp/opus-5.5"):
         named = str(successor_model or "").strip() or "the house successor"
         return named
-    return "cdp/opus-5"
+    return "cdp/opus-5.5"
 
 
 def _peer_house_line(policy: dict | None, successor_model: str | None) -> str:
-    if model_paused(policy, "cdp/opus-5"):
+    if model_paused(policy, "cdp/opus-5.5"):
         named = _judgment_consult(policy, successor_model)
         return (
             f"§ Peer-house: keep both; judgment consult ⇒ {named} (Opus paused); "
             "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled."
         )
     return (
-        "§ Peer-house: keep both; cdp/opus-5 → 2nd pool → cursor/claude-opus-5; "
+        "§ Peer-house: keep both; cdp/opus-5.5 → 2nd pool → cursor/claude-opus-5-5; "
         "¬ cursor/claude-fable-5-1; ¬ hop away unreconciled."
     )
 
@@ -461,7 +461,7 @@ def _successor_duty_line(
             "duty: dispatch -> read back -> verify -> CP. Commission the work on a child lane "
             "(cursor_request, parent_thread=<root>, lane_role=sub_mission); read its closeout; "
             "verify against git before any 'landed' word; then checkpoint. "
-            "Repo-write goals ⇒ cursor-auto; design/judgment forks ⇒ cdp/fable — never STAY. "
+            "Repo-write goals ⇒ cursor-auto; design/judgment forks ⇒ cdp/fable-5.1 — never STAY. "
             "Orienting and writing STAY is not the leg."
         )
     consult = _judgment_consult(policy, successor_model)

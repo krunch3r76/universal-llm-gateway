@@ -86,13 +86,13 @@ def friction_night_key(friction_id: str, *, role: str | None = None) -> str:
 
 
 def trio_sketch_model(policy: dict[str, Any]) -> str | None:
-    """TRIO sketch consult when no ``todo:{slug}`` — default ``cdp/opus-5``.
+    """TRIO sketch consult when no ``todo:{slug}`` — default ``cdp/opus-5.5``.
 
     A paused default or override yields None. The caller holds; it does not
     substitute another model.
     """
     raw = str(policy.get("trio_sketch_model") or "").strip()
-    model = raw if raw.startswith(("cursor/", "cdp/")) else "cdp/opus-5"
+    model = raw if raw.startswith(("cursor/", "cdp/")) else "cdp/opus-5.5"
     if model_paused(policy, model):
         return None
     return model

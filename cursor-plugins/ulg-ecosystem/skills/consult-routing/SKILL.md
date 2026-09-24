@@ -29,7 +29,16 @@ gap: `life-to-code-request-lane` (`lane:life-to-code`).
 
 ### CDP transport (MCP `project_ask` removed)
 
-Product = `team_dispatch(model=cdp/opus-5|cdp/fable|cdp/sonnet-5)` → poll `poll_hint`.
+Product = `team_dispatch(model=cdp/opus-5.5|cdp/fable-5.1|cdp/sonnet-5)` → poll `poll_hint`.
+
+Reasoning strength, low → high. Walk effort `high` → `extra` → `max` inside a rung before the next wire. Opus 5 reasons harder than Opus 5.5. Fable 5 reasons harder than Fable 5.1. Opus versions share one usage channel. Fable versions share the other. Fable can exhaust while Opus remains. Name the full wire. Bare `cdp/opus` aliases to `cdp/opus-5.5`. Bare `cdp/fable` aliases to `cdp/fable-5.1`.
+
+| Rung | Wire |
+|---|---|
+| 1 default | `cdp/opus-5.5` |
+| 2 | `cdp/opus-5` |
+| 3 | `cdp/fable-5.1` |
+| 4 strongest | `cdp/fable-5` |
 Delivery complete iff `chat_url` observed or followup `send_verified` — Stargate admit ≠ on claude.ai (`claude-ai-cdp-navigation` § Dispatch delivery).
 Warm paste / attended resolve = `cse_session(op=followup|resolve_attended)`.
 Admission/busy = `manage(action=busy_status)`. IF6 / satellite-direct submit =
@@ -49,15 +58,15 @@ guard). Consults about claude.ai / Cowork / the picker itself prime
 
 | Job | Picker | Effort | Transport | `purpose` |
 |---|---|---|---|---|
-| G1 / Mode B / path-sim Q / hop-5 check | `cdp/fable` | high (max when bind gates a wave) | fresh `/new`; followup only into a live op-proxy CSE | `ask` |
-| G2 frame | `cdp/fable` followup in the G1 CSE; else `cdp/opus-5` fresh. **When `conductor_profile=fable-scarce`** (or packet profile line): `cdp/opus-5` **fresh**, effort **`extra`** (picker) ≡ **`xhigh`** (wire; `libs/effort_vocabulary/core.py`), `purpose=ask`, **¬** Fable followup in G1 CSE | high (profile G2: **`extra`/`xhigh`**, ¬ followup) | followup ≻ fresh (profile: fresh Opus only) | inherit `ask` (profile G2: **`ask`**) |
-| BIND (score-play M1) | `cdp/fable` if architecture-open / ≥2 rivals / invariant-touching; else `cdp/opus-5` | high (Fable max when bind gates a wave) | fresh; 0 turns when zero forks ∧ G1 edge resolves ∧ mechanical | `ask` |
-| SKEPTIC@BIND (score-play M2) | `cdp/fable` high when Opus bound; **`cdp/opus-5` xhigh/max when Fable bound** (house default). **Under `conductor_profile=fable-scarce`:** no automatic Opus re-pass when Fable bound — a second CDP only on M2 invariant attr or explicit operator/packet pin **written on the scoreboard row** | see picker | 2nd CDP, identity ≠ binder; `panel_dispatch` when M2 known pre-dispatch (`panel_dispatch` members count as legs under profile cap) | `ask` or `review` |
-| GATED REVIEW pre-go-live (score-play M3) | `cdp/opus-5` | xhigh — pin `reasoning_effort="high"` minimum; xhigh on critical path | pre-LAND gate; fires on M3 predicates only. Transport fail ≡ stop past gate (`conductor` a:32226) | `review` |
-| R-admit / verifier / mission / M-Arch | `cdp/opus-5` | high | fresh (R); mission followup | `review` or `mission` |
-| G6 pre-land arc review (score-play M4) | `cdp/opus-5` | **House default:** high — pin `reasoning_effort="high"` (do not inherit conductor admit `effort:max`). **Under `conductor_profile=fable-scarce`:** floor **`extra`/`xhigh`**; **`max` when invariant-touching** (M2/M3 attr meaning) | **default-on at G6 — after G5 implement, before any land or DONE claim** — **review harvest ≺ land ≺ DONE** (`conductor` stronger-model gates · a:32146). CDP stall / empty FAILED / `cdp-ask` down ≡ no harvest ≡ **HARD STOP** — ¬ DEFERRED-and-proceed; ¬ silent Cursor substitute. Latency-only while CDP healthy: poll / hop+watcher / `PARKED_TRANSPORT` until harvest. Stage closeout + `files_expected` to `cortex://`; ¬ diff artifact. Skip only under full-skip (runbook:score-play § Explicit skip). ¬ a silent G4 | `review` |
+| G1 / Mode B / path-sim Q / hop-5 check | `cdp/fable-5.1` | high (max when bind gates a wave) | fresh `/new`; followup only into a live op-proxy CSE | `ask` |
+| G2 frame | `cdp/fable-5.1` followup in the G1 CSE; else `cdp/opus-5.5` fresh. **When `conductor_profile=fable-scarce`** (or packet profile line): `cdp/opus-5.5` **fresh**, effort **`extra`** (picker) ≡ **`xhigh`** (wire; `libs/effort_vocabulary/core.py`), `purpose=ask`, **¬** Fable followup in G1 CSE | high (profile G2: **`extra`/`xhigh`**, ¬ followup) | followup ≻ fresh (profile: fresh Opus only) | inherit `ask` (profile G2: **`ask`**) |
+| BIND (score-play M1) | `cdp/fable-5.1` if architecture-open / ≥2 rivals / invariant-touching; else `cdp/opus-5.5` | high (Fable max when bind gates a wave) | fresh; 0 turns when zero forks ∧ G1 edge resolves ∧ mechanical | `ask` |
+| SKEPTIC@BIND (score-play M2) | `cdp/fable-5.1` high when Opus bound; **`cdp/opus-5.5` xhigh/max when Fable bound** (house default). **Under `conductor_profile=fable-scarce`:** no automatic Opus re-pass when Fable bound — a second CDP only on M2 invariant attr or explicit operator/packet pin **written on the scoreboard row** | see picker | 2nd CDP, identity ≠ binder; `panel_dispatch` when M2 known pre-dispatch (`panel_dispatch` members count as legs under profile cap) | `ask` or `review` |
+| GATED REVIEW pre-go-live (score-play M3) | `cdp/opus-5.5` | xhigh — pin `reasoning_effort="high"` minimum; xhigh on critical path | pre-LAND gate; fires on M3 predicates only. Transport fail ≡ stop past gate (`conductor` a:32226) | `review` |
+| R-admit / verifier / mission / M-Arch | `cdp/opus-5.5` | high | fresh (R); mission followup | `review` or `mission` |
+| G6 pre-land arc review (score-play M4) | `cdp/opus-5.5` | **House default:** high — pin `reasoning_effort="high"` (do not inherit conductor admit `effort:max`). **Under `conductor_profile=fable-scarce`:** floor **`extra`/`xhigh`**; **`max` when invariant-touching** (M2/M3 attr meaning) | **default-on at G6 — after G5 implement, before any land or DONE claim** — **review harvest ≺ land ≺ DONE** (`conductor` stronger-model gates · a:32146). CDP stall / empty FAILED / `cdp-ask` down ≡ no harvest ≡ **HARD STOP** — ¬ DEFERRED-and-proceed; ¬ silent Cursor substitute. Latency-only while CDP healthy: poll / hop+watcher / `PARKED_TRANSPORT` until harvest. Stage closeout + `files_expected` to `cortex://`; ¬ diff artifact. Skip only under full-skip (runbook:score-play § Explicit skip). ¬ a silent G4 | `review` |
 | Docs / closeouts / spec polish / office I/O / dashboards | `cdp/sonnet-5` | **Extra** default; **Max** via `reasoning_effort=max` | pipeline or fresh; office → `harvest_source=output-file` | `produce` |
-| Skill authoring | `cdp/opus-5` draft · `cdp/sonnet-5` revise | high / Extra | fresh, output-file → cortex staging | `produce` |
+| Skill authoring | `cdp/opus-5.5` draft · `cdp/sonnet-5` revise | high / Extra | fresh, output-file → cortex staging | `produce` |
 | Haiku | `cdp/haiku-4.5` | — | **no recipe** until Sonnet caps | — |
 
 Standing: verifier ≠ producer; independent check ≠ author; Other Models /
@@ -73,8 +82,8 @@ denylist `xhigh` on the card.
 
 | Need | Route while outage open | Do not |
 |---|---|---|
-| Judgment / width | `cdp/fable` (Cowork transport) | Rebind to another Fable SDK rung |
-| Bind / sketch on SDK | `cursor/claude-opus-5` `{high\|xhigh\|max}` | `cursor/claude-fable-5{,-1}` on cursor-sdk |
+| Judgment / width | `cdp/fable-5.1` (Cowork transport) | Rebind to another Fable SDK rung |
+| Bind / sketch on SDK | `cursor/claude-opus-5-5` `{high\|xhigh\|max}` | `cursor/claude-fable-5{,-1}` on cursor-sdk |
 | Mechanical | `cursor/composer-2.5` | Third retry at a different Fable effort |
 
 **Recovery probe:** one trivial Fable SDK run — body non-empty and duration >15s ⇒
@@ -141,7 +150,7 @@ Rule stub: `dispatch-kernel_ulg.mdc` § Hard walls.
 
 | Leg | Model / seat | Contract | Delivers |
 |---|---|---|---|
-| Bind | `cdp/opus-5`, `cdp/fable`, `cursor/claude-opus-5` (bind scope only) | `none` | Dense packet / spec: `files_expected`, `acceptance_criteria`, invariants — ¬ repo implement |
+| Bind | `cdp/opus-5.5`, `cdp/fable-5.1`, `cursor/claude-opus-5-5` (bind scope only) | `none` | Dense packet / spec: `files_expected`, `acceptance_criteria`, invariants — ¬ repo implement |
 | Compose | `seat=cursor-sdk` (Composer default) | `implement` \| `pure-mechanical` | Mechanical edits + verify |
 
 ```python
@@ -167,11 +176,21 @@ authored — compose leg only (`lean-context-dispatch-first` non-primary gate).
 
 | Bad | Good |
 |---|---|
-| `cursor/claude-opus-5` + `none` + implement acceptance in one packet | Opus bind sidecar → nested `cursor-sdk` `contract=implement` |
-| `executor_override: cursor/claude-opus-5` on mechanical implement | Omit `model=` on `seat=cursor-sdk` implement (Composer default) |
+| `cursor/claude-opus-5-5` + `none` + implement acceptance in one packet | Opus bind sidecar → nested `cursor-sdk` `contract=implement` |
+| `executor_override: cursor/claude-opus-5-5` on mechanical implement | Omit `model=` on `seat=cursor-sdk` implement (Composer default) |
 | Ignore `sdk_cost_risk` at admit | Split or downgrade to Composer before edits |
 | Premium model runs quality_gate/pytest loops on known files | Composer leg + lead verify sample |
 | Treat the split as guidance the orchestrator may skip when in a hurry | On `cursor-auto` it is substrate; the redirect fires whether or not you meant it |
+| Stop a review-apply at `landed: false` / `lane_b_unlanded` | After the compose closeout, land the lane, then recycle |
+
+## Review-apply finishes live
+
+When the operator orders a review of this session's changes and auto-apply of every suggestion:
+
+1. Review is `cdp/opus-5.5`, `purpose=review`, `contract=none`. That call does not edit.
+2. On `AMEND`, the compose packet lists every suggestion. It does not say "do not commit" or "do not land".
+3. After the implement closeout, the parent lands the lane (`git merge` of `cursor-sdk/lane-<thread>`, never a path copy) and recycles every serving process that loaded a touched path.
+4. `landed: false` is not the end of this path. Quote the merge SHA and the recycle payload before calling the suggestions live.
 
 ## cursor-sdk model name surfaces
 
@@ -196,7 +215,7 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 | workflow | seat | model | contracts |
 |---|---|---|---|
 | auto_judgment | cursor-sdk | cursor/composer-2.5 | answer, confer, ask, verify, execute, propagate, sketch, none, conductor |
-| check_review | cursor-sdk | cursor/muse-spark-1.3 | — |
+| check_review | cursor-sdk | cursor/composer-2.5 | — |
 | investigate | cursor-sdk | cursor/composer-2.5 | investigate, recon, seed |
 | mechanical_implement | cursor-sdk | cursor/composer-2.5 | implement |
 
@@ -225,7 +244,7 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 | **Workflow-primary** | A model a standing rule/skill already names as the autonomous default for that need (dispatch-kernel ladder · this skill · `path-sim` · `subagent-strategy`). Omitting `model=` when the harness inherits the session/role default counts as primary. |
 | **Non-primary** | Any other explicit bind — e.g. `gpt-5.6-sol-*`, off-table Task slugs, or a ladder model used for the **wrong** work class (Sol/Opus for mechanical work after judgment closed). |
 
-**Named exceptions** (fire without re-asking; still announce): path-sim **A** → Composer enumerate + **`cdp/fable` bind** · path-sim **Q** → `cdp/fable` · implement → `cursor/composer-2.5` · CDP trigger → `cdp/opus-5` · escalation-warranted `cursor/claude-opus-5` under the premium inform-then-proceed row.
+**Named exceptions** (fire without re-asking; still announce): path-sim **A** → Composer enumerate + **`cdp/fable-5.1` bind** · path-sim **Q** → `cdp/fable-5.1` · implement → `cursor/composer-2.5` · CDP trigger → `cdp/opus-5.5` · escalation-warranted `cursor/claude-opus-5-5` under the premium inform-then-proceed row.
 
 **Anti-pattern:** re-spend frontier reasoning (Sol / Opus / Fable) to *implement* amendments a prior consult already densified — that is non-primary for the mechanical class.
 
@@ -252,12 +271,12 @@ guidance that table has no room for — the two are read together.
 | Park on the operator for `manage` / `charter_reload` / git-tracked implement | Seat executes or implements autonomous recovery; `charter_reload` = loop bounce only |
 | Treat every consult as operator-gated | CDP consult is **autonomous** under the dispatch-kernel CDP trigger |
 | Skip CDP and go straight to human on judgment forks | Cursor (incl. cursor/opus) → CDP/Fable first; human only when CDP/Fable flags `ESCALATE` or operator-only |
-| CDP Opus/Fable stuck → Ask the human | `cursor-auto` → nested `cursor-sdk` (`cursor/claude-opus-5` or explicit Other Models pin) (`cdp-operator-proxy` 2b); Terra only if named |
-| Treat `cursor/claude-opus-5` as ladder-top — ask human when Opus is unsure | Opus-in-cursor is step 1; consult an independent binder (step 2) before human |
-| `cdp/opus-5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
+| CDP Opus/Fable stuck → Ask the human | `cursor-auto` → nested `cursor-sdk` (`cursor/claude-opus-5-5` or explicit Other Models pin) (`cdp-operator-proxy` 2b); Terra only if named |
+| Treat `cursor/claude-opus-5-5` as ladder-top — ask human when Opus is unsure | Opus-in-cursor is step 1; consult an independent binder (step 2) before human |
+| `cdp/opus-5.5` ratifies its own output at the same tier | Escalate that artifact to **Fable** (2b) — weight-class independence |
 | Treat any two Anthropic seats as self-review and skip straight to GPT | Opus→**Fable** is a genuine check; 2b precedes explicit Other Models (2c) |
-| Silent Terra / Other Models as the next binder | 2c is **explicit pin only**; default after Fable is **`cursor/claude-opus-5`** on cursor-sdk |
-| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` for judgment/`none`/`implement` because Fable is wanted | Blocked for cost (both — 5.1 launched 2026-09-01 at same $/M) — use `cdp/fable`. **Exception:** standing `workflows.check_review` default (`cursor/claude-fable-5-1`) during the operator Fable window — revert via YAML edit, never silent terra/opus swap. While a:32393 SDK outage is open, Fable 5.1 on cursor-sdk is also **observed hollow at every tested rung** on non-check_review binds — use § Fable 5.1 SDK outage |
+| Silent Terra / Other Models as the next binder | 2c is **explicit pin only**; default after Fable is **`cursor/claude-opus-5-5`** on cursor-sdk |
+| Pin `cursor/claude-fable-5` or `cursor/claude-fable-5-1` for judgment/`none`/`implement` because Fable is wanted | Blocked for cost (both — 5.1 launched 2026-09-01 at same $/M) — use `cdp/fable-5.1`. **Exception:** standing `workflows.check_review` default (`cursor/claude-fable-5-1`) during the operator Fable window — revert via YAML edit, never silent terra/opus swap. While a:32393 SDK outage is open, Fable 5.1 on cursor-sdk is also **observed hollow at every tested rung** on non-check_review binds — use § Fable 5.1 SDK outage |
 | Rebind Sketch to Fable max/high on cursor-sdk after xhigh hollow | Falsified (a:32403): `medium` and `max` hollow too — rebind **off the Fable SDK surface** |
 | `team_dispatch(model=gpt-5.6-terra)` bare slug on code-lane bind | `seat=cursor-sdk` + `model=cursor/gpt-5.6-terra` — explicit pin only |
 | Spend `cursor/gpt-5.6-sol` on broad open-ended review | `sol` is targeted, low-token, still Other Models — explicit pin only |
@@ -270,18 +289,18 @@ Rationale for the independence axis (weight class vs family, self-review definit
 |---|---|
 | `anthropic/*` on `team_dispatch` | **PROHIBITED** |
 | `cursor/*` on `cursor-sdk` | OK except **Fable** |
-| Anthropic consult / binder / R-admit | **`team_dispatch(model=cdp/opus-5\|cdp/fable)`** + `cortex://` staging — poll `poll_hint` |
+| Anthropic consult / binder / R-admit | **`team_dispatch(model=cdp/opus-5.5\|cdp/fable-5.1)`** + `cortex://` staging — poll `poll_hint` |
 | IF6 / satellite-direct submit | **CLI** — `scripts/cortex/claude-ai-sync-jupiter project-ask`. Operator-proxy: `team_dispatch(model=cdp/…, purpose=operator-proxy)`. Warm paste: `cse_session(op=followup)` |
 | Live checkout | `cursor/claude-opus-*` |
 
-Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable` / picker — ¬ `cursor/*` Fable).
+Rule: `anthropic-dispatch-authorization_ws.mdc`. Fable = CDP only (`cdp/fable-5.1` / picker — ¬ `cursor/*` Fable).
 
 ## xAI coding-substrate
 
 | Path | Default |
 |---|---|
-| Path-sim **A** (L1+L2) / closed-detent light consult | Composer enumerate → **`cdp/fable` bind** |
-| Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable)` (CLI `fable-5.1` = IF6 only; path-sim annex A) |
+| Path-sim **A** (L1+L2) / closed-detent light consult | Composer enumerate → **`cdp/fable-5.1` bind** |
+| Path-sim bundled **Q** (L0) | **CDP Fable** — `team_dispatch(model=cdp/fable-5.1)` (CLI `fable-5.1` = IF6 only; path-sim annex A) |
 | Recon+investigate judgment residual | **`seat=cursor-sdk` + `contract=investigate`** (facts + `OPEN FORK:` — never binds) |
 | API `xai/grok-4.7` on coding work | **PROHIBITED** |
 | Engineering skeptic on **codework** | **DORMANT** — `grok-4.7` barred on codework (operator ratified agent-bus:9956). Re-evaluate when a successor model (e.g. grok-5) earns admission. Use CDP judgment slots (M1–M4, `runbook:score-play`) instead. |

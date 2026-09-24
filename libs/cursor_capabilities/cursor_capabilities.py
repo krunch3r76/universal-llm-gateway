@@ -156,6 +156,27 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         instruction_profile="reasoner",
     ),
+    # Opus 5.5 (Anthropic 2026-09-22, API id claude-opus-5-5). Same Cursor
+    # knob surface as claude-opus-5 until a ListModels probe diverges.
+    # API adaptive thinking cannot be turned off; the thinking knob stays so
+    # this card remains interchangeable with claude-opus-5 at admission.
+    "claude-opus-5-5": ModelCapability(
+        knobs={
+            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
+            "context": KnobSpec(accepted=("300k", "1m"), default="1m"),
+            "effort": KnobSpec(accepted=_FULL_EFFORT),
+            "fast": KnobSpec(accepted=("false", "true")),
+        },
+        fixed_params={"cyber": "false"},
+        default_variant={
+            "cyber": "false",
+            "thinking": "true",
+            "context": "1m",
+            "effort": "high",
+            "fast": "false",
+        },
+        instruction_profile="reasoner",
+    ),
     "claude-opus-4-8": ModelCapability(
         knobs={
             "thinking": KnobSpec(accepted=("false", "true"), default="true"),

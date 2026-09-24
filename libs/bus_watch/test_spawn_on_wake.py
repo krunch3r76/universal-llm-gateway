@@ -507,15 +507,15 @@ def test_paused_opus_wake_names_successor_not_opus() -> None:
         "10479",
         {
             "successor_model": "cursor/grok-4.7",
-            "paused_models": ["cdp/opus-5", "cursor/claude-opus-5"],
+            "paused_models": ["cdp/opus-5.5", "cursor/claude-opus-5-5"],
             "max_hop_minutes": 60,
             "gear": "3-wake-on-attention",
         },
         successor_context={"gear": "3-wake-on-attention", "row": "STAY"},
     )
     message = body["message"]
-    assert "cdp/opus-5" not in message
-    assert "cursor/claude-opus-5" not in message
+    assert "cdp/opus-5.5" not in message
+    assert "cursor/claude-opus-5-5" not in message
     assert "cursor/grok-4.7 consult before bind" in message
 
 

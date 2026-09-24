@@ -17,8 +17,8 @@ Life, web-anthropic, and any seat without `team_dispatch` use `cursor_request`. 
 | Recon, loci unknown | `Task(subagent_type="explore")` in this tab |
 | Mechanical implement (`files_expected` + acceptance criteria) | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane=B, source_ref=todo:…, dispatch_thread_id=<root>)` |
 | Script or upload, no repo edit | same cursor-sdk generate, `lane=B` |
-| Design or judgment fork | `team_dispatch(model=cdp/fable)` |
-| Independent check | `team_dispatch(model=cdp/opus-5)` |
+| Design or judgment fork | `team_dispatch(model=cdp/fable-5.1)` |
+| Independent check | `team_dispatch(model=cdp/opus-5.5)` |
 | Land on green | in-seat `git merge` of `cursor-sdk/lane-<thread>`. Conflict ⇒ keep both |
 
 `cursor_request` is life-only. On code the AutoJob admit door is `agent_bus(tool="request")`. `contract=implement` through `cursor_request` from this seat is an extra admit. Life implement uses that verb because life MCP has no `team_dispatch`.

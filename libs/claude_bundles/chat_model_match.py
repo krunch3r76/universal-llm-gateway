@@ -40,11 +40,11 @@ def sealed_ask_default_effort(family: str) -> str | None:
     return None
 
 
-# Bare dispatch aliases → canonical picker wire (team_dispatch ``cdp/fable``).
-# Fable 5.1 launched 2026-09-01 (Anthropic ``claude-fable-5-1``, same headline
-# $/M as Fable 5 — cache reads only). Bare alias tracks the recommended
-# current release; pin ``cdp/fable-5`` explicitly for the prior generation.
-# Bare ``cdp/opus`` tracks Opus 5.5 the same way; pin ``cdp/opus-5`` for Opus 5.
+# Bare aliases land on the lower reasoning rung of each family.
+# Strength, low → high: opus-5.5, opus-5, fable-5.1, fable-5.
+# Opus 5 reasons harder than Opus 5.5. Fable 5 reasons harder than Fable 5.1.
+# ``cdp/fable`` → fable-5.1; pin ``cdp/fable-5`` for the stronger Fable.
+# ``cdp/opus`` → opus-5.5; pin ``cdp/opus-5`` for the stronger Opus.
 _PICKER_FAMILY_ALIASES: dict[str, str] = {
     "fable": "fable-5.1",
     "opus": "opus-5.5",

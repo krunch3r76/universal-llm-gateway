@@ -65,7 +65,7 @@ POLICY_DEFAULTS: dict[str, Any] = {
 GEAR_PRESETS: dict[str, dict[str, Any]] = {
     "1-fable-mvp": {},
     "2-opus-hops": {
-        "successor_model": "cursor/claude-opus-5",
+        "successor_model": "cursor/claude-opus-5-5",
         "successor_cost_intent": None,
         "max_ticks_per_hop": 6,
     },
@@ -82,7 +82,7 @@ GEAR_PRESETS: dict[str, dict[str, Any]] = {
     },
     "4-cdp-liaison": {
         "successor_seat": "cdp",
-        "successor_model": "cdp/opus-5",
+        "successor_model": "cdp/opus-5.5",
         "successor_cost_intent": None,
         "successor_contract": "conductor",
         "ready": False,

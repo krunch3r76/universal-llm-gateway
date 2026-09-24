@@ -141,7 +141,7 @@ When communicating scoreboard gates to the **human operator**: pair `G#` with th
 | G3 | implementation spec | Densified spec ready for review or build |
 | G4 | skeptic review | Independent skeptic / gate-6 verdict |
 | G5 | implementation | Code / config land in workspace |
-| G6 | pre-land review | `cdp/opus-5` `purpose=review` on lane branch diff (R1) |
+| G6 | pre-land review | `cdp/opus-5.5` `purpose=review` on lane branch diff (R1) |
 | G7 | ship and land | Merge, path-explicit commit, recycle / go-live proof (L1) |
 
 Arc-specific rows and example pager lines live on each scoreboard under **## Gate legend** and **## Pager triggers (natural language)** — e.g. `cortex://notes/system/scoreboards/event-db-corruption-recovery-scoreboard.md`. Do not page on bare `G4 cleared`; say what gate completed in words the operator can act on or ignore.
