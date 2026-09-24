@@ -15,6 +15,7 @@ from bus_watch.fable_lock import (
     current_night_id,
     read_lock,
     release_fable_lock,
+    seat_lock_free,
 )
 from bus_watch.liaison_pager import maybe_forfeit_expired_lease, page_liaison
 from bus_watch.now_row import resolve_now_row
@@ -23,6 +24,7 @@ from bus_watch.spawn_pending import (
     digest_pending_is_terminal,
     record_remint_cap,
     record_spawn_service,
+    row_is_terminal,
 )
 from bus_watch.spawn_wake.packet import (
     _wire_submit_body,
@@ -52,6 +54,7 @@ from bus_watch.spawn_wake.row_class import (
 
 _WORK_KEY_IN_FLIGHT = "CURSOR_SOURCE_REF_IN_FLIGHT"
 _WORK_KEY_UNPARSEABLE = "work_key_unparseable"
+LIVE_DISPATCH_HOLD = "live_dispatch_hold"
 _FRICTION_NOW_RE = re.compile(r"Friction\s+a:(\d+)", re.I)
 
 
@@ -148,6 +151,90 @@ def maybe_steer_friction_gate(
     return {
         "steered": True,
         "friction_id": friction_id,
+        "dispatch_id": dispatch_id,
+        "status_code": status,
+    }
+
+
+def _holder_ident(lock: dict[str, Any]) -> str | None:
+    holder = str(lock.get("holder") or "")
+    if not holder.startswith("sdk:"):
+        return None
+    parts = holder.split(":", 1)
+    return parts[1] if len(parts) > 1 else None
+
+
+def _lane_for_live_holder(digest: dict[str, Any], ident: str) -> dict[str, Any] | None:
+    for lane in digest.get("lanes") or []:
+        if not isinstance(lane, dict) or row_is_terminal(lane):
+            continue
+        dispatch_id = str(lane.get("dispatch_id") or "")
+        if dispatch_id.startswith(ident) or ident in str(lane.get("last_subject") or ""):
+            return lane
+    return None
+
+
+def maybe_steer_live_dispatch(
+    digest: dict[str, Any],
+    state: dict[str, Any],
+    lock: dict[str, Any],
+    evaluation: dict[str, Any],
+    body: dict[str, Any] | None,
+    policy: dict[str, Any],
+    *,
+    submit: Callable[..., tuple[dict[str, Any], int]] | None = None,
+) -> dict[str, Any] | None:
+    """Hold spawn and steer a live sdk holder on context-budget hop.
+
+    Returns steer metadata when the fire predicate holds (including latch and
+    no-match holds); None when spawn should proceed normally.
+    """
+    ident = _holder_ident(lock)
+    if not ident:
+        return None
+    max_hop_minutes = float(policy.get("max_hop_minutes") or 60)
+    root = str((digest.get("root") or {}).get("id") or "").strip()
+    if seat_lock_free(lock, max_hop_minutes=max_hop_minutes, root_id=root):
+        return None
+    if evaluation.get("reaped_sdk_holder"):
+        return None
+    if (body or {}).get("_review_apply"):
+        return None
+
+    lane = _lane_for_live_holder(digest, ident)
+    dispatch_id = str((lane or {}).get("dispatch_id") or "").strip()
+    if not lane or not dispatch_id:
+        return {"steered": False, "reason": "no_dispatch_id"}
+
+    sent = state.get("live_dispatch_steers_sent")
+    if not isinstance(sent, dict):
+        sent = {}
+    if sent.get(dispatch_id):
+        return {
+            "steered": False,
+            "dispatch_id": dispatch_id,
+            "reason": "latched",
+        }
+
+    steer_body = {
+        "op": "steer",
+        "seat": "cursor-sdk",
+        "steer": "inject",
+        "dispatch_id": dispatch_id,
+        "reason": "context-budget-hop",
+        "directive": (
+            f"CHECKPOINT. Context budget reached for dispatch {dispatch_id}. "
+            "Hop under the context policy. Do not start a parallel liaison."
+        ),
+        "caller_agent": "liaison-ticker",
+    }
+    poster = submit or submit_team_dispatch
+    _payload, status = poster(steer_body)
+    sent = dict(sent)
+    sent[dispatch_id] = _utcnow()
+    state["live_dispatch_steers_sent"] = dict(list(sent.items())[-32:])
+    return {
+        "steered": True,
         "dispatch_id": dispatch_id,
         "status_code": status,
     }
@@ -479,6 +566,23 @@ def tick_spawn_on_wake(
         }
     if not evaluation["spawn"]:
         return {"action": "hold", "evaluation": evaluation, "body": body}
+    live_steer = maybe_steer_live_dispatch(
+        digest,
+        state,
+        lock,
+        evaluation,
+        body,
+        policy,
+        submit=submit,
+    )
+    if live_steer is not None:
+        return {
+            "action": "hold",
+            "evaluation": evaluation,
+            "refused": LIVE_DISPATCH_HOLD,
+            "body": None,
+            "live_dispatch_steer": live_steer,
+        }
     if forfeit := evaluation.get("idle_ide_forfeit"):
         # The stopped tab's lease goes before the successor is minted, so the
         # successor's ``--claim`` is not refused by a seat nobody is sitting in.
