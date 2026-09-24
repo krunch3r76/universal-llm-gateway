@@ -126,7 +126,11 @@ def maybe_steer_friction_gate(
         return {"steered": False, "friction_id": friction_id, "reason": "latched"}
     dispatch_id = str(lane.get("dispatch_id") or "").strip()
     if not dispatch_id:
-        return {"steered": False, "friction_id": friction_id, "reason": "no_dispatch_id"}
+        return {
+            "steered": False,
+            "friction_id": friction_id,
+            "reason": "no_dispatch_id",
+        }
     body = {
         "op": "steer",
         "seat": "cursor-sdk",
@@ -180,11 +184,17 @@ def body_for_leftover(
                 if extract_todo_slug(row.get("work_key")) == slug:
                     roster_row_id = str(row.get("row_id") or "")
                     break
+        reuse = None
+        if digest is not None:
+            from bus_watch.spawn_wake.play_classify import parked_resume_thread
+
+            reuse = parked_resume_thread(digest)
         return build_play_dispatch_body(
             root_id,
             policy,
             todo_slug=str(todo),
             roster_row_id=roster_row_id or None,
+            reuse_thread=reuse,
         )
     if review_body:
         return review_body
@@ -417,9 +427,7 @@ def tick_spawn_on_wake(
     if leftover.get("leftover") == LEFTOVER_HOLD and not (body or {}).get(
         "_review_apply"
     ):
-        steer_meta = maybe_steer_friction_gate(
-            digest, state, leftover, submit=submit
-        )
+        steer_meta = maybe_steer_friction_gate(digest, state, leftover, submit=submit)
         out: dict[str, Any] = {
             "action": "hold",
             "evaluation": evaluation,

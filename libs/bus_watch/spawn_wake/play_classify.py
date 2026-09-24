@@ -207,7 +207,79 @@ def hire_latch_released(digest: dict[str, Any], dispatch_id: str) -> bool:
             continue
         if str(row.get("dispatch_id") or "").strip() == target:
             return True
+    return _parked_transport_owes_resume(lanes, target)
+
+
+def _parked_transport_owes_resume(lanes: list[Any], target: str) -> bool:
+    """A seat-written PARKED_TRANSPORT is not a finished hire.
+
+    The latch dispatch and the parked closeout differ: hops stay on the
+    thread, and the roster still names the first hire. Matching them would
+    never resume. A later closeout whose dispatch id *is* the latch was
+    already the resume, and stays held.
+    """
+    from operator_hop_harvest.ledger import fetch_latest_terminal_conductor
+
+    for lane in lanes:
+        if not isinstance(lane, dict) or _lane_live(lane) is not False:
+            continue
+        if _conductor_signal(lane) is not True:
+            continue
+        thread_id = str(lane.get("id") or "")
+        if not thread_id:
+            continue
+        fetched = fetch_latest_terminal_conductor(thread_id)
+        if not isinstance(fetched, dict) or fetched.get("ledger_unreachable"):
+            continue
+        row = fetched.get("row")
+        if not isinstance(row, dict):
+            continue
+        parked_id = str(row.get("dispatch_id") or "").strip()
+        if not parked_id or parked_id == target:
+            continue
+        record = row.get("record_json")
+        body = (
+            str(record.get("closeout_body") or "") if isinstance(record, dict) else ""
+        )
+        if "stop: PARKED_TRANSPORT" not in body:
+            continue
+        if "HOLD_MERGE" in body or "OPERATOR_GATE" in body:
+            continue
+        return True
     return False
+
+
+def parked_resume_thread(digest: dict[str, Any]) -> str | None:
+    """Worker thread whose latest closeout is an unpaid PARKED_TRANSPORT."""
+    lanes = digest.get("lanes")
+    if not isinstance(lanes, list):
+        return None
+    from operator_hop_harvest.ledger import fetch_latest_terminal_conductor
+
+    for lane in lanes:
+        if not isinstance(lane, dict) or _lane_live(lane) is not False:
+            continue
+        if _conductor_signal(lane) is not True:
+            continue
+        thread_id = str(lane.get("id") or "")
+        if not thread_id:
+            continue
+        fetched = fetch_latest_terminal_conductor(thread_id)
+        if not isinstance(fetched, dict) or fetched.get("ledger_unreachable"):
+            continue
+        row = fetched.get("row")
+        if not isinstance(row, dict):
+            continue
+        record = row.get("record_json")
+        body = (
+            str(record.get("closeout_body") or "") if isinstance(record, dict) else ""
+        )
+        if "stop: PARKED_TRANSPORT" not in body:
+            continue
+        if "HOLD_MERGE" in body or "OPERATOR_GATE" in body:
+            continue
+        return thread_id
+    return None
 
 
 def mark_consult_reply_seats_empty(digest: dict[str, Any]) -> None:
@@ -361,6 +433,7 @@ def build_play_dispatch_body(
     *,
     todo_slug: str,
     roster_row_id: str | None = None,
+    reuse_thread: str | None = None,
 ) -> dict[str, Any]:
     """Admit one conductor on the addressed todo. Lane B; no house-generate paste.
 
@@ -387,6 +460,8 @@ def build_play_dispatch_body(
     }
     if roster_row_id:
         body["_roster_row_id"] = str(roster_row_id)
+    if reuse_thread:
+        body["reuse_thread"] = str(reuse_thread)
     return body
 
 

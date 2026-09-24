@@ -253,6 +253,51 @@ def test_hire_latch_releases_when_consult_continuation_owed(monkeypatch) -> None
     assert verdict["decision"] == "play"
 
 
+def test_hire_latch_releases_on_parked_transport(monkeypatch) -> None:
+    """A parked lane with a different closeout id is a resume, not a finished hire."""
+    rows = [
+        _row(
+            "row-a",
+            "a",
+            paths=["libs/bus_watch/roster.py"],
+            last_hire_dispatch_id="disp-first",
+        ),
+    ]
+    digest = _digest_with_roster(
+        rows,
+        lanes=[
+            {
+                "id": "12597",
+                "status": "closed",
+                "lifecycle": "completed",
+                "contract": "conductor",
+                "last_from": "cursor-sdk",
+                "last_subject": "cursor-sdk CLOSEOUT 8b7998b0e864",
+            }
+        ],
+    )
+
+    def _fetch(thread_id: str) -> dict:
+        assert thread_id == "12597"
+        return {
+            "ledger_unreachable": False,
+            "row": {
+                "dispatch_id": "disp-parked",
+                "consult_pending_continue_owed": False,
+                "record_json": {
+                    "closeout_body": "land_disposition: unlanded\nstop: PARKED_TRANSPORT\n"
+                },
+            },
+        }
+
+    monkeypatch.setattr(
+        "operator_hop_harvest.ledger.fetch_latest_terminal_conductor",
+        _fetch,
+    )
+    verdict = classify_row(digest, digest["roster"][0])
+    assert verdict["decision"] == "play"
+
+
 def test_hire_latch_holds_after_dispatch_recorded() -> None:
     rows = [
         _row(
