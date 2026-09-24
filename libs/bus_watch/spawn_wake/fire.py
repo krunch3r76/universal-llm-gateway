@@ -185,16 +185,20 @@ def body_for_leftover(
                     roster_row_id = str(row.get("row_id") or "")
                     break
         reuse = None
+        hop_from = None
         if digest is not None:
-            from bus_watch.spawn_wake.play_classify import parked_resume_thread
+            from bus_watch.spawn_wake.play_classify import parked_resume
 
-            reuse = parked_resume_thread(digest)
+            found = parked_resume(digest)
+            if found:
+                reuse, hop_from = found
         return build_play_dispatch_body(
             root_id,
             policy,
             todo_slug=str(todo),
             roster_row_id=roster_row_id or None,
             reuse_thread=reuse,
+            hop_from=hop_from,
         )
     if review_body:
         return review_body

@@ -249,8 +249,11 @@ def _parked_transport_owes_resume(lanes: list[Any], target: str) -> bool:
     return False
 
 
-def parked_resume_thread(digest: dict[str, Any]) -> str | None:
-    """Worker thread whose latest closeout is an unpaid PARKED_TRANSPORT."""
+def parked_resume(digest: dict[str, Any]) -> tuple[str, str] | None:
+    """Closed lane whose latest closeout is an unpaid PARKED_TRANSPORT.
+
+    Returns ``(thread_id, dispatch_id)`` so the replay hops that lane.
+    """
     lanes = digest.get("lanes")
     if not isinstance(lanes, list):
         return None
@@ -278,8 +281,19 @@ def parked_resume_thread(digest: dict[str, Any]) -> str | None:
             continue
         if "HOLD_MERGE" in body or "OPERATOR_GATE" in body:
             continue
-        return thread_id
+        if "land_disposition: discard" in body:
+            continue
+        dispatch_id = str(row.get("dispatch_id") or "").strip()
+        if not dispatch_id:
+            continue
+        return thread_id, dispatch_id
     return None
+
+
+def parked_resume_thread(digest: dict[str, Any]) -> str | None:
+    """Worker thread whose latest closeout is an unpaid PARKED_TRANSPORT."""
+    found = parked_resume(digest)
+    return found[0] if found else None
 
 
 def mark_consult_reply_seats_empty(digest: dict[str, Any]) -> None:
@@ -434,6 +448,7 @@ def build_play_dispatch_body(
     todo_slug: str,
     roster_row_id: str | None = None,
     reuse_thread: str | None = None,
+    hop_from: str | None = None,
 ) -> dict[str, Any]:
     """Admit one conductor on the addressed todo. Lane B; no house-generate paste.
 
@@ -462,6 +477,10 @@ def build_play_dispatch_body(
         body["_roster_row_id"] = str(roster_row_id)
     if reuse_thread:
         body["reuse_thread"] = str(reuse_thread)
+    if hop_from:
+        body["hop_from"] = str(hop_from)
+        body["hop_seq"] = 2
+        body["hop_reason"] = "park_harvest"
     return body
 
 
