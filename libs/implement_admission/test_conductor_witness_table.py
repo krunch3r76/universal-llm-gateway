@@ -291,6 +291,77 @@ def test_g6_s9_gate6_verdict_ratify_witnesses(tmp_path: Path) -> None:
     assert witnesses.get("G6") is not None
 
 
+def test_g6_bare_verdict_ratify_line_witnesses(tmp_path: Path) -> None:
+    """Whole-line ``VERDICT: RATIFY`` witnesses when cited sha matches."""
+    files_root = tmp_path / "cortex"
+    review_body = "VERDICT: RATIFY\n"
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is not None
+
+
+def test_g6_prose_ratify_withdrawn_verdict_reject_not_witness(tmp_path: Path) -> None:
+    """Prose mentions RATIFY; only **Verdict:** **REJECT** binds — no G6 witness."""
+    files_root = tmp_path / "cortex"
+    review_body = (
+        "The prior round's RATIFY is withdrawn after new findings.\n\n"
+        "**Verdict:** **REJECT**\n"
+    )
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is None
+
+
+def test_g6_quoted_merits_instruction_merits_return_not_witness(tmp_path: Path) -> None:
+    """Quoted ``Merits: RATIFY`` in instructions; live Merits: RETURN blocks G6."""
+    files_root = tmp_path / "cortex"
+    review_body = (
+        "Write the sidecar with a line exactly like Merits: RATIFY in the template.\n\n"
+        "Merits: RETURN\n\n"
+        "**Verdict:** **RETURN**\n"
+    )
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is None
+
+
+def test_g6_pre_admit_heading_verdict_return_not_witness(tmp_path: Path) -> None:
+    """Pre-ADMIT review with ``## Verdict: **RETURN**`` does not witness G6."""
+    files_root = tmp_path / "cortex"
+    review_body = "Pre-ADMIT review — scope only.\n\n## Verdict: **RETURN**\n"
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is None
+
+
 @pytest.mark.parametrize(
     ("review_body", "expected_reason"),
     [

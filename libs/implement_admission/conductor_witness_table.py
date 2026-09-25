@@ -6,7 +6,13 @@ import hashlib
 import re
 from pathlib import Path
 
-from review_verdict.grammar import VerdictAction, parse_any_review_body
+from review_verdict.grammar import (
+    _MERITS_RE,
+    ParsedVerdict,
+    VerdictAction,
+    _parse_token_from_raw,
+    parse_gate6_markdown,
+)
 
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.conductor_score_journal import (
@@ -49,6 +55,10 @@ _WITNESS_KIND_LAND = "LAND"
 _G2_ARTIFACT_IDS = ("F1", "S7")
 _G3_ARTIFACT_IDS = ("S4b", "S9")
 _G6_REVIEW_ARTIFACT_IDS = ("R1",)
+_G6_STANDALONE_VERDICT_RE = re.compile(
+    r"(?m)^VERDICT:\s*(?P<raw>.+?)\s*$",
+    re.IGNORECASE,
+)
 
 
 def _first_resolving_artifact(
@@ -183,6 +193,24 @@ def _g6_review_body_witnesses(
     )
 
 
+def _g6_collect_standalone_verdict_lines(text: str) -> list[ParsedVerdict]:
+    """Merits lines, gate-6 blocks, and whole-line ``VERDICT:`` — no prose-token fallback."""
+    collected: list[ParsedVerdict] = []
+    body = text or ""
+    for match in _MERITS_RE.finditer(body):
+        parsed = _parse_token_from_raw(match.group(1))
+        if parsed.token is not None:
+            collected.append(parsed)
+    gate6 = parse_gate6_markdown(body)
+    if gate6.token is not None:
+        collected.append(gate6)
+    for match in _G6_STANDALONE_VERDICT_RE.finditer(body):
+        parsed = _parse_token_from_raw(match.group("raw"))
+        if parsed.token is not None:
+            collected.append(parsed)
+    return collected
+
+
 def _g6_review_failure_reason(
     uri: str,
     *,
@@ -194,13 +222,15 @@ def _g6_review_failure_reason(
     text = _cortex_text(uri, files_root=files_root)
     if text is None:
         return "artifact unreadable"
-    parsed = parse_any_review_body(text)
-    if parsed.token is None:
+    collected = _g6_collect_standalone_verdict_lines(text)
+    if not collected:
         return "unrecognized review verdict"
-    if parsed.action in (VerdictAction.AMENDMENTS_REQUIRED, VerdictAction.BLOCKED):
+    for parsed in collected:
+        if parsed.action is VerdictAction.ADVANCE:
+            continue
+        if parsed.reason == "unknown_verdict":
+            return "unrecognized review verdict"
         return "negative review verdict"
-    if parsed.action is not VerdictAction.ADVANCE:
-        return "unrecognized review verdict"
     cited_sha = _artifact_cited_sha(tip_body, artifact_id)
     if cited_sha is None:
         return "missing_cited_sha"
