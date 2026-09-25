@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from typing import Any
 
 import httpx
@@ -600,11 +601,20 @@ async def post_conductor_hop_team_dispatch(
     stargate_url: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """POST ``/api/v1/team/dispatch``; return ``(ok, detail)``."""
+    stop_id = str(body.get("hop_from") or "").strip()
+    if not stop_id:
+        return False, {"reason": "missing_hop_from"}
+    admit_dispatch_id = str(body.get("dispatch_id") or "").strip() or str(uuid.uuid4())
+    wire_body = dict(body)
+    wire_body["dispatch_id"] = admit_dispatch_id
+    ledger = CursorDispatchLedger.instance()
+    if not ledger.claim_stop_service(stop_id, admit_dispatch_id):
+        return False, {"reason": "stop_not_claimed", "stop_id": stop_id}
     base = (stargate_url or DEFAULT_STARGATE_URL).rstrip("/")
     endpoint = "/api/v1/team/dispatch"
     try:
         async with make_async_client(base, timeout=_RELAY_TIMEOUT) as client:
-            resp = await client.post(endpoint, json=body)
+            resp = await client.post(endpoint, json=wire_body)
     except httpx.HTTPError as exc:
         logger.warning("conductor hop team_dispatch transport error: %s", exc)
         return False, {"error": str(exc), "reason": "stargate_unreachable"}

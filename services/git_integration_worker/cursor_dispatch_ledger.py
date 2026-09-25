@@ -77,6 +77,10 @@ CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_running
     ON cursor_sdk_dispatches(status) WHERE status = 'running';
 CREATE INDEX IF NOT EXISTS idx_sdk_dispatch_execution
     ON cursor_sdk_dispatches(execution_id);
+CREATE TABLE IF NOT EXISTS cursor_dispatch_stop_service (
+    stop_id         TEXT PRIMARY KEY,
+    serviced_admit  TEXT
+);
 """
 
 
@@ -1985,7 +1989,34 @@ class CursorDispatchLedger:
                 "WHERE dispatch_id=?",
                 (terminal_status, terminal_status, _now(), dispatch_id),
             )
+            conn.execute(
+                "INSERT OR IGNORE INTO cursor_dispatch_stop_service "
+                "(stop_id, serviced_admit) VALUES (?, NULL)",
+                (dispatch_id,),
+            )
         return lease_key
+
+    def claim_stop_service(self, stop_id: str, admit_dispatch_id: str) -> bool:
+        """Claim the single admit slot for a terminal stop row.
+
+        Succeeds only when ``serviced_admit`` is still null. A lost race or a
+        repeat attempt after a prior claim returns False (cap is 1).
+        """
+        sid = str(stop_id or "").strip()
+        admit = str(admit_dispatch_id or "").strip()
+        if not sid or not admit:
+            return False
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "UPDATE cursor_dispatch_stop_service "
+                "SET serviced_admit = ? "
+                "WHERE stop_id = ? AND serviced_admit IS NULL",
+                (admit, sid),
+            )
+            claimed = cur.rowcount == 1
+            conn.commit()
+            return claimed
 
     def promote_next_queued(
         self,

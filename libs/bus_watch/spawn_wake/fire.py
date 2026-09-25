@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -273,12 +274,22 @@ def body_for_leftover(
                     break
         reuse = None
         hop_from = None
+        service_stop_id = None
         if digest is not None:
             from bus_watch.spawn_wake.play_classify import parked_resume
 
             found = parked_resume(digest)
             if found:
                 reuse, hop_from = found
+            if roster_row_id and not hop_from:
+                for row in digest.get("roster") or []:
+                    if isinstance(row, dict) and str(row.get("row_id") or "") == str(
+                        roster_row_id
+                    ):
+                        service_stop_id = str(
+                            row.get("last_hire_dispatch_id") or ""
+                        ).strip() or None
+                        break
         return build_play_dispatch_body(
             root_id,
             policy,
@@ -286,6 +297,7 @@ def body_for_leftover(
             roster_row_id=roster_row_id or None,
             reuse_thread=reuse,
             hop_from=hop_from,
+            stop_id=service_stop_id,
         )
     if review_body:
         return review_body
@@ -390,6 +402,23 @@ def fire_spawn(
             "body": body,
             "leftover": verdict,
         }
+    if body and verdict.get("leftover") == LEFTOVER_PLAY:
+        stop_id = str(body.get("hop_from") or body.get("_stop_id") or "").strip()
+        if stop_id:
+            from services.git_integration_worker.cursor_dispatch_ledger import (
+                CursorDispatchLedger,
+            )
+
+            admit_id = str(body.get("dispatch_id") or "").strip() or str(uuid.uuid4())
+            body["dispatch_id"] = admit_id
+            if not CursorDispatchLedger.instance().claim_stop_service(stop_id, admit_id):
+                return {
+                    "status_code": 0,
+                    "refused": "stop_not_claimed",
+                    "quiet_refusal": True,
+                    "body": body,
+                    "leftover": verdict,
+                }
     poster = submit or submit_team_dispatch
     payload, status = poster(_wire_submit_body(body or {}))
     night_id = current_night_id()

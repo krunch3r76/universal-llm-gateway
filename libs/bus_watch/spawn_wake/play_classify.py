@@ -542,6 +542,7 @@ def build_play_dispatch_body(
     roster_row_id: str | None = None,
     reuse_thread: str | None = None,
     hop_from: str | None = None,
+    stop_id: str | None = None,
 ) -> dict[str, Any]:
     """Admit the liaison once on an empty seat. The liaison admits the conductor.
 
@@ -575,6 +576,8 @@ def build_play_dispatch_body(
         body["hop_from"] = str(hop_from)
         body["hop_seq"] = 2
         body["hop_reason"] = "park_harvest"
+    elif stop_id:
+        body["_stop_id"] = str(stop_id)
     return body
 
 
