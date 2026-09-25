@@ -395,6 +395,8 @@ def live_conductor_owner(
         conductor = _conductor_signal(lane)
         if slug not in todos:
             continue
+        if str(lane.get("quiet_reason") or "") == "closeout_unharvested":
+            continue
         if live is False:
             continue
         if live is True and conductor is True:
@@ -518,7 +520,11 @@ def _play_prompt(todo_slug: str) -> str:
     text = (
         f"Execute the liaison turn at {LIAISON_TURN_SPEC}. "
         "Do not implement the row. Admit one conductor. "
-        "If this dispatch is already live, stop."
+        "If this dispatch is already live, stop. "
+        "A closeout_unharvested lane is not a live conductor. "
+        "If a cdp reply is already on this house, the conductor folds that "
+        "harvest and continues. Do not stop for a human unless the packet "
+        "names see-score or OPERATOR_GATE."
     )
     if todo_slug == "cdp-review-contract-shape":
         text += (

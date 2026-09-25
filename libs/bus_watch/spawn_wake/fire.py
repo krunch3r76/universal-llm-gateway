@@ -471,6 +471,12 @@ def tick_spawn_on_wake(
     policy = digest.get("policy") or {}
     if not policy.get("wake_on_attention_only"):
         return {"action": "disabled"}
+    if not dry_run:
+        from bus_watch.quiet_reason import close_unharvested_quiet_lanes_on_bus
+
+        closed_quiet = close_unharvested_quiet_lanes_on_bus(digest.get("lanes") or [])
+        if closed_quiet:
+            digest["closed_unharvested_lanes"] = closed_quiet
     lock = read_lock(root_id)
     maybe_forfeit_expired_lease(
         root_id,
