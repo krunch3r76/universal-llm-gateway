@@ -517,6 +517,14 @@ def tick_spawn_on_wake(
     unstarted = CursorDispatchLedger.instance().unstarted_claims()
     if unstarted:
         digest["unstarted_claims"] = unstarted
+    if not dry_run:
+        from bus_watch.quiet_reason import fetch_held_execution_ids, reconcile_holder_lost
+
+        held = fetch_held_execution_ids()
+        if held is not None:
+            holder_lost = reconcile_holder_lost(digest.get("lanes") or [], held)
+            if holder_lost:
+                digest["holder_lost"] = holder_lost
     lock = read_lock(root_id)
     maybe_forfeit_expired_lease(
         root_id,
