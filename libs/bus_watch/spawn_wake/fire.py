@@ -517,7 +517,6 @@ def tick_spawn_on_wake(
     unstarted = CursorDispatchLedger.instance().unstarted_claims()
     if unstarted:
         digest["unstarted_claims"] = unstarted
-        return {"action": "hold", "unstarted_claims": unstarted}
     lock = read_lock(root_id)
     maybe_forfeit_expired_lease(
         root_id,
