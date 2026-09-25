@@ -60,6 +60,33 @@ def test_reconcile_holder_lost_posts_when_not_held() -> None:
     assert posts == [("12711", "holder_lost exec-orphan-1")]
 
 
+def test_reconcile_holder_lost_posts_digest_generate_subject() -> None:
+    """12680 shape: digest lane has no dispatch_id, lifecycle active, short id."""
+    posts: list[tuple[str, str]] = []
+
+    def fake_post(thread_id: str, execution_id: str) -> bool:
+        posts.append((thread_id, execution_id))
+        return True
+
+    lane = {
+        "id": "12680",
+        "status": "active",
+        "lifecycle": "active",
+        "contract": "conductor",
+        "last_subject": "cursor-sdk generate — 6e1f4eba",
+    }
+    written = reconcile_holder_lost([lane], frozenset(), post=fake_post)
+    assert written == ["12680"]
+    assert posts == [("12680", "6e1f4eba")]
+
+    held = reconcile_holder_lost(
+        [lane],
+        frozenset({"6e1f4eba-5e95-4e4f-94a3-91ec0835ac5c"}),
+        post=fake_post,
+    )
+    assert held == []
+
+
 def test_reconcile_holder_lost_skips_when_execution_held() -> None:
     posts: list[tuple[str, str]] = []
 

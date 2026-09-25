@@ -168,7 +168,10 @@ def _lane_execution_id(lane: dict[str, Any]) -> str:
             return token
     subject = str(lane.get("last_subject") or "")
     match = _UUID_RE.search(subject)
-    return match.group(0) if match else ""
+    if match:
+        return match.group(0)
+    short = re.search(r"generate\s+[—-]\s*([0-9a-f]{8,})", subject, re.I)
+    return short.group(1) if short else ""
 
 
 def _subject_terminal(last_subject: str) -> bool:
@@ -190,8 +193,10 @@ def _admitted_cursor_sdk_hop(lane: dict[str, Any]) -> bool:
     if "generate admitted" in subject_l:
         return True
     contract = _lane_contract(lane)
-    if contract == "conductor" and str(lane.get("lifecycle") or "").lower() == "admitted":
-        return True
+    lifecycle = str(lane.get("lifecycle") or "").lower()
+    if contract == "conductor" and lifecycle in {"admitted", "active"}:
+        if "cursor-sdk generate" in subject_l or lifecycle == "admitted":
+            return True
     if contract == "conductor" and "admitted" in subject_l:
         return True
     for tag in lane.get("tags") or []:
@@ -199,6 +204,17 @@ def _admitted_cursor_sdk_hop(lane: dict[str, Any]) -> bool:
         if token == "contract:conductor" and (
             str(lane.get("lifecycle") or "").lower() == "admitted" or "admitted" in subject_l
         ):
+            return True
+    return False
+
+
+def _execution_held(execution_id: str, held_execution_ids: set[str] | frozenset[str]) -> bool:
+    token = str(execution_id or "").strip().lower()
+    if not token:
+        return False
+    for held in held_execution_ids:
+        other = str(held or "").strip().lower()
+        if other == token or other.startswith(token):
             return True
     return False
 
@@ -218,7 +234,7 @@ def _qualifies_holder_lost(
     execution_id = _lane_execution_id(lane)
     if not execution_id:
         return None
-    if execution_id in held_execution_ids:
+    if _execution_held(execution_id, held_execution_ids):
         return None
     thread_id = str(lane.get("id") or "").strip()
     if not thread_id:

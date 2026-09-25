@@ -518,7 +518,10 @@ def tick_spawn_on_wake(
     if unstarted:
         digest["unstarted_claims"] = unstarted
     if not dry_run:
-        from bus_watch.quiet_reason import fetch_held_execution_ids, reconcile_holder_lost
+        from bus_watch.quiet_reason import (
+            fetch_held_execution_ids,
+            reconcile_holder_lost,
+        )
 
         held = fetch_held_execution_ids()
         if held is not None:
