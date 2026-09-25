@@ -260,7 +260,9 @@ async def test_ledger_non_authority(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     bus.terminate_dispatch.assert_awaited_once_with(
-        thread_id="1604", terminal_status="completed", bus_lifecycle="completed"
+        thread_id="1604",
+        terminal_status="completed",
+        execution_id="exec-nonauth",
     )
 
 
@@ -328,15 +330,17 @@ def test_register_lane_worktree_writes_pinned_db_across_home_swap(
         register_lane_worktree,
     )
 
+    source_repo = real_home / "universal-llm-gateway"
     register_lane_worktree(
         thread_id="10143",
         worktree_path=worktree_path,
         branch_name="cursor-sdk/lane-10143",
         branch_point="master",
         last_dispatch_id="disp-10143",
+        source_repo=source_repo,
     )
 
-    record = lookup_lane_worktree(thread_id="10143")
+    record = lookup_lane_worktree(thread_id="10143", source_repo=source_repo)
     assert record is not None
     assert record.worktree_path == worktree_path.resolve()
     assert pinned_db == real_home / ".gateway" / "cursor-sdk-dispatch.db"
@@ -600,9 +604,7 @@ def test_baseline_after_lease_ac9() -> None:
         ).fetchone()
     assert row["wt_baseline"] is None
 
-    ledger.set_wt_baseline(
-        dispatch_id=req.dispatch_id, wt_baseline='{"path": "sha"}'
-    )
+    ledger.set_wt_baseline(dispatch_id=req.dispatch_id, wt_baseline='{"path": "sha"}')
     with _connect() as conn:
         row2 = conn.execute(
             "SELECT wt_baseline FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -765,7 +767,12 @@ def test_dispatch_status_by_thread_absent() -> None:
 def test_dispatch_status_by_thread_queued() -> None:
     ledger = CursorDispatchLedger.instance()
     repo = "/repo"
-    _admit(ledger, _req(dispatch_id="w1", thread_id="t-queued"), source_repo=repo, contract="implement")
+    _admit(
+        ledger,
+        _req(dispatch_id="w1", thread_id="t-queued"),
+        source_repo=repo,
+        contract="implement",
+    )
     req2 = _req(dispatch_id="w2", thread_id="t-queued")
     ledger.admit(
         req=req2,
@@ -843,7 +850,12 @@ def test_dispatch_status_endpoint_unknown_thread() -> None:
         params={"thread_id": "unknown-thread"},
     )
     assert resp.status_code == 200
-    assert resp.json() == {"thread_id": "unknown-thread", "status": None}
+    assert resp.json() == {
+        "thread_id": "unknown-thread",
+        "dispatch_id": None,
+        "status": None,
+        "park": None,
+    }
 
 
 _SOURCE_REF = "todo:cursor-sdk-same-source-ref-dedupe"
@@ -946,8 +958,7 @@ def test_force_bypasses_same_ref_but_still_fifo_ac4() -> None:
     assert forced.status == "queued"
     with _connect() as conn:
         row = conn.execute(
-            "SELECT status, source_ref FROM cursor_sdk_dispatches "
-            "WHERE dispatch_id=?",
+            "SELECT status, source_ref FROM cursor_sdk_dispatches WHERE dispatch_id=?",
             ("forced-twin",),
         ).fetchone()
     assert row["status"] == "queued"
@@ -1364,12 +1375,8 @@ def test_open_conductor_holder_visible_in_ledger() -> None:
         ledger,
         req,
         source_repo=_REPO,
-        contract="none",
+        contract="conductor",
         work_key=_CONDUCTOR_WORK_KEY,
-    )
-    ledger.merge_record_json(
-        dispatch_id="cond-open-1",
-        patch={"contract": "conductor", },
     )
     with ledger._connect() as conn:
         holder = find_open_conductor_holder_conn(
@@ -1415,6 +1422,42 @@ def test_nested_implement_same_work_key_under_conductor_allowed() -> None:
         nest_under=parent,
     )
     assert result is None or result.status in ("admitted", "queued")
+
+
+def test_unstarted_claims_returns_orphan_after_claim() -> None:
+    ledger = CursorDispatchLedger.instance()
+    stop_id = "orphan-stop-1"
+    admit_id = "orphan-admit-1"
+    ledger.mark_terminal(dispatch_id=stop_id, terminal_status="completed")
+    assert ledger.claim_stop_service(stop_id, admit_id) is True
+    assert ledger.unstarted_claims() == [
+        {"stop_id": stop_id, "serviced_admit": admit_id},
+    ]
+
+
+def test_unstarted_claims_empty_when_dispatch_row_exists() -> None:
+    ledger = CursorDispatchLedger.instance()
+    stop_id = "started-stop-1"
+    admit_id = "started-admit-1"
+    ledger.mark_terminal(dispatch_id=stop_id, terminal_status="completed")
+    assert ledger.claim_stop_service(stop_id, admit_id) is True
+    _insert_status_row(ledger, dispatch_id=admit_id, status="admitted")
+    assert ledger.unstarted_claims() == []
+
+
+def test_unstarted_claims_scan_does_not_clear_serviced_admit() -> None:
+    ledger = CursorDispatchLedger.instance()
+    stop_id = "persist-claim-stop"
+    admit_id = "persist-claim-admit"
+    ledger.mark_terminal(dispatch_id=stop_id, terminal_status="completed")
+    assert ledger.claim_stop_service(stop_id, admit_id) is True
+    ledger.unstarted_claims()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT serviced_admit FROM cursor_dispatch_stop_service WHERE stop_id=?",
+            (stop_id,),
+        ).fetchone()
+    assert row["serviced_admit"] == admit_id
 
 
 def test_claim_stop_service_first_wins_second_not_claimed() -> None:
