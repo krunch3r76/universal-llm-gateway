@@ -31,6 +31,10 @@ Reader = answering model. Cognitive procedure only. ¬ cascade · ¬ header gram
 8. Bind one rival; name what it kills; state the falsifier (one observation that overturns the bind).
 9. `¬(lit_search ∨ RAG ∨ paper_cite)@instance` · `¬ranked(L0|L1|L2 tables)` — those are the lead's check (`path-sim`).
 
+## Architectural change is permitted
+
+`apply(this) ⇒ architectural_change ∈ option_space`. The incumbent implementation is the baseline to kill, not a constraint the bind must fit. A producer that already holds the bytes may be redesigned so a stream it already drains is retained and served. A packet line such as "do not invent a second store" does not freeze that producer. Treating today's drop, skip, or missing route as the option space is the miss.
+
 ## Width by detent
 
 | Detent | Width |
