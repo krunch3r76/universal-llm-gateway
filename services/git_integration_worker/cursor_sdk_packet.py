@@ -319,6 +319,27 @@ def infer_contract_from_text(text: str) -> str | None:
     return match.group(1).strip().lower()
 
 
+# Generate admits ``none`` when the caller wants freeform judgment. ``consult``
+# is still a real handoff-derivation token, so a missing SDK contract must not
+# be filled in as ``consult``.
+MISSING_SDK_CONTRACT = "none"
+
+
+def sdk_contract_or_missing(*tokens: str | None) -> str:
+    """First non-blank contract token, else ``none``.
+
+    Explicit ``consult`` is returned unchanged. Only the empty case changes:
+    it used to invent ``consult``, which ``team_dispatch`` generate cannot send.
+    """
+    for token in tokens:
+        if token is None:
+            continue
+        text = str(token).strip().lower()
+        if text:
+            return text
+    return MISSING_SDK_CONTRACT
+
+
 _SOURCE_REF_FRONTMATTER_RE = re.compile(
     r"^source_ref:\s*(\S+)\s*$", re.IGNORECASE | re.MULTILINE
 )
@@ -573,7 +594,7 @@ def resolve_prompt_preamble(
     the invoke can resolve. Slugs already invoked by a fixed preamble or by the
     packet body are skipped rather than repeated.
     """
-    contract = (handoff_contract or inferred_contract or "consult").lower()
+    contract = sdk_contract_or_missing(handoff_contract, inferred_contract)
     if prompt_preamble:
         preamble = prompt_preamble.strip()
     elif contract == "implement":

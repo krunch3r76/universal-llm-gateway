@@ -214,6 +214,7 @@ from services.git_integration_worker.cursor_sdk_packet import (
     extract_work_key_from_packet,
     infer_contract_from_text,
     resolve_prompt_preamble,
+    sdk_contract_or_missing,
 )
 from services.git_integration_worker.cursor_sdk_park import (
     queue_stall_lease_keys,
@@ -1428,7 +1429,7 @@ async def _start_promoted_dispatch(
     ledger = CursorDispatchLedger.instance()
     req = ledger.load_promoted_request(promoted)
     cfg = _config(request) if request is not None else _CONFIG
-    contract = (promoted.contract or "consult").lower()
+    contract = sdk_contract_or_missing(promoted.contract)
     binding = binding_for_dispatch(
         cfg=cfg,
         lease_key=promoted.lease_key or promoted.source_repo,
@@ -1922,7 +1923,7 @@ async def _deliver_sdk_closeout(
         "admitted_via": req.admitted_via,
     }
 
-    closeout_contract = (req.handoff_contract or "consult").lower()
+    closeout_contract = sdk_contract_or_missing(req.handoff_contract)
     closeout_reply_kwargs = {
         "thread_id": req.thread_id,
         "to_agent": reply_to,
@@ -1946,7 +1947,7 @@ async def _deliver_sdk_closeout(
         bus_result = await bus.reply(**closeout_reply_kwargs)
 
     if bus_result.status_code < 400:
-        contract = (req.handoff_contract or "consult").lower()
+        contract = sdk_contract_or_missing(req.handoff_contract)
         try:
             from systems.frontier_consult.cursor_sdk_role_delivery import (
                 post_role_labeled_check_turn,
@@ -3083,7 +3084,7 @@ async def admit_cursor_dispatch(
         if (not req.handoff_contract and packet_text)
         else None
     )
-    contract = (req.handoff_contract or inferred_contract or "consult").lower()
+    contract = sdk_contract_or_missing(req.handoff_contract, inferred_contract)
     pool_refusal = _conductor_pool_refusal(
         req, contract=contract, packet_text=packet_text
     )

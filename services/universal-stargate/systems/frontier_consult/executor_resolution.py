@@ -121,7 +121,8 @@ def derive_recommended_executor(
 
     if reason_code == _DESIGN_JUDGMENT_REMAINING:
         warnings.append(
-            "not_mechanical_implement; consider contract=consult or split handoff"
+            "not_mechanical_implement; omit the contract override "
+            "(handoff then derives consult) or split the handoff"
         )
         return _composer_fields(
             source="explicit_override",

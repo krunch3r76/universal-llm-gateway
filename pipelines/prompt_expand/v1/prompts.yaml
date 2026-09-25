@@ -18,8 +18,9 @@ prompts:
       - Never prescribe the route — invite the model to choose and report it (free-strategy).
       - Do not launder inference as citation; derived summaries are not evidence.
 
-      Scope list (retrieve before author): llm_prompting, writing, suggestion_orientation,
-      prompt_injection, agent_skills_research, constitutional_ai.
+      Scope list (retrieve before author, model reader): llm_prompting,
+      suggestion_orientation, prompt_injection, agent_skills_research.
+      writing is human craft, not this list.
     template: ""
 
   author_cdp:

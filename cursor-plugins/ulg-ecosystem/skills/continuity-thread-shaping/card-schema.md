@@ -9,7 +9,7 @@ Header table lives on the skill first screen. This file is the field shape. CHEC
 | `## Stance` | yes (`orchestrator_continuity`; `tick_charter` skips speech) | Use `ulg-for-llms` |
 | `## Why this house` | yes | one paragraph **or** sidecar pointer |
 | `## Objective` | yes | Mission + In / Out (short) |
-| `## Runbooks` | yes | ≥1 `runbook:*` ids |
+| `## Runbooks` | yes | `runbook:house-close` plus the house-specific `runbook:*` |
 | `## Rules` | yes | assertion-id / runbook-id rows that **override** global skill omit-paths |
 | `## Sidecars` | yes | evidence URIs. `_None yet._` is legal; missing heading is not |
 | `## House` | when minted | house entity id |

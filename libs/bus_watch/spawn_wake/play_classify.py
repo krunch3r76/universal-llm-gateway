@@ -107,6 +107,10 @@ def _lane_todos(lane: dict[str, Any]) -> set[str]:
             found.add(slug)
         elif blob and str(blob).lower().startswith("todo:"):
             found.add(str(blob).split(":", 1)[1].lower())
+    for tag in lane.get("tags") or []:
+        token = str(tag).strip().lower()
+        if token.startswith("todo:") and len(token) > 5:
+            found.add(token.split(":", 1)[1])
     return found
 
 
@@ -182,8 +186,8 @@ def consult_reply_seat_empty(thread_id: str) -> bool:
 def hire_latch_released(digest: dict[str, Any], dispatch_id: str) -> bool:
     """True when *dispatch_id* is a terminal conductor that still owes a continuation.
 
-    A quiet-alarm or consult-reply on the open bus thread is that surface.
-    The hire latch must not block the re-admit.
+    A consult reply on the open bus thread is that surface. A quiet-with-WIP
+    alarm on a lane that is still active is not: that lane still owns the row.
     """
     target = str(dispatch_id or "").strip()
     if not target:
@@ -195,6 +199,8 @@ def hire_latch_released(digest: dict[str, Any], dispatch_id: str) -> bool:
         return False
     for lane in lanes:
         if not isinstance(lane, dict) or not _continuation_surface(lane):
+            continue
+        if _quiet_work_lane(lane) and _lane_live(lane) is not False:
             continue
         thread_id = str(lane.get("id") or "")
         if not thread_id:
@@ -507,6 +513,21 @@ def plant_play_state(
     return planted
 
 
+def _play_prompt(todo_slug: str) -> str:
+    """Liaison admit text. Generate rejects ``source_ref`` combined with ``prompt``."""
+    text = (
+        f"Execute the liaison turn at {LIAISON_TURN_SPEC}. "
+        "Do not implement the row. Admit one conductor. "
+        "If this dispatch is already live, stop."
+    )
+    if todo_slug == "cdp-review-contract-shape":
+        text += (
+            " The conductor must rag(op=search) with scope research "
+            "before it binds the review contract."
+        )
+    return text
+
+
 def build_play_dispatch_body(
     root_id: str,
     policy: dict[str, Any],
@@ -532,15 +553,10 @@ def build_play_dispatch_body(
         "seat": "cursor-sdk",
         "contract": "none",
         "lane": "B",
-        "source_ref": work_key,
         "work_key": work_key,
         "dispatch_thread_id": str(root_id),
         "subject": f"{LIAISON_DRIVER_MARK} todo:{todo_slug}",
-        "prompt": (
-            f"Execute the liaison turn at {LIAISON_TURN_SPEC}. "
-            "Do not implement the row. Admit one conductor. "
-            "If this dispatch is already live, stop."
-        ),
+        "prompt": _play_prompt(todo_slug),
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
         **successor_model_fields(policy),

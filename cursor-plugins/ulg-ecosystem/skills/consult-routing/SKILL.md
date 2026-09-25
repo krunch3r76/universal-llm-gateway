@@ -431,27 +431,25 @@ SoT: `services/git_integration_worker/cursor_sdk_mode.py` ·
 
 | Need | `contract` | Default `sdk_mode` | Explicit override | Incompatible |
 |---|---|---|---|---|
-| Sparse recon / architecture bind before code | `none` \| `consult` \| `ask` \| `recon` \| `seed` | **`plan`** when `read_only=true` or unset on these contracts | `sdk_mode: agent` forces agent | — |
-| Packet names plan-first | same as row above | **`plan`** if frontmatter `sdk_mode: plan` | `sdk_mode: agent` | — |
+| Bind / recon / freeform | `none` or `sketch` | **`agent`** | `sdk_mode: plan` on the wire or in packet frontmatter | — |
+| Packet names plan-first | any non-implement-class | wire or frontmatter `sdk_mode` | `sdk_mode: agent` | — |
 | Code implement / mechanical | `implement` \| `pure-mechanical` | **`agent`** | omit ok | **`sdk_mode=plan` → 422** |
 | Conductor orchestration | `conductor` | **`agent`** | — | **`sdk_mode=plan` → 422** |
 | After `PLAN_COMPLETE` | `implement` | **`agent`** | nest `nest_under=<plan_id>` | plan land claims forbidden |
+
+`consult`, `ask`, `recon`, and `seed` are not `team_dispatch` generate contracts. `consult` remains the handoff-derivation default when the override is omitted. `ask` / `recon` / `seed` are `agent_bus.request` contracts.
 
 ### Resolution order (v1)
 
 1. Wire `sdk_mode` on request body (if set)
 2. Packet frontmatter `sdk_mode:`
-3. Implement-class contracts → **`agent`**
-4. `read_only=true` on plan-default contracts → **`plan`**
-5. Else **`agent`**
+3. Else **`agent`**
+
+`resolve_sdk_mode` does not select `plan` from `read_only` or from the contract name. Plan is explicit.
 
 ### cursor-auto nested hook (W3)
 
-Nested `contract ∈ {ask, recon, seed}` legs declare **`sdk_mode: plan`** on the
-wire or in packet frontmatter when read-only plan mode is intended; otherwise
-admit resolves **`agent`**. Does **not** auto-fire implement — conductor
-`NEXT_ADMIT` nests implement after plan harvest (`conductor` § Scoreboard
-`sdk_mode` column).
+A nested leg resolves **`agent`** unless it declares **`sdk_mode: plan`** on the wire or in packet frontmatter. That does **not** auto-fire implement — conductor `NEXT_ADMIT` nests implement after plan harvest (`conductor` § Scoreboard `sdk_mode` column).
 
 ### Closeout
 

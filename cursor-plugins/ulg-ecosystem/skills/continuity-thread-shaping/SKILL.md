@@ -110,7 +110,7 @@ Residuals: `residual-imprint`. Hub ≠ parking lot.
 
 | Trigger | Act |
 |---|---|
-| Birth | seven headings + hub (`source_uri`=card) + ≥1 `runbook:*` · house-specific runbook same write if the lane has its own law → `card-schema.md` |
+| Birth | seven headings + hub (`source_uri`=card) + `runbook:house-close` and the house-specific `runbook:*` · house-specific runbook same write if the lane has its own law → `card-schema.md` |
 | Resume | Cortex-house order. Speaking it? Slot order = `operator-posture` Rule 3; fill sources → `resume-fill.md`. Slot 6 (imprint ids as memory) is the only slot this skill originates. IDE tab `{n} {slug}` |
 | "where do we leave this" | matter node first → hub `related_to` if the house owns it → else new root |
 | Inbound LIAISON / NOTE | per `liaison-inbound.md` · `send` ¬ `request` · `runbook:liaison-seat-on-a-lane` |

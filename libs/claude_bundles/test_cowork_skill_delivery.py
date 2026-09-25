@@ -150,6 +150,25 @@ def test_dispatch_prompt_asks_for_a_local_skill_hash() -> None:
     assert again.count("Hash these skills") == 1
 
 
+def test_review_charter_is_not_an_implementer_checklist() -> None:
+    from claude_bundles.cowork_skill_delivery import prepend_cdp_dispatch_skills
+    from claude_bundles.sealed_cdp_prefix import (
+        ensure_review_reading_charter,
+        peel_sealed_cdp_skill_prefix,
+    )
+
+    text, _, _ = prepend_cdp_dispatch_skills("Pin 2a005f508.\n", ["reasoning-posture"])
+    reviewed = ensure_review_reading_charter(text, "review")
+    assert "the packet carries the code under review" in reviewed
+    assert "cannot check out a commit" in reviewed
+    assert reviewed.count("Review seat:") == 1
+    assert ensure_review_reading_charter(reviewed, "review").count("Review seat:") == 1
+    _attach, _inline, body = peel_sealed_cdp_skill_prefix(reviewed)
+    assert "Review seat:" not in body
+    assert "Pin 2a005f508" in body
+    assert "Review seat:" not in ensure_review_reading_charter(text, "ask")
+
+
 def test_attest_shared_sync_rejects_inline_only_channel() -> None:
     """a:27142 — shared_sync must be attached; inline alone is wrong_channel."""
     with pytest.raises(SkillDeliveryError, match="wrong_channel"):

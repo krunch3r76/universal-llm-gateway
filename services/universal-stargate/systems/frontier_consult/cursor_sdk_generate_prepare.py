@@ -42,6 +42,27 @@ from .handoff import (
     post_pointer_turn,
 )
 
+
+def _row_identity_tags(work_key: str | None, packet_path: str | None) -> list[str]:
+    """Tags that keep the admitted row visible after the subject changes.
+
+    A quiet-alarm replaces ``last_subject``. The packet name
+    ``conductor-{slug}.md`` and a ``todo:`` work key are the row.
+    """
+    tags: list[str] = []
+    key = str(work_key or "").strip().lower()
+    if key.startswith("todo:") and len(key) > 5:
+        tags.append(key)
+    name = str(packet_path or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if name.startswith("conductor-") and name.endswith(".md"):
+        slug = name[len("conductor-") : -len(".md")]
+        if slug and all(c.isalnum() or c == "-" for c in slug):
+            tag = f"todo:{slug}"
+            if tag not in tags:
+                tags.append(tag)
+    return tags
+
+
 __all__ = [
     "PreparedCursorSdkHandle",
     "handle_from_dict",
@@ -322,6 +343,7 @@ async def prepare_cursor_sdk_generate(
                         "cursor-sdk-generate",
                         "type:generate",
                         f"contract:{handoff_contract}",
+                        *_row_identity_tags(work_key, packet_path),
                     ],
                     handoff_contract=handoff_contract,
                     lifecycle_state="pending",
@@ -360,6 +382,7 @@ async def prepare_cursor_sdk_generate(
                 "cursor-sdk-generate",
                 "type:generate",
                 f"contract:{handoff_contract}",
+                *_row_identity_tags(work_key, packet_path),
             ],
             handoff_contract=handoff_contract,
             lifecycle_state="pending",

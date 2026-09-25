@@ -89,7 +89,9 @@ def FrontierHandoffRequested(  # noqa: N802
 ) -> Event:
     """Handoff admission — seat resolved, thread creation pending.
 
-    ``handoff_contract`` is the resolved work-intent (``consult`` | ``implement``).
+    ``handoff_contract`` is the derived F1 work-intent. Omission resolves to
+    ``consult``. An explicit override uses the handoff enum
+    (``sketch`` | ``pure-mechanical`` | ``implement`` | ``none``).
     ``model`` is the canonical synthetic seat slug when ``model`` was the selector.
     """
     payload: dict[str, str | None] = {

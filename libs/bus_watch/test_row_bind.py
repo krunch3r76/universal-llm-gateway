@@ -111,7 +111,8 @@ def test_latched_trio_with_todo_is_play_body() -> None:
     )
     assert body["contract"] == "none"
     assert "liaison-sdk-driver" in body["subject"]
-    assert body["source_ref"] == "todo:foo"
+    assert "source_ref" not in body
+    assert body["work_key"] == "todo:foo"
     assert body["lane"] == "B"
     assert body.get("_row_class") == "trio"
     assert "--mark-friction a:35997:" in body["prompt"]

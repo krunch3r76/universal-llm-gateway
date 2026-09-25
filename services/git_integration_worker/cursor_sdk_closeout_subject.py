@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from services.git_integration_worker.cursor_sdk_packet import infer_contract_from_text
+from services.git_integration_worker.cursor_sdk_packet import (
+    infer_contract_from_text,
+    sdk_contract_or_missing,
+)
 from services.git_integration_worker.models.cursor_api import CursorDispatchRequest
 
 _HANDOFF_TO_WIRE = {
@@ -36,7 +39,7 @@ def resolve_closeout_wire_contract(
     mapped = _HANDOFF_TO_WIRE.get(handoff)
     if mapped:
         return mapped
-    return (contract_fallback or handoff or "consult").strip().lower()
+    return sdk_contract_or_missing(contract_fallback, handoff)
 
 
 def build_sdk_closeout_subject(req: CursorDispatchRequest, *, contract: str) -> str:

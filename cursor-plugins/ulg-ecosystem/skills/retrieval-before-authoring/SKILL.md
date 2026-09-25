@@ -13,24 +13,38 @@ best cell in the trial paired retrieval **with** a stance block.
 
 ## 1. Retrieve
 
-Run one `rag(op="search", ...)` per scope. Do not skip this to save a turn.
+Run one `rag(op="search", ...)` per scope in the set for this job. Do not skip
+a scope in that set to save a turn. A null yield is a finding: do not look that
+scope up again for the same job.
+
+### LLM prompt or packet (a model will act on it)
+
+These four only:
 
 | Scope | What it holds |
 |---|---|
 | `llm_prompting` | persona/framing effects, ICL, long-context, prompt optimization |
-| `writing_exemplars` | exemplary human prose (Gutenberg essays/oratory) — register. Query first on a writing TASK |
-| `writing` | human writing craft — cogency, fluency, persuasion, revision (procedure, not prose to imitate) |
-| `llm_writing_anti` | anti-specimen — how LLMs should not write to humans (named retrieve only) |
 | `suggestion_orientation` | elicitation, free-strategy, Law of Reversed Effort, demand characteristics |
 | `prompt_injection` | spotlighting, instruction hierarchy, post-prompting, provenance |
 | `agent_skills_research` | procedural memory, progressive disclosure, compiled artifacts |
-| `constitutional_ai` | self-report reliability, sycophancy, fluency bias, verification |
 
-`suggestion_orientation` is **not** inside the composite `research` / `all_research`
-scopes — query it by name or the arc under-draws. A writing TASK queries
-`writing_exemplars` **by name** for register (steal rhythm, not period diction);
-query `writing` for craft theory only. Use `llm_writing_anti` only for "what
-not to sound like." Do not treat craft PDFs as prose to sound like.
+`writing` is human craft (cogency, revision, persuasion). It is not LLM
+prompting guidance. Do not cite it when the reader is a model.
+`writing_exemplars` and `llm_writing_anti` are not this set.
+`constitutional_ai` is not this set; query it by name only when the failure
+mode under study is sycophancy or fluency bias.
+
+`suggestion_orientation` is **not** inside the composite `research` /
+`all_research` scopes — query it by name or the arc under-draws. Off-question
+chunks (autosuggestion, injection-benchmark generators) are not guidance.
+
+### Human letter or outbound prose
+
+| Scope | When |
+|---|---|
+| `writing` | Craft theory only. Not prose to imitate. Not an LLM prompt. |
+| `writing_exemplars` | Register on a human writing task, by name. Steal rhythm, not period diction. A null means no specimen; do not invent one. |
+| `llm_writing_anti` | Named retrieve only, and only for "what not to sound like." |
 Call shape:
 
 ```
@@ -74,4 +88,6 @@ table, and the cheapest experiment that would falsify the design.
 
 Authoring before any `rag` call · citing a finding you did not retrieve this session ·
 reporting only hits and omitting null scopes · naming the audience and calling the
-genre handled · shipping a packet whose constraint bulk drowns its target.
+genre handled · shipping a packet whose constraint bulk drowns its target ·
+citing `writing`, `writing_exemplars`, or `llm_writing_anti` as guidance for a
+prompt a model will execute.

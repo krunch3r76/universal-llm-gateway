@@ -247,6 +247,7 @@ def stage_cdp_prompt_with_skills(
         SkillDeliveryError,
         prepend_cdp_dispatch_skills,
     )
+    from claude_bundles.sealed_cdp_prefix import ensure_review_reading_charter
 
     reject_cdp_skills_path_sim(skills)
 
@@ -297,6 +298,7 @@ def stage_cdp_prompt_with_skills(
             raise CdpStagingError(str(exc), code="pool_blocked") from exc
     try:
         merged, _, _ = prepend_cdp_dispatch_skills(body, effective)
+        merged = ensure_review_reading_charter(merged, purpose)
     except KeyError as exc:
         raise CdpStagingError(
             f"unknown skill in skills=: {exc.args[0] if exc.args else exc}",

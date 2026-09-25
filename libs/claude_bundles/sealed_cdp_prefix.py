@@ -16,6 +16,15 @@ _LEADING_AUTHORITY = re.compile(
 _LEADING_SKILL_HASH = re.compile(
     r"^Hash these skills from your local skill server and quote each digest before you answer:.*\n"
 )
+REVIEW_READING_CHARTER = (
+    "Review seat: the packet carries the code under review. "
+    "Read that, and browse the live tree for other code. "
+    "Do not REJECT because you cannot check out a commit, run pytest, or run quality_gate. "
+    "A conflict between this live tree and land is reconciled later by a reasoning seat.\n"
+)
+_LEADING_REVIEW_CHARTER = re.compile(
+    r"^Review seat: the packet carries the code under review\..*\n"
+)
 _LEADING_INLINE_BLOCK = re.compile(
     r"^(?:\r?\n)*<skills_inline>.*?</skills_inline>(?:\r?\n)*",
     re.DOTALL,
@@ -84,6 +93,10 @@ def peel_sealed_cdp_skill_prefix(
         if skill_hash is not None:
             rest = rest[skill_hash.end() :]
             continue
+        charter = _LEADING_REVIEW_CHARTER.match(rest)
+        if charter is not None:
+            rest = rest[charter.end() :]
+            continue
         inline_match = _LEADING_INLINE_BLOCK.match(rest)
         if inline_match is not None:
             block = inline_match.group(0)
@@ -96,3 +109,23 @@ def peel_sealed_cdp_skill_prefix(
             continue
         break
     return attach, inline, rest
+
+
+def ensure_review_reading_charter(text: str, purpose: str | None) -> str:
+    """Place the reading-review line after the skill hash. Idempotent under peel.
+
+    ``purpose=review`` only. The packet carries the code. CDP reads the live
+    tree. Checkout, pytest, and quality_gate are not this seat's reject grounds.
+    """
+    if (purpose or "").strip().lower() != "review":
+        return text
+    if "the packet carries the code under review" in text:
+        return text
+    marker = "Hash these skills from your local skill server"
+    idx = text.find(marker)
+    if idx == -1:
+        return f"{REVIEW_READING_CHARTER}{text}"
+    end = text.find("\n", idx)
+    if end == -1:
+        return f"{text}\n{REVIEW_READING_CHARTER}"
+    return f"{text[: end + 1]}{REVIEW_READING_CHARTER}{text[end + 1 :]}"

@@ -781,8 +781,11 @@ class TeamHandoffBody(BaseModel):
 
     At least one of ``source_ref`` or ``packet_path`` must be present.
     ``source_ref`` triggers normalize→materialize (Phase 2 unified admission).
-    ``contract`` — optional explicit authority grant (``consult`` | ``implement``);
-    highest-priority signal in F1 derivation when set.
+    ``contract`` — optional explicit override
+    (``sketch`` | ``pure-mechanical`` | ``implement`` | ``none``), highest-priority
+    signal in F1 derivation when set. Omitting it still derives a work-intent,
+    and that derivation defaults to ``consult``. ``consult`` is not a legal
+    override value on this body.
     """
 
     model_config = {"extra": "forbid"}

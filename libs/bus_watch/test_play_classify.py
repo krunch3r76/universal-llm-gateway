@@ -70,7 +70,8 @@ def test_play_dispatch_body_uses_resume_root_not_tape() -> None:
         todo_slug="liaison-loop-tape-birth",
     )
     assert body["dispatch_thread_id"] == "12029"
-    assert body["source_ref"] == "todo:liaison-loop-tape-birth"
+    assert "source_ref" not in body
+    assert body["work_key"] == "todo:liaison-loop-tape-birth"
     assert "model" not in body
 
 
@@ -136,6 +137,55 @@ def test_hold_when_open_conductors_meet_cap() -> None:
     verdict = classify_leftover(digest, {})
     assert verdict["leftover"] == LEFTOVER_HOLD
     assert verdict["reason"] == "conductor_cap"
+
+
+def test_quiet_active_lane_still_owns_its_todo() -> None:
+    """A quiet alarm hides the subject. The admit tag still owns the row."""
+    from bus_watch.spawn_wake.play_classify import live_conductor_owner
+
+    digest = _digest()
+    digest["lanes"] = [
+        {
+            "id": "12650",
+            "slug": "cursor-sdk-generate-ed07c9d9",
+            "status": "active",
+            "lifecycle": "active",
+            "contract": "conductor",
+            "last_from": "dispatch",
+            "last_subject": "Quiet with work in flight",
+            "tags": ["contract:conductor", "todo:liaison-ticker-steer-live-dispatch"],
+        }
+    ]
+    owner = live_conductor_owner(digest, "liaison-ticker-steer-live-dispatch")
+    assert owner is not None
+    assert owner.get("unsure") is False
+    assert owner["lane"]["id"] == "12650"
+
+
+def test_quiet_active_lane_does_not_release_the_hire_latch(monkeypatch) -> None:
+    from bus_watch.spawn_wake.play_classify import hire_latch_released
+
+    def _boom(*_a, **_k):  # noqa: ANN002
+        raise AssertionError("active quiet lane must not consult the ledger")
+
+    monkeypatch.setattr(
+        "operator_hop_harvest.ledger.fetch_latest_terminal_conductor",
+        _boom,
+    )
+    digest = {
+        "lanes": [
+            {
+                "id": "12640",
+                "status": "active",
+                "lifecycle": "active",
+                "contract": "conductor",
+                "last_from": "dispatch",
+                "last_subject": "Quiet with work in flight",
+                "tags": ["todo:liaison-multi-conductor-p2-clock-ownership"],
+            }
+        ]
+    }
+    assert hire_latch_released(digest, "36e842959666-7a8343df") is False
 
 
 def test_classify_play_when_todo_named_and_no_owner() -> None:
@@ -219,7 +269,8 @@ def test_consult_reply_on_terminal_conductor_open_thread_admits(
     body = out["body"]
     assert body["contract"] == "none"
     assert "liaison-sdk-driver" in body["subject"]
-    assert body["source_ref"] == "todo:cse-attachment-hop"
+    assert "source_ref" not in body
+    assert body["work_key"] == "todo:cse-attachment-hop"
     assert body["model"] == "cursor/grok-4.7"
     assert body["model_knobs"] == {"effort": "high", "fast": "false"}
     assert digest["lanes"][0]["seat_empty"] is True
@@ -271,7 +322,7 @@ def test_dry_run_play_admits_liaison_once(
     assert body["contract"] == "none"
     assert body["subject"] == "liaison-sdk-driver todo:alpha"
     assert "Admit one conductor" in body["prompt"]
-    assert body["source_ref"] == "todo:alpha"
+    assert "source_ref" not in body
     assert body["work_key"] == "todo:alpha"
     assert body["lane"] == "B"
     assert body["dispatch_thread_id"] == "10479"

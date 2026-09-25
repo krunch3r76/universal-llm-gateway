@@ -100,6 +100,7 @@ def _lane_row(t: dict[str, Any]) -> dict[str, Any]:
         "last_from": t.get("last_turn_from"),
         "last_subject": subject,
         "contract": _contract_from_thread(t),
+        "tags": [str(tag) for tag in (t.get("tags") or [])],
         "terminal": bool(_TERMINAL_RE.search(subject)),
         "nag": bool(_NAG_RE.search(subject))
         and t.get("last_turn_from") in _NAG_SENDERS,
