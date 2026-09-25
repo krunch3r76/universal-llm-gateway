@@ -172,12 +172,15 @@ def _g6_review_body_witnesses(
     artifact_id: str,
 ) -> bool:
     """After-ship review (R1): affirmative verdict + cited-sha bind."""
-    return _g6_review_failure_reason(
-        uri,
-        files_root=files_root,
-        tip_body=tip_body,
-        artifact_id=artifact_id,
-    ) is None
+    return (
+        _g6_review_failure_reason(
+            uri,
+            files_root=files_root,
+            tip_body=tip_body,
+            artifact_id=artifact_id,
+        )
+        is None
+    )
 
 
 def _g6_review_failure_reason(
@@ -226,7 +229,11 @@ def _witness_g1(*, source_ref: str, cortex: WitnessCortex) -> Witness | None:
             continue
         doc = cortex.entity_get(target, intent="card")
         attrs = doc.get("attributes") or {}
-        kind = str(attrs.get("consult_kind") or doc.get("consult_kind") or "").strip().lower()
+        kind = (
+            str(attrs.get("consult_kind") or doc.get("consult_kind") or "")
+            .strip()
+            .lower()
+        )
         if kind != "architecture":
             blob = " ".join(
                 (
@@ -357,9 +364,7 @@ def _row_witnesses_g_ladder(
         if g2_uri and _uri_resolves(g2_uri, files_root=files_root, repo=repo):
             g2_id = "tip"
     if g2_id and g2_uri:
-        witnesses["G2"] = Witness(
-            row="G2", source=f"artifact:{g2_id}", detail=g2_uri
-        )
+        witnesses["G2"] = Witness(row="G2", source=f"artifact:{g2_id}", detail=g2_uri)
 
     g3_id, g3_uri = _first_resolving_artifact(
         artifacts, _G3_ARTIFACT_IDS, files_root=files_root, repo=repo
@@ -369,9 +374,7 @@ def _row_witnesses_g_ladder(
         if g3_uri and _uri_resolves(g3_uri, files_root=files_root, repo=repo):
             g3_id = "tip"
     if g3_id and g3_uri:
-        witnesses["G3"] = Witness(
-            row="G3", source=f"artifact:{g3_id}", detail=g3_uri
-        )
+        witnesses["G3"] = Witness(row="G3", source=f"artifact:{g3_id}", detail=g3_uri)
 
     g4_uri = artifacts.get("G4")
     g4_stops = stops_block_reason(tip_body, "G4")

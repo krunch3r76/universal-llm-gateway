@@ -352,7 +352,9 @@ def _g4_stops_tip(
     if include_g4_sidecar and g4_body is not None:
         uri = _write_g4_review(files_root, g4_body)
         sidecars.append(f"| G4 | `{uri}` | G4 verdict |")
-    return _gated_rows(("G4", "Skeptic", g4_status, g4_stops)) + "\n".join(sidecars) + "\n"
+    return (
+        _gated_rows(("G4", "Skeptic", g4_status, g4_stops)) + "\n".join(sidecars) + "\n"
+    )
 
 
 @pytest.mark.offline
@@ -420,7 +422,9 @@ def test_ac_p2_1b_absent_g4_uri_stops_blocks_g5(tmp_path: Path) -> None:
     ],
 )
 @pytest.mark.offline
-def test_ac_p2_2_g4_body_withhold_param(tmp_path: Path, body: str, expected: bool) -> None:
+def test_ac_p2_2_g4_body_withhold_param(
+    tmp_path: Path, body: str, expected: bool
+) -> None:
     """AC-P2-2 — G4 body AMEND withhold via _g4_body_clears."""
     files_root = tmp_path / "cortex"
     uri = _write_g4_review(files_root, body)
@@ -497,8 +501,7 @@ def test_r2_c3_bare_sha40_sidecar_witnesses_g2_g3_g4(
     tip_body = (
         "## Sidecars\n\n"
         "| ID | Artifact URI | What it is |\n"
-        "|---|---|---|\n"
-        + _sidecar_row(sidecar_id)
+        "|---|---|---|\n" + _sidecar_row(sidecar_id)
     )
     witnesses = row_witnesses(
         _SLUG,
