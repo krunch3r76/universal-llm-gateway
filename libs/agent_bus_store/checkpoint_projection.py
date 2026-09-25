@@ -16,10 +16,13 @@ from .turns_models import MAX_TURN_BODY_CHARS
 
 CANONICAL_RESUME_FOOTER = (
     "— RESUME (any seat, no command): load checkpoint-discipline "
-    "(tip resume + author workflow; done/close claims also load "
+    "(tip resume + fire/verify; done/close claims also load "
     "agent-bus-discipline § R12 completeness gate; cursor coding arc may add "
-    "orchestrator-workflow) → read <roadmap path> [+ scoreboard gated lane if "
-    "named] → this is the latest CHECKPOINT (wave/in-flight/next above). Do not "
+    "orchestrator-workflow) → read <continuity-card URI> and use each slug in "
+    "## Skills → then this CHECKPOINT (Entity refs · Sidecars · Handoff pointer) "
+    "→ then entity_get each id in ## Entity refs and read only the named field "
+    "→ then the card's Stance / Why this house / Objective / House → then one "
+    "named hop. A live entity field outranks any sentence on the card. Do not "
     "read the thread linearly. empty Next-pickup ≠ arc complete."
 )
 
@@ -194,7 +197,7 @@ def extract_authored_resume_footer(body: str) -> str | None:
 
     The projection re-emits this rather than the canonical constant so a
     per-arc continuity URI survives the round trip instead of being replaced by
-    the constant's unresolved ``<roadmap path>`` placeholder.
+    the constant's unresolved ``<continuity-card URI>`` placeholder.
     """
     for line in _residue_after_derived(body).splitlines():
         if line.lstrip().startswith(RESUME_FOOTER_PREFIX):

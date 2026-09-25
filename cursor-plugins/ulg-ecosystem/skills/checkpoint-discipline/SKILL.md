@@ -232,9 +232,20 @@ get a window.
    | `model=cursor/grok-4.7` without `lane=` | `lane=A` + one-line reason in prompt (“CHECKPOINT tip → bus only”) |
    | `op=handoff, seat=cursor` to author the tip | SDK generate as above; handoff delivers packets, not Stargate workers |
 
+**Completion.** The seal turn is `seal_posted`. Do not call the seal complete.
+`checkpoint_complete` only when the current tip on the **house** thread is a
+later turn from `cursor`, subject starting with `CHECKPOINT`, whose body
+contains that seal’s `Window:` line, that seal’s `Harvest:` line, and a
+`Next-pickup`. Quote that turn id. The worker closeout is not the signal.
+A `CHECKPOINT` that exists only on the worker thread is not the signal.
+Poll the house thread for the tip. `no_new_turn`, and the end of a short
+wait, mean the checkpoint is not complete; the next turn of this tab polls
+the house again. Do not exit the verify duty on the wait, and do not use
+the word complete for the seal or for the wait result. A newer house
+`CHECKPOINT` that drops the seal `Window:` line or the `Harvest:` line is
+not complete — do not keep quoting the superseded match.
+
 **`Window:` / `Harvest:` lines come from the seal** — never hand-count `turns@cp`.
-Verify from tool payloads: pipeline status/posted, bus turn,
-`Window: transcript_id=… · turns@cp=K`, `open_interval` empty or not.
 CHECKPOINT is a reconstitution index, not completeness authority.
 
 ## Related
