@@ -68,6 +68,26 @@ class ReconcilePort(Protocol):
         ...
 
 
+class DetailPort(Protocol):
+    """Read-only detail fetch for display; never a fold input.
+
+    Like :class:`ReconcilePort`, this port is operator-initiated and
+    click-time. Nothing it returns enters the fold -- any datum the View
+    needs continuously must arrive as an :class:`EventRecord` instead.
+    """
+
+    def fetch(self, kind: str, key: str) -> Mapping[str, Any]:
+        """Return a mapping suitable for display; never raises.
+
+        The returned mapping is for rendering only and does not enter the
+        fold. On ``kind="prompt"`` the mapping includes ``kind``, ``key``,
+        ``source``, ``body``, ``bytes``, ``truncated``, and ``error``. For
+        any other ``kind`` the mapping is ``kind``, ``key``, and
+        ``error`` set to ``"unsupported_kind"``.
+        """
+        ...
+
+
 class ControllerPort(Protocol):
     """The lifecycle the G5 Controller is expected to implement.
 
