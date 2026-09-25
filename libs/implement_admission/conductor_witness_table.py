@@ -6,6 +6,8 @@ import hashlib
 import re
 from pathlib import Path
 
+from review_verdict.grammar import VerdictAction, parse_any_review_body
+
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.conductor_score_journal import (
     G_ROWS,
@@ -33,12 +35,6 @@ _G4_BLOCKS_DONE_RE = re.compile(
 )
 _G4_VERDICT_WITHHOLD_RE = re.compile(
     r"(?m)^##\s*(?i:verdict)\s*$[^*]{0,400}?\*\*\s*(?:VERDICT:\s*)?(AMEND|REVISE|REJECT|BLOCK)\b"
-)
-_G6_REVIEW_AFFIRMATIVE_RE = re.compile(
-    r"(?im)^\s*VERDICT:\s*(RATIFY(?:_WITH_CONDITIONS|-WITH-CONDITIONS)?)\s*$"
-)
-_G6_REVIEW_NEGATIVE_RE = re.compile(
-    r"(?im)^\s*VERDICT:\s*(REVISE|REJECT|SCOPE-DRIFT|SCOPE_DRIFT)\s*$"
 )
 _CITED_SHA_RE = re.compile(
     r"(?:`(?:sha256:)?([0-9a-f]{7,64})`|read_sha256[=:]([0-9a-f]{7,64}))",
@@ -195,9 +191,12 @@ def _g6_review_failure_reason(
     text = _cortex_text(uri, files_root=files_root)
     if text is None:
         return "artifact unreadable"
-    if _G6_REVIEW_NEGATIVE_RE.search(text):
+    parsed = parse_any_review_body(text)
+    if parsed.token is None:
+        return "unrecognized review verdict"
+    if parsed.action in (VerdictAction.AMENDMENTS_REQUIRED, VerdictAction.BLOCKED):
         return "negative review verdict"
-    if _G6_REVIEW_AFFIRMATIVE_RE.search(text) is None:
+    if parsed.action is not VerdictAction.ADVANCE:
         return "unrecognized review verdict"
     cited_sha = _artifact_cited_sha(tip_body, artifact_id)
     if cited_sha is None:

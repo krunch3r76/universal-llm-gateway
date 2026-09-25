@@ -21,6 +21,7 @@ from implement_admission.conductor_witness_table import (
     _artifact_map,
     _first_resolving_artifact,
     _g4_body_clears,
+    _g6_review_failure_reason,
     _uri_resolves,
 )
 from implement_admission.degraded_reasons import (
@@ -131,8 +132,8 @@ def test_ac3_revise_body_does_not_witness_g6(tmp_path: Path, verdict_line: str) 
     assert witnesses.get("G6") is None
 
 
-def test_ac4_ratify_with_conditions_witnesses_g6(tmp_path: Path) -> None:
-    """AC4 — VERDICT: RATIFY_WITH_CONDITIONS + cited sha ⇒ G6 witness."""
+def test_ac4_ratify_with_conditions_not_witness_g6(tmp_path: Path) -> None:
+    """AC4 — grammar AMENDMENTS_REQUIRED (RATIFY_WITH_CONDITIONS) ⇒ no G6 witness."""
     files_root = tmp_path / "cortex"
     review_body = "VERDICT: RATIFY_WITH_CONDITIONS\n\nMinor nits only.\n"
     cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
@@ -144,8 +145,7 @@ def test_ac4_ratify_with_conditions_witnesses_g6(tmp_path: Path) -> None:
         files_root=files_root,
         rows=G_ROWS,
     )
-    assert witnesses.get("G6") is not None
-    assert witnesses["G6"].source == "artifact:R1"
+    assert witnesses.get("G6") is None
 
 
 def test_ac5_cited_sha_mismatch_not_witness(tmp_path: Path) -> None:
@@ -244,6 +244,76 @@ def test_ac6_unrecognized_verdict_not_witness(tmp_path: Path) -> None:
         rows=G_ROWS,
     )
     assert witnesses.get("G6") is None
+
+
+_LANDED_HARVEST_R1_BODY = """# Pre-land review — cdp-opus harvest shape
+
+Merits: RATIFY
+
+Ship when G6 row binds; action ADVANCE is the harvest disposition elsewhere.
+
+## Verdict
+
+**Verdict:** **RATIFY**
+"""
+
+
+def test_g6_harvest_merits_ratify_witnesses_with_cited_sha(tmp_path: Path) -> None:
+    """Landed harvest (Merits + gate-6 RATIFY) witnesses when sha cited."""
+    files_root = tmp_path / "cortex"
+    review_body = _LANDED_HARVEST_R1_BODY
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is not None
+    assert witnesses["G6"].source == "artifact:R1"
+
+
+def test_g6_s9_gate6_verdict_ratify_witnesses(tmp_path: Path) -> None:
+    """S9-style **Verdict:** **RATIFY** block witnesses with cited sha."""
+    files_root = tmp_path / "cortex"
+    review_body = "## Findings\n\nClean.\n\n**Verdict:** **RATIFY**\n"
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is not None
+
+
+@pytest.mark.parametrize(
+    ("review_body", "expected_reason"),
+    [
+        ("VERDICT: WITHHOLD\nPending operator.\n", "unrecognized review verdict"),
+        ("Merits: ADMIT_WITH_AMENDMENTS\n", "negative review verdict"),
+        ("**Verdict:** **REJECT**\n", "negative review verdict"),
+    ],
+)
+def test_g6_non_advance_review_bodies_block(
+    tmp_path: Path,
+    review_body: str,
+    expected_reason: str,
+) -> None:
+    files_root = tmp_path / "cortex"
+    uri = _write_review(files_root, review_body)
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    reason = _g6_review_failure_reason(
+        uri,
+        files_root=files_root,
+        tip_body=_review_tip(cited_sha=cited_sha, body=review_body),
+        artifact_id="R1",
+    )
+    assert reason == expected_reason
 
 
 def _gated_rows(*rows: tuple[str, str, str, str]) -> str:
