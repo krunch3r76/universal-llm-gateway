@@ -82,26 +82,25 @@ async def test_insert_prompt_continues_when_no_attach_slugs_requested() -> None:
 
 
 @pytest.mark.asyncio
-async def test_insert_prompt_aborts_when_required_attach_slugs_undelivered() -> None:
-    from claude_bundles.cowork_skill_delivery import SkillDeliveryError
-
+async def test_insert_prompt_followon_when_required_attach_slugs_undelivered() -> None:
     page = _page_mock([[]])
     composer = _composer_mock()
 
     with patch(ATTACH_ONE, new_callable=AsyncMock):
-        with pytest.raises(SkillDeliveryError, match="undelivered"):
-            await _insert_prompt_text(
-                page,
-                "/reasoning-posture\n\n# Sealed\n",
-                composer=composer,
-            )
+        missing, notes = await _insert_prompt_text(
+            page,
+            "/reasoning-posture\n\n# Sealed\n",
+            composer=composer,
+        )
 
-    page.keyboard.insert_text.assert_not_awaited()
+    assert missing == ["reasoning-posture"]
+    assert notes == ()
+    page.keyboard.insert_text.assert_awaited()
 
 
 @pytest.mark.asyncio
-async def test_insert_prompt_surfaces_click_errors_on_undelivered() -> None:
-    """a:30502 — swallowed attach miss must keep the Skills-list items."""
+async def test_insert_prompt_keeps_click_notes_on_undelivered() -> None:
+    """a:30502 — a missed chip still returns the Skills-list items for the follow-on."""
     from claude_bundles.cowork_skill_delivery import SkillDeliveryError
 
     page = _page_mock([[]])
@@ -114,36 +113,32 @@ async def test_insert_prompt_surfaces_click_errors_on_undelivered() -> None:
         )
 
     with patch(ATTACH_ONE, new=_fail):
-        with pytest.raises(SkillDeliveryError, match="click_errors") as caught:
-            await _insert_prompt_text(
-                page,
-                "/life-operator-do-chain\n\n# Sealed\n",
-                composer=composer,
-            )
-    err = str(caught.value)
-    assert "undelivered" in err
-    assert "Life operator do-chain" in err
-    page.keyboard.insert_text.assert_not_awaited()
+        missing, notes = await _insert_prompt_text(
+            page,
+            "/life-operator-do-chain\n\n# Sealed\n",
+            composer=composer,
+        )
+    assert missing == ["life-operator-do-chain"]
+    assert any("Life operator do-chain" in note for note in notes)
+    page.keyboard.insert_text.assert_awaited()
 
 
 @pytest.mark.asyncio
-async def test_insert_prompt_aborts_when_clicker_succeeds_but_no_chip_lands() -> None:
-    """The a25806 regression: a clean click return is not a landed skill."""
-    from claude_bundles.cowork_skill_delivery import SkillDeliveryError
-
+async def test_insert_prompt_followon_when_clicker_succeeds_but_no_chip_lands() -> None:
+    """A clean click return is not a landed skill; the body still pastes."""
     page = _page_mock([[]])
     composer = _composer_mock()
 
     with patch(ATTACH_ONE, new_callable=AsyncMock) as attach:
-        with pytest.raises(SkillDeliveryError, match="undelivered"):
-            await _insert_prompt_text(
-                page,
-                "/cdp-operator-proxy\n/reasoning-posture\n\n# Sealed\n",
-                composer=composer,
-            )
+        missing, _notes = await _insert_prompt_text(
+            page,
+            "/cdp-operator-proxy\n/reasoning-posture\n\n# Sealed\n",
+            composer=composer,
+        )
 
+    assert set(missing) == {"cdp-operator-proxy", "reasoning-posture"}
     assert set(_attached_slugs(attach)) == {"cdp-operator-proxy", "reasoning-posture"}
-    page.keyboard.insert_text.assert_not_awaited()
+    page.keyboard.insert_text.assert_awaited()
 
 
 @pytest.mark.asyncio

@@ -29,7 +29,7 @@ def test_purpose_recognition() -> None:
 
 def test_ensure_injects_chips_and_briefing() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
-    assert out.startswith("/cdp-operator-proxy\n/ulg-for-llms\n/reasoning-posture\n")
+    assert out.startswith("/cdp-operator-proxy\n/reasoning-posture\n")
     assert "/completion-provenance-discipline\n" in out
     assert "/agent-bus-discipline\n" in out
     assert out.count("/agent-bus-discipline\n") == 1
@@ -62,7 +62,7 @@ def test_ensure_injects_self_scheduled_wake_guide() -> None:
     assert "while true; do sleep 240" not in out
     assert "Consume-time wake affinity" in out
     assert "Absence is not permission" in out
-    assert "missing (file absent): default STAND_DOWN" in out
+    assert "missing (file absent under a visible root): default STAND_DOWN" in out
 
 
 def test_ensure_idempotent_when_chips_present() -> None:
@@ -72,7 +72,7 @@ def test_ensure_idempotent_when_chips_present() -> None:
     assert twice.count("## Mission seat map (BINDING") == 1
     assert twice.count("## This hop (read first)") == 1
     assert twice.count("/reasoning-posture") == 1
-    assert twice.count("/ulg-for-llms") == 1
+    assert twice.count("/ulg-for-llms") == 0
     # Counted in the leading chip block only — the slug also appears in the
     # seat-map prose below it.
     assert twice.split("\n\n", 1)[0].count("/completion-provenance-discipline") == 1
@@ -85,7 +85,7 @@ def test_ensure_adds_missing_chip_only() -> None:
     out = ensure_operator_proxy_mission_prompt(
         "/cdp-operator-proxy\n\n# Already chipped\n"
     )
-    assert out.startswith("/cdp-operator-proxy\n/ulg-for-llms\n/reasoning-posture\n")
+    assert out.startswith("/cdp-operator-proxy\n/reasoning-posture\n")
     assert "## Mission seat map (BINDING" in out
 
 

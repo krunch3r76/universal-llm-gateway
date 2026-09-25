@@ -9,6 +9,7 @@ Uses the authenticated ``claude-ai-chrome-profile`` on Jupiter CDP.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import re
 from collections.abc import Awaitable, Callable
@@ -281,6 +282,15 @@ _SUBMIT_ROLE_RES = (
     re.compile(r"send message", re.I),
 )
 _SUBMIT_ARIA_SUBSTRS = ("Start task", "Send")
+_UNDELIVERED_RE = re.compile(r"undelivered=(\[[^\]]*\])")
+
+
+def _undelivered_slugs(err: str) -> list[str]:
+    match = _UNDELIVERED_RE.search(err)
+    if not match:
+        return []
+    parsed = ast.literal_eval(match.group(1))
+    return [str(slug) for slug in parsed]
 
 
 def submit_control_names() -> tuple[str, ...]:
@@ -295,7 +305,7 @@ async def _insert_prompt_text(
     composer,
     stargate_execution_id: str = "",
     satellite_execution_id: str = "",
-) -> None:
+) -> tuple[list[str], tuple[str, ...]]:
     """Fill the composer: attach Claude skills via + menu, then paste body.
 
     **Canonical skill attach (operator 2026-07-26):** ``+`` → **Skills** →
@@ -340,7 +350,7 @@ async def _insert_prompt_text(
         required = attach_slugs + inline_slugs
     if not required and not attach_slugs and not inline_slugs:
         await page.keyboard.insert_text(text)
-        return
+        return [], ()
 
     attached: list[str] = []
     click_errors: tuple[str, ...] = ()
@@ -350,6 +360,7 @@ async def _insert_prompt_text(
         )
         attached = list(observation.observed)
         click_errors = observation.click_errors
+    missing: list[str] = []
     try:
         attest_delivery_channels(
             required,
@@ -359,12 +370,10 @@ async def _insert_prompt_text(
             satellite_execution_id=str(satellite_execution_id or ""),
         )
     except SkillDeliveryError as exc:
-        if click_errors:
-            raise SkillDeliveryError(
-                f"{exc}; click_errors={list(click_errors)}"
-            ) from exc
-        raise
-
+        err = str(exc)
+        if "wrong_channel" in err or "undelivered=" not in err:
+            raise
+        missing = _undelivered_slugs(err)
     if rest:
         body = rest
         if not body.startswith(("\n", "\r")):
@@ -372,6 +381,7 @@ async def _insert_prompt_text(
         await composer.click(force=True)
         await page.wait_for_timeout(200)
         await page.keyboard.insert_text(body)
+    return missing, click_errors
 
 
 async def send_prompt(
@@ -412,7 +422,7 @@ async def send_prompt(
 
     await clear_composer_verified(page, composer)
     await page.wait_for_timeout(180)
-    await _insert_prompt_text(
+    missing, attach_notes = await _insert_prompt_text(
         page,
         text,
         composer=composer,
@@ -487,6 +497,7 @@ async def send_prompt(
         execution_id=str(stargate_execution_id or ""),
         satellite_execution_id=str(satellite_execution_id or ""),
     )
+    del missing, attach_notes
 
 
 async def _compose_model_selected(

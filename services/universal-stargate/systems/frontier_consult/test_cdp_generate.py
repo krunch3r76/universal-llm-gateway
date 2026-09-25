@@ -116,7 +116,7 @@ def test_stage_inputs_prepends_claude_slash_skills(tmp_path, monkeypatch) -> Non
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-1/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n/consult-posture\n")
+    assert text.startswith("/reasoning-posture\n/consult-posture\n")
     assert "## ask" in text
     assert staged.staged is True
 
@@ -138,7 +138,7 @@ def test_stage_inputs_omitted_skills_gets_judgment_skill(tmp_path, monkeypatch) 
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-light/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
+    assert text.startswith("/reasoning-posture\n")
     assert "## light" in text
     assert staged.staged is True
     assert "<skills_inline>" not in text
@@ -163,7 +163,7 @@ def test_stage_inputs_inlines_non_claude_skills(tmp_path, monkeypatch) -> None:
     )
     text = prompt_path.read_text(encoding="utf-8")
     # Judgment skill always prepended as slash; caller non-Claude stays inline.
-    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
+    assert text.startswith("/reasoning-posture\n")
     assert "<skills_inline>" in text
     assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text
@@ -210,7 +210,7 @@ def test_stage_inputs_inlines_code_mcp_skills_with_claude_slash(
         tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-skills-mixed/prompt.md"
     )
     text = prompt_path.read_text(encoding="utf-8")
-    assert text.startswith("/ulg-for-llms\n/reasoning-posture\n")
+    assert text.startswith("/reasoning-posture\n")
     assert "/investigation-economy" not in text.split("<skills_inline>", 1)[0]
     assert '<skill slug="investigation-economy"' in text
     assert "BODY" in text

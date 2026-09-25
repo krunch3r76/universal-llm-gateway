@@ -13,6 +13,9 @@ _INLINE_SKILL_SLUG = re.compile(r'<skill slug="([^"]+)"')
 _LEADING_AUTHORITY = re.compile(
     r"^(?:\r?\n)*<!--cdp-required-skills:([^\n]*?)-->\r?\n?"
 )
+_LEADING_SKILL_HASH = re.compile(
+    r"^Hash these skills from your local skill server and quote each digest before you answer:.*\n"
+)
 _LEADING_INLINE_BLOCK = re.compile(
     r"^(?:\r?\n)*<skills_inline>.*?</skills_inline>(?:\r?\n)*",
     re.DOTALL,
@@ -76,6 +79,10 @@ def peel_sealed_cdp_skill_prefix(
                     seen_attach.add(key)
                     attach.append(slug)
             rest = after
+            continue
+        skill_hash = _LEADING_SKILL_HASH.match(rest)
+        if skill_hash is not None:
+            rest = rest[skill_hash.end() :]
             continue
         inline_match = _LEADING_INLINE_BLOCK.match(rest)
         if inline_match is not None:

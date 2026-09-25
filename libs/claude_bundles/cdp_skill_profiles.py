@@ -12,32 +12,28 @@ CDP_PURPOSE_PROFILES: dict[str, tuple[str, ...]] = {
     "ask": (
         "architecture-invariants",
         "ulg-architecture",
-        "ulg-for-llms",
         "reasoning-posture",
         "hypothesize-simulate",
     ),
     "review": (
-        "ulg-for-llms",
         "reasoning-posture",
         "consult-posture",
         "hypothesize-simulate",
     ),
-    "produce": ("ulg-for-llms", "reasoning-posture"),
+    "produce": ("reasoning-posture",),
     "mission": (
         "cdp-operator-proxy",
-        "ulg-for-llms",
         "reasoning-posture",
         "hypothesize-simulate",
     ),
     "operator-proxy": (
         "cdp-operator-proxy",
-        "ulg-for-llms",
         "reasoning-posture",
         "hypothesize-simulate",
     ),
 }
 
-_DEFAULT_FLOOR: tuple[str, ...] = ("ulg-for-llms", "reasoning-posture")
+_DEFAULT_FLOOR: tuple[str, ...] = ("reasoning-posture",)
 
 
 def infer_cdp_purpose(purpose: str | None, model: str | None) -> str:

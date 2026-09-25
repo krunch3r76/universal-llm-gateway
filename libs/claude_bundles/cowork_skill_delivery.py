@@ -276,6 +276,11 @@ def prepend_cdp_dispatch_skills(
     else:
         prefix = f"{slash_block}{inline_block}"
     authority = render_cdp_required_authority(requested)
+    named = ", ".join(f"`{slug}`" for slug in requested)
+    authority += (
+        "Hash these skills from your local skill server and quote each digest "
+        f"before you answer: {named}.\n"
+    )
     if not prefix:
         return f"{authority}{body}", slash_slugs, bodies
     # Blank line between slash chip lines and body when no XML inline follows.

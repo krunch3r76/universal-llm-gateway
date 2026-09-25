@@ -37,7 +37,7 @@ from implement_admission.closeout_helpers import cortex_files_root, workspaces_r
 _EPHEMERAL_PREFIX = "notes/system/ephemeral/cdp-endpoint"
 
 # Scope rails + epistemic quality — always on CDP skills= (none too).
-CDP_JUDGMENT_SKILL_SLUGS: tuple[str, ...] = ("ulg-for-llms", "reasoning-posture")
+CDP_JUDGMENT_SKILL_SLUGS: tuple[str, ...] = ("reasoning-posture",)
 
 # a:27430 — one-slug denylist at CDP skills= staging (not a general policy DSL).
 _CDP_SKILLS_DENIED_SLUGS: frozenset[str] = frozenset({"path-sim"})

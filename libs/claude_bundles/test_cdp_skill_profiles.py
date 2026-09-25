@@ -7,26 +7,21 @@ from claude_bundles.cdp_skill_profiles import infer_cdp_purpose, profile_slugs_f
 
 
 def test_omitted_purpose_stays_judgment_only() -> None:
-    assert profile_slugs_for_purpose(None) == ("ulg-for-llms", "reasoning-posture")
-    assert ensure_cdp_judgment_skills(None) == ["ulg-for-llms", "reasoning-posture"]
-    assert ensure_cdp_judgment_skills(None, purpose=None) == [
-        "ulg-for-llms",
-        "reasoning-posture",
-    ]
+    assert profile_slugs_for_purpose(None) == ("reasoning-posture",)
+    assert ensure_cdp_judgment_skills(None) == ["reasoning-posture"]
+    assert ensure_cdp_judgment_skills(None, purpose=None) == ["reasoning-posture"]
 
 
 def test_ask_floor_prepends_arch_pair() -> None:
     assert ensure_cdp_judgment_skills(None, purpose="ask") == [
         "architecture-invariants",
         "ulg-architecture",
-        "ulg-for-llms",
         "reasoning-posture",
         "hypothesize-simulate",
     ]
     assert ensure_cdp_judgment_skills(["reasoning-posture"], purpose="ask") == [
         "architecture-invariants",
         "ulg-architecture",
-        "ulg-for-llms",
         "hypothesize-simulate",
         "reasoning-posture",
     ]
@@ -34,24 +29,18 @@ def test_ask_floor_prepends_arch_pair() -> None:
 
 def test_review_produce_mission_floors() -> None:
     assert ensure_cdp_judgment_skills(None, purpose="review") == [
-        "ulg-for-llms",
         "reasoning-posture",
         "consult-posture",
         "hypothesize-simulate",
     ]
-    assert ensure_cdp_judgment_skills(None, purpose="produce") == [
-        "ulg-for-llms",
-        "reasoning-posture",
-    ]
+    assert ensure_cdp_judgment_skills(None, purpose="produce") == ["reasoning-posture"]
     assert ensure_cdp_judgment_skills(None, purpose="mission") == [
         "cdp-operator-proxy",
-        "ulg-for-llms",
         "reasoning-posture",
         "hypothesize-simulate",
     ]
     assert ensure_cdp_judgment_skills(None, purpose="operator-proxy") == [
         "cdp-operator-proxy",
-        "ulg-for-llms",
         "reasoning-posture",
         "hypothesize-simulate",
     ]

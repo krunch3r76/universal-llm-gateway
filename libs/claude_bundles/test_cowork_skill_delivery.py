@@ -139,6 +139,17 @@ def test_attest_delivery_channels_mixed_and_all_inline() -> None:
         )
 
 
+def test_dispatch_prompt_asks_for_a_local_skill_hash() -> None:
+    from claude_bundles.cowork_skill_delivery import prepend_cdp_dispatch_skills
+
+    text, _, _ = prepend_cdp_dispatch_skills("## Task\n", ["consult-posture"])
+    assert "local skill server" in text
+    assert "`consult-posture`" in text
+    assert text.count("Hash these skills") == 1
+    again, _, _ = prepend_cdp_dispatch_skills(text, ["consult-posture"])
+    assert again.count("Hash these skills") == 1
+
+
 def test_attest_shared_sync_rejects_inline_only_channel() -> None:
     """a:27142 — shared_sync must be attached; inline alone is wrong_channel."""
     with pytest.raises(SkillDeliveryError, match="wrong_channel"):
