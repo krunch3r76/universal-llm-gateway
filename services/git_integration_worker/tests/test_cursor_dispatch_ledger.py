@@ -1415,3 +1415,48 @@ def test_nested_implement_same_work_key_under_conductor_allowed() -> None:
         nest_under=parent,
     )
     assert result is None or result.status in ("admitted", "queued")
+
+
+def test_claim_stop_service_first_wins_second_not_claimed() -> None:
+    ledger = CursorDispatchLedger.instance()
+    ledger.mark_terminal(dispatch_id="stop-row-1", terminal_status="completed")
+    assert ledger.claim_stop_service("stop-row-1", "admit-first") is True
+    assert ledger.claim_stop_service("stop-row-1", "admit-second") is False
+
+
+@pytest.mark.asyncio
+async def test_lost_stop_claim_does_not_post_team_dispatch(monkeypatch) -> None:
+    from unittest.mock import AsyncMock, MagicMock
+
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        post_conductor_hop_team_dispatch,
+    )
+
+    ledger = CursorDispatchLedger.instance()
+    ledger.mark_terminal(dispatch_id="pred-stop-claim", terminal_status="completed")
+    assert ledger.claim_stop_service("pred-stop-claim", "winner-admit") is True
+
+    post_mock = AsyncMock()
+    client = MagicMock()
+    client.post = post_mock
+
+    async def _enter(*_a, **_k):
+        return client
+
+    async def _exit(*_a, **_k):
+        return None
+
+    holder = MagicMock()
+    holder.__aenter__ = _enter
+    holder.__aexit__ = _exit
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.make_async_client",
+        lambda *_a, **_k: holder,
+    )
+
+    ok, detail = await post_conductor_hop_team_dispatch(
+        {"op": "generate", "hop_from": "pred-stop-claim", "seat": "cursor-sdk"},
+    )
+    assert ok is False
+    assert detail.get("reason") == "stop_not_claimed"
+    post_mock.assert_not_called()
