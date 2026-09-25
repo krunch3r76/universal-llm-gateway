@@ -6,6 +6,8 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from review_verdict import gate6_affirmative_disposition
+
 from implement_admission.implement_ready_gate_resolve import SkepticRatificationOutcome
 from implement_admission.scheme_resolve import (
     parse_schemed_path,
@@ -17,16 +19,6 @@ _AGENT_BUS_EVIDENCE = re.compile(
     re.IGNORECASE,
 )
 _ELIGIBLE_GATE6_ROLES = frozenset({"reviewer", "skeptic"})
-_AFFIRMATIVE_VERDICT = re.compile(
-    r"(?:^##\s*Verdict:\s*\*\*RATIFY(?:-WITH-CONDITIONS)?\*\*"
-    r"|^\*\*Verdict:\*\*\s*\*\*RATIFY(?:-WITH-CONDITIONS)?\*\*)",
-    re.IGNORECASE | re.MULTILINE,
-)
-_NEGATIVE_VERDICT = re.compile(
-    r"(?:^##\s*Verdict:\s*\*\*REJECT[^*]*\*\*"
-    r"|^\*\*Verdict:\*\*\s*\*\*REJECT[^*]*\*\*)",
-    re.IGNORECASE | re.MULTILINE,
-)
 _FILE_EVIDENCE_HEADER = re.compile(r"^FILE_EVIDENCE_PATHS:\s*$", re.IGNORECASE)
 _LIST_MARKER_RE = re.compile(r"^(?:[-*+]\s+|\d+[.)]\s+)(?P<entry>.+)$")
 _GROUNDING_MODE_LINE = re.compile(r"^grounding_mode:\s*(\S+)\s*$", re.IGNORECASE)
@@ -137,9 +129,7 @@ def _ground_file_evidence_paths(
 
 
 def _gate6_affirmative_disposition(body: str) -> bool:
-    if _NEGATIVE_VERDICT.search(body):
-        return False
-    return _AFFIRMATIVE_VERDICT.search(body) is not None
+    return gate6_affirmative_disposition(body)
 
 
 def _gate6_turn_role(turn: dict[str, Any]) -> str | None:
@@ -244,7 +234,7 @@ def resolve_gate6_ratification(
             ratified=False,
             reason=(
                 "gate6 bus turn lacks an affirmative verdict line "
-                "(## Verdict: **RATIFY** or **Verdict:** **RATIFY-WITH-CONDITIONS**)"
+                "(## Verdict: **RATIFY** or **Verdict:** **RATIFY** with action ADVANCE)"
             ),
         )
 
