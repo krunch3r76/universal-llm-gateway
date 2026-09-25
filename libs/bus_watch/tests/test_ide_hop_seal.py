@@ -230,7 +230,7 @@ def test_ac3_fire_ide_hop_proceeds_with_ok_seal_and_none_bus_turn() -> None:
     assert out["ok"] is True
     assert out["dry_run"] is True
     assert out["bus_turn"] is None
-    assert "execution_id" in out
+    assert out["execution_id"] is None
 
 
 def test_ac11_qualify_refusal_skips_seal_and_fire(capsys) -> None:
@@ -272,3 +272,41 @@ def test_ac11_qualify_refusal_skips_seal_and_fire(capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert payload["phase"] == "no_autonomous_followup"
     assert payload["stay"] is True
+
+
+def test_ac7_force_still_refuses_when_seal_fails(capsys) -> None:
+    hop_mod = _load_hop_module()
+    fire_called = False
+
+    def fake_fire(*_a, **_k):
+        nonlocal fire_called
+        fire_called = True
+        return {"ok": True}
+
+    with (
+        patch.object(hop_mod, "harvest_judgment_turns", return_value={"ok": True}),
+        patch.object(hop_mod, "load_state", return_value={}),
+        patch.object(hop_mod, "effective_policy", return_value={}),
+        patch.object(hop_mod, "build_digest", return_value={}),
+        patch.object(hop_mod, "resolve_now_row", return_value=("quiet", "digest")),
+        patch.object(hop_mod, "format_now_line", return_value="quiet"),
+        patch.object(
+            hop_mod,
+            "hop_qualifies",
+            return_value={"ok": False, "reason": "no_autonomous_followup"},
+        ),
+        patch.object(
+            hop_mod,
+            "seal_hop_window",
+            return_value={"ok": False, "phase": "seal_timeout"},
+        ),
+        patch.object(hop_mod, "fire_ide_hop", side_effect=fake_fire),
+        patch.object(hop_mod, "live_watcher_labels", return_value=[]),
+        patch.object(sys, "argv", [*_HOP_ARGS, "--force"]),
+    ):
+        code = hop_mod.main()
+    assert code == 2
+    assert fire_called is False
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["phase"] == "seal_timeout"
