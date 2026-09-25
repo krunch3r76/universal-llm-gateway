@@ -94,6 +94,8 @@ Happy path is § Pipeline CHECKPOINT. Myelinate, card / sketchboard / continuity
 
 `resume_envelope` carries Highlight / summary_row / sealed pour — **not** a layer above tip CP. ¬ competing orderings.
 
+**The busy part is the agent-bus loop, not the lookup.** The journal read inside the pour is a WAL `SELECT` (`json_each` on `entity_ids`). It does not take a write lock, and it finishes in milliseconds. `continuity(op=resume)` still runs `assemble_resume_fence` on that process's one loop, and the MCP relay aborts the call at 30s (`wall_clock_timeout`, `duration_s: 30.0`). A 30s abort means the loop was occupied by other work on the same process. The SQLite connect timeout is also 30s and is a writer lock-wait; this read does not enter it. The pour often finishes after the abort and emits `mcp.agentbus.resume.fence.poured`. On `wall_clock_timeout`, do not treat the resume as a failed lookup and do not immediately send a second resume onto the same loop. Read the poured fence and continue from that bundle. Specimen: thread 12716, fences `rf-da60ac1e` and `rf-d27122ae`, 2026-09-25.
+
 **Attended resume:** The continuity card ## Skills lists slugs. After resume, read that section and Use each slug before the first move.
 
 1. Detect root: `role:root` ∨ legacy CHECKPOINT read ∨ enrollment.
