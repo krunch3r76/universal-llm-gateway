@@ -21,6 +21,7 @@ from implement_admission.conductor_witness_table import (
     _artifact_map,
     _first_resolving_artifact,
     _g4_body_clears,
+    _g6_review_failure_reason,
     _uri_resolves,
 )
 from implement_admission.degraded_reasons import (
@@ -131,8 +132,8 @@ def test_ac3_revise_body_does_not_witness_g6(tmp_path: Path, verdict_line: str) 
     assert witnesses.get("G6") is None
 
 
-def test_ac4_ratify_with_conditions_witnesses_g6(tmp_path: Path) -> None:
-    """AC4 — VERDICT: RATIFY_WITH_CONDITIONS + cited sha ⇒ G6 witness."""
+def test_ac4_ratify_with_conditions_not_witness_g6(tmp_path: Path) -> None:
+    """AC4 — grammar AMENDMENTS_REQUIRED (RATIFY_WITH_CONDITIONS) ⇒ no G6 witness."""
     files_root = tmp_path / "cortex"
     review_body = "VERDICT: RATIFY_WITH_CONDITIONS\n\nMinor nits only.\n"
     cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
@@ -144,8 +145,7 @@ def test_ac4_ratify_with_conditions_witnesses_g6(tmp_path: Path) -> None:
         files_root=files_root,
         rows=G_ROWS,
     )
-    assert witnesses.get("G6") is not None
-    assert witnesses["G6"].source == "artifact:R1"
+    assert witnesses.get("G6") is None
 
 
 def test_ac5_cited_sha_mismatch_not_witness(tmp_path: Path) -> None:
@@ -246,6 +246,166 @@ def test_ac6_unrecognized_verdict_not_witness(tmp_path: Path) -> None:
     assert witnesses.get("G6") is None
 
 
+_LANDED_HARVEST_R1_BODY = """# Pre-land review — cdp-opus harvest shape
+
+Merits: RATIFY
+
+Ship when G6 row binds; action ADVANCE is the harvest disposition elsewhere.
+
+## Verdict
+
+**Verdict:** **RATIFY**
+"""
+
+
+def test_g6_harvest_merits_ratify_witnesses_with_cited_sha(tmp_path: Path) -> None:
+    """Landed harvest (Merits + gate-6 RATIFY) witnesses when sha cited."""
+    files_root = tmp_path / "cortex"
+    review_body = _LANDED_HARVEST_R1_BODY
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is not None
+    assert witnesses["G6"].source == "artifact:R1"
+
+
+def test_g6_s9_gate6_verdict_ratify_witnesses(tmp_path: Path) -> None:
+    """S9-style **Verdict:** **RATIFY** block witnesses with cited sha."""
+    files_root = tmp_path / "cortex"
+    review_body = "## Findings\n\nClean.\n\n**Verdict:** **RATIFY**\n"
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is not None
+
+
+def test_g6_bare_verdict_ratify_line_witnesses(tmp_path: Path) -> None:
+    """Whole-line ``VERDICT: RATIFY`` witnesses when cited sha matches."""
+    files_root = tmp_path / "cortex"
+    review_body = "VERDICT: RATIFY\n"
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is not None
+
+
+def test_g6_prose_ratify_withdrawn_verdict_reject_not_witness(tmp_path: Path) -> None:
+    """Prose mentions RATIFY; only **Verdict:** **REJECT** binds — no G6 witness."""
+    files_root = tmp_path / "cortex"
+    review_body = (
+        "The prior round's RATIFY is withdrawn after new findings.\n\n"
+        "**Verdict:** **REJECT**\n"
+    )
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is None
+
+
+def test_g6_quoted_merits_instruction_merits_return_not_witness(tmp_path: Path) -> None:
+    """Quoted ``Merits: RATIFY`` in instructions; live Merits: RETURN blocks G6."""
+    files_root = tmp_path / "cortex"
+    review_body = (
+        "Write the sidecar with a line exactly like Merits: RATIFY in the template.\n\n"
+        "Merits: RETURN\n\n"
+        "**Verdict:** **RETURN**\n"
+    )
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is None
+
+
+def test_g6_lowercase_prose_merits_admit_not_witness(tmp_path: Path) -> None:
+    """``on the merits: admit`` mid-sentence is not a standalone Merits line."""
+    files_root = tmp_path / "cortex"
+    review_body = (
+        "We discussed this on the merits: admit was the old word.\n\n"
+        "No verdict line is present.\n"
+    )
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is None
+
+
+def test_g6_pre_admit_heading_verdict_return_not_witness(tmp_path: Path) -> None:
+    """Pre-ADMIT review with ``## Verdict: **RETURN**`` does not witness G6."""
+    files_root = tmp_path / "cortex"
+    review_body = "Pre-ADMIT review — scope only.\n\n## Verdict: **RETURN**\n"
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is None
+
+
+@pytest.mark.parametrize(
+    ("review_body", "expected_reason"),
+    [
+        ("VERDICT: WITHHOLD\nPending operator.\n", "unrecognized review verdict"),
+        ("Merits: ADMIT_WITH_AMENDMENTS\n", "negative review verdict"),
+        ("**Verdict:** **REJECT**\n", "negative review verdict"),
+    ],
+)
+def test_g6_non_advance_review_bodies_block(
+    tmp_path: Path,
+    review_body: str,
+    expected_reason: str,
+) -> None:
+    files_root = tmp_path / "cortex"
+    uri = _write_review(files_root, review_body)
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    reason = _g6_review_failure_reason(
+        uri,
+        files_root=files_root,
+        tip_body=_review_tip(cited_sha=cited_sha, body=review_body),
+        artifact_id="R1",
+    )
+    assert reason == expected_reason
+
+
 def _gated_rows(*rows: tuple[str, str, str, str]) -> str:
     lines = [
         "## Gated deliverables",
@@ -282,7 +442,9 @@ def _g4_stops_tip(
     if include_g4_sidecar and g4_body is not None:
         uri = _write_g4_review(files_root, g4_body)
         sidecars.append(f"| G4 | `{uri}` | G4 verdict |")
-    return _gated_rows(("G4", "Skeptic", g4_status, g4_stops)) + "\n".join(sidecars) + "\n"
+    return (
+        _gated_rows(("G4", "Skeptic", g4_status, g4_stops)) + "\n".join(sidecars) + "\n"
+    )
 
 
 @pytest.mark.offline
@@ -350,7 +512,9 @@ def test_ac_p2_1b_absent_g4_uri_stops_blocks_g5(tmp_path: Path) -> None:
     ],
 )
 @pytest.mark.offline
-def test_ac_p2_2_g4_body_withhold_param(tmp_path: Path, body: str, expected: bool) -> None:
+def test_ac_p2_2_g4_body_withhold_param(
+    tmp_path: Path, body: str, expected: bool
+) -> None:
     """AC-P2-2 — G4 body AMEND withhold via _g4_body_clears."""
     files_root = tmp_path / "cortex"
     uri = _write_g4_review(files_root, body)
@@ -427,8 +591,7 @@ def test_r2_c3_bare_sha40_sidecar_witnesses_g2_g3_g4(
     tip_body = (
         "## Sidecars\n\n"
         "| ID | Artifact URI | What it is |\n"
-        "|---|---|---|\n"
-        + _sidecar_row(sidecar_id)
+        "|---|---|---|\n" + _sidecar_row(sidecar_id)
     )
     witnesses = row_witnesses(
         _SLUG,

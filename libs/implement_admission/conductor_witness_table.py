@@ -6,6 +6,14 @@ import hashlib
 import re
 from pathlib import Path
 
+from review_verdict.grammar import (
+    _MERITS_RE,
+    ParsedVerdict,
+    VerdictAction,
+    _parse_token_from_raw,
+    parse_gate6_markdown,
+)
+
 from implement_admission.closeout_helpers import cortex_files_root
 from implement_admission.conductor_score_journal import (
     G_ROWS,
@@ -34,12 +42,6 @@ _G4_BLOCKS_DONE_RE = re.compile(
 _G4_VERDICT_WITHHOLD_RE = re.compile(
     r"(?m)^##\s*(?i:verdict)\s*$[^*]{0,400}?\*\*\s*(?:VERDICT:\s*)?(AMEND|REVISE|REJECT|BLOCK)\b"
 )
-_G6_REVIEW_AFFIRMATIVE_RE = re.compile(
-    r"(?im)^\s*VERDICT:\s*(RATIFY(?:_WITH_CONDITIONS|-WITH-CONDITIONS)?)\s*$"
-)
-_G6_REVIEW_NEGATIVE_RE = re.compile(
-    r"(?im)^\s*VERDICT:\s*(REVISE|REJECT|SCOPE-DRIFT|SCOPE_DRIFT)\s*$"
-)
 _CITED_SHA_RE = re.compile(
     r"(?:`(?:sha256:)?([0-9a-f]{7,64})`|read_sha256[=:]([0-9a-f]{7,64}))",
     re.IGNORECASE,
@@ -53,6 +55,10 @@ _WITNESS_KIND_LAND = "LAND"
 _G2_ARTIFACT_IDS = ("F1", "S7")
 _G3_ARTIFACT_IDS = ("S4b", "S9")
 _G6_REVIEW_ARTIFACT_IDS = ("R1",)
+_G6_STANDALONE_VERDICT_RE = re.compile(
+    r"(?m)^VERDICT:\s*(?P<raw>.+?)\s*$",
+    re.IGNORECASE,
+)
 
 
 def _first_resolving_artifact(
@@ -176,12 +182,37 @@ def _g6_review_body_witnesses(
     artifact_id: str,
 ) -> bool:
     """After-ship review (R1): affirmative verdict + cited-sha bind."""
-    return _g6_review_failure_reason(
-        uri,
-        files_root=files_root,
-        tip_body=tip_body,
-        artifact_id=artifact_id,
-    ) is None
+    return (
+        _g6_review_failure_reason(
+            uri,
+            files_root=files_root,
+            tip_body=tip_body,
+            artifact_id=artifact_id,
+        )
+        is None
+    )
+
+
+def _g6_collect_standalone_verdict_lines(text: str) -> list[ParsedVerdict]:
+    """Merits lines, gate-6 blocks, and whole-line ``VERDICT:`` — no prose-token fallback."""
+    collected: list[ParsedVerdict] = []
+    body = text or ""
+    for line in body.splitlines():
+        stripped = line.strip()
+        match = _MERITS_RE.search(stripped)
+        if match is None or match.start() != 0:
+            continue
+        parsed = _parse_token_from_raw(match.group(1))
+        if parsed.token is not None:
+            collected.append(parsed)
+    gate6 = parse_gate6_markdown(body)
+    if gate6.token is not None:
+        collected.append(gate6)
+    for match in _G6_STANDALONE_VERDICT_RE.finditer(body):
+        parsed = _parse_token_from_raw(match.group("raw"))
+        if parsed.token is not None:
+            collected.append(parsed)
+    return collected
 
 
 def _g6_review_failure_reason(
@@ -195,10 +226,15 @@ def _g6_review_failure_reason(
     text = _cortex_text(uri, files_root=files_root)
     if text is None:
         return "artifact unreadable"
-    if _G6_REVIEW_NEGATIVE_RE.search(text):
-        return "negative review verdict"
-    if _G6_REVIEW_AFFIRMATIVE_RE.search(text) is None:
+    collected = _g6_collect_standalone_verdict_lines(text)
+    if not collected:
         return "unrecognized review verdict"
+    for parsed in collected:
+        if parsed.action is VerdictAction.ADVANCE:
+            continue
+        if parsed.reason == "unknown_verdict":
+            return "unrecognized review verdict"
+        return "negative review verdict"
     cited_sha = _artifact_cited_sha(tip_body, artifact_id)
     if cited_sha is None:
         return "missing_cited_sha"
@@ -227,7 +263,11 @@ def _witness_g1(*, source_ref: str, cortex: WitnessCortex) -> Witness | None:
             continue
         doc = cortex.entity_get(target, intent="card")
         attrs = doc.get("attributes") or {}
-        kind = str(attrs.get("consult_kind") or doc.get("consult_kind") or "").strip().lower()
+        kind = (
+            str(attrs.get("consult_kind") or doc.get("consult_kind") or "")
+            .strip()
+            .lower()
+        )
         if kind != "architecture":
             blob = " ".join(
                 (
@@ -358,9 +398,7 @@ def _row_witnesses_g_ladder(
         if g2_uri and _uri_resolves(g2_uri, files_root=files_root, repo=repo):
             g2_id = "tip"
     if g2_id and g2_uri:
-        witnesses["G2"] = Witness(
-            row="G2", source=f"artifact:{g2_id}", detail=g2_uri
-        )
+        witnesses["G2"] = Witness(row="G2", source=f"artifact:{g2_id}", detail=g2_uri)
 
     g3_id, g3_uri = _first_resolving_artifact(
         artifacts, _G3_ARTIFACT_IDS, files_root=files_root, repo=repo
@@ -370,9 +408,7 @@ def _row_witnesses_g_ladder(
         if g3_uri and _uri_resolves(g3_uri, files_root=files_root, repo=repo):
             g3_id = "tip"
     if g3_id and g3_uri:
-        witnesses["G3"] = Witness(
-            row="G3", source=f"artifact:{g3_id}", detail=g3_uri
-        )
+        witnesses["G3"] = Witness(row="G3", source=f"artifact:{g3_id}", detail=g3_uri)
 
     g4_uri = artifacts.get("G4")
     g4_stops = stops_block_reason(tip_body, "G4")
