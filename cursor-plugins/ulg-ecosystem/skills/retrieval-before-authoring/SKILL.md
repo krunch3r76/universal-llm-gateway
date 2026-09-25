@@ -30,7 +30,9 @@ These four only:
 
 `writing` is human craft (cogency, revision, persuasion). It is not LLM
 prompting guidance. Do not cite it when the reader is a model.
-`writing_exemplars` and `llm_writing_anti` are not this set.
+`writing_exemplars` is off topic here. It holds writing samples for
+inspiration when a human is writing. It is not a register or prompting
+scope. `llm_writing_anti` is not this set.
 `constitutional_ai` is not this set; query it by name only when the failure
 mode under study is sycophancy or fluency bias.
 
@@ -43,7 +45,7 @@ chunks (autosuggestion, injection-benchmark generators) are not guidance.
 | Scope | When |
 |---|---|
 | `writing` | Craft theory only. Not prose to imitate. Not an LLM prompt. |
-| `writing_exemplars` | Register on a human writing task, by name. Steal rhythm, not period diction. A null means no specimen; do not invent one. |
+| `writing_exemplars` | Sample prose for inspiration in human writing only. Off topic for a prompt a model will execute. Do not query it to set register on an LLM packet. |
 | `llm_writing_anti` | Named retrieve only, and only for "what not to sound like." |
 Call shape:
 

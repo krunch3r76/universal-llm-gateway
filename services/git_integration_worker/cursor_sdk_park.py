@@ -319,6 +319,13 @@ def conductor_hop_watchdog_candidates(
             if terminal_ts is None or (now_ts - terminal_ts) < grace:
                 continue
             closeout_tokens = _closeout_tokens_from_row(mapped)
+            from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+                admit_retry_park_unserviced,
+            )
+
+            if admit_retry_park_unserviced(mapped):
+                candidates.append(dispatch_id)
+                continue
             verdict = evaluate_hop_budget(mapped, closeout_tokens=closeout_tokens)
             if verdict.park and verdict.reason:
                 candidates.append(dispatch_id)

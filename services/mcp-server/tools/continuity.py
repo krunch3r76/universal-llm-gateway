@@ -358,6 +358,10 @@ def register_continuity_tools(mcp: FastMCP) -> None:
                         "message": "op=checkpoint requires thread and surface",
                     }
                 }
+            if surface == "cursor" and transcript_id:
+                from bus_watch.ide_hop_retire import stop_tab_background
+
+                stop_tab_background(transcript_id)
             return _continuity_checkpoint(
                 thread=thread,
                 surface=surface,

@@ -5,8 +5,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 from collections.abc import Sequence
+from typing import Any
 
 from scripts.model_manager.ui.dispatch_monitor.core import __main__ as core_main
+from scripts.model_manager.ui.dispatch_monitor.core.curses_board import CursesBoard
+from scripts.model_manager.ui.dispatch_monitor.core.dtos import (
+    SupervisorProjection,
+    Thresholds,
+)
+from scripts.model_manager.ui.dispatch_monitor.core.model import Model
+from scripts.model_manager.ui.dispatch_monitor.core.replay import JsonlEventSource
 from scripts.model_manager.ui.dispatch_monitor.ulg.controller import MonitorController
 from scripts.model_manager.ui.dispatch_monitor.ulg.manage_charter_hold import (
     charter_hold_status,
@@ -14,9 +22,42 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.manage_charter_hold import (
     charter_resume,
 )
 from scripts.model_manager.ui.dispatch_monitor.ulg.manage_reload import charter_reload
+from scripts.model_manager.ui.dispatch_monitor.ulg.projection_hub import BroadcastHub
 from scripts.model_manager.ui.dispatch_monitor.ulg.reconcile_on_click import (
     ReconcileOnClick,
 )
+
+
+def run_fixture_board(
+    stdscr: Any,
+    fixture_path: str,
+    *,
+    now_ms: int | None = None,
+    seed_minutes: int = 60,
+) -> SupervisorProjection:
+    """Drive :class:`CursesBoard` from a JSONL fixture via in-process ``BroadcastHub``.
+
+    Same shape as live ``--watch`` (hub publish → view sink), without Event Service,
+    UDS, or an external compositor. Intended for fixture replay and headless tests.
+    """
+    source = JsonlEventSource.from_path(fixture_path)
+    model = Model(Thresholds())
+    hub = BroadcastHub()
+    board = CursesBoard(stdscr, seed_minutes=seed_minutes)
+    board.set_status("fixture")
+    painted: list[SupervisorProjection] = []
+
+    def _sink(frame: SupervisorProjection) -> None:
+        board.paint(frame)
+        painted.append(frame)
+
+    hub.subscribe(_sink)
+    source.subscribe(model.apply)
+    clock = source.max_ts() if now_ms is None else now_ms
+    hub.publish(model.derive(clock))
+    if not painted:
+        raise RuntimeError("fixture board hub published but no sink ran")
+    return painted[-1]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,9 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--format",
-        choices=("text", "json"),
+        choices=("text", "json", "board"),
         default="text",
-        help="text sink or canonical JSON projection frames (live mode)",
+        help="text sink, JSON frames, or curses board (fixture replay uses board in-process)",
     )
     parser.add_argument(
         "--seed-minutes",
@@ -95,6 +136,27 @@ def _run_fixture(argv: Sequence[str]) -> int:
     return core_main.main(argv)
 
 
+def _run_fixture_board(args: argparse.Namespace) -> int:
+    import curses
+
+    def _main(stdscr: Any) -> None:
+        run_fixture_board(
+            stdscr,
+            args.watch,
+            now_ms=args.now_ms,
+            seed_minutes=args.seed_minutes,
+        )
+        # Hold one paint so an interactive operator can read the frame; tests call
+        # run_fixture_board directly with a fake screen and never enter wrapper.
+        try:
+            stdscr.getch()
+        except curses.error:
+            pass
+
+    curses.wrapper(_main)
+    return 0
+
+
 def _run_live(args: argparse.Namespace) -> int:
     controller = MonitorController(seed_minutes=args.seed_minutes)
 
@@ -148,7 +210,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--watch is required unless using a --charter-* one-shot")
 
     if args.watch == "live":
+        if args.format == "board":
+            parser.error("--format board is fixture-only; use scripts/watch-dispatch-board for live")
         return _run_live(args)
+
+    if args.format == "board":
+        return _run_fixture_board(args)
 
     fixture_argv = ["--watch", args.watch]
     if args.frames:

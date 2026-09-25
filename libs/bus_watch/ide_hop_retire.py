@@ -89,6 +89,53 @@ def departing_tail_pids(root_id: str, labels: Iterable[str]) -> list[int]:
     return out
 
 
+def tab_background_pids(transcript_id: str) -> list[int]:
+    """PIDs this Cursor tab started, except the house ticker and the caller.
+
+    A tab shell inherits the transcript id in its environment. Checkpoint and
+    hop use that mark. ``liaison-tick.py`` is the house poller, not a tab
+    terminal, and survives.
+    """
+    needle = transcript_id.strip()
+    if not needle:
+        return []
+    protected = {os.getpid()}
+    parent = os.getpid()
+    while parent > 1:
+        try:
+            parent = int(psutil.Process(parent).ppid())
+        except (psutil.Error, ValueError):
+            break
+        protected.add(parent)
+    encoded = needle.encode()
+    out: list[int] = []
+    for proc in psutil.process_iter(["pid", "cmdline"]):
+        pid = int(proc.info["pid"])
+        if pid in protected:
+            continue
+        argv = proc.info.get("cmdline") or []
+        if any("liaison-tick.py" in str(tok) for tok in argv):
+            continue
+        try:
+            env = Path(f"/proc/{pid}/environ").read_bytes()
+        except OSError:
+            continue
+        if encoded in env:
+            out.append(pid)
+    return out
+
+
+def stop_tab_background(transcript_id: str) -> list[int]:
+    """SIGTERM every background process attached to this tab."""
+    pids = tab_background_pids(transcript_id)
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            continue
+    return pids
+
+
 def stop_departing_tails(
     root_id: str,
     labels: Iterable[str],
@@ -110,6 +157,7 @@ def retire_departing_tab(
     root: str,
     holder: str,
     *,
+    transcript_id: str = "",
     watch_dir: Path = WATCH_DIR,
     stop_loops: Callable[[str], list[int]] = stop_attended_loops,
     labels_for: Callable[..., list[str]] = departing_watcher_labels,
@@ -127,6 +175,7 @@ def retire_departing_tab(
         "stopped_loops": stop_loops(root),
         "labels": labels,
         "stopped_tails": stop_tails(root, labels),
+        "stopped_tab_background": stop_tab_background(transcript_id),
         "goal": GOAL_RELEASE,
     }
     if holder.startswith("ide:"):

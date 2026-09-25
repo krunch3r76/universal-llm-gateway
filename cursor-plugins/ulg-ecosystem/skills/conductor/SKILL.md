@@ -237,8 +237,9 @@ per-G-row one. Default posture once running:
   Bounds each dispatch's token footprint to roughly one movement and caps a
   crash's loss to the in-flight row (`a:31786`). A mission that ends inside
   one dispatch simply stops `DONE`. Owed stops win at a boundary:
-  `stop_after` ⇒ `ROW_PINNED`; attended G3→G5 ⇒ `SCORE_RESURFACE` then the
-  existing attended exit (`ROW_PINNED` per § Score journal + stops); named
+  `stop_after` ⇒ `ROW_PINNED`; explicit see-score or `OPERATOR_GATE` ⇒
+  `ROW_PINNED`; G3→G5 fires in-process CDP score-ratify (`cdp/fable-5.1`)
+  then continues — a live summoning chat is not a human stop; named
   hold ⇒ `HOLD_MERGE`. A live nested child forbids the hop (W3) — harvest,
   then hop. If you end with the mission open and **no** token, the substrate
   still re-admits you (budgeted) — that is the safety net, not the default.
@@ -580,8 +581,10 @@ Plan closeout **forbids** `landed` / path-explicit commit claims
   owed picker harvests a quotable verdict URI, or (2) the operator **explicitly**
   rebinds that gate’s seat (e.g. Cursor skeptic) — inform-then-proceed, never
   silent. Liaison / IDE stand-in enforces the same stop (9638 hop3; 10013).
-- Attended IDE spawn: resurface the score in the summoning chat at G3→G5 unless
-  the summon named confer-and-finish.
+- Attended IDE spawn: at G3→G5 fire the same in-process CDP score-ratify
+  (`cdp/fable-5.1`) as an away summon, and post `SCORE_RESURFACE` on the
+  summoning thread as a report. The report is not a stop. A human gate is
+  only an explicit see-score or `OPERATOR_GATE`.
 - `cursor-auto` / no live summoning chat = confer-and-finish (Q2 unchanged).
 - `ROW_PINNED` / stall / QWA pages the operator when away, when see-score is
   explicit, **or** when the summoning IDE is liaison (human not in that chat).

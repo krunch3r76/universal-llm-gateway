@@ -15,20 +15,7 @@ _G3_DONE_RE = re.compile(r"(?im)^\|\s*G3\s*\|[^|]*\|\s*DONE\b")
 _GATE_ROW_RE = re.compile(
     r"(?im)^(?:resume_at|entry_gate|persisted_row):\s*(G[456])\b"
 )
-_SUMMON_MODE_RE = re.compile(
-    r"(?i)summon_mode:\s*(attended|confer[_-]and[_-]finish)\b"
-)
 _CONTRACT_FRONTMATTER_RE = re.compile(r"(?im)^contract:\s*(\S+)")
-
-
-def _extract_summon_mode(text: str | None) -> str | None:
-    """Return normalized summon_mode from packet text, or None when absent."""
-    if not text:
-        return None
-    match = _SUMMON_MODE_RE.search(text)
-    if not match:
-        return None
-    return match.group(1).lower().replace("-", "_")
 
 
 def _is_conductor_packet(packet_text: str | None) -> bool:
@@ -57,10 +44,11 @@ def validate_q2_away_score_ratify(
     *,
     packet_text: str | None = None,
 ) -> str | None:
-    """Return ``q2_score_ratify_missing`` when away G3→G5 lacks score-ratify posture."""
+    """Return ``q2_score_ratify_missing`` when a G3→G5 exit lacks score-ratify posture.
+
+    Attended summon_mode is not an exemption. A live chat is not a human gate.
+    """
     if not _is_conductor_packet(packet_text):
-        return None
-    if _extract_summon_mode(packet_text) == "attended":
         return None
     if not is_g3_g5_exit(body):
         return None

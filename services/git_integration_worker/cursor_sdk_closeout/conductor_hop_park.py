@@ -14,6 +14,7 @@ from universal_logging import get_logger
 from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
     HOP_PARK_REASON_KEY,
     HOP_PARKED_KEY,
+    PARK_REASON_ADMIT_RETRY_CAP,
     build_budget_authority_patch,
 )
 
@@ -160,12 +161,13 @@ async def park_conductor_hop_mission(
         },
     )
 
-    await page_hop_budget_parked(
-        dispatch_id=dispatch_id,
-        thread_id=thread_id,
-        reason=reason,
-        work_key=work_key,
-    )
+    if reason != PARK_REASON_ADMIT_RETRY_CAP:
+        await page_hop_budget_parked(
+            dispatch_id=dispatch_id,
+            thread_id=thread_id,
+            reason=reason,
+            work_key=work_key,
+        )
 
 
 __all__ = [

@@ -244,6 +244,7 @@ def main() -> int:
             out["retire"] = retire_departing_tab(
                 args.root,
                 holder=f"ide:{args.transcript_id}",
+                transcript_id=args.transcript_id,
             )
     print(json.dumps(out, indent=2))
     if out.get("ok"):

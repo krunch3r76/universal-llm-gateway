@@ -164,6 +164,8 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
     row = _load_row(dispatch_id)
     if row is None or not _is_conductor_row(row):
         return False
+    if await _service_admit_retry_park(row):
+        return True
     closeout_tokens = _closeout_tokens_from_row(row)
     if _mission_park_blocks_hop(row):
         return False
@@ -226,6 +228,43 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
                 row, reason=PARK_REASON_ADMIT_RETRY_CAP
             )
     return stamped
+
+
+async def _service_admit_retry_park(row: dict) -> bool:
+    """One hop after an admit-retry park, once the worker thread is empty."""
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        live_conductor_row_on_thread,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop_budget import (
+        HOP_PARKED_KEY,
+    )
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_stop_service import (
+        admit_retry_park_unserviced,
+    )
+
+    if not admit_retry_park_unserviced(row):
+        return False
+    thread_id = str(row.get("thread_id") or "")
+    dispatch_id = str(row.get("dispatch_id") or "")
+    if not thread_id or not dispatch_id:
+        return False
+    if live_conductor_row_on_thread(
+        thread_id=thread_id, exclude_dispatch_id=dispatch_id
+    ):
+        return False
+    body = build_hop_team_dispatch_body(row, hop_reason_override="admit_retry_service")
+    if body is None or "dispatch_thread_id" not in body:
+        return False
+    ok, _detail = await post_conductor_hop_team_dispatch(body)
+    ledger = CursorDispatchLedger.instance()
+    patch: dict = {"hop_park_serviced": True}
+    if ok:
+        patch[HOP_PARKED_KEY] = False
+    ledger.merge_record_json(dispatch_id=dispatch_id, patch=patch)
+    return ok
 
 
 async def sweep_conductor_hop_watchdog(

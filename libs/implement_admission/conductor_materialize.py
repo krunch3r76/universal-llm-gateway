@@ -305,7 +305,9 @@ def _render_invariants(ctx: ConductorMaterializeContext) -> str:
             "admits your successor on this same thread and Lane-B checkout after your "
             "row goes terminal. ROW_HOP is not a pause and not a page; the mission "
             "continues under this admit. Owed stops win: stop_after ⇒ ROW_PINNED; "
-            "attended G3→G5 ⇒ SCORE_RESURFACE + ROW_PINNED; a live nested child "
+            "explicit see-score or OPERATOR_GATE ⇒ ROW_PINNED; G3→G5 fires "
+            "in-process CDP score-ratify (cdp/fable-5.1) then continues — a live "
+            "summoning chat is not a human stop; a live nested child "
             "forbids the hop — harvest first."
         ),
         (
@@ -328,12 +330,16 @@ def _render_task_guidance(ctx: ConductorMaterializeContext) -> str:
     if ctx.summon_mode == "attended":
         g3_g5_lines = [
             (
-                "G3→G5 attended: post SCORE_RESURFACE on "
+                "G3→G5 attended: fire in-process CDP score-ratify "
+                "(cdp/fable-5.1, do-not-fight / likely-optimal), then continue. "
+                "Post SCORE_RESURFACE on "
                 f"summoning_thread_id={ctx.summoning_thread_id or '<parent/root>'} "
-                "(never this worker thread); resurface in the summoning IDE chat "
-                "(discussion, not implement, not pager, not CONFIRM_PENDING)."
+                "(never this worker thread) as a report. The report is not a stop."
             ),
-            "Explicit see-score while attended: ROW_PINNED at G3, no pager (live summoning chat).",
+            (
+                "Human gate only on explicit see-score or OPERATOR_GATE: "
+                "ROW_PINNED. A live summoning chat is not a gate."
+            ),
         ]
     else:
         g3_g5_lines = [

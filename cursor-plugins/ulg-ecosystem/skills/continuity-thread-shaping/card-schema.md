@@ -2,19 +2,25 @@
 
 Header table lives on the skill first screen. This file is the field shape. CHECKPOINT B1–B5 stay in `checkpoint-schema-profiles`. Birth mints the whole header in one write. Resume loads it before any `team_dispatch`. A heading whose body is an essay has left the motif.
 
-## Seven headings (one line each on the card)
+## Seven headings (continuity-card v2)
+
+Birth header, before any heading:
+
+`<!-- continuity-card v=2 thread={N} reader_job=<one noun phrase> -->`
+
+Ids first, prose second. A later reader follows whichever block is louder, so the ids sit above the story. No `## Entities` heading: entity ids are dated and live on the tip `## Entity refs` block (address + field name, never a value). No `## Sidecars` on the card: sidecar URIs are dated and live on the tip.
 
 | Heading | Required | Owns |
 |---|---|---|
-| `## Stance` | yes (`orchestrator_continuity`; `tick_charter` skips speech) | Use `ulg-for-llms` |
-| `## Why this house` | yes | one paragraph **or** sidecar pointer |
-| `## Objective` | yes | Mission + In / Out (short) |
+| `## Skills` | yes | slug rows. Use each before the first move. A fallback path only when the slug is off this seat's loader |
 | `## Runbooks` | yes | `runbook:house-close` plus the house-specific `runbook:*` |
-| `## Rules` | yes | assertion-id / runbook-id rows that **override** global skill omit-paths |
-| `## Sidecars` | yes | evidence URIs. `_None yet._` is legal; missing heading is not |
-| `## House` | when minted | house entity id |
+| `## Rules` | yes | assertion-id / runbook-id rows that **override** global skill omit-paths. `_None yet._` legal; missing heading is not |
+| `## Stance` | yes (`orchestrator_continuity`; `tick_charter` skips speech) | Use `ulg-for-llms` |
+| `## Why this house` | yes | one paragraph **or** sidecar pointer. No dated status |
+| `## Objective` | yes | Mission + In / Out (short). No dated status |
+| `## House` | yes | what kind of house, where the tape lives, what this root does not own |
 
-**Bounded archive:** sit tape / older `# Current` cuts / Windows accrual live on a **sidecar** named on the card. ¬ grow the card. ¬ mint a second dialect file (`{N}-window-ledger` / `{N}-recall.md`).
+**Bounded archive:** sit tape / older `# Current` cuts / Windows accrual live on a **sidecar named on the tip**. ¬ grow the card. ¬ mint a second dialect file (`{N}-window-ledger` / `{N}-recall.md`). A v1 card (no `v=2` comment) stays legal and is not migrated by this schema.
 
 ### `## Rules` (field)
 

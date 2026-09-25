@@ -80,7 +80,7 @@ Cite: `operator-posture` Rule 1.
 
 ## Card
 
-Seven headings, one line each: Stance · Why · Objective · Runbooks · Rules · Sidecars · House. Essays and numbers leave the card. `## Rules` = id rows; missing heading = house gap; `_None yet._` legal. Shape detail → `card-schema.md`.
+Seven headings, ids then prose: Skills · Runbooks · Rules · Stance · Why · Objective · House. `v=2` comment on the birth header. Essays, numbers, entity ids, and sidecar URIs leave the card (entity refs and sidecars live on the tip). `## Rules` = id rows; missing heading = house gap; `_None yet._` legal. Shape detail → `card-schema.md`.
 
 Reader-job body lives on a sidecar or the house runbook; the card points. Specimens 9582 · 9638 · 9732.
 

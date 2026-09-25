@@ -174,10 +174,10 @@ Enrolled roots only. Design SOT: `cortex://notes/system/specs/autonomous-path-si
 Prefix must stay `— RESUME (any seat, no command):` (parser T8).
 
 ```
-— RESUME (any seat, no command): load checkpoint-discipline (tip resume + fire/verify; done/close claims also load agent-bus-discipline § R12 completeness gate; cursor coding arc may add orchestrator-workflow) → read <continuity-source URI/path> [+ scoreboard gated lane if named] → this is the latest CHECKPOINT (wave/in-flight/next above). Do not read the thread linearly. empty Next-pickup ≠ arc complete.
+— RESUME (any seat, no command): load checkpoint-discipline (tip resume + fire/verify; done/close claims also load agent-bus-discipline § R12 completeness gate; cursor coding arc may add orchestrator-workflow) → read <continuity-card URI> and use each slug in ## Skills → then this CHECKPOINT (Entity refs · Sidecars · Handoff pointer) → then entity_get each id in ## Entity refs and read only the named field → then the card's Stance / Why this house / Objective / House → then one named hop. A live entity field outranks any sentence on the card. Do not read the thread linearly. empty Next-pickup ≠ arc complete.
 ```
 
-`<continuity-source URI/path>` = the durable roadmap or reconstitution index named in the CHECKPOINT body (e.g. `cortex://notes/system/roadmaps/<slug>.md` or a workspaces share path). Parameterize per arc — do not hardcode a single global path.
+`<continuity-card URI>` is the root card. On a v1 card with no `## Skills`, that step resolves to the skills named in the load clause. `## Entity refs` rows are `id · watch: field`. Never a value. A tip that drops a non-empty inherited ref list is a failed encoding.
 
 ## Pipeline CHECKPOINT (cursor lane) — lean / fast happy path
 
@@ -188,7 +188,10 @@ Required checkpoint args: `thread` + `surface`. `thread` is resolved this turn f
 tab (sidecar, session join, prior Window), then quoted. Seal without `transcript_id`
 can still post and refuse the window — do not take that path.
 
-1. **Seal + mechanical post.** `dispatch(tool="continuity")` or
+1. **Seal + mechanical post.** The call tears down every background terminal
+   this tab started (`stop_tab_background(transcript_id)` — environ contains
+   the tab uuid). The house ticker (`liaison-tick.py`) survives. Then
+   `dispatch(tool="continuity")` or
    `continuity(op=checkpoint, surface=cursor, transcript_id=<tab UUID>, thread=<house resolved this turn>, from_agent=cursor, pre_consolidate=false)`.
    **`pre_consolidate=false` is explicit.** Do not omit it — the channel default admits a
    cursor-sdk worker that authors residue and can patch cards; that worker is not the

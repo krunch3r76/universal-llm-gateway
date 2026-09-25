@@ -162,6 +162,26 @@ def test_quiet_active_lane_still_owns_its_todo() -> None:
     assert owner["lane"]["id"] == "12650"
 
 
+def test_closeout_unharvested_quiet_lane_does_not_own_the_row() -> None:
+    """The worker finished. Leaving the thread active must not block the next admit."""
+    from bus_watch.spawn_wake.play_classify import live_conductor_owner
+
+    digest = _digest()
+    digest["lanes"] = [
+        {
+            "id": "12671",
+            "status": "active",
+            "lifecycle": "active",
+            "contract": "conductor",
+            "last_from": "dispatch",
+            "last_subject": "Quiet with work in flight",
+            "quiet_reason": "closeout_unharvested",
+            "tags": ["todo:cdp-review-contract-shape"],
+        }
+    ]
+    assert live_conductor_owner(digest, "cdp-review-contract-shape") is None
+
+
 def test_quiet_active_lane_does_not_release_the_hire_latch(monkeypatch) -> None:
     from bus_watch.spawn_wake.play_classify import hire_latch_released
 

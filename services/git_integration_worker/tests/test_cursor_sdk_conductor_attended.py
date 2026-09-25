@@ -66,11 +66,12 @@ def test_attended_conductor_preamble_includes_resurface_block() -> None:
     )
     assert "CONDUCTOR ATTENDED RESURFACE" in preamble
     assert "SCORE_RESURFACE" in preamble
+    assert "cdp/fable-5.1" in preamble
     assert "summoning bus thread 9638" in preamble
     assert "never this leftover worker thread" in preamble
     assert "summoning lead" in preamble
-    assert "liaison IDE" in preamble
-    assert "not a page" in preamble
+    assert "not a stop" in preamble
+    assert "OPERATOR_GATE" in preamble
     assert "CONDUCTOR AWAY SCORE-RATIFY" not in preamble
 
 

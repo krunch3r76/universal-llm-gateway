@@ -165,7 +165,11 @@ def conductor_q2_score_ratify_degraded_reason(
     packet_text: str | None = None,
     packet_kind: str | None = None,
 ) -> str | None:
-    """Fail-closed degrade when away conductor G3→G5 lacks score-ratify posture."""
+    """Fail-closed degrade when a conductor G3→G5 exit lacks score-ratify posture.
+
+    A live attended chat is not an exemption. ``contract: conductor`` counts
+    when ``packet_kind`` is absent.
+    """
     is_conductor = packet_kind == "conductor"
     if not is_conductor and packet_text:
         from services.git_integration_worker.cursor_sdk_packet import (
@@ -173,6 +177,10 @@ def conductor_q2_score_ratify_degraded_reason(
         )
 
         is_conductor = extract_packet_kind_from_packet(packet_text) == "conductor"
+    if not is_conductor and packet_text:
+        from claude_bundles.conductor_score_ratify import _is_conductor_packet
+
+        is_conductor = _is_conductor_packet(packet_text)
     if not is_conductor:
         return None
     from claude_bundles.conductor_score_ratify import validate_q2_away_score_ratify

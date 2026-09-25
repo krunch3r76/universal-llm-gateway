@@ -43,6 +43,7 @@ from bus_watch.life_digest import build_life_block, project_life_block
 from bus_watch.loop_tape import loop_tape_thread
 from bus_watch.now_row import harvest_policy_entity_cache
 from bus_watch.now_row_bind import ticker_owns_bind
+from bus_watch.quiet_reason import stamp_quiet_reason
 from bus_watch.roster import fold_roster
 from bus_watch.spawn_pending import (
     build_attention_lanes,
@@ -151,6 +152,8 @@ def _child_lanes(client: httpx.Client, root: str) -> list[dict[str, Any]]:
             out.append(
                 {**_lane_row(row), "lane_role": row.get("lane_role") or "linked_worker"}
             )
+    for lane in out:
+        stamp_quiet_reason(client, lane)
     out.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
     out.sort(key=lambda r: bool(r.get("nag")))
     return out[:_MAX_LANES]

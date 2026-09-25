@@ -341,10 +341,8 @@ def test_materialize_conductor_attended_packet_strings(tmp_path: Path) -> None:
     assert "summon_mode: attended" in mp.text
     assert "SCORE_RESURFACE on summoning_thread_id=" in mp.text
     assert "never this worker thread" in mp.text
-    assert (
-        "Explicit see-score while attended: ROW_PINNED at G3, no pager"
-        in mp.text
-    )
+    assert "cdp/fable-5.1" in mp.text
+    assert "A live summoning chat is not a gate." in mp.text
 
 
 def test_materialize_conductor_skips_birth_when_tip_exists(tmp_path: Path) -> None:

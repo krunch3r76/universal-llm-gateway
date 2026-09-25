@@ -59,6 +59,25 @@ def test_conductor_q2_with_markers_not_degraded() -> None:
     assert reason is None
 
 
+_ATTENDED_PACKET = """\
+---
+
+work_key: todo:fixture-slug
+contract: conductor
+lane: B
+---
+<scope>Conductor session. summon_mode: attended.</scope>
+"""
+
+
+def test_conductor_q2_attended_missing_markers_degrades() -> None:
+    reason = conductor_q2_score_ratify_degraded_reason(
+        body=_G3_DONE_NO_MARKERS,
+        packet_text=_ATTENDED_PACKET,
+    )
+    assert reason == "q2_score_ratify_missing"
+
+
 def test_conductor_g3_row_pinned_not_degraded() -> None:
     reason = conductor_q2_score_ratify_degraded_reason(
         body=_G3_ROW_PINNED,

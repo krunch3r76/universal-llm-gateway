@@ -298,6 +298,34 @@ def test_hire_latch_releases_on_parked_transport(monkeypatch) -> None:
     assert verdict["decision"] == "play"
 
 
+def test_closed_park_releases_the_hire_latch_so_the_row_plays() -> None:
+    """A parked conductor is a stop the next admit services, not a permanent hold."""
+    rows = [
+        _row(
+            "row-a",
+            "hop-checkpoint-precondition",
+            paths=["libs/bus_watch/roster.py"],
+            last_hire_dispatch_id="disp-parked",
+        ),
+    ]
+    digest = _digest_with_roster(
+        rows,
+        lanes=[
+            {
+                "id": "12680",
+                "status": "closed",
+                "lifecycle": "completed",
+                "contract": "conductor",
+                "last_subject": "Quiet with work in flight",
+                "quiet_reason": "closeout_unharvested",
+                "tags": ["todo:hop-checkpoint-precondition", "contract:conductor"],
+            }
+        ],
+    )
+    verdict = classify_row(digest, digest["roster"][0])
+    assert verdict["decision"] == "play"
+
+
 def test_hire_latch_holds_after_dispatch_recorded() -> None:
     rows = [
         _row(

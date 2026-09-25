@@ -115,6 +115,7 @@ def test_retire_departing_tab_stops_loops_tails_and_releases(
         "stopped_loops",
         "labels",
         "stopped_tails",
+        "stopped_tab_background",
         "goal",
         "seat_release",
     }
@@ -128,6 +129,7 @@ def test_retire_departing_tab_stops_loops_tails_and_releases(
     assert tuple(sig.parameters) == (
         "root",
         "holder",
+        "transcript_id",
         "watch_dir",
         "stop_loops",
         "labels_for",
