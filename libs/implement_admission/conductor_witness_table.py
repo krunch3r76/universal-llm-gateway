@@ -197,7 +197,11 @@ def _g6_collect_standalone_verdict_lines(text: str) -> list[ParsedVerdict]:
     """Merits lines, gate-6 blocks, and whole-line ``VERDICT:`` — no prose-token fallback."""
     collected: list[ParsedVerdict] = []
     body = text or ""
-    for match in _MERITS_RE.finditer(body):
+    for line in body.splitlines():
+        stripped = line.strip()
+        match = _MERITS_RE.search(stripped)
+        if match is None or match.start() != 0:
+            continue
         parsed = _parse_token_from_raw(match.group(1))
         if parsed.token is not None:
             collected.append(parsed)

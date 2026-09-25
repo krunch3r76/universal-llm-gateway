@@ -346,6 +346,25 @@ def test_g6_quoted_merits_instruction_merits_return_not_witness(tmp_path: Path) 
     assert witnesses.get("G6") is None
 
 
+def test_g6_lowercase_prose_merits_admit_not_witness(tmp_path: Path) -> None:
+    """``on the merits: admit`` mid-sentence is not a standalone Merits line."""
+    files_root = tmp_path / "cortex"
+    review_body = (
+        "We discussed this on the merits: admit was the old word.\n\n"
+        "No verdict line is present.\n"
+    )
+    cited_sha = hashlib.sha256(review_body.encode()).hexdigest()
+    tip_body = _g5_precondition_tip(files_root, review_body, cited_sha=cited_sha)
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=_deps(tmp_path),
+        files_root=files_root,
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G6") is None
+
+
 def test_g6_pre_admit_heading_verdict_return_not_witness(tmp_path: Path) -> None:
     """Pre-ADMIT review with ``## Verdict: **RETURN**`` does not witness G6."""
     files_root = tmp_path / "cortex"
