@@ -76,12 +76,26 @@ def _token_in_scope_check_context(body: str, start: int) -> bool:
     return _SCOPE_CHECK_PREFIX_RE.search(prefix) is not None
 
 
+def _block_token_with_trailing(normalized: str) -> ParsedVerdict | None:
+    """Block tokens may carry trailing prose; closed-set tokens must match whole string."""
+    for token in ("REJECT", "RETURN", "SCOPE-DRIFT"):
+        if normalized == token or normalized.startswith(f"{token} "):
+            return ParsedVerdict(token, VerdictAction.BLOCKED, "r_verdict_blocked")
+        if normalized.startswith(token) and len(normalized) > len(token):
+            tail = normalized[len(token) :]
+            if tail and tail[0] in " \t—-(":
+                return ParsedVerdict(token, VerdictAction.BLOCKED, "r_verdict_blocked")
+    return None
+
+
 def _parse_token_from_raw(raw: str) -> ParsedVerdict:
-    normalized = normalize_verdict_token(raw.split()[0] if raw else "")
-    if not normalized:
+    stripped = (raw or "").strip()
+    if not stripped:
         return ParsedVerdict(None, VerdictAction.BLOCKED, "unparseable_r_verdict")
-    if normalized.startswith("REJECT"):
-        return ParsedVerdict("REJECT", VerdictAction.BLOCKED, "r_verdict_blocked")
+    normalized = normalize_verdict_token(stripped)
+    blocked = _block_token_with_trailing(normalized)
+    if blocked is not None:
+        return blocked
     return _classify(normalized)
 
 
@@ -100,14 +114,24 @@ def parse_merits_line(text: str) -> ParsedVerdict:
     return ParsedVerdict(None, VerdictAction.BLOCKED, "unparseable_r_verdict")
 
 
+def _gate6_verdict_priority(parsed: ParsedVerdict) -> int:
+    if parsed.action is VerdictAction.BLOCKED:
+        return 0
+    if parsed.action is VerdictAction.AMENDMENTS_REQUIRED:
+        return 1
+    return 2
+
+
 def parse_gate6_markdown(text: str) -> ParsedVerdict:
     """Parse gate-6 ``## Verdict:`` / ``**Verdict:**`` markdown blocks."""
     body = text or ""
+    parsed_lines: list[ParsedVerdict] = []
     for pattern in (_GATE6_HEADING_VERDICT_RE, _GATE6_BOLD_VERDICT_RE):
-        match = pattern.search(body)
-        if match is not None:
-            return _parse_token_from_raw(match.group("token"))
-    return ParsedVerdict(None, VerdictAction.BLOCKED, "unparseable_gate6_verdict")
+        for match in pattern.finditer(body):
+            parsed_lines.append(_parse_token_from_raw(match.group("token")))
+    if not parsed_lines:
+        return ParsedVerdict(None, VerdictAction.BLOCKED, "unparseable_gate6_verdict")
+    return min(parsed_lines, key=_gate6_verdict_priority)
 
 
 def parse_any_review_body(text: str) -> ParsedVerdict:

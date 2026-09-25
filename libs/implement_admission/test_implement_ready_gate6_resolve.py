@@ -43,6 +43,19 @@ def _body(verdict_line: str) -> str:
         ("**Verdict:** **RATIFY_WITH_CONDITIONS**", False),
         ("## Verdict: **REJECT**", False),
         ("## Verdict: **RETURN**", False),
+        ("**Verdict:** **RATIFY WITH CONDITIONS**", False),
+        ("**Verdict:** **RATIFY — conditional on AC3**", False),
+        ("**Verdict:** **RATIFY (with conditions)**", False),
+        (
+            "\n".join(
+                [
+                    "**Verdict:** **REJECT**",
+                    "",
+                    "## Verdict: **RATIFY**",
+                ]
+            ),
+            False,
+        ),
     ],
 )
 def test_gate6_affirmative_only_advance(verdict_line: str, affirmative: bool) -> None:

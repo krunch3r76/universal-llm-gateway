@@ -8,6 +8,7 @@ from review_verdict import (
     VerdictAction,
     format_canonical_gate6_block,
     format_canonical_merits_line,
+    gate6_affirmative_disposition,
     parse_any_review_body,
     parse_gate6_markdown,
     parse_merits_line,
@@ -67,7 +68,9 @@ def _merits_bold(token: str) -> str:
 
 
 def _gate6_bold(token: str) -> str:
-    return format_canonical_gate6_block(token.replace("-", "_").replace("SCOPE_DRIFT", "SCOPE-DRIFT"))
+    return format_canonical_gate6_block(
+        token.replace("-", "_").replace("SCOPE_DRIFT", "SCOPE-DRIFT")
+    )
 
 
 def _gate6_heading(token: str) -> str:
@@ -146,3 +149,35 @@ def test_format_canonical_merits_line_underscore() -> None:
     assert format_canonical_merits_line("ratify-with-conditions") == (
         "Merits: RATIFY_WITH_CONDITIONS"
     )
+
+
+_A1_NON_AFFIRMATIVE_RATIFY_PROSE = (
+    "RATIFY WITH CONDITIONS",
+    "RATIFY — conditional on AC3",
+    "RATIFY (with conditions)",
+)
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize("token_prose", _A1_NON_AFFIRMATIVE_RATIFY_PROSE)
+def test_a1_whole_token_not_affirmative_ratify(token_prose: str) -> None:
+    body = f"**Verdict:** **{token_prose}**"
+    parsed = parse_gate6_markdown(body)
+    assert parsed.action is VerdictAction.BLOCKED
+    assert parsed.reason == "unknown_verdict"
+    assert gate6_affirmative_disposition(body) is False
+
+
+@pytest.mark.offline
+def test_a2_blocked_verdict_wins_over_ratify() -> None:
+    body = "\n".join(
+        [
+            "**Verdict:** **REJECT**",
+            "",
+            "## Verdict: **RATIFY**",
+        ]
+    )
+    parsed = parse_gate6_markdown(body)
+    assert parsed.action is VerdictAction.BLOCKED
+    assert parsed.token == "REJECT"
+    assert gate6_affirmative_disposition(body) is False
