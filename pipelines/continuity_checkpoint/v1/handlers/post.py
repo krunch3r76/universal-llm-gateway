@@ -7,7 +7,10 @@ import logging
 import re
 from typing import Any, override
 
-from agent_bus_store.checkpoint_projection import CANONICAL_RESUME_FOOTER
+from agent_bus_store.checkpoint_projection import (
+    CANONICAL_RESUME_FOOTER,
+    RESUME_FOOTER_PREFIX,
+)
 from continuity_tape.events import stargate_continuity_checkpoint_posted
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
@@ -76,36 +79,45 @@ def _compose_body(
     surface: str = "cursor",
     channel: str = "continuity",
 ) -> str:
-    lines = ["## Residue (authored — cap ~800 chars)", residue.strip(), "", "## Anchor"]
     refused = seal.get("refused")
+    # a:36491 — a refused seal is an audit notice. A RESUME footer makes
+    # resume treat the notice as the tip and follow an unresolved placeholder.
+    if refused:
+        residue = "\n".join(
+            line
+            for line in residue.splitlines()
+            if not line.lstrip().startswith(RESUME_FOOTER_PREFIX)
+        )
+    lines = ["## Residue (authored — cap ~800 chars)", residue.strip(), "", "## Anchor"]
     if refused:
         lines.append(f"Harvest: refused({refused.get('code', 'unknown')})")
-    else:
-        transcript_id = seal.get("transcript_id") or ""
-        turn_count = seal.get("turn_count") or 0
-        session_id = seal.get("session_id") or ""
-        sha = seal.get("messages_sha256")
-        sha_token = sha if sha else "absent"
-        hop_suffix = " · channel=hop" if channel == "hop" else ""
-        if surface == "claude_ai":
-            chat_url = seal.get("chat_url") or ""
-            coverage = seal.get("coverage") or "tail"
-            lines.append(
-                f"Window: chat_url={chat_url} · transcript_id={transcript_id} · "
-                f"turns@cp={turn_count} · coverage={coverage}{hop_suffix}"
-            )
-            harvest_surface = "claude_ai"
-        else:
-            lines.append(
-                f"Window: transcript_id={transcript_id} · "
-                f"turns@cp={turn_count}{hop_suffix}"
-            )
-            harvest_surface = "cursor"
-        codec = str(seal.get("verbatim_codec") or "messages-v1")
+        lines.extend(["", "Mission: checkpoint refused; this notice is not a resume tip."])
+        return "\n".join(lines)
+    transcript_id = seal.get("transcript_id") or ""
+    turn_count = seal.get("turn_count") or 0
+    session_id = seal.get("session_id") or ""
+    sha = seal.get("messages_sha256")
+    sha_token = sha if sha else "absent"
+    hop_suffix = " · channel=hop" if channel == "hop" else ""
+    if surface == "claude_ai":
+        chat_url = seal.get("chat_url") or ""
+        coverage = seal.get("coverage") or "tail"
         lines.append(
-            f"Harvest: transcript:{session_id} · messages_sha256:{sha_token} · "
-            f"codec:{codec} · surface:{harvest_surface}"
+            f"Window: chat_url={chat_url} · transcript_id={transcript_id} · "
+            f"turns@cp={turn_count} · coverage={coverage}{hop_suffix}"
         )
+        harvest_surface = "claude_ai"
+    else:
+        lines.append(
+            f"Window: transcript_id={transcript_id} · "
+            f"turns@cp={turn_count}{hop_suffix}"
+        )
+        harvest_surface = "cursor"
+    codec = str(seal.get("verbatim_codec") or "messages-v1")
+    lines.append(
+        f"Harvest: transcript:{session_id} · messages_sha256:{sha_token} · "
+        f"codec:{codec} · surface:{harvest_surface}"
+    )
     mission_line = (
         mission.strip() or "Mission: resume continuity house from this CHECKPOINT."
     )

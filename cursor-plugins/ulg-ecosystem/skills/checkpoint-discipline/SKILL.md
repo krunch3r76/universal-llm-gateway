@@ -184,13 +184,20 @@ Prefix must stay `— RESUME (any seat, no command):` (parser T8).
 Asking tab **fires and verifies**. It does not write the tip body.
 
 `¬transcript_id` (this Cursor tab's UUID) ⇒ say so and stop. ¬ guess · ¬ mint · ¬ foreign root.
+The id is `CURSOR_CONVERSATION_ID` only when
+`$AGENT_TRANSCRIPTS/$CURSOR_CONVERSATION_ID/$CURSOR_CONVERSATION_ID.jsonl` exists.
+`AGENT_TRANSCRIPTS` is a directory, not the id. If that file is absent, stop.
 Required checkpoint args: `thread` + `surface`. `thread` is resolved this turn from the
-tab (sidecar, session join, prior Window), then quoted. Seal without `transcript_id`
-can still post and refuse the window — do not take that path.
+tab (sidecar, session join, prior Window), then quoted. The pipeline looks up that
+explicit id under every `~/.cursor/projects/*/agent-transcripts`, not only the
+gateway project directory. A refusal posts an INFO notice with no RESUME footer.
+That notice is not a tip — do not resume from it, and do not mint a house to
+get a window.
 
 1. **Seal + mechanical post.** The call tears down every background terminal
-   this tab started (`stop_tab_background(transcript_id)` — environ contains
-   the tab uuid). The house ticker (`liaison-tick.py`) survives. Then
+   this tab started (`stop_tab_background(transcript_id)` — the id is the JSONL
+   directory name above, not the agent-store path). The house ticker
+   (`liaison-tick.py`) survives. Then
    `dispatch(tool="continuity")` or
    `continuity(op=checkpoint, surface=cursor, transcript_id=<tab UUID>, thread=<house resolved this turn>, from_agent=cursor, pre_consolidate=false)`.
    **`pre_consolidate=false` is explicit.** Do not omit it — the channel default admits a

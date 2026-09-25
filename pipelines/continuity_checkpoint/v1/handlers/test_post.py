@@ -36,12 +36,14 @@ def test_c2_no_prior_residue_returns_none() -> None:
 
 def test_compose_body_refused_seal_omits_window() -> None:
     body = _compose_body(
-        residue="WIP",
+        residue="WIP\n— RESUME (any seat, no command): read <roadmap path>\n",
         seal={"refused": {"code": "transcript_seal.not_lane_window"}},
         mission="resume",
     )
     assert "Window:" not in body
     assert "Harvest: refused(transcript_seal.not_lane_window)" in body
+    assert "— RESUME (any seat, no command):" not in body
+    assert "<roadmap path>" not in body
 
 
 def test_compose_body_cursor_hop_channel_token() -> None:
@@ -215,6 +217,9 @@ async def test_post_skipped_seal_is_info_not_checkpoint() -> None:
     body = send.await_args.kwargs["body"]
     assert "Harvest: refused(checkpoint.window_unresolvable)" in body
     assert "Window:" not in body
+    assert "— RESUME (any seat, no command):" not in body
+    assert "<roadmap path>" not in body
+    assert "this notice is not a resume tip" in body
 
 
 @pytest.mark.asyncio

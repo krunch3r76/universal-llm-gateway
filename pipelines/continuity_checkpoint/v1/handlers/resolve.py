@@ -10,8 +10,10 @@ from urllib.parse import urlparse
 
 from chat_harvest.models import ClassifyRefuse, classify_chat_url
 from continuity_tape.events import stargate_continuity_checkpoint_admitted
-from cortex_store.transcript_assembly import _transcripts_root
-from cortex_store.transcript_session_id import jsonl_path_for_uuid
+from cortex_store.transcript_assembly import (
+    _transcripts_root,
+    locate_cursor_transcript_jsonl,
+)
 from systems.pipeline.core.handlers.builtin import BaseHandler
 from systems.pipeline.core.handlers.protocol import StepOutput
 
@@ -115,11 +117,14 @@ class ContinuityCheckpointResolveHandler(BaseHandler):
                 "cursor checkpoint requires transcript_id (or jsonl_path)",
             )
 
+        # a:36491 — the id is explicit; the JSONL may live under a satellite
+        # project root rather than the gateway default. Still refuse a miss
+        # or two hits. Do not fall back to the newest file (a:33211).
         root = _transcripts_root()
-        path = jsonl_path_for_uuid(root, str(transcript_id))
-        if not path.is_file():
+        path, code = locate_cursor_transcript_jsonl(str(transcript_id))
+        if code or path is None:
             return _refused(
-                "checkpoint.window_unresolvable",
+                code or "checkpoint.window_unresolvable",
                 f"transcript_id {transcript_id!r} has no JSONL",
             )
         try:

@@ -96,19 +96,97 @@ def _transcripts_root() -> Path:
     return _default_transcripts_root().resolve()
 
 
+def _path_is_under(path: Path, root: Path) -> bool:
+    root_str = str(root) + os.sep
+    return (str(path) + os.sep).startswith(root_str)
+
+
+def _safe_transcript_id(conversation_uuid: str) -> str | None:
+    text = conversation_uuid.strip()
+    if not text or text in {".", ".."} or "/" in text or "\\" in text:
+        return None
+    return text
+
+
+def _cursor_projects_root(projects_root: Path | None = None) -> Path:
+    if projects_root is not None:
+        return projects_root.expanduser().resolve()
+    return (Path.home() / ".cursor" / "projects").resolve()
+
+
+def _is_cursor_project_transcript(path: Path, projects_root: Path | None = None) -> bool:
+    """True for ``<project>/agent-transcripts/<uuid>/<uuid>.jsonl`` under Cursor projects."""
+    if path.suffix != ".jsonl":
+        return False
+    transcript_id = path.parent.name
+    if path.name != f"{transcript_id}.jsonl":
+        return False
+    if path.parent.parent.name != "agent-transcripts":
+        return False
+    try:
+        path.relative_to(_cursor_projects_root(projects_root))
+    except ValueError:
+        return False
+    return True
+
+
+def locate_cursor_transcript_jsonl(
+    conversation_uuid: str,
+    *,
+    projects_root: Path | None = None,
+) -> tuple[Path | None, str | None]:
+    """Find one Cursor JSONL for an explicit transcript id.
+
+    The configured transcripts root is checked first. A miss searches every
+    ``~/.cursor/projects/*/agent-transcripts/<id>/<id>.jsonl`` so a satellite
+    workspace tab is not refused just because the default root is the gateway
+    project. Returns ``(path, None)`` on one hit. Returns ``(None, code)``
+    when nothing matches (``checkpoint.window_unresolvable``) or the same id
+    exists in more than one project (``checkpoint.window_ambiguous``). Never
+    selects the newest file. Checkpoint resolve is the caller.
+    """
+    transcript_id = _safe_transcript_id(conversation_uuid)
+    if transcript_id is None:
+        return None, "checkpoint.window_unresolvable"
+    from cortex_store.transcript_session_id import jsonl_path_for_uuid
+
+    primary = jsonl_path_for_uuid(_transcripts_root(), transcript_id)
+    if primary.is_file():
+        return primary, None
+    projects = _cursor_projects_root(projects_root)
+    if not projects.is_dir():
+        return None, "checkpoint.window_unresolvable"
+    hits = sorted(
+        path
+        for path in projects.glob(f"*/agent-transcripts/{transcript_id}/{transcript_id}.jsonl")
+        if path.is_file() and path.resolve() != primary.resolve()
+    )
+    if not hits:
+        return None, "checkpoint.window_unresolvable"
+    if len(hits) > 1:
+        return None, "checkpoint.window_ambiguous"
+    return hits[0].resolve(), None
+
+
 class TranscriptPathError(ValueError):
     """Raised when ``transcript_jsonl_path`` fails the sandbox/existence gate."""
 
 
 def resolve_jsonl_path(candidate: str) -> Path:
-    """Resolve *candidate* to a real file under ``CURSOR_AGENT_TRANSCRIPTS_ROOT``."""
+    """Resolve *candidate* to a Cursor transcript JSONL the seal may read.
+
+    Relative paths stay under the configured transcripts root. An absolute
+    path may also be ``<project>/agent-transcripts/<uuid>/<uuid>.jsonl``
+    under ``~/.cursor/projects``, which is how a satellite workspace window
+    reaches seal after checkpoint resolve. Other paths are rejected.
+    """
     if not candidate:
         raise TranscriptPathError("transcript_jsonl_path is required")
     root = _transcripts_root()
     raw = Path(candidate).expanduser()
     resolved = (raw if raw.is_absolute() else root / raw).resolve()
-    root_str = str(root) + os.sep
-    if not (str(resolved) + os.sep).startswith(root_str):
+    allowed = _path_is_under(resolved, root) or _is_cursor_project_transcript(resolved)
+    if not allowed:
         raise TranscriptPathError(
             f"transcript_jsonl_path {candidate!r} resolves to {resolved} — "
             f"outside CURSOR_AGENT_TRANSCRIPTS_ROOT ({root})"
@@ -146,6 +224,7 @@ __all__ = [
     "derive_prior_session_id_from_jsonl_path",
     "derive_session_id_from_jsonl_start",
     "format_turn_heading",
+    "locate_cursor_transcript_jsonl",
     "resolve_jsonl_path",
     "session_id_timing_hint",
     "validate_transcript_turn_grammar",

@@ -99,3 +99,51 @@ async def test_transcript_id_binds_jsonl_without_discover(
     assert out.json.get("refused") is None
     assert out.json["jsonl_path"] == f"{tid}/{tid}.jsonl"
     assert out.json["transcript_id"] == tid
+
+
+@pytest.mark.asyncio
+async def test_transcript_id_found_in_satellite_project(tmp_path, monkeypatch) -> None:
+    """a:36491 — explicit id under a non-gateway project root still binds."""
+    tid = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
+    configured = tmp_path / "configured"
+    configured.mkdir()
+    jsonl = (
+        tmp_path
+        / "projects"
+        / "mnt-torus-projects-claudeburst"
+        / "agent-transcripts"
+        / tid
+        / f"{tid}.jsonl"
+    )
+    jsonl.parent.mkdir(parents=True)
+    jsonl.write_text("{}\n")
+    monkeypatch.setenv("CURSOR_AGENT_TRANSCRIPTS_ROOT", str(configured))
+    monkeypatch.setattr(
+        "cortex_store.transcript_assembly._cursor_projects_root",
+        lambda projects_root=None: (tmp_path / "projects").resolve(),
+    )
+    ctx = _Ctx()
+    ctx.options = {
+        "thread": "12716",
+        "surface": "cursor",
+        "from_agent": "cursor",
+        "transcript_id": tid,
+    }
+    handler = ContinuityCheckpointResolveHandler()
+    out = await handler.execute(_Step(), ctx)
+    assert out.json.get("refused") is None
+    assert out.json["jsonl_path"] == str(jsonl.resolve())
+    assert out.json["transcript_id"] == tid
+
+
+def test_duplicate_transcript_id_across_projects_is_ambiguous(tmp_path) -> None:
+    from cortex_store.transcript_assembly import locate_cursor_transcript_jsonl
+
+    tid = "cccccccc-dddd-eeee-ffff-000000000001"
+    for project in ("alpha", "beta"):
+        jsonl = tmp_path / project / "agent-transcripts" / tid / f"{tid}.jsonl"
+        jsonl.parent.mkdir(parents=True)
+        jsonl.write_text("{}\n")
+    path, code = locate_cursor_transcript_jsonl(tid, projects_root=tmp_path)
+    assert path is None
+    assert code == "checkpoint.window_ambiguous"
