@@ -170,7 +170,9 @@ def _lane_for_live_holder(digest: dict[str, Any], ident: str) -> dict[str, Any] 
         if not isinstance(lane, dict) or row_is_terminal(lane):
             continue
         dispatch_id = str(lane.get("dispatch_id") or "")
-        if dispatch_id.startswith(ident) or ident in str(lane.get("last_subject") or ""):
+        if dispatch_id.startswith(ident) or ident in str(
+            lane.get("last_subject") or ""
+        ):
             return lane
     return None
 
@@ -286,9 +288,9 @@ def body_for_leftover(
                     if isinstance(row, dict) and str(row.get("row_id") or "") == str(
                         roster_row_id
                     ):
-                        service_stop_id = str(
-                            row.get("last_hire_dispatch_id") or ""
-                        ).strip() or None
+                        service_stop_id = (
+                            str(row.get("last_hire_dispatch_id") or "").strip() or None
+                        )
                         break
         return build_play_dispatch_body(
             root_id,
@@ -411,7 +413,9 @@ def fire_spawn(
 
             admit_id = str(body.get("dispatch_id") or "").strip() or str(uuid.uuid4())
             body["dispatch_id"] = admit_id
-            if not CursorDispatchLedger.instance().claim_stop_service(stop_id, admit_id):
+            if not CursorDispatchLedger.instance().claim_stop_service(
+                stop_id, admit_id
+            ):
                 return {
                     "status_code": 0,
                     "refused": "stop_not_claimed",
@@ -506,6 +510,13 @@ def tick_spawn_on_wake(
         closed_quiet = close_unharvested_quiet_lanes_on_bus(digest.get("lanes") or [])
         if closed_quiet:
             digest["closed_unharvested_lanes"] = closed_quiet
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    unstarted = CursorDispatchLedger.instance().unstarted_claims()
+    if unstarted:
+        digest["unstarted_claims"] = unstarted
     lock = read_lock(root_id)
     maybe_forfeit_expired_lease(
         root_id,

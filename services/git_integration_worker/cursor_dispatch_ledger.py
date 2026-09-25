@@ -46,9 +46,7 @@ _STATUS_CHECK = (
     "'queued','admitted','running','parked_waiting','completed','failed','cancelled'"
 )
 _TERMINAL_STATUS_CHECK = "'completed','failed','cancelled'"
-_ACTIVE_IDENTITY_STATUSES = (
-    "'queued','admitted','running','parked_waiting'"
-)
+_ACTIVE_IDENTITY_STATUSES = "'queued','admitted','running','parked_waiting'"
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS cursor_sdk_dispatches (
@@ -717,9 +715,7 @@ def _merge_record_json_conn(
     )
 
 
-def _resume_parent_work_key_exempt(
-    conn: sqlite3.Connection, *, resume_of: str
-) -> bool:
+def _resume_parent_work_key_exempt(conn: sqlite3.Connection, *, resume_of: str) -> bool:
     """True when the ``resume_of`` parent is a lineage the child may re-enter.
 
     Two parent shapes qualify: a bridge-death failure stamped ``resume_eligible``
@@ -1116,9 +1112,9 @@ class CursorDispatchLedger:
             "execution_id": req.execution_id,
             "packet_path": req.packet_path,
             "message": req.message,
-        "read_only": req.read_only,
-        "sdk_mode": req.sdk_mode,
-    }
+            "read_only": req.read_only,
+            "sdk_mode": req.sdk_mode,
+        }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
@@ -2017,6 +2013,26 @@ class CursorDispatchLedger:
             claimed = cur.rowcount == 1
             conn.commit()
             return claimed
+
+    def unstarted_claims(self) -> list[dict[str, str]]:
+        """Stop rows with a won admit claim but no matching dispatch row yet."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT s.stop_id, s.serviced_admit "
+                "FROM cursor_dispatch_stop_service s "
+                "WHERE s.serviced_admit IS NOT NULL "
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM cursor_sdk_dispatches d "
+                "  WHERE d.dispatch_id = s.serviced_admit"
+                ")"
+            ).fetchall()
+        return [
+            {
+                "stop_id": str(row["stop_id"]),
+                "serviced_admit": str(row["serviced_admit"]),
+            }
+            for row in rows
+        ]
 
     def promote_next_queued(
         self,
