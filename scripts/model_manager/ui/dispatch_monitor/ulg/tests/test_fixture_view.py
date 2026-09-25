@@ -9,10 +9,12 @@ from scripts.model_manager.ui.dispatch_monitor.core.tests.conftest import (
     FIXTURE_NAMES,
     fixture_path,
 )
-from scripts.model_manager.ui.dispatch_monitor.ulg.controller import MonitorController
 from scripts.model_manager.ui.dispatch_monitor.ulg import fixture_view
 from scripts.model_manager.ui.dispatch_monitor.ulg import seeder as seeder_mod
-from scripts.model_manager.ui.dispatch_monitor.ulg import terminal_backfill as backfill_mod
+from scripts.model_manager.ui.dispatch_monitor.ulg import (
+    terminal_backfill as backfill_mod,
+)
+from scripts.model_manager.ui.dispatch_monitor.ulg.controller import MonitorController
 
 
 def test_replay_publishes_only_when_fingerprint_changes() -> None:
