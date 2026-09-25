@@ -9,7 +9,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
 from bus_watch.ide_hop import fire_ide_hop
 
 pytestmark = pytest.mark.offline
