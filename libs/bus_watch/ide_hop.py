@@ -496,6 +496,7 @@ def fire_ide_hop(
     message: str,
     *,
     root_id: str,
+    seal: dict[str, Any],
     gui_host: str | None,
     remote_repo: str = DEFAULT_REMOTE_REPO,
     dry_run: bool = False,
@@ -503,6 +504,10 @@ def fire_ide_hop(
     landing_timeout_s: float = 30.0,
 ) -> dict[str, Any]:
     """Write the hop message where the GUI host sees it (NFS) and keystroke it into a new chat.
+
+    The seal receipt (``seal_hop_window``) is the hard precondition for keystroke:
+    callers must pass ``seal`` with ``ok`` true after CHECKPOINT lands; otherwise this
+    function refuses before any file write or SSH.
 
     Refuses when ``gui_host`` is unset (no fallback host). The refusal tells
     the seat to ask the operator which node, not to invent jupiter. The agents window
@@ -515,6 +520,14 @@ def fire_ide_hop(
     After ``ok`` the hop script must ``retire_departing_tab`` (loops, pollers, tails, ``ide:``
     lock). UpdateGoal only if a leftover native goal is still injecting wakes.
     """
+    if not seal.get("ok"):
+        return {
+            "ok": False,
+            "phase": "seal_receipt_missing",
+            "root": root_id,
+            "bus_turn": seal.get("bus_turn"),
+            "execution_id": seal.get("execution_id"),
+        }
     if not gui_host:
         return {
             "ok": False,
@@ -541,6 +554,8 @@ def fire_ide_hop(
         "raise_uri": None,
         "focus_title": focus_title,
         "remote_cmd": cmd,
+        "bus_turn": seal.get("bus_turn"),
+        "execution_id": seal.get("execution_id"),
     }
     if dry_run:
         return {"ok": True, "dry_run": True, **result}

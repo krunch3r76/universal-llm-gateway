@@ -226,6 +226,7 @@ def main() -> int:
     out = fire_ide_hop(
         message,
         root_id=args.root,
+        seal=seal,
         gui_host=args.gui_host or policy_gui_host(args.root),
         remote_repo=args.remote_repo,
         dry_run=args.dry_run,

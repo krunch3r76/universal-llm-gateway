@@ -10,6 +10,8 @@ from unittest.mock import patch
 
 import pytest
 
+from bus_watch.ide_hop import fire_ide_hop
+
 pytestmark = pytest.mark.offline
 
 _SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "liaison-ide-hop.py"
@@ -188,3 +190,86 @@ def test_bearer_headers_env_wins(
     yaml_path.write_text("AGENT_BUS_TOKEN: from-yaml\n", encoding="utf-8")
     monkeypatch.setattr("bus_watch.digest_budget._MCP_YAML", yaml_path)
     assert agent_bus_bearer_headers() == {"Authorization": "Bearer from-env"}
+
+
+def test_ac1_fire_ide_hop_requires_seal_kwonly() -> None:
+    with pytest.raises(TypeError):
+        fire_ide_hop("msg", root_id="10479", gui_host="jupiter")  # type: ignore[call-arg]
+
+
+def test_ac2_fire_ide_hop_refuses_unsealed_receipt() -> None:
+    with (
+        patch("bus_watch.ide_hop.subprocess.run") as run_mock,
+        patch("bus_watch.ide_hop.durable_write_text") as write_mock,
+    ):
+        out = fire_ide_hop(
+            "msg",
+            root_id="10479",
+            seal={"ok": False, "phase": "seal_timeout"},
+            gui_host="jupiter",
+        )
+    assert out == {
+        "ok": False,
+        "phase": "seal_receipt_missing",
+        "root": "10479",
+        "bus_turn": None,
+        "execution_id": None,
+    }
+    run_mock.assert_not_called()
+    write_mock.assert_not_called()
+
+
+def test_ac3_fire_ide_hop_proceeds_with_ok_seal_and_none_bus_turn() -> None:
+    with patch("bus_watch.ide_hop.durable_write_text"):
+        out = fire_ide_hop(
+            "resume 10479\n",
+            root_id="10479",
+            seal={"ok": True, "bus_turn": None},
+            gui_host="jupiter",
+            dry_run=True,
+        )
+    assert out["ok"] is True
+    assert out["dry_run"] is True
+    assert out["bus_turn"] is None
+    assert "execution_id" in out
+
+
+def test_ac11_qualify_refusal_skips_seal_and_fire(capsys) -> None:
+    hop_mod = _load_hop_module()
+    seal_called = False
+    fire_called = False
+
+    def fake_seal(*_a, **_k):
+        nonlocal seal_called
+        seal_called = True
+        return {"ok": True}
+
+    def fake_fire(*_a, **_k):
+        nonlocal fire_called
+        fire_called = True
+        return {"ok": True}
+
+    with (
+        patch.object(hop_mod, "harvest_judgment_turns", return_value={"ok": True}),
+        patch.object(hop_mod, "load_state", return_value={}),
+        patch.object(hop_mod, "effective_policy", return_value={}),
+        patch.object(hop_mod, "build_digest", return_value={}),
+        patch.object(hop_mod, "resolve_now_row", return_value=("quiet", "digest")),
+        patch.object(hop_mod, "format_now_line", return_value="quiet"),
+        patch.object(
+            hop_mod,
+            "hop_qualifies",
+            return_value={"ok": False, "reason": "no_autonomous_followup"},
+        ),
+        patch.object(hop_mod, "seal_hop_window", side_effect=fake_seal),
+        patch.object(hop_mod, "fire_ide_hop", side_effect=fake_fire),
+        patch.object(hop_mod, "live_watcher_labels", return_value=[]),
+        patch.object(sys, "argv", _HOP_ARGS),
+    ):
+        code = hop_mod.main()
+    assert code == 2
+    assert seal_called is False
+    assert fire_called is False
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["phase"] == "no_autonomous_followup"
+    assert payload["stay"] is True

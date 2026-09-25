@@ -1,5 +1,9 @@
 """When a liaison hop is allowed.
 
+``hop_qualifies`` is an advisory predicate over caller-supplied arguments; it is
+not a hop precondition. The keystroke precondition is ``fire_ide_hop(seal=…)``,
+which refuses unless the CHECKPOINT seal receipt is ok.
+
 Operator 2026-09-12 07:26 PT: hop only when something needs autonomous
 follow-up. Empty NOW and quiet ticks are STAY. A HOLD_MERGE *row* still
 refuses the hop (do not mill LAND OWED) — autonomous land is mandated
@@ -29,7 +33,11 @@ def hop_qualifies(
     context_budget: bool = False,
     policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Return ``{ok, reason}``. Fail closed: refuse unless follow-up is named.
+    """Return ``{ok, reason}``. Advisory only — not enforced at keystroke.
+
+    This predicate is advisory over the arguments the hop script supplies; the
+    hard hop precondition is ``fire_ide_hop(seal=…)`` (seal receipt must be ok).
+    Fail closed here: refuse unless follow-up is named.
 
     Qualifies: live watcher tails, CONTEXT_BUDGET with a non-hold NOW, or a
     NOW that is not HOLD_MERGE / LAND OWED / empty / quiet. An operator-sourced
