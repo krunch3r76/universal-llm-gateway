@@ -30,6 +30,7 @@ def test_remote_followup_command_locks_compositor_activate() -> None:
     assert "--no-raise --focus-title 'Cursor Agents' --focus-app-id cursor" in cmd
     assert " launch " not in cmd
     assert "ctrl_n" not in cmd
+    assert "ctrl_t" not in cmd
     operator = remote_followup_command("/repo/m.md", remote_repo="/repo", no_raise=True)
     assert "--no-raise" in operator
     assert "--focus-title" not in operator

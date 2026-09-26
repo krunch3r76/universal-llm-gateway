@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Same-tab Agents followup: focus window, Ctrl+K chat title, paste, Ctrl+Enter.
 
-Preserves the composer model. Does not Ctrl+n. Used when a hop would land on
+Preserves the composer model. Does not send Ctrl+T. Used when a hop would land on
 the default model. Landing proof is the hub watcher, not this script.
 """
 
@@ -135,6 +135,11 @@ def followup_named_chat(
     focus_app_id: str,
     dry_run: bool,
 ) -> dict[str, object]:
+    """Focus one IDE chat by title, paste ``message``, and submit with Ctrl+Enter.
+
+    Ctrl+K selects ``chat_title``. This does not send Ctrl+T, so the composer
+    on that tab stays. ``dry_run`` returns the step plan and sends nothing.
+    """
     plan = [
         f"focus:{focus_title}",
         f"ctrl_k:{chat_title}",
@@ -182,6 +187,10 @@ def followup_named_chat(
 
 
 def main() -> int:
+    """CLI for a same-tab IDE followup. Reads the message file and prints JSON.
+
+    Requires the GUI-host display. Returns 0 on a dry-run or a completed paste.
+    """
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--message-file", required=True)
     p.add_argument("--chat-title", required=True)

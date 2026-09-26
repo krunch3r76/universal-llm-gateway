@@ -383,7 +383,7 @@ def remote_launch_command(
 ) -> str:
     """Build the GUI-host command.
 
-    Keys on the host are Ctrl+n (same-window tab, not Ctrl+Shift+N) → paste →
+    Keys on the host are Ctrl+T (IDE new tab, Shift released) → paste →
     Ctrl+Enter. Raise is compositor ``activate`` on ``focus_title`` (default
     ``Cursor Agents``). ``no_raise`` types into the already-focused window when
     the operator said so. ``--raise-uri`` / ``vscode-remote://`` is not a hop
@@ -620,7 +620,7 @@ def fire_ide_hop(
             "toplevels": toplevels,
             "cursor_windows": cursor_windows,
             "fix": (
-                "no new Cursor chat carries the hop header — Ctrl+N / paste / "
+                "no new Cursor chat carries the hop header — Ctrl+T / paste / "
                 f"Ctrl+Enter did not submit, or keys hit another window; "
                 f"focus was {focus_title!r} on {gui_host}. Check cursor_windows: "
                 "a lone 'Cursor Agents' toplevel with no editor window, or a "

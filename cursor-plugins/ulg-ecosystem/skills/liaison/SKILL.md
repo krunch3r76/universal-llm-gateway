@@ -69,7 +69,7 @@ one step; ≤ 700 bytes, `libs/bus_watch/induction.py`, operator bind 10479 #82/
 first key of every `DIGEST <root>` bus turn, so a woken claude.ai liaison reads the same address. Bind NOW
 for the next wake with `liaison-tick.py --root R --set now_row="<row>"`; standing operator binds go in
 `--set induction_binds='["hopper paused (10479#210)"]'`, already-loaded skills in `induction_loaded`.
-Keystroke paste of this block into the live tab (same uinput path as the hop, no Ctrl+n) is the planned IDE
+Keystroke paste of this block into the live tab (same uinput path as the hop, no Ctrl+T) is the planned IDE
 transport; `cse_session(op=followup)` is the planned claude.ai transport — both are **planned / not yet wired**.
 
 **After resume, before the first move:** The continuity card ## Skills lists slugs. After resume, read that

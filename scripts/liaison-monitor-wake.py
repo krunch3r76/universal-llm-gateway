@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Wake or hop the liaison-monitor Cursor tab on orion-node.
 
-``hop`` opens a new chat (Ctrl+n) and pastes ``resume <root>``. ``wake`` pastes
+``hop`` opens a new IDE tab (Ctrl+T) and pastes ``resume <root>``. ``wake`` pastes
 into the focused chat, and only when the watched house has no live conductor.
 That wake does not say resume. It tells the tab to hop if its context is dense.
 ``loop`` checks every ``--interval-minutes`` (default 5). It pastes only when no
@@ -215,6 +215,11 @@ def wake_once(root_id: str, gui_host: str, *, force: bool = False) -> dict[str, 
 
 
 def main() -> int:
+    """CLI for monitor ``hop`` (Ctrl+T new IDE tab), ``wake``, and ``loop``.
+
+    ``hop`` requires ``--transcript-id`` so the departing tab can seal first.
+    Prints JSON. ``loop`` stays up until the watched house is fully played.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("cmd", choices=("hop", "wake", "loop"))
     parser.add_argument("--root", default=_DEFAULT_ROOT)

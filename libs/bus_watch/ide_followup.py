@@ -38,7 +38,11 @@ def remote_followup_command(
     focus_title: str | None = None,
     no_raise: bool = False,
 ) -> str:
-    """Build the GUI-host followup command (paste + Ctrl+Enter, no Ctrl+n)."""
+    """Build the GUI-host followup command: paste and Ctrl+Enter into the focused IDE tab.
+
+    This path does not send Ctrl+T, so it does not open a new tab. Glass is a
+    different toplevel and is not selected here.
+    """
     if no_raise:
         focus = "--no-raise"
     else:

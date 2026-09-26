@@ -38,7 +38,7 @@ def _wl_copy(text: str) -> subprocess.Popen[bytes]:
 
     ``--paste-once`` exits on the first read. A manager or the shell consumes
     it during the new-tab wait, so Ctrl+V then inserts nothing. Do not call
-    this between Ctrl+N and Ctrl+V — that gap is a sleep only.
+    this between Ctrl+T and Ctrl+V — that gap is a sleep only.
     """
     proc = subprocess.Popen(
         ["wl-copy", "--foreground", "--trim-newline"],
@@ -191,7 +191,6 @@ def _ui() -> UInput:
     for extra in (
         e.KEY_D,
         e.KEY_V,
-        e.KEY_N,
         e.KEY_P,
         e.KEY_L,
         e.KEY_SLASH,
@@ -283,7 +282,7 @@ def _quick_command(ui: UInput, query: str, *, opener: str = "ctrl_slash") -> Non
 
 
 def _release_modifiers(ui: UInput) -> None:
-    """Drop Shift before Ctrl+N. Ctrl+Shift+N is a new window; Ctrl+n is a tab."""
+    """Drop Shift before Ctrl+T. A held Shift turns the IDE new-tab chord into Ctrl+Shift+T."""
     for key in (
         e.KEY_LEFTSHIFT,
         e.KEY_RIGHTSHIFT,
@@ -296,10 +295,10 @@ def _release_modifiers(ui: UInput) -> None:
 
 
 def _new_chat(ui: UInput) -> None:
-    """Same-window Agents tab: Ctrl+n (no Shift). Ctrl+Shift+N opens a new window."""
+    """IDE new tab: Ctrl+T with Shift released. Glass uses ctrl-/ and does not call this."""
     _release_modifiers(ui)
     time.sleep(0.05)
-    _chord(ui, e.KEY_LEFTCTRL, e.KEY_N)
+    _chord(ui, e.KEY_LEFTCTRL, e.KEY_T)
     time.sleep(0.45)
 
 
@@ -317,7 +316,7 @@ def followup_existing_chat_with_message(
     focus_title: str | None = None,
     focus_app_id: str = "cursor",
 ) -> dict[str, object]:
-    """Focus the lock-holder Agents window, paste ``message``, Ctrl+Enter — no Ctrl+n."""
+    """Focus the lock-holder IDE window, paste ``message``, Ctrl+Enter — no Ctrl+T."""
     _require_display()
     if dry_run:
         return {
@@ -360,18 +359,18 @@ def launch_new_chat_with_message(
     focus_title: str | None = None,
     focus_app_id: str = "cursor",
 ) -> dict[str, object]:
-    """Focus Agents, Ctrl+n (same-window tab), paste ``message``, Ctrl+Enter.
+    """Focus the IDE window, Ctrl+T (new tab), paste ``message``, Ctrl+Enter.
 
-    Clipboard is armed before Ctrl+N. The only step between Ctrl+N and Ctrl+V
+    Clipboard is armed before Ctrl+T. The only step between Ctrl+T and Ctrl+V
     is a wait — a ``wl-copy`` in that gap empties ``--paste-once`` before the
-    new composer reads it. Ctrl+Shift+N is a new window, not a tab.
+    new composer reads it. Glass is a different toplevel and uses ctrl-/.
     """
     _require_display()
     if dry_run:
         return {
             "dry_run": True,
             "repo": repo,
-            "steps": ["clipboard", "ctrl_n", "wait", "paste", "ctrl_enter"],
+            "steps": ["clipboard", "ctrl_t", "wait", "paste", "ctrl_enter"],
             "raise_window": raise_window,
             "focus_title": focus_title,
             "message_preview": message[:120],
@@ -393,7 +392,7 @@ def launch_new_chat_with_message(
         _release_clipboard(clip)
     return {
         "ok": True,
-        "steps": ["clipboard", "ctrl_n", "wait", "paste", "ctrl_enter"],
+        "steps": ["clipboard", "ctrl_t", "wait", "paste", "ctrl_enter"],
         "focus_title": focus_title,
         "focused": focused.get("activated"),
         "message_len": len(message),
@@ -453,10 +452,15 @@ def select_composer_model(
 
 
 def main() -> int:
+    """CLI for IDE launch, same-tab followup, and Glass quick-command probes.
+
+    ``launch`` sends Ctrl+T on the IDE. ``--raise-uri`` is refused because
+    Firefox owns ``vscode-remote://``. Prints a JSON verdict.
+    """
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
     lp = sub.add_parser(
-        "launch", help="Focus Cursor, Ctrl+n (same-window tab), paste, Ctrl+Enter"
+        "launch", help="Focus the IDE, Ctrl+T (new tab), paste, Ctrl+Enter"
     )
     lp.add_argument("--message", help="First user message (e.g. resume 10223 …)")
     lp.add_argument(

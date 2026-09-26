@@ -4,7 +4,7 @@
 evdev uinput + wl-copy, same substrate as ``orchestrator_tab_keystroke.py`` and
 ``grokbot_tab_keystroke.py``. Two ops the io-side watcher drives over SSH:
 
-  open   raise Cursor → palette "New Chat" → paste opening message → Enter
+  open   raise Cursor → Ctrl+T new IDE tab → optional Ctrl+/ model → paste → Enter
   paste  raise Cursor → [focus tab by title] → focus chat input → paste → Enter
 
 ``paste`` is the per-turn wake: the in-tab agent has ended its turn, so a fresh
@@ -35,7 +35,7 @@ _DEFAULT_REPO = os.environ.get(
     "CURSOR_BRIDGE_REPO", "/mnt/torus/projects/universal-llm-gateway"
 )
 _MODEL_QUERY = os.environ.get("CURSOR_BRIDGE_MODEL_QUERY", "composer")
-_NEW_CHAT = os.environ.get("CURSOR_BRIDGE_NEW_CHAT", "ctrl_n")
+_NEW_CHAT = os.environ.get("CURSOR_BRIDGE_NEW_CHAT", "ctrl_t")
 _NEW_CHAT_CHORDS = ("ctrl_n", "ctrl_t", "palette")
 _FOCUS_OPENERS = ("none", "ctrl_k", "ctrl_slash", "ctrl_shift_p")
 _INPUT_FOCUS = ("ctrl_l", "none")
@@ -168,6 +168,7 @@ def _ui() -> UInput:
             e.KEY_V,
             e.KEY_P,
             e.KEY_L,
+            e.KEY_N,
             e.KEY_T,
             e.KEY_K,
             e.KEY_SLASH,
@@ -258,7 +259,12 @@ def _new_chat(ui: UInput, chord: str) -> None:
 def open_tab(
     message: str, *, repo: str, model_query: str, new_chat: str, dry_run: bool
 ) -> dict[str, object]:
-    """Operator recipe (2026-09-10): Ctrl+N new chat → Ctrl+/ quick command → model → paste."""
+    """IDE new tab is Ctrl+T, then an optional Ctrl+/ model filter, then the paste.
+
+    ``new_chat`` may still be ``ctrl_n`` or ``palette`` when the caller names
+    that chord. The default is Ctrl+T. Glass quick-command is the model step,
+    not the new-tab step.
+    """
     _require_display()
     plan = ["raise", f"new_chat:{new_chat}"]
     if model_query:
@@ -298,6 +304,12 @@ def paste_message(
     input_focus: str,
     dry_run: bool,
 ) -> dict[str, object]:
+    """Paste into an existing Cursor chat. Does not open a new IDE tab.
+
+    ``focus_opener`` selects ``focus_title`` first. ``input_focus=ctrl_l``
+    moves the caret to the composer so the paste does not land in an editor
+    buffer. Returns the step plan; uinput stays off until the bridge is armed.
+    """
     _require_display()
     plan = ["raise"]
     if focus_title and focus_opener != "none":
@@ -362,12 +374,17 @@ def _read_message(args: argparse.Namespace) -> str:
 
 
 def main() -> int:
+    """CLI for ``open`` (Ctrl+T new IDE tab) and ``paste`` (the existing chat).
+
+    Uinput stays off unless ``CURSOR_BRIDGE_UINPUT_ENABLED`` is set. Prints
+    JSON for the op that ran.
+    """
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
 
     op = sub.add_parser(
         "open",
-        help="Raise Cursor, Ctrl+N new chat, Ctrl+/ model, paste opening message",
+        help="Raise Cursor, Ctrl+T new IDE tab, Ctrl+/ model, paste opening message",
     )
     op.add_argument("--message")
     op.add_argument("--message-file")
