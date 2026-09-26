@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Follow one selected dispatch in a tmux pane.
+
+Reads the selection file the board writes and prints TailPort lines after
+the cursor this process holds.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+import time
+from pathlib import Path
+
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from scripts.model_manager.ui.dispatch_monitor.ulg.tail_follow import (  # noqa: E402
+    FollowState,
+    follow_step,
+)
+from scripts.model_manager.ui.dispatch_monitor.ulg.tail_on_click import (  # noqa: E402
+    TailOnClick,
+)
+from scripts.model_manager.ui.dispatch_monitor.ulg.tail_selection import (  # noqa: E402
+    DEFAULT_SELECTION_PATH,
+    read_selection,
+)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--selection",
+        type=Path,
+        default=Path(
+            os.environ.get("DISPATCH_BOARD_SELECTION", str(DEFAULT_SELECTION_PATH))
+        ),
+    )
+    parser.add_argument("--interval", type=float, default=0.5)
+    args = parser.parse_args(argv)
+    port = TailOnClick()
+    state = FollowState()
+    while True:
+        for line in follow_step(state, read_selection(args.selection), port):
+            print(line, flush=True)
+        time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

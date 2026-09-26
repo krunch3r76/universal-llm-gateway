@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
+import httpx
+
 from scripts.model_manager.ui.charter_scoreboard_objective import (
     objective_meta_event,
     tip_meta_for_root,
@@ -206,17 +208,29 @@ def seed_model(
                 seeded_roots.add(root)
         pending.append(event)
 
-    audit = charter_tick_audit(minutes=minutes, limit=limit)
+    # The audit scan can stall the query socket. Seed continues from the
+    # exact signal pulls so a timeout does not kill the board.
+    try:
+        audit = charter_tick_audit(minutes=minutes, limit=limit, timeout=5.0)
+    except (httpx.HTTPError, OSError):
+        audit = {}
     for row in _audit_rows(audit):
         _ingest(row)
 
     # Lifecycle first — exact signals beat glob crowding under the 500-cap.
+    # A stalled query is skipped. The board paints from whatever arrived.
+    def _pull(signal: str) -> list[dict]:
+        try:
+            return signal_events(signal, minutes=minutes, limit=limit, timeout=5.0)
+        except (httpx.HTTPError, OSError):
+            return []
+
     for signal in _PRIORITY_SIGNALS:
-        for row in signal_events(signal, minutes=minutes, limit=limit):
+        for row in _pull(signal):
             _ingest(row)
 
     for pattern in _LIVE_FILTERS:
-        for row in signal_events(pattern, minutes=minutes, limit=limit):
+        for row in _pull(pattern):
             _ingest(row)
 
     pending.extend(

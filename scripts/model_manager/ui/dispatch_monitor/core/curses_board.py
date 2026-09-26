@@ -76,13 +76,16 @@ class CursesBoard:
             return 2
         return 0
 
-    def paint(self, projection: SupervisorProjection | None) -> None:
+    def paint(
+        self,
+        projection: SupervisorProjection | None,
+        *,
+        selected_key: str | None = None,
+    ) -> None:
         height, width = self._scr.getmaxyx()
         self._scr.erase()
         if projection is None:
-            self._safe_addstr(
-                0, 0, f"DISPATCH BOARD  {la_clock()}  {self._status}", 3
-            )
+            self._safe_addstr(0, 0, f"DISPATCH BOARD  {la_clock()}  {self._status}", 3)
             self._safe_addstr(2, 0, "Waiting for first projection frame…", 0)
             self._scr.refresh()
             return
@@ -112,8 +115,24 @@ class CursesBoard:
             budgets["aside"],
         )
         y = self._paint_lease(projection, y, width, height)
-        y = self._paint_sdk(projection, sdk_live, y, width, height, budgets["sdk"])
-        y = self._paint_cdp(projection, cdp_live, y, width, height, budgets["cdp"])
+        y = self._paint_sdk(
+            projection,
+            sdk_live,
+            y,
+            width,
+            height,
+            budgets["sdk"],
+            selected_key=selected_key,
+        )
+        y = self._paint_cdp(
+            projection,
+            cdp_live,
+            y,
+            width,
+            height,
+            budgets["cdp"],
+            selected_key=selected_key,
+        )
         paint_attention(self, projection, y, width, height, budgets["attention"])
         self._scr.refresh()
 
@@ -293,6 +312,7 @@ class CursesBoard:
         width: int,
         height: int,
         row_cap: int,
+        selected_key: str | None = None,
     ) -> int:
         if y >= height - 1:
             return y
@@ -337,7 +357,8 @@ class CursesBoard:
                 width=width - 1,
                 relations=projection.relations,
             )
-            self._safe_addstr(y, 0, line[: width - 1], pair)
+            attr = curses.A_REVERSE if row.dispatch_id == selected_key else 0
+            self._safe_addstr(y, 0, line[: width - 1], pair, attr)
             y += 1
             shown += 1
         if shown < len(live) and y < height - 1:
@@ -362,6 +383,7 @@ class CursesBoard:
         width: int,
         height: int,
         row_cap: int,
+        selected_key: str | None = None,
     ) -> int:
         if y >= height - 1:
             return y
@@ -385,7 +407,9 @@ class CursesBoard:
         for row in live:
             if y >= height - 1 or shown >= row_cap:
                 break
-            self._safe_addstr(y, 0, _cdp_line(row, width=width - 1), 0)
+            cdp_key = row.chat_url or row.registration_id
+            attr = curses.A_REVERSE if cdp_key and cdp_key == selected_key else 0
+            self._safe_addstr(y, 0, _cdp_line(row, width=width - 1), 0, attr)
             y += 1
             shown += 1
         if shown < len(live) and y < height - 1:
@@ -401,7 +425,7 @@ class CursesBoard:
             y += 1
         return y
 
-    def _safe_addstr(self, y: int, x: int, text: str, pair: int) -> None:
+    def _safe_addstr(self, y: int, x: int, text: str, pair: int, attr: int = 0) -> None:
         if y < 0 or x < 0:
             return
         height, width = self._scr.getmaxyx()
@@ -409,8 +433,9 @@ class CursesBoard:
             return
         clip = text[: max(0, width - x - 1)]
         try:
-            if pair:
-                self._scr.addstr(y, x, clip, curses.color_pair(pair))
+            style = (curses.color_pair(pair) if pair else 0) | attr
+            if style:
+                self._scr.addstr(y, x, clip, style)
             else:
                 self._scr.addstr(y, x, clip)
         except curses.error:

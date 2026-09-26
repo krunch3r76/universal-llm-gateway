@@ -37,6 +37,13 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.controller import (  # noqa: 
 from scripts.model_manager.ui.dispatch_monitor.ulg.manage_charter_hold import (  # noqa: E402
     charter_hold_status,
 )
+from scripts.model_manager.ui.dispatch_monitor.ulg.tail_selection import (  # noqa: E402
+    DEFAULT_SELECTION_PATH,
+    ensure_prose_pane,
+    move_selection,
+    tail_targets,
+    write_selection,
+)
 
 
 class _SharedState:
@@ -82,32 +89,65 @@ def _run_controller(state: _SharedState, *, seed_minutes: int) -> None:
         except Exception as exc:  # noqa: BLE001
             with state.lock:
                 state.status = f"controller error: {exc}"
+        while not state.stop.is_set():
+            await asyncio.sleep(0.5)
 
     try:
         asyncio.run(_main())
     except KeyboardInterrupt:
-        pass
-    finally:
         state.stop.set()
+
+
+def _selection_verb(key: int) -> str | None:
+    if key in (ord("j"), curses.KEY_DOWN):
+        return "down"
+    if key in (ord("k"), curses.KEY_UP):
+        return "up"
+    if key in (10, 13, curses.KEY_ENTER):
+        return "enter"
+    return None
 
 
 def _curses_main(stdscr: Any, state: _SharedState, *, seed_minutes: int) -> None:
     board = CursesBoard(stdscr, seed_minutes=seed_minutes)
+    index = 0
+    tail_status = "j/k select · enter opens the transcript pane"
+    launcher = os.path.join(os.path.dirname(__file__), "tmux-dispatch-prose")
     while not state.stop.is_set():
         with state.lock:
             frame = state.frame
             hold = state.hold
             status = state.status
+        targets = tail_targets(frame.sdk, frame.cdp) if frame is not None else []
+        index, _ = move_selection(index, len(targets), "")
+        selected = targets[index].key if targets else None
         board.set_hold(hold)
-        board.set_status(status)
-        board.paint(frame)
+        board.set_status(f"{status}  {tail_status}")
+        board.paint(frame, selected_key=selected)
         try:
             key = stdscr.getch()
-            if key in (ord("q"), ord("Q"), 27):
-                state.stop.set()
-                break
         except curses.error:
-            pass
+            continue
+        if key in (ord("q"), ord("Q")):
+            state.stop.set()
+            break
+        verb = _selection_verb(key)
+        if verb is None or not targets:
+            continue
+        index, arm = move_selection(index, len(targets), verb)
+        if not arm:
+            continue
+        target = targets[index]
+        write_selection(DEFAULT_SELECTION_PATH, target)
+        pane = ensure_prose_pane(launcher)
+        if pane == "opened":
+            tail_status = f"transcript pane opened · {target.label}"
+        elif pane == "already_open":
+            tail_status = f"transcript following {target.label}"
+        elif pane == "not_in_tmux":
+            tail_status = f"selection written · run scripts/tmux-dispatch-prose · {target.label}"
+        else:
+            tail_status = f"transcript pane failed ({pane})"
 
 
 def main(argv: list[str] | None = None) -> int:

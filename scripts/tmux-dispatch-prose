@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Tmux pane for the selected dispatch transcript.
+#
+#   ./scripts/tmux-dispatch-prose
+# The board also splits this pane on Enter when already inside tmux.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PY="${PYTHON:-$HOME/.venvs/universal/bin/python}"
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+if [[ -n "${TMUX:-}" ]]; then
+  tmux set-option -t "#{pane_id}" remain-on-exit on 2>/dev/null \
+    || tmux set-option remain-on-exit on 2>/dev/null \
+    || true
+fi
+exec "$PY" "$ROOT/scripts/watch-dispatch-prose" "$@"
