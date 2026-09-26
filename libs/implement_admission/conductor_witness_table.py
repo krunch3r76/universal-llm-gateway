@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import subprocess
 from pathlib import Path
 
 from review_verdict.grammar import (
@@ -288,6 +289,25 @@ def _witness_g1(*, source_ref: str, cortex: WitnessCortex) -> Witness | None:
     return None
 
 
+def _repo_head_full_sha(repo: Path) -> str | None:
+    """Return full HEAD sha for a git working tree, or None if unavailable."""
+    git_dir = repo / ".git"
+    if not git_dir.exists():
+        return None
+    proc = subprocess.run(
+        ["git", "-C", str(repo.resolve()), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+    head = proc.stdout.strip().lower()
+    if not _SHA_RE.match(head):
+        return None
+    return head
+
+
 def _conductor_dispatch_id(tip_body: str) -> str | None:
     match = re.search(
         r"conductor dispatch_id[^:`]*[`\"]?([0-9a-f-]{8,})[`\"]?",
@@ -445,6 +465,16 @@ def _row_witnesses_g_ladder(
                 source="ledger:nested_implement",
                 detail=dispatch_id,
             )
+    if witnesses.get("G5") is None and summon != "attended":
+        l1_sha = artifacts.get("L1")
+        if l1_sha and _SHA_RE.match(l1_sha) and repo is not None:
+            head_sha = _repo_head_full_sha(repo)
+            if head_sha is not None and head_sha == l1_sha.lower():
+                witnesses["G5"] = Witness(
+                    row="G5",
+                    source="git:lane_head",
+                    detail=l1_sha,
+                )
 
     if witnesses.get("G5") is not None:
         g6_id, g6_uri = _first_resolving_artifact(

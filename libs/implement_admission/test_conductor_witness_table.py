@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -630,3 +631,109 @@ def test_g3_witness_from_spec_artifact_ignores_density_triage(tmp_path: Path) ->
     assert g3 is not None
     assert g3.source == "artifact:S4b"
     assert g3.detail == spec_uri
+
+
+def _git_repo_at_commit(tmp_path: Path, *, advance: bool = False) -> tuple[Path, str]:
+    """Init a repo; return (repo path, first commit full sha). Optionally advance HEAD."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "witness@test"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "witness"], cwd=repo, check=True)
+    (repo / "f").write_text("1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "f"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "c1"], cwd=repo, check=True)
+    first_sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+    ).strip()
+    if advance:
+        (repo / "f").write_text("2\n", encoding="utf-8")
+        subprocess.run(["git", "commit", "-am", "c2"], cwd=repo, check=True)
+    return repo, first_sha
+
+
+@pytest.mark.offline
+def test_g5_git_lane_head_when_head_equals_l1(tmp_path: Path) -> None:
+    """confer_and_finish: HEAD == L1 sha witnesses G5 via git:lane_head."""
+    repo, l1_sha = _git_repo_at_commit(tmp_path)
+    tip_body = (
+        "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        + _sidecar_row("L1", l1_sha)
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(),
+        nested_implement=_StubNestedImplement(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        summon_mode="confer_and_finish",
+        repo=repo,
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=tmp_path / "cortex",
+        rows=G_ROWS,
+    )
+    g5 = witnesses.get("G5")
+    assert g5 is not None
+    assert g5.source == "git:lane_head"
+    assert g5.detail == l1_sha.lower()
+
+
+@pytest.mark.offline
+def test_g5_git_lane_head_not_descendant_head(tmp_path: Path) -> None:
+    """confer_and_finish: descendant HEAD must not witness G5 from L1 alone."""
+    repo, l1_sha = _git_repo_at_commit(tmp_path, advance=True)
+    tip_body = (
+        "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        + _sidecar_row("L1", l1_sha)
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(),
+        nested_implement=_StubNestedImplement(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        summon_mode="confer_and_finish",
+        repo=repo,
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=tmp_path / "cortex",
+        rows=G_ROWS,
+    )
+    assert witnesses.get("G5") is None
+
+
+@pytest.mark.offline
+def test_g5_attended_resurface_without_head_equality(tmp_path: Path) -> None:
+    """Attended SCORE_RESURFACE witnesses G5 without L1/HEAD equality."""
+    repo, l1_sha = _git_repo_at_commit(tmp_path, advance=True)
+    wrong_l1 = l1_sha  # L1 pins parent; HEAD is descendant
+    tip_body = (
+        "## Sidecars\n\n| ID | Artifact URI | What it is |\n|---|---|---|\n"
+        + _sidecar_row("L1", wrong_l1)
+    )
+    deps = FoldDeps(
+        cortex=_StubCortex(),
+        bus=_StubBus(),
+        git=_StubGit(),
+        source_ref=_SOURCE_REF,
+        summon_mode="attended",
+        summoning_thread_id="10110",
+        repo=repo,
+    )
+    witnesses = row_witnesses(
+        _SLUG,
+        tip_body=tip_body,
+        deps=deps,
+        files_root=tmp_path / "cortex",
+        rows=G_ROWS,
+    )
+    g5 = witnesses.get("G5")
+    assert g5 is not None
+    assert g5.source == "bus:SCORE_RESURFACE"
