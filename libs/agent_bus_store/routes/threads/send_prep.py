@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException, status
 
-from ...body_auto_spill import PreparedBody, prepare_body_for_insert, spill_error_http
+from ...body_auto_spill import spill_error_http
 from ...db import get_thread, normalize_thread_id
 from ...db.lane_associations import (
     associate_lane,
@@ -19,30 +19,6 @@ from ...supersedes_turn_boundary import (
 )
 from ...thread_classification import liaison_tag_on_child_without_root
 from ...turns_models import TurnSendCreate, post_mint_detail, turn_body_limit_error
-
-
-def _spill_transformer(
-    *,
-    subject: str,
-    body: str,
-    from_agent: str,
-    allow_long_body: bool,
-    holder: dict[str, PreparedBody],
-):
-    """Build a create_thread_with_turn body_transformer that soft-spills."""
-
-    def _transform(thread_id: str) -> str:
-        prepared = prepare_body_for_insert(
-            thread=thread_id,
-            subject=subject,
-            body=body,
-            from_agent=from_agent,
-            allow_long_body=allow_long_body,
-        )
-        holder["prepared"] = prepared
-        return prepared.body
-
-    return _transform
 
 
 def _raise_spill_http(exc: BaseException, *, thread_id: str | None = None) -> None:
@@ -151,9 +127,11 @@ def _raise_post_mint_http(
         reason=orphan_reason,
         error=str(error_key) if error_key is not None else None,
     )
+    enriched = post_mint_detail(detail, thread_id=thread_id)
+    enriched["orphan_reason"] = orphan_reason
     raise HTTPException(
         status_code=status_code,
-        detail=post_mint_detail(detail, thread_id=thread_id),
+        detail=enriched,
     )
 
 

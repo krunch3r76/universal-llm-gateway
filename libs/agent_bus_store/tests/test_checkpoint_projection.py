@@ -745,11 +745,14 @@ def test_send_new_slug_checkpoint_body_too_large_413(tmp_path, monkeypatch) -> N
                     "from": "cursor",
                     "to": "web",
                     "subject": "CHECKPOINT — birth too large",
-                    "body": "x" * 9000,
+                    "body": "x" * 500,
                 },
             )
             assert resp.status_code == 413, resp.text
-            assert resp.json()["detail"]["code"] == "checkpoint_body_too_large"
+            detail = resp.json()["detail"]
+            assert detail["code"] == "checkpoint_body_too_large"
+            assert detail["created_thread"]
+            assert detail["orphan_reason"] == "checkpoint_body_too_large"
 
 
 def test_send_non_checkpoint_unchanged(tmp_path, monkeypatch) -> None:

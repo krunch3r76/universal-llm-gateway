@@ -8,20 +8,9 @@ from datetime import datetime
 from fastapi import HTTPException, status
 from openapi_mcp.binding import x_mcp
 
-from ...body_auto_spill import (
-    PreparedBody,
-    build_turn_created,
-    prepare_body_for_insert,
-    spill_error_http,
-)
+from ...body_auto_spill import build_turn_created, prepare_body_for_insert
 from ...checkpoint_auto_stamp_wiring import load_thread_tags
-from ...db import (
-    SlugExists,
-    create_thread_with_turn,
-    create_turn,
-    get_thread,
-    normalize_thread_id,
-)
+from ...db import SlugExists, create_turn, get_thread, normalize_thread_id
 from ...db.turns import UnreadTurnsExist
 from ...enrollment_guard import EnrollmentTagError
 from ...resume_fence_citation import check_send_citation_gate, release_on_clean_send
@@ -30,13 +19,12 @@ from ...turns_models import TurnSendCreate, TurnSendCreated, slug_exists_detail
 from . import router
 from .crud import _raise_enrollment_denied
 from .detail import _thread_detail
+from .new_thread_send import run_new_thread_send
 from .send_prep import (
-    _bind_lane_on_send,
     _maybe_auto_bind_lane_on_send,
     _raise_if_turn_body_over_limit,
     _raise_spill_http,
     _resolve_send_supersedes,
-    _spill_transformer,
     _validate_lane_bind_pre_mint,
 )
 from .send_sidecar import _send_with_sidecar
@@ -78,7 +66,6 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
     if body.sidecar_content is not None:
         return await asyncio.to_thread(_send_with_sidecar, body)
     att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None
-    spill_holder: dict[str, PreparedBody] = {}
 
     if has_new_slug:
         if body.after_turn is not None and body.after_turn > 0:
@@ -102,65 +89,44 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         _validate_lane_bind_pre_mint(body)
         _raise_if_turn_body_over_limit(body.body, allow_long_body=body.allow_long_body)
         try:
-            thread_row, turn_id, ts, turn_number = await asyncio.to_thread(
-                create_thread_with_turn,
+            thread_row, turn_id, ts, turn_number, prepared = await asyncio.to_thread(
+                run_new_thread_send,
+                route="send",
+                strict_slug=True,
                 slug=body.new_slug,
                 summary=body.summary,
+                tags=body.tags or [],
+                lifecycle_state=body.lifecycle_state,
+                enroll_charter_runner=body.enroll_charter_runner,
                 from_agent=body.from_agent,
                 to_agent=body.to,
                 subject=body.subject,
                 body=body.body,
-                status=body.status,
-                after_turn=0,
+                turn_status=body.status,
                 attachments=att_dicts,
-                tags=body.tags or [],
-                lifecycle_state=body.lifecycle_state,
-                strict_slug=True,
-                enroll_charter_runner=body.enroll_charter_runner,
-                body_transformer=_spill_transformer(
-                    subject=body.subject,
-                    body=body.body,
-                    from_agent=body.from_agent,
-                    allow_long_body=body.allow_long_body,
-                    holder=spill_holder,
-                ),
+                allow_long_body=body.allow_long_body,
+                lane_bind_body=body,
             )
-        except Exception as exc:
-            mapped = spill_error_http(exc)
-            if mapped is not None:
-                status_code, detail = mapped
-                raise HTTPException(status_code=status_code, detail=detail) from exc
-            if isinstance(exc, (EnrollmentTagError, ThreadClassificationError)):
-                _raise_enrollment_denied(exc)
-                raise
-            if isinstance(exc, SlugExists):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=slug_exists_detail(
-                        slug=exc.slug,
-                        existing_thread_id=exc.existing_thread_id,
-                    ),
-                ) from exc
-            if isinstance(exc, UnreadTurnsExist):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=exc.to_detail(),
-                ) from exc
-            if isinstance(exc, ValueError):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
-                ) from exc
+        except (EnrollmentTagError, ThreadClassificationError) as exc:
+            _raise_enrollment_denied(exc)
             raise
-        prepared = spill_holder.get("prepared")
-        await asyncio.to_thread(
-            _bind_lane_on_send, body=body, thread_id=thread_row["id"]
-        )
-        thread_row = await asyncio.to_thread(get_thread, thread_row["id"]) or thread_row
+        except SlugExists as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=slug_exists_detail(
+                    slug=exc.slug,
+                    existing_thread_id=exc.existing_thread_id,
+                ),
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+            ) from exc
         return TurnSendCreated(
             send_path="new_thread",
             thread=_thread_detail(thread_row),
             turn=build_turn_created(
-                prepared or PreparedBody(body=body.body),
+                prepared,
                 turn_id=turn_id,
                 thread=thread_row["id"],
                 turn_number=turn_number,
@@ -169,8 +135,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                 to_agent=body.to,
                 subject=body.subject,
             ),
-            sidecar_uri=prepared.sidecar_uri if prepared else None,
-            sidecar_sha256=prepared.sidecar_sha256 if prepared else None,
+            sidecar_uri=prepared.sidecar_uri,
+            sidecar_sha256=prepared.sidecar_sha256,
         )
 
     if body.lifecycle_state is not None:
