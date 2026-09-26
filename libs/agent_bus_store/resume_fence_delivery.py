@@ -24,8 +24,8 @@ from .resume_fence import (
     assemble_resume_fence,
     encode_resume_bundle,
 )
-from .tape_harvest import harvest_before_pour
 from .resume_fence_store import _within_adopt_window, fold_fence
+from .tape_harvest import harvest_before_pour
 
 PourKey = tuple[str, str | None]
 

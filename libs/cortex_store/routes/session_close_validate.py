@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from continuity_tape.extract_jsonl import (
-    extract_turns_from_jsonl,
     extract_turns_from_jsonl_bytes,
 )
 from continuity_tape.messages import ContinuityMessagesEnvelope

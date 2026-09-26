@@ -17,7 +17,6 @@ from .tape_cells import (
     _last_session_cells,
     _window_cells,
 )
-from .tape_membership import _turn_count_verbatim
 
 # Reasons ``filter_lane_journals`` can emit — not discover-door keys (foreign_dominant, no_touch).
 _FILTER_LANE_EXCLUDED_REASONS = frozenset(

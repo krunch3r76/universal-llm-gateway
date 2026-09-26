@@ -7,9 +7,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from cortex_store.verbatim_succession import build_seal_envelope_meta
 
-from cortex_store.dispatch_ops.ops_transcript_source_probe import _op_transcript_source_probe
+from cortex_store.dispatch_ops.ops_transcript_source_probe import (
+    _op_transcript_source_probe,
+)
+from cortex_store.verbatim_succession import build_seal_envelope_meta
 
 pytestmark = pytest.mark.offline
 

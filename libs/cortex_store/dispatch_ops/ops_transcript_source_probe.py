@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 from typing import Any
 
 from continuity_tape.extract_jsonl import extract_turns_from_jsonl_bytes
