@@ -30,13 +30,24 @@ stamp honest deferral / operator bridge — ¬ call CODE_EXTRA from life.
 | Trigger | Action |
 |---|---|
 | Subsystem SLOC debt (red >400 or yellow 301–400) | `/overhaul {directory}` after modularize scan confirms violators |
-| Post-split consumer drift suspected | Full pass: splits → review → gates → arch doc |
-| Thin or missing `docs/architecture/{subsystem}.md` | Run through step 9+ only after code pass is green |
+| Post-split consumer drift suspected | Full pass: splits → review → gates → production docstrings → arch doc |
+| Thin production docstrings, or a managed doc projected from them | Docstring half on the whole directory (§5–§5.6), then step 9. Tests may be excluded |
+| Thin or missing `docs/architecture/{subsystem}.md` | Same docstring half first. An existing doc does not skip it |
 | Single red file blocking a directory pass | `/overhaul-file {file}` first, then `/overhaul {directory}` |
 | Grant / submission freeze active | See **Pre-submission NARROW scope** — prep-only may be permitted |
 
 ¬ batch multiple directories in one session. ¬ start code-changing splits during a
 submission freeze unless a named CPR INV-6 blocker explicitly requires them.
+
+**Production docstring obligation (binding).** Every production module, class, and
+public function in the directory is in the pass. Tests (`test_*.py`, `*_test.py`,
+files under `tests/`) may be excluded. Private helpers stay out unless the logic
+is non-obvious. The pass is not limited to files a split touched. Empty,
+too-short, and name-echo findings on that production surface are all enhanced
+before step 9. A green modularize scan plus an existing architecture doc does
+not close the directory while any of those findings remain. The managed doc is
+a projection of the docstrings, so it is regenerated only after that surface
+is clean.
 
 ## Posture
 
@@ -61,11 +72,13 @@ live under `tmp/`.
 libs/cortex_store → services/cortex-api → systems/pipeline → rag → routing → gateway → stargate → federation
 ```
 
-**Pipeline subsystem:** modularize + arch-doc **complete** (scan 280/0/0 green,
-`todo:overhaul-pipeline` done; `todo:pipeline-architecture-doc-overhaul-rag-tool` closed).
-Doc at `docs/architecture/pipeline.md` (web review 4751: 0 Criticals; F1–F7 applied;
-F8/F9/a23318 + F9 secondary transport-drift sweep closed live — threads 4761/4762/4755).
-Wave 0 next: **rag** (`services/rag/rag_service`) on orchestrator root `wave0-rag-overhaul`.
+**Pipeline subsystem:** modularize + arch-doc review closed 2026-07-10 (scan 280/0/0
+green, `todo:overhaul-pipeline` done; threads 4750/4751; doc
+`docs/architecture/pipeline.md`, review 0 Criticals). That close did not run the
+production docstring obligation. The live tree
+`services/universal-stargate/systems/pipeline` still owes §5–§5.6, tests excluded,
+then a step-9 re-projection. RAG's July modularize close is the same open half.
+Wave 0 code order is unchanged; the docstring half is open on both.
 
 **Architecture inventory** (`docs/architecture/`): subsystem docs are overhaul-generated
 only — see `arch-docs-maintenance_ws.mdc`. Current committed set includes
@@ -113,7 +126,7 @@ not `services/cortex-api` — the API service is an 11-line wrapper):
 **Not permitted pre-submission:** behavior-changing `/overhaul` splits, arch-doc commit
 from doc-generate, or store-layer code edits unless a named CPR INV-6 blocker requires them.
 
-Gate: pipeline modularize + arch-doc complete (threads 4750/4751 closed 2026-07-10).
+Gate: pipeline modularize + arch-doc review closed (threads 4750/4751, 2026-07-10). That gate is not the production docstring obligation.
 Post-submission: full `libs/cortex_store` `/overhaul`, then Wave 0 order above.
 
 ## Gotchas
