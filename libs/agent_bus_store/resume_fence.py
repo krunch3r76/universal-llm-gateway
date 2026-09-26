@@ -44,6 +44,20 @@ _ENTITY_RE = re.compile(
     re.IGNORECASE,
 )
 _GIT_SHA_RE = re.compile(r"\b(?:git:)?([0-9a-f]{7,40})\b", re.IGNORECASE)
+
+
+def _resume_first_hop(
+    thread_id: str,
+    *,
+    transcript_id: str | None,
+    surface: str | None,
+) -> str:
+    hop = f"continuity(op=resume, thread={thread_id}"
+    if transcript_id:
+        hop += f", transcript_id={transcript_id}"
+    if surface == "cursor":
+        hop += ", surface=cursor"
+    return hop + ")"
 _TRANSCRIPT_ID_RE = re.compile(
     r"transcript_id\s*=\s*([0-9a-f-]{8,})",
     re.IGNORECASE,
@@ -275,6 +289,7 @@ def arm_resume_fence(
     transcript_id: str | None = None,
     source: str = "hook_prompt",
     pool: str | None = None,
+    surface: str | None = None,
 ) -> dict[str, Any]:
     """Arm a fence with ``read_set`` only — no tape render (FIX-8)."""
     tip, _card_text, read_set = _load_resume_context(thread_id, pool=pool)
@@ -302,6 +317,7 @@ def arm_resume_fence(
                 "source": source,
                 "transcript_id": transcript_id,
                 "read_set": read_set,
+                "surface": surface,
             },
         )
     else:
@@ -342,9 +358,10 @@ def arm_resume_fence(
             "fence_id": fence_id,
             "transcript_id": transcript_id,
             "durable_send_requires_fence_id": state in {"armed", "poured"},
-            "first_hop": (
-                f"continuity(op=resume, thread={thread_id}"
-                f"{f', transcript_id={transcript_id}' if transcript_id else ''})"
+            "first_hop": _resume_first_hop(
+                thread_id,
+                transcript_id=transcript_id,
+                surface=surface,
             ),
         },
         "read_set": read_set,
@@ -361,6 +378,8 @@ def assemble_resume_fence(
     transcript_id: str | None = None,
     source: str = "mcp",
     pool: str | None = None,
+    surface: str | None = None,
+    pre_pour_harvest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pour ResumeBundle v1 onto an armed or new fence."""
     tip, card_text, read_set = _load_resume_context(thread_id, pool=pool)
@@ -401,6 +420,7 @@ def assemble_resume_fence(
                 "source": source,
                 "transcript_id": transcript_id,
                 "read_set": read_set,
+                "surface": surface,
             },
         )
     else:
@@ -414,6 +434,7 @@ def assemble_resume_fence(
                 "source": source,
                 "transcript_id": transcript_id,
                 "read_set": read_set,
+                "surface": surface,
             },
         )
 
@@ -450,9 +471,10 @@ def assemble_resume_fence(
             "fence_id": fence_id,
             "transcript_id": transcript_id,
             "durable_send_requires_fence_id": False,
-            "first_hop": (
-                f"continuity(op=resume, thread={thread_id}"
-                f"{f', transcript_id={transcript_id}' if transcript_id else ''})"
+            "first_hop": _resume_first_hop(
+                thread_id,
+                transcript_id=transcript_id,
+                surface=surface,
             ),
         },
         "tip_checkpoint": {
@@ -501,6 +523,8 @@ def assemble_resume_fence(
             ],
         },
     }
+    if pre_pour_harvest is not None:
+        bundle["pre_pour_harvest"] = pre_pour_harvest
 
     bundle_bytes = len(json.dumps(bundle, ensure_ascii=False))
     mission_bytes = len(json.dumps(mission, ensure_ascii=False))
@@ -522,6 +546,8 @@ def assemble_resume_fence(
         poured_payload["adopted_from"] = adopted_from
     if ambiguous > 1:
         poured_payload["adoption_ambiguous"] = ambiguous
+    if pre_pour_harvest is not None:
+        poured_payload["pre_pour_harvest"] = pre_pour_harvest
 
     poured_payload["bundle_sha256"] = resume_bundle_sha256(bundle)
     append_fence_event(

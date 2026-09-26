@@ -20,7 +20,6 @@ from .tape_degrade import (
     tape_budget_exceeded_envelope,
 )
 from .tape_harvest import render_tape_with_harvest
-from .tape_render import _find_jsonl_for_uuid
 from .tape_verbal import project_role_content_list, tape_left_off_gap, tape_tail
 
 _MECHANICAL_PROJECTION_URI = (
@@ -34,13 +33,8 @@ def _derive_seal_status(open_line: dict[str, Any]) -> str:
     if isinstance(mismatch, list) and mismatch:
         return "seal_pending"
     open_interval = open_line.get("open_interval")
-    if isinstance(open_interval, dict):
-        turns = int(open_interval.get("turns") or 0)
-        transcript_ids = open_interval.get("transcript_ids") or []
-        if turns > 0:
-            for tid in transcript_ids:
-                if _find_jsonl_for_uuid(str(tid)) is None:
-                    return "seal_pending"
+    if isinstance(open_interval, dict) and int(open_interval.get("turns") or 0) > 0:
+        return "seal_pending"
     return "sealed"
 
 
@@ -77,8 +71,6 @@ def _filter_messages_for_seal_pending(
     transcript_ids = open_interval.get("transcript_ids") or []
     open_turns = int(open_interval.get("turns") or 0)
     if not transcript_ids or open_turns <= 0:
-        return messages
-    if any(_find_jsonl_for_uuid(str(tid)) is not None for tid in transcript_ids):
         return messages
     last_cp = open_line.get("last_cp")
     if not isinstance(last_cp, dict):

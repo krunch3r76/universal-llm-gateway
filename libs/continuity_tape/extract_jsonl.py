@@ -19,20 +19,24 @@ from continuity_tape.messages import (
 _SOURCE = "cursor-jsonl"
 
 
-def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+def _read_jsonl_bytes(raw: bytes, *, path_hint: str = "<bytes>") -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
-    with path.open("r", encoding="utf-8") as fh:
-        for line_no, line in enumerate(fh, start=1):
-            stripped = line.strip()
-            if not stripped:
-                continue
-            try:
-                records.append(json.loads(stripped))
-            except json.JSONDecodeError as exc:
-                raise ValueError(
-                    f"jsonl_path {path} line {line_no}: invalid JSON ({exc})"
-                ) from exc
+    text = raw.decode("utf-8")
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            records.append(json.loads(stripped))
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"jsonl_path {path_hint} line {line_no}: invalid JSON ({exc})"
+            ) from exc
     return records
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    return _read_jsonl_bytes(path.read_bytes(), path_hint=str(path))
 
 
 def _extract_user_text(content: list[dict[str, Any]]) -> str:
@@ -134,18 +138,17 @@ def _turns_to_messages(
     return messages
 
 
-def extract_turns_from_jsonl(
-    path: Path,
+def extract_turns_from_jsonl_bytes(
+    raw: bytes,
     *,
     tools: Tools = "none",
     transcript_id: str | None = None,
     session_id: str | None = None,
     observed_at: str | None = None,
 ) -> ContinuityMessagesEnvelope:
-    """Parse a Cursor JSONL into a continuity messages envelope."""
-    raw_bytes = path.read_bytes()
-    source_sha256 = hashlib.sha256(raw_bytes).hexdigest()
-    records = _read_jsonl(path)
+    """Parse Cursor JSONL bytes into a continuity messages envelope."""
+    source_sha256 = hashlib.sha256(raw).hexdigest()
+    records = _read_jsonl_bytes(raw)
     turns = _walk_turns(records, tools=tools)
     messages = _turns_to_messages(turns)
     now = observed_at or datetime.now(tz=UTC).isoformat()
@@ -176,6 +179,24 @@ def extract_turns_from_jsonl(
         source=_SOURCE,
     )
     return envelope
+
+
+def extract_turns_from_jsonl(
+    path: Path,
+    *,
+    tools: Tools = "none",
+    transcript_id: str | None = None,
+    session_id: str | None = None,
+    observed_at: str | None = None,
+) -> ContinuityMessagesEnvelope:
+    """Parse a Cursor JSONL file into a continuity messages envelope."""
+    return extract_turns_from_jsonl_bytes(
+        path.read_bytes(),
+        tools=tools,
+        transcript_id=transcript_id,
+        session_id=session_id,
+        observed_at=observed_at,
+    )
 
 
 __all__ = ["extract_turns_from_jsonl"]

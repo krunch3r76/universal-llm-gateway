@@ -225,7 +225,7 @@ def _arm_fence(
     transcript_id: str | None,
     source: str,
 ) -> dict[str, Any] | None:
-    body: dict[str, Any] = {"source": source}
+    body: dict[str, Any] = {"source": source, "surface": "cursor"}
     if transcript_id:
         body["transcript_id"] = transcript_id
     try:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
@@ -35,6 +35,7 @@ class ResumeFenceCreate(BaseModel):
     transcript_id: str | None = None
     source: str = "mcp"
     pool: str | None = None
+    surface: Literal["cursor", "claude_ai"] | None = None
 
 
 class FenceDeniedCreate(BaseModel):
@@ -99,6 +100,7 @@ async def arm_thread_resume_fence(
         transcript_id=body.transcript_id,
         source=body.source,
         pool=body.pool,
+        surface=body.surface,
     )
     _resume_fence_error(payload, thread_id)
     return payload
@@ -120,6 +122,7 @@ async def create_resume_fence(
         transcript_id=body.transcript_id,
         source=body.source,
         pool=body.pool,
+        surface=body.surface,
     )
     _resume_fence_error(bundle, thread_id)
     return bundle

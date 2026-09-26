@@ -321,7 +321,9 @@ def register_continuity_tools(mcp: FastMCP) -> None:
 
         - ``resume`` — sync relay to
           ``POST /threads/{thread}/resume-fence``. Required: ``thread``.
-          Optional: ``transcript_id``, ``pool``.
+          Optional: ``transcript_id``, ``pool``, ``surface`` (``cursor`` or
+          ``claude_ai`` — Cursor callers should pass ``surface=cursor`` for
+          pre-pour harvest).
 
         - ``resume_release`` — explicit fence release. Required: ``fence_id``.
         """
@@ -338,6 +340,7 @@ def register_continuity_tools(mcp: FastMCP) -> None:
                 transcript_id=transcript_id,
                 pool=pool,
                 source="mcp",
+                surface=surface,
             )
 
         if op == "resume_release":

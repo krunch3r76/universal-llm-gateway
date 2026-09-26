@@ -25,6 +25,7 @@ from .resume_fence import (
     encode_resume_bundle,
 )
 from .resume_fence_store import _within_adopt_window, fold_fence
+from .tape_harvest import harvest_before_pour
 
 PourKey = tuple[str, str | None]
 
@@ -148,18 +149,33 @@ def _pour_or_adopt(
     transcript_id: str | None,
     source: str,
     pool: str | None,
+    surface: str | None = None,
 ) -> dict[str, Any]:
+    pre_pour_harvest = harvest_before_pour(
+        thread_id,
+        surface=surface,
+        transcript_id=transcript_id,
+    )
     row = read_stored_bundle(thread_id, transcript_id)
-    if row is not None and _bundle_is_fresh(row, thread_id):
+    if (
+        row is not None
+        and _bundle_is_fresh(row, thread_id)
+        and int(pre_pour_harvest.get("sealed") or 0) == 0
+    ):
         stored = json.loads(row.body_json)
-        return _stamp_live_state(stored, row.fence_id)
+        adopted = _stamp_live_state(stored, row.fence_id)
+        adopted["pre_pour_harvest"] = pre_pour_harvest
+        return adopted
     bundle = assemble_resume_fence(
         thread_id,
         transcript_id=transcript_id,
         source=source,
         pool=pool,
+        surface=surface,
+        pre_pour_harvest=pre_pour_harvest,
     )
     if bundle.get("error"):
+        bundle["pre_pour_harvest"] = pre_pour_harvest
         return bundle
     store_bundle(bundle)
     fid = bundle["fence"]["fence_id"]
@@ -178,6 +194,7 @@ async def deliver_resume_bundle(
     transcript_id: str | None,
     source: str,
     pool: str | None,
+    surface: str | None = None,
 ) -> dict[str, Any]:
     """Single-flight pour or adopt for one root thread + transcript key."""
     key = pour_key(thread_id, transcript_id)
@@ -191,6 +208,7 @@ async def deliver_resume_bundle(
                     transcript_id=key[1],
                     source=source,
                     pool=pool,
+                    surface=surface,
                 )
             )
             _IN_FLIGHT[key] = task

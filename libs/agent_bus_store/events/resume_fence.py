@@ -223,3 +223,55 @@ def emit_resume_fence_expired(*, fence_id: str, idle_seconds: int) -> None:
         idle_seconds=idle_seconds,
     )
     _publish(event.signal, event.payload, role=event.role)
+
+
+@event_factory
+def AgentBusResumeFenceHarvestDecided(  # noqa: N802
+    thread_id: str,
+    transcript_id: str | None,
+    surface: str | None,
+    outcome: str,
+    reason: str | None,
+    discovered: int,
+    sealed: int,
+    refused: int,
+) -> Event:
+    """Signal: resume.fence.harvest.decided"""
+    return Event(
+        signal="resume.fence.harvest.decided",
+        payload={
+            "thread_id": thread_id,
+            "transcript_id": transcript_id,
+            "surface": surface,
+            "outcome": outcome,
+            "reason": reason,
+            "discovered": discovered,
+            "sealed": sealed,
+            "refused": refused,
+        },
+        role="coordination",
+    )
+
+
+def emit_resume_fence_harvest_decided(
+    *,
+    thread_id: str,
+    transcript_id: str | None,
+    surface: str | None,
+    outcome: str,
+    reason: str | None,
+    discovered: int,
+    sealed: int,
+    refused: int,
+) -> None:
+    event = AgentBusResumeFenceHarvestDecided(
+        thread_id=thread_id,
+        transcript_id=transcript_id,
+        surface=surface,
+        outcome=outcome,
+        reason=reason,
+        discovered=discovered,
+        sealed=sealed,
+        refused=refused,
+    )
+    _publish(event.signal, event.payload, role=event.role)

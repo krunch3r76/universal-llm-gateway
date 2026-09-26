@@ -73,12 +73,11 @@ def test_build_lane_segments_propagates_verbatim_codec(tmp_path: Path) -> None:
             "_dominant_lane": "6341",
         }
     ]
-    with patch("agent_bus_store.tape_render.post_lid_tail", return_value=(0, None)):
-        segments = build_lane_segments(
-            lane_journals=lane_journals,
-            files_root=files_root,
-            excluded=[],
-        )
+    segments = build_lane_segments(
+        lane_journals=lane_journals,
+        files_root=files_root,
+        excluded=[],
+    )
     assert segments[0]["verbatim_codec"] == "messages-v1"
     assert segment_codec_counts(segments)["messages-v1"] == 1
 

@@ -41,8 +41,13 @@ from ..verbatim_succession import (
     split_verbatim_layer,
     stamp_verbatim_fields,
     transcript_messages_path,
+    transcript_source_path,
 )
 from .session_close_helpers import _ensure_continues_edge, _ensure_transcript_entity
+from .session_close_source_relocate import (
+    relocate_transcript_source,
+    restore_transcript_source,
+)
 from .session_close_validate import (
     ValidatedCloseContext,
     enforce_handoff_transcript_anchor,
@@ -382,6 +387,8 @@ def persist_session_close(
     seal_abs_path: Path | None = None
     prior_transcript_snapshot: str | None = None
     prior_seal_snapshot: str | None = None
+    prior_source_snapshot: bytes | None = None
+    source_abs_path: Path | None = None
     prior_codec: str | None = None
     if ctx.transcript_path is not None:
         assert ctx.composed_md is not None
@@ -427,6 +434,19 @@ def persist_session_close(
             ) + "\n"
             if (structural_fill or succession_extend) and seal_abs_path.is_file():
                 prior_seal_snapshot = seal_abs_path.read_text(encoding="utf-8")
+            if ctx.source_jsonl_bytes is not None and ctx.envelope is not None:
+                source_rel = transcript_source_path(ctx.transcript_path or "")
+                source_abs_path = _FILES_ROOT / source_rel
+                expected = ctx.envelope.meta.source_sha256 or ""
+                relocate_result = relocate_transcript_source(
+                    source_abs_path=source_abs_path,
+                    raw_bytes=ctx.source_jsonl_bytes,
+                    expected_sha256=expected,
+                    session_id=body.session_id,
+                    transcript_id=conversation_uuid,
+                    files_root=_FILES_ROOT,
+                )
+                prior_source_snapshot = relocate_result.prior_snapshot
             try:
                 durable_write_text(
                     seal_abs_path, seal_payload, retain_store_root=_FILES_ROOT
@@ -744,6 +764,18 @@ def persist_session_close(
                     "mcp.session.close.cleanup.failed",
                     session_id=body.session_id,
                     agent=body.agent,
+                )
+        if source_abs_path is not None:
+            try:
+                restore_transcript_source(
+                    source_abs_path,
+                    prior_source_snapshot,
+                    files_root=_FILES_ROOT,
+                )
+            except OSError:
+                logger.warning(
+                    "Failed to restore/unlink source jsonl after DB rollback: %s",
+                    source_abs_path,
                 )
         logger.error(
             "session_close DB transaction failed for %s",

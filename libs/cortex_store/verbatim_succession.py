@@ -31,6 +31,14 @@ def transcript_messages_path(file_path: str) -> str:
     return f"{_SEAL_DIR}/{name}"
 
 
+def transcript_source_path(file_path: str) -> str:
+    """Map ``notes/system/transcripts/{sid}.md`` → relocated JSONL source path."""
+    name = Path(file_path).name
+    if name.endswith(".md"):
+        name = name[:-3] + ".source.jsonl"
+    return f"{_SEAL_DIR}/{name}"
+
+
 def split_verbatim_layer(
     full_md: str,
     *,
@@ -306,5 +314,6 @@ __all__ = [
     "split_verbatim_layer",
     "stamp_verbatim_fields",
     "transcript_messages_path",
+    "transcript_source_path",
     "verbatim_fingerprint",
 ]
