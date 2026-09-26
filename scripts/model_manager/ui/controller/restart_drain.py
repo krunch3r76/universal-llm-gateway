@@ -70,6 +70,13 @@ GATED_ACTIONS = frozenset({"stop", "restart", "sync_restart"})
 _SELF_HOLDER_POLL_INTERVAL_S = 0.2
 
 
+def describe_probe_exc(exc: BaseException) -> str:
+    """Render a probe failure with its class; httpx timeouts often stringify to ``""``."""
+    text = str(exc).strip()
+    name = type(exc).__name__
+    return f"{name}: {text}" if text else name
+
+
 def holder_dispatch_id_from_active_work(active_work: dict[str, Any]) -> str | None:
     """Extract the active write-lease holder dispatch id from a probe payload."""
     lease = active_work.get("write_lease")
@@ -295,11 +302,12 @@ class RestartDrainGate:
                 work = await self.probe(service)
             except (httpx.HTTPError, ValueError, OSError) as exc:
                 # Probe failure must not kill a maybe-busy service. Fail closed: defer.
-                logger.warning("active-work probe failed for %s: %s", service, exc)
+                detail = describe_probe_exc(exc)
+                logger.warning("active-work probe failed for %s: %s", service, detail)
                 return DrainOutcome(
                     state="probe_error",
                     service=service,
-                    reason=f"could not determine in-flight work: {exc}",
+                    reason=f"could not determine in-flight work: {detail}",
                 )
 
             if work.busy:
@@ -364,7 +372,7 @@ class RestartDrainGate:
                 report[service] = {
                     "busy": False,
                     "restart_would_defer": True,
-                    "active_work": {"error": str(exc)},
+                    "active_work": {"error": describe_probe_exc(exc)},
                 }
                 continue
             report[service] = {
@@ -752,6 +760,7 @@ __all__ = [
     "RETRY_AFTER_S",
     "RestartDrainGate",
     "STARGATE_PROBE_URL",
+    "describe_probe_exc",
     "holder_dispatch_id_from_active_work",
     "resume_drain_supervision",
     "run_gated",

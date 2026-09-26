@@ -5,12 +5,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+
+from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_capacity_invariant import (
@@ -21,6 +24,8 @@ from services.git_integration_worker.cursor_sdk_deliverables import (
     STRUCTURED_CLOSEOUT_FULL_HEADING,
     sidecar_has_structured_closeout_full,
 )
+
+logger = get_logger(__name__)
 
 HISTORICAL_INCLUSION_RULE = (
     "corrected peaks: contract in {implement, none} only; "
@@ -478,6 +483,61 @@ def active_work_lane_fields(*, source_repo: Path) -> dict[str, Any]:
         "lane_b_regime": lane_b_regime_active(),
         "lane_b": lane_b_inventory_snapshot(source_repo=source_repo),
     }
+
+
+# ``/active-work`` is the manage drain probe (5s budget) for GIW and agent_bus.
+# The Lane-B inventory costs git subprocesses per ``cursor-sdk/*`` branch and is
+# display-only there, so it must never gate the occupancy answer.
+LANE_B_INVENTORY_WAIT_S = 1.0
+_lane_b_refresh: dict[Path, asyncio.Task[bool]] = {}
+_lane_b_cache: dict[Path, tuple[dict[str, Any], str]] = {}
+
+
+async def _refresh_lane_b_inventory(repo: Path) -> bool:
+    try:
+        inventory = await asyncio.to_thread(lane_b_inventory_snapshot, source_repo=repo)
+    except Exception:
+        logger.exception("lane-B inventory refresh failed for %s", repo)
+        return False
+    _lane_b_cache[repo] = (inventory, datetime.now(UTC).isoformat())
+    return True
+
+
+async def active_work_lane_fields_bounded(
+    *, source_repo: Path, wait_s: float = LANE_B_INVENTORY_WAIT_S
+) -> dict[str, Any]:
+    """``active_work_lane_fields`` for ``/active-work``, waiting at most ``wait_s``.
+
+    One refresh runs at a time per repo and survives the request that started it.
+    On timeout the last snapshot is served with ``lane_b_status="stale"``, or
+    ``lane_b={"status": "pending"}`` when none exists yet.
+    """
+    from services.git_integration_worker.cursor_sdk_lane_regime import (
+        lane_b_regime_active,
+    )
+
+    repo = source_repo.resolve()
+    loop = asyncio.get_running_loop()
+    task = _lane_b_refresh.get(repo)
+    if task is None or task.done() or task.get_loop() is not loop:
+        task = loop.create_task(_refresh_lane_b_inventory(repo))
+        _lane_b_refresh[repo] = task
+    try:
+        refreshed = await asyncio.wait_for(asyncio.shield(task), timeout=wait_s)
+    except TimeoutError:
+        refreshed = False
+    status = "fresh" if refreshed else "stale"
+
+    fields: dict[str, Any] = {"lane_b_regime": lane_b_regime_active()}
+    cached = _lane_b_cache.get(repo)
+    if cached is None:
+        fields.update(
+            lane_b={"status": "pending"}, lane_b_status="pending", lane_b_as_of=None
+        )
+        return fields
+    inventory, as_of = cached
+    fields.update(lane_b=inventory, lane_b_status=status, lane_b_as_of=as_of)
+    return fields
 
 
 def concurrency_stats(

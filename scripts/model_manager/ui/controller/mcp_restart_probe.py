@@ -26,6 +26,7 @@ from .restart_drain import (
     ActiveWork,
     BusyProbe,
     HttpActiveWorkProbe,
+    describe_probe_exc,
 )
 from .service_config import cdp_ask_url_config
 
@@ -88,7 +89,7 @@ class McpBusyProbe:
             try:
                 mcp_work = await self._mcp.snapshot()
             except (httpx.HTTPError, ValueError, OSError) as exc:
-                detail["mcp_probe_error"] = str(exc)
+                detail["mcp_probe_error"] = describe_probe_exc(exc)
                 # Without cdp_ask we cannot soft-fail: an unreachable MCP that
                 # still has a life client would look idle and get killed.
                 if not cdp_seen:
