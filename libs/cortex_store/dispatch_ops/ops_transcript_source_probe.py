@@ -68,11 +68,16 @@ def _op_transcript_source_probe(
 
     raw = source_path.read_bytes()
     source_sha256 = hashlib.sha256(raw).hexdigest()
-    envelope = extract_turns_from_jsonl_bytes(raw, session_id=session_id)
+    # meta.tools is the policy the seal was extracted with. The extract
+    # default "none" drops tool_use blocks, so the messages digest misses.
+    envelope = extract_turns_from_jsonl_bytes(
+        raw,
+        tools=sealed.meta.tools,
+        session_id=session_id,
+    )
     recomputed_messages = seal_messages_sha256(envelope.messages)
     sha_match = (
-        source_sha256 == expected_source
-        and recomputed_messages == expected_messages
+        source_sha256 == expected_source and recomputed_messages == expected_messages
     )
     turn_count = int(envelope.meta.turn_count or sealed.meta.turn_count or 0)
     transcript_source_probed(

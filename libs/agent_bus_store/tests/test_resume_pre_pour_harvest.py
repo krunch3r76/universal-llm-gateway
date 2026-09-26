@@ -86,7 +86,13 @@ def test_pre_pour_harvest_order_and_shape() -> None:
 
     def _harvest(*_a, **_k):
         call_order.append("harvest")
-        return {"discovered": 1, "sealed": 1, "deferred_count": 0, "refused": 0, "quiescent": 0}
+        return {
+            "discovered": 1,
+            "sealed": 1,
+            "deferred_count": 0,
+            "refused": 0,
+            "quiescent": 0,
+        }
 
     def _assemble(*_a, **kw):
         call_order.append("assemble")
@@ -220,7 +226,7 @@ def test_harvest_failure_still_pours(exc_factory, reason: str) -> None:
         ),
         patch(
             "agent_bus_store.events.resume_fence.emit_resume_fence_harvest_decided",
-        ),
+        ) as decided,
     ):
         bundle = _pour_or_adopt(
             "10223",
@@ -233,3 +239,6 @@ def test_harvest_failure_still_pours(exc_factory, reason: str) -> None:
     assert record["outcome"] == "failed"
     assert record["reason"] == reason
     assert "fence" in bundle
+    decided.assert_called_once()
+    assert decided.call_args.kwargs["outcome"] == "failed"
+    assert decided.call_args.kwargs["reason"] == reason
