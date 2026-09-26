@@ -86,6 +86,54 @@ def test_stage_cdp_prompt_with_skills_prepends_manifest(
     assert staged.prompt_uri.endswith("exec-skills/prompt.md")
 
 
+def test_stage_cdp_ask_stamps_libs_and_pipeline_notice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Ask/review CDP prompts carry the notice; expand's restage still receives it."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    staged = stage_cdp_prompt_with_skills(
+        execution_id="exec-notice",
+        prompt_text="## Task\ndesign the tail\n",
+        purpose="ask",
+    )
+    on_disk = tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-notice/prompt.md"
+    text = on_disk.read_text(encoding="utf-8")
+    assert "Primitives in libs/ are often the right tool" in text
+    assert "Pipelines are always in scope" in text
+    again = stage_cdp_prompt_with_skills(
+        execution_id="exec-notice",
+        prompt_uri=staged.prompt_uri,
+        purpose="ask",
+    )
+    assert again.prompt_uri == staged.prompt_uri
+    assert on_disk.read_text(encoding="utf-8").count("Primitives in libs/") == 1
+
+    expanded = stage_prompt_uri(
+        execution_id="exec-expanded",
+        prompt_text="TASK' with the pipeline name edited out\n",
+    )
+    stage_cdp_prompt_with_skills(
+        execution_id="exec-expanded",
+        prompt_uri=expanded.prompt_uri,
+        purpose="review",
+    )
+    expanded_text = (
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-expanded/prompt.md"
+    ).read_text(encoding="utf-8")
+    assert "Primitives in libs/ are often the right tool" in expanded_text
+
+    produce = stage_cdp_prompt_with_skills(
+        execution_id="exec-produce",
+        prompt_text="write the paragraph\n",
+        purpose="produce",
+    )
+    produce_text = (
+        tmp_path / "notes/system/ephemeral/cdp-endpoint/exec-produce/prompt.md"
+    ).read_text(encoding="utf-8")
+    assert "Primitives in libs/" not in produce_text
+    assert produce.prompt_uri.endswith("exec-produce/prompt.md")
+
+
 def test_stage_cdp_prompt_with_skills_prepends_house_block(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

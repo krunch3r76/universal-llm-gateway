@@ -30,9 +30,14 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from claude_bundles.cdp_skill_profiles import profile_slugs_for_purpose
+from consult_substrate_notice import (
+    ensure_substrate_notice,
+    substrate_notice_warrants,
+)
 from durable_io.atomic import durable_write_bytes, durable_write_text
 from implement_admission.closeout_helpers import cortex_files_root, workspaces_root
+
+from claude_bundles.cdp_skill_profiles import profile_slugs_for_purpose
 
 _EPHEMERAL_PREFIX = "notes/system/ephemeral/cdp-endpoint"
 
@@ -74,6 +79,27 @@ def ephemeral_dir(execution_id: str) -> Path:
 def ephemeral_uri_prefix(execution_id: str) -> str:
     """Return cortex:// URI prefix for one execution's ephemeral staging tree."""
     return _cortex_uri(f"{_EPHEMERAL_PREFIX}/{execution_id}")
+
+
+def _stamp_owned_ephemeral_notice(uri: str, purpose: str | None) -> None:
+    """Append the libs/pipeline notice onto an ephemeral prompt we already own.
+
+    Prompt-expand restages ``prompt.md`` and the worker then passes that URI
+    through. The stamp has to land on that file or the rewrite drops it.
+    """
+    if not substrate_notice_warrants(purpose=purpose):
+        return
+    rel = uri.removeprefix("cortex://").lstrip("/")
+    path = cortex_files_root() / rel
+    if path.is_dir():
+        path = path / "prompt.md"
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    updated = ensure_substrate_notice(text)
+    if updated == text:
+        return
+    durable_write_text(path, updated, retain_store_root=cortex_files_root())
 
 
 def resolve_workspaces_path(uri_or_path: str) -> Path | None:
@@ -262,6 +288,7 @@ def stage_cdp_prompt_with_skills(
         uri = str(prompt_uri).strip()
         if uri.startswith(prefix) or uri.rstrip("/") == prefix.rstrip("/"):
             root = ephemeral_dir(execution_id)
+            _stamp_owned_ephemeral_notice(uri, purpose)
             return StagedPrompt(
                 prompt_uri=uri,
                 ephemeral_root=root if root.is_dir() else None,
@@ -299,6 +326,8 @@ def stage_cdp_prompt_with_skills(
     try:
         merged, _, _ = prepend_cdp_dispatch_skills(body, effective)
         merged = ensure_review_reading_charter(merged, purpose)
+        if substrate_notice_warrants(purpose=purpose):
+            merged = ensure_substrate_notice(merged)
     except KeyError as exc:
         raise CdpStagingError(
             f"unknown skill in skills=: {exc.args[0] if exc.args else exc}",
@@ -343,9 +372,7 @@ def stage_prompt_uri(
     if prompt_text is not None and prompt_text.strip():
         dest_dir = ephemeral_dir(execution_id)
         dest = dest_dir / "prompt.md"
-        durable_write_text(
-            dest, prompt_text, retain_store_root=cortex_files_root()
-        )
+        durable_write_text(dest, prompt_text, retain_store_root=cortex_files_root())
         rel = f"{_EPHEMERAL_PREFIX}/{execution_id}/prompt.md"
         return StagedPrompt(
             prompt_uri=_cortex_uri(rel),
