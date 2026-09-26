@@ -20,7 +20,7 @@ import re
 from typing import Any
 
 from .cursor_sdk_dispatch_turn import is_cursor_sdk_dispatch_terminal_subject
-from .db.connection import connect
+from .db.connection import connect, write_connect
 from .db.threads import load_dispatch_links
 from .db.turns import get_turns, update_turn, update_turn_status
 from .events.lifecycle import emit_dispatch_orphan_demoted
@@ -63,7 +63,7 @@ def _orphan_matches_thread(orphan: dict[str, Any], thread_id: str) -> bool:
     orphan_exec = parse_orphan_execution_id(str(orphan.get("body") or ""))
     if not orphan_exec:
         return True
-    with connect() as conn:
+    with write_connect() as conn:
         links = load_dispatch_links(conn, thread_id)
     if not links:
         return True

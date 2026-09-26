@@ -42,7 +42,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         write_thread_sidecar_for_send,
     )
 
-    from ...db.connection import connect
+    from ...db.connection import connect, write_connect
     from ...db.turns import UnreadTurnsExist, insert_turn, mark_sender_unread_in_thread
     from ...events.lifecycle import (
         emit_sidecar_orphaned,
@@ -84,7 +84,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         _raise_if_turn_body_over_limit(
             body.body, allow_long_body=body.allow_long_body
         )
-        with connect() as conn:
+        with write_connect() as conn:
             existing = conn.execute(
                 "SELECT id FROM threads WHERE slug = ? LIMIT 1",
                 (body.new_slug,),

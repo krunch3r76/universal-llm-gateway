@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from ..recipients import recipient_in_clause, sender_auto_mark_clause
-from .connection import connect, now
+from .connection import connect, now, write_connect
 from .threads import _next_auto_id
 
 
@@ -147,7 +147,7 @@ def insert_turn(
     addressed to from_agent exist after that turn number.
     """
     ts = now()
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT id, status, bus_lifecycle_state FROM threads WHERE id = ?",
             (thread,),
@@ -359,7 +359,7 @@ def get_turns(
 
     sql = f"SELECT {select} FROM turns {where} {order} {limit}"
     close_candidates: set[str] = set()
-    with connect() as conn:
+    with write_connect() as conn:
         rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
 
         if mark_read:
@@ -441,7 +441,7 @@ def get_unread_thread_toc(
         ORDER BY last_activity_at DESC
     """
     close_candidates: list[str] = []
-    with connect() as conn:
+    with write_connect() as conn:
         totals_row = conn.execute(totals_sql, inbox_params).fetchone()
         total_threads = int(totals_row["total_threads"] or 0)
         total_turns = int(totals_row["total_turns"] or 0)
@@ -521,7 +521,7 @@ def mark_sender_unread_in_thread(
     """
     mark_clause, mark_params = sender_auto_mark_clause(from_agent)
     ts = now()
-    with connect() as conn:
+    with write_connect() as conn:
         cur = conn.execute(
             f"UPDATE turns SET read_at = ? "
             f"WHERE thread = ? AND {mark_clause} "
@@ -544,7 +544,7 @@ def bulk_mark_read_state(
 ) -> int:
     """Bulk mark read — enumerated turn_numbers XOR through_turn+agent."""
     ts = now()
-    with connect() as conn:
+    with write_connect() as conn:
         if turn_numbers is not None:
             placeholders = ",".join("?" * len(turn_numbers))
             cur = conn.execute(
@@ -573,7 +573,7 @@ def bulk_mark_read_state(
 def mark_turn_read(turn_id: int) -> str | None:
     """Returns read_at timestamp, or None if turn not found."""
     thread_id: str | None = None
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT read_at, thread FROM turns WHERE id = ?", (turn_id,)
         ).fetchone()
@@ -609,7 +609,7 @@ def update_turn_status(
     turn_id: int, *, status: str, supersedes_turn: int | None = None
 ) -> bool:
     """Returns False if turn not found."""
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute("SELECT id FROM turns WHERE id = ?", (turn_id,)).fetchone()
         if row is None:
             return False
@@ -638,7 +638,7 @@ def update_turn(
     if body is not None and append is not None:
         raise ValueError("Cannot specify both body (replace) and append")
 
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute("SELECT * FROM turns WHERE id = ?", (turn_id,)).fetchone()
         if row is None:
             return None
@@ -673,7 +673,7 @@ def update_turn(
 
 def get_turn_by_number(thread: str, turn_number: int) -> dict[str, Any] | None:
     """Look up a single turn by thread + turn_number, including attachments."""
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT * FROM turns WHERE thread = ? AND turn_number = ?",
             (thread, turn_number),
@@ -697,7 +697,7 @@ def delete_turn(turn_id: int, *, force: bool = False) -> dict[str, Any]:
     Raises KeyError if turn not found.
     Raises TurnAlreadyAcknowledged if force=False and turn has been read.
     """
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT id, thread, turn_number, read_at FROM turns WHERE id = ?",
             (turn_id,),

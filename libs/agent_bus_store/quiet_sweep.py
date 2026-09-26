@@ -20,7 +20,7 @@ from claude_bundles.cse_session_obligations import (
     get_open_wake_owed,
 )
 
-from .db.connection import connect, now
+from .db.connection import connect, now, write_connect
 from .db.turns import insert_turn
 from .events.quiet_with_wip import emit_quiet_with_wip_fired
 from .quiet_with_wip import (
@@ -139,7 +139,7 @@ def _write_alarm_and_actuate(
         if reason == "pickup_unbound"
         else list(wip_execution_ids)
     )
-    with connect() as conn:
+    with write_connect() as conn:
         conn.execute(
             "INSERT INTO thread_quiet_alarms ("
             "  alarm_id, thread_id, seat, first_seen_at, fired_at, "
@@ -242,7 +242,7 @@ def discharge_quiet_alarms_on_seat_turn(
     Returns count discharged.
     """
     del created_at  # reserved for finer discharge rules
-    with connect() as conn:
+    with write_connect() as conn:
         cur = conn.execute(
             "UPDATE thread_quiet_alarms SET status = 'discharged', "
             "discharged_at = ? "

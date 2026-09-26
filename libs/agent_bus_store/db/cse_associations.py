@@ -14,7 +14,7 @@ from typing import Any
 from claude_bundles.cse_url import normalize_cse_url
 
 from ..events.cse_bound import emit_cse_bound
-from .connection import connect
+from .connection import connect, write_connect
 
 _CSE_PATH_MARKER = "/cowork/cse_"
 
@@ -66,7 +66,7 @@ def associate_cse(
     if get_thread(thread_id) is None:
         raise LookupError(f"Thread {thread_id} not found")
 
-    with connect() as conn:
+    with write_connect() as conn:
         prior = _prior_row(conn, thread_id=thread_id)
         if prior is not None:
             prior_url = str(prior["cse_chat_url"] or "")

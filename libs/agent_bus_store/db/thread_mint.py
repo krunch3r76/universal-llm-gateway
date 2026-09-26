@@ -7,7 +7,7 @@ from typing import Any
 
 from agent_bus_store.thread_classification import gate_thread_tags
 
-from .connection import connect, now
+from .connection import connect, now, write_connect
 from .lifecycle import _transition_lifecycle_state
 from .threads import _next_auto_id, get_thread_with_links, set_thread_tags
 from .turns import SlugExists
@@ -31,7 +31,7 @@ def mint_thread(
         tags, prior_tags=[], enroll_charter_runner=enroll_charter_runner
     )
     t0 = time.monotonic()
-    with connect() as conn:
+    with write_connect() as conn:
         if strict_slug:
             existing = conn.execute(
                 "SELECT id FROM threads WHERE slug = ? LIMIT 1",

@@ -24,7 +24,7 @@ from .checkpoint_entity_ref_lint import entity_ref_drop_advisory
 from .checkpoint_projection import CheckpointBodyTooLargeError
 from .checkpoint_projection_wiring import maybe_project_checkpoint_body
 from .checkpoint_stance_lint import orchestration_stance_advisory
-from .db.connection import connect
+from .db.connection import connect, write_connect
 from .turns_models import (
     MAX_LONG_TURN_BODY_CHARS,
     MAX_SIDECAR_CONTENT_CHARS,
@@ -42,7 +42,7 @@ AUTO_OVERFLOW_SLUG = "auto-overflow"
 
 def _turn_body(thread: str, turn_number: int) -> str | None:
     """Body of a prior turn, or None when the row is gone."""
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT body FROM turns WHERE thread = ? AND turn_number = ?",
             (thread, turn_number),
