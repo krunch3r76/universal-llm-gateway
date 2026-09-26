@@ -537,14 +537,29 @@ def plant_play_state(
 
 def _play_prompt(todo_slug: str) -> str:
     """Liaison admit text. Generate rejects ``source_ref`` combined with ``prompt``."""
+    if todo_slug == "liaison-multi-conductor-p3-multi-hire":
+        # G5 is on the lane only. This hire is the G6 review. It does not land.
+        return (
+            "G5 is implemented on cursor-sdk/lane-12786 commit "
+            "7f18840b09f91ba7a78e14b30211cc3ef11aaa6c, parent "
+            "fc7421c31e9ec3beec5276647ddfef16b3c660f8. That commit is not on "
+            "master. Do not land it. Do not mark G5 DONE. Do not re-implement. "
+            "The live scoreboard sha256 is "
+            "9d74c8108634d4ebda2bd03120c769444420dcb297350de908ef7615eac6d0df "
+            "and its entry gate is still G4. The closeout prose cited "
+            "4ccd1907; that digest is not the live file. Set the entry gate "
+            "to G5 and write the in-flight line to this lane commit. "
+            "Then run the G6 pre-land review: cdp/opus-5 purpose=review on "
+            "the diff fc7421c3..7f18840. Exclude implement dispatch "
+            "5e732bae5ae8-f9c62e11. Harvest the review onto the G6 sidecar. "
+            "Stop before any merge. "
+            "Scoreboard: cortex://notes/system/scoreboards/"
+            "liaison-multi-conductor-p3-multi-hire-scoreboard.md."
+        )
     if todo_slug == "liaison-ticker-steer-live-dispatch":
         return (
-            "G5 implement is DONE at 2a005f508, already on master. "
-            "Do not admit an implement conductor. "
-            "The hire is G6 pre-land review: dispatch cdp/opus-5 with "
-            "purpose=review of commit 2a005f508 against its parent. "
-            "Record the review witness on the scoreboard. "
-            "Do not land and do not re-implement."
+            "G7 is DONE. L1 2a005f508 is on master and the entry gate is "
+            "complete. Do not re-admit this row."
         )
     text = (
         f"Execute the liaison turn at {LIAISON_TURN_SPEC}. "
@@ -583,13 +598,13 @@ def build_play_dispatch_body(
     not conductor mailbox (a:36103 — 12029 play 422'd on tape 12030).
     """
     max_hop = int(policy.get("max_hop_minutes") or 60)
-    # The implement work key stays reserved by the discarded conductor admit.
-    # G6 is a review, not that admit.
-    work_key = (
-        f"todo:{todo_slug}:g6-review"
-        if todo_slug == "liaison-ticker-steer-live-dispatch"
-        else f"todo:{todo_slug}"
-    )
+    # G5 is on the lane. This key is the G6 pre-land review.
+    if todo_slug == "liaison-multi-conductor-p3-multi-hire":
+        work_key = f"todo:{todo_slug}:g6-preland-review"
+    elif todo_slug == "liaison-ticker-steer-live-dispatch":
+        work_key = f"todo:{todo_slug}:g7-land"
+    else:
+        work_key = f"todo:{todo_slug}"
     body: dict[str, Any] = {
         "op": "generate",
         "seat": "cursor-sdk",

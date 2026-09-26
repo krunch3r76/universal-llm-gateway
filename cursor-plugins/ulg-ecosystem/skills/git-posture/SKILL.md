@@ -16,8 +16,11 @@ Read on:
 
 Default substrate: **attended Cursor IDE** edits on the live shared checkout
 (`GIT_INTEGRATION_SOURCE_REPO`, default `universal-llm-gateway`). **cursor-sdk
-generate:** in-repo implement uses lane B — pass `lane="B"` (regime on, in-repo).
-Omit is not that default: empty `files_expected` + omit → Lane A.
+generate:** pass `lane="B"` for every top-level admit, including read-only and
+`sdk_mode=plan`. A throwaway worktree is the default checkout. Lane A is the
+exception (`CURSOR_LANE_B_SCOPE_REFUSED`, or an explicit operator request for
+shared master), not the lane for work that writes nothing. Omit is not Lane B:
+empty `files_expected` + omit → Lane A.
 Explicit `lane="A"` (named exception + one-line reason) or out-of-repo stays on
 the shared checkout. Caller recipe: `consult-routing` § cursor-sdk checkout lane.
 These rules bind unless the operator directs otherwise.

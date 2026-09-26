@@ -60,37 +60,51 @@ async def add_custom_connector(
     click_connect_and_oauth,
 ) -> str:
     page = await back_to_list(page)
-    add = page.get_by_role("button", name=re.compile(r"^add\b", re.I))
-    if not await add.count():
-        raise RuntimeError("Add button not found on Connectors list")
-    await add.first.click(force=True)
-    await page.wait_for_timeout(800)
-    custom = page.get_by_role(
-        "menuitem", name=re.compile(r"add custom connector", re.I)
-    )
-    if not await custom.count():
-        custom = page.get_by_text(re.compile(r"add custom connector", re.I))
-    if not await custom.count():
-        raise RuntimeError("Add custom connector not found")
-    await custom.first.click(force=True)
-    await page.wait_for_timeout(1200)
 
-    name_input = page.locator('input[placeholder="Name"]')
-    if not await name_input.count():
-        name_input = page.get_by_placeholder(re.compile(r"^name$", re.I))
-    url_input = page.locator('input[placeholder*="Remote MCP" i]')
-    if not await url_input.count():
-        url_input = page.get_by_placeholder(re.compile(r"mcp.*url|url", re.I))
+    async def _form_inputs():
+        name_input = page.locator('input[placeholder="Name"]')
+        if not await name_input.count():
+            name_input = page.get_by_placeholder(re.compile(r"^name$", re.I))
+        url_input = page.locator('input[placeholder*="Remote MCP" i]')
+        if not await url_input.count():
+            url_input = page.locator('input[placeholder*="MCP server URL" i]')
+        if not await url_input.count():
+            url_input = page.get_by_placeholder(re.compile(r"mcp.*url|url", re.I))
+        return name_input, url_input
+
+    name_input, url_input = await _form_inputs()
+    form_open = (
+        await name_input.count()
+        and await url_input.count()
+        and await url_input.first.is_visible()
+    )
+    if not form_open:
+        add = page.get_by_role("button", name=re.compile(r"^add\b", re.I))
+        if not await add.count():
+            raise RuntimeError("Add button not found on Connectors list")
+        await add.first.click(force=True)
+        await page.wait_for_timeout(800)
+        custom = page.get_by_role(
+            "menuitem", name=re.compile(r"add custom connector", re.I)
+        )
+        if not await custom.count():
+            custom = page.get_by_text(re.compile(r"add custom connector", re.I))
+        if not await custom.count():
+            raise RuntimeError("Add custom connector not found")
+        await custom.first.click(force=True)
+        await page.wait_for_timeout(1200)
+        name_input, url_input = await _form_inputs()
     if not await name_input.count() or not await url_input.count():
         raise RuntimeError("Add-connector name/URL inputs not found")
     await name_input.first.fill(connector_name)
     await url_input.first.fill(mcp_url)
     await page.wait_for_timeout(400)
 
-    # Form Add is typically the last Add-named button (list Add opens the menu).
-    submit = page.get_by_role("button", name=re.compile(r"^add\b", re.I)).last
-    if not await page.get_by_role("button", name=re.compile(r"^add\b", re.I)).count():
-        raise RuntimeError("Add submit button not found")
+    # Current modal submits with Continue. Older UI used a second Add button.
+    submit = page.get_by_role("button", name=re.compile(r"^(add|continue)\b", re.I))
+    if not await submit.count():
+        raise RuntimeError("Add/Continue submit button not found")
+    submit = submit.last
 
     try:
         async with page.expect_navigation(url=_OAUTH_AUTHORIZE, timeout=timeout_ms):

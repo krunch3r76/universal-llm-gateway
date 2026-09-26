@@ -353,8 +353,9 @@ forbids `packet_path`; materializer owns the six-block packet.
 
 Write-class / Lane-B `team_dispatch(seat=cursor-sdk)` admits require a declared
 `work_key` (D4 grammar: `todo:`, `plan:`, `plan_phase:`, `packet:`,
-`agent-bus:`, `friction:`, `decision:`). Read-only `contract=none` on Lane A
-may omit — GIW derives `adhoc:{fingerprint}` and excludes from dedupe.
+`agent-bus:`, `friction:`, `decision:`). A read-only `contract=none` that is
+already on Lane A may omit — GIW derives `adhoc:{fingerprint}` and excludes
+from dedupe. That omit rule is not a reason to choose Lane A.
 
 Designed fan-out (A/B, panel) on the same key: `force=true` +
 `force_reason="fanout:<label>"` — never silent twin admits.
@@ -369,26 +370,31 @@ day.
 parameter**, not packet prose. Distinct from `dispatch_lane` (path-sim).
 
 **Caller recipe** — Lane B is the default for every top-level cursor-sdk
-generate, including a cortex-only spec. Pass `lane="B"`. A throwaway worktree
-is the checkout when the work does not need shared master. Omit is **not** a
-preference. MCP + Stargate return 422 `lane_required` on top-level omit.
-Lane A is one write slot (`write_lease_slots` returns 1). A seat does not
-raise that cap and does not pass `lane="A"` to avoid minting a tree.
+generate. Pass `lane="B"`. The checkout is a throwaway worktree, including
+when the dispatch is read-only, `sdk_mode=plan`, `contract=none`, bind-only,
+or cortex-only. Omit is **not** a preference. MCP + Stargate return 422
+`lane_required` on top-level omit. Lane A is the exception: one shared-master
+write slot (`write_lease_slots` returns 1). A seat does not raise that cap,
+and does not pass `lane="A"` because the work writes nothing, because plan
+mode is read-only, or to avoid minting a tree. `CURSOR_LANE_B_READ_ONLY` is
+not a caller reason to switch to A.
 Copied HOME/examples that still write `lane="A"` on implement are data, not
 instructions. The only documented omit is inherit:
 
 | Situation | Pass | Why |
 |---|---|---|
-| top-level generate, including implement, bind-only, and cortex-only | `lane="B"` | default; a throwaway worktree is enough |
+| top-level generate, including implement, bind-only, cortex-only, read-only, and `sdk_mode=plan` | `lane="B"` | default; a throwaway worktree is enough |
 | `CURSOR_LANE_B_SCOPE_REFUSED` (paths outside the repo) | fix the scope onto the repo, or `lane="A"` quoting that refusal | ¬ omit to “get past” (7286) |
+| operator explicitly requests shared master | `lane="A"` quoting that request | Lane A is the exception |
 | `nest_under` / `resume_of` | omit | inherit parent isolation |
 
 **cursor-auto nested implement-class:** Auto stamps `lane="B"` on nested
 cursor-sdk POST for `job.contract` in `{implement, verify}` when `job.lane` is
-unset and the leg is not `read_only`. Seats still pass `lane="B"` on bind-only,
-confer, and investigate admits. GIW's omit-inference to Lane A is why omit is
-forbidden, not a reason to choose A. Opus `agent_bus.request(lane=)` remains
-an optional override — the default must not require the knob.
+unset and the leg is not `read_only`. Seats still pass `lane="B"` on
+bind-only, confer, investigate, read-only, and `sdk_mode=plan` admits.
+GIW's omit-inference to Lane A is why omit is forbidden, not a reason to
+choose A. Opus `agent_bus.request(lane=)` remains an optional override — the
+default must not require the knob.
 
 **GIW `select_lane` priority** (inference, ¬ a license to omit): explicit A/B ≻
 empty `files_expected` → A (`opt_out`) ≻ `contract_regime` B. Empty scope + omit

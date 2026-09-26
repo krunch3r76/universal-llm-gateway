@@ -774,11 +774,12 @@ then proceed (`lean-context-dispatch-first` inform-then-proceed).
 
 ### When Lane A is still the right call
 
-Lane B is the default, including when the deliverable is only a cortex note.
-A throwaway worktree is enough. Lane A is one write slot, and a seat does not
-raise that cap or pass `lane="A"` to avoid minting a tree. Name Lane A only
-when `CURSOR_LANE_B_SCOPE_REFUSED` cites paths outside the repo and those paths
-cannot be moved onto the tree. Quote that refusal in the packet.
+Lane B is the default, including a cortex note, a read-only plan, and
+`sdk_mode=plan`. A throwaway worktree is enough. Lane A is the exception, and
+a seat does not pass `lane="A"` because the work writes nothing or to avoid
+minting a tree. Name Lane A only when the operator explicitly requests shared
+master, or when `CURSOR_LANE_B_SCOPE_REFUSED` cites paths outside the repo and
+those paths cannot be moved onto the tree. Quote that request or refusal.
 
 ### `CURSOR_LANE_B_WORKTREE_MISSING` — B without a tree is not A
 

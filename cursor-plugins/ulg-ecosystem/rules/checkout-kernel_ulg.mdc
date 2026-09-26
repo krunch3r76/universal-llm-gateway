@@ -30,8 +30,8 @@ instead of merge; **¬ leave a stash unpopped**. `merge_blocked ⇒ reconcile`, 
 
 ## Lanes
 
-Attended IDE = live shared checkout. `cursor-sdk` generate: pass `lane="B"` for every top-level admit, including a cortex-only spec. A throwaway worktree is enough. Omit is
-**not** Lane B (empty `files_expected` + omit → Lane A). Lane A is one write slot; a seat does not raise that cap or pass `lane="A"` to avoid a tree. `lane="A"` only when lane B is refused for paths outside the repo. Lane A: no
+Attended IDE = live shared checkout. `cursor-sdk` generate: pass `lane="B"` for every top-level admit, including cortex-only, read-only, and `sdk_mode=plan`. A throwaway worktree is the default checkout. Omit is
+**not** Lane B (empty `files_expected` + omit → Lane A). Lane A is the exception, not the read-only lane. A seat does not pass `lane="A"` because the work writes nothing or to avoid a tree. `lane="A"` only on `CURSOR_LANE_B_SCOPE_REFUSED` or an explicit operator request for shared master. Lane A: no
 intersecting parallel writers, no `git stash` to isolate or A/B against HEAD — read the tree. IDE hygiene:
 commit this-session paths often or dispatch new implement on B; do not remint A-authored dirt onto B.
 

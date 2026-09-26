@@ -124,7 +124,7 @@ DIRECTIVE names: conductor role, a root thread (`new_slug` or existing `role:roo
 **Composer + lane (BINDING):**
 - Omit `model=` — Composer is the only cursor_sdk seat; `model_knobs={"fast":"true"}` on the wire unless an arc pin names otherwise.
 - Name CDP escalation model (`cdp/fable` or `cdp/opus-5`) in the directive when the leg needs independent intelligence beyond Composer enumerate.
-- In-repo implement uses lane B — pass `lane="B"` on the wire (`cursor_request` / nested `team_dispatch`). `lane=` is a **wire parameter**, not packet prose. Omit on `agent_bus.request` + empty `files_expected` selects Lane A; `team_dispatch` top-level omit is 422 `lane_required`, not A. Name `lane="A"` only with a one-line reason (bind-only / empty scope / out-of-repo).
+- Pass `lane="B"` on the wire (`cursor_request` / nested `team_dispatch`) for every top-level generate, including read-only, plan, and bind-only. The checkout is a throwaway worktree. `lane=` is a **wire parameter**, not packet prose. Omit on `agent_bus.request` + empty `files_expected` selects Lane A; `team_dispatch` top-level omit is 422 `lane_required`, not A. `lane="A"` only on `CURSOR_LANE_B_SCOPE_REFUSED` or an explicit operator request for shared master. Bind-only and empty scope are not that exception.
 
 Full recipe (mandatory conductor Use-line, six-block packet): `agent_skill:conductor` § **First-utterance spawn** — this skill does not duplicate it. Wire shape: `cursor_request(contract=investigate, lane="B", …)` → cursor-auto → nested `team_dispatch(seat=cursor-sdk, contract=conductor, …)`. Packet tier table: `conductor`.
 

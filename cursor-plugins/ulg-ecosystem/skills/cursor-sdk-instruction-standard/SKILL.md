@@ -109,15 +109,16 @@ slugs are left in place. Per-slug outcome: `frontier.sdk.worker.skills.mounted`.
 
 ## D-lane — explicit checkout lane (top-level generate)
 
-Lane B is the default for every top-level cursor-sdk generate, including a cortex-only spec. A throwaway worktree is enough when the work does not need shared master. `lane=` is a **wire parameter** on `team_dispatch(op=generate|to_thread, seat=cursor-sdk)`.
+Lane B is the default for every top-level cursor-sdk generate. The checkout is a throwaway worktree, including read-only, `sdk_mode=plan`, `contract=none`, bind-only, and cortex-only. `lane=` is a **wire parameter** on `team_dispatch(op=generate|to_thread, seat=cursor-sdk)`.
 Packet prose does not select a lane. SOT: `consult-routing` § cursor-sdk checkout lane.
 
-Lane A is one write slot. `write_lease_slots("A")` returns 1 unless an operator environment switch is already set, and a seat does not set that switch or pass `lane="A"` to avoid minting a tree.
+Lane A is the exception: one shared-master write slot. `write_lease_slots("A")` returns 1 unless an operator environment switch is already set. A seat does not set that switch, and does not pass `lane="A"` because the work writes nothing or to avoid minting a tree. `CURSOR_LANE_B_READ_ONLY` is not a caller reason to switch to A.
 
 | Situation | Pass |
 |---|---|
-| top-level generate, including implement, bind-only, and cortex-only | `lane="B"` |
+| top-level generate, including implement, bind-only, cortex-only, read-only, and `sdk_mode=plan` | `lane="B"` |
 | `CURSOR_LANE_B_SCOPE_REFUSED` (paths outside the repo) | fix the scope onto the repo, or `lane="A"` quoting that refusal |
+| operator explicitly requests shared master | `lane="A"` quoting that request |
 | `nest_under` / `resume_of` | omit (inherit) |
 
 Omit on a **top-level** generate is not “no preference”: MCP + Stargate 422
@@ -139,7 +140,7 @@ pass, not only service-up.
 - [ ] Every fork is bound in the dispatch.
 - [ ] Propagation named for every touched surface that needs one (service restart, plugin install), or `propagation: none` stated.
 - [ ] cursor-sdk `op=generate`: before `team_dispatch`, verify `dispatch_thread_id` has `lifecycle_state=pending ∧ turn_count=0`; otherwise halt and fix. Response `consolidation_split_warning` is too late. **Conductor carve-out:** `` may pass a continuity root with turns (mint child) or a pending-empty *child* of the root — still never a lifecycle-null empty thread.
-- [ ] Top-level cursor-sdk generate: pass `lane="B"`, including cortex-only work (throwaway worktree). Lane A is one write slot; do not pass it to avoid a tree. `lane="A"` only when lane B is refused for paths outside the repo. Omit only `nest_under` / `resume_of`. After admit, quote the lane event / `active_by_lane`.
+- [ ] Top-level cursor-sdk generate: pass `lane="B"` (throwaway worktree), including cortex-only, read-only, and `sdk_mode=plan`. Lane A is the exception. Do not pass it because the work writes nothing or to avoid a tree. `lane="A"` only on `CURSOR_LANE_B_SCOPE_REFUSED` or an explicit operator request for shared master. Omit only `nest_under` / `resume_of`. After admit, quote the lane event / `active_by_lane`.
 
 ## Gate-2 implement-ready checklist
 

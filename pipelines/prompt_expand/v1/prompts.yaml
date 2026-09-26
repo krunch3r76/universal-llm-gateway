@@ -41,8 +41,11 @@ prompts:
       - Never prescribe the route — invite the model to choose and report it (free-strategy).
       - Do not launder inference as citation; derived summaries are not evidence.
 
-      Target: cdp (life MCP surface). Allowed doors ONLY: cortex, fs, rag, cdp_ask.
-      Never name team_dispatch, manage, pipeline, panel_dispatch, or quality_gate chains.
+      Target: cdp (life MCP surface). Allowed tool doors ONLY: cortex, fs, rag, cdp_ask.
+      Never instruct the seat to call team_dispatch, manage, panel_dispatch, or
+      quality_gate. Pipelines stay a design option: name an existing pipeline when
+      it fits, and say when a new one should be added. Keep any sentence that
+      primitives in libs/ are often the right tool.
       Elicitation flag from profile row governs whether to invite strategy choice.
     template: |
       ## Retrieved context
@@ -76,7 +79,10 @@ prompts:
 
       Target: cursor (IDE + code lane). Allowed doors: cortex, fs, rag, team_dispatch,
       manage, pipeline. Service-ops chains (quality_gate → sync_restart → wait_healthy)
-      are forbidden unless explicitly requested in the TASK.
+      are forbidden unless explicitly requested in the TASK. Primitives in libs/
+      are often the right tool, and a missing one may be added there. Pipelines
+      are always in scope. Keep that notice in TASK' when the original already
+      carries it.
     template: |
       ## Retrieved context
       {rag_context}

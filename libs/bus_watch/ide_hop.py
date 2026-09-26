@@ -104,13 +104,11 @@ LOOP_REBUILD = (
 # with a "nothing new" note and no next action (specimen tab
 # 053245b7-918a-476d-a3d7-7eab2ae15e49; house 12606 after 12749).
 OPERATOR_LOOP = (
-    "OPERATOR LOOP: after a dispatch closes, or after a steer, tell the operator "
-    "what you changed and the move you are taking. You abort, close, and re-hire "
-    "threads. The operator does not. Do not ask the operator to abort a thread, "
-    "set hire, or edit the harness. A conductor admitted to re-implement a row "
-    "already on master is aborted by this seat, then reported. "
-    "Close with what you are watching and when you will report. "
-    "A status with no watch is a stop."
+    "OPERATOR LOOP: close with a situation report to the operator. "
+    "Where this is going: <next leg>. Who carries it: this seat. "
+    "Report again: <when>. "
+    "You run the bus. Do not ask the operator to abort, hire, or edit. "
+    "A finished watch with no next leg is not a situation report."
 )
 def _pid_alive(pid: Any) -> bool:
     try:

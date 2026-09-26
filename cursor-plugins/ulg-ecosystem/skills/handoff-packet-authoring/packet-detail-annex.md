@@ -83,10 +83,9 @@ Blocked until N≥5 runs.
 ## General execution without packet
 
 ```text
-# in-repo implement / pure-mechanical uses lane B
+# top-level generate, including implement, recon, bind-only, and read-only
 team_dispatch(op=generate, seat=cursor-sdk, lane="B", dispatch_thread_id=…, contract=pure-mechanical)
-# bind-only / recon: lane="A" + one-line reason (empty files_expected)
-team_dispatch(op=generate, seat=cursor-sdk, lane="A", dispatch_thread_id=…, contract=none)
+team_dispatch(op=generate, seat=cursor-sdk, lane="B", dispatch_thread_id=…, contract=none)
 ```
 
 Load `cursor-sdk-instruction-standard` (D1–D4). Model split: recon+investigate → **`seat=cursor-sdk` `contract=investigate`**; implement → Composer.

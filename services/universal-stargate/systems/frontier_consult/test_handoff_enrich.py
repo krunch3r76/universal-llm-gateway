@@ -80,6 +80,26 @@ class _StubCortex:
         raise KeyError(entity_id)
 
 
+def test_consult_enrich_stamps_libs_and_pipeline_notice() -> None:
+    result = enrich_handoff_packet(
+        _THIN_WEB_PACKET,
+        cortex=_StubCortex(),
+        handoff_contract="consult",
+    )
+    assert "Primitives in libs/ are often the right tool" in result.text
+    assert "Pipelines are always in scope" in result.text
+    sketch = _THIN_WEB_PACKET.replace("contract: consult", "contract: sketch")
+    sketched = enrich_handoff_packet(
+        sketch, cortex=_StubCortex(), handoff_contract="sketch"
+    )
+    assert "Primitives in libs/" in sketched.text
+    implement = _THIN_WEB_PACKET.replace("contract: consult", "contract: implement")
+    implemented = enrich_handoff_packet(
+        implement, cortex=_StubCortex(), handoff_contract="implement"
+    )
+    assert "Primitives in libs/" not in implemented.text
+
+
 def test_canonical_skill_invariant_line_shape() -> None:
     line = _canonical_skill_invariant_line("consult-routing")
     assert "`consult-routing`" in line
@@ -165,9 +185,7 @@ def test_enrich_injects_reasoning_posture_from_route_contract() -> None:
     skipped = enrich_handoff_packet(packet, cortex=cortex)
     assert "reasoning-posture" not in skipped.skills_added
     assert "ulg-for-llms" not in skipped.skills_added
-    injected = enrich_handoff_packet(
-        packet, cortex=cortex, handoff_contract="none"
-    )
+    injected = enrich_handoff_packet(packet, cortex=cortex, handoff_contract="none")
     assert "reasoning-posture" in injected.skills_added
     assert "ulg-for-llms" in injected.skills_added
 

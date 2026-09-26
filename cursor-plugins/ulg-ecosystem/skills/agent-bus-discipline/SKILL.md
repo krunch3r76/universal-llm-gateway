@@ -86,6 +86,7 @@ When a bus-consult / dispatch-closeout arm misfires:
 | **Tail-skipped** | Poller only — skipped leg 2 to "save an IDE terminal"; autoadvance stalls (IDE slots unlimited; always background tail same turn) |
 | **Hold-turn** | Foreground `wait`/`Await`/`tail \| grep` instead of background tail + exit |
 | **Hang-tail** | `tail --forever`, raw `tail -F` on watcher log, or tail still running **after** `state.json status=complete` — **not** tail waiting while `status=polling` |
+| **Killed-tail** | IDE/supervisor killed the wake tail while the poller stayed up (a:36552, a:35526). Poller may later print `consult complete` / `closeout turn=` with **no** living tail ⇒ this chat never wakes |
 | **Wake-no-relay** | Leg 2 fired; turn closed without `get` + operator translate (leg 3) |
 | **Wrong target** | Wrong script family, bad `after_turn`, omitted `poll_hint.after_turn`, invalid flags, false `complete` |
 
@@ -96,6 +97,21 @@ On any class — **same turn** before close:
    `watch-supervise.sh`, `poll_hint`, runbook §).
 2. **`assert` on `runbook:bus-consult-watcher`** — specimen + falsifier candidate.
 3. **¬ `todo:`** — accumulate; consolidate only on commission/triage.
+
+**Killed-tail recovery (binding — a:36552):** `poller_alive ⇏ wake_armed`. When the
+IDE tail dies (Shell abort, kill, elapsed fail) and `state.json` is still
+`polling`/`predicate_unmet`, **same turn** re-arm leg 2:
+`watch-supervise.sh tail --label L` + `notify_on_output` on
+`closeout turn=|consult complete|stall-pop:`. Do not wait for a later chat
+question to discover `consult complete` in the log. If complete already
+printed with no tail attached: `get` the qualifying turn + relay now (leg 3);
+do not keep reporting the dispatch/densify as `in_flight`.
+
+**Complete-state read gate (binding — a:36552 / a:35437):** `status=complete` ∧
+(`verdict=in_flight` ∨ `producer.terminal_status` null ∨ stale `turn_count`) ⇒
+**false in_flight**. Trust the poller log line / a fresh `wait(wait_seconds=0)`
+snap for terminal producer + qualifying turn — not leftover incomplete-slice
+fields left in `state.json` after the complete write.
 
 **Atomic arm (IDE):** leg 1 `start … --no-page` → leg 2 `tail --label L` background
 (exit-on-complete default; ¬ `--forever`; **always leg 2** — IDE terminal slots
@@ -141,7 +157,7 @@ State reconstitution default = tip CHECKPOINT + roadmap (+ scoreboard when chart
 
 | Surface | Required when | Minimum |
 |---|---|---|
-| **Objective** | always on birth; reprint on every continuity resume as **`Mission:`** + In/Out | one bound sentence (`Objective:`, `## Anchor`, or `Primary OPEN:`) — `decision:continuity-resume-mission-open` |
+| **Objective** | always on birth; on resume the operator-facing opening expands it per `operator-posture` Rule 3 (aim, already, object, move order) | the aim, undated (`## Why this house` + `## Objective`). A hop is not the mission — `decision:continuity-resume-mission-open`, amended 2026-09-25 |
 | **Scoreboard** | deliverable sequence ∨ `charter-runner` enrolled | `cortex://…/<thread-id>-charter-scoreboard.md` indexed in CHECKPOINT |
 | **Continuity doc** | manual root without scoreboard yet | `continuity-doc` or `Charter: cortex://…` pointer + objective |
 | **Stance** | `orchestrator_continuity` (unenrolled) | `## Stance`: Use the `ulg-for-llms` skill + `## Why this house` (durable on the continuity-doc; birth CP indexes). `tick_charter` skips |

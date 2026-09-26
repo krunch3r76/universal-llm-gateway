@@ -632,6 +632,12 @@ def enrich_handoff_packet(
         text, rewrites = mirror_workspaces_pointers_for_web(text, thread_id=thread_id)
         corpus_rewritten = bool(rewrites)
 
+    from consult_substrate_notice import apply_substrate_notice_if_warranted
+
+    noticed = apply_substrate_notice_if_warranted(text, handoff_contract)
+    substrate_stamped = noticed != text
+    text = noticed
+
     changed = bool(
         skills_added
         or skills_inlined
@@ -639,6 +645,7 @@ def enrich_handoff_packet(
         or mcp_additions
         or web_mcp_stamped
         or corpus_rewritten
+        or substrate_stamped
     )
     return EnrichResult(
         text=text,

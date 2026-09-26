@@ -96,6 +96,9 @@ async def _open_connectors_panel(page: Page) -> Page:
             break
     await page.bring_to_front()
 
+    if "modal=add-custom-connector" in page.url:
+        return page
+
     if "claude.ai" not in page.url:
         await page.goto("https://claude.ai/new", wait_until="domcontentloaded")
         await page.wait_for_timeout(2000)
@@ -150,6 +153,28 @@ async def _back_to_list(page: Page) -> Page:
     if await back.count() and await back.first.is_visible():
         await back.first.click(force=True)
         await page.wait_for_timeout(1500)
+    return page
+
+
+async def _open_exact_connector(page: Page, connector_name: str, mcp_url: str) -> Page:
+    """Open the named row or the full URL. Do not match the bare host.
+
+    ``toys`` and a code connector share ``mcp.k-1.me``. Host matching would
+    open the life row and then fail, or worse, treat it as the code connector.
+    """
+    row = await _row_matching(page, connector_name, mcp_url)
+    if row is None:
+        page = await _back_to_list(page)
+        row = await _row_matching(page, connector_name, mcp_url)
+    if row is None:
+        raise RuntimeError(
+            f"Connector row not found for {connector_name!r} / {mcp_url}"
+        )
+    await row.click(force=True)
+    await page.wait_for_timeout(2000)
+    body = await page.locator("body").inner_text()
+    if mcp_url not in body:
+        raise RuntimeError(f"Opened a connector that does not show {mcp_url}")
     return page
 
 
@@ -258,6 +283,7 @@ async def restore_connector(
     connector_name: str,
     timeout_s: float,
     force_reconnect: bool = False,
+    add_only: bool = False,
 ) -> str:
     pw, _browser, context, page = await connect_cdp(cdp_url)
     timeout_ms = int(timeout_s * 1000)
@@ -271,6 +297,33 @@ async def restore_connector(
 
     try:
         page = await _open_connectors_panel(page)
+        if add_only:
+            # Never Remove. A second mount on the same host must not hit the
+            # vortex→toys rename path or the bare-host row match.
+            exact = await _row_matching(page, connector_name, mcp_url)
+            if exact is None:
+                result = await add_custom_connector(
+                    page,
+                    connector_name=connector_name,
+                    mcp_url=mcp_url,
+                    context=context,
+                    timeout_ms=timeout_ms,
+                    back_to_list=_back_to_list,
+                    approve_oauth=_approve_oauth,
+                    click_connect_and_oauth=_connect,
+                )
+            else:
+                page = await _open_exact_connector(page, connector_name, mcp_url)
+                result = await _connect(page)
+            page = await _open_connectors_panel(page)
+            if await _row_matching(page, connector_name, mcp_url) is None:
+                raise RuntimeError(
+                    f"{connector_name} missing after add-only ({result})"
+                )
+            if await _row_matching(page, "toys", "https://mcp.k-1.me/mcp/life") is None:
+                raise RuntimeError("toys connector missing after code add")
+            return result
+
         desired = await _row_matching(page, connector_name)
         legacy_found: str | None = None
         for legacy_name in _LEGACY_NAMES:
@@ -337,6 +390,12 @@ def main() -> int:
         help="Disconnect then Connect+OAuth even when already Connected "
         "(forces tools/list refresh after MCP schema changes).",
     )
+    parser.add_argument(
+        "--add-only",
+        action="store_true",
+        help="Add this name+URL if absent, or Connect that exact row. "
+        "Does not Remove legacy rows and does not match the bare host.",
+    )
     args = parser.parse_args()
 
     try:
@@ -347,6 +406,7 @@ def main() -> int:
                 connector_name=args.connector_name,
                 timeout_s=args.timeout,
                 force_reconnect=args.force_reconnect,
+                add_only=args.add_only,
             )
         )
     except Exception as exc:

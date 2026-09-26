@@ -277,7 +277,7 @@ team_dispatch(
   op=generate,
   seat=cursor-sdk,
   contract=none,
-  lane="B",  # sit/house generate: Lane A is 1 write-lease slot; do not queue overnight successors behind shared-master grok. Bind-only cortex hops remain the named A exception.
+  lane="B",  # throwaway worktree. Lane A only on scope refusal or an explicit operator request for shared master. Bind-only and read-only are not that exception.
   model=<policy.successor_model>,
   prompt=<build_successor_message>,
   dispatch_thread_id=<R>,

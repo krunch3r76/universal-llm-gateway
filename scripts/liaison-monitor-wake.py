@@ -9,7 +9,8 @@ conductor is live. Every ``--safeguard-minutes`` (default 60) it pastes anyway,
 so a runaway of admitted conductors cannot stay silent.
 The test interval is 5 minutes; overnight is ``--interval-minutes 20``.
 A quiet NOW is not the program ending. The loop does not exit on it. The seat
-kills the process only when the continuity card's stop is met.
+kills the process only when the continuity card's stop is met. A closed root
+thread ends the loop without a paste.
 
 The keystrokes run on the GUI host over SSH (``orchestrator_tab_keystroke.py``).
 This does not stop the house ticker.
@@ -61,6 +62,11 @@ def hop_message(root_id: str) -> str:
         f"Read {_card_uri(root_id)} before acting.\n"
         "Service the house and the harness only when its conductors have stopped. "
         "If this tab is dense, checkpoint this root before any further hop.\n"
+        "When a conductor is admitted, arm a watcher on that thread in the same turn "
+        "(scripts/watch-supervise.sh start --label "
+        f"{root_id}-<thread> -- scripts/watch-dispatch-closeout.py "
+        "--thread <thread> --dispatch-id <dispatch>, then tail that label). "
+        "The 20-minute wake is the exception catcher, not the watch.\n"
         f"{_standing_tail(root_id)}"
     )
 
@@ -96,6 +102,9 @@ def wake_message(root_id: str) -> str:
         f"{root_id} and hop (scripts/liaison-monitor-wake.py hop --root {root_id} "
         "--transcript-id <this-tab-uuid>). The hop seals the checkpoint first. "
         "If this tab is still thin, service the house and the harness.\n"
+        "If a conductor is admitted and this root has no watcher on that thread, "
+        "arm one in this turn (watch-supervise.sh start + tail). "
+        "The 20-minute wake is the exception catcher, not the watch.\n"
         f"{_standing_tail(root_id)}"
     )
 
@@ -121,6 +130,24 @@ def conductors_stopped() -> tuple[bool, str]:
     if live:
         return False, "live=" + ",".join(live)
     return True, "no live conductor"
+
+
+def root_lane_closed(root_id: str) -> tuple[bool, str]:
+    """True only when this loop's bus root has ``status=closed``.
+
+    A transport miss is not closed. The loop keeps running until the close
+    is observed.
+    """
+    from bus_watch.digest_budget import _bus, _get
+
+    with _bus() as client:
+        root = _get(client, f"/threads/{root_id}") or {}
+    if not isinstance(root, dict) or root.get("_error"):
+        return False, "lane_unread"
+    status = str(root.get("status") or "").strip().lower()
+    if status == "closed":
+        return True, "lane_closed"
+    return False, status or "open"
 
 
 def house_fully_played() -> bool:
@@ -204,6 +231,9 @@ def seal_then_hop(root_id: str, gui_host: str, transcript_id: str) -> dict[str, 
 
 def wake_once(root_id: str, gui_host: str, *, force: bool = False) -> dict[str, object]:
     """Paste into the focused chat. ``force`` pastes even when conductors are live."""
+    closed, lane = root_lane_closed(root_id)
+    if closed:
+        return {"ok": True, "skipped": True, "stopped": True, "reason": lane}
     stopped, detail = conductors_stopped()
     if not stopped and not force:
         return {"ok": True, "skipped": True, "reason": detail}
@@ -242,6 +272,10 @@ def main() -> int:
         help="Departing Cursor tab UUID. Required for hop, so the checkpoint seals first.",
     )
     args = parser.parse_args()
+    closed, lane = root_lane_closed(args.root)
+    if closed:
+        print(json.dumps({"ok": True, "skipped": True, "stopped": True, "reason": lane}))
+        return 0
     if args.cmd == "hop":
         if not args.transcript_id:
             print(json.dumps({"ok": False, "phase": "transcript_id_required"}))
@@ -259,6 +293,9 @@ def main() -> int:
                 return 0
             force = (time.time() - last_force) >= safeguard_s
             result = wake_once(args.root, args.gui_host, force=force)
+            if result.get("reason") == "lane_closed":
+                print(json.dumps(result), flush=True)
+                return 0
             if result.get("phase") == "sent":
                 last_force = time.time()
             print(json.dumps(result), flush=True)

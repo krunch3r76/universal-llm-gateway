@@ -47,8 +47,9 @@ Ask in one batch; skip any already bound in chat:
 2. **Root** — existing `agent-bus:N` or birth new `orchestrator_continuity` root?
 3. **Incident / sibling lanes** — cite-only ids (e.g. stood-down proxy lane); any
    `¬ request` / pause markers?
-4. **Checkout regime** — default is **Lane B** (`cursor-sdk/lane-*`);
-   confirm, or override to Lane A (shared master) with a named reason.
+4. **Checkout regime** — default is **Lane B** (throwaway worktree,
+   `cursor-sdk/lane-*`), including read-only and plan. Do not ask. Lane A
+   only when the operator already requested shared master.
 5. **G-rows** — paste scoreboard or list OPEN rows + Next-pickup.
 6. **Human gates** — anything that must stay operator-only (tabs, creds,
    genuinely irreversible acts)? Default is **none beyond that** — the

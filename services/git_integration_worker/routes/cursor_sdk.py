@@ -2332,7 +2332,14 @@ async def _run_sdk_dispatch_gated(
             emit_tag="CURSOR_PROMPT_EXPAND_CONSUME",
         )
         return
-    prompt = expand_result.prompt
+    from consult_substrate_notice import apply_substrate_notice_if_warranted
+
+    prompt = apply_substrate_notice_if_warranted(
+        expand_result.prompt,
+        ctx.handoff_contract,
+        req.handoff_contract,
+        getattr(req, "operator_contract", None),
+    )
 
     live_counter = _LiveToolCallCounter()
     worker_task = controller.create_tracked_task(
