@@ -564,8 +564,15 @@ Written for three consumers:
 
 #### Scope
 
+The pass covers the directory. It is not limited to files a split touched.
+
 Skip private helpers (`_name`) unless their logic is non-obvious.
 For `__init__.py` files, a brief re-export summary is sufficient.
+Tests may be excluded: `test_*.py`, `*_test.py`, and files under `tests/`.
+Every other module, class, and public function is in the pass. Empty,
+too-short, and name-echo findings on that production surface are enhanced
+before step 9. A green modularize scan and an existing architecture doc
+do not waive it.
 
 ### 5.5. Verify docstring quality
 
@@ -582,18 +589,20 @@ This checks every module, public class, and public function for:
 - **too_short** (warning): Below word count threshold for scope
 - **name_echo** (warning): First sentence just restates the element name
 
-If there are critical issues (exit code 1), fix them and re-run before
-proceeding. For warnings, review the report and improve any docstrings
-that would produce thin architecture doc sections.
+The checker also reports test files. Set those aside. On the production
+remainder, empty, too-short, and name-echo findings all block step 9.
+Fix them and re-run before proceeding. Do not leave a warning because an
+architecture doc already exists.
 
-The goal: every docstring should give step 9 enough material to
-write a substantive architecture doc paragraph, not just a label.
+The goal: every production docstring should give step 9 enough material to
+write a substantive architecture doc paragraph, not just a label. Quote the
+production remainder in the checkpoint.
 
 ### 5.6. Docstring enhancement pass (gradual default — CDP Sonnet 5)
 
-When local/manual cleanup still leaves thin content (**warnings** that would
-starve step-9 arch-doc projection), run CDP Sonnet enhance — **not** the
-Stargate API pipeline:
+When any production warning remains (too-short or name-echo), run CDP Sonnet
+enhance on that directory — **not** the Stargate API pipeline, and **not**
+only the files a split touched:
 
 ```
 /docstring-enhance {directory}
@@ -601,19 +610,17 @@ Stargate API pipeline:
 
 Use the `claude-ai-cdp-navigation` skill. Template:
 `cortex://notes/system/templates/cdp-overhaul-docstring-enhance.md`.
-Apply harvest via `scripts/docstring-apply`; re-run step 5.5 until criticals
-are 0 and feedstock is thick enough for step 9.
+Apply harvest via `scripts/docstring-apply`; re-run step 5.5 until the
+production remainder has no empty, too-short, or name-echo findings.
 
 **Forbidden on gradual:** `/docstring-enhance frontier` / curl `model=docstring-enhance`
 (paid Stargate API). Frontier override only with explicit operator cost approval.
 
-Use when:
+Transport stays on the Claude subscription (`/docstring-enhance` via CDP Sonnet).
+The pass is not optional when a production warning remains, and it is not
+limited to files whose split is still red or yellow.
 
-- warnings remain concentrated on module/class/function quality (not missing files)
-- prior arch drafts produced weak sections or repeated HUMAN markers
-- credit-budget bind: burn Claude **subscription**, not API credits
-
-After apply + step 5.5 green on criticals, proceed to quality gates / step 9.
+After that production remainder is clean, proceed to quality gates / step 9.
 
 ### 6. Quality gates
 
@@ -701,11 +708,12 @@ all files are green or the user explicitly defers a remaining violator.
 scripts/docstring-quality scan {directory}
 ```
 
-- **Criticals > 0** → halt; finish §5 / §5.6 (CDP Sonnet enhance) until criticals
-  are 0. **¬** draft arch-doc from empty docstrings.
-- **Warnings concentrated** (too_short / name_echo on public surface that step-9
-  will project) → run §5.6 CDP enhance (or explicit operator waive with CHECKPOINT
-  note). Skipping thicken underfeeds the managed arch doc and breaks the flow.
+- **Production findings > 0** (empty, too_short, or name_echo; tests excluded)
+  → halt; finish §5 / §5.6 until that surface is clean. **¬** draft the managed
+  arch doc from empty or thin production docstrings. A green modularize scan
+  or an existing doc does not clear this gate.
+- Test findings may remain. They do not block step 9 and they are not a waive
+  of the production surface.
 
 **Gradual gate (red):** summarize steps 1–8 outcomes (include docstring scan
 summary) and ask the user before firing the CDP Sonnet draft. Skip this step
@@ -882,8 +890,9 @@ Do not split code and doc updates into separate commits.
   operator cost approval (paid Sonnet+Gemini API)
 - ¬ invoke Stargate `docstring-enhance` on the **gradual** path — §5.6 /
   `/docstring-enhance` = CDP Sonnet; frontier API only with cost approval
-- **Fail closed before step 9:** `docstring-quality` criticals must be 0; thicken
-  warnings via §5.6 CDP when they would underfeed arch-doc projection
+- **Fail closed before step 9:** production docstring findings (empty, too_short,
+  name_echo) must be 0. Tests may be excluded. **¬** treat a green modularize
+  scan or an existing arch doc as this gate
 - ¬ invoke other Stargate pipelines (`modularize plan`, `code-review`) without
   tier-appropriate pause
 - CDP `team_dispatch(model=cdp/…)` for deep splits, step-4 review, **Fable opportunity legs**,
@@ -1475,8 +1484,15 @@ Written for three consumers:
 
 #### Scope
 
+The pass covers the directory. It is not limited to files a split touched.
+
 Skip private helpers (`_name`) unless their logic is non-obvious.
 For `__init__.py` files, a brief re-export summary is sufficient.
+Tests may be excluded: `test_*.py`, `*_test.py`, and files under `tests/`.
+Every other module, class, and public function is in the pass. Empty,
+too-short, and name-echo findings on that production surface are enhanced
+before step 9. A green modularize scan and an existing architecture doc
+do not waive it.
 
 ### 5.5. Verify docstring quality
 
@@ -1493,18 +1509,20 @@ This checks every module, public class, and public function for:
 - **too_short** (warning): Below word count threshold for scope
 - **name_echo** (warning): First sentence just restates the element name
 
-If there are critical issues (exit code 1), fix them and re-run before
-proceeding. For warnings, review the report and improve any docstrings
-that would produce thin architecture doc sections.
+The checker also reports test files. Set those aside. On the production
+remainder, empty, too-short, and name-echo findings all block step 9.
+Fix them and re-run before proceeding. Do not leave a warning because an
+architecture doc already exists.
 
-The goal: every docstring should give step 9 enough material to
-write a substantive architecture doc paragraph, not just a label.
+The goal: every production docstring should give step 9 enough material to
+write a substantive architecture doc paragraph, not just a label. Quote the
+production remainder in the checkpoint.
 
 ### 5.6. Docstring enhancement pass (gradual default — CDP Sonnet 5)
 
-When local/manual cleanup still leaves thin content (**warnings** that would
-starve step-9 arch-doc projection), run CDP Sonnet enhance — **not** the
-Stargate API pipeline:
+When any production warning remains (too-short or name-echo), run CDP Sonnet
+enhance on that directory — **not** the Stargate API pipeline, and **not**
+only the files a split touched:
 
 ```
 /docstring-enhance {directory}
@@ -1512,19 +1530,17 @@ Stargate API pipeline:
 
 Use the `claude-ai-cdp-navigation` skill. Template:
 `cortex://notes/system/templates/cdp-overhaul-docstring-enhance.md`.
-Apply harvest via `scripts/docstring-apply`; re-run step 5.5 until criticals
-are 0 and feedstock is thick enough for step 9.
+Apply harvest via `scripts/docstring-apply`; re-run step 5.5 until the
+production remainder has no empty, too-short, or name-echo findings.
 
 **Forbidden on gradual:** `/docstring-enhance frontier` / curl `model=docstring-enhance`
 (paid Stargate API). Frontier override only with explicit operator cost approval.
 
-Use when:
+Transport stays on the Claude subscription (`/docstring-enhance` via CDP Sonnet).
+The pass is not optional when a production warning remains, and it is not
+limited to files whose split is still red or yellow.
 
-- warnings remain concentrated on module/class/function quality (not missing files)
-- prior arch drafts produced weak sections or repeated HUMAN markers
-- credit-budget bind: burn Claude **subscription**, not API credits
-
-After apply + step 5.5 green on criticals, proceed to quality gates / step 9.
+After that production remainder is clean, proceed to quality gates / step 9.
 
 ### 6. Quality gates
 
@@ -1612,11 +1628,12 @@ all files are green or the user explicitly defers a remaining violator.
 scripts/docstring-quality scan {directory}
 ```
 
-- **Criticals > 0** → halt; finish §5 / §5.6 (CDP Sonnet enhance) until criticals
-  are 0. **¬** draft arch-doc from empty docstrings.
-- **Warnings concentrated** (too_short / name_echo on public surface that step-9
-  will project) → run §5.6 CDP enhance (or explicit operator waive with CHECKPOINT
-  note). Skipping thicken underfeeds the managed arch doc and breaks the flow.
+- **Production findings > 0** (empty, too_short, or name_echo; tests excluded)
+  → halt; finish §5 / §5.6 until that surface is clean. **¬** draft the managed
+  arch doc from empty or thin production docstrings. A green modularize scan
+  or an existing doc does not clear this gate.
+- Test findings may remain. They do not block step 9 and they are not a waive
+  of the production surface.
 
 **Gradual gate (red):** summarize steps 1–8 outcomes (include docstring scan
 summary) and ask the user before firing the CDP Sonnet draft. Skip this step
@@ -1793,8 +1810,9 @@ Do not split code and doc updates into separate commits.
   operator cost approval (paid Sonnet+Gemini API)
 - ¬ invoke Stargate `docstring-enhance` on the **gradual** path — §5.6 /
   `/docstring-enhance` = CDP Sonnet; frontier API only with cost approval
-- **Fail closed before step 9:** `docstring-quality` criticals must be 0; thicken
-  warnings via §5.6 CDP when they would underfeed arch-doc projection
+- **Fail closed before step 9:** production docstring findings (empty, too_short,
+  name_echo) must be 0. Tests may be excluded. **¬** treat a green modularize
+  scan or an existing arch doc as this gate
 - ¬ invoke other Stargate pipelines (`modularize plan`, `code-review`) without
   tier-appropriate pause
 - CDP `team_dispatch(model=cdp/…)` for deep splits, step-4 review, **Fable opportunity legs**,
