@@ -11,6 +11,7 @@ from typing import Any
 
 from claude_bundles import cdp_lane
 from claude_bundles import cdp_registry_events as _events
+from claude_bundles.cse_url import normalize_cse_url
 
 _DEFAULT_ORPHANED_ALIVE_TTL_S = 1800.0  # 30 min — exceeds warm-reattach window
 
@@ -172,4 +173,42 @@ def reap_orphaned_alive_rows(
     except Exception:
         pass
 
+    return reaped
+
+
+def release_dead_chat_url_holders(
+    active: dict[str, dict[str, Any]],
+    listen: Callable[[int], bool],
+    chat_url: str,
+    *,
+    pid_alive: Callable[[int], bool] | None = None,
+    is_attached: Callable[[str], bool] | None = None,
+) -> list[str]:
+    """Release dead ``orphaned_alive`` rows that still claim *chat_url*.
+
+    A Cowork session is the URL. A dead Chrome row is not an attachment, so it
+    must not keep ``attachment.conflict`` raised for a later bind. Live rows
+    and other URLs stay. Mutates *active*; caller writes it.
+    """
+    norm = normalize_cse_url(chat_url or "")
+    if not norm:
+        return []
+    subset = {
+        rid: row
+        for rid, row in active.items()
+        if isinstance(row, dict)
+        and row.get("status") == "orphaned_alive"
+        and normalize_cse_url(str(row.get("chat_url") or "")) == norm
+    }
+    if not subset:
+        return []
+    reaped = reap_orphaned_alive_rows(
+        subset,
+        listen,
+        pid_alive=pid_alive,
+        is_attached=is_attached,
+        include_ttl_reap=False,
+    )
+    for rid in reaped:
+        active[rid] = subset[rid]
     return reaped

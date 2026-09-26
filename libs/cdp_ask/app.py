@@ -264,8 +264,9 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
     async def cse_session_harvest(req: HarvestRequest) -> dict[str, object]:
         """Bounded read-only harvest — no submit or followup.
 
-        Default harvest does not wake dormant seats; pass ``reattach=true`` to
-        relaunch a parked Cowork CSE, scrape, then park it again.
+        The Cowork session is the URL. Harvest opens that URL when no live tab
+        is attached. A dead orphaned_alive row that still claims the URL is
+        released before bind; it is not an attachment.
         """
         verify_harvest_root()
         result = await execute_harvest(req, execution_store)

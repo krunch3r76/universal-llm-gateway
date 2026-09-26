@@ -36,6 +36,42 @@ def _orphan_row(
     }
 
 
+def test_release_dead_chat_url_holders_drops_only_that_url() -> None:
+    url = "https://claude.ai/cowork/cse_dead"
+    other = "https://claude.ai/cowork/cse_other"
+    active = {
+        "orph-1": {**_orphan_row(rid="orph-1"), "chat_url": url},
+        "orph-2": {
+            **_orphan_row(rid="orph-2", port=9224),
+            "chat_url": other,
+        },
+    }
+    reaped = reaper.release_dead_chat_url_holders(
+        active,
+        lambda _port: False,
+        url,
+        pid_alive=lambda _pid: True,
+        is_attached=lambda _rid: False,
+    )
+    assert reaped == ["orph-1"]
+    assert active["orph-1"]["status"] == "released"
+    assert active["orph-2"]["status"] == "orphaned_alive"
+
+
+def test_release_dead_chat_url_holders_keeps_live_port() -> None:
+    url = "https://claude.ai/cowork/cse_live"
+    active = {"orph-1": {**_orphan_row(), "chat_url": url}}
+    reaped = reaper.release_dead_chat_url_holders(
+        active,
+        lambda _port: True,
+        url,
+        pid_alive=lambda _pid: True,
+        is_attached=lambda _rid: False,
+    )
+    assert reaped == []
+    assert active["orph-1"]["status"] == "orphaned_alive"
+
+
 def test_trigger_a_port_not_listening_reaped() -> None:
     active = {"orph-1": _orphan_row(port=9223)}
     reaped = reaper.reap_orphaned_alive_rows(

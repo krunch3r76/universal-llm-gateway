@@ -112,6 +112,61 @@ async def _navigate_new_page(
         return None
 
 
+def _bind_chat_url(registration_id: str, chat_url: str) -> str | None:
+    """Return None when *chat_url* is bound. ``attachment.conflict`` if a live holder remains.
+
+    A dead ``orphaned_alive`` row that still claims the URL is not an attachment.
+    Release it with the registry reaper and retry the bind once.
+    """
+    from claude_bundles import cdp_lane
+    from claude_bundles.cdp_lane_reaper import release_dead_chat_url_holders
+    from universal_protocol.errors import ProtocolError
+
+    def _once() -> None:
+        cdp_registry.bind_session_address(registration_id, chat_url=chat_url)
+
+    try:
+        _once()
+    except ProtocolError as exc:
+        if exc.code != "attachment.conflict":
+            raise
+    else:
+        return None
+
+    store = cdp_registry._store
+    with store.ports_lock():
+        active = store.load_active()
+        reaped = release_dead_chat_url_holders(
+            active,
+            cdp_lane.is_listening,
+            chat_url,
+        )
+        if reaped:
+            store.write_active(active)
+    if not reaped:
+        return "attachment.conflict"
+    try:
+        _once()
+    except ProtocolError as exc:
+        if exc.code == "attachment.conflict":
+            return "attachment.conflict"
+        raise
+    return None
+
+
+async def _bind_or_drop(
+    registration_id: str,
+    chat_url: str,
+    page: Any,
+    pw: Any,
+) -> str | None:
+    """Bind, or close *page* and return ``attachment.conflict`` when a live holder remains."""
+    err = _bind_chat_url(registration_id, chat_url)
+    if err:
+        await _teardown_attempt(page, pw)
+    return err
+
+
 async def _disconnect_playwright(pw: Any | None) -> None:
     """Stop Playwright without closing the navigated tab (retain_lane path)."""
     if pw is not None:
@@ -143,7 +198,8 @@ async def _wake_dormant_seat(chat_url: str, *, holder: str) -> ReattachOutcome |
     found = await find_page_on_lane(reg.cdp_url, chat_url)
     if found is not None:
         page, pw = found
-        cdp_registry.bind_session_address(reg.registration_id, chat_url=chat_url)
+        if err := await _bind_or_drop(reg.registration_id, chat_url, page, pw):
+            return ReattachOutcome(ok=False, error=err, relaunched=True)
         return ReattachOutcome(
             ok=True,
             registration_id=reg.registration_id,
@@ -203,7 +259,8 @@ async def ensure_cse_attached(
         found = await find_page_on_lane(lane.cdp_url, chat_url)
         if found is not None:
             page, pw = found
-            cdp_registry.bind_session_address(lane.registration_id, chat_url=chat_url)
+            if err := await _bind_or_drop(lane.registration_id, chat_url, page, pw):
+                return ReattachOutcome(ok=False, error=err)
             return ReattachOutcome(
                 ok=True,
                 registration_id=lane.registration_id,
@@ -216,7 +273,8 @@ async def ensure_cse_attached(
         if opened is None:
             continue
         page, pw = opened
-        cdp_registry.bind_session_address(lane.registration_id, chat_url=chat_url)
+        if err := await _bind_or_drop(lane.registration_id, chat_url, page, pw):
+            return ReattachOutcome(ok=False, error=err)
         return ReattachOutcome(
             ok=True,
             registration_id=lane.registration_id,
@@ -240,7 +298,9 @@ async def ensure_cse_attached(
         cdp_registry.deregister_lane(reg.registration_id)
         return ReattachOutcome(ok=False, error="reattach_navigate_failed")
     page, pw = opened
-    cdp_registry.bind_session_address(reg.registration_id, chat_url=chat_url)
+    if err := await _bind_or_drop(reg.registration_id, chat_url, page, pw):
+        cdp_registry.deregister_lane(reg.registration_id)
+        return ReattachOutcome(ok=False, error=err)
     return ReattachOutcome(
         ok=True,
         registration_id=reg.registration_id,

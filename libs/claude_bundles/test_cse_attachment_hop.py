@@ -121,32 +121,32 @@ def test_ac3_ac4_streaming_latch(
     row = _mint()
     rid = row.registration_id
 
-    hook = runner._wrap_harvest_with_address(None, registration_id=rid, execution_id="e1")
+    hook = runner._wrap_harvest_with_address(
+        None, registration_id=rid, execution_id="e1"
+    )
 
     async def _run(state: dict[str, Any]) -> None:
         await hook(state)
 
     import asyncio
 
-    asyncio.get_event_loop().run_until_complete(
-        _run({"url": _CSE, "streaming": False})
+    asyncio.get_event_loop().run_until_complete(_run({"url": _CSE, "streaming": False}))
+    assert (
+        not (isolated_registry / "registry.jsonl").exists()
+        or "attachment_observed"
+        not in (isolated_registry / "registry.jsonl").read_text()
     )
-    assert not (isolated_registry / "registry.jsonl").exists() or "attachment_observed" not in (
-        isolated_registry / "registry.jsonl"
-    ).read_text()
 
-    asyncio.get_event_loop().run_until_complete(
-        _run({"url": _CSE, "streaming": True})
-    )
+    asyncio.get_event_loop().run_until_complete(_run({"url": _CSE, "streaming": True}))
     log = (isolated_registry / "registry.jsonl").read_text()
     assert log.count("attachment_observed") == 1
     active = reg._load_active()[rid]
     assert active.get("attached_at")
 
-    asyncio.get_event_loop().run_until_complete(
-        _run({"url": _CSE, "streaming": True})
-    )
-    assert (isolated_registry / "registry.jsonl").read_text().count("attachment_observed") == 1
+    asyncio.get_event_loop().run_until_complete(_run({"url": _CSE, "streaming": True}))
+    assert (isolated_registry / "registry.jsonl").read_text().count(
+        "attachment_observed"
+    ) == 1
 
 
 def test_ac5_observation_survives_non_authority(
@@ -157,16 +157,16 @@ def test_ac5_observation_survives_non_authority(
     monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "0")
     row = _mint()
     rid = row.registration_id
-    hook = runner._wrap_harvest_with_address(None, registration_id=rid, execution_id="e1")
+    hook = runner._wrap_harvest_with_address(
+        None, registration_id=rid, execution_id="e1"
+    )
 
     async def _run(state: dict[str, Any]) -> None:
         await hook(state)
 
     import asyncio
 
-    asyncio.get_event_loop().run_until_complete(
-        _run({"url": _CSE, "streaming": True})
-    )
+    asyncio.get_event_loop().run_until_complete(_run({"url": _CSE, "streaming": True}))
     active = reg._load_active()[rid]
     assert active.get("chat_url")
     assert not active.get("attached_at")
@@ -315,7 +315,9 @@ def test_ac6_standdown_missing(isolated_registry: Path) -> None:
     assert (isolated_registry / "active.json").read_bytes() == before
 
 
-def test_ac8_detach_pop(isolated_registry: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ac8_detach_pop(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(reg, "_kill_listener", lambda _p: None)
     monkeypatch.setattr(
         "claude_bundles.cdp_registry.hygiene.reclaim_profile_for_detached_row",
@@ -359,6 +361,38 @@ def test_ac15_followup_single_pair(isolated_registry: Path) -> None:
     pairs = _registry_pairs_for_chat_url(_CSE)
     assert len(pairs) == 1
     assert pairs[0].registration_id == row.registration_id
+
+
+def test_dead_orphaned_claim_does_not_block_rebind(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dead orphaned_alive row is not an attachment for the Cowork URL."""
+    monkeypatch.setattr("claude_bundles.cdp_lane.is_listening", lambda _port: False)
+    dead = _mint(holder="dead")
+    assert reg.bind_session_address(dead.registration_id, chat_url=_CSE)
+    reg.deregister_lane(
+        dead.registration_id,
+        reason="cse_not_found",
+        is_listening=lambda _port: True,
+    )
+    assert reg._load_active()[dead.registration_id]["status"] == "orphaned_alive"
+    live = _mint(holder="live")
+    from cdp_ask.followup_reattach import _bind_chat_url
+
+    assert _bind_chat_url(live.registration_id, _CSE) is None
+    assert reg._load_active()[dead.registration_id]["status"] == "released"
+    assert reg._load_active()[live.registration_id]["chat_url"] == _CSE
+
+
+def test_live_holder_bind_returns_conflict(isolated_registry: Path) -> None:
+    holder = _mint(holder="holder")
+    other = _mint(holder="other")
+    assert reg.bind_session_address(holder.registration_id, chat_url=_CSE)
+    from cdp_ask.followup_reattach import _bind_chat_url
+
+    assert _bind_chat_url(other.registration_id, _CSE) == "attachment.conflict"
+    assert reg._load_active()[holder.registration_id]["status"] == "active"
+    assert not reg._load_active()[other.registration_id].get("chat_url")
 
 
 def test_attachment_for_chat_url_lookup(isolated_registry: Path) -> None:
