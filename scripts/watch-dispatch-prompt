@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+"""Print the sent prompt for the board's selected row, then exit.
+
+The body is not a projection field. The pane stays up because tmux
+remain-on-exit is on.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from scripts.model_manager.ui.dispatch_monitor.ulg.detail_on_click import (  # noqa: E402
+    fetch_prompt,
+)
+from scripts.model_manager.ui.dispatch_monitor.ulg.tail_selection import (  # noqa: E402
+    DEFAULT_SELECTION_PATH,
+    read_selection,
+)
+
+
+def main() -> int:
+    selected = read_selection(DEFAULT_SELECTION_PATH)
+    if selected is None:
+        print("no selection")
+        return 0
+    key = selected.get("prompt_key") or ""
+    label = selected.get("label") or key
+    if not key:
+        print(f"{label}: no stored prompt key")
+        return 0
+    result = fetch_prompt(key)
+    error = result.get("error") or ""
+    print(
+        f"{label}  source={result.get('source')}  "
+        f"bytes={result.get('bytes')}  truncated={result.get('truncated')}"
+        + (f"  error={error}" if error else "")
+    )
+    print()
+    body = result.get("body")
+    if isinstance(body, str) and body:
+        print(body)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

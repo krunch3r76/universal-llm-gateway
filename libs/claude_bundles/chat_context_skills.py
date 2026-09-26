@@ -29,7 +29,12 @@ from claude_bundles.chat_context_disclosure import expand_context_frame
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)+$")
-_COMPOSE_URL = re.compile(r"/new(?:\?|$|#)|/cowork/cse_|/chat/", re.I)
+# ``/cowork/local_<uuid>`` is the session Cowork opens after the induction
+# submit (thread 12831). ``cse_`` is the older session id. Both are compose.
+_COMPOSE_URL = re.compile(
+    r"/new(?:\?|$|#)|/cowork/(?:cse_|local_)|/chat/",
+    re.I,
+)
 
 # Right-rail section labels — stop collecting when another section begins.
 _SECTION_STOP = re.compile(
@@ -106,7 +111,8 @@ def require_chat_surface(page: Page) -> str:
     url = page.url or ""
     if not _COMPOSE_URL.search(url):
         raise ChatContextSkillsError(
-            f"Context→Skills scrape requires /new|/cowork/cse_|/chat/ — on {url!r}"
+            "Context→Skills scrape requires /new|/cowork/cse_|/cowork/local_|/chat/ "
+            f"— on {url!r}"
         )
     return url
 
@@ -139,10 +145,11 @@ async def _pick_chat_page(context: BrowserContext, *, chat_url: str | None) -> P
 async def scrape_loaded_skills(page: Page) -> LoadedSkillsReport:
     """Return the skill slugs listed under the chat UI Context → Skills frame.
 
-    Non-LLM. Does not ask the model. Confirms the Context rail and the
-    Skills list are expanded before reading rows. Empty ``skills`` with
-    ``context_found`` true means that open list has no skills bound. A
-    list that stays collapsed raises ``ChatContextSkillsError``.
+    Non-LLM. Does not ask the model. Confirms the Context section header
+    is expanded before reading rows. The Skills label sits in that open
+    grid; it is not its own toggle. Empty ``skills`` with ``context_found``
+    true means that open section has no skills bound. A header that stays
+    collapsed raises ``ChatContextSkillsError``.
     """
     url = require_chat_surface(page)
     await expand_context_frame(page)

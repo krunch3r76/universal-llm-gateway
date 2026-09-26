@@ -199,9 +199,7 @@ def archive_harvest(
     stamp = datetime.now(UTC).isoformat()
     exec_line = f"- execution_id: `{execution_id}`\n" if execution_id else ""
     stargate = (stargate_execution_id or "").strip()
-    stargate_line = (
-        f"- stargate_execution_id: `{stargate}`\n" if stargate else ""
-    )
+    stargate_line = f"- stargate_execution_id: `{stargate}`\n" if stargate else ""
     card_lines = ""
     if artifact_cards:
         card_lines = f"- artifact_cards: `{artifact_cards}`\n"
@@ -462,20 +460,18 @@ async def send_prompt(
     empty strings are valid for non-seating harness callers.
 
     When required authority includes ``shared_sync`` slugs, sends a prior turn
-    containing only ``Use the {slug} skill`` lines, scrapes Context → Skills,
-    and aborts before the work body when the panel is not ready
-    (``decision:web-seat-skill-body-delivery``).
+    containing only ``Use the {slug} skill`` lines, then polls the open
+    Context grid until those slugs are listed. A still-closed header aborts
+    on the first read. An open grid that stays empty through the wait aborts
+    before the work body (``decision:web-seat-skill-body-delivery``).
 
     After a successful work-prompt click, records a non-gating Context → Skills
     receipt (``cdp.skill.context_loaded``) — chips gate submit; the rail is the
     receipt.
     """
-    from claude_bundles.chat_context_skills import scrape_loaded_skills
     from claude_bundles.composer_session_skills import require_compose_surface
     from claude_bundles.cowork_skill_delivery import (
-        SkillDeliveryError,
         extract_cdp_required_authority,
-        induction_panel_ready,
         parse_cdp_sealed_skill_channels,
         partition_cdp_skills,
         render_skill_induction,
@@ -483,6 +479,7 @@ async def send_prompt(
     from claude_bundles.skill_context_receipt import (
         record_post_submit_skills_receipt,
     )
+    from claude_bundles.skill_induction_panel import wait_for_induction_panel
 
     require_compose_surface(page)
     composer = await find_composer(page)
@@ -511,18 +508,8 @@ async def send_prompt(
         await page.wait_for_timeout(200)
         await page.keyboard.insert_text(induction_text)
         await page.wait_for_timeout(600)
-        await _submit_composer_draft(
-            page, composer=composer, draft_text=induction_text
-        )
-        await page.wait_for_timeout(1500)
-        report = await scrape_loaded_skills(page)
-        observed = list(report.skills)
-        if not induction_panel_ready(induction_slugs, observed):
-            raise SkillDeliveryError(
-                "induction Context → Skills panel not ready before work prompt: "
-                f"required={induction_slugs} observed={observed} — fail closed "
-                "(decision:web-seat-skill-body-delivery)"
-            )
+        await _submit_composer_draft(page, composer=composer, draft_text=induction_text)
+        await wait_for_induction_panel(page, induction_slugs)
         await clear_composer_verified(page, composer)
         await page.wait_for_timeout(180)
 

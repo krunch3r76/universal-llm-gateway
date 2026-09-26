@@ -14,6 +14,16 @@ _ADMITTED = f"{_PREFIX}admitted"
 _CLOSED = f"{_PREFIX}closed"
 _FAILED = f"{_PREFIX}window_failed"
 _WAITING = f"{_PREFIX}waiting_open"
+_AUDIT_SIGNALS = (_ADMITTED, _CLOSED, _FAILED, _WAITING)
+
+# Prefix LIKE is case-insensitive, so it cannot use idx_signal_ts. Paired
+# with ORDER BY seq DESC the planner scans events from the newest row, and
+# the dispatch-board seed (5s) never sees this op return. These four
+# signals are the rows the op classifies; equality is an index range.
+_AUDIT_SQL = (
+    "SELECT * FROM events WHERE signal = ? AND ts_unix_ms > ? "
+    "ORDER BY ts_unix_ms DESC LIMIT ?"
+)
 
 
 def _payload(row: dict[str, Any]) -> dict[str, Any]:
@@ -33,11 +43,17 @@ async def manage_charter_tick_audit(
     """Return admitted/closed/failed rows plus waiting_open aging for charter ticks."""
     minutes, cutoff = await _resolve_window_minutes_and_cutoff(params, store)
     limit = _coerce_limit(params.get("limit", 200))
-    rows = await store.query(
-        "SELECT * FROM events WHERE signal LIKE ? AND ts_unix_ms > ? "
-        "ORDER BY seq DESC LIMIT ?",
-        (f"{_PREFIX}%", cutoff, limit),
-    )
+    rows: list[dict[str, Any]] = []
+    for signal in _AUDIT_SIGNALS:
+        rows.extend(
+            await store.query(
+                _AUDIT_SQL,
+                (signal, cutoff, limit),
+                limit=limit,
+            )
+        )
+    rows.sort(key=lambda row: int(row.get("seq") or 0), reverse=True)
+    rows = rows[:limit]
     admitted: list[dict[str, Any]] = []
     closed: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []

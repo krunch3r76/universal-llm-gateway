@@ -48,7 +48,12 @@ def test_move_and_write_selection(tmp_path) -> None:
     path = tmp_path / "selection.json"
     target = tail_targets((SdkDispatchRow(dispatch_id="d1"),), ())[0]
     write_selection(path, target)
-    assert read_selection(path) == {"kind": "cursor-sdk", "key": "d1", "label": "d1"}
+    assert read_selection(path) == {
+        "kind": "cursor-sdk",
+        "key": "d1",
+        "label": "d1",
+        "prompt_key": "d1",
+    }
 
 
 def test_follow_step_appends_once_then_respects_cursor() -> None:

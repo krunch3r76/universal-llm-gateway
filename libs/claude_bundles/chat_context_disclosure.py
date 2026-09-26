@@ -1,10 +1,11 @@
-"""Open the Cowork Context rail and Skills list before a slug scrape.
+"""Open the Cowork Context section before a Skills scrape.
 
-``scrape_loaded_skills`` calls ``expand_context_frame``. The rail controls
-are toggles: a click on an already-open list closes it, and a scrape of a
-closed list looks like no skills. This module reads ``aria-expanded`` and
-whether the list body is on screen, clicks only when the list is closed,
-and refuses the scrape when the list is still closed after that attempt.
+``scrape_loaded_skills`` calls ``expand_context_frame``. On the live rail
+the Skills rows are the grid under ``[data-section-header]`` labeled
+Context (``role=button``, ``aria-expanded``). That header is the toggle.
+The word Skills is a label inside the open grid, not a second disclosure.
+A click on an already-open header closes it, so this module reads
+``aria-expanded`` first and clicks only when the section is closed.
 """
 
 from __future__ import annotations
@@ -17,57 +18,26 @@ _DISCLOSURE_JS = """
 (spec) => {
   const label = spec.label;
   const doClick = !!spec.click;
-  const exact = (el, want) => {
-    const own = Array.from(el.childNodes)
-      .filter((n) => n.nodeType === Node.TEXT_NODE)
-      .map((n) => n.textContent || '')
-      .join('')
-      .trim();
-    if (own === want) return true;
-    return el.childElementCount === 0 && (el.textContent || '').trim() === want;
-  };
-  const nodes = Array.from(
-    document.querySelectorAll('span,button,div,h1,h2,h3,h4,summary')
+  const headers = Array.from(document.querySelectorAll('[data-section-header][role="button"]'));
+  const header = headers.find((el) =>
+    (el.innerText || '').trim().split('\\n')[0].trim() === label
   );
-  const node = nodes.find((el) => exact(el, label));
-  if (!node) {
+  if (!header) {
     return { found: false, aria_expanded: null, list_visible: false, clicked: false };
   }
-  const btn = node.closest('button, [role="button"], summary');
-  const firstLine = btn ? (btn.innerText || '').trim().split('\\n')[0].trim() : '';
-  const named = !!(btn && (
-    (btn.getAttribute('aria-label') || '').trim() === label
-    || exact(btn, label)
-    || firstLine === label
-  ));
-  const control = named ? btn : null;
   if (doClick) {
-    if (!control) return { found: true, aria_expanded: null, list_visible: false, clicked: false };
-    control.click();
+    header.click();
     return { found: true, aria_expanded: null, list_visible: false, clicked: true };
   }
-  const aria = control ? control.getAttribute('aria-expanded') : null;
-  const controlsId = control && control.getAttribute('aria-controls');
-  const panel = controlsId ? document.getElementById(controlsId) : null;
-  const sibling = (control || node).nextElementSibling;
-  const shown = (el) => {
-    if (!el) return false;
-    const style = getComputedStyle(el);
-    if (style.display === 'none' || style.visibility === 'hidden') return false;
-    if (el.hasAttribute('hidden')) return false;
-    return el.getClientRects().length > 0;
-  };
-  let listVisible = false;
-  if (panel) listVisible = shown(panel);
-  else if (sibling) listVisible = shown(sibling);
-  else if (label === 'Context') {
-    const skillsNode = nodes.find((el) => exact(el, 'Skills'));
-    listVisible = !!(skillsNode && shown(skillsNode));
-  }
+  const panel = header.nextElementSibling;
+  const style = panel ? getComputedStyle(panel) : null;
+  const rows = style ? (style.gridTemplateRows || '') : '';
+  const collapsed = !panel || rows === '0px' || rows === '0fr' || rows.startsWith('0px');
+  const height = panel ? panel.getBoundingClientRect().height : 0;
   return {
     found: true,
-    aria_expanded: aria,
-    list_visible: listVisible,
+    aria_expanded: header.getAttribute('aria-expanded'),
+    list_visible: !collapsed && height > 0,
     clicked: false,
   };
 }
@@ -135,13 +105,13 @@ async def _require_disclosure_open(page: Page, label: str) -> None:
 
 
 async def expand_context_frame(page: Page) -> bool:
-    """Confirm the Context rail and the Skills list are expanded.
+    """Confirm the Context section header is expanded before the scrape.
 
-    Reads each disclosure before clicking. A collapsed list is opened
-    once. An already-open list is not clicked, because the control
-    toggles shut. Returns true only when both are open. Raises
-    ``ChatContextSkillsError`` when either list is still closed.
+    The Skills rows live in the grid under that header. There is no
+    separate Skills toggle. A collapsed header is opened once. An
+    already-open header is not clicked, because the control toggles
+    shut. Returns true when the section is open. Raises
+    ``ChatContextSkillsError`` when the header stays closed.
     """
     await _require_disclosure_open(page, "Context")
-    await _require_disclosure_open(page, "Skills")
     return True

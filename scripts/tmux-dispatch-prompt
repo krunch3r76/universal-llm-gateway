@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Tmux pane that prints the selected dispatch's sent prompt once.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PY="${PYTHON:-$HOME/.venvs/universal/bin/python}"
+export PYTHONPATH="${ROOT}${PYTHONPATH:+:$PYTHONPATH}"
+if [[ -n "${TMUX:-}" ]]; then
+  tmux set-option -t "#{pane_id}" remain-on-exit on 2>/dev/null \
+    || tmux set-option remain-on-exit on 2>/dev/null \
+    || true
+fi
+exec "$PY" "$ROOT/scripts/watch-dispatch-prompt" "$@"

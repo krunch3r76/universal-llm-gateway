@@ -18,6 +18,7 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     SourceRefConflict,
 )
 from services.git_integration_worker.cursor_sdk_park_ledger import (
+    PARK_KIND_DISCARD,
     load_park_row,
     mark_parked,
     open_park_rows,
@@ -110,6 +111,7 @@ def _seed_parked(
     expired: bool = False,
     conductor: bool = False,
     work_key: str | None = None,
+    park_kind: str = "park_for_restart",
 ) -> None:
     # Each parked mission owns its work_key: an open park row reserves it (D5.4b).
     work_key = work_key or f"{_WORK_KEY}-{dispatch_id}"
@@ -167,6 +169,7 @@ def _seed_parked(
         tool_call_count=4,
         last_tool_calls=[{"tool_name": "fs", "status": "completed"}],
         sidecar_uri=f"cortex://notes/system/threads/{thread_id}-park-partial-{dispatch_id}.md",
+        park_kind=park_kind,
     )
     parked_at = datetime.now(UTC) + timedelta(seconds=parked_offset_s)
     expires = (
@@ -430,6 +433,44 @@ def test_open_park_row_reserves_work_key_but_child_is_exempt(tmp_path: Path) -> 
         )
         is None
     )
+
+
+def test_cancel_discard_does_not_reserve_the_work_key(tmp_path: Path) -> None:
+    _seed_parked(
+        "p-disc",
+        thread_id="7060",
+        tmp_path=tmp_path,
+        work_key=_WORK_KEY,
+        park_kind=PARK_KIND_DISCARD,
+    )
+    ledger = CursorDispatchLedger.instance()
+    nxt = CursorDispatchRequest(
+        thread_id="7061",
+        model="cursor/composer-2.5",
+        dispatch_id="after-discard",
+        execution_id="exec-after-discard",
+        message="the discarded pin is free",
+        handoff_contract="conductor",
+    )
+    ledger.admit(
+        req=nxt,
+        fingerprint=ledger.fingerprint(nxt),
+        execution_id=nxt.execution_id,
+        caller_agent="liaison-ticker",
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id="after-discard",
+            thread_id="7061",
+            model_id="m",
+        ),
+        contract="conductor",
+        source_repo=str(tmp_path / "repo"),
+        lease_key=str(tmp_path / "repo"),
+        work_key=_WORK_KEY,
+        identity_class="declared",
+    )
+    assert _row("after-discard") is not None
 
 
 def test_preamble_and_request_builder_shapes(tmp_path: Path) -> None:

@@ -23,15 +23,22 @@ from scripts.model_manager.ui.dispatch_monitor.core.dtos import (
 
 DEFAULT_SELECTION_PATH = Path("/tmp/ulg-dispatch-board-selection.json")
 PANE_TITLE = "dispatch-prose"
+PROMPT_PANE_TITLE = "dispatch-prompt"
 
 
 @dataclass(frozen=True)
 class TailTarget:
-    """One selectable live row."""
+    """One selectable live row.
+
+    ``prompt_key`` is the id the prompt pane reads. For cursor-sdk that is
+    the dispatch id. For CDP it is the execution id, empty when the row
+    has none.
+    """
 
     kind: str
     key: str
     label: str
+    prompt_key: str = ""
 
 
 def tail_targets(
@@ -42,13 +49,25 @@ def tail_targets(
     targets: list[TailTarget] = []
     for row in live_sdk(tuple(sdk)):
         targets.append(
-            TailTarget(kind="cursor-sdk", key=row.dispatch_id, label=row.dispatch_id)
+            TailTarget(
+                kind="cursor-sdk",
+                key=row.dispatch_id,
+                label=row.dispatch_id,
+                prompt_key=row.dispatch_id,
+            )
         )
     for row in live_cdp(tuple(cdp)):
         key = row.chat_url or row.registration_id
         if not key:
             continue
-        targets.append(TailTarget(kind="cdp", key=key, label=row.request_id))
+        targets.append(
+            TailTarget(
+                kind="cdp",
+                key=key,
+                label=row.request_id,
+                prompt_key=row.execution_id or "",
+            )
+        )
     return targets
 
 
@@ -67,7 +86,12 @@ def move_selection(index: int, count: int, verb: str) -> tuple[int, bool]:
 
 def write_selection(path: Path, target: TailTarget) -> None:
     """Atomically publish the row the pane should follow."""
-    payload = {"kind": target.kind, "key": target.key, "label": target.label}
+    payload = {
+        "kind": target.kind,
+        "key": target.key,
+        "label": target.label,
+        "prompt_key": target.prompt_key,
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload), encoding="utf-8")
@@ -87,11 +111,15 @@ def read_selection(path: Path) -> dict[str, str] | None:
     if not isinstance(kind, str) or not isinstance(key, str) or not kind or not key:
         return None
     label = raw.get("label")
-    return {
+    prompt_key = raw.get("prompt_key")
+    selected = {
         "kind": kind,
         "key": key,
         "label": label if isinstance(label, str) and label else key,
     }
+    if isinstance(prompt_key, str):
+        selected["prompt_key"] = prompt_key
+    return selected
 
 
 def ensure_prose_pane(
@@ -138,5 +166,57 @@ def ensure_prose_pane(
         return "tmux_split_failed"
     pane_id = opened.stdout.strip().splitlines()[-1]
     _run(["tmux", "select-pane", "-t", pane_id, "-T", PANE_TITLE])
+    _run(["tmux", "set-option", "-t", pane_id, "remain-on-exit", "on"])
+    return "opened"
+
+
+def ensure_prompt_pane(
+    launcher: Path,
+    *,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> str:
+    """Split ``dispatch-prompt``, or respawn it so the new selection prints.
+
+    The printer exits after one body. A second ``p`` has to start it again.
+    """
+    if not os.environ.get("TMUX"):
+        return "not_in_tmux"
+
+    def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+        return run(args, check=False, capture_output=True, text=True)
+
+    listed = _run(["tmux", "list-panes", "-F", "#{pane_id}\t#{pane_title}"])
+    if listed.returncode != 0:
+        return "tmux_list_failed"
+    existing = ""
+    for line in listed.stdout.splitlines():
+        pane_id, _, title = line.partition("\t")
+        if title.strip() == PROMPT_PANE_TITLE and pane_id.strip():
+            existing = pane_id.strip()
+            break
+    if existing:
+        refreshed = _run(["tmux", "respawn-pane", "-k", "-t", existing, str(launcher)])
+        if refreshed.returncode != 0:
+            return "tmux_respawn_failed"
+        _run(["tmux", "select-pane", "-t", existing, "-T", PROMPT_PANE_TITLE])
+        return "refreshed"
+    opened = _run(
+        [
+            "tmux",
+            "split-window",
+            "-v",
+            "-l",
+            "14",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            str(launcher),
+        ]
+    )
+    if opened.returncode != 0 or not opened.stdout.strip():
+        return "tmux_split_failed"
+    pane_id = opened.stdout.strip().splitlines()[-1]
+    _run(["tmux", "select-pane", "-t", pane_id, "-T", PROMPT_PANE_TITLE])
     _run(["tmux", "set-option", "-t", pane_id, "remain-on-exit", "on"])
     return "opened"

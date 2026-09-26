@@ -740,10 +740,11 @@ def _resume_parent_work_key_exempt(conn: sqlite3.Connection, *, resume_of: str) 
     return str(data.get("bridge_death_degraded_reason") or "") == "bridge_read_timeout"
 
 
-# Open park rows keep their ``work_key`` reserved between park and auto-resume so
-# a foreign implement cannot take over the lineage in that window (spec D5.4b).
+# A restart park keeps its ``work_key`` reserved until auto-resume so a foreign
+# implement cannot take the lineage (spec D5.4b). ``cancel_discard`` is not that
+# window: the row is dead, and reserving the key re-admits the same pin into a 409.
 _OPEN_PARK_ROW_SQL = (
-    "(park_kind IS NOT NULL AND park_resumed_by IS NULL "
+    "(park_kind='park_for_restart' AND park_resumed_by IS NULL "
     "AND (park_expires_at IS NULL OR park_expires_at > ?))"
 )
 

@@ -6,8 +6,10 @@ import pytest
 
 from claude_bundles.chat_context_disclosure import disclosure_is_expanded
 from claude_bundles.chat_context_skills import (
+    ChatContextSkillsError,
     LoadedSkillsReport,
     parse_skills_from_context_section,
+    require_chat_surface,
 )
 
 pytestmark = pytest.mark.offline
@@ -87,3 +89,23 @@ def test_missing_required() -> None:
     assert report.missing(["reasoning-posture", "consult-posture"]) == (
         "consult-posture",
     )
+
+
+class _UrlPage:
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+
+def test_local_cowork_session_is_a_compose_surface() -> None:
+    url = "https://claude.ai/cowork/local_0e29ba8a-f756-40d5-949c-39e9b7d85007"
+    assert require_chat_surface(_UrlPage(url)) == url
+
+
+def test_cse_cowork_session_stays_a_compose_surface() -> None:
+    url = "https://claude.ai/cowork/cse_01ToWejFedjBWFbKXbAxeKLZ"
+    assert require_chat_surface(_UrlPage(url)) == url
+
+
+def test_settings_url_is_not_a_compose_surface() -> None:
+    with pytest.raises(ChatContextSkillsError, match="cowork/local_"):
+        require_chat_surface(_UrlPage("https://claude.ai/settings/skills"))

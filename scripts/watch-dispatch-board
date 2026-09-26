@@ -39,6 +39,7 @@ from scripts.model_manager.ui.dispatch_monitor.ulg.manage_charter_hold import ( 
 )
 from scripts.model_manager.ui.dispatch_monitor.ulg.tail_selection import (  # noqa: E402
     DEFAULT_SELECTION_PATH,
+    ensure_prompt_pane,
     ensure_prose_pane,
     move_selection,
     tail_targets,
@@ -111,8 +112,9 @@ def _selection_verb(key: int) -> str | None:
 def _curses_main(stdscr: Any, state: _SharedState, *, seed_minutes: int) -> None:
     board = CursesBoard(stdscr, seed_minutes=seed_minutes)
     index = 0
-    tail_status = "j/k select · enter opens the transcript pane"
+    tail_status = "j/k select · enter transcript · p prompt"
     launcher = os.path.join(os.path.dirname(__file__), "tmux-dispatch-prose")
+    prompt_launcher = os.path.join(os.path.dirname(__file__), "tmux-dispatch-prompt")
     while not state.stop.is_set():
         with state.lock:
             frame = state.frame
@@ -131,6 +133,17 @@ def _curses_main(stdscr: Any, state: _SharedState, *, seed_minutes: int) -> None
         if key in (ord("q"), ord("Q")):
             state.stop.set()
             break
+        if key in (ord("p"), ord("P")) and targets:
+            target = targets[index]
+            write_selection(DEFAULT_SELECTION_PATH, target)
+            pane = ensure_prompt_pane(prompt_launcher)
+            if pane in {"opened", "refreshed"}:
+                tail_status = f"prompt pane {pane} · {target.label}"
+            elif pane == "not_in_tmux":
+                tail_status = f"selection written · run scripts/tmux-dispatch-prompt · {target.label}"
+            else:
+                tail_status = f"prompt pane failed ({pane})"
+            continue
         verb = _selection_verb(key)
         if verb is None or not targets:
             continue
