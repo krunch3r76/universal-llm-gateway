@@ -145,6 +145,30 @@ def partition_cdp_skills(slugs: list[str]) -> tuple[list[str], list[str]]:
     return slash, inline
 
 
+def render_skill_induction(slugs: list[str]) -> str:
+    """Build the pre-work induction turn — only ``Use the {slug} skill`` lines.
+
+    Customize loads skill bodies on that verb; the Context → Skills panel is the
+    receipt that must land before the sealed work prompt is pasted
+    (``decision:web-seat-skill-body-delivery`` / friction a:36580).
+    """
+    lines = [f"Use the {str(s).strip()} skill" for s in slugs if str(s).strip()]
+    return "\n".join(lines)
+
+
+def induction_panel_ready(required: list[str], observed: list[str]) -> bool:
+    """True when every induction slug appears in Context → Skills (case-insensitive).
+
+    Empty ``required`` is vacuously ready. Composer chips are not this panel —
+    the scrape runs after the induction submit, not before the work body.
+    """
+    req = [str(s).strip() for s in required if str(s).strip()]
+    if not req:
+        return True
+    have = {str(s).strip().lower() for s in observed if str(s).strip()}
+    return all(r.lower() in have for r in req)
+
+
 def format_cdp_use_the_lines(slugs: list[str]) -> str:
     """Render ``Use the `{slug}` skill\\n`` lines — hybrid **escape** remainder.
 
@@ -276,11 +300,6 @@ def prepend_cdp_dispatch_skills(
     else:
         prefix = f"{slash_block}{inline_block}"
     authority = render_cdp_required_authority(requested)
-    named = ", ".join(f"`{slug}`" for slug in requested)
-    authority += (
-        "Hash these skills from your local skill server and quote each digest "
-        f"before you answer: {named}.\n"
-    )
     if not prefix:
         return f"{authority}{body}", slash_slugs, bodies
     # Blank line between slash chip lines and body when no XML inline follows.

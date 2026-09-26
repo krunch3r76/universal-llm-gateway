@@ -15,6 +15,7 @@ from claude_bundles.cowork_skill_delivery import (
     attest_skills_chip_enabled,
     classify_skill_delivery,
     github_cannot_load_skill_trees_note,
+    induction_panel_ready,
     ledger_skills_channels,
     ledger_skills_record,
     load_skill_bodies,
@@ -22,6 +23,7 @@ from claude_bundles.cowork_skill_delivery import (
     prepend_cdp_dispatch_skills,
     prepend_injected_skills,
     render_injected_skills_block,
+    render_skill_induction,
 )
 
 
@@ -139,15 +141,24 @@ def test_attest_delivery_channels_mixed_and_all_inline() -> None:
         )
 
 
-def test_dispatch_prompt_asks_for_a_local_skill_hash() -> None:
-    from claude_bundles.cowork_skill_delivery import prepend_cdp_dispatch_skills
-
+def test_prepend_cdp_dispatch_skills_omits_local_skill_hash_sentence() -> None:
     text, _, _ = prepend_cdp_dispatch_skills("## Task\n", ["consult-posture"])
-    assert "local skill server" in text
-    assert "`consult-posture`" in text
-    assert text.count("Hash these skills") == 1
+    assert "Hash these skills" not in text
+    assert "<!--cdp-required-skills:consult-posture-->" in text
     again, _, _ = prepend_cdp_dispatch_skills(text, ["consult-posture"])
-    assert again.count("Hash these skills") == 1
+    assert "Hash these skills" not in again
+
+
+def test_render_skill_induction_single_slug() -> None:
+    assert render_skill_induction(["consult-posture"]) == (
+        "Use the consult-posture skill"
+    )
+
+
+def test_induction_panel_ready_matches_observed_slugs() -> None:
+    assert induction_panel_ready(["consult-posture"], []) is False
+    assert induction_panel_ready(["consult-posture"], ["consult-posture"]) is True
+    assert induction_panel_ready([], ["consult-posture"]) is True
 
 
 def test_review_charter_is_not_an_implementer_checklist() -> None:
@@ -476,7 +487,6 @@ def test_ledger_ok_requires_delivery() -> None:
 def test_prepend_cdp_dispatch_skills_is_text_idempotent() -> None:
     """stage(stage(x)) must not stack a second slash+authority block."""
     from claude_bundles.cowork_skill_delivery import (
-        peel_sealed_cdp_skill_prefix,
         prepend_cdp_dispatch_skills,
         split_leading_slash_skills,
     )
