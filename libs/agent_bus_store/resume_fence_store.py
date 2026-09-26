@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from .db.connection import connect
+from .db.connection import connect, write_connect
 from .events.resume_fence import (
     emit_resume_fence_armed,
     emit_resume_fence_denied,
@@ -55,7 +55,7 @@ def append_fence_event(
 ) -> int:
     """Append one journal row and emit the matching event signal."""
     payload_json = json.dumps(payload) if payload else None
-    with connect() as conn:
+    with write_connect() as conn:
         cur = conn.execute(
             """
             INSERT INTO resume_fence_events

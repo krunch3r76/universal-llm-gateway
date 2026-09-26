@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from ..events.branch_associated import emit_branch_associated
-from .connection import connect
+from .connection import connect, write_connect
 from .threads import get_thread, normalize_thread_id
 
 AssociationState = Literal["none", "associated"]
@@ -32,7 +32,7 @@ def associate_branch(*, thread_id: str, branch_name: str) -> dict[str, Any]:
     if get_thread(thread_id) is None:
         raise LookupError(f"Thread {thread_id} not found")
 
-    with connect() as conn:
+    with write_connect() as conn:
         cur = conn.execute(
             "INSERT INTO thread_branch_associations (thread_id, branch_name) "
             "VALUES (?, ?)",

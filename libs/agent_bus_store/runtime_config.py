@@ -39,6 +39,14 @@ def apply_runtime_config_env() -> None:
         return
     if _parse_bool(raw.get("checkpoint_auto_supersede")):
         os.environ.setdefault("AGENT_BUS_CHECKPOINT_AUTO_SUPERSEDE", "1")
+    busy = raw.get("write_busy_timeout_ms")
+    if busy is not None and str(busy).strip() != "":
+        os.environ.setdefault("AGENT_BUS_WRITE_BUSY_TIMEOUT_MS", str(busy).strip())
+    depth = raw.get("write_queue_depth_threshold")
+    if depth is not None and str(depth).strip() != "":
+        os.environ.setdefault(
+            "AGENT_BUS_WRITE_QUEUE_DEPTH_THRESHOLD", str(depth).strip()
+        )
 
 
 __all__ = ["apply_runtime_config_env"]

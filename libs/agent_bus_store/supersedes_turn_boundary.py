@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .checkpoint_kind_detector import should_auto_derive_supersedes_turn
-from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL, is_checkpoint_subject
+from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL
 
 
 @dataclass(frozen=True, slots=True)

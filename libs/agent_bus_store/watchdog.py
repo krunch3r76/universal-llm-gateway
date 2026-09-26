@@ -32,7 +32,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from .db.connection import connect, now
+from .db.connection import connect, now, write_connect
 from .db.lifecycle import _transition_lifecycle_state
 from .events.lifecycle import emit_thread_abandoned, emit_watchdog_sweep_failed
 from .sdk_liveness import (
@@ -73,7 +73,7 @@ def _reap_single(
     Opens its own transaction. Returns True when the thread was abandoned,
     False when it was already advanced (TOCTOU guard fired).
     """
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT bus_lifecycle_state FROM threads WHERE id = ?", (thread_id,)
         ).fetchone()

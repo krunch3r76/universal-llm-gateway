@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from ..events.lane_bound import emit_lane_bound
 from ..lane_roles import parse_lane_role
 from ..thread_classification import liaison_tag_on_child_without_root
-from .connection import connect
+from .connection import connect, write_connect
 from .threads import get_thread, normalize_thread_id
 
 AssociationState = Literal["none", "associated"]
@@ -103,7 +103,7 @@ def associate_lane(
             "not on a child lane"
         )
 
-    with connect() as conn:
+    with write_connect() as conn:
         prior_id = _prior_association_id(conn, thread_id=thread_id)
         cur = conn.execute(
             "INSERT INTO thread_lane_associations "

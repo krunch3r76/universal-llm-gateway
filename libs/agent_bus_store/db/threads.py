@@ -17,7 +17,7 @@ from ..turns_models import (
     _BROADCAST_TO_AGENTS,
     TRIAGE_CONFIRM_TTL_SECONDS,
 )
-from .connection import connect, now
+from .connection import connect, now, write_connect
 
 _QUERY_MAX_LEN = 200
 
@@ -211,7 +211,7 @@ def add_tags(
     if not tags:
         return get_thread(thread_id)
     ts = now()
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT id FROM threads WHERE id = ?", (thread_id,)
         ).fetchone()
@@ -252,7 +252,7 @@ def remove_tags(thread_id: str, tags: list[str]) -> dict[str, Any] | None:
     ts = now()
     prior_tags: list[str] = []
     prior_status = ""
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT id, status FROM threads WHERE id = ?", (thread_id,)
         ).fetchone()
@@ -496,7 +496,7 @@ def create_thread(
     if thread_id is None:
         thread_id = next_thread_id()
     ts = now()
-    with connect() as conn:
+    with write_connect() as conn:
         existing = conn.execute(
             "SELECT id FROM threads WHERE id = ?", (thread_id,)
         ).fetchone()
@@ -526,7 +526,7 @@ def rename_thread(old_id: str, new_id: str) -> dict[str, Any] | None:
     Returns updated thread detail, or None if old_id not found.
     Raises ValueError if new_id already exists.
     """
-    with connect() as conn:
+    with write_connect() as conn:
         old = conn.execute("SELECT * FROM threads WHERE id = ?", (old_id,)).fetchone()
         if old is None:
             return None
@@ -587,7 +587,7 @@ def update_thread(
     ts = now()
     prior_status: str | None = None
     prior_tags: list[str] = []
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT id, status FROM threads WHERE id = ?", (thread_id,)
         ).fetchone()
@@ -659,7 +659,7 @@ def delete_thread(thread_id: str, *, force: bool = False) -> dict[str, Any]:
     Raises KeyError if thread not found.
     Raises ThreadHasReadTurns if force=False and any turns have been read.
     """
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT id FROM threads WHERE id = ?", (thread_id,)
         ).fetchone()
@@ -873,7 +873,7 @@ def execute_triage_mark_read(*, agent: str, thread_ids: list[str]) -> int:
     owned_placeholders = ",".join("?" * len(owned))
     thread_placeholders = ",".join("?" * len(thread_ids))
     ts = now()
-    with connect() as conn:
+    with write_connect() as conn:
         cur = conn.execute(
             f"UPDATE turns SET read_at = ? "
             f"WHERE thread IN ({thread_placeholders}) "

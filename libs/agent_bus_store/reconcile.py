@@ -16,7 +16,7 @@ from .cursor_sdk_dispatch_turn import (
     infer_cursor_sdk_terminal_status,
     sdk_terminal_closeout_turn,
 )
-from .db.connection import connect, now
+from .db.connection import connect, now, write_connect
 from .db.lifecycle import _transition_lifecycle_state
 from .db.threads_atomic import close_thread, terminate_dispatch
 from .db.turns import get_turns, insert_turn
@@ -130,7 +130,7 @@ def _stamp_liveness_deferred(
     execution_id: str,
     reason: str,
 ) -> None:
-    with connect() as conn:
+    with write_connect() as conn:
         conn.execute(
             "UPDATE thread_dispatch_links "
             "SET liveness_probe_deferred_at = ?, liveness_probe_deferred_reason = ? "
@@ -140,7 +140,7 @@ def _stamp_liveness_deferred(
 
 
 def _clear_liveness_deferred(*, thread_id: str, execution_id: str) -> None:
-    with connect() as conn:
+    with write_connect() as conn:
         conn.execute(
             "UPDATE thread_dispatch_links "
             "SET liveness_probe_deferred_at = NULL, liveness_probe_deferred_reason = NULL "

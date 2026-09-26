@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -89,6 +90,7 @@ CREATE INDEX IF NOT EXISTS idx_thread_tags_tag ON thread_tags(tag);
 
 
 def init_db() -> None:
+    """Create base schema and run migrations at process start (not a request writer)."""
     from .migrations import run_migrations
 
     with connect() as conn:
@@ -110,5 +112,73 @@ def connect() -> Generator[sqlite3.Connection, None, None]:
         conn.close()
 
 
+def _write_busy_timeout_ms() -> int | None:
+    """Positive ``PRAGMA busy_timeout`` from env at call time, or None when off."""
+    raw = os.environ.get("AGENT_BUS_WRITE_BUSY_TIMEOUT_MS")
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        val = int(str(raw).strip())
+    except ValueError:
+        return None
+    if val <= 0:
+        return None
+    return val
+
+
+@contextmanager
+def write_connect() -> Generator[sqlite3.Connection, None, None]:
+    """Serialize writers via an in-process FIFO ticket; readers use ``connect()``."""
+    from . import write_ticket as wt
+
+    if wt.outer_depth() > 0:
+        wt.enter_nested()
+        conn = wt.outer_connection()
+        assert isinstance(conn, sqlite3.Connection)
+        try:
+            yield conn
+        finally:
+            wt.leave_nested()
+        return
+
+    ticket_event: threading.Event | None = None
+    wait_finished = False
+    conn: sqlite3.Connection | None = None
+    try:
+        ticket_event = wt.enqueue_and_wait()
+        wait_finished = True
+        conn = sqlite3.connect(_db_path(), isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        busy_ms = _write_busy_timeout_ms()
+        if busy_ms is not None:
+            conn.execute(f"PRAGMA busy_timeout={busy_ms}")
+        conn.execute("BEGIN IMMEDIATE")
+        wt.set_outer_connection(conn)
+        state_depth = wt.outer_depth()
+        wt.enter_nested()
+        try:
+            yield conn
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            if wt.outer_depth() > state_depth:
+                wt.leave_nested()
+    except BaseException:
+        if ticket_event is not None and not wait_finished:
+            wt.cancel_wait(ticket_event)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+            wt.clear_outer_connection()
+        if ticket_event is not None and wait_finished:
+            wt.release_ticket(ticket_event)
+
+
 def now() -> str:
+    """Return the current UTC timestamp in agent-bus wire format."""
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")

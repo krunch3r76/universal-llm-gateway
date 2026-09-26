@@ -16,7 +16,7 @@ from typing import Any
 
 from deploy_identity.code_version import resolve_code_version
 
-from .db.connection import connect
+from .db.connection import connect, write_connect
 from .house_pools import load_continuity_card
 from .resume_fence import (
     _sha256_text,
@@ -92,7 +92,7 @@ def store_bundle(bundle: dict[str, Any]) -> StoredBundle:
     head_sha = bundle["fence"]["head_sha"]
     built_at = bundle["provenance"]["built_at"]
     body_text = body.decode("utf-8")
-    with connect() as conn:
+    with write_connect() as conn:
         conn.execute(
             """
             INSERT INTO resume_fence_bundles

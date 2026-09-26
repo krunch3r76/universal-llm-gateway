@@ -6,7 +6,7 @@ from typing import Any
 
 from universal_logging import get_logger
 
-from .connection import connect, now
+from .connection import connect, now, write_connect
 from .lane_associations import associate_lane, get_current_lane
 from .lifecycle import TERMINAL_STATES, _transition_lifecycle_state
 from .lineage import get_thread_lineage
@@ -67,7 +67,7 @@ def create_thread_with_turn(
         tags, prior_tags=[], enroll_charter_runner=enroll_charter_runner
     )
     ts = now()
-    with connect() as conn:
+    with write_connect() as conn:
         if strict_slug:
             existing = conn.execute(
                 "SELECT id FROM threads WHERE slug = ? LIMIT 1", (slug,)
@@ -188,7 +188,7 @@ def close_thread(
 
     ts = now()
     stripped_enrollment = False
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT id, bus_lifecycle_state FROM threads WHERE id = ?", (thread_id,)
         ).fetchone()
@@ -488,7 +488,7 @@ def update_dispatch_link_chat_url(
     Returns rowcount; logs ``dispatch_link_chat_url_miss`` when zero.
     """
     ts = now_ts or now()
-    with connect() as conn:
+    with write_connect() as conn:
         cur = conn.execute(
             "UPDATE thread_dispatch_links "
             "SET chat_url = ?, chat_url_bound_at = ? "
@@ -526,7 +526,7 @@ def terminate_dispatch(
         )
 
     ts = now()
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT id FROM threads WHERE id = ?", (thread_id,)
         ).fetchone()
@@ -610,7 +610,7 @@ def claim_and_post_turn(
     Raises PendingShellContention when the CAS guard fails.
     """
     ts = now()
-    with connect() as conn:
+    with write_connect() as conn:
         row = conn.execute(
             "SELECT bus_lifecycle_state, "
             "(SELECT COUNT(*) FROM turns WHERE thread = ?) AS turn_count "

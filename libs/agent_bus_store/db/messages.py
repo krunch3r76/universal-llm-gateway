@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from .connection import connect, now
+from .connection import connect, now, write_connect
 
 
 def insert_message(
     from_agent: str, to_agent: str, thread: str, body: str
 ) -> tuple[int, str]:
     ts = now()
-    with connect() as conn:
+    with write_connect() as conn:
         cur = conn.execute(
             "INSERT INTO messages (from_agent, to_agent, thread, body, timestamp) "
             "VALUES (?, ?, ?, ?, ?)",
@@ -46,7 +46,7 @@ def get_messages(
 
 
 def mark_read(message_id: int) -> bool:
-    with connect() as conn:
+    with write_connect() as conn:
         cur = conn.execute("UPDATE messages SET read = 1 WHERE id = ?", (message_id,))
         return cur.rowcount > 0
 
