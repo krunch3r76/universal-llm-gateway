@@ -539,13 +539,18 @@ def _play_prompt(todo_slug: str) -> str:
     """Liaison admit text. Generate rejects ``source_ref`` combined with ``prompt``."""
     if todo_slug == "liaison-multi-conductor-p3-multi-hire":
         # The continuity card names the hire. This prompt does not.
+        # 12842 parked a re-attest with no Merits line and did not land.
+        # Replaying that attest is the finished move, so the liaison admits
+        # a conductor.
         return (
             "Read the latest closeout on this house and "
             "cortex://notes/system/scoreboards/"
             "liaison-multi-conductor-p3-multi-hire-scoreboard.md. "
-            "The next hire is that reading. Do not replay the 12809 "
-            "match check. Do not replay the 12813 review. Do not land. "
-            "Do not mark G5 or G6 DONE."
+            "Admit one conductor. Do not stop after writing the reading. "
+            "Do not replay the 12809 match check. Do not replay the 12813 "
+            "review. Do not replay the 12828 fold. Do not replay the 12834 "
+            "reading. Do not replay the 12839 row hop. Do not replay the "
+            "12842 parked re-attest. Do not land. Do not mark G5 or G6 DONE."
         )
     if todo_slug == "liaison-ticker-steer-live-dispatch":
         return (
@@ -589,9 +594,9 @@ def build_play_dispatch_body(
     not conductor mailbox (a:36103 — 12029 play 422'd on tape 12030).
     """
     max_hop = int(policy.get("max_hop_minutes") or 60)
-    # 12813 recorded the review. A new key so that hire is not re-admitted.
+    # 12842 parked the re-attest. A new key so that hire is not re-admitted.
     if todo_slug == "liaison-multi-conductor-p3-multi-hire":
-        work_key = f"todo:{todo_slug}:after-12813"
+        work_key = f"todo:{todo_slug}:after-12842"
     elif todo_slug == "liaison-ticker-steer-live-dispatch":
         work_key = f"todo:{todo_slug}:g7-land"
     else:
