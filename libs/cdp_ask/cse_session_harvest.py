@@ -20,7 +20,7 @@ from cdp_ask.cse_session_harvest_identity import (
     resolve_execution_provenance,
     resolve_harvest_chat_url,
 )
-from cdp_ask.cse_session_harvest_open import harvest_by_opening_url
+from cdp_ask.cse_session_harvest_open import _LaneHold, harvest_by_opening_url
 from cdp_ask.cse_session_harvest_scrape import (
     harvest_with_loading_wait,
     pick_page_for_chat_url,
@@ -313,18 +313,19 @@ async def execute_harvest(
         )
 
     try:
-        pw, _browser, ctx, page = await connect_cdp(lane.cdp_url)
-        if url:
-            page = await pick_page_for_chat_url(ctx, url, fallback=page)
-        try:
-            response = await harvest_page(
-                page,
-                req,
-                provenance,
-                **identity_kwargs,
-            )
-        finally:
-            await pw.stop()
+        async with _LaneHold(registration_id):
+            pw, _browser, ctx, page = await connect_cdp(lane.cdp_url)
+            if url:
+                page = await pick_page_for_chat_url(ctx, url, fallback=page)
+            try:
+                response = await harvest_page(
+                    page,
+                    req,
+                    provenance,
+                    **identity_kwargs,
+                )
+            finally:
+                await pw.stop()
     except Exception as exc:
         return _bind_chat_url(
             HarvestResponse(outcome="unreachable", reason=str(exc)),

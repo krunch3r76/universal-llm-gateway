@@ -38,7 +38,7 @@ async def test_open_failed_stays_not_attached() -> None:
 
 
 @pytest.mark.asyncio
-async def test_open_success_scrapes_then_tears_down() -> None:
+async def test_open_success_scrapes_without_closing_the_browser() -> None:
     page = MagicMock()
     opened = ReattachOutcome(
         ok=True,
@@ -59,7 +59,7 @@ async def test_open_success_scrapes_then_tears_down() -> None:
             AsyncMock(return_value=opened),
         ),
         patch(
-            "cdp_ask.cse_session_harvest_open._teardown_opened",
+            "cdp_ask.cse_session_harvest_open._teardown_attempt",
             AsyncMock(),
         ) as teardown,
     ):
@@ -70,7 +70,7 @@ async def test_open_success_scrapes_then_tears_down() -> None:
             harvest_page,
         )
     harvest_page.assert_awaited_once()
-    teardown.assert_awaited_once()
+    teardown.assert_awaited_once_with(page, opened.pw, close_page=False)
     assert result.outcome == "harvested"
     assert result.provenance
     assert result.provenance.get("opened_on_demand") is True
@@ -104,13 +104,6 @@ async def test_loading_incomplete_skips_park_for_minted_lane() -> None:
             "cdp_ask.cse_session_harvest_open._teardown_attempt",
             AsyncMock(),
         ) as teardown,
-        patch(
-            "cdp_ask.cse_session_harvest_open.cdp_registry.deregister_lane",
-        ) as deregister,
-        patch(
-            "cdp_ask.cse_session_harvest_open.park_relaunched_host",
-            AsyncMock(),
-        ) as park,
     ):
         result = await harvest_by_opening_url(
             "https://claude.ai/cowork/cse_x",
@@ -119,14 +112,12 @@ async def test_loading_incomplete_skips_park_for_minted_lane() -> None:
             harvest_page,
         )
     teardown.assert_awaited_once_with(page, pw, close_page=False)
-    deregister.assert_not_called()
-    park.assert_not_awaited()
     assert result.outcome == "incomplete_dom"
     assert result.reason == "loading"
 
 
 @pytest.mark.asyncio
-async def test_loading_incomplete_borrowed_host_still_closes() -> None:
+async def test_loading_incomplete_borrowed_host_leaves_the_tab() -> None:
     page = MagicMock()
     pw = MagicMock()
     opened = ReattachOutcome(
@@ -158,7 +149,7 @@ async def test_loading_incomplete_borrowed_host_still_closes() -> None:
             None,
             harvest_page,
         )
-    teardown.assert_awaited_once_with(page, pw)
+    teardown.assert_awaited_once_with(page, pw, close_page=False)
 
 
 @pytest.mark.asyncio
@@ -199,9 +190,6 @@ async def test_skip_park_keeps_registration_for_lane_order() -> None:
             "cdp_ask.cse_session_harvest_open._teardown_attempt",
             AsyncMock(),
         ),
-        patch(
-            "cdp_ask.cse_session_harvest_open.cdp_registry.deregister_lane",
-        ) as deregister,
     ):
         await harvest_by_opening_url(
             "https://claude.ai/cowork/cse_x",
@@ -209,6 +197,5 @@ async def test_skip_park_keeps_registration_for_lane_order() -> None:
             None,
             harvest_page,
         )
-    deregister.assert_not_called()
     ordered = _lane_order([lane], None, "https://claude.ai/cowork/cse_x")
     assert ordered[0].registration_id == reg_id
