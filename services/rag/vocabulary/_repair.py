@@ -1,4 +1,11 @@
-"""Orchestrator: run_scope_freshness_repair — refresh hints and vocabulary for stale scopes."""
+"""Orchestrator that refreshes corpus hints and vocabulary for stale RAG scopes.
+
+``run_scope_freshness_repair`` is called from ``rag_service.scope_freshness`` on
+startup, after reconcile, and on debounced watcher changes. It always refreshes
+corpus hints for non-union scopes, classifies only scopes lacking vocabulary
+(local or frontier via ``vocab-classify-v1``), stamps property-index watermarks,
+and publishes rag hints/vocabulary gap and failure events.
+"""
 
 from __future__ import annotations
 

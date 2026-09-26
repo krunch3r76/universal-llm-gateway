@@ -1,4 +1,12 @@
-"""Built-in rag_search_v1: semantic search against the RAG service (UDS/TCP)."""
+"""Built-in rag_search_v1 pipeline handler: semantic search against the RAG service.
+
+``RagSearchV1Handler`` is registered via ``register_handler`` for step type
+``rag_search_v1``. It resolves a ``query`` (list inputs are space-joined) and an
+optional ``scope`` from map inputs or ``handler_inputs``, clamps ``top_k`` to
+1..50 (default 5), POSTs to the RAG API ``/search`` endpoint over UDS/TCP
+(``resolve_rag_base_url``), and returns chunk texts plus metadata as JSON in a
+``StepOutput``. HTTP and transport errors are logged and re-raised.
+"""
 
 from __future__ import annotations
 

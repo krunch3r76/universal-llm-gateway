@@ -1,4 +1,11 @@
-"""Classify HTTP error envelopes as capacity-class vs structural."""
+"""Classify HTTP error envelopes as capacity-class vs structural.
+
+``is_capacity_class_envelope`` inspects a Stargate JSON error body for a
+``detail.code`` such as ``REQUEST_TIMEOUT``, ``MODEL_LOADING`` or
+``NO_FEASIBLE_GATEWAY``. ``extraction.worker_loop`` calls it for HTTP statuses
+it does not special-case: capacity-class errors hold the retry budget
+(``increment_attempt=False``) while anything else burns an attempt.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,13 @@
-"""Failure classification and persistence helpers for the indexing pipeline."""
+"""Failure classification and persistence helpers for the RAG indexing pipeline.
+
+``_record_indexing_failure_best_effort`` is called from the commit phase and
+from ``indexing/index_file.py`` when indexing a file raises. It classifies the
+exception with ``classify_indexing_failure``, upserts the file-level
+``indexing_failures`` row via ``PropertyIndex.record_indexing_failure`` and
+emits ``rag_file_indexing_failure_recorded`` with the attempt count. If the
+persistence itself fails it emits ``rag_indexing_failure_persist_failed`` and
+never raises, so the original exception is not masked.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,10 @@
-"""Signal dispatch: map incoming event signals to gate open/close transitions."""
+"""Signal dispatch: map incoming event signals to gate open/close transitions.
+
+``_apply_signal`` is bound by ``admission_gate/gate.py`` and fed by the
+``_io._subscribe_loop`` WebSocket reader. Gateway degraded/recovered signals
+toggle every tracked model; ``capacity.admission.*`` and ``model.*`` load
+signals toggle one routing key. Untracked model IDs are logged once, then ignored.
+"""
 
 from __future__ import annotations
 

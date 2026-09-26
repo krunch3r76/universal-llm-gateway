@@ -209,7 +209,12 @@ def extract_backtranslation_data(
     steps: list[StepConfig],
     context: PipelineContext,
 ) -> dict[str, Any] | None:
-    """Extract backtranslation data if present."""
+    """Return the JSON payload of the first ``backtranslation`` step that produced one.
+
+    Walks ``steps`` in order, looks up each backtranslation step's output on the
+    pipeline context, and returns its ``json`` dict; returns ``None`` when no such
+    step ran or none emitted JSON. Used by outcome assembly and PipelineExecutor.
+    """
     for step in steps:
         if step.type == "backtranslation":
             bt_output = context.get_output(step.id)

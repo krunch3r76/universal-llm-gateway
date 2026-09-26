@@ -1,4 +1,13 @@
-"""_PropertyIndexPart09 — articles, indexed-source counts, failure snapshots."""
+"""_PropertyIndexPart09 — articles, indexed-source counts, failure snapshots.
+
+SLOC-split mixin composed into ``PropertyIndex``. Serves article row reads,
+source path resolution, filename and orphaned-by-hash article lookups, and
+``move_article_source_path`` which the indexing article-sync phase uses to
+migrate an article row when a file moves (same content hash, new path). Also
+provides operational views: committed indexed-source count, failure snapshot,
+per-source pipeline state (read by ``admin_routes/_helpers.py``), per-source
+item data, stale corpus-hint scope count and permanent failed chunks by file.
+"""
 
 from __future__ import annotations
 

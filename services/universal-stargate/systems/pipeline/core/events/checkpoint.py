@@ -1,4 +1,12 @@
-"""Checkpoint operation events."""
+"""Event-bus factories for pipeline step checkpoint save, load, and failure outcomes.
+
+Defines ``CheckpointSaved``, ``CheckpointLoaded``, and ``CheckpointFailed`` (signals
+``pipeline.checkpoint.saved|loaded|failed``). ``CheckpointManager`` in
+``execution/checkpoint/manager.py`` looks them up by name on the ``events`` package and
+publishes them fire-and-forget via ``publish_nowait``, injecting ``pipeline_id`` and
+``execution_id``; nothing is emitted when the manager has no event bus. Also re-exported
+from ``pipeline.core``.
+"""
 
 from universal_event_bus import Event, event_factory
 

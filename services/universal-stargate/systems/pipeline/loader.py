@@ -20,6 +20,14 @@ logger = get_logger(__name__)
 class PipelineConfigLoader:
     """
     Loader for pipeline models, prompts, and pipeline specs.
+
+    Constructed with a ``config_dir``; ``load_all`` reads
+    ``pipeline_models.yaml`` into ``SharedModels``, merges every
+    ``pipeline_prompts*.yaml`` into ``SharedPrompts`` (suffixed files are
+    namespaced by suffix), and parses each ``pipelines.d/**/*.yaml`` into a
+    ``PipelineSpec`` keyed by id, resolving ``pipeline_ref`` sub-pipelines.
+    Files are read without touching timestamps. Missing files raise
+    ``FileNotFoundError``; invalid specs raise ``ValueError``.
     """
 
     def __init__(self, config_dir: str = "config") -> None:

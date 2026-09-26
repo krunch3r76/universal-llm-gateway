@@ -24,7 +24,14 @@ CloudSelectFn = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 def is_cloud_ref(model_ref: str) -> bool:
-    """Check whether a model_ref uses the cloud: prefix syntax."""
+    """Report whether a step's model_ref uses the ``cloud:<tag>[,...]`` selection
+    syntax.
+
+    Pure string-prefix test with no parsing or I/O. Called by
+    ``_resolve_model_alias_async`` in ``handlers/builtin/model_resolution.py``
+    to decide whether to route the ref through ``resolve_cloud_ref_async``
+    instead of normal alias/registry lookup.
+    """
     return model_ref.startswith("cloud:")
 
 

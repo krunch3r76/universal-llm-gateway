@@ -137,7 +137,12 @@ def _str(x: Any) -> str:
 
 
 def get_entry(registry: dict[str, ArticleEntry], file_path: str) -> ArticleEntry | None:
-    """Return registry entry by filename, or None."""
+    """Look up an ``ArticleEntry`` by the basename of ``file_path``, ignoring dirs.
+
+    Registries from ``load_registry`` / ``load_registry_from_db`` are keyed by
+    filename, so two files with the same basename share one entry. Returns
+    ``None`` when absent; used by ``lookup_article`` for chunk metadata merges.
+    """
     return registry.get(Path(file_path).name)
 
 

@@ -1,4 +1,10 @@
-"""Bulk extraction export route: GET /extraction_export."""
+"""Bulk extraction export route: GET /extraction_export over raw ChromaDB metadata.
+
+Registered by ``register_status_routes`` in ``admin_routes/status.py``. Unlike the
+property-index-backed ``/sources`` views, it reads the Chroma collection directly,
+so chunks with no ``extraction`` field still appear; malformed metadata rows are
+skipped and counted in a warning log rather than failing the export.
+"""
 
 from __future__ import annotations
 
@@ -24,7 +30,13 @@ def register_extraction_export_route(
     get_collection_fn: Callable[[], chromadb.Collection],
     **_kwargs: object,
 ) -> None:
-    """Register GET /extraction_export onto router."""
+    """Attach the ``GET /extraction_export`` bulk chunk-extraction dump to the router.
+
+    The handler returns ``ExtractionExportResponse`` items (source, chunk index,
+    extraction JSON, extraction model and schema version) sorted by source and
+    chunk index, optionally filtered by ``prefix`` and optionally carrying chunk
+    text. Only ``get_collection_fn`` is used; other keyword deps are ignored.
+    """
 
     @router.get("/extraction_export", response_model=ExtractionExportResponse)
     def extraction_export(

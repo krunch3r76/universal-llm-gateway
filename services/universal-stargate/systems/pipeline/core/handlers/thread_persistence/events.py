@@ -23,7 +23,15 @@ _REQUEST_TIMEOUT = 10.0
 
 
 async def cx_async(tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    """Relay asynchronously to cortex-api via UDS, normalising error shape."""
+    """POST a cortex tool call to cortex-api ``/dispatch`` over UDS and return the JSON
+    result.
+
+    *arguments* is JSON-encoded into the request body; timeout is 10s. Never
+    raises for transport, HTTP >= 400, or non-JSON failures: instead returns
+    ``{"error", "status_code", "detail"?}`` (status_code None on connection
+    failure) and logs the error. Used by archive handlers, summarize_thread_v1,
+    turn_assertions and frontier_consult delivery helpers.
+    """
     try:
         async with make_async_client(
             DEFAULT_CORTEX_URL, timeout=_REQUEST_TIMEOUT

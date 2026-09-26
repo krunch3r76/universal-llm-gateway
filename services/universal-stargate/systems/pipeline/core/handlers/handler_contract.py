@@ -1,4 +1,11 @@
-"""Abstract handler base and StepHandler protocol."""
+"""Abstract handler base and StepHandler protocol.
+
+Defines the step-handler contract: AbstractStepHandler (ABC for explicit
+inheritance and IDE support) and the runtime-checkable StepHandler Protocol for
+duck typing. Both require a ``step_type`` string and an async ``execute()`` that
+returns StepOutput without writing to ``context.outputs``; the executor is the sole
+writer. Re-exported to handlers through ``protocol.py``.
+"""
 
 from __future__ import annotations
 

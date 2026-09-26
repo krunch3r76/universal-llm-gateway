@@ -28,7 +28,13 @@ async def resolve_fallback_models(
     exclude: str,
     primary_resolution: ResolvedTargetModel | None,
 ) -> list[str]:
-    """Resolve model_requirements to a ranked fallback list, excluding primary."""
+    """Resolve model_requirements to a ranked fallback list, excluding primary.
+
+    Called by the generate handler after the primary model fails. Returns ``[]``
+    (with a warning log) when fallback eligibility suppresses resolution for the
+    primary resolution; otherwise returns ranked candidate model ids from
+    ``get_ranked_candidates`` with the ``exclude`` model filtered out.
+    """
     from ..execution.resolved_candidates import get_ranked_candidates
 
     suppression_reason = get_fallback_suppression_reason(

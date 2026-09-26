@@ -1,4 +1,13 @@
-"""Chunk- and document-level co-occurrence filtering for hint terms."""
+"""Chunk- and document-level co-occurrence filtering for corpus hint terms.
+
+Validates candidate hint terms against the user query by checking which hints
+share ``prop.name@@`` / ``prop.topic@@`` property rows with query terms in the
+same chunks of the metadata SQLite ``properties`` table (opened read-only).
+Falls back to document-level overlap when no chunk meets the threshold.
+Called by the rag_context_v1 ``filter_hints`` and ``refine_generation_context``
+handlers. Failures never raise: they log, emit
+``rag_corpus_hints_filter_failed`` when an event bus is given, and return [].
+"""
 
 from __future__ import annotations
 
@@ -101,7 +110,18 @@ def filter_hints_by_cooccurrence(
     min_chunk_cooccurrence: int = 2,
     event_bus: EventBus | None = None,
 ) -> list[str]:
-    """Return hint terms that co-occur with query terms at chunk level."""
+    """Keep only hint terms whose property rows share chunks with the query terms.
+
+    Query terms are matched on word boundaries inside name/topic keys; hints
+    must co-occur in at least ``min_chunk_cooccurrence`` distinct chunks, else
+    a document-level (same source) overlap of one is accepted. Uses TEMP tables
+    that are always dropped afterwards.
+
+    Returns:
+        Original-cased hint terms ordered by overlap count desc, then term.
+        Empty when inputs are empty, the DB is missing, or the query fails
+        (failures emit ``rag_corpus_hints_filter_failed`` on ``event_bus``).
+    """
     if not query_terms or not hint_terms:
         return []
 

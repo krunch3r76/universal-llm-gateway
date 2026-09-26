@@ -1,3 +1,13 @@
+"""Tree-sitter AST metadata for Python code chunks indexed by the RAG service.
+
+Used by ``services/rag/chunkers/code_chunking.py``, which calls
+``build_python_chunk_metadata`` once per emitted Python chunk. Derives chunk type
+(class, method, function, import_block, partial_member, statement_block), entity
+and class names, line span, import symbols, docstring signals and a lightweight
+complexity score. ``chunk_hash`` includes byte offsets so identical text at
+different positions stays distinct.
+"""
+
 import re
 from hashlib import sha256
 from typing import cast
@@ -32,7 +42,12 @@ def chunk_names_from_nodes(
     source: bytes,
     nodes: list[_ts.Node],
 ) -> tuple[str | None, str | None]:
-    """Detect (function_name, class_name) from nodes within a chunk."""
+    """Find the first function or class definition among a chunk's top-level nodes.
+
+    Returns ``(function_name, class_name)`` with at most one element set; decorated
+    definitions are unwrapped to their inner function or class. Returns
+    ``(None, None)`` when no node is a definition (imports, bare statements).
+    """
     for node in nodes:
         if node.type == "decorated_definition":
             for child in node.children:
@@ -138,7 +153,13 @@ def _extract_docstring_signals(
 
 
 def complexity_score(nodes: list[_ts.Node]) -> float:
-    """Approximate chunk complexity in [0.0, 1.0] for reranking."""
+    """Score chunk control-flow complexity in [0.0, 1.0] for reranking signals.
+
+    Counts decision nodes (if/for/while/try/except/with/match) across the subtrees
+    and the maximum nesting depth, then returns
+    ``min(1.0, (2 * decisions + max_depth) / 30)`` rounded to four places. Stored
+    as ``lightweight_complexity_score`` in chunk metadata.
+    """
     decision_nodes = {
         "if_statement",
         "for_statement",
@@ -171,7 +192,14 @@ def build_python_chunk_metadata(
     class_scope: str | None,
     nws_len: int,
 ) -> dict[str, MetadataValue]:
-    """Build phase-2 Python metadata contract for one chunk."""
+    """Build phase-2 Python metadata contract for one chunk.
+
+    ``nodes`` are the tree-sitter top-level nodes covered by ``text``;
+    ``class_scope`` names the enclosing class when the chunk is a split class body;
+    ``nws_len`` is the non-whitespace length. Returns a flat Chroma-safe dict with
+    ``source``, ``chunk_type``, lines, ``chunk_hash`` and docstring/complexity
+    signals, plus entity, class, function, parent and import keys when known.
+    """
     chunk_type, entity_name = _chunk_type_and_entity(source, nodes, class_scope)
     start_line = nodes[0].start_point[0] + 1
     end_line = nodes[-1].end_point[0] + 1

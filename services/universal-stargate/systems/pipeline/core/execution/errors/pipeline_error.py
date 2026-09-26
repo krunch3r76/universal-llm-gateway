@@ -11,7 +11,13 @@ from abc import ABC, abstractmethod
 
 
 class PipelineError(RuntimeError, ABC):
-    """Base class for pipeline validation/runtime errors."""
+    """Abstract root of all structured pipeline validation and runtime errors.
+
+    Subclasses (binding, timeout, map-reduce partial failure, dispatch-frontier,
+    validation, concurrency errors) must implement ``to_dict()`` for API error envelopes
+    and may override ``retryable``, which defaults to ``False``. Inherits
+    ``RuntimeError`` so generic handlers still catch it.
+    """
 
     @property
     def retryable(self) -> bool:

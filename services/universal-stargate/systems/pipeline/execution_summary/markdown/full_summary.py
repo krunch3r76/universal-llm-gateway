@@ -41,7 +41,12 @@ def render_full_summary_markdown(
     timestamp: datetime,
 ) -> str:
     """
-    Render the full pipeline-execution markdown summary.
+    Build the complete markdown report for one pipeline execution as a string.
+
+    Called by ``ExecutionSummaryWriter`` in ``execution_summary/writer.py`` for
+    both the single-file summary and the per-step directory's
+    ``full_summary.md``. Includes metadata (execution time measured from
+    ``context.started_at``), token table, and per-step sections. Pure: no I/O.
 
     Args:
         pipeline: Pipeline specification.

@@ -1,4 +1,11 @@
-"""Gate open/close state mutations and first-burst emission."""
+"""Gate open/close state mutations and first-burst emission.
+
+Called from ``admission_gate/_signals.py``. A gate stays CLOSED while any close
+reason (e.g. ``model.loading``, ``capacity.admission``, ``gateway:<id>``) is
+active and reopens only when the reason set is empty, resetting the admitted
+worker count. The first ``model.loading`` close per model schedules a
+first-burst observation event.
+"""
 
 from __future__ import annotations
 

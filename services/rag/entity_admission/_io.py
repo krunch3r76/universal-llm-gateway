@@ -1,4 +1,12 @@
-"""Async I/O: admitted-set snapshot/refresh, WS subscriber, backstop loop."""
+"""Async I/O: admitted-set snapshot/refresh, WS subscriber, backstop loop.
+
+Background coroutines driven by ``EntityAdmissionGate`` in ``gate.py``: a full
+re-fetch of admitted source paths from cortex-api, a periodic backstop
+refresh, a debounced dirty-flag refresh worker, and an Event Service
+WebSocket subscriber that forwards signals to ``_apply_signal``. Invariant:
+I/O failures keep the prior admitted set (fail-closed) and emit
+``rag_entity_gate_io_failed``.
+"""
 
 from __future__ import annotations
 

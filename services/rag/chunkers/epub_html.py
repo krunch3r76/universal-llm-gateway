@@ -1,4 +1,11 @@
-"""EPUB and HTML chunking."""
+"""EPUB and HTML chunking.
+
+``chunk_epub`` and ``chunk_html`` are dispatched by ``office_dispatch.chunk_file``;
+``normalize_html_to_markdown`` is re-exported from ``services.rag.chunkers``.
+Both formats are converted to ATX-heading markdown and then chunked by
+``markdown_pdf.chunk_markdown`` so ``section_path`` metadata matches the PDF path.
+EPUBs use the larger ebook budgets; JS-only HTML shells yield no chunks.
+"""
 
 from __future__ import annotations
 
@@ -97,7 +104,14 @@ def chunk_epub(
 
 
 def normalize_html_to_markdown(path: str, html: str) -> str:
-    """Convert HTML into deterministic markdown for chunking/indexing."""
+    """Convert HTML into deterministic markdown for chunking/indexing.
+
+    Drops scripts, styles, hidden nodes and navigation boilerplate, scopes to
+    ``<main>`` / ``<article>`` / ``<body>``, and skips guarded boilerplate selectors
+    that hold over half the root text. Uses markdownify with ATX headings and
+    collapses blank-line runs. Raises ``ValueError`` when the result is empty;
+    ``path`` is only used in that message.
+    """
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup.select("script, style, noscript, template, svg, canvas, iframe"):
         tag.decompose()

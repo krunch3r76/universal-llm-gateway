@@ -1,4 +1,12 @@
-"""Prompt loading and rendering utilities."""
+"""Prompt loading and rendering utilities for built-in pipeline step handlers.
+
+Looks up a PromptConfig by dotted ref in the pipeline registry (via the
+PipelineContext) and renders it with PromptBuilder, never Jinja2 or str.format().
+``_render_prompt`` returns a RenderedPrompt (system + user prompt) and
+``_load_and_render_prompt`` returns the raw string plus config; both are wrapped as
+methods on the builtin handler base class in ``base.py``. System prompts always
+render in safe mode (missing variables become empty strings).
+"""
 
 from __future__ import annotations
 

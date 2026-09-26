@@ -50,7 +50,18 @@ async def process_ready_steps(executor: DAGExecutor) -> bool:
 
 
 async def launch_steps(executor: DAGExecutor, steps_to_launch: list[StepNode]) -> bool:
-    """Launch selected steps as asyncio tasks."""
+    """Start filtered ready steps as named asyncio tasks, honoring per-model gate locks.
+
+    For each node, resolves its target/lock model and defers it (emitting
+    ``PipelineStepModelDeferred`` with reason ``gate_unavailable`` or
+    ``gate_already_claimed``) when the model tracker cannot grant the lock or
+    another step claimed the same model this pass. Launched nodes become
+    ``RUNNING``, are registered with the coordinator, and stored in
+    ``executor._pending_tasks`` under task name ``step-<id>``.
+
+    Returns:
+        True if at least one step was launched.
+    """
     launched_any = False
     models_in_use_this_iteration: set[str] = set()
 
@@ -95,7 +106,18 @@ async def launch_steps(executor: DAGExecutor, steps_to_launch: list[StepNode]) -
 async def filter_ready_steps(
     executor: DAGExecutor, ready_steps: list[StepNode]
 ) -> list[StepNode]:
-    """Filter ready steps by condition and model availability."""
+    """Select which READY steps may launch, skipping condition-false steps along the
+    way.
+
+    Evaluates ``enabled``/``condition`` per step (emitting a condition-evaluated
+    event when a condition exists). Steps that should not run get an empty
+    ``StepOutput`` with ``{"_skipped": True}``, move to ``SKIPPED``, emit a skip
+    event, and propagate completion to dependents. Steps whose lock model is
+    currently unavailable are silently left READY for a later pass.
+
+    Returns:
+        Nodes eligible for ``launch_steps``.
+    """
     from ....handlers.protocol import StepOutput
 
     steps_to_launch: list[StepNode] = []
@@ -155,7 +177,12 @@ def propagate_completion(executor: DAGExecutor, completed_step_id: str) -> None:
 
 
 def incomplete_step_ids(executor: DAGExecutor) -> list[str]:
-    """Return non-terminal step IDs for timeout/deadlock diagnostics."""
+    """List ids of steps not yet COMPLETED, SKIPPED, or FAILED for timeout/deadlock
+    diagnostics.
+
+    Used by ``execute_dag`` in the timeout and deadlock error messages and the
+    matching ``PipelineExecutionTimedOut``/``PipelineDeadlockDetected`` events.
+    """
     return [
         node.step.id
         for node in executor.nodes.values()
@@ -164,7 +191,12 @@ def incomplete_step_ids(executor: DAGExecutor) -> list[str]:
 
 
 def all_done(executor: DAGExecutor) -> bool:
-    """Check if all steps are complete."""
+    """Report whether every DAG node has reached a terminal state
+    (COMPLETED/SKIPPED/FAILED).
+
+    Loop-exit predicate for ``execute_dag``; FAILED counts as terminal here even
+    though it does not unlock dependents in ``propagate_completion``.
+    """
     return all(
         node.state in (StepState.COMPLETED, StepState.SKIPPED, StepState.FAILED)
         for node in executor.nodes.values()
@@ -172,7 +204,11 @@ def all_done(executor: DAGExecutor) -> bool:
 
 
 def step_state_counts(executor: DAGExecutor) -> dict[StepState, int]:
-    """Count terminal and intermediate step states for completion telemetry."""
+    """Tally DAG nodes per ``StepState``, including zero entries for unused states.
+
+    Feeds the completed/skipped/failed counts of the
+    ``PipelineDagExecutionCompleted`` event emitted at the end of ``execute_dag``.
+    """
     counts: dict[StepState, int] = {state: 0 for state in StepState}
     for node in executor.nodes.values():
         counts[node.state] += 1

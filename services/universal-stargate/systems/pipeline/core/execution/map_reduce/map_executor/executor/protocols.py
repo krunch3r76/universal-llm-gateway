@@ -17,7 +17,14 @@ if TYPE_CHECKING:
 
 
 class MapIterationRuntimeProtocol(Protocol):
-    """Runtime contract needed by map iteration execution paths."""
+    """Structural runtime contract that ``MapExecutor`` and per-iteration execution
+    require.
+
+    Exposes pipeline, execution_id, recorder and the private ``_proxy`` (event bus
+    source), plus immutable ``with_*`` builders returning a decorated copy scoped to one
+    iteration: map iteration request ID, inference request ID and map state. Satisfied
+    by the production pipeline runtime via duck typing.
+    """
 
     pipeline: Any  # TODO: tighten to concrete runtime pipeline protocol
     execution_id: str
@@ -32,6 +39,11 @@ class MapIterationRuntimeProtocol(Protocol):
 
 
 class MapIterationHandlerProtocol(Protocol):
-    """Handler contract needed by map executor."""
+    """Structural contract for the step handler that ``MapExecutor`` fans out over.
+
+    ``execute(step, context)`` is awaited once per map iteration with the per-iteration
+    ``StepConfig`` (model and map inputs applied) and the iteration-scoped runtime; the
+    returned step output is collected into the ``MapOutputCollection``.
+    """
 
     async def execute(self, step: StepConfig, _context: Any) -> Any: ...

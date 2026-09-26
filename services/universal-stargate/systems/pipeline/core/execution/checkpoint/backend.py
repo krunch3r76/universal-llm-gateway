@@ -2,6 +2,12 @@
 Checkpoint storage backends.
 
 Provides protocol for pluggable storage and filesystem implementation.
+
+Contents: ``CheckpointData`` (the JSON-serializable per-step payload), the
+``AbstractCheckpointBackend`` ABC documenting the storage contract, the structural
+``CheckpointBackend`` Protocol that ``CheckpointManager`` depends on, and
+``FilesystemCheckpointBackend`` which writes ``{base_path}/{key}.json`` atomically via a
+temp file plus rename and expires files by mtime. Backends never emit events themselves.
 """
 
 import json
@@ -220,7 +226,15 @@ class AbstractCheckpointBackend(ABC):
 
 
 class CheckpointBackend(Protocol):
-    """Protocol for checkpoint storage backends."""
+    """Structural protocol for checkpoint storage backends consumed by
+    ``CheckpointManager``.
+
+    Any object providing ``backend_name`` plus async ``save``, ``load`` (``None`` when
+    missing), ``exists``, ``delete`` and ``cleanup_expired`` satisfies it; no
+    inheritance is required. ``FilesystemCheckpointBackend`` is the shipped
+    implementation and ``AbstractCheckpointBackend`` documents the full atomicity
+    contract.
+    """
 
     @property
     def backend_name(self) -> str:

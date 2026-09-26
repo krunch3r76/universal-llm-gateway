@@ -1,4 +1,11 @@
-"""Recency-weighted distance adjustment for search ranking."""
+"""Recency-weighted reordering of search results by document age.
+
+``execute_search`` in ``services.rag.rag_service.search`` calls
+``apply_recency_sort`` last in its ranking chain, after tier weighting. Age comes
+from ``published_date`` or ``indexed_at`` metadata and decays exponentially with
+``RECENCY_DECAY_LAMBDA``. Adjusted scores only drive the sort order; the
+returned distances stay the raw (or tier-adjusted) values.
+"""
 
 from __future__ import annotations
 
@@ -16,7 +23,13 @@ def apply_recency_sort(
     distances: list[float],
     recency_weight: float,
 ) -> tuple[list[str], list[dict[str, str | int | float | bool]], list[float]]:
-    """Reorder results by recency-adjusted score while preserving raw distances."""
+    """Reorder results by recency-adjusted score while preserving raw distances.
+
+    Adjusted score is ``distance * (1 - w) - w * exp(-lambda * days_old)`` with
+    ``w = recency_weight``; rows lacking a parseable ISO date keep their raw
+    distance as the score. A weight <= 0 or empty input is a no-op. Returns the
+    re-sorted chunks, metadatas and original distances.
+    """
     if recency_weight <= 0.0 or not chunks:
         return chunks, metadatas, distances
     adjusted = _apply_recency(distances, metadatas, recency_weight)

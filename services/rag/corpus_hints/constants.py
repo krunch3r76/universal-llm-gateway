@@ -1,4 +1,11 @@
-"""Shared defaults, blocklists, and term-filter regex for corpus hints."""
+"""Shared defaults, blocklists, and term-filter regex for corpus hints.
+
+Imported by ``corpus_hints`` siblings ``cli``, ``update``, ``term_scoring``,
+``loaders`` and ``cooccurrence``. Defines the ``prop.name@@`` / ``prop.topic@@``
+key prefixes, per-prefix chunk-count bands for candidate terms, the metadata DB
+path, a generic-term blocklist, and regexes rejecting structural noise such as
+theorem labels, math variables and "et al" citations.
+"""
 
 from __future__ import annotations
 

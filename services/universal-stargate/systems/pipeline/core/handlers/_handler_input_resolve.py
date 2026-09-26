@@ -1,4 +1,11 @@
-"""Shared handler_inputs resolution helpers for archive turn handlers."""
+"""Shared handler_inputs resolution helpers for archive turn handlers.
+
+Imported by archive_user_turn, archive_assistant_turn and summarize_thread_v1 to
+resolve ``step.handler_inputs`` bindings through NamespaceResolver + traverse_path.
+Required lookups raise ``ValueError`` when the binding is missing and ``TypeError``
+on a str/int type mismatch (bool is rejected as int); optional lookups return a
+default only when no binding is declared, letting resolution errors propagate.
+"""
 
 from __future__ import annotations
 

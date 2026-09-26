@@ -1,4 +1,11 @@
-"""Status and monitoring routes: /indexing/status, /coverage, /source-status, /watch/status."""
+"""Status and monitoring routes: /indexing/status, /coverage, /source-status, /watch/status.
+
+``register_status_routes`` is called by ``register_admin_routes`` in
+``admin_routes/__init__.py`` and also mounts ``GET /extraction_export``. All
+views are read-only snapshots of live state (Chroma collection, SQLite
+``PropertyIndex``, ``WatcherManager``); degraded SQLite reads are flagged in the
+response instead of failing the request.
+"""
 
 from __future__ import annotations
 
@@ -47,7 +54,13 @@ def register_status_routes(
     get_config_fn: Callable[[], RagConfig | None] | None = None,
     **_kwargs: object,
 ) -> None:
-    """Register status and monitoring routes onto router."""
+    """Attach read-only health, coverage and per-source pipeline status handlers.
+
+    Registers ``/watch/status``, ``/indexing/status`` (bounded backlog sample),
+    ``/coverage`` (MCP ``rag.coverage``, per configured scope prefix via
+    ``get_config_fn``), ``/source-status`` (HTTP 503 without a property index, 422
+    with no selectors) and the ``/extraction_export`` bulk dump. No side effects.
+    """
 
     @router.get("/watch/status")
     def watch_status() -> list[dict[str, str | int | bool]]:

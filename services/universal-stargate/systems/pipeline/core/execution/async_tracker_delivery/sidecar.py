@@ -1,4 +1,12 @@
-"""Thin Stargate client for on-behalf cortex thread sidecar writes."""
+"""Thin Stargate client for on-behalf cortex thread sidecar writes.
+
+Used by ``on_behalf.py`` during ``op="to_thread"`` async dispatch delivery: before
+posting a dispatch result to an agent-bus thread, Stargate persists the full content as
+a durable cortex sidecar via the ``thread_sidecar_write`` tool (through ``cx_async``).
+The returned ``SidecarResult`` (URI, sha256, body length) lets oversized results be
+replaced by a relocation pointer. Failures are logged and surfaced as ``None``, never
+raised.
+"""
 
 from __future__ import annotations
 
@@ -28,6 +36,15 @@ async def write_on_behalf_sidecar(
     subject: str,
     oversized: bool,
 ) -> SidecarResult | None:
+    """Persist a dispatch result as a cortex thread sidecar on behalf of the dispatched
+    agent.
+
+    Calls cortex tool ``thread_sidecar_write`` with the thread, subject, content, the
+    record's ``from_agent`` (default ``"dispatch"``), ``execution_id`` and the
+    ``oversized`` flag (content exceeds the bus body limit). Returns ``SidecarResult``
+    on success; logs and returns ``None`` when cortex reports an error. ``on_behalf``
+    treats a ``None`` result for oversized content as a terminal delivery failure.
+    """
     from ...handlers.thread_persistence import cx_async
 
     result = await cx_async(

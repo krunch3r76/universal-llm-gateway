@@ -30,7 +30,13 @@ if TYPE_CHECKING:
 
 
 def resolve_source_identity(source: str) -> str:
-    """Return the stable path string used as G1 ``source_identity``."""
+    """Canonicalize a source path into the G1 ``source_identity`` cache key.
+
+    Expands ``~`` and resolves symlinks and relative segments, so one file
+    reached via different spellings shares contextualize cache rows. Used by
+    ``rag_service/indexing/contextualize_cache.py`` when loading and storing
+    cached context prefixes. Touches the filesystem only for resolution.
+    """
     return str(Path(source).expanduser().resolve())
 
 

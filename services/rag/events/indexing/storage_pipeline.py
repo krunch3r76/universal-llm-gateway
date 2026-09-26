@@ -1,4 +1,12 @@
-"""RAG indexing event factories — embed, chroma, property, commit, hints pipeline."""
+"""RAG indexing event factories — embed, chroma, property, commit, hints pipeline.
+
+Started/completed pairs for each storage stage after contextualization:
+embedding (``rag.embed.*`` plus ``rag.embed.diff.evaluated`` with diff-gate
+skip/process chunk counts), ChromaDB upsert, property-index write, source commit and
+corpus-hints update. Paired events share an ``operation_id`` so stage latency
+can be computed per file. Emitted by ``rag_service.indexing`` (``embed``,
+``chroma``, ``commit``).
+"""
 
 from __future__ import annotations
 

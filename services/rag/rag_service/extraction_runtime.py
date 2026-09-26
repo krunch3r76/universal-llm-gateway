@@ -1,4 +1,14 @@
-"""Watcher-independent extraction worker runtime."""
+"""Watcher-independent extraction worker runtime for the RAG service.
+
+Started by ``dependency_activation`` once Stargate and embeddings are reachable,
+and stopped by ``lifecycle._shutdown``. Startup recovers extraction-queue claims
+abandoned by a previous process (cancelling their remote executions), creates
+the ``ExtractionAdmissionGate`` and a ``model.available`` WebSocket watcher on
+the events-query Unix socket for the configured extraction pipeline, and launches
+``run_extraction_worker`` as a tracked background task. The watcher wakes
+cooling-off queue rows when the pipeline becomes routable. Start is idempotent:
+``state._extraction_shutdown`` marks an already-running runtime.
+"""
 
 from __future__ import annotations
 
@@ -115,7 +125,18 @@ async def _watch_extraction_model(
 
 
 async def start_extraction_runtime(config: RagConfig) -> None:
-    """Start extraction runtime after Stargate and embeddings are reachable."""
+    """Start extraction runtime after Stargate and embeddings are reachable.
+
+    Called by ``dependency_activation``. No-op (logged) if already started.
+    Recovers abandoned extraction-queue claims, cancelling any in-flight remote
+    execution and emitting ``rag_extraction_claim_recovered`` per claim. When
+    ``config.knowledge_extraction.pipeline`` is set, starts an
+    ``ExtractionAdmissionGate`` and a tracked ``model.available`` watcher task.
+    Finally launches ``run_extraction_worker`` as a tracked background task.
+
+    Raises:
+        RuntimeError: If the property index or event bus is not initialized.
+    """
     if state._property_index is None or state._event_bus is None:
         raise RuntimeError("Extraction runtime requires property index and event bus")
     if state._extraction_shutdown is not None:
@@ -174,7 +195,14 @@ async def start_extraction_runtime(config: RagConfig) -> None:
 
 
 async def stop_extraction_runtime() -> None:
-    """Stop extraction-specific coordination resources."""
+    """Signal the extraction worker to stop and tear down its admission gate.
+
+    Called first by ``lifecycle._shutdown``. Sets and clears
+    ``state._extraction_shutdown`` (the worker and model watcher observe it) and
+    stops and clears ``state._extraction_admission_gate``. Does not await the
+    worker task; shutdown cancels tracked background tasks afterwards. Safe to
+    call when the runtime never started.
+    """
     if state._extraction_shutdown is not None:
         state._extraction_shutdown.set()
         state._extraction_shutdown = None

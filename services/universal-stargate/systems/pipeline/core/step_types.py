@@ -1,7 +1,14 @@
 """
 Shared step-related data types.
 
-These types are used by step configuration and execution paths.
+These types are used by step configuration and execution paths. Defines the
+dataclasses that describe how a pipeline step is wired and what it produces:
+``StepInputs`` (typed handler inputs with checkpoint fingerprinting),
+``StepOutput``, ``InputBinding``, ``OutputDeclaration``, ``ReadsFrom``,
+``OutputBinding``, ``SourceInput``, ``CheckpointConfig``, ``MapState`` and
+``MapConfig``. Imported by ``core.schemas`` and the ``core.step_config``
+builders/validators; kept dependency-light so schemas can import it without
+cycles.
 """
 
 from __future__ import annotations

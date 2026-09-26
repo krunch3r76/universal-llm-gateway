@@ -272,7 +272,12 @@ def resolve_remote_mcp(*, model: str, mcp_enabled: bool) -> bool:
 
 
 def validate_frontier_dispatch_step(step: StepConfig) -> list[str]:
-    """Validate a frontier_dispatch_v1 step configuration."""
+    """Check at config time that a step is actually typed ``frontier_dispatch_v1``.
+
+    Backs the frontier_dispatch handler's ``validate()`` hook. Returns a list of
+    human-readable error strings (empty when valid); it does not raise and performs
+    no model, MCP or capability-card lookups.
+    """
     errors: list[str] = []
     if step.type != "frontier_dispatch_v1":
         errors.append(f"Step '{step.id}': expected type frontier_dispatch_v1")

@@ -1,4 +1,10 @@
-"""Inotify watcher registration for configured directories."""
+"""Inotify watcher registration for configured RAG watch directories.
+
+``_register_one`` is called by ``WatcherManager.start`` (for each configured
+directory, concurrently) and by ``register_directory`` at runtime. It creates a
+``HotReloadWatcher`` with a 2 s debounce and the effective extension patterns,
+and emits ``rag_watch_directory_missing`` or ``rag_watch_started``.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +25,14 @@ logger = get_logger(__name__)
 
 
 class RegistrationMixin:
+    """Watcher registration step mixed into ``WatcherManager``.
+
+    ``_register_one`` binds change and delete callbacks to the file-event
+    handlers, appends started watchers to ``_watchers``/``_watch_configs``, and
+    returns the path, directory and extensions the caller needs to schedule
+    the initial reindex; it returns None when the directory is missing.
+    """
+
     async def _register_one(
         self, watch_directory: WatchDirectory
     ) -> tuple[Path, WatchDirectory, tuple[str, ...]] | None:

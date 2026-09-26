@@ -1,4 +1,11 @@
-"""Startup initial reindex sweep for one watch directory."""
+"""Startup initial reindex sweep for one watch directory, run as a background task.
+
+``WatcherManager.start`` and ``register_directory`` spawn ``_initial_reindex``
+per registered directory. Files are filtered by extension, exclude patterns and
+``_should_attempt`` gating, then indexed by a bounded worker pool with jittered
+exponential retry for transient failures. Emits rag_watch_initial started,
+progress (about every 10%) and complete events.
+"""
 
 from __future__ import annotations
 
@@ -23,6 +30,15 @@ logger = get_logger(__name__)
 
 
 class InitialReindexMixin:
+    """Initial full-directory reindex sweep mixed into ``WatcherManager``.
+
+    Holds no state of its own; ``_initial_reindex`` uses the host's
+    ``_index_fn``, ``_index_workers`` and ``_should_attempt`` gate. Each sweep is
+    one asyncio task tracked in ``_initial_reindex_tasks``, awaited by
+    ``wait_for_initial_indexing`` and by the reconcile loop before it starts,
+    and cancelled by ``stop``.
+    """
+
     async def _initial_reindex(
         self,
         watch_path: Path,

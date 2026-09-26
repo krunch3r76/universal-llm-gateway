@@ -1,4 +1,12 @@
-"""RAG extraction admission (coordination) event factories."""
+"""Coordination event factories for the RAG extraction worker's admission gate.
+
+``rag.extraction.admission.closed`` and ``.opened`` are published by
+``services.rag.extraction_admission.ExtractionAdmissionGate`` on gate state
+transitions (timeout bursts, step failure ratio, gateway degraded, model
+loading); ``.timeout`` is published by ``extraction.worker_loop`` when a wait
+for admission expires and the worker proceeds anyway. Events carry
+``role="coordination"`` and node scope, keyed by extraction ``pipeline_id``.
+"""
 
 from __future__ import annotations
 

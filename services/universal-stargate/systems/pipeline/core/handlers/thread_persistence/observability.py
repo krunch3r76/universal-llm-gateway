@@ -1,4 +1,12 @@
-"""Compaction observability helpers for thread-persistence handlers."""
+"""Compaction observability helpers for thread-persistence handlers.
+
+``publish_compaction_event`` builds an event from a factory and publishes it
+fire-and-forget on the proxy event bus reachable from the ``PipelineContext``;
+it silently no-ops when no bus exists and only logs if event construction fails.
+Background tasks are held in a module set so they are not garbage-collected
+early. Called by archive_user_turn, archive_assistant_turn, assemble_thread and
+summarize_thread_v1.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,12 @@
-"""RAG indexing event factories — file-level contextualization flow."""
+"""RAG indexing event factories — file-level contextualization flow.
+
+Brackets one file's contextual-retrieval pass: ``rag.contextualization.started``
+before per-chunk requests are dispatched, then ``completed``, ``partial`` or
+``tail.abandoned``, plus ``applied`` and the exception-recording pair. Emitted
+by ``rag_service.indexing.contextualize`` (``tail.abandoned`` is defined and
+re-exported but has no in-tree emit site today); most factories accept optional
+``operation_id``/``operation`` correlation fields shared with storage events.
+"""
 
 from __future__ import annotations
 

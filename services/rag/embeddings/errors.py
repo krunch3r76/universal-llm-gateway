@@ -1,10 +1,21 @@
-"""Embedding client exception types."""
+"""Exception types raised by the RAG embedding client package.
+
+``EmbeddingDependencyUnavailableError`` is raised by ``health.wait_until_healthy``
+and caught in ``rag_service/dependency_activation.py``;
+``EmbeddingTransientError`` is raised by ``query_embed`` and caught by the RAG
+search and API paths. ``_BatchRetryError`` stays internal to ``batch_post``.
+"""
 
 from __future__ import annotations
 
 
 class EmbeddingDependencyUnavailableError(RuntimeError):
-    """Embedding unavailable: not in catalog or dim seed failed after admission."""
+    """Raised when the configured embedding model cannot serve RAG at startup.
+
+    Covers a model that is structurally absent from the Stargate catalog, and
+    a dimension-seeding probe POST that fails after the model was admitted.
+    Dependency activation catches it and publishes ``rag_embeddings_unavailable``.
+    """
 
 
 class _BatchRetryError(Exception):
@@ -12,7 +23,12 @@ class _BatchRetryError(Exception):
 
 
 class EmbeddingTransientError(Exception):
-    """Raised when embed_query retries are exhausted on transient failures."""
+    """Raised when search-time query embedding exhausts its transient retries.
+
+    Thrown by ``embed_query`` and ``embed_queries_batch`` after 429/502/503/504
+    or connection/timeout failures. Carries ``model_id``, ``attempts`` and
+    ``last_status`` (HTTP code or None) so search callers can report or degrade.
+    """
 
     def __init__(
         self,

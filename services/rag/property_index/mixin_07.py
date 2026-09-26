@@ -1,4 +1,14 @@
-"""_PropertyIndexPart07 — contextualization exceptions and extraction queue."""
+"""_PropertyIndexPart07 — contextualization exceptions and extraction queue.
+
+SLOC-split mixin composed into ``PropertyIndex``. Lists degraded
+contextualization attempts and implements the durable ``extraction_queue``:
+enqueue, claim-based ``dequeue_extraction`` used by ``extraction/worker_loop.py``,
+complete/fail (``last_failure_at`` anchors retry backoff),
+``wake_extraction_queue`` (reset cooling-off rows when the extraction model
+becomes available), per-claim active execution IDs, and ``recover_abandoned_extraction_claims`` which
+``extraction_runtime.start_extraction_runtime`` runs at startup to release claims
+orphaned by a crash. Also exposes queue breakdown, row listing and count reads.
+"""
 
 from __future__ import annotations
 

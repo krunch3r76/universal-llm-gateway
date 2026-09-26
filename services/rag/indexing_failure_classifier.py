@@ -1,4 +1,12 @@
-"""Pure indexing failure classification (no rag_service package import)."""
+"""Pure indexing failure classification (no rag_service package import).
+
+Maps exceptions raised while indexing a file to a ``(category, reason)`` pair
+where category is ``"permanent"`` or ``"transient"``. Callers include
+``rag_service.indexing.failure_ops`` (persisting failure rows),
+``watcher_manager.initial_reindex`` and ``rag_service.startup_cleanup``. Kept
+free of rag_service imports so it can be used without import cycles;
+underscore aliases remain for legacy importers.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +17,12 @@ import httpx
 
 
 def classify_http_status_error(exc: httpx.HTTPStatusError) -> tuple[str, str]:
-    """Classify an HTTP status error for indexing failure persistence."""
+    """Map an httpx status error to a permanent/transient failure category.
+
+    503/504 give ``("transient", "http_<code>")``, other 5xx give
+    ``("transient", "http_5xx")``, 429 gives ``("transient", "http_429")`` and
+    every other status is ``("permanent", "http_client_error")``.
+    """
     code = exc.response.status_code
     if code in (503, 504):
         return ("transient", f"http_{code}")
@@ -46,7 +59,15 @@ def classify_indexing_failure(
     *,
     chunk_count: int,
 ) -> tuple[str, str]:
-    """Classify an indexing exception as permanent vs transient."""
+    """Decide whether an indexing exception should be retried or recorded as final.
+
+    Precedence: ``failure_category``/``failure_reason`` attributes set on the
+    exception, then the first ``httpx.HTTPStatusError`` in the ``__cause__``
+    chain, then type and message heuristics (permission, missing file,
+    embedding dimension, corrupt archive, timeouts, capacity). Unknown errors
+    default to ``("transient", "unclassified")``. ``chunk_count`` is currently
+    unused and reserved for chunk-aware rules.
+    """
     del chunk_count  # reserved for future chunk-aware rules
 
     precomputed = _precomputed_failure(exc)

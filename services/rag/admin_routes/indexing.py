@@ -1,4 +1,11 @@
-"""File and directory indexing routes: /index, /reindex, /index_directory, etc."""
+"""File and directory indexing routes: /index, /reindex, /index_directory, etc.
+
+``register_indexing_routes`` is called by ``register_admin_routes`` in
+``admin_routes/__init__.py``. Besides single-file and directory (re)indexing it
+serves ``/clear_directory``, ``/sources``, ``/source`` and ``/stats``. Directory
+reindex walks candidates, indexes them concurrently, then deletes chunks for
+sources no longer on disk and stamps the ``reindex`` watermark.
+"""
 
 from __future__ import annotations
 
@@ -63,7 +70,14 @@ def register_indexing_routes(
     get_config_fn: Callable[[], RagConfig | None] | None = None,
     **_kwargs: object,
 ) -> None:
-    """Register file/directory indexing and source-query routes onto router."""
+    """Attach indexing, directory clear and source-inspection handlers to the router.
+
+    ``index_file_fn`` performs per-file indexing (each call gets a fresh
+    ``operation_id``); directory runs honor ``RagConfig.index_workers`` for
+    concurrency and publish ``rag_directory_index_started`` / ``_completed`` and
+    ``rag_directory_cleared`` when an event bus is wired. Missing paths raise
+    HTTP 404 and wrong path kinds HTTP 400 via the ``_helpers`` validators.
+    """
 
     async def _index_single_file(
         request: IndexRequest, *, operation: str

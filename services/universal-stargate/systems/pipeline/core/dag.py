@@ -32,7 +32,13 @@ logger = get_logger(__name__)
 
 
 class StepState(StrEnum):
-    """Execution state of a step."""
+    """Lifecycle state of one ``StepNode`` in the pipeline execution DAG.
+
+    Nodes start ``PENDING``; ``DAGBuilder`` marks dependency-free nodes ``READY``. The
+    DAG executor's scheduling moves READY nodes to ``RUNNING`` (or ``SKIPPED`` when a
+    condition is false), and outcome/completion handling sets ``COMPLETED`` or
+    ``FAILED``. Final counts per state feed the executor lifecycle summary.
+    """
 
     PENDING = auto()
     READY = auto()
@@ -180,7 +186,13 @@ class DAGBuilder:
 
 
 class PipelineExecutionError(Exception):
-    """Raised when pipeline execution fails."""
+    """Base exception for step-level failures raised while executing a pipeline DAG.
+
+    Raised by the DAG executor's fail-fast completion handling (wrapping the originating
+    step exception as ``__cause__``) and by handlers such as ``pipeline_call`` and
+    ``select_output``. ``ContextExceededError`` and ``ResponseTruncatedError`` subclass
+    it. Distinct from the async tracker's ``records.PipelineExecutionError`` dataclass.
+    """
 
     pass
 

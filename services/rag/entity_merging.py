@@ -133,7 +133,14 @@ def merge_relations(entities: list[Entity]) -> list[MergedRelation]:
 
 
 def format_relation_context(merged: list[MergedRelation]) -> str:
-    """Format merged relations as a structured context section."""
+    """Render merged relations as a ``## Key Relationships`` context section.
+
+    Each relation becomes a ``- subject —[predicate]→ target`` bullet in input
+    order, for injection into the RAG answer prompt.
+
+    Returns:
+        The section text, or "" when ``merged`` is empty.
+    """
     if not merged:
         return ""
     lines: list[str] = ["## Key Relationships\n"]
@@ -143,7 +150,14 @@ def format_relation_context(merged: list[MergedRelation]) -> str:
 
 
 def extract_topics_from_metadata(metadata: dict[str, object]) -> list[str]:
-    """Parse topics from a chunk's extraction metadata field."""
+    """Read the topic strings stored in a chunk's ``extraction`` metadata field.
+
+    Accepts the field as a JSON string or dict; non-string topics are dropped.
+    Used by ``metadata_boost`` and rag_context_v1 ``rerank_scoring``.
+
+    Returns:
+        Topic list, or [] when extraction data is absent or malformed.
+    """
     raw = metadata.get("extraction")
     if not raw:
         return []
@@ -182,7 +196,14 @@ def merge_topics(topics: list[str]) -> list[tuple[str, int]]:
 
 
 def format_topic_context(merged: list[tuple[str, int]]) -> str:
-    """Format merged topics as a structured context section."""
+    """Render merged topics as a ``## Key Topics`` context section.
+
+    Takes ``(topic, count)`` pairs from ``merge_topics``; counts above one are
+    shown as a ``(n)`` suffix on each bullet.
+
+    Returns:
+        The section text, or "" when ``merged`` is empty.
+    """
     if not merged:
         return ""
     lines: list[str] = ["## Key Topics\n"]

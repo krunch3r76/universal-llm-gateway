@@ -54,7 +54,15 @@ def should_execute_step(
 
 
 async def execute_step(executor: DAGExecutor, node: StepNode) -> None:
-    """Execute step and update state."""
+    """Run one launched step end-to-end as the body of its ``step-<id>`` asyncio task.
+
+    Resolves the execution-time target model (honoring the
+    ``model_ref_overrides`` pipeline option), emits step-started and
+    step-inputs observability, times ``run_step``, and hands the result to
+    ``record_success`` or ``record_failure``, which set node state, output, and
+    downstream propagation. Exceptions are re-raised so
+    ``await_and_handle_completions`` can apply fail-fast cancellation.
+    """
     import time
 
     _mro = executor.context.options.get("model_ref_overrides")
@@ -129,7 +137,16 @@ async def run_step(
 
 
 async def run_step_inner(executor: DAGExecutor, step: StepConfig) -> StepOutput:
-    """Execute step through the standard wrapper chain."""
+    """Invoke the step's registered handler wrapped by ``execute_step_with_wrappers``.
+
+    The handler call is ``HandlerRegistry.execute(step, executor.context)``; the
+    wrapper chain receives the executor's checkpoint manager. This is the
+    no-fallback primitive that ``run_step`` calls first and that the model
+    fallback helper re-invokes as ``run_step_fn`` for alternative models.
+
+    Returns:
+        The handler's ``StepOutput``.
+    """
     from ....handlers import HandlerRegistry
     from ...step_wrapper import execute_step_with_wrappers
 

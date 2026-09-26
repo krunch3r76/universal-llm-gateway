@@ -2,6 +2,14 @@
 Types for chunked model execution.
 
 Invariant: ∀ ChunkResult: len(results) == len(item_indices)
+
+Slotted keyword-only dataclasses shared by ``ChunkedModelExecutor`` (``executor.py``)
+and the chunking/selection strategies (``strategies.py``): ``Chunk`` (items plus their
+original indices and optional grouping key), ``ProcessResult`` (optional token-counting
+return from a caller's ``process_fn``), ``ChunkResult`` (per-chunk outcome, model,
+latency, fallback flag) and ``ChunkedResult`` (merged results in original order plus
+aggregates such as ``success_rate`` and total prompt/completion tokens). Re-exported by
+the package.
 """
 
 from __future__ import annotations

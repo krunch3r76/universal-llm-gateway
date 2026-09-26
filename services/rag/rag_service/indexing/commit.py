@@ -1,4 +1,13 @@
-"""Commit phase for the indexing pipeline."""
+"""Commit phase of the RAG file index funnel, run after embeddings are upserted.
+
+``_run_commit_phase`` is called by ``indexing/index_file.py``. It deletes stale
+chunk ids from the property index, FTS and Chroma, upserts the
+``indexed_sources`` stat cache row, syncs article structural fields (emitting
+``rag_article_auto_created`` for new rows), stores contextualize cache rows best
+effort, and refreshes corpus hints, bracketed by source-commit and hints-update
+events. Any failure emits ``rag_file_indexing_failed``, records an indexing
+failure row, and re-raises; the success path lives in ``finalize.py``.
+"""
 
 from __future__ import annotations
 

@@ -1,5 +1,12 @@
 """
 Response builder for pipeline results.
+
+Turns a finished buffered (non-streaming) pipeline execution into an
+OpenAI-compatible chat-completion JSON ``Response``: aggregates token usage
+across steps and map collections, lists resolved model IDs in execution
+order, and optionally attaches alternates, backtranslation, and step_stats
+extensions. Called from ``core.executor.pipeline_executor``; the streaming
+branch bypasses it entirely.
 """
 
 import json
@@ -47,7 +54,13 @@ def _collect_resolved_models(
 
 
 class ResponseBuilder:
-    """Build OpenAI-compatible responses for pipeline executions."""
+    """Build OpenAI-compatible responses for pipeline executions.
+
+    Stateless namespace class that is never instantiated; the single entry
+    point is the static ``build_response``, invoked by ``PipelineExecutor``
+    on the buffered path. Streaming ``StepOutput`` values reaching it are
+    logged as a lifecycle bug and counted as zero tokens.
+    """
 
     @staticmethod
     def build_response(

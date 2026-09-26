@@ -1,4 +1,13 @@
-"""RAG lifecycle and watcher event factories."""
+"""RAG service lifecycle, dependency activation and file-watcher event factories.
+
+Covers boot and shutdown (``rag.started``, ``rag.start.degraded``,
+``rag.dependency.retry.scheduled``, ``rag.shutdown``), watcher sweeps and
+reconciliation (``rag.watch.*``), article-registry loading, orphan and
+exclusion purges, and vocabulary/hints gap repair. Emitted mainly from
+``rag_service.lifecycle``, ``rag_service.dependency_activation``,
+``rag_service.startup_cleanup`` and the ``watcher_manager`` package
+(``manager``, ``initial_reindex``, ``reconcile``, ``file_events``).
+"""
 
 from __future__ import annotations
 

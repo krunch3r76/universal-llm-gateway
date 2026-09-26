@@ -25,7 +25,15 @@ def build_iteration_context(
     pool_assignments: dict[int, str],
     total: int,
 ) -> dict[int, dict[str, Any]]:
-    """Build and seed per-iteration context used by event correlation."""
+    """Seed one correlation dict per map iteration before fan-out begins.
+
+    For each ``(index, value, key)`` item, prepares inputs and a per-iteration step to
+    learn the resolved model (``model_ref`` or ``model_id``, honoring
+    ``pool_assignments``), then records ``model_id``, ``gateway_id`` (None), a monotonic
+    ``started_at`` and fresh UUID ``map_iteration_request_id`` / ``request_id``. Returns
+    ``{index: ctx}``; used for event correlation and by ``MapConcurrencyManager`` to
+    cancel federation requests.
+    """
     iteration_context: dict[int, dict[str, Any]] = {}
     for idx, value, key in iteration_items:
         assigned_model = pool_assignments.get(idx)
@@ -52,7 +60,13 @@ def build_iteration_runtime(
     executor: MapExecutor,
     ctx: dict[str, Any],
 ) -> MapIterationRuntimeProtocol:
-    """Decorate runtime with iteration and request-level correlation IDs."""
+    """Derive an iteration-scoped runtime carrying the map and inference request IDs.
+
+    Applies ``with_map_iteration_request_id`` and ``with_inference_request_id`` to the
+    executor's shared runtime using the IDs seeded by ``build_iteration_context``; each
+    is skipped if absent from ``ctx``. The shared runtime is not mutated; the decorated
+    copy is returned for ``execute_iteration`` to hand to the step handler.
+    """
     iter_runtime = executor._runtime
     map_iteration_request_id = ctx.get("map_iteration_request_id")
     if map_iteration_request_id:

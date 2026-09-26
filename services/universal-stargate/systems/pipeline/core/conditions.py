@@ -172,7 +172,12 @@ _condition_evaluator: ConditionEvaluator | None = None
 
 
 def get_condition_evaluator() -> ConditionEvaluator:
-    """Get or create condition evaluator singleton."""
+    """Return the process-wide ``ConditionEvaluator``, lazily creating it on first call.
+
+    The sandboxed evaluator is stateless between calls, so one shared instance is reused
+    for all pipeline step ``condition`` checks; ``evaluate_condition`` delegates here
+    and the accessor is re-exported from ``pipeline.core``. Not guarded by a lock.
+    """
     global _condition_evaluator
     if _condition_evaluator is None:
         _condition_evaluator = ConditionEvaluator()

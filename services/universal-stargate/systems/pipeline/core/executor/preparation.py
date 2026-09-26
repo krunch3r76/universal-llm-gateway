@@ -230,7 +230,13 @@ def extract_runtime_options(
     context: _PipelineRequestContextProtocol,
     pipeline: PipelineSpec,
 ) -> dict[str, Any]:
-    """Flatten ``pipeline_options`` + merged ``model_ref_overrides`` from request."""  # noqa: E501
+    """Flatten ``pipeline_options`` + merged ``model_ref_overrides`` from request.
+
+    Copies ``original_request["pipeline_options"]`` (raising ``ValueError`` if it is
+    not a dict), merges top-level and nested ``model_ref_overrides`` (nested wins),
+    surfaces the outer ``stream`` flag, and sets ``chat_completions_only`` from the
+    caller ``model`` via frontier_consult admission. Returns ``{}`` with no request.
+    """  # noqa: E501
     runtime_options: dict[str, Any] = {}
     if not context.original_request:
         return runtime_options
@@ -306,7 +312,12 @@ def expand_steps(
     executor: PipelineExecutor,
     steps: Sequence[StepConfig | FragmentRef | dict[str, Any]],
 ) -> list[StepConfig]:
-    """Expand fragment references into full steps."""
+    """Flatten a pipeline step list by expanding fragment references into StepConfigs.
+
+    Dict items with a ``use`` key become FragmentRef and are expanded through
+    ``executor.fragment_loader``; other dicts are parsed as StepConfig; existing
+    FragmentRef/StepConfig objects are expanded or passed through, preserving order.
+    """
     expanded: list[StepConfig] = []
 
     for item in steps:

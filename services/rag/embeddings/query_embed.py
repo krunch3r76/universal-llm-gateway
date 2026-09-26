@@ -1,4 +1,12 @@
-"""Search-time query embedding with instruction prefixes and bounded retry."""
+"""Search-time query embedding with instruction prefixes and bounded retry.
+
+``embed_query`` (used by ``rag_service/search.py``) posts one formatted query
+with jittered exponential backoff on transient errors; ``embed_queries_batch``
+(used by ``rag_service/api.py``) embeds several queries through
+``post_embeddings``. Both publish ``rag_embedding_query_success`` or
+``rag_embedding_query_failed`` and raise ``EmbeddingTransientError`` when
+retries run out.
+"""
 
 from __future__ import annotations
 
@@ -37,7 +45,15 @@ __all__ = ["embed_queries_batch", "embed_query"]
 
 
 def format_query_text(text: str, scope: str | list[str] | None = None) -> str:
-    """Apply instruction prefix for instruction-aware embedding models."""
+    """Prefix a search query with the prompt format the embedding model expects.
+
+    Instruction-aware models get ``Instruct: <scope instruction>`` plus
+    ``Query: <text>`` using ``SCOPE_INSTRUCTIONS`` (first scope of a list,
+    else ``DEFAULT_INSTRUCTION``); others get ``search_query: <text>``.
+
+    Raises:
+        RuntimeError: When the embedding module has not been configured.
+    """
     model_id = require_configured()
     if isinstance(scope, list):
         effective_scope = scope[0] if scope else None

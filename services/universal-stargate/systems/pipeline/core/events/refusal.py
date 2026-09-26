@@ -1,4 +1,11 @@
-"""Frontier refusal anomaly events."""
+"""Event-bus factory flagging suspected refusals from frontier_dispatch agent runs.
+
+``PipelineFrontierDispatchRefusalSuspected`` (signal
+``pipeline.frontier.dispatch.refusal.suspected``, node scope) is published by
+``handlers/frontier_dispatch/observability.py`` when a dispatch that made tool calls
+ends with a short, refusal-shaped answer (below an output-token threshold and matching
+refusal markers). It is an anomaly hint for observability, not an execution failure.
+"""
 
 from __future__ import annotations
 

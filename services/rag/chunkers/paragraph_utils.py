@@ -1,4 +1,10 @@
-"""Paragraph splitting utilities and Chunk type."""
+"""Paragraph splitting utilities and Chunk type.
+
+Defines the ``Chunk`` dataclass (text plus flat Chroma-safe metadata) returned by
+every chunker, the soft-target/pad-zone paragraph splitter with paragraph
+overlap used by ``markdown_pdf.chunk_markdown``, oversized-paragraph fallbacks
+(table rows, word boundaries, hard truncation) and ``chunk_index`` annotation.
+"""
 
 from __future__ import annotations
 

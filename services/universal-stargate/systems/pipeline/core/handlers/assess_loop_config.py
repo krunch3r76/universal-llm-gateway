@@ -308,7 +308,13 @@ def build_assess_ctx(
     iteration: int,
     last_decision: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Build per-iteration context for assess prompt rendering."""
+    """Build the per-iteration template context used to render the assess prompt.
+
+    Shallow-copies ``base_ctx`` and adds the current artifact under ``artifact_key``
+    plus ``iteration``; when a previous decision exists, also exposes its action,
+    target and reason as ``assess_action``/``assess_target``/``assess_reason``.
+    Called by the assess_loop loop runner each iteration; ``base_ctx`` is not mutated.
+    """
     ctx = {**base_ctx, artifact_key: artifact, "iteration": iteration}
     if last_decision:
         ctx.update(
@@ -337,7 +343,13 @@ def emit_iteration_completed(
     *,
     state: LoopState | None = None,
 ) -> None:
-    """Emit AssessLoopIterationCompleted and optionally track history."""
+    """Emit AssessLoopIterationCompleted and optionally track history.
+
+    When ``recorder`` is truthy, emits the event with decision, action, latency and
+    per-iteration token counts. When ``state`` is given, also appends a summary dict
+    (latencies rounded to 0.1 ms) to ``state.history``. Called from the assess_loop
+    loop runner and assess phase on both normal and error/terminal paths.
+    """
     if recorder:
         recorder.emit(
             AssessLoopIterationCompleted(

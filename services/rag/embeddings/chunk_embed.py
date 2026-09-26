@@ -1,4 +1,12 @@
-"""Index-time chunk embedding with token-aware batching."""
+"""Index-time chunk embedding with token-aware batching.
+
+``embed_chunks`` is the indexing entry point (called from
+``rag_service/indexing/embed.py``). It groups texts into sub-batches capped by
+``EMBED_BATCH_SIZE`` and by an estimated token budget derived from the model
+ID (chars / ``CHARS_PER_TOKEN``), sending oversize texts alone so
+``post_embeddings`` can truncate or zero-vector them. Output order matches
+input order.
+"""
 
 from __future__ import annotations
 

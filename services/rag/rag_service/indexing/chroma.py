@@ -1,4 +1,12 @@
-"""ChromaDB upsert helpers for the indexing pipeline."""
+"""ChromaDB upsert helpers for the RAG indexing pipeline's embed phase.
+
+``_upsert_chroma_chunk_batches`` is called by ``indexing/embed.py`` to write
+chunk ids, embeddings, documents and metadata to a Chroma collection. It splits
+the rows with ``chromadb.utils.batch_utils.create_batches`` so each call stays
+under the backend's max batch size, and brackets every batch with
+``rag_chroma_upsert_started`` / ``rag_chroma_upsert_completed`` events carrying
+batch index and total. Raises RuntimeError when no Chroma client is initialized.
+"""
 
 from __future__ import annotations
 

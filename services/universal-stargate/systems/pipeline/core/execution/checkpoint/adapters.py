@@ -15,6 +15,12 @@ class StepOutputCheckpointAdapter:
     Adapts StepOutput to CheckpointManager interface.
 
     Extracts checkpoint data from StepOutput fields.
+
+    Wraps one ``StepOutput`` per construction and exposes ``to_checkpoint_data``,
+    returning ``(raw_text, json_data, metadata)`` where metadata keeps latency,
+    model/step IDs, token counts, temperature and max_tokens with ``None`` values
+    dropped. Stateless and cheap; exported from the checkpoint package for outputs
+    lacking their own extraction method.
     """
 
     def __init__(self, step_output: "StepOutput"):

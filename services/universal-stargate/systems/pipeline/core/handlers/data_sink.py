@@ -1,4 +1,11 @@
-"""Built-in data_sink_v1: persist pipeline outputs to RAG metadata (SQLite)."""
+"""Built-in data_sink_v1: persist pipeline outputs to RAG metadata (SQLite).
+
+Registers DataSinkV1Handler (imported for side effect by ``handlers.builtin``).
+Only ``sink_type: scope_vocabulary`` is supported: the resolved vocabulary dict is
+written through PropertyIndex, per-scope freshness is stamped with ``files_hash`` and
+the local/frontier tier, the vocabulary and corpus_hints watermarks are bumped, and
+scopes missing from the output have their freshness invalidated.
+"""
 
 # ruff: noqa: E501
 

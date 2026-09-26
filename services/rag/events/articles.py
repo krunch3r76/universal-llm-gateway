@@ -1,4 +1,13 @@
-"""RAG article metadata event factories."""
+"""RAG article-registry event factories: article rows, source moves and deletes.
+
+Covers ``rag.article.auto.created``, ``rag.article.upserted``,
+``rag.source.deleted``, ``rag.article.content.hash.mismatch``,
+``rag.article.path.moved`` and ``rag.directory.sources.deleted``. Emitters are
+the admin routes (``admin_routes.articles``, ``admin_routes._directory_routes``)
+and the indexing path (``rag_service.indexing.commit``, ``file_guards`` and
+``article_sync``). Payloads key on ``source_path`` so article metadata can be
+joined to file-indexing events.
+"""
 
 from __future__ import annotations
 

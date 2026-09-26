@@ -1,4 +1,15 @@
-"""Pre-chunking and post-chunking guard helpers for _index_file_impl."""
+"""Pre-chunking and post-chunking guard helpers for the index_file funnel.
+
+Short-circuit checks called by ``indexing/index_file.py`` (``_index_file_impl``)
+that may end an index run early with an ``IndexResult``.
+``_handle_pdf_duplicate_or_move`` migrates Chroma metadata for moved article
+rows and skips true PDF duplicates; ``_handle_empty_chunks`` deletes existing
+chunks when chunking produces nothing; ``_handle_unchanged_prefix_skip`` skips
+work when ``indexed_sources.source_hash`` is unchanged and no legacy-scheme
+chunk ids remain. Both the empty and unchanged paths refresh the indexed-source
+row; the unchanged path also syncs article structural fields and enqueues
+extraction.
+"""
 
 from __future__ import annotations
 

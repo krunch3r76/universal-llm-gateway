@@ -1,4 +1,11 @@
-"""RAG configuration dataclasses and module-level defaults."""
+"""RAG configuration dataclasses and module-level defaults.
+
+Defines ``WatchDirectory``, ``ScopeDefinition``, ``KnowledgeExtractionConfig``
+and the root ``RagConfig`` plus defaults (embedding model, index workers,
+contextualize client timeout, baseline file extensions), all re-exported by
+``services.rag.config``. Instances are built by ``_loader.load_config`` via
+``_parsing``; models are plain slotted keyword-only dataclasses with no I/O.
+"""
 
 from __future__ import annotations
 

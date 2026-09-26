@@ -1,4 +1,10 @@
-"""Build the system prompt for scope vocabulary classification."""
+"""Build the system prompt for scope vocabulary classification from a taxonomy.
+
+``build_classification_prompt`` renders one bullet per taxonomy category (curated
+text from ``_categories`` or a generic fallback), noise-dropping rules, the
+asterisk convention for inferred terms, and a JSON output example. Called by
+``_classify.classify_scope_async`` and re-exported from the vocabulary package.
+"""
 
 from __future__ import annotations
 

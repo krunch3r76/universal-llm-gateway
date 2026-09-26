@@ -23,7 +23,12 @@ _SUMMARY_PRED_PREFIX = THREAD_SUMMARY_PREFIX
 
 
 def is_turn_assertion(assertion: dict[str, Any]) -> bool:
-    """True when *assertion* is a non-superseded user/assistant turn row."""
+    """Check whether a cortex assertion is a live archived conversation turn.
+
+    True only when the row has no ``superseded_by`` and its ``predicate_form``
+    starts with ``user_turn(`` or ``assistant_turn(``. Summary rows are excluded.
+    Used by window assembly, anchor turn allocation and compaction.
+    """
     if assertion.get("superseded_by"):
         return False
     pred = assertion.get("predicate_form")
@@ -33,7 +38,12 @@ def is_turn_assertion(assertion: dict[str, Any]) -> bool:
 
 
 def parse_turn_index(predicate_form: str) -> int | None:
-    """Extract N from ``user_turn(N)`` / ``assistant_turn(N)``."""
+    """Extract the integer turn index N from a ``user_turn(N)``/``assistant_turn(N)``
+    predicate.
+
+    Returns None for any other predicate prefix or when N is not an integer.
+    Used for turn-slot allocation and by ``compaction_summarize``.
+    """
     if not (
         predicate_form.startswith(_USER_TURN_PREFIX)
         or predicate_form.startswith(_ASSISTANT_TURN_PREFIX)
@@ -60,7 +70,13 @@ def next_turn_index(assertions: list[dict[str, Any]]) -> int:
 def turns_from_assertions(
     assertions: list[dict[str, Any]],
 ) -> list[tuple[int, str, str]]:
-    """Project turn assertions to ``(turn_index, role, content)`` tuples."""
+    """Convert archived turn assertions into ordered ``(turn_index, role, content)``
+    tuples.
+
+    Skips non-turn or unparseable rows, strips the ``"<role>: "`` claim prefix, and
+    sorts by turn index with the user message before the assistant reply in each
+    turn. Used by ``window.py`` to rebuild chat history for the referential window.
+    """
     turns: list[tuple[int, str, str]] = []
     for ass in assertions:
         if not is_turn_assertion(ass):
@@ -96,7 +112,12 @@ def is_thread_summary_assertion(assertion: dict[str, Any]) -> bool:
 
 
 def parse_thread_summary_index(predicate_form: str) -> int | None:
-    """Extract N from ``thread_summary(N)``."""
+    """Extract the exclusive upper turn bound N from a ``thread_summary(N)`` predicate.
+
+    Returns None for non-summary predicates or a non-integer N. Used by
+    :func:`extract_latest_summary`, ``thread_compression`` boundary fallback and
+    ``compaction_summarize``.
+    """
     if not predicate_form.startswith(_SUMMARY_PRED_PREFIX):
         return None
     try:
@@ -144,7 +165,12 @@ async def load_all_assertions(anchor_id: str) -> list[dict[str, Any]]:
 
 
 async def load_turn_assertions(anchor_id: str) -> list[dict[str, Any]]:
-    """Load all non-superseded turn assertions on a thread anchor."""
+    """Fetch a thread anchor from cortex and return only its live turn assertions.
+
+    Uses ``entity_get`` with ``intent="full"`` (unpaginated) via ``cx_async`` and
+    filters with :func:`is_turn_assertion`. Returns [] when the anchor is missing
+    (404); raises RuntimeError for any other cortex error.
+    """
     res = await cx_async("entity_get", {"entity_id": anchor_id, "intent": "full"})
     if res.get("status_code") == 404:
         return []

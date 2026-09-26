@@ -1,4 +1,11 @@
-"""BM25 sparse sidecar merged with dense results via mini-RRF."""
+"""BM25 sparse sidecar merged with dense Chroma results via mini-RRF.
+
+``execute_search`` in ``services.rag.rag_service.search`` calls
+``apply_bm25_sidecar`` after the source-prefix filter whenever a property index
+(and therefore its SQLite FTS index) is loaded. Lexical BM25 hits are fused with
+the dense vector ranking by reciprocal rank fusion (k=20). The sidecar is
+fail-open: any FTS or Chroma error is logged and dense-only results are returned.
+"""
 
 from __future__ import annotations
 

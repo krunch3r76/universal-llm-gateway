@@ -1,4 +1,12 @@
-"""Property-index distance boost for hybrid search."""
+"""Property-index distance boost for hybrid search ranking.
+
+``execute_search`` in ``services.rag.rag_service.search`` calls
+``apply_property_boost`` when both a property index and a config are loaded.
+Entity-like terms (capitalized words minus a stop list, plus 4-5 digit port
+numbers) are extracted from the query by regex and looked up as ``prop.name@@``
+keys; matching chunks get their distance multiplied by
+``property_boost_factor``. The order of results is not changed here.
+"""
 
 from __future__ import annotations
 

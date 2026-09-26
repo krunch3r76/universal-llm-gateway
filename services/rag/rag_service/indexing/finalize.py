@@ -1,4 +1,12 @@
-"""Post-commit success path for a completed index funnel run."""
+"""Post-commit success path for a completed RAG index funnel run.
+
+``_finalize_index_success`` is called by ``indexing/index_file.py`` after the
+commit phase returns without error. It clears any file-level indexing failure
+row (emitting ``rag_file_indexing_failure_cleared``), enqueues the source for
+async knowledge extraction, emits ``rag_file_indexed`` with deleted/indexed/noise
+counts, duration and article metadata, and returns the final ``IndexResult``.
+Kept separate from ``commit.py`` so commit failures never touch success state.
+"""
 
 from __future__ import annotations
 

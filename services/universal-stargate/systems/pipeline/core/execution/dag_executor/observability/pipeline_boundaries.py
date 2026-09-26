@@ -24,7 +24,12 @@ def emit_pipeline_execution_timed_out(
     timeout_seconds: float,
     incomplete_steps: list[str],
 ) -> None:
-    """Emit timeout boundary before pipeline timeout failure is raised."""
+    """Publish ``PipelineExecutionTimedOut`` just before ``execute_dag`` raises on
+    timeout.
+
+    Carries the configured ``timeout_seconds`` option and the ids of steps still
+    non-terminal at the deadline. Bus-only, fire-and-forget.
+    """
     from src.scheduling.events import PipelineExecutionTimedOut
 
     pipeline_id, execution_id = get_event_context(obs)
@@ -45,7 +50,13 @@ def emit_pipeline_deadlock_detected(
     incomplete_steps: list[str],
     pending_task_count: int,
 ) -> None:
-    """Emit deadlock boundary before deadlock failure is raised."""
+    """Publish ``PipelineDeadlockDetected`` just before ``execute_dag`` raises on
+    deadlock.
+
+    Fired when no step was launched or skipped and no tasks are pending while
+    steps remain incomplete; ``pending_task_count`` is currently always 0 from
+    that caller. Bus-only, fire-and-forget.
+    """
     from src.scheduling.events import PipelineDeadlockDetected
 
     pipeline_id, execution_id = get_event_context(obs)
@@ -63,7 +74,13 @@ def emit_pipeline_deadlock_detected(
 def emit_pipeline_execution_cancelled(
     obs: StepObservability, *, cancelled_steps: list[str]
 ) -> None:
-    """Emit cancellation summary once task cancellation has completed."""
+    """Publish ``PipelineExecutionCancelled`` after external cancel has stopped pending
+    tasks.
+
+    Emitted by the executor's ``cancel`` lifecycle function once each unfinished
+    task was cancelled and its model gate released, listing the step ids that
+    were actually interrupted. Bus-only, fire-and-forget.
+    """
     from src.scheduling.events import PipelineExecutionCancelled
 
     pipeline_id, execution_id = get_event_context(obs)

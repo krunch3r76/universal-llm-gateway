@@ -1,4 +1,14 @@
-"""_PropertyIndexPart02 — PropertyIndex method chunk (SLOC split)."""
+"""_PropertyIndexPart02 — PropertyIndex write methods for properties and sources.
+
+One of the SLOC-split mixins composed into ``PropertyIndex`` in
+``property_index/__init__.py``. Holds the async writers for the ``properties``
+inverted index (``add_batch``, ``add_batch_with_scope`` used by
+``extraction/chroma_source.py``, ``remove_chunk``, ``clear``), the
+``indexed_sources`` stat cache (``upsert_indexed_source`` called from the indexing
+commit phase), the ``pending`` crash-recovery set, per-chunk extraction failure
+rows (``record_failure``) and article upserts. Writes are serialized through
+``self._seq`` (SequentialExecutor); ``article_exists`` reads SQLite directly.
+"""
 
 from __future__ import annotations
 

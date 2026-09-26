@@ -1,4 +1,11 @@
-"""Proxy client error types and HTTP transport error normalization."""
+"""Proxy client error types and HTTP transport error normalization for Stargate calls.
+
+Defines ``ProxyClientError`` (re-exported from ``proxy_client``) plus private helpers
+that build status-based messages and map httpx transport failures to it: ConnectError ->
+503, RemoteProtocolError -> 502. Imported by the chat completion, streaming, vector
+(embeddings / rerank) and timeout-diagnostics modules so pipeline handlers catch one
+error type.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +15,13 @@ import httpx
 
 
 class ProxyClientError(Exception):
-    """Error from ProxyClient operations against Stargate."""
+    """Single error type raised by ProxyClient operations against the Stargate proxy.
+
+    Carries an optional HTTP ``status_code`` (503 for connect failures, 502 for protocol
+    errors, upstream status otherwise) and raw ``detail`` payload. Caught by pipeline
+    handlers such as ``call_model`` and ``model_fallback`` to trigger fallback to other
+    ranked model candidates or to surface step failures.
+    """
 
     def __init__(
         self, message: str, status_code: int | None = None, detail: Any = None

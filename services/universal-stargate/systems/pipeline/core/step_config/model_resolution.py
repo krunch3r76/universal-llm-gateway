@@ -59,7 +59,12 @@ def get_pipeline_model_override(step: StepConfig, context: Any | None) -> str | 
 
 
 def get_requirements_source(step: StepConfig) -> str | None:
-    """Return the configured ``model_requirements.source`` value when present."""
+    """Read the ``source`` key from a step's ``model_requirements`` dict for provenance.
+
+    Returns the non-empty string value, or None when requirements are absent, not a
+    dict, or have no string source. Recorded as ``requirements_source`` on every
+    :class:`ResolvedTargetModel` built by the sync and async resolvers.
+    """
     requirements = step.model_requirements
     if not isinstance(requirements, dict):
         return None
@@ -76,7 +81,14 @@ def resolve_target_model_sync(
     model_ref_overrides: dict[str, str] | None = None,
     context: Any | None = None,
 ) -> ResolvedTargetModel | None:
-    """Return structured target-model resolution metadata for ``step``."""
+    """Resolve which model a step will call, without awaiting, following the module
+    order.
+
+    Checks runtime override, ``model_ref_overrides``, requirements via
+    ``resolve_model_requirements`` (first candidate), then the registry. Unknown
+    ``model_ref`` (KeyError) falls back to the raw ref; other lookup errors are logged
+    and yield None. Raises ValueError for a dynamic ``${...}`` model_ref.
+    """
     runtime_override = get_pipeline_model_override(step, context)
     if runtime_override:
         return ResolvedTargetModel.build(
@@ -153,7 +165,14 @@ async def resolve_target_model_async(
     model_ref_overrides: dict[str, str] | None = None,
     context: Any | None = None,
 ) -> ResolvedTargetModel | None:
-    """Async structured target-model resolution for live execution paths."""
+    """Resolve a step's target model on live execution paths, awaiting candidate
+    ranking.
+
+    Same precedence as :func:`resolve_target_model_sync`, but requirements use
+    ``get_ranked_candidates`` when a context exists (else
+    ``async_resolve_model_requirements``). Returns a :class:`ResolvedTargetModel`
+    tagged with its ``resolution_source`` or None; raises ValueError for dynamic refs.
+    """
     runtime_override = get_pipeline_model_override(step, context)
     if runtime_override:
         return ResolvedTargetModel.build(

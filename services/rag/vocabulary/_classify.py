@@ -1,4 +1,11 @@
-"""LLM-based vocabulary classification: local model and frontier pipeline paths."""
+"""LLM-based vocabulary classification: local model and frontier pipeline paths.
+
+``classify_scope_async`` sends one scope's terms directly to Stargate chat
+completions with a JSON-object response format and returns per-category term
+lists, or None on any failure. ``_classify_scopes_via_pipeline`` and
+``_classify_frontier_scopes`` instead invoke the ``vocab-classify-v1`` pipeline,
+which writes vocabulary to the property index itself; ``_repair`` uses these.
+"""
 
 from __future__ import annotations
 

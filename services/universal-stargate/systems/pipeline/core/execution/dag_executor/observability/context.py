@@ -28,7 +28,13 @@ logger = get_logger(__name__)
 
 
 def get_event_context(obs: StepObservability) -> tuple[str, str]:
-    """Extract pipeline_id and execution_id from context."""
+    """Return ``(pipeline_id, execution_id)`` for stamping bus events from executor
+    context.
+
+    Never raises: a missing ``context.pipeline`` or ``context.execution_id``
+    is logged at ERROR and replaced with the ``"unknown"`` sentinel. Used by
+    every emit/record helper in this observability package.
+    """
     pipeline = getattr(obs._executor.context, "pipeline", None)
     if pipeline is None:
         logger.error("Missing context.pipeline - using 'unknown' for events")

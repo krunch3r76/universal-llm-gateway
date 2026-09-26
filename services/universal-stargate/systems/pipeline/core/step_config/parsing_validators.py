@@ -38,7 +38,14 @@ def reject_map_type(v: str) -> str:
 
 
 def normalize_map_config(values: dict[str, Any]) -> dict[str, Any]:
-    """Normalize flat ``map_over`` / ``map_inputs`` fields into ``map_config``."""
+    """Fold flat map-step keys (``map_over``, ``map_inputs``, etc.) into a nested
+    ``map_config``.
+
+    Before-mode model validator body for StepConfig. No-op when ``map_config`` is
+    already set or ``map_over`` is absent. Moves (pops) map_inputs, thresholds,
+    concurrency, model_pool, selection, exclude_self and timeout keys; copies
+    ``model_requirements`` without removing it. Mutates and returns *values*.
+    """
     if values.get("map_config") is not None:
         return values
 
@@ -112,7 +119,13 @@ def parse_handler_inputs(v: dict[str, Any]) -> dict[str, InputBinding]:
 
 
 def parse_handler_outputs(v: dict[str, Any]) -> dict[str, OutputBinding]:
-    """Convert string/dict specs to :class:`OutputBinding` objects."""
+    """Build :class:`OutputBinding` objects from the ``handler_outputs`` YAML mapping.
+
+    Accepts a string binding path, a dict with ``binding`` (str, namespace dict,
+    or InputBinding) and optional ``optional`` flag, or an existing OutputBinding.
+    Raises ValueError for a non-mapping input, a missing ``binding`` key, or a
+    malformed binding.
+    """
     if not isinstance(v, dict):
         raise ValueError(
             "handler_outputs must be a mapping of field name -> binding spec"
@@ -160,7 +173,13 @@ def parse_handler_outputs(v: dict[str, Any]) -> dict[str, OutputBinding]:
 def parse_output_declarations(
     v: dict[str, Any],
 ) -> dict[str, OutputDeclaration]:
-    """Convert dict specs to :class:`OutputDeclaration` objects."""
+    """Build :class:`OutputDeclaration` step contracts from the ``output_declarations``
+    map.
+
+    Each value must be an OutputDeclaration or a dict with ``binding`` and ``type``
+    (``description`` optional; ``type`` maps to ``declared_type``). Raises
+    ValueError on a non-mapping input, missing keys, or any other value type.
+    """
     if not isinstance(v, dict):
         raise ValueError(
             "output_declarations must be a mapping of output name -> declaration"
@@ -189,7 +208,13 @@ def parse_output_declarations(
 
 
 def parse_reads_from(v: list[Any]) -> list[ReadsFrom]:
-    """Convert dict specs to :class:`ReadsFrom` objects."""
+    """Build :class:`ReadsFrom` read-dependency declarations from the ``reads_from``
+    list.
+
+    Each item must be a ReadsFrom or a dict with ``step`` (``fields`` becomes a
+    tuple, default empty; ``description`` optional). These feed StepConfig
+    ``computed_depends_on``. Raises ValueError for a non-list or invalid items.
+    """
     if not isinstance(v, list):
         raise ValueError("reads_from must be a list of dict declarations")
     result = []

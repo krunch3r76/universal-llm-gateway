@@ -25,7 +25,12 @@ from .prepared import _PipelineRequestContextProtocol
 def extract_dispatch_thread_id(
     context: _PipelineRequestContextProtocol,
 ) -> str | None:
-    """Lift ``dispatch_thread_id`` for team-dispatch compaction (Phase D)."""
+    """Lift ``dispatch_thread_id`` for team-dispatch compaction (Phase D).
+
+    Reads ``context.original_request["dispatch_thread_id"]`` and returns it stripped
+    when it is a non-empty string; missing, blank or non-string values yield ``None``.
+    Called by ``preparation`` when building the prepared source input.
+    """
     if not context.original_request:
         return None
     raw = context.original_request.get("dispatch_thread_id")
@@ -53,7 +58,12 @@ def extract_chat_id(context: _PipelineRequestContextProtocol) -> str | None:
 def extract_messages(
     context: _PipelineRequestContextProtocol,
 ) -> list[dict[str, Any]] | None:
-    """Extract full chat messages, preferring explicit pre-truncation capture."""
+    """Return the full chat history, preferring the explicit pre-truncation capture.
+
+    Checks ``http_request.state.pipeline_full_messages`` first (set before any
+    context truncation), then falls back to a non-empty ``messages`` list on
+    ``original_request``. Returns ``None`` when neither source is available.
+    """
     if hasattr(context.http_request, "state") and hasattr(
         context.http_request.state, "pipeline_full_messages"
     ):
@@ -67,7 +77,12 @@ def extract_messages(
 
 
 def extract_source_text(context: _PipelineRequestContextProtocol) -> str:
-    """Extract source text from request context."""
+    """Return the most recent user message text as the canonical pipeline source text.
+
+    Scans ``chat_request.messages`` newest-first for a ``user`` turn, accepting plain
+    string content or the first text part of multimodal content; then falls back to
+    string content in ``original_request["messages"]``. Returns ``""`` if none found.
+    """
     if context.chat_request and context.chat_request.messages:
         for msg in reversed(context.chat_request.messages):
             if msg.role == "user":

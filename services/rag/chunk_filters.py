@@ -147,7 +147,12 @@ def noise_reason(content: str, threshold: float = 0.35) -> str | None:
 
 
 def chunk_is_noise(content: str, threshold: float = 0.35) -> bool:
-    """True when ``noise_reason`` is not None."""
+    """Boolean text-heuristic noise check: True when ``noise_reason`` finds a category.
+
+    ``threshold`` is the junk-line fraction that marks a chunk
+    ``garbled_extraction``. Pure function over raw chunk text; for already-tagged
+    Chroma metadata use ``chunk_metadata_is_noise`` instead.
+    """
     return noise_reason(content, threshold) is not None
 
 

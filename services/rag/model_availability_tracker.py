@@ -76,7 +76,12 @@ class AvailabilityResult:
 
 
 class ModelAvailabilityStartError(RuntimeError):
-    """Transient Stargate watch-registration failure during RAG dependency activation."""
+    """Transient Stargate watch-registration failure during RAG dependency activation.
+
+    Raised by ``ModelAvailabilityTracker.refresh_snapshot`` when the
+    model-availability watch POST fails. ``rag_service.dependency_activation``
+    catches it, marks ``waiting_on="stargate"`` and schedules a retry.
+    """
 
 
 class ModelAvailabilityTracker:
@@ -371,16 +376,28 @@ class ModelAvailabilityTracker:
 
 
 def get_model_availability_tracker() -> ModelAvailabilityTracker | None:
-    """Return the process singleton tracker if configured."""
+    """Return the process-wide ModelAvailabilityTracker, or None if unset.
+
+    Read by ``rag_service.dependency_activation``, ``rag_service.lifecycle`` and
+    ``embeddings.health``; None means startup has not installed a tracker yet.
+    """
     return _tracker
 
 
 def set_model_availability_tracker(t: ModelAvailabilityTracker | None) -> None:
-    """Set the process singleton (lifecycle owns creation)."""
+    """Install or clear the process-wide ModelAvailabilityTracker singleton.
+
+    ``rag_service.lifecycle`` owns creation: it sets the tracker at startup and
+    passes None on shutdown after stopping it. Mutates module-global state only.
+    """
     global _tracker
     _tracker = t
 
 
 async def close_model_availability_client() -> None:
-    """Close the shared HTTP client on RAG shutdown."""
+    """Close the module-level httpx client used for Stargate availability calls.
+
+    Called once by ``rag_service.lifecycle`` during RAG shutdown, after the
+    tracker is stopped; the client is not recreated afterwards.
+    """
     await _client.aclose()

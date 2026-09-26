@@ -1,4 +1,11 @@
-"""Term noise filtering and IDF-style scoring for corpus hint selection."""
+"""Term noise filtering and IDF-style scoring for corpus hint selection.
+
+Pure functions used by ``update_corpus_hints`` to rank candidate name/topic
+terms from the property index: ``is_structural_noise`` rejects paths, URLs,
+math variables, citations and doc-structure refs; ``score_term`` gives a
+hybrid IDF plus chunk-density score; ``entity_shape_boost`` multiplies that
+score to favour hyphenated and single-token entity-like names.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +48,12 @@ def entity_shape_boost(
     hyphen_boost: float = 1.3,
     single_token_boost: float = 1.2,
 ) -> float:
-    """Return a multiplicative boost based on term shape."""
+    """Return a score multiplier favouring entity-shaped corpus hint terms.
+
+    Hyphenated terms (e.g. product or model names) get ``hyphen_boost``;
+    otherwise single-token terms get ``single_token_boost``; multi-word
+    phrases get 1.0. Applied on top of ``score_term`` in update_corpus_hints.
+    """
     if "-" in term:
         return hyphen_boost
     if " " not in term:
@@ -50,7 +62,13 @@ def entity_shape_boost(
 
 
 def score_term(chunk_count: int, doc_count: int, total_docs: int) -> float:
-    """Hybrid IDF + chunk-boost score using document frequency."""
+    """Compute a hybrid IDF plus chunk-density score for a candidate hint term.
+
+    Score is ``log(total_docs / doc_count) + 0.3 * log(1 + chunk_count /
+    doc_count)``, so rarer documents dominate and repeated mentions per
+    document add a small boost. When ``doc_count`` is 0 (no document stats)
+    it falls back to ``log(1 + chunk_count)``, or 0.0 with no chunks.
+    """
     if doc_count == 0:
         return math.log(1 + chunk_count) if chunk_count > 0 else 0.0
     idf = math.log(total_docs / doc_count)

@@ -1,4 +1,11 @@
-"""Persist extraction failure and emit queue event."""
+"""Persist an extraction-queue failure and emit the matching queue event.
+
+``record_source_failure`` is the single failure sink for
+``extraction.worker_loop``: it calls ``PropertyIndex.fail_extraction`` (which
+may or may not burn a retry attempt, per ``increment_attempt``) and then
+publishes ``rag.extraction.source.failed`` when an event bus is wired, keeping
+queue state and observability in lockstep.
+"""
 
 from __future__ import annotations
 

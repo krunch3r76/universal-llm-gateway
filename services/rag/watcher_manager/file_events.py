@@ -1,4 +1,11 @@
-"""Hot-reload file change and delete handlers."""
+"""Hot-reload file change and delete handlers mixed into ``WatcherManager``.
+
+``RegistrationMixin._register_one`` wires each ``HotReloadWatcher``'s on_change
+and on_delete callbacks to these handlers. A change reindexes one file through
+the injected ``_index_fn``; a delete removes its chunks via ``_delete_fn``.
+Failures are logged and emitted as ``rag_file_indexing_failed`` or
+``rag_file_deletion_failed`` events rather than raised.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +26,15 @@ logger = get_logger(__name__)
 
 
 class FileEventsMixin:
+    """Per-file hot-reload handlers for inotify change and delete notifications.
+
+    Stateless mixin composed into ``WatcherManager``; it relies on the host's
+    ``_index_fn``, ``_delete_fn``, ``_emit`` and ``_note_index_mutation``.
+    ``_handle_file_change`` reindexes an existing file and emits
+    ``rag_watch_reindex_complete``; ``_handle_file_delete`` emits
+    ``rag_watch_file_deleted``.
+    """
+
     async def _handle_file_change(
         self, file_path: str, chunk_tokens: int | None
     ) -> None:

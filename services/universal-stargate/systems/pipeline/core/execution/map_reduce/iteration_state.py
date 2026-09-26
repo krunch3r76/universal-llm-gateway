@@ -10,7 +10,12 @@ from typing import Any
 
 
 class IterationStatus(StrEnum):
-    """Iteration completion status."""
+    """Lifecycle and terminal status of a single map-step iteration.
+
+    Stored on ``IterationResult.status``. ``TIMEOUT`` is set by the timeout execution
+    mode, ``CANCELLED`` by fail-fast mode when a sibling fails; ``MapEventPublisher``
+    maps these values into progress/completion event payloads.
+    """
 
     PENDING = "pending"
     RUNNING = "running"

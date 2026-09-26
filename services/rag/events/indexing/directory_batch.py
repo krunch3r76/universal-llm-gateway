@@ -1,4 +1,12 @@
-"""RAG indexing event factories — directory batch and property index rebuild."""
+"""RAG indexing event factories — directory batch and property index rebuild.
+
+Directory-scoped bulk operations driven by the admin API: ``rag.directory.cleared``
+(chunks under a directory deleted, e.g. via POST /clear_directory) and the
+``rag.directory.index.started``/``completed`` pair bracketing an
+``index_directory``/``reindex_directory`` batch, emitted from
+``admin_routes.indexing``. Also
+defines ``rag.property.index.rebuilt`` for property-index rebuild reporting.
+"""
 
 from __future__ import annotations
 

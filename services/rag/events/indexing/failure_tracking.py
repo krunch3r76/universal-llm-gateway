@@ -1,4 +1,14 @@
-"""RAG indexing event factories — indexing failure and retry tracking."""
+"""RAG indexing event factories — indexing failure and retry tracking.
+
+Separates retryable outcomes (``rag.file.retry.deferred``, the watcher tries
+again next sweep) from persisted failure records (``failure.recorded``,
+``.skipped``, ``.cleared``, ``.retry.requested``, ``persist.failed``), entity
+gate gating and I/O errors, and watcher deletion failures. Emitted by
+``rag_service.indexing`` (``index_file``, ``finalize``, ``failure_ops``),
+``watcher_manager``, ``admin_routes.failures`` and ``entity_admission._io``.
+A duplicate ``rag_article_content_hash_mismatch`` factory is re-exported here;
+``article_sync`` imports the ``events.articles`` copy.
+"""
 
 from __future__ import annotations
 

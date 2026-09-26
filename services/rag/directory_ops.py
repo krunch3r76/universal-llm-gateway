@@ -89,6 +89,18 @@ async def index_directory_contents(
     operation: str | None = None,
     max_concurrency: int | None = None,
 ) -> DirectoryIndexTotals:
+    """Index candidate files concurrently through a bounded worker queue.
+
+    Called by the admin indexing route after ``collect_directory_candidates``.
+    Each file is passed to ``index_file`` with the shared metadata overrides,
+    ``force`` and ``operation`` label; ``max_concurrency`` caps the number of
+    workers (None means one per file). Per-file exceptions are handed to
+    ``on_index_error`` and skipped rather than aborting the directory run.
+
+    Returns:
+        Aggregate indexed/deleted chunk counts plus duplicate, unchanged and
+        processed file counts for the successfully handled files.
+    """
     totals = DirectoryIndexTotals()
 
     if not file_paths:

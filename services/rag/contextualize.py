@@ -55,7 +55,14 @@ def compute_neighbor_digest(chunks: list[Chunk], idx: int) -> str:
 
 
 class ContextualizationPhaseError(RuntimeError):
-    """All cache-miss chunks failed contextualization at the indexing phase boundary."""
+    """All cache-miss chunks failed contextualization at the indexing phase boundary.
+
+    Raised by ``_run_contextualization_phase`` in
+    ``rag_service/indexing/contextualize.py`` when every cache miss failed, which
+    aborts the file's indexing and preserves its ``indexing_failures`` row for
+    reconcile retry. Carries ``failure_category`` / ``failure_reason`` and chains
+    ``first_failure_exc`` as ``__cause__``; partial failures never raise this.
+    """
 
     def __init__(
         self,

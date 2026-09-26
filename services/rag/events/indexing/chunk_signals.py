@@ -1,4 +1,12 @@
-"""RAG indexing event factories — chunk-level contextualization signals."""
+"""RAG indexing event factories — chunk-level contextualization signals.
+
+Per-chunk events (as opposed to the file-level ``contextualization`` module):
+``rag.chunk.noise.tagged`` for heuristic ``is_noise`` tagging, the
+``rag.chunk.contextualization.started/completed/failed`` trio, and
+``rag.embedding.chunk.fallback`` when batch embedding degrades to per-chunk
+requests. Emitted by ``rag_service.indexing.embed`` and
+``embeddings.batch_post``; re-exported from ``services.rag.events.indexing``.
+"""
 
 from __future__ import annotations
 

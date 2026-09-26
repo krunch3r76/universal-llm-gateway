@@ -1,4 +1,12 @@
-"""RAG indexing event factories — file lifecycle transitions."""
+"""RAG indexing event factories — file lifecycle transitions.
+
+Terminal per-file outcomes of the indexing pipeline: ``rag.file.indexed``
+(written to both ChromaDB and the property index, with timing and optional
+article metadata), ``rag.file.deleted``, ``rag.file.skipped`` (unchanged or
+duplicate), ``rag.file.indexing.failed`` and ``rag.property.index.unavailable``.
+Emitted from ``rag_service.indexing`` (``index_file``, ``finalize``, ``commit``,
+``delete``, ``file_guards``), ``rag_service.state`` and ``watcher_manager``.
+"""
 
 from __future__ import annotations
 

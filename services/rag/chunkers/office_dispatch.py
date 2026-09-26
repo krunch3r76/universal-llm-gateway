@@ -1,4 +1,11 @@
-"""Office formats and extension dispatch."""
+"""Office formats and extension dispatch.
+
+``chunk_file`` is the package entry point, re-exported from
+``services.rag.chunkers`` and called by ``rag_service/indexing/index_file.py``.
+It routes by suffix to markdown, PDF, EPUB, HTML, Word (.docx via python-docx,
+.doc via LibreOffice ``soffice`` headless) or code chunkers, and raises for
+unsupported extensions. Office outputs are tagged with ``source_format``.
+"""
 
 from __future__ import annotations
 
@@ -129,7 +136,14 @@ def chunk_file(
     target_chars: int | None = None,
     pad_chars: int | None = None,
 ) -> list[Chunk]:
-    """Dispatch to the correct chunker based on file extension."""
+    """Chunk one file by routing on its lowercased suffix to a format chunker.
+
+    Handles .md/.mdc/.txt, .pdf, .epub, HTML, .docx, .doc and code extensions;
+    ``target_chars`` / ``pad_chars`` override chunker defaults only when given
+    (for code, ``target_chars`` becomes ``max_chunk_chars``). Reads the file from
+    disk. Raises ``ValueError`` for unsupported extensions; format chunkers may
+    raise ``RuntimeError`` or ``ValueError`` on missing deps or empty text.
+    """
     suffix = path.suffix.lower()
     kwargs: dict[str, int] = {
         k: v

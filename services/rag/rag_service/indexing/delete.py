@@ -1,4 +1,13 @@
-"""File deletion and extraction-queue helpers for the indexing pipeline."""
+"""File deletion and extraction-queue helpers for the RAG indexing pipeline.
+
+``_delete_file`` is the watcher's delete callback (re-exported from the
+``indexing`` package) for a removed file: it serializes on the per-source FIFO
+gate from ``source_path_gate``, deletes the source's Chroma chunks, removes
+source-scoped property-index metadata (keeping the article row), and emits
+``rag_file_deleted`` when chunks existed. ``_enqueue_for_extraction`` is shared
+with ``finalize`` and ``file_guards`` and queues a source for async knowledge
+extraction only when its scope allows extraction.
+"""
 
 from __future__ import annotations
 

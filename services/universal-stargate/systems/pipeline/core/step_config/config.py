@@ -43,6 +43,12 @@ class StepConfig(BaseModel):
     Step configuration for pipeline execution.
 
     Invariant: ∀ binding ∈ handler_inputs.values(), binding resolved before execute()
+
+    One entry of a pipeline YAML ``steps:`` block, built by PipelineSpec
+    validation or ``expand_steps``/fragment expansion and read by the DAG executor.
+    Validators delegate to ``parsing_validators`` (bindings, map_config
+    normalization); ``computed_depends_on`` derives DAG edges, and
+    ``get_target_model_resolution`` (sync/async) delegates to ``model_resolution``.
     """
 
     model_config: ConfigDict = ConfigDict(populate_by_name=True, extra="allow")

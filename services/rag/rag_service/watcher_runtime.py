@@ -1,4 +1,13 @@
-"""Watcher, extraction worker, and post-activation background cleanup after dependency gates pass."""
+"""Watcher, reconcile, and post-activation background cleanup after dependency gates.
+
+``_start_watcher_runtime`` is called by ``dependency_activation`` once Stargate,
+embeddings and the extraction runtime are up. It builds the ``WatcherManager``
+with index/delete callbacks routed to ``indexing._index_file`` and
+``indexing._delete_file`` and a post-reconcile scope-freshness hook, checks
+post-index watermarks (emitting ``rag_post_index_stale`` and setting the strict
+gate unless enforcement is ``warn``), launches pending-reconcile, orphan and
+exclusion purge sweeps as tracked background tasks, then starts the watcher.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,12 @@
-"""Pipeline lifecycle events."""
+"""Event-bus factories for pipeline lifecycle: started, completed, failed, and
+cancelled.
+
+Emits ``pipeline.started``, ``pipeline.completed``, ``pipeline.failed`` and
+``pipeline.cancelled`` (e.g. client disconnect). ``executor/preparation.py`` publishes
+``PipelineStarted`` and ``executor/execution_loop.py`` publishes the terminal three,
+importing them under ``Bus*`` aliases because same-named recorder events in
+``events/lifecycle.py`` are emitted alongside them to the JSONL recorder.
+"""
 
 from universal_event_bus import Event, event_factory
 

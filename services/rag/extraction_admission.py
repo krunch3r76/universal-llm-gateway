@@ -1,4 +1,12 @@
-"""Observation-driven admission gate for the RAG extraction worker."""
+"""Observation-driven admission gate for the RAG extraction worker.
+
+Subscribes to the Event Service WebSocket (UDS ``EVENTS_QUERY_SOCK``) and closes
+admission when pipeline iteration timeouts burst, step failure ratios exceed
+a threshold, a federation gateway degrades, or an observed extraction model
+starts loading. Created and started by ``rag_service.extraction_runtime``;
+``extraction.worker_loop`` consults it before each dequeue. The gate is
+advisory: callers proceed after a bounded wait.
+"""
 
 from __future__ import annotations
 
@@ -36,6 +44,17 @@ _REASON_STEP_FAILURE_RATIO = "step-failure-ratio"
 
 
 class ExtractionAdmissionGate:
+    """Per-pipeline admission gate that pauses extraction dequeues under pressure.
+
+    One instance per extraction ``pipeline_id`` is built by
+    ``rag_service.extraction_runtime``, which calls ``start()`` to launch the
+    event-subscription task and ``stop()`` on shutdown. The gate stays closed
+    while any reason (``iteration-timeout-burst``, ``step-failure-ratio``,
+    ``gateway:<id>``, ``model:<id>``) is active and publishes
+    ``rag.extraction.admission.closed``/``opened`` on transitions. Key methods:
+    ``wait_for_admission``, ``is_closed`` and ``active_reasons``.
+    """
+
     def __init__(
         self,
         pipeline_id: str,

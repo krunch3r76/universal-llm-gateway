@@ -1,4 +1,11 @@
-"""Scope utility helpers: configured scopes map and vocab mode resolution."""
+"""Scope utility helpers: configured scopes map and vocab mode resolution.
+
+``configured_scopes_map`` flattens ``RagConfig.scopes`` into name-to-prefixes
+for ``update_corpus_hints`` and freshness checks (``_repair``,
+``rag_service.scope_freshness``, ``rag_service.state``, admin article routes).
+``_resolve_scope_vocab_mode`` applies per-scope ``vocab_mode`` over the global
+``vocabulary_mode``, defaulting to "local".
+"""
 
 from __future__ import annotations
 
@@ -9,7 +16,12 @@ if TYPE_CHECKING:
 
 
 def configured_scopes_map(config: RagConfig) -> dict[str, list[str]]:
-    """Map scope name → prefix list from rag.yaml."""
+    """Build a scope name → source-prefix list mapping from rag.yaml scopes.
+
+    Copies each ``ScopeDefinition.prefixes`` into a fresh list, so callers may mutate
+    the result without touching config. Includes every configured scope,
+    union scopes too; ``run_scope_freshness_repair`` skips unions itself.
+    """
     return {name: list(sdef.prefixes) for name, sdef in config.scopes.items()}
 
 

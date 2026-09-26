@@ -1,4 +1,14 @@
-"""_PropertyIndexPart06 — PropertyIndex method chunk (SLOC split)."""
+"""_PropertyIndexPart06 — PropertyIndex extraction and indexing failure ledgers.
+
+SLOC-split mixin composed into ``PropertyIndex``. Reads the per-chunk
+``failed_extractions`` table (permanent vs retriable counts, attempt counts)
+and maintains the file-level ``indexing_failures`` table: ``record_indexing_failure``
+is called by ``rag_service/indexing/failure_ops.py``, ``get_indexing_failure`` by
+the watcher manager, and ``is_indexing_failure_invalidated_by_content`` compares
+stored mtime/size so a changed file can bypass a stale failure row. Also
+persists ``contextualization_exceptions`` rows recorded when contextualization
+partially fails during indexing.
+"""
 
 # ruff: noqa: F405 — names supplied by `from ._spec import *` split-module pattern.
 from __future__ import annotations

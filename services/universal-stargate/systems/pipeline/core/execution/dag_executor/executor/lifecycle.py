@@ -27,14 +27,25 @@ logger = get_logger(__name__)
 
 
 async def ensure_proxy_client(executor: DAGExecutor) -> ProxyClient:
-    """Lazily initialize ProxyClient for handler invocations."""
+    """Return the executor's ``ProxyClient``, creating it on first use from the
+    environment.
+
+    Built via ``ProxyClient.from_environment()`` and cached on
+    ``executor._proxy_client`` so ``execute_dag`` and map-step fan-out share one
+    client per run; ``shutdown`` closes and clears it.
+    """
     if executor._proxy_client is None:
         executor._proxy_client = ProxyClient.from_environment()
     return executor._proxy_client
 
 
 async def shutdown(executor: DAGExecutor) -> None:
-    """Cleanup resources."""
+    """Close and drop the executor's cached ``ProxyClient``, if one was created.
+
+    Idempotent: a second call (or a call before any client exists) is a no-op.
+    Invoked at the end of ``cancel``; the next ``ensure_proxy_client`` call
+    would build a fresh client.
+    """
     if executor._proxy_client:
         await executor._proxy_client.close()
         executor._proxy_client = None

@@ -1,4 +1,11 @@
-"""RAG indexing event factories — HTML normalization events."""
+"""RAG indexing event factories — HTML normalization events.
+
+HTML sources are converted to deterministic markdown before chunking; these
+three signals (``rag.html.normalization.started``, ``.completed`` with output
+character count, and ``.failed``, after which the file is skipped) let
+operators trace that pre-chunking step. Emitted by
+``rag_service.indexing.index_file``.
+"""
 
 from __future__ import annotations
 

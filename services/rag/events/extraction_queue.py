@@ -1,4 +1,12 @@
-"""RAG extraction queue event factories."""
+"""Event factories for the SQLite-backed RAG extraction queue lifecycle.
+
+Signals: ``rag.extraction.source.claimed`` and ``.source.completed`` (emitted by
+``extraction.worker_loop``), ``.source.failed`` (``extraction.record_failure``),
+and ``rag.extraction.claim.recovered`` plus ``rag.extraction.queue.woken``
+(``rag_service.extraction_runtime`` at startup recovery and on model-available
+wake-ups). Payloads are keyed by source path so one queue row can be traced
+from claim to completion or failure.
+"""
 
 from __future__ import annotations
 

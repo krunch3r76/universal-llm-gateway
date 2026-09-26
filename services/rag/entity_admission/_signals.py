@@ -1,4 +1,10 @@
-"""Signal application: react to cortex.entity.source.changed."""
+"""Signal application: react to cortex.entity.source.changed.
+
+Holds ``_apply_signal``, which ``EntityAdmissionGate`` in ``gate.py`` invokes
+for every Event Service message received by the ``_io`` subscriber. It only
+marks the gate dirty on source-changed signals; the debounced full refresh
+of the admitted path set happens in the ``_io`` dirty-refresh worker.
+"""
 
 from __future__ import annotations
 

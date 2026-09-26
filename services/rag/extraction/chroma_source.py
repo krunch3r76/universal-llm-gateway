@@ -1,4 +1,12 @@
-"""Run extraction for one Chroma source."""
+"""Run LLM knowledge extraction for every pending chunk of one ChromaDB source.
+
+``extract_source`` is called by ``extraction.worker_loop`` for each claimed
+queue row. It selects non-noise chunks lacking ``extraction_schema_version``,
+submits them to the Stargate extraction pipeline, patches chunk metadata in
+ChromaDB and writes property-index quads via ``build_property_entries``. If
+recording the execution id fails, the Stargate execution is cancelled so no
+orphan run exists without a database pointer.
+"""
 
 from __future__ import annotations
 

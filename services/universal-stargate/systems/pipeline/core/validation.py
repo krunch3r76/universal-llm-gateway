@@ -17,7 +17,16 @@ logger = logging.getLogger(__name__)
 
 
 class PipelineValidator:
-    """Validates pipeline configuration at parse time."""
+    """Validates pipeline configuration at parse time.
+
+    Stateless checker instantiated per use (e.g. ``PipelineValidator()`` in
+    ``scripts/validate_pipeline/pipeline.py``) after a ``PipelineSpec`` has been
+    parsed. ``validate`` runs every check (reserved-namespace usage for
+    ``loopNs``/``mapNs``, step order, bindings, circular dependencies, map
+    steps, declared-type compatibility, ``reads_from``) and returns a list of
+    human-readable error strings rather than raising. Distinct from the
+    registry-level ``registry.validator.PipelineValidator``.
+    """
 
     RESERVED_NAMESPACES = frozenset({"sourceNs", "optionsNs", "loopNs", "mapNs"})
 

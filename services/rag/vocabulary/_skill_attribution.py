@@ -1,4 +1,11 @@
-"""Pure helpers for per-skill vocabulary attribution JOIN."""
+"""Pure helpers for per-skill vocabulary attribution JOIN, with no I/O.
+
+``build_skill_vocabulary_rows`` joins classified scope vocabulary with
+per-source term occurrence counts, mapping each source to a skill slug.
+Called by ``scripts/rag/attribute_skill_vocabulary.py``, which does the
+property-index reads and the idempotent full-replace of ``skill_vocabulary``.
+Terms match case-insensitively.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,11 @@
-"""Step output types for pipeline handler execution."""
+"""Step output dataclasses shared by pipeline handlers and the executor.
+
+Defines ``StepOutput`` (raw model response, parsed JSON, optional captured
+prompts, and an optional passthrough ``stream`` of chat.completion chunks) and
+``MapIterationState`` (provenance for the current map iteration, populated by
+MapExecutor). Re-exported through ``protocol.py``, ``handler_contract.py`` and
+``pipeline_context.py`` so handlers import them from one place.
+"""
 
 from __future__ import annotations
 

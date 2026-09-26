@@ -376,7 +376,12 @@ _fragment_loader: FragmentLoader | None = None
 
 
 def get_fragment_loader(config_dir: str = "config") -> FragmentLoader:
-    """Get or create fragment loader singleton."""
+    """Return the process-wide FragmentLoader, creating and loading it on first call.
+
+    The first call builds a FragmentLoader for ``config_dir`` and runs ``load()``;
+    later calls return the cached instance and ignore ``config_dir``. Used by
+    PipelineExecutor at construction to expand ``use:`` fragment references.
+    """
     global _fragment_loader
     if _fragment_loader is None:
         _fragment_loader = FragmentLoader(config_dir)

@@ -1,4 +1,11 @@
-"""Chunk sizing constants and shared parsers."""
+"""Chunk sizing constants and shared parsers.
+
+Imported by every sibling chunker (``markdown_pdf``, ``code_chunking``,
+``epub_html``, ``office_dispatch``). Budgets are defined in tokens and converted
+to characters at a fixed 4 chars/token estimate (prose target 4096 + 1024 pad,
+code 1024). Also holds the code/HTML extension sets, HTML boilerplate CSS
+selectors, and the module-level tree-sitter Python parser.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,12 @@
-"""RAG admission gate event factories."""
+"""RAG admission gate event factories for the Stargate cold-load admission path.
+
+Defines ``rag.admission.first.burst.observed`` (the first OPEN to CLOSED
+transition caused by ``model.loading.started``, sizing the contextualize burst)
+and ``rag.admission.io.failed`` (snapshot or burst-fetch HTTP errors). Both are
+emitted only by ``services.rag.admission_gate._io`` on behalf of the
+contextualization ``AdmissionGate``; this is distinct from the extraction
+worker's gate, whose events live in ``events.extraction_admission``.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,12 @@
-"""_PropertyIndexPart01 — PropertyIndex method chunk (SLOC split)."""
+"""_PropertyIndexPart01 — PropertyIndex method chunk (SLOC split).
+
+First of the mixins composed into ``PropertyIndex`` in
+``services/rag/property_index/__init__.py``. It owns the lifecycle core:
+``__init__``, ``start``/``stop`` (SQLite connect in WAL mode, legacy DB path
+move, FtsIndex attach), the ordered schema_version migrations v1 through v16,
+and the first write method ``add``. Writes are serialized via
+SequentialExecutor; reads use the shared connection directly.
+"""
 
 from __future__ import annotations
 

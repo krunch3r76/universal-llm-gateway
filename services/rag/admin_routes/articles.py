@@ -1,4 +1,12 @@
-"""Article metadata and source deletion routes."""
+"""Article metadata, corpus-hint refresh and source deletion routes for RAG admin.
+
+``register_article_routes`` is called by ``register_admin_routes`` in
+``admin_routes/__init__.py`` and serves ``GET /articles``,
+``GET /orphaned_articles``, ``POST /refresh_corpus_hints``, ``POST /article`` and
+``DELETE /source``; it also delegates ``DELETE /directory`` to
+``_directory_routes``. Deletes purge Chroma, property index, FTS and article rows
+together so retrieval state stays coherent.
+"""
 
 from __future__ import annotations
 
@@ -57,7 +65,14 @@ def register_article_routes(
     | None = None,
     **_kwargs: object,
 ) -> None:
-    """Register article metadata and source deletion routes onto router."""
+    """Attach article listing, upsert, orphan, hint-refresh and delete handlers.
+
+    Handlers resolve the Chroma collection and ``PropertyIndex`` lazily through
+    the getter closures; most return HTTP 503 when the property index is absent.
+    Upserts and deletes publish ``rag_article_upserted`` / ``rag_source_deleted``
+    when an event bus is wired, and call the optional article-registry refresh or
+    reconcile callbacks. Also registers ``DELETE /directory``.
+    """
 
     @router.get(
         "/articles",

@@ -1,4 +1,10 @@
-"""Map extracted knowledge into property-index quads."""
+"""Map extracted knowledge into property-index quads.
+
+Pure transformation used by ``extraction.chroma_source.extract_source`` after a
+chunk is extracted: each entity name, type, facet, relation and topic becomes a
+``prop.<kind>@@<value>`` key paired with the chunk id, scope and source path,
+ready for ``PropertyIndex.add_batch_with_scope``.
+"""
 
 from __future__ import annotations
 
@@ -11,7 +17,13 @@ def build_property_entries(
     scope: str = "all",
     source: str = "",
 ) -> list[tuple[str, str, str, str]]:
-    """Build (key, chunk_id, scope, source) quads from extracted knowledge."""
+    """Flatten one chunk's ExtractedKnowledge into property-index key quads.
+
+    Emits one ``(key, chunk_id, scope, source)`` tuple per entity name
+    (``prop.name@@``), entity type (``prop.type@@``), facet
+    (``prop.facet@@name:value``), relation (``prop.rel@@entity>predicate>target``)
+    and topic (``prop.topic@@``). No I/O; the caller persists the result.
+    """
     return (
         [
             (f"prop.name@@{entity.name}", chunk_id, scope, source)

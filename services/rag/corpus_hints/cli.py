@@ -1,4 +1,11 @@
-"""CLI entry for one-shot corpus hints generation and Chroma backfill."""
+"""CLI entry for one-shot corpus hints generation and Chroma backfill.
+
+``main`` is invoked from the ``__main__`` block of ``corpus_hints/__init__.py``
+(``python -m services.rag.corpus_hints``). It opens its own ``PropertyIndex``,
+prints per-prefix term-band diagnostics, runs ``update_corpus_hints`` over the
+scopes from ``rag.yaml`` and stamps the ``corpus_hints`` watermark. Intended for
+operators, not the running service.
+"""
 
 from __future__ import annotations
 
@@ -47,7 +54,14 @@ def _build_chunk_source_map() -> dict[str, str]:
 
 
 def main() -> None:
-    """Run one-shot corpus-hints generation from the local property index."""
+    """Run one-shot corpus-hints generation from the local property index.
+
+    Parses ``sys.argv`` flags: ``--backfill`` (copy chunk sources from the Chroma
+    ``knowledge`` collection into property rows), ``--scope NAME``,
+    ``--no-entity-boost`` and ``--no-blocklist``. Writes hint rows to
+    ``rag_metadata.db``, prints a summary, and exits with status 1 when no hints
+    are generated.
+    """
     args = sys.argv[1:]
     do_backfill = "--backfill" in args
 

@@ -1,4 +1,11 @@
-"""Shared helpers and validators for admin routes."""
+"""Shared helpers, validators and response TypedDicts for the RAG admin routes.
+
+Imported by ``admin_routes/indexing.py`` (path validation, ``DEFAULT_EXTENSIONS``,
+list alignment), ``status.py`` (coverage sources, per-source pipeline status),
+``articles.py`` (pipeline stage, orphaned-article types) and
+``_extraction_export.py``. Path validators raise ``HTTPException`` so route
+handlers can call them without their own error mapping.
+"""
 
 from __future__ import annotations
 
@@ -146,6 +153,13 @@ def _get_pipeline_stage(
 
 
 class OrphanedArticle(TypedDict):
+    """One article-table row with no matching ``indexed_sources`` record.
+
+    Built per SQL row by the ``GET /orphaned_articles`` handler in ``articles.py``
+    (a LEFT JOIN of ``articles`` against ``indexed_sources``); plain dict data,
+    never mutated after construction.
+    """
+
     source_path: str
     title: str
     scope: str
@@ -153,6 +167,12 @@ class OrphanedArticle(TypedDict):
 
 
 class OrphanedArticlesResponse(TypedDict):
+    """Response body of ``GET /orphaned_articles`` (MCP ``rag.orphaned_articles``).
+
+    Holds the orphaned article rows, newest ``updated_at`` first, plus their
+    count; returned empty when the property index is unavailable.
+    """
+
     orphans: list[OrphanedArticle]
     count: int
 

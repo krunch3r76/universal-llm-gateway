@@ -1,4 +1,15 @@
-"""Pipeline model availability checks."""
+"""Pipeline model availability checks used to filter or defer pipelines with absent
+models.
+
+Pure helpers with injected dependencies: ``get_pipeline_required_models`` walks a
+``PipelineSpec`` (direct ``model_ref``, ``optionsNs.<key>`` refs, and map steps whose
+``map_over`` points at an options list/dict) and resolves each ref to a concrete model
+ID; ``are_models_available`` and ``missing_models`` then test those IDs against an
+``is_available`` predicate supplied by Stargate. Called by
+``PipelineRegistry._should_filter_pipeline`` (registry/core.py) and ``PipelineLoader``
+(registry/loader.py) when deciding whether a loaded pipeline is registered, deferred
+until domains load, or reported as unavailable. No catalog or registry I/O happens here.
+"""
 
 from __future__ import annotations
 
@@ -189,5 +200,11 @@ def missing_models(
     *,
     is_available: Callable[[str], bool],
 ) -> set[str]:
-    """Subset of *required_models* for which *is_available* is False."""
+    """Return the subset of *required_models* whose *is_available* predicate is False.
+
+    Complement of ``are_models_available``: used by ``PipelineRegistry`` and
+    ``PipelineLoader`` only after a pipeline is flagged for filtering, to log or defer
+    it with the sorted list of absent model IDs. Pure; an empty input yields an empty
+    set.
+    """
     return {mid for mid in required_models if not is_available(mid)}

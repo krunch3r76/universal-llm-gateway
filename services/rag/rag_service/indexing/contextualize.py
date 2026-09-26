@@ -1,4 +1,14 @@
-"""Contextualization phase for the indexing pipeline."""
+"""Contextualization phase of the RAG index funnel (LLM chunk context prefixes).
+
+``_run_contextualization_phase`` is called by ``indexing/embed.py`` when a
+``contextualize_model`` is configured. It loads cached contexts from the
+property index, builds a cache plan, calls ``contextualize_chunks`` only for
+cache misses, merges results into chunk metadata and embed texts, and returns
+rows to persist plus per-chunk cache-hit flags used by the embed diff gate.
+Partial failures are recorded as contextualization exceptions; if every miss
+fails it raises ``ContextualizationPhaseError``. Emits cache-evaluated, started,
+partial, applied and completed events.
+"""
 
 from __future__ import annotations
 

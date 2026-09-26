@@ -66,7 +66,13 @@ logger = get_logger(__name__)
 
 
 class HandlerLoadError(Exception):
-    """Fatal error loading handler package. Stops startup."""
+    """Fatal error loading handler package. Stops startup.
+
+    Raised by ``_load_handlers_package`` when a ``handlers/__init__.py`` has
+    no module spec, fails to import, lacks ``register_handlers(router)``, or
+    its ``register_handlers`` call raises. The directory scan catches it,
+    logs, and skips that domain (shared failure) or variant package.
+    """
 
     pass
 

@@ -1,4 +1,12 @@
-"""Shared token-budget estimation helpers for pipeline tooling."""
+"""Shared token-budget estimation helpers for pipeline batching and cost planning.
+
+Pure, dependency-free arithmetic: character-to-token estimation, first-fit-decreasing
+bin packing of items into token-budgeted batches, the code-review validate-step token
+envelope, and per-model cost projection. The ``POST /pipelines/estimate`` router
+(``proxy/routers/v1/pipeline_estimate.py``) is the caller. All helpers validate inputs
+eagerly and raise ``ValueError`` on negative or non-positive parameters; token counts
+are always rounded up with ``ceil``.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +16,12 @@ from typing import TypedDict
 
 
 class PackedBatch(TypedDict):
-    """Packed batch result with item names and token total."""
+    """One batch produced by ``pack_first_fit_decreasing``: item names plus token total.
+
+    ``items`` lists ``EstimateItem.name`` values in placement order and ``tokens`` is
+    their summed estimate, which never exceeds the budget unless a single oversize item
+    forced its own batch. Returned as plain dicts for direct JSON serialization.
+    """
 
     items: list[str]
     tokens: int
@@ -24,7 +37,12 @@ class EstimateItem:
 
 
 def estimate_tokens(chars: int, *, chars_per_token: float) -> int:
-    """Estimate token count from character count."""
+    """Convert a character count into an approximate token count, rounded up.
+
+    Computes ``ceil(chars / chars_per_token)``; the ratio is caller-supplied per
+    pipeline. Raises ``ValueError`` when ``chars`` is negative or ``chars_per_token`` is
+    not positive.
+    """
     if chars < 0:
         raise ValueError("chars must be >= 0")
     if chars_per_token <= 0:
@@ -37,7 +55,13 @@ def pack_first_fit_decreasing(
     *,
     budget_tokens: int,
 ) -> list[PackedBatch]:
-    """Pack items into budgeted batches using first-fit decreasing."""
+    """Group items into token-budgeted batches with the first-fit-decreasing heuristic.
+
+    Items are sorted by ``tokens`` descending and each is placed in the first existing
+    batch with room, else a new batch. An item larger than ``budget_tokens`` still gets
+    its own (over-budget) batch rather than being dropped. Returns a list of
+    ``PackedBatch``. Raises ``ValueError`` when ``budget_tokens`` is not positive.
+    """
     if budget_tokens <= 0:
         raise ValueError("budget_tokens must be > 0")
 
@@ -62,7 +86,13 @@ def compute_code_review_validate_tokens(
     validate_amplification: float,
     fixed_overhead_tokens: int,
 ) -> int:
-    """Estimate validate-step token envelope for code-review pipeline."""
+    """Estimate the validate-step token envelope for the code-review pipeline.
+
+    Formula: ``ceil(source_tokens * validate_amplification + fixed_overhead_tokens)``,
+    modelling validation output that scales with reviewed source plus a fixed prompt
+    cost. Raises ``ValueError`` on negative tokens/overhead or a non-positive
+    amplification.
+    """
     if source_tokens < 0:
         raise ValueError("source_tokens must be >= 0")
     if validate_amplification <= 0:
@@ -78,7 +108,14 @@ def project_model_cost(
     prompt_cost_per_million: float | None,
     completion_cost_per_million: float | None,
 ) -> dict[str, float]:
-    """Project prompt/completion cost from optional model pricing."""
+    """Project prompt and completion dollar cost for a token estimate from model
+    pricing.
+
+    Multiplies ``estimated_tokens / 1_000_000`` by each per-million price; a ``None``
+    price counts as zero. Returns ``{"projected_prompt_cost",
+    "projected_completion_cost"}`` rounded to 8 decimals. Raises ``ValueError`` when
+    ``estimated_tokens`` is negative.
+    """
     if estimated_tokens < 0:
         raise ValueError("estimated_tokens must be >= 0")
 

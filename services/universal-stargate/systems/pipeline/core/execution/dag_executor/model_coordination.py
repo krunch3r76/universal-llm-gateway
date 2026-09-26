@@ -1,4 +1,13 @@
-"""Model lock and global tracking coordination for DAG executor."""
+"""Per-step model resolution, local model locks, and global usage tracking for the DAG
+executor.
+
+``StepModelCoordinator`` is instantiated by ``DAGExecutor.__init__`` and called
+from the executor's scheduling, completion, lifecycle (cancel), and step-runner
+modules. It caches target-model resolution per (step id, override set) so gating,
+execution, and release agree on one model identity, serializes steps on a model
+via ``ModelUsageTracker``, registers in-use models with ``gateway_tracker`` for
+eviction protection, and fails fast on coordinator/handler model drift.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +30,17 @@ logger = get_logger(__name__)
 
 
 class StepModelCoordinator:
-    """Encapsulate model lock and global usage tracking decisions."""
+    """Coordinate which model each DAG step uses and guard that model while the step
+    runs.
+
+    One instance per ``DAGExecutor`` run, created in its constructor and held as
+    ``executor._model_coordination``; state (resolution cache, local
+    ``ModelUsageTracker``) lives for that run only. Key methods:
+    ``resolve_target_model`` / ``resolve_target_model_resolution_for_execution``
+    (cached resolution), ``get_lock_model`` and ``can_launch_with_lock`` (gating),
+    ``on_step_launched`` / ``on_step_finished`` / ``on_cancelled_step`` (claim and
+    release with gate events), and ``validate_resolution_consistency`` (drift check).
+    """
 
     def __init__(self, executor: DAGExecutor) -> None:
         self._executor = executor

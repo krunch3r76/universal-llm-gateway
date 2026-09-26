@@ -21,7 +21,14 @@ if TYPE_CHECKING:
 def get_record(
     tracker: PipelineExecutionTracker, execution_id: str
 ) -> PipelineExecutionRecord | None:
-    """Return the record for ``execution_id`` or ``None`` if unknown/expired."""
+    """Look up an async execution record by ID after pruning expired terminal records.
+
+    Side effect: runs ``_prune_terminal_records`` first, which evicts completed/failed
+    records older than the retention window and emits
+    ``pipeline.dispatch.tracker.expired`` for each. Returns the
+    ``PipelineExecutionRecord`` or ``None`` if unknown or pruned. Backs the tracker's
+    public ``get`` method.
+    """
     _prune_terminal_records(tracker)
     return tracker.records.get(execution_id)
 

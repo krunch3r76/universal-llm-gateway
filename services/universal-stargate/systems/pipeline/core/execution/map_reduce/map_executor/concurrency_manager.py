@@ -1,4 +1,11 @@
-"""Map executor concurrency: timeout monitoring and federation cancellation."""
+"""Map executor concurrency: stall-timeout warnings and federation request cancellation.
+
+Provides ``MapConcurrencyManager``, built once per map step by ``MapExecutor`` and
+shared with ``MapExecutionModes``, ``TimeoutExecutionMode`` and
+``InferenceTimeoutMonitor``. Warnings are emitted as ``MapTimeoutWarning`` bus events
+through ``MapEventPublisher``; cancellation goes through an optional injected callback
+so remote federation workers release capacity.
+"""
 
 from __future__ import annotations
 
@@ -19,7 +26,15 @@ logger = logging.getLogger(__name__)
 
 
 class MapConcurrencyManager:
-    """Manages timeout warnings and federation request cancellation."""
+    """Per-map-step helper for stall-timeout warnings and cancelling in-flight
+    iterations.
+
+    Created by ``MapExecutor.__init__`` with the step config, an optional
+    ``cancel_callback(map_iteration_request_id, model_id) -> bool`` and the step's
+    ``MapEventPublisher``; lives for one map step execution. Key methods:
+    ``timeout_warning_monitor`` (75%/90% stall warnings, polled every 5s) and
+    ``cancel_pending_iterations`` (fan-out cancel of pending federation requests).
+    """
 
     def __init__(
         self,

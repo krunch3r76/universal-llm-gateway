@@ -1,4 +1,11 @@
-"""Markdown and PDF chunking."""
+"""Markdown and PDF chunking.
+
+``chunk_markdown`` is the shared section-then-paragraph splitter used by every
+prose path (``epub_html``, ``office_dispatch`` for .md/.txt/.docx/.doc) and
+emits ``heading`` / ``section_path`` / ``overlap_prefix_len`` metadata.
+``chunk_pdf`` converts via pymupdf4llm, strips running headers, and rewrites
+bold pseudo-headings to ATX with ``normalize_pdf_headings`` before chunking.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,15 @@
-"""Startup / reconcile / watcher automatic scope-freshness repair hooks."""
+"""Startup / reconcile / watcher automatic scope-freshness repair hooks.
+
+Three entry points detect stale scopes (corpus hints and vocabulary lagging the
+indexed corpus) and call ``run_scope_freshness_repair`` with a trigger label:
+``_run_startup_scope_freshness_repair`` (background task from
+``dependency_activation``, retried with ``STARTUP_SCOPE_REPAIR_RETRY_DELAYS_S``),
+``_post_reconcile_scope_freshness`` (``post_reconcile_repair`` hook passed to
+``WatcherManager`` by ``watcher_runtime``) and
+``_watcher_debounced_scope_freshness`` (exported via ``lifecycle``). After each
+repair the post-index strict gate ``state._post_index_stale`` is cleared once
+the reindex watermarks have caught up.
+"""
 
 from __future__ import annotations
 

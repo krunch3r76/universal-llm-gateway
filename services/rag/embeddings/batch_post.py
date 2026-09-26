@@ -1,4 +1,13 @@
-"""Gateway POST batching with retry, split-on-500, and zero-vector fallback."""
+"""Gateway POST batching with retry, split-on-500, and zero-vector fallback.
+
+``post_embeddings`` sends one batch to the gateway ``/v1/embeddings`` endpoint
+and is used by ``chunk_embed.embed_chunks`` and ``query_embed``. A 500 on a
+multi-item batch is bisected recursively; a single-item 500 is truncated to
+the model's token cap or retried; 503/504 wait for the model to rewarm; other
+transient codes back off with jitter. As a last resort a single failing text
+gets a zero vector (emitting ``rag_embedding_chunk_fallback``) once the
+embedding dimension is known.
+"""
 
 from __future__ import annotations
 
@@ -37,7 +46,15 @@ __all__ = ["post_embeddings"]
 
 
 def parse_embedding_rows(payload: dict[str, object]) -> list[list[float]]:
-    """Extract embedding vectors from gateway response payload."""
+    """Pull the ``data[*].embedding`` vectors out of an OpenAI-style response.
+
+    Returns:
+        Vectors in response order.
+
+    Raises:
+        RuntimeError: When ``data`` is not a list, an item is not an object,
+            or an item lacks an ``embedding`` list.
+    """
     data = payload.get("data")
     if not isinstance(data, list):
         raise RuntimeError("Embedding response missing list 'data' field")

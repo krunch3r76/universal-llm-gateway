@@ -1,4 +1,14 @@
-"""_PropertyIndexPart03 — PropertyIndex method chunk (SLOC split)."""
+"""_PropertyIndexPart03 — PropertyIndex article, cleanup and vocabulary writers.
+
+SLOC-split mixin composed into ``PropertyIndex``. Covers article identity sync
+(``sync_article_structural_fields``, called by the indexing commit phase and
+file guards, which preserves curated title/authors/venue), article and
+source-metadata removal, extraction-failure clearing, ``backfill_source``, and
+wholesale replacement of ``corpus_hints``, ``scope_vocabulary`` and
+``skill_vocabulary`` rows (``replace_corpus_hints_for_scope`` is driven by
+``corpus_hints/update.py``). Also exposes read helpers that load skill/scope
+vocabulary, corpus hint scores and per-scope list enrichment.
+"""
 
 # ruff: noqa: F405 — names supplied by `from ._spec import *` split-module pattern.
 from __future__ import annotations

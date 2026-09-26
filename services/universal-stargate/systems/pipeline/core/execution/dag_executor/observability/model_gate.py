@@ -27,7 +27,13 @@ def emit_pipeline_step_model_deferred(
     model_id: str,
     reason: str,
 ) -> None:
-    """Emit model-gate deferral for a runnable step."""
+    """Publish ``PipelineStepModelDeferred`` when a runnable step cannot take its model
+    gate yet.
+
+    Called from ``launch_steps`` with ``reason`` ``gate_unavailable`` (model lock
+    held elsewhere) or ``gate_already_claimed`` (claimed earlier in this pass).
+    Bus-only, fire-and-forget; no recorder event.
+    """
     from src.scheduling.events import PipelineStepModelDeferred
 
     pipeline_id, execution_id = get_event_context(obs)
@@ -91,7 +97,13 @@ def emit_pipeline_model_gate_released_on_failure(
     model_id: str,
     error_type: str,
 ) -> None:
-    """Emit failure-boundary gate release event for failed step execution."""
+    """Publish ``PipelineModelGateReleasedOnFailure`` after a failed step frees its
+    model gate.
+
+    Emitted by ``await_and_handle_completions`` in addition to the regular
+    gate-released event (outcome ``failure``), only when the step had a target
+    model; ``error_type`` is the exception class name. Bus-only, fire-and-forget.
+    """
     from src.scheduling.events import PipelineModelGateReleasedOnFailure
 
     pipeline_id, execution_id = get_event_context(obs)

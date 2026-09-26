@@ -1,4 +1,14 @@
-"""Article sync phase: orphan detection and content-hash mismatch check."""
+"""Article sync phase of the file index funnel: move detection and hash checks.
+
+``_run_article_sync_phase`` is called by ``indexing/index_file.py`` before
+chunking. When a file's content hash matches an article row whose old path no
+longer exists, it migrates the row to the new path via
+``PropertyIndex.move_article_source_path``, refreshes the article registry and
+emits ``rag_article_path_moved``; the returned old path lets file guards migrate
+Chroma chunk metadata too. It also warns and emits
+``rag_article_content_hash_mismatch`` when the article registry expects a
+different hash than the file on disk.
+"""
 
 from __future__ import annotations
 

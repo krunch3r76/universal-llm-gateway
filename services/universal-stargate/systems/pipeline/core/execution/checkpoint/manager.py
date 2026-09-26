@@ -2,6 +2,12 @@
 Checkpoint manager for pipeline execution.
 
 Handles checkpoint save/load with event emission.
+
+``CheckpointManager`` is built per pipeline execution around a ``CheckpointBackend`` and
+``CheckpointConfig`` and passed to ``execute_step_with_wrappers`` (``step_wrapper.py``)
+and ``MapExecutor`` to reuse cached step or iteration outputs. Keys are execution-scoped
+unless an input fingerprint is supplied; optional SHA-256 checksums guard loads. Storage
+errors are logged and reported as ``CheckpointFailed`` events, never raised to callers.
 """
 
 import hashlib

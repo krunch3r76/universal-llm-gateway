@@ -168,7 +168,14 @@ def _prune_sync(path: Path, retention_seconds: float) -> tuple[int, float | None
 
 
 async def initialize_schema() -> None:
-    """Ensure the sqlite journal schema exists."""
+    """Create the ``dispatch_records`` table and its index if missing, off the event
+    loop.
+
+    Runs the blocking sqlite DDL via ``asyncio.to_thread`` against
+    ``$DATA_DIR/pipeline-dispatch.db`` (default ``~/.gateway``). Idempotent. Called once
+    by ``initialize_dispatch_journal`` at Stargate startup before the tracker's journal
+    writer is installed.
+    """
     await asyncio.to_thread(_initialize_schema_sync, _journal_path())
 
 
@@ -177,7 +184,14 @@ async def journal_terminal(
     *,
     event_bus: _EventBusProtocol | None = None,
 ) -> None:
-    """Persist a terminal tracker record to sqlite."""
+    """Upsert a completed or failed tracker record into the sqlite dispatch journal.
+
+    Silently returns for non-terminal statuses or records without ``completed_at``.
+    Otherwise writes ``record.to_dict()`` as JSON via ``INSERT OR REPLACE`` on a worker
+    thread and, when ``event_bus`` is given, fire-and-forget publishes
+    ``PipelineDispatchJournalWritten`` with the byte size. Installed (via ``partial``)
+    as the async tracker's journal writer by ``initialize_dispatch_journal``.
+    """
     if record.status not in {"completed", "failed"}:
         return
     if record.completed_at is None:
@@ -227,7 +241,13 @@ async def prune_expired(
     *,
     event_bus: _EventBusProtocol | None = None,
 ) -> dict[str, float | int | None]:
-    """Delete records older than ``retention_seconds`` and emit prune telemetry."""
+    """Delete records older than ``retention_seconds`` and emit prune telemetry.
+
+    Age is measured from ``completed_at_epoch``. Runs the sqlite DELETE on a worker
+    thread, publishes ``PipelineDispatchJournalPruned`` when ``event_bus`` is given, and
+    returns a dict with ``records_deleted`` and ``oldest_deleted_age_seconds`` (None if
+    nothing was deleted). Invoked hourly by the Stargate dispatch-journal prune loop.
+    """
     deleted, oldest_age_seconds = await asyncio.to_thread(
         _prune_sync,
         _journal_path(),

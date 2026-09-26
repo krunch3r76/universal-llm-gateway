@@ -30,7 +30,13 @@ def log_step_model_calls(
     *,
     success: bool,
 ) -> None:
-    """Log per-step model call summary to execution logger."""
+    """Write one summary line of a step's model calls to ``systems.pipeline.execution``.
+
+    Reports completed/failed status (from ``success``), execution id, distinct
+    models, call count, prompt/completion/total tokens, duration, and snapshot
+    request ids. Called by ``record_success`` and ``record_failure`` after the
+    per-step call ledger is drained; emits no events.
+    """
     _, execution_id = get_event_context(obs)
     total_prompt = sum(c.prompt_tokens for c in calls)
     total_completion = sum(c.completion_tokens for c in calls)

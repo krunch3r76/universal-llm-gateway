@@ -58,7 +58,16 @@ def record_success(
     output: StepOutput,
     duration: float,
 ) -> None:
-    """Record successful step completion with auto-aggregated tokens."""
+    """Finalize a successful step: aggregate tokens, mark COMPLETED, emit events, unlock
+    dependents.
+
+    Drains the step's model-call ledger, filling ``output`` token counts only
+    when the handler left both at zero, and logs the call summary. Mutates the
+    node (``COMPLETED``, output), clears step progress, stores the output in
+    context for non-map steps, appends ``execution_order``, and propagates
+    completion. Emits recorder ``StepOutputCaptured`` + ``StepCompleted`` and
+    bus ``StepCompleted`` (with exit code and optional cached tokens).
+    """
     step_calls = obs._executor.context.drain_step_calls(node.step.name)
     if step_calls:
         output.model_call_count = len(step_calls)
@@ -143,7 +152,15 @@ def record_success(
 def record_failure(
     obs: StepObservability, node: StepNode, error: Exception, duration: float
 ) -> None:
-    """Record step failure, preserving timeout/debug metadata semantics."""
+    """Finalize a failed step: mark FAILED, tally partial usage, write debug file, emit
+    events.
+
+    Drains all model calls but sums tokens only from successful ones; marks the
+    node ``FAILED`` with ``error``; enriches ``StepTimeoutError`` with token,
+    call-count, and item-progress metadata; writes a failure-debug artifact
+    (errors there are logged, never raised); and emits recorder ``StepFailed``
+    plus bus ``StepFailed`` with traceback. Does not propagate to dependents.
+    """
     all_calls = obs._executor.context.drain_step_calls(node.step.name)
     successful_calls = [
         call for call in all_calls if getattr(call, "success", True) is True

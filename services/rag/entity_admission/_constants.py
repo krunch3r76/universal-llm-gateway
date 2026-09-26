@@ -1,4 +1,10 @@
-"""EntityAdmissionGate configuration constants."""
+"""Timing and endpoint constants for the RAG EntityAdmissionGate I/O loops.
+
+Consumed by ``entity_admission/_io.py``: the Event Service socket and
+subscribe path, the cortex-api ``/entities/source-paths`` snapshot endpoint,
+snapshot timeout, steady backstop vs unready retry intervals, the debounce
+window for ``cortex.entity.source.changed`` bursts, and WS reconnect delay.
+"""
 
 from __future__ import annotations
 

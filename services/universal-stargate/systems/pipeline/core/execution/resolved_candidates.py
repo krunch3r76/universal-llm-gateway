@@ -1,4 +1,11 @@
-"""Per-execution cache for ranked model candidates."""
+"""Per-execution cache for ranked model candidates resolved from model requirements.
+
+``get_ranked_candidates`` memoizes ``async_resolve_model_requirements`` results on the
+pipeline context (``_resolved_model_candidates``), keyed by step name, requirements and
+token estimate. Called by ``step_config.model_resolution``, ``handlers.model_fallback``
+and ``handlers.generate.model_resolution``; returns copies so callers cannot mutate the
+cache.
+"""
 
 from __future__ import annotations
 

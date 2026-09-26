@@ -26,7 +26,14 @@ logger = get_logger(__name__)
 
 
 def capture_step_inputs(obs: StepObservability, step: StepConfig) -> dict[str, Any]:
-    """Capture resolved handler inputs for observability."""
+    """Resolve a step's ``handler_inputs`` bindings into a recorder-friendly snapshot.
+
+    Returns a mapping of input name to ``{"source": str(binding), "value": ...}``;
+    string values over 2000 chars are truncated with a length suffix. A binding
+    that fails to resolve is logged as a warning and recorded with value ``None``.
+    Returns an empty dict when the step declares no handler inputs. Called by
+    ``emit_step_inputs`` only when a recorder is attached.
+    """
     from ...resolver import NamespaceResolver, traverse_path
 
     inputs: dict[str, Any] = {}

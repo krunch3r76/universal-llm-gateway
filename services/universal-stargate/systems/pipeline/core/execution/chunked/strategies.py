@@ -2,6 +2,14 @@
 Chunking and model selection strategies.
 
 Pattern: Strategy — interchangeable algorithms for chunking and selection.
+
+Three pluggable families consumed by ``ChunkedModelExecutor``: ``ChunkStrategy``
+subclasses partition items into ``Chunk`` objects (``BySize``, ``ByField``,
+``Individual``, ``ByFieldThenBySize``); ``ModelSelector`` subclasses assign a model ID
+per chunk (``RoundRobin``, ``FirstAvailable``, ``ByChunkKey``, ``Weighted``); and
+``FallbackHandler`` subclasses produce results when a chunk fails (``RaiseFallback``,
+``SkipFallback``, ``DefaultValueFallback``, ``CallableFallback``). ``model_config``'s
+``create_chunk_strategy`` picks among the chunk strategies from ``chunk_size`` config.
 """
 
 from __future__ import annotations
@@ -20,7 +28,14 @@ from .chunk_types import Chunk
 
 
 class ChunkStrategy(ABC):
-    """Base class for chunking strategies."""
+    """Abstract base for strategies that partition an item list into indexed ``Chunk``
+    objects.
+
+    Subclasses implement ``chunk(items)``, which must place every item in exactly one
+    chunk and record its original position in ``item_indices`` so
+    ``ChunkedModelExecutor`` can merge per-chunk results back into input order.
+    Instances are stateless and reusable.
+    """
 
     @abstractmethod
     def chunk(self, items: list[Any]) -> list[Chunk]:
@@ -33,7 +48,12 @@ class ChunkStrategy(ABC):
 
 
 class BySize(ChunkStrategy):
-    """Chunk by fixed size."""
+    """Split items into consecutive fixed-size chunks, preserving input order.
+
+    The last chunk may be smaller. ``chunk_size=1`` is ``ChunkedModelExecutor``'s
+    default strategy. Chunks carry no grouping ``key``. Raises ``ValueError`` on
+    construction when ``chunk_size`` is below 1.
+    """
 
     def __init__(self, chunk_size: int):
         if chunk_size < 1:
@@ -57,7 +77,13 @@ class BySize(ChunkStrategy):
 
 
 class ByField(ChunkStrategy):
-    """Chunk by field value (domain, originator, etc.)."""
+    """Group items into one chunk per distinct field value (domain, originator, etc.).
+
+    ``field_getter`` defaults to ``item.get(field_name, "unknown")`` so dict items work
+    out of the box. Each chunk's ``key`` is the field value, which ``ByChunkKey`` can
+    use for exclude-self model selection. Chunk sizes are unbounded; see
+    ``ByFieldThenBySize``.
+    """
 
     def __init__(
         self, field_name: str, field_getter: Callable[[Any], str] | None = None
@@ -88,7 +114,12 @@ class ByField(ChunkStrategy):
 
 
 class Individual(ChunkStrategy):
-    """One item per chunk (maximum parallelism)."""
+    """Place each item in its own single-item chunk (maximum parallelism).
+
+    Chunk ``index`` equals the item's original index and no ``key`` is set.
+    ``create_chunk_strategy`` returns this when the configured ``chunk_size`` is 1, so
+    every item gets an independent model call and independent fallback handling.
+    """
 
     def chunk(self, items: list[Any]) -> list[Chunk]:
         return [
@@ -154,7 +185,14 @@ class ByFieldThenBySize(ChunkStrategy):
 
 
 class ModelSelector(ABC):
-    """Base class for model selection strategies."""
+    """Abstract base for strategies assigning a model ID from a fixed pool to each
+    chunk.
+
+    Constructed with a non-empty ``pool`` (``ValueError`` otherwise) and exposed via the
+    ``pool`` property. ``ChunkedModelExecutor`` calls ``select(chunk)`` once per chunk
+    before dispatch; selection is deterministic from chunk index/key, with no health
+    checks.
+    """
 
     def __init__(self, pool: list[str]):
         if not pool:
@@ -172,14 +210,23 @@ class ModelSelector(ABC):
 
 
 class RoundRobin(ModelSelector):
-    """Rotate through models by chunk index."""
+    """Assign models in rotation by chunk index: ``pool[chunk.index % len(pool)]``.
+
+    Spreads chunks evenly across all pooled models for parallel throughput; ignores the
+    chunk key. Deterministic, so the same chunking always yields the same assignment.
+    """
 
     def select(self, chunk: Chunk) -> str:
         return self._pool[chunk.index % len(self._pool)]
 
 
 class FirstAvailable(ModelSelector):
-    """Always use first model in pool."""
+    """Assign every chunk to the first model in the pool, ignoring index and key.
+
+    The single-model selector: ``ChunkedModelExecutor`` recommends
+    ``FirstAvailable([model_id])`` when chunking is wanted without model distribution.
+    Despite the name it performs no availability probing.
+    """
 
     def select(self, chunk: Chunk) -> str:
         return self._pool[0]
@@ -254,7 +301,13 @@ class Weighted(ModelSelector):
 
 
 class FallbackHandler(ABC):
-    """Base class for handling chunk processing errors."""
+    """Abstract base for handlers that recover results when a chunk's ``process_fn``
+    fails.
+
+    ``ChunkedModelExecutor`` calls ``handle(chunk, error, process_fn)`` after a chunk
+    raises or times out, then marks the ``ChunkResult`` with ``fallback_used=True``. The
+    handler must return one result per chunk item, or raise to propagate the failure.
+    """
 
     @abstractmethod
     async def handle(
@@ -276,7 +329,11 @@ class FallbackHandler(ABC):
 
 
 class RaiseFallback(FallbackHandler):
-    """Re-raise errors (no fallback)."""
+    """Fail-fast handler that re-raises the original chunk error instead of recovering.
+
+    ``ChunkedModelExecutor``'s default when no ``fallback_handler`` is given, so any
+    chunk failure (including per-chunk timeouts) propagates out of ``execute``.
+    """
 
     async def handle(
         self, chunk: Chunk, error: Exception, process_fn: Callable
@@ -285,7 +342,12 @@ class RaiseFallback(FallbackHandler):
 
 
 class SkipFallback(FallbackHandler):
-    """Return None for all items in failed chunk."""
+    """Tolerant handler that returns ``None`` for every item of a failed chunk.
+
+    Lets the remaining chunks succeed while leaving placeholder gaps in the merged
+    results; callers must treat ``None`` as "no result". The error is otherwise
+    discarded.
+    """
 
     async def handle(
         self, chunk: Chunk, error: Exception, process_fn: Callable
@@ -294,7 +356,12 @@ class SkipFallback(FallbackHandler):
 
 
 class DefaultValueFallback(FallbackHandler):
-    """Return default value for all items in failed chunk."""
+    """Tolerant handler filling every item of a failed chunk with a freshly built
+    default.
+
+    ``default_factory`` is called once per item, so mutable defaults (dicts, lists) are
+    not shared between results. The original error is discarded.
+    """
 
     def __init__(self, default_factory: Callable[[], Any]):
         self._default_factory = default_factory
@@ -306,7 +373,13 @@ class DefaultValueFallback(FallbackHandler):
 
 
 class CallableFallback(FallbackHandler):
-    """Call custom fallback function for failed chunk."""
+    """Handler delegating a failed chunk to a caller-supplied synchronous
+    ``fallback_fn``.
+
+    ``fallback_fn(chunk)`` must return one result per chunk item, e.g. a heuristic
+    classifier replacing a failed model call. The error and ``process_fn`` are not
+    passed to it; exceptions it raises propagate from ``ChunkedModelExecutor.execute``.
+    """
 
     def __init__(self, fallback_fn: Callable[[Chunk], list[Any]]):
         self._fallback_fn = fallback_fn

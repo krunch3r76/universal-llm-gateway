@@ -1,4 +1,16 @@
-"""Retry Stargate-backed dependency activation until watcher runtime can start."""
+"""Retry Stargate-backed dependency activation until watcher runtime can start.
+
+``_activate_dependencies_when_ready`` is launched as a background task by
+``lifecycle`` and loops until the service reaches phase ``ready``: it refreshes
+the model availability tracker (Stargate), waits for embeddings health, starts
+the extraction runtime, then (when automatic indexing and watch directories are
+configured) starts the watcher runtime and schedules startup scope-freshness
+repair off the critical path. Progress is mirrored into
+``state._dependency_activation`` (phase, waiting_on, attempts, last_error). On
+failure it sets phase ``degraded``, emits ``rag_start_degraded`` once and
+``rag_dependency_retry_scheduled`` per attempt, and backs off exponentially
+between ``DEPENDENCY_RETRY_BASE_S`` and ``DEPENDENCY_RETRY_MAX_S``.
+"""
 
 from __future__ import annotations
 

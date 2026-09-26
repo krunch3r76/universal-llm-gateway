@@ -40,7 +40,12 @@ def emit_condition_evaluated(
     should_execute: bool,
     available_outputs: list[str],
 ) -> None:
-    """Emit condition evaluation event to recorder and legacy bus."""
+    """Record a step's condition result to the recorder and publish it on the event bus.
+
+    Called by ``filter_ready_steps`` only for steps that declare a condition or
+    are disabled; carries the expression, boolean result, and the output names
+    available at evaluation time for debugging skipped branches.
+    """
     recorder = obs._executor.context.recorder
     if recorder:
         recorder.emit(
@@ -66,7 +71,12 @@ def emit_condition_evaluated(
 
 
 def emit_step_skipped(obs: StepObservability, *, node: StepNode, reason: str) -> None:
-    """Emit skip event to recorder and legacy bus."""
+    """Record a condition-driven step skip to the recorder and publish ``StepSkipped``
+    on the bus.
+
+    Called by ``filter_ready_steps`` before the node is marked ``SKIPPED``;
+    ``reason`` is the ``condition not met: <expr>`` text.
+    """
     recorder = obs._executor.context.recorder
     if recorder:
         recorder.emit(
@@ -90,7 +100,12 @@ def emit_step_skipped(obs: StepObservability, *, node: StepNode, reason: str) ->
 def emit_step_started(
     obs: StepObservability, *, node: StepNode, target_model: str | None
 ) -> None:
-    """Emit step started events to recorder and legacy bus."""
+    """Record a step start to the recorder and publish ``StepStarted`` on the event bus.
+
+    Called by ``execute_step`` right after execution-time model resolution;
+    includes step type, the resolved ``target_model`` (may be None), and
+    whether the step is a map step.
+    """
     recorder = obs._executor.context.recorder
     if recorder:
         recorder.emit(
@@ -116,7 +131,13 @@ def emit_step_started(
 
 
 def emit_step_inputs(obs: StepObservability, *, node: StepNode) -> None:
-    """Capture and emit step inputs for recorder observability."""
+    """Snapshot a step's resolved handler inputs into a recorder ``StepInputsCaptured``
+    event.
+
+    Recorder-only (no bus publish, payloads can be large); returns early without
+    resolving inputs when no recorder is attached, and skips emission when the
+    step has no captured inputs. Called by ``execute_step`` after step start.
+    """
     recorder = obs._executor.context.recorder
     if not recorder:
         return

@@ -37,7 +37,15 @@ if TYPE_CHECKING:
 
 
 class StepObservability:
-    """Owns DAG executor observability and event emission behavior."""
+    """Facade that the DAG executor calls to emit step, model-gate, and pipeline events.
+
+    Created once per ``DAGExecutor`` in its constructor (``executor._observability``)
+    and holds only the executor back-reference plus a warn-once flag for a
+    missing event bus. Methods delegate to sibling modules: ``step_lifecycle``
+    (condition/skip/start/inputs), ``outcomes`` (``record_success`` /
+    ``record_failure``), ``model_gate``, ``pipeline_boundaries``, and ``context``
+    (``get_event_context`` / ``publish_event``).
+    """
 
     def __init__(self, executor: DAGExecutor) -> None:
         self._executor = executor

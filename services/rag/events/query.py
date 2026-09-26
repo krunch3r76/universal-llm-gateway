@@ -1,4 +1,12 @@
-"""RAG scope, search, and corpus-hint event factories."""
+"""RAG read-path event factories: scope resolution, search and corpus hints.
+
+Defines ``rag.scope.*`` (resolved, rejected, listed), search outcomes
+(``rag.search.executed``, ``.no.results``, ``.tier.applied``,
+``.embedding.failed``), query-embedding success/failure, and corpus-hint
+update/load/filter signals. Emitters include ``rag_service.search``,
+``rag_service.api``, ``rag_service.state``, ``embeddings.query_embed`` and the
+``corpus_hints`` package (``update``, ``loaders``, ``cooccurrence``).
+"""
 
 from __future__ import annotations
 

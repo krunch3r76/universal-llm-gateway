@@ -41,7 +41,12 @@ def register_domain_handler(
     handler_class: type,
 ) -> None:
     """
-    Register an external domain handler.
+    Add one externally supplied handler class to the global DomainRouter.
+
+    Validates the class, then calls
+    ``get_domain_router().register_domain_handler_class`` with
+    ``external=True`` (marked for diagnostics) and logs the registration.
+    Also used by ``register_domain`` for bulk registration.
 
     Called by external projects to register their handlers:
 
@@ -144,6 +149,11 @@ def discover_plugins() -> None:
 
 
 def reset_discovery() -> None:
-    """Reset discovery state (for testing only)."""
+    """Reset discovery state (for testing only).
+
+    Clears the module-level ``_discovery_complete`` flag so the next
+    ``discover_plugins`` call re-scans ``stargate.domains`` entry points.
+    Does not unregister handlers already added to the DomainRouter.
+    """
     global _discovery_complete
     _discovery_complete = False

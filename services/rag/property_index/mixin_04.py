@@ -1,4 +1,14 @@
-"""_PropertyIndexPart04 — PropertyIndex method chunk (SLOC split)."""
+"""_PropertyIndexPart04 — PropertyIndex freshness, watermarks and context cache.
+
+SLOC-split mixin composed into ``PropertyIndex``. Owns per-scope vocabulary
+replacement that leaves other scopes untouched, ``scope_freshness`` rows read by
+``corpus_hints/freshness.py`` and the pipeline RAG data source, post-index
+``watermarks`` (``stamp_watermark`` / ``check_watermarks``, consulted by
+``rag_service/scope_freshness.py`` and ``watcher_runtime.py`` to detect stale
+corpus_hints/vocabulary steps), the ``pending`` file list, indexed-source
+snapshots, and the contextualized-chunk cache keyed by source identity (G1) with
+a legacy source-hash path used by ``indexing/contextualize_cache.py``.
+"""
 
 # ruff: noqa: F405 — names supplied by `from ._spec import *` split-module pattern.
 from __future__ import annotations

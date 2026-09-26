@@ -1,4 +1,11 @@
-"""Format corpus hints and register vocabulary for prompt injection."""
+"""Format corpus hints and register vocabulary for prompt injection.
+
+Pure string helpers with no I/O: they turn the dicts returned by
+``load_scope_vocabulary`` and ``load_corpus_hints`` into compact text that the
+rag_context_v1 ``filter_hints`` and ``refine_generation_context`` handlers (and
+``pipelines/rag/corpus_hints_loader.py``) inject into LLM prompts. Output is
+deterministic: scopes and registers are emitted in sorted order.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +16,15 @@ def format_register_hints(
     vocabulary: dict[str, dict[str, list[str]]],
     scopes: list[str] | None = None,
 ) -> str:
-    """Format register-structured vocabulary for prompt injection."""
+    """Render scope -> register -> terms vocabulary as one prompt line per scope.
+
+    Each line looks like ``[scope] reg_a: t1, t2 | reg_b: t3`` with scopes and
+    registers sorted; registers with no terms are skipped. When ``scopes`` is
+    given only those scopes present in ``vocabulary`` are rendered.
+
+    Returns:
+        Newline-joined lines, or "" when nothing matches.
+    """
     if not vocabulary:
         return ""
     target = (

@@ -1,4 +1,15 @@
-"""Property index: DDL / migration SQL strings."""
+"""Property index DDL and migration SQL strings for the PropertyIndex SQLite store.
+
+Pure string constants, re-exported through ``property_index/_spec.py`` (star
+import) and applied by ``_PropertyIndexPart01._apply_migrations``. Each
+``_V<n>_*_SQL`` block creates the tables and indexes introduced at schema
+version n: properties/pending/failed_extractions/watermarks (V1), corpus hints,
+scope vocabulary and articles (V2), indexed_sources (V4), scope_freshness (V5),
+extraction_queue (V8, execution id in V14), indexing_failures (V9),
+contextualized chunk caches (V10 legacy, V16 G1), contextualization exceptions
+(V12) and skill_vocabulary (V15). Statements are idempotent (IF NOT EXISTS) except
+the V14 ALTER TABLE, which the migration runs only when the column is missing.
+"""
 
 from __future__ import annotations
 

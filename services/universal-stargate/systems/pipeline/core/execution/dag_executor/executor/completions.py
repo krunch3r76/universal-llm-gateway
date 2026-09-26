@@ -24,7 +24,20 @@ logger = get_logger(__name__)
 
 
 async def await_and_handle_completions(executor: DAGExecutor) -> None:
-    """Wait for tasks and handle completion/failure."""
+    """Await the first finished step task, release its model gate, and fail fast on
+    error.
+
+    Uses ``asyncio.wait(FIRST_COMPLETED)`` over ``executor._pending_tasks``
+    (no-op when empty). Each done task is popped, its target model resolved via
+    the coordinator, and ``on_step_finished`` called with outcome
+    ``success``/``failure``. On failure the node is marked ``FAILED``, a
+    gate-released-on-failure event is emitted when a model was held, all other
+    pending tasks are cancelled, and the error is re-raised.
+
+    Raises:
+        PipelineExecutionError: A step task raised, or a finished task's name
+            does not map to a known step id.
+    """
     if not executor._pending_tasks:
         return
 

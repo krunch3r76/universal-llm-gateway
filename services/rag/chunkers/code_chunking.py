@@ -1,4 +1,11 @@
-"""Code AST and line-based chunking."""
+"""Code AST and line-based chunking.
+
+``chunk_code`` is dispatched by ``office_dispatch.chunk_file`` for extensions in
+``_CODE_EXTENSIONS``. Python goes through ``chunk_code_ast`` (tree-sitter cAST
+split-merge on non-whitespace size, metadata from ``chunker_ast_metadata``);
+other languages are split by line count. Every chunk gets a position-salted
+``chunk_hash`` and a sequential ``chunk_index``.
+"""
 
 from __future__ import annotations
 
@@ -175,7 +182,14 @@ def chunk_code(
     content: str,
     max_chunk_chars: int | None = None,
 ) -> list[Chunk]:
-    """Code chunker: AST-aware for Python, line-based fallback for others."""
+    """Split source code into chunks: AST-aware for Python, line-based otherwise.
+
+    ``.py`` files delegate to ``chunk_code_ast`` with ``max_chunk_chars`` as the
+    non-whitespace budget (default ``_AST_CHUNK_NWS_CHARS``). Other files
+    accumulate whole lines until the character budget (default
+    ``_CHUNK_CHARS_CODE``) is reached, emitting ``statement_block`` chunks tagged
+    with the file suffix as ``language`` and ``is_semantically_complete=False``.
+    """
     if Path(path).suffix.lower() == ".py":
         budget = max_chunk_chars if max_chunk_chars else _AST_CHUNK_NWS_CHARS
         return chunk_code_ast(path, content, max_chunk_chars=budget)

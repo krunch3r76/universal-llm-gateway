@@ -1,4 +1,13 @@
-"""Map executor event publishing."""
+"""Map executor event publishing: bus signals and recorder lifecycle events for map
+steps.
+
+Defines ``MapEventPublisher``, created by ``MapExecutor`` per map step and shared with
+the execution modes and ``MapConcurrencyManager``. Bus events (``MapStepStarted``,
+``MapIterationStarted``/``Failed``, inference started/fallback/lost, timeout warnings)
+are published fire-and-forget via the runtime proxy's event bus; the richer lifecycle
+``MapIterationCompleted`` goes only to the recorder. Small Protocols describe the
+runtime shape needed so this module avoids importing the concrete runtime.
+"""
 
 from __future__ import annotations
 
@@ -29,33 +38,57 @@ if TYPE_CHECKING:
 
 
 class PipelineProtocol(Protocol):
-    """Pipeline contract required by map event publishing paths."""
+    """Structural pipeline contract for map event publishing: only an ``id`` string.
+
+    ``MapEventPublisher.get_event_context`` reads ``id`` as the ``pipeline_id`` stamped
+    on every map bus event, falling back to ``"unknown"`` when the runtime has no
+    pipeline.
+    """
 
     id: str
 
 
 class RecorderProtocol(Protocol):
-    """Recorder contract required by map event publishing paths."""
+    """Structural contract for the execution recorder used by map event publishing.
+
+    ``MapEventPublisher.emit_iteration_events`` calls ``emit`` with the recorder-only
+    lifecycle ``MapIterationCompleted`` (output text, token counts, duration) for each
+    successful iteration; the recorder is optional on the runtime.
+    """
 
     def emit(self, event: MapIterationCompleted) -> None:
         """Emit one lifecycle event."""
 
 
 class EventBusProtocol(Protocol):
-    """Event bus contract required by map event publishing paths."""
+    """Structural event bus contract for map event publishing: an async
+    ``publish_nowait``.
+
+    ``MapEventPublisher.publish_event`` schedules ``publish_nowait`` as a
+    fire-and-forget task and logs failures via a done callback instead of awaiting it.
+    """
 
     async def publish_nowait(self, event: Event) -> None:
         """Publish one bus event asynchronously."""
 
 
 class ProxyProtocol(Protocol):
-    """Proxy contract required by map event publishing paths."""
+    """Structural proxy contract for map event publishing: an optional ``event_bus``.
+
+    ``MapEventPublisher`` reaches it through the runtime's private ``_proxy`` attribute;
+    when the proxy or its ``event_bus`` is None, bus events are silently dropped.
+    """
 
     event_bus: EventBusProtocol | None
 
 
 class RuntimeProtocol(Protocol):
-    """Runtime contract needed by map event publishing paths."""
+    """Structural execution-runtime contract consumed by ``MapEventPublisher``.
+
+    Supplies ``pipeline`` (for ``pipeline_id``), ``execution_id`` and an optional
+    ``recorder``. The concrete DAG runtime passed into ``MapExecutor`` satisfies it; a
+    private ``_proxy`` attribute, if present, supplies the event bus.
+    """
 
     pipeline: PipelineProtocol | None
     execution_id: str
@@ -70,7 +103,15 @@ logger = logging.getLogger(__name__)
 
 
 class MapEventPublisher:
-    """Handles all event publishing for map step execution."""
+    """Single publishing surface for all map-step bus and recorder events.
+
+    Built once per map step in ``MapExecutor.__init__`` from the ``StepConfig`` and
+    runtime, then shared with ``MapConcurrencyManager`` and the execution modes.
+    ``publish_event`` is fire-and-forget and never raises;
+    ``emit_iteration_completed_immediate`` streams per-iteration success in real time,
+    while ``emit_iteration_events`` records completions to the recorder and emits
+    failure events (error, timeout, cancelled) at step end.
+    """
 
     def __init__(self, step: StepConfig, runtime: RuntimeProtocol) -> None:
         self._step: StepConfig = step

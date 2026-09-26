@@ -137,7 +137,15 @@ def complete_execution(
     reasoning: Any = None,
     hints: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Record success terminal state (idempotent)."""
+    """Mark a running async execution as completed and fan out its success side effects.
+
+    Idempotent: unknown IDs or records already ``completed``/``failed`` are logged and
+    ignored. Otherwise sets status and timestamps, stores a ``PipelineExecutionResult``,
+    sets ``terminal_event`` (waking ``wait_for_terminal``), emits
+    ``pipeline.dispatch.completed``, schedules bus delivery, and schedules sqlite
+    journaling except for ``op="to_thread"`` records, whose journal entry is deferred
+    until delivery resolves. Called via ``PipelineExecutionTracker.complete_execution``.
+    """
     record = tracker.records.get(execution_id)
     if record is None or record.status in {"completed", "failed"}:
         logger.warning(

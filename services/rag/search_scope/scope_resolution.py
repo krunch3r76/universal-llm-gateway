@@ -1,4 +1,10 @@
-"""Named scope resolution for search requests."""
+"""Named scope resolution for RAG search requests, raising FastAPI HTTP errors.
+
+``execute_search`` calls ``resolve_scope_request`` to expand ``scope`` names from
+rag.yaml into a de-duplicated ``source_prefixes`` list; ``rag_service.api``
+routes call ``require_loaded_config`` to fail with 503 before startup finishes.
+Invariant: ``scope`` and ``source_prefixes`` are mutually exclusive on a request.
+"""
 
 from __future__ import annotations
 

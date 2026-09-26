@@ -1,4 +1,10 @@
-"""Directory-level delete route: DELETE /directory."""
+"""Directory-level delete route: DELETE /directory (MCP tool ``rag.delete_directory``).
+
+Registered by ``register_article_routes`` in ``admin_routes/articles.py``. Resolves
+every indexed source under a path prefix via ``find_sources_under_prefixes`` and
+purges each one from ChromaDB, the property index, FTS, failure rows, indexed-source
+records and the article table, then emits ``rag_directory_sources_deleted``.
+"""
 
 from __future__ import annotations
 
@@ -31,7 +37,14 @@ def register_directory_routes(
     get_event_bus_fn: Callable[[], EventBus | None] | None = None,
     **_kwargs: object,
 ) -> None:
-    """Register directory-level delete route onto router."""
+    """Attach the ``DELETE /directory`` bulk-purge handler to the admin router.
+
+    The handler normalizes ``path`` to a trailing-slash prefix, deletes chunks per
+    source from the Chroma collection and, when a ``PropertyIndex`` is available,
+    its properties, FTS rows, failures, indexed-source record and article. If an
+    event bus is wired it publishes ``rag_directory_sources_deleted`` with totals.
+    Extra keyword dependencies are accepted and ignored.
+    """
 
     @router.delete(
         "/directory",

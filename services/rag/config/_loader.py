@@ -1,4 +1,11 @@
-"""RAG config loading and persistence: load_config and save_scope."""
+"""RAG config loading and persistence: load_config and save_scope.
+
+Both are re-exported from ``services.rag.config``. ``load_config`` is called by
+``rag_service/lifecycle.py``, ``admin_routes/articles.py``,
+``corpus_hints/cli.py`` and ``property_index/__main__.py``; ``save_scope`` by
+``rag_service/api.py``. Contextualize and vocabulary model IDs come from
+pipeline ``models.yaml`` files, never from ``rag.yaml``, to avoid split-brain.
+"""
 
 from __future__ import annotations
 
@@ -85,7 +92,13 @@ def save_scope(
 
 
 def load_config() -> RagConfig:
-    """Load ~/.gateway/rag.yaml and return parsed config."""
+    """Read ``~/.gateway/rag.yaml`` from disk and build a validated ``RagConfig``.
+
+    Malformed optional fields (workers, timeouts, enforcement, vocabulary mode or
+    taxonomy) silently fall back to defaults; watch directories and scope
+    prefixes are symlink-resolved. Raises ``ValueError`` if the file is missing,
+    is not valid YAML, or its root is not a mapping. No caching: rereads each call.
+    """
     config_path = _resolve_config_path()
     if config_path is None:
         raise ValueError("rag.yaml not found at ~/.gateway/rag.yaml")

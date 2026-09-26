@@ -1,4 +1,11 @@
-"""Indexing failure management routes: /indexing_failures."""
+"""Indexing failure management routes: list, clear and retry ``/indexing_failures``.
+
+``register_failure_routes`` is called by ``register_admin_routes`` in
+``admin_routes/__init__.py``. Failure rows live in the SQLite ``PropertyIndex``
+and are filterable by ``permanent`` / ``transient`` category. Clearing publishes
+``rag_file_indexing_failure_cleared``; retry also asks the ``WatcherManager`` to
+reindex the file and publishes ``rag_file_indexing_failure_retry_requested``.
+"""
 
 from __future__ import annotations
 

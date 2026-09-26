@@ -1,4 +1,13 @@
-"""Map step progress events."""
+"""Event-bus factories for map (fan-out) step progress, iteration outcomes, and
+timeouts.
+
+Covers the ``pipeline.map.*`` signal family: step started/completed/empty-iterations,
+iteration started/completed/failed, per-iteration inference started/fallback/lost, and
+``MapTimeoutWarning``. Published fire-and-forget by ``MapEventPublisher``
+(``execution/map_reduce/map_executor/events.py``) and, for timeout warnings, by
+``MapConcurrencyManager``. Distinct from the JSONL-recorder lifecycle events in
+``events/lifecycle.py``, which carry richer iteration data.
+"""
 
 from typing import Any
 

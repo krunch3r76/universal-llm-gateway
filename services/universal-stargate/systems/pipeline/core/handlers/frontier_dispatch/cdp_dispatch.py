@@ -47,11 +47,20 @@ _VALID_EXPECTED_SIZES = frozenset({"small", "large", "auto"})
 
 
 class CdpDispatchError(ValueError):
-    """CDP generate failed or stalled without a successful step outcome."""
+    """CDP generate failed or stalled without a successful step outcome.
+
+    Raised by ``run_cdp_dispatch`` after it publishes ``CdpGenerateStalled``; the
+    message carries the adapter's ``stall_stage``, error and model. Subclasses
+    ``ValueError`` so existing step-failure handling treats it as a bad outcome.
+    """
 
 
 def is_cdp_dispatch_model(model: str) -> bool:
-    """True when ``model`` is ``cdp/<picker>``."""
+    """Return True when ``model`` parses to the ``cdp`` backend (``cdp/<picker>``).
+
+    Routing predicate used by the admission gate and FrontierDispatchHandler to
+    divert to the CDP substrate path; unparseable model strings return False.
+    """
     try:
         return ModelId.parse(model).backend_type == "cdp"
     except (TypeError, ValueError):
@@ -81,7 +90,12 @@ def reject_cdp_role_conflict(
 
 
 def parse_cdp_harvest_options(opts: dict[str, Any]) -> dict[str, Any]:
-    """Extract CDP harvest knobs from ``pipeline_options``."""
+    """Extract and validate CDP harvest knobs from ``pipeline_options``.
+
+    Returns ``harvest_source`` and ``expected_size`` (each default ``auto``),
+    ``download_output`` (bool) and ``max_wall_s`` (positive ``timeout_seconds`` or
+    ``DEFAULT_MAX_WALL_S``). Raises ``ValueError`` on an unknown source or size.
+    """
     harvest_source = opts.get("harvest_source", "auto")
     if harvest_source not in _VALID_HARVEST_SOURCES:
         raise ValueError(
@@ -110,7 +124,12 @@ def parse_cdp_harvest_options(opts: dict[str, Any]) -> dict[str, Any]:
 
 
 def compose_cdp_prompt_text(user_prompt: str, system_prompt: str | None) -> str:
-    """Merge optional system block with the resolved user prompt."""
+    """Merge the optional system block with the resolved user prompt into one text.
+
+    Both parts are stripped; when both exist they are joined as system, a ``---``
+    rule, then user. Returns whichever part is non-empty, or ``""`` when both are
+    empty (admission treats that as an error).
+    """
     user = (user_prompt or "").strip()
     system = (system_prompt or "").strip()
     if not user and not system:
@@ -128,7 +147,13 @@ def build_cdp_step_output(
     latency_ms: float,
     system_prompt: str | None,
 ) -> StepOutput:
-    """Map adapter result to dual-bind ``StepOutput``."""
+    """Map a successful CdpGenerateResult to a dual-bind ``StepOutput``.
+
+    ``raw`` holds the harvested body (token counts are zero, one model call); ``json``
+    carries provider/substrate ids, prompt URI, cost source and poll snapshots, plus
+    archive/content-proof URIs, chat_url, registration_id and harvest provenance
+    when the adapter supplied them.
+    """
     output = StepOutput(
         raw=result.body,
         prompt_tokens=0,
@@ -178,7 +203,13 @@ def build_cdp_admission_result(
     opts: dict[str, Any],
     role: str | None,
 ) -> AdmissionResult:
-    """Lightweight admission for ``cdp/`` — skips cloud MCP/hydration/tool-set."""
+    """Lightweight admission for ``cdp/`` — skips cloud MCP/hydration/tool-set.
+
+    Called by the admission gate for CDP models. Rejects role + cdp combinations,
+    resolves user and system prompts (``ValueError`` if both are empty), derives the
+    model entity id, and returns an AdmissionResult with MCP/tools disabled,
+    ``max_turns=1`` and a publish hook bound to the handler's event bus.
+    """
     from .admission_gate import AdmissionResult
 
     reject_cdp_role_conflict(
@@ -223,7 +254,14 @@ async def run_cdp_dispatch(
     context: PipelineContext,
     admission: AdmissionResult,
 ) -> StepOutput:
-    """Run synchronous CDP generate and return dual-bind ``StepOutput``."""
+    """Run synchronous CDP generate and return dual-bind ``StepOutput``.
+
+    Invoked by FrontierDispatchHandler for ``cdp/`` models. Publishes
+    PipelineFrontierDispatchStarted, runs ``run_cdp_generate`` in a worker thread
+    (emitting CdpGenerateSubmitted from its callback), then on success emits
+    CdpGenerateProof and PipelineFrontierDispatchCompleted. On failure emits
+    CdpGenerateStalled and raises ``CdpDispatchError``.
+    """
     from systems.frontier_consult.cdp_events import (
         CdpGenerateProof,
         CdpGenerateStalled,

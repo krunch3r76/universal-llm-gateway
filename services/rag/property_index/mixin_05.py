@@ -1,4 +1,13 @@
-"""_PropertyIndexPart05 — PropertyIndex method chunk (SLOC split)."""
+"""_PropertyIndexPart05 — PropertyIndex lookups, term counts and corpus stats.
+
+SLOC-split mixin composed into ``PropertyIndex``. Provides contextualized-chunk
+garbage collection (G1 identity rows plus legacy V10 hash rows), the pending
+snapshot for status endpoints, ``rebuild_from_metadata``, exact-key property
+lookups (``lookup``, ``lookup_entity``, relation lookups) that complement vector
+retrieval, per-scope / per-prefix / per-source term counts, document and chunk
+totals, indexed-source listings with timestamps, and failed-chunk listings.
+Everything except the GC and rebuild writers is a direct synchronous SQLite read.
+"""
 
 # ruff: noqa: F405 — names supplied by `from ._spec import *` split-module pattern.
 from __future__ import annotations

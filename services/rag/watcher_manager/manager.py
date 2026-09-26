@@ -1,4 +1,12 @@
-"""WatcherManager core lifecycle and admission gating."""
+"""WatcherManager core lifecycle and admission gating for RAG file watching.
+
+``rag_service.watcher_runtime`` builds one ``WatcherManager`` with injected
+index/delete callables and ``_post_reconcile_scope_freshness`` as the
+post-reconcile repair hook. The class composes the registration, initial
+reindex, reconcile, file-event and scope-repair mixins, and owns
+``_should_attempt``: entity-admission gating plus permanent/transient
+indexing-failure backoff.
+"""
 
 from __future__ import annotations
 

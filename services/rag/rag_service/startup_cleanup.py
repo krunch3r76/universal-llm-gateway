@@ -1,4 +1,14 @@
-"""Startup reconciliation, orphan / exclusion purges, and watch chunk-token resolution."""
+"""Startup reconciliation, orphan / exclusion purges, and watch chunk-token resolution.
+
+Background sweeps launched by ``watcher_runtime._start_watcher_runtime`` once
+dependencies are ready. ``_reconcile_pending`` re-indexes files left in the
+``pending`` set by an interrupted run using a worker pool with a per-file
+timeout, keeping transient failures pending for the next sweep and clearing
+permanent ones; it emits ``rag_pending_reconciled``. ``_purge_orphans`` deletes
+sources whose files vanished while the service was down (``rag_orphan_purged``)
+and ``_purge_excluded_sources`` removes sources now matching watch exclude
+patterns (``rag_exclusion_purged``).
+"""
 
 from __future__ import annotations
 

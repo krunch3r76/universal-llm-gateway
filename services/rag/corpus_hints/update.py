@@ -1,4 +1,12 @@
-"""Persist discriminative corpus hints from property-index term statistics."""
+"""Persist discriminative corpus hints from property-index term statistics.
+
+Computes, per RAG scope, the best ``prop.name@@`` and ``prop.topic@@`` terms
+(chunk-band filtered, blocklisted, noise-filtered, IDF-scored) and writes them
+to the ``corpus_hints`` table via ``PropertyIndex``. Called by the corpus hints
+CLI, ``rag_service/state.py`` after indexing, the admin articles route and
+vocabulary repair. Emits ``rag_corpus_hints_updated`` or
+``rag_corpus_hints_skipped`` when an event bus is supplied.
+"""
 
 from __future__ import annotations
 
@@ -51,7 +59,22 @@ async def update_corpus_hints(
     configured_scopes: dict[str, list[str]] | None = None,
     event_bus: EventBus | None = None,
 ) -> dict[str, str]:
-    """Persist discriminative scope hints to metadata SQLite tables."""
+    """Select top-scoring hint terms per scope and replace the stored hint rows.
+
+    Terms come from ``configured_scopes`` source prefixes when given, otherwise
+    from the property index's own scope column. Each key prefix keeps terms
+    within its chunk band, spanning ``min_docs`` docs (capped by scope size),
+    not noise or blocklisted, and keeps its best ``names_budget`` /
+    ``topics_budget`` terms by ``score_term * entity_shape_boost``; winners
+    are deduped case-insensitively.
+
+    Side effects: replaces rows for ``scope``, for each configured scope, or
+    the whole table; publishes ``rag_corpus_hints_updated`` (or
+    ``rag_corpus_hints_skipped`` when the index has zero chunks).
+
+    Returns:
+        Mapping of scope name to comma-joined hint terms; {} when skipped.
+    """
     prefixes = key_prefixes if key_prefixes is not None else DEFAULT_KEY_PREFIXES
     if property_index.get_total_chunks() == 0:
         logger.warning("PropertyIndex has 0 chunks — skipping corpus hints update")

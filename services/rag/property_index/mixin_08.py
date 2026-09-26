@@ -1,4 +1,12 @@
-"""_PropertyIndexPart08 — PropertyIndex method chunk (SLOC split)."""
+"""_PropertyIndexPart08 — PropertyIndex article hash lookup and bulk rescope.
+
+SLOC-split mixin composed into ``PropertyIndex``. ``lookup_articles_by_hash``
+batch-resolves ``ArticleEntry`` metadata by content hash for search result
+enrichment in ``rag_service/search.py``. ``rescope_all`` re-runs a scope resolver
+over every ``properties`` row with a non-empty source (legacy empty-source rows
+are skipped) in one transaction; it is invoked by ``property_index/__main__.py``
+after scope configuration changes. Both methods use the connection directly.
+"""
 
 # ruff: noqa: F405 — names supplied by `from ._spec import *` split-module pattern.
 from __future__ import annotations

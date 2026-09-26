@@ -1,4 +1,12 @@
-"""Per-category descriptions and default taxonomy for vocabulary classification."""
+"""Per-category descriptions and default taxonomy for vocabulary classification.
+
+Holds ``_CATEGORY_DESCRIPTIONS`` (curated prompt text with cross-domain examples
+for the practitioner, academic and specification registers) and
+``DEFAULT_TAXONOMY``. ``_prompt.build_classification_prompt`` renders the
+descriptions; ``_classify`` and ``refine_generation_context`` in the
+rag_context_v1 pipeline use the default taxonomy. Taxonomy order is retrieval
+anchor priority.
+"""
 
 from __future__ import annotations
 

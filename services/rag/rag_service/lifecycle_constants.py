@@ -1,4 +1,11 @@
-"""Shared constants for RAG lifecycle, watcher startup, and dependency activation."""
+"""Shared constants for RAG lifecycle, watcher startup, and dependency activation.
+
+Kept in a leaf module so ``dependency_activation`` (retry backoff base and cap
+in seconds), ``startup_cleanup`` (per-file reconcile timeout),
+``watcher_runtime`` and ``scope_freshness`` (``POST_INDEX_STEPS`` watermark names
+corpus_hints and vocabulary, plus startup scope-repair retry delays) can import
+them without circular imports through ``lifecycle``.
+"""
 
 from __future__ import annotations
 

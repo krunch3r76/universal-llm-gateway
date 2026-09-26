@@ -20,7 +20,13 @@ if TYPE_CHECKING:
 
 
 class PipelineContextProtocol(Protocol):
-    """Minimal interface for pipeline context required by resolver."""
+    """Minimal structural interface a pipeline context must satisfy for
+    NamespaceResolver.
+
+    Exposes only ``source`` (backing ``sourceNs``), ``options`` (backing ``optionsNs``)
+    and ``outputs`` (completed step outputs for step bindings), so the resolver stays
+    decoupled from the concrete ``PipelineContext`` passed through step handlers.
+    """
 
     @property
     def source(self) -> "SourceInput":
@@ -39,7 +45,12 @@ class PipelineContextProtocol(Protocol):
 
 
 class NamespaceHandler(Protocol):
-    """Protocol for namespace-specific resolution."""
+    """Structural protocol for a per-namespace handler registered on NamespaceResolver.
+
+    A handler's ``resolve(field_path)`` returns the root object for its namespace
+    (e.g. ``sourceNs``, ``optionsNs``, ``mapNs``); traverse_path() then walks the
+    field path. Custom handlers are added via ``register_namespace()``.
+    """
 
     def resolve(self, field_path: str) -> Any:
         """Resolve field_path within this namespace's root object."""
@@ -214,7 +225,13 @@ class MapNamespaceHandler:
 
 class NamespaceResolver:
     """
-    Centralized namespace resolution.
+    Centralized namespace resolution for pipeline input bindings.
+
+    Built per step from a PipelineContextProtocol (callers include the archive turn
+    handlers, parse_json, summarize_thread_v1, the sqlite data source and
+    execution_summary_inputs). Registers ``sourceNs`` and ``optionsNs`` handlers plus a
+    step-output handler; ``with_map_context()`` returns a copy with ``mapNs`` added
+    instead of mutating self, and ``register_namespace()`` refuses reserved names.
 
     Invariant: ∀ binding, resolve(binding) returns root object for traverse_path()
     """

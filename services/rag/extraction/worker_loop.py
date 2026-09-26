@@ -1,4 +1,12 @@
-"""Main asyncio loop for the decoupled extraction worker."""
+"""Main asyncio loop for the decoupled RAG knowledge-extraction worker.
+
+``run_extraction_worker`` (re-exported by ``services.rag.extraction_worker`` and
+started by ``rag_service.extraction_runtime``) claims one source at a time from
+the property-index extraction queue, honours the advisory
+``ExtractionAdmissionGate``, runs ``extract_source`` and records outcomes.
+Error handling distinguishes capacity-class failures (timeouts, 429/503,
+capacity envelopes; retry budget held) from structural ones that burn attempts.
+"""
 
 from __future__ import annotations
 

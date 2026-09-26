@@ -1,4 +1,12 @@
-"""Request-scoped inference boundary subscriptions for pipeline execution."""
+"""Request-scoped inference boundary subscriptions for pipeline execution.
+
+``RequestInferenceBoundaryTracker.subscribe`` listens on the event bus for
+``request.inference.started`` (primary) and ``request.processing`` (fallback) signals,
+recording the first observation per tracked request_id with a monotonic timestamp. Used
+by the map executor (``map_executor/executor/inference_boundary``) to emit per-iteration
+inference started / fallback-used / signal-lost events; callers must ``close()`` to
+unsubscribe.
+"""
 
 from __future__ import annotations
 
@@ -16,7 +24,12 @@ logger = logging.getLogger(__name__)
 
 
 class EventPayloadProtocol(Protocol):
-    """Minimal event shape required for request boundary correlation."""
+    """Minimal structural event shape required for request boundary correlation.
+
+    Only a ``payload`` dict is needed; the tracker reads ``payload["request_id"]`` to
+    match events to tracked requests and copies the payload into a
+    ``BoundaryObservation``.
+    """
 
     payload: dict[str, Any]
 

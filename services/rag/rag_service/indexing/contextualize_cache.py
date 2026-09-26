@@ -1,4 +1,14 @@
-"""Contextualize-cache load/store and partial-failure persistence for indexing."""
+"""Contextualize-cache load/store and partial-failure persistence for indexing.
+
+Helpers used by ``indexing/contextualize.py`` and ``indexing/commit.py`` to talk
+to the PropertyIndex contextualized-chunk cache. ``_load_cached_contexts`` reads
+per-chunk contexts keyed by resolved source identity (falling back to the legacy
+source-hash table) and returns an empty dict on error so the caller recomputes.
+``_store_cached_contexts_best_effort`` persists new rows at commit time and
+``_record_partial_failure`` writes a contextualization exception row. All three
+swallow storage errors and emit cache lookup/store events instead of failing
+the index run.
+"""
 
 from __future__ import annotations
 

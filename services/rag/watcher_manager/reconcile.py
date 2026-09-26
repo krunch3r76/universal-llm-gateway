@@ -1,4 +1,10 @@
-"""Periodic reconciliation sweeps to recover missed files."""
+"""Periodic reconciliation sweeps that recover files missed by inotify watchers.
+
+``WatcherManager.start`` launches ``_reconcile_loop`` as a background task when
+watchers exist and the interval is positive. Each pass re-indexes eligible
+files (unchanged ones short-circuit), then calls the post-reconcile repair hook
+for roots that recovered files and polls faster (30 s) while recovery continues.
+"""
 
 from __future__ import annotations
 
@@ -24,6 +30,14 @@ logger = get_logger(__name__)
 
 
 class ReconcileMixin:
+    """Reconciliation sweep loop mixed into ``WatcherManager``.
+
+    ``_reconcile_loop`` waits for initial reindex tasks, then runs forever until
+    ``stop`` cancels it; ``_reconcile_directory`` sweeps one directory with
+    ``_reconcile_workers`` workers and returns its recovered-file count. Emits
+    reconcile complete, failed and repair_failed events.
+    """
+
     async def _reconcile_loop(self) -> None:
         """Periodically re-sweep watched directories to recover missed files."""
         if self._initial_reindex_tasks:

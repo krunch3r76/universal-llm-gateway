@@ -1,3 +1,12 @@
+"""CLI entry point for ``python -m services.rag.property_index --rescope``.
+
+Operator maintenance tool: loads the RAG config, starts a standalone
+PropertyIndex, re-resolves every property row's scope via
+``config.get_scope_for_path`` (``rescope_all``), then prints the updated count
+and per-scope row totals before stopping the index. Any other invocation
+prints usage and exits with status 1.
+"""
+
 if __name__ == "__main__":
     import sys
 

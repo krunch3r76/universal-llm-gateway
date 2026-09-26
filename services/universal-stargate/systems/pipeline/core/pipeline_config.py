@@ -76,7 +76,14 @@ class PipelineOptions(BaseModel):
 
 
 class FragmentRef(BaseModel):
-    """Reference to a reusable pipeline fragment."""
+    """Step-list entry that splices a named reusable fragment into a pipeline.
+
+    ``use`` names the fragment, ``with`` (field ``with_``) supplies variable
+    substitutions, and ``as_prefix`` optionally prefixes the expanded step ids and
+    their internal bindings. Built from dicts with a ``use`` key by
+    ``executor.preparation.expand_steps`` and expanded by
+    ``FragmentLoader.expand_fragment_ref`` into StepConfig objects.
+    """
 
     use: str
     with_: dict[str, Any] = Field(default_factory=dict, alias="with")
@@ -88,6 +95,13 @@ class PipelineSpec(BaseModel):
     Generic pipeline specification.
 
     The `type` field determines which domain handles execution.
+
+    Validated Pydantic model for one pipeline YAML (created by
+    ``systems.pipeline.loader`` via ``PipelineSpec(**data)``): id/version, the
+    ``steps`` list of StepConfig, the ``output`` reference, options, token
+    defaults, fragments and checkpoint settings, plus the search path and variant
+    it was loaded from for isolation-scoped model resolution and handler dispatch.
+    Key members: ``domain`` and ``is_stream_passthrough_eligible``.
     """
 
     model_config = ConfigDict(extra="allow")

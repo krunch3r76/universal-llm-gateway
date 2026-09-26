@@ -262,7 +262,14 @@ _domain_router: DomainRouter | None = None
 
 
 def get_domain_router() -> DomainRouter:
-    """Get or create domain router singleton."""
+    """Return the process-wide ``DomainRouter``, constructing an empty one on first
+    call.
+
+    The shared instance is where ``plugins.discover_plugins``/entry-point plugins and
+    ``user_handlers`` register domain handler classes, and where the handler registry
+    (``core/handlers/registry.py``) resolves variant, shared, or generic handlers per
+    step. Construction does no plugin loading; not guarded by a lock.
+    """
     global _domain_router
     if _domain_router is None:
         _domain_router = DomainRouter()

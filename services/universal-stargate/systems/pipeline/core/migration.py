@@ -14,7 +14,15 @@ logger = logging.getLogger(__name__)
 
 
 class SchemaMigrator:
-    """Apply migrations from older schema versions."""
+    """Upgrade raw pipeline YAML dicts from older ``schema_version`` values to the
+    current one.
+
+    Stateless and reusable: construct once and call :meth:`migrate`, which walks
+    ``_migrate_vN_to_vN+1`` hooks in order (v4->v5 renames inputs/outputs to
+    handler_inputs/handler_outputs and drops depends_on; v5->v6 adds provenance
+    fields), mutating the dict in place. Exported from ``systems.pipeline.core``;
+    unknown future versions raise ValueError.
+    """
 
     CURRENT_VERSION = 6
 

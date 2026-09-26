@@ -1,4 +1,11 @@
-"""Startup health gating for the configured embedding model."""
+"""Startup and pre-index health gating for the configured embedding model.
+
+Both gates consult the shared ``ModelAvailabilityTracker`` (aggregate routing
+admission), never probing readiness themselves. ``wait_until_healthy`` runs
+in ``rag_service/dependency_activation.py`` and also seeds the cached
+embedding dimension with one probe POST; ``require_healthy`` is awaited by
+``rag_service/indexing/index_file.py`` before each file is indexed.
+"""
 
 from __future__ import annotations
 

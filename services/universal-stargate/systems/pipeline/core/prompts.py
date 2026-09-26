@@ -226,7 +226,12 @@ _prompt_builder: PromptBuilder | None = None
 
 
 def get_prompt_builder() -> PromptBuilder:
-    """Get or create prompt builder singleton."""
+    """Return the process-wide :class:`PromptBuilder`, creating it lazily on first call.
+
+    Shared by ``PipelineExecutor`` and the builtin handler base so every template
+    render uses the same regex-substitution builder. Not lock-protected; the
+    builder is stateless, so a duplicate construction under a race is harmless.
+    """
     global _prompt_builder
     if _prompt_builder is None:
         _prompt_builder = PromptBuilder()

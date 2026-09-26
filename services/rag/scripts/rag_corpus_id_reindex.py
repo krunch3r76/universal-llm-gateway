@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""One-time corpus sweep to migrate chunk IDs to content-addressed scheme (S3)."""
+"""One-time corpus sweep to migrate chunk IDs to content-addressed scheme (S3).
+
+Run as a CLI (``main``) with ``--property-index-db`` pointing at the PropertyIndex
+SQLite file; it lists every indexed source (optionally filtered by ``--prefix``)
+and re-admits each through ``indexing._index_file`` with ``force=True`` and
+``operation="reindex"`` in concurrent batches, optionally rate limited. Missing
+files are counted and skipped; per-source exceptions are collected rather than
+aborting. ``run_corpus_id_reindex`` takes injectable callables so tests (see
+``test_embed_diff_gate.py``) drive it without a live service.
+"""
 
 from __future__ import annotations
 
@@ -141,7 +150,13 @@ async def _main_async(args: argparse.Namespace) -> CorpusReindexResult:
 
 
 def main() -> None:
-    """CLI entry: corpus ID reindex sweep."""
+    """Parse CLI flags and run the corpus chunk-ID reindex sweep to completion.
+
+    Requires ``--property-index-db``; also accepts ``--prefix``, ``--batch-size``,
+    ``--rate-limit-s`` and ``--dry-run``. Runs ``_main_async`` under
+    ``asyncio.run`` and logs a summary (totals, missing, elapsed seconds) plus up
+    to 20 failed sources. Exit status does not reflect failures.
+    """
     parser = _build_parser()
     parser.add_argument(
         "--property-index-db",

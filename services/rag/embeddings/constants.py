@@ -1,4 +1,11 @@
-"""Embedding client tunables and scope instruction templates."""
+"""Embedding client tunables and scope instruction templates.
+
+Holds the gateway URL, batch size and token-estimate ratio, retry/backoff and
+model rewarm timings, transient HTTP status codes, and the per-scope
+``SCOPE_INSTRUCTIONS`` used to build ``Instruct:`` query prefixes. Imported by
+the ``services.rag.embeddings`` submodules (batch_post, chunk_embed, health,
+model_id, query_embed); values are module constants, not runtime config.
+"""
 
 from __future__ import annotations
 

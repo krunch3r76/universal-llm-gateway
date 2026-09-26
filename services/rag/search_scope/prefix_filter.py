@@ -1,4 +1,11 @@
-"""Source-prefix and max-distance filters for search result lists."""
+"""Source-prefix and max-distance filters for parallel search result lists.
+
+Helpers operate on the parallel ``chunks``/``metadatas``/``distances`` lists
+(optionally with chunk ``ids``) produced by Chroma queries and keep them aligned.
+``execute_search`` in ``services.rag.rag_service.search`` applies the prefix
+filter to scope results and the max-distance ceiling as a raw-cosine relevance
+gate; ``bm25_sidecar`` reuses the ID-aware prefix filter on BM25-only rows.
+"""
 
 from __future__ import annotations
 
@@ -50,7 +57,13 @@ def apply_source_prefix_filter_with_ids(
     list[dict[str, str | int | float | bool]],
     list[float],
 ]:
-    """Source prefix filter that keeps chunk IDs in sync."""
+    """Keep rows whose metadata ``source`` starts with a prefix, IDs kept in sync.
+
+    ID-aware variant of ``apply_source_prefix_filter`` used by ``execute_search``
+    and by ``apply_bm25_sidecar``. Returns inputs unchanged when
+    ``source_prefixes`` is empty or None; otherwise returns the matching rows,
+    in original order, truncated to ``top_k``.
+    """
     if not source_prefixes:
         return ids, chunks, metadatas, distances
     filtered = [
@@ -74,7 +87,13 @@ def apply_max_distance_filter(
     distances: list[float],
     max_distance: float | None,
 ) -> tuple[list[str], list[dict[str, str | int | float | bool]], list[float]]:
-    """Drop rows whose distance exceeds the configured ceiling."""
+    """Drop rows whose distance exceeds the configured ``max_distance`` ceiling.
+
+    Rows with ``distance <= max_distance`` are kept in original order. A None
+    ceiling is a no-op. Does not handle chunk IDs, so ``execute_search`` filters
+    its ID list in parallel before calling this. Returns three empty lists when
+    nothing survives.
+    """
     if max_distance is None:
         return chunks, metadatas, distances
     filtered = [

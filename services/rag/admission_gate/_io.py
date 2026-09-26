@@ -1,4 +1,10 @@
-"""Async I/O: startup snapshot, WebSocket subscriber loop, first-burst emission."""
+"""Async I/O: startup snapshot, WebSocket subscriber loop, first-burst emission.
+
+Functions take the ``AdmissionGate`` instance explicitly and are bound onto it by
+``admission_gate/gate.py``. The Stargate ``/api/v1/admission/state`` snapshot is
+best-effort (failures leave gates OPEN and emit ``rag_admission_io_failed``); the
+Event Service subscriber reconnects forever, resuming from the last seen ``seq``.
+"""
 
 from __future__ import annotations
 

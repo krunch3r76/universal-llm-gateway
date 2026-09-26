@@ -1,4 +1,14 @@
-"""Embed phase: chunk preparation, noise tagging, contextualization, Chroma upsert, FTS."""
+"""Embed phase: chunk preparation, noise tagging, contextualization, Chroma upsert, FTS.
+
+``_run_embed_phase`` is called by ``indexing/index_file.py`` with non-empty
+chunks. It assigns content-addressed chunk ids (path key plus positional chunk
+hash from ``embed_diff``), stamps source hash and ``indexed_at``, tags noise
+chunks, optionally runs the contextualization phase, then uses the embed diff
+partition to skip chunks whose id already exists and whose context was a cache
+hit. Only the remaining chunks are embedded, upserted to Chroma and inserted
+into FTS. Returns ``EmbedPhaseResult`` including stale ids computed from the
+full new id set for the commit phase.
+"""
 
 from __future__ import annotations
 

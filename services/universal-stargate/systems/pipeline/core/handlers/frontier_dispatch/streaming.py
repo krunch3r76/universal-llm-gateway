@@ -34,7 +34,12 @@ REMOTE_MCP_OVERALL_TIMEOUT_S = 300.0
 
 
 def build_cancel_check(context: PipelineContext) -> Callable[[], bool]:
-    """Poll the dispatch tracker for cancellation at tool-loop boundaries."""
+    """Poll the dispatch tracker for cancellation at tool-loop boundaries.
+
+    Returns a zero-arg closure that looks up this execution in the proxy's
+    ``pipeline_dispatch_tracker`` and reports True only when its status is
+    ``cancelled``; a missing proxy, tracker or record reads as not cancelled.
+    """
     execution_id = context.execution_id
     proxy = getattr(context, "_proxy", None)
 
@@ -57,7 +62,13 @@ def build_on_tool_event(
     agent: str | None,
     publish: Callable[[object], None],
 ) -> Callable[[str, dict[str, Any]], None]:
-    """Translate lib-emitted tool events to Stargate event-bus factories."""
+    """Translate lib-emitted tool events to Stargate event-bus factories.
+
+    Returns an ``(signal, payload)`` callback for the native tool loop: the
+    ``tool.called`` signal becomes PipelineFrontierDispatchToolCalled, any other
+    signal becomes PipelineFrontierDispatchToolFailed (with error, arguments and
+    retry_count), and the event is handed to ``publish``.
+    """
     from ...events.dispatch import (
         PipelineFrontierDispatchToolCalled,
         PipelineFrontierDispatchToolFailed,

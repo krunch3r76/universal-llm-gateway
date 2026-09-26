@@ -1,4 +1,12 @@
-"""RAG indexing event factories — contextualize cache read/write/gc."""
+"""RAG indexing event factories — contextualize cache read/write/gc.
+
+The contextualize cache lets unchanged chunks reuse prior contextualization
+output instead of re-calling the model. Signals: ``cache.evaluated`` (per-file
+hit/miss plan), ``lookup.failed``, ``store.completed``/``store.failed`` and
+``gc.completed``/``gc.failed``. Emitted by
+``rag_service.indexing.contextualize``, ``rag_service.indexing.contextualize_cache``
+and, for garbage collection, ``rag_service.lifecycle``.
+"""
 
 from __future__ import annotations
 

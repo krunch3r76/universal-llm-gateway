@@ -1,4 +1,12 @@
-"""Read corpus hints and scope vocabulary from the metadata SQLite database."""
+"""Read corpus hints and scope vocabulary from the metadata SQLite database.
+
+Read-only loaders (``mode=ro`` URI) for the ``corpus_hints`` and
+``scope_vocabulary`` tables written by ``update_corpus_hints`` and the
+vocabulary pipeline. Called by the rag_context_v1 hint handlers, the
+vocabulary repair path and Stargate's RAG data source. Invariant: loaders
+never raise; a missing DB yields {} and SQLite errors log, emit a load-failed
+event when an event bus is given, and return {}.
+"""
 
 from __future__ import annotations
 
@@ -68,7 +76,16 @@ def load_corpus_hints(
 def load_scope_vocabulary(
     db_path: Path | None = None, event_bus: EventBus | None = None
 ) -> dict[str, dict[str, list[str]]]:
-    """Load register-structured vocabulary from the metadata database."""
+    """Read the ``scope_vocabulary`` table into a scope -> register -> terms map.
+
+    Rows are ordered by scope, register, term; blank or non-string values are
+    dropped and terms are stripped. The result feeds ``format_register_hints``.
+
+    Returns:
+        Nested dict, or {} when the DB is missing or unreadable. SQLite and
+        unexpected errors emit ``rag_scope_vocabulary_load_failed`` on
+        ``event_bus`` (if given) instead of raising.
+    """
     resolved = db_path or DEFAULT_METADATA_DB_PATH
     if not resolved.exists():
         return {}

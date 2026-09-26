@@ -1,4 +1,13 @@
-"""Shared helpers reused across indexing sub-modules."""
+"""Shared source-identity helpers reused across RAG indexing sub-modules.
+
+``_should_skip_cached_source`` is the stat-first cache check used by
+``indexing/index_file.py`` (and re-exported by the ``indexing`` package): a
+source is skipped only when not forced, not a ``reindex`` operation, and its
+cached mtime_ns and size match the file. Extraction staleness is deliberately
+ignored because the extraction worker handles it. ``_derive_subdirectory``
+returns a source's parent path relative to its watch root, used for article
+rows by the index funnel, article sync and file guards.
+"""
 
 from __future__ import annotations
 

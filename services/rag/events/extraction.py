@@ -1,4 +1,13 @@
-"""RAG extraction event factories."""
+"""RAG knowledge-extraction event factories: per-chunk, batch and recovery signals.
+
+Defines the ``rag.extraction.*`` family (completed/failed per chunk, batch
+started/completed/skipped/timed-out, model mismatch, recovery, and
+infrastructure degraded/recovered/structurally-unavailable). The batch
+contract and its invariant (every ``batch.started`` ends in ``batch.completed``
+or ``batch.timed.out``) are documented in ``docs/event-contracts.md``. Queue
+claim and admission signals for the decoupled worker live in the sibling
+``events.extraction_queue`` and ``events.extraction_admission`` modules.
+"""
 
 from __future__ import annotations
 

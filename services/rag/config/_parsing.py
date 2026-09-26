@@ -1,4 +1,10 @@
-"""RAG config YAML parsing: watch directories, scopes, knowledge extraction."""
+"""RAG config YAML parsing: watch directories, scopes, knowledge extraction.
+
+Private helpers used only by ``_loader.load_config``. Invalid entries are logged
+and skipped rather than raising. Paths are symlink-resolved with any trailing
+slash preserved (scope prefix matching relies on it); ``union`` scopes absorb
+all explicit prefixes; model IDs are read from ``pipelines/*/models.yaml``.
+"""
 
 from __future__ import annotations
 

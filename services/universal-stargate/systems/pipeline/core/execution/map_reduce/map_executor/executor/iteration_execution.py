@@ -21,7 +21,13 @@ logger = get_logger(__name__)
 
 
 def extract_input_fingerprint(typed_inputs: Any) -> str | None:
-    """Return deterministic input fingerprint when available."""
+    """Return the deterministic checkpoint-cache fingerprint of typed iteration inputs.
+
+    Calls ``typed_inputs.fingerprint()`` when the object is truthy and exposes that
+    method; otherwise returns None. ``execute_iteration`` passes the result as
+    ``input_fingerprint`` when loading and saving map iteration checkpoints, keying
+    cache hits to input content.
+    """
     if typed_inputs and hasattr(typed_inputs, "fingerprint"):
         return typed_inputs.fingerprint()
     return None

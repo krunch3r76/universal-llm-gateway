@@ -1,4 +1,11 @@
-"""Scope freshness hashing and watch-path overlap for corpus hint refresh."""
+"""Scope freshness hashing and watch-path overlap for corpus hint refresh.
+
+Decides which configured RAG scopes need their corpus hints recomputed: a
+scope is stale when the SHA-256 of the sorted basenames of its indexed sources
+(from ``PropertyIndex``) differs from the hash stored in scope freshness.
+Called by ``rag_service/scope_freshness.py`` (stale detection and file-watch
+mapping) and Stargate's RAG data-source handler (``rag_source.py``).
+"""
 
 from __future__ import annotations
 

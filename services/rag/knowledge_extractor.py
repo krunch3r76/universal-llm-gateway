@@ -90,7 +90,12 @@ async def wait_until_extraction_ready(
 
 
 def configure_timeouts(config: KnowledgeExtractionConfig) -> None:
-    """Set batch timeout overhead from config at RAG startup."""
+    """Store the extraction batch timeout overhead in module-global state.
+
+    Copies ``config.batch_timeout_overhead_s`` into ``_batch_overhead_s``, which
+    is added to the pipeline ceiling when polling for extraction results.
+    Called once by ``extraction.worker_loop.run_extraction_worker`` on start.
+    """
     global _batch_overhead_s
     _batch_overhead_s = config.batch_timeout_overhead_s
     logger.info(
@@ -358,7 +363,12 @@ async def poll_extraction_result(
 
 
 async def cancel_extraction_execution(execution_id: str) -> None:
-    """Cancel an in-flight Stargate extraction execution. Best-effort."""
+    """Best-effort DELETE of an in-flight Stargate pipeline execution by id.
+
+    Used to kill orphaned runs: by ``extraction.chroma_source`` when storing the
+    execution id fails, and by ``rag_service.extraction_runtime`` for abandoned
+    claims at startup. Never raises; failures are logged as warnings.
+    """
     try:
         response = await _client.delete(
             f"{STARGATE_URL}/api/v1/pipelines/executions/{execution_id}",

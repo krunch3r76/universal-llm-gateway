@@ -1,3 +1,12 @@
+"""ChromaDB helper functions shared by the RAG file-indexing path.
+
+Provides source-path migration for moved files (``migrate_chroma_source``),
+schema-versioned content hashing (``file_hash``), chunk-id prefix checks and
+PDF duplicate detection by ``source_hash`` (``check_pdf_duplicate``).
+``rag_service.indexing.file_guards`` uses the migration and duplicate helpers
+before normal indexing so moved or duplicated files are not re-embedded.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -53,6 +62,11 @@ def file_hash(data: bytes, schema_version: int = 0) -> str:
 
 
 def all_ids_match_prefix(ids: list[str], prefix: str) -> bool:
+    """Report whether every chunk id begins with ``<prefix>-`` (dash-delimited).
+
+    Returns False for an empty list, so "no ids" is never treated as a match.
+    Pure check with no ChromaDB access.
+    """
     return bool(ids) and all(item_id.startswith(f"{prefix}-") for item_id in ids)
 
 
@@ -61,6 +75,13 @@ def check_pdf_duplicate(
     source_hash: str,
     source: str,
 ) -> IndexResult | None:
+    """Detect a PDF whose content hash is already indexed under another path.
+
+    Queries up to 10 chunks with matching ``source_hash``; if any belongs to a
+    different ``source``, returns an unchanged ``IndexResult`` with
+    ``duplicate=True`` and ``duplicate_of`` set so indexing is skipped. Returns
+    None when no duplicate exists or when the ChromaDB query fails (logged).
+    """
     try:
         existing = collection.get(
             where={"source_hash": source_hash},

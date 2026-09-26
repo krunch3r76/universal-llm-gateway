@@ -1,4 +1,11 @@
-"""Pipeline execution context passed through step handlers."""
+"""Pipeline execution context passed through step handlers.
+
+Defines the PipelineContext dataclass, built once per run in executor preparation
+from the request's source text, messages, runtime options, chat_id and
+dispatch_thread_id. Handlers read it; only DAGExecutor writes step outputs via
+``set_output()``. MapExecutor derives per-iteration shallow copies with
+``with_map_state()`` and the request-id helpers. Re-exported through ``protocol.py``.
+"""
 
 from __future__ import annotations
 

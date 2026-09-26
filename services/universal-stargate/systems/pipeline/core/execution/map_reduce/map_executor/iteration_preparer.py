@@ -1,4 +1,11 @@
-"""Map iteration preparation: input resolution, model selection, step creation."""
+"""Map iteration preparation: map_over resolution, model pool selection, step creation.
+
+Hosts ``MapIterationPreparer``, owned by ``MapExecutor`` and used by ``execute_flow``
+(resolve map_over, build pool assignments) and by ``iteration_context`` /
+``iteration_execution`` (per-iteration inputs and step configs). Keeps binding
+resolution and model assignment pure so iteration execution only dispatches to the
+handler.
+"""
 
 # ruff: noqa: E501
 
@@ -16,7 +23,16 @@ logger = logging.getLogger(__name__)
 
 
 class MapIterationPreparer:
-    """Resolves map_over bindings, prepares per-iteration inputs and step configs."""
+    """Turns a map step's config into concrete per-iteration items, models and step
+    configs.
+
+    Constructed once per map step in ``MapExecutor.__init__`` from the step, its map
+    config, the binding resolver and the handler. Key methods: ``resolve_map_over``
+    (list/dict/``MapOutputCollection`` to ``(index, value, key)`` items),
+    ``build_pool_assignments`` and ``select_from_pool`` (model_pool /
+    model_requirements), ``prepare_iteration_inputs`` and ``create_iteration_step``
+    (per-iteration overrides and assigned model).
+    """
 
     def __init__(
         self,
