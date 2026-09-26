@@ -8,6 +8,8 @@ That wake does not say resume. It tells the tab to hop if its context is dense.
 conductor is live. Every ``--safeguard-minutes`` (default 60) it pastes anyway,
 so a runaway of admitted conductors cannot stay silent.
 The test interval is 5 minutes; overnight is ``--interval-minutes 20``.
+A quiet NOW is not the program ending. The loop does not exit on it. The seat
+kills the process only when the continuity card's stop is met.
 
 The keystrokes run on the GUI host over SSH (``orchestrator_tab_keystroke.py``).
 This does not stop the house ticker.
@@ -21,7 +23,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from bus_watch.ide_hop import session_unreachable
+from bus_watch.ide_hop import OPERATOR_LOOP, session_unreachable
 
 _REPO = Path(__file__).resolve().parents[1]
 _WATCHED_HOUSE = "12586"
@@ -35,15 +37,31 @@ _TEST_INTERVAL_MINUTES = 5
 _SAFECARD_MINUTES = 60
 
 
+def _card_uri(root_id: str) -> str:
+    return f"cortex://notes/system/threads/{root_id}-continuity.md"
+
+
+def _standing_tail(root_id: str) -> str:
+    """Last lines of a paste. They outrank a quiet-NOW closeout."""
+    return (
+        f"Standing order: {_card_uri(root_id)}. "
+        "A quiet NOW or one landed row is not the program ending. "
+        "Do not kill this loop, and do not set NOW to quiet, "
+        "unless that card's stop is met. "
+        "Do not end the turn on a hold. Act until a different move can be hired. "
+        f"{OPERATOR_LOOP}\n"
+    )
+
+
 def hop_message(root_id: str) -> str:
     """First message of a new chat. Starts with resume so the fence fires."""
     return (
         f"resume {root_id}\n\n"
-        f"You are the monitor for house {_WATCHED_HOUSE} liaison-unattended-6h. "
-        "Service it and the harness only when its conductors have stopped. "
-        "If this tab is dense, checkpoint this root before any further hop. "
-        "When the house is fully played, kill the liaison-monitor-wake.py loop "
-        "and do not arm another.\n"
+        f"This chat monitors house {_WATCHED_HOUSE} liaison-unattended-6h. "
+        f"Read {_card_uri(root_id)} before acting.\n"
+        "Service the house and the harness only when its conductors have stopped. "
+        "If this tab is dense, checkpoint this root before any further hop.\n"
+        f"{_standing_tail(root_id)}"
     )
 
 
@@ -62,12 +80,11 @@ def safeguard_message(root_id: str, detail: str) -> str:
         f"Safeguard for house {_WATCHED_HOUSE} liaison-unattended-6h. {detail}. "
         f"NOW: {now}. max_conductors: {cap}. "
         "If more conductors are admitted than that cap, or the same pin is being "
-        "re-admitted, fix the harness. Do not set NOW to quiet unless no row remains. "
+        "re-admitted, fix the harness. "
         f"If this tab is dense, checkpoint {root_id} and hop "
         f"(scripts/liaison-monitor-wake.py hop --root {root_id} "
-        "--transcript-id <this-tab-uuid>) before that edit. "
-        "When the house is fully played, kill the liaison-monitor-wake.py loop "
-        "and do not arm another.\n"
+        "--transcript-id <this-tab-uuid>) before that edit.\n"
+        f"{_standing_tail(root_id)}"
     )
 
 
@@ -78,9 +95,8 @@ def wake_message(root_id: str) -> str:
         "If this tab's context is dense, do not service here: checkpoint "
         f"{root_id} and hop (scripts/liaison-monitor-wake.py hop --root {root_id} "
         "--transcript-id <this-tab-uuid>). The hop seals the checkpoint first. "
-        "If this tab is still thin, service the house and the harness. "
-        "When the house is fully played, kill the liaison-monitor-wake.py loop "
-        "and do not arm another.\n"
+        "If this tab is still thin, service the house and the harness.\n"
+        f"{_standing_tail(root_id)}"
     )
 
 
@@ -108,18 +124,12 @@ def conductors_stopped() -> tuple[bool, str]:
 
 
 def house_fully_played() -> bool:
-    """True when NOW names no todo and no conductor is live."""
-    if not _TICK.is_file():
-        return False
-    try:
-        data = json.loads(_TICK.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return False
-    now = str((data.get("policy") or {}).get("now_row") or "").strip().lower()
-    if "todo:" in now and now not in {"quiet", "stay"}:
-        return False
-    stopped, _detail = conductors_stopped()
-    return stopped
+    """False. A quiet NOW is not the minted program ending.
+
+    The seat kills this process only when the continuity card's stop is met.
+    The tick file cannot see that, so the loop does not exit on its own.
+    """
+    return False
 
 
 def _remote_cmd(op: str, remote_msg: str, repo: str) -> str:

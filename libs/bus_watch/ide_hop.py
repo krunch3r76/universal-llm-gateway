@@ -100,6 +100,17 @@ LOOP_REBUILD = (
     "→ do not arm; SIGTERM this root's --loop. A harvested conductor tail printing "
     "stall-pop is not a watcher: watch-supervise.sh stop --label <label>."
 )
+# Last line of every attended hop and monitor wake. Seats stop after a close
+# with a "nothing new" note and no next action (specimen tab
+# 053245b7-918a-476d-a3d7-7eab2ae15e49; house 12606 after 12749).
+OPERATOR_LOOP = (
+    "OPERATOR LOOP: after a dispatch closes, or after a steer, tell the operator "
+    "what you changed and the move you are taking. You abort, close, and re-hire "
+    "threads. The operator does not. Do not ask the operator to abort a thread, "
+    "set hire, or edit the harness. A conductor admitted to re-implement a row "
+    "already on master is aborted by this seat, then reported. Silence, or a "
+    "request that the operator run the bus, is a stop."
+)
 def _pid_alive(pid: Any) -> bool:
     try:
         n = int(pid)
@@ -228,6 +239,7 @@ def build_ide_hop_message(
         "label (pollers survive retire). "
         "Hop only if hop_qualifies; else STAY. "
         "STAY with no playable row and no live watcher: do not leave the loop running.",
+        OPERATOR_LOOP,
     ]
     return "\n".join(lines) + "\n"
 

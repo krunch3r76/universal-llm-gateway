@@ -47,6 +47,9 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     assert "--heartbeat 1200" in message
     assert "LOOP: rebuild" in message
     assert "runbook:bus-consult-watcher" in message
+    assert message.rstrip().endswith(
+        "Silence, or a request that the operator run the bus, is a stop."
+    )
 
 
 def test_hop_arm_line_attaches_tail() -> None:
