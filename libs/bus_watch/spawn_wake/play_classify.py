@@ -538,20 +538,14 @@ def plant_play_state(
 def _play_prompt(todo_slug: str) -> str:
     """Liaison admit text. Generate rejects ``source_ref`` combined with ``prompt``."""
     if todo_slug == "liaison-multi-conductor-p3-multi-hire":
-        # A1 and A2 are dirty on the lane. This hire commits them. It does not land.
+        # The continuity card names the hire. This prompt does not.
         return (
-            "A1 and A2 are already edited and uncommitted on "
-            "cursor-sdk/lane-12786 at HEAD "
-            "7f18840b09f91ba7a78e14b30211cc3ef11aaa6c. The dirty files are "
-            "libs/bus_watch/spawn_wake/fire.py and "
-            "libs/bus_watch/test_roster_cutover.py in worktree "
-            "/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/"
-            "lane-12786. Commit those two files on that branch. Do not "
-            "re-edit the fold. Do not land. Do not mark G5 or G6 DONE. "
-            "Leave A3 closed_lanes_before_latch untouched. Stop before any "
-            "merge. "
-            "Scoreboard: cortex://notes/system/scoreboards/"
-            "liaison-multi-conductor-p3-multi-hire-scoreboard.md."
+            "Read the latest closeout on this house and "
+            "cortex://notes/system/scoreboards/"
+            "liaison-multi-conductor-p3-multi-hire-scoreboard.md. "
+            "The next hire is that reading. Do not replay the 12809 "
+            "match check. Do not replay the 12813 review. Do not land. "
+            "Do not mark G5 or G6 DONE."
         )
     if todo_slug == "liaison-ticker-steer-live-dispatch":
         return (
@@ -595,9 +589,9 @@ def build_play_dispatch_body(
     not conductor mailbox (a:36103 — 12029 play 422'd on tape 12030).
     """
     max_hop = int(policy.get("max_hop_minutes") or 60)
-    # A1 and A2 are dirty on the lane. This key commits them.
+    # 12813 recorded the review. A new key so that hire is not re-admitted.
     if todo_slug == "liaison-multi-conductor-p3-multi-hire":
-        work_key = f"todo:{todo_slug}:g6-amend-commit"
+        work_key = f"todo:{todo_slug}:after-12813"
     elif todo_slug == "liaison-ticker-steer-live-dispatch":
         work_key = f"todo:{todo_slug}:g7-land"
     else:
