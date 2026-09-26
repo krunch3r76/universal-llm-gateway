@@ -14,21 +14,21 @@ import time
 from pathlib import Path
 from typing import Any
 
+from chat_harvest.chrome import is_chrome_only, substantive_reply_body
 from claude_bundles.chat_model_select import current_model_label
 from claude_bundles.project_ask import (
     _archive_body_section,
     archive_harvest,
     read_archive_execution_id,
 )
-from chat_harvest.chrome import is_chrome_only, substantive_reply_body
 
+from cdp_ask.cse_session_harvest import harvest_page
 from cdp_ask.cse_session_harvest_identity import (
     chat_url_from_archives,
     chat_url_from_provenance,
     resolve_harvest_chat_url,
     satellite_id_from_inflight,
 )
-from cdp_ask.cse_session_harvest import harvest_page
 from cdp_ask.cse_session_models import HarvestRequest, HarvestResponse
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.runner import verify_harvest_root

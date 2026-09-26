@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.poll_recovery import (
     correlation_tokens,
     recover_poll_snapshot,
     snapshot_from_archive_token,
     stargate_id_from_satellite,
 )
-from cdp_ask.execution_store import ExecutionStore
 
 pytestmark = pytest.mark.offline
 
