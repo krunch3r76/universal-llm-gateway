@@ -17,7 +17,7 @@ Ids first, prose second. A later reader follows whichever block is louder, so th
 | `## Rules` | yes | assertion-id / runbook-id rows that **override** global skill omit-paths. `_None yet._` legal; missing heading is not |
 | `## Stance` | yes (`orchestrator_continuity`; `tick_charter` skips speech) | Use `ulg-for-llms` |
 | `## Why this house` | yes | one paragraph **or** sidecar pointer. No dated status |
-| `## Objective` | yes | Mission + In / Out (short). No dated status |
+| `## Objective` | yes | The aim: what has to be true, undated, plus In / Out. A hop is not an objective |
 | `## House` | yes | what kind of house, where the tape lives, what this root does not own |
 
 **Bounded archive:** sit tape / older `# Current` cuts / Windows accrual live on a **sidecar named on the tip**. ¬ grow the card. ¬ mint a second dialect file (`{N}-window-ledger` / `{N}-recall.md`). A v1 card (no `v=2` comment) stays legal and is not migrated by this schema.
@@ -41,7 +41,7 @@ absence ⇒ house_gap
 | **Tip** | CHECKPOINT indexes a pointer when a rule **changes**; speech stays on the card or the runbook. |
 | **Specimen** | 9638 (liaison) · 9582 house runbook (trading) |
 
-Mission text SOT = card `## Objective`. Hub mirrors same write. Speech order: `operator-posture` Rule 3 · `decision:continuity-resume-mission-open`. Drift: hub `content_hash` ≠ card sha.
+The aim lives on `## Why this house` and `## Objective`. Resume speech expands that aim per `operator-posture` Rule 3. Hub mirrors the same write. Drift: hub `content_hash` ≠ card sha.
 
 ## Body shapes (specimen-gated)
 

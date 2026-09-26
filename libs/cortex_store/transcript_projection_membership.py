@@ -36,7 +36,9 @@ _WINDOW_ANCHOR_RE = re.compile(
     re.I,
 )
 _HIGHLIGHT_RE = re.compile(r"(?m)^(?:\*\*)?Highlight:(?:\*\*)?\s*(.+)$")
+_OBJECT_RE = re.compile(r"(?m)^(?:\*\*)?Object:(?:\*\*)?\s*(.+)$")
 HIGHLIGHT_MAX_CHARS = 600
+OBJECT_MAX_CHARS = 240
 
 
 @dataclass
@@ -278,6 +280,17 @@ def extract_cp_highlight(body: str) -> str | None:
     return text[:HIGHLIGHT_MAX_CHARS]
 
 
+def extract_cp_object(body: str) -> str | None:
+    """Parse the residue ``Object:`` line — what this window is carrying."""
+    match = _OBJECT_RE.search(body or "")
+    if not match:
+        return None
+    text = match.group(1).strip()
+    if not text:
+        return None
+    return text[:OBJECT_MAX_CHARS]
+
+
 def extract_cp_note(body: str, subject: str) -> tuple[str, str]:
     """Derive cell note from CHECKPOINT body (Layer S v1)."""
     for pattern in (
@@ -410,7 +423,9 @@ __all__ = [
     "extract_closeout_note",
     "extract_cp_highlight",
     "extract_cp_note",
+    "extract_cp_object",
     "HIGHLIGHT_MAX_CHARS",
+    "OBJECT_MAX_CHARS",
     "fetch_lineage_children",
     "fetch_thread_detail",
     "join_boundary_turn_number",

@@ -52,7 +52,7 @@ Lead with problem → direction + decision. Operator may stop after the first tw
 
 Operator correction class (2026-07-19 / friction 25419): seats reconstituted from CHECKPOINTs internally (orchestrator-workflow R12 resume step 0) but opened the operator turn without restating the charter — even with this skill active. Internal reconstitution ≠ operator-facing orientation.
 
-**Profile gate (binding — todo:orchestration-resume-charter-print):** `orchestrator_continuity` resume opens with `operator-posture` Rule 3 (aim, already, object and move order, Been / Are / Going, `In one line:`). This section does not replace that opening with a one-line `Mission:`. It binds **`orchestrator_continuity`** only (¬ root tagged `charter-runner` / `tick_charter`). Discriminator: `checkpoint-discipline`. **`tick_charter`** resume: the aim sentence and scope, then tick index (wave · in-flight · next pickup) — ¬ the picture. `In` / `Out` stay the lock inside the aim (`decision:continuity-resume-mission-open`, amended 2026-09-25).
+**Profile gate (binding — todo:orchestration-resume-charter-print):** `orchestrator_continuity` resume opens with `operator-posture` Rule 3 (aim, Where we left off, already, object and move order, Are / Going, `In one line:`, then a skippable receipts line). This section does not replace that opening with a one-line `Mission:`. House words (house, fence, pour, seal) get a 3–6 word gloss on first use in that reply. It binds **`orchestrator_continuity`** only (¬ root tagged `charter-runner` / `tick_charter`). Discriminator: `checkpoint-discipline`. **`tick_charter`** resume: the aim sentence and scope, then tick index (wave · in-flight · next pickup) — ¬ the picture. `In` / `Out` stay the lock inside the aim (`decision:continuity-resume-mission-open`, amended 2026-09-25).
 
 **Fire when any holds (and profile = `orchestrator_continuity`):** reply after a CHECKPOINT turn, `resume <thread#>`, pasted orchestration handoff, or any standing-root pickup that has a charter/brief/scoreboard/Objective.
 
@@ -68,8 +68,11 @@ Surfaces card (below) may follow when ≥2 live surfaces; it does **not** replac
 | A1–A8 / slug inventory as the opening | Scoreboard dump (still banned) |
 | Picture without explicit `In one line:` | Missing scan sentence (todo:checkpoint-resume-one-liner) |
 | Object omitted, or the hop named as the object | Resume cannot say what this window is carrying |
+| No "Where we left off" quote, and no spoken gap when the pour is empty | The person cannot tell whether the seat read the recent turns |
+| Been restates Already | The last exchange already covered that beat |
+| House word with no gloss (house, fence, pour, seal) | The word is doing work the reader cannot see |
 
-`checkpoint_or_orchestration_resume ∧ slot-1-omits-(aim ∨ object ∨ in_one_line)` ⇒ format miss.
+`checkpoint_or_orchestration_resume ∧ slot-1-omits-(aim ∨ where_we_left_off ∨ object ∨ in_one_line)` ⇒ format miss.
 
 Composes with operator-posture: `¬` dump scoreboard rows **≠** omit the aim. Inventory dump remains a miss; opening on the hop is the other miss.
 

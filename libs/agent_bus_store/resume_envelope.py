@@ -7,7 +7,10 @@ import re
 from pathlib import Path
 from typing import Any
 
-from cortex_store.transcript_projection_membership import extract_cp_highlight
+from cortex_store.transcript_projection_membership import (
+    extract_cp_highlight,
+    extract_cp_object,
+)
 
 from .checkpoint_windows_render import list_checkpoint_turns
 from .db.connection import connect
@@ -18,7 +21,7 @@ from .tape_degrade import (
 )
 from .tape_harvest import render_tape_with_harvest
 from .tape_render import _find_jsonl_for_uuid
-from .tape_verbal import project_role_content_list
+from .tape_verbal import project_role_content_list, tape_left_off_gap, tape_tail
 
 _MECHANICAL_PROJECTION_URI = (
     "cortex://notes/system/threads/{thread}-transcript-projection.md"
@@ -212,6 +215,8 @@ def build_resume_envelope(
     verbal = project_role_content_list(messages)
     tip_turn, tip_body = _tip_checkpoint_body(thread_id)
     checkpoint_highlight = extract_cp_highlight(tip_body)
+    checkpoint_object = extract_cp_object(tip_body)
+    where_we_left_off = tape_tail(verbal)
     summary_row, summary_row_source, summary_as_of_turn = _resume_summary_row(
         thread_id, tip_turn=tip_turn, tip_body=tip_body
     )
@@ -219,6 +224,14 @@ def build_resume_envelope(
         "scope": open_line.get("scope") or "last_session",
         "seal_status": seal_status,
         "tape_verbal": verbal,
+        "tape_tail": where_we_left_off,
+        "tape_left_off_gap": tape_left_off_gap(
+            seal_status,
+            verbal_empty=not where_we_left_off,
+            degraded=tape_degraded is not None,
+            truncated=bool(tape.get("truncated")),
+        ),
+        "checkpoint_object": checkpoint_object,
         "message_count": len(verbal),
         "tape_truncated": bool(tape.get("truncated")),
         "tape_degraded": tape_degraded,

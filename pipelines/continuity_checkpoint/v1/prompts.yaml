@@ -30,8 +30,11 @@ prompts:
 
       ## Residue rules (≤800-char bus body)
 
-      Line 1 `Mission: …` (mandatory). Then `Primary OPEN:` gated G-row(s) by id.
-      Then `Next:` exactly one named hop — pointer, never a status claim.
+      Line 1 `Mission:` the aim — what has to be true, and the constraint that
+      makes it fail. A hop, a path, or "follow the reply" is not the mission.
+      Then `Object:` one short line naming what this window is carrying. If this
+      move changes the object, say so. Then `Primary OPEN:` gated G-row(s) by id.
+      Then `Next:` exactly one move on that object — pointer, never a status claim.
       Then `Do-not-trust:` what a resumer must not take as settled.
       Then `Vocabulary:` bind bare ids to homes when the arc uses numbered lists.
       Pointers only: `agent-bus:{id}#{turn}`, `cortex://…`, `workspaces://…`.
@@ -40,9 +43,19 @@ prompts:
 
       ## resume_open rules (uncapped card zone)
 
-      Been → Are → Going in three short paragraphs, then a single line starting
-      exactly `In one line:` (resume fence parses this prefix). Carry settled rows
-      by reference; write new state without "formerly" or "updated from".
+      Aim (what has to be true, and the constraint that makes it fail). Then
+      `Where we left off:` quote the person's last utterance and the seat's
+      last reply from the tape, a sentence or two each, in those words. If the
+      tape is unsealed or the budget dropped it, write this sentence instead
+      of omitting the beat: "the last few turns aren't sealed yet, so I'm
+      going from the checkpoint." Then what already landed and why the house
+      stayed open. Then the object (one noun phrase for what this window is
+      carrying) and the order of moves. Are → Going follow; Going is the
+      current move only. Do not write Been; Where we left off is that beat.
+      Then a single line starting exactly `In one line:` (resume fence parses
+      this prefix) — the aim again, outcome and constraint together, not the
+      hop. Carry settled rows by reference; write new state without "formerly"
+      or "updated from".
 
       ## Input precedence
 

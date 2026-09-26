@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from cortex_store.transcript_cp_anchors import window_anchors_from_text
+from cortex_store.transcript_projection_membership import extract_cp_object
 
 from .checkpoint_projection import extract_authored_residue
 from .db.connection import connect
@@ -115,12 +116,20 @@ def build_mission_block(
                 "tape: agent_bus_read(scope=window, transcript_id=<window_anchor>, "
                 "prior_cells=1) — not scope=full"
             ),
-            "orientation: Mission + Been→Are→Going + In one line",
+            (
+                "orientation: aim, Where we left off, already, object, "
+                "Are/Going, In one line; receipts after"
+            ),
         ]
     )
 
     mission: dict[str, Any] = {
         "highlight": envelope.get("checkpoint_highlight"),
+        "object": envelope.get("checkpoint_object")
+        if "checkpoint_object" in envelope
+        else extract_cp_object(tip_body or ""),
+        "tape_tail": envelope.get("tape_tail") or [],
+        "tape_left_off_gap": envelope.get("tape_left_off_gap"),
         "open_line": open_line,
         "summary_row": envelope.get("consolidate_summary_row"),
         "summary_row_source": envelope.get("summary_row_source"),

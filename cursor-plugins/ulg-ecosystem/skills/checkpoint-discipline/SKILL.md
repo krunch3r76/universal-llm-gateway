@@ -59,7 +59,8 @@ Happy path is § Pipeline CHECKPOINT. Myelinate, card / sketchboard / continuity
 | Rule | Binding |
 |---|---|
 | Subject | Prefix `CHECKPOINT` (wave/seam). Other verbs: WIP/DONE/BLOCKED/SPAWN/reconcile |
-| Body | WIP + pointers; Next-pickup = gated G-rows only; tangent by pointer |
+| Body | WIP + pointers; Next-pickup = one move on the object (chartered roots: that move is an open gated G-row); tangent by pointer |
+| Object | Residue line `Object:` names what this window is carrying. `Next` is one move on that object. A move that changes the object says so on that line. An empty Next does not clear the object. The aim stays on the card (`## Why this house`); the hop is not the object |
 | Primary OPEN vs WIP | Name G-rows separately from seat WIP; divergence without bind/child = named fork |
 | Delta gate board | Carry settled `[x]` by reference; emit open/delta rows; evidence in sidecar |
 | Scoreboard birth | **Chartered root** (`charter-runner` enrolled): mint `cortex://notes/system/threads/<id>-charter-scoreboard.md` from template **before** first CP if absent. `Scoreboard: none` = violation. **Unchartered orchestrator_continuity root**: omit scoreboard birth — continuity-doc only |
@@ -113,7 +114,7 @@ Happy path is § Pipeline CHECKPOINT. Myelinate, card / sketchboard / continuity
 | Review / audit of whole-history | Fetch role:root CHECKPOINT turns (server-rendered `## Windows` on read; schema §3.5) — not linear thread read |
 | Execute on child lane | Open **that** thread separately |
 
-**Operator-facing:** Mission + In/Out first (`operator-posture` Rule 3 · `decision:continuity-resume-mission-open`). Then `orchestrator_continuity` → Been→Are→Going → `In one line:` → settled·live·next · next. `tick_charter` → Mission + Scope, then wave · in-flight · next pickup.
+**Operator-facing:** `orchestrator_continuity` resume opens with the picture in `operator-posture` Rule 3 (aim, Where we left off, already, object and move order, Are / Going, `In one line:`). Where we left off quotes the tape tail; an unsealed or overflowed pour says so instead of skipping. Been is not spoken. The next-pickup is the Going line. Tip turn, `seal_status`, and `summary_row_source` are a skippable receipts line after that picture. `tick_charter` → the aim sentence, then wave · in-flight · next pickup.
 
 **IDE tab (attended Cursor only — `operator-posture`):** explicit IDE `resume <n>` ⇒ `{n} {slug}`; `checkpoint <n>` or CHECKPOINT post to thread `n` ⇒ `. {n} {slug}`. Headless / agent-only continuity ⇒ no-op.
 
