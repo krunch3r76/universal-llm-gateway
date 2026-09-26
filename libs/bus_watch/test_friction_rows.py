@@ -303,7 +303,7 @@ def test_digest_carries_friction_rows_and_attention(
     state: dict = {
         "policy": {"owned_services": "agent-bus", "friction_dispatch_cap": 1}
     }
-    digest = build_digest("10534", state, register="autonomous", budget_tokens=700000)
+    digest = build_digest("10534", state, register="autonomous")
     fetch.assert_called_once_with("service:agent-bus")
     assert [r["id"] for r in digest["frictions"]] == ["a:33355", "a:32873"]
     assert [i["id"] for i in digest["attention"] if i.get("kind") == "friction"] == [
@@ -317,5 +317,5 @@ def test_digest_carries_friction_rows_and_attention(
     assert "NOW: Friction a:33355" in digest["induction"]
     # AC-3: friction_close supersedes the assertion → it is not in the next read.
     fetch.return_value = [r for r in _RECORDED if r["id"] != 33355]
-    digest = build_digest("10534", state, register="autonomous", budget_tokens=700000)
+    digest = build_digest("10534", state, register="autonomous")
     assert [r["id"] for r in digest["frictions"]] == ["a:32873"]

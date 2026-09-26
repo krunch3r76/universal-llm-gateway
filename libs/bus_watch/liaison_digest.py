@@ -229,7 +229,7 @@ def is_life_root(root: dict[str, Any]) -> bool:
 
 
 def build_digest(
-    root_id: str, state: dict[str, Any], *, register: str, budget_tokens: int
+    root_id: str, state: dict[str, Any], *, register: str
 ) -> dict[str, Any]:
     """Assemble one digest; mutates ``state`` counters (ticks, est_tokens)."""
     with _bus() as client:

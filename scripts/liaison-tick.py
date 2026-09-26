@@ -36,7 +36,6 @@ from pathlib import Path
 
 import bus_watch.doorbell as doorbell_module
 import httpx
-from bus_watch.digest_budget import POLICY_DEFAULTS
 from bus_watch.digest_publish import is_own_digest_echo, publish_if_enabled
 from bus_watch.fable_lock import (
     WATCH_DIR as _WATCH_DIR,
@@ -156,17 +155,6 @@ def main() -> int:
         help="continuity root thread id",
     )
     p.add_argument("--register", choices=["attended", "autonomous"], default=None)
-    p.add_argument(
-        "--budget-tokens",
-        type=int,
-        default=int(
-            os.environ.get(
-                "LIAISON_BUDGET_TOKENS",
-                str(POLICY_DEFAULTS["ide_window_tokens"]),
-            )
-        ),
-        help="ignored for the window; the successor model card sets that",
-    )
     p.add_argument("--state-file", default="")
     p.add_argument("--once", action="store_true")
     p.add_argument("--loop", action="store_true")
@@ -389,9 +377,7 @@ def main() -> int:
     if args.hire_view:
         from bus_watch.roster import roster_classifications
 
-        digest = build_digest(
-            root, state, register=register, budget_tokens=args.budget_tokens
-        )
+        digest = build_digest(root, state, register=register)
         for row in roster_classifications(digest):
             print(
                 json.dumps(
@@ -406,9 +392,7 @@ def main() -> int:
         return 0
 
     if not args.loop:
-        digest = build_digest(
-            root, state, register=register, budget_tokens=args.budget_tokens
-        )
+        digest = build_digest(root, state, register=register)
         if args.holder and read_lock(root).get("holder") == args.holder:
             policy = digest.get("policy") or {}
             refresh_fable_lock(
@@ -491,9 +475,7 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
             _log_steer(absorb_operator_edits(state, state_path))
             register = str(state.get("register") or register)
             try:
-                digest = build_digest(
-                    root, state, register=register, budget_tokens=args.budget_tokens
-                )
+                digest = build_digest(root, state, register=register)
             except (httpx.HTTPError, OSError) as exc:
                 print(
                     json.dumps({"loop": "transport_error", "error": str(exc)[:200]}),
@@ -550,9 +532,7 @@ def _loop(args, root, state, state_path, register, holder, last_emit):  # noqa: 
         _log_steer(absorb_operator_edits(state, state_path))
         register = str(state.get("register") or register)
         try:
-            digest = build_digest(
-                root, state, register=register, budget_tokens=args.budget_tokens
-            )
+            digest = build_digest(root, state, register=register)
         except (httpx.HTTPError, OSError) as exc:
             print(
                 json.dumps({"loop": "transport_error", "error": str(exc)[:200]}),

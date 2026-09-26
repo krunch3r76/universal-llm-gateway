@@ -182,7 +182,7 @@ def test_attention_excludes_nag_lanes(
     mock_get.return_value = {"id": "10479", "turn_count": 10, "status": "active"}
     mock_child.return_value = [live, nag]
     state: dict = {"policy": {}}
-    digest = build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    digest = build_digest("10479", state, register="autonomous")
     attn_ids = [lane["id"] for lane in digest["attention"] if "id" in lane]
     assert "101" not in attn_ids
     assert "100" in attn_ids
@@ -221,7 +221,7 @@ def test_attention_excludes_terminal_without_unread(
     }
     mock_child.return_value = lanes
     state: dict = {"policy": {}}
-    digest = build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    digest = build_digest("10479", state, register="autonomous")
     ids = [lane["id"] for lane in digest["attention"] if "id" in lane]
     assert "10493" not in ids
     assert "10496" in ids
@@ -294,8 +294,7 @@ def test_hop_cap_tracks_policy_override() -> None:
     ):
         mock_bus.return_value.__enter__.return_value = MagicMock()
         digest = build_digest(
-            "10479", digest_state, register="autonomous", budget_tokens=700000
-        )
+            "10479", digest_state, register="autonomous"        )
     assert digest["hop_cap"]["max_hops_per_night"] == 16
     assert digest["hop_cap"]["lock_hops_scope"] == "root"
     assert "lock_hops" in digest["hop_cap"]
@@ -365,7 +364,7 @@ def test_budget_estimate_attention_item(
     }
     mock_bus.return_value.__enter__.return_value = object()
     state: dict = {"policy": {}, "budget_epoch": "epoch-1"}
-    digest = build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    digest = build_digest("10479", state, register="autonomous")
     kinds = [item.get("kind") for item in digest["attention"]]
     assert "budget_estimate" in kinds
     assert digest["budget"]["source"] == "digest.estimate"
@@ -444,7 +443,7 @@ def test_code_root_digest_omits_life_key(
     }
     mock_bus.return_value.__enter__.return_value = object()
     state: dict = {"policy": {}}
-    digest = build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    digest = build_digest("10479", state, register="autonomous")
     assert "life" not in digest
     assert is_life_root(mock_get.return_value) is False
 
@@ -477,7 +476,7 @@ def test_life_root_digest_attaches_life_block(
     }
     mock_bus.return_value.__enter__.return_value = object()
     state: dict = {"policy": {}}
-    digest = build_digest("10500", state, register="autonomous", budget_tokens=700000)
+    digest = build_digest("10500", state, register="autonomous")
     assert is_life_root(mock_get.return_value) is True
     assert "life" in digest
     assert digest["life"]["now"] is None
@@ -526,13 +525,11 @@ def test_checkpoint_observed_advances_epoch_and_clears_due(
     mock_root_surface.return_value = ([], None, [])
     state: dict = {"ticks": 5, "last_cp_tick": 0, "last_cp_turn": 0, "policy": {}}
     due_before = build_digest(
-        "10479", state, register="autonomous", budget_tokens=700000
-    )
+        "10479", state, register="autonomous"    )
     assert due_before["checkpoint_due"] is True
     mock_root_surface.return_value = ([], 50, [])
     due_after = build_digest(
-        "10479", state, register="autonomous", budget_tokens=700000
-    )
+        "10479", state, register="autonomous"    )
     assert state["last_cp_turn"] == 50
     assert state["last_cp_tick"] == 7
     assert due_after["checkpoint_due"] is False
@@ -571,7 +568,7 @@ def test_checkpoint_observed_idempotent_same_turn(
     mock_root_surface.return_value = ([], 40, [])
     state: dict = {"ticks": 1, "last_cp_turn": 40, "last_cp_tick": 2, "policy": {}}
     before = dict(state)
-    build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    build_digest("10479", state, register="autonomous")
     assert state["last_cp_turn"] == before["last_cp_turn"]
     assert state["last_cp_tick"] == before["last_cp_tick"]
     mock_emit.assert_not_called()
@@ -604,7 +601,7 @@ def test_checkpoint_absent_leaves_epoch_untouched(
     mock_root_surface.return_value = ([], None, [])
     state: dict = {"ticks": 3, "last_cp_tick": 1, "policy": {}}
     before = dict(state)
-    build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    build_digest("10479", state, register="autonomous")
     assert state.get("last_cp_turn") == before.get("last_cp_turn")
     assert state["last_cp_tick"] == before["last_cp_tick"]
     mock_emit.assert_not_called()
@@ -636,7 +633,7 @@ def test_manual_last_cp_tick_not_lowered(
     _digest_mocks(mock_bus, mock_get, tip_checkpoint_turn=10)
     mock_root_surface.return_value = ([], 10, [])
     state: dict = {"ticks": 2, "last_cp_tick": 100, "last_cp_turn": 0, "policy": {}}
-    build_digest("10479", state, register="autonomous", budget_tokens=700000)
+    build_digest("10479", state, register="autonomous")
     assert state["last_cp_tick"] == 100
     assert state["last_cp_turn"] == 10
 
@@ -735,7 +732,7 @@ def test_digest_attention_includes_ready_row_class(
             "a:35997": {"class": "low", "why": "mechanical", "row_id": "a:35997"}
         },
     }
-    digest = build_digest("11960", state, register="autonomous", budget_tokens=700000)
+    digest = build_digest("11960", state, register="autonomous")
     assert any(
         item.get("kind") == "friction" and item.get("id") == "a:35997"
         for item in digest["attention"]

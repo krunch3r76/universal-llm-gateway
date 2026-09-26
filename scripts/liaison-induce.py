@@ -46,11 +46,6 @@ def main() -> int:
         action="store_true",
         help="print induction + remote command; no SSH",
     )
-    p.add_argument(
-        "--budget-tokens",
-        type=int,
-        default=int(os.environ.get("LIAISON_BUDGET_TOKENS", "700000")),
-    )
     p.add_argument("--remote-repo", default=DEFAULT_REMOTE_REPO)
     p.add_argument(
         "--gui-host",
@@ -86,7 +81,7 @@ def main() -> int:
     reaped = navigator_lease_reap.reap_navigator_lease(root, dry_run=args.dry_run)
     register = str(state.get("register") or "attended")
     digest = build_digest(
-        root, state, register=register, budget_tokens=args.budget_tokens
+        root, state, register=register
     )
     fp = digest.get("fingerprint")
     if fp and fp == state.get("last_induction_fingerprint"):

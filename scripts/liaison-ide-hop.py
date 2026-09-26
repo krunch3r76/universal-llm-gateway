@@ -188,7 +188,6 @@ def main() -> int:
         args.root,
         state,
         register=str(state.get("register") or "attended"),
-        budget_tokens=int(policy.get("ide_window_tokens") or 256_000),
     )
     raw_row, row_source = resolve_now_row(digest)
     row = format_now_line(raw_row or args.row, row_source, digest, omit_tip_prefix=True)
