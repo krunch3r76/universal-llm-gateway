@@ -60,6 +60,7 @@ On this skill's surface the instance is the **house card**: headings that are th
 
 `role:root` birth · resume of **that** root (`resume <n>` only when `n` is that root) · catch-up / card shape · "drop this on the liaison" · "where do we leave this" · hub wrap · inbound `LIAISON` / `NOTE` / `fyi:` on a liaison-inbox root.
 ¬ work-spine · ¬ conductor packet/worker · ¬ MONITOR / continuity-sibling · ¬ Child lane · ¬ dispatch thread.
+Liaison house vs monitor: `watches:<id>` is the monitor; `lane:liaison` together with `role:root` and no `watches:` tag is the liaison house. `role:root` alone is not that test (`agent-bus-discipline` § Liaison house and monitor).
 Conductor *operates* the root (`conductor`); this skill *shapes the root's house*.
 
 ## Cortex-house order

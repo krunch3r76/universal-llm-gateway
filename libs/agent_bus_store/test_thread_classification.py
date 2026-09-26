@@ -87,3 +87,69 @@ def test_enroll_without_flag_still_denied() -> None:
             prior_tags=[],
             enroll_charter_runner=False,
         )
+
+
+def test_liaison_monitor_kind_order() -> None:
+    from agent_bus_store.thread_classification import liaison_monitor_kind
+
+    assert liaison_monitor_kind(["watches:12586", "role:root"]) == "monitor"
+    assert liaison_monitor_kind(["watch:6590", "type:monitor"]) == "monitor"
+    assert (
+        liaison_monitor_kind(["lane:liaison", "role:root", "type:continuity"])
+        == "liaison_house"
+    )
+    assert liaison_monitor_kind(["role:root", "type:continuity"]) == "other"
+    assert liaison_monitor_kind(["lane:liaison"]) == "other"
+    assert liaison_monitor_kind(["type:monitor"]) == "other"
+
+
+def test_monitor_write_requires_watches_and_forbids_continuity() -> None:
+    with pytest.raises(ThreadClassificationError) as missing:
+        gate_thread_tags(["type:monitor"], prior_tags=[], enroll_charter_runner=False)
+    assert missing.value.error_code == "monitor_watch_required"
+
+    with pytest.raises(ThreadClassificationError) as both:
+        gate_thread_tags(
+            ["type:monitor", "watches:12586", "type:continuity"],
+            prior_tags=[],
+            enroll_charter_runner=False,
+        )
+    assert both.value.error_code == "monitor_continuity_conflict"
+
+    tags = gate_thread_tags(
+        ["type:monitor", "watch:12586"],
+        prior_tags=[],
+        enroll_charter_runner=False,
+    )
+    assert tags == ["type:monitor", "watches:12586"]
+
+
+def test_existing_monitor_without_watches_accepts_unrelated_add() -> None:
+    tags = gate_thread_tags(
+        ["project:ulg"],
+        prior_tags=["type:monitor", "project:ulg"],
+        enroll_charter_runner=False,
+        merge_prior=True,
+    )
+    assert tags == ["project:ulg"]
+
+
+def test_child_lane_cannot_gain_liaison_tag_without_root() -> None:
+    with pytest.raises(ThreadClassificationError) as ei:
+        gate_thread_tags(
+            ["lane:liaison"],
+            prior_tags=["project:ulg"],
+            enroll_charter_runner=False,
+            merge_prior=True,
+            child_lane=True,
+        )
+    assert ei.value.error_code == "liaison_tag_on_child_lane"
+
+    kept = gate_thread_tags(
+        ["lane:liaison", "role:root"],
+        prior_tags=[],
+        enroll_charter_runner=False,
+        child_lane=True,
+    )
+    assert "lane:liaison" in kept
+    assert "role:root" in kept

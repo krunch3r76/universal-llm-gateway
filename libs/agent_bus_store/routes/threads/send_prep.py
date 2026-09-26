@@ -17,6 +17,7 @@ from ...supersedes_turn_boundary import (
     SupersedesTurnNotFoundError,
     resolve_send_supersedes,
 )
+from ...thread_classification import liaison_tag_on_child_without_root
 from ...turns_models import TurnSendCreate, post_mint_detail, turn_body_limit_error
 
 
@@ -115,11 +116,20 @@ def _validate_lane_bind_pre_mint(body: TurnSendCreate) -> None:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {parent_id} not found",
         )
+    if liaison_tag_on_child_without_root(body.tags):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "liaison_tag_on_child_lane",
+                "detail": (
+                    "lane:liaison belongs on a liaison house (with role:root), "
+                    "not on a child lane."
+                ),
+            },
+        )
 
 
-def _raise_if_turn_body_over_limit(
-    body: str, *, allow_long_body: bool = False
-) -> None:
+def _raise_if_turn_body_over_limit(body: str, *, allow_long_body: bool = False) -> None:
     if error_detail := turn_body_limit_error(body, allow_long_body=allow_long_body):
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,

@@ -188,6 +188,18 @@ Two axes only. Spec: `docs/specs/agent-bus-thread-classification-thin.md`.
 
 Only reserved spine tag: `role:root`. Other `role:*` tags are rejected on write. Not classification: `bus_lifecycle:*`, DB `status` / `bus_lifecycle_state`, facet tags (`type:*`, `project:*`, …), thread `480`.
 
+### Liaison house and monitor
+
+`role:root` is the house spine. It does not by itself mean a liaison house.
+
+| Read, in order | Kind |
+|---|---|
+| a `watches:<id>` tag | monitor of that thread |
+| `lane:liaison` and `role:root`, and no `watches:` tag | liaison house |
+| anything else | neither |
+
+`type:monitor` without `watches:<id>` is not a monitor. `lane:liaison` on a child lane that lacks `role:root` is not a liaison house. Birth of a monitor sets `type:monitor` and `watches:<id>` and does not set `type:continuity`. Birth of a liaison house sets `lane:liaison` and `role:root`. `watch:<id>` is the same key as `watches:<id>`.
+
 CHECKPOINT profile still follows enrollment only (`tick_charter` iff enrolled; else `orchestrator_continuity`).
 
 ### Genus (prose, not a classification axis)
@@ -219,6 +231,9 @@ Do not mint `genus:` tags until that decision's promotion trigger fires.
 
 **Three registers (BINDING — Fable 9518 / `decision:thread-genus`):** do not
 read `slug` or `type:*` as the current contract. They are birth graffiti.
+Exception: the liaison/monitor reader above. `watches:` and
+`lane:liaison` together with `role:root` are that discriminator. Other
+`type:*` and `lane:*` tags stay graffiti.
 
 | Register | What it is | When it changes |
 |---|---|---|

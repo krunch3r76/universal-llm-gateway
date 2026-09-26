@@ -203,7 +203,10 @@ def add_tags(
     enroll_charter_runner: bool = False,
 ) -> dict[str, Any] | None:
     """Add tags to a thread without clobbering unspecified tags."""
-    from agent_bus_store.thread_classification import gate_thread_tags
+    from agent_bus_store.thread_classification import (
+        gate_thread_tags,
+        thread_is_child_lane,
+    )
 
     if not tags:
         return get_thread(thread_id)
@@ -219,6 +222,8 @@ def add_tags(
             tags,
             prior_tags=prior_tags,
             enroll_charter_runner=enroll_charter_runner,
+            merge_prior=True,
+            child_lane=thread_is_child_lane(thread_id),
         )
         add_thread_tags(conn, thread_id, gated)
         conn.execute("UPDATE threads SET updated_at = ? WHERE id = ?", (ts, thread_id))
@@ -569,7 +574,10 @@ def update_thread(
     queue regardless of which endpoint is used.
     """
     from agent_bus_store.enrollment_guard import ENROLLMENT_TAG
-    from agent_bus_store.thread_classification import gate_thread_tags
+    from agent_bus_store.thread_classification import (
+        gate_thread_tags,
+        thread_is_child_lane,
+    )
 
     from ..events.thread_closed import (
         emit_thread_closed,
@@ -592,6 +600,7 @@ def update_thread(
                 tags,
                 prior_tags=prior_tags,
                 enroll_charter_runner=enroll_charter_runner,
+                child_lane=thread_is_child_lane(thread_id),
             )
         # Closing an enrolled root without an explicit tags replace: strip
         # enrollment so seat/update_thread(status=closed) cannot leave a parked

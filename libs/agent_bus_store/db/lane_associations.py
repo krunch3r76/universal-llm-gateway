@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from ..events.lane_bound import emit_lane_bound
 from ..lane_roles import parse_lane_role
+from ..thread_classification import liaison_tag_on_child_without_root
 from .connection import connect
 from .threads import get_thread, normalize_thread_id
 
@@ -93,6 +94,14 @@ def associate_lane(
         raise LookupError(f"Thread {thread_id} not found")
     if get_thread(parent_thread_id) is None:
         raise LookupError(f"Thread {parent_thread_id} not found")
+
+    child = get_thread(thread_id)
+    child_tags = list(child.get("tags") or []) if child else []
+    if liaison_tag_on_child_without_root(child_tags):
+        raise ValueError(
+            "lane:liaison belongs on a liaison house (with role:root), "
+            "not on a child lane"
+        )
 
     with connect() as conn:
         prior_id = _prior_association_id(conn, thread_id=thread_id)
