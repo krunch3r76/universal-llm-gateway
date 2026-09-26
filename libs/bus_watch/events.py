@@ -205,3 +205,73 @@ def emit_now_row_bound(**kwargs: Any) -> None:
 
 def emit_now_row_released(**kwargs: Any) -> None:
     _emit(LiaisonNowRowReleased(**kwargs))
+
+
+@event_factory
+def LiaisonRosterHireLatched(  # noqa: N802
+    *,
+    row_id: str,
+    work_key: str,
+    dispatch_id: str,
+    readmit_count: int,
+    readmit_from: str | None = None,
+) -> Event:
+    return Event(
+        signal="liaison.roster.hire.latched",
+        payload={
+            "row_id": row_id,
+            "work_key": work_key,
+            "dispatch_id": dispatch_id,
+            "readmit_count": readmit_count,
+            "readmit_from": readmit_from,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def LiaisonRosterHireReleased(  # noqa: N802
+    *,
+    row_id: str,
+    dispatch_id: str,
+    reason: str,
+) -> Event:
+    return Event(
+        signal="liaison.roster.hire.released",
+        payload={
+            "row_id": row_id,
+            "dispatch_id": dispatch_id,
+            "reason": reason,
+        },
+        scope="global",
+    )
+
+
+@event_factory
+def LiaisonRosterHireRefused(  # noqa: N802
+    *,
+    row_id: str,
+    work_key: str,
+    reason: str,
+) -> Event:
+    return Event(
+        signal="liaison.roster.hire.refused",
+        payload={
+            "row_id": row_id,
+            "work_key": work_key,
+            "reason": reason,
+        },
+        scope="global",
+    )
+
+
+def emit_roster_hire_latched(**kwargs: Any) -> None:
+    _emit(LiaisonRosterHireLatched(**kwargs))
+
+
+def emit_roster_hire_released(**kwargs: Any) -> None:
+    _emit(LiaisonRosterHireReleased(**kwargs))
+
+
+def emit_roster_hire_refused(**kwargs: Any) -> None:
+    _emit(LiaisonRosterHireRefused(**kwargs))

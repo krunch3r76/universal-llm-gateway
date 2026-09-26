@@ -110,8 +110,13 @@ def test_latched_trio_with_todo_is_play_body() -> None:
         todo_slug="foo",
     )
     assert body["contract"] == "none"
-    assert "liaison-sdk-driver" in body["subject"]
+    assert body["subject"] == "trio todo:foo"
     assert "source_ref" not in body
+    assert body["prompt"] == (
+        "Close the score row: --mark-friction a:35997:direct-first|todo-minted|"
+        "declined then friction_close on the assertion (commit:<sha> at land). "
+        "Do not leave the row forcing."
+    )
     assert body["work_key"] == "todo:foo"
     assert body["lane"] == "B"
     assert body.get("_row_class") == "trio"

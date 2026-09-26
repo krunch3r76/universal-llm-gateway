@@ -494,6 +494,240 @@ def fire_spawn(
     return result
 
 
+def _remember_unparseable_work_key(state: dict[str, Any], work_key: str) -> None:
+    if not work_key:
+        return
+    seen = [str(key) for key in (state.get("refused_work_keys") or []) if key]
+    if work_key not in seen:
+        seen.append(work_key)
+    state["refused_work_keys"] = seen[-32:]
+
+
+def _page_roster_remint(
+    root_id: str, state: dict[str, Any], payload: dict[str, Any]
+) -> bool:
+    """Latch and page a REMINT_CAP refusal once per night. False for any other code."""
+    wall = record_remint_cap(state, payload, night_id=current_night_id(), at=_utcnow())
+    if not wall:
+        return False
+    night_id = str(wall.get("night_id") or "")
+    page_liaison(
+        root_id,
+        f"liaison {root_id} — REMINT_CAP wall {night_id}",
+        f"GIW refused the night's work_key: {wall['message']} "
+        "Ticker holds until the night rolls.",
+    )
+    return True
+
+
+def _emit_roster_classify_refuses(
+    root_id: str, digest: dict[str, Any], state: dict[str, Any]
+) -> None:
+    """Emit readmit_cap / max_conductors once per row and reason."""
+    del root_id
+    roster = digest.get("roster")
+    if not isinstance(roster, list) or not roster:
+        return
+    from bus_watch.events import emit_roster_hire_refused
+    from bus_watch.roster import classify_roster_rows
+
+    sent = state.get("roster_classify_refused")
+    if not isinstance(sent, dict):
+        sent = {}
+    else:
+        sent = dict(sent)
+    changed = False
+    for row, verdict in zip(roster, classify_roster_rows(digest), strict=False):
+        reason = str(verdict.get("reason") or "")
+        if reason not in ("readmit_cap", "max_conductors"):
+            continue
+        row_id = str(row.get("row_id") or "")
+        stamp = f"{row_id}:{reason}"
+        if sent.get(stamp):
+            continue
+        emit_roster_hire_refused(
+            row_id=row_id,
+            work_key=str(row.get("work_key") or ""),
+            reason=reason,
+        )
+        sent[stamp] = _utcnow()
+        changed = True
+    if changed:
+        state["roster_classify_refused"] = dict(list(sent.items())[-200:])
+
+
+def _roster_hire_active(digest: dict[str, Any]) -> bool:
+    roster = digest.get("roster")
+    if not isinstance(roster, list) or not roster:
+        return False
+    from bus_watch.roster import roster_play_rows
+
+    return bool(roster_play_rows(digest))
+
+
+def _post_roster_hires(
+    digest: dict[str, Any],
+    state: dict[str, Any],
+    root_id: str,
+    evaluation: dict[str, Any],
+    *,
+    submit: Callable[..., tuple[dict[str, Any], int]] | None,
+) -> dict[str, Any]:
+    """Post play rows up to the conductor cap. Does not write ``pending_spawn``."""
+    from bus_watch.events import (
+        emit_roster_hire_latched,
+        emit_roster_hire_refused,
+        emit_roster_hire_released,
+    )
+    from bus_watch.roster import record_row_hire, roster_play_rows
+    from bus_watch.spawn_wake.play_classify import (
+        closed_unharvested_lane_ids,
+        extract_todo_slug,
+        holder_lost_finished_hire,
+    )
+
+    policy = digest.get("policy") or {}
+    roster = digest.get("roster") or []
+    live = sum(1 for row in roster if isinstance(row, dict) and row.get("live") is True)
+    cap = max(0, int(policy.get("max_conductors") or 2) - live)
+    poster = submit or submit_team_dispatch
+    posts: list[dict[str, Any]] = []
+    refused_keys = {
+        str(key) for key in (state.get("refused_work_keys") or []) if key
+    }
+    for row, verdict in roster_play_rows(digest)[:cap]:
+        work_key = str(row.get("work_key") or "")
+        if work_key and work_key in refused_keys:
+            continue
+        slug = extract_todo_slug(row.get("work_key")) or ""
+        release_reason = str(verdict.get("release_reason") or "")
+        release_lane = str(verdict.get("release_lane_id") or "")
+        latched = str(row.get("last_hire_dispatch_id") or "").strip()
+        if release_reason:
+            emit_roster_hire_released(
+                row_id=str(row.get("row_id") or ""),
+                dispatch_id=latched,
+                reason=release_reason,
+            )
+        stop_id = None
+        if (
+            latched
+            and release_reason
+            and release_reason != "holder_lost"
+            and not holder_lost_finished_hire(digest, slug)
+        ):
+            stop_id = latched
+        body = build_play_dispatch_body(
+            root_id,
+            policy,
+            todo_slug=slug,
+            roster_row_id=str(row.get("row_id") or "") or None,
+            stop_id=stop_id,
+        )
+        if stop_id:
+            from services.git_integration_worker.cursor_dispatch_ledger import (
+                CursorDispatchLedger,
+            )
+
+            admit_id = str(body.get("dispatch_id") or "").strip() or str(uuid.uuid4())
+            body["dispatch_id"] = admit_id
+            if not CursorDispatchLedger.instance().claim_stop_service(
+                stop_id, admit_id
+            ):
+                emit_roster_hire_refused(
+                    row_id=str(row.get("row_id") or ""),
+                    work_key=str(row.get("work_key") or ""),
+                    reason="stop_not_claimed",
+                )
+                continue
+        payload, status = poster(_wire_submit_body(body))
+        err = payload.get("error") or {}
+        code = err.get("code") if isinstance(err, dict) else None
+        posted_key = str(body.get("work_key") or work_key)
+        row_id = str(row.get("row_id") or "")
+        if code == _WORK_KEY_IN_FLIGHT or status == 409:
+            # REMINT_CAP is itself a 409. Page that wall; other 409s stay in-flight.
+            if _page_roster_remint(root_id, state, payload):
+                emit_roster_hire_refused(
+                    row_id=row_id,
+                    work_key=posted_key,
+                    reason=str(code or "CURSOR_WORK_KEY_REMINT_CAP"),
+                )
+            else:
+                emit_roster_hire_refused(
+                    row_id=row_id,
+                    work_key=posted_key,
+                    reason="work_key_in_flight",
+                )
+            continue
+        if status >= 400:
+            if code == _WORK_KEY_UNPARSEABLE:
+                _remember_unparseable_work_key(state, posted_key)
+                refused_keys.add(posted_key)
+            _page_roster_remint(root_id, state, payload)
+            emit_roster_hire_refused(
+                row_id=row_id,
+                work_key=posted_key,
+                reason=str(code or status),
+            )
+            continue
+        if status <= 0:
+            continue
+        dispatch_id = str(
+            payload.get("dispatch_id")
+            or payload.get("execution_id")
+            or payload.get("thread_id")
+            or payload.get("thread")
+            or ""
+        ).strip()
+        if not dispatch_id:
+            emit_roster_hire_refused(
+                row_id=row_id,
+                work_key=posted_key,
+                reason="posted_unlatched",
+            )
+            continue
+        readmit_from = release_lane if release_reason == "closed_park" else None
+        record_row_hire(
+            root_id,
+            str(row.get("row_id") or ""),
+            dispatch_id,
+            readmit_from=readmit_from,
+            closed_lane_ids=closed_unharvested_lane_ids(digest, slug),
+        )
+        merged_count = int(row.get("readmit_count") or 0)
+        if readmit_from:
+            merged_count += 1
+        emit_roster_hire_latched(
+            row_id=str(row.get("row_id") or ""),
+            work_key=str(row.get("work_key") or ""),
+            dispatch_id=dispatch_id,
+            readmit_count=merged_count,
+            readmit_from=readmit_from or row.get("readmit_from"),
+        )
+        posts.append({"status_code": status, "payload": payload, "body": body})
+    if not posts:
+        return {
+            "action": "hold",
+            "evaluation": evaluation,
+            "body": None,
+        }
+    night_id = current_night_id()
+    by_night = dict(state.get("dispatches_tonight_by_night") or {})
+    count = int(by_night.get(night_id) or state.get("dispatches_tonight") or 0)
+    count += len(posts)
+    by_night[night_id] = count
+    state["dispatches_tonight_by_night"] = by_night
+    state["dispatches_tonight"] = count
+    state["last_spawn_at"] = time.time()
+    return {
+        "action": "spawned",
+        "evaluation": evaluation,
+        "fires": posts,
+        "body": posts[0]["body"],
+    }
+
+
 def tick_spawn_on_wake(
     digest: dict[str, Any],
     state: dict[str, Any],
@@ -586,6 +820,34 @@ def tick_spawn_on_wake(
         digest=digest,
         state=state,
     )
+    if _roster_hire_active(digest):
+        from bus_watch.spawn_wake.predicate import roster_hire_night_caps
+
+        if not roster_hire_night_caps(evaluation.get("clauses") or {}):
+            if not dry_run:
+                _emit_roster_classify_refuses(root_id, digest, state)
+            return {
+                "action": "hold",
+                "evaluation": evaluation,
+                "refused": "roster_night_cap",
+                "body": None,
+            }
+        if dry_run:
+            return {
+                "action": "would_spawn",
+                "evaluation": evaluation,
+                "body": body,
+            }
+        _emit_roster_classify_refuses(root_id, digest, state)
+        return _post_roster_hires(
+            digest,
+            state,
+            root_id,
+            evaluation,
+            submit=submit,
+        )
+    if not dry_run:
+        _emit_roster_classify_refuses(root_id, digest, state)
     if leftover.get("leftover") == LEFTOVER_HOLD and not (body or {}).get(
         "_review_apply"
     ):

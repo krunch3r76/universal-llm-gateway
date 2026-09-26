@@ -29,6 +29,7 @@ def _live_lane(todo: str, *, lane_id: str = "11800") -> dict:
         "id": lane_id,
         "status": "active",
         "lifecycle": "admitted",
+        "turns": 1,
         "contract": "conductor",
         "work_key": f"todo:{todo}",
     }
@@ -339,3 +340,515 @@ def test_hire_latch_holds_after_dispatch_recorded() -> None:
     verdict = classify_row(digest, digest["roster"][0])
     assert verdict["decision"] == "hold"
     assert verdict["reason"] == "hire_latched"
+
+
+def test_closed_park_second_sight_holds_hire_latched() -> None:
+    """After the releasing lane is recorded, the same park does not play again."""
+    row = _row(
+        "row-a",
+        "hop-checkpoint-precondition",
+        paths=["libs/bus_watch/roster.py"],
+        last_hire_dispatch_id="disp-parked",
+    )
+    row["readmit_from"] = "12680"
+    row["readmit_count"] = 1
+    digest = _digest_with_roster(
+        [row],
+        lanes=[
+            {
+                "id": "12680",
+                "status": "closed",
+                "lifecycle": "completed",
+                "contract": "conductor",
+                "quiet_reason": "closeout_unharvested",
+                "tags": ["todo:hop-checkpoint-precondition"],
+            }
+        ],
+    )
+    verdict = classify_row(digest, digest["roster"][0])
+    assert verdict["decision"] == "hold"
+    assert verdict["reason"] == "hire_latched"
+
+
+def test_exposed_dispatch_lane_binds_closed_park_release() -> None:
+    """A lane that carries the latched dispatch id is the only closed-park release."""
+    row = _row(
+        "row-a",
+        "alpha",
+        paths=["libs/bus_watch/roster.py"],
+        last_hire_dispatch_id="disp-parked",
+    )
+    stale = {
+        "id": "9001",
+        "status": "closed",
+        "lifecycle": "completed",
+        "contract": "conductor",
+        "quiet_reason": "closeout_unharvested",
+        "dispatch_id": "disp-older",
+        "tags": ["todo:alpha"],
+    }
+    own = {
+        "id": "12680",
+        "status": "closed",
+        "lifecycle": "completed",
+        "contract": "conductor",
+        "quiet_reason": "closeout_unharvested",
+        "dispatch_id": "disp-parked",
+        "tags": ["todo:alpha"],
+    }
+    held = _digest_with_roster([row], lanes=[stale])
+    assert classify_row(held, held["roster"][0])["reason"] == "hire_latched"
+    released = _digest_with_roster([row], lanes=[stale, own])
+    verdict = classify_row(released, released["roster"][0])
+    assert verdict["decision"] == "play"
+    assert verdict["release_reason"] == "closed_park"
+    assert verdict["release_lane_id"] == "12680"
+
+
+def _quiet_tick(monkeypatch) -> None:
+    monkeypatch.setattr("bus_watch.spawn_wake.fire.page_liaison", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "bus_watch.quiet_reason.close_unharvested_quiet_lanes_on_bus",
+        lambda _lanes: [],
+    )
+    monkeypatch.setattr(
+        "bus_watch.quiet_reason.fetch_held_execution_ids",
+        lambda: None,
+    )
+
+
+def test_closed_lane_before_first_latch_next_tick_holds(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A park that predates the latch does not release that latch on the next tick."""
+    from bus_watch.roster import append_row, fold_roster, roster_path
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    monkeypatch.setattr("bus_watch.roster.WATCH_DIR", tmp_path)
+    _quiet_tick(monkeypatch)
+    root = "12786"
+    append_row(
+        roster_path(root),
+        _row("row-a", "alpha", paths=["libs/bus_watch/roster.py"]),
+    )
+    closed = {
+        "id": "9001",
+        "status": "closed",
+        "lifecycle": "completed",
+        "turns": 4,
+        "contract": "conductor",
+        "quiet_reason": "closeout_unharvested",
+        "tags": ["todo:alpha"],
+    }
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["lanes"] = [closed]
+    digest["policy"]["max_conductors"] = 2
+    digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
+    state: dict = {}
+    calls: list[dict] = []
+
+    def submit(body: dict) -> tuple[dict, int]:
+        calls.append(body)
+        return ({"dispatch_id": f"disp-{len(calls)}"}, 202)
+
+    tick_spawn_on_wake(digest, state, root, submit=submit)
+    assert len(calls) == 1
+    assert "prompt" not in calls[0]
+    assert calls[0]["contract"] == "conductor"
+    digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
+    assert digest["roster"][0]["closed_lanes_before_latch"] == ["9001"]
+    tick_spawn_on_wake(digest, state, root, submit=submit)
+    assert len(calls) == 1
+    verdict = classify_row(digest, digest["roster"][0])
+    assert verdict["reason"] == "hire_latched"
+    assert "pending_spawn" not in state
+
+
+def test_closed_lanes_before_latch_caps_at_32_and_keeps_the_tail(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The exclusion list is the tail of 32. Dropped ids are not excluded."""
+    from bus_watch.roster import (
+        _CLOSED_LANES_BEFORE_LATCH_CAP,
+        append_row,
+        merge_by_row_id,
+        read_journal,
+        record_row_hire,
+    )
+
+    monkeypatch.setattr("bus_watch.roster.WATCH_DIR", tmp_path)
+    root = "12786"
+    append_row(
+        roster_path(root),
+        _row("row-a", "alpha", paths=["libs/bus_watch/roster.py"]),
+    )
+    observed = [str(i) for i in range(40)]
+    record_row_hire(root, "row-a", "disp-1", closed_lane_ids=observed)
+    closed = merge_by_row_id(read_journal(roster_path(root)))[0][
+        "closed_lanes_before_latch"
+    ]
+    assert len(closed) == _CLOSED_LANES_BEFORE_LATCH_CAP
+    assert closed == [str(i) for i in range(8, 40)]
+    record_row_hire(root, "row-a", "disp-2", closed_lane_ids=["40"])
+    closed = merge_by_row_id(read_journal(roster_path(root)))[0][
+        "closed_lanes_before_latch"
+    ]
+    assert closed == [str(i) for i in range(9, 41)]
+    assert "8" not in closed
+
+
+def test_reused_lane_id_in_closed_lanes_before_latch_stays_excluded() -> None:
+    """A lane id still in the list does not release, even with empty readmit_from."""
+    row = _row(
+        "row-a",
+        "hop-checkpoint-precondition",
+        paths=["libs/bus_watch/roster.py"],
+        last_hire_dispatch_id="disp-parked",
+    )
+    row["closed_lanes_before_latch"] = ["12680"]
+    digest = _digest_with_roster(
+        [row],
+        lanes=[
+            {
+                "id": "12680",
+                "status": "closed",
+                "lifecycle": "completed",
+                "contract": "conductor",
+                "quiet_reason": "closeout_unharvested",
+                "tags": ["todo:hop-checkpoint-precondition"],
+            }
+        ],
+    )
+    verdict = classify_row(digest, digest["roster"][0])
+    assert verdict["decision"] == "hold"
+    assert verdict["reason"] == "hire_latched"
+
+
+def test_two_disjoint_rows_one_tick_posts_both_then_holds(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from bus_watch.roster import append_row, fold_roster, roster_path
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    monkeypatch.setattr("bus_watch.roster.WATCH_DIR", tmp_path)
+    _quiet_tick(monkeypatch)
+    root = "12786"
+    append_row(
+        roster_path(root),
+        _row("row-a", "a", paths=["libs/bus_watch/roster.py"]),
+    )
+    append_row(
+        roster_path(root),
+        _row("row-b", "b", paths=["libs/bus_watch/induction.py"]),
+    )
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["lanes"] = []
+    digest["policy"]["max_conductors"] = 2
+    digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
+    state: dict = {}
+    calls: list[dict] = []
+
+    def submit(body: dict) -> tuple[dict, int]:
+        calls.append(body)
+        return ({"dispatch_id": f"disp-{len(calls)}"}, 202)
+
+    tick_spawn_on_wake(digest, state, root, submit=submit)
+    assert len(calls) == 2
+    assert {body["work_key"] for body in calls} == {"todo:a", "todo:b"}
+    assert all(
+        body["contract"] == "conductor" and "prompt" not in body for body in calls
+    )
+    digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
+    ids = {row["last_hire_dispatch_id"] for row in digest["roster"]}
+    assert ids == {"disp-1", "disp-2"}
+    tick_spawn_on_wake(digest, state, root, submit=submit)
+    assert len(calls) == 2
+    assert "pending_spawn" not in state
+
+
+def test_path_overlap_with_live_sibling_posts_nothing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from bus_watch.roster import append_row, fold_roster, roster_path
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    monkeypatch.setattr("bus_watch.roster.WATCH_DIR", tmp_path)
+    _quiet_tick(monkeypatch)
+    root = "12786"
+    append_row(
+        roster_path(root),
+        _row("row-a", "a", paths=["libs/bus_watch/roster.py"]),
+    )
+    append_row(
+        roster_path(root),
+        _row("row-b", "b", paths=["libs/bus_watch/roster.py"]),
+    )
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["lanes"] = [_live_lane("a", lane_id="live-a")]
+    digest["policy"]["max_conductors"] = 2
+    digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
+    calls: list[dict] = []
+
+    def submit(body: dict) -> tuple[dict, int]:
+        calls.append(body)
+        return ({"dispatch_id": "disp-should-not"}, 202)
+
+    tick_spawn_on_wake(digest, {}, root, submit=submit)
+    assert calls == []
+    assert classify_row(digest, digest["roster"][1])["reason"] == "path_overlap:row-a"
+
+
+def test_readmit_cap_holds_and_posts_nothing(tmp_path: Path, monkeypatch) -> None:
+    from bus_watch.roster import append_row, fold_roster, roster_path
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    monkeypatch.setattr("bus_watch.roster.WATCH_DIR", tmp_path)
+    _quiet_tick(monkeypatch)
+    root = "12786"
+    row = _row(
+        "row-a",
+        "alpha",
+        paths=["libs/bus_watch/roster.py"],
+        last_hire_dispatch_id="disp-parked",
+    )
+    row["readmit_count"] = 2
+    append_row(roster_path(root), row)
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["lanes"] = [
+        {
+            "id": "12680",
+            "status": "closed",
+            "lifecycle": "completed",
+            "turns": 4,
+            "contract": "conductor",
+            "quiet_reason": "closeout_unharvested",
+            "tags": ["todo:alpha"],
+        }
+    ]
+    digest["policy"]["max_conductors"] = 2
+    digest["policy"]["max_readmits"] = 2
+    digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
+    calls: list[dict] = []
+
+    def submit(body: dict) -> tuple[dict, int]:
+        calls.append(body)
+        return ({"dispatch_id": "disp-again"}, 202)
+
+    tick_spawn_on_wake(digest, {}, root, submit=submit)
+    assert calls == []
+    assert classify_row(digest, digest["roster"][0])["reason"] == "readmit_cap"
+
+
+def _capture_hire_refuses(monkeypatch) -> list[dict]:
+    refused: list[dict] = []
+
+    def _emit(**kwargs: object) -> None:
+        refused.append(dict(kwargs))
+
+    monkeypatch.setattr("bus_watch.events.emit_roster_hire_refused", _emit)
+    return refused
+
+
+def _play_row_digest(tmp_path: Path, monkeypatch, root: str = "12786") -> dict:
+    from bus_watch.roster import append_row, fold_roster, roster_path
+
+    monkeypatch.setattr("bus_watch.roster.WATCH_DIR", tmp_path)
+    _quiet_tick(monkeypatch)
+    append_row(
+        roster_path(root),
+        _row("row-a", "alpha", paths=["libs/bus_watch/roster.py"]),
+    )
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["lanes"] = []
+    digest["policy"]["max_conductors"] = 2
+    digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
+    return digest
+
+
+def test_thread_id_fallback_latches_hire(tmp_path: Path, monkeypatch) -> None:
+    from bus_watch.roster import fold_roster
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    root = "12786"
+    digest = _play_row_digest(tmp_path, monkeypatch, root)
+    calls: list[dict] = []
+
+    def submit(body: dict) -> tuple[dict, int]:
+        calls.append(body)
+        return ({"thread_id": "12901"}, 202)
+
+    tick_spawn_on_wake(digest, {}, root, submit=submit)
+    assert len(calls) == 1
+    digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
+    assert digest["roster"][0]["last_hire_dispatch_id"] == "12901"
+
+
+def test_posted_without_id_emits_refused_and_does_not_latch(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from bus_watch.roster import fold_roster
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    root = "12786"
+    digest = _play_row_digest(tmp_path, monkeypatch, root)
+    refused = _capture_hire_refuses(monkeypatch)
+
+    def submit(body: dict) -> tuple[dict, int]:
+        return ({}, 202)
+
+    tick_spawn_on_wake(digest, {}, root, submit=submit)
+    assert refused == [
+        {
+            "row_id": "row-a",
+            "work_key": "todo:alpha",
+            "reason": "posted_unlatched",
+        }
+    ]
+    digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
+    assert not digest["roster"][0].get("last_hire_dispatch_id")
+
+
+def test_unparseable_work_key_is_recorded_and_not_reposted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    root = "12786"
+    digest = _play_row_digest(tmp_path, monkeypatch, root)
+    refused = _capture_hire_refuses(monkeypatch)
+    calls = {"n": 0}
+
+    def submit(body: dict) -> tuple[dict, int]:
+        calls["n"] += 1
+        return ({"error": {"code": "work_key_unparseable", "message": "nope"}}, 422)
+
+    state: dict = {}
+    tick_spawn_on_wake(digest, state, root, submit=submit)
+    assert calls["n"] == 1
+    assert state["refused_work_keys"] == ["todo:alpha"]
+    assert refused[-1]["reason"] == "work_key_unparseable"
+    tick_spawn_on_wake(digest, state, root, submit=submit)
+    assert calls["n"] == 1
+
+
+def test_remint_cap_409_pages_once(tmp_path: Path, monkeypatch) -> None:
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    root = "12786"
+    digest = _play_row_digest(tmp_path, monkeypatch, root)
+    pages: list[tuple] = []
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.page_liaison",
+        lambda *args, **kwargs: pages.append(args),
+    )
+    refused = _capture_hire_refuses(monkeypatch)
+    calls = {"n": 0}
+
+    def submit(body: dict) -> tuple[dict, int]:
+        calls["n"] += 1
+        return (
+            {
+                "error": {
+                    "code": "CURSOR_WORK_KEY_REMINT_CAP",
+                    "message": "remint seq exceeds cap",
+                }
+            },
+            409,
+        )
+
+    state: dict = {}
+    tick_spawn_on_wake(digest, state, root, submit=submit)
+    assert calls["n"] == 1
+    assert len(pages) == 1
+    assert "REMINT_CAP" in pages[0][1]
+    assert refused[-1]["reason"] == "CURSOR_WORK_KEY_REMINT_CAP"
+    assert state["remint_cap_wall"]["night_id"]
+    tick_spawn_on_wake(digest, state, root, submit=submit)
+    assert calls["n"] == 1
+    assert len(pages) == 1
+
+
+def test_dry_run_does_not_emit_classify_refuses(tmp_path: Path, monkeypatch) -> None:
+    from bus_watch.roster import append_row, fold_roster, roster_path
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    monkeypatch.setattr("bus_watch.roster.WATCH_DIR", tmp_path)
+    _quiet_tick(monkeypatch)
+    root = "12786"
+    row = _row(
+        "row-a",
+        "alpha",
+        paths=["libs/bus_watch/roster.py"],
+        last_hire_dispatch_id="disp-parked",
+    )
+    row["readmit_count"] = 2
+    append_row(roster_path(root), row)
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["lanes"] = [
+        {
+            "id": "12680",
+            "status": "closed",
+            "lifecycle": "completed",
+            "turns": 4,
+            "contract": "conductor",
+            "quiet_reason": "closeout_unharvested",
+            "tags": ["todo:alpha"],
+        }
+    ]
+    digest["policy"]["max_conductors"] = 2
+    digest["policy"]["max_readmits"] = 2
+    digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
+    refused = _capture_hire_refuses(monkeypatch)
+    state: dict = {}
+    out = tick_spawn_on_wake(
+        digest, state, root, dry_run=True, submit=lambda body: ({}, 202)
+    )
+    assert out["action"] == "hold"
+    assert refused == []
+    assert "roster_classify_refused" not in state
+
+
+def test_readmit_cap_refuses_once_per_row_and_reason(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from bus_watch.roster import append_row, fold_roster, roster_path
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    monkeypatch.setattr("bus_watch.roster.WATCH_DIR", tmp_path)
+    _quiet_tick(monkeypatch)
+    root = "12786"
+    row = _row(
+        "row-a",
+        "alpha",
+        paths=["libs/bus_watch/roster.py"],
+        last_hire_dispatch_id="disp-parked",
+    )
+    row["readmit_count"] = 2
+    append_row(roster_path(root), row)
+    digest = _digest(attention=[{"id": "1", "unread": 1}])
+    digest["lanes"] = [
+        {
+            "id": "12680",
+            "status": "closed",
+            "lifecycle": "completed",
+            "turns": 4,
+            "contract": "conductor",
+            "quiet_reason": "closeout_unharvested",
+            "tags": ["todo:alpha"],
+        }
+    ]
+    digest["policy"]["max_conductors"] = 2
+    digest["policy"]["max_readmits"] = 2
+    digest["roster"] = fold_roster(root, digest["policy"], digest, giw_live={})
+    refused = _capture_hire_refuses(monkeypatch)
+    state: dict = {}
+
+    def submit(body: dict) -> tuple[dict, int]:
+        raise AssertionError("readmit_cap must not post")
+
+    tick_spawn_on_wake(digest, state, root, submit=submit)
+    tick_spawn_on_wake(digest, state, root, submit=submit)
+    assert refused == [
+        {"row_id": "row-a", "work_key": "todo:alpha", "reason": "readmit_cap"}
+    ]
+    assert "row-a:readmit_cap" in state["roster_classify_refused"]

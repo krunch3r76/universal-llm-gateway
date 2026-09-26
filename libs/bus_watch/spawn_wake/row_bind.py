@@ -8,7 +8,7 @@ from bus_watch.fable_lock import current_night_id
 from bus_watch.liaison_pager import page_liaison
 from bus_watch.loop_tape import loop_tape_thread
 from bus_watch.model_pause import model_paused
-from bus_watch.spawn_wake.play_classify import build_play_dispatch_body
+from bus_watch.spawn_wake.packet import successor_model_fields
 from bus_watch.spawn_wake.row_class import (
     ROW_CLASS_FIRED,
     ROW_CLASS_HOLD,
@@ -248,16 +248,25 @@ def build_trio_fire_body(
     latched: dict[str, Any] | None = None,
     todo_slug: str | None = None,
 ) -> dict[str, Any]:
-    """TRIO: play conductor when ``todo:{slug}`` is named; else CDP sketch consult."""
+    """TRIO: disposition exit when ``todo:{slug}`` is named; else CDP sketch consult."""
     if todo_slug:
-        body = build_play_dispatch_body(root_id, policy, todo_slug=todo_slug)
+        max_hop = int(policy.get("max_hop_minutes") or 60)
         fid = str(friction.get("id") or "")
-        body["_row_class"] = ROW_CLASS_TRIO
-        body["_friction_id"] = fid
-        exit_line = _DISPOSITION_EXIT.format(friction_id=fid)
-        prior = str(body.get("prompt") or "").rstrip()
-        body["prompt"] = f"{prior}\n{exit_line}" if prior else exit_line
-        return body
+        return {
+            "op": "generate",
+            "seat": "cursor-sdk",
+            "contract": "none",
+            "lane": "B",
+            "work_key": f"todo:{todo_slug}",
+            "dispatch_thread_id": str(root_id),
+            "subject": f"trio todo:{todo_slug}",
+            "prompt": _DISPOSITION_EXIT.format(friction_id=fid),
+            "timeout_seconds": max_hop * 60 + 1800,
+            "caller_agent": "liaison-ticker",
+            "_row_class": ROW_CLASS_TRIO,
+            "_friction_id": fid,
+            **successor_model_fields(policy),
+        }
     return build_trio_sketch_body(root_id, policy, friction, latched=latched)
 
 
