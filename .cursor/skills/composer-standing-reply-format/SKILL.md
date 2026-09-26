@@ -39,7 +39,7 @@ Applies equally to matter shorthand (RFR, EO, AAB, …), infra labels (CDP, WIP,
 
 ## Six-slot shape
 
-1. **Where we're headed / problem → direction** — the arc grounded as **problem(s) we're solving → direction of travel**, not a narrative that assumes the operator still holds the thread. Serves the vision through-line. On checkpoint / orchestration resume, this slot **must** restate charter + current state first (see Checkpoint / orchestration resume); when the fork spans sessions, follow with a **surface · status · aims-to** card (see Re-entry orientation) — enough that a cold, parallel-session reader knows the charter, where it stands, and where we're heading before the decision line.
+1. **Where we're headed / problem → direction** — the arc grounded as **problem(s) we're solving → direction of travel**, not a narrative that assumes the operator still holds the thread. Serves the vision through-line. On checkpoint / orchestration resume, this slot **is** the `operator-posture` Rule 3 opening (aim, already, object, then the move); when the fork spans sessions, follow with a **surface · status · aims-to** card (see Re-entry orientation) — enough that a cold, parallel-session reader knows the aim, the object, and where we're heading before the decision line.
 2. **Decision I need** — one line: the fork + recommended default.
 3. **The win / working now** — outcomes (and earned momentum), not raw IDs.
 4. **Still in our way / blocked** — numbered; consequence-first (cost / what it blocks), ¬ mechanism-first.
@@ -52,28 +52,26 @@ Lead with problem → direction + decision. Operator may stop after the first tw
 
 Operator correction class (2026-07-19 / friction 25419): seats reconstituted from CHECKPOINTs internally (orchestrator-workflow R12 resume step 0) but opened the operator turn without restating the charter — even with this skill active. Internal reconstitution ≠ operator-facing orientation.
 
-**Profile gate (binding — todo:orchestration-resume-charter-print):** Continuity-root resume always opens with **`Mission:`** + In/Out (`decision:continuity-resume-mission-open`). The rest of this section binds **`orchestrator_continuity`** only (¬ root tagged `charter-runner` / `tick_charter`). Discriminator: `agent-bus-discipline` § Two CHECKPOINT profiles. **`tick_charter`** resume: Mission + Scope, then tick index (wave · in-flight · next pickup) — ¬ the state walk. Composes with `operator-posture` Rule 3.
+**Profile gate (binding — todo:orchestration-resume-charter-print):** `orchestrator_continuity` resume opens with `operator-posture` Rule 3 (aim, already, object and move order, Been / Are / Going, `In one line:`). This section does not replace that opening with a one-line `Mission:`. It binds **`orchestrator_continuity`** only (¬ root tagged `charter-runner` / `tick_charter`). Discriminator: `checkpoint-discipline`. **`tick_charter`** resume: the aim sentence and scope, then tick index (wave · in-flight · next pickup) — ¬ the picture. `In` / `Out` stay the lock inside the aim (`decision:continuity-resume-mission-open`, amended 2026-09-25).
 
 **Fire when any holds (and profile = `orchestrator_continuity`):** reply after a CHECKPOINT turn, `resume <thread#>`, pasted orchestration handoff, or any standing-root pickup that has a charter/brief/scoreboard/Objective.
 
-**Slot 1 MUST lead with**, in spoken prose, before surfaces detail or the decision line:
+**Slot 1 is that opening**, in spoken prose, before surfaces detail or the decision line. Fill sources: `continuity-thread-shaping` `resume-fill.md`.
 
-1. **`Mission:`** — the root's **original** Objective in one sentence (what success is) plus **In** / **Out**. Same referent as operator-posture § Charter / mission referent — not a mid-session seeded todo, parked friction, or slug.
-2. **Current state** — compact vs that mission: what's settled · what's live · what's next (≤3 short clauses). Outcomes and position, not mechanism and not a scoreboard row walk.
-3. **`In one line:`** — one explicit labeled sentence distilling what the arc/session is doing (after Been→Are→Going when rule 1 orientation precedes slot 1; todo:checkpoint-resume-one-liner). The scan line — not a substitute for mission + state above.
-
-Surfaces card (below) may follow when ≥2 live surfaces; it does **not** replace mission + state + In one line.
+Surfaces card (below) may follow when ≥2 live surfaces; it does **not** replace the picture.
 
 | Miss | Why |
 |---|---|
-| Jump to decision / WIP / fork with no Mission + In/Out | Cold reader cannot agree the lock |
-| Surfaces-only open with no charter purpose | Status of pieces ≠ charter of the whole |
-| A1–A8 / slug inventory as “state” | Scoreboard dump (still banned); state is a spoken position line |
-| Mission + state without explicit `In one line:` | Missing scan sentence (todo:checkpoint-resume-one-liner) |
+| Jump to decision / WIP / fork with no aim | Cold reader cannot see what has to be true |
+| Hop, path, or next-pickup in the aim slot | The picture is invisible until someone asks to zoom out |
+| Surfaces-only open with no aim | Status of pieces ≠ the aim of the house |
+| A1–A8 / slug inventory as the opening | Scoreboard dump (still banned) |
+| Picture without explicit `In one line:` | Missing scan sentence (todo:checkpoint-resume-one-liner) |
+| Object omitted, or the hop named as the object | Resume cannot say what this window is carrying |
 
-`checkpoint_or_orchestration_resume ∧ slot-1-omits-(mission ∨ current_state ∨ in_one_line)` ⇒ format miss.
+`checkpoint_or_orchestration_resume ∧ slot-1-omits-(aim ∨ object ∨ in_one_line)` ⇒ format miss.
 
-Composes with operator-posture: `¬` dump scoreboard rows **≠** omit mission. Inventory dump remains a miss; mission silence is the other miss.
+Composes with operator-posture: `¬` dump scoreboard rows **≠** omit the aim. Inventory dump remains a miss; opening on the hop is the other miss.
 
 ## Re-entry orientation (multi-session operator)
 
