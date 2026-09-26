@@ -183,7 +183,7 @@ def test_post_turns_write_failure_503_no_turn(tmp_path, monkeypatch) -> None:
         assert after == before
 
 
-def test_with_turn_spill_failure_no_orphan_thread(tmp_path, monkeypatch) -> None:
+def test_with_turn_spill_failure_post_mint_orphan_thread(tmp_path, monkeypatch) -> None:
     app, _ = _app(tmp_path, monkeypatch)
     with (
         TestClient(app) as client,
@@ -191,6 +191,9 @@ def test_with_turn_spill_failure_no_orphan_thread(tmp_path, monkeypatch) -> None
             "agent_bus_store.body_auto_spill.write_thread_sidecar_for_send",
             side_effect=SidecarWriteError("injected"),
         ),
+        patch(
+            "agent_bus_store.routes.threads.send_prep.emit_thread_orphaned"
+        ) as orphaned,
     ):
         before_ids = {t["id"] for t in client.get("/threads").json()["threads"]}
         resp = client.post(
@@ -204,11 +207,16 @@ def test_with_turn_spill_failure_no_orphan_thread(tmp_path, monkeypatch) -> None
             },
         )
         assert resp.status_code == 503, resp.text
-        assert resp.json()["detail"]["code"] == "sidecar_write_failed"
+        detail = resp.json()["detail"]
+        assert detail["code"] == "sidecar_write_failed"
+        assert detail["created_thread"]
+        assert detail["orphan_reason"] == "sidecar_write_failed"
+        orphaned.assert_called_once()
         after = client.get("/threads").json()["threads"]
-        after_ids = {t["id"] for t in after}
-        assert after_ids == before_ids
-        assert not any(t["slug"] == "orphan-guard" for t in after)
+        orphan = next(t for t in after if t["slug"] == "orphan-guard")
+        assert orphan["id"] == detail["created_thread"]
+        assert orphan["turn_count"] == 0
+        assert len(after) == len(before_ids) + 1
 
 
 def test_spill_over_sidecar_cap_413(tmp_path, monkeypatch) -> None:

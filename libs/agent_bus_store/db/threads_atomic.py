@@ -48,7 +48,6 @@ def create_thread_with_turn(
     tags: list[str] | None = None,
     lifecycle_state: str | None = None,
     strict_slug: bool = False,
-    body_transformer: Any | None = None,
     enroll_charter_runner: bool = False,
 ) -> tuple[dict[str, Any], int, str, int]:
     """Atomically create a thread and its first turn in one transaction.
@@ -59,10 +58,6 @@ def create_thread_with_turn(
 
     lifecycle_state: when provided, transitions the new thread into that
     state as part of the same transaction and emits the coordination event.
-
-    body_transformer: optional ``(thread_id: str) -> str`` called after the
-    thread row is inserted and before the turn insert (same transaction).
-    Used for soft-spill so a raise rolls back the thread (no orphan).
     """
     from agent_bus_store.thread_classification import gate_thread_tags
 
@@ -110,7 +105,7 @@ def create_thread_with_turn(
                     provided_after_turn=after_turn,
                 )
 
-        insert_body = body_transformer(thread_id) if body_transformer else body
+        insert_body = body
 
         turn_number = 1
         cur = conn.execute(
