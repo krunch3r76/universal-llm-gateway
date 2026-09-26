@@ -99,21 +99,6 @@ def pour_lane_messages(
             codec_fallback_count += 1
         seg["codec_used"] = codec_used
         messages.extend(row_messages)
-        post_lid = int(seg.get("post_lid_turns") or 0)
-        if post_lid > 0 and verbatim is not None:
-            sealed_full = _turn_count_verbatim(verbatim)
-            _, tail_messages = tape_live.post_lid_tail(
-                conversation_uuid=journal.get("conversation_uuid"),
-                sealed_turn_count=sealed_full,
-                session_id=sid,
-            )
-            if tail_messages:
-                turn_lo, turn_hi = sealed_full, sealed_full + post_lid
-                for msg in tail_messages:
-                    turn_index = int(msg.get("turn_index") or 0)
-                    if turn_lo < turn_index <= turn_hi:
-                        messages.append({**msg, "window_whole": False})
-    messages.extend(tape_live.anchor_jsonl_messages(thread_id, existing=messages))
     hop_cells_skipped = 0
     foreign_cells_excluded = 0
     ownership_unresolved = 0

@@ -146,6 +146,7 @@ def _continuity_resume(
     transcript_id: str | None = None,
     pool: str | None = None,
     source: str = "mcp",
+    surface: str | None = None,
 ) -> dict[str, Any]:
     """POST agent-bus ``/threads/{thread}/resume-fence`` (Door 1 bundle pour)."""
     from tools.agent_bus._shared import relay
@@ -155,6 +156,8 @@ def _continuity_resume(
         body["transcript_id"] = transcript_id
     if pool is not None:
         body["pool"] = pool
+    if surface is not None:
+        body["surface"] = surface
     return relay("agent-bus", "POST", f"/threads/{thread}/resume-fence", body=body)
 
 

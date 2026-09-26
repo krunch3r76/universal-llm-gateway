@@ -351,20 +351,6 @@ def build_lane_segments(
             j for j in lane_journals if j.get("session_id") == chain_seg["session_id"]
         )
         post_lid_turns = 0
-        file_path = journal.get("file_path")
-        if file_path:
-            from agent_bus_store import tape_render as tape_live
-
-            full = (files_root / file_path).read_text(encoding="utf-8")
-            verbatim = _split_verbatim_layer(
-                full, verbatim_bytes=journal_verbatim_bytes(journal)
-            )
-            sealed_full_turns = _turn_count_verbatim(verbatim)
-            post_lid_turns, _ = tape_live.post_lid_tail(
-                conversation_uuid=journal.get("conversation_uuid"),
-                sealed_turn_count=sealed_full_turns,
-                session_id=str(chain_seg["session_id"]),
-            )
         segments.append(
             {
                 **chain_seg,

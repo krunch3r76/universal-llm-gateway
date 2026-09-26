@@ -5,7 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from continuity_tape.extract_jsonl import extract_turns_from_jsonl
+from continuity_tape.extract_jsonl import (
+    extract_turns_from_jsonl,
+    extract_turns_from_jsonl_bytes,
+)
 from continuity_tape.messages import ContinuityMessagesEnvelope
 from continuity_tape.render_md import render_verbatim_md
 
@@ -159,6 +162,7 @@ class ValidatedCloseContext:
     diverged_first_index: int | None = None
     diverged_sealed_turns: int | None = None
     diverged_codec: str | None = None
+    source_jsonl_bytes: bytes | None = None
 
 
 def _structured_422(
@@ -277,6 +281,8 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
     fill_check_envelope: ContinuityMessagesEnvelope | None = None
     fill_check_verbatim_md: str | None = None
     fill_check_turn_count: int | None = None
+    fill_check_source_bytes: bytes | None = None
+    source_jsonl_bytes: bytes | None = None
 
     if succession_fill and body.transcript_jsonl_path:
         from ..dispatch_ops._shared import _FILES_ROOT
@@ -300,8 +306,9 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
                 detail=str(exc),
             )
         try:
-            fill_check_envelope = extract_turns_from_jsonl(
-                _fill_resolved,
+            fill_check_source_bytes = _fill_resolved.read_bytes()
+            fill_check_envelope = extract_turns_from_jsonl_bytes(
+                fill_check_source_bytes,
                 tools="marker",
                 session_id=body.session_id,
             )
@@ -613,6 +620,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
                 envelope = fill_check_envelope
                 verbatim_md = fill_check_verbatim_md
                 turn_count = fill_check_turn_count or 0
+                source_jsonl_bytes = fill_check_source_bytes
             else:
                 try:
                     resolved_path = resolve_jsonl_path(body.transcript_jsonl_path)
@@ -635,8 +643,9 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
                     )
 
                 try:
-                    envelope = extract_turns_from_jsonl(
-                        resolved_path,
+                    source_jsonl_bytes = resolved_path.read_bytes()
+                    envelope = extract_turns_from_jsonl_bytes(
+                        source_jsonl_bytes,
                         tools="marker",
                         session_id=body.session_id,
                     )
@@ -788,6 +797,7 @@ def validate_session_close(body: SessionCloseRequest) -> ValidatedCloseContext:
         diverged_first_index=diverged_first_index,
         diverged_sealed_turns=diverged_sealed_turns,
         diverged_codec=diverged_codec,
+        source_jsonl_bytes=source_jsonl_bytes,
     )
 
 

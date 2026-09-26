@@ -125,12 +125,7 @@ def _cells_for_lane(
         turn_lo = _last_turns_at_cp(cp_anchors, transcript_id=transcript_id)
         turn_hi = max_turn_by_tid.get(transcript_id, turn_lo)
         if turn_hi <= turn_lo:
-            from agent_bus_store import tape_render as tape_live
-
-            live_hi = tape_live.live_jsonl_turn_count(transcript_id)
-            if live_hi <= turn_lo:
-                continue
-            turn_hi = live_hi
+            continue
         cells.append(
             {
                 "cp_ordinal": last_cp.cp_ordinal + 1,

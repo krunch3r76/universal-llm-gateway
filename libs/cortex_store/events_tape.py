@@ -422,3 +422,72 @@ def agent_bus_tape_harvest_failed(
     )
     record(ev.signal, **ev.payload)
     return ev
+
+
+@event_factory
+def transcript_source_relocated(
+    *,
+    session_id: str,
+    transcript_id: str,
+    bytes: int,
+    source_sha256: str,
+) -> Event:
+    ev = Event(
+        signal="transcript.source.relocated",
+        role="observation",
+        scope="global",
+        payload={
+            "session_id": session_id,
+            "transcript_id": transcript_id,
+            "bytes": bytes,
+            "source_sha256": source_sha256,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def transcript_source_relocate_refused(
+    *,
+    session_id: str,
+    transcript_id: str,
+    expected_sha256: str,
+    actual_sha256: str,
+) -> Event:
+    ev = Event(
+        signal="transcript.source.relocate.refused",
+        role="coordination",
+        scope="global",
+        payload={
+            "session_id": session_id,
+            "transcript_id": transcript_id,
+            "expected_sha256": expected_sha256,
+            "actual_sha256": actual_sha256,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev
+
+
+@event_factory
+def transcript_source_probed(
+    *,
+    session_id: str,
+    source_present: bool,
+    sha_match: bool,
+    turn_count: int,
+) -> Event:
+    ev = Event(
+        signal="transcript.source.probed",
+        role="debug",
+        scope="global",
+        payload={
+            "session_id": session_id,
+            "source_present": source_present,
+            "sha_match": sha_match,
+            "turn_count": turn_count,
+        },
+    )
+    record(ev.signal, **ev.payload)
+    return ev

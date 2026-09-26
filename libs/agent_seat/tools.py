@@ -127,6 +127,7 @@ _CORTEX_OPS_DOC = (
     "  todo_distill_implement_gate (todo_id?, files_expected?, acceptance_criteria?, required_skills?, claim?, evidence?, agent?, session_id?, seeded_by?, density_triage?, source_uri?, recon_waive_reason_code?, recon_waive_reason?) — Wire implement-admission gate fields atomically at Gate-2 close.\n"
     "  transcript_discover (thread?, thread_id?, explicit_transcript_ids?) — Discover idle JSONL windows for a continuity lane (read-only scan). Zero durable writes — seal happens only via ``transcript_seal``.\n"
     "  transcript_harvest (thread?, thread_id?, explicit_transcript_ids?, max_seals?) — Discover bindable windows and seal up to *max_seals* in priority order.\n"
+    "  transcript_source_probe (session_id, emit_messages?) — Verify relocated JSONL source on Cortex against seal digests.\n"
     "  transcript_seal (thread?, thread_id?, jsonl_path?, transcript_jsonl_path?, session_id?, binding?) — Seal an idle window via session_close with ``closed_by=succession``.\n"
     "  view_render (document_id?, mode?, root_id?, view_profile?, narrative_sections?, as_of_system?, as_of_valid?, agent?, session_id?) — Render or refresh a derived view document from graph state and recipe data.\n"
     "  walk_subgraph (root?, hops?, edge_types?, direction?, entity_cap?, include_counts?, promote_hubs?, hub_rel_threshold?) — Walk a subgraph — lean topology without assertion canvas.\n"

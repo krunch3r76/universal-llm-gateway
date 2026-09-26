@@ -23,7 +23,6 @@ def test_hop_anchor_advances_turn_lo() -> None:
         patch("agent_bus_store.tape_cells.list_checkpoint_turns", return_value=cps),
         patch("agent_bus_store.tape_cells.connect") as mock_connect,
         patch("agent_bus_store.tape_cells.build_chain_segments", return_value=[]),
-        patch("agent_bus_store.tape_render.live_jsonl_turn_count", return_value=0),
         patch(
             "agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid",
             return_value=None,
@@ -54,7 +53,6 @@ def test_from_agent_not_a_discriminator() -> None:
         patch("agent_bus_store.tape_cells.list_checkpoint_turns", return_value=[cp]),
         patch("agent_bus_store.tape_cells.connect") as mock_connect,
         patch("agent_bus_store.tape_cells.build_chain_segments", return_value=[]),
-        patch("agent_bus_store.tape_render.live_jsonl_turn_count", return_value=0),
         patch(
             "agent_bus_store.tape_membership.lookup_dominant_lane_by_uuid",
             return_value=None,

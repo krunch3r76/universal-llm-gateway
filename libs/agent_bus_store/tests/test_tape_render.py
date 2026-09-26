@@ -393,7 +393,6 @@ def test_b12_post_lid_turns_on_segment(tmp_path: Path) -> None:
     with (
         patch("agent_bus_store.tape_membership.list_checkpoint_turns", return_value=()),
         patch("agent_bus_store.tape_cells.list_checkpoint_turns", return_value=()),
-        patch("agent_bus_store.tape_render.post_lid_tail", return_value=(3, None)),
         patch("cortex_store.db.cortex_conn") as mock_conn,
         patch("cortex_store.events_tape.agent_bus_tape_rendered"),
         patch("cortex_store.events_tape.transcript_legacy_md_read"),
@@ -403,7 +402,7 @@ def test_b12_post_lid_turns_on_segment(tmp_path: Path) -> None:
         conn.execute.return_value.fetchall.return_value = [journal_row]
         result = render_tape(thread_id="6341")
 
-    assert result["segments"][0]["post_lid_turns"] == 3
+    assert result["segments"][0]["post_lid_turns"] == 0
 
 
 def test_b9_degrade_emits_index_lines_with_pointers() -> None:

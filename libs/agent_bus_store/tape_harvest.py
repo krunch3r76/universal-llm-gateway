@@ -3,18 +3,163 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+import uuid
+from collections.abc import Callable
+from typing import Any, TypedDict
 
 import httpx
-from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
-
 from cortex_store.transcript_cp_anchors import explicit_uuids_for_lane
+from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
 from .tape_render import render_tape
 
 # Read-path harvest must quick-fail; lid-close seal may take longer.
 TAPE_HARVEST_TIMEOUT_S = 8.0
 LID_CLOSE_HARVEST_TIMEOUT_S = 120.0
+
+
+class _HarvestDecision(TypedDict):
+    should_run: bool
+    reason: str | None
+    targets: list[str]
+
+
+def pre_pour_harvest_decision(
+    *,
+    surface: str | None,
+    transcript_id: str | None,
+    anchors_provider: Callable[[], set[str]],
+) -> _HarvestDecision:
+    """Decide whether pre-pour harvest runs (cursor surface + uuid + lane anchors)."""
+    if surface != "cursor":
+        reason = (
+            "surface_claude_ai"
+            if surface == "claude_ai"
+            else "surface_unspecified"
+        )
+        return {"should_run": False, "reason": reason, "targets": []}
+    tid = (transcript_id or "").strip()
+    if not tid:
+        return {"should_run": False, "reason": "no_transcript_id", "targets": []}
+    try:
+        uuid.UUID(tid)
+    except ValueError:
+        return {
+            "should_run": False,
+            "reason": "transcript_id_not_uuid",
+            "targets": [],
+        }
+    targets = sorted(anchors_provider())
+    if not targets:
+        return {"should_run": False, "reason": "no_lane_anchors", "targets": []}
+    return {"should_run": True, "reason": None, "targets": targets}
+
+
+def _empty_harvest_record(
+    *,
+    surface: str | None,
+    transcript_id: str | None,
+    outcome: str,
+    reason: str | None,
+    targets: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "outcome": outcome,
+        "reason": reason,
+        "surface": surface,
+        "transcript_id": transcript_id,
+        "targets": targets or [],
+        "discovered": 0,
+        "sealed": 0,
+        "deferred": 0,
+        "refused": 0,
+        "quiescent": 0,
+    }
+
+
+def harvest_before_pour(
+    thread_id: str,
+    *,
+    surface: str | None,
+    transcript_id: str | None,
+) -> dict[str, Any]:
+    """Run transcript_harvest before resume pour when the cursor predicate passes."""
+    from .events.resume_fence import emit_resume_fence_harvest_decided
+
+    decision = pre_pour_harvest_decision(
+        surface=surface,
+        transcript_id=transcript_id,
+        anchors_provider=lambda: explicit_uuids_for_lane(thread_id, set()),
+    )
+    if not decision["should_run"]:
+        record = _empty_harvest_record(
+            surface=surface,
+            transcript_id=transcript_id,
+            outcome="skipped",
+            reason=decision["reason"],
+        )
+        emit_resume_fence_harvest_decided(
+            thread_id=thread_id,
+            transcript_id=transcript_id,
+            surface=surface,
+            outcome=record["outcome"],
+            reason=record["reason"],
+            discovered=0,
+            sealed=0,
+            refused=0,
+        )
+        return record
+
+    targets = decision["targets"]
+    harvest_result = _call_transcript_harvest(
+        thread_id=thread_id,
+        explicit_ids=targets,
+        max_seals=8,
+        timeout=TAPE_HARVEST_TIMEOUT_S,
+    )
+    if harvest_result.get("error"):
+        record = _empty_harvest_record(
+            surface=surface,
+            transcript_id=transcript_id,
+            outcome="failed",
+            reason=str(harvest_result.get("reason") or "harvest_error"),
+            targets=targets,
+        )
+        emit_resume_fence_harvest_decided(
+            thread_id=thread_id,
+            transcript_id=transcript_id,
+            surface=surface,
+            outcome=record["outcome"],
+            reason=record["reason"],
+            discovered=0,
+            sealed=0,
+            refused=0,
+        )
+        return record
+
+    record = {
+        "outcome": "ran",
+        "reason": None,
+        "surface": surface,
+        "transcript_id": transcript_id,
+        "targets": targets,
+        "discovered": int(harvest_result.get("discovered") or 0),
+        "sealed": int(harvest_result.get("sealed") or 0),
+        "deferred": int(harvest_result.get("deferred_count") or 0),
+        "refused": int(harvest_result.get("refused") or 0),
+        "quiescent": int(harvest_result.get("quiescent") or 0),
+    }
+    emit_resume_fence_harvest_decided(
+        thread_id=thread_id,
+        transcript_id=transcript_id,
+        surface=surface,
+        outcome=record["outcome"],
+        reason=record["reason"],
+        discovered=record["discovered"],
+        sealed=record["sealed"],
+        refused=record["refused"],
+    )
+    return record
 
 
 def _call_transcript_harvest(
@@ -155,6 +300,8 @@ def render_tape_with_harvest(
 __all__ = [
     "LID_CLOSE_HARVEST_TIMEOUT_S",
     "TAPE_HARVEST_TIMEOUT_S",
+    "harvest_before_pour",
+    "pre_pour_harvest_decision",
     "render_tape_with_harvest",
     "request_lid_close_seal",
 ]
