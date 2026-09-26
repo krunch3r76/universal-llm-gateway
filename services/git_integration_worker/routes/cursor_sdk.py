@@ -1204,6 +1204,7 @@ def _run_sdk_sync(
                 usage_total_derived=False,
                 sdk_request_id=stream_capture.sdk_request_id,
                 request_id_source=stream_capture.request_id_source,
+                lines=stream_capture.lines,
             )
             persist_dispatch_usage(
                 CursorDispatchLedger.instance(),

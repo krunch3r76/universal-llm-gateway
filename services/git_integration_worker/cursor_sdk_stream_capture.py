@@ -8,7 +8,9 @@ stream as a ``running``/``error`` message. This module drains ``run.events()``
 (when available) before ``run.wait()``: ``SDKToolUseMessage`` tool calls and
 ``SDKUsageMessage`` (``type=="usage"``) come from ``RunStreamEvent.sdk_message``;
 ``TurnEndedUpdate`` / ``TokenDeltaUpdate`` on ``interaction_update`` remain a
-secondary path. After ``run.wait()``, ``finalize_stream_capture_usage`` applies
+secondary path. Assistant text and thinking are kept on the capture and, when
+a live run is registered, on that handle. After ``run.wait()``,
+``finalize_stream_capture_usage`` applies
 post-wait ``run.usage`` / ``result.usage`` as authority. Falls back to
 ``run.stream()`` for test doubles.
 """
@@ -24,6 +26,10 @@ from universal_event_bus import Event, event_factory
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_sdk_events import emit_frontier_event
+from services.git_integration_worker.cursor_sdk_run_lines import (
+    RunLine,
+    retain_stream_prose,
+)
 from services.git_integration_worker.cursor_sdk_toolcall_retention import (
     prepare_toolcall_result_retention,
 )
@@ -92,6 +98,9 @@ class StreamCapture:
     # First stream SDKRequestMessage.request_id (pin: not on RunResult).
     sdk_request_id: str | None = None
     request_id_source: str | None = None
+    # Assistant text and thinking the drain used to drop. Same lines as the
+    # live run handle when one is registered; readable after a cursor there.
+    lines: tuple[RunLine, ...] = ()
 
     @property
     def tool_call_count(self) -> int:
@@ -321,6 +330,7 @@ def observe_run_stream(
     turn_usages: list[Mapping[str, Any] | None] = []
     token_delta_sum = [0]
     captured_request: list[tuple[str, str]] = []
+    retained: list[RunLine] = []
 
     def _emit(call_id: str, message: Any) -> None:
         observation = _observation_from_message(message)
@@ -375,6 +385,7 @@ def observe_run_stream(
     try:
         if callable(events_fn):
             for event in events_fn():
+                retain_stream_prose(event, dispatch_id=dispatch_id, local=retained)
                 interaction = getattr(event, "interaction_update", None)
                 if interaction is not None:
                     _record_usage_message(
@@ -402,6 +413,7 @@ def observe_run_stream(
                         )
         else:
             for message in run.stream():
+                retain_stream_prose(message, dispatch_id=dispatch_id, local=retained)
                 _record_usage_message(
                     message,
                     turn_usages=turn_usages,
@@ -434,6 +446,7 @@ def observe_run_stream(
         usage_total_derived=derived,
         sdk_request_id=sdk_request_id,
         request_id_source=request_id_source,
+        lines=tuple(retained),
     )
 
 
@@ -460,6 +473,7 @@ def finalize_request_id_capture(
         usage_total_derived=capture.usage_total_derived,
         sdk_request_id=str(request_id),
         request_id_source="post_wait",
+        lines=capture.lines,
     )
 
 
@@ -478,6 +492,7 @@ def finalize_stream_capture_usage(
         usage_total_derived=False,
         sdk_request_id=capture.sdk_request_id,
         request_id_source=capture.request_id_source,
+        lines=capture.lines,
     )
 
 

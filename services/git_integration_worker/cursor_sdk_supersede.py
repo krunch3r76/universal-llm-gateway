@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,7 @@ from services.git_integration_worker.cursor_sdk_cancel_events import (
     emit_sdk_worker_cancelled,
 )
 from services.git_integration_worker.cursor_sdk_orphan import abort_orphaned_bridge
+from services.git_integration_worker.cursor_sdk_run_lines import RunLineLog
 
 logger = get_logger(__name__)
 
@@ -39,6 +40,8 @@ class LiveRun:
     source_repo: str
     run: Any
     started_at: float
+    # Prose the stream drain used to drop. Readers slice it after a cursor.
+    lines: RunLineLog = field(default_factory=RunLineLog)
 
 
 @dataclass(frozen=True)

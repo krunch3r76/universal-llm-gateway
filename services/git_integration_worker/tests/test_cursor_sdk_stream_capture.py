@@ -743,6 +743,121 @@ def test_latest_turn_used_tokens_not_summed() -> None:
     assert status == "captured"
 
 
+def test_observe_keeps_assistant_and_thinking_readable_after_cursor(
+    _capture_emitted: list[Any],
+) -> None:
+    from services.git_integration_worker.cursor_sdk_run_lines import read_run_lines
+    from services.git_integration_worker.cursor_sdk_supersede import (
+        register_live_run,
+        unregister_live_run,
+    )
+
+    @dataclass
+    class _Delta:
+        type: str
+        text: str
+
+    @dataclass
+    class _Block:
+        text: str
+
+    @dataclass
+    class _AssistantBody:
+        content: tuple[Any, ...]
+
+    @dataclass
+    class _Assistant:
+        message: _AssistantBody
+        type: str = "assistant"
+
+    @dataclass
+    class _Thinking:
+        text: str
+        type: str = "thinking"
+
+    @dataclass
+    class _StepMessage:
+        text: str
+
+    @dataclass
+    class _Step:
+        type: str
+        message: _StepMessage
+
+    @dataclass
+    class _StepEvent:
+        sdk_message: Any = None
+        interaction_update: Any = None
+        step: Any = None
+
+    register_live_run(
+        dispatch_id="d-prose",
+        thread_id="t-prose",
+        source_repo=".",
+        run=object(),
+    )
+    try:
+        run = _FakeRunWithEvents(
+            events_list=[
+                _FakeStreamEvent(interaction_update=_Delta("text-delta", "Hello")),
+                _FakeStreamEvent(
+                    interaction_update=_Delta("thinking-delta", "because")
+                ),
+                _FakeStreamEvent(
+                    sdk_message=_Assistant(
+                        message=_AssistantBody(content=(_Block(text=" world"),))
+                    )
+                ),
+                _FakeStreamEvent(sdk_message=_Thinking(text="done")),
+                _StepEvent(
+                    step=_Step(
+                        type="thinkingMessage",
+                        message=_StepMessage(text="step-think"),
+                    )
+                ),
+                _FakeStreamEvent(
+                    sdk_message=_FakeToolCallMessage(
+                        call_id="c1", name="fs", status="completed"
+                    )
+                ),
+            ]
+        )
+        result = observe_run_stream(
+            run,
+            dispatch_id="d-prose",
+            thread_id="t-prose",
+            resolved_model="composer-2.5",
+        )
+        assert [(line.kind, line.text) for line in result.lines] == [
+            ("assistant", "Hello"),
+            ("thinking", "because"),
+            ("assistant", " world"),
+            ("thinking", "done"),
+            ("thinking", "step-think"),
+        ]
+        opened, cursor = read_run_lines("d-prose", 0)
+        assert cursor == 5
+        assert opened[-1].text == "step-think"
+        after, cursor_after = read_run_lines("d-prose", 2)
+        assert [line.index for line in after] == [3, 4, 5]
+        assert cursor_after == 5
+        absent, unchanged = read_run_lines("missing-dispatch", 4)
+        assert absent == ()
+        assert unchanged == 4
+    finally:
+        unregister_live_run(dispatch_id="d-prose")
+
+    fallback = observe_run_stream(
+        _FakeRun(messages=[_Thinking(text="via-stream")]),
+        dispatch_id="d-fallback",
+        thread_id="t-fallback",
+        resolved_model="composer-2.5",
+    )
+    assert [(line.kind, line.text) for line in fallback.lines] == [
+        ("thinking", "via-stream")
+    ]
+
+
 def test_request_id_from_sdk_error() -> None:
     from services.git_integration_worker.cursor_sdk_stream_capture import (
         request_id_from_sdk_error,
