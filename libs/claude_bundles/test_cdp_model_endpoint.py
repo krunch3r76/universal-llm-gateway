@@ -1523,6 +1523,78 @@ def test_run_cdp_generate_store_miss_recovers_on_poll(
     assert result.archive_uri == archive
 
 
+def test_run_cdp_generate_store_miss_hints_chat_url_before_unverified(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """a:36568 — satellite 404 persists; poller hints its CSE URL and recovers.
+
+    Satellite lost execution row, registry, and provenance, so only a poll
+    carrying the poller-held chat_url can recover. Without the hint the run
+    posted ``cdp UNVERIFIED`` (observer_unverified) although the reply was done.
+    """
+    from systems.frontier_consult.cdp_generate_worker import cdp_result_subject
+
+    _mock_run_cdp_staging(monkeypatch, tmp_path, "dispatch-36568")
+    cse = "https://claude.ai/cowork/cse_01SM31isUQXVUvEN7S2i9uT4"
+    archive = "cortex://notes/system/threads/cdp-ask-archive-cdp-recover-sat36568.md"
+    running = {
+        "execution_id": "sat36568",
+        "status": "running",
+        "completion_phase": "running",
+        "body_len": None,
+        "streaming": True,
+        "tool_pause": True,
+        "url": cse,
+    }
+    recovered = {
+        "execution_id": "sat36568",
+        "status": "completed",
+        "completion_phase": "terminal",
+        "archive_uri": archive,
+        "body": "## Review\n\nVERDICT: ship",
+        "attested_model": "Opus 5",
+        "harvest_provenance": "cse-dom",
+        "url": cse,
+    }
+    miss = {
+        "_status_code": 404,
+        "error": "unknown execution_id: sat36568",
+    }
+
+    class _StoreMissClient(_FakeClient):
+        def request(
+            self, method: str, url: str, json: dict[str, Any] | None = None
+        ) -> _FakeResp:
+            if method == "GET" and "/executions/sat36568" in url and self.calls:
+                self.calls.append((method, url))
+                if len(self.calls) == 2:
+                    return _FakeResp(running)
+                if "chat_url=" in url and "cse_01SM31isUQXVUvEN7S2i9uT4" in url:
+                    return _FakeResp(recovered)
+                return _FakeResp(miss)
+            return super().request(method, url, json)
+
+    client = _StoreMissClient([{"execution_id": "sat36568", "status": "running"}])
+    clock = {"t": 0.0}
+    result = run_cdp_generate(
+        execution_id="dispatch-36568",
+        model_id="cdp/opus-5",
+        prompt_text="ping",
+        purpose="review",
+        no_progress_s=5,
+        poll_interval_s=0,
+        client=client,  # type: ignore[arg-type]
+        sleep=lambda _s: clock.__setitem__("t", clock["t"] + 2.0),
+        now=lambda: clock["t"],
+    )
+    assert result.stall_stage != "observer_unverified"
+    assert "UNVERIFIED" not in cdp_result_subject(result)
+    assert result.ok is True
+    assert result.archive_uri == archive
+    hinted = [u for m, u in client.calls if m == "GET" and "chat_url=" in u]
+    assert hinted, client.calls
+
+
 def test_run_cdp_generate_transport_miss_no_witness_aborts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -569,12 +569,16 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         "/v1/project-ask/executions/{execution_id}",
         response_model=ExecutionPollResponse,
     )
-    async def poll_execution(execution_id: str) -> ExecutionPollResponse:
+    async def poll_execution(
+        execution_id: str, chat_url: str | None = None
+    ) -> ExecutionPollResponse:
         record = await execution_store.get(execution_id)
         if record is None:
             from cdp_ask.poll_recovery import recover_poll_snapshot
 
-            recovered = await recover_poll_snapshot(execution_id, execution_store)
+            recovered = await recover_poll_snapshot(
+                execution_id, execution_store, chat_url_hint=chat_url
+            )
             if recovered is not None:
                 return ExecutionPollResponse(**recovered)
             raise HTTPException(404, f"unknown execution_id: {execution_id}")

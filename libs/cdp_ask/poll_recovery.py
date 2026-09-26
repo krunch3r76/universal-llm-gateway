@@ -38,6 +38,7 @@ _URL_LINE = re.compile(
     re.MULTILINE,
 )
 _ATTESTED_LINE = re.compile(r"^-\s+attested_model:\s+`([^`]+)`", re.MULTILINE)
+_CSE_HINT = re.compile(r"^https://claude\.ai/(?:cowork/)?cse_[A-Za-z0-9_-]+$")
 _STARGATE_LINE = re.compile(r"^-\s+stargate_execution_id:\s+`([^`]+)`", re.MULTILINE)
 
 _RECOVERY_MIN_RETRY_S = 60.0
@@ -261,11 +262,24 @@ async def _harvest_chat_to_snapshot(
     }
 
 
+def cse_url_hint(raw: str | None) -> str | None:
+    """Accept a caller-held CSE URL hint only in canonical Cowork form."""
+    token = (raw or "").strip()
+    return token if _CSE_HINT.match(token) else None
+
+
 async def recover_poll_snapshot(
     execution_id: str,
     store: ExecutionStore,
+    *,
+    chat_url_hint: str | None = None,
 ) -> dict[str, Any] | None:
-    """Return a terminal poll snapshot when the execution store row is missing."""
+    """Return a terminal poll snapshot when the execution store row is missing.
+
+    ``chat_url_hint`` is the CSE URL the poller already observed. It is used
+    only when archives, provenance, and the registry no longer resolve one —
+    the store miss that erased the row usually erased those too.
+    """
     tokens = correlation_tokens(execution_id)
     if not tokens:
         return None
@@ -288,6 +302,8 @@ async def recover_poll_snapshot(
             )
             if chat_url:
                 break
+    if not chat_url:
+        chat_url = cse_url_hint(chat_url_hint)
 
     if not chat_url:
         return None
