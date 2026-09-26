@@ -108,8 +108,9 @@ OPERATOR_LOOP = (
     "what you changed and the move you are taking. You abort, close, and re-hire "
     "threads. The operator does not. Do not ask the operator to abort a thread, "
     "set hire, or edit the harness. A conductor admitted to re-implement a row "
-    "already on master is aborted by this seat, then reported. Silence, or a "
-    "request that the operator run the bus, is a stop."
+    "already on master is aborted by this seat, then reported. "
+    "Close with what you are watching and when you will report. "
+    "A status with no watch is a stop."
 )
 def _pid_alive(pid: Any) -> bool:
     try:
@@ -383,7 +384,7 @@ def remote_launch_command(
 ) -> str:
     """Build the GUI-host command.
 
-    Keys on the host are Ctrl+T (IDE new tab, Shift released) → paste →
+    Keys on the host are Ctrl+T (IDE new tab) → Ctrl+/ grok-4.7 → paste →
     Ctrl+Enter. Raise is compositor ``activate`` on ``focus_title`` (default
     ``Cursor Agents``). ``no_raise`` types into the already-focused window when
     the operator said so. ``--raise-uri`` / ``vscode-remote://`` is not a hop

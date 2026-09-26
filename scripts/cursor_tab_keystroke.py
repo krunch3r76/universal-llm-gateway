@@ -34,7 +34,7 @@ from evdev import ecodes as e
 _DEFAULT_REPO = os.environ.get(
     "CURSOR_BRIDGE_REPO", "/mnt/torus/projects/universal-llm-gateway"
 )
-_MODEL_QUERY = os.environ.get("CURSOR_BRIDGE_MODEL_QUERY", "composer")
+_MODEL_QUERY = os.environ.get("CURSOR_BRIDGE_MODEL_QUERY", "grok-4.7")
 _NEW_CHAT = os.environ.get("CURSOR_BRIDGE_NEW_CHAT", "ctrl_t")
 _NEW_CHAT_CHORDS = ("ctrl_n", "ctrl_t", "palette")
 _FOCUS_OPENERS = ("none", "ctrl_k", "ctrl_slash", "ctrl_shift_p")
@@ -259,11 +259,11 @@ def _new_chat(ui: UInput, chord: str) -> None:
 def open_tab(
     message: str, *, repo: str, model_query: str, new_chat: str, dry_run: bool
 ) -> dict[str, object]:
-    """IDE new tab is Ctrl+T, then an optional Ctrl+/ model filter, then the paste.
+    """IDE new tab is Ctrl+T, then Ctrl+/ to select the model, then the paste.
 
-    ``new_chat`` may still be ``ctrl_n`` or ``palette`` when the caller names
-    that chord. The default is Ctrl+T. Glass quick-command is the model step,
-    not the new-tab step.
+    The default model filter is grok-4.7. ``new_chat`` may still be ``ctrl_n``
+    or ``palette`` when the caller names that chord. An empty model query skips
+    the model step.
     """
     _require_display()
     plan = ["raise", f"new_chat:{new_chat}"]
@@ -393,7 +393,7 @@ def main() -> int:
     op.add_argument(
         "--model-query",
         default=_MODEL_QUERY,
-        help="Ctrl+/ quick-command filter; empty skips",
+        help="Ctrl+/ model filter on the new IDE tab. Default grok-4.7. Empty skips.",
     )
     op.add_argument("--dry-run", action="store_true")
 

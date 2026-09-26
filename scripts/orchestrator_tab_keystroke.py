@@ -24,6 +24,7 @@ from evdev import ecodes as e
 
 _REPO = Path(__file__).resolve().parents[1]
 _DEFAULT_REPO = "/mnt/torus/projects/universal-llm-gateway"
+_IDE_MODEL = os.environ.get("ORCHESTRATOR_IDE_MODEL", "grok-4.7")
 
 
 def _require_display() -> None:
@@ -358,32 +359,41 @@ def launch_new_chat_with_message(
     raise_window: bool = True,
     focus_title: str | None = None,
     focus_app_id: str = "cursor",
+    model_query: str = _IDE_MODEL,
 ) -> dict[str, object]:
-    """Focus the IDE window, Ctrl+T (new tab), paste ``message``, Ctrl+Enter.
+    """Focus the IDE, Ctrl+T, Ctrl+/ ``model_query``, paste ``message``, Ctrl+Enter.
 
-    Clipboard is armed before Ctrl+T. The only step between Ctrl+T and Ctrl+V
-    is a wait — a ``wl-copy`` in that gap empties ``--paste-once`` before the
-    new composer reads it. Glass is a different toplevel and uses ctrl-/.
+    The message clipboard is armed after the model filter. Holding it across
+    Ctrl+/ would replace the filter paste. Default filter is grok-4.7. An empty
+    ``model_query`` skips the model step. Followup does not select a model.
     """
     _require_display()
+    steps = ["ctrl_t", "wait"]
+    if model_query:
+        steps.append(f"ctrl+/:{model_query}")
+    steps += ["paste", "ctrl_enter"]
     if dry_run:
         return {
             "dry_run": True,
             "repo": repo,
-            "steps": ["clipboard", "ctrl_t", "wait", "paste", "ctrl_enter"],
+            "steps": steps,
             "raise_window": raise_window,
             "focus_title": focus_title,
+            "model_query": model_query,
             "message_preview": message[:120],
         }
     focused: dict = {}
     if focus_title or raise_window:
         chosen = _pick_cursor_window("ide", focus_title, repo)
         focused = _focus_window(str(chosen["title"]), focus_app_id)
-    clip = _wl_copy(message)
+    clip: subprocess.Popen[bytes] | None = None
     ui = _ui()
     try:
         _new_chat(ui)
         time.sleep(1.5)
+        if model_query:
+            _quick_command(ui, model_query, opener="ctrl_slash")
+        clip = _wl_copy(message)
         _paste(ui)
         time.sleep(0.4)
         _submit_composer(ui)
@@ -392,9 +402,10 @@ def launch_new_chat_with_message(
         _release_clipboard(clip)
     return {
         "ok": True,
-        "steps": ["clipboard", "ctrl_t", "wait", "paste", "ctrl_enter"],
+        "steps": steps,
         "focus_title": focus_title,
         "focused": focused.get("activated"),
+        "model_query": model_query,
         "message_len": len(message),
     }
 
@@ -454,13 +465,14 @@ def select_composer_model(
 def main() -> int:
     """CLI for IDE launch, same-tab followup, and Glass quick-command probes.
 
-    ``launch`` sends Ctrl+T on the IDE. ``--raise-uri`` is refused because
+    ``launch`` sends Ctrl+T, then Ctrl+/ grok-4.7, on the IDE. ``--raise-uri`` is refused because
     Firefox owns ``vscode-remote://``. Prints a JSON verdict.
     """
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="cmd", required=True)
     lp = sub.add_parser(
-        "launch", help="Focus the IDE, Ctrl+T (new tab), paste, Ctrl+Enter"
+        "launch",
+        help="Focus the IDE, Ctrl+T, Ctrl+/ grok-4.7, paste, Ctrl+Enter",
     )
     lp.add_argument("--message", help="First user message (e.g. resume 10223 …)")
     lp.add_argument(
@@ -470,6 +482,11 @@ def main() -> int:
         "--repo", default=os.environ.get("ORCHESTRATOR_REPO", _DEFAULT_REPO)
     )
     lp.add_argument("--dry-run", action="store_true")
+    lp.add_argument(
+        "--model-query",
+        default=_IDE_MODEL,
+        help="Ctrl+/ filter on the new IDE tab. Empty skips. Default grok-4.7.",
+    )
     lp.add_argument(
         "--no-raise",
         action="store_true",
@@ -581,6 +598,7 @@ def main() -> int:
             raise_window=not args.no_raise,
             focus_title=args.focus_title,
             focus_app_id=args.focus_app_id,
+            model_query=args.model_query,
         )
         import json
 
