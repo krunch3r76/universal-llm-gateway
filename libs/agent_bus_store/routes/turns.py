@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -92,9 +93,10 @@ def _rows_to_turns(rows: list[dict[str, Any]]) -> list[Turn]:
 )
 async def create_turn(turn: TurnCreate) -> TurnCreated:
     """Create one turn, enforcing unread and status invariants from storage logic."""
-    turn.thread = normalize_thread_id(turn.thread)
-    thread_tags = load_thread_tags(turn.thread)
-    storage_supersedes, echo_turn_number, echo_turn_id = _resolve_send_supersedes(
+    turn.thread = await asyncio.to_thread(normalize_thread_id, turn.thread)
+    thread_tags = await asyncio.to_thread(load_thread_tags, turn.thread)
+    storage_supersedes, echo_turn_number, echo_turn_id = await asyncio.to_thread(
+        _resolve_send_supersedes,
         thread_id=turn.thread,
         subject=turn.subject,
         thread_tags=thread_tags,
@@ -102,7 +104,8 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         turn_id_alias=turn.supersedes_turn_id,
     )
     try:
-        prepared = prepare_body_for_insert(
+        prepared = await asyncio.to_thread(
+            prepare_body_for_insert,
             thread=turn.thread,
             subject=turn.subject,
             body=turn.body,
@@ -119,7 +122,8 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
         raise HTTPException(status_code=status_code, detail=detail) from exc
     att_dicts = [a.model_dump() for a in turn.attachments] if turn.attachments else None
     try:
-        turn_id, ts, turn_number = insert_turn(
+        turn_id, ts, turn_number = await asyncio.to_thread(
+            insert_turn,
             thread=turn.thread,
             from_agent=turn.from_agent,
             to_agent=turn.to,
@@ -143,8 +147,6 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             detail={"error": str(e), "reason": "supersedes_turn_invalid"},
         ) from e
     try:
-        import asyncio
-
         loop = asyncio.get_running_loop()
         loop.run_in_executor(
             None,
@@ -159,7 +161,8 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             maybe_auto_close_after_implement_handoff_reply,
         )
 
-        maybe_auto_close_after_implement_handoff_reply(
+        await asyncio.to_thread(
+            maybe_auto_close_after_implement_handoff_reply,
             turn.thread,
             turn_number=turn_number,
             from_agent=turn.from_agent,
@@ -173,7 +176,8 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             turn_number,
             exc_info=True,
         )
-    return build_turn_created(
+    return await asyncio.to_thread(
+        build_turn_created,
         prepared,
         turn_id=turn_id,
         thread=turn.thread,

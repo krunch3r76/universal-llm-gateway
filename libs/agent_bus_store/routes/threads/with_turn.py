@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 from fastapi import HTTPException, status
@@ -41,7 +42,8 @@ async def create_thread_with_turn_route(
     att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None
     spill_holder: dict[str, PreparedBody] = {}
     try:
-        thread_row, turn_id, ts, turn_number = create_thread_with_turn(
+        thread_row, turn_id, ts, turn_number = await asyncio.to_thread(
+            create_thread_with_turn,
             slug=body.slug,
             summary=body.summary,
             from_agent=body.from_agent,

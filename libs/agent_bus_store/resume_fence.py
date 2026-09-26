@@ -50,6 +50,8 @@ _TRANSCRIPT_ID_RE = re.compile(
 )
 _SECTION_CHILD = "### Child lanes"
 _SECTION_CITED = "### Cited lanes"
+
+
 # Matches the other tape doors (TAPE_BUDGET_BYTES_DEFAULT, GET /threads/{id}/tape).
 # RESUME_FENCE_TAPE_BUDGET env overrides only at this resume door.
 def _resume_fence_tape_budget() -> tuple[int, str]:
@@ -64,6 +66,16 @@ RESUME_FENCE_TAPE_BUDGET, RESUME_FENCE_BUDGET_SOURCE = _resume_fence_tape_budget
 
 def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def encode_resume_bundle(bundle: dict[str, Any]) -> bytes:
+    return json.dumps(
+        bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def resume_bundle_sha256(bundle: dict[str, Any]) -> str:
+    return hashlib.sha256(encode_resume_bundle(bundle)).hexdigest()
 
 
 def _thread_slug(thread_id: str) -> str | None:
@@ -511,6 +523,7 @@ def assemble_resume_fence(
     if ambiguous > 1:
         poured_payload["adoption_ambiguous"] = ambiguous
 
+    poured_payload["bundle_sha256"] = resume_bundle_sha256(bundle)
     append_fence_event(
         fence_id=fence_id,
         root_thread=thread_id,
@@ -518,10 +531,14 @@ def assemble_resume_fence(
         event="poured",
         payload=poured_payload,
     )
-    poured_terminal = pour_terminal_release(fence_id=fence_id)
-    if poured_terminal is not None:
-        bundle["fence"]["state"] = poured_terminal.state
+    pour_terminal_release(fence_id=fence_id)
     return bundle
 
 
-__all__ = ["RESUME_FENCE_TAPE_BUDGET", "arm_resume_fence", "assemble_resume_fence"]
+__all__ = [
+    "RESUME_FENCE_TAPE_BUDGET",
+    "arm_resume_fence",
+    "assemble_resume_fence",
+    "encode_resume_bundle",
+    "resume_bundle_sha256",
+]

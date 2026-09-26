@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 from fastapi import HTTPException, status
@@ -43,13 +44,9 @@ from .send_sidecar import _send_with_sidecar
 
 def _send_xor_violation(*, provided: list[str]) -> dict[str, object]:
     if provided:
-        message = (
-            "thread and new_slug are mutually exclusive — provide exactly one"
-        )
+        message = "thread and new_slug are mutually exclusive — provide exactly one"
     else:
-        message = (
-            "exactly one of thread or new_slug is required — neither was provided"
-        )
+        message = "exactly one of thread or new_slug is required — neither was provided"
     return {
         "error": message,
         "reason": "send_xor_violation",
@@ -79,7 +76,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             detail=_send_xor_violation(provided=[]),
         )
     if body.sidecar_content is not None:
-        return _send_with_sidecar(body)
+        return await asyncio.to_thread(_send_with_sidecar, body)
     att_dicts = [a.model_dump() for a in body.attachments] if body.attachments else None
     spill_holder: dict[str, PreparedBody] = {}
 
@@ -103,11 +100,10 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                 },
             )
         _validate_lane_bind_pre_mint(body)
-        _raise_if_turn_body_over_limit(
-            body.body, allow_long_body=body.allow_long_body
-        )
+        _raise_if_turn_body_over_limit(body.body, allow_long_body=body.allow_long_body)
         try:
-            thread_row, turn_id, ts, turn_number = create_thread_with_turn(
+            thread_row, turn_id, ts, turn_number = await asyncio.to_thread(
+                create_thread_with_turn,
                 slug=body.new_slug,
                 summary=body.summary,
                 from_agent=body.from_agent,
@@ -156,8 +152,10 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
                 ) from exc
             raise
         prepared = spill_holder.get("prepared")
-        _bind_lane_on_send(body=body, thread_id=thread_row["id"])
-        thread_row = get_thread(thread_row["id"]) or thread_row
+        await asyncio.to_thread(
+            _bind_lane_on_send, body=body, thread_id=thread_row["id"]
+        )
+        thread_row = await asyncio.to_thread(get_thread, thread_row["id"]) or thread_row
         return TurnSendCreated(
             send_path="new_thread",
             thread=_thread_detail(thread_row),
@@ -186,10 +184,13 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             },
         )
 
-    thread_id = normalize_thread_id(body.thread)
-    _maybe_auto_bind_lane_on_send(body=body, thread_id=thread_id)
-    thread_tags = load_thread_tags(thread_id)
-    citation_refusal = check_send_citation_gate(
+    thread_id = await asyncio.to_thread(normalize_thread_id, body.thread)
+    await asyncio.to_thread(
+        _maybe_auto_bind_lane_on_send, body=body, thread_id=thread_id
+    )
+    thread_tags = await asyncio.to_thread(load_thread_tags, thread_id)
+    citation_refusal = await asyncio.to_thread(
+        check_send_citation_gate,
         thread_id=thread_id,
         from_agent=body.from_agent,
         subject=body.subject,
@@ -201,7 +202,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=citation_refusal,
         )
-    storage_supersedes, echo_turn_number, echo_turn_id = _resolve_send_supersedes(
+    storage_supersedes, echo_turn_number, echo_turn_id = await asyncio.to_thread(
+        _resolve_send_supersedes,
         thread_id=thread_id,
         subject=body.subject,
         thread_tags=thread_tags,
@@ -209,7 +211,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         turn_id_alias=body.supersedes_turn_id,
     )
     try:
-        prepared = prepare_body_for_insert(
+        prepared = await asyncio.to_thread(
+            prepare_body_for_insert,
             thread=thread_id,
             subject=body.subject,
             body=body.body,
@@ -222,7 +225,8 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         _raise_spill_http(exc, thread_id=thread_id)
         raise  # pragma: no cover — _raise_spill_http always raises
     try:
-        thread_row, turn_id, ts, turn_number, marked_read = create_turn(
+        thread_row, turn_id, ts, turn_number, marked_read = await asyncio.to_thread(
+            create_turn,
             thread_id=thread_id,
             from_agent=body.from_agent,
             to_agent=body.to,
@@ -250,7 +254,7 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {thread_id} not found",
         )
-    thread_row = get_thread(thread_id) or thread_row
+    thread_row = await asyncio.to_thread(get_thread, thread_id) or thread_row
     turn_created = build_turn_created(
         prepared,
         turn_id=turn_id,
@@ -266,11 +270,12 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         supersedes_turn=echo_turn_number,
     )
     if body.fence_id:
-        release_on_clean_send(
+        await asyncio.to_thread(
+            release_on_clean_send,
             fence_id=body.fence_id,
             release_turn=turn_number,
         )
-    thread_row = get_thread(thread_id) or thread_row
+    thread_row = await asyncio.to_thread(get_thread, thread_id) or thread_row
     return TurnSendCreated(
         send_path="continue",
         thread=_thread_detail(thread_row),

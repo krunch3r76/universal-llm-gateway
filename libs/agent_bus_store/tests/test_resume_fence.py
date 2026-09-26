@@ -130,7 +130,7 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
     blob = json.dumps(bundle).lower()
     assert "grok" not in blob
     assert "9796" not in blob
-    assert bundle["fence"]["state"] == "released"
+    assert bundle["fence"]["state"] == "poured"
     assert bundle["fence_carriage"]["fence_id"] == bundle["fence"]["fence_id"]
     assert bundle["mission"]["fence_id"] == bundle["fence"]["fence_id"]
     assert not any(

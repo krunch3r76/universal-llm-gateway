@@ -39,6 +39,7 @@ def AgentBusResumeFencePoured(  # noqa: N802
     mission_bytes: int = 0,
     card_inlined: bool = True,
     bundle_version: str = "resume-bundle-v1",
+    bundle_sha256: str | None = None,
 ) -> Event:
     """Signal: mcp.agentbus.resume.fence.poured"""
     return Event(
@@ -52,6 +53,7 @@ def AgentBusResumeFencePoured(  # noqa: N802
             "mission_bytes": mission_bytes,
             "card_inlined": card_inlined,
             "bundle_version": bundle_version,
+            "bundle_sha256": bundle_sha256,
         },
         role="coordination",
     )
@@ -157,6 +159,7 @@ def emit_resume_fence_poured(
     mission_bytes: int = 0,
     card_inlined: bool = True,
     bundle_version: str = "resume-bundle-v1",
+    bundle_sha256: str | None = None,
 ) -> None:
     event = AgentBusResumeFencePoured(
         fence_id=fence_id,
@@ -167,6 +170,7 @@ def emit_resume_fence_poured(
         mission_bytes=mission_bytes,
         card_inlined=card_inlined,
         bundle_version=bundle_version,
+        bundle_sha256=bundle_sha256,
     )
     _publish(event.signal, event.payload, role=event.role)
 

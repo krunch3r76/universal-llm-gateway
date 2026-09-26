@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from typing import Any
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
 from pydantic import BaseModel, Field
 
 from ...checkpoint_auto_stamp_wiring import load_thread_tags
 from ...db import get_thread, normalize_thread_id
-from ...resume_fence import arm_resume_fence, assemble_resume_fence
+from ...resume_fence import arm_resume_fence
+from ...resume_fence_delivery import (
+    deliver_resume_bundle,
+    pour_in_flight,
+    pour_key,
+    read_delivery_view,
+)
 from ...resume_fence_store import (
     fold_fence,
     journal_denied,
@@ -105,9 +113,9 @@ async def create_resume_fence(
     body: ResumeFenceCreate,
 ) -> dict[str, Any]:
     """Pour a resume bundle for a continuity root thread."""
-    thread_id = normalize_thread_id(thread_id)
-    _resume_fence_root_guard(thread_id)
-    bundle = assemble_resume_fence(
+    thread_id = await asyncio.to_thread(normalize_thread_id, thread_id)
+    await asyncio.to_thread(_resume_fence_root_guard, thread_id)
+    bundle = await deliver_resume_bundle(
         thread_id,
         transcript_id=body.transcript_id,
         source=body.source,
@@ -115,6 +123,35 @@ async def create_resume_fence(
     )
     _resume_fence_error(bundle, thread_id)
     return bundle
+
+
+@router.get("/threads/{thread_id}/resume-fence")
+async def get_thread_resume_bundle(
+    thread_id: str,
+    transcript_id: str | None = Query(None),
+) -> dict[str, Any]:
+    """Return stored resume bundle or pouring / missing state."""
+    thread_id = await asyncio.to_thread(normalize_thread_id, thread_id)
+    key = pour_key(thread_id, transcript_id)
+    in_flight = pour_in_flight(key)
+    view = await asyncio.to_thread(read_delivery_view, thread_id, key[1])
+    if view is not None:
+        row, folded_state = view
+        return {
+            "state": folded_state,
+            "fence_id": row.fence_id,
+            "bundle": json.loads(row.body_json),
+        }
+    if in_flight:
+        return {"state": "pouring", "fence_id": None}
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail={
+            "error": "resume_fence.no_bundle",
+            "reason": "resume_fence.no_bundle",
+            "thread": thread_id,
+        },
+    )
 
 
 @router.get("/resume-fences/{fence_id}")
