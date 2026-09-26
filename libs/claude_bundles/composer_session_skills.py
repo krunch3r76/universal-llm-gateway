@@ -471,15 +471,14 @@ async def _click_matched_skill_label(page: Page, label: str, slug: str) -> None:
 
 
 async def _click_skill_slug(page: Page, slug: str) -> None:
-    """Pick the Skills-list row for ``slug``, scrolling the flyout if needed.
+    """Pick the Skills-list row for ``slug``.
 
-    First-viewport inventory alone is a false absence for mid-list Customize
-    slugs (a:36560 — ``hypothesize-simulate`` visible to the operator but not
-    mounted until the flyout scrolls).
+    Typing the slug uses the flyout's own typeahead, which scrolls that row
+    into view (a:36560). The click then lands on the mounted label match.
     """
-    from claude_bundles.composer_skills_flyout import click_skill_slug_scrolling
+    from claude_bundles.composer_skills_flyout import click_skill_slug_typed
 
-    await click_skill_slug_scrolling(
+    await click_skill_slug_typed(
         page,
         slug,
         open_items=_open_menu_items,
