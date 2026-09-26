@@ -6,7 +6,6 @@ import json
 from unittest.mock import patch
 
 import pytest
-
 from agent_bus_store.db import create_thread, create_turn, init_db
 from agent_bus_store.resume_fence import arm_resume_fence, assemble_resume_fence
 from agent_bus_store.resume_fence_store import fold_fence

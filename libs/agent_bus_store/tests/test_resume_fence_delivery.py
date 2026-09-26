@@ -10,7 +10,6 @@ from contextlib import ExitStack
 from unittest.mock import patch
 
 import pytest
-
 from agent_bus_store.db import create_thread, create_turn, init_db
 from agent_bus_store.db.connection import connect
 from agent_bus_store.resume_fence import encode_resume_bundle
