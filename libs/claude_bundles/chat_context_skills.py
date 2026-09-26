@@ -3,7 +3,9 @@
 Operator correction (arc 6895): a model's ``SKILLS_PROBE_OK`` self-report is not
 evidence that Customize skills are session-loaded. The chat right-rail
 **Context** frame lists the skills the product actually bound. This module
-reads that DOM — deterministic, zero tokens.
+reads that DOM — deterministic, zero tokens. The Skills list is scraped only
+after its disclosure is confirmed open; a collapsed rail is expanded once,
+and a still-closed list raises instead of returning no slugs.
 
 Loci (live 2026-08-07, Cowork CSE ``cse_01AhPKZ5C8gb1py1m3xHbEeL``):
 
@@ -23,6 +25,7 @@ from urllib.parse import urlparse
 
 from playwright.async_api import BrowserContext, Page
 
+from claude_bundles.chat_context_disclosure import expand_context_frame
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)+$")
@@ -35,7 +38,12 @@ _SECTION_STOP = re.compile(
 
 
 class ChatContextSkillsError(RuntimeError):
-    """Context frame scrape failed closed."""
+    """Scrape refused because the Context rail or its Skills list could not be read.
+
+    Callers treat this as fail-closed: a collapsed list is not an empty skill
+    set. ``record_post_submit_skills_receipt`` catches it and records the error
+    without aborting a submit that already happened.
+    """
 
 
 @dataclass(frozen=True)
@@ -128,32 +136,13 @@ async def _pick_chat_page(context: BrowserContext, *, chat_url: str | None) -> P
     raise ChatContextSkillsError("No browser pages on CDP session")
 
 
-async def expand_context_frame(page: Page) -> bool:
-    """Click the Context rail control if present. Returns whether it was found."""
-    return bool(
-        await page.evaluate(
-            """() => {
-              const spans = Array.from(document.querySelectorAll('span'));
-              const ctx = spans.find((s) => {
-                const t = (s.textContent || '').trim();
-                if (t !== 'Context') return false;
-                const cls = (s.className || '').toString();
-                return cls.includes('font-medium') || cls.includes('text-sm');
-              }) || spans.find((s) => (s.textContent || '').trim() === 'Context');
-              if (!ctx) return false;
-              const btn = ctx.closest('button, [role="button"]') || ctx.parentElement;
-              if (btn) { btn.click(); return true; }
-              return false;
-            }"""
-        )
-    )
-
-
 async def scrape_loaded_skills(page: Page) -> LoadedSkillsReport:
     """Return the skill slugs listed under the chat UI Context → Skills frame.
 
-    Non-LLM. Does not ask the model. Empty ``skills`` with ``context_found``
-    true means the frame is open but no skills are bound.
+    Non-LLM. Does not ask the model. Confirms the Context rail and the
+    Skills list are expanded before reading rows. Empty ``skills`` with
+    ``context_found`` true means that open list has no skills bound. A
+    list that stays collapsed raises ``ChatContextSkillsError``.
     """
     url = require_chat_surface(page)
     await expand_context_frame(page)
@@ -316,6 +305,13 @@ def emit_loaded_skills_json(
     *,
     required: list[str] | None = None,
 ) -> int:
+    """Print the Context → Skills observation as JSON and return an exit code.
+
+    ``required`` adds ``missing_required`` so a CLI caller can see which
+    slugs the open list did not contain. Returns 2 when the Context frame
+    is absent, 1 when a required slug is missing, and 0 when the report
+    is usable.
+    """
     payload = report.to_dict()
     payload["skills"] = list(report.skills)
     payload["selectors"] = list(report.selectors)

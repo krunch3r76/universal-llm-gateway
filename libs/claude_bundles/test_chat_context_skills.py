@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from claude_bundles.chat_context_disclosure import disclosure_is_expanded
 from claude_bundles.chat_context_skills import (
     LoadedSkillsReport,
     parse_skills_from_context_section,
@@ -56,6 +57,21 @@ Skills
 
 def test_parse_no_skills_heading() -> None:
     assert parse_skills_from_context_section("Context\nFiles\nfoo") == ()
+
+
+def test_open_aria_is_expanded_without_a_second_click() -> None:
+    assert disclosure_is_expanded("true", list_visible=False) is True
+    assert disclosure_is_expanded("TRUE", list_visible=False) is True
+
+
+def test_closed_aria_stays_collapsed_even_if_text_remains() -> None:
+    assert disclosure_is_expanded("false", list_visible=True) is False
+
+
+def test_missing_aria_follows_list_visibility() -> None:
+    assert disclosure_is_expanded(None, list_visible=True) is True
+    assert disclosure_is_expanded("", list_visible=False) is False
+    assert disclosure_is_expanded("  ", list_visible=False) is False
 
 
 def test_missing_required() -> None:
