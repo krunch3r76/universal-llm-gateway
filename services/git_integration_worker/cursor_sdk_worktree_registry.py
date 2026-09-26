@@ -778,17 +778,27 @@ def lookup_dispatch_worktree(
 
 
 def list_registered_worktrees_with_status() -> list[sqlite3.Row]:
-    """Lane rows with live-writer status (NULL when the lane has no active dispatch)."""
+    """Lane rows with live-writer status (NULL when the lane has no active dispatch).
+
+    Active status is aggregated once, then joined. A per-worktree correlated
+    subquery re-scanned the dispatch ledger (644 worktrees × the full
+    ``record_json`` table measured 2.8s) and pushed ``/active-work`` past the
+    5s drain-probe budget.
+    """
     with ledger_connection() as conn:
         ensure_worktree_schema(conn)
         return conn.execute(
             "SELECT w.source_repo, w.thread_id, w.last_dispatch_id AS dispatch_id, "
             "w.worktree_path, w.branch_name, w.branch_point, "
             "w.salvage_refusal_count, w.quarantined_at, "
-            "(SELECT d.status FROM cursor_sdk_dispatches d "
-            " WHERE d.thread_id = w.thread_id AND d.status IN ('admitted','running') "
-            " LIMIT 1) AS status "
-            "FROM cursor_sdk_lane_worktrees w"
+            "a.status AS status "
+            "FROM cursor_sdk_lane_worktrees w "
+            "LEFT JOIN ("
+            "  SELECT thread_id, MAX(status) AS status "
+            "  FROM cursor_sdk_dispatches "
+            "  WHERE status IN ('admitted', 'running') "
+            "  GROUP BY thread_id"
+            ") a ON a.thread_id = w.thread_id"
         ).fetchall()
 
 
