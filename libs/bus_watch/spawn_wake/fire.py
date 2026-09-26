@@ -278,7 +278,10 @@ def body_for_leftover(
         hop_from = None
         service_stop_id = None
         if digest is not None:
-            from bus_watch.spawn_wake.play_classify import parked_resume
+            from bus_watch.spawn_wake.play_classify import (
+                holder_lost_finished_hire,
+                parked_resume,
+            )
 
             found = parked_resume(digest)
             if found:
@@ -288,6 +291,11 @@ def body_for_leftover(
                     if isinstance(row, dict) and str(row.get("row_id") or "") == str(
                         roster_row_id
                     ):
+                        # holder_lost already finished that hire. Claiming its
+                        # dispatch id again returns stop_not_claimed and the
+                        # row never admits.
+                        if holder_lost_finished_hire(digest, str(todo)):
+                            break
                         service_stop_id = (
                             str(row.get("last_hire_dispatch_id") or "").strip() or None
                         )
@@ -510,6 +518,12 @@ def tick_spawn_on_wake(
         closed_quiet = close_unharvested_quiet_lanes_on_bus(digest.get("lanes") or [])
         if closed_quiet:
             digest["closed_unharvested_lanes"] = closed_quiet
+    import sys
+    from pathlib import Path
+
+    repo_root = str(Path(__file__).resolve().parents[3])
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
     )

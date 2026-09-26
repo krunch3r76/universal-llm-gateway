@@ -16,14 +16,13 @@ stay in-seat only for trivial/local touches or latency-sensitive tight-loop debu
 independent questions). Explore ≡ Cursor subagent; in-seat Grep/Read is not Explore. Omit `model=`.
 Sparse work item (`density_triage` unset or `recon_pending`) ⇒ recon front-half before **implement**
 (`require_implement_ready` guards implement, not conductor spawn). Exempt: `mechanical`/`trivial`, or dense
-spec with `files_expected` + `acceptance_criteria`. Todo stage attrs are spawn seeds only — scoreboard fold
-is current state while G1–G3 open. Bugfix on pattern P ⇒ service sweep (`[quality:bug-class-sweep]`).
+spec with `files_expected` + `acceptance_criteria`. Bugfix on pattern P ⇒ service sweep (`[quality:bug-class-sweep]`).
 
 ## Ladder + binder order
 
 | Need | Path | Autonomy |
 |---|---|---|
-| Mechanical implement | `team_dispatch(op=generate, seat=cursor-sdk, lane="B")` → Composer (omit `model=`). In-repo implement uses lane B; `lane="A"` only with a one-line reason | autonomous |
+| Mechanical implement | `team_dispatch(..., lane="B")` → Composer (omit `model=`). Lane B for every top-level generate, including cortex-only (throwaway tree). Lane A is 1 slot; do not raise it. `lane="A"` only on `CURSOR_LANE_B_SCOPE_REFUSED` | autonomous |
 | Investigate residual · conductor drive | Composer (omit `model=`, `contract=conductor\|investigate`) — returns `OPEN FORK:` lines, never binds | autonomous |
 | Greater reasoning / independent check | **`cdp/fable-5.1`** width · **`cdp/opus-5.5`** bind/review — announce `CDP: <trigger> — <why>`, then proceed | autonomous on trigger |
 | Premium live checkout | `cursor/claude-opus-5-5` — inform-then-proceed (wait only if premium spend paused) | announce |

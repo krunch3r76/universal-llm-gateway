@@ -397,10 +397,11 @@ when the row is sparse recon before `implement_ready`. SoT:
 Required in `<scope>` / `<invariants>`:
 - **`Use the conductor skill — …`** (continuity-lead required-skill gate — see Audience)
 - Root thread id + charter + scoreboard URIs
-- Checkout regime: **Lane B is the standing default** — state it explicitly
-  (`lane="B"`; an *omitted* `lane=` still resolves to Lane A at GIW, so
-  default ≠ "leave the param off"). Lane A only on a named reason (trivial
-  single-locus mechanical, or scope genuinely incompatible with a worktree)
+- Checkout regime: **Lane B is the standing default**, including cortex-only
+  work (a throwaway worktree is enough). State `lane="B"` explicitly; an
+  omitted `lane=` still resolves to Lane A at GIW, so default ≠ "leave the
+  param off". Lane A is one write slot. A seat does not raise that cap.
+  `lane="A"` only when lane B is refused for paths outside the repo
 - Incident/sibling lanes (cite ≠ convert)
 - Forbidden verbs (e.g. no `request` on a stood-down lane)
 - Judgment vs human rule (above)
@@ -773,12 +774,11 @@ then proceed (`lean-context-dispatch-first` inform-then-proceed).
 
 ### When Lane A is still the right call
 
-Lane B is the default, not the only option. Name Lane A explicitly, one line
-in packet `<invariants>`, when **either**: the mission is mechanical single-locus — a
-single locus, self-contained, nothing else plausibly touching that file mid-
-mission — **or** the scope is structurally incompatible with a worktree (an
-absolute mount path or non-repo URI that `CURSOR_LANE_B_SCOPE_REFUSED` cannot
-be resolved for, below). Absent a named reason, admit Lane B.
+Lane B is the default, including when the deliverable is only a cortex note.
+A throwaway worktree is enough. Lane A is one write slot, and a seat does not
+raise that cap or pass `lane="A"` to avoid minting a tree. Name Lane A only
+when `CURSOR_LANE_B_SCOPE_REFUSED` cites paths outside the repo and those paths
+cannot be moved onto the tree. Quote that refusal in the packet.
 
 ### `CURSOR_LANE_B_WORKTREE_MISSING` — B without a tree is not A
 

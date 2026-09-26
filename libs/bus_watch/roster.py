@@ -15,6 +15,7 @@ from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.now_row import resolve_now_row
 from bus_watch.spawn_wake.play_classify import (
     extract_todo_slug,
+    holder_lost_finished_hire,
     live_conductor_owner,
     mark_consult_reply_seats_empty,
 )
@@ -430,7 +431,9 @@ def classify_row(
     if latched and row.get("live") is not True and owner is None:
         from bus_watch.spawn_wake.play_classify import hire_latch_released
 
-        if not hire_latch_released(digest, latched):
+        if not holder_lost_finished_hire(digest, slug) and not hire_latch_released(
+            digest, latched
+        ):
             return {
                 "decision": DECISION_HOLD,
                 "reason": "hire_latched",

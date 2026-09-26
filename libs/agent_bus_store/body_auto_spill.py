@@ -20,9 +20,11 @@ from cortex_store.dispatch_ops._thread_sidecar import (
 
 from .body_briefing_advisory import BriefingAdvisory, briefing_advisory
 from .checkpoint_charter_lint import orchestration_charter_advisory
+from .checkpoint_entity_ref_lint import entity_ref_drop_advisory
 from .checkpoint_projection import CheckpointBodyTooLargeError
 from .checkpoint_projection_wiring import maybe_project_checkpoint_body
 from .checkpoint_stance_lint import orchestration_stance_advisory
+from .db.connection import connect
 from .turns_models import (
     MAX_LONG_TURN_BODY_CHARS,
     MAX_SIDECAR_CONTENT_CHARS,
@@ -36,6 +38,20 @@ if TYPE_CHECKING:
     from .turns_models import TurnCreated
 
 AUTO_OVERFLOW_SLUG = "auto-overflow"
+
+
+def _turn_body(thread: str, turn_number: int) -> str | None:
+    """Body of a prior turn, or None when the row is gone."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT body FROM turns WHERE thread = ? AND turn_number = ?",
+            (thread, turn_number),
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row["body"]) if row["body"] is not None else None
+
+
 AUTO_OVERFLOW_BRIEFING = (
     "Body auto-spilled over soft inline limit ({body_chars} chars). "
     "Full content in sidecar."
@@ -100,6 +116,14 @@ def prepare_body_for_insert(
         if advisory is None:
             advisory = orchestration_stance_advisory(
                 body=body,
+                subject=subject,
+                thread_tags=thread_tags,
+                supersedes_turn=supersedes_turn,
+            )
+        if advisory is None and supersedes_turn is not None:
+            advisory = entity_ref_drop_advisory(
+                body=body,
+                predecessor_body=_turn_body(thread, supersedes_turn),
                 subject=subject,
                 thread_tags=thread_tags,
                 supersedes_turn=supersedes_turn,

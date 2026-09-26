@@ -20,7 +20,7 @@ from bus_watch.digest_budget import _bus, _get
 
 _GIW_ACTIVE_WORK = os.environ.get(
     "LIAISON_GIW_ACTIVE_WORK",
-    "http://127.0.0.1:8091/api/v1/integrate/active-work",
+    "http://127.0.0.1:8091/api/v1/git/active-work",
 )
 _QUIET_REASON_RE = re.compile(r"\breason=([a-z_]+)")
 _UUID_RE = re.compile(

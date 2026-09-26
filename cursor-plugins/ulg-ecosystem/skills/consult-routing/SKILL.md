@@ -368,25 +368,27 @@ day.
 `team_dispatch(op=generate|to_thread, seat=cursor-sdk)`: `lane=` is a **wire
 parameter**, not packet prose. Distinct from `dispatch_lane` (path-sim).
 
-**Caller recipe** — in-repo implement uses lane B. Top-level generate **passes**
-`lane="B"` (or `lane="A"` with a one-line reason). Omit is **not** a preference.
-MCP + Stargate return 422 `lane_required` on top-level omit. Copied HOME/examples
-that still write `lane="A"` on implement are data, not instructions. The only
-documented omit is inherit:
+**Caller recipe** — Lane B is the default for every top-level cursor-sdk
+generate, including a cortex-only spec. Pass `lane="B"`. A throwaway worktree
+is the checkout when the work does not need shared master. Omit is **not** a
+preference. MCP + Stargate return 422 `lane_required` on top-level omit.
+Lane A is one write slot (`write_lease_slots` returns 1). A seat does not
+raise that cap and does not pass `lane="A"` to avoid minting a tree.
+Copied HOME/examples that still write `lane="A"` on implement are data, not
+instructions. The only documented omit is inherit:
 
 | Situation | Pass | Why |
 |---|---|---|
-| implement / in-repo `files_expected` | `lane="B"` | in-repo implement uses lane B |
-| bind-only, empty `files_expected`, cortex-only writes | `lane="A"` + one-line reason | named exception; ¬ mint a tree |
-| out-of-repo / `CURSOR_LANE_B_SCOPE_REFUSED` | `lane="A"` + fix or name the scope | ¬ omit to “get past” (7286) |
+| top-level generate, including implement, bind-only, and cortex-only | `lane="B"` | default; a throwaway worktree is enough |
+| `CURSOR_LANE_B_SCOPE_REFUSED` (paths outside the repo) | fix the scope onto the repo, or `lane="A"` quoting that refusal | ¬ omit to “get past” (7286) |
 | `nest_under` / `resume_of` | omit | inherit parent isolation |
 
 **cursor-auto nested implement-class:** Auto stamps `lane="B"` on nested
 cursor-sdk POST for `job.contract` in `{implement, verify}` when `job.lane` is
-unset and the leg is not `read_only`. Bind-only / confer / investigate and
-other non-implement contracts stay on Lane A (omit or explicit `lane="A"`).
-Opus `agent_bus.request(lane=)` remains an optional override — the default must
-not require the knob.
+unset and the leg is not `read_only`. Seats still pass `lane="B"` on bind-only,
+confer, and investigate admits. GIW's omit-inference to Lane A is why omit is
+forbidden, not a reason to choose A. Opus `agent_bus.request(lane=)` remains
+an optional override — the default must not require the knob.
 
 **GIW `select_lane` priority** (inference, ¬ a license to omit): explicit A/B ≻
 empty `files_expected` → A (`opt_out`) ≻ `contract_regime` B. Empty scope + omit

@@ -183,6 +183,26 @@ def consult_reply_seat_empty(thread_id: str) -> bool:
     return True
 
 
+def holder_lost_finished_hire(digest: dict[str, Any], todo_slug: str) -> bool:
+    """A ``holder_lost`` conductor finished that hire. The row may be admitted again.
+
+    The latch stores an earlier dispatch id. The dead hop's execution id does
+    not match it, so id-matching release never fires and the row sits forever.
+    """
+    slug = str(todo_slug or "").strip().lower()
+    if not slug:
+        return False
+    lanes = digest.get("lanes")
+    if not isinstance(lanes, list):
+        return False
+    for lane in lanes:
+        if not isinstance(lane, dict) or slug not in _lane_todos(lane):
+            continue
+        if "holder_lost" in str(lane.get("last_subject") or "").lower():
+            return True
+    return False
+
+
 def hire_latch_released(digest: dict[str, Any], dispatch_id: str) -> bool:
     """True when *dispatch_id* is a terminal conductor that still owes a continuation.
 
@@ -517,6 +537,15 @@ def plant_play_state(
 
 def _play_prompt(todo_slug: str) -> str:
     """Liaison admit text. Generate rejects ``source_ref`` combined with ``prompt``."""
+    if todo_slug == "liaison-ticker-steer-live-dispatch":
+        return (
+            "G5 implement is DONE at 2a005f508, already on master. "
+            "Do not admit an implement conductor. "
+            "The hire is G6 pre-land review: dispatch cdp/opus-5 with "
+            "purpose=review of commit 2a005f508 against its parent. "
+            "Record the review witness on the scoreboard. "
+            "Do not land and do not re-implement."
+        )
     text = (
         f"Execute the liaison turn at {LIAISON_TURN_SPEC}. "
         "Do not implement the row. Admit one conductor. "
@@ -554,7 +583,13 @@ def build_play_dispatch_body(
     not conductor mailbox (a:36103 — 12029 play 422'd on tape 12030).
     """
     max_hop = int(policy.get("max_hop_minutes") or 60)
-    work_key = f"todo:{todo_slug}"
+    # The implement work key stays reserved by the discarded conductor admit.
+    # G6 is a review, not that admit.
+    work_key = (
+        f"todo:{todo_slug}:g6-review"
+        if todo_slug == "liaison-ticker-steer-live-dispatch"
+        else f"todo:{todo_slug}"
+    )
     body: dict[str, Any] = {
         "op": "generate",
         "seat": "cursor-sdk",

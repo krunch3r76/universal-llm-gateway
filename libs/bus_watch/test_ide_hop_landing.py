@@ -48,7 +48,8 @@ def test_hop_header_line_is_the_landing_marker() -> None:
     assert "LOOP: rebuild" in message
     assert "runbook:bus-consult-watcher" in message
     assert message.rstrip().endswith(
-        "Silence, or a request that the operator run the bus, is a stop."
+        "Close with what you are watching and when you will report. "
+        "A status with no watch is a stop."
     )
 
 

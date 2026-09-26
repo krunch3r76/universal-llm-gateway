@@ -22,7 +22,9 @@ from bus_watch.spawn_pending import (
 )
 from bus_watch.spawn_wake.play_classify import (
     LEFTOVER_HOLD,
+    LEFTOVER_PLAY,
     classify_leftover,
+    holder_lost_finished_hire,
 )
 from bus_watch.spawn_wake.review_apply import (
     owing_review_apply,
@@ -234,6 +236,13 @@ def evaluate_spawn_predicate(
     # Play admits the same successor_model as later wakes. An unbound model
     # must not start the house as Composer omit.
     clauses["leftover_not_hold"] = leftover["leftover"] != LEFTOVER_HOLD
+    # A dead hop does not change lane id/turns/status, so the idempotency
+    # fingerprint stays equal to the last admit and the row never plays again.
+    # A live successor flips leftover to hold and stops the re-admit.
+    if leftover.get("leftover") == LEFTOVER_PLAY and holder_lost_finished_hire(
+        digest, str(leftover.get("todo") or "")
+    ):
+        clauses["fingerprint_changed"] = True
     if owing_review_apply(digest, state):
         # Apply-all under: frozen ready, ide: check-in, or leftover HOLD must
         # not park suggestions for the operator (11960).
