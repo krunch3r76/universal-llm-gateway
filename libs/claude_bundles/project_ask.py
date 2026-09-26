@@ -42,13 +42,10 @@ from claude_bundles.chat_session_hygiene import (
 )
 from claude_bundles.compose_attest import (
     await_compose_attest,
-    await_live_submit_visible,
     await_submit_visible,
-    click_discovered_submit,
     compose_mode_fingerprint,
     cowork_auto_refuse_reason,
     resolve_submit_strategy,
-    warm_submit_settle_ms,
 )
 from claude_bundles.cowork_output_download import (
     ExpectedSize,
@@ -384,53 +381,13 @@ async def _insert_prompt_text(
     return missing, click_errors
 
 
-async def send_prompt(
+async def _submit_composer_draft(
     page: Page,
-    text: str,
     *,
-    stargate_execution_id: str = "",
-    satellite_execution_id: str = "",
+    composer,
+    draft_text: str,
 ) -> None:
-    """Clear the composer, attach leading slash skills, then click submit.
-
-    Contract: leading ``/<slug>\\n`` tokens name Customize skills to attach via
-    ``+`` → Skills → pick-each (not typed); remaining body (incl. hybrid escape
-    Use-the lines / ``<skills_inline>``) pastes via insert_text. Fail-closed
-    submit: composer-local Send click when visible; warm/stream surfaces fall
-    back to Enter then Control/Meta+Enter with draft-clear proof.
-
-    Correlation ids optional: threaded into channel-attest telemetry only;
-    empty strings are valid for non-seating harness callers.
-
-    After a successful click, records a non-gating Context → Skills receipt
-    (``cdp.skill.context_loaded``) — chips gate submit; the rail is the receipt.
-    """
-    from claude_bundles.composer_session_skills import require_compose_surface
-    from claude_bundles.cowork_skill_delivery import (
-        extract_cdp_required_authority,
-        parse_cdp_sealed_skill_channels,
-    )
-    from claude_bundles.skill_context_receipt import (
-        record_post_submit_skills_receipt,
-    )
-
-    require_compose_surface(page)
-    composer = await find_composer(page)
-    if composer is None:
-        raise RuntimeError(f"composer not found on page url={page.url!r}")
-    from claude_bundles.composer_submit import clear_composer_verified
-
-    await clear_composer_verified(page, composer)
-    await page.wait_for_timeout(180)
-    missing, attach_notes = await _insert_prompt_text(
-        page,
-        text,
-        composer=composer,
-        stargate_execution_id=stargate_execution_id,
-        satellite_execution_id=satellite_execution_id,
-    )
-    await page.wait_for_timeout(600)
-
+    """Submit the current composer draft; fail-closed when controls are missing."""
     from claude_bundles.chat_cowork_mode import ensure_approval_auto
 
     auto = await ensure_approval_auto(page)
@@ -444,7 +401,7 @@ async def send_prompt(
     from claude_bundles.composer_submit import submit_composer_content
 
     if strategy == "live_discover":
-        await submit_composer_content(page, text, composer=composer)
+        await submit_composer_content(page, draft_text, composer=composer)
     else:
         mode: str = fp.get("mode") or ("cowork" if fp.get("approval") else "chat")
         if mode not in ("chat", "cowork"):
@@ -474,7 +431,7 @@ async def send_prompt(
             from claude_bundles.composer_submit import is_generation_active
 
             if await is_generation_active(page):
-                await submit_composer_content(page, text, composer=composer)
+                await submit_composer_content(page, draft_text, composer=composer)
             else:
                 raise RuntimeError(
                     "submit control missing: need visible Start task (Cowork) or "
@@ -483,7 +440,102 @@ async def send_prompt(
         else:
             from claude_bundles.composer_submit import prove_composer_submitted
 
-            await prove_composer_submitted(page, text)
+            await prove_composer_submitted(page, draft_text)
+
+
+async def send_prompt(
+    page: Page,
+    text: str,
+    *,
+    stargate_execution_id: str = "",
+    satellite_execution_id: str = "",
+) -> None:
+    """Clear the composer, attach leading slash skills, then click submit.
+
+    Contract: leading ``/<slug>\\n`` tokens name Customize skills to attach via
+    ``+`` → Skills → pick-each (not typed); remaining body (incl. hybrid escape
+    Use-the lines / ``<skills_inline>``) pastes via insert_text. Fail-closed
+    submit: composer-local Send click when visible; warm/stream surfaces fall
+    back to Enter then Control/Meta+Enter with draft-clear proof.
+
+    Correlation ids optional: threaded into channel-attest telemetry only;
+    empty strings are valid for non-seating harness callers.
+
+    When required authority includes ``shared_sync`` slugs, sends a prior turn
+    containing only ``Use the {slug} skill`` lines, scrapes Context → Skills,
+    and aborts before the work body when the panel is not ready
+    (``decision:web-seat-skill-body-delivery``).
+
+    After a successful work-prompt click, records a non-gating Context → Skills
+    receipt (``cdp.skill.context_loaded``) — chips gate submit; the rail is the
+    receipt.
+    """
+    from claude_bundles.chat_context_skills import scrape_loaded_skills
+    from claude_bundles.composer_session_skills import require_compose_surface
+    from claude_bundles.cowork_skill_delivery import (
+        SkillDeliveryError,
+        extract_cdp_required_authority,
+        induction_panel_ready,
+        parse_cdp_sealed_skill_channels,
+        partition_cdp_skills,
+        render_skill_induction,
+    )
+    from claude_bundles.skill_context_receipt import (
+        record_post_submit_skills_receipt,
+    )
+
+    require_compose_surface(page)
+    composer = await find_composer(page)
+    if composer is None:
+        raise RuntimeError(f"composer not found on page url={page.url!r}")
+    from claude_bundles.composer_submit import clear_composer_verified
+
+    required_authority = extract_cdp_required_authority(text)
+    attach_slugs, inline_slugs, _rest = parse_cdp_sealed_skill_channels(text)
+    if required_authority is not None:
+        required_for_induction = required_authority
+    else:
+        required_for_induction = attach_slugs + inline_slugs
+    induction_slugs, _inline_only = (
+        partition_cdp_skills(required_for_induction)
+        if required_for_induction
+        else ([], [])
+    )
+
+    await clear_composer_verified(page, composer)
+    await page.wait_for_timeout(180)
+
+    if induction_slugs:
+        induction_text = render_skill_induction(induction_slugs)
+        await composer.click(force=True)
+        await page.wait_for_timeout(200)
+        await page.keyboard.insert_text(induction_text)
+        await page.wait_for_timeout(600)
+        await _submit_composer_draft(
+            page, composer=composer, draft_text=induction_text
+        )
+        await page.wait_for_timeout(1500)
+        report = await scrape_loaded_skills(page)
+        observed = list(report.skills)
+        if not induction_panel_ready(induction_slugs, observed):
+            raise SkillDeliveryError(
+                "induction Context → Skills panel not ready before work prompt: "
+                f"required={induction_slugs} observed={observed} — fail closed "
+                "(decision:web-seat-skill-body-delivery)"
+            )
+        await clear_composer_verified(page, composer)
+        await page.wait_for_timeout(180)
+
+    missing, attach_notes = await _insert_prompt_text(
+        page,
+        text,
+        composer=composer,
+        stargate_execution_id=stargate_execution_id,
+        satellite_execution_id=satellite_execution_id,
+    )
+    await page.wait_for_timeout(600)
+
+    await _submit_composer_draft(page, composer=composer, draft_text=text)
 
     required_authority = extract_cdp_required_authority(text)
     attach_slugs, inline_slugs, _rest = parse_cdp_sealed_skill_channels(text)
