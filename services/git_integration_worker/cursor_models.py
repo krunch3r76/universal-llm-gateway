@@ -129,6 +129,32 @@ def _wire_param_id(model_id: str, name: str) -> str:
     return _PARAM_WIRE_ID.get((model_id, name), name)
 
 
+def selected_context_window_tokens(
+    model: str, emitted: Mapping[str, str]
+) -> int | None:
+    """Budget window for the context knob actually sent.
+
+    ``context_window_tokens`` is the card default. A pinned ``context`` label
+    replaces it so a 500k dispatch is not stopped at 256k.
+    """
+    from cursor_capabilities import context_window_tokens, supported_knobs
+
+    window = context_window_tokens(model)
+    label = str(emitted.get("context") or "")
+    if not label:
+        return window
+    try:
+        bare = canonical_cursor_bare_id(model)
+    except ValueError:
+        return window
+    spec = supported_knobs(bare).get("context")
+    if spec is None or label not in spec.accepted:
+        return window
+    if label.endswith("k") and label[:-1].isdigit():
+        return int(label[:-1]) * 1_000
+    return window
+
+
 def build_model_selection(
     config: CursorSdkModelConfig,
     overrides: Mapping[str, str] | None = None,

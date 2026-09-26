@@ -30,7 +30,7 @@ __all__ = [
     "to_model_card_dict",
 ]
 
-DESCRIPTOR_VERSION: Final[str] = "2026-08-15"
+DESCRIPTOR_VERSION: Final[str] = "2026-09-25"
 
 # Emergency denylist for cursor-sdk substrate admission. Entries are bare wire ids
 # (no cursor/ prefix); membership is checked after prefix strip + lowercase.
@@ -301,23 +301,26 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         default_variant={"context": "300k", "effort": "high"},
         instruction_profile="reasoner",
     ),
-    # Cursor Grok 4.7. ListModels also advertises context=500k, but a run that
-    # sends that parameter returns status ERROR: Invalid parameters for registry
-    # model "grok-4.7". Omitting context lets the SDK default succeed.
-    # The live parameter id for effort is reasoning_effort (see cursor_models).
+    # Cursor Grok 4.7. ListModels accepts context=256k|500k and its default
+    # variant is 500k (long-context, 2× the standard rate). team_dispatch pins
+    # 256k unless the caller sets context=500k. Effort's live parameter id is
+    # reasoning_effort (see cursor_models). context_window_tokens is the
+    # default window; the context knob is the two-window card.
     "grok-4.7": ModelCapability(
         knobs={
+            "context": KnobSpec(accepted=("256k", "500k"), default="256k"),
             "effort": KnobSpec(
                 accepted=("low", "medium", "high", "xhigh"), default="high"
             ),
             "fast": KnobSpec(accepted=("false", "true"), default="true"),
         },
         default_variant={
+            "context": "256k",
             "effort": "high",
             "fast": "true",
         },
         instruction_profile="reasoner",
-        context_window_tokens=500_000,
+        context_window_tokens=256_000,
     ),
     "gemini-3.5-flash": ModelCapability(
         knobs={},

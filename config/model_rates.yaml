@@ -194,6 +194,7 @@ models:
 # resolved_model=cursor/grok-4.7 + model_knobs_requested.fast.
 # Grok 4.7 (Fast) Cursor pool table 2026-08-13: $4 / - / $1 / $12.
 # Effort variants: sot_absent on the pool table — ¬ invent multipliers.
+# Context: Cursor pool table 2026-09-25. 500k is 2× standard; Fast+500k is 3×.
 knob_variants:
   - model_id: cursor/grok-4.7
     knobs:
@@ -201,6 +202,23 @@ knob_variants:
     input_rate_per_m: 4.0
     cache_read_rate_per_m: 1.0
     output_rate_per_m: 12.0
+    source: manual_seed
+    pinned: true
+  - model_id: cursor/grok-4.7
+    knobs:
+      context: "500k"
+    input_rate_per_m: 4.0
+    cache_read_rate_per_m: 1.0
+    output_rate_per_m: 12.0
+    source: manual_seed
+    pinned: true
+  - model_id: cursor/grok-4.7
+    knobs:
+      fast: "true"
+      context: "500k"
+    input_rate_per_m: 6.0
+    cache_read_rate_per_m: 1.5
+    output_rate_per_m: 18.0
     source: manual_seed
     pinned: true
   - model_id: cursor/gpt-5.5

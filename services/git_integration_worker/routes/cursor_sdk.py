@@ -1067,9 +1067,11 @@ def _run_sdk_sync(
 
         # The model card's verified window is the headless CONTEXT_BUDGET stop.
         # No flat stand-in when the card carries none.
-        from cursor_capabilities import context_window_tokens
+        from services.git_integration_worker.cursor_models import (
+            selected_context_window_tokens,
+        )
 
-        budget_window = context_window_tokens(resolved_model)
+        budget_window = selected_context_window_tokens(resolved_model, knob_summary)
         run_started = time.monotonic()
 
         def _on_tool_call(observation: object = None) -> None:

@@ -140,6 +140,21 @@ def test_grok_fast_is_knob_variant_not_fake_model_id() -> None:
     )
     assert fast_high is not None
     assert fast_high.input_rate_per_m == 4.0
+    standard_window = resolve_rate(
+        "cursor/grok-4.7", knobs={"context": "256k", "fast": "false"}
+    )
+    assert standard_window is not None
+    assert standard_window.input_rate_per_m == 2.0
+    long_window = resolve_rate("cursor/grok-4.7", knobs={"context": "500k"})
+    assert long_window is not None
+    assert long_window.input_rate_per_m == 4.0
+    assert long_window.output_rate_per_m == 12.0
+    fast_long = resolve_rate(
+        "cursor/grok-4.7", knobs={"fast": "true", "context": "500k"}
+    )
+    assert fast_long is not None
+    assert fast_long.input_rate_per_m == 6.0
+    assert fast_long.output_rate_per_m == 18.0
 
 
 def test_price_row_uses_knobs_in_join_key() -> None:

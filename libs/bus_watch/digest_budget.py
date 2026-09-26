@@ -249,10 +249,18 @@ def seat_budget(
 
     if usage_live:
         live_model = str(usage_live.get("model") or successor_model)
+        live_window = usage_live.get("window_limit_tokens")
+        window = (
+            int(live_window)
+            if isinstance(live_window, int)
+            and not isinstance(live_window, bool)
+            and live_window > 0
+            else card_window_tokens(live_model)
+        )
         return (
             build_budget_block(
                 used_tokens=int(usage_live.get("used_tokens") or 0),
-                window_limit_tokens=card_window_tokens(live_model),
+                window_limit_tokens=window,
                 model=live_model,
                 source="giw.sdk_stream",
                 scope=_BUDGET_SCOPE,
@@ -267,9 +275,7 @@ def seat_budget(
     if (register != "autonomous" or ide_holder_transcript(lock)) and (
         ide := _measure_ide_tab(root_id, lock, policy)
     ):
-        pct = round(
-            100.0 * ide["used_tokens"] / max(ide["window_limit_tokens"], 1), 1
-        )
+        pct = round(100.0 * ide["used_tokens"] / max(ide["window_limit_tokens"], 1), 1)
         return (
             build_budget_block(
                 used_tokens=ide["used_tokens"],
@@ -321,11 +327,7 @@ def build_budget_block(
     never for the cumulative ``digest.estimate``. Extra ``basis`` fields
     (transcript id, tool calls, …) ride along so a reader can audit the number.
     """
-    ratio = (
-        used_tokens / window_limit_tokens
-        if window_limit_tokens
-        else 0.0
-    )
+    ratio = used_tokens / window_limit_tokens if window_limit_tokens else 0.0
     stop_class = (
         "CONTEXT_BUDGET"
         if window_limit_tokens
