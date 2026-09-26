@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from services.git_integration_worker.app import create_app
+from services.git_integration_worker.config import load_config
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_concurrency_meter import (
     ATTRIBUTION_FLOOR_ISO,
@@ -567,6 +568,7 @@ def test_concurrency_stats_exposes_lane_dimension(
     assert lane_fields["lane_b"]["branches_unlanded"] is not None
 
     app = create_app()
+    app.state.worker_config = load_config()
     client = TestClient(app)
     active_resp = client.get("/api/v1/git/active-work")
     assert active_resp.status_code == 200

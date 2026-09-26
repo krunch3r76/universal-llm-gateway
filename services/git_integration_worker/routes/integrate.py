@@ -469,7 +469,7 @@ async def get_active_work(request: Request):
         CursorDispatchLedger,
     )
     from services.git_integration_worker.cursor_sdk_concurrency_meter import (
-        active_work_lane_fields,
+        active_work_lane_fields_bounded,
     )
     from services.git_integration_worker.cursor_sdk_gate import (
         sdk_dispatch_gate_holder_detail,
@@ -491,9 +491,7 @@ async def get_active_work(request: Request):
     )
     active_count = controller.active_count()
     cfg = getattr(request.app.state, "worker_config", _CONFIG)
-    lane_fields = await asyncio.to_thread(
-        active_work_lane_fields, source_repo=cfg.source_repo
-    )
+    lane_fields = await active_work_lane_fields_bounded(source_repo=cfg.source_repo)
     from services.git_integration_worker.cse_session_holders import (
         occupancy_projections,
     )
