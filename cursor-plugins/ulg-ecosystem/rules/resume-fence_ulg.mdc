@@ -20,7 +20,7 @@ sketchboard, card, or prior-tab prose. Paths are bundle keys.
 
 | Row | Source | Bind |
 |---|---|---|
-| 1 fence | `fence.fence_id` · `fence.state` · `fence.head_sha` | Quote id once; `state=poured` (or the released terminal state) is the only "resumed" evidence |
+| 1 fence | `fence.fence_id` · `fence.state` · `fence.head_sha` | Read these to confirm the pour. `state=poured` (or the released terminal state) is the only "resumed" evidence. Speak `fence_id` and `head_sha` once, on the skippable receipts line after the picture. They do not open the reply |
 | 2 tip + chain | `tip_checkpoint.turn_number` · `.body` · `.supersedes_turn` | Tip body **is** the mission — quote verbatim, never restate. Walk `supersedes_turn` back; a lower-numbered CP is superseded, not context |
 | 3 highlight | `mission.highlight` | Quote as-is — the tip's own extract, not a seat summary |
 | 4 summary_row | `mission.summary_row` · `resume_envelope.summary_row_source` · `.summary_row_as_of_turn` | Settled · live · next. `as_of_turn < tip.turn_number ⇒ label stale`; tip wins |
@@ -28,5 +28,6 @@ sketchboard, card, or prior-tab prose. Paths are bundle keys.
 | 6 secondary stale | `read_set.citable` ids with turn < tip | Sketchboard · log rows · earlier CPs are secondary: cite by id as `(superseded by #<tip>)`, ¬ paraphrase into Been→Are→Going |
 | 7 handoff | `mission.handoff` · `mission.residue` · `mission.window_anchor` · `mission.bus_tail` · `mission.lifecycle.clone_mode` | `window_anchor` ⇒ Mode B + `scope=window` tape; fold `bus_tail`; `handoff` replaces external mission paste |
 
-Precedence in the fenced tab: this block ≻ `operator-posture` § Pickup step 1 ≻ `checkpoint-discipline` § Resume.
-Named failure: sketchboard `#521` rendered ahead of tip `#525` because `open_line` was null. Rows 1–6, then Been→Are→Going.
+Read order in the fenced tab: this block, top-down, before any sketchboard, card, or prior-tab prose. A lower row does not outrank the tip.
+Spoken reply: `operator-posture` Rule 3, which starts at the aim. This block does not open that reply. Fence id and head sha join the receipts line.
+Named failure: sketchboard `#521` rendered ahead of tip `#525` because `open_line` was null.

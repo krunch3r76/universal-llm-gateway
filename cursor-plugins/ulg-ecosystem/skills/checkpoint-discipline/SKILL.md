@@ -114,7 +114,7 @@ Happy path is § Pipeline CHECKPOINT. Myelinate, card / sketchboard / continuity
 | Review / audit of whole-history | Fetch role:root CHECKPOINT turns (server-rendered `## Windows` on read; schema §3.5) — not linear thread read |
 | Execute on child lane | Open **that** thread separately |
 
-**Operator-facing:** `orchestrator_continuity` resume opens with the picture in `operator-posture` Rule 3 (aim, Where we left off, already, object and move order, Are / Going, `In one line:`). Where we left off quotes the tape tail; an unsealed or overflowed pour says so instead of skipping. Been is not spoken. The next-pickup is the Going line. Tip turn, `seal_status`, and `summary_row_source` are a skippable receipts line after that picture. `tick_charter` → the aim sentence, then wave · in-flight · next pickup.
+**Operator-facing:** `orchestrator_continuity` resume opens with the picture in `operator-posture` Rule 3 (aim, Where we left off, already, object and move order, Are / Going, `In one line:`). Where we left off quotes the tape tail; an unsealed or overflowed pour says so instead of skipping. Been is not spoken. The next-pickup is the Going line. Tip turn, `seal_status`, `summary_row_source`, `fence_id`, and `head_sha` are a skippable receipts line after that picture. The fence id and the commit hash do not open the reply. `tick_charter` → the aim sentence, then wave · in-flight · next pickup.
 
 **IDE tab (attended Cursor only — `operator-posture`):** explicit IDE `resume <n>` ⇒ `{n} {slug}`; `checkpoint <n>` or CHECKPOINT post to thread `n` ⇒ `. {n} {slug}`. Headless / agent-only continuity ⇒ no-op.
 

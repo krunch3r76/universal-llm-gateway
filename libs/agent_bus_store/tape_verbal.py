@@ -19,6 +19,9 @@ TAPE_LEFT_OFF_GAP = (
     "the last few turns aren't sealed yet, so I'm going from the checkpoint"
 )
 _SENTENCE_END = re.compile(r"[.!?…](?:\s|$)")
+_USER_QUERY = re.compile(r"<user_query>\s*(.*?)\s*</user_query>", re.DOTALL)
+# The operator says this to make the seat save. It is not where the work stopped.
+_CHECKPOINT_UTTERANCE = re.compile(r"^/?checkpoint(?:\s+\S+)?\.?$", re.IGNORECASE)
 
 
 def project_role_content(message: Mapping[str, Any]) -> dict[str, str]:
@@ -57,16 +60,56 @@ def _trim_exchange(text: str, chars: int) -> str:
     return window.rstrip() + "…"
 
 
+def _operator_utterance(content: str) -> str:
+    """The person's words, without the timestamp wrapper around ``user_query``."""
+    match = _USER_QUERY.search(content)
+    text = match.group(1) if match else content
+    return " ".join(text.split())
+
+
+def _is_checkpoint_command(content: str) -> bool:
+    """True when the row is only the utterance that asks for a checkpoint."""
+    return _CHECKPOINT_UTTERANCE.match(_operator_utterance(content)) is not None
+
+
+def _drop_trailing_checkpoint(
+    kept: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Drop a trailing checkpoint command and the reply that only acknowledges it.
+
+    The command is how the save gets made. Quoting it restates the save.
+    """
+    checkpoint_at: int | None = None
+    for index in range(len(kept) - 1, -1, -1):
+        row = kept[index]
+        if row["role"] == "user":
+            if _is_checkpoint_command(row["content"]):
+                checkpoint_at = index
+            break
+        if row["role"] != "assistant":
+            break
+    if checkpoint_at is None:
+        return kept
+    if all(
+        kept[index]["role"] == "assistant"
+        for index in range(checkpoint_at + 1, len(kept))
+    ):
+        return kept[:checkpoint_at]
+    return kept
+
+
 def tape_tail(
     verbal: Sequence[Mapping[str, Any]],
     *,
     turns: int = 2,
     chars: int = 320,
 ) -> list[dict[str, str]]:
-    """Last speech rows of a pour, each trimmed to a sentence or two.
+    """Last substantive speech rows of a pour, each trimmed to a sentence or two.
 
     ``turns`` counts role/content rows from the end, skipping empty content.
-    The resume opening quotes this list as "Where we left off."
+    A trailing ``checkpoint`` command and the acknowledgement after it are
+    omitted: that pair is how the save was asked for. The resume opening
+    quotes this list as "Where we left off."
     """
     kept: list[dict[str, str]] = []
     for message in verbal:
@@ -79,9 +122,18 @@ def tape_tail(
                 "content": content,
             }
         )
+    kept = _drop_trailing_checkpoint(kept)
     tail = kept[-turns:] if turns > 0 else []
     return [
-        {"role": row["role"], "content": _trim_exchange(row["content"], chars)}
+        {
+            "role": row["role"],
+            "content": _trim_exchange(
+                _operator_utterance(row["content"])
+                if row["role"] == "user"
+                else row["content"],
+                chars,
+            ),
+        }
         for row in tail
     ]
 
