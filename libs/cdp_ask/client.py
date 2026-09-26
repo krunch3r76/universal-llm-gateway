@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
 from transport_utils import make_async_client, make_sync_client
@@ -93,14 +94,18 @@ class CdpAskClient:
         self,
         execution_id: str,
         *,
+        chat_url: str | None = None,
         client: httpx.Client | None = None,
     ) -> dict[str, Any]:
-        """GET ``/v1/project-ask/executions/{id}``."""
-        return self._request(
-            "GET",
-            f"/v1/project-ask/executions/{execution_id}",
-            client=client,
-        )
+        """GET ``/v1/project-ask/executions/{id}``.
+
+        ``chat_url`` is a store-miss recovery hint; the satellite ignores it
+        while the execution row is live.
+        """
+        path = f"/v1/project-ask/executions/{execution_id}"
+        if chat_url:
+            path = f"{path}?{urlencode({'chat_url': chat_url})}"
+        return self._request("GET", path, client=client)
 
     def abort(
         self,

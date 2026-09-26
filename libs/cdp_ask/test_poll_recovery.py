@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.poll_recovery import (
     correlation_tokens,
     recover_poll_snapshot,
     snapshot_from_archive_token,
     stargate_id_from_satellite,
 )
-from cdp_ask.execution_store import ExecutionStore
 
 pytestmark = pytest.mark.offline
 
@@ -108,6 +108,56 @@ async def test_recover_poll_snapshot_harvests_when_url_known(
     )
     snap = await recover_poll_snapshot("68a8129ca2264fe088ec267a20d88376", store)
     assert snap == harvested
+
+
+def _no_satellite_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "cdp_ask.poll_recovery.snapshot_from_archive_token",
+        lambda _token, archive_dir=None: None,
+    )
+    monkeypatch.setattr("cdp_ask.poll_recovery.chat_url_from_archives", lambda _t: None)
+    monkeypatch.setattr("cdp_ask.poll_recovery.chat_url_from_provenance", lambda _t: None)
+    monkeypatch.setattr(
+        "cdp_ask.poll_recovery.resolve_harvest_chat_url",
+        AsyncMock(return_value=None),
+    )
+
+
+@pytest.mark.asyncio
+async def test_recover_poll_snapshot_uses_caller_chat_url_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """a:36568 — registry/provenance lost the URL; the poller's hint recovers."""
+    _no_satellite_url(monkeypatch)
+    cse = "https://claude.ai/cowork/cse_01SM31isUQXVUvEN7S2i9uT4"
+    harvest = AsyncMock(return_value={"status": "completed", "url": cse})
+    monkeypatch.setattr("cdp_ask.poll_recovery._harvest_chat_to_snapshot", harvest)
+    exe = "30c0e62c78a24891ad54dcee2f6bc809"
+    assert await recover_poll_snapshot(exe, ExecutionStore()) is None
+    harvest.assert_not_awaited()
+    monkeypatch.setattr("cdp_ask.poll_recovery._recovery_last_attempt", {})
+    snap = await recover_poll_snapshot(exe, ExecutionStore(), chat_url_hint=cse)
+    assert snap == {"status": "completed", "url": cse}
+    assert harvest.await_args.kwargs["chat_url"] == cse
+
+
+@pytest.mark.asyncio
+async def test_recover_poll_snapshot_rejects_non_cse_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _no_satellite_url(monkeypatch)
+    harvest = AsyncMock(return_value={"status": "completed"})
+    monkeypatch.setattr("cdp_ask.poll_recovery._harvest_chat_to_snapshot", harvest)
+    for hint in ("https://claude.ai/chat/abc", "https://evil.test/cowork/cse_x"):
+        assert (
+            await recover_poll_snapshot(
+                "40c0e62c78a24891ad54dcee2f6bc809",
+                ExecutionStore(),
+                chat_url_hint=hint,
+            )
+            is None
+        )
+    harvest.assert_not_awaited()
 
 
 def test_stargate_id_from_satellite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

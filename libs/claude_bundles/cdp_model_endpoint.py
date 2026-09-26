@@ -739,6 +739,7 @@ def run_cdp_generate(
     trace = ProgressTrace()
     trace.record(last_fp, at_s=0.0)
     polls = 0
+    transport_missed = False
     proof_carry = _ProofCarry()
     proof_carry.absorb_status_snapshot(submitted)
     url_bound_emitted: set[tuple[str, str]] = set()
@@ -800,12 +801,18 @@ def run_cdp_generate(
             )
 
         sleep(poll_interval_s)
+        poll_kwargs: dict[str, Any] = {"client": client}
+        if transport_missed and proof_carry.url:
+            # A satellite store miss can also lose registry/provenance; this
+            # poller may be the only holder of the URL its recovery harvest needs.
+            poll_kwargs["chat_url"] = proof_carry.url
         try:
-            snapshot = relay.poll(sat_id, client=client)
+            snapshot = relay.poll(sat_id, **poll_kwargs)
         except CdpAskClientError as exc:
             snapshot = _client_error_dict(exc)
         polls += 1
-        if snapshot.get("error") and "status" not in snapshot:
+        transport_missed = bool(snapshot.get("error")) and "status" not in snapshot
+        if transport_missed:
             if clock() - last_progress_at > no_progress_s:
                 if mission_retain:
                     last_progress_at = clock()
