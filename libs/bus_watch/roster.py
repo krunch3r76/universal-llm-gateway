@@ -39,6 +39,7 @@ HIRE_HOLD = "hold"
 DECISION_PLAY = "play"
 DECISION_HOLD = "hold"
 DECISION_UNSURE = "unsure"
+_CLOSED_LANES_BEFORE_LATCH_CAP = 32
 
 
 def roster_path(root_id: str) -> Path:
@@ -85,6 +86,16 @@ def _parse_line(raw: str) -> dict[str, Any] | None:
         parsed["paths"] = paths
     if last_hire:
         parsed["last_hire_dispatch_id"] = last_hire
+    if "readmit_count" in row:
+        parsed["readmit_count"] = int(row.get("readmit_count") or 0)
+    if "readmit_from" in row:
+        raw_from = row.get("readmit_from")
+        parsed["readmit_from"] = str(raw_from) if raw_from else None
+    closed_raw = row.get("closed_lanes_before_latch")
+    if isinstance(closed_raw, list):
+        parsed["closed_lanes_before_latch"] = [
+            str(item) for item in closed_raw if str(item)
+        ]
     return parsed
 
 
@@ -347,14 +358,48 @@ def _path_overlap_blocker(
     return None
 
 
-def record_row_hire(root_id: str, row_id: str, dispatch_id: str) -> None:
-    """Append a journal line latching ``last_hire_dispatch_id`` for crash re-admit."""
+def record_row_hire(
+    root_id: str,
+    row_id: str,
+    dispatch_id: str,
+    *,
+    readmit_from: str | None = None,
+    closed_lane_ids: list[str] | None = None,
+) -> None:
+    """Append a journal line latching ``last_hire_dispatch_id`` for crash re-admit.
+
+    ``readmit_from`` set means this line is a closed-park re-admit. Closed lane
+    ids observed at latch time stay excluded from the next release. The list
+    keeps at most ``_CLOSED_LANES_BEFORE_LATCH_CAP`` ids, first-seen order,
+    tail only. An id that remains stays excluded when that lane id is reused.
+    """
     path = roster_path(root_id)
     journal = merge_by_row_id(read_journal(path))
     base = next((r for r in journal if r.get("row_id") == row_id), None)
     if not base:
         return
-    updated = {**base, "last_hire_dispatch_id": str(dispatch_id).strip()}
+    prior_count = int(base.get("readmit_count") or 0)
+    prior_from = base.get("readmit_from")
+    prior_closed = [
+        str(item) for item in (base.get("closed_lanes_before_latch") or []) if str(item)
+    ]
+    observed = [str(item) for item in (closed_lane_ids or []) if str(item)]
+    if readmit_from is None:
+        count = prior_count
+        from_id = prior_from if prior_from else None
+    else:
+        count = prior_count + 1
+        from_id = str(readmit_from)
+    closed = list(dict.fromkeys([*prior_closed, *observed]))[
+        -_CLOSED_LANES_BEFORE_LATCH_CAP:
+    ]
+    updated = {
+        **base,
+        "last_hire_dispatch_id": str(dispatch_id).strip(),
+        "readmit_count": count,
+        "readmit_from": from_id,
+        "closed_lanes_before_latch": closed,
+    }
     append_row(path, updated)
 
 
@@ -428,17 +473,36 @@ def classify_row(
         }
 
     latched = str(row.get("last_hire_dispatch_id") or "").strip()
+    release_reason: str | None = None
+    release_lane_id: str | None = None
     if latched and row.get("live") is not True and owner is None:
-        from bus_watch.spawn_wake.play_classify import hire_latch_released
-
-        if not holder_lost_finished_hire(digest, slug) and not hire_latch_released(
-            digest, latched
-        ):
+        max_readmits = int(policy.get("max_readmits") or 2)
+        if int(row.get("readmit_count") or 0) >= max_readmits:
             return {
                 "decision": DECISION_HOLD,
-                "reason": "hire_latched",
+                "reason": "readmit_cap",
                 "row_id": row.get("row_id"),
             }
+        if holder_lost_finished_hire(digest, slug):
+            release_reason = "holder_lost"
+        else:
+            from bus_watch.spawn_wake.play_classify import hire_latch_release
+
+            released, reason, lane_id = hire_latch_release(
+                digest,
+                latched,
+                todo_slug=slug,
+                readmit_from=row.get("readmit_from"),
+                closed_lanes_before_latch=row.get("closed_lanes_before_latch"),
+            )
+            if not released:
+                return {
+                    "decision": DECISION_HOLD,
+                    "reason": "hire_latched",
+                    "row_id": row.get("row_id"),
+                }
+            release_reason = reason
+            release_lane_id = lane_id
 
     overlap_id = _path_overlap_blocker(row, roster if roster else [row], scheduled)
     if overlap_id:
@@ -457,11 +521,15 @@ def classify_row(
             "row_id": row.get("row_id"),
         }
 
-    return {
+    played: dict[str, Any] = {
         "decision": DECISION_PLAY,
         "reason": "play_row",
         "row_id": row.get("row_id"),
     }
+    if release_reason:
+        played["release_reason"] = release_reason
+        played["release_lane_id"] = release_lane_id
+    return played
 
 
 def classify_roster_rows(digest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -513,6 +581,9 @@ def roster_classifications(digest: dict[str, Any]) -> list[dict[str, Any]]:
                 "hire": verdict.get("decision"),
                 "reason": verdict.get("reason"),
                 "decision": verdict.get("decision"),
+                "last_hire_dispatch_id": row.get("last_hire_dispatch_id"),
+                "readmit_count": int(row.get("readmit_count") or 0),
+                "readmit_from": row.get("readmit_from"),
             }
         )
     return out

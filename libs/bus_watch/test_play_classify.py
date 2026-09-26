@@ -70,7 +70,9 @@ def test_play_dispatch_body_uses_resume_root_not_tape() -> None:
         todo_slug="liaison-loop-tape-birth",
     )
     assert body["dispatch_thread_id"] == "12029"
-    assert "source_ref" not in body
+    assert body["source_ref"] == "todo:liaison-loop-tape-birth"
+    assert body["contract"] == "conductor"
+    assert "prompt" not in body
     assert body["work_key"] == "todo:liaison-loop-tape-birth"
     assert "model" not in body
 
@@ -83,27 +85,10 @@ def test_play_dispatch_body_uses_successor_model() -> None:
     )
     assert body["model"] == "cursor/grok-4.7"
     assert body["model_knobs"] == {"effort": "high", "fast": "false"}
-    assert body["contract"] == "none"
-    assert body["subject"] == "liaison-sdk-driver todo:cse-attachment-hop"
-    assert "liaison-sdk-driver-turn.md" in body["prompt"]
-
-
-def test_classify_holds_live_liaison() -> None:
-    """A live liaison subject is held so the ticker does not admit a second one."""
-    digest = _digest()
-    digest["policy"]["now_row"] = "todo:alpha"
-    digest["lanes"] = [
-        {
-            "id": "12660",
-            "status": "active",
-            "lifecycle": "admitted",
-            "contract": "none",
-            "last_subject": "liaison-sdk-driver todo:alpha",
-        }
-    ]
-    verdict = classify_leftover(digest, {})
-    assert verdict["leftover"] == LEFTOVER_HOLD
-    assert verdict["reason"] == "live_liaison"
+    assert body["contract"] == "conductor"
+    assert body["subject"] == "conductor todo:cse-attachment-hop"
+    assert "prompt" not in body
+    assert body["source_ref"] == "todo:cse-attachment-hop"
 
 
 def test_classify_hold_when_lanes_unobserved_and_todo_named() -> None:
@@ -287,9 +272,10 @@ def test_consult_reply_on_terminal_conductor_open_thread_admits(
     out = tick_spawn_on_wake(digest, {}, "12557", dry_run=True)
     assert out["action"] == "would_spawn"
     body = out["body"]
-    assert body["contract"] == "none"
-    assert "liaison-sdk-driver" in body["subject"]
-    assert "source_ref" not in body
+    assert body["contract"] == "conductor"
+    assert "prompt" not in body
+    assert body["subject"] == "conductor todo:cse-attachment-hop"
+    assert body["source_ref"] == "todo:cse-attachment-hop"
     assert body["work_key"] == "todo:cse-attachment-hop"
     assert body["model"] == "cursor/grok-4.7"
     assert body["model_knobs"] == {"effort": "high", "fast": "false"}
@@ -339,10 +325,10 @@ def test_dry_run_play_admits_liaison_once(
     out = tick_spawn_on_wake(digest, {}, "10479", dry_run=True)
     body = out["body"]
     assert body is not None
-    assert body["contract"] == "none"
-    assert body["subject"] == "liaison-sdk-driver todo:alpha"
-    assert "Admit one conductor" in body["prompt"]
-    assert "source_ref" not in body
+    assert body["contract"] == "conductor"
+    assert body["subject"] == "conductor todo:alpha"
+    assert "prompt" not in body
+    assert body["source_ref"] == "todo:alpha"
     assert body["work_key"] == "todo:alpha"
     assert body["lane"] == "B"
     assert body["dispatch_thread_id"] == "10479"

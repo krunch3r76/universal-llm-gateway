@@ -385,6 +385,9 @@ def main() -> int:
                         "row_id": row.get("row_id"),
                         "hire": row.get("hire"),
                         "reason": row.get("reason"),
+                        "last_hire_dispatch_id": row.get("last_hire_dispatch_id"),
+                        "readmit_count": row.get("readmit_count"),
+                        "readmit_from": row.get("readmit_from"),
                     },
                     sort_keys=True,
                 )
@@ -483,9 +486,7 @@ def _spawn_loop(args, root, state, state_path, register):  # noqa: ANN001, ANN20
                 )
                 time.sleep(poll_s)
                 continue
-            bind = maybe_bind_now_row(
-                digest, state, state_path, as_of=_utcnow()
-            )
+            bind = maybe_bind_now_row(digest, state, state_path, as_of=_utcnow())
             spawn_result = tick_spawn_on_wake(digest, state, root, dry_run=args.dry_run)
             prior_fp = state.get("fingerprint")
             publish_outcome = publish_if_enabled(

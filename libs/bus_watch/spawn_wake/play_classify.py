@@ -33,8 +33,6 @@ LEFTOVER_HOLD = "hold"
 LEFTOVER_PLAY = "play"
 LEFTOVER_SIT = "sit"
 PLAY_HOLD = "play_hold"
-LIAISON_DRIVER_MARK = "liaison-sdk-driver"
-LIAISON_TURN_SPEC = "cortex://notes/system/specs/liaison-sdk-driver-turn.md"
 MODE_AWARE = "aware"
 MODE_SIT = "sit"
 
@@ -203,20 +201,103 @@ def holder_lost_finished_hire(digest: dict[str, Any], todo_slug: str) -> bool:
     return False
 
 
-def hire_latch_released(digest: dict[str, Any], dispatch_id: str) -> bool:
-    """True when *dispatch_id* is a terminal conductor that still owes a continuation.
+def _lane_exposed_dispatch_id(lane: dict[str, Any]) -> str:
+    """Dispatch id when the digest lane carries one. Production lanes usually do not."""
+    return str(lane.get("dispatch_id") or lane.get("execution_id") or "").strip()
 
-    A consult reply on the open bus thread is that surface. A quiet-with-WIP
-    alarm on a lane that is still active is not: that lane still owns the row.
+
+def closed_unharvested_lane_ids(digest: dict[str, Any], todo_slug: str) -> list[str]:
+    """Closed ``closeout_unharvested`` lane ids whose todos include ``todo_slug``."""
+    slug = str(todo_slug or "").strip().lower()
+    lanes = digest.get("lanes")
+    if not slug or not isinstance(lanes, list):
+        return []
+    found: list[str] = []
+    for lane in lanes:
+        if not isinstance(lane, dict) or _lane_live(lane) is not False:
+            continue
+        if slug not in _lane_todos(lane):
+            continue
+        if str(lane.get("quiet_reason") or "") != "closeout_unharvested":
+            continue
+        lane_id = str(lane.get("id") or "")
+        if lane_id:
+            found.append(lane_id)
+    return found
+
+
+def _closed_park_release_lane(
+    digest: dict[str, Any],
+    dispatch_id: str,
+    *,
+    todo_slug: str | None,
+    readmit_from: str | None,
+    closed_lanes_before_latch: list[str] | None,
+) -> dict[str, Any] | None:
+    """Closed-park lane that may release ``dispatch_id``.
+
+    When a lane exposes that dispatch id, only that lane can release. Otherwise
+    a lane already closed before the first latch stays excluded. An id that
+    remains in ``closed_lanes_before_latch`` stays excluded if that lane id
+    is reused. The journal list is capped; this predicate does not trim it.
+    """
+    slug = str(todo_slug or "").strip().lower()
+    lanes = digest.get("lanes")
+    if not slug or not isinstance(lanes, list):
+        return None
+    target = str(dispatch_id or "").strip()
+    excluded = {str(item) for item in (closed_lanes_before_latch or []) if str(item)}
+    prior = str(readmit_from or "")
+    exposed: dict[str, Any] | None = None
+    if target:
+        for lane in lanes:
+            if isinstance(lane, dict) and _lane_exposed_dispatch_id(lane) == target:
+                exposed = lane
+                break
+
+    def _matches(lane: dict[str, Any]) -> bool:
+        if _lane_live(lane) is not False:
+            return False
+        if slug not in _lane_todos(lane):
+            return False
+        if str(lane.get("quiet_reason") or "") != "closeout_unharvested":
+            return False
+        lane_id = str(lane.get("id") or "")
+        if not lane_id or lane_id == prior or lane_id in excluded:
+            return False
+        shown = _lane_exposed_dispatch_id(lane)
+        if shown and shown != target:
+            return False
+        return True
+
+    if exposed is not None:
+        return exposed if _matches(exposed) else None
+    for lane in lanes:
+        if isinstance(lane, dict) and _matches(lane):
+            return lane
+    return None
+
+
+def hire_latch_release(
+    digest: dict[str, Any],
+    dispatch_id: str,
+    *,
+    todo_slug: str | None = None,
+    readmit_from: str | None = None,
+    closed_lanes_before_latch: list[str] | None = None,
+) -> tuple[bool, str | None, str | None]:
+    """Release tuple ``(released, reason, lane_id)`` for a latched hire.
+
+    Ledger paths stay first. The closed-park clause is digest-only.
     """
     target = str(dispatch_id or "").strip()
     if not target:
-        return False
+        return False, None, None
     from operator_hop_harvest.ledger import fetch_latest_terminal_conductor
 
     lanes = digest.get("lanes")
     if not isinstance(lanes, list):
-        return False
+        return False, None, None
     for lane in lanes:
         if not isinstance(lane, dict) or not _continuation_surface(lane):
             continue
@@ -235,11 +316,46 @@ def hire_latch_released(digest: dict[str, Any], dispatch_id: str) -> bool:
         if isinstance(record, dict) and record.get("hop_successor"):
             continue
         if str(row.get("dispatch_id") or "").strip() == target:
-            return True
-    return _parked_transport_owes_resume(lanes, target)
+            return True, "consult_continuation", thread_id
+    parked_id = _parked_transport_owes_resume(lanes, target)
+    if parked_id:
+        return True, "parked_transport", parked_id
+    park = _closed_park_release_lane(
+        digest,
+        target,
+        todo_slug=todo_slug,
+        readmit_from=readmit_from,
+        closed_lanes_before_latch=closed_lanes_before_latch,
+    )
+    if park is not None:
+        return True, "closed_park", str(park.get("id") or "")
+    return False, None, None
 
 
-def _parked_transport_owes_resume(lanes: list[Any], target: str) -> bool:
+def hire_latch_released(
+    digest: dict[str, Any],
+    dispatch_id: str,
+    *,
+    todo_slug: str | None = None,
+    readmit_from: str | None = None,
+    closed_lanes_before_latch: list[str] | None = None,
+) -> bool:
+    """True when *dispatch_id* may be admitted again.
+
+    A consult reply on the open bus thread is that surface. A quiet-with-WIP
+    alarm on a lane that is still active is not: that lane still owns the row.
+    """
+    released, _reason, _lane_id = hire_latch_release(
+        digest,
+        dispatch_id,
+        todo_slug=todo_slug,
+        readmit_from=readmit_from,
+        closed_lanes_before_latch=closed_lanes_before_latch,
+    )
+    return released
+
+
+def _parked_transport_owes_resume(lanes: list[Any], target: str) -> str | None:
     """A seat-written PARKED_TRANSPORT is not a finished hire.
 
     The latch dispatch and the parked closeout differ: hops stay on the
@@ -274,8 +390,8 @@ def _parked_transport_owes_resume(lanes: list[Any], target: str) -> bool:
             continue
         if "HOLD_MERGE" in body or "OPERATOR_GATE" in body:
             continue
-        return True
-    return False
+        return thread_id
+    return None
 
 
 def parked_resume(digest: dict[str, Any]) -> tuple[str, str] | None:
@@ -448,42 +564,42 @@ def classify_leftover(
     if mode == MODE_SIT:
         result["reason"] = "sit_forced"
         return result
-    if live_liaison_lane(digest) is not None:
-        result["leftover"] = LEFTOVER_HOLD
-        result["reason"] = "live_liaison"
+    roster = digest.get("roster")
+    if isinstance(roster, list) and roster:
+        from bus_watch.roster import (
+            DECISION_HOLD,
+            classify_roster_rows,
+            roster_play_rows,
+        )
+
+        play_rows = roster_play_rows(digest)
+        if play_rows:
+            first_row, _verdict = play_rows[0]
+            result["leftover"] = LEFTOVER_PLAY
+            result["reason"] = "play_roster_row"
+            result["todo"] = extract_todo_slug(first_row.get("work_key"))
+            result["roster_row_id"] = first_row.get("row_id")
+            return result
+        if any(
+            v.get("decision") == DECISION_HOLD for v in classify_roster_rows(digest)
+        ):
+            result["leftover"] = LEFTOVER_HOLD
+            result["reason"] = PLAY_HOLD
         return result
     if not todo:
-        roster = digest.get("roster") or []
-        if roster:
-            from bus_watch.roster import (
-                DECISION_HOLD,
-                classify_roster_rows,
-                roster_play_rows,
-            )
-
-            play_rows = roster_play_rows(digest)
-            if play_rows:
-                first_row, _verdict = play_rows[0]
-                result["leftover"] = LEFTOVER_PLAY
-                result["reason"] = "play_roster_row"
-                result["todo"] = extract_todo_slug(first_row.get("work_key"))
-                return result
-            if any(
-                v.get("decision") == DECISION_HOLD for v in classify_roster_rows(digest)
-            ):
-                result["leftover"] = LEFTOVER_HOLD
-                result["reason"] = PLAY_HOLD
-            return result
         return result
     owner = live_conductor_owner(digest, todo)
     result["owner"] = owner
     if owner is None:
         open_lanes = open_conductor_lanes(digest)
-        cap = conductor_cap(digest.get("policy") if isinstance(digest.get("policy"), dict) else {})
+        cap = conductor_cap(
+            digest.get("policy") if isinstance(digest.get("policy"), dict) else {}
+        )
         admitted = [
             lane
             for lane in open_lanes
             if str(lane.get("lifecycle") or "").lower() == "admitted"
+            and _conductor_signal(lane) is not True
         ]
         if admitted or len(open_lanes) >= cap:
             result["leftover"] = LEFTOVER_HOLD
@@ -497,26 +613,6 @@ def classify_leftover(
     result["reason"] = PLAY_HOLD
     result["unsure_live"] = bool(owner.get("unsure"))
     return result
-
-
-def live_liaison_lane(digest: dict[str, Any]) -> dict[str, Any] | None:
-    """Lane whose subject still names the liaison driver, when it is not finished.
-
-    The admit subject is the marker the next tick can see. A closeout replaces
-    that subject, so a finished liaison does not keep the seat.
-    """
-    lanes = digest.get("lanes")
-    if not isinstance(lanes, list):
-        return None
-    for lane in lanes:
-        if not isinstance(lane, dict):
-            continue
-        blob = f"{lane.get('last_subject') or ''} {lane.get('slug') or ''}"
-        if LIAISON_DRIVER_MARK not in blob:
-            continue
-        if _lane_live(lane) is not False:
-            return lane
-    return None
 
 
 def plant_play_state(
@@ -535,45 +631,6 @@ def plant_play_state(
     return planted
 
 
-def _play_prompt(todo_slug: str) -> str:
-    """Liaison admit text. Generate rejects ``source_ref`` combined with ``prompt``."""
-    if todo_slug == "liaison-multi-conductor-p3-multi-hire":
-        # The continuity card names the hire. This prompt does not.
-        # 12842 parked a re-attest with no Merits line and did not land.
-        # Replaying that attest is the finished move, so the liaison admits
-        # a conductor.
-        return (
-            "Read the latest closeout on this house and "
-            "cortex://notes/system/scoreboards/"
-            "liaison-multi-conductor-p3-multi-hire-scoreboard.md. "
-            "Admit one conductor. Do not stop after writing the reading. "
-            "Do not replay the 12809 match check. Do not replay the 12813 "
-            "review. Do not replay the 12828 fold. Do not replay the 12834 "
-            "reading. Do not replay the 12839 row hop. Do not replay the "
-            "12842 parked re-attest. Do not land. Do not mark G5 or G6 DONE."
-        )
-    if todo_slug == "liaison-ticker-steer-live-dispatch":
-        return (
-            "G7 is DONE. L1 2a005f508 is on master and the entry gate is "
-            "complete. Do not re-admit this row."
-        )
-    text = (
-        f"Execute the liaison turn at {LIAISON_TURN_SPEC}. "
-        "Do not implement the row. Admit one conductor. "
-        "If this dispatch is already live, stop. "
-        "A closeout_unharvested lane is not a live conductor. "
-        "If a cdp reply is already on this house, the conductor folds that "
-        "harvest and continues. Do not stop for a human unless the packet "
-        "names see-score or OPERATOR_GATE."
-    )
-    if todo_slug == "cdp-review-contract-shape":
-        text += (
-            " The conductor must rag(op=search) with scope research "
-            "before it binds the review contract."
-        )
-    return text
-
-
 def build_play_dispatch_body(
     root_id: str,
     policy: dict[str, Any],
@@ -584,19 +641,14 @@ def build_play_dispatch_body(
     hop_from: str | None = None,
     stop_id: str | None = None,
 ) -> dict[str, Any]:
-    """Admit the liaison once on an empty seat. The liaison admits the conductor.
-
-    ``contract`` stays ``none`` so this dispatch does not implement the row.
-    The subject carries ``liaison-sdk-driver`` because the digest lane keeps
-    ``last_subject``, and the next tick holds on that mark.
+    """Roster hire: ``contract=conductor`` with ``source_ref`` and no prompt.
 
     Coord parent is the resume root. ``loop_thread`` is occupancy (DIGEST),
     not conductor mailbox (a:36103 — 12029 play 422'd on tape 12030).
     """
     max_hop = int(policy.get("max_hop_minutes") or 60)
-    # 12842 parked the re-attest. A new key so that hire is not re-admitted.
     if todo_slug == "liaison-multi-conductor-p3-multi-hire":
-        work_key = f"todo:{todo_slug}:after-12842"
+        work_key = f"todo:{todo_slug}:after-12844"
     elif todo_slug == "liaison-ticker-steer-live-dispatch":
         work_key = f"todo:{todo_slug}:g7-land"
     else:
@@ -604,12 +656,12 @@ def build_play_dispatch_body(
     body: dict[str, Any] = {
         "op": "generate",
         "seat": "cursor-sdk",
-        "contract": "none",
+        "contract": "conductor",
         "lane": "B",
+        "source_ref": f"todo:{todo_slug}",
         "work_key": work_key,
         "dispatch_thread_id": str(root_id),
-        "subject": f"{LIAISON_DRIVER_MARK} todo:{todo_slug}",
-        "prompt": _play_prompt(todo_slug),
+        "subject": f"conductor todo:{todo_slug}",
         "timeout_seconds": max_hop * 60 + 1800,
         "caller_agent": "liaison-ticker",
         **successor_model_fields(policy),
@@ -635,11 +687,11 @@ __all__ = [
     "MODE_SIT",
     "PLAY_HOLD",
     "addressed_todo",
-    "LIAISON_DRIVER_MARK",
     "build_play_dispatch_body",
     "classify_leftover",
-    "live_liaison_lane",
+    "closed_unharvested_lane_ids",
     "consult_reply_seat_empty",
+    "hire_latch_release",
     "hire_latch_released",
     "mark_consult_reply_seats_empty",
     "extract_todo_slug",

@@ -61,6 +61,8 @@ POLICY_DEFAULTS: dict[str, Any] = {
     "ide_tokens_per_tool_call": 1500,
     # Cost knob: how many live conductors may run before extra roster rows hold.
     "max_conductors": 2,
+    # Closed-park re-admits per row. Gear presets do not override this.
+    "max_readmits": 2,
 }
 GEAR_PRESETS: dict[str, dict[str, Any]] = {
     "1-fable-mvp": {},

@@ -168,6 +168,19 @@ def compute_spawn_signal_sources(
     return sources
 
 
+_ROSTER_NIGHT_CAPS = (
+    "dispatches_under_cap",
+    "remint_cap_clear",
+    "policy_ready",
+    "successor_model_bound",
+)
+
+
+def roster_hire_night_caps(clauses: dict[str, Any]) -> bool:
+    """Roster posts gate on the night clauses only. The house path keeps the rest."""
+    return all(bool(clauses.get(name)) for name in _ROSTER_NIGHT_CAPS)
+
+
 def evaluate_spawn_predicate(
     digest: dict[str, Any],
     state: dict[str, Any],
