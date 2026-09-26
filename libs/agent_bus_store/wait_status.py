@@ -36,6 +36,7 @@ from chat_harvest.chrome import (
 )
 
 from .close_on_read import CLOSE_ON_READ_TAG
+from .cursor_sdk_dispatch_turn import is_cursor_sdk_advisory_subject
 from .disposition import first_line_is_disposition_type, resolve_bus_lifecycle
 from .producer_projection import classify_producer_link
 from .turns_models import ThreadStatus
@@ -190,8 +191,17 @@ def qualifying_reply(
     for t in sorted(turns, key=lambda r: r["turn_number"]):
         if t["turn_number"] <= after_turn:
             continue
-        if expected is None or normalize_bus_address(t["from_agent"]) == expected:
-            return t
+        author = normalize_bus_address(t["from_agent"])
+        if expected is not None and author != expected:
+            continue
+        # GIW park/resume posts are from cursor-sdk and have a real body, so
+        # first_reply_from and proof_reply_from both used to complete on them
+        # and the watcher exited while the execution was still in flight.
+        if author == "cursor-sdk" and is_cursor_sdk_advisory_subject(
+            str(t.get("subject") or "")
+        ):
+            continue
+        return t
     return None
 
 

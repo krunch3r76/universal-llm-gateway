@@ -13,6 +13,11 @@ _PARKED_OR_RESUMED = re.compile(r"\b(PARKED|RESUMED)\b", re.IGNORECASE)
 _CLOSEOUT_SUBJECT = re.compile(r"^cursor-sdk CLOSEOUT\b")
 
 
+def is_cursor_sdk_advisory_subject(subject: str) -> bool:
+    """Park and resume notices are not a finished dispatch reply."""
+    return bool(_PARKED_OR_RESUMED.search(subject or ""))
+
+
 def is_cursor_sdk_dispatch_subject(subject: str) -> bool:
     return bool(subject) and subject.startswith("cursor-sdk dispatch")
 

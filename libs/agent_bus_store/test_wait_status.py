@@ -462,6 +462,44 @@ def test_classify_producer_link_in_flight_from_gate0_payload() -> None:
     }
 
 
+def test_cursor_sdk_park_and_resume_do_not_complete_wait() -> None:
+    """Park and resume notices are not the dispatch reply the watcher waits for."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    turns = [
+        _turn(1, "dispatch"),
+        _turn(
+            2,
+            "cursor-sdk",
+            subject="cursor-sdk dispatch d1 PARKED (for GIW restart i)",
+            body='{"status": "parked"}',
+        ),
+        _turn(
+            3,
+            "cursor-sdk",
+            subject="cursor-sdk dispatch d1-r1 RESUMED (resume_of d1, restart i)",
+            body='{"status": "resumed"}',
+        ),
+    ]
+    for mode in ("first_reply_from", "proof_reply_from"):
+        comp = {"mode": mode, "from_agent": "cursor-sdk"}
+        assert not is_complete(thread, turns, after_turn=1, completion=comp)
+        assert derive_status(thread, turns, after_turn=1, completion=comp) == (
+            "predicate_unmet"
+        )
+    turns.append(
+        _turn(
+            4,
+            "cursor-sdk",
+            subject="closeout: agent-bus-write-ticket Part A",
+            body="Part A landed.\nstatus: complete\n",
+        )
+    )
+    comp = {"mode": "proof_reply_from", "from_agent": "cursor-sdk"}
+    assert is_complete(thread, turns, after_turn=1, completion=comp)
+    reply = qualifying_proof_reply(turns, after_turn=1, from_agent="cursor-sdk")
+    assert reply is not None and reply["turn_number"] == 4
+
+
 def test_classify_producer_link_terminal() -> None:
     assert classify_producer_link(
         execution_id="exec-done",
