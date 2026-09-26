@@ -858,6 +858,63 @@ def test_observe_keeps_assistant_and_thinking_readable_after_cursor(
     ]
 
 
+def test_conversation_tail_keeps_lines_after_unregister(
+    _capture_emitted: list[Any],
+) -> None:
+    from services.git_integration_worker.cursor_sdk_run_lines import conversation_tail
+    from services.git_integration_worker.cursor_sdk_supersede import (
+        register_live_run,
+        unregister_live_run,
+    )
+
+    @dataclass
+    class _Delta:
+        type: str
+        text: str
+
+    register_live_run(
+        dispatch_id="d-tail",
+        thread_id="t-tail",
+        source_repo=".",
+        run=object(),
+    )
+    try:
+        observe_run_stream(
+            _FakeRunWithEvents(
+                events_list=[
+                    _FakeStreamEvent(
+                        interaction_update=_Delta("text-delta", "kept")
+                    ),
+                    _FakeStreamEvent(
+                        interaction_update=_Delta("thinking-delta", "still")
+                    ),
+                ]
+            ),
+            dispatch_id="d-tail",
+            thread_id="t-tail",
+            resolved_model="composer-2.5",
+        )
+        live = conversation_tail("d-tail", 0)
+        assert live["eof"] is False
+        assert live["source"] == "sdk.run_lines"
+        assert [line["text"] for line in live["lines"]] == ["kept", "still"]
+        assert live["cursor"] == 2
+        after = conversation_tail("d-tail", 1)
+        assert [line["text"] for line in after["lines"]] == ["still"]
+    finally:
+        unregister_live_run(dispatch_id="d-tail")
+    parked = conversation_tail("d-tail", 1)
+    assert parked["eof"] is True
+    assert [line["text"] for line in parked["lines"]] == ["still"]
+    unknown = conversation_tail("d-tail-missing", 4)
+    assert unknown == {
+        "lines": [],
+        "cursor": 4,
+        "eof": True,
+        "source": "sdk.run_lines",
+    }
+
+
 def test_request_id_from_sdk_error() -> None:
     from services.git_integration_worker.cursor_sdk_stream_capture import (
         request_id_from_sdk_error,

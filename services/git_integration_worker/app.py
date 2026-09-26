@@ -78,6 +78,9 @@ from services.git_integration_worker.routes.cursor_sdk import (
 from services.git_integration_worker.routes.cursor_sdk import (
     router as cursor_sdk_router,
 )
+from services.git_integration_worker.routes.cursor_sdk_tail import (
+    router as cursor_sdk_tail_router,
+)
 from services.git_integration_worker.routes.health import router as health_router
 from services.git_integration_worker.routes.integrate import router as integrate_router
 from services.git_integration_worker.routes.triggers import router as triggers_router
@@ -271,6 +274,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(integrate_router)
     app.include_router(cursor_sdk_router)
+    app.include_router(cursor_sdk_tail_router)
     app.include_router(cursor_catalog_router)
     app.include_router(cursor_auto_router)
     app.include_router(admin_router)

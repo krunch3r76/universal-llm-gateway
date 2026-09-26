@@ -116,3 +116,11 @@ async def cursor_native_dispatch(request: Request) -> Response:
 async def cursor_native_catalog(request: Request) -> Response:
     """Native cursor catalog — proxies GIW ``GET /api/v1/cursor/catalog``."""
     return await _relay_to_giw(request, "/api/v1/cursor/catalog")
+
+
+@router.get("/dispatch/{dispatch_id}/conversation")
+async def cursor_native_conversation(dispatch_id: str, request: Request) -> Response:
+    """Proxy the GIW conversation tail for one dispatch."""
+    return await _relay_to_giw(
+        request, f"/api/v1/cursor/dispatch/{dispatch_id}/conversation"
+    )

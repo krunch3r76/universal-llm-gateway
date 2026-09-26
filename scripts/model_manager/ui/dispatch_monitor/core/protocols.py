@@ -88,6 +88,25 @@ class DetailPort(Protocol):
         ...
 
 
+class TailPort(Protocol):
+    """Click-time tail of one selected dispatch. Never a fold input.
+
+    The view polls ``tail`` and holds only the cursor. Nothing returned
+    enters the fold, and the call publishes no snapshot and no event.
+    """
+
+    def tail(self, kind: str, key: str, cursor: int) -> Mapping[str, Any]:
+        """Return ``lines``, ``cursor``, ``eof``, and ``source``. Never raises.
+
+        ``kind`` selects the substrate. ``key`` is that substrate's id.
+        ``cursor`` is the last line the caller has already shown; the
+        mapping's ``cursor`` is the new one. ``eof`` is true when no later
+        line will arrive. On an unsupported ``kind`` the mapping includes
+        ``error`` set to ``"unsupported_kind"``.
+        """
+        ...
+
+
 class ControllerPort(Protocol):
     """The lifecycle the G5 Controller is expected to implement.
 

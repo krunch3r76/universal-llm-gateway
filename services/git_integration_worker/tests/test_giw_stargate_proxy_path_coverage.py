@@ -42,6 +42,14 @@ def _stargate_covers_giw_path(giw_path: str, stargate_paths: set[str]) -> bool:
         return "/api/v1/providers/cursor/dispatch" in stargate_paths
     if giw_path == "/api/v1/cursor/catalog":
         return "/api/v1/providers/cursor/catalog" in stargate_paths
+    if (
+        giw_path.startswith("/api/v1/cursor/dispatch/")
+        and giw_path.endswith("/conversation")
+    ):
+        return (
+            "/api/v1/providers/cursor/dispatch/{dispatch_id}/conversation"
+            in stargate_paths
+        )
     return False
 
 

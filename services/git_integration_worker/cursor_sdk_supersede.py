@@ -84,9 +84,18 @@ def register_live_run(
 
 
 def unregister_live_run(*, dispatch_id: str) -> None:
-    """Drop the run registration once the worker thread has left the stream."""
+    """Drop the run registration once the worker thread has left the stream.
+
+    The prose log stays readable. TailPort still returns those lines with eof.
+    """
     with _lock:
-        _live.pop(dispatch_id, None)
+        record = _live.pop(dispatch_id, None)
+    if record is not None:
+        from services.git_integration_worker.cursor_sdk_run_lines import (
+            park_finished_lines,
+        )
+
+        park_finished_lines(dispatch_id, record.lines)
 
 
 def live_run_for_thread(thread_id: str) -> LiveRun | None:

@@ -39,7 +39,11 @@ class RunLineLog:
         """Lines with ``index`` greater than ``cursor``, and the new cursor."""
         with self._lock:
             lines = tuple(line for line in self._lines if line.index > cursor)
-            new_cursor = self._lines[-1].index if self._lines else 0
+            if not self._lines:
+                return lines, cursor
+            new_cursor = self._lines[-1].index
+            if new_cursor < cursor:
+                new_cursor = cursor
             return lines, new_cursor
 
     def snapshot(self) -> tuple[RunLine, ...]:
@@ -47,21 +51,71 @@ class RunLineLog:
             return tuple(self._lines)
 
 
+_finished_lock = threading.Lock()
+_finished: dict[str, RunLineLog] = {}
+
+
+def park_finished_lines(dispatch_id: str, log: RunLineLog) -> None:
+    """Keep the prose log after the live run unregisters so a tail can still read it."""
+    with _finished_lock:
+        _finished[dispatch_id] = log
+
+
+def _finished_log(dispatch_id: str) -> RunLineLog | None:
+    with _finished_lock:
+        return _finished.get(dispatch_id)
+
+
 def read_run_lines(
     dispatch_id: str, cursor: int = 0
 ) -> tuple[tuple[RunLine, ...], int]:
-    """Prose on the live run for ``dispatch_id`` after ``cursor``.
+    """Prose for ``dispatch_id`` after ``cursor``.
 
-    An unregistered dispatch returns no lines and leaves the cursor unchanged.
+    A live run wins. After unregister, the parked log is still readable.
+    An unknown dispatch returns no lines and leaves the cursor unchanged.
     """
     from services.git_integration_worker.cursor_sdk_supersede import (
         live_run_for_dispatch,
     )
 
     record = live_run_for_dispatch(dispatch_id)
-    if record is None:
+    if record is not None:
+        return record.lines.after(cursor)
+    finished = _finished_log(dispatch_id)
+    if finished is None:
         return (), cursor
-    return record.lines.after(cursor)
+    return finished.after(cursor)
+
+
+def conversation_tail(dispatch_id: str, after: int) -> dict[str, Any]:
+    """Tail payload for one cursor-sdk dispatch. ``eof`` is true once it is not live.
+
+    Source is ``sdk.run_lines``: the drain's retained assistant text and thinking,
+    not ``run.conversation()``, which drops thinking and may be empty until wait.
+    """
+    from services.git_integration_worker.cursor_sdk_supersede import (
+        live_run_for_dispatch,
+    )
+
+    record = live_run_for_dispatch(dispatch_id)
+    log = record.lines if record is not None else _finished_log(dispatch_id)
+    if log is None:
+        return {
+            "lines": [],
+            "cursor": after,
+            "eof": True,
+            "source": "sdk.run_lines",
+        }
+    lines, cursor = log.after(after)
+    return {
+        "lines": [
+            {"index": line.index, "kind": line.kind, "text": line.text}
+            for line in lines
+        ],
+        "cursor": cursor,
+        "eof": record is None,
+        "source": "sdk.run_lines",
+    }
 
 
 def retain_stream_prose(
