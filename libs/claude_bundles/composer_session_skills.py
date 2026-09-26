@@ -13,7 +13,7 @@ from typing import Any
 
 from playwright.async_api import Page
 
-from claude_bundles.composer_skill_match import label_matches_slug, strip_pua
+from claude_bundles.composer_skill_match import strip_pua
 from claude_bundles.cowork_skill_delivery import SkillDeliveryError
 
 logger = logging.getLogger(__name__)
@@ -463,19 +463,27 @@ async def _open_plus_skills_menu(page: Page) -> dict[str, Any]:
     )
 
 
+async def _click_matched_skill_label(page: Page, label: str, slug: str) -> None:
+    """Click a Skills-list row already matched to ``slug`` (a:30502 labels)."""
+    norm = _norm_menu_label(label)
+    needle = re.compile(rf"^{re.escape(norm[:60])}", re.I)
+    await _click_menu_text(page, needle, what=f"skill:{slug}")
+
+
 async def _click_skill_slug(page: Page, slug: str) -> None:
-    """Pick the Skills-list row whose collapsed label names ``slug`` (a:30502)."""
-    items = await _open_menu_items(page)
-    for row in items:
-        label = row.get("text") or row.get("aria") or ""
-        if not label_matches_slug(slug, label):
-            continue
-        norm = _norm_menu_label(label)
-        needle = re.compile(rf"^{re.escape(norm[:60])}", re.I)
-        await _click_menu_text(page, needle, what=f"skill:{slug}")
-        return
-    raise SkillDeliveryError(
-        f"skill {slug!r} not in Skills list — items={items[:30]!r}"
+    """Pick the Skills-list row for ``slug``, scrolling the flyout if needed.
+
+    First-viewport inventory alone is a false absence for mid-list Customize
+    slugs (a:36560 — ``hypothesize-simulate`` visible to the operator but not
+    mounted until the flyout scrolls).
+    """
+    from claude_bundles.composer_skills_flyout import click_skill_slug_scrolling
+
+    await click_skill_slug_scrolling(
+        page,
+        slug,
+        open_items=_open_menu_items,
+        click_label=_click_matched_skill_label,
     )
 
 
