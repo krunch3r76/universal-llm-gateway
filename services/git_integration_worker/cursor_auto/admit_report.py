@@ -59,6 +59,8 @@ def build_admit_report_body(
     effort_rule: str | None = None,
     pin_flags: tuple[str, ...] = (),
     field_parity_report: FieldParityReport | None = None,
+    execution_mode: str | None = None,
+    execution_mode_declined: str | None = None,
 ) -> str:
     """Compose the admit / admit-report body lines (no I/O, no gating)."""
     header = (
@@ -83,6 +85,10 @@ def build_admit_report_body(
         f"continuity_hop={str(bool(continuity_hop)).lower()} "
         f"matched_token={matched_token or 'none'}"
     )
+    if execution_mode is not None:
+        body += f"\nexecution_mode={execution_mode}"
+    if execution_mode_declined:
+        body += f"\nexecution_mode_declined={execution_mode_declined}"
     if override_rule:
         body += f"\n{override_rule}"
     if effort_rule:

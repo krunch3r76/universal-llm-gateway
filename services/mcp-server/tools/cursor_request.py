@@ -57,6 +57,7 @@ CALLER_FIELDS: frozenset[str] = frozenset(
         "request_id",
         "cse_registration_id",
         "cse_chat_url",
+        "work_key",
     }
 )
 
@@ -126,12 +127,15 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
         request_id: str | None = None,
         cse_registration_id: str | None = None,
         cse_chat_url: str | None = None,
+        work_key: str | None = None,
     ) -> Any:
         """Cursor-auto lane. `to=cursor` is fixed. XOR `new_slug`|`thread`. Returns `{thread, turn, auto_handler_status, job_admission, poll_hint}`. Poll `poll_hint`. Prefer `from_agent=`.
 
 **contract**∈{`answer`,`confer`,`ask`,`investigate`,`implement`,`verify`,`execute`,`propagate`,`seed`,`recon`}. Unknown → **422** before the turn write. `consult` aliases `confer`. Omit/`auto` `desired_effort`: answer/ask/confer/verify/execute/propagate `high`; investigate/seed `xhigh`; implement/recon `medium`.
 
 **lane:** in-repo implement passes `B`. Omit plus empty `files_expected` selects Lane A. Distinct from `lane_role`. `workspace` omit = hub. `parent_thread`+`lane_role` are both-or-neither.
+
+**work_key:** optional D4 identity (`todo:…`, `agent-bus:…`, `friction:…`). With `lane=B` and a lane-conductor contract (`investigate`, `recon`, `verify`) GIW selects concurrent Auto admission; omit ⇒ serial on that path.
 
 **Admit:** `implement`|`investigate` need body `vision:` else **`vision_field_missing`**. `require_attended` → **`status:needs-attended`**. Implement is `pure-mechanical` unless the body has a line-start `RULING` / `RULING AC`. Judgment marker (implement admit): `agent_skill:directive-authoring-standard`. Confer negotiation fields stay in the body: `negotiation_phase`∈{`proposal`,`counter`,`agree`,`ratify`}.
 
@@ -180,6 +184,8 @@ Depth: `agent_skill:cdp-operator-proxy` · `agent_skill:life-coding-playbook` ·
                 parsed["cse_registration_id"] = cse_registration_id
             if cse_chat_url is not None:
                 parsed["cse_chat_url"] = cse_chat_url
+            if work_key is not None:
+                parsed["work_key"] = work_key
             if new_slug is not None:
                 parsed["new_slug"] = new_slug
             if thread is not None:

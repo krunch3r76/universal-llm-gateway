@@ -130,6 +130,7 @@ def _request_impl(
     prompt_uri: str | None = None,
     advisor_brief: str | None = None,
     census_mismatch: bool = False,
+    work_key: str | None = None,
 ) -> dict[str, Any]:
     """Write turn via send path, then arm/enqueue Auto when live."""
     from pager_notify.so_what import resolve_so_what_summary
@@ -287,6 +288,7 @@ def _request_impl(
         workspace=workspace,
         prompt_uri=prompt_uri,
         advisor_brief=advisor_brief,
+        work_key=work_key,
     )
     if not enq.get("ok"):
         reason = enqueue_failure_reason(enq)
@@ -449,6 +451,7 @@ def _request_dispatch(
     lane_role: str | None = None,
     prompt_uri: str | None = None,
     advisor_brief: str | None = None,
+    work_key: str | None = None,
 ) -> dict[str, Any]:
     """Validate + dispatch ``agent_bus.request``.
 
@@ -481,6 +484,9 @@ def _request_dispatch(
     ``prompt_uri`` / ``advisor_brief``: sealed advisor brief for CDP escalation.
     GIW ``AutoJob`` already stores these; omitting them on this surface ships
     ``job.body`` instead (``prompt_source=job.body``).
+
+    ``work_key``: optional D4 identity. With ``lane=B`` and a lane-conductor
+    contract GIW selects concurrent Auto admission; omit ⇒ serial on that path.
     """
     if isinstance(thread, int):
         thread = str(thread)
@@ -538,6 +544,12 @@ def _request_dispatch(
     checkout_lane, lane_err = resolve_checkout_lane(lane, from_agent=from_agent)
     if lane_err is not None:
         return lane_err
+    if work_key is not None and str(work_key).strip():
+        from .._frontier_intake import validate_work_key
+
+        work_key_err = validate_work_key(str(work_key).strip())
+        if work_key_err is not None:
+            return work_key_err
     lane_bind_refusal = refuse_lane_bind_incomplete_pair(
         parent_thread=parent_thread,
         lane_role=lane_role,
@@ -578,6 +590,7 @@ def _request_dispatch(
         prompt_uri=prompt_uri,
         advisor_brief=advisor_brief,
         census_mismatch=bool(admission_audit.get("census_mismatch")),
+        work_key=work_key,
     )
     if (
         admission_audit.get("census_mismatch")
