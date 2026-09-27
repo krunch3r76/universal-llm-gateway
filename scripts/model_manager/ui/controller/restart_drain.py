@@ -127,6 +127,172 @@ def sole_busy_holder_matches(
     return True
 
 
+_IN_FLIGHT_REASON = "service has in-flight work; retry later or pass force=true"
+_CALLER_ID_KEYS = ("op_id", "job_id", "dispatch_id")
+
+
+def _identity_values(row: dict[str, Any]) -> set[str]:
+    found: set[str] = set()
+    for key in _CALLER_ID_KEYS:
+        val = row.get(key)
+        if isinstance(val, str) and val.strip():
+            found.add(val.strip())
+    return found
+
+
+def _holder_record(row: dict[str, Any], *, kind: str | None = None) -> dict[str, Any]:
+    ident = row.get("op_id") or row.get("dispatch_id") or row.get("job_id")
+    rec: dict[str, Any] = {"kind": kind or str(row.get("kind") or "op")}
+    if isinstance(ident, str) and ident.strip():
+        rec["op_id"] = ident.strip()
+    subject = row.get("subject_preview")
+    if isinstance(subject, str) and subject.strip():
+        rec["subject_preview"] = subject.strip()
+    return rec
+
+
+def _deferral_holder_label(detail: dict[str, Any]) -> str | None:
+    """Name the first census holder, when ``evaluate`` attached one."""
+    holders = detail.get("holders")
+    if not isinstance(holders, list) or not holders:
+        return None
+    first = holders[0]
+    if not isinstance(first, dict):
+        return None
+    ident = first.get("op_id") or first.get("dispatch_id")
+    if not isinstance(ident, str) or not ident.strip():
+        return None
+    label = f"{first.get('kind') or 'holder'}:{ident.strip()}"
+    subject = first.get("subject_preview")
+    if isinstance(subject, str) and subject.strip():
+        label += f" subject={subject.strip()}"
+    return label
+
+
+def in_flight_defer_reason(detail: dict[str, Any]) -> str:
+    """Busy-deferral reason. Names a holder only when the census attached one."""
+    named = _deferral_holder_label(detail)
+    if not named:
+        return _IN_FLIGHT_REASON
+    return f"{_IN_FLIGHT_REASON}; holder={named}"
+
+
+def exclude_caller_from_agent_bus_census(
+    detail: dict[str, Any],
+    *,
+    exclude_job_id: str,
+) -> ActiveWork:
+    """Drop the propagating cursor-auto job from an agent_bus busy snapshot.
+
+    GIW ``busy`` is ``active_count > 0``. ``active_ops`` unions claimed Auto
+    jobs, so the job executing ``contract:propagate`` is itself the occupant.
+    Counting it defers the restart until that job exits, and the job cannot
+    exit until manage returns. Foreign ops, a foreign write-lease holder, and
+    ``live_bridges`` rows stay. When the caller id is not in the snapshot and
+    the raw ``busy`` bit is set, the result stays busy (fail closed).
+
+    Does not change GIW's own busy flag — apply this only on the agent_bus path.
+    """
+    caller = exclude_job_id.strip()
+    raw_ops = detail.get("active_ops")
+    remaining: list[Any] = []
+    dropped = False
+    if isinstance(raw_ops, list):
+        for op in raw_ops:
+            if isinstance(op, dict) and caller in _identity_values(op):
+                dropped = True
+                continue
+            remaining.append(op)
+
+    holders: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for op in remaining:
+        if not isinstance(op, dict):
+            continue
+        rec = _holder_record(op)
+        ident = rec.get("op_id")
+        if isinstance(ident, str):
+            seen.add(ident)
+        holders.append(rec)
+
+    lease = detail.get("write_lease")
+    if isinstance(lease, dict):
+        hid = lease.get("holder_dispatch_id")
+        if isinstance(hid, str) and hid.strip() and hid.strip() != caller:
+            if hid.strip() not in seen:
+                holders.append(
+                    {
+                        "kind": "write_lease",
+                        "op_id": hid.strip(),
+                        "dispatch_id": hid.strip(),
+                    }
+                )
+                seen.add(hid.strip())
+
+    bridges = detail.get("live_bridges")
+    if isinstance(bridges, list):
+        for bridge in bridges:
+            if not isinstance(bridge, dict):
+                continue
+            if caller in _identity_values(bridge):
+                dropped = True
+                continue
+            rec = _holder_record(bridge, kind=str(bridge.get("kind") or "live_bridge"))
+            ident = rec.get("op_id")
+            if isinstance(ident, str) and ident in seen:
+                continue
+            if isinstance(ident, str):
+                seen.add(ident)
+            holders.append(rec)
+
+    if holders:
+        busy = True
+    elif dropped:
+        busy = False
+    else:
+        busy = bool(detail.get("busy", False))
+
+    filtered = dict(detail)
+    if isinstance(raw_ops, list):
+        filtered["active_ops"] = remaining
+        filtered["active_count"] = len(remaining)
+    filtered["busy"] = busy
+    filtered["excluded_job_id"] = caller
+    if holders:
+        filtered["holders"] = holders
+    return ActiveWork(busy=busy, detail=filtered)
+
+
+def agent_bus_restart_would_defer(
+    detail: dict[str, Any],
+    *,
+    exclude_job_id: str,
+    restart_in_progress: bool = False,
+) -> dict[str, Any]:
+    """agent_bus drain decision after dropping the propagating cursor-auto job.
+
+    ``restart_would_defer`` matches ``RestartDrainGate.busy_report``:
+    filtered busy, or a restart already in progress. ``deferral`` is the
+    manage payload when the filtered census is still busy, else None.
+    """
+    work = exclude_caller_from_agent_bus_census(detail, exclude_job_id=exclude_job_id)
+    would_defer = work.busy or restart_in_progress
+    deferral: dict[str, Any] | None = None
+    if work.busy:
+        deferral = DrainOutcome(
+            state="busy",
+            service="agent_bus",
+            reason=in_flight_defer_reason(work.detail),
+            active_work=work.detail,
+        ).to_result()
+    return {
+        "busy": work.busy,
+        "restart_would_defer": would_defer,
+        "active_work": work.detail,
+        "deferral": deferral,
+    }
+
+
 @dataclass(slots=True, kw_only=True)
 class ActiveWork:
     """Snapshot from a service's active-work probe."""
@@ -173,9 +339,11 @@ class BusyProbe(Protocol):
 class NullBusyProbe:
     """Probe for services with no long-running, cancel-on-restart work.
 
-    Used for sub-second request services (cortex_api, agent_bus, event_service).
-    MCP is **not** NullBusyProbe — see ``mcp_restart_probe.McpBusyProbe``; the
-    container's SIGTERM HTTP drain alone does not cover Cowork life sessions.
+    Used for sub-second request services (cortex_api, event_service).
+    ``agent_bus`` is **not** this probe — ``_default_probes`` points it at
+    GIW ``/api/v1/git/active-work``. MCP is **not** NullBusyProbe either —
+    see ``mcp_restart_probe.McpBusyProbe``; the container's SIGTERM HTTP
+    drain alone does not cover Cowork life sessions.
     """
 
     async def snapshot(self) -> ActiveWork:
@@ -212,6 +380,11 @@ def _default_probes() -> dict[str, BusyProbe]:
         "git_integration_worker": HttpActiveWorkProbe(
             GIT_INTEGRATION_WORKER_URL, "/api/v1/git/active-work"
         ),
+        # Same payload as GIW. ``busy`` is admission ``active_count``
+        # (tickets ∪ live dispatches ∪ claimed Auto jobs), not the
+        # running/queued/cursor_dispatches/write_lease fields. The propagate
+        # caller's own job is dropped in ``evaluate`` via ``exclude_job_id``;
+        # this probe does not change GIW's busy flag.
         "agent_bus": HttpActiveWorkProbe(
             GIT_INTEGRATION_WORKER_URL, "/api/v1/git/active-work"
         ),
@@ -248,7 +421,12 @@ class RestartDrainGate:
         return self._probes.get(service, NullBusyProbe())
 
     async def evaluate(
-        self, service: str, *, force: bool, supervised_drain: bool = False
+        self,
+        service: str,
+        *,
+        force: bool,
+        supervised_drain: bool = False,
+        exclude_job_id: str | None = None,
     ) -> DrainOutcome | None:
         """Decide whether a restart may proceed.
 
@@ -310,11 +488,20 @@ class RestartDrainGate:
                     reason=f"could not determine in-flight work: {detail}",
                 )
 
+            if (
+                service == "agent_bus"
+                and isinstance(exclude_job_id, str)
+                and exclude_job_id.strip()
+            ):
+                work = exclude_caller_from_agent_bus_census(
+                    work.detail, exclude_job_id=exclude_job_id
+                )
+
             if work.busy:
                 return DrainOutcome(
                     state="busy",
                     service=service,
-                    reason="service has in-flight work; retry later or pass force=true",
+                    reason=in_flight_defer_reason(work.detail),
                     active_work=work.detail,
                 )
 
@@ -390,6 +577,7 @@ async def run_gated(
     *,
     force: bool,
     lifecycle: Callable[[], Awaitable[str]],
+    exclude_job_id: str | None = None,
 ) -> dict[str, Any]:
     """Run one lifecycle action under the drain gate. Single shared entry point.
 
@@ -408,7 +596,7 @@ async def run_gated(
     """
     if action not in GATED_ACTIONS:
         return {"status": "ok", "message": await lifecycle()}
-    outcome = await gate.evaluate(service, force=force)
+    outcome = await gate.evaluate(service, force=force, exclude_job_id=exclude_job_id)
     if outcome is not None:
         return outcome.to_result()
     try:
@@ -760,8 +948,11 @@ __all__ = [
     "RETRY_AFTER_S",
     "RestartDrainGate",
     "STARGATE_PROBE_URL",
+    "agent_bus_restart_would_defer",
     "describe_probe_exc",
+    "exclude_caller_from_agent_bus_census",
     "holder_dispatch_id_from_active_work",
+    "in_flight_defer_reason",
     "resume_drain_supervision",
     "run_gated",
     "run_gated_deferred",

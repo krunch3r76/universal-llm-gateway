@@ -7,6 +7,9 @@ Store-HTTP shared helper for POST /turns, /threads/with-turn, and
 
 from __future__ import annotations
 
+import os
+import sqlite3
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -38,6 +41,43 @@ if TYPE_CHECKING:
     from .turns_models import TurnCreated
 
 AUTO_OVERFLOW_SLUG = "auto-overflow"
+
+
+def auto_overflow_slug(*, turn_number: int | None) -> str:
+    """Per-turn sidecar slug. A missing turn number gets a unique token.
+
+    The fixed ``auto-overflow`` slug wrote one file per thread, so a later
+    spill replaced the earlier closeout.
+    """
+    if turn_number is None:
+        return f"{AUTO_OVERFLOW_SLUG}-{uuid.uuid4().hex[:12]}"
+    return f"{AUTO_OVERFLOW_SLUG}-{turn_number}"
+
+
+def _prospective_spill_turn_number(thread: str) -> int | None:
+    """Next turn number for ``thread``, or None when no bus DB is configured.
+
+    Spill runs before insert, so the number is ``MAX(turn_number)+1``. Callers
+    that have not set ``AGENT_BUS_DB_PATH`` (unit tests that mock the writer)
+    get a unique slug instead of opening the default ``/data/messages.db``.
+    """
+    path = os.environ.get("AGENT_BUS_DB_PATH", "").strip()
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        from .db.connection import connect
+
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT COALESCE(MAX(turn_number), 0) + 1 AS n "
+                "FROM turns WHERE thread = ?",
+                (thread,),
+            ).fetchone()
+    except (sqlite3.Error, OSError):
+        return None
+    if row is None:
+        return None
+    return int(row["n"])
 
 
 def _turn_body(thread: str, turn_number: int) -> str | None:
@@ -152,7 +192,9 @@ def prepare_body_for_insert(
         subject=subject,
         content=body,
         from_agent=from_agent,
-        sidecar_slug=AUTO_OVERFLOW_SLUG,
+        sidecar_slug=auto_overflow_slug(
+            turn_number=_prospective_spill_turn_number(thread)
+        ),
         oversized=True,
     )
     briefing = AUTO_OVERFLOW_BRIEFING.format(body_chars=len(body))
@@ -267,6 +309,7 @@ def build_turn_created(
 __all__ = [
     "AUTO_OVERFLOW_BRIEFING",
     "AUTO_OVERFLOW_SLUG",
+    "auto_overflow_slug",
     "BriefingAdvisory",
     "BodyTooLargeError",
     "PreparedBody",

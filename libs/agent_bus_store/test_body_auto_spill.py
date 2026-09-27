@@ -69,13 +69,11 @@ def test_post_turns_soft_spill_201(tmp_path, monkeypatch) -> None:
         assert resp.status_code == 201, resp.text
         data = resp.json()
         assert data["sidecar_uri"] == (
-            f"cortex://notes/system/threads/{thread_id}-{AUTO_OVERFLOW_SLUG}.md"
+            f"cortex://notes/system/threads/{thread_id}-{AUTO_OVERFLOW_SLUG}-2.md"
         )
         assert data["sidecar_sha256"] == hashlib.sha256(body.encode()).hexdigest()
 
-        turn = client.get(
-            f"/turns/by-number?thread={thread_id}&turn_number=2"
-        ).json()
+        turn = client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").json()
         assert "Sidecar:" in turn["body"]
         assert data["sidecar_uri"] in turn["body"]
         assert body not in turn["body"]
@@ -109,9 +107,7 @@ def test_post_turns_allow_long_inline(tmp_path, monkeypatch) -> None:
         assert resp.status_code == 201, resp.text
         data = resp.json()
         assert data.get("sidecar_uri") is None
-        turn = client.get(
-            f"/turns/by-number?thread={thread_id}&turn_number=2"
-        ).json()
+        turn = client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").json()
         assert turn["body"] == body
 
 
@@ -261,3 +257,63 @@ def test_send_continue_soft_spill(tmp_path, monkeypatch) -> None:
         assert data["sidecar_sha256"] == hashlib.sha256(body.encode()).hexdigest()
         rel = data["sidecar_uri"].removeprefix("cortex://")
         assert (cortex_root / rel).is_file()
+
+
+def test_two_spills_one_thread_distinct_files(tmp_path, monkeypatch) -> None:
+    """Two oversized turns must not share or overwrite one auto-overflow file."""
+    app, cortex_root = _app(tmp_path, monkeypatch)
+    body_a = "a" * (MAX_TURN_BODY_CHARS + 500)
+    body_b = "b" * (MAX_TURN_BODY_CHARS + 700)
+    with TestClient(app) as client:
+        thread_id = _seed_thread(client, slug="two-spills")
+        first = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "Spill A",
+                "body": body_a,
+                "after_turn": 1,
+            },
+        )
+        assert first.status_code == 201, first.text
+        first_uri = first.json()["sidecar_uri"]
+        second = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "Spill B",
+                "body": body_b,
+                "after_turn": first.json()["turn_number"],
+            },
+        )
+        assert second.status_code == 201, second.text
+        second_uri = second.json()["sidecar_uri"]
+
+        assert first_uri != second_uri
+        assert first_uri.endswith(f"-{AUTO_OVERFLOW_SLUG}-2.md")
+        assert second_uri.endswith(f"-{AUTO_OVERFLOW_SLUG}-3.md")
+
+        turn_a = client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").json()
+        turn_b = client.get(f"/turns/by-number?thread={thread_id}&turn_number=3").json()
+        assert f"Sidecar: {first_uri}" in turn_a["body"]
+        assert f"Sidecar: {second_uri}" in turn_b["body"]
+        assert first_uri not in turn_b["body"]
+
+        path_a = cortex_root / first_uri.removeprefix("cortex://")
+        path_b = cortex_root / second_uri.removeprefix("cortex://")
+        assert path_a.is_file() and path_b.is_file()
+        text_a = path_a.read_text(encoding="utf-8")
+        text_b = path_b.read_text(encoding="utf-8")
+        assert body_a in text_a
+        assert body_b in text_b
+        assert body_b not in text_a
+        spilled = list(
+            (cortex_root / "notes" / "system" / "threads").glob(
+                f"{thread_id}-{AUTO_OVERFLOW_SLUG}*.md"
+            )
+        )
+        assert len(spilled) == 2
