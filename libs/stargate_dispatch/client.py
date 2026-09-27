@@ -45,6 +45,7 @@ _ALLOWED_FIELDS = frozenset(
         "hop_from",
         "hop_seq",
         "hop_reason",
+        "generation_options",
     }
 )
 

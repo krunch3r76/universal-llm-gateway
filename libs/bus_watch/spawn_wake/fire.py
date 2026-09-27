@@ -658,6 +658,11 @@ def _post_roster_hires(
                     )
                     dropped.append("stop_not_claimed")
                     continue
+        from bus_watch.spawn_wake.park_release import arm_hop_park_release
+
+        # The hop reactor's mission-cap park is not the liaison's hire. A
+        # roster play releases it; the body still names no next step.
+        arm_hop_park_release(body, work_key)
         payload, status = poster(_wire_submit_body(body))
         err = payload.get("error") or {}
         code = err.get("code") if isinstance(err, dict) else None
