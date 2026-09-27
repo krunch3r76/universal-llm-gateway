@@ -48,7 +48,7 @@ def fetch_active_work(base_url: str) -> dict[str, Any]:
 def fetch_registry_via_ssh(ssh_target: str) -> dict[str, dict[str, Any]]:
     """Read Jupiter ``active.json`` over SSH so hub seats can join registrations."""
     remote = (
-        "python3 -c \"import json,pathlib;"
+        'python3 -c "import json,pathlib;'
         "p=pathlib.Path.home()/'.gateway/cdp-registry/active.json';"
         "print(p.read_text() if p.exists() else '{}')\""
     )
@@ -134,9 +134,11 @@ def build_from_env(
     base = (project_ask_url or os.environ.get("PROJECT_ASK_URL") or "").strip()
     if not base:
         raise SystemExit("PROJECT_ASK_URL unset — cannot fetch active-work")
+    from claude_bundles.cdp_registry_store import REGISTRATION_REGISTRY_SSH_ENV
+
     ssh = (
         ssh_target
-        or os.environ.get("WHAT_IS_RUNNING_REGISTRY_SSH")
+        or os.environ.get(REGISTRATION_REGISTRY_SSH_ENV)
         or "krunch3r@jupiter"
     ).strip()
     sources = {"project_ask_url": base, "registry": "skipped"}

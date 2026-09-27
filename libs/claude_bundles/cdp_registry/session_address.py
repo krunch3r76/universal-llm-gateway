@@ -1,4 +1,9 @@
-"""Bind and read CSE chat URLs while maintaining listable registry and orphan projections for durable reattachment."""
+"""Bind and read CSE chat URLs while maintaining listable registry and orphan projections for durable reattachment.
+
+Rows come from ``cdp_registry_store.ACTIVE_JSON`` on this host. That file is
+not the Jupiter registry; the pin is ``REGISTRATION_REGISTRY_SSH_ENV``
+(agent-bus:13001).
+"""
 
 from __future__ import annotations
 

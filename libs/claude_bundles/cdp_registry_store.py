@@ -43,6 +43,12 @@ def _resolve_registry_dir() -> Path:
 REGISTRY_DIR = _resolve_registry_dir()
 REGISTRY_LOG = REGISTRY_DIR / "registry.jsonl"
 ACTIVE_JSON = REGISTRY_DIR / "active.json"
+# agent-bus:13001 read this local file as `{}` and reported registration
+# 517cdefb not found. agent-bus:12995 found that row on Jupiter. Registration
+# rows are ssh target ``WHAT_IS_RUNNING_REGISTRY_SSH`` (default
+# ``krunch3r@jupiter``) path ``~/.gateway/cdp-registry/active.json``. On the
+# hub, ``ACTIVE_JSON`` is ``/home/io/.gateway/cdp-registry/active.json``.
+REGISTRATION_REGISTRY_SSH_ENV = "WHAT_IS_RUNNING_REGISTRY_SSH"
 SESSIONS_JSON = REGISTRY_DIR / "sessions.json"
 SESSION_TRANSITIONS_JSONL = REGISTRY_DIR / "session_transitions.jsonl"
 PORTS_LOCK = REGISTRY_DIR / "ports.lock"
@@ -94,9 +100,7 @@ class RegistryRead:
     present: bool
 
     def miss_label(self) -> str:
-        return (
-            f"observed_home_kind={self.observed_home_kind} path={self.source_path}"
-        )
+        return f"observed_home_kind={self.observed_home_kind} path={self.source_path}"
 
 
 def classify_observed_home_kind(home: Path | str) -> str:
@@ -113,7 +117,9 @@ def _registry_home() -> Path:
     return REGISTRY_DIR.parent.parent
 
 
-def _load_json_object(path: Path, *, label: str) -> tuple[dict[str, dict[str, Any]], bool]:
+def _load_json_object(
+    path: Path, *, label: str
+) -> tuple[dict[str, dict[str, Any]], bool]:
     if not path.exists():
         return {}, False
     try:
@@ -183,7 +189,9 @@ def write_active(active: dict[str, dict[str, Any]]) -> None:
         if rid not in merged and isinstance(row, dict) and seat_open(row):
             merged[rid] = row
     tmp = ACTIVE_JSON.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.write_text(
+        json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     os.replace(tmp, ACTIVE_JSON)
 
 
@@ -232,7 +240,9 @@ def append_seat_transition_journal(
     )
 
 
-def _apply_seat_lane_bound(active: dict[str, dict[str, Any]], record: dict[str, Any]) -> None:
+def _apply_seat_lane_bound(
+    active: dict[str, dict[str, Any]], record: dict[str, Any]
+) -> None:
     """Apply one ``seat_lane_bound`` journal line to *active* (in-memory replay)."""
     reg_id = str(record.get("registration_id") or "").strip()
     lane = str(record.get("seat_lane") or "").strip()
@@ -257,7 +267,9 @@ def _apply_seat_lane_bound(active: dict[str, dict[str, Any]], record: dict[str, 
     active[reg_id] = row
 
 
-def fold_seat_journal(active: dict[str, dict[str, Any]] | None = None) -> dict[str, dict[str, Any]]:
+def fold_seat_journal(
+    active: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, dict[str, Any]]:
     """Replay seat_lane_bound lines from registry.jsonl into *active* or a fresh map."""
     state = dict(active) if active is not None else {}
     for record in read_registry_log():
@@ -564,7 +576,9 @@ def write_sessions(sessions: dict[str, dict[str, Any]]) -> None:
     """Atomic replace for obligation projection."""
     ensure_dirs()
     tmp = SESSIONS_JSON.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(sessions, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    tmp.write_text(
+        json.dumps(sessions, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     os.replace(tmp, SESSIONS_JSON)
 
 
