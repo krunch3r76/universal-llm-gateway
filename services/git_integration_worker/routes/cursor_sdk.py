@@ -639,14 +639,49 @@ def _reject_pre_admission(
     )
 
 
+_PACKET_SCHEME_PREFIXES = (
+    "workspaces://",
+    "workspaces:",
+    "ws://",
+    "ws:",
+)
+
+
+def _normalize_packet_rel(rel: str, source_repo: Path) -> str:
+    """Strip a share scheme and a doubled ``basename(source_repo)/`` prefix.
+
+    Materializers emit ``{basename(GIT_INTEGRATION_SOURCE_REPO)}/{rel}``
+    (sometimes as ``workspaces://``). ``source_repo`` is already that root,
+    so joining both misses the file and intake 422s
+    ``CURSOR_PACKET_INVALID`` (friction a:36662).
+    """
+    text = rel.strip()
+    lower = text.lower()
+    if lower.startswith("packet:"):
+        text = text[len("packet:") :].lstrip("/")
+        lower = text.lower()
+    for prefix in _PACKET_SCHEME_PREFIXES:
+        if lower.startswith(prefix):
+            text = text[len(prefix) :].lstrip("/")
+            break
+    repo_name = source_repo.name
+    doubled = f"{repo_name}/"
+    if repo_name and text.startswith(doubled):
+        text = text[len(doubled) :]
+    return text
+
+
 def _read_packet_text(req: CursorDispatchRequest, source_repo: Path) -> str:
     if req.message:
         return req.message
     if req.packet_path is None:
         raise ValueError("dispatch requires either message or packet_path")
-    rel = req.packet_path.strip()
-    if rel.startswith("/") or ".." in Path(rel).parts:
-        raise ValueError(f"packet_path must be workspaces-relative: {rel!r}")
+    raw = req.packet_path.strip()
+    if raw.startswith("/") or ".." in Path(raw).parts:
+        raise ValueError(f"packet_path must be workspaces-relative: {raw!r}")
+    rel = _normalize_packet_rel(raw, source_repo)
+    if not rel or rel.startswith("/") or ".." in Path(rel).parts:
+        raise ValueError(f"packet_path must be workspaces-relative: {raw!r}")
     packet = (source_repo / rel).resolve()
     if not packet.is_relative_to(source_repo.resolve()):
         raise ValueError(f"packet_path escapes source_repo: {rel!r}")
