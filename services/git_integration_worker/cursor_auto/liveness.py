@@ -186,10 +186,21 @@ def queue_admission_health() -> dict[str, Any]:
     from services.git_integration_worker.cursor_auto.gate_serialize import (
         ledger_aligned_operator_occupancy,
     )
-    from services.git_integration_worker.cursor_sdk_gate import sdk_dispatch_gate_stats
+    from services.git_integration_worker.cursor_sdk_gate import (
+        OPERATOR_DISPATCH_CONCURRENCY_DEFAULT,
+        OPERATOR_DISPATCH_CONCURRENCY_ENV,
+        operator_dispatch_limit,
+        sdk_dispatch_gate_holder_detail,
+    )
 
-    operator_limit = int(sdk_dispatch_gate_stats(lane="operator")["limit"])
+    operator_limit = operator_dispatch_limit()
     occupancy = ledger_aligned_operator_occupancy()
+    operator_slots = [
+        {"slot": index, "holder_dispatch_id": holder_id}
+        for index, holder_id in enumerate(
+            sdk_dispatch_gate_holder_detail().get("operator") or []
+        )
+    ]
     headroom_full = occupancy >= operator_limit
     concurrent_pending_headroom_held = sum(
         1
@@ -210,6 +221,10 @@ def queue_admission_health() -> dict[str, Any]:
         "red_reason": red_reason,
         "red_threshold_s": _OCCUPANT_IDLE_RED_THRESHOLD_S,
         "concurrent_occupants": concurrent_occupants,
+        "operator_slots": operator_slots,
+        "operator_slot_limit": operator_limit,
+        "operator_slot_limit_env": OPERATOR_DISPATCH_CONCURRENCY_ENV,
+        "operator_slot_limit_default": OPERATOR_DISPATCH_CONCURRENCY_DEFAULT,
         "concurrent_pending_headroom_held": concurrent_pending_headroom_held,
         "projection_only": True,
         **waiter,

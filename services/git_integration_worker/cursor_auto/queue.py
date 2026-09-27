@@ -423,6 +423,9 @@ class AutoJobQueue:
                 "state": "running",
                 "thread_id": job.thread_id,
                 "contract": job.contract,
+                "work_key": job.work_key,
+                "execution_mode": job.execution_mode,
+                "lane": job.lane,
             }
             if ledger is not None:
                 age = ledger.heartbeat_age_s(job.job_id)
@@ -502,9 +505,21 @@ class AutoJobQueue:
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
+            claimed_jobs = [j for j in self._jobs.values() if j.status == "claimed"]
             snap = {
                 "pending": sum(1 for j in self._jobs.values() if j.status == "queued"),
-                "claimed": sum(1 for j in self._jobs.values() if j.status == "claimed"),
+                "claimed": len(claimed_jobs),
+                "claimed_slots": [
+                    {
+                        "job_id": j.job_id,
+                        "thread_id": j.thread_id,
+                        "contract": j.contract,
+                        "work_key": j.work_key,
+                        "execution_mode": j.execution_mode,
+                        "lane": j.lane,
+                    }
+                    for j in claimed_jobs
+                ],
                 "done": sum(1 for j in self._jobs.values() if j.status == "done"),
                 "failed": sum(1 for j in self._jobs.values() if j.status == "failed"),
                 "report_undelivered": sum(

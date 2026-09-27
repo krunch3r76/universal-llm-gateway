@@ -110,8 +110,11 @@ def write_lease_slots(
     if gate_limit is not None:
         return max(1, gate_limit)
     std = max(1, int(os.environ.get("CURSOR_SDK_DISPATCH_CONCURRENCY", "1")))
-    op = max(1, int(os.environ.get("CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY", "3")))
-    return std + op
+    from services.git_integration_worker.cursor_sdk_gate import (
+        operator_dispatch_limit,
+    )
+
+    return std + operator_dispatch_limit()
 
 
 def resolve_promoted_workspace(

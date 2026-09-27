@@ -7,6 +7,7 @@ import json
 from services.git_integration_worker.cursor_auto.job_record import (
     job_from_row,
     job_record,
+    observer_admission_fields,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
 
@@ -86,3 +87,59 @@ def test_job_record_round_trip_restores_advisor_brief() -> None:
     restored = job_from_row(row)  # type: ignore[arg-type]
     assert restored.prompt_uri == uri
     assert restored.advisor_brief == "TYPE: CONSULT\nsealed\n"
+
+
+def test_observer_admission_fields_round_trip_for_concurrent_claim() -> None:
+    job = _job(
+        contract="implement",
+        lane="B",
+        work_key="todo:probe-a",
+        execution_mode="isolated_lane_conductor",
+    )
+    record = job_record(job)
+    fields = observer_admission_fields(record)
+    assert fields == {
+        "work_key": "todo:probe-a",
+        "execution_mode": "isolated_lane_conductor",
+        "lane": "B",
+    }
+    row = {
+        "job_id": job.job_id,
+        "thread_id": job.thread_id,
+        "turn_number": job.turn_number,
+        "request_id": None,
+        "status": "claimed",
+        "record_json": json.dumps(record),
+    }
+    restored = job_from_row(row)  # type: ignore[arg-type]
+    assert restored.work_key == "todo:probe-a"
+    assert restored.execution_mode == "isolated_lane_conductor"
+    assert restored.lane == "B"
+
+    from services.git_integration_worker.cursor_auto.job_lifecycle import (
+        observer_view_from_row,
+    )
+
+    view = observer_view_from_row(
+        {
+            "status": "claimed",
+            "claimed_at": "2026-09-27T16:54:25.011Z",
+            "admitted_at": None,
+            "bound_at": None,
+            "dispatch_id": None,
+            "lifecycle_phase": None,
+            "relay_phase": None,
+            "job_id": job.job_id,
+            "thread_id": job.thread_id,
+            "request_id": None,
+            "enqueued_at": None,
+            "ended_at": None,
+            "terminal_reason": None,
+            "turn_number": 1,
+            "record_json": json.dumps(record),
+        }
+    )
+    assert view["status"] == "claimed"
+    assert view["work_key"] == "todo:probe-a"
+    assert view["execution_mode"] == "isolated_lane_conductor"
+    assert view["lane"] == "B"

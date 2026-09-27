@@ -525,5 +525,6 @@ def resolve_handoff_contract(
         "verify": "none",
         "execute": "none",
         "propagate": "none",
+        "conductor": "conductor",
     }
     return _direct.get(raw, "none")

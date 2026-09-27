@@ -38,7 +38,9 @@ from services.git_integration_worker.admission import (
 from services.git_integration_worker.config import WorkerConfig, load_config
 from services.git_integration_worker.cursor_sdk_land_lease import (
     DirtyMasterRefused,
+    LandLeaseAcquireTimeout,
     dirty_master_envelope,
+    land_lease_timeout_envelope,
     master_land_guard,
 )
 from services.git_integration_worker.models.api import (
@@ -183,6 +185,9 @@ async def _admit_and_land_slot(
     except Draining503:
         raise
     except DirtyMasterRefused:
+        terminal = "rejected"
+        raise
+    except LandLeaseAcquireTimeout:
         terminal = "rejected"
         raise
     except Exception:
@@ -374,6 +379,8 @@ async def integrate(req: IntegrateRequest, request: Request) -> IntegrateRespons
         return _draining_response(exc)
     except DirtyMasterRefused as exc:
         return IntegrateResponse(**dirty_master_envelope(exc=exc))
+    except LandLeaseAcquireTimeout as exc:
+        return IntegrateResponse(**land_lease_timeout_envelope(exc=exc))
     return IntegrateResponse(**result)
 
 
@@ -415,6 +422,8 @@ async def land(req: LandRequest, request: Request) -> IntegrateResponse:
         return _draining_response(exc)
     except DirtyMasterRefused as exc:
         return IntegrateResponse(**dirty_master_envelope(exc=exc))
+    except LandLeaseAcquireTimeout as exc:
+        return IntegrateResponse(**land_lease_timeout_envelope(exc=exc))
     return IntegrateResponse(**result)
 
 

@@ -485,8 +485,13 @@ def _request_dispatch(
     GIW ``AutoJob`` already stores these; omitting them on this surface ships
     ``job.body`` instead (``prompt_source=job.body``).
 
-    ``work_key``: optional D4 identity. With ``lane=B`` and a lane-conductor
-    contract GIW selects concurrent Auto admission; omit ⇒ serial on that path.
+    ``work_key``: optional D4 identity. With ``lane=B`` and contract
+    ``investigate|recon|verify|implement|conductor`` plus a scheme-prefixed
+    key (``todo:``, ``plan:``, ``plan_phase:``, ``packet:``, ``agent-bus:``,
+    ``friction:``, ``decision:``) GIW selects concurrent Auto admission.
+    Omit the key, or use lane A, and the job stays serial. Same thread still
+    supersedes. ``conductor`` is recognized by that predicate; bus intake
+    still rejects it as ``request_contract_unknown`` — probes use ``implement``.
     """
     if isinstance(thread, int):
         thread = str(thread)

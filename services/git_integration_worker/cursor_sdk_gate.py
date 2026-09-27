@@ -54,9 +54,29 @@ def _standard_limit() -> int:
     return max(1, int(raw))
 
 
-def _operator_limit() -> int:
-    raw = os.environ.get("CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY", "3")
+OPERATOR_DISPATCH_CONCURRENCY_ENV = "CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY"
+OPERATOR_DISPATCH_CONCURRENCY_DEFAULT = 3
+
+
+def operator_dispatch_limit() -> int:
+    """Operator-lane slot cap. Default 3.
+
+    Raise path: set ``CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY`` to the
+    integer slot count (six parallel conductors need ``6``) in the GIW
+    process environment, then recycle ``git_integration_worker`` with
+    ``manage`` ``sync_restart`` (drain-gated). The gate re-reads this on
+    each acquire, so a process started before the env change still serves
+    the old cap until recycle. Do not force-stop GIW.
+    """
+    raw = os.environ.get(
+        OPERATOR_DISPATCH_CONCURRENCY_ENV,
+        str(OPERATOR_DISPATCH_CONCURRENCY_DEFAULT),
+    )
     return max(1, int(raw))
+
+
+def _operator_limit() -> int:
+    return operator_dispatch_limit()
 
 
 _STANDARD_GATE = FifoCapacityGate(limit=_standard_limit, gate_id="cursor-sdk-dispatch")
@@ -157,9 +177,7 @@ def sdk_dispatch_lane(
                 dispatch_id=parent_id,
                 caller_agent=_caller_agent_for_dispatch(parent_id),
             )
-    return _direct_sdk_dispatch_lane(
-        caller_agent=caller_agent, dispatch_id=dispatch_id
-    )
+    return _direct_sdk_dispatch_lane(caller_agent=caller_agent, dispatch_id=dispatch_id)
 
 
 def _gate_for_lane(lane: GateLane) -> FifoCapacityGate:
