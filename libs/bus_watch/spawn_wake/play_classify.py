@@ -647,12 +647,7 @@ def build_play_dispatch_body(
     not conductor mailbox (a:36103 — 12029 play 422'd on tape 12030).
     """
     max_hop = int(policy.get("max_hop_minutes") or 60)
-    # A lane suffix named the hire that already completed. The conductor
-    # reads that closeout; this body does not name the next step.
-    if todo_slug == "liaison-ticker-steer-live-dispatch":
-        work_key = f"todo:{todo_slug}:g7-land"
-    else:
-        work_key = f"todo:{todo_slug}"
+    work_key = f"todo:{todo_slug}"
     body: dict[str, Any] = {
         "op": "generate",
         "seat": "cursor-sdk",
