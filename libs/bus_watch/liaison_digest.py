@@ -43,7 +43,7 @@ from bus_watch.life_digest import build_life_block, project_life_block
 from bus_watch.loop_tape import loop_tape_thread
 from bus_watch.now_row import harvest_policy_entity_cache
 from bus_watch.now_row_bind import ticker_owns_bind
-from bus_watch.quiet_reason import stamp_quiet_reason
+from bus_watch.quiet_reason import stamp_quiet_reason, usable_holder_id
 from bus_watch.roster import fold_roster
 from bus_watch.spawn_pending import (
     build_attention_lanes,
@@ -90,7 +90,7 @@ def _contract_from_thread(t: dict[str, Any]) -> str:
 
 def _lane_row(t: dict[str, Any]) -> dict[str, Any]:
     subject = str(t.get("last_subject") or "")[:_SUBJECT_CAP]
-    return {
+    row: dict[str, Any] = {
         "id": str(t.get("id")),
         "slug": t.get("slug"),
         "status": t.get("status"),
@@ -107,6 +107,46 @@ def _lane_row(t: dict[str, Any]) -> dict[str, Any]:
         and t.get("last_turn_from") in _NAG_SENDERS,
         "updated_at": t.get("updated_at"),
     }
+    # A bare 8-hex subject prefix is not copied. The holder id is a dispatch
+    # id or a full execution id when the thread actually carries one.
+    execution_id = usable_holder_id(t.get("execution_id"))
+    dispatch_id = usable_holder_id(t.get("dispatch_id"))
+    if execution_id:
+        row["execution_id"] = execution_id
+    if dispatch_id:
+        row["dispatch_id"] = dispatch_id
+    return row
+
+
+def apply_projection_holder_ids(
+    lanes: list[Any], projections: list[Any] | None
+) -> None:
+    """Copy a live projection's holder id onto the lane with the same thread id.
+
+    Does not replace an id the lane already carries. Does not copy a bare
+    8-hex prefix.
+    """
+    by_thread: dict[str, dict[str, Any]] = {}
+    for proj in projections or []:
+        if not isinstance(proj, dict):
+            continue
+        thread_id = str(proj.get("thread_id") or "").strip()
+        if thread_id:
+            by_thread[thread_id] = proj
+    for lane in lanes or []:
+        if not isinstance(lane, dict):
+            continue
+        thread_id = str(lane.get("id") or "").strip()
+        proj = by_thread.get(thread_id)
+        if not proj:
+            continue
+        lane["live_projection_thread_id"] = thread_id
+        dispatch_id = usable_holder_id(proj.get("dispatch_id") or proj.get("op_id"))
+        execution_id = usable_holder_id(proj.get("execution_id"))
+        if dispatch_id and not usable_holder_id(lane.get("dispatch_id")):
+            lane["dispatch_id"] = dispatch_id
+        if execution_id and not usable_holder_id(lane.get("execution_id")):
+            lane["execution_id"] = execution_id
 
 
 def _linked_worker_ids(client: httpx.Client, root: str) -> set[str]:

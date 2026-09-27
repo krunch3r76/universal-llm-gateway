@@ -801,12 +801,19 @@ def tick_spawn_on_wake(
     if not dry_run:
         from bus_watch.quiet_reason import (
             fetch_held_execution_ids,
+            live_holder_projections,
             reconcile_holder_lost,
         )
 
         held = fetch_held_execution_ids()
         if held is not None:
-            holder_lost = reconcile_holder_lost(digest.get("lanes") or [], held)
+            projections = live_holder_projections() or []
+            digest["giw_live_projections"] = projections
+            holder_lost = reconcile_holder_lost(
+                digest.get("lanes") or [],
+                held,
+                projections=projections,
+            )
             if holder_lost:
                 digest["holder_lost"] = holder_lost
     lock = read_lock(root_id)

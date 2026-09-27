@@ -181,11 +181,35 @@ def consult_reply_seat_empty(thread_id: str) -> bool:
     return True
 
 
+def _lane_thread_in_live_projection(
+    digest: dict[str, Any], lane: dict[str, Any]
+) -> bool:
+    """True when a live GIW projection's ``thread_id`` is this lane's id."""
+    lane_id = str(lane.get("id") or "").strip()
+    if not lane_id:
+        return False
+    if str(lane.get("live_projection_thread_id") or "").strip() == lane_id:
+        return True
+    rows = digest.get("giw_live_projections")
+    if not isinstance(rows, list):
+        return False
+    for proj in rows:
+        if (
+            isinstance(proj, dict)
+            and str(proj.get("thread_id") or "").strip() == lane_id
+        ):
+            return True
+    return False
+
+
 def holder_lost_finished_hire(digest: dict[str, Any], todo_slug: str) -> bool:
     """A ``holder_lost`` conductor finished that hire. The row may be admitted again.
 
     The latch stores an earlier dispatch id. The dead hop's execution id does
     not match it, so id-matching release never fires and the row sits forever.
+
+    A lane whose thread is still in the live GIW projection is not finished.
+    ``holder_lost`` in the subject is not enough to release that latch.
     """
     slug = str(todo_slug or "").strip().lower()
     if not slug:
@@ -196,8 +220,11 @@ def holder_lost_finished_hire(digest: dict[str, Any], todo_slug: str) -> bool:
     for lane in lanes:
         if not isinstance(lane, dict) or slug not in _lane_todos(lane):
             continue
-        if "holder_lost" in str(lane.get("last_subject") or "").lower():
-            return True
+        if "holder_lost" not in str(lane.get("last_subject") or "").lower():
+            continue
+        if _lane_thread_in_live_projection(digest, lane):
+            continue
+        return True
     return False
 
 
@@ -531,12 +558,18 @@ def live_conductor_owner(
         conductor = _conductor_signal(lane)
         if slug not in todos:
             continue
-        # holder_lost already finished this hop. The bus lifecycle can stay
-        # admitted after the mint rolls back; that row is not a live owner.
-        if "holder_lost" in str(lane.get("last_subject") or "").lower():
+        subject_l = str(lane.get("last_subject") or "").lower()
+        projection_live = _lane_thread_in_live_projection(digest, lane)
+        # holder_lost finishes the hop only when no live projection still
+        # names this thread. The subject alone must not drop a live owner.
+        # The digest marks that subject terminal, so a live projection also
+        # keeps the lane live.
+        if "holder_lost" in subject_l and not projection_live:
             continue
         if str(lane.get("quiet_reason") or "") == "closeout_unharvested":
             continue
+        if projection_live and "holder_lost" in subject_l:
+            live = True
         if live is False:
             continue
         if live is True and conductor is True:
