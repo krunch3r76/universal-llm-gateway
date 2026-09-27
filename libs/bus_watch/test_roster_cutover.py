@@ -186,6 +186,7 @@ def test_all_roster_rows_hold_yields_play_hold_leftover() -> None:
     verdict = classify_leftover(digest, {})
     assert verdict["leftover"] == LEFTOVER_HOLD
     assert verdict["reason"] == PLAY_HOLD
+    assert verdict["hold_rows"] == [{"row_id": "row-a", "reason": "live_conductor"}]
 
 
 def test_disjoint_path_siblings_both_play() -> None:

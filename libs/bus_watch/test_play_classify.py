@@ -42,6 +42,7 @@ def test_classify_hold_when_live_conductor_owns_todo() -> None:
     assert verdict["leftover"] == LEFTOVER_HOLD
     assert verdict["reason"] == PLAY_HOLD
     assert verdict["todo"] == "music-lexicon-accord"
+    assert "hold_rows" not in verdict
 
 
 def test_classify_hold_live_conductor_without_work_key() -> None:

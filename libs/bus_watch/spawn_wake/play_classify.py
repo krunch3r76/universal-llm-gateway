@@ -580,11 +580,16 @@ def classify_leftover(
             result["todo"] = extract_todo_slug(first_row.get("work_key"))
             result["roster_row_id"] = first_row.get("row_id")
             return result
-        if any(
-            v.get("decision") == DECISION_HOLD for v in classify_roster_rows(digest)
-        ):
+        roster_verdicts = classify_roster_rows(digest)
+        hold_rows = [
+            {"row_id": v.get("row_id"), "reason": v.get("reason")}
+            for v in roster_verdicts
+            if v.get("decision") == DECISION_HOLD
+        ]
+        if hold_rows:
             result["leftover"] = LEFTOVER_HOLD
             result["reason"] = PLAY_HOLD
+            result["hold_rows"] = hold_rows
         return result
     if not todo:
         return result
