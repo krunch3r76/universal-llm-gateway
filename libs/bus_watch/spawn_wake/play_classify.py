@@ -633,6 +633,14 @@ def classify_leftover(
             result["leftover"] = LEFTOVER_HOLD
             result["reason"] = PLAY_HOLD
             result["hold_rows"] = hold_rows
+            # Spawn refusal stays play_hold. The row verdict is a separate
+            # field so the tick line can name which hold fired (12586).
+            # Scalars are the first holding row; hold_rows keeps every row.
+            # Reason strings (scoreboard_complete, hire_latched, …) pass
+            # through from classify_row unchanged.
+            first = hold_rows[0]
+            result["hold_row_id"] = first.get("row_id")
+            result["hold_reason"] = first.get("reason")
         return result
     if not todo:
         return result
