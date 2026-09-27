@@ -13,6 +13,7 @@ from services.git_integration_worker.cse_session_holders import (
     get_holder,
     occupy_holder_on_hop,
     resolve_nest_parent,
+    seat_successor_on_lane,
     transition_seat_state,
     upsert_holder,
 )
@@ -92,15 +93,19 @@ def test_boot_reconcile_keeps_driving_on_empty_registry_snapshot(
     with ledger._connect() as conn:
         ensure_schema(conn)
         upsert_holder(conn, chat_url=_CSE_URL, registration_id="reg-x")
-    with patch(
-        "claude_bundles.cdp_registry.session_address.list_active",
-        return_value=[],
-    ), patch(
-        "claude_bundles.cdp_registry.dormant.list_dormant",
-        return_value=[],
-    ), patch(
-        "services.git_integration_worker.cse_holder_boot_reconcile._emit",
-        side_effect=_capture,
+    with (
+        patch(
+            "claude_bundles.cdp_registry.session_address.list_active",
+            return_value=[],
+        ),
+        patch(
+            "claude_bundles.cdp_registry.dormant.list_dormant",
+            return_value=[],
+        ),
+        patch(
+            "services.git_integration_worker.cse_holder_boot_reconcile._emit",
+            side_effect=_capture,
+        ),
     ):
         with ledger._connect() as conn:
             summary = boot_reconcile(conn)
@@ -109,9 +114,7 @@ def test_boot_reconcile_keeps_driving_on_empty_registry_snapshot(
     assert summary["skipped_release_empty_snapshot"] == 1
     assert row is not None
     assert row["seat_state"] == "driving"
-    skip_signals = [
-        p for s, p in emitted if s == "cse.holder.reconcile_skip_release"
-    ]
+    skip_signals = [p for s, p in emitted if s == "cse.holder.reconcile_skip_release"]
     assert len(skip_signals) == 1
     assert skip_signals[0]["holder_id"] == "cse_testholder1"
     assert skip_signals[0]["reason"] == "empty_registry_snapshot"
@@ -130,15 +133,19 @@ def test_boot_reconcile_releases_driving_absent_from_nonempty_registry(
     with ledger._connect() as conn:
         ensure_schema(conn)
         upsert_holder(conn, chat_url=_CSE_URL, registration_id="reg-x")
-    with patch(
-        "claude_bundles.cdp_registry.session_address.list_active",
-        return_value=[other_reg],
-    ), patch(
-        "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
-        return_value=other_url,
-    ), patch(
-        "claude_bundles.cdp_registry.dormant.list_dormant",
-        return_value=[],
+    with (
+        patch(
+            "claude_bundles.cdp_registry.session_address.list_active",
+            return_value=[other_reg],
+        ),
+        patch(
+            "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
+            return_value=other_url,
+        ),
+        patch(
+            "claude_bundles.cdp_registry.dormant.list_dormant",
+            return_value=[],
+        ),
     ):
         with ledger._connect() as conn:
             summary = boot_reconcile(conn)
@@ -157,12 +164,15 @@ def test_boot_reconcile_dormant_holder_survives_restart(
         upsert_holder(conn, chat_url=_CSE_URL, registration_id="reg-d")
         transition_seat_state(conn, "cse_testholder1", to_state="dormant")
         conn.commit()
-    with patch(
-        "claude_bundles.cdp_registry.session_address.list_active",
-        return_value=[],
-    ), patch(
-        "claude_bundles.cdp_registry.dormant.list_dormant",
-        return_value=[],
+    with (
+        patch(
+            "claude_bundles.cdp_registry.session_address.list_active",
+            return_value=[],
+        ),
+        patch(
+            "claude_bundles.cdp_registry.dormant.list_dormant",
+            return_value=[],
+        ),
     ):
         with ledger._connect() as conn:
             summary = boot_reconcile(conn)
@@ -205,15 +215,19 @@ def test_boot_reconcile_adopts_registry_without_holder_row(
     )
     with ledger._connect() as conn:
         ensure_schema(conn)
-    with patch(
-        "claude_bundles.cdp_registry.session_address.list_active",
-        return_value=[reg],
-    ), patch(
-        "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
-        return_value=_CSE_URL,
-    ), patch(
-        "claude_bundles.cdp_registry.dormant.list_dormant",
-        return_value=[],
+    with (
+        patch(
+            "claude_bundles.cdp_registry.session_address.list_active",
+            return_value=[reg],
+        ),
+        patch(
+            "claude_bundles.cdp_registry.session_address.chat_url_for_registration",
+            return_value=_CSE_URL,
+        ),
+        patch(
+            "claude_bundles.cdp_registry.dormant.list_dormant",
+            return_value=[],
+        ),
     ):
         with ledger._connect() as conn:
             summary = boot_reconcile(conn)
@@ -255,3 +269,43 @@ def test_occupy_supersedes_same_lane_missed_mint_when_prior_reg_differs(
     assert "cse_01scratchoccupy1" in outcome["superseded_holder_ids"]
     assert synth is not None and synth["seat_state"] == "superseded"
     assert occupied is not None and occupied["seat_state"] == "driving"
+
+
+def test_seat_successor_relaunches_dormant_window(ledger: CursorDispatchLedger) -> None:
+    successor_url = "https://claude.ai/cowork/cse_0135zweUWn6uF4Hx7mWXGdSJ"
+    pred_url = "https://claude.ai/cowork/cse_014i5jSfBoYepuvsxswuz1BP"
+    birth = "ab" * 16
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        upsert_holder(
+            conn,
+            chat_url=successor_url,
+            registration_id=birth,
+            lane_thread_id="99004",
+        )
+        successor = get_holder(conn, "cse_0135zweUWn6uF4Hx7mWXGdSJ")
+        assert successor is not None
+        transition_seat_state(conn, successor["holder_id"], to_state="dormant")
+        upsert_holder(
+            conn,
+            chat_url=pred_url,
+            registration_id="517cdefbc5394176a2018b91e31e9c9f",
+            lane_thread_id="99004",
+        )
+        seated = seat_successor_on_lane(
+            conn,
+            chat_url=successor_url,
+            registration_id=birth,
+            lane_thread_id="99004",
+            execution_id="exec-relaunch",
+        )
+        driving = conn.execute(
+            "SELECT holder_id, seat_state FROM cse_session_holders "
+            "WHERE lane_thread_id=? AND seat_state='driving'",
+            ("99004",),
+        ).fetchall()
+        pred = get_holder(conn, "cse_014i5jSfBoYepuvsxswuz1BP")
+    assert seated["ok"] is True
+    assert len(driving) == 1
+    assert driving[0]["holder_id"] == "cse_0135zweUWn6uF4Hx7mWXGdSJ"
+    assert pred is not None and pred["seat_state"] == "superseded"

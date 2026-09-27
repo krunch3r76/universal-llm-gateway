@@ -175,6 +175,66 @@ def _watch_targets() -> list[Any]:
     return targets
 
 
+def _chat_url_from_dispatch_link(execution_id: str) -> str | None:
+    """CSE URL persisted on the generate's dispatch link, if the file exists.
+
+    Arm-time snapshots often lack the window. The link row is written when
+    the CDP generate binds ``chat_url`` (turn 383's execution on 12286).
+    """
+    exec_id = (execution_id or "").strip()
+    if not exec_id:
+        return None
+    try:
+        import os
+
+        path = os.environ.get("AGENT_BUS_DB_PATH", "/data/messages.db")
+        if not path or not os.path.isfile(path):
+            return None
+        import sqlite3
+
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2.0)
+        try:
+            row = conn.execute(
+                "SELECT chat_url FROM thread_dispatch_links "
+                "WHERE execution_id=? AND chat_url IS NOT NULL AND chat_url != '' "
+                "ORDER BY chat_url_bound_at DESC LIMIT 1",
+                (exec_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:  # noqa: BLE001 — seating must not crash the hop
+        logger.warning(
+            "cse_seating_hook dispatch-link chat_url failed exec=%s: %s",
+            exec_id,
+            exc,
+        )
+        return None
+    if row is None:
+        return None
+    url = str(row[0] or "").strip()
+    return url or None
+
+
+def _live_holder_registration_ids(
+    conn: Any,
+    *,
+    lane: str,
+    successor: str,
+) -> list[str]:
+    """Registration ids of driving/dormant holders on *lane* other than *successor*."""
+    rows = conn.execute(
+        "SELECT registration_id FROM cse_session_holders "
+        "WHERE lane_thread_id=? AND seat_state IN ('driving', 'dormant')",
+        (lane,),
+    ).fetchall()
+    found: list[str] = []
+    for row in rows:
+        reg = str(row["registration_id"] or "").strip()
+        if reg and reg != successor and reg not in found:
+            found.append(reg)
+    return found
+
+
 def _persist_successor_watch(
     *,
     lane: str,
@@ -182,6 +242,7 @@ def _persist_successor_watch(
     execution_id: str,
     successor_birth_id: str | None,
     retired_registration_ids: list[str],
+    chat_url: str | None = None,
 ) -> None:
     """Point the lane watch at the hop successor and drop stale census ids."""
     from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
@@ -195,6 +256,9 @@ def _persist_successor_watch(
         "execution_id": execution_id,
         "retired_registration_ids": list(retired_registration_ids),
     }
+    url = (chat_url or "").strip()
+    if url:
+        updates["chat_url"] = url
     birth = (successor_birth_id or "").strip()
     if birth:
         updates["successor_birth_id"] = birth
@@ -215,10 +279,15 @@ def _seat_successor_without_occupy(
     """Seat a Cowork/CDP successor that has no occupy_target.
 
     The census key is ``successor_birth_id`` until a real registration is
-    resolved for ``execution_id``. Predecessor census ids are written onto
-    the watch so the next ``request`` / ``hop`` drops them. Registry
-    ``seat_closed_at`` is applied later by the seat-authority bind
-    (``bind_execution_lane``); this process is not that authority.
+    resolved for ``execution_id``. Predecessor census ids and same-lane
+    holder registration ids are written onto the watch. The successor
+    window URL comes from the identity snap or the generate dispatch link.
+    Holder rows for the lane move only when that URL is known: successor
+    driving, predecessors superseded, registry peers closed. With no URL
+    the census watch still keys the birth id, and both the holder table
+    and the registry stay put until ``record_seated_registration`` sees
+    the window. Closing the registry first would leave the predecessor
+    holder as the wake target.
     """
     from hop_handoff import parse_successor_birth_id
 
@@ -236,27 +305,83 @@ def _seat_successor_without_occupy(
         _emit_hook(outcome)
         return outcome
 
-    snap = _load_identity_snap()
-    seated = on_successor_seated(
-        snap,
-        parent_thread=lane,
-        registration_id=successor,
-        chat_url=(resolved_chat or ""),
-        execution_id=execution_id,
-        bind_registry=False,
-        bind_thread=False,
+    chat = (resolved_chat or "").strip() or (
+        _chat_url_from_dispatch_link(execution_id) or ""
     )
+    snap = _load_identity_snap()
+    holder_regs: list[str] = []
+    superseded_holders: list[str] = []
+    holders_seated = False
+    from services.git_integration_worker.cse_session_holders import (
+        ensure_schema,
+        seat_successor_on_lane,
+    )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        ensure_schema(conn)
+        holder_regs = _live_holder_registration_ids(
+            conn, lane=lane, successor=successor
+        )
+        if chat:
+            seated_holders = seat_successor_on_lane(
+                conn,
+                chat_url=chat,
+                registration_id=successor,
+                lane_thread_id=lane,
+                execution_id=execution_id,
+            )
+            if not seated_holders.get("ok"):
+                outcome = {
+                    "ok": False,
+                    "path": "refused_live_peer",
+                    "reason": str(
+                        seated_holders.get("reason")
+                        or "occupy_target_held_by_live_peer"
+                    ),
+                    "thread_id": str(job.thread_id),
+                    "lane_thread_id": lane,
+                    "successor_registration_id": successor,
+                    "successor_chat_url": chat,
+                    "held_by_lane": seated_holders.get("held_by_lane"),
+                    "successor_seated": False,
+                }
+                _emit_hook(outcome)
+                return outcome
+            superseded_holders = [
+                str(item)
+                for item in (seated_holders.get("superseded_holder_ids") or [])
+                if str(item).strip()
+            ]
+            holders_seated = True
+        seated = on_successor_seated(
+            snap,
+            parent_thread=lane,
+            registration_id=successor,
+            chat_url=chat,
+            execution_id=execution_id,
+            bind_registry=holders_seated,
+            bind_thread=False,
+        )
+        conn.commit()
     retired = [
         str(item).strip()
         for item in (seated.get("retired_registration_ids") or [])
         if str(item).strip() and str(item).strip() != successor
     ]
+    if holders_seated:
+        for reg in holder_regs:
+            if reg not in retired:
+                retired.append(reg)
     _persist_successor_watch(
         lane=lane,
         successor=successor,
         execution_id=execution_id,
         successor_birth_id=birth or None,
         retired_registration_ids=retired,
+        chat_url=chat or None,
     )
     outcome = {
         "ok": True,
@@ -265,10 +390,13 @@ def _seat_successor_without_occupy(
         "thread_id": str(job.thread_id),
         "lane_thread_id": lane,
         "successor_registration_id": successor,
+        "successor_chat_url": chat or None,
         "execution_id": execution_id,
         "successor_birth_id": birth or None,
         "successor_seated": True,
+        "holders_seated": holders_seated,
         "retired_registration_ids": retired,
+        "superseded_holder_ids": superseded_holders,
     }
     _emit_hook(outcome)
     return outcome
@@ -279,12 +407,15 @@ def record_seated_registration(
     chat_url: str | None,
     registration_id: str | None,
     execution_id: str | None = None,
+    lane_thread_id: str | None = None,
 ) -> dict[str, Any] | None:
     """Write a registration confirm actually observed onto an existing holder.
 
     Arm-time seating leaves ``registration_id`` null when the successor
     execution is not in the snapshot yet. The hop wire id is admission
-    identity, not proof of who sat down.
+    identity, not proof of who sat down. When ``lane_thread_id`` is set
+    this is the late window bind: the holder becomes the lane's driving
+    row and registry peers on that lane close with it.
     """
     url = (chat_url or "").strip()
     reg = (registration_id or "").strip()
@@ -305,18 +436,53 @@ def record_seated_registration(
     hid = holder_id_from_chat_url(normalize_cse_url(url))
     if not hid:
         return None
+    lane = (lane_thread_id or "").strip()
+    holder: dict[str, Any] | None
     with CursorDispatchLedger.instance()._connect() as conn:
         ensure_schema(conn)
-        if get_holder(conn, hid) is None:
-            return None
-        row = upsert_holder(
-            conn,
-            chat_url=url,
-            registration_id=reg,
-            execution_id=(execution_id or "").strip() or None,
-        )
-        conn.commit()
-    return row or None
+        if lane:
+            from services.git_integration_worker.cse_session_holders import (
+                seat_successor_on_lane,
+            )
+
+            seated = seat_successor_on_lane(
+                conn,
+                chat_url=url,
+                registration_id=reg,
+                lane_thread_id=lane,
+                execution_id=(execution_id or "").strip() or None,
+            )
+            if not seated.get("ok"):
+                return None
+            conn.commit()
+            seated_holder = seated.get("holder")
+            holder = seated_holder if isinstance(seated_holder, dict) else None
+        else:
+            if get_holder(conn, hid) is None:
+                return None
+            row = upsert_holder(
+                conn,
+                chat_url=url,
+                registration_id=reg,
+                execution_id=(execution_id or "").strip() or None,
+            )
+            conn.commit()
+            holder = row or None
+    if lane and holder is not None:
+        try:
+            from claude_bundles.cdp_registry.session_address import (
+                retire_predecessor_identity,
+            )
+
+            retire_predecessor_identity(reg, parent_thread=lane)
+        except Exception as exc:  # noqa: BLE001 — confirm must not crash the hop
+            logger.warning(
+                "retire_predecessor_identity failed reg=%s lane=%s: %s",
+                reg,
+                lane,
+                exc,
+            )
+    return holder
 
 
 def _retire_identity_row(row: dict[str, Any]) -> dict[str, Any]:

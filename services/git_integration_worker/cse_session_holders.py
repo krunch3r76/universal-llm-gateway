@@ -295,6 +295,77 @@ def _supersede_lane_predecessors(
     return superseded_ids
 
 
+def seat_successor_on_lane(
+    conn: sqlite3.Connection,
+    *,
+    chat_url: str,
+    registration_id: str,
+    lane_thread_id: str,
+    execution_id: str | None = None,
+) -> dict[str, Any]:
+    """Drive *registration_id* on *lane_thread_id* and supersede other live rows.
+
+    The holder key is the successor window URL. Same-lane driving and dormant
+    rows, including a missed-mint with no registration, become ``superseded``.
+    """
+    reg = (registration_id or "").strip()
+    lane = (lane_thread_id or "").strip()
+    if not reg or not lane:
+        return {
+            "ok": False,
+            "reason": "missing_successor_or_lane",
+            "holder": None,
+            "superseded_holder_ids": [],
+        }
+    url = normalize_cse_url(chat_url)
+    hid = holder_id_from_chat_url(url)
+    existing = get_holder(conn, hid) if hid else None
+    if existing is not None:
+        existing_lane = str(existing.get("lane_thread_id") or "").strip()
+        existing_state = str(existing.get("seat_state") or "")
+        if existing_lane and existing_lane != lane and existing_state == "driving":
+            return {
+                "ok": False,
+                "reason": "occupy_target_held_by_live_peer",
+                "holder": existing,
+                "held_by_lane": existing_lane,
+                "superseded_holder_ids": [],
+            }
+    row = upsert_holder(
+        conn,
+        chat_url=chat_url,
+        registration_id=reg,
+        execution_id=execution_id,
+        lane_thread_id=lane,
+    )
+    hid = str(row.get("holder_id") or "")
+    # upsert relaunches only superseded/released. A dormant window on this
+    # URL would otherwise stay dormant while its peers are superseded.
+    if hid and str(row.get("seat_state") or "") != "driving":
+        repaired = transition_seat_state(
+            conn,
+            hid,
+            to_state="driving",
+            superseded_by=None,
+            registration_id=reg,
+            execution_id=execution_id,
+        )
+        if repaired is not None:
+            row = repaired
+    superseded = _supersede_lane_predecessors(
+        conn,
+        lane_thread_id=lane,
+        occupy_holder_id=hid,
+        superseded_registration_id=None,
+        superseded_by=reg,
+    )
+    return {
+        "ok": True,
+        "holder": row,
+        "superseded_holder_ids": superseded,
+    }
+
+
 def occupy_holder_on_hop(
     conn: sqlite3.Connection,
     *,
@@ -323,11 +394,7 @@ def occupy_holder_on_hop(
     if existing is not None:
         existing_lane = str(existing.get("lane_thread_id") or "").strip()
         existing_state = str(existing.get("seat_state") or "")
-        if (
-            existing_lane
-            and existing_lane != lane
-            and existing_state == "driving"
-        ):
+        if existing_lane and existing_lane != lane and existing_state == "driving":
             _emit(
                 "cse.holder.occupy_refused",
                 {
@@ -459,9 +526,9 @@ def release_holder_remote(
     reason: str | None = None,
 ) -> bool:
     """Fail-open HTTP release for out-of-process ``detach``."""
-    base = os.environ.get(
-        "GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091"
-    ).rstrip("/")
+    base = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091").rstrip(
+        "/"
+    )
     body = json.dumps(
         {
             "chat_url": chat_url,
@@ -491,9 +558,9 @@ def upsert_holder_remote(
     lane_thread_id: str | None = None,
 ) -> bool:
     """Fail-open HTTP upsert for out-of-process callers (cdp_registry hook)."""
-    base = os.environ.get(
-        "GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091"
-    ).rstrip("/")
+    base = os.environ.get("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091").rstrip(
+        "/"
+    )
     body = json.dumps(
         {
             "chat_url": chat_url,
@@ -528,6 +595,7 @@ __all__ = [
     "occupy_holder_on_hop",
     "occupancy_projections",
     "resolve_nest_parent",
+    "seat_successor_on_lane",
     "transition_seat_state",
     "release_holder_for_registration",
     "release_holder_remote",
