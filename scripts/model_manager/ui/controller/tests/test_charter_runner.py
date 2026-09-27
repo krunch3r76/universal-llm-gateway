@@ -556,7 +556,7 @@ def test_materializer_contains_stop_contract() -> None:
 
 
 @pytest.mark.offline
-def test_default_judgment_body_is_grok_xhigh() -> None:
+def test_default_judgment_body_is_grok_high_fast() -> None:
     from scripts.model_manager.ui.controller.charter_runner.executor_defaults import (
         JUDGMENT_MODEL,
         JUDGMENT_MODEL_KNOBS,
@@ -574,11 +574,11 @@ def test_default_judgment_body_is_grok_xhigh() -> None:
     assert body["seat"] == "cursor-sdk"
     assert body["model"] == JUDGMENT_MODEL == "cursor/grok-4.7"
     assert body["model_knobs"] == JUDGMENT_MODEL_KNOBS
-    assert body["model_knobs"]["effort"] == "xhigh"
-    assert body["model_knobs"]["fast"] == "false"
+    assert body["model_knobs"]["effort"] == "high"
+    assert body["model_knobs"]["fast"] == "true"
     assert "thinking" not in body["model_knobs"]
     assert "context" not in body["model_knobs"]
-    assert body["contract"] == "sketch"
+    assert body["contract"] == "none"
     assert body["dispatch_thread_id"] == "5361"
     assert body["caller_agent"] == "charter-runner"
     # generate schema: subject/tags are handoff-only (Stargate 400 otherwise)

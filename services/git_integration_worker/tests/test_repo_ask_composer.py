@@ -63,13 +63,17 @@ def test_ask_is_confer_pattern_not_nested_scope() -> None:
     assert "ask" in REASONING_POSTURE_SKIP_CONTRACTS
 
 
-def test_auto_ask_and_recon_choose_composer_medium() -> None:
-    for contract in ("ask", "recon"):
-        model = resolve_desired_model("auto", contract=contract)
-        assert model["resolved_model_id"] == "cursor/composer-2.5"
-        effort = resolve_desired_effort(None, contract=contract)
-        assert effort["resolved_effort"] == "medium"
-        assert effort["clamped"] is False
+def test_auto_ask_is_grok_high_recon_is_grok_medium() -> None:
+    ask = resolve_desired_model("auto", contract="ask")
+    assert ask["resolved_model_id"] == "cursor/grok-4.7"
+    ask_effort = resolve_desired_effort(None, contract="ask")
+    assert ask_effort["resolved_effort"] == "high"
+    assert ask_effort["clamped"] is False
+    recon = resolve_desired_model("auto", contract="recon")
+    assert recon["resolved_model_id"] == "cursor/grok-4.7"
+    recon_effort = resolve_desired_effort(None, contract="recon")
+    assert recon_effort["resolved_effort"] == "medium"
+    assert recon_effort["clamped"] is False
 
 
 def test_ask_handoff_is_sketch_not_answer() -> None:

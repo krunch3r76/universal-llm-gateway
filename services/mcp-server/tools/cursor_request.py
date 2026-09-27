@@ -129,7 +129,7 @@ def register_cursor_request_tool(mcp: FastMCP) -> None:
     ) -> Any:
         """Cursor-auto lane. `to=cursor` is fixed. XOR `new_slug`|`thread`. Returns `{thread, turn, auto_handler_status, job_admission, poll_hint}`. Poll `poll_hint`. Prefer `from_agent=`.
 
-**contract**∈{`answer`,`confer`,`ask`,`investigate`,`implement`,`verify`,`execute`,`propagate`,`seed`,`recon`}. Unknown → **422** before the turn write. `consult` aliases `confer`. Omit/`auto` `desired_effort`: judgment `xhigh`, mechanical `medium`.
+**contract**∈{`answer`,`confer`,`ask`,`investigate`,`implement`,`verify`,`execute`,`propagate`,`seed`,`recon`}. Unknown → **422** before the turn write. `consult` aliases `confer`. Omit/`auto` `desired_effort`: answer/ask/confer/verify/execute/propagate `high`; investigate/seed `xhigh`; implement/recon `medium`.
 
 **lane:** in-repo implement passes `B`. Omit plus empty `files_expected` selects Lane A. Distinct from `lane_role`. `workspace` omit = hub. `parent_thread`+`lane_role` are both-or-neither.
 

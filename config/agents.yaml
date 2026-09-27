@@ -316,14 +316,21 @@ profiles:
 #   web-consult / web-implement → web-anthropic; cursor-consult / cursor-implement → cursor.
 #   Web consult shorthand: team_dispatch(op="handoff", role="web-consult") → web-anthropic + operator push.
 #   Cursor consult: team_dispatch(op="handoff", seat="cursor") → cursor IDE mailbox.
-#   Bound implement (DEFAULT, automated): team_dispatch(op="generate", seat="cursor-sdk",
-#     packet_path=…, contract="implement") → auto Composer (cursor/composer-2.5), no IDE
-#     pickup; poll poll_hint (agent-bus wait). PRECONDITION — DENSE INSTRUCTIONS: the packet
-#     must be dense/complete (Composer executes mechanically, no design judgment). cursor-sdk
-#     is platform=sdk on the Cursor subscription, NOT an Anthropic-API generate lane.
-#   Recon+investigate (root-cause/suggest): same seat=cursor-sdk with
-#     contract=investigate|seed — auto resolves cursor/composer-2.5 (fast); returns
-#     facts + OPEN FORK lines, never a bind. Ranking/bind → CDP (cdp/fable, cdp/opus-5).
+#   Judgment omit-model: workflows.auto_judgment.model is cursor/grok-4.7.
+#     team_dispatch generate with model omitted resolves that id for every
+#     contract (Stargate does not split by contract). Auto-lane judgment
+#     contracts (answer, confer, ask, verify, execute, propagate) resolve the
+#     same model; omit-effort is contract_effort high; fast=true is the grok
+#     card default. Never Composer for judgment.
+#   Bound implement (Auto lane): contract=implement → workflows.mechanical_implement
+#     (cursor/composer-2.5). Pass explicit model=cursor/composer-2.5 when a
+#     team_dispatch implement must stay on Composer — omit-model follows
+#     auto_judgment. Packet must be dense. cursor-sdk is platform=sdk on the
+#     Cursor subscription, NOT an Anthropic-API generate lane.
+#   Recon+investigate: contract=investigate|seed|recon → workflows.investigate
+#     (cursor/grok-4.7). investigate and seed omit-effort are xhigh; recon is
+#     medium. fast=true is the grok card default. Returns facts + OPEN FORK
+#     lines, never a bind. Ranking/bind → CDP (cdp/fable, cdp/opus-5).
 #   Bound implement (operator-attended FALLBACK): team_dispatch(op="handoff", seat="cursor", contract="implement") →
 #     cursor from any dispatching seat; packet + acceptance criteria required. Use only
 #     when SDK worker unavailable or attended IDE execution is explicitly wanted.

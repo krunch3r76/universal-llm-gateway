@@ -1,29 +1,18 @@
 """Charter-runner executor binds — judgment (default) and implement.
 
-Judgment and implement windows both run on the cursor-sdk seat with
-``cursor/composer-2.5`` (operator ruling 2026-09-02, superseding the same-day
-Sonnet-5 bind — ``decision:grok-4-6-fleet-default`` a:31939 amended). Composer
-has one knob (``fast``); there is no ``effort``/``thinking``/``context`` knob to
-carry, and ``align_cursor_knobs`` drops unrecognized knobs silently.
+Judgment windows run on the cursor-sdk seat with ``cursor/grok-4.7`` at
+``effort=high`` and ``fast=true`` (operator ruling 2026-09-27). Composer is
+the implement executor only.
 
-The judgment/implement split now lives in ``contract``, not ``model``:
 ``JUDGMENT_MODEL`` dispatches at ``DEFAULT_CONTRACT`` (``none``), which
 GIW ``resolve_prompt_preamble`` auto-scaffolds with ``Use the reasoning-posture
-skill`` + ``Use the hypothesize-simulate skill`` on every cursor-sdk generate —
-Composer's reasoning space is squeezed via those two skills rather than by a
-heavier model. Hard reasoning gaps are caught by the fleet's extensive external
-CDP (Fable/Opus) consultation elsewhere, not by this in-seat default.
+skill`` + ``Use the hypothesize-simulate skill`` on every cursor-sdk generate.
 ``IMPLEMENT_MODEL`` dispatches at ``IMPLEMENT_CONTRACT`` (``implement``) — no
 skill scaffolding, mechanical execution against a pre-densified packet.
 
-``cursor/grok-4.7`` is an explicit pin only — path-sim A, ``role=skeptic``, and
-family-cross checks — never this module's default. Layer-arc G3 keeps its own
-family-diversity locus in ``window_exec.materializer_layer``.
-
-This module's locus is independent of the GIW Auto-lane's own ``wire_map``
-resolution (``config/agents.yaml`` judgment-contract comments describe that
-separate mechanism) — the two may legitimately diverge; charter_runner is
-decommissioned (a:31919), so this bind is inert today regardless.
+The live omit-model authority is ``config/routing/route_policy.yaml``
+``workflows.auto_judgment``. Charter_runner is decommissioned (a:31919); this
+bind stays aligned so a revived window does not dispatch Composer for judgment.
 
 Step overrides (not this module): CDP Opus for Opus-class code review;
 attended Composer handoff when eyes-on is required.
@@ -34,8 +23,8 @@ from __future__ import annotations
 from typing import Any
 
 DEFAULT_SEAT = "cursor-sdk"
-JUDGMENT_MODEL = "cursor/composer-2.5"
-JUDGMENT_MODEL_KNOBS: dict[str, str] = {"fast": "true"}
+JUDGMENT_MODEL = "cursor/grok-4.7"
+JUDGMENT_MODEL_KNOBS: dict[str, str] = {"effort": "high", "fast": "true"}
 DEFAULT_CONTRACT = "none"
 
 IMPLEMENT_MODEL = "cursor/composer-2.5"

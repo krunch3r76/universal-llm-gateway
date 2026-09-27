@@ -207,16 +207,16 @@ When the operator orders a review of this session's changes and auto-apply of ev
 <!-- workflow-registry:v1:start -->
 ### Workflow registry (generated from config/routing/route_policy.yaml)
 
-- **policy_version:** `2026-09-02`
+- **policy_version:** `2026-09-27`
 
 **Stargate omit-model default:** `workflows.auto_judgment.model` (same SOT as
 GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 
 | workflow | seat | model | contracts |
 |---|---|---|---|
-| auto_judgment | cursor-sdk | cursor/composer-2.5 | answer, confer, ask, verify, execute, propagate, sketch, none, conductor |
+| auto_judgment | cursor-sdk | cursor/grok-4.7 | answer, confer, ask, verify, execute, propagate, sketch, none, conductor |
 | check_review | cursor-sdk | cursor/composer-2.5 | — |
-| investigate | cursor-sdk | cursor/composer-2.5 | investigate, recon, seed |
+| investigate | cursor-sdk | cursor/grok-4.7 | investigate, recon, seed |
 | mechanical_implement | cursor-sdk | cursor/composer-2.5 | implement |
 
 **Roaming bare ids:** `composer-2.5`, `composer-2.5-fast`, `grok-4.7`
@@ -225,16 +225,16 @@ GIW Auto lane `resolve_desired_model(auto)` for judgment contracts).
 
 | contract | effort |
 |---|---|
-| answer | medium |
-| ask | medium |
-| confer | xhigh |
-| execute | xhigh |
+| answer | high |
+| ask | high |
+| confer | high |
+| execute | high |
 | implement | medium |
 | investigate | xhigh |
-| propagate | xhigh |
+| propagate | high |
 | recon | medium |
 | seed | xhigh |
-| verify | xhigh |
+| verify | high |
 <!-- workflow-registry:v1:end -->
 
 ## Non-primary model gate — discriminator

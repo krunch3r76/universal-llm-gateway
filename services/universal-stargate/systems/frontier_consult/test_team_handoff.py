@@ -2982,7 +2982,7 @@ def test_t1_resolve_cursor_sdk_handoff_seat() -> None:
     assert to_agent == "cursor-sdk"
     assert family == "cursor"
     assert platform == "sdk"
-    assert resolved_model == "cursor/composer-2.5"
+    assert resolved_model == "cursor/grok-4.7"
 
 
 def test_t3_cursor_sdk_handoff_rejects_seat_not_manual(
@@ -3144,7 +3144,7 @@ def test_t6a_cursor_sdk_seat_capability(
     assert sc["role"] == "cursor-sdk"
     assert sc["substrate"] == "sdk"
     assert sc["tool_surface"] == "sdk"
-    assert sc["resolved_model"] == "cursor/composer-2.5"
+    assert sc["resolved_model"] == "cursor/grok-4.7"
     assert sc["inline_only"] is False
     assert sc["tool_access"] is True
     assert sc["mcp_mechanism"] == "local_native"
@@ -3204,7 +3204,7 @@ def test_t4b_resolve_auto_seat_generate_target_default_model() -> None:
     assert to_agent == "cursor-sdk"
     assert family == "cursor"
     assert platform == "sdk"
-    assert model == "cursor/composer-2.5"
+    assert model == "cursor/grok-4.7"
 
 
 def test_t4c_resolve_auto_seat_generate_target_explicit_model() -> None:

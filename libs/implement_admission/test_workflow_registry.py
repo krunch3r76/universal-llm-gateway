@@ -35,7 +35,7 @@ def test_live_file_conformance() -> None:
 
 
 def test_load_auto_judgment_default_model_live() -> None:
-    assert load_auto_judgment_default_model(load_route_policy()) == "cursor/composer-2.5"
+    assert load_auto_judgment_default_model(load_route_policy()) == "cursor/grok-4.7"
 
 
 def test_assert_workflow_registry_boot_conformance_passes() -> None:
@@ -216,7 +216,7 @@ def test_r8_contract_effort_unclaimed_canonical() -> None:
 def test_contract_effort_live_defaults_match_omit_path() -> None:
     reg = load_workflow_registry()
     assert reg.default_effort_for_contract("investigate") == "xhigh"
-    assert reg.default_effort_for_contract("answer") == "medium"
+    assert reg.default_effort_for_contract("answer") == "high"
     out = resolve_desired_effort(None, contract="investigate", registry=reg)
     assert out["resolved_effort"] == "xhigh"
     assert "via contract_effort" in out["notes"]
@@ -242,7 +242,7 @@ def test_render_workflow_registry_block_lists_live_slots() -> None:
     assert "| auto_judgment |" in block
     assert "workflows.auto_judgment.model" in block
     assert "GIW Auto lane" in block
-    assert "| answer | medium |" in block
+    assert "| answer | high |" in block
 
 
 def test_embed_and_drift_roundtrip(tmp_path: Path) -> None:

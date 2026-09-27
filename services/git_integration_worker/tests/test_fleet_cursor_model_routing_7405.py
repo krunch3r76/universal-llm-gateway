@@ -7,7 +7,10 @@ from cursor_capabilities import default_variant, supported_knobs
 from effort_vocabulary import AUTO_EFFORT
 
 from services.git_integration_worker.cursor_auto.knob_compose import compose_model_knobs
-from services.git_integration_worker.cursor_auto.wire_map import resolve_desired_effort
+from services.git_integration_worker.cursor_auto.wire_map import (
+    resolve_desired_effort,
+    resolve_desired_model,
+)
 from services.git_integration_worker.cursor_models import (
     build_model_selection,
     resolve_cursor,
@@ -54,18 +57,18 @@ def test_compose_investigate_sonnet5_knobs() -> None:
     }
 
 
-def test_compose_confer_grok_xhigh_fast_true() -> None:
+def test_compose_confer_grok_high_fast_true() -> None:
     knobs = compose_model_knobs(
         {"resolved_model_id": "cursor/grok-4.7"},
         resolve_desired_effort(None, contract="confer"),
         contract="confer",
     )
-    assert knobs == {"effort": "xhigh", "fast": "true"}
+    assert knobs == {"effort": "high", "fast": "true"}
 
 
-def test_omit_effort_answer_stays_medium() -> None:
+def test_omit_effort_answer_is_high() -> None:
     effort = resolve_desired_effort(None, contract="answer")
-    assert effort["resolved_effort"] == "medium"
+    assert effort["resolved_effort"] == "high"
     assert effort["requested"] == AUTO_EFFORT
     assert effort["clamped"] is False
 
@@ -80,20 +83,20 @@ def test_auto_sentinel_equals_omit() -> None:
         assert resolve_desired_effort(" auto ", contract=contract) == baseline
 
 
-def test_omit_effort_residual_contracts_xhigh() -> None:
+def test_omit_effort_residual_contracts_high() -> None:
     for contract in ("verify", "execute", "propagate"):
         effort = resolve_desired_effort(None, contract=contract)
-        assert effort["resolved_effort"] == "xhigh"
+        assert effort["resolved_effort"] == "high"
         assert effort["requested"] == AUTO_EFFORT
 
 
-def test_omit_effort_implement_mechanical_medium_judgment_xhigh() -> None:
+def test_omit_effort_implement_mechanical_medium_judgment_high() -> None:
     mechanical = resolve_desired_effort(None, contract="implement")
     assert mechanical["resolved_effort"] == "medium"
     judgment = resolve_desired_effort(
         None, contract="implement", handoff_contract="none"
     )
-    assert judgment["resolved_effort"] == "xhigh"
+    assert judgment["resolved_effort"] == "high"
     pure = resolve_desired_effort(
         None, contract="implement", handoff_contract="pure-mechanical"
     )
@@ -107,9 +110,11 @@ def test_explicit_medium_honored_on_judgment_contract() -> None:
     assert effort["notes"] == "honored"
 
 
-def test_compose_grok_investigate_omit_xhigh() -> None:
+def test_compose_investigate_auto_is_grok_xhigh_fast() -> None:
+    model = resolve_desired_model("auto", contract="investigate")
+    assert model["resolved_model_id"] == "cursor/grok-4.7"
     knobs = compose_model_knobs(
-        {"resolved_model_id": "cursor/grok-4.7"},
+        model,
         resolve_desired_effort("auto", contract="investigate"),
         contract="investigate",
     )

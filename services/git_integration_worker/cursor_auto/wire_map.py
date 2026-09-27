@@ -428,17 +428,18 @@ def resolve_desired_effort(
     ``extra-high``, ``Extra High``) normalize to ``xhigh`` via effort_vocabulary.
 
     ``auto``/omitted ⇒ per-contract default from ``route_policy.yaml contract_effort``
-    (process-cached registry): investigate/confer/seed/verify/execute/propagate →
-    ``xhigh``; implement/recon/ask/answer → ``medium``; ``implement`` whose handoff
-    contract is ``none`` (body declares judgment) → ``xhigh``.
+    (process-cached registry): answer/ask/confer/verify/execute/propagate →
+    ``high``; investigate/seed → ``xhigh``; implement/recon → ``medium``;
+    ``implement`` whose handoff contract is ``none`` (body declares judgment) →
+    ``high``.
     ``requested`` echoes ``auto`` so the admit turn surfaces the rule via
     ``admit_effort_override_rule_line``.
     """
     contract_key = (contract or "answer").strip().lower()
     if _effort_omitted(desired_effort):
         if contract_key == "implement" and handoff_contract == _JUDGMENT_HANDOFF:
-            resolved = "xhigh"
-            why = f"auto chose xhigh for contract=implement (handoff={_JUDGMENT_HANDOFF})"
+            resolved = "high"
+            why = f"auto chose high for contract=implement (handoff={_JUDGMENT_HANDOFF})"
         else:
             reg = registry or load_workflow_registry()
             resolved = reg.default_effort_for_contract(contract_key)
