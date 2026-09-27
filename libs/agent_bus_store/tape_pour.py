@@ -182,6 +182,7 @@ def build_open_line(
     codec_fallback_count: int = 0,
 ) -> dict[str, Any]:
     from agent_bus_store import tape_render as tape_meta
+
     last_cp: dict[str, Any] | None = None
     for cell in reversed(cells):
         if cell.get("bus_turn_id") is not None:
@@ -197,7 +198,11 @@ def build_open_line(
     open_cells = [c for c in cells if c.get("bus_turn_id") is None]
     open_interval = {
         "transcript_ids": sorted(
-            {str(c.get("transcript_id") or "") for c in open_cells if c.get("transcript_id")}
+            {
+                str(c.get("transcript_id") or "")
+                for c in open_cells
+                if c.get("transcript_id")
+            }
         ),
         "turns": sum(
             max(0, int(c.get("turn_hi") or 0) - int(c.get("turn_lo") or 0))
