@@ -1752,6 +1752,28 @@ def test_unattributed_null_exit_still_blocks_clause_c() -> None:
     assert verification_has_failure([lint, pytest_row]) is False
 
 
+def test_verification_row_kept_keeps_exit_zero_row() -> None:
+    """Falsifier — bus shrink keeps exit 0 and exit_code-null unattributed rows."""
+    from services.git_integration_worker.cursor_sdk_closeout.bus_body_budget import (
+        _verification_row_kept,
+    )
+
+    assert _verification_row_kept({"command": "pytest -q foo.py", "exit_code": 0}) is True
+    assert (
+        _verification_row_kept(
+            {
+                "command": "ruff check foo.py; echo ruff_exit=$?",
+                "exit_code": None,
+                "wrapper_exit_code": 0,
+            }
+        )
+        is True
+    )
+    assert _verification_row_kept({"command": "gate_d:passed"}) is False
+    assert _verification_row_kept({}) is False
+    assert _verification_row_kept("not-a-dict") is False
+
+
 def test_legacy_closeout_json_bare_integer_exit_code_still_validates() -> None:
     """AC6 — field widens; historical integer exit_code still loads."""
     payload = {
