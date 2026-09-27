@@ -111,6 +111,9 @@ def pour_lane_messages(
             _last_session_cells(cells, thread_id=thread_id, channel=channel)
         )
         messages = _filter_messages_to_cells(messages, cells)
+    from agent_bus_store.tape_catalog_elide import elide_ide_catalog_blocks
+
+    messages = elide_ide_catalog_blocks(messages)
     truncated = payload_bytes(messages, []) > budget_bytes
     index_rows: list[dict[str, Any]] = []
     degraded: dict[str, Any] | None = None

@@ -79,7 +79,9 @@ def test_build_mission_block_includes_residue_and_window(bus_db) -> None:
     )
     assert mission["fence_id"] == "rf-test1234"
     assert mission["window_anchor"]["transcript_id"].startswith("d556c84f")
+    assert mission["window_anchor"].keys() == {"transcript_id", "turns_at_cp"}
     assert mission["lifecycle"]["clone_mode"] == "B"
+    assert not any("scope=window" in step for step in mission["handoff"]["steps"])
     assert mission["lifecycle"]["release"] == "pour_terminal"
     assert "FIX-18" in (mission.get("residue") or "")
     assert mission["handoff"]["todo"] == "todo:continuity-resume-fence"

@@ -430,7 +430,7 @@ class ThreadDetail(BaseModel):
     matches its own schema is a worse contract than no field.
 
     ``resume_envelope`` is populated on ``GET /threads/{id}`` when
-    ``include_resume=true`` (default) and ``spine=root``. Work lanes omit it.
+    ``include_resume=true`` and ``spine=root``. Work lanes omit it.
     """
 
     id: str
