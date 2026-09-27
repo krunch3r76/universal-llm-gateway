@@ -1,4 +1,4 @@
-"""Offline tests for Cowork Output download and harvest-body resolution."""
+"""Offline Playwright and unit tests for Cowork Output download, preview-menu Download, and harvest-body resolution paths."""
 
 from __future__ import annotations
 
@@ -30,30 +30,30 @@ pytestmark = pytest.mark.offline
 
 
 def test_should_attempt_output_download_matrix() -> None:
+    """Cover chat, output-file, and auto size flags for whether a download is attempted."""
     assert not should_attempt_output_download(harvest_source="chat")
     assert should_attempt_output_download(harvest_source="output-file")
     assert not should_attempt_output_download(
         harvest_source="auto", expected_size="small"
     )
-    assert should_attempt_output_download(
-        harvest_source="auto", expected_size="large"
-    )
-    assert should_attempt_output_download(
-        harvest_source="auto", download_output=True
-    )
+    assert should_attempt_output_download(harvest_source="auto", expected_size="large")
+    assert should_attempt_output_download(harvest_source="auto", download_output=True)
     assert not should_attempt_output_download(
         harvest_source="auto", expected_size="auto", download_output=False
     )
 
 
 def test_extract_and_read_cortex_uri(tmp_path: Path) -> None:
+    """Read a cortex URI planted in chat text back from a temporary files root."""
     deliverable = tmp_path / "notes/system/threads/big-review.md"
     deliverable.parent.mkdir(parents=True, exist_ok=True)
     deliverable.write_text("full deliverable body\n", encoding="utf-8")
     uri = "cortex://notes/system/threads/big-review.md"
     chat = f"Written to {uri} · sha256 abc"
     assert extract_cortex_uri(chat) == uri
-    assert read_cortex_uri_content(uri, cortex_root=tmp_path) == "full deliverable body\n"
+    assert (
+        read_cortex_uri_content(uri, cortex_root=tmp_path) == "full deliverable body\n"
+    )
 
 
 def _download_ctx(download: MagicMock):
@@ -169,6 +169,7 @@ async def test_download_both_paths_miss_returns_none(
 
 
 def test_looks_like_output_filename() -> None:
+    """Accept deliverable filenames and reject chrome labels that are not files."""
     assert looks_like_output_filename("6386-band-order-verdict.md")
     assert looks_like_output_filename("notes.json")
     assert not looks_like_output_filename("Download")
@@ -177,6 +178,7 @@ def test_looks_like_output_filename() -> None:
 
 
 def test_is_thin_or_chrome_preview() -> None:
+    """Reject short chrome strings and keep a long deliverable preview body."""
     assert is_thin_or_chrome_preview("Copy")
     assert is_thin_or_chrome_preview("Write your prompt")
     assert is_thin_or_chrome_preview("short")
@@ -185,7 +187,9 @@ def test_is_thin_or_chrome_preview() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_harvest_body_prefers_download(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_resolve_harvest_body_prefers_download(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     page = MagicMock()
     monkeypatch.setattr(
         "claude_bundles.cowork_output_download.download_cowork_output",
@@ -488,6 +492,47 @@ _FILENAME_BUTTON_ONLY_HTML = """
 </body></html>
 """
 
+_PREVIEW_MENU_DOWNLOAD_HTML = """
+<!doctype html><html><body>
+<aside id="outputs">
+  <h2>Outputs</h2>
+  <button id="file-btn">\ue000review-commands-orient-skills-memo.md</button>
+</aside>
+<main>
+  <button type="button" aria-label="Expand">Expand</button>
+  <button type="button" aria-label="Comment on this item">Comment</button>
+  <button type="button" id="decoy-download">Download</button>
+  <button type="button" id="more" aria-label="More ways to open"
+          aria-haspopup="menu" hidden>More</button>
+  <div id="menu" role="menu" hidden>
+    <div role="menuitem" id="drive">Google Drive</div>
+    <div role="menuitem" id="dl">Download</div>
+  </div>
+  <div id="preview" hidden></div>
+</main>
+<script>
+  document.getElementById('file-btn').addEventListener('click', () => {
+    document.getElementById('more').hidden = false;
+    const p = document.getElementById('preview');
+    p.hidden = false;
+    p.innerText = Array(20).fill('preview panel innerText only.').join('\\n');
+  });
+  document.getElementById('more').addEventListener('click', () => {
+    document.getElementById('menu').hidden = false;
+  });
+  document.getElementById('dl').addEventListener('click', () => {
+    const blob = new Blob(['section 8'], {type: 'text/markdown'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'not-the-row-name.md';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
+</script>
+</body></html>
+"""
+
 _NO_AFFORDANCE_HTML = """
 <!doctype html><html><body>
 <main>
@@ -519,11 +564,15 @@ async def test_dom_classic_download_js_tags_download_affordance() -> None:
         assert await page.locator("[data-cdp-output-download='1']").count() == 1
         # Filename button must not be the classic tag target.
         classic = page.locator("[data-cdp-output-download='1']")
-        assert "download" in (
-            (await classic.get_attribute("aria-label") or "")
-            + " "
-            + (await classic.inner_text())
-        ).lower() or await classic.get_attribute("download") is not None
+        assert (
+            "download"
+            in (
+                (await classic.get_attribute("aria-label") or "")
+                + " "
+                + (await classic.inner_text())
+            ).lower()
+            or await classic.get_attribute("download") is not None
+        )
     finally:
         await browser.close()
         await pw.stop()
@@ -543,6 +592,34 @@ async def test_dom_filename_button_preview_extract_path() -> None:
         assert result.filename == "6386-band-order-verdict.md"
         assert "disposition_date" in result.content
         assert "Write your prompt" not in result.content
+    finally:
+        await browser.close()
+        await pw.stop()
+
+
+@pytest.mark.asyncio
+async def test_dom_preview_menu_download_returns_file_bytes() -> None:
+    """When the Outputs row has no download attribute, harvest returns More ways to open Download bytes."""
+    pw, browser, page = await _with_page(_PREVIEW_MENU_DOWNLOAD_HTML)
+    try:
+        label = await page.locator("#file-btn").evaluate("el => el.textContent")
+        assert label == "\ue000review-commands-orient-skills-memo.md"
+        assert await page.locator("#file-btn").get_attribute("download") is None
+        assert await page.evaluate(_OUTPUT_DOWNLOAD_JS) is None
+        result = await download_cowork_output(page, timeout_ms=5000)
+        assert result is not None
+        assert b"section 8" in result.content_bytes
+        assert "section 8" in result.content
+        assert "preview panel innerText only." not in result.content
+        assert result.filename == "review-commands-orient-skills-memo.md"
+        body = await resolve_harvest_body(
+            page,
+            "in-chat summary only",
+            harvest_source="output-file",
+        )
+        assert body.provenance == "output-file"
+        assert "section 8" in body.content
+        assert "in-chat summary only" not in body.content
     finally:
         await browser.close()
         await pw.stop()
