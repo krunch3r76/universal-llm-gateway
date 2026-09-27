@@ -4,7 +4,10 @@ The subject is fixed. ``closeout_unharvested`` means the worker finished
 and the thread was left active. That lane must not keep the row.
 
 ``holder_lost`` closes the gap when an admitted conductor hop has no live
-GIW holder and no worker closeout.
+GIW holder and no worker closeout. A live projection whose ``thread_id``
+equals the lane id is that holder. The compared id is a dispatch id or a
+full execution id from the lane or that projection. An 8-character subject
+prefix is not an id.
 """
 
 from __future__ import annotations
@@ -32,6 +35,57 @@ _TERMINAL_SUBJECT_MARKERS = (
     "Dispatch orphaned",
     "holder_lost",
 )
+_BARE_PREFIX_RE = re.compile(r"[0-9a-f]{8}", re.I)
+# Last successful active-work parse. None means the probe did not succeed.
+_LIVE_HOLDER_PROJECTIONS: list[dict[str, Any]] | None = None
+
+
+def usable_holder_id(token: object) -> str:
+    """Dispatch id or full execution id.
+
+    A bare 8-hex token is a subject prefix, not an id that can be compared
+    to the held set.
+    """
+    text = str(token or "").strip()
+    if not text or _BARE_PREFIX_RE.fullmatch(text):
+        return ""
+    return text
+
+
+def live_holder_projections() -> list[dict[str, Any]] | None:
+    """Projections from the last ``fetch_held_execution_ids`` call.
+
+    ``None`` when that probe did not succeed. An empty list means the probe
+    succeeded and no live projection was present.
+    """
+    return _LIVE_HOLDER_PROJECTIONS
+
+
+def _remember_projections(rows: list[dict[str, Any]] | None) -> None:
+    global _LIVE_HOLDER_PROJECTIONS
+    _LIVE_HOLDER_PROJECTIONS = rows
+
+
+def _projections_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Live GIW rows that carry ``thread_id`` and a holder id."""
+    out: list[dict[str, Any]] = []
+    for op in payload.get("active_ops") or []:
+        if not isinstance(op, dict):
+            continue
+        thread_id = str(op.get("thread_id") or "").strip()
+        dispatch_id = usable_holder_id(op.get("dispatch_id") or op.get("op_id"))
+        execution_id = usable_holder_id(op.get("execution_id"))
+        if not thread_id and not dispatch_id and not execution_id:
+            continue
+        out.append(
+            {
+                "thread_id": thread_id,
+                "op_id": dispatch_id,
+                "dispatch_id": dispatch_id,
+                "execution_id": execution_id,
+            }
+        )
+    return out
 
 
 def stamp_quiet_reason(client: httpx.Client, lane: dict[str, Any]) -> None:
@@ -100,19 +154,28 @@ def close_unharvested_quiet_lanes_on_bus(lanes: list[Any]) -> list[str]:
 
 
 def fetch_held_execution_ids() -> set[str] | None:
-    """Live holder ids from GIW ``/api/v1/integrate/active-work``. ``None`` if unreachable."""
+    """Live holder ids from GIW ``/api/v1/integrate/active-work``. ``None`` if unreachable.
+
+    Also remembers live projections (``thread_id`` plus dispatch id) for the
+    same payload. Those projections are not mixed into the returned id set.
+    """
     try:
         response = httpx.get(_GIW_ACTIVE_WORK, timeout=3.0)
     except httpx.HTTPError:
+        _remember_projections(None)
         return None
     if response.status_code >= 400:
+        _remember_projections(None)
         return None
     try:
         payload = response.json()
     except ValueError:
+        _remember_projections(None)
         return None
     if not isinstance(payload, dict):
+        _remember_projections(None)
         return None
+    _remember_projections(_projections_from_payload(payload))
     held: set[str] = set()
     cursor = payload.get("cursor_dispatches") or {}
     if isinstance(cursor, dict):
@@ -144,9 +207,10 @@ def fetch_held_execution_ids() -> set[str] | None:
                         held.add(token)
     for op in payload.get("active_ops") or []:
         if isinstance(op, dict):
-            token = str(op.get("op_id") or op.get("dispatch_id") or "").strip()
-            if token:
-                held.add(token)
+            for key in ("op_id", "dispatch_id", "execution_id"):
+                token = usable_holder_id(op.get(key))
+                if token:
+                    held.add(token)
     return held
 
 
@@ -162,16 +226,14 @@ def _lane_contract(lane: dict[str, Any]) -> str:
 
 
 def _lane_execution_id(lane: dict[str, Any]) -> str:
+    """Dispatch id or full execution id on the lane. Never a subject prefix."""
     for key in ("execution_id", "dispatch_id"):
-        token = str(lane.get(key) or "").strip()
+        token = usable_holder_id(lane.get(key))
         if token:
             return token
     subject = str(lane.get("last_subject") or "")
     match = _UUID_RE.search(subject)
-    if match:
-        return match.group(0)
-    short = re.search(r"generate\s+[—-]\s*([0-9a-f]{8,})", subject, re.I)
-    return short.group(1) if short else ""
+    return match.group(0) if match else ""
 
 
 def _subject_terminal(last_subject: str) -> bool:
@@ -202,25 +264,47 @@ def _admitted_cursor_sdk_hop(lane: dict[str, Any]) -> bool:
     for tag in lane.get("tags") or []:
         token = str(tag).lower()
         if token == "contract:conductor" and (
-            str(lane.get("lifecycle") or "").lower() == "admitted" or "admitted" in subject_l
+            str(lane.get("lifecycle") or "").lower() == "admitted"
+            or "admitted" in subject_l
         ):
             return True
     return False
 
 
-def _execution_held(execution_id: str, held_execution_ids: set[str] | frozenset[str]) -> bool:
-    token = str(execution_id or "").strip().lower()
+def _execution_held(
+    execution_id: str, held_execution_ids: set[str] | frozenset[str]
+) -> bool:
+    token = usable_holder_id(execution_id).lower()
     if not token:
         return False
     for held in held_execution_ids:
-        other = str(held or "").strip().lower()
-        if other == token or other.startswith(token):
+        other = usable_holder_id(held).lower()
+        if other and other == token:
             return True
     return False
 
 
+def _projection_for_lane(
+    lane: dict[str, Any], projections: list[Any] | None
+) -> dict[str, Any] | None:
+    """Live projection whose ``thread_id`` equals the lane id."""
+    lane_id = str(lane.get("id") or "").strip()
+    if not lane_id:
+        return None
+    for proj in projections or []:
+        if not isinstance(proj, dict):
+            continue
+        if str(proj.get("thread_id") or "").strip() == lane_id:
+            return proj
+    if str(lane.get("live_projection_thread_id") or "").strip() == lane_id:
+        return {"thread_id": lane_id}
+    return None
+
+
 def _qualifies_holder_lost(
-    lane: dict[str, Any], held_execution_ids: set[str] | frozenset[str]
+    lane: dict[str, Any],
+    held_execution_ids: set[str] | frozenset[str],
+    projections: list[Any] | None = None,
 ) -> tuple[str, str] | None:
     if not isinstance(lane, dict):
         return None
@@ -230,6 +314,10 @@ def _qualifies_holder_lost(
         return None
     last_subject = str(lane.get("last_subject") or "")
     if _subject_terminal(last_subject):
+        return None
+    # The projection's thread_id is the lane id. That holder is live even
+    # when the subject only carries an execution-id prefix.
+    if _projection_for_lane(lane, projections) is not None:
         return None
     execution_id = _lane_execution_id(lane)
     if not execution_id:
@@ -266,13 +354,26 @@ def reconcile_holder_lost(
     held_execution_ids: set[str] | frozenset[str],
     *,
     post: Callable[[str, str], bool] | None = None,
+    projections: list[Any] | None = None,
 ) -> list[str]:
-    """POST ``holder_lost`` terminal closeout on lanes with no live GIW holder."""
-    poster = post or (lambda thread_id, execution_id: _post_holder_lost_turn(thread_id, execution_id))
+    """POST ``holder_lost`` on lanes with no live GIW holder.
+
+    ``projections`` are live GIW rows (``thread_id``, ``op_id`` /
+    ``dispatch_id``, ``execution_id``). A projection whose ``thread_id``
+    equals the lane id is a live holder, so nothing is posted. Matching
+    rows also copy that dispatch id onto the lane.
+    """
+    poster = post or (
+        lambda thread_id, execution_id: _post_holder_lost_turn(thread_id, execution_id)
+    )
+    live = [row for row in (projections or []) if isinstance(row, dict)]
+    from bus_watch.liaison_digest import apply_projection_holder_ids
+
+    apply_projection_holder_ids(lanes, live)
     held = frozenset(str(x) for x in held_execution_ids)
     written: list[str] = []
     for lane in lanes or []:
-        qualified = _qualifies_holder_lost(lane, held)
+        qualified = _qualifies_holder_lost(lane, held, live)
         if not qualified:
             continue
         thread_id, execution_id = qualified

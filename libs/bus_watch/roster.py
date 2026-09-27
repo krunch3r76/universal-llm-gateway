@@ -13,6 +13,7 @@ import httpx
 
 from bus_watch.fable_lock import WATCH_DIR
 from bus_watch.now_row import resolve_now_row
+from bus_watch.park_harvest import scoreboard_g_rows_done
 from bus_watch.spawn_wake.play_classify import (
     extract_todo_slug,
     holder_lost_finished_hire,
@@ -429,6 +430,15 @@ def classify_row(
         return {
             "decision": DECISION_HOLD,
             "reason": "hire_hold",
+            "row_id": row.get("row_id"),
+        }
+
+    # DONE overrides hire=auto. Reopening is a G-row that is not DONE.
+    # Journal prose is not that signal.
+    if scoreboard_g_rows_done(str(row.get("work_key") or "")):
+        return {
+            "decision": DECISION_HOLD,
+            "reason": "scoreboard_complete",
             "row_id": row.get("row_id"),
         }
 

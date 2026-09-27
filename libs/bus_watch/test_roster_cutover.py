@@ -305,7 +305,7 @@ def test_closed_park_releases_the_hire_latch_so_the_row_plays() -> None:
     rows = [
         _row(
             "row-a",
-            "hop-checkpoint-precondition",
+            "hop-checkpoint-latch-fixture",
             paths=["libs/bus_watch/roster.py"],
             last_hire_dispatch_id="disp-parked",
         ),
@@ -320,7 +320,7 @@ def test_closed_park_releases_the_hire_latch_so_the_row_plays() -> None:
                 "contract": "conductor",
                 "last_subject": "Quiet with work in flight",
                 "quiet_reason": "closeout_unharvested",
-                "tags": ["todo:hop-checkpoint-precondition", "contract:conductor"],
+                "tags": ["todo:hop-checkpoint-latch-fixture", "contract:conductor"],
             }
         ],
     )
@@ -347,7 +347,7 @@ def test_closed_park_second_sight_holds_hire_latched() -> None:
     """After the releasing lane is recorded, the same park does not play again."""
     row = _row(
         "row-a",
-        "hop-checkpoint-precondition",
+        "hop-checkpoint-latch-fixture",
         paths=["libs/bus_watch/roster.py"],
         last_hire_dispatch_id="disp-parked",
     )
@@ -362,7 +362,7 @@ def test_closed_park_second_sight_holds_hire_latched() -> None:
                 "lifecycle": "completed",
                 "contract": "conductor",
                 "quiet_reason": "closeout_unharvested",
-                "tags": ["todo:hop-checkpoint-precondition"],
+                "tags": ["todo:hop-checkpoint-latch-fixture"],
             }
         ],
     )
@@ -502,7 +502,7 @@ def test_reused_lane_id_in_closed_lanes_before_latch_stays_excluded() -> None:
     """A lane id still in the list does not release, even with empty readmit_from."""
     row = _row(
         "row-a",
-        "hop-checkpoint-precondition",
+        "hop-checkpoint-latch-fixture",
         paths=["libs/bus_watch/roster.py"],
         last_hire_dispatch_id="disp-parked",
     )
@@ -516,7 +516,7 @@ def test_reused_lane_id_in_closed_lanes_before_latch_stays_excluded() -> None:
                 "lifecycle": "completed",
                 "contract": "conductor",
                 "quiet_reason": "closeout_unharvested",
-                "tags": ["todo:hop-checkpoint-precondition"],
+                "tags": ["todo:hop-checkpoint-latch-fixture"],
             }
         ],
     )
@@ -853,3 +853,114 @@ def test_readmit_cap_refuses_once_per_row_and_reason(
         {"row_id": "row-a", "work_key": "todo:alpha", "reason": "readmit_cap"}
     ]
     assert "row-a:readmit_cap" in state["roster_classify_refused"]
+
+
+_P3_KEY = "todo:liaison-multi-conductor-p3-multi-hire"
+_P3_SCOREBOARD_SHA = "a8e02943412f898b05f8f32792ea39910306d944fae4885b7091c4a472bf05c9"
+_P3_ROW_ID = "liaison-multi-conductor-p3-multi-hire"
+
+
+def test_scoreboard_complete_p3_row_holds_and_does_not_post() -> None:
+    """hire=auto on the p3 row holds when every G-row of sha a8e02943… is DONE."""
+    import hashlib
+
+    from implement_admission.conductor_score_locus import work_item_locus
+
+    from bus_watch.park_harvest import load_work_item_scoreboard
+    from bus_watch.spawn_wake.fire import _post_roster_hires
+
+    tip = work_item_locus("liaison-multi-conductor-p3-multi-hire").tip_path
+    assert hashlib.sha256(tip.read_bytes()).hexdigest() == _P3_SCOREBOARD_SHA
+    body = load_work_item_scoreboard(_P3_KEY)
+    assert body is not None
+    assert "DONE" in body
+
+    row = {
+        "row_id": _P3_ROW_ID,
+        "work_key": _P3_KEY,
+        "hire": "auto",
+        "gate": "",
+        "text": (
+            "hire=auto. Land 5f3c4babb is on master; do not replay that slice. "
+            "G5 and G6 stay open. Next step is unwritten."
+        ),
+    }
+    digest = _digest_with_roster([row], lanes=[])
+    verdict = classify_row(digest, digest["roster"][0])
+    assert verdict["decision"] == "hold"
+    assert verdict["reason"] == "scoreboard_complete"
+    assert roster_play_rows(digest) == []
+
+    posted: list[dict] = []
+
+    def submit(body: dict) -> tuple[dict, int]:
+        posted.append(body)
+        return {}, 0
+
+    result = _post_roster_hires(digest, {}, "12586", {}, submit=submit)
+    assert posted == []
+    assert result["action"] == "hold"
+
+
+def test_hire_hold_survives_done_scoreboard() -> None:
+    row = {
+        "row_id": _P3_ROW_ID,
+        "work_key": _P3_KEY,
+        "hire": "hold",
+        "gate": "",
+        "text": "house paused. hire=hold. Do not admit.",
+    }
+    digest = _digest_with_roster([row], lanes=[])
+    verdict = classify_row(digest, digest["roster"][0])
+    assert verdict["decision"] == "hold"
+    assert verdict["reason"] == "hire_hold"
+
+
+def test_open_g_row_does_not_hold_for_scoreboard(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "bus_watch.park_harvest.load_work_item_scoreboard",
+        lambda _work_key: "| G1 | x | — | OPEN | |\n",
+    )
+    row = _row("row-open", "scoreboard-open-fixture")
+    digest = _digest_with_roster([row], lanes=[])
+    verdict = classify_row(digest, digest["roster"][0])
+    assert verdict["decision"] == "play"
+    assert verdict["reason"] == "play_row"
+
+
+def test_live_projection_keeps_holder_lost_lane_and_latch() -> None:
+    from bus_watch.spawn_wake.play_classify import (
+        holder_lost_finished_hire,
+        live_conductor_owner,
+    )
+
+    slug = "holder-lost-projection-fixture"
+    lane = {
+        "id": "12951",
+        "status": "active",
+        "lifecycle": "admitted",
+        "contract": "conductor",
+        "terminal": True,
+        "work_key": f"todo:{slug}",
+        "last_subject": "holder_lost fc33e2ab",
+    }
+    projection = [{"thread_id": "12951", "op_id": "62cee299adf4-ed675f8c"}]
+    row = _row("row-live", slug, last_hire_dispatch_id="disp-prior")
+    digest = _digest_with_roster([row], lanes=[lane])
+    digest["giw_live_projections"] = projection
+
+    owner = live_conductor_owner(digest, slug)
+    assert isinstance(owner, dict)
+    assert owner.get("unsure") is False
+    assert owner["lane"]["id"] == "12951"
+    assert holder_lost_finished_hire(digest, slug) is False
+    verdict = classify_row(digest, digest["roster"][0])
+    assert verdict["reason"] == "live_conductor"
+    assert "release_reason" not in verdict
+
+    bare = _digest_with_roster([row], lanes=[lane])
+    assert live_conductor_owner(bare, slug) is None
+    assert holder_lost_finished_hire(bare, slug) is True
+    released = classify_row(bare, bare["roster"][0])
+    assert released["decision"] == "play"
+    assert released["release_reason"] == "holder_lost"
