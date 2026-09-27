@@ -267,8 +267,18 @@ per-G-row one. Default posture once running:
 - **After-ship `cdp/opus-5.5` code review (a:32146) is a stronger-model gate, not
   a background nicety.** On codework that claims land / cert / terminal `DONE`:
   **review harvest ≺ land ≺ DONE** (dogfood 10013 / a:32221–32222; 9638 hop3 /
-  a:32226). Fire `team_dispatch(model=cdp/opus-5.5, purpose=review, …)` and
-  **harvest a real verdict body** before those claims. Latency while CDP is
+  a:32226). Fire `team_dispatch(model=cdp/opus-5.5, purpose=review, contract=none, …)`
+  and **harvest a real verdict body** before those claims. Filtered nested
+  seats (`implement` / `pure-mechanical`) see that same call on `tools/list`. The
+  stdio bridge refuses a `tools/call` outside the contract primary list, and
+  refuses `team_dispatch` unless the arguments are the review shape
+  (`op=generate`, `purpose=review`, `model` in `cdp/opus-5` | `cdp/opus-5.5` |
+  `cdp/fable`, `contract=none`, no other keys). That bound is the bridge
+  process for the filtered seat; it is not a server-side identity check on
+  `/mcp/code`. When Opus returns `stall_stage=completed_without_proof`, the
+  CDP worker retries `cdp/fable` once, resets the inflight clock, and posts
+  that verdict on the original execution id only when the fable body is
+  non-empty — the retry is not a second operator or conductor step. Latency while CDP is
   healthy is not a skip — poll / hop+watcher / `PARKED_TRANSPORT` until harvest.
   CDP down or stall (`Chrome on :9225 did not reach CDP`, empty body,
   `stall_stage=mark_terminal`) ≡ **no harvest** ≡ **HARD STOP** — restore the

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,6 +16,11 @@ from claude_bundles.cdp_model_endpoint import (
     UPSTREAM_OVERLOADED,
     CdpGenerateResult,
     run_cdp_generate,
+)
+from g6_review_class import (
+    adopt_review_fallback,
+    fallback_wall_s,
+    review_fallback_model,
 )
 from transport_utils import DEFAULT_AGENT_BUS_URL, DEFAULT_CORTEX_URL, make_async_client
 from universal_logging import get_logger
@@ -28,6 +33,49 @@ from .cdp_events import (
 )
 
 logger = get_logger(__name__)
+
+
+def rebase_review_fallback(
+    fallback: CdpGenerateResult,
+    *,
+    original_execution_id: str,
+    original_model_id: str,
+    fallback_model: str,
+    primary_satellite_execution_id: str | None,
+) -> CdpGenerateResult:
+    """Return *fallback* addressed to the Opus execution the conductor is polling.
+
+    The harvest wait is bound to the original ``execution_id``. The fable leg
+    runs under a distinct staging id; the terminal turn uses the original.
+    """
+    extras = dict(fallback.extras)
+    extras["review_fallback_from"] = original_model_id
+    extras["review_fallback_model"] = fallback_model
+    extras["review_fallback_execution_id"] = fallback.execution_id
+    if primary_satellite_execution_id:
+        extras["review_primary_satellite_execution_id"] = primary_satellite_execution_id
+    return replace(
+        fallback,
+        execution_id=original_execution_id,
+        extras=extras,
+    )
+
+
+def note_unadopted_review_fallback(
+    primary: CdpGenerateResult,
+    *,
+    fallback_model: str,
+    fallback_execution_id: str,
+    stall_stage: str | None,
+) -> CdpGenerateResult:
+    """Keep the Opus diagnostic and record that fable did not supply a body."""
+    extras = dict(primary.extras)
+    extras["review_fallback_attempted"] = True
+    extras["review_fallback_model"] = fallback_model
+    extras["review_fallback_execution_id"] = fallback_execution_id
+    extras["review_fallback_stall_stage"] = stall_stage
+    return replace(primary, extras=extras)
+
 
 _UPSTREAM_OVERLOAD_FRICTION_EMITTED: set[str] = set()
 _CORTEX_FRICTION_TIMEOUT_S = 10.0
@@ -498,6 +546,92 @@ async def run_cdp_worker(
             picker_model=model_id.split("/", 1)[-1],
             error=f"worker_crash: {exc}",
         )
+
+    fallback_model = review_fallback_model(
+        purpose=purpose,
+        model_id=model_id,
+        stall_stage=result.stall_stage,
+    )
+    if fallback_model is not None:
+        from .cdp_generate_inflight_ledger import upsert_inflight_leg
+
+        fallback_execution_id = f"{execution_id}:fable"
+        fallback_wall = fallback_wall_s(wall)
+        upsert_inflight_leg(
+            execution_id=execution_id,
+            request_id=request_id,
+            thread_id=thread_id,
+            pointer_turn=pointer_turn,
+            caller_agent=caller_agent,
+            prompt_uri=prompt_uri,
+            model_id=fallback_model,
+            max_wall_s=fallback_wall,
+        )
+        try:
+            fallback = await asyncio.to_thread(
+                run_cdp_generate,
+                execution_id=fallback_execution_id,
+                model_id=fallback_model,
+                prompt_uri=prompt_uri,
+                max_wall_s=fallback_wall,
+                harvest_source=harvest_source,  # type: ignore[arg-type]
+                expected_size=expected_size,  # type: ignore[arg-type]
+                download_output=download_output,
+                purpose=purpose,
+                mission_kind=mission_kind,
+                parent_thread=parent_thread,
+                project_uuid=project_uuid,
+                on_submitted=_on_submitted,
+                on_url_bound=_on_url_bound,
+            )
+        except asyncio.CancelledError:
+            cancelled = CdpGenerateResult(
+                ok=False,
+                body="",
+                execution_id=execution_id,
+                satellite_execution_id=leg_satellite_id[0],
+                prompt_uri=prompt_uri,
+                picker_model=fallback_model.split("/", 1)[-1],
+                stall_stage="worker_cancelled",
+                error="CDP review fallback cancelled",
+            )
+            await finalize_cdp_generate(
+                result=cancelled,
+                request_id=request_id,
+                thread_id=thread_id,
+                to_agent=to_agent,
+                pointer_turn=pointer_turn,
+                via="worker",
+            )
+            raise
+        except Exception:
+            logger.exception(
+                "cdp review fallback crashed: execution_id=%s model=%s",
+                execution_id,
+                fallback_model,
+            )
+            result = note_unadopted_review_fallback(
+                result,
+                fallback_model=fallback_model,
+                fallback_execution_id=fallback_execution_id,
+                stall_stage="worker_crash",
+            )
+        else:
+            if adopt_review_fallback(ok=fallback.ok, body=fallback.body):
+                result = rebase_review_fallback(
+                    fallback,
+                    original_execution_id=execution_id,
+                    original_model_id=model_id,
+                    fallback_model=fallback_model,
+                    primary_satellite_execution_id=result.satellite_execution_id,
+                )
+            else:
+                result = note_unadopted_review_fallback(
+                    result,
+                    fallback_model=fallback_model,
+                    fallback_execution_id=fallback.execution_id,
+                    stall_stage=fallback.stall_stage,
+                )
 
     await finalize_cdp_generate(
         result=result,

@@ -30,6 +30,7 @@ IMPLEMENT_ALLOW = frozenset(
         "dispatch",
         "manage",
         "observability",
+        "team_dispatch",
     }
 )
 LIFE_ONLY = frozenset({"imprint", "recall", "delegate", "notify"})
@@ -38,7 +39,6 @@ HIDDEN_FROM_IMPLEMENT = frozenset(
         "rag",
         "retrieve",
         "pipeline",
-        "team_dispatch",
         "panel_dispatch",
     }
 )
@@ -62,9 +62,17 @@ def test_residual_falls_back_to_code_primaries() -> None:
     assert derive_contract_primary_tools("", CANONICAL_YAML) == code
 
 
-def test_implement_hides_team_dispatch() -> None:
+def test_implement_lists_team_dispatch_for_review_gate() -> None:
+    """Nested implement seats see team_dispatch; the bridge gates the call."""
     tools = derive_contract_primary_tools("implement", CANONICAL_YAML)
-    assert "team_dispatch" not in tools
+    assert "team_dispatch" in tools
+
+
+def test_top_level_conductor_contract_includes_team_dispatch() -> None:
+    """handoff=conductor has no contract_primary_domains row, so the full code set."""
+    code = derive_surface_primary_tools("code", CANONICAL_YAML)
+    assert derive_contract_primary_tools("conductor", CANONICAL_YAML) == code
+    assert "team_dispatch" in code
 
 
 def test_allow_list_subset_of_code_primaries() -> None:

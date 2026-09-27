@@ -16,6 +16,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from scripts.mcp_bridge_contract_filter import (  # noqa: E402
     FILTERED_CONTRACTS,
     ULG_MCP_CONTRACT_ENV,
+    _copy_downstream,
     filter_tools_list_payload,
     read_framed_message,
     should_filter_stdio,
@@ -91,3 +92,89 @@ def test_bridge_main_always_proxies_no_execve() -> None:
 
 def test_filter_fixture_json_serializable() -> None:
     json.dumps(TOOLS_LIST_FIXTURE)
+
+
+def _tools_call(arguments: dict) -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "tools/call",
+        "params": {"name": "team_dispatch", "arguments": arguments},
+    }
+
+
+def _drive_downstream(
+    message: dict, *, review_gate: bool
+) -> tuple[dict | None, dict | None]:
+    client_in = io.BytesIO()
+    write_framed_message(client_in, message)
+    client_in.seek(0)
+    child_in = io.BytesIO()
+    client_out = io.BytesIO()
+    _copy_downstream(
+        child_in,
+        client_in,
+        pending_methods={},
+        review_gate=review_gate,
+        allow=frozenset({"team_dispatch", "cortex"}) if review_gate else None,
+        client_out=client_out,
+    )
+    child_in.seek(0)
+    client_out.seek(0)
+    forwarded = read_framed_message(child_in)
+    refused = read_framed_message(client_out)
+    return forwarded, refused
+
+
+_REVIEW_ARGS = {
+    "op": "generate",
+    "model": "cdp/opus-5",
+    "purpose": "review",
+    "contract": "none",
+    "prompt": "diff",
+    "dispatch_thread_id": "1",
+}
+
+
+def test_nested_filter_forwards_review_and_refuses_implement_spawn() -> None:
+    forwarded, refused = _drive_downstream(_tools_call(_REVIEW_ARGS), review_gate=True)
+    assert forwarded == _tools_call(_REVIEW_ARGS)
+    assert refused is None
+    spawn = {
+        "op": "generate",
+        "seat": "cursor-sdk",
+        "contract": "implement",
+        "model": "cursor/composer-2.5",
+    }
+    forwarded, refused = _drive_downstream(_tools_call(spawn), review_gate=True)
+    assert forwarded is None
+    assert refused is not None
+    assert refused["error"]["code"] == -32602
+
+
+def test_nested_filter_refuses_panel_dispatch_by_name() -> None:
+    message = {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "tools/call",
+        "params": {"name": "panel_dispatch", "arguments": {"op": "generate"}},
+    }
+    forwarded, refused = _drive_downstream(message, review_gate=True)
+    assert forwarded is None
+    assert refused is not None
+    assert "panel_dispatch" in refused["error"]["message"]
+
+
+def test_top_level_unfiltered_forwards_arbitrary_team_dispatch() -> None:
+    """conductor handoff does not set ULG_MCP_CONTRACT, so the review gate is off."""
+    assert not should_filter_stdio({ULG_MCP_CONTRACT_ENV: "conductor"})
+    assert "conductor" not in FILTERED_CONTRACTS
+    spawn = {
+        "op": "generate",
+        "seat": "cursor-sdk",
+        "contract": "implement",
+        "model": "cursor/composer-2.5",
+    }
+    forwarded, refused = _drive_downstream(_tools_call(spawn), review_gate=False)
+    assert forwarded == _tools_call(spawn)
+    assert refused is None

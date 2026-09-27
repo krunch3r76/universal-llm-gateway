@@ -323,6 +323,8 @@ def build_mcp_servers(
     if substrate_ctx is not None:
         env[CURSOR_SDK_DISPATCH_ID_ENV] = substrate_ctx.dispatch_id
         env[ULG_STEER_SPOOL_DIR_ENV] = str(steer_spool_dir())
+        if substrate_ctx.thread_id:
+            env["ULG_DISPATCH_THREAD_ID"] = substrate_ctx.thread_id
     return {
         _VORTEX_MCP_SERVER: StdioMcpServerConfig(
             command=sys.executable,

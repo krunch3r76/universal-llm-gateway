@@ -367,6 +367,7 @@ def test_mcp_servers_stamp_steer_env_from_substrate_ctx(
     env = build_mcp_servers(repo, substrate_ctx=ctx)["vortex-code"].env or {}
     assert env.get(CURSOR_SDK_DISPATCH_ID_ENV) == "disp-steer"
     assert env.get(ULG_STEER_SPOOL_DIR_ENV) == str(tmp_path / "steer-spool")
+    assert env.get("ULG_DISPATCH_THREAD_ID") == "10479"
 
 
 def test_build_agent_options_passes_substrate_to_mcp_servers(

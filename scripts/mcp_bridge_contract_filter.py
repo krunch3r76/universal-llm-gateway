@@ -2,9 +2,12 @@
 
 Every nest crosses this bidirectional JSON-RPC proxy (``fastmcp-remote`` child).
 When ``ULG_MCP_CONTRACT`` is ``implement`` or ``pure-mechanical``, upstream
-``tools/list`` responses are trimmed to ``contract_primary_domains``. Steer
-directives append as a second ``result.content`` block on ``tools/call``
-responses only (``mcp_bridge_steer_inject``).
+``tools/list`` responses are trimmed to ``contract_primary_domains``. Those
+seats may call ``team_dispatch`` only in the G6 review shape
+(``libs/g6_review_class.py``); every other ``team_dispatch`` tools/call is
+refused here and never forwarded. Steer directives append as a second
+``result.content`` block on ``tools/call`` responses only
+(``mcp_bridge_steer_inject``).
 """
 
 from __future__ import annotations
@@ -13,15 +16,19 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Any, BinaryIO
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _MCP_SERVER_DIR = _REPO_ROOT / "services" / "mcp-server"
-if str(_MCP_SERVER_DIR) not in sys.path:
-    sys.path.insert(0, str(_MCP_SERVER_DIR))
+_LIBS_DIR = _REPO_ROOT / "libs"
+for _path in (_LIBS_DIR, _MCP_SERVER_DIR):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
 from endpoint_surface import derive_contract_primary_tools  # noqa: E402
+from g6_review_class import refuse_filtered_tools_call  # noqa: E402
 
 from scripts.mcp_bridge_steer_inject import (  # noqa: E402
     CURSOR_SDK_DISPATCH_ID_ENV,
@@ -31,15 +38,20 @@ from scripts.mcp_bridge_steer_inject import (  # noqa: E402
 )
 
 ULG_MCP_CONTRACT_ENV = "ULG_MCP_CONTRACT"
+ULG_DISPATCH_THREAD_ENV = "ULG_DISPATCH_THREAD_ID"
 FILTERED_CONTRACTS: frozenset[str] = frozenset({"implement", "pure-mechanical"})
-_LIFE_ONLY_TOOLS: frozenset[str] = frozenset({"imprint", "recall", "delegate", "notify"})
+_LIFE_ONLY_TOOLS: frozenset[str] = frozenset(
+    {"imprint", "recall", "delegate", "notify"}
+)
 _HIDDEN_FROM_IMPLEMENT: frozenset[str] = frozenset(
     {
+        # Not the call gate. Enforcement is refuse_filtered_tools_call plus
+        # contract_primary_domains. This set is unused documentation of names
+        # the implement allow list still omits.
         "rag",
         "retrieve",
         "cursor_request",
         "pipeline",
-        "team_dispatch",
         "panel_dispatch",
     }
 )
@@ -108,7 +120,9 @@ def read_framed_message(stream: BinaryIO) -> dict[str, Any] | None:
 
 def write_framed_message(stream: BinaryIO, payload: dict[str, Any]) -> None:
     """Write one MCP stdio message as a single NDJSON line."""
-    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
     stream.write(body)
     stream.write(b"\n")
     stream.flush()
@@ -134,7 +148,9 @@ def _is_tools_call_result(
     return isinstance(content, list) and bool(content)
 
 
-def _maybe_inject_steer(message: dict[str, Any], pending_methods: dict[Any, str]) -> dict[str, Any]:
+def _maybe_inject_steer(
+    message: dict[str, Any], pending_methods: dict[Any, str]
+) -> dict[str, Any]:
     if not _is_tools_call_result(message, pending_methods):
         return message
     dispatch_id = os.environ.get(CURSOR_SDK_DISPATCH_ID_ENV, "").strip()
@@ -154,6 +170,7 @@ def _copy_upstream(
     *,
     allow: frozenset[str] | None,
     pending_methods: dict[Any, str],
+    client_out_lock: threading.Lock | None = None,
 ) -> None:
     while True:
         message = read_framed_message(upstream)
@@ -162,7 +179,11 @@ def _copy_upstream(
         if allow is not None:
             message = filter_tools_list_payload(message, allow)
         message = _maybe_inject_steer(message, pending_methods)
-        write_framed_message(downstream, message)
+        if client_out_lock is None:
+            write_framed_message(downstream, message)
+        else:
+            with client_out_lock:
+                write_framed_message(downstream, message)
 
 
 def _copy_downstream(
@@ -170,11 +191,29 @@ def _copy_downstream(
     upstream: BinaryIO,
     *,
     pending_methods: dict[Any, str],
+    review_gate: bool = False,
+    allow: frozenset[str] | None = None,
+    seat_thread: str | None = None,
+    client_out: BinaryIO | None = None,
+    client_out_lock: threading.Lock | None = None,
 ) -> None:
     while True:
         message = read_framed_message(upstream)
         if message is None:
             break
+        if review_gate and allow is not None:
+            refusal = refuse_filtered_tools_call(
+                message, allow=allow, seat_thread=seat_thread
+            )
+            if refusal is not None:
+                if client_out is None:
+                    raise RuntimeError("review gate refusal requires client_out")
+                if client_out_lock is None:
+                    write_framed_message(client_out, refusal)
+                else:
+                    with client_out_lock:
+                        write_framed_message(client_out, refusal)
+                continue
         msg_id = message.get("id")
         method = message.get("method")
         if msg_id is not None and isinstance(method, str):
@@ -199,10 +238,10 @@ def run_filtered_stdio_proxy(
     )
     assert proc.stdin is not None
     assert proc.stdout is not None
-    import threading
 
     pending_methods: dict[Any, str] = {}
     upstream_err: list[BaseException] = []
+    client_out_lock = threading.Lock()
 
     def _upstream_worker() -> None:
         try:
@@ -211,6 +250,7 @@ def run_filtered_stdio_proxy(
                 sys.stdout.buffer,
                 allow=allow,
                 pending_methods=pending_methods,
+                client_out_lock=client_out_lock,
             )
         except BaseException as exc:  # noqa: BLE001
             upstream_err.append(exc)
@@ -227,6 +267,11 @@ def run_filtered_stdio_proxy(
             proc.stdin,
             sys.stdin.buffer,
             pending_methods=pending_methods,
+            review_gate=allow is not None,
+            allow=allow,
+            seat_thread=(child_env.get(ULG_DISPATCH_THREAD_ENV) or "").strip() or None,
+            client_out=sys.stdout.buffer,
+            client_out_lock=client_out_lock,
         )
     finally:
         try:
