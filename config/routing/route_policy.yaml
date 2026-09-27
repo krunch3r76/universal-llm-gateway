@@ -102,12 +102,12 @@ workflows:
     model: cursor/grok-4.7
     contracts: [answer, confer, ask, verify, execute, propagate, sketch, none, conductor]
   check_review:
-    # Standing default is the primary Cursor Models pool. Second-pool ids
-    # (muse, fable, terra, sol, luna) stay explicit pins only — budget stays on
-    # primary pool and CDP until a usage-open switch exists. role=reviewer
-    # omit-model coerces to seat=cursor-sdk + this model.
+    # Reviewer omit-model is judgment, so it uses the same model as
+    # workflows.auto_judgment. Second-pool ids (muse, fable, terra, sol, luna)
+    # stay explicit pins. role=reviewer omit-model coerces to seat=cursor-sdk
+    # + this model. Grok's bus delivery role is skeptic.
     seat: cursor-sdk
-    model: cursor/composer-2.5
+    model: cursor/grok-4.7
     contracts: []
 
 # Per-model policy keyed by bare cursor id (CURSOR_MODEL_CAPABILITIES key).

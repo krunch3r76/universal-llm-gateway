@@ -20,12 +20,12 @@ from implement_admission.workflow_registry import (
 pytestmark = pytest.mark.offline
 
 
-def test_standing_default_is_primary_pool_composer() -> None:
+def test_standing_default_is_judgment_grok() -> None:
     policy = load_route_policy()
-    assert load_check_review_default_model(policy) == "cursor/composer-2.5"
+    assert load_check_review_default_model(policy) == "cursor/grok-4.7"
     assert CHECK_REVIEW_DECISION_CITATION in "decision:code-review-panel-cursor-substrate"
     entry = policy["workflows"][CHECK_REVIEW_WORKFLOW]
-    assert entry["model"] == "cursor/composer-2.5"
+    assert entry["model"] == "cursor/grok-4.7"
     assert entry["seat"] == "cursor-sdk"
     assert "cursor/muse-spark-1.3" not in entry["model"]
     assert "cursor/gpt-5.6-terra" not in entry["model"]
@@ -45,12 +45,10 @@ def test_route_policy_conformance() -> None:
 
 def test_resolve_reviewer_omit_uses_cursor_default() -> None:
     resolution = resolve_check_review_model("reviewer", None)
-    assert resolution.resolved_model == "cursor/composer-2.5"
+    assert resolution.resolved_model == "cursor/grok-4.7"
     assert resolution.substrate == "cursor-sdk"
-    # Composer is mechanical. Giving it a check-review delivery role makes
-    # evaluate_check_review_admission 422 profile_mismatch, so the standing
-    # default carries no delivery role. Explicit second-pool pins still do.
-    assert resolution.delivery_from_role is None
+    # grok-4.7 is a reasoner; cursor_delivery_from_role maps it to skeptic.
+    assert resolution.delivery_from_role == "skeptic"
 
 
 def test_coerce_omit_reviewer_to_cursor_seat() -> None:
@@ -60,7 +58,7 @@ def test_coerce_omit_reviewer_to_cursor_seat() -> None:
     assert coerced is True
     assert role is None
     assert seat == "cursor-sdk"
-    assert model == "cursor/composer-2.5"
+    assert model == "cursor/grok-4.7"
 
 
 def test_coerce_skips_when_explicit_openai() -> None:
