@@ -99,6 +99,7 @@ class DischargeResult:
     refused_reason: str | None = None
     probe: LandProbe | None = None
     inherited: bool = False
+    worktree_release: str | None = None
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -257,6 +258,7 @@ def _finish(
     root = repo.resolve()
     rev = _git(root, "rev-parse", "--verify", f"{branch_name}^{{commit}}")
     tip_sha = rev.stdout.strip() if rev.returncode == 0 else None
+    worktree_release: str | None = None
 
     record = _record_for_branch(source_repo=root, branch_name=branch_name)
     if (
@@ -294,6 +296,8 @@ def _finish(
             allow_unharvested=True,
             ignore_dispatch_id=completing_dispatch_id,
         )
+        if release.deferred_to_caller:
+            worktree_release = "deferred_to_caller"
         if not release.released and release.refusal is not None:
             return DischargeResult(
                 discharged=False,
@@ -320,6 +324,7 @@ def _finish(
                 refused_reason=(
                     "archive failed — refusing to delete an unarchived tip"
                 ),
+                worktree_release=worktree_release,
             )
         archive_skipped_reason = "tip_unreachable"
 
@@ -332,6 +337,7 @@ def _finish(
             tip_sha=tip_sha,
             archive_tag=archive_tag,
             refused_reason=error,
+            worktree_release=worktree_release,
         )
 
     debt = get_branch_debt(branch_name=branch_name)
@@ -359,6 +365,7 @@ def _finish(
         tip_sha=tip_sha,
         archive_tag=archive_tag,
         archive_skipped_reason=archive_skipped_reason,
+        worktree_release=worktree_release,
     )
 
 
@@ -411,6 +418,7 @@ def discharge_landed(
         refused_reason=result.refused_reason,
         probe=probe,
         inherited=result.inherited,
+        worktree_release=result.worktree_release,
     )
 
 

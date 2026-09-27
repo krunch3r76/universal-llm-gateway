@@ -309,6 +309,7 @@ def worktree_held_by_live_bridge(
     worktree_root: Path | None = None,
     occupancy: list[BridgeOccupancy] | None = None,
     fresh: bool = False,
+    ignore_dispatch_id: str | None = None,
 ) -> int | None:
     """Pid of a live bridge standing in ``worktree_path``, or ``None`` if free.
 
@@ -317,6 +318,13 @@ def worktree_held_by_live_bridge(
     caller knows the tree but not the root.
 
     ``fresh=True`` drops the occupancy cache and rescans process truth.
+
+    ``ignore_dispatch_id`` is the dispatch discharging its own branch. That
+    bridge is not a hold: its row, lease, and cwd must not refuse the
+    discharge. Callers that still need to keep the directory (the process is
+    standing in it) ask ``completing_dispatch_blocks_directory_remove``.
+    Reapers omit this argument, so a live completing bridge still blocks a
+    sweep from deleting the tree out from under itself.
     """
     if fresh:
         reset_occupancy_cache()
@@ -324,6 +332,12 @@ def worktree_held_by_live_bridge(
     root = (worktree_root or worktree_path.parent).resolve()
     bridges = occupancy if occupancy is not None else _occupancy_snapshot()
     for bridge in bridges:
+        if (
+            ignore_dispatch_id
+            and bridge.dispatch_id
+            and bridge.dispatch_id == ignore_dispatch_id
+        ):
+            continue
         claims = set()
         stale = bool(bridge.dispatch_id) and _dispatch_claim_stale(bridge.dispatch_id)
         if bridge.cwd and not stale:
@@ -340,3 +354,43 @@ def worktree_held_by_live_bridge(
             except (OSError, RuntimeError):
                 continue
     return None
+
+
+def completing_dispatch_blocks_directory_remove(
+    *,
+    worktree_path: Path,
+    dispatch_id: str,
+    worktree_root: Path | None = None,
+    occupancy: list[BridgeOccupancy] | None = None,
+    fresh: bool = False,
+) -> bool:
+    """Whether deleting ``worktree_path`` now would pull the cwd out from under the caller.
+
+    The completing dispatch is not a ``live_bridge`` hold. Deleting the
+    directory is still unsafe when one of its bridges has a cwd inside the
+    tree, or when that cwd cannot be read: a missing cwd is not proof the
+    process is elsewhere. A cwd resolved outside the tree does not block
+    removal (the lane-A case: the hold was a lease or registry claim).
+    """
+    if not dispatch_id:
+        return False
+    if fresh:
+        reset_occupancy_cache()
+    target = worktree_path.resolve()
+    root = (worktree_root or worktree_path.parent).resolve()
+    bridges = occupancy if occupancy is not None else _occupancy_snapshot()
+    for bridge in bridges:
+        if bridge.dispatch_id != dispatch_id:
+            continue
+        if not bridge.cwd:
+            return True
+        try:
+            cwd_path = Path(bridge.cwd).resolve()
+        except (OSError, RuntimeError):
+            return True
+        if cwd_path == target:
+            return True
+        resolved = containing_worktree_under_root(path=cwd_path, worktree_root=root)
+        if resolved == str(target):
+            return True
+    return False
