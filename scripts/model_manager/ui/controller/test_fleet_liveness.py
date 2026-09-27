@@ -140,7 +140,10 @@ def test_deleted_path_keeps_mtime_unknown_and_reports_probe_error(
         probe,
         "run",
         lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            args=["git"], returncode=0, stdout=" D services/universal-stargate/app.py\0", stderr=""
+            args=["git"],
+            returncode=0,
+            stdout=" D services/universal-stargate/app.py\0",
+            stderr="",
         ),
     )
     result = probe.tree_probe(tmp_path)
@@ -209,13 +212,17 @@ def test_snapshot_marks_tree_motion(monkeypatch: pytest.MonkeyPatch, tmp_path) -
             "error": "test",
         },
     )
-    monkeypatch.setattr(live, "_process_start", lambda _pid: {
-        "kind": "host_proc_start",
-        "value_utc": "2026-08-15T00:00:00Z",
-        "granularity_s": 0.001,
-        "clock_domain": "host_proc",
-        "error": None,
-    })
+    monkeypatch.setattr(
+        live,
+        "_process_start",
+        lambda _pid: {
+            "kind": "host_proc_start",
+            "value_utc": "2026-08-15T00:00:00Z",
+            "granularity_s": 0.001,
+            "clock_domain": "host_proc",
+            "error": None,
+        },
+    )
     result = live.build_snapshot(tmp_path, SimpleNamespace())
     assert result["tree_moved_during_probe"] is True
     path = next(
@@ -397,15 +404,17 @@ def test_code_ref_validation_labeled_derived_under_manage_authority(
     monkeypatch.setattr(
         live,
         "_service_info",
-        lambda _state, service: ServiceInfo(
-            name="git-integration-worker",
-            status=ServiceStatus.UNHEALTHY,
-            pid=123,
-            health_url="http://127.0.0.1:8791/health",
-            detail="PID 123, health probe failed",
-        )
-        if service == "git_integration_worker"
-        else ServiceInfo(name=service, status=ServiceStatus.RUNNING, pid=1),
+        lambda _state, service: (
+            ServiceInfo(
+                name="git-integration-worker",
+                status=ServiceStatus.UNHEALTHY,
+                pid=123,
+                health_url="http://127.0.0.1:8791/health",
+                detail="PID 123, health probe failed",
+            )
+            if service == "git_integration_worker"
+            else ServiceInfo(name=service, status=ServiceStatus.RUNNING, pid=1)
+        ),
     )
     monkeypatch.setattr(
         live,
@@ -490,3 +499,88 @@ def test_mcp_reported_version_qualifies_working_tree_label(
         "source_sync_worktree_state": "dirty",
         "error": None,
     }
+
+
+def _git(repo, *args: str) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return proc.stdout.strip()
+
+
+def test_index_behind_head_when_ref_moves_without_checkout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """A ref-only advance of an on-load-surface path is index_behind_head."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "master")
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "test")
+    path = repo / "services" / "git_integration_worker" / "stale_probe.py"
+    path.parent.mkdir(parents=True)
+    path.write_text("old\n", encoding="utf-8")
+    _git(repo, "add", "services/git_integration_worker/stale_probe.py")
+    _git(repo, "commit", "-m", "old")
+    _git(repo, "checkout", "-b", "lane")
+    path.write_text("new\n", encoding="utf-8")
+    _git(repo, "add", "services/git_integration_worker/stale_probe.py")
+    _git(repo, "commit", "-m", "new")
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "master")
+    _git(repo, "update-ref", "refs/heads/master", head)
+    assert path.read_text(encoding="utf-8") == "old\n"
+
+    monkeypatch.setattr(
+        live,
+        "_service_info",
+        lambda _state, service: ServiceInfo(
+            name=service, status=ServiceStatus.RUNNING, pid=123
+        ),
+    )
+    monkeypatch.setattr(
+        live,
+        "_container_start",
+        lambda _container: {
+            "kind": "container_started_at",
+            "value_utc": None,
+            "granularity_s": 0.001,
+            "clock_domain": "docker_host",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_mcp_reported_version",
+        lambda _container: {
+            "field": "code_version",
+            "value": None,
+            "denotes": "test",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_process_start",
+        lambda _pid: {
+            "kind": "host_proc_start",
+            "value_utc": "2026-08-15T00:00:00Z",
+            "granularity_s": 0.001,
+            "clock_domain": "host_proc",
+            "error": None,
+        },
+    )
+    result = live.build_snapshot(repo, SimpleNamespace())
+    checkout = result["checkout"]
+    print("CHECKOUT_VERDICT=" + str(checkout["verdict"]))
+    print("INDEX_BEHIND_PATHS=" + str(checkout["index_behind_head_paths"]))
+    print("CHECKOUT_HEAD=" + str(checkout["head_sha"]))
+    assert checkout["verdict"] == "index_behind_head"
+    assert (
+        "services/git_integration_worker/stale_probe.py"
+        in checkout["index_behind_head_paths"]
+    )
+    assert path.read_text(encoding="utf-8") == "old\n"

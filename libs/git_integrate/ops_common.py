@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -22,8 +23,10 @@ from git_integrate.git_cas import (
     reset_hard_to,
 )
 from git_integrate.git_identity import integrate_git_env_vars
+from git_integrate.hub_tree_sync import apply_hub_sync, plan_hub_sync
 from git_integrate.schema import (
     RC_CAS_EXHAUSTED,
+    RC_DIRTY_MASTER,
     RC_GATE_FAILED,
     RC_INTEGRATE_CONFLICT,
 )
@@ -96,7 +99,9 @@ async def integrate_retry_loop(
     """Merge, gate, and CAS-advance master with optimistic retry.
 
     Returns a success dict with ``master_sha`` and ``merge_commit``, or a
-    rejected envelope on failure.
+    rejected envelope on failure. After a successful CAS, clean landed
+    paths are checked out on the master worktree. Divergent dirt on those
+    paths refuses the CAS and reports ``NOT landed@working-tree``.
     """
     for attempt in range(1, max_attempts + 1):
         master_before = await current_sha(source_repo, "refs/heads/master")
@@ -123,6 +128,38 @@ async def integrate_retry_loop(
                 duration_s=time.monotonic() - t0,
             )
 
+        candidate = await current_sha(worktree_path, "HEAD")
+
+        async def _refuse_blocked(sync_plan: Any) -> dict[str, Any] | None:
+            if not sync_plan.blocked:
+                return None
+            await reset_hard_to(worktree_path, arc_tip_before)
+            reason = "NOT landed@working-tree\n" + sync_plan.porcelain
+            emit_git_integrate_rejected(
+                integration_id=integration_id,
+                reason_code=RC_DIRTY_MASTER,
+                reason=reason,
+                arc=arc,
+                phase=phase,
+            )
+            return envelope(
+                integration_id=integration_id,
+                status="rejected",
+                reason_code=RC_DIRTY_MASTER,
+                reason=reason,
+                working_tree="NOT landed@working-tree",
+                hub_porcelain=sync_plan.porcelain,
+                attempt=attempt,
+                duration_s=time.monotonic() - t0,
+            )
+
+        plan = await asyncio.to_thread(
+            plan_hub_sync, source_repo, master_before, candidate
+        )
+        refused = await _refuse_blocked(plan)
+        if refused is not None:
+            return refused
+
         gate = await _run_command(
             green_gate_cmd, cwd=worktree_path, timeout=_GATE_TIMEOUT
         )
@@ -147,6 +184,13 @@ async def integrate_retry_loop(
                 **_bounded_gate_output(gate.stdout, gate.stderr),
             )
 
+        plan = await asyncio.to_thread(
+            plan_hub_sync, source_repo, master_before, candidate
+        )
+        refused = await _refuse_blocked(plan)
+        if refused is not None:
+            return refused
+
         adv = await advance_master_cas(
             source_repo, worktree_path, expected=master_before
         )
@@ -160,10 +204,27 @@ async def integrate_retry_loop(
             )
             continue
 
+        working_tree = "no_master_checkout"
+        hub_porcelain = ""
+        if plan.checkout:
+            # Re-planning after CAS treats the stale checkout as dirt: HEAD
+            # already names the new blob, so a path we are about to update
+            # shows modified. The second plan, above, is the one that runs
+            # after the gate and before the ref moves.
+            hub_porcelain = await asyncio.to_thread(
+                apply_hub_sync, plan, adv.new_sha
+            )
+            working_tree = (
+                "NOT landed@working-tree"
+                if hub_porcelain.strip()
+                else "landed@working-tree"
+            )
         return {
             "master_sha": adv.new_sha,
             "merge_commit": merged.merge_commit,
             "attempt": attempt,
+            "working_tree": working_tree,
+            "hub_porcelain": hub_porcelain,
         }
 
     emit_git_integrate_rejected(

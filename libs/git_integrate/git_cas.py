@@ -5,15 +5,13 @@ diff_sha256 is synchronous (called from
 validate_integrate which runs in run_in_executor).
 
 Ref-advance shape chosen: direct CAS on refs/heads/master via
-``git update-ref refs/heads/master <new> <old>``. The worker layer must
-ensure master is NOT checked out as HEAD of any linked worktree it
-controls (Git ≥2.35 worktree HEAD protection). The live developer
-checkout pulls --ff-only on its own cadence; integration never writes
-to the live working tree.
-
-If the worker cannot guarantee the above, the worker layer should
-switch to advancing refs/integration/master (A″ shape) instead —
-the lib CAS call site is a single-line change in that case.
+``git update-ref refs/heads/master <new> <old>``. That primitive does
+not touch an index or a worktree. When master is checked out, the
+update still moves HEAD and leaves the index and worktree behind;
+``git merge --ff-only`` is then a no-op. The land loop checks out only
+the landed paths, and refuses when those paths diverge. A successful
+CAS is not ``landed@working-tree`` by itself. Origin push stays
+operator-discretionary.
 """
 
 from __future__ import annotations

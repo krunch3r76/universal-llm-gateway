@@ -30,17 +30,18 @@ from git_integrate.validate import validate_integrate, validate_land
 
 _logger = get_logger(__name__)
 
-# Land-report disambiguation (thread 1153): a land advances the *ref*
-# refs/heads/master in source_repo — the authoritative land target. The live
-# working checkout ff-pulls on its own cadence and origin push is
-# operator-discretionary; neither is implied by a completed land. Reconcile
-# "landed" claims against the ref (via git_cas.is_reachable_from_master /
-# GET /api/v1/git/reachable), never a working tree's HEAD.
+# Land-report disambiguation: master_sha is the tip of refs/heads/master.
+# working_tree says whether the checked-out master index/worktree was updated
+# for the landed paths (landed@working-tree), was not checked out
+# (no_master_checkout), or still disagrees (NOT landed@working-tree).
+# Origin push stays operator-discretionary.
 _LAND_REPORT_NOTE = (
-    "master_sha is the advanced tip of refs/heads/master in source_repo (the "
-    "authoritative land target). The live working checkout ff-pulls on its own "
-    "cadence and origin push is operator-discretionary — neither is implied by "
-    "this land. Reconcile reachability against the ref, not a working tree."
+    "master_sha is the advanced tip of refs/heads/master in source_repo. "
+    "working_tree is landed@working-tree only when the checked-out master "
+    "index and worktree match that tip on the landed paths. "
+    "no_master_checkout means no worktree had master checked out. "
+    "NOT landed@working-tree means those paths were left untouched. "
+    "Origin push is operator-discretionary."
 )
 
 
@@ -215,6 +216,8 @@ async def land_op(
         committed=committed,
         commit_sha=commit_sha,
         duration_s=duration_s,
+        working_tree=loop_result.get("working_tree", ""),
+        hub_porcelain=loop_result.get("hub_porcelain", ""),
     )
     if teardown_warning:
         result["teardown_warning"] = teardown_warning

@@ -1,12 +1,12 @@
 """Path-overlap dirty predicate for master land (S1a dirty_master successor).
 
-Land advances ``refs/heads/master`` via ``update-ref`` and never writes the live
-working tree. Post-land ``pull --ff-only`` is where overlapping dirt surfaces:
-disjoint dirt allows ff-pull; overlapping dirty paths refuse (git overwrite
-guard). This module refuses land only when a checked-out master worktree has
-porcelain dirt on a landing path whose bytes diverge from the arc tip — the
-class where WIP content disagrees with what master would become. Byte-identical
-overlap and disjoint-only dirt are allowed.
+The CAS primitive advances ``refs/heads/master`` via ``update-ref``. The land
+loop then checks out only the landed paths on a master worktree when those
+paths are clean or byte-identical to the incoming blob. This module refuses
+before that checkout when a checked-out master worktree has porcelain dirt on
+a landing path whose bytes diverge from the arc tip. The refusal is
+``NOT landed@working-tree`` plus the porcelain line, and the path is not
+written. Byte-identical overlap and disjoint-only dirt are allowed.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ def landing_path_names(worktree_path: str) -> frozenset[str]:
 
 
 def _parse_porcelain_paths(porcelain: str) -> frozenset[str]:
-    """Parse ``git status --porcelain`` paths (rename takes the destination)."""
+    """Parse text porcelain. Prefer ``status_paths_z``; quotes break this form."""
     paths: set[str] = set()
     for line in porcelain.splitlines():
         if len(line) < 4:
@@ -82,25 +82,41 @@ def _parse_porcelain_paths(porcelain: str) -> frozenset[str]:
         if " -> " in body:
             body = body.split(" -> ", 1)[1]
         rel = body.strip()
+        if len(rel) >= 2 and rel[0] == '"' and rel[-1] == '"':
+            rel = rel[1:-1]
         if rel:
             paths.add(rel)
     return frozenset(paths)
 
 
-def _porcelain_paths(worktree_path: str) -> frozenset[str]:
-    """Return dirty/untracked paths in ``worktree_path``, or empty on failure."""
+def _path_porcelain(worktree_path: str, rel_path: str) -> str:
+    """Porcelain line for one path, or empty when the path is clean."""
     try:
         proc = subprocess.run(
-            ["git", "-C", worktree_path, "status", "--porcelain"],
+            ["git", "-C", worktree_path, "status", "--porcelain", "--", rel_path],
             capture_output=True,
             text=True,
             timeout=_GIT_TIMEOUT,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return frozenset()
+        return ""
     if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def _porcelain_paths(worktree_path: str) -> frozenset[str]:
+    """Return dirty/untracked paths in ``worktree_path``, or empty on failure.
+
+    ``-z`` keeps paths that contain a space unquoted so they match the
+    landing path set. Text porcelain would quote them and miss the overlap.
+    """
+    from git_integrate.hub_tree_sync import status_paths_z
+
+    found = status_paths_z(worktree_path)
+    if found is None:
         return frozenset()
-    return _parse_porcelain_paths(proc.stdout)
+    return found
 
 
 def _file_bytes(root: str, rel_path: str) -> bytes | None:
@@ -172,8 +188,11 @@ def checked_out_master_dirty(
             landing_bytes = _file_bytes(landing, rel)
             if master_bytes == landing_bytes:
                 continue
+            porcelain = _path_porcelain(worktree_path, rel)
             return True, (
-                f"checked-out master worktree has divergent dirt on landing "
+                "NOT landed@working-tree\n"
+                f"hub-porcelain:{porcelain}\n"
+                "checked-out master worktree has divergent dirt on landing "
                 f"path {rel!r} ({worktree_path!r}); refusing merge-out"
             )
     return False, ""

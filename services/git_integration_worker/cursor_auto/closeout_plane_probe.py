@@ -85,6 +85,8 @@ class PlaneObservation:
     published_origin: bool | None
     unknown_reason: str | None
     as_of: str
+    working_tree_blocked: bool = False
+    hub_porcelain: str | None = None
 
     @property
     def is_unknown(self) -> bool:
@@ -132,9 +134,7 @@ def parse_capture_plane_keys(wrapper_text: str | None) -> CapturePlaneKeys:
     head = data.get("head_sha")
     branch = data.get("branch")
     head_sha = head.strip() if isinstance(head, str) and head.strip() else None
-    branch_name = (
-        branch.strip() if isinstance(branch, str) and branch.strip() else None
-    )
+    branch_name = branch.strip() if isinstance(branch, str) and branch.strip() else None
     if head_sha is not None and not _SHA_RE.match(head_sha):
         head_sha = None
     commits_key_present = "commits_ahead" in data
@@ -238,6 +238,14 @@ def probe_three_planes(
         )
     landed = _is_ancestor_of_ref(source_repo, head_sha, "refs/heads/master")
     published = _is_ancestor_of_ref(source_repo, head_sha, "refs/remotes/origin/master")
+    working_tree_blocked = False
+    hub_porcelain: str | None = None
+    if landed is True:
+        from git_integrate.hub_tree_sync import hub_porcelain_for_sha
+
+        hub_porcelain = hub_porcelain_for_sha(str(source_repo), head_sha)
+        if hub_porcelain is not None and hub_porcelain.strip():
+            working_tree_blocked = True
     return PlaneObservation(
         head_sha=head_sha,
         branch=branch,
@@ -246,6 +254,8 @@ def probe_three_planes(
         published_origin=published,
         unknown_reason=None,
         as_of=stamp,
+        working_tree_blocked=working_tree_blocked,
+        hub_porcelain=hub_porcelain,
     )
 
 
@@ -298,6 +308,12 @@ def apply_landed_admit_gate(
     return replace(plane, landed_local_master=False)
 
 
+def _porcelain_token(porcelain: str | None) -> str:
+    """One headline slot quoting hub porcelain. Newlines cannot split the line."""
+    text = (porcelain or "").replace("\n", " | ").replace("·", "|")
+    return f'hub-porcelain:"{text}"'
+
+
 def _short_sha(sha: str) -> str:
     """Seven-char prefix for plane headline referent (capture tip)."""
     return sha[:7]
@@ -325,8 +341,17 @@ def render_plane_headline(obs: PlaneObservation) -> str:
         return f"plane: unknown@lane-B ({reason})"
     branch_token = f"({obs.branch})" if obs.branch else ""
     parts: list[str] = []
-    if obs.landed_local_master is True:
+    if obs.working_tree_blocked:
+        parts.append("NOT landed@working-tree")
+        parts.append(_porcelain_token(obs.hub_porcelain))
+        if obs.landed_local_master is True:
+            parts.append("ref@local-master")
+        elif obs.landed_local_master is False:
+            parts.append("NOT landed@local-master")
+    elif obs.landed_local_master is True:
         parts.append("landed@local-master")
+        if obs.hub_porcelain is not None:
+            parts.append(_porcelain_token(obs.hub_porcelain))
     elif obs.landed_local_master is False:
         if obs.commit_exists is True:
             parts.append(f"tip@lane-B{branch_token}")
@@ -367,9 +392,9 @@ def qualify_checkpoint_value(checkpoint: str) -> str:
     if text.startswith("authored_cortex:"):
         return "authored_cortex@local-master:" + text[len("authored_cortex:") :]
     if text.startswith("baseline_unavailable:"):
-        return "baseline_unavailable@local-master:" + text[
-            len("baseline_unavailable:") :
-        ]
+        return (
+            "baseline_unavailable@local-master:" + text[len("baseline_unavailable:") :]
+        )
     return text
 
 
@@ -505,8 +530,7 @@ def annotate_checkpoint_claim_discrepancy(
     claim_display = qualify_checkpoint_value(normalize_checkpoint_value(claim.strip()))
     measure_display = measurement.strip()
     return (
-        f"checkpoint_claim@§2 {claim_display} "
-        f"while checkpoint@infra {measure_display}"
+        f"checkpoint_claim@§2 {claim_display} while checkpoint@infra {measure_display}"
     )
 
 
@@ -552,9 +576,7 @@ def annotate_plane_discrepancy(
             and deployment_state
             and "authored-not-committed" in deployment_state
         ):
-            markers.append(
-                "deployment_state@local-master lags landed@local-master"
-            )
+            markers.append("deployment_state@local-master lags landed@local-master")
         if (
             plane.landed_local_master is False
             and plane.commit_exists is True
@@ -594,7 +616,11 @@ def inject_plane_discrepancy_line(body: str, *, value: str | None) -> str:
     """Inject an annotate-only ``plane-discrepancy:`` marker; no-op when value is None."""
     if not value:
         return body
-    line = value if value.startswith("plane-discrepancy:") else f"plane-discrepancy: {value}"
+    line = (
+        value
+        if value.startswith("plane-discrepancy:")
+        else f"plane-discrepancy: {value}"
+    )
     if _PLANE_DISCREPANCY_RE.search(body):
         return _PLANE_DISCREPANCY_RE.sub(line, body, count=1)
     plane_match = _PLANE_LINE_RE.search(body)

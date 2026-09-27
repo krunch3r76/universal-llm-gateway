@@ -120,6 +120,8 @@ async def integrate_op(
         merge_commit=merge_commit,
         master_sha=master_sha,
         duration_s=duration_s,
+        working_tree=loop_result.get("working_tree", ""),
+        hub_porcelain=loop_result.get("hub_porcelain", ""),
     )
     if teardown_warning:
         result["teardown_warning"] = teardown_warning

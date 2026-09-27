@@ -295,9 +295,16 @@ async def master_land_guard(
 
 def dirty_master_envelope(*, exc: DirtyMasterRefused) -> dict[str, str]:
     """Rejected integrate/land envelope for dirty checked-out master."""
+    porcelain = ""
+    for line in exc.reason.splitlines():
+        if line.startswith("hub-porcelain:"):
+            porcelain = line[len("hub-porcelain:") :]
+            break
     return {
         "integration_id": exc.integration_id,
         "status": "rejected",
         "reason_code": RC_DIRTY_MASTER,
         "reason": exc.reason,
+        "working_tree": "NOT landed@working-tree",
+        "hub_porcelain": porcelain,
     }

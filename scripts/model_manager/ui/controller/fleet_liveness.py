@@ -30,6 +30,9 @@ from .fleet_liveness_probe import (
     mcp_reported_version as _mcp_reported_version,
 )
 from .fleet_liveness_probe import (
+    paths_index_behind_head as _paths_index_behind_head,
+)
+from .fleet_liveness_probe import (
     process_start as _process_start,
 )
 from .fleet_liveness_probe import (
@@ -68,9 +71,7 @@ def _path_comparison(
     if service in CONTAINER_SERVICES:
         result["comparison_method"] = "content_hash_in_load_location"
         running_sha = _container_sha(CONTAINER_SERVICES[service][0], path)
-        blob_sha = _git_blob_sha(
-            root, str(reported.get("value") or head_sha), path
-        )
+        blob_sha = _git_blob_sha(root, str(reported.get("value") or head_sha), path)
         result["evidence"] = {
             "load_surface_sha256": running_sha,
             "git_blob_sha256": blob_sha,
@@ -275,7 +276,8 @@ def build_snapshot(
             row["live_sha_claim"] = {"sound": None, "reason": "evidence_indeterminate"}
         row["running_bytes_determinable"] = (
             "yes"
-            if results and all(item["running_bytes_determinable"] == "yes" for item in results)
+            if results
+            and all(item["running_bytes_determinable"] == "yes" for item in results)
             else "no"
         )
         row["matches_reported_sha"] = (
@@ -283,7 +285,8 @@ def build_snapshot(
             if any(item["matches_reported_sha"] == "no" for item in results)
             else (
                 "yes"
-                if results and all(item["matches_reported_sha"] == "yes" for item in results)
+                if results
+                and all(item["matches_reported_sha"] == "yes" for item in results)
                 else "indeterminate"
             )
         )
@@ -295,6 +298,15 @@ def build_snapshot(
                 health_url=row.get("health_url"),
                 activation_validation_id=activation_validation_id,
             )
+
+    behind = _paths_index_behind_head(
+        root, before.get("head_sha"), before.get("paths", {})
+    )
+    behind_set = set(behind)
+    for path_row in before.get("paths", {}).values():
+        if path_row.get("path") in behind_set:
+            path_row["verdict"] = "index_behind_head"
+    checkout_verdict = "index_behind_head" if behind else None
 
     finished = time.time()
     return {
@@ -328,6 +340,8 @@ def build_snapshot(
             "porcelain_raw_open": before.get("raw", ""),
             "porcelain_raw_close": after.get("raw", ""),
             "paths": list(before.get("paths", {}).values()),
+            "verdict": checkout_verdict,
+            "index_behind_head_paths": behind,
         },
         "services": services,
         "probe_errors": before.get("errors", []) + after.get("errors", []),

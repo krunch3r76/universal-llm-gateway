@@ -212,9 +212,7 @@ def process_start(pid: int | None) -> dict[str, Any]:
         fields = stat_text[stat_text.rindex(")") + 1 :].split()
         start_ticks = float(fields[19])
         uptime_s = float(uptime_text.split()[0])
-        started_at = time.time() - uptime_s + start_ticks / os.sysconf(
-            "SC_CLK_TCK"
-        )
+        started_at = time.time() - uptime_s + start_ticks / os.sysconf("SC_CLK_TCK")
     except (OSError, ValueError, IndexError):
         return {
             "kind": "host_proc_start",
@@ -289,11 +287,53 @@ def mcp_reported_version(container: str) -> dict[str, Any]:
             "code_version_semantics", "legacy_source_sync_commit_label"
         ),
         "source_sync_basis": metadata.get("source_basis", "unspecified_legacy"),
-        "source_sync_worktree_state": metadata.get(
-            "working_tree_state", "unknown"
-        ),
+        "source_sync_worktree_state": metadata.get("working_tree_state", "unknown"),
         "error": None if value else "stamp_value_unavailable",
     }
+
+
+def index_behind_head(root: Path, head_sha: str | None, path: str) -> bool:
+    """True when index or worktree bytes for ``path`` are not the blob at ``head_sha``.
+
+    The checkout verdict that consumes this is named ``index_behind_head``.
+    That token covers a ref-only land and any other on-load path whose index
+    or worktree is not the HEAD blob, including an ordinary edit or an
+    untracked file. A hash-object failure is treated as behind so a probe
+    error is not reported as matching HEAD.
+    """
+    if not head_sha:
+        return False
+    head_blob = git(root, "rev-parse", "--verify", "--quiet", f"{head_sha}:{path}")
+    index_blob = git(root, "rev-parse", "--verify", "--quiet", f":{path}")
+    file_path = root / path
+    worktree_blob: str | None = None
+    if file_path.is_file():
+        try:
+            hashed = run(["git", "-C", str(root), "hash-object", "--", path])
+        except (OSError, subprocess.TimeoutExpired):
+            return True
+        if hashed.returncode == 0:
+            worktree_blob = hashed.stdout.strip() or None
+    if head_blob != index_blob:
+        return True
+    if file_path.is_file():
+        return worktree_blob != head_blob
+    return head_blob is not None
+
+
+def paths_index_behind_head(
+    root: Path,
+    head_sha: str | None,
+    paths: dict[str, dict[str, Any]],
+) -> list[str]:
+    """On-load-surface paths whose index or worktree disagrees with ``head_sha``."""
+    behind: list[str] = []
+    for path, row in paths.items():
+        if not row.get("on_load_surface"):
+            continue
+        if index_behind_head(root, head_sha, path):
+            behind.append(path)
+    return behind
 
 
 def git_blob_sha(root: Path, commit: str | None, path: str) -> str | None:

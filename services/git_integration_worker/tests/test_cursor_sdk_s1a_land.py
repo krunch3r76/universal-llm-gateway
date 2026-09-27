@@ -128,6 +128,17 @@ async def test_s1a_land_refuses_overlapping_divergent_dirt(
     dirty, reason = checked_out_master_dirty(str(source_repo), str(wt))
     assert dirty is True
     assert "divergent" in reason.lower()
+    assert "NOT landed@working-tree" in reason
+
+    before_bytes = (source_repo / "feature.py").read_bytes()
+    before_master = _git(
+        "rev-parse", "refs/heads/master", cwd=source_repo
+    ).stdout.strip()
+    before_porcelain = _git(
+        "status", "--porcelain", "--", "feature.py", cwd=source_repo
+    ).stdout
+    print(f"PORCELAIN_BEFORE={before_porcelain!r}")
+    print(f"REV_PARSE_BEFORE={before_master}")
 
     out = await _land_with_master_lease(
         source_repo=source_repo,
@@ -137,6 +148,20 @@ async def test_s1a_land_refuses_overlapping_divergent_dirt(
     )
     assert out["status"] == "rejected"
     assert out["reason_code"] == RC_DIRTY_MASTER
+    assert out["working_tree"] == "NOT landed@working-tree"
+    assert "feature.py" in out["hub_porcelain"]
+    assert (source_repo / "feature.py").read_bytes() == before_bytes
+    after_master = _git(
+        "rev-parse", "refs/heads/master", cwd=source_repo
+    ).stdout.strip()
+    after_porcelain = _git(
+        "status", "--porcelain", "--", "feature.py", cwd=source_repo
+    ).stdout
+    print(f"PORCELAIN_AFTER={after_porcelain!r}")
+    print(f"REV_PARSE_AFTER={after_master}")
+    print(f"HUB_PORCELAIN={out['hub_porcelain']!r}")
+    assert after_master == before_master
+    assert after_porcelain == before_porcelain
 
 
 @pytest.mark.asyncio
@@ -153,6 +178,15 @@ async def test_s1a_land_allows_disjoint_only_dirt(
     assert dirty is False
     assert reason == ""
 
+    before_porcelain = _git(
+        "status", "--porcelain", "--", "feature.py", cwd=source_repo
+    ).stdout
+    before_master = _git(
+        "rev-parse", "refs/heads/master", cwd=source_repo
+    ).stdout.strip()
+    print(f"PORCELAIN_BEFORE={before_porcelain!r}")
+    print(f"REV_PARSE_BEFORE={before_master}")
+
     out = await _land_with_master_lease(
         source_repo=source_repo,
         arc="disjoint-arc",
@@ -161,6 +195,24 @@ async def test_s1a_land_allows_disjoint_only_dirt(
     )
     assert out["status"] == "completed"
     assert out["master_sha"]
+    assert out["working_tree"] == "landed@working-tree"
+    after_porcelain = _git(
+        "status", "--porcelain", "--", "feature.py", cwd=source_repo
+    ).stdout
+    after_master = _git(
+        "rev-parse", "refs/heads/master", cwd=source_repo
+    ).stdout.strip()
+    wip_porcelain = _git(
+        "status", "--porcelain", "--", "operator-wip.py", cwd=source_repo
+    ).stdout
+    print(f"PORCELAIN_AFTER={after_porcelain!r}")
+    print(f"REV_PARSE_AFTER={after_master}")
+    print(f"WIP_PORCELAIN={wip_porcelain!r}")
+    assert after_porcelain.strip() == ""
+    assert after_master == out["master_sha"]
+    assert (source_repo / "feature.py").read_text() == (wt / "feature.py").read_text()
+    assert (source_repo / "operator-wip.py").read_text() == "# unrelated wip\n"
+    assert "operator-wip.py" in wip_porcelain
 
 
 @pytest.mark.asyncio
@@ -210,7 +262,10 @@ async def test_s1a_concurrent_land_loser_remerge_regate(
         return await original_run(cmd, **kwargs)
 
     monkeypatch.setattr("git_integrate.ops_common._run_command", _count_gate)
-    monkeypatch.setattr("git_integrate.events.record", lambda signal, **payload: event_log.append((signal, payload)))
+    monkeypatch.setattr(
+        "git_integrate.events.record",
+        lambda signal, **payload: event_log.append((signal, payload)),
+    )
 
     results = await asyncio.gather(
         _land_with_master_lease(

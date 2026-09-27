@@ -147,7 +147,9 @@ def test_stranded_fixture_headline_grep_visible_not_landed(tmp_path: Path) -> No
         ).returncode
         != 0
     )
-    obs = probe_three_planes(repo, head_sha=head, branch=branch, as_of="2026-08-07T00:00:00Z")
+    obs = probe_three_planes(
+        repo, head_sha=head, branch=branch, as_of="2026-08-07T00:00:00Z"
+    )
     line = render_plane_headline(obs)
     assert "NOT landed@local-master" in line
     assert "tip@lane-B" in line
@@ -174,8 +176,15 @@ def test_ff_landed_fixture_headline_landed_not_published(tmp_path: Path) -> None
     _git(repo, "merge", "--ff-only", branch)
     # no origin/master ref → unknown@origin, not a false unpublished claim...
     # AC5 wants NOT published@origin when origin is behind. Create origin behind.
-    _git(repo, "update-ref", "refs/remotes/origin/master", _git(repo, "rev-parse", "HEAD~1"))
-    obs = probe_three_planes(repo, head_sha=head, branch=branch, as_of="2026-08-07T00:00:00Z")
+    _git(
+        repo,
+        "update-ref",
+        "refs/remotes/origin/master",
+        _git(repo, "rev-parse", "HEAD~1"),
+    )
+    obs = probe_three_planes(
+        repo, head_sha=head, branch=branch, as_of="2026-08-07T00:00:00Z"
+    )
     line = render_plane_headline(obs)
     assert "landed@local-master" in line
     assert "NOT landed@local-master" not in line
@@ -184,6 +193,35 @@ def test_ff_landed_fixture_headline_landed_not_published(tmp_path: Path) -> None
     # Shared-referent shape: SHA at head even when no lane-B rung is shown
     assert line.startswith(f"plane: {head[:7]} · ")
     assert "tip@lane-B" not in line
+
+
+def test_stale_hub_tree_refuses_landed_and_quotes_porcelain(tmp_path: Path) -> None:
+    """Ref advanced without a checkout: landed is refused and porcelain is quoted."""
+    repo = _init_repo(tmp_path)
+    (repo / "landed.txt").write_text("v1\n", encoding="utf-8")
+    _git(repo, "add", "landed.txt")
+    _git(repo, "commit", "-m", "v1")
+    _git(repo, "checkout", "-b", "cursor-sdk/stale")
+    (repo / "landed.txt").write_text("v2\n", encoding="utf-8")
+    _git(repo, "add", "landed.txt")
+    _git(repo, "commit", "-m", "v2")
+    head = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "master")
+    _git(repo, "update-ref", "refs/heads/master", head)
+    assert (repo / "landed.txt").read_text(encoding="utf-8") == "v1\n"
+    obs = probe_three_planes(
+        repo, head_sha=head, branch="cursor-sdk/stale", as_of="2026-09-27T00:00:00Z"
+    )
+    line = render_plane_headline(obs)
+    print(f"PLANE_LINE={line}")
+    assert "NOT landed@working-tree" in line
+    assert "landed@local-master" not in line
+    assert "ref@local-master" in line
+    assert obs.landed_local_master is True
+    assert "landed.txt" in line
+    assert obs.hub_porcelain
+    assert "landed.txt" in obs.hub_porcelain
+    assert (repo / "landed.txt").read_text(encoding="utf-8") == "v1\n"
 
 
 def test_degraded_capture_head_absent_never_upgraded(tmp_path: Path) -> None:
@@ -277,12 +315,15 @@ def test_checkpoint_dispositions_equivalent_authored_cortex_digest_only_delta() 
         )
         is None
     )
-    assert merge_plane_discrepancy_markers(
-        annotate_checkpoint_claim_discrepancy(
-            claim=claim,
-            measurement=measurement,
+    assert (
+        merge_plane_discrepancy_markers(
+            annotate_checkpoint_claim_discrepancy(
+                claim=claim,
+                measurement=measurement,
+            )
         )
-    ) is None
+        is None
+    )
 
 
 def test_checkpoint_dispositions_equivalent_committed_short_sha() -> None:
@@ -386,9 +427,13 @@ def test_qualify_checkpoint_and_deployment_additive() -> None:
         qualify_checkpoint_value("committed abc1234 paths=1")
         == "committed@local-master abc1234 paths=1"
     )
-    assert qualify_checkpoint_value("deferred: reason") == "deferred@local-master: reason"
     assert (
-        qualify_deployment_state("authored-not-committed — 2 paths await path-explicit commit")
+        qualify_checkpoint_value("deferred: reason") == "deferred@local-master: reason"
+    )
+    assert (
+        qualify_deployment_state(
+            "authored-not-committed — 2 paths await path-explicit commit"
+        )
         == "authored-not-committed@local-master — 2 paths await path-explicit commit"
     )
 
@@ -403,14 +448,17 @@ def test_compute_tree_state_stranded_end_to_end(tmp_path: Path) -> None:
     head = _git(repo, "rev-parse", "HEAD")
     _git(repo, "checkout", "master")
     wrapper = _wrapper(head_sha=head, branch=branch)
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="deferred: authored paths not yet path-explicit committed",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "authored_paths_for_dispatch",
-        return_value=("x.txt",),
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "compute_lane_a_checkpoint_value",
+            return_value="deferred: authored paths not yet path-explicit committed",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "authored_paths_for_dispatch",
+            return_value=("x.txt",),
+        ),
     ):
         state = compute_closeout_tree_state(
             source_repo=repo,
@@ -478,7 +526,9 @@ def test_transport_death_recovers_capture_head_from_committer_ref(
     )
     head = _git(repo, "rev-parse", "HEAD")
     _git(repo, "checkout", "master")
-    wrapper = '```json\n{\n  "code": "transport_error",\n  "message": "bridge died"\n}\n```'
+    wrapper = (
+        '```json\n{\n  "code": "transport_error",\n  "message": "bridge died"\n}\n```'
+    )
     with patch(
         "services.git_integration_worker.cursor_auto.closeout_tree_state."
         "compute_lane_a_checkpoint_value",
@@ -629,13 +679,21 @@ def test_landed_axis_parse_a1_a2_u1_u2_feed_gate_unknown() -> None:
     """Classify paths A1/A2/U1/U2 → presence≠present → gate unknown (not bare landed)."""
     cases = [
         ({"head_sha": "abc1234"}, "absent", "commits_ahead absent"),  # A1
-        ({"head_sha": "abc1234", "commits_ahead": None}, "absent", "commits_ahead absent"),  # A2
+        (
+            {"head_sha": "abc1234", "commits_ahead": None},
+            "absent",
+            "commits_ahead absent",
+        ),  # A2
         (
             {"head_sha": "abc1234", "commits_ahead": "not-a-number"},
             "unparsed",
             "commits_ahead unparsed",
         ),  # U1
-        ({"head_sha": "abc1234", "commits_ahead": -1}, "unparsed", "commits_ahead unparsed"),  # U2
+        (
+            {"head_sha": "abc1234", "commits_ahead": -1},
+            "unparsed",
+            "commits_ahead unparsed",
+        ),  # U2
     ]
     plane = PlaneObservation(
         head_sha="abc1234",
@@ -746,7 +804,9 @@ def test_vacuous_tip_on_master_commits_ahead_zero_not_landed(tmp_path: Path) -> 
         )
     assert "NOT landed@local-master" in state.plane_line
     plane_body = state.plane_line.split("plane:", 1)[1]
-    assert "landed@local-master" not in plane_body.replace("NOT landed@local-master", "")
+    assert "landed@local-master" not in plane_body.replace(
+        "NOT landed@local-master", ""
+    )
 
 
 def test_vacuous_landed_false_wrapper_still_not_landed(tmp_path: Path) -> None:
@@ -939,7 +999,9 @@ def test_checkpoint_claims_baseline_unavailable() -> None:
     )
 
 
-def test_annotate_checkpoint_claim_discrepancy_suppressed_for_baseline_unavailable() -> None:
+def test_annotate_checkpoint_claim_discrepancy_suppressed_for_baseline_unavailable() -> (
+    None
+):
     measurement = (
         "baseline_unavailable@local-master: "
         "no admit baseline recorded for this dispatch"
