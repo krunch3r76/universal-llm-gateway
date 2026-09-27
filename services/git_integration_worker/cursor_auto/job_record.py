@@ -12,6 +12,20 @@ if TYPE_CHECKING:
     from services.git_integration_worker.cursor_auto.queue import AutoJob
 
 
+def observer_admission_fields(data: dict[str, Any]) -> dict[str, Any]:
+    """Admission identity ``job_state`` must show for a concurrent claim.
+
+    AC6 probes read ``execution_mode`` (``isolated_lane_conductor``),
+    ``work_key``, and ``lane`` on two rows whose ``status`` is ``claimed``.
+    """
+    lane = data.get("lane")
+    return {
+        "work_key": normalize_work_key(data.get("work_key") or None),
+        "execution_mode": str(data.get("execution_mode") or "serial"),
+        "lane": str(lane) if lane else None,
+    }
+
+
 def job_record(job: AutoJob) -> dict[str, Any]:
     """Flatten an in-memory AutoJob into the ledger ``record_json`` payload.
 
@@ -58,6 +72,7 @@ def job_from_row(row: sqlite3.Row) -> AutoJob:
     data = json.loads(row["record_json"] or "{}")
     if not isinstance(data, dict):
         data = {}
+    admission = observer_admission_fields(data)
     return AutoJob(
         job_id=row["job_id"],
         thread_id=row["thread_id"],
@@ -82,10 +97,10 @@ def job_from_row(row: sqlite3.Row) -> AutoJob:
         wire_dropped_fields=tuple(data.get("wire_dropped_fields") or ()),
         prompt_uri=data.get("prompt_uri") or None,
         advisor_brief=data.get("advisor_brief") or None,
-        lane=data.get("lane") or None,
+        lane=admission["lane"],
         workspace=data.get("workspace") or None,
-        work_key=normalize_work_key(data.get("work_key") or None),
-        execution_mode=str(data.get("execution_mode") or "serial"),
+        work_key=admission["work_key"],
+        execution_mode=admission["execution_mode"],
         execution_mode_declare_reason=data.get("execution_mode_declare_reason") or None,
         cse_chat_url=data.get("cse_chat_url") or None,
         cse_registration_id=data.get("cse_registration_id") or None,

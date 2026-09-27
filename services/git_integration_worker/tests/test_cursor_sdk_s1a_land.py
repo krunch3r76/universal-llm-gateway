@@ -238,14 +238,19 @@ async def test_s1a_concurrent_land_loser_remerge_regate(
     ).stdout
     assert "a.py" in master_tree
     assert "b.py" in master_tree
-    # Loser re-merged updated master before gating (merge commit on arc B).
-    merge_count = subprocess.run(
-        ["git", "-C", str(wt_b), "rev-list", "--count", "--merges", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    assert int(merge_count) >= 1
+
+    def _merge_count(wt: Path) -> int:
+        counted = subprocess.run(
+            ["git", "-C", str(wt), "rev-list", "--count", "--merges", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        return int(counted)
+
+    # The lease winner fast-forwards an ancestor (zero merge commits). The
+    # loser re-merges the updated master tip. Which arc loses is scheduling.
+    assert _merge_count(wt_a) + _merge_count(wt_b) >= 1
 
     lease_key = master_land_lease_key(source_repo)
     with _connect() as conn:

@@ -14,9 +14,9 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from git_integrate.schema import RC_DIRTY_MASTER
+from git_integrate.schema import RC_DIRTY_MASTER, RC_LAND_LEASE_TIMEOUT
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_dispatch_ledger import _connect
@@ -49,6 +49,9 @@ __all__ = (
     "checked_out_master_dirty",
     "dirty_master_envelope",
     "ensure_land_lease_schema",
+    "land_lease_holder",
+    "land_lease_timeout_envelope",
+    "land_lease_waiter_report",
     "master_land_guard",
     "master_land_lease_key",
     "reap_stale_land_leases",
@@ -68,6 +71,28 @@ class DirtyMasterRefused(Exception):
 
 class LandLeaseAcquireTimeout(TimeoutError):
     """Raised when another land holder does not release within the wait horizon."""
+
+    def __init__(
+        self,
+        message: str = "",
+        *,
+        lease_key: str = "",
+        waiter_op_id: str = "",
+        holder_op_id: str | None = None,
+        timeout_s: float = 0.0,
+    ) -> None:
+        self.lease_key = lease_key
+        self.waiter_op_id = waiter_op_id
+        self.holder_op_id = holder_op_id
+        self.timeout_s = timeout_s
+        self.report = land_lease_waiter_report(
+            status="timeout",
+            lease_key=lease_key,
+            waiter_op_id=waiter_op_id,
+            holder_op_id=holder_op_id,
+            timeout_s=timeout_s,
+        )
+        super().__init__(message or str(self.report["reason"]))
 
 
 def master_land_lease_key(source_repo: str | Path) -> str:
@@ -103,13 +128,59 @@ def try_acquire_land_lease(*, lease_key: str, holder_op_id: str) -> bool:
         return row["holder_op_id"] == holder_op_id
 
 
+def land_lease_holder(lease_key: str) -> str | None:
+    """Current holder of the master land lease, or None when free."""
+    with _connect() as conn:
+        ensure_land_lease_schema(conn)
+        row = conn.execute(
+            "SELECT holder_op_id FROM cursor_sdk_land_leases WHERE lease_key=?",
+            (lease_key,),
+        ).fetchone()
+    if row is None:
+        return None
+    return str(row["holder_op_id"])
+
+
+def land_lease_waiter_report(
+    *,
+    status: str,
+    lease_key: str,
+    waiter_op_id: str,
+    holder_op_id: str | None,
+    timeout_s: float,
+) -> dict[str, str | float | None]:
+    """Waiter-facing report for a blocked G7 land. Names the holder."""
+    return {
+        "status": status,
+        "lease_key": lease_key,
+        "waiter_op_id": waiter_op_id,
+        "holder_op_id": holder_op_id,
+        "timeout_s": timeout_s,
+        "reason": (
+            f"master land lease {lease_key!r} held by {holder_op_id!r}; "
+            f"waiter {waiter_op_id!r} status={status} timeout_s={timeout_s:.0f}"
+        ),
+    }
+
+
+def land_lease_timeout_envelope(*, exc: LandLeaseAcquireTimeout) -> dict[str, Any]:
+    """Rejected integrate/land envelope when the master lease wait expires."""
+    integration_id = str(uuid.uuid4())
+    return {
+        "integration_id": integration_id,
+        "status": "rejected",
+        "reason_code": RC_LAND_LEASE_TIMEOUT,
+        "reason": str(exc),
+        "land_lease_waiter": exc.report,
+    }
+
+
 def release_land_lease(*, lease_key: str, holder_op_id: str) -> bool:
     """Release the land lease when ``holder_op_id`` still owns it."""
     with _connect() as conn:
         ensure_land_lease_schema(conn)
         deleted = conn.execute(
-            "DELETE FROM cursor_sdk_land_leases "
-            "WHERE lease_key=? AND holder_op_id=?",
+            "DELETE FROM cursor_sdk_land_leases WHERE lease_key=? AND holder_op_id=?",
             (lease_key, holder_op_id),
         )
         return deleted.rowcount == 1
@@ -147,8 +218,13 @@ async def acquire_land_lease_blocking(
     poll_interval_s: float = _DEFAULT_POLL_S,
     timeout_s: float = _DEFAULT_ACQUIRE_TIMEOUT_S,
 ) -> None:
-    """Block until the master land lease is acquired or ``timeout_s`` elapses."""
+    """Block until the master land lease is acquired or ``timeout_s`` elapses.
+
+    The first missed acquire logs a waiter report naming the current holder.
+    Timeout raises :class:`LandLeaseAcquireTimeout` with that report attached.
+    """
     deadline = asyncio.get_running_loop().time() + timeout_s
+    reported = False
     while True:
         acquired = await asyncio.to_thread(
             try_acquire_land_lease,
@@ -157,9 +233,23 @@ async def acquire_land_lease_blocking(
         )
         if acquired:
             return
+        holder = await asyncio.to_thread(land_lease_holder, lease_key)
+        if not reported:
+            waiting = land_lease_waiter_report(
+                status="waiting",
+                lease_key=lease_key,
+                waiter_op_id=holder_op_id,
+                holder_op_id=holder,
+                timeout_s=timeout_s,
+            )
+            logger.info("master land lease waiter %s", waiting["reason"])
+            reported = True
         if asyncio.get_running_loop().time() >= deadline:
             raise LandLeaseAcquireTimeout(
-                f"master land lease {lease_key!r} unavailable after {timeout_s:.0f}s"
+                lease_key=lease_key,
+                waiter_op_id=holder_op_id,
+                holder_op_id=holder,
+                timeout_s=timeout_s,
             )
         await asyncio.sleep(poll_interval_s)
 
@@ -178,7 +268,11 @@ async def master_land_guard(
     Lock order: caller must already hold ``FifoCapacityGate`` before entering.
     """
     lease_key = master_land_lease_key(source_repo)
-    await acquire_land_lease_blocking(lease_key=lease_key, holder_op_id=holder_op_id)
+    await acquire_land_lease_blocking(
+        lease_key=lease_key,
+        holder_op_id=holder_op_id,
+        timeout_s=_DEFAULT_ACQUIRE_TIMEOUT_S,
+    )
     try:
         dirty, reason = await asyncio.to_thread(
             checked_out_master_dirty, source_repo, worktree_path

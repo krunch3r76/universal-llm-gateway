@@ -104,6 +104,11 @@ def observer_view_from_row(row: Any) -> dict[str, Any]:
     )
     contract: str | None = None
     escalation: Any = None
+    admission = {
+        "work_key": None,
+        "execution_mode": "serial",
+        "lane": None,
+    }
     record_raw = row["record_json"] if "record_json" in keys else None
     if record_raw:
         try:
@@ -111,8 +116,13 @@ def observer_view_from_row(row: Any) -> dict[str, Any]:
         except (TypeError, ValueError, json.JSONDecodeError):
             data = {}
         if isinstance(data, dict):
+            from services.git_integration_worker.cursor_auto.job_record import (
+                observer_admission_fields,
+            )
+
             contract = data.get("contract")
             escalation = data.get("escalation")
+            admission = observer_admission_fields(data)
     return {
         "job_id": row["job_id"] if "job_id" in keys else None,
         "thread_id": row["thread_id"] if "thread_id" in keys else None,
@@ -130,6 +140,9 @@ def observer_view_from_row(row: Any) -> dict[str, Any]:
             row["terminal_reason"] if "terminal_reason" in keys else None
         ),
         "contract": contract,
+        "work_key": admission["work_key"],
+        "execution_mode": admission["execution_mode"],
+        "lane": admission["lane"],
         "escalation": escalation,
         "turn_number": row["turn_number"] if "turn_number" in keys else None,
     }

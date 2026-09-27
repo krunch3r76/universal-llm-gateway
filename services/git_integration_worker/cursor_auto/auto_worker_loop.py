@@ -171,8 +171,10 @@ async def auto_worker_loop(app: Any) -> None:
 async def auto_concurrent_worker_loop(app: Any) -> None:
     """Poll for concurrent-opted-in jobs; spawn each as an untracked-wait
     background task so N can run alongside each other and alongside the
-    serial occupant. Production allowlist is ``lease_free_propagate`` —
-    nested-scope / write-lease work stays on the serial loop.
+    serial occupant. Opt-in classes are ``lease_free_propagate`` and
+    ``isolated_lane_conductor`` (investigate/recon/verify/implement/conductor
+    when lane B and an explicit work_key). Lane A and every other contract
+    stay on the serial loop. G7 land stays on ``master_land_guard``.
     """
     queue = get_queue()
     fail_streak = 0

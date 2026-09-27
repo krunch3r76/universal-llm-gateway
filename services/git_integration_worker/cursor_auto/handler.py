@@ -131,7 +131,9 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 logger = get_logger(__name__)
 
 _FROM_AUTO = "cursor-auto"
-_NESTED_CONTRACTS = nested_scope_contracts() | {"confer", "ask"}
+# ``conductor`` is not in contract_vocab (bus intake rejects the token). A job
+# that already carries it must nest, or concurrent admission would answer in-seat.
+_NESTED_CONTRACTS = nested_scope_contracts() | {"confer", "ask", "conductor"}
 
 
 def _close_dispatch_ticket(

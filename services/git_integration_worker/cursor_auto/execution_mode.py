@@ -15,12 +15,22 @@ reach this class concurrently (thread-scoped supersede). Same-``work_key``
 jobs serialize at ``claim_next_concurrent``. Nested implements under a running
 conductor park/transfer the slot and do not consume a second one.
 
+``implement`` and ``conductor`` join that predicate (arc agent-bus:12286).
+Each matched job still gets its own lane-B worktree. The shared step is G7
+land: ``master_land_guard`` (FIFO ``git_integrate`` slot plus the durable
+master lease, timeout, waiter report names the holder). They do not merge
+the hub checkout inside ``process_job``. ``conductor`` is not a canonical
+bus contract — intake still rejects it — but a job that already carries the
+token nests as ``handoff_contract=conductor`` instead of answering in-seat.
+Lane A never matches. Overturning observation: one matched job writes the
+hub index or HEAD before ``git_land``.
+
 Lease-context answer for ``lease_free_propagate`` (9031-turn-80):
 ``contract:propagate`` is not ``nested_scope`` (``libs/contract_vocab/records.py``)
 and ``process_job`` routes it to ``run_propagation_in_seat`` — manage
 ``sync_restart``, no ``ledger.admit`` write lease, no shared-checkout mutation
 by the Auto job. Two concurrent propagates collide at manage's drain queue,
-not on a worktree. Nested-scope contracts stay serial.
+not on a worktree.
 """
 
 from __future__ import annotations
@@ -32,14 +42,18 @@ LEASE_FREE_PROPAGATE_MODE = "lease_free_propagate"
 ISOLATED_LANE_CONDUCTOR_MODE = "isolated_lane_conductor"
 _PROPAGATE_CONTRACT = "propagate"
 
-LANE_CONDUCTOR_CONTRACTS = frozenset({"investigate", "recon", "verify"})
+LANE_CONDUCTOR_CONTRACTS = frozenset(
+    {"investigate", "recon", "verify", "implement", "conductor"}
+)
 
 # Opt-in set. Do not add an entry without a cited lease-context answer.
 _CONCURRENT_EXECUTION_MODES: frozenset[str] = frozenset(
     {LEASE_FREE_PROPAGATE_MODE, ISOLATED_LANE_CONDUCTOR_MODE}
 )
 
-ExecutionModeDeclareReason = str  # predicate_met | predicate_unmet_requested_declined | propagate_map | default
+ExecutionModeDeclareReason = (
+    str  # predicate_met | predicate_unmet_requested_declined | propagate_map | default
+)
 
 
 @dataclass(frozen=True)

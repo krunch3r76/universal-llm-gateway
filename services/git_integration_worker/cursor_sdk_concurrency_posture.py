@@ -69,8 +69,11 @@ def write_lease_slot_limit(
         return 1
     if admit_lane == "A":
         if posture == "multi_a_operator" and operator_multi_a_enabled():
-            raw = os.environ.get("CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY", "3")
-            return max(1, int(raw))
+            from services.git_integration_worker.cursor_sdk_gate import (
+                operator_dispatch_limit,
+            )
+
+            return operator_dispatch_limit()
         return 1
     return 1
 
