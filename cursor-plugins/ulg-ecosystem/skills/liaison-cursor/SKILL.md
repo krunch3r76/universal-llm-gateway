@@ -1,6 +1,6 @@
 ---
 name: liaison-cursor
-description: "Attended Cursor IDE house liaison with team_dispatch and the checkout. Repo writes go to cursor-sdk. cursor-auto implement is the life seat. Load on IDE hop and resume of a liaison root."
+description: "Attended Cursor IDE house liaison with team_dispatch and the checkout. A played todo admits one conductor. Life implement stays on cursor_request. Load on IDE hop and resume of a liaison root."
 ---
 
 # Liaison on Cursor
@@ -8,22 +8,21 @@ description: "Attended Cursor IDE house liaison with team_dispatch and the check
 `seat = attended Cursor IDE ∧ holds(team_dispatch) ∧ holds(checkout) ⇒ this`.
 Life, web-anthropic, and any seat without `team_dispatch` use `cursor_request`. Do not load this there.
 
-`liaison` owns harvest, fold, checkpoint, hop, and land. This skill owns **who implements**.
+`liaison` owns harvest, fold, checkpoint, hop, and land. This skill owns **who is admitted**. A played todo admits one conductor.
 
 ## Dispatch
 
 | Work | Fire |
 |---|---|
 | Recon, loci unknown | `Task(subagent_type="explore")` in this tab |
-| Mechanical implement (`files_expected` + acceptance criteria) | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement, lane=B, source_ref=todo:…, dispatch_thread_id=<root>)` |
-| Script or upload, no repo edit | same cursor-sdk generate, `lane=B` |
-| Design or judgment fork | `team_dispatch(model=cdp/fable-5.1)` |
-| Independent check | `team_dispatch(model=cdp/opus-5.5)` |
+| Play a `todo:{slug}` | `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, lane=B, source_ref=todo:…, dispatch_thread_id=<root>)` then end. Sketch, Compose, and `contract=implement` are that conductor's nest |
+| Script or upload, no repo edit | same cursor-sdk generate, `lane=B`, `contract=none` |
+| Independent check of a harvested closeout | `team_dispatch(model=cdp/opus-5.5)` |
 | Land on green | in-seat `git merge` of `cursor-sdk/lane-<thread>`. Conflict ⇒ keep both |
 
 `cursor_request` is life-only. On code the AutoJob admit door is `agent_bus(tool="request")`. `contract=implement` through `cursor_request` from this seat is an extra admit. Life implement uses that verb because life MCP has no `team_dispatch`.
 
-Gear-3 `goal_escalation` still names cursor-auto for repo-write. That rung is life and seats without a checkout. This seat does not follow it.
+Gear-3 `goal_escalation` admits a conductor for repo-write and design. Life seats without `team_dispatch` stay on `cursor_request`. This seat does not follow that life rung.
 
 ## Wake
 
@@ -36,5 +35,5 @@ A conductor whose closeout is already relayed, while its tail still prints `stal
 | Bad | Good |
 |---|---|
 | Arm a tail and read each conductor turn | Wait for the closeout or a designed stop |
-| Hop line "repo-write → cursor-auto" on this tab | `team_dispatch` cursor-sdk, then land here |
+| Sketch or `contract=implement` on a house row | One `contract=conductor` admit, then land here |
 | Another `--replace` after the same quoted error | A new gate, or stop `REPEATED_FAILURE` |

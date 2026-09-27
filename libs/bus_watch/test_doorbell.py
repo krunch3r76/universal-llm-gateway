@@ -579,7 +579,7 @@ _10479_CDP_SUCCESSOR_KW = {
 def test_successor_wake_cdp_10479_inlines_liaison_body_without_use_line() -> None:
     """AC4 — rendered CDP successor wake seals liaison SOT; no Customize Use-line."""
     rendered = render_successor_wake("10479", **_10479_CDP_SUCCESSOR_KW)
-    assert "harvests → folds → decides → dispatches → checkpoints → hops" in rendered
+    assert "harvests → folds → decides → admits one conductor → checkpoints → hops" in rendered
     assert "Use the liaison skill" not in rendered
     assert '<skill slug="liaison"' in rendered
     assert "<skills_inline>" in rendered

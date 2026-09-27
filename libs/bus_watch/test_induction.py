@@ -49,11 +49,11 @@ def test_induction_plants_addresses_not_a_skill_copy() -> None:
     assert "watcher 10479-10586-r9-none complete" in text
     assert "NOW: tip turn #214 on agent-bus:10479 · «CHECKPOINT 10479 54b93098»" in text
     assert (
-        "do not re-read): reasoning-posture skill · git-posture § Land"
+        "do not re-read): liaison skill · reasoning-posture skill · git-posture § Land"
         in text
     )
     assert "register=autonomous · hopper paused (10479#210)" in text
-    assert "repo→auto" in text or "cdp/fable" in text
+    assert "contract=conductor" in text
     assert len(text.encode("utf-8")) <= INDUCTION_CAP
 
 
@@ -241,7 +241,7 @@ def test_induction_cse_fire_keeps_skill_activation_when_summary_row_stale() -> N
     assert "Use the liaison skill" not in cse
     assert "<skills_inline>" in cse
     assert 'slug="liaison"' in cse
-    assert "harvests → folds → decides → dispatches → checkpoints → hops" in cse
+    assert "harvests → folds → decides → admits one conductor → checkpoints → hops" in cse
     assert "Use the reasoning-posture skill" in cse
     assert "IN FLIGHT lane 11364" not in cse
     assert "close todo" in cse
@@ -283,7 +283,7 @@ def test_induction_cse_surface_use_lines() -> None:
     assert "Use the liaison skill" not in cse
     assert "<skills_inline>" in cse
     assert 'slug="liaison"' in cse
-    assert "harvests → folds → decides → dispatches → checkpoints → hops" in cse
+    assert "harvests → folds → decides → admits one conductor → checkpoints → hops" in cse
     assert "Use the reasoning-posture skill" in cse
     assert "Use the git-posture skill" not in cse
     assert "Loaded already (do not re-read)" not in cse
@@ -304,7 +304,7 @@ def test_induction_cse_use_lines_are_bare_slugs() -> None:
     assert "Use the liaison skill" not in cse
     assert "<skills_inline>" in cse
     assert 'slug="liaison"' in cse
-    assert "harvests → folds → decides → dispatches → checkpoints → hops" in cse
+    assert "harvests → folds → decides → admits one conductor → checkpoints → hops" in cse
 
 
 def test_induction_cse_liaison_cursor_only_inlines_sot_body_in_skills_inline() -> None:
@@ -313,7 +313,7 @@ def test_induction_cse_liaison_cursor_only_inlines_sot_body_in_skills_inline() -
     assert "Use the liaison skill" not in cse
     assert "<skills_inline>" in cse
     assert 'slug="liaison"' in cse
-    assert "harvests → folds → decides → dispatches → checkpoints → hops" in cse
+    assert "harvests → folds → decides → admits one conductor → checkpoints → hops" in cse
     assert "Use the reasoning-posture skill" in cse
 
 
@@ -341,7 +341,7 @@ def test_induction_loaded_fence_matches_navigator_skills_policy() -> None:
     assert 'slug="liaison"' in cse
     assert 'slug="architecture-invariants"' in cse
     assert 'slug="ulg-architecture"' in cse
-    assert "harvests → folds → decides → dispatches → checkpoints → hops" in cse
+    assert "harvests → folds → decides → admits one conductor → checkpoints → hops" in cse
     assert "ULG Architecture" in cse
     assert "Use the reasoning-posture skill" in cse
 

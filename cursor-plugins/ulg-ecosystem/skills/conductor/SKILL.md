@@ -411,7 +411,7 @@ Required in `<scope>` / `<invariants>`:
   specific hold-merge exception in this same list
 - **Bound conductor model + effort** (or "lead picks at admit from tier table")
 - **G-row contract honesty** — do not mark a G-row conductor-direct / `owner: cursor-sdk` when `files_expected` includes production code+tests. Conductor binds; Composer implements.
-- **Class reservation (A1 §13′ #2)** — under `work_key=todo:{slug}`, only a seated conductor (`contract=conductor`, cursor-sdk) may author G-rows and mutate the scoreboard. Liaison and IDE seats compute Address. They spawn or re-admit a conductor for LAYER (Address rows 3 and 5) only. Row 6 DISPATCH is Composer implement and does not spawn a conductor. Liaison seats do not author G-rows.
+- **Class reservation (A1 §13′ #2)** — under `work_key=todo:{slug}`, only a seated conductor (`contract=conductor`, cursor-sdk) may author G-rows and mutate the scoreboard. A liaison admits that conductor for a played todo (§ Play in `liaison`) and does not author G-rows, Sketch, or `contract=implement`. The conductor nests Composer implement after its own Compose.
 - **Scoreboard G6/G7 (binding)** — **`review harvest ≺ land ≺ DONE`**. After G5
   implement, **G6** = `cdp/opus-5.5` `purpose=review` `reasoning_effort="high"`
   (**`extra`/`xhigh` floor, `max` if invariant-touching, under

@@ -531,6 +531,10 @@ def live_conductor_owner(
         conductor = _conductor_signal(lane)
         if slug not in todos:
             continue
+        # holder_lost already finished this hop. The bus lifecycle can stay
+        # admitted after the mint rolls back; that row is not a live owner.
+        if "holder_lost" in str(lane.get("last_subject") or "").lower():
+            continue
         if str(lane.get("quiet_reason") or "") == "closeout_unharvested":
             continue
         if live is False:

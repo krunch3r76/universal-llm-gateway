@@ -1,14 +1,21 @@
 ---
 name: liaison
-description: On a Cursor IDE tab seated as the house liaison (attended or autonomous register) — tick protocol on the liaison digest, dispatch ladder by cost, designed stops, checkpoint + hop discipline, register flip, peer-house master conflict. Load on `/liaison`, `resume <liaison root>`, "close the house", or "run the house while I'm away".
+description: House liaison on a continuity root. A played todo admits one conductor. Load on /liaison, resume of a liaison root, close the house, or run the house while away.
 ---
 # Liaison — the seat that runs the house
 
-`liaison ≡ seat(root:role:root) ∧ register ∈ {attended, autonomous}`. Conductors and subagents do the work;
-the liaison **harvests → folds → decides → dispatches → checkpoints → hops**. It never reads a thread linearly
+`liaison ≡ seat(root:role:root) ∧ register ∈ {attended, autonomous}`. Conductors do the work;
+the liaison **harvests → folds → decides → admits one conductor → checkpoints → hops**. It never reads a thread linearly
 and never implements what a live dispatch owns (`in-flight-work-guard`). Consolidated name for what the
 operator called *coordinator*; Cortex: `agent_skill:conductor` #31004 (liaison register), #30549 (conductor =
 session to a designed stop), `decision:conductor-attended-vs-unattended-routing`.
+
+**Play (binding).** `played(todo:{slug}) ⇒ admit(contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B) ∧ end`. Sketch, Compose, densify, and `contract=implement` are that conductor's steps. This seat does not fire them. This binding wins over the dispatch ladder, Seat stays, and a digest one-step that says to Sketch or implement.
+
+| Bad | Good |
+|---|---|
+| Sketch or `contract=implement` from this tab on a house row | One conductor admit; harvest its closeout |
+| CDP generate on the house thread as the play | Conductor lane parented to the house |
 
 **Not the same as** `runbook:liaison-seat-on-a-lane` — that runbook is voice/web liaison on a **foreign lane**;
 this skill is the **IDE house seat** on a continuity root.
@@ -91,7 +98,7 @@ House wakes, cheapest first:
 
 Binds. Later prose that conflicts with them loses.
 
-1. **cursor-sdk directly.** This seat holds `team_dispatch` and the checkout. Repo write, script, and upload go to `team_dispatch(op=generate, seat=cursor-sdk, contract=implement|pure-mechanical|none, lane=B)`. `cursor_request` is life-only. Life implement uses it because life has no `team_dispatch`. On code the AutoJob admit door is `agent_bus(tool="request")` (conductor commission, mission negotiation, unattended enqueue), not this seat's implement path.
+1. **One conductor.** This seat holds `team_dispatch` and the checkout. A played `todo:{slug}` is `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, source_ref=todo:{slug}, dispatch_thread_id=<root>, lane=B)`, then end the turn. Repo write is that conductor's nested `contract=implement`. This seat does not send `contract=implement` or a Sketch generate for a house row. `cursor_request` is life-only. Life implement uses it because life has no `team_dispatch`. On code the AutoJob admit door is `agent_bus(tool="request")` (conductor commission, mission negotiation, unattended enqueue), not this seat's implement path.
 2. **Do not close the house on a dead tail or an empty wake.** A conductor whose closeout is already relayed, while its tail still prints `stall-pop:`, is finished: `watch-supervise.sh stop --label <label>`. That tail is not a watcher, not a hop, and not a reason to end the seat. No playable next row and no live watcher ⇒ do not arm `--loop`, and SIGTERM this root's `--loop` if it is running. A tick that only repeats this tab's CHECKPOINT is not an instruction to play. The house stays. The wake stops.
 3. **File the friction, add the house row, play a gate.** A row that cannot proceed: `friction()` on the owner the same turn, and a row on the continuity card `## Rows`. A **gate** is a friction the current row cannot pass until it is resolved. A gate swaps into NOW (`--set now_row=` `Friction a:<n> …`). The blocked row becomes the next row. Play the gate the same turn on the ladder in (1). Do not STAY on the blocked row. Do not page unless the gate is an armed `OPERATOR_GATE`.
 4. **When a row has been played, close its todo, then add the next one.** A played row is a land on master for that `todo:{slug}`. Same turn, before the next row, `pipeline(op=run, pipeline_id=todo-close)` so `workflow_state=done`. The ticker drops a policy `now_row` when that state is terminal (`done` included). An open card is still the work: the clock admits another conductor for it. That re-admit is how a night fails to replace the operator. A finished row does not empty the house. After the close, add every next deliverable that is not gated on another row, to `## Rows` and `--set now_row=`, then play it. Adding that row clears `now_row=quiet` and re-arms `--loop --heartbeat 1200` if the loop is down. Ungated rows may run at the same time. A row that waits on some other row having been played first stays off NOW until that condition is true. `now_row=quiet` and an empty NOW are legal only when the house program has no open deliverable. Do not close on `checks_failed`, `ROW_PINNED`, or `land_disposition: discard`.
@@ -117,7 +124,7 @@ Binds. Later prose that conflicts with them loses.
    status ← observed (quote sha / pytest line / execution_id). Landed ≠ live: a slice whose paths serve a
    running process needs `manage(sync_restart)` — **LOAD** `restart-drain-discipline` (`needed(restart) ⇒
    fire(restart)`; busy never skips).
-4. **Decide** — **Archived as G-row picker** — liaison computes Address. Spawn or re-admit a conductor only for Address rows 3 and 5. Row 6 DISPATCH (`mechanical`, or `implement_ready` and stamped) goes to Composer and does not spawn a conductor; conductor owns scoreboard NOW under `work_key=todo:{slug}`. With no seat bind the induction's NOW **is** the newest undispositioned friction (§ Friction score rows). Gear 3 (`--spawn-on-wake`) pins the attention-tier NOW into `policy.now_row` and releases it when the lane is spent (`now_row_bind` provenance in tick.json). `--set now_row=…` always wins while satisfied; `--set now_row=quiet` holds the field. `reasoning-posture`: pin the question, bind, one determinate step.
+4. **Decide** — liaison computes Address. A played `todo:{slug}` admits or re-admits one conductor (§ Play). The conductor owns scoreboard NOW under `work_key=todo:{slug}` and nests Composer after its own Compose. This seat does not fire that implement. With no seat bind the induction's NOW **is** the newest undispositioned friction (§ Friction score rows). Gear 3 (`--spawn-on-wake`) pins the attention-tier NOW into `policy.now_row` and releases it when the lane is spent (`now_row_bind` provenance in tick.json). `--set now_row=…` always wins while satisfied; `--set now_row=quiet` holds the field. `reasoning-posture`: pin the question, bind, one determinate step.
 5. **Dispatch** — by the ladder below; every dispatch gets a lane on the root (`dispatch_thread_id=R`) and an
    **in-session watcher**: **LOAD AND EXECUTE** `runbook:bus-consult-watcher` (all legs 1–3 — arm, wake,
    relay — before turn end; start-only / skipped tail / hold-turn = mis-arm). That watcher relays one
@@ -301,15 +308,16 @@ dispatches (`contract=implement`, omit `model=`) run **alongside** — they are 
 
 ## Dispatch ladder (cost ↓, cycle time ↓)
 
-`attended IDE ∧ team_dispatch ∧ checkout ⇒ implement = team_dispatch(op=generate, seat=cursor-sdk, contract=implement|pure-mechanical, lane=B)`. Code AutoJob admit is `agent_bus(tool="request")`. Life implement uses `cursor_request` because life has no `team_dispatch`.
+`attended IDE ∧ team_dispatch ∧ checkout ∧ played(todo) ⇒ admit(contract=conductor)` (§ Play). Code AutoJob admit is `agent_bus(tool="request")`. Life implement uses `cursor_request` because life has no `team_dispatch`.
 
 | Work | Executor | Bind / review |
 |---|---|---|
 | Read / recon / ≥3 files | `Task(subagent_type="explore")` in-tab | none |
 | Trivial / local edit (<20 lines, no served path) | in-seat (Opus-class only by default; the successor **dispatches** instead) | none — commit path-explicit same turn |
-| Mechanical implement with dense spec (`files_expected` + ACs) | `team_dispatch(op=generate, seat=cursor-sdk, contract=implement\|pure-mechanical, lane="B", source_ref=todo:…, packet_path=…, dispatch_thread_id=R)` | none — Fable-densified packets skip skeptic |
-| Repo write when this seat lacks `team_dispatch` or the checkout (life) | **`cursor_request(contract=implement)`** — never STAY, never needs-attended | Attended IDE with both: skill `liaison-cursor` (`team_dispatch` cursor-sdk). ¬ this row |
-| Design / judgment fork (discriminator, architecture, bind table) | **`team_dispatch(model=cdp/fable-5.1)`** — decider of last resort; never STAY | one round; disagreement ⇒ CONSULT_PENDING |
+| Play a `todo:{slug}` | `team_dispatch(op=generate, seat=cursor-sdk, contract=conductor, lane="B", source_ref=todo:…, dispatch_thread_id=R)` then end | conductor nests Sketch, Compose, densify, implement |
+| Mechanical implement with dense spec (`files_expected` + ACs) | the conductor's nest, not this seat | none — Fable-densified packets skip skeptic |
+| Repo write when this seat lacks `team_dispatch` or the checkout (life) | **`cursor_request(contract=implement)`** — never STAY, never needs-attended | Attended IDE with both: skill `liaison-cursor`. ¬ this row |
+| Design / judgment fork on a played row | the conductor's nest | one round inside the conductor; disagreement ⇒ CONSULT_PENDING |
 | Judgment fork (independent check) | **this seat** binds inline when Opus-class; below Opus, § Reasoning recon first (`cdp/opus-5.5` wide read → bind on the compact) | independent check only if invariant-touching ∨ cross-agent ∨ recurrence ≥2 |
 | Independent check / CDP judgment | **`team_dispatch(model=cdp/opus-5.5)`** — announce `CDP: <trigger> — <why>`; opus hops (`agent_bus hop`) to stay lean | one round; disagreement ⇒ `CONSULT_PENDING` stop |
 | Long-context reasoning inside a work tab | `cursor/claude-opus-5-5` (Cursor Fable credit window closed) | **`cdp/fable-5.1`** only when the operator names it — never `cursor/claude-fable-5{,-1}` |
@@ -355,7 +363,9 @@ dirs, stale watcher hygiene, scoreboard grooming — then lengthen the heartbeat
 
 `todo:liaison-friction-score-rows` · `libs/bus_watch/friction_rows.py`. Open `friction()` assertions on the
 house's **charter-owned** services are score rows: they enter the digest, need a disposition, and leave when
-closed on the assertion. Same driver as everything else — no second loop.
+closed on the assertion. Same driver as everything else — no second loop. Attended play of a `todo:{slug}`
+follows § Play. The ticker's LOW/TRIO fire below is the headless machine. It is not a license for this seat
+to Sketch or send `contract=implement`.
 
 | Leg | Mechanic |
 |---|---|

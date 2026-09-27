@@ -592,12 +592,14 @@ def _post_roster_hires(
     cap = max(0, int(policy.get("max_conductors") or 2) - live)
     poster = submit or submit_team_dispatch
     posts: list[dict[str, Any]] = []
-    refused_keys = {
-        str(key) for key in (state.get("refused_work_keys") or []) if key
-    }
+    dropped: list[str] = []
+    refused_keys = {str(key) for key in (state.get("refused_work_keys") or []) if key}
+    if cap == 0 and roster_play_rows(digest):
+        dropped.append("conductor_cap")
     for row, verdict in roster_play_rows(digest)[:cap]:
         work_key = str(row.get("work_key") or "")
         if work_key and work_key in refused_keys:
+            dropped.append("refused_work_key")
             continue
         slug = extract_todo_slug(row.get("work_key")) or ""
         release_reason = str(verdict.get("release_reason") or "")
@@ -629,17 +631,33 @@ def _post_roster_hires(
                 CursorDispatchLedger,
             )
 
-            admit_id = str(body.get("dispatch_id") or "").strip() or str(uuid.uuid4())
-            body["dispatch_id"] = admit_id
+            # The generate schema forbids dispatch_id. A claim id on the body
+            # is a 400, which burns the one-shot slot and leaves no dispatch row.
+            admit_id = str(uuid.uuid4())
+            body.pop("dispatch_id", None)
             if not CursorDispatchLedger.instance().claim_stop_service(
                 stop_id, admit_id
             ):
-                emit_roster_hire_refused(
-                    row_id=str(row.get("row_id") or ""),
-                    work_key=str(row.get("work_key") or ""),
-                    reason="stop_not_claimed",
-                )
-                continue
+                from bus_watch.spawn_wake.consumed_stop import release_consumed_stop
+
+                # The slot was taken by an admit that never became a dispatch.
+                # Claiming it again is what made every later play a silent hold.
+                if release_consumed_stop(
+                    body, stop_id, digest.get("unstarted_claims") or []
+                ):
+                    emit_roster_hire_released(
+                        row_id=str(row.get("row_id") or ""),
+                        dispatch_id=stop_id,
+                        reason="stop_unstarted",
+                    )
+                else:
+                    emit_roster_hire_refused(
+                        row_id=str(row.get("row_id") or ""),
+                        work_key=str(row.get("work_key") or ""),
+                        reason="stop_not_claimed",
+                    )
+                    dropped.append("stop_not_claimed")
+                    continue
         payload, status = poster(_wire_submit_body(body))
         err = payload.get("error") or {}
         code = err.get("code") if isinstance(err, dict) else None
@@ -648,30 +666,36 @@ def _post_roster_hires(
         if code == _WORK_KEY_IN_FLIGHT or status == 409:
             # REMINT_CAP is itself a 409. Page that wall; other 409s stay in-flight.
             if _page_roster_remint(root_id, state, payload):
+                reason = str(code or "CURSOR_WORK_KEY_REMINT_CAP")
                 emit_roster_hire_refused(
                     row_id=row_id,
                     work_key=posted_key,
-                    reason=str(code or "CURSOR_WORK_KEY_REMINT_CAP"),
+                    reason=reason,
                 )
             else:
+                reason = "work_key_in_flight"
                 emit_roster_hire_refused(
                     row_id=row_id,
                     work_key=posted_key,
-                    reason="work_key_in_flight",
+                    reason=reason,
                 )
+            dropped.append(reason)
             continue
         if status >= 400:
             if code == _WORK_KEY_UNPARSEABLE:
                 _remember_unparseable_work_key(state, posted_key)
                 refused_keys.add(posted_key)
             _page_roster_remint(root_id, state, payload)
+            reason = str(code or status)
             emit_roster_hire_refused(
                 row_id=row_id,
                 work_key=posted_key,
-                reason=str(code or status),
+                reason=reason,
             )
+            dropped.append(reason)
             continue
         if status <= 0:
+            dropped.append("status_0")
             continue
         dispatch_id = str(
             payload.get("dispatch_id")
@@ -686,6 +710,7 @@ def _post_roster_hires(
                 work_key=posted_key,
                 reason="posted_unlatched",
             )
+            dropped.append("posted_unlatched")
             continue
         readmit_from = release_lane if release_reason == "closed_park" else None
         record_row_hire(
@@ -707,11 +732,14 @@ def _post_roster_hires(
         )
         posts.append({"status_code": status, "payload": payload, "body": body})
     if not posts:
-        return {
+        held: dict[str, Any] = {
             "action": "hold",
             "evaluation": evaluation,
             "body": None,
         }
+        if dropped:
+            held["refused"] = dropped[0]
+        return held
     night_id = current_night_id()
     by_night = dict(state.get("dispatches_tonight_by_night") or {})
     count = int(by_night.get(night_id) or state.get("dispatches_tonight") or 0)

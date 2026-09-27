@@ -58,7 +58,7 @@ def test_skill_pointer_line_re_does_not_match_doorbell_unbackticked_use_line() -
 def test_skill_pointer_rewrite_preserves_backticked_use_inside_inlined_excerpts() -> None:
     """AC3 — backticked Use-lines inside verbatim liaison/ulg excerpts must survive."""
     liaison_excerpt = (
-        "harvests → folds → decides → dispatches → checkpoints → hops\n"
+        "harvests → folds → decides → admits one conductor → checkpoints → hops\n"
         "**Use the `git-posture` skill § Land** (merge the lane; keep both hunks).\n"
     )
     ulg_excerpt = (

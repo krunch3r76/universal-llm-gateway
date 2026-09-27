@@ -44,27 +44,31 @@ CSE_INLINE_SKILL_MAX_CHARS = 800
 CSE_INLINE_TRUNCATION_MARKER = "full SOT not sealed"
 # Distinctive SOT lines the successor must receive inside ``<skills_inline>`` (not via fetch).
 _CSE_INLINE_ANCHORS: dict[str, str] = {
-    "liaison": "harvests → folds → decides → dispatches → checkpoints → hops",
+    "liaison": "harvests → folds → decides → admits one conductor → checkpoints → hops",
 }
 _INLINE_SLUG_RE = re.compile(r'<skill slug="([^"]+)"')
 _EVENT_ITEMS = 3
 _SUBJECT_CHARS = 56
 _ONE_STEP = (
     "One step: harvest → fold → decide; quote evidence; end turn. "
-    "Repo→cursor-auto · design→cdp/fable."
+    "Played todo → admit conductor."
 )
 _IDE_SURFACES = frozenset({"ide", "cursor-sdk"})
 _ONE_STEP_IDE = (
     "One step: harvest → fold → decide; quote evidence; end turn. "
-    "Repo→cursor-sdk · design→cdp/fable. Load liaison-cursor."
+    "Played todo → contract=conductor. Do not Sketch or implement. "
+    "Load liaison-cursor."
 )
 _NOW_STEP_IDE = (
-    "Dispatch NOW (repo→cursor-sdk lane=B · design→fable); "
-    "STAY iff empty/OPERATOR_GATE; end."
+    "Admit one conductor for NOW (contract=conductor, lane=B); "
+    "do not Sketch or implement; STAY iff empty/OPERATOR_GATE; end."
 )
 # 10479 tab 12e32c8b (2026-09-13 06:56Z) wrote "Next: R12 recon" and STAYed at
 # 0.7 % of its window: a NOW row is the leg to dispatch this tick, not a note.
-_NOW_STEP = "Dispatch NOW (repo→auto · design→fable); STAY iff empty/OPERATOR_GATE; end."
+_NOW_STEP = (
+    "Admit one conductor for NOW; do not Sketch or implement; "
+    "STAY iff empty/OPERATOR_GATE; end."
+)
 
 
 def _one_step(surface: str) -> str:
@@ -385,16 +389,10 @@ def build_wake_induction(
     if _tab_at_budget(digest):
         lines.append(_HOP_STEP)
     elif goal_kind and now_row and root_id:
-        if surface in _IDE_SURFACES and goal_kind == "repo_write":
-            lines.append(
-                "Dispatch: team_dispatch cursor-sdk implement lane=B "
-                f"(parent_thread={root_id})"
-            )
-        else:
-            lines.append(
-                "Dispatch: "
-                + format_dispatch_instruction(goal_kind, now_row, root_id=str(root_id))
-            )
+        lines.append(
+            "Dispatch: "
+            + format_dispatch_instruction(goal_kind, now_row, root_id=str(root_id))
+        )
         lines.append(_now_step(surface))
     elif forcing and now_row:
         lines.append(_now_step(surface))

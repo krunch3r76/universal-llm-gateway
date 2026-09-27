@@ -1,9 +1,7 @@
 """Goal escalation for gear-3 liaison ticker — dispatch vs STAY.
 
-When an open goal needs a repo write or a design/judgment fork the liaison
-seat cannot bind, escalate down the ladder instead of STAY or needs-attended.
-Ladder: cursor-auto (repo write) → cdp/opus-5.5 (independent check) →
-cdp/fable-5.1 (design/judgment last resort). Human operator is not a routine rung.
+When an open goal needs a repo write or a design/judgment fork, the liaison
+admits one conductor instead of STAY, Sketch, or ``contract=implement``.
 Only an explicit ``OPERATOR_GATE`` may terminate as needs-attended.
 """
 
@@ -52,17 +50,17 @@ def classify_goal(row: str) -> GoalKind | None:
 
 
 def escalation_target(kind: GoalKind) -> str:
-    """Map a classified goal to its first ladder rung."""
-    if kind == "repo_write":
-        return "cursor-auto"
-    return "cdp/fable-5.1"
+    """Map a classified goal to the seat that plays it."""
+    if kind not in ("repo_write", "design"):
+        raise ValueError(f"unknown goal kind: {kind}")
+    return "conductor"
 
 
 def format_dispatch_instruction(kind: GoalKind, row: str, *, root_id: str) -> str:
-    """One-line dispatch recipe the successor must fire instead of STAY."""
-    if kind == "repo_write":
-        return f"Dispatch cursor-auto (parent_thread={root_id})"
-    return "Dispatch cdp/fable-5.1 (judgment fork)"
+    """One-line admit the successor fires instead of STAY, Sketch, or implement."""
+    if not row.strip():
+        raise ValueError("dispatch instruction requires a NOW row")
+    return f"Admit conductor ({kind}) lane=B (parent_thread={root_id})"
 
 
 def needs_escalation_dispatch(row: str) -> bool:

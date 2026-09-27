@@ -14,13 +14,13 @@ from bus_watch.induction import build_wake_induction
 def test_classify_repo_write_goal() -> None:
     row = "G26 — hoist now_row · [implement] · files_expected: friction_rows.py"
     assert classify_goal(row) == "repo_write"
-    assert escalation_target("repo_write") == "cursor-auto"
+    assert escalation_target("repo_write") == "conductor"
 
 
 def test_classify_design_goal() -> None:
     row = "G27 — observer-loss discriminator · design · consult_role: judgment_gap"
     assert classify_goal(row) == "design"
-    assert escalation_target("design") == "cdp/fable-5.1"
+    assert escalation_target("design") == "conductor"
 
 
 def test_repo_write_emits_dispatch_not_stay() -> None:
@@ -40,14 +40,13 @@ def test_repo_write_emits_dispatch_not_stay() -> None:
     text = build_wake_induction(digest)
     assert needs_escalation_dispatch(row)
     assert "Dispatch:" in text
-    assert "cursor-auto" in text
-    assert "cursor-auto" in text or "cdp/fable-5.1" in text
+    assert "Admit conductor (repo_write)" in text
 
 
 def test_design_goal_emits_fable_dispatch() -> None:
     row = "G27 — design discriminator for observer-loss vs no_episode death"
     instruction = format_dispatch_instruction("design", row, root_id="10479")
-    assert instruction == "Dispatch cdp/fable-5.1 (judgment fork)"
+    assert instruction == "Admit conductor (design) lane=B (parent_thread=10479)"
     digest = {
         "ts": "2026-09-19T18:00:00Z",
         "root": {"id": "10479", "turns": 385},
@@ -61,4 +60,4 @@ def test_design_goal_emits_fable_dispatch() -> None:
     }
     text = build_wake_induction(digest)
     assert "Dispatch:" in text
-    assert "cdp/fable-5.1" in text
+    assert "Admit conductor (design)" in text
