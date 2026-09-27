@@ -8,6 +8,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from work_key_grammar import normalize_work_key
+
 from services.git_integration_worker.cursor_auto.execution_mode import (
     is_concurrent_execution_mode,
 )
@@ -92,6 +94,8 @@ class AutoJobQueue:
         return self._ledger
 
     def enqueue(self, **kwargs: Any) -> AutoJob:
+        if "work_key" in kwargs:
+            kwargs["work_key"] = normalize_work_key(kwargs.get("work_key"))
         job = AutoJob(job_id=str(uuid.uuid4()), **kwargs)
         with self._lock:
             self._jobs[job.job_id] = job
@@ -131,11 +135,11 @@ class AutoJobQueue:
         skipped_same_key: AutoJob | None = None
         with self._lock:
             held_work_keys = {
-                other.work_key
+                normalize_work_key(other.work_key)
                 for other in self._jobs.values()
                 if other.status == "claimed"
                 and is_concurrent_execution_mode(other.execution_mode)
-                and other.work_key
+                and normalize_work_key(other.work_key)
             }
             for jid in self._order:
                 job = self._jobs[jid]
@@ -143,10 +147,8 @@ class AutoJobQueue:
                     job.execution_mode
                 ):
                     continue
-                if (
-                    job.work_key
-                    and job.work_key in held_work_keys
-                ):
+                job_key = normalize_work_key(job.work_key)
+                if job_key and job_key in held_work_keys:
                     if skipped_same_key is None:
                         skipped_same_key = job
                     continue

@@ -550,6 +550,7 @@ def _request_dispatch(
         work_key_err = validate_work_key(str(work_key).strip())
         if work_key_err is not None:
             return work_key_err
+        work_key = str(work_key).strip()
     lane_bind_refusal = refuse_lane_bind_incomplete_pair(
         parent_thread=parent_thread,
         lane_role=lane_role,

@@ -81,6 +81,17 @@ def test_f1_explicit_work_key_lane_b_investigate_concurrent() -> None:
     )
 
 
+def test_f2_whitespace_work_key_collapses_to_one_claim() -> None:
+    queue = get_queue()
+    j1 = _enqueue_conductor(queue, thread_id="a", turn=1, work_key=" todo:x ")
+    j2 = _enqueue_conductor(queue, thread_id="b", turn=1, work_key="todo:x")
+    assert j1.work_key == "todo:x"
+    assert j2.work_key == "todo:x"
+    assert queue.claim_next_concurrent() is not None
+    assert queue.claim_next_concurrent() is None
+    assert queue.get(j2.job_id).status == "queued"
+
+
 def test_f2_same_work_key_only_one_concurrent_claim() -> None:
     queue = get_queue()
     j1 = _enqueue_conductor(queue, thread_id="a", turn=1)
@@ -166,12 +177,15 @@ def test_f11_keyless_concurrent_jobs_both_claimable() -> None:
 def test_f13_health_projection_fields() -> None:
     queue = get_queue()
     _enqueue_conductor(queue)
-    with patch(
-        "services.git_integration_worker.cursor_auto.gate_serialize.ledger_aligned_operator_occupancy",
-        return_value=99,
-    ), patch(
-        "services.git_integration_worker.cursor_sdk_gate.sdk_dispatch_gate_stats",
-        return_value={"limit": 3},
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.gate_serialize.ledger_aligned_operator_occupancy",
+            return_value=99,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_gate.sdk_dispatch_gate_stats",
+            return_value={"limit": 3},
+        ),
     ):
         snap = queue_admission_health()
     assert "concurrent_occupants" in snap
@@ -230,9 +244,7 @@ def test_f3_fourth_job_stays_queued_at_gate_capacity() -> None:
 
 def test_f8_confer_lane_b_not_concurrent_class() -> None:
     assert (
-        declared_execution_mode(
-            contract="confer", lane="B", work_key="todo:x"
-        )
+        declared_execution_mode(contract="confer", lane="B", work_key="todo:x")
         == "serial"
     )
 
@@ -252,9 +264,7 @@ def test_f16_verify_contract_in_allowlist() -> None:
 
     assert "verify" in LANE_CONDUCTOR_CONTRACTS
     assert (
-        declared_execution_mode(
-            contract="verify", lane="B", work_key="todo:v"
-        )
+        declared_execution_mode(contract="verify", lane="B", work_key="todo:v")
         == ISOLATED_LANE_CONDUCTOR_MODE
     )
 
