@@ -173,6 +173,31 @@ def queue_admission_health() -> dict[str, Any]:
         red_reason = "waiter_starvation"
     else:
         red_reason = None
+    concurrent_occupants = [
+        {
+            "job_id": j.job_id,
+            "thread_id": j.thread_id,
+            "work_key": j.work_key,
+            "execution_mode": j.execution_mode,
+        }
+        for j in open_jobs
+        if j.status == "claimed" and is_concurrent_execution_mode(j.execution_mode)
+    ]
+    from services.git_integration_worker.cursor_auto.gate_serialize import (
+        ledger_aligned_operator_occupancy,
+    )
+    from services.git_integration_worker.cursor_sdk_gate import sdk_dispatch_gate_stats
+
+    operator_limit = int(sdk_dispatch_gate_stats(lane="operator")["limit"])
+    occupancy = ledger_aligned_operator_occupancy()
+    headroom_full = occupancy >= operator_limit
+    concurrent_pending_headroom_held = sum(
+        1
+        for j in open_jobs
+        if j.status == "queued"
+        and is_concurrent_execution_mode(j.execution_mode)
+        and headroom_full
+    )
     snapshot = {
         "admit_eligible_pending": len(admit_eligible_pending),
         "serial_occupant_job_id": (
@@ -184,6 +209,8 @@ def queue_admission_health() -> dict[str, Any]:
         "red": red,
         "red_reason": red_reason,
         "red_threshold_s": _OCCUPANT_IDLE_RED_THRESHOLD_S,
+        "concurrent_occupants": concurrent_occupants,
+        "concurrent_pending_headroom_held": concurrent_pending_headroom_held,
         "projection_only": True,
         **waiter,
     }

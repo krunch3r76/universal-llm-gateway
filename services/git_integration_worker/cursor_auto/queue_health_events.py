@@ -13,6 +13,15 @@ from services.git_integration_worker.cursor_sdk_events import emit_frontier_even
 
 logger = get_logger(__name__)
 
+_same_work_key_hold_emitted: set[str] = set()
+_headroom_hold_emitted: set[str] = set()
+
+
+def reset_rising_edge_state_for_tests() -> None:
+    """Clear per-job rising-edge sets (hermetic tests only)."""
+    _same_work_key_hold_emitted.clear()
+    _headroom_hold_emitted.clear()
+
 
 @event_factory
 def GiwCursorAutoQueueNotServing(  # noqa: N802
@@ -43,14 +52,85 @@ def GiwCursorAutoConcurrentClaimed(  # noqa: N802
     thread_id: str,
     contract: str,
     execution_mode: str,
+    work_key: str | None = None,
 ) -> Event:
     """Concurrent worker claimed a lease-exempt Auto job beside the serial slot."""
+    payload: dict[str, str | None] = {
+        "job_id": job_id,
+        "thread_id": thread_id,
+        "contract": contract,
+        "execution_mode": execution_mode,
+    }
+    if work_key is not None:
+        payload["work_key"] = work_key
     return Event(
         signal="giw.cursor_auto.concurrent_claimed",
+        payload=payload,
+        scope="node",
+        role="observation",
+    )
+
+
+@event_factory
+def GiwCursorAutoJobExecutionModeDeclared(  # noqa: N802
+    execution_mode: str,
+    reason: str,
+    work_key: str | None,
+    lane: str | None,
+    contract: str,
+    job_id: str,
+) -> Event:
+    """Mode resolved at Auto enqueue."""
+    return Event(
+        signal="giw.cursor_auto.auto_job_execution_mode_declared",
+        payload={
+            "execution_mode": execution_mode,
+            "reason": reason,
+            "work_key": work_key,
+            "lane": lane,
+            "contract": contract,
+            "job_id": job_id,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+@event_factory
+def GiwCursorAutoConcurrentSameWorkKeyHeld(  # noqa: N802
+    job_id: str,
+    thread_id: str,
+    work_key: str,
+    execution_mode: str,
+) -> Event:
+    """Concurrent claim skipped: same work_key already claimed."""
+    return Event(
+        signal="giw.cursor_auto.auto_job_concurrent_same_work_key_held",
         payload={
             "job_id": job_id,
             "thread_id": thread_id,
-            "contract": contract,
+            "work_key": work_key,
+            "execution_mode": execution_mode,
+        },
+        scope="node",
+        role="observation",
+    )
+
+
+@event_factory
+def GiwCursorAutoConcurrentHeadroomHeld(  # noqa: N802
+    job_id: str,
+    thread_id: str,
+    work_key: str | None,
+    execution_mode: str,
+) -> Event:
+    """Concurrent claim deferred: operator gate at capacity."""
+    return Event(
+        signal="giw.cursor_auto.auto_job_concurrent_headroom_held",
+        payload={
+            "job_id": job_id,
+            "thread_id": thread_id,
+            "work_key": work_key,
             "execution_mode": execution_mode,
         },
         scope="node",
@@ -93,6 +173,7 @@ def emit_concurrent_claimed(
     thread_id: str,
     contract: str,
     execution_mode: str,
+    work_key: str | None = None,
 ) -> None:
     """Publish that the concurrent worker claimed a lease-exempt Auto job."""
     emit_frontier_event(
@@ -101,15 +182,85 @@ def emit_concurrent_claimed(
             thread_id=thread_id,
             contract=contract,
             execution_mode=execution_mode,
+            work_key=work_key,
         )
     )
     logger.info(
-        "cursor-auto concurrent claimed job=%s thread=%s contract=%s mode=%s",
+        "cursor-auto concurrent claimed job=%s thread=%s contract=%s mode=%s work_key=%s",
         job_id,
         thread_id,
         contract,
         execution_mode,
+        work_key,
     )
 
 
-__all__ = ["emit_concurrent_claimed", "emit_queue_not_serving"]
+def emit_execution_mode_declared(
+    *,
+    job_id: str,
+    execution_mode: str,
+    reason: str,
+    work_key: str | None,
+    lane: str | None,
+    contract: str,
+) -> None:
+    emit_frontier_event(
+        GiwCursorAutoJobExecutionModeDeclared(
+            execution_mode=execution_mode,
+            reason=reason,
+            work_key=work_key,
+            lane=lane,
+            contract=contract,
+            job_id=job_id,
+        )
+    )
+
+
+def emit_concurrent_same_work_key_held(
+    *,
+    job_id: str,
+    thread_id: str,
+    work_key: str,
+    execution_mode: str,
+) -> None:
+    if job_id in _same_work_key_hold_emitted:
+        return
+    _same_work_key_hold_emitted.add(job_id)
+    emit_frontier_event(
+        GiwCursorAutoConcurrentSameWorkKeyHeld(
+            job_id=job_id,
+            thread_id=thread_id,
+            work_key=work_key,
+            execution_mode=execution_mode,
+        )
+    )
+
+
+def emit_concurrent_headroom_held(
+    *,
+    job_id: str,
+    thread_id: str,
+    work_key: str | None,
+    execution_mode: str,
+) -> None:
+    if job_id in _headroom_hold_emitted:
+        return
+    _headroom_hold_emitted.add(job_id)
+    emit_frontier_event(
+        GiwCursorAutoConcurrentHeadroomHeld(
+            job_id=job_id,
+            thread_id=thread_id,
+            work_key=work_key,
+            execution_mode=execution_mode,
+        )
+    )
+
+
+__all__ = [
+    "emit_concurrent_claimed",
+    "emit_concurrent_headroom_held",
+    "emit_concurrent_same_work_key_held",
+    "emit_execution_mode_declared",
+    "emit_queue_not_serving",
+    "reset_rising_edge_state_for_tests",
+]

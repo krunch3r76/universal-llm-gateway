@@ -8,6 +8,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from work_key_grammar import normalize_work_key
+
 from services.git_integration_worker.cursor_auto.execution_mode import (
     is_concurrent_execution_mode,
 )
@@ -47,6 +49,10 @@ class AutoJob:
     lane: str | None = None
     # Satellite repo name under the projects root; None/omit ⇒ hub ULG.
     workspace: str | None = None
+    # D4 work identity for lane-B conductor concurrent admission (optional).
+    work_key: str | None = None
+    # Enqueue-time reason from ``resolve_execution_mode_at_enqueue`` (reporting).
+    execution_mode_declare_reason: str | None = None
     # Declared execution mode (S-3). "serial" (default) uses the exclusive
     # single-occupant loop unchanged since before this mission. Any other
     # value is looked up against the default-deny allowlist in
@@ -88,6 +94,8 @@ class AutoJobQueue:
         return self._ledger
 
     def enqueue(self, **kwargs: Any) -> AutoJob:
+        if "work_key" in kwargs:
+            kwargs["work_key"] = normalize_work_key(kwargs.get("work_key"))
         job = AutoJob(job_id=str(uuid.uuid4()), **kwargs)
         with self._lock:
             self._jobs[job.job_id] = job
@@ -120,22 +128,63 @@ class AutoJobQueue:
         exclusivity invariant of claim_next()/auto_worker_loop is untouched
         by this method; it is a fully independent claim path (same shape as
         the existing continuity-hop bypass, generalized past hops).
+
+        Skips (leaves ``queued``) when another claimed concurrent job holds
+        the same non-empty ``work_key`` — FIFO among same-key waiters.
         """
+        skipped_same_key: AutoJob | None = None
+        with self._lock:
+            held_work_keys = {
+                normalize_work_key(other.work_key)
+                for other in self._jobs.values()
+                if other.status == "claimed"
+                and is_concurrent_execution_mode(other.execution_mode)
+                and normalize_work_key(other.work_key)
+            }
+            for jid in self._order:
+                job = self._jobs[jid]
+                if job.status != "queued" or not is_concurrent_execution_mode(
+                    job.execution_mode
+                ):
+                    continue
+                job_key = normalize_work_key(job.work_key)
+                if job_key and job_key in held_work_keys:
+                    if skipped_same_key is None:
+                        skipped_same_key = job
+                    continue
+                job.status = "claimed"
+                claimed = job
+                break
+            else:
+                claimed = None
+        if skipped_same_key is not None:
+            from services.git_integration_worker.cursor_auto.queue_health_events import (
+                emit_concurrent_same_work_key_held,
+            )
+
+            emit_concurrent_same_work_key_held(
+                job_id=skipped_same_key.job_id,
+                thread_id=skipped_same_key.thread_id,
+                work_key=skipped_same_key.work_key or "",
+                execution_mode=skipped_same_key.execution_mode,
+            )
+        if claimed is None:
+            return None
+        ledger = self._ledger_client()
+        if ledger is not None:
+            ledger.mark_claimed(claimed.job_id)
+        return claimed
+
+    def head_concurrent_queued(self) -> AutoJob | None:
+        """Oldest queued job in the concurrent class (FIFO), or None."""
         with self._lock:
             for jid in self._order:
                 job = self._jobs[jid]
                 if job.status == "queued" and is_concurrent_execution_mode(
                     job.execution_mode
                 ):
-                    job.status = "claimed"
-                    claimed = job
-                    break
-            else:
-                return None
-        ledger = self._ledger_client()
-        if ledger is not None:
-            ledger.mark_claimed(claimed.job_id)
-        return claimed
+                    return job
+        return None
 
     def claim_job(self, job_id: str) -> AutoJob | None:
         """Claim a specific queued job (continuity-hop concurrent path)."""

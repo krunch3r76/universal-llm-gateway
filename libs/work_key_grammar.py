@@ -26,4 +26,22 @@ def is_valid_work_key_scheme(work_key: str) -> bool:
     return any(key.startswith(prefix) for prefix in WORK_ITEM_SCHEMES)
 
 
-__all__ = ["ADHOC_SCHEME", "WORK_ITEM_SCHEMES", "is_valid_work_key_scheme"]
+def normalize_work_key(work_key: str | None) -> str | None:
+    """Strip surrounding space. Empty becomes ``None``.
+
+    Scheme prefixes are case-sensitive (``todo:`` ≠ ``TODO:``). This does not
+    casefold: the remainder is an identity, and an invalid prefix is rejected
+    by :func:`is_valid_work_key_scheme` rather than folded into a valid one.
+    """
+    if work_key is None:
+        return None
+    key = str(work_key).strip()
+    return key or None
+
+
+__all__ = [
+    "ADHOC_SCHEME",
+    "WORK_ITEM_SCHEMES",
+    "is_valid_work_key_scheme",
+    "normalize_work_key",
+]

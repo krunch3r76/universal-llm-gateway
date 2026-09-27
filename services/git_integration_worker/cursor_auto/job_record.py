@@ -6,6 +6,8 @@ import json
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
+from work_key_grammar import normalize_work_key
+
 if TYPE_CHECKING:
     from services.git_integration_worker.cursor_auto.queue import AutoJob
 
@@ -41,7 +43,9 @@ def job_record(job: AutoJob) -> dict[str, Any]:
         "advisor_brief": job.advisor_brief,
         "lane": job.lane,
         "workspace": job.workspace,
+        "work_key": job.work_key,
         "execution_mode": job.execution_mode,
+        "execution_mode_declare_reason": job.execution_mode_declare_reason,
         "cse_chat_url": job.cse_chat_url,
         "cse_registration_id": job.cse_registration_id,
     }
@@ -80,7 +84,9 @@ def job_from_row(row: sqlite3.Row) -> AutoJob:
         advisor_brief=data.get("advisor_brief") or None,
         lane=data.get("lane") or None,
         workspace=data.get("workspace") or None,
+        work_key=normalize_work_key(data.get("work_key") or None),
         execution_mode=str(data.get("execution_mode") or "serial"),
+        execution_mode_declare_reason=data.get("execution_mode_declare_reason") or None,
         cse_chat_url=data.get("cse_chat_url") or None,
         cse_registration_id=data.get("cse_registration_id") or None,
     )
