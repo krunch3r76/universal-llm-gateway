@@ -12,7 +12,7 @@ from cortex_store.verbatim_succession import (
     split_verbatim_layer,
 )
 
-from .tape_catalog_elide import elide_ide_catalog_blocks
+from .tape_catalog_elide import elide_ide_catalog_blocks, exclude_ide_catalog_turns
 from .tape_cells import (
     _cells_for_lane,
     _filter_messages_to_cells,
@@ -118,6 +118,7 @@ def pour_lane_messages(
             _last_session_cells(cells, thread_id=thread_id, channel=channel)
         )
         messages = _filter_messages_to_cells(messages, cells)
+    messages = exclude_ide_catalog_turns(messages)
     messages = elide_ide_catalog_blocks(messages)
     index_rows: list[dict[str, Any]] = []
     degraded: dict[str, Any] | None = None

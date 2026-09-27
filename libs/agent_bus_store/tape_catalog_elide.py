@@ -1,4 +1,4 @@
-"""Elide IDE harness catalog blocks before tape budget measurement."""
+"""Drop IDE catalog turns and elide harness blocks before tape budget measurement."""
 
 from __future__ import annotations
 
@@ -11,6 +11,16 @@ _ELIDE_TAG_NAMES = (
     "manually_attached_skills",
     "dynamic_tool_catalog",
     "open_and_recently_viewed_files",
+)
+
+# Whole-turn harness injection (Cursor IDE catalog user messages). A turn whose
+# body is only these blocks is not speech — drop it. Mixed turns that also
+# carry a substantive ``<user_query>`` stay, and these blocks are not elided
+# there: the operator text and the catalog share one message.
+_CATALOG_TURN_TAGS = (
+    "available_subagent_types",
+    "available_subagent_models",
+    "dynamic_tools",
 )
 
 _USER_QUERY_RE = re.compile(
@@ -71,6 +81,41 @@ def _elide_catalog_in_content(content: str) -> str:
     return "".join(pieces)
 
 
+def _is_ide_catalog_turn(content: str) -> bool:
+    """True when ``content`` is only IDE catalog blocks and whitespace.
+
+    Requires at least one catalog-turn tag so a checkpoint command or other
+    harness text without these tags is left for the block elider.
+    """
+    if not any(f"<{tag}>" in content for tag in _CATALOG_TURN_TAGS):
+        return False
+    if any(substantive for _start, _end, substantive in _user_query_spans(content)):
+        return False
+    residual = content
+    for tag in _CATALOG_TURN_TAGS:
+        residual = _tag_block_re(tag).sub("", residual)
+    return not residual.strip()
+
+
+def exclude_ide_catalog_turns(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop user turns that are IDE catalog injections, not operator speech."""
+    try:
+        kept: list[dict[str, Any]] = []
+        for message in messages:
+            if str(message.get("role") or "") != "user":
+                kept.append(message)
+                continue
+            content = message.get("content")
+            if isinstance(content, str) and content and _is_ide_catalog_turn(content):
+                continue
+            kept.append(message)
+        return kept
+    except Exception:
+        return messages
+
+
 def elide_ide_catalog_blocks(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -95,4 +140,4 @@ def elide_ide_catalog_blocks(
         return messages
 
 
-__all__ = ["elide_ide_catalog_blocks"]
+__all__ = ["elide_ide_catalog_blocks", "exclude_ide_catalog_turns"]
