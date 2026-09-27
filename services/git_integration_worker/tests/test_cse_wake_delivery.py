@@ -86,7 +86,15 @@ def test_deliver_cse_wake_timeout_is_not_unreachable(monkeypatch):
     assert "unreachable" not in result["error"]
 
 
-def test_build_wake_prompt_text_token_free():
+def test_build_wake_prompt_text_token_free(monkeypatch):
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_pager_resolve._owner_lane_id",
+        lambda thread_id: "12286",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_pager_resolve._closeout_turn_number",
+        lambda thread_id: "7",
+    )
     text = build_wake_prompt_text(
         dispatch_id="auto-abc",
         thread_id="6661",
@@ -95,6 +103,68 @@ def test_build_wake_prompt_text_token_free():
     )
     assert "auto-abc" in text
     assert "status:done" not in text
+    assert "closeout_status" not in text
+    assert text.startswith("WAKE. First: reload skills")
+
+
+def test_maybe_deliver_partial_identity_does_not_reattach_job_stamp(monkeypatch):
+    """A registration-only seating address must not POST the job's stale chat_url."""
+    monkeypatch.setenv("PROJECT_ASK_URL", "http://127.0.0.1:9191")
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_pager_resolve._owner_lane_id",
+        lambda thread_id: "12286",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_pager_resolve._closeout_turn_number",
+        lambda thread_id: "7",
+    )
+    stale = "https://claude.ai/cowork/cse_01AoM9mfdhGSHrbPoikuwobw"
+    calls: list[dict] = []
+
+    def _post(method: str, url: str, *, json=None, timeout: float):
+        calls.append(json)
+        resp = MagicMock(spec=httpx.Response)
+        resp.status_code = 200
+        resp.content = b'{"ok": true}'
+        resp.json.return_value = {"ok": True}
+        resp.text = ""
+        return resp
+
+    job = AutoJob(
+        job_id="j1",
+        thread_id="13001",
+        turn_number=1,
+        subject="s",
+        body="b",
+        from_agent="web-anthropic",
+        to_agent="cursor-auto",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+        cse_chat_url=stale,
+        cse_registration_id="c97c246d71884a03a0ed50cb83471e4b",
+    )
+    result = asyncio.run(
+        maybe_deliver_cse_wake(
+            job,
+            dispatch_id="auto-x",
+            request_turn="1",
+            closeout_status="complete",
+            post=_post,
+            chat_url=None,
+            registration_id="reg-seat",
+            source="hop_watch",
+        )
+    )
+    assert result["ok"] is True
+    assert result["source"] == "hop_watch"
+    assert len(calls) == 1
+    body = calls[0]
+    assert "chat_url" not in body
+    assert "reattach" not in body
+    assert body["registration_id"] == "reg-seat"
+    assert stale not in str(body)
+    assert "c97c246d" not in str(body)
 
 
 def test_maybe_deliver_skips_ide_class():
@@ -139,14 +209,17 @@ def test_pay_wake_unit_no_debt_still_posts_bus_wake():
         contract="implement",
     )
     wake_result = {"ok": True, "status_code": 200}
-    with patch(
-        "claude_bundles.cse_session_obligations.get_open_wake_owed",
-        return_value=None,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.nested_sdk.post_operator_wake",
-        new_callable=AsyncMock,
-        return_value=wake_result,
-    ) as mock_wake:
+    with (
+        patch(
+            "claude_bundles.cse_session_obligations.get_open_wake_owed",
+            return_value=None,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.nested_sdk.post_operator_wake",
+            new_callable=AsyncMock,
+            return_value=wake_result,
+        ) as mock_wake,
+    ):
         result = asyncio.run(
             pay_wake_unit(
                 job,
@@ -183,28 +256,35 @@ def test_pay_wake_unit_debt_followup_ok_skips_bus_wake():
         "payment": {},
         "status": "open",
     }
-    with patch(
-        "claude_bundles.cse_session_obligations.get_open_wake_owed",
-        return_value=obligation,
-    ), patch(
-        "claude_bundles.cse_session_obligations.resolve_payment_channel",
-        return_value={
-            "chat_url": "https://claude.ai/chat/x",
-            "registration_id": "reg-6655",
-        },
-    ), patch(
-        "claude_bundles.cse_wake_retain.try_claim_wake_payment",
-        return_value=True,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.cse_wake_delivery.maybe_deliver_cse_wake",
-        new_callable=AsyncMock,
-        return_value={"ok": True, "send_verified": True},
-    ), patch(
-        "claude_bundles.cse_wake_retain.release_lane_if_debt_cleared",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.nested_sdk.post_operator_wake",
-        new_callable=AsyncMock,
-    ) as mock_wake:
+    with (
+        patch(
+            "claude_bundles.cse_session_obligations.get_open_wake_owed",
+            return_value=obligation,
+        ),
+        patch(
+            "claude_bundles.cse_session_obligations.resolve_payment_channel",
+            return_value={
+                "chat_url": "https://claude.ai/chat/x",
+                "registration_id": "reg-6655",
+            },
+        ),
+        patch(
+            "claude_bundles.cse_wake_retain.try_claim_wake_payment",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.cse_wake_delivery.maybe_deliver_cse_wake",
+            new_callable=AsyncMock,
+            return_value={"ok": True, "send_verified": True},
+        ),
+        patch(
+            "claude_bundles.cse_wake_retain.release_lane_if_debt_cleared",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.nested_sdk.post_operator_wake",
+            new_callable=AsyncMock,
+        ) as mock_wake,
+    ):
         result = asyncio.run(
             pay_wake_unit(
                 job,
@@ -231,17 +311,21 @@ def test_pay_wake_unit_no_debt_live_identity_skips_bus_wake():
         desired_effort="medium",
         contract="implement",
     )
-    with patch(
-        "claude_bundles.cse_session_obligations.get_open_wake_owed",
-        return_value=None,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.cse_pager_resolve.attempt_live_wake_followup",
-        new_callable=AsyncMock,
-        return_value=(True, {"ok": True, "send_verified": True}, "hop_watch"),
-    ), patch(
-        "services.git_integration_worker.cursor_auto.nested_sdk.post_operator_wake",
-        new_callable=AsyncMock,
-    ) as mock_wake:
+    with (
+        patch(
+            "claude_bundles.cse_session_obligations.get_open_wake_owed",
+            return_value=None,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.cse_pager_resolve.attempt_live_wake_followup",
+            new_callable=AsyncMock,
+            return_value=(True, {"ok": True, "send_verified": True}, "hop_watch"),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.nested_sdk.post_operator_wake",
+            new_callable=AsyncMock,
+        ) as mock_wake,
+    ):
         result = asyncio.run(
             pay_wake_unit(
                 job,

@@ -30,6 +30,7 @@ from .quiet_with_wip import (
     evaluate_quiet_with_wip,
     infer_seat,
     parse_iso_ts,
+    seat_park_licence,
 )
 
 logger = logging.getLogger("agent-bus.quiet-sweep")
@@ -39,8 +40,10 @@ _QUIET_THRESHOLD_S: float = float(
 )
 
 
-def _licensed_park(thread_id: str, links: list[DispatchLinkView], turns: list[LaneTurnView]) -> bool:
-    """True when wake_owed / stop_ack_owed is open or latest seat body is PARKED."""
+def _licensed_park(
+    thread_id: str, links: list[DispatchLinkView], turns: list[LaneTurnView]
+) -> bool:
+    """True when wake debt is open, the seat's latest TYPE line is PARKED, or the parent lane is."""
     try:
         sessions = load_sessions()
         if get_open_wake_owed(sessions, thread=thread_id) is not None:
@@ -60,7 +63,42 @@ def _licensed_park(thread_id: str, links: list[DispatchLinkView], turns: list[La
             latest = max(seat_turns, key=lambda t: t.turn_number)
             if is_parked_body(latest.body):
                 return True
+        if seat_park_licence(turns, seat):
+            return True
+    if _parent_park_licensed(thread_id):
+        return True
     return False
+
+
+def _parent_park_licensed(thread_id: str) -> bool:
+    """True when this lane's parent has a live ``TYPE: PARKED`` licence.
+
+    Child-lane jobs (``parent_thread`` = the parking lane) must not trip
+    quiet-with-WIP while that licence holds.
+    """
+    try:
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT parent_thread_id FROM thread_lane_associations "
+                "WHERE thread_id = ? ORDER BY id DESC LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+    except Exception as exc:  # noqa: BLE001 — park probe must not kill sweep
+        logger.debug("parent lane lookup failed for %s: %s", thread_id, exc)
+        return False
+    if row is None:
+        return False
+    parent = str(row["parent_thread_id"] or "").strip()
+    if not parent or parent == thread_id:
+        return False
+    loaded = _load_lane(parent)
+    if loaded is None:
+        return False
+    _lifecycle, _links, turns = loaded
+    seat = infer_seat(turns)
+    if seat is None:
+        return False
+    return seat_park_licence(turns, seat)
 
 
 def _alarm_open(thread_id: str) -> bool:
@@ -73,7 +111,9 @@ def _alarm_open(thread_id: str) -> bool:
     return row is not None
 
 
-def _load_lane(thread_id: str) -> tuple[str, list[DispatchLinkView], list[LaneTurnView]] | None:
+def _load_lane(
+    thread_id: str,
+) -> tuple[str, list[DispatchLinkView], list[LaneTurnView]] | None:
     with connect() as conn:
         trow = conn.execute(
             "SELECT bus_lifecycle_state FROM threads WHERE id = ?",

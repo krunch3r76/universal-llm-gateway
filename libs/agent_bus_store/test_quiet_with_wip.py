@@ -113,13 +113,52 @@ def test_unbound_pickup_fires() -> None:
     assert verdict.unbound_turn_labels == ("t1: ARCHITECTURE BIND",)
 
 
+def test_seat_park_licence_survives_later_nontype_turn() -> None:
+    """CDP reply after TYPE: PARKED does not cancel the licence."""
+    from agent_bus_store.quiet_with_wip import seat_park_licence
+
+    turns = (
+        LaneTurnView(
+            turn_number=1,
+            from_agent=SEAT,
+            created_at=_ts(900),
+            body="TYPE: PARKED\nwake: chat_delivery\n",
+        ),
+        LaneTurnView(
+            turn_number=2,
+            from_agent=SEAT,
+            created_at=_ts(800),
+            body="# CDP generate result\nexecution_id: abc\n",
+        ),
+    )
+    assert seat_park_licence(turns, SEAT) is True
+
+
+def test_seat_park_licence_cleared_by_later_type_line() -> None:
+    from agent_bus_store.quiet_with_wip import seat_park_licence
+
+    turns = (
+        LaneTurnView(
+            turn_number=1,
+            from_agent=SEAT,
+            created_at=_ts(900),
+            body="TYPE: PARKED\n",
+        ),
+        LaneTurnView(
+            turn_number=2,
+            from_agent=SEAT,
+            created_at=_ts(100),
+            body="TYPE: DISPOSITION\nverdict: ratify\n",
+        ),
+    )
+    assert seat_park_licence(turns, SEAT) is False
+
+
 def test_licensed_park_suppresses() -> None:
     """Open wake_owed / licensed park ⇒ skip even with in-flight WIP."""
     snap = _snap(
         licensed_park=True,
-        links=(
-            DispatchLinkView(execution_id="exec-x", terminal_status=None),
-        ),
+        links=(DispatchLinkView(execution_id="exec-x", terminal_status=None),),
         turns=(
             LaneTurnView(
                 turn_number=1,

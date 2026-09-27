@@ -8,8 +8,10 @@ from claude_bundles.cdp_registry.models import Registration
 
 from services.git_integration_worker.cursor_auto.cse_pager_resolve import (
     _registration_listable,
+    live_identity_for_job,
     pager_key_for_job,
     refresh_pager_identity,
+    resolve_closeout_delivery_address,
     resolve_live_cse_address,
 )
 from services.git_integration_worker.cursor_auto.queue import AutoJob
@@ -112,7 +114,9 @@ def test_stale_watch_skipped_when_reg_not_listable(
         ),
         patch(
             "cdp_ask.operator_seat_resolve.load_active",
-            return_value={"reg-live": {"started_at": 200.0, "purpose": "operator-proxy"}},
+            return_value={
+                "reg-live": {"started_at": 200.0, "purpose": "operator-proxy"}
+            },
         ),
     ):
         job = _job()
@@ -183,7 +187,9 @@ def test_registry_prefers_unique_hop_kind(
     assert result["registration_id"] == "reg-hop"
 
 
-@patch("services.git_integration_worker.cursor_auto.cse_pager_resolve.stamp_session_ids")
+@patch(
+    "services.git_integration_worker.cursor_auto.cse_pager_resolve.stamp_session_ids"
+)
 @patch("services.git_integration_worker.cursor_auto.cse_pager_resolve.save_watches")
 @patch("services.git_integration_worker.cursor_auto.cse_pager_resolve.load_watches")
 def test_refresh_pager_identity_preserves_cadence_fields(
@@ -277,3 +283,108 @@ def test_stale_watch_with_foreign_provenance_identity_not_listable(
     ):
         result = resolve_live_cse_address(_job())
     assert result == {"chat_url": None, "registration_id": None, "source": ""}
+
+
+@patch(
+    "services.git_integration_worker.cse_session_holders.get_driving_holder_for_lane",
+    return_value=None,
+)
+@patch(
+    "services.git_integration_worker.cursor_auto.cse_pager_resolve.chat_url_for_registration"
+)
+@patch("services.git_integration_worker.cursor_auto.cse_pager_resolve.list_active")
+@patch("services.git_integration_worker.cursor_auto.cse_pager_resolve.load_watches")
+def test_closeout_address_uses_parent_seating_not_job_stamp(
+    mock_watches, mock_list_active, mock_chat_url, _holder, monkeypatch
+):
+    """Child closeout targets the parent hop watch, never the job's stale URL."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_pager_resolve._owner_lane_id",
+        lambda thread_id: "12286",
+    )
+    mock_watches.return_value = {
+        "12286": {
+            "registration_id": "reg-seat",
+            "chat_url": "https://claude.ai/cowork/cse_014i5jSfBoYepuvsxswuz1BP",
+        }
+    }
+    mock_list_active.return_value = [MagicMock(registration_id="reg-seat")]
+    mock_chat_url.side_effect = lambda rid: {
+        "reg-seat": "https://claude.ai/cowork/cse_014i5jSfBoYepuvsxswuz1BP",
+    }.get(rid)
+    job = _job(
+        thread_id="13001",
+        cse_chat_url="https://claude.ai/cowork/cse_01AoM9mfdhGSHrbPoikuwobw",
+        cse_registration_id="c97c246d71884a03a0ed50cb83471e4b",
+    )
+    result = resolve_closeout_delivery_address(job)
+    assert result["source"] == "hop_watch"
+    assert result["chat_url"] == "https://claude.ai/cowork/cse_014i5jSfBoYepuvsxswuz1BP"
+    assert result["registration_id"] == "reg-seat"
+    assert "cse_01AoM9" not in (result["chat_url"] or "")
+
+
+def test_partial_explicit_identity_does_not_fill_job_stamp():
+    """One-sided seating must not reattach the job's other side."""
+    stale_url = "https://claude.ai/cowork/cse_01AoM9mfdhGSHrbPoikuwobw"
+    stale_reg = "c97c246d71884a03a0ed50cb83471e4b"
+    job = _job(cse_chat_url=stale_url, cse_registration_id=stale_reg)
+    reg_only = live_identity_for_job(job, chat_url=None, registration_id="reg-seat")
+    assert reg_only["chat_url"] is None
+    assert reg_only["registration_id"] == "reg-seat"
+    assert stale_url not in str(reg_only)
+    url_only = live_identity_for_job(
+        job,
+        chat_url="https://claude.ai/cowork/cse_014i5jSfBoYepuvsxswuz1BP",
+        registration_id=None,
+        source="hop_watch",
+    )
+    assert url_only["registration_id"] is None
+    assert (
+        url_only["chat_url"] == "https://claude.ai/cowork/cse_014i5jSfBoYepuvsxswuz1BP"
+    )
+    assert url_only["source"] == "hop_watch"
+    assert stale_reg not in str(url_only)
+
+
+@patch(
+    "services.git_integration_worker.cse_session_holders.get_driving_holder_for_lane",
+    return_value=None,
+)
+@patch(
+    "services.git_integration_worker.cursor_auto.cse_pager_resolve.chat_url_for_registration"
+)
+@patch("services.git_integration_worker.cursor_auto.cse_pager_resolve.list_active")
+@patch("services.git_integration_worker.cursor_auto.cse_pager_resolve.load_watches")
+def test_closeout_address_falls_back_to_pager_home_lane(
+    mock_watches, mock_list_active, mock_chat_url, _holder, monkeypatch
+):
+    """When parent and child have no seating, the mailbox home lane is tried."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_pager_resolve._owner_lane_id",
+        lambda thread_id: thread_id,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_pager_resolve.pager_key_for_job",
+        lambda job: "12286",
+    )
+    mock_watches.return_value = {
+        "12286": {
+            "registration_id": "reg-seat",
+            "chat_url": "https://claude.ai/cowork/cse_014i5jSfBoYepuvsxswuz1BP",
+        }
+    }
+    mock_list_active.return_value = [MagicMock(registration_id="reg-seat")]
+    mock_chat_url.side_effect = lambda rid: {
+        "reg-seat": "https://claude.ai/cowork/cse_014i5jSfBoYepuvsxswuz1BP",
+    }.get(rid)
+    job = _job(
+        thread_id="13001",
+        from_agent="cdp-operator-12286-day",
+        cse_chat_url="https://claude.ai/cowork/cse_01AoM9mfdhGSHrbPoikuwobw",
+        cse_registration_id="c97c246d71884a03a0ed50cb83471e4b",
+    )
+    result = resolve_closeout_delivery_address(job)
+    assert result["source"] == "hop_watch"
+    assert result["chat_url"] == "https://claude.ai/cowork/cse_014i5jSfBoYepuvsxswuz1BP"
+    assert result["registration_id"] == "reg-seat"

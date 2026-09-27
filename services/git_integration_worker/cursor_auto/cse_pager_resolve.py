@@ -40,9 +40,11 @@ __all__ = [
     "build_wake_prompt_text",
     "live_identity_for_job",
     "map_followup_code",
+    "owner_lane_for_delivery",
     "pager_key_for_job",
     "refresh_pager_after_hop",
     "refresh_pager_identity",
+    "resolve_closeout_delivery_address",
     "resolve_live_cse_address",
 ]
 
@@ -109,7 +111,10 @@ def _from_hop_watch(pager_key: str) -> dict[str, str | None]:
 
 
 def _has_identity(result: dict[str, str | None]) -> bool:
-    return bool((result.get("chat_url") or "").strip() or (result.get("registration_id") or "").strip())
+    return bool(
+        (result.get("chat_url") or "").strip()
+        or (result.get("registration_id") or "").strip()
+    )
 
 
 def _from_csr(job: AutoJob, pager_key: str) -> dict[str, str | None]:
@@ -119,7 +124,11 @@ def _from_csr(job: AutoJob, pager_key: str) -> dict[str, str | None]:
         reg = (channel.get("registration_id") or "").strip() or None
         if reg and not _registration_listable(reg):
             continue
-        url = _url_for_registration(reg) or (channel.get("chat_url") or "").strip() or None
+        url = (
+            _url_for_registration(reg)
+            or (channel.get("chat_url") or "").strip()
+            or None
+        )
         if url or reg:
             return {"chat_url": url, "registration_id": reg, "source": "csr"}
     return _empty_address()
@@ -153,6 +162,93 @@ def _from_job_stamp(job: AutoJob) -> dict[str, str | None]:
     return {"chat_url": url, "registration_id": reg, "source": "job_stamp"}
 
 
+def owner_lane_for_delivery(job: AutoJob) -> str:
+    """Parent lane when the job thread is a child; otherwise the job thread.
+
+    Closeout delivery targets the operator seat that owns the lane, which is
+    seated on the parent, not on the child commission thread.
+    """
+    return _owner_lane_id(str(job.thread_id))
+
+
+def _owner_lane_id(thread_id: str) -> str:
+    tid = (thread_id or "").strip()
+    if not tid:
+        return tid
+    try:
+        from agent_bus_store.db.lane_associations import get_current_lane
+
+        lane = get_current_lane(thread_id=tid)
+    except Exception as exc:  # noqa: BLE001 — missing thread must not block delivery
+        logger.debug("owner lane lookup failed thread=%s: %s", tid, exc)
+        return tid
+    parent = str(lane.get("parent_thread") or "").strip()
+    return parent or tid
+
+
+def _closeout_turn_number(thread_id: str) -> str:
+    """Latest turn on the child lane after the closeout relay has been posted."""
+    tid = (thread_id or "").strip()
+    if not tid:
+        return "unknown"
+    try:
+        from agent_bus_store.db.connection import connect
+
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(turn_number) AS n FROM turns WHERE thread = ?",
+                (tid,),
+            ).fetchone()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("closeout turn lookup failed thread=%s: %s", tid, exc)
+        return "unknown"
+    if row is None or row["n"] is None:
+        return "unknown"
+    return str(row["n"])
+
+
+def resolve_closeout_delivery_address(job: AutoJob) -> dict[str, str | None]:
+    """CSE address for a closeout followup, from seating identity only.
+
+    Looks up the owner lane (parent of a child commission), then the child,
+    then the home-lane pager key, on the hop watch, the driving holder, the
+    CSR, and the operator-seat registry. Does not read ``job.cse_chat_url``
+    or the thread CSE columns — those were the stale target behind the
+    2026-09-27 0/2.
+    """
+    child = str(job.thread_id)
+    owner = owner_lane_for_delivery(job)
+    pager = pager_key_for_job(job)
+    keys: list[str] = []
+    for key in (owner, child, pager):
+        cleaned = (key or "").strip()
+        if cleaned and cleaned not in keys:
+            keys.append(cleaned)
+    for key in keys:
+        for result in (
+            _from_hop_watch(key),
+            _from_csr(job, key),
+            _from_registry(key),
+        ):
+            if result.get("source") == "unavailable":
+                continue
+            if _has_identity(result):
+                logger.info(
+                    "closeout_delivery_address job_thread=%s key=%s source=%s reg=%s",
+                    child,
+                    key,
+                    result.get("source"),
+                    result.get("registration_id"),
+                )
+                return result
+    logger.info(
+        "closeout_delivery_address no seating job_thread=%s owner=%s",
+        child,
+        owner,
+    )
+    return _empty_address()
+
+
 def resolve_live_cse_address(job: AutoJob) -> dict[str, str | None]:
     """Resolve the current CSE delivery address for a pager key (never mutates *job*)."""
     pager_key = pager_key_for_job(job)
@@ -178,15 +274,21 @@ def live_identity_for_job(
     *,
     chat_url: str | None = None,
     registration_id: str | None = None,
+    source: str | None = None,
 ) -> dict[str, str | None]:
-    """Return delivery address from explicit overrides or the live lookup ladder."""
+    """Return an explicit address, or the closeout seating lookup.
+
+    A passed side is used as-is. The missing side is not filled from
+    ``job.cse_chat_url`` or ``job.cse_registration_id`` — that fill
+    reattached a stale chat when seating returned only one side.
+    """
     if chat_url is not None or registration_id is not None:
         return {
-            "chat_url": chat_url or getattr(job, "cse_chat_url", None),
-            "registration_id": registration_id or getattr(job, "cse_registration_id", None),
-            "source": "",
+            "chat_url": (chat_url or "").strip() or None,
+            "registration_id": (registration_id or "").strip() or None,
+            "source": (source or "").strip(),
         }
-    return resolve_live_cse_address(job)
+    return resolve_closeout_delivery_address(job)
 
 
 async def attempt_live_wake_followup(
@@ -206,10 +308,15 @@ async def attempt_live_wake_followup(
 
     if not is_operator_proxy_mailbox(job.from_agent):
         return False, {"ok": False, "skipped": True}, None
-    live = resolve_live_cse_address(job)
+    live = resolve_closeout_delivery_address(job)
     source = live.get("source") or None
     if not _has_identity(live):
-        return False, {"ok": False, "skipped": True}, source
+        logger.info(
+            "closeout followup skipped no seating thread=%s owner=%s",
+            job.thread_id,
+            owner_lane_for_delivery(job),
+        )
+        return False, {"ok": False, "skipped": True, "reason": "no_identity"}, source
     delivery = await maybe_deliver_cse_wake(
         job,
         dispatch_id=dispatch_id,
@@ -218,6 +325,7 @@ async def attempt_live_wake_followup(
         post=post,
         chat_url=live.get("chat_url"),
         registration_id=live.get("registration_id"),
+        source=source,
     )
     return bool(delivery.get("ok")), delivery, source
 
@@ -229,15 +337,18 @@ def build_wake_prompt_text(
     request_turn: str,
     closeout_status: str,
 ) -> str:
-    """Token-free wake body for in-chat delivery (not a CLOSEOUT envelope copy)."""
-    return (
-        "Park-on-WAKE delivery (leg b).\n"
-        f"dispatch_id: {dispatch_id}\n"
-        f"thread: {thread_id}\n"
-        f"request_turn: {request_turn}\n"
-        f"closeout_status: {closeout_status}\n"
-        "\n"
-        "Harvest: mark_read → wait(wait_seconds=0) → validate dispatch_id vs lane tip."
+    """Skill-reload followup body. ``closeout_status`` is not rendered (rank rots)."""
+    del request_turn, closeout_status
+    from services.git_integration_worker.cursor_auto.operator_wake_body import (
+        render_operator_wake_body,
+    )
+
+    child = str(thread_id)
+    return render_operator_wake_body(
+        owner_lane=_owner_lane_id(child),
+        child_lane=child,
+        dispatch_id=dispatch_id,
+        closeout_turn=_closeout_turn_number(child),
     )
 
 

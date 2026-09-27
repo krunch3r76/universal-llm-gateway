@@ -177,6 +177,56 @@ def test_sweep_pickup_unbound_names_turns(bus_db) -> None:
     assert "execution_ids=" not in body
 
 
+def test_parked_parent_suppresses_child_lane_wip(bus_db) -> None:
+    """TYPE: PARKED on the parent licences in-flight work on parent_thread children."""
+    seat = "web-anthropic"
+    parent, *_ = create_thread_with_turn(
+        slug="park-parent",
+        from_agent=seat,
+        to_agent="cursor",
+        subject="TYPE: PARKED",
+        body="TYPE: PARKED\nwake: chat_delivery\n",
+        lifecycle_state="pending",
+    )
+    child, *_ = create_thread_with_turn(
+        slug="park-child",
+        from_agent=seat,
+        to_agent="cursor",
+        subject="commission",
+        body="please run this",
+        lifecycle_state="pending",
+    )
+    parent_id = parent["id"]
+    child_id = child["id"]
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO thread_lane_associations "
+            "(thread_id, parent_thread_id, lane_role) VALUES (?, ?, 'sub_mission')",
+            (child_id, parent_id),
+        )
+    admit_dispatch(
+        thread_id=child_id,
+        execution_id="exec-child-inflight",
+        pipeline_id="cursor-sdk-generate",
+        caller_agent=seat,
+    )
+    old = (datetime.now(UTC) - timedelta(seconds=120)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with connect() as conn:
+        conn.execute("UPDATE turns SET created_at = ?", (old,))
+        conn.execute(
+            "UPDATE threads SET bus_lifecycle_state = 'active', updated_at = ?",
+            (old,),
+        )
+
+    with patch(
+        "agent_bus_store.quiet_sweep.emit_quiet_with_wip_fired",
+    ) as emitted:
+        n = sweep_quiet_with_wip(threshold_s=60.0)
+
+    assert n == 0
+    emitted.assert_not_called()
+
+
 def test_migration_006_backfills_null_mission_lanes(bus_db) -> None:
     """Backfill enrolls lane:cursor-auto NULL rows; leaves other NULLs alone."""
     from agent_bus_store.db.migrations import migration_006

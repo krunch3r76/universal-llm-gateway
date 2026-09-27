@@ -11,9 +11,10 @@ Silence is **seat-scoped** (``last_turn_from(T, S)``), never ``threads.updated_a
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, Sequence
+from typing import Literal
 
 from claude_bundles.pickup_awaits import (
     PriorTurn,
@@ -86,6 +87,25 @@ def parse_iso_ts(ts: str) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC)
+
+
+def seat_park_licence(turns: Sequence[LaneTurnView], seat: str) -> bool:
+    """True when the seat's latest ``TYPE:`` line is ``TYPE: PARKED``.
+
+    A later non-``TYPE:`` turn (a CDP reply pasted onto the lane) does not
+    cancel the licence. The next ``TYPE:`` line does.
+    """
+    ordered = sorted(
+        (t for t in turns if t.from_agent == seat),
+        key=lambda t: t.turn_number,
+        reverse=True,
+    )
+    for turn in ordered:
+        first = (turn.body or "").strip().split("\n", 1)[0].strip()
+        if not first.startswith("TYPE:"):
+            continue
+        return first == "TYPE: PARKED" or first.startswith("TYPE: PARKED ")
+    return False
 
 
 def infer_seat(turns: Sequence[LaneTurnView]) -> str | None:

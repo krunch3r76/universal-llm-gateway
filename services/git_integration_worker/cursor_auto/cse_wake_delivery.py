@@ -139,6 +139,7 @@ async def maybe_deliver_cse_wake(
     post: HttpPoster | None = None,
     chat_url: str | None = None,
     registration_id: str | None = None,
+    source: str | None = None,
 ) -> dict[str, Any]:
     """Leg (b): fire followup after bus WAKE; skip IDE-class or missing identity."""
     from services.git_integration_worker.cursor_auto.cse_pager_resolve import (
@@ -149,7 +150,12 @@ async def maybe_deliver_cse_wake(
     if not is_chat_delivery_capable(job.from_agent):
         return {"ok": False, "skipped": True, "reason": "not_chat_delivery_capable"}
 
-    live = live_identity_for_job(job, chat_url=chat_url, registration_id=registration_id)
+    live = live_identity_for_job(
+        job,
+        chat_url=chat_url,
+        registration_id=registration_id,
+        source=source,
+    )
     chat_url = live.get("chat_url")
     registration_id = live.get("registration_id")
     source = live.get("source") or None
@@ -281,7 +287,9 @@ async def pay_wake_unit(
         followup_code = map_followup_code(delivery)
         source = delivery.get("source")
         registration_id = channel.get("registration_id") or (
-            resolve_live_cse_address(job).get("registration_id") if followup_ok else None
+            resolve_live_cse_address(job).get("registration_id")
+            if followup_ok
+            else None
         )
         if followup_ok and registration_id:
             release_lane_if_debt_cleared(str(registration_id), purpose="operator-proxy")
