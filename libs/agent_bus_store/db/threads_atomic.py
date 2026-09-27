@@ -223,9 +223,7 @@ def close_thread(
         # the caller is responsible for ensuring the thread reached active first.
         lifecycle = row["bus_lifecycle_state"]
         if lifecycle == "active":
-            _transition_lifecycle_state(
-                conn, thread_id, "completed", lifecycle_trigger
-            )
+            _transition_lifecycle_state(conn, thread_id, "completed", lifecycle_trigger)
 
     detail = get_thread_with_links(thread_id)
     # Observation: CLI / direct HTTP /close previously emitted nothing when
@@ -356,7 +354,9 @@ def backfill_parent_facing_dispatch_enumeration(
                 )
             execution_id = row["execution_id"]
             pipeline_id = pipeline_id or row["pipeline_id"]
-            caller_agent = caller_agent if caller_agent is not None else row["caller_agent"]
+            caller_agent = (
+                caller_agent if caller_agent is not None else row["caller_agent"]
+            )
         else:
             if pipeline_id is None:
                 row = conn.execute(
@@ -515,8 +515,10 @@ def terminate_dispatch(
 ) -> dict[str, Any] | None:
     """Mark dispatch link(s) terminal — sets terminal_status, terminal_at, delivery_at.
 
-    When ``execution_id`` is omitted, updates all non-terminal links for the thread
-    (SDK is 1:1). Idempotent: rows already terminal are skipped via the NULL guard.
+    When ``execution_id`` is omitted, updates the sole non-terminal link only if
+    the thread has exactly one link. A second link is not stamped — sibling
+    failure must not terminalize a live producer. Idempotent: rows already
+    terminal are skipped via the NULL guard.
     ``archive_uri`` is persisted on failed delivery when harvest proof exists.
     ``chat_url`` refreshes the link projection at terminal when provided.
     """
@@ -562,7 +564,21 @@ def terminate_dispatch(
                     (terminal_status, ts, ts, archive_uri, thread_id, execution_id),
                 )
         else:
-            if chat_url is not None:
+            # Omitted execution_id is the 1:1 convenience. A second link on the
+            # same thread means this call must not stamp the sibling.
+            count_row = conn.execute(
+                "SELECT COUNT(*) AS n FROM thread_dispatch_links WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+            link_n = int(count_row["n"] if count_row is not None else 0)
+            if link_n != 1:
+                logger.warning(
+                    "terminate_dispatch skipped thread-wide stamp "
+                    "thread_id=%s links=%s",
+                    thread_id,
+                    link_n,
+                )
+            elif chat_url is not None:
                 conn.execute(
                     "UPDATE thread_dispatch_links "
                     "SET terminal_status = ?, terminal_at = ?, delivery_at = ?, "

@@ -81,6 +81,15 @@ def _resolve_hop_seat_request_refusal(
     return refusal
 
 
+def _side_effect_failure(op: str, exc: BaseException) -> dict[str, str]:
+    """Advisory row for a post-enqueue side effect that must not fail the call."""
+    return {
+        "op": op,
+        "error_type": type(exc).__name__,
+        "error": str(exc),
+    }
+
+
 def _merge_lane_tags(tags: list[str] | None) -> list[str]:
     merged: list[str] = []
     seen: set[str] = set()
@@ -345,6 +354,7 @@ def _request_impl(
     if request_id:
         posted_kw["request_id"] = request_id
     record("mcp.agentbus.request.posted", **posted_kw)
+    side_effect_failures: list[dict[str, str]] = []
     if (
         capture_identity
         and (cse_chat_url or cse_registration_id)
@@ -352,18 +362,26 @@ def _request_impl(
     ):
         from claude_bundles.cse_session_obligations import stamp_session_ids
 
-        stamp_session_ids(
-            lane_thread=str(thread_id),
-            chat_url=cse_chat_url,
-            registration_id=cse_registration_id,
-        )
+        try:
+            stamp_session_ids(
+                lane_thread=str(thread_id),
+                chat_url=cse_chat_url,
+                registration_id=cse_registration_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — post-enqueue advisory, not the receipt
+            side_effect_failures.append(_side_effect_failure("stamp_session_ids", exc))
         from .cse_provenance_enrich import enrich_request_provenance
 
-        enrich_request_provenance(
-            lane_thread=str(thread_id),
-            chat_url=cse_chat_url,
-            registration_id=cse_registration_id,
-        )
+        try:
+            enrich_request_provenance(
+                lane_thread=str(thread_id),
+                chat_url=cse_chat_url,
+                registration_id=cse_registration_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — post-enqueue advisory, not the receipt
+            side_effect_failures.append(
+                _side_effect_failure("enrich_request_provenance", exc)
+            )
     # Promote lane discriminant out of the double-nested HTTP body so a
     # caller of agent_bus.request need not dig to enqueue.enqueue.* —
     # same keys remain beside superseded on the worker body for parity.
@@ -399,6 +417,8 @@ def _request_impl(
         result["request_id"] = request_id
     if lane:
         result["lane"] = lane
+    if side_effect_failures:
+        result["side_effect_failures"] = side_effect_failures
     return result
 
 

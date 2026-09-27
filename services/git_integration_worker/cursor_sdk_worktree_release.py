@@ -109,13 +109,25 @@ def _ledger_status_for_dispatch(*, dispatch_id: str) -> str:
     return str(row["status"])
 
 
-def _any_non_terminal_on_thread(*, thread_id: str) -> bool:
+def _any_non_terminal_on_thread(
+    *, thread_id: str, ignore_dispatch_id: str | None = None
+) -> bool:
+    """True when a live SDK row still owns the thread.
+
+    ``ignore_dispatch_id`` is the dispatch discharging its own branch: its
+    running row is not a successor.
+    """
     placeholders = ", ".join("?" for _ in _LIVE_DISPATCH_STATUSES)
+    params: list[str] = [thread_id, *_LIVE_DISPATCH_STATUSES]
+    exclude = ""
+    if ignore_dispatch_id:
+        exclude = " AND dispatch_id<>?"
+        params.append(ignore_dispatch_id)
     with ledger_connection() as conn:
         row = conn.execute(
             "SELECT 1 FROM cursor_sdk_dispatches "
-            f"WHERE thread_id=? AND status IN ({placeholders}) LIMIT 1",
-            (thread_id, *_LIVE_DISPATCH_STATUSES),
+            f"WHERE thread_id=? AND status IN ({placeholders}){exclude} LIMIT 1",
+            tuple(params),
         ).fetchone()
     return row is not None
 
@@ -150,7 +162,9 @@ def _landed_by_ancestry(
         timeout=_GIT_TIMEOUT_S,
         check=False,
     )
-    ancestry_on_master = ancestor.returncode == 0 if ancestor.returncode in (0, 1) else None
+    ancestry_on_master = (
+        ancestor.returncode == 0 if ancestor.returncode in (0, 1) else None
+    )
     landed = admit_landed_true(
         ancestry_on_master=ancestry_on_master,
         commits_ahead=state.commits_ahead,
@@ -232,6 +246,7 @@ def release_lane_worktree(
     allow_unharvested: bool = False,
     unregistered: bool = False,
     actor: str | None = None,
+    ignore_dispatch_id: str | None = None,
 ) -> ReleaseResult:
     """Sole production caller of ``git worktree remove`` for Lane-B trees."""
     from services.git_integration_worker.cursor_sdk_events import (
@@ -289,8 +304,10 @@ def release_lane_worktree(
         )
         return ReleaseResult(released=False, refusal=ReleaseRefusal.LIVE_BRIDGE)
 
-    if not unregistered and resolved_dispatch and dispatch_retain_active(
-        dispatch_id=resolved_dispatch
+    if (
+        not unregistered
+        and resolved_dispatch
+        and dispatch_retain_active(dispatch_id=resolved_dispatch)
     ):
         _emit_release_refused(
             reason=ReleaseRefusal.RETAIN_ACTIVE,
@@ -300,8 +317,13 @@ def release_lane_worktree(
         )
         return ReleaseResult(released=False, refusal=ReleaseRefusal.RETAIN_ACTIVE)
 
-    if not unregistered and resolved_thread and _any_non_terminal_on_thread(
-        thread_id=resolved_thread
+    if (
+        not unregistered
+        and resolved_thread
+        and _any_non_terminal_on_thread(
+            thread_id=resolved_thread,
+            ignore_dispatch_id=ignore_dispatch_id,
+        )
     ):
         _emit_release_refused(
             reason=ReleaseRefusal.DISPATCH_ACTIVE,

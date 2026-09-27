@@ -95,7 +95,8 @@ class CursorDispatchRequest(BaseModel):
     hop_from: str | None = None
     hop_seq: int | None = Field(default=None, ge=0)
     hop_reason: (
-        Literal["spawn", "planned", "crash", "silent", "watchdog", "park_harvest"] | None
+        Literal["spawn", "planned", "crash", "silent", "watchdog", "park_harvest"]
+        | None
     ) = None
     hop_park_release: bool = False
 
@@ -136,11 +137,18 @@ class CursorDispatchRequest(BaseModel):
 
 
 class BranchDischargeRequest(BaseModel):
-    """Explicit retirement of a lane branch — the closeout's declared outcome."""
+    """Explicit retirement of a lane branch — the closeout's declared outcome.
+
+    ``completing_dispatch_id`` is the dispatch posting the discharge. The
+    inheritor test skips that row. Omit it when the GIW process itself holds
+    ``CURSOR_SDK_DISPATCH_ID`` (the bridge harness stamps that env on the
+    dispatch); the route fills the field from the env.
+    """
 
     branch: str
     verb: Literal["landed", "discard"]
     reason: str | None = None
+    completing_dispatch_id: str | None = None
 
 
 class LaneWorktreeReleaseRequest(BaseModel):

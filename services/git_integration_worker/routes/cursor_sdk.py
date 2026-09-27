@@ -180,6 +180,10 @@ from services.git_integration_worker.cursor_sdk_gate import (
 from services.git_integration_worker.cursor_sdk_implement_gate import (
     implement_gate_bypass_deviations,
 )
+from services.git_integration_worker.cursor_sdk_key_entitlement import (
+    is_not_entitled,
+    note_plan_required,
+)
 from services.git_integration_worker.cursor_sdk_lane_branch import associate_lane_branch
 from services.git_integration_worker.cursor_sdk_lane_regime import lane_b_regime_active
 from services.git_integration_worker.cursor_sdk_lane_select import (
@@ -577,6 +581,21 @@ def _stamp_model_knobs_from_outcome(
 
 
 _DISPATCH_ROUTE = "/api/v1/cursor/dispatch"
+
+
+def _stamp_cursor_auth(
+    env_data: dict[str, Any],
+    forensics: dict[str, Any] | None,
+    *texts: str,
+) -> None:
+    """Copy bridge-abort provenance onto the failure envelope and cache plan_required."""
+    if not isinstance(forensics, dict):
+        return
+    auth = forensics.get("cursor_auth")
+    if not isinstance(auth, str) or not auth.strip():
+        return
+    env_data["cursor_auth"] = auth
+    note_plan_required(*texts, provenance=auth)
 
 
 def _reject_pre_admission(
@@ -1144,6 +1163,7 @@ def _run_sdk_sync(
                 # Assertion 31706: a refused connection only says the bridge
                 # is gone. Its exit code and dying stderr say why.
                 **bridge_exit_snapshot(bridge_tap),
+                "cursor_auth": key_res.provenance,
                 "note": (
                     "bridge failure, not verified run death — the underlying "
                     "cursor-agent and any remote side effects (browser "
@@ -2707,6 +2727,7 @@ async def _finalize_bridge_abort_partial(
     }
     if degraded_reasons:
         env_data["degraded_reasons"] = list(degraded_reasons)
+    _stamp_cursor_auth(env_data, forensics, fail_message, str(exc))
     env = error_envelope(
         code=fail_code,
         message=fail_message,
@@ -2788,6 +2809,13 @@ async def _finalize_failed(
     env_data = dict(data) if data else {}
     if degraded_reasons:
         env_data["degraded_reasons"] = list(degraded_reasons)
+    _stamp_cursor_auth(
+        env_data,
+        forensics,
+        effective_message,
+        effective_error,
+        str(exc) if exc is not None else "",
+    )
     env = error_envelope(
         code=effective_code,
         message=effective_message,
@@ -3053,6 +3081,20 @@ async def admit_cursor_dispatch(
         req.thread_id,
         parity,
     )
+    auth_source = str(parity.get("cursor_auth_source") or "")
+    if auth_source and is_not_entitled(auth_source):
+        return _reject_pre_admission(
+            req,
+            worker_error_code="cursor_key_not_entitled",
+            failure_layer="validation",
+            http_status=422,
+            detail_summary=(
+                f"Cursor key is not entitled ({auth_source}); "
+                "refusing admit before dispatch HOME or bridge spawn"
+            ),
+            retryable=False,
+            extra_data={"cursor_auth": auth_source},
+        )
 
     # Early synchronous drain reject: skip creating a ledger row at all in the
     # common draining case. The binding TOCTOU guarantee is in try_admit below
@@ -4110,7 +4152,10 @@ async def cursor_branch_discharge(
         get_branch_debt,
         resolve_debt_source_repo,
     )
-    from services.git_integration_worker.cursor_sdk_branch_discharge import discharge
+    from services.git_integration_worker.cursor_sdk_branch_discharge import (
+        discharge,
+        resolve_completing_dispatch_id,
+    )
 
     cfg = _config(request)
     debt = get_branch_debt(branch_name=req.branch)
@@ -4125,6 +4170,9 @@ async def cursor_branch_discharge(
         branch_name=req.branch,
         verb=req.verb,
         reason=req.reason,
+        completing_dispatch_id=resolve_completing_dispatch_id(
+            req.completing_dispatch_id
+        ),
     )
     payload = {
         "discharged": result.discharged,
