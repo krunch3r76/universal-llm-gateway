@@ -186,7 +186,59 @@ def test_all_roster_rows_hold_yields_play_hold_leftover() -> None:
     verdict = classify_leftover(digest, {})
     assert verdict["leftover"] == LEFTOVER_HOLD
     assert verdict["reason"] == PLAY_HOLD
+    assert verdict["hold_row_id"] == "row-a"
+    assert verdict["hold_reason"] == "live_conductor"
     assert verdict["hold_rows"] == [{"row_id": "row-a", "reason": "live_conductor"}]
+
+
+def test_play_hold_keeps_row_verdict_on_tick_line(monkeypatch) -> None:
+    """12586 2026-09-27T02:26:33Z: play_hold, todo null, owner null, row reason kept.
+
+    The printed tick line is json.dumps of the spawn result. The row id and
+    that row's classify reason have to be on the leftover dict the dump embeds.
+    """
+    import json
+
+    from bus_watch.spawn_on_wake import tick_spawn_on_wake
+
+    _quiet_tick(monkeypatch)
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.read_lock", lambda *_a, **_k: {"holder": None}
+    )
+    monkeypatch.setattr(
+        "bus_watch.spawn_wake.fire.maybe_forfeit_expired_lease",
+        lambda *_a, **_k: False,
+    )
+    rows = [_row("row-a", "a")]
+    digest = _digest_with_roster(rows, lanes=[_live_lane("a")])
+    verdict = classify_leftover(digest, {})
+    assert verdict["reason"] == PLAY_HOLD
+    assert verdict["todo"] is None
+    assert verdict["owner"] is None
+    assert verdict["hold_row_id"] == "row-a"
+    assert verdict["hold_reason"] == "live_conductor"
+    out = tick_spawn_on_wake(digest, {}, "12586", dry_run=True)
+    assert out["action"] == "hold"
+    assert out["refused"] == PLAY_HOLD
+    leftover = out["evaluation"]["leftover"]
+    assert leftover["hold_row_id"] == "row-a"
+    assert leftover["hold_reason"] == "live_conductor"
+    line = json.dumps({"spawn": out, "digest_ts": "2026-09-27T02:26:33Z"}, default=str)
+    assert '"hold_row_id": "row-a"' in line
+    assert '"hold_reason": "live_conductor"' in line
+
+
+def test_multiple_holds_name_first_row_and_keep_every_reason() -> None:
+    rows = [_row("row-a", "a", hire="hold"), _row("row-b", "b", hire="hold")]
+    digest = _digest_with_roster(rows, lanes=[])
+    verdict = classify_leftover(digest, {})
+    assert verdict["reason"] == PLAY_HOLD
+    assert verdict["hold_row_id"] == "row-a"
+    assert verdict["hold_reason"] == "hire_hold"
+    assert verdict["hold_rows"] == [
+        {"row_id": "row-a", "reason": "hire_hold"},
+        {"row_id": "row-b", "reason": "hire_hold"},
+    ]
 
 
 def test_disjoint_path_siblings_both_play() -> None:
