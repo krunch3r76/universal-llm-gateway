@@ -40,9 +40,6 @@ def _window_anchor(tip_body: str) -> dict[str, Any] | None:
     return {
         "transcript_id": transcript_id,
         "turns_at_cp": turns_at_cp,
-        "scope": "window",
-        "prior_cells": 1,
-        "harvest": False,
     }
 
 
@@ -112,10 +109,6 @@ def build_mission_block(
     steps.extend(
         [
             "fold bus_tail INFO turns",
-            (
-                "tape: agent_bus_read(scope=window, transcript_id=<window_anchor>, "
-                "prior_cells=1) — not scope=full"
-            ),
             (
                 "orientation: aim, Where we left off, already, object, "
                 "Are/Going, In one line; receipts after"

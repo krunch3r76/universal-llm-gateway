@@ -19,7 +19,7 @@ def test_thread_get_happy_path() -> None:
     }
 
     with (
-        patch("tools.agent_bus.threads.relay", return_value=detail),
+        patch("tools.agent_bus.threads.relay", return_value=detail) as relay,
         patch(
             "tools.agent_bus.request_worker_client.fetch_job_state",
             return_value={"ok": True, "found": False, "job": None},
@@ -28,6 +28,8 @@ def test_thread_get_happy_path() -> None:
         result = _thread_get_impl(thread="049")
 
     assert result == detail
+    relay.assert_called_once()
+    assert "include_resume=false" in relay.call_args[0][2]
     assert result["tags"] == ["role:root"]
     assert result["turn_count"] == 12
     assert "cursor_auto_job" not in result

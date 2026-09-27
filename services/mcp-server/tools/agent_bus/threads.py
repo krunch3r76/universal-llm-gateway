@@ -158,13 +158,14 @@ def _enrich_with_cursor_auto_job(detail: dict[str, Any], *, thread: str) -> dict
     return detail
 
 
-def _thread_get_impl(*, thread: str) -> dict[str, Any]:
+def _thread_get_impl(*, thread: str, include_resume: bool = False) -> dict[str, Any]:
     """Fetch one thread by id — relay GET /threads/{thread} → ThreadDetail."""
     if isinstance(thread, int):
         thread = str(thread)
     if not thread:
         return {"error": "thread_get requires: thread (str)"}
-    result = relay("agent-bus", "GET", f"/threads/{thread}?include_resume=true")
+    qs = urlencode({"include_resume": "true" if include_resume else "false"})
+    result = relay("agent-bus", "GET", f"/threads/{thread}?{qs}")
     if not isinstance(result, dict):
         return {"error": f"agent-bus error: unexpected response for thread {thread!r}"}
     if "error" in result:
@@ -182,10 +183,14 @@ def _thread_get_impl(*, thread: str) -> dict[str, Any]:
     return _enrich_with_cursor_auto_job(result, thread=thread)
 
 
-def _thread_get_dispatch(*, thread: str | int = "") -> dict[str, Any]:
+def _thread_get_dispatch(
+    *,
+    thread: str | int = "",
+    include_resume: bool = False,
+) -> dict[str, Any]:
     if isinstance(thread, int):
         thread = str(thread)
-    return _thread_get_impl(thread=thread)
+    return _thread_get_impl(thread=thread, include_resume=bool(include_resume))
 
 
 def _job_state_dispatch(

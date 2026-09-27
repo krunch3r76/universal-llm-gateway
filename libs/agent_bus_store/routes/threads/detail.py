@@ -121,9 +121,9 @@ async def list_threads_route(
 async def get_thread_route(
     thread_id: str,
     include_resume: bool = Query(
-        True,
+        False,
         description=(
-            "When true (default), spine=root continuity threads include "
+            "When true, spine=root continuity threads include "
             "resume_envelope (last-session verbal tape pour). Work threads omit it."
         ),
     ),
