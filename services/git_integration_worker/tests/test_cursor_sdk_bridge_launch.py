@@ -97,6 +97,7 @@ def test_command_argv_reaches_bridge_popen(tmp_path, monkeypatch) -> None:
     assert f"HOME={home}" in argv
     assert "CURSOR_SDK_DISPATCH_ID=disp-guard" in argv
     assert any(a.startswith("GIT_AUTHOR_NAME=") for a in argv)
+    assert any(a.startswith("CURSOR_SDK_DISPATCH_LEDGER=") for a in argv)
     bin_idx = _first_non_assignment(argv)
     assert os.path.isabs(argv[bin_idx]), argv[bin_idx]
     assert argv[bin_idx] == command[-1]

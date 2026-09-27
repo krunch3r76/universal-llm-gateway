@@ -31,6 +31,9 @@ from cursor_sdk._vendor import resolve_bridge_path
 from cursor_sdk.types import LocalAgentOptions
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    dispatch_ledger_env_vars,
+)
 from services.git_integration_worker.cursor_home import (
     build_dispatch_path_prepend,
     dispatch_git_env_vars,
@@ -129,6 +132,7 @@ def build_bridge_command(
     if dispatch_id is not None:
         command.append(f"CURSOR_SDK_DISPATCH_ID={dispatch_id}")
         command.extend(f"{k}={v}" for k, v in dispatch_git_env_vars(dispatch_id).items())
+        command.extend(f"{k}={v}" for k, v in dispatch_ledger_env_vars().items())
     command.append(bridge_bin)
     return command
 
