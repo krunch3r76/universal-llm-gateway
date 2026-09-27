@@ -26,11 +26,12 @@ def _tag_block_re(tag: str) -> re.Pattern[str]:
     )
 
 
-def _user_query_has_substance(text: str) -> bool:
-    match = _USER_QUERY_RE.search(text)
-    if not match:
-        return False
-    return bool(match.group(1).strip())
+def _user_query_spans(text: str) -> list[tuple[int, int, bool]]:
+    """Every ``<user_query>`` span as ``(start, end, has_substance)``."""
+    return [
+        (match.start(), match.end(), bool(match.group(1).strip()))
+        for match in _USER_QUERY_RE.finditer(text)
+    ]
 
 
 def _spans_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
@@ -38,31 +39,36 @@ def _spans_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
 
 
 def _elide_catalog_in_content(content: str) -> str:
-    uq_match = _USER_QUERY_RE.search(content)
-    uq_span = (uq_match.start(), uq_match.end()) if uq_match else None
-    has_uq = _user_query_has_substance(content)
+    """Single pass over ``content`` — spans never drift because nothing is rebuilt mid-scan."""
+    uq_spans = _user_query_spans(content)
+    has_uq = any(substantive for _start, _end, substantive in uq_spans)
 
-    out = content
+    replacements: list[tuple[int, int, str]] = []
     for tag in _ELIDE_TAG_NAMES:
-        pattern = _tag_block_re(tag)
-        pos = 0
-        while True:
-            match = pattern.search(out, pos)
-            if not match:
-                break
+        if tag == "cursor_commands" and not has_uq:
+            continue
+        for match in _tag_block_re(tag).finditer(content):
             start, end = match.span()
-            if uq_span and _spans_overlap(start, end, uq_span[0], uq_span[1]):
-                pos = end
+            if any(
+                _spans_overlap(start, end, uq_start, uq_end)
+                for uq_start, uq_end, _substantive in uq_spans
+            ):
                 continue
-            if tag == "cursor_commands" and not has_uq:
-                pos = end
-                continue
-            block = match.group(0)
-            byte_count = len(block.encode("utf-8"))
-            marker = f"[elided {tag}: {tag}, {byte_count} B]"
-            out = out[:start] + marker + out[end:]
-            pos = start + len(marker)
-    return out
+            byte_count = len(match.group(0).encode("utf-8"))
+            replacements.append((start, end, f"[elided {tag}: {byte_count} B]"))
+    if not replacements:
+        return content
+    replacements.sort()
+    pieces: list[str] = []
+    cursor = 0
+    for start, end, marker in replacements:
+        if start < cursor:
+            continue
+        pieces.append(content[cursor:start])
+        pieces.append(marker)
+        cursor = end
+    pieces.append(content[cursor:])
+    return "".join(pieces)
 
 
 def elide_ide_catalog_blocks(

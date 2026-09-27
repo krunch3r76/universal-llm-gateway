@@ -27,6 +27,7 @@ contain turns whose per-turn status is ``open``
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from typing import Any, Literal, TypedDict
 
 from agent_seat.registry import normalize_bus_address
@@ -178,8 +179,12 @@ def qualifying_reply(
     *,
     after_turn: int,
     from_agent: str | None,
+    accept: Callable[[dict[str, Any]], bool] | None = None,
 ) -> dict[str, Any] | None:
     """First turn after ``after_turn`` authored by ``from_agent`` (any, if None).
+
+    ``accept``, when set, skips turns it rejects. A progress post is not the
+    closeout; proof waits for a later turn that passes.
 
     Author match is alias-aware: both the stored ``from_agent`` and the expected
     value are normalized through the seat registry, so a reply posted under a
@@ -201,8 +206,17 @@ def qualifying_reply(
             str(t.get("subject") or "")
         ):
             continue
+        if accept is not None and not accept(t):
+            continue
         return t
     return None
+
+
+def _is_proof_turn(turn: dict[str, Any]) -> bool:
+    """True when this turn is the closeout, not a progress or failed envelope."""
+    if is_failed_relay_envelope_subject(str(turn.get("subject") or "")):
+        return False
+    return bool(substantive_reply_body(str(turn.get("body") or "")))
 
 
 def qualifying_proof_reply(
@@ -211,23 +225,17 @@ def qualifying_proof_reply(
     after_turn: int,
     from_agent: str | None,
 ) -> dict[str, Any] | None:
-    """First qualifying turn whose body is substantive after chrome strip.
+    """First later turn whose body is substantive after chrome strip.
 
-    Like ``qualifying_reply``, but rejects CDP relay envelopes whose subject is
-    FAILED/UNVERIFIED and bodies that are chrome-only (streaming tool-badge stubs).
+    Skips CDP FAILED/UNVERIFIED envelopes and chrome-only progress posts
+    ("Ran a command, loaded tools"). Those turns are not the closeout.
     """
-    reply = qualifying_reply(
-        turns, after_turn=after_turn, from_agent=from_agent
+    return qualifying_reply(
+        turns,
+        after_turn=after_turn,
+        from_agent=from_agent,
+        accept=_is_proof_turn,
     )
-    if reply is None:
-        return None
-    subject = str(reply.get("subject") or "")
-    if is_failed_relay_envelope_subject(subject):
-        return None
-    body = str(reply.get("body") or "")
-    if not substantive_reply_body(body):
-        return None
-    return reply
 
 
 def build_suggested_next(

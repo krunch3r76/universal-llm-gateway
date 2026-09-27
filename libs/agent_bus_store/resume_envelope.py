@@ -166,6 +166,7 @@ def build_resume_envelope(
     *,
     tape_budget_bytes: int = TAPE_BUDGET_BYTES_DEFAULT,
     budget_source: str | None = None,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Last-session verbal pour + projection pointers (no graph/consolidation).
 
@@ -186,6 +187,7 @@ def build_resume_envelope(
             include_extras=False,
             scope="last_session",
             budget_source=budget_source,
+            deadline=deadline,
         )
     except TapeBudgetExceeded as exc:
         tape_degraded = tape_budget_exceeded_envelope(exc)
@@ -197,6 +199,9 @@ def build_resume_envelope(
             "reason": str(exc),
         }
         tape = {"messages": [], "open_line": {}, "truncated": True}
+    poured = tape.get("degraded") if isinstance(tape.get("degraded"), dict) else None
+    if poured is not None and tape_degraded is None:
+        tape_degraded = poured
     if tape.get("error"):
         return {"error": tape["error"], "reason": "tape_render_failed"}
     open_line = tape.get("open_line") if isinstance(tape.get("open_line"), dict) else {}

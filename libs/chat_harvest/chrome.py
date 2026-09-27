@@ -5,9 +5,10 @@ from __future__ import annotations
 import re
 
 # Tool-badge vocabulary observed in Cowork scrape UI (incl. streaming mid-reply).
+# "Ran a command, loaded tools" is a progress badge, not the reply (12887 turn 27).
 _TOOL_BADGE_SEGMENT = (
     r"(searched the web|used toys integration|used a skill|used \d+ skills?|"
-    r"used \d+ tools?|loaded tools)"
+    r"used \d+ tools?|loaded tools|ran a command|ran \d+ commands?)"
 )
 TOOL_BADGE_LINE_RE = re.compile(
     rf"^{_TOOL_BADGE_SEGMENT}(,\s*{_TOOL_BADGE_SEGMENT})*\.?$",
@@ -47,6 +48,12 @@ def _is_badge_line(line: str) -> bool:
     return bool(TOOL_BADGE_LINE_RE.match(line.strip()))
 
 
+def _is_symbol_only_line(line: str) -> bool:
+    """Cowork icon glyphs (private-use) sit between tool badges and are not prose."""
+    stripped = line.strip()
+    return bool(stripped) and not any(ch.isalnum() for ch in stripped)
+
+
 def _is_lone_glyph_adjacent_to_badge(lines: list[str], index: int) -> bool:
     """True for single-glyph lines sandwiched next to tool-badge rows."""
     stripped = lines[index].strip()
@@ -66,6 +73,7 @@ def strip_chrome(text: str) -> str:
         line
         for index, line in enumerate(lines)
         if not _is_badge_line(line)
+        and not _is_symbol_only_line(line)
         and not _is_lone_glyph_adjacent_to_badge(lines, index)
     ]
     while lines and not lines[0].strip():
@@ -99,6 +107,8 @@ def _is_metadata_line(line: str) -> bool:
     if stripped.startswith("#"):
         return True
     if TOOL_BADGE_LINE_RE.match(stripped):
+        return True
+    if _is_symbol_only_line(stripped):
         return True
     return False
 

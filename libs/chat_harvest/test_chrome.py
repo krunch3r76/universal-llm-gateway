@@ -53,6 +53,32 @@ def test_specimen_347_has_substantive_prose() -> None:
     assert "implementation plan" in prose
 
 
+# 12887 turn 27 — Cowork progress badges posted as a cdp reply. Not a closeout.
+SPECIMEN_12887_PROGRESS_BODY = """\
+# CDP generate result (fable-5.1-high)
+
+- execution_id: `260e806d-9782-4cd9-8697-2f7ae349787a`
+- satellite_execution_id: `eeb3c8bff4494bc0bd911db7f193444c`
+- substrate: `web-anthropic-cdp`
+- cost_source: `unavailable`
+- archive_uri: `cortex://notes/system/threads/cdp-ask-archive-cdp-fable-eeb3c8bff4494bc0bd911db7f193444c.md`
+
+Ran a command, loaded tools
+\ue027
+Ran a command, loaded tools
+\ue056
+\ue0e4
+\ue0fb
+\ue0f9
+just now
+"""
+
+
+def test_specimen_12887_progress_is_chrome_only() -> None:
+    assert is_chrome_only(SPECIMEN_12887_PROGRESS_BODY)
+    assert substantive_reply_body(SPECIMEN_12887_PROGRESS_BODY) == ""
+
+
 def test_strip_chrome_drops_tool_badges_including_loaded_tools() -> None:
     text = (
         "Used toys integration, used 3 skills, loaded tools\n\n"

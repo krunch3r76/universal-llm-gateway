@@ -552,7 +552,22 @@ def classify_leftover(
     del lock
     st = state or {}
     mode = leftover_mode(digest, st)
-    todo = addressed_todo(digest)
+    roster = digest.get("roster")
+    roster_live = isinstance(roster, list) and bool(roster)
+    play_rows: list[dict[str, Any]] = []
+    roster_verdicts: list[dict[str, Any]] = []
+    if roster_live:
+        from bus_watch.roster import DECISION_PLAY, classify_roster_rows
+
+        roster_verdicts = classify_roster_rows(digest)
+        play_rows = [
+            row
+            for row, verdict in zip(roster, roster_verdicts, strict=False)
+            if verdict.get("decision") == DECISION_PLAY
+        ]
+        todo = extract_todo_slug(play_rows[0].get("work_key")) if play_rows else None
+    else:
+        todo = addressed_todo(digest)
     result: dict[str, Any] = {
         "leftover": LEFTOVER_SIT,
         "reason": "sit_no_todo",
@@ -564,23 +579,14 @@ def classify_leftover(
     if mode == MODE_SIT:
         result["reason"] = "sit_forced"
         return result
-    roster = digest.get("roster")
-    if isinstance(roster, list) and roster:
-        from bus_watch.roster import (
-            DECISION_HOLD,
-            classify_roster_rows,
-            roster_play_rows,
-        )
+    if roster_live:
+        from bus_watch.roster import DECISION_HOLD
 
-        play_rows = roster_play_rows(digest)
         if play_rows:
-            first_row, _verdict = play_rows[0]
             result["leftover"] = LEFTOVER_PLAY
             result["reason"] = "play_roster_row"
-            result["todo"] = extract_todo_slug(first_row.get("work_key"))
-            result["roster_row_id"] = first_row.get("row_id")
+            result["roster_row_id"] = play_rows[0].get("row_id")
             return result
-        roster_verdicts = classify_roster_rows(digest)
         hold_rows = [
             {"row_id": v.get("row_id"), "reason": v.get("reason")}
             for v in roster_verdicts

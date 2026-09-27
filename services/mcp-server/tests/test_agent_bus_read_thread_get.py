@@ -88,3 +88,30 @@ def test_thread_get_dispatch_requires_thread() -> None:
     result = _thread_get_dispatch(thread="")
     assert "error" in result
     assert "thread_get requires" in result["error"]
+
+
+def test_thread_get_include_resume_true_relays_flag_and_envelope() -> None:
+    detail = {
+        "id": "049",
+        "slug": "root-arc",
+        "status": "active",
+        "turn_count": 12,
+        "unread_count": 0,
+        "tags": ["role:root"],
+        "resume_envelope": {"tape_verbal": [], "checkpoint_highlight": "hi"},
+    }
+
+    with (
+        patch("tools.agent_bus.threads.relay", return_value=detail) as relay,
+        patch(
+            "tools.agent_bus.request_worker_client.fetch_job_state",
+            return_value={"ok": True, "found": False, "job": None},
+        ),
+    ):
+        result = _thread_get_dispatch(thread=49, include_resume=True)
+
+    assert relay.call_args[0][2] == "/threads/49?include_resume=true"
+    assert result["resume_envelope"] == {
+        "tape_verbal": [],
+        "checkpoint_highlight": "hi",
+    }

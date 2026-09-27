@@ -27,6 +27,7 @@ from urllib.parse import urlencode
 import httpx
 import yaml
 from bus_watch.arm_contract import NO_PRODUCER_HELP, require_producer_declaration
+from bus_watch.harvest_closeout import closeout_after_turn, fetch_turn_body
 from bus_watch.poll import DEFAULT_MAX_HOURS, DEFAULT_WAIT_SLICE_S, sliced_wait_loop
 from bus_watch.producer_grace import ProducerGrace
 from bus_watch.stall_pop import emit_stall_pop, should_emit_stall_pop
@@ -453,10 +454,37 @@ def main() -> int:
             )
         return 0
 
+    def is_closeout(snap: dict[str, Any]) -> bool:
+        # Server complete can be a progress turn. Keep polling until the body
+        # is the reply. A stale agent_bus still marks chrome as complete.
+        if not snap.get("complete"):
+            return False
+        turn = int(snap.get("qualifying_reply_turn") or 0)
+        if turn <= args.after_turn:
+            return False
+        try:
+            body = fetch_turn_body(client, thread_id, turn)
+        except _BUS_TRANSPORT_ERRORS as exc:
+            print(
+                f"… body fetch failed ({type(exc).__name__}: {exc}); "
+                f"turn {turn} is not a closeout",
+                flush=True,
+            )
+            return False
+        ok, args.after_turn = closeout_after_turn(
+            body, turn=turn, after_turn=args.after_turn
+        )
+        if not ok:
+            print(
+                f"non-closeout turn={turn} after_turn={args.after_turn}",
+                flush=True,
+            )
+        return ok
+
     try:
         return sliced_wait_loop(
             wait_once=wait_once,
-            is_complete=lambda s: bool(s.get("complete")),
+            is_complete=is_closeout,
             on_incomplete=on_incomplete,
             on_complete=on_complete,
             transport_errors=_BUS_TRANSPORT_ERRORS,

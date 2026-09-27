@@ -97,6 +97,7 @@ def render_tape(
     tools: Tools = "none",
     channel: str = "continuity",
     budget_source: str | None = None,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Render messages+extras dump for a continuity lane (read-only)."""
     from cortex_store.db import cortex_conn, decode_row
@@ -149,6 +150,7 @@ def render_tape(
         include_extras=include_extras,
         channel=channel,
         budget_source=budget_source,
+        deadline=deadline,
     )
     if scope == "window" and transcript_id:
         segments = _window_segments(segments, cells)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from continuity_tape.messages import Tools, apply_tools_policy, strip_extras
@@ -11,6 +12,7 @@ from cortex_store.verbatim_succession import (
     split_verbatim_layer,
 )
 
+from .tape_catalog_elide import elide_ide_catalog_blocks
 from .tape_cells import (
     _cells_for_lane,
     _filter_messages_to_cells,
@@ -56,6 +58,7 @@ def pour_lane_messages(
     include_extras: bool,
     channel: str = "continuity",
     budget_source: str | None = None,
+    deadline: float | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -77,7 +80,11 @@ def pour_lane_messages(
     )
     messages: list[dict[str, Any]] = []
     codec_fallback_count = 0
+    deadline_hit = False
     for seg in segments:
+        if deadline is not None and time.monotonic() >= deadline:
+            deadline_hit = True
+            break
         sid = seg["session_id"]
         journal = next(j for j in journals if j.get("session_id") == sid)
         file_path = journal.get("file_path")
@@ -111,13 +118,15 @@ def pour_lane_messages(
             _last_session_cells(cells, thread_id=thread_id, channel=channel)
         )
         messages = _filter_messages_to_cells(messages, cells)
-    from agent_bus_store.tape_catalog_elide import elide_ide_catalog_blocks
-
     messages = elide_ide_catalog_blocks(messages)
-    truncated = payload_bytes(messages, []) > budget_bytes
     index_rows: list[dict[str, Any]] = []
     degraded: dict[str, Any] | None = None
-    if truncated:
+    if deadline_hit:
+        truncated = True
+        degraded = {"reason": "deadline"}
+    else:
+        truncated = payload_bytes(messages, []) > budget_bytes
+    if truncated and not deadline_hit:
         messages, index_rows, truncated, degraded = degrade_overflow_messages(
             messages,
             cells=cells,

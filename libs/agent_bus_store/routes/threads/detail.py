@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime
 from typing import Any
 
@@ -138,18 +139,11 @@ async def get_thread_route(
         )
     detail = _thread_detail(row)
     if include_resume and classify_thread(detail.tags)["spine"] == "root":
-        try:
-            detail.resume_envelope = await asyncio.wait_for(
-                asyncio.to_thread(build_resume_envelope, thread_id),
-                timeout=_RESUME_ENVELOPE_TIMEOUT_S,
-            )
-        except TimeoutError:
-            detail.resume_envelope = {
-                "error": (
-                    f"resume_envelope timed out after {_RESUME_ENVELOPE_TIMEOUT_S}s"
-                ),
-                "reason": "tape_render_timeout",
-            }
+        detail.resume_envelope = await asyncio.to_thread(
+            build_resume_envelope,
+            thread_id,
+            deadline=time.monotonic() + _RESUME_ENVELOPE_TIMEOUT_S,
+        )
     return detail
 
 

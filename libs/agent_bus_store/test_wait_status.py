@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from chat_harvest.test_chrome import (
+    SPECIMEN_346_BODY,
+    SPECIMEN_347_BODY,
+    SPECIMEN_12887_PROGRESS_BODY,
+)
+
 from agent_bus_store.producer_projection import classify_producer_link
 from agent_bus_store.turns_models import ThreadStatus
 from agent_bus_store.wait_status import (
@@ -10,7 +16,6 @@ from agent_bus_store.wait_status import (
     is_complete,
     qualifying_proof_reply,
 )
-from chat_harvest.test_chrome import SPECIMEN_346_BODY, SPECIMEN_347_BODY
 
 
 def _turn(n, frm, read_at=None, status="open", *, subject="", body=""):
@@ -315,6 +320,37 @@ def test_proof_reply_from_specimen_347_complete():
     reply = qualifying_proof_reply(turns, after_turn=1, from_agent="web-anthropic")
     assert reply is not None
     assert reply["turn_number"] == 2
+    assert derive_status(thread, turns, after_turn=1, completion=comp) == "complete"
+
+
+def test_proof_reply_skips_progress_turn_for_later_substantive():
+    """A tool-badge turn is not the closeout; the next substantive reply is."""
+    thread = {"status": ThreadStatus.ACTIVE}
+    comp = {"mode": "proof_reply_from", "from_agent": "web-anthropic"}
+    turns = [
+        _turn(1, "cursor"),
+        _turn(
+            2,
+            "web-anthropic",
+            subject="cdp reply — 260e806d",
+            body=SPECIMEN_12887_PROGRESS_BODY,
+        ),
+        _turn(
+            3,
+            "web-anthropic",
+            subject="cdp reply — 260e806d",
+            body=SPECIMEN_347_BODY,
+        ),
+    ]
+    assert not is_complete(
+        thread,
+        turns[:2],
+        after_turn=1,
+        completion=comp,
+    )
+    reply = qualifying_proof_reply(turns, after_turn=1, from_agent="web-anthropic")
+    assert reply is not None
+    assert reply["turn_number"] == 3
     assert derive_status(thread, turns, after_turn=1, completion=comp) == "complete"
 
 
