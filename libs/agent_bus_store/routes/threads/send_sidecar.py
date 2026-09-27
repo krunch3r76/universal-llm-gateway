@@ -42,7 +42,7 @@ def _send_with_sidecar(body: TurnSendCreate) -> TurnSendCreated:
         write_thread_sidecar_for_send,
     )
 
-    from ...db.connection import connect, write_connect
+    from ...db.connection import write_connect
     from ...db.turns import UnreadTurnsExist, insert_turn, mark_sender_unread_in_thread
     from ...events.lifecycle import (
         emit_sidecar_orphaned,

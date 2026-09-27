@@ -7,7 +7,7 @@ from typing import Any
 
 from agent_bus_store.thread_classification import gate_thread_tags
 
-from .connection import connect, now, write_connect
+from .connection import now, write_connect
 from .lifecycle import _transition_lifecycle_state
 from .threads import _next_auto_id, get_thread_with_links, set_thread_tags
 from .turns import SlugExists
@@ -25,7 +25,7 @@ def mint_thread(
     """Mint a thread row in one transaction; projection runs only after commit.
 
     Returns ``(thread_detail, mint_hold_ms)`` where ``mint_hold_ms`` is wall
-    time in milliseconds for the ``connect()`` block including commit.
+    time in milliseconds for the ``write_connect()`` block including commit.
     """
     gated_tags = gate_thread_tags(
         tags, prior_tags=[], enroll_charter_runner=enroll_charter_runner

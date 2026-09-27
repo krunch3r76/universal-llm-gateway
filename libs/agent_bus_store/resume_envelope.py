@@ -167,6 +167,8 @@ def build_resume_envelope(
     tape_budget_bytes: int = TAPE_BUDGET_BYTES_DEFAULT,
     budget_source: str | None = None,
     deadline: float | None = None,
+    tip_turn: int | None = None,
+    tip_body: str | None = None,
 ) -> dict[str, Any]:
     """Last-session verbal pour + projection pointers (no graph/consolidation).
 
@@ -176,6 +178,10 @@ def build_resume_envelope(
     bundle — the resume fence is the sole admitted first hop for a successor
     and must never 500 on the size of one prior message (10479, 2026-09-12)
     or on a mid-codepoint ``verbatim_bytes`` slice (10479, 2026-09-13).
+
+    Pass ``tip_turn`` and ``tip_body`` together when the caller already selected
+    the checkpoint on its write connection. Omitting either falls back to a
+    reader load of the latest checkpoint, which can miss an insert still open.
     """
     # Read path: render-only. Harvest is explicit via tape?harvest=true (quick-fail).
     tape_degraded: dict[str, Any] | None = None
@@ -210,7 +216,8 @@ def build_resume_envelope(
     if seal_status == "seal_pending":
         messages = _filter_messages_for_seal_pending(messages, open_line)
     verbal = project_role_content_list(messages)
-    tip_turn, tip_body = _tip_checkpoint_body(thread_id)
+    if tip_turn is None or tip_body is None:
+        tip_turn, tip_body = _tip_checkpoint_body(thread_id)
     checkpoint_highlight = extract_cp_highlight(tip_body)
     checkpoint_object = extract_cp_object(tip_body)
     where_we_left_off = tape_tail(verbal)

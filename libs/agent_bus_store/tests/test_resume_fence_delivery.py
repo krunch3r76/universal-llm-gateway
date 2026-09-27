@@ -77,7 +77,7 @@ class _PourPatches:
         self._stack = ExitStack()
         self._stack.enter_context(
             patch(
-                "agent_bus_store.resume_fence.build_resume_envelope",
+                "agent_bus_store.resume_fence_pour.build_resume_envelope",
                 return_value=_ENVELOPE,
             )
         )
@@ -89,7 +89,7 @@ class _PourPatches:
         )
         self._stack.enter_context(
             patch(
-                "agent_bus_store.resume_fence.resolve_code_version",
+                "agent_bus_store.resume_fence_pour.resolve_code_version",
                 return_value="abc123",
             )
         )

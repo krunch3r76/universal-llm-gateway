@@ -10,13 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from .db.connection import connect, write_connect
-from .events.resume_fence import (
-    emit_resume_fence_armed,
-    emit_resume_fence_denied,
-    emit_resume_fence_expired,
-    emit_resume_fence_poured,
-    emit_resume_fence_released,
-)
+from .resume_fence_emit import emit_fence_event, fence_emit_bucket
 
 FenceStateName = Literal["armed", "poured", "released", "expired"]
 
@@ -53,7 +47,11 @@ def append_fence_event(
     transcript_id: str | None = None,
     payload: dict[str, Any] | None = None,
 ) -> int:
-    """Append one journal row and emit the matching event signal."""
+    """Append one journal row and emit the matching event signal.
+
+    Inside ``fence_writes_then_emit`` the insert joins the open write
+    transaction and the signal is queued until that transaction commits.
+    """
     payload_json = json.dumps(payload) if payload else None
     with write_connect() as conn:
         cur = conn.execute(
@@ -66,46 +64,18 @@ def append_fence_event(
         )
         row_id = int(cur.lastrowid)
 
-    if event == "armed":
-        emit_resume_fence_armed(
-            fence_id=fence_id,
-            root_thread=root_thread,
-            transcript_id=transcript_id,
-            source=(payload or {}).get("source", "mcp"),
-        )
-    elif event == "poured":
-        emit_resume_fence_poured(
-            fence_id=fence_id,
-            root_thread=root_thread,
-            bundle_bytes=int((payload or {}).get("bundle_bytes", 0)),
-            readable_counts=(payload or {}).get("readable_counts") or {},
-            seal_status=str((payload or {}).get("seal_status", "")),
-            mission_bytes=int((payload or {}).get("mission_bytes", 0)),
-            card_inlined=bool((payload or {}).get("card_inlined", True)),
-            bundle_version=str(
-                (payload or {}).get("bundle_version", "resume-bundle-v1")
-            ),
-            bundle_sha256=(payload or {}).get("bundle_sha256"),
-        )
-    elif event == "denied":
-        emit_resume_fence_denied(
-            fence_id=fence_id,
-            surface=str((payload or {}).get("surface", "")),
-            tool=str((payload or {}).get("tool", "")),
-            op=str((payload or {}).get("op", "")),
-            target=str((payload or {}).get("target", "")),
-            reason=str((payload or {}).get("reason", "")),
-        )
-    elif event == "released":
-        emit_resume_fence_released(
-            fence_id=fence_id,
-            release_turn=int((payload or {}).get("release_turn", 0)),
-        )
-    elif event == "expired":
-        emit_resume_fence_expired(
-            fence_id=fence_id,
-            idle_seconds=int((payload or {}).get("idle_seconds", RESUME_FENCE_IDLE_S)),
-        )
+    emit_args = {
+        "event": event,
+        "fence_id": fence_id,
+        "root_thread": root_thread,
+        "transcript_id": transcript_id,
+        "payload": payload,
+    }
+    queued = fence_emit_bucket()
+    if queued is not None:
+        queued.append(emit_args)
+    else:
+        emit_fence_event(**emit_args)
     return row_id
 
 

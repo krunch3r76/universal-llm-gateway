@@ -20,7 +20,7 @@ import re
 from typing import Any
 
 from .cursor_sdk_dispatch_turn import is_cursor_sdk_dispatch_terminal_subject
-from .db.connection import connect, write_connect
+from .db.connection import write_connect
 from .db.threads import load_dispatch_links
 from .db.turns import get_turns, update_turn, update_turn_status
 from .events.lifecycle import emit_dispatch_orphan_demoted

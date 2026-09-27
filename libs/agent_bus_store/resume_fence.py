@@ -6,24 +6,21 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 from datetime import UTC, datetime
 from typing import Any
 
-from deploy_identity.code_version import resolve_code_version
-
-from .checkpoint_windows_render import list_checkpoint_turns
+from .checkpoint_projection import CHECKPOINT_SUBJECT_SQL
 from .continuity_card_scratchboards import extract_scratchboard_uris
-from .db.connection import connect
+from .db.connection import connect, write_connect
 from .house_pools import (
     continuity_card_uri,
     load_continuity_card,
     parse_pools,
 )
-from .resume_envelope import build_resume_envelope
+from .resume_fence_emit import fence_writes_then_emit
 from .resume_fence_mission import build_mission_block, mission_marker_preview
 from .resume_fence_store import (
-    _armed_source,
-    adoption_ambiguous_count,
     append_fence_event,
     find_open_fence,
     fold_fence,
@@ -58,6 +55,8 @@ def _resume_first_hop(
     if surface == "cursor":
         hop += ", surface=cursor"
     return hop + ")"
+
+
 _TRANSCRIPT_ID_RE = re.compile(
     r"transcript_id\s*=\s*([0-9a-f-]{8,})",
     re.IGNORECASE,
@@ -104,20 +103,24 @@ def _thread_slug(thread_id: str) -> str | None:
     return None
 
 
-def _tip_checkpoint(thread_id: str) -> dict[str, Any] | None:
-    cps = list_checkpoint_turns(thread_id=thread_id)
-    if not cps:
-        return None
-    tip = cps[-1]
-    with connect() as conn:
-        row = conn.execute(
-            """
-            SELECT id, turn_number, subject, body, supersedes_turn, created_at
-            FROM turns WHERE thread = ? AND turn_number = ?
-            """,
-            (thread_id, tip.turn_number),
-        ).fetchone()
-    if not row:
+def _tip_checkpoint(thread_id: str, conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """Latest CHECKPOINT turn on *conn*, which must be the open write transaction.
+
+    A reader ``connect()`` can return the previous tip while a checkpoint
+    insert still holds the writer ticket. Selecting here, after ``BEGIN
+    IMMEDIATE``, sees the tip that committed before this ticket was granted.
+    """
+    row = conn.execute(
+        f"""
+        SELECT id, turn_number, subject, body, supersedes_turn, created_at
+        FROM turns
+        WHERE thread = ? AND {CHECKPOINT_SUBJECT_SQL}
+        ORDER BY turn_number DESC
+        LIMIT 1
+        """,
+        (thread_id,),
+    ).fetchone()
+    if row is None:
         return None
     return dict(row)
 
@@ -267,8 +270,9 @@ def _load_resume_context(
     thread_id: str,
     *,
     pool: str | None,
+    conn: sqlite3.Connection,
 ) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None]:
-    tip = _tip_checkpoint(thread_id)
+    tip = _tip_checkpoint(thread_id, conn)
     if tip is None:
         return None, None, None
     card_text = load_continuity_card(thread_id)
@@ -291,8 +295,37 @@ def arm_resume_fence(
     pool: str | None = None,
     surface: str | None = None,
 ) -> dict[str, Any]:
-    """Arm a fence with ``read_set`` only — no tape render (FIX-8)."""
-    tip, _card_text, read_set = _load_resume_context(thread_id, pool=pool)
+    """Arm a resume fence on the write transaction that also reads the tip.
+
+    The latest checkpoint is selected on that connection after the writer
+    ticket is granted and ``BEGIN IMMEDIATE`` has run, and the fence row is
+    inserted before commit. An in-flight checkpoint insert therefore commits
+    before this read. Returns the arm payload, or an error dict when the
+    thread has no checkpoint. The armed signal fires after commit. Tape is
+    not rendered on this path.
+    """
+    with fence_writes_then_emit():
+        with write_connect() as conn:
+            return _arm_resume_fence_in_txn(
+                conn,
+                thread_id,
+                transcript_id=transcript_id,
+                source=source,
+                pool=pool,
+                surface=surface,
+            )
+
+
+def _arm_resume_fence_in_txn(
+    conn: sqlite3.Connection,
+    thread_id: str,
+    *,
+    transcript_id: str | None,
+    source: str,
+    pool: str | None,
+    surface: str | None,
+) -> dict[str, Any]:
+    tip, _card_text, read_set = _load_resume_context(thread_id, pool=pool, conn=conn)
     if tip is None or read_set is None:
         return {
             "error": "no_tip_checkpoint",
@@ -381,184 +414,31 @@ def assemble_resume_fence(
     surface: str | None = None,
     pre_pour_harvest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Pour ResumeBundle v1 onto an armed or new fence."""
-    tip, card_text, read_set = _load_resume_context(thread_id, pool=pool)
-    if tip is None or read_set is None:
-        return {
-            "error": "no_tip_checkpoint",
-            "reason": "resume_fence.no_tip_checkpoint",
-        }
+    """Pour a resume bundle whose tip is read inside the fence write.
 
-    card_uri = continuity_card_uri(thread_id)
-    card_sha = _sha256_text(card_text) if card_text else None
+    After the writer ticket is granted, ``BEGIN IMMEDIATE`` runs, the latest
+    checkpoint tip is selected on that connection, and the fence row is
+    inserted before commit. A checkpoint insert already in ``write_connect``
+    commits first, so the bundle's tip is that checkpoint. Returns the bundle,
+    or an error dict when the thread has no checkpoint or the tape render
+    fails. The pour-terminal release is the next write, after this commit.
+    """
+    with fence_writes_then_emit():
+        with write_connect() as conn:
+            from .resume_fence_pour import assemble_resume_fence_in_txn
 
-    envelope = build_resume_envelope(
-        thread_id,
-        tape_budget_bytes=RESUME_FENCE_TAPE_BUDGET,
-        budget_source=RESUME_FENCE_BUDGET_SOURCE,
-    )
-    if envelope.get("error"):
-        return envelope
-
-    pools_row = read_set.pop("pools_row")
-    ambiguous = adoption_ambiguous_count(thread_id) if transcript_id is None else 0
-
-    fence_id = find_open_fence(root_thread=thread_id, transcript_id=transcript_id)
-    adopted_from: str | None = None
-    if fence_id is not None:
-        folded = fold_fence(fence_id)
-        if folded is not None and folded.state == "armed":
-            adopted_from = _armed_source(fence_id)
-    elif ambiguous > 1:
-        fence_id = mint_fence_id()
-        append_fence_event(
-            fence_id=fence_id,
-            root_thread=thread_id,
-            transcript_id=transcript_id,
-            event="armed",
-            payload={
-                "source": source,
-                "transcript_id": transcript_id,
-                "read_set": read_set,
-                "surface": surface,
-            },
-        )
-    else:
-        fence_id = mint_fence_id()
-        append_fence_event(
-            fence_id=fence_id,
-            root_thread=thread_id,
-            transcript_id=transcript_id,
-            event="armed",
-            payload={
-                "source": source,
-                "transcript_id": transcript_id,
-                "read_set": read_set,
-                "surface": surface,
-            },
-        )
-
-    projection_uri = _PROJECTION_URI.format(thread=thread_id)
-    open_line_match = _OPEN_LINE_RE.search(card_text or "")
-    open_line = open_line_match.group(1).strip() if open_line_match else None
-    verbal = envelope.get("tape_verbal") or []
-    tape_bytes = len(json.dumps(verbal, ensure_ascii=False).encode("utf-8"))
-    mission = build_mission_block(
-        thread_id=thread_id,
-        tip_body=str(tip["body"]),
-        tip_turn=int(tip["turn_number"]),
-        supersedes_turn=tip.get("supersedes_turn"),
-        card_text=card_text,
-        envelope=envelope,
-        pools_row=pools_row,
-        open_line=open_line,
-        fence_id=fence_id,
-        thread_slug=_thread_slug(thread_id),
-    )
-
-    bundle: dict[str, Any] = {
-        "bundle_version": _BUNDLE_VERSION,
-        "fence": {
-            "fence_id": fence_id,
-            "root_thread": thread_id,
-            "transcript_id": transcript_id,
-            "state": "poured",
-            "opened_at": datetime.now(UTC).isoformat(),
-            "head_sha": resolve_code_version(),
-        },
-        "mission": mission,
-        "fence_carriage": {
-            "fence_id": fence_id,
-            "transcript_id": transcript_id,
-            "durable_send_requires_fence_id": False,
-            "first_hop": _resume_first_hop(
+            bundle = assemble_resume_fence_in_txn(
+                conn,
                 thread_id,
                 transcript_id=transcript_id,
+                source=source,
+                pool=pool,
                 surface=surface,
-            ),
-        },
-        "tip_checkpoint": {
-            "turn_number": tip["turn_number"],
-            "turn_id": tip["id"],
-            "subject": tip["subject"],
-            "body": tip["body"],
-            "supersedes_turn": tip.get("supersedes_turn"),
-            "created_at": tip.get("created_at"),
-        },
-        "resume_envelope": envelope,
-        "tape": {
-            "message_count": envelope.get("message_count", len(verbal)),
-            "truncated": envelope.get("tape_truncated", False),
-            "degraded": envelope.get("tape_degraded"),
-            "bytes": tape_bytes,
-            "scope": envelope.get("scope", "last_session"),
-            "read_via": {
-                "tool": "continuity",
-                "op": "tape_read",
-                "thread": thread_id,
-                "scope": "last_session",
-            },
-        },
-        "card": {
-            "uri": card_uri,
-            "sha256": card_sha,
-            "read_via": {"tool": "fs", "op": "read", "path": card_uri},
-        },
-        "projection": {
-            "uri": projection_uri,
-            "sha256": None,
-            "open_line": open_line,
-        },
-        "opportunities": {
-            "uri": _OPPORTUNITIES_URI.format(thread=thread_id),
-            "sha256": None,
-        },
-        "read_set": read_set,
-        "stance": "Use the ulg-for-llms skill.",
-        "provenance": {
-            "built_at": datetime.now(UTC).isoformat(),
-            "sources": [
-                {"uri": card_uri, "sha256": card_sha},
-                {"uri": f"agent-bus:{thread_id}#{tip['turn_number']}", "sha256": None},
-            ],
-        },
-    }
-    if pre_pour_harvest is not None:
-        bundle["pre_pour_harvest"] = pre_pour_harvest
-
-    bundle_bytes = len(json.dumps(bundle, ensure_ascii=False))
-    mission_bytes = len(json.dumps(mission, ensure_ascii=False))
-    readable = bundle["read_set"]["readable"]
-    poured_payload: dict[str, Any] = {
-        "bundle_bytes": bundle_bytes,
-        "mission_bytes": mission_bytes,
-        "card_inlined": False,
-        "bundle_version": _BUNDLE_VERSION,
-        "readable_counts": {
-            "bus_threads": len(readable["bus_threads"]),
-            "cortex_uris": len(readable["cortex_uris"]),
-            "entities": len(readable["entities"]),
-        },
-        "seal_status": envelope.get("seal_status", ""),
-        "read_set": read_set,
-    }
-    if adopted_from:
-        poured_payload["adopted_from"] = adopted_from
-    if ambiguous > 1:
-        poured_payload["adoption_ambiguous"] = ambiguous
-    if pre_pour_harvest is not None:
-        poured_payload["pre_pour_harvest"] = pre_pour_harvest
-
-    poured_payload["bundle_sha256"] = resume_bundle_sha256(bundle)
-    append_fence_event(
-        fence_id=fence_id,
-        root_thread=thread_id,
-        transcript_id=transcript_id,
-        event="poured",
-        payload=poured_payload,
-    )
-    pour_terminal_release(fence_id=fence_id)
-    return bundle
+                pre_pour_harvest=pre_pour_harvest,
+            )
+        if not bundle.get("error"):
+            pour_terminal_release(fence_id=bundle["fence"]["fence_id"])
+        return bundle
 
 
 __all__ = [

@@ -89,7 +89,7 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
     }
     with (
         patch(
-            "agent_bus_store.resume_fence.build_resume_envelope",
+            "agent_bus_store.resume_fence_pour.build_resume_envelope",
             return_value=envelope,
         ),
         patch(
@@ -97,7 +97,7 @@ def test_assemble_resume_fence_manifest_excludes_9796(root_thread) -> None:
             return_value=_CARD,
         ),
         patch(
-            "agent_bus_store.resume_fence.resolve_code_version",
+            "agent_bus_store.resume_fence_pour.resolve_code_version",
             return_value="abc123",
         ),
     ):

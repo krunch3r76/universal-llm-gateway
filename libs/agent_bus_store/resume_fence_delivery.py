@@ -123,7 +123,8 @@ def store_bundle(bundle: dict[str, Any]) -> StoredBundle:
 def _bundle_is_fresh(row: StoredBundle, thread_id: str) -> bool:
     if not _within_adopt_window(row.built_at):
         return False
-    tip = _tip_checkpoint(thread_id)
+    with write_connect() as conn:
+        tip = _tip_checkpoint(thread_id, conn)
     if tip is None or int(tip["id"]) != row.tip_turn_id:
         return False
     card = load_continuity_card(thread_id)
