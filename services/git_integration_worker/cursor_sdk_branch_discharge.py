@@ -12,6 +12,7 @@ does not show is refused and told which paths disagree — the same posture
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -291,6 +292,7 @@ def _finish(
             dispatch_id=dispatch_id,
             reason="discharge",
             allow_unharvested=True,
+            ignore_dispatch_id=completing_dispatch_id,
         )
         if not release.released and release.refusal is not None:
             return DischargeResult(
@@ -434,6 +436,24 @@ def discharge_discard(
         note=reason.strip(),
         completing_dispatch_id=completing_dispatch_id,
     )
+
+
+def resolve_completing_dispatch_id(explicit: str | None) -> str | None:
+    """Body field, else the harness env the bridge stamps on the dispatch.
+
+    GIW's own process does not inherit a nested dispatch's env. A dispatch
+    that POSTs must send ``completing_dispatch_id``, or be the process whose
+    environment already carries ``CURSOR_SDK_DISPATCH_ID``.
+    """
+    body = (explicit or "").strip()
+    if body:
+        return body
+    from services.git_integration_worker.cursor_sdk_context import (
+        CURSOR_SDK_DISPATCH_ID_ENV,
+    )
+
+    stamped = os.environ.get(CURSOR_SDK_DISPATCH_ID_ENV, "").strip()
+    return stamped or None
 
 
 def discharge(

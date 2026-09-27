@@ -46,6 +46,33 @@ def _sdk_terminal_turn(thread_id: str) -> dict[str, Any] | None:
     return sdk_terminal_closeout_turn(turns)
 
 
+def _link_count(thread_id: str) -> int:
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM thread_dispatch_links WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchone()
+    return int(row["n"] if row is not None else 0)
+
+
+def _terminal_turn_binds_execution(
+    turn: dict[str, Any],
+    execution_id: str,
+    *,
+    sole_link: bool,
+) -> bool:
+    """A thread-level closeout may terminalize a link only for that execution.
+
+    One link on the thread is the 1:1 case: the newest terminal turn is that
+    dispatch. Two links means a sibling closeout must name this execution_id
+    or it is left in flight.
+    """
+    if sole_link:
+        return True
+    blob = f"{turn.get('subject') or ''}\n{turn.get('body') or ''}"
+    return bool(execution_id) and execution_id in blob
+
+
 def _pending_orphan_reason(reason: str) -> str:
     return f"pending_orphan:{reason}"
 
@@ -191,12 +218,15 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
     linked_at = link["linked_at"]
     lifecycle = link["bus_lifecycle_state"]
     caller_agent = link.get("caller_agent")
+    sole_link = _link_count(thread_id) == 1
 
     if _age_seconds(linked_at) < RECONCILE_RESUME_GRACE_S:
         return False
 
     sdk_turn = _sdk_terminal_turn(thread_id)
-    if sdk_turn is not None:
+    if sdk_turn is not None and _terminal_turn_binds_execution(
+        sdk_turn, execution_id, sole_link=sole_link
+    ):
         status = infer_cursor_sdk_terminal_status(str(sdk_turn.get("subject") or ""))
         terminate_dispatch(
             thread_id=thread_id,
@@ -248,6 +278,7 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
     verdict, reason, terminal_status = evaluate_link_liveness(
         thread_id=thread_id,
         link_execution_id=execution_id,
+        sole_link=sole_link,
     )
     if verdict is LivenessVerdict.SKIP_LIVE:
         _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
@@ -266,9 +297,7 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
             status=terminal_status,
         )
 
-    if _link_table_blocks_orphan_post(
-        thread_id=thread_id, execution_id=execution_id
-    ):
+    if _link_table_blocks_orphan_post(thread_id=thread_id, execution_id=execution_id):
         _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
         return False
 

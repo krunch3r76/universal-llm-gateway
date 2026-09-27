@@ -82,8 +82,15 @@ def classify_probe(
     probe: ProbeResult,
     *,
     link_execution_id: str | None,
+    sole_link: bool = True,
 ) -> tuple[LivenessVerdict, str, str | None]:
-    """Classify a GIW dispatch-status probe. Returns (verdict, reason, terminal)."""
+    """Classify a GIW dispatch-status probe. Returns (verdict, reason, terminal).
+
+    ``sole_link`` is the 1:1 case (thread 11151): a terminal probe may backfill
+    the only link even when the probe's execution_id string differs. When the
+    thread has another link, a terminal probe for a different execution_id is
+    that sibling — it must not stamp this link.
+    """
     if probe.error is not None:
         return LivenessVerdict.DEFER, probe.error, None
 
@@ -110,6 +117,14 @@ def classify_probe(
 
     bus_terminal = _WORKER_TERMINAL_TO_BUS.get(status)
     if bus_terminal is not None:
+        probe_execution_id = payload.get("execution_id")
+        execution_id_mismatch = (
+            link_execution_id
+            and probe_execution_id
+            and str(probe_execution_id) != str(link_execution_id)
+        )
+        if execution_id_mismatch and not sole_link:
+            return LivenessVerdict.SKIP_LIVE, "probe_other_execution", None
         return LivenessVerdict.TERMINAL_BACKFILL, "probe_terminal", bus_terminal
 
     if status not in _LIVE_STATUSES:
@@ -179,12 +194,15 @@ def evaluate_link_liveness(
     *,
     thread_id: str,
     link_execution_id: str | None,
+    sole_link: bool = True,
     probe_fn=probe_dispatch_status,
 ) -> tuple[LivenessVerdict, str, str | None]:
     """Probe GIW and classify whether orphan-reconcile or admitted-TTL reap may proceed."""
     probe = probe_fn(thread_id)
     verdict, reason, terminal_status = classify_probe(
-        probe, link_execution_id=link_execution_id
+        probe,
+        link_execution_id=link_execution_id,
+        sole_link=sole_link,
     )
     if verdict is LivenessVerdict.DEFER:
         logger.warning(

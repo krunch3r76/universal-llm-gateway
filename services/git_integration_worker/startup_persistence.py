@@ -31,6 +31,13 @@ async def run_startup_persistence(app: Any) -> None:
     try:
         logger.info("startup persistence: ledger reconcile begin")
         await startup_ledger_reconcile(app)
+        logger.info("startup persistence: cursor key entitlement probe begin")
+        from services.git_integration_worker.cursor_sdk_key_entitlement import (
+            probe_configured_keys,
+        )
+
+        probe_rows = await asyncio.to_thread(probe_configured_keys)
+        logger.info("startup persistence: cursor key entitlement probe %s", probe_rows)
         logger.info("startup persistence: closeout outbox replay begin")
         await startup_closeout_outbox_replay(app)
         logger.info("startup persistence: auto-job reconcile begin")
