@@ -22,21 +22,21 @@ from typing import Any
 
 from universal_logging import get_logger
 
+from services.git_integration_worker.cursor_home import operator_real_home
 from services.git_integration_worker.cursor_sdk_nest_depth import (
     NestDepthExceeded,
     NestParentNotLive,
     park_stack_depth,
 )
-from services.git_integration_worker.cursor_home import operator_real_home
 from services.git_integration_worker.ledger_pytest_guard import (
     refuse_live_ledger_under_pytest,
 )
-
-CURSOR_SDK_DISPATCH_LEDGER_ENV = "CURSOR_SDK_DISPATCH_LEDGER"
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
 )
+
+CURSOR_SDK_DISPATCH_LEDGER_ENV = "CURSOR_SDK_DISPATCH_LEDGER"
 
 logger = get_logger(__name__)
 
