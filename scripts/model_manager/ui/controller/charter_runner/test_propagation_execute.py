@@ -90,6 +90,7 @@ def test_process_live_registry_excludes_unprobeable() -> None:
         "event_service",
         "cdp_ask",
         "agent_bus",
+        "manage",
     ):
         assert slug in probeable
         assert (slug, "process_live") in PROOF_PROBE_REGISTRY

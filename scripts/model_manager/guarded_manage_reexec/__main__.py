@@ -36,7 +36,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
             "External guarded manage quit/start. Default is --dry-run "
-            "(checks only; never quits). Not wired into propagate."
+            "(checks only; never quits). Propagate service=manage calls "
+            "run_guarded_reexec; this CLI is the same external path."
         )
     )
     parser.add_argument(

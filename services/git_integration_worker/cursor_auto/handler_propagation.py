@@ -243,6 +243,27 @@ async def run_propagation_in_seat(
     )
 
 
+def _guarded_manage_reexec_payload(code_ref: str) -> dict[str, Any]:
+    """Restart manage from outside its PID.
+
+    Manage imports ``restart_drain`` at process start. An in-process
+    ``sync_restart`` would die with the RPC that is waiting on it. The
+    guarded reexec quits the tmux host, starts a new process, and proves
+    ``whoami`` against ``code_ref``.
+    """
+    from scripts.model_manager.guarded_manage_reexec import run_guarded_reexec
+
+    result = run_guarded_reexec(target_ref=code_ref, dry_run=False)
+    payload = result.as_dict()
+    if result.status == "proof-satisfied":
+        return {"status": "ok", "guarded_reexec": payload}
+    return {
+        "status": "error",
+        "reason": result.reason or result.status,
+        "guarded_reexec": payload,
+    }
+
+
 async def _execute_row(
     row: PropagationRow,
     *,
@@ -293,19 +314,26 @@ async def _execute_row(
             "proof_class_requested": dispatch_before.proof_class_requested,
             "proof_class_executed": dispatch_before.proof_class_executed,
         }
-    manage_result = await asyncio.to_thread(
-        sync_restart_service,
-        row.service,
-        reason=(
-            "operator-proxy self-preempt (own cdp_ask_live)"
-            if force
-            else "operator propagate via cursor-auto"
-        ),
-        force=force,
-        code_ref=row.code_ref,
-        row_id=row_id,
-        caller_job_id=caller_job_id if row.service == "agent_bus" else None,
-    )
+    if row.service == "manage":
+        # External reexec — not manage.sock sync_restart. Manage is absent
+        # from VALID_SERVICES on purpose; see _guarded_manage_reexec_payload.
+        manage_result = await asyncio.to_thread(
+            _guarded_manage_reexec_payload, row.code_ref
+        )
+    else:
+        manage_result = await asyncio.to_thread(
+            sync_restart_service,
+            row.service,
+            reason=(
+                "operator-proxy self-preempt (own cdp_ask_live)"
+                if force
+                else "operator propagate via cursor-auto"
+            ),
+            force=force,
+            code_ref=row.code_ref,
+            row_id=row_id,
+            caller_job_id=caller_job_id if row.service == "agent_bus" else None,
+        )
     status = str(manage_result.get("status") or "unknown")
     # Operator bind: do not harvest_wanted-pushback a self-preemptable mcp/cdp_ask
     # restart — retry once with force and advise disconnect (mcp).
