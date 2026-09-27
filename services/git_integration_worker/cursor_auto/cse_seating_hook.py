@@ -19,6 +19,7 @@ __all__ = [
     "record_seated_registration",
     "retire_predecessors_on_seat",
     "run_cse_seating_hook",
+    "seat_successor_from_dispatch_link",
 ]
 
 
@@ -285,9 +286,10 @@ def _seat_successor_without_occupy(
     Holder rows for the lane move only when that URL is known: successor
     driving, predecessors superseded, registry peers closed. With no URL
     the census watch still keys the birth id, and both the holder table
-    and the registry stay put until ``record_seated_registration`` sees
-    the window. Closing the registry first would leave the predecessor
-    holder as the wake target.
+    and the registry stay put. The deferred flip is
+    ``seat_successor_from_dispatch_link`` on a later reconcile tick, when
+    ``thread_dispatch_links`` has a chat_url for this execution. Closing
+    the registry first would leave the predecessor holder as the wake target.
     """
     from hop_handoff import parse_successor_birth_id
 
@@ -397,6 +399,153 @@ def _seat_successor_without_occupy(
         "holders_seated": holders_seated,
         "retired_registration_ids": retired,
         "superseded_holder_ids": superseded_holders,
+    }
+    _emit_hook(outcome)
+    return outcome
+
+
+def seat_successor_from_dispatch_link(
+    *,
+    lane_thread_id: str,
+    execution_id: str,
+    successor_birth_id: str,
+) -> dict[str, Any]:
+    """Drive the successor from the hop execution's dispatch-link chat_url.
+
+    Hub-local trigger: ``thread_dispatch_links.chat_url`` for *execution_id*.
+    The registration key is *successor_birth_id*. One call supersedes the
+    lane's other driving holders and appends the thread-CSE association.
+    No chat_url means no write — a window that never opened stays on the
+    predecessor. The holder commit happens before the thread append; a
+    thread-bind failure leaves the holder flipped so a later tick can
+    retry the association only.
+    """
+    lane = (lane_thread_id or "").strip()
+    exec_id = (execution_id or "").strip()
+    birth = (successor_birth_id or "").strip()
+    if not lane or not exec_id or not birth:
+        return {
+            "ok": False,
+            "path": "dispatch_link",
+            "reason": "missing_lane_execution_or_birth",
+            "holders_seated": False,
+            "thread_bound": False,
+            "superseded_holder_ids": [],
+        }
+    chat = _chat_url_from_dispatch_link(exec_id) or ""
+    if not chat:
+        return {
+            "ok": False,
+            "path": "dispatch_link",
+            "reason": "no_dispatch_link",
+            "lane_thread_id": lane,
+            "execution_id": exec_id,
+            "successor_birth_id": birth,
+            "holders_seated": False,
+            "thread_bound": False,
+            "superseded_holder_ids": [],
+        }
+    from agent_bus_store.db.cse_associations import (
+        associate_cse,
+        normalize_cse_bind_url,
+    )
+
+    if normalize_cse_bind_url(chat) is None:
+        return {
+            "ok": False,
+            "path": "dispatch_link",
+            "reason": "chat_url_not_bindable",
+            "lane_thread_id": lane,
+            "execution_id": exec_id,
+            "successor_chat_url": chat,
+            "holders_seated": False,
+            "thread_bound": False,
+            "superseded_holder_ids": [],
+        }
+    from services.git_integration_worker.cse_session_holders import (
+        ensure_schema,
+        seat_successor_on_lane,
+    )
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CursorDispatchLedger,
+    )
+
+    with CursorDispatchLedger.instance()._connect() as conn:
+        ensure_schema(conn)
+        retired_regs = _live_holder_registration_ids(conn, lane=lane, successor=birth)
+        seated = seat_successor_on_lane(
+            conn,
+            chat_url=chat,
+            registration_id=birth,
+            lane_thread_id=lane,
+            execution_id=exec_id,
+        )
+        if not seated.get("ok"):
+            return {
+                "ok": False,
+                "path": "dispatch_link",
+                "reason": str(
+                    seated.get("reason") or "occupy_target_held_by_live_peer"
+                ),
+                "lane_thread_id": lane,
+                "execution_id": exec_id,
+                "successor_birth_id": birth,
+                "successor_chat_url": chat,
+                "held_by_lane": seated.get("held_by_lane"),
+                "holders_seated": False,
+                "thread_bound": False,
+                "superseded_holder_ids": [],
+            }
+        conn.commit()
+    superseded = [
+        str(item)
+        for item in (seated.get("superseded_holder_ids") or [])
+        if str(item).strip()
+    ]
+    try:
+        associate_cse(
+            thread_id=lane,
+            cse_chat_url=chat,
+            cse_registration_id=birth,
+            bound_by="cse_seating_hook",
+            evidence="thread_dispatch_links.chat_url",
+        )
+    except Exception as exc:  # noqa: BLE001 — holder flip must survive a bind miss
+        logger.warning(
+            "dispatch-link thread bind failed lane=%s exec=%s: %s",
+            lane,
+            exec_id,
+            exc,
+        )
+        outcome = {
+            "ok": False,
+            "path": "dispatch_link",
+            "reason": "thread_bind_failed",
+            "lane_thread_id": lane,
+            "execution_id": exec_id,
+            "successor_birth_id": birth,
+            "successor_registration_id": birth,
+            "successor_chat_url": chat,
+            "holders_seated": True,
+            "thread_bound": False,
+            "superseded_holder_ids": superseded,
+            "retired_registration_ids": retired_regs,
+        }
+        _emit_hook(outcome)
+        return outcome
+    outcome = {
+        "ok": True,
+        "path": "dispatch_link",
+        "reason": "successor_seated_from_dispatch_link",
+        "lane_thread_id": lane,
+        "execution_id": exec_id,
+        "successor_birth_id": birth,
+        "successor_registration_id": birth,
+        "successor_chat_url": chat,
+        "holders_seated": True,
+        "thread_bound": True,
+        "superseded_holder_ids": superseded,
+        "retired_registration_ids": retired_regs,
     }
     _emit_hook(outcome)
     return outcome
