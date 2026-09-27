@@ -1,6 +1,7 @@
 """Durable, restart-surviving idempotency + resume ledger for cursor-sdk dispatches.
 
-Replaces the process-local CursorDispatchRegistry. SQLite at DATA_DIR/cursor-sdk-dispatch.db
+Replaces the process-local CursorDispatchRegistry. SQLite at
+``CURSOR_SDK_DISPATCH_LEDGER`` or ``DATA_DIR`` / ``operator_real_home()/.gateway``
 (mirrors event_store.dispatch_journal). The ledger answers "what SHOULD be running";
 a process-local task dict answers "what IS running in this process". Never sole authority:
 a lost row degrades to Phase-1 loud-failure (thread_dispatch_links + agent-bus reconciler).
@@ -26,9 +27,12 @@ from services.git_integration_worker.cursor_sdk_nest_depth import (
     NestParentNotLive,
     park_stack_depth,
 )
+from services.git_integration_worker.cursor_home import operator_real_home
 from services.git_integration_worker.ledger_pytest_guard import (
     refuse_live_ledger_under_pytest,
 )
+
+CURSOR_SDK_DISPATCH_LEDGER_ENV = "CURSOR_SDK_DISPATCH_LEDGER"
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
@@ -221,11 +225,38 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _ledger_path() -> Path:
-    data_dir = Path(os.getenv("DATA_DIR", str(Path.home() / ".gateway"))).expanduser()
+def resolve_cursor_sdk_dispatch_ledger_path() -> Path:
+    """Production dispatch ledger path — immune to per-dispatch ``HOME`` overlays.
+
+    ``CURSOR_SDK_DISPATCH_LEDGER`` (exported by GIW into bridge argv) wins when
+    set. Otherwise ``DATA_DIR`` or ``operator_real_home()/.gateway`` — never
+    ``Path.home()``, which follows a swapped dispatch HOME into a shadow DB.
+    """
+    pinned = os.environ.get(CURSOR_SDK_DISPATCH_LEDGER_ENV, "").strip()
+    if pinned:
+        db_path = Path(pinned).expanduser()
+        refuse_live_ledger_under_pytest(
+            db_path.parent, ledger_label="dispatch ledger"
+        )
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        return db_path.resolve()
+    data_dir = Path(
+        os.getenv("DATA_DIR", str(operator_real_home() / ".gateway"))
+    ).expanduser()
     refuse_live_ledger_under_pytest(data_dir, ledger_label="dispatch ledger")
     data_dir.mkdir(parents=True, exist_ok=True)
-    return data_dir / "cursor-sdk-dispatch.db"
+    return (data_dir / "cursor-sdk-dispatch.db").resolve()
+
+
+def dispatch_ledger_env_vars() -> dict[str, str]:
+    """Env pin GIW injects into cursor-sdk bridge argv (``build_bridge_command``)."""
+    return {
+        CURSOR_SDK_DISPATCH_LEDGER_ENV: str(resolve_cursor_sdk_dispatch_ledger_path())
+    }
+
+
+def _ledger_path() -> Path:
+    return resolve_cursor_sdk_dispatch_ledger_path()
 
 
 def _connect(path: Path | None = None) -> sqlite3.Connection:
@@ -970,12 +1001,8 @@ class CursorDispatchLedger:
     def __init__(self) -> None:
         # Live in-process task handles (NOT persistable): dispatch_id -> Task.
         self._tasks: dict[str, asyncio.Task[Any]] = {}
-        # Capture the ledger DB path ONCE at construction (happens pre-HOME-swap,
-        # at record_state_root). The dispatch path swaps os.environ["HOME"] for
-        # cursor-sdk-bridge isolation, and _ledger_path() falls back to
-        # Path.home() when DATA_DIR is unset, so re-resolving per _connect()
-        # would aim in-swap ops (heartbeat, sdk_identity, terminal) at an empty
-        # <swapped-home>/.gateway DB -> "no such table: cursor_sdk_dispatches".
+        # Pin DB path at construction; in-swap shells re-resolve via
+        # ``CURSOR_SDK_DISPATCH_LEDGER`` / ``operator_real_home()``, not ``HOME``.
         self._db_path: Path = _ledger_path()
         with self._connect() as conn:
             conn.executescript(_DDL)

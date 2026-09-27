@@ -281,11 +281,15 @@ def test_ledger_db_path_stable_across_home_swap(
     real_home.mkdir()
     swapped_home = tmp_path / "dispatch-home"
     swapped_home.mkdir()
+    ledger_db = real_home / ".gateway" / "cursor-sdk-dispatch.db"
     monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.setenv(
+        "CURSOR_SDK_DISPATCH_LEDGER", str(ledger_db)
+    )  # GIW bridge pin (friction a:36673)
     monkeypatch.setenv("HOME", str(real_home))
     CursorDispatchLedger._instance = None
 
-    ledger = CursorDispatchLedger.instance()  # table created under real_home
+    ledger = CursorDispatchLedger.instance()  # table created under real_home pin
     req = _req()
     ledger.admit(
         req=req,
