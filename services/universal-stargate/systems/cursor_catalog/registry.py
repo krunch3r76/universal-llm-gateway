@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -36,6 +37,7 @@ logger = get_logger(__name__)
 
 _REFRESH_INTERVAL_S = 3600
 _RETRY_INTERVAL_S = 30
+_HEARTBEAT_INTERVAL_S = 60
 _GATEWAY_ID = "cursor-sdk-catalog"
 
 
@@ -53,11 +55,15 @@ class CursorSdkCatalogPoller:
         self._event_bus = event_bus
         self._client = httpx.AsyncClient(base_url=self._worker_url, timeout=15.0)
         self._refresh_task: asyncio.Task[None] | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
         self._connected = False
 
     async def startup(self) -> None:
         self._refresh_task = asyncio.create_task(
             self._refresh_loop(), name="cursor-sdk-catalog-refresh"
+        )
+        self._heartbeat_task = asyncio.create_task(
+            self._heartbeat_loop(), name="cursor-sdk-catalog-heartbeat"
         )
         reachable = await self._probe_health()
         if not reachable:
@@ -74,6 +80,12 @@ class CursorSdkCatalogPoller:
         logger.info("Cursor SDK catalog poller started")
 
     async def shutdown(self) -> None:
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
         if self._refresh_task and not self._refresh_task.done():
             self._refresh_task.cancel()
             try:
@@ -154,6 +166,27 @@ class CursorSdkCatalogPoller:
         await self._gateway_manager.register_cursor_gateway(gateway)
         await self._emit_catalog_updated(len(model_ids))
         await self._emit_drift_if_needed(projected)
+
+    async def _touch_heartbeat(self) -> None:
+        """Refresh liveness without re-fetching the hourly catalog."""
+        gateway = self._gateway_manager.get_gateway(_GATEWAY_ID)
+        if gateway is None:
+            return
+        await self._gateway_manager.register_cursor_gateway(
+            replace(gateway, last_heartbeat=time.time())
+        )
+
+    async def _heartbeat_loop(self) -> None:
+        while True:
+            await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
+            if not self._connected:
+                continue
+            try:
+                await self._touch_heartbeat()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Error touching cursor SDK catalog heartbeat")
 
     async def _emit_drift_if_needed(
         self, projected: dict[str, dict[str, object]]
