@@ -207,9 +207,7 @@ async def execute(
                     ctl, "restart", park_live=bool(params.get("park_live", False))
                 )
             else:
-                preempted = await preempt_giw_keep_await_if_needed(
-                    ctl, service, force
-                )
+                preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
                 if preempted is not None:
                     return preempted
                 result = await run_gated(
@@ -267,6 +265,7 @@ async def execute(
                 )
             force = bool(params.get("force", False))
             caller_dispatch_id = _optional_attr_str(params, "caller_dispatch_id")
+            caller_job_id = _optional_attr_str(params, "caller_job_id")
             if service == "git_integration_worker" and not force:
                 return await _git_worker_drain_supervised(
                     ctl,
@@ -319,6 +318,7 @@ async def execute(
                     "sync_restart",
                     lambda: _sync_restart(ctl, service),
                 ),
+                exclude_job_id=caller_job_id if service == "agent_bus" else None,
             )
 
         case "busy_status":

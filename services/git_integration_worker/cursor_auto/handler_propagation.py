@@ -99,9 +99,7 @@ def restart_intent_persisted(manage_result: dict[str, Any]) -> bool:
     return bool(manage_result.get("restart_intent_id"))
 
 
-def deferred_is_self_preemptable(
-    service: str, manage_result: dict[str, Any]
-) -> bool:
+def deferred_is_self_preemptable(service: str, manage_result: dict[str, Any]) -> bool:
     """True when a busy deferral is the commissioning seat's own CSE/MCP heat.
 
     Durable drain intents (GIW-style) are not self-preempt — those stay queued.
@@ -122,9 +120,7 @@ def execution_for_manage_deferred(
 ) -> dict[str, Any]:
     """Map a manage ``status=deferred`` outcome to a truthful row execution dict."""
     reason = str(
-        manage_result.get("reason")
-        or manage_result.get("state")
-        or "manage_deferred"
+        manage_result.get("reason") or manage_result.get("state") or "manage_deferred"
     )
     if restart_intent_persisted(manage_result):
         from charter_runner_store.propagation_validation import (
@@ -210,7 +206,12 @@ async def run_propagation_in_seat(
     executions: list[dict[str, Any]] = []
     for row, row_id in zip(stamped, row_ids, strict=True):
         executions.append(
-            await _execute_row(row, row_id=row_id, from_agent=job.from_agent)
+            await _execute_row(
+                row,
+                row_id=row_id,
+                from_agent=job.from_agent,
+                caller_job_id=job.job_id,
+            )
         )
 
     disposition = _disposition_for(executions)
@@ -247,6 +248,7 @@ async def _execute_row(
     *,
     row_id: str,
     from_agent: str = "",
+    caller_job_id: str = "",
 ) -> dict[str, Any]:
     from scripts.model_manager.ui.controller.charter_runner.propagation_execute import (
         dispatch_proof_probe,
@@ -302,6 +304,7 @@ async def _execute_row(
         force=force,
         code_ref=row.code_ref,
         row_id=row_id,
+        caller_job_id=caller_job_id if row.service == "agent_bus" else None,
     )
     status = str(manage_result.get("status") or "unknown")
     # Operator bind: do not harvest_wanted-pushback a self-preemptable mcp/cdp_ask
@@ -366,11 +369,7 @@ async def _execute_row(
             "manage": manage_result,
         }
     after = after_dispatch.payload
-    advisory = (
-        MCP_DISCONNECT_ADVISORY
-        if force and row.service == "mcp"
-        else None
-    )
+    advisory = MCP_DISCONNECT_ADVISORY if force and row.service == "mcp" else None
     if proof_observed(row, after, before=before):
         close_row(
             row_id,
@@ -520,11 +519,7 @@ def _self_preempt_escalations_for(
 
 def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
     services = ", ".join(str(item.get("service") or "?") for item in executions)
-    advisories = [
-        str(item["advisory"])
-        for item in executions
-        if item.get("advisory")
-    ]
+    advisories = [str(item["advisory"]) for item in executions if item.get("advisory")]
     advisory_suffix = f" {advisories[0]}" if advisories else ""
     if disposition in {"executed", "propagated"}:
         preempt_items = [
@@ -561,9 +556,7 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
     if disposition == "harvest_wanted":
         reasons = ", ".join(str(item.get("reason") or "?") for item in executions)
         suppressed = [
-            item
-            for item in executions
-            if item.get("self_preempt_suppressed")
+            item for item in executions if item.get("self_preempt_suppressed")
         ]
         base = (
             f"Auto propagation harvest_wanted for {services} (reason={reasons}). "

@@ -435,3 +435,25 @@ def test_sync_restart_service_forwards_propagate_row_identity() -> None:
     assert (
         captured["params"]["row_id"] == "git_integration_worker:8fc646c7:sync_restart"
     )
+    assert "caller_job_id" not in captured["params"]
+
+
+def test_sync_restart_service_forwards_caller_job_id() -> None:
+    """agent_bus propagate identifies the executing cursor-auto job to manage."""
+    captured: dict = {}
+
+    def _call(method: str, params: dict | None = None, *, timeout: float = 0.0) -> dict:
+        captured["method"] = method
+        captured["params"] = params or {}
+        return {"status": "ok"}
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.manage_sock.call_manage",
+        _call,
+    ):
+        sync_restart_service(
+            "agent_bus",
+            caller_job_id="job-propagate-12286",
+        )
+    assert captured["params"]["caller_job_id"] == "job-propagate-12286"
+    assert captured["params"]["service"] == "agent_bus"

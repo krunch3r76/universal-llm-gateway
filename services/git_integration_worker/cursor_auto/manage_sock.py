@@ -65,6 +65,7 @@ def sync_restart_service(
     force: bool = False,
     code_ref: str | None = None,
     row_id: str | None = None,
+    caller_job_id: str | None = None,
 ) -> dict[str, Any]:
     """Request drain-gated sync_restart for one service slug.
 
@@ -73,6 +74,9 @@ def sync_restart_service(
     busy deferral — manage still owns the gate; this only forwards the flag.
     ``code_ref`` / ``row_id`` are the propagate ledger identity so manage can mint
     an activation validation keyed to the row SHA rather than process HEAD.
+    ``caller_job_id`` is the executing cursor-auto job. manage applies it only
+    for ``agent_bus``, so that job is not counted as in-flight work against
+    its own propagate.
     """
     params: dict[str, Any] = {"service": service}
     if reason:
@@ -83,6 +87,8 @@ def sync_restart_service(
         params["code_ref"] = code_ref
     if row_id:
         params["row_id"] = row_id
+    if caller_job_id:
+        params["caller_job_id"] = caller_job_id
     return call_manage("sync_restart", params)
 
 
