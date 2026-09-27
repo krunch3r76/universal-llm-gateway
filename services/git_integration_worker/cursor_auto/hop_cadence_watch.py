@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from agent_seat.registry import normalize_bus_address
-from claude_bundles.cdp_registry_store import load_active
+from claude_bundles.cdp_registry_remote_read import read_fleet_registry
 from claude_bundles.operator_mailbox import (
     is_operator_proxy_mailbox as _is_operator_proxy_mailbox,
 )
@@ -159,23 +159,31 @@ def should_observe_job(job: AutoJob) -> bool:
 
 
 def registry_started_at(registration_id: str | None) -> float | None:
-    """Return ``active.json`` started_at for a live registration, else None."""
+    """Return document ``started_at`` for a live registration, else None."""
     rid = (registration_id or "").strip()
     if not rid:
         return None
-    active = load_active()
-    row = active.get(rid)
-    if not isinstance(row, dict):
+    doc = read_fleet_registry()
+    if doc.get("availability") != "ok":
         return None
-    if row.get("status") not in ("active", "orphaned_alive", "allocating"):
+    seats = doc.get("seats")
+    if not isinstance(seats, list):
         return None
-    started = row.get("started_at")
-    if started is None:
-        return None
-    try:
-        return float(started)
-    except (TypeError, ValueError):
-        return None
+    for seat in seats:
+        if not isinstance(seat, dict):
+            continue
+        if str(seat.get("registration_id") or "").strip() != rid:
+            continue
+        if seat.get("status") not in ("active", "orphaned_alive", "allocating"):
+            return None
+        started = seat.get("started_at")
+        if started is None:
+            return None
+        try:
+            return float(started)
+        except (TypeError, ValueError):
+            return None
+    return None
 
 
 def observe_lane_from_enqueue(

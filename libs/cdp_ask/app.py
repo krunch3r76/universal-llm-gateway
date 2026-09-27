@@ -7,12 +7,13 @@ browser-attachment projection used by restart safety.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import time
 
 from deploy_identity.code_version import resolve_code_version
-from deploy_identity.tree_state import resolve_tree_state
+from deploy_identity.tree_state import peek_tree_state, refresh_tree_state
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -138,9 +139,16 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
     execution_store.bind_deregister(_deregister)
     execution_store.bind_occupancy(occupancy)
+    _tree_refresh_task: asyncio.Task[None] | None = None
+
+    async def _tree_state_refresh_loop() -> None:
+        while True:
+            await asyncio.to_thread(refresh_tree_state)
+            await asyncio.sleep(15)
 
     @app.on_event("startup")
     async def _startup() -> None:
+        nonlocal _tree_refresh_task
         os.environ.setdefault("CDP_REGISTRY_SEAT_AUTHORITY", "1")
         verify_harvest_root()
         reaped = await execution_store.boot_reconcile()
@@ -148,11 +156,35 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             logger.warning("boot reconcile reaped orphaned lanes: %s", reaped)
         await execution_store.start()
         await registry_hygiene.start()
+        refresh_flag = os.environ.get("CDP_ASK_TREE_STATE_REFRESH", "1").strip().lower()
+        if refresh_flag not in ("0", "false", "no"):
+            _tree_refresh_task = asyncio.create_task(_tree_state_refresh_loop())
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
+        nonlocal _tree_refresh_task
+        if _tree_refresh_task is not None:
+            _tree_refresh_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await _tree_refresh_task
+            _tree_refresh_task = None
         await registry_hygiene.stop()
         await execution_store.stop()
+
+    @app.get("/v1/project-ask/registry")
+    async def registry_document() -> dict[str, object]:
+        """Fleet registry document — vocabulary-filtered seat rows for hub readers."""
+        from claude_bundles.cdp_registry_document import (
+            build_registry_document,
+            registry_unavailable_document,
+        )
+        from claude_bundles.cdp_registry_store import load_active
+
+        try:
+            active = load_active()
+        except Exception:  # noqa: BLE001 — document must not 500 on local I/O
+            return registry_unavailable_document()
+        return build_registry_document(active)
 
     @app.get("/v1/project-ask/active-work")
     async def active_work() -> dict[str, object]:
@@ -379,7 +411,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                 registry_hygiene="stopped",
                 code_version=resolve_code_version(),
                 pid=os.getpid(),
-                tree_state=resolve_tree_state(),
+                tree_state=peek_tree_state(),
             )
         hygiene_status = "running" if registry_hygiene.running else "stopped"
         from cdp_ask.standing_pins import probe_health
@@ -397,7 +429,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
             registry_hygiene=hygiene_status,
             code_version=resolve_code_version(),
             pid=os.getpid(),
-            tree_state=resolve_tree_state(),
+            tree_state=peek_tree_state(),
             displays=displays,
             standing_pins={
                 name: StandingPinHealthModel(

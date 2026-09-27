@@ -248,14 +248,18 @@ def test_read_cdp_lane_snapshot_attaches_registry_seats() -> None:
         "at_hard_limit": False,
     }
     with patch(
-        "claude_bundles.cdp_registry_store.load_active",
+        "claude_bundles.cdp_registry_remote_read.read_fleet_registry",
         return_value={
-            _REG: {
-                "registration_id": _REG,
-                "status": "active",
-                "purpose": "operator-proxy",
-                "parent_thread": _THREAD,
-            }
+            "availability": "ok",
+            "seat_count": 1,
+            "seats": [
+                {
+                    "registration_id": _REG,
+                    "status": "active",
+                    "purpose": "operator-proxy",
+                    "parent_thread": _THREAD,
+                }
+            ],
         },
     ):
         snap = read_cdp_lane_snapshot(client=client)

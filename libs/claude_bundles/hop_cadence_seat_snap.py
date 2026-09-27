@@ -173,23 +173,44 @@ def seated_rows_from_registry_records(
     return out
 
 
+def _active_map_from_registry_document(
+    doc: Mapping[str, Any],
+) -> dict[str, Mapping[str, Any]]:
+    seats = doc.get("seats")
+    if not isinstance(seats, list):
+        return {}
+    out: dict[str, Mapping[str, Any]] = {}
+    for seat in seats:
+        if not isinstance(seat, Mapping):
+            continue
+        registration_id = str(seat.get("registration_id") or "").strip()
+        if not registration_id:
+            continue
+        out[registration_id] = seat
+    return out
+
+
 def read_registry_seated_rows(
     *,
     load_active: Callable[[], Mapping[str, Mapping[str, Any]]] | None = None,
     stream_index: StreamIndex | None = None,
 ) -> list[dict[str, Any]]:
-    """Load listable CSE-registry seats as hop-identity rows; empty on I/O fault."""
-    try:
-        if load_active is None:
-            from claude_bundles.cdp_registry_store import load_active as _load_active
-
-            raw = _load_active()
-        else:
+    """Load listable CSE-registry seats via the fleet registry document."""
+    if load_active is not None:
+        try:
             raw = load_active()
-    except Exception:  # noqa: BLE001 — hop identity must fail open to store rows
+        except Exception:  # noqa: BLE001 — hop identity must fail open to store rows
+            return []
+        if not isinstance(raw, Mapping):
+            return []
+        return seated_rows_from_registry_records(raw, stream_index=stream_index)
+
+    from claude_bundles.cdp_registry_remote_read import read_fleet_registry
+
+    doc = read_fleet_registry()
+    if doc.get("availability") != "ok":
         return []
-    if not isinstance(raw, Mapping):
-        return []
+    raw = _active_map_from_registry_document(doc)
     return seated_rows_from_registry_records(raw, stream_index=stream_index)
 
 
@@ -281,14 +302,14 @@ def attach_registry_seated_rows(snap: dict[str, Any]) -> dict[str, Any]:
         return snap
     stream_index = build_stream_index_from_snap(snap)
     observed_at = str(snap.get("observed_at") or "").strip() or None
-    try:
-        from claude_bundles.cdp_registry_store import load_active as _load_active
+    from claude_bundles.cdp_registry_remote_read import read_fleet_registry
 
-        raw = _load_active()
-    except Exception:  # noqa: BLE001 — hop identity must fail open to store rows
-        raw = {}
-    if not isinstance(raw, Mapping):
-        raw = {}
+    doc = read_fleet_registry()
+    if doc.get("availability") != "ok":
+        out = dict(snap)
+        out["registry_availability"] = "unavailable"
+        return out
+    raw = _active_map_from_registry_document(doc)
     out = snap
     if need_seated:
         out = attach_seated_rows(
