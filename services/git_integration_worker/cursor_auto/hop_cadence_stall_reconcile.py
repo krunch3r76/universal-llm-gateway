@@ -811,6 +811,7 @@ def reconcile_succession_confirmations(
                 chat_url=str(aw.get("chat_url") or "") or None,
                 registration_id=new_reg,
                 execution_id=matched_key,
+                lane_thread_id=thread_id,
             )
             post_seat_registration_if_keyed(
                 thread_id=thread_id,

@@ -61,7 +61,11 @@ def backfill_attachment_from_chat_url(
         return {"dry_run": True, "would_bind": registration_id, "chat_url": url}
     if _store._has_attachment_observed(registration_id, url):
         _store.fold_attachment_journal()
-        return {"dry_run": False, "registration_id": registration_id, "idempotent": True}
+        return {
+            "dry_run": False,
+            "registration_id": registration_id,
+            "idempotent": True,
+        }
     _store.append_attachment_journal(
         registration_id=registration_id,
         chat_url=url,
@@ -248,8 +252,10 @@ def retire_predecessor_identity(
 ) -> list[str]:
     """Close every other registry row on this lane, including never-seat-open rows.
 
-    Census drops a row once ``seat_closed_at`` is set. No-op when the
-    successor registration is not in the active registry.
+    Census drops a row once ``seat_closed_at`` is set. A successor that is
+    only a birth id (not yet in the active map) still closes lane peers and
+    records ``superseded_by`` as that birth id. No-op when the lane is empty
+    or no open peer remains.
     """
     rid = (registration_id or "").strip()
     if not rid:
@@ -258,18 +264,22 @@ def retire_predecessor_identity(
     with _store.ports_lock():
         active = _store.load_active()
         row = active.get(rid)
-        if not isinstance(row, dict):
-            return []
-        lane = (parent_thread or str(row.get("parent_thread") or "")).strip()
+        row_ok = isinstance(row, dict)
+        lane = (
+            parent_thread or (str(row.get("parent_thread") or "") if row_ok else "")
+        ).strip()
         if not lane:
             return []
         ts = time.time()
         for other_id, other in list(active.items()):
             if other_id == rid or not isinstance(other, dict):
                 continue
-            if str(other.get("parent_thread") or "").strip() != lane:
-                continue
             if other.get("seat_closed_at") is not None:
+                continue
+            parent = str(other.get("parent_thread") or "").strip()
+            # parent_thread keeps the never-seat-open close. seat_open covers
+            # a seat-lane row whose parent_thread was never copied.
+            if parent != lane and not seat_open(other, lane):
                 continue
             closed = dict(other)
             closed["seat_closed_at"] = ts
@@ -277,18 +287,21 @@ def retire_predecessor_identity(
             closed["superseded_by"] = rid
             active[other_id] = closed
             released.append(str(other_id))
-        updated = dict(row)
-        updated["parent_thread"] = lane
-        updated["seat_lane"] = lane
-        updated["seat_closed_at"] = None
-        updated["seat_bound_at"] = ts
-        active[rid] = updated
+        if row_ok:
+            updated = dict(row)
+            updated["parent_thread"] = lane
+            updated["seat_lane"] = lane
+            updated["seat_closed_at"] = None
+            updated["seat_bound_at"] = ts
+            active[rid] = updated
+        elif not released:
+            return []
         _store.require_seat_authority(operation="retire_predecessor_identity")
         _store.write_active(active)
         _store.append_seat_transition_journal(
             registration_id=rid,
             seat_lane=lane,
-            seat_bound_at=ts,
+            seat_bound_at=ts if row_ok else None,
             superseded=released,
         )
     return released
@@ -326,10 +339,15 @@ def _emit_seat_axis_events(
 ) -> None:
     if bound_row is None and not released_rows:
         return
-    lane = str((bound_row or (released_rows[0] if released_rows else {})).get("seat_lane") or "")
+    lane = str(
+        (bound_row or (released_rows[0] if released_rows else {})).get("seat_lane")
+        or ""
+    )
     if bound_row is not None:
         superseded = (
-            str(released_rows[0].get("registration_id") or "") if released_rows else None
+            str(released_rows[0].get("registration_id") or "")
+            if released_rows
+            else None
         )
         with contextlib.suppress(Exception):
             _events.emit(

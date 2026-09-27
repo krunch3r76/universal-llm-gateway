@@ -545,10 +545,12 @@ def test_wire_id_outside_census_refused_and_empty_census_flags_mismatch() -> Non
 
 
 def test_no_occupy_target_seats_birth_and_retires_stale_rows(
+    ledger: CursorDispatchLedger,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Hop verb with no occupy_target keys the successor and drops stale ids."""
+    assert ledger is CursorDispatchLedger.instance()
     watch_file = tmp_path / "hop_cadence_watches.json"
     monkeypatch.setenv("CURSOR_AUTO_HOP_WATCHES_PATH", str(watch_file))
     birth = "ab" * 16
@@ -567,6 +569,14 @@ def test_no_occupy_target_seats_birth_and_retires_stale_rows(
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.cse_seating_hook._resolve_successor_identity",
         lambda _job, _execution_id: (None, None),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._chat_url_from_dispatch_link",
+        lambda _execution_id: None,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.cdp_registry.session_address.retire_predecessor_identity",
+        lambda *_args, **_kwargs: [],
     )
     body = build_continuity_handoff_body(
         thread_id=_LANE_T,
@@ -621,6 +631,334 @@ def test_no_occupy_target_seats_birth_and_retires_stale_rows(
     assert identity.registration_id == birth
     assert identity.source == "watch_resume"
     assert identity.census_n == 0
+
+
+def _isolate_registry(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """Point the CDP registry store at *root* so a seating test cannot touch live."""
+    import claude_bundles.cdp_registry_store as store
+
+    root.mkdir(parents=True, exist_ok=True)
+    regs = root / "registrations"
+    regs.mkdir()
+    monkeypatch.setattr(store, "REGISTRY_DIR", root)
+    monkeypatch.setattr(store, "REGISTRY_LOG", root / "registry.jsonl")
+    monkeypatch.setattr(store, "ACTIVE_JSON", root / "active.json")
+    monkeypatch.setattr(store, "PORTS_LOCK", root / "ports.lock")
+    monkeypatch.setattr(store, "REGISTRATIONS_DIR", regs)
+    monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "1")
+
+
+def test_no_occupy_seats_successor_holder_and_resolve(
+    ledger: CursorDispatchLedger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Birth-id hop: one driving holder, predecessor superseded, resolve follows it."""
+    import json
+
+    from claude_bundles.cdp_registry_store import load_active
+
+    from services.git_integration_worker.cse_session_holders import (
+        get_driving_holder_for_lane,
+    )
+    from services.git_integration_worker.cursor_auto.cse_pager_resolve import (
+        resolve_live_cse_address,
+    )
+
+    lane = "99002"
+    birth = "ab" * 16
+    pred_reg = "517cdefbc5394176a2018b91e31e9c9f"
+    foreign_reg = "ff" * 16
+    seat_only_reg = "ee" * 16
+    stale = "6a1176ee778f48ad9b3be616229e53e4"
+    successor_url = "https://claude.ai/cowork/cse_0135zweUWn6uF4Hx7mWXGdSJ"
+    pred_url = "https://claude.ai/cowork/cse_014i5jSfBoYepuvsxswuz1BP"
+    scratch_url = "https://claude.ai/cowork/cse_01AoM9mfdhGSHrbPoikuwobw"
+    watch_file = tmp_path / "hop_cadence_watches.json"
+    monkeypatch.setenv("CURSOR_AUTO_HOP_WATCHES_PATH", str(watch_file))
+    _isolate_registry(monkeypatch, tmp_path / "cdp-registry")
+    # Re-read after the patch; the name imported above is the pre-patch binding.
+    import claude_bundles.cdp_registry_store as store
+
+    active = {
+        pred_reg: {
+            "registration_id": pred_reg,
+            "parent_thread": lane,
+            "seat_lane": lane,
+            "seat_closed_at": None,
+            "purpose": "operator-proxy",
+            "chat_url": pred_url,
+            "status": "active",
+        },
+        foreign_reg: {
+            "registration_id": foreign_reg,
+            "parent_thread": "88888",
+            "seat_lane": "88888",
+            "seat_closed_at": None,
+            "purpose": "operator-proxy",
+            "status": "active",
+        },
+        seat_only_reg: {
+            "registration_id": seat_only_reg,
+            "parent_thread": "",
+            "seat_lane": lane,
+            "seat_closed_at": None,
+            "purpose": "operator-proxy",
+            "status": "active",
+        },
+    }
+    store.ACTIVE_JSON.write_text(json.dumps(active), encoding="utf-8")
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        upsert_holder(
+            conn,
+            chat_url=pred_url,
+            registration_id=pred_reg,
+            execution_id="exec-pred",
+            lane_thread_id=lane,
+        )
+        upsert_holder(
+            conn,
+            chat_url=scratch_url,
+            lane_thread_id=lane,
+        )
+        conn.commit()
+    snap = {
+        "rows": [],
+        "seated_rows": [
+            {
+                "registration_id": stale,
+                "parent_thread": lane,
+                "purpose": "operator-proxy",
+                "seat_state": "active",
+                "stream_state": "running",
+                "execution_id": "exec-stale",
+                "source": "cse-session-registry",
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._load_identity_snap",
+        lambda: snap,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._resolve_successor_identity",
+        lambda _job, _execution_id: (None, None),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._chat_url_from_dispatch_link",
+        lambda _execution_id: successor_url,
+    )
+    body = build_continuity_handoff_body(
+        thread_id=lane,
+        trigger="no-occupy",
+        source="agent-bus-hop-verb",
+        handoff=StandingHandoffFreshness(
+            status="current",
+            uri=f"cortex://notes/system/threads/{lane}-standing-handoff.md",
+            mtime_epoch=1.0,
+            age_s=1.0,
+        ),
+        occupy_target=None,
+        successor_birth_id=birth,
+    )
+    job = AutoJob(
+        job_id="job-seat-holder",
+        thread_id=lane,
+        turn_number=384,
+        subject="continuity hop",
+        body=body,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="cdp/fable-5.1",
+        desired_effort="auto",
+        contract="answer",
+        continuity_hop=True,
+        cse_chat_url="",
+        cse_registration_id="",
+    )
+    outcome = run_cse_seating_hook(
+        job, execution_id="0a0ec5eb-9380-431d-8747-40a4c732e13f"
+    )
+    assert outcome["path"] == "seated_without_occupy_target"
+    assert outcome["holders_seated"] is True
+    assert outcome["successor_registration_id"] == birth
+    assert outcome["successor_chat_url"] == successor_url
+    assert stale in outcome["retired_registration_ids"]
+    assert pred_reg in outcome["retired_registration_ids"]
+
+    with ledger._connect() as conn:
+        driving = conn.execute(
+            "SELECT registration_id, chat_url, seat_state FROM cse_session_holders "
+            "WHERE lane_thread_id=? AND seat_state='driving'",
+            (lane,),
+        ).fetchall()
+        pred = conn.execute(
+            "SELECT seat_state, superseded_by FROM cse_session_holders "
+            "WHERE registration_id=?",
+            (pred_reg,),
+        ).fetchone()
+        scratch = conn.execute(
+            "SELECT seat_state FROM cse_session_holders WHERE chat_url=?",
+            (scratch_url,),
+        ).fetchone()
+        resolved_row = get_driving_holder_for_lane(conn, lane)
+    assert len(driving) == 1
+    assert driving[0]["registration_id"] == birth
+    assert driving[0]["chat_url"] == successor_url
+    assert pred is not None and pred["seat_state"] == "superseded"
+    assert pred["superseded_by"] == birth
+    assert scratch is not None and scratch["seat_state"] == "superseded"
+    assert resolved_row is not None
+    assert resolved_row["registration_id"] == birth
+
+    resolved = resolve_live_cse_address(job)
+    assert resolved["source"] == "cse_session_holders"
+    assert resolved["registration_id"] == birth
+    assert resolved["chat_url"] == successor_url
+
+    after = load_active()
+    assert after[pred_reg]["seat_closed_at"] is not None
+    assert after[pred_reg]["seat_close_reason"] == "superseded"
+    assert after[pred_reg]["superseded_by"] == birth
+    assert after[foreign_reg]["seat_closed_at"] is None
+    assert after[seat_only_reg]["seat_closed_at"] is not None
+    assert after[seat_only_reg]["superseded_by"] == birth
+
+
+def test_no_url_defers_both_stores_until_confirm(
+    ledger: CursorDispatchLedger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No window URL must not close the registry while the predecessor still drives.
+
+    The confirm that later observes the URL seats the holder and closes the lane.
+    """
+    import json
+
+    from claude_bundles.cdp_registry_store import load_active
+
+    from services.git_integration_worker.cursor_auto.cse_seating_hook import (
+        record_seated_registration,
+    )
+
+    lane = "99003"
+    birth = "cd" * 16
+    pred_reg = "517cdefbc5394176a2018b91e31e9c9f"
+    successor_url = "https://claude.ai/cowork/cse_0135zweUWn6uF4Hx7mWXGdSJ"
+    pred_url = "https://claude.ai/cowork/cse_014i5jSfBoYepuvsxswuz1BP"
+    watch_file = tmp_path / "hop_cadence_watches.json"
+    monkeypatch.setenv("CURSOR_AUTO_HOP_WATCHES_PATH", str(watch_file))
+    _isolate_registry(monkeypatch, tmp_path / "cdp-registry-defer")
+    import claude_bundles.cdp_registry_store as store
+
+    store.ACTIVE_JSON.write_text(
+        json.dumps(
+            {
+                pred_reg: {
+                    "registration_id": pred_reg,
+                    "parent_thread": lane,
+                    "seat_lane": lane,
+                    "seat_closed_at": None,
+                    "purpose": "operator-proxy",
+                    "status": "active",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        upsert_holder(
+            conn,
+            chat_url=pred_url,
+            registration_id=pred_reg,
+            lane_thread_id=lane,
+        )
+        conn.commit()
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._load_identity_snap",
+        lambda: {"rows": [], "seated_rows": []},
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._resolve_successor_identity",
+        lambda _job, _execution_id: (None, None),
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._chat_url_from_dispatch_link",
+        lambda _execution_id: None,
+    )
+    body = build_continuity_handoff_body(
+        thread_id=lane,
+        trigger="no-occupy",
+        source="agent-bus-hop-verb",
+        handoff=StandingHandoffFreshness(
+            status="current",
+            uri=f"cortex://notes/system/threads/{lane}-standing-handoff.md",
+            mtime_epoch=1.0,
+            age_s=1.0,
+        ),
+        occupy_target=None,
+        successor_birth_id=birth,
+    )
+    job = AutoJob(
+        job_id="job-defer-url",
+        thread_id=lane,
+        turn_number=384,
+        subject="continuity hop",
+        body=body,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="cdp/fable-5.1",
+        desired_effort="auto",
+        contract="answer",
+        continuity_hop=True,
+        cse_chat_url="",
+        cse_registration_id="",
+    )
+    outcome = run_cse_seating_hook(
+        job, execution_id="0a0ec5eb-9380-431d-8747-40a4c732e13f"
+    )
+    assert outcome["path"] == "seated_without_occupy_target"
+    assert outcome["holders_seated"] is False
+    with ledger._connect() as conn:
+        driving = conn.execute(
+            "SELECT registration_id FROM cse_session_holders "
+            "WHERE lane_thread_id=? AND seat_state='driving'",
+            (lane,),
+        ).fetchall()
+    assert [row["registration_id"] for row in driving] == [pred_reg]
+    assert load_active()[pred_reg]["seat_closed_at"] is None
+
+    written = record_seated_registration(
+        chat_url=successor_url,
+        registration_id=birth,
+        execution_id="0a0ec5eb-9380-431d-8747-40a4c732e13f",
+        lane_thread_id=lane,
+    )
+    assert written is not None
+    assert written["registration_id"] == birth
+    assert written["seat_state"] == "driving"
+    with ledger._connect() as conn:
+        driving = conn.execute(
+            "SELECT registration_id, chat_url FROM cse_session_holders "
+            "WHERE lane_thread_id=? AND seat_state='driving'",
+            (lane,),
+        ).fetchall()
+        pred = conn.execute(
+            "SELECT seat_state, superseded_by FROM cse_session_holders "
+            "WHERE registration_id=?",
+            (pred_reg,),
+        ).fetchone()
+    assert len(driving) == 1
+    assert driving[0]["registration_id"] == birth
+    assert driving[0]["chat_url"] == successor_url
+    assert pred is not None and pred["seat_state"] == "superseded"
+    assert pred["superseded_by"] == birth
+    closed = load_active()[pred_reg]
+    assert closed["seat_closed_at"] is not None
+    assert closed["superseded_by"] == birth
 
 
 def test_watch_retired_ids_leave_successor_as_sole_census_match() -> None:
