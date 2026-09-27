@@ -21,10 +21,16 @@ UnresolvableReason = Literal[
     "empty_snap",
     "zero_matches",
     "ambiguous_matches",
+    "wire_id_not_in_census",
 ]
 
 REFUSE_CENSUS_REASONS: frozenset[UnresolvableReason] = frozenset(
-    {"ambiguous_matches", "zero_matches", "empty_snap"}
+    {
+        "ambiguous_matches",
+        "zero_matches",
+        "empty_snap",
+        "wire_id_not_in_census",
+    }
 )
 
 # ``zero_matches`` / ``empty_snap`` bind hop-seat lanes (watch present). Unwatched
@@ -42,7 +48,7 @@ def should_refuse_census(
     """Return whether enqueue should refuse on census miss."""
     if unresolvable_reason not in REFUSE_CENSUS_REASONS:
         return False
-    if unresolvable_reason == "ambiguous_matches":
+    if unresolvable_reason in {"ambiguous_matches", "wire_id_not_in_census"}:
         return True
     return watch_present
 
@@ -57,6 +63,11 @@ def _row_counts_for_census(row: dict[str, Any]) -> bool:
 
 def census_match_ids(thread_id: str, snap: dict[str, Any]) -> list[str]:
     """Unique operator-purpose registration ids on ``thread_id`` from the union."""
+    retired = {
+        str(item).strip()
+        for item in (snap.get("retired_registration_ids") or [])
+        if str(item).strip()
+    }
     matches: list[str] = []
     seen: set[str] = set()
     for row in identity_rows(snap):
@@ -67,9 +78,10 @@ def census_match_ids(thread_id: str, snap: dict[str, Any]) -> list[str]:
         if str(row.get("parent_thread") or "").strip() != thread_id:
             continue
         reg = str(row.get("registration_id") or "").strip()
-        if reg and reg not in seen:
-            seen.add(reg)
-            matches.append(reg)
+        if not reg or reg in seen or reg in retired:
+            continue
+        seen.add(reg)
+        matches.append(reg)
     return matches
 
 
@@ -116,5 +128,33 @@ def census_refusal_envelope(
             "census_n": census_n,
             "identity_source": identity_source,
             "match_registration_ids": list(match_registration_ids),
+        },
+    ).to_dict()
+
+
+def wire_id_not_in_census_envelope(
+    *,
+    thread_id: str,
+    census_n: int,
+    identity_source: str,
+    match_registration_ids: tuple[str, ...],
+    wire_registration_id: str,
+) -> dict[str, Any]:
+    """Refuse a caller wire id that is outside a non-empty census set."""
+    return ProtocolError(
+        code="seat.wire_id_not_in_census",
+        message=(
+            "request: wire cse_registration_id is not in the lane census "
+            f"N={census_n}; refusing enqueue rather than binding the stale id"
+        ),
+        source="rpc",
+        retryable=False,
+        data={
+            "thread_id": thread_id or None,
+            "reason": "wire_id_not_in_census",
+            "census_n": census_n,
+            "identity_source": identity_source,
+            "match_registration_ids": list(match_registration_ids),
+            "wire_registration_id": wire_registration_id,
         },
     ).to_dict()

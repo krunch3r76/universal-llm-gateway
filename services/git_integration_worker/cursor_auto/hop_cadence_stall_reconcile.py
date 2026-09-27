@@ -78,6 +78,7 @@ _GENERATE_SIGNALS = (
     "cdp.generate.stalled",
     "cdp.generate.submitted",
     "cdp.generate.proof",
+    "cdp.generate.seated",
 )
 _EVENTS_QUERY_URL = f"unix://{EVENTS_QUERY_SOCK}"
 
@@ -126,7 +127,7 @@ def query_generate_events_since(
     limit: int = 200,
     query_fn: Callable[[str, list[Any], int], list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return ``cdp.generate.{stalled,submitted,proof}`` rows with seq > since_seq."""
+    """Return generate lifecycle rows with seq > since_seq, including seated."""
     placeholders = ",".join("?" for _ in _GENERATE_SIGNALS)
     sql = (
         "SELECT seq, signal, ts_unix_ms, execution_id, payload "
@@ -315,7 +316,79 @@ def apply_event_to_watch(
             return row, None
         return revoke_succession_claim(row, stall_payload=payload, now=now), "revoked"
 
+    if signal == "cdp.generate.seated":
+        reg = str(payload.get("registration_id") or "").strip()
+        chat = str(payload.get("chat_url") or "").strip()
+        if not reg or not chat:
+            return row, None
+        parent = str(payload.get("parent_thread") or "").strip()
+        thread_id = str(row.get("thread_id") or "").strip()
+        if parent:
+            if parent != thread_id:
+                return row, None
+        else:
+            exec_id = normalize_id(payload.get("execution_id"))
+            if not exec_id or exec_id not in claim_join_keys(row):
+                return row, None
+        updated = dict(row)
+        updated["registration_id"] = reg
+        updated["chat_url"] = chat
+        return updated, "seated"
+
     return row, None
+
+
+def _commit_seated_successor(
+    *,
+    thread_id: str,
+    watches: dict[str, Any],
+    payload: dict[str, Any],
+) -> None:
+    """Persist holder, thread, and retired census ids from a seated event."""
+    reg = str(payload.get("registration_id") or "").strip()
+    chat = str(payload.get("chat_url") or "").strip()
+    if not reg or not chat:
+        return
+    parent = str(payload.get("parent_thread") or thread_id).strip()
+    try:
+        snap = _default_snapshot_reader()
+    except Exception as exc:  # noqa: BLE001 — seated commit must not crash reconcile
+        logger.warning("seated snapshot read failed thread=%s: %s", thread_id, exc)
+        snap = {}
+    if not isinstance(snap, dict):
+        snap = {}
+    try:
+        from services.git_integration_worker.cse_session_holders import ensure_schema
+        from services.git_integration_worker.cursor_auto.cse_seating_hook import (
+            on_successor_seated,
+        )
+        from services.git_integration_worker.cursor_dispatch_ledger import (
+            CursorDispatchLedger,
+        )
+
+        with CursorDispatchLedger.instance()._connect() as conn:
+            ensure_schema(conn)
+            seated = on_successor_seated(
+                snap,
+                parent_thread=parent,
+                registration_id=reg,
+                chat_url=chat,
+                execution_id=str(payload.get("execution_id") or "").strip() or None,
+                conn=conn,
+                watches=watches,
+                bind_registry=True,
+                bind_thread=True,
+            )
+            conn.commit()
+        row = dict(watches.get(thread_id) or {"thread_id": thread_id})
+        row["retired_registration_ids"] = list(
+            seated.get("retired_registration_ids") or []
+        )
+        row["registration_id"] = reg
+        row["chat_url"] = chat
+        watches[thread_id] = row
+    except Exception as exc:  # noqa: BLE001 — reconcile continues if the seat write fails
+        logger.warning("seated identity commit failed thread=%s: %s", thread_id, exc)
 
 
 def reconcile_stall_revocations(
@@ -364,6 +437,12 @@ def reconcile_stall_revocations(
                     row=updated,
                     payload=payload if isinstance(payload, dict) else {},
                     poster=harvest_poster,
+                )
+            if action == "seated":
+                _commit_seated_successor(
+                    thread_id=thread_id,
+                    watches=watches,
+                    payload=payload if isinstance(payload, dict) else {},
                 )
             if action == "revoked":
                 exec_id = normalize_id(payload.get("execution_id")) or ""

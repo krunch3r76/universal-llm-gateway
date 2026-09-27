@@ -131,6 +131,8 @@ def seated_row_from_registry_record(
     ``seat_state`` carries registry status; ``stream_state`` joins the
     execution store for the registration's current execution.
     """
+    if record.get("seat_closed_at") is not None:
+        return None
     status = str(record.get("status") or "")
     if status not in _HOST_LISTABLE_STATUSES:
         return None
@@ -300,6 +302,16 @@ def attach_registry_seated_rows(snap: dict[str, Any]) -> dict[str, Any]:
                 raw, stream_index=stream_index, observed_at=observed_at
             ),
         )
+    retired = [
+        str(rid).strip()
+        for rid, row in raw.items()
+        if isinstance(row, dict)
+        and row.get("seat_closed_at") is not None
+        and str(rid).strip()
+    ]
+    if retired:
+        out = dict(out)
+        out["retired_registration_ids"] = retired
     return out
 
 

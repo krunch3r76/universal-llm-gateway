@@ -53,6 +53,7 @@ def _resolve_hop_seat_request_refusal(
     thread_id: str | None,
     cse_registration_id: str | None,
     from_agent: str | None = None,
+    audit: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Bind identity and refuse superseded predecessor writes when fenced.
 
@@ -65,6 +66,7 @@ def _resolve_hop_seat_request_refusal(
         thread_id=thread_id,
         caller_registration_id=cse_registration_id,
         from_agent=from_agent,
+        audit=audit,
     )
     if refusal is None:
         return None
@@ -118,6 +120,7 @@ def _request_impl(
     lane_role: str | None = None,
     prompt_uri: str | None = None,
     advisor_brief: str | None = None,
+    census_mismatch: bool = False,
 ) -> dict[str, Any]:
     """Write turn via send path, then arm/enqueue Auto when live."""
     from pager_notify.so_what import resolve_so_what_summary
@@ -125,6 +128,8 @@ def _request_impl(
     from .lifecycle import _update_thread_impl
 
     merged_tags = _merge_lane_tags(tags)
+    if census_mismatch and "census_mismatch" not in merged_tags:
+        merged_tags.append("census_mismatch")
     thread_tags_for_summary: list[str] | None = list(merged_tags) if new_slug else None
     if thread and not new_slug:
         # Host agent-bus owns messages.db. MCP in the container relays;
@@ -500,10 +505,12 @@ def _request_dispatch(
     if rid_intake.error is not None:
         return rid_intake.error
 
+    admission_audit: dict[str, Any] = {}
     seat_refusal = _resolve_hop_seat_request_refusal(
         thread_id=thread_hint,
         cse_registration_id=cse_registration_id,
         from_agent=from_agent,
+        audit=admission_audit,
     )
     if seat_refusal is not None:
         return seat_refusal
@@ -550,5 +557,12 @@ def _request_dispatch(
         lane_role=lane_role,
         prompt_uri=prompt_uri,
         advisor_brief=advisor_brief,
+        census_mismatch=bool(admission_audit.get("census_mismatch")),
     )
+    if (
+        admission_audit.get("census_mismatch")
+        and isinstance(result, dict)
+        and "error" not in result
+    ):
+        result["census_mismatch"] = True
     return stamp_contract_deprecation(result, intake)

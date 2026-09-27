@@ -241,6 +241,59 @@ def apply_driving_seat_bind(
     return updated, released
 
 
+def retire_predecessor_identity(
+    registration_id: str,
+    *,
+    parent_thread: str | None = None,
+) -> list[str]:
+    """Close every other registry row on this lane, including never-seat-open rows.
+
+    Census drops a row once ``seat_closed_at`` is set. No-op when the
+    successor registration is not in the active registry.
+    """
+    rid = (registration_id or "").strip()
+    if not rid:
+        return []
+    released: list[str] = []
+    with _store.ports_lock():
+        active = _store.load_active()
+        row = active.get(rid)
+        if not isinstance(row, dict):
+            return []
+        lane = (parent_thread or str(row.get("parent_thread") or "")).strip()
+        if not lane:
+            return []
+        ts = time.time()
+        for other_id, other in list(active.items()):
+            if other_id == rid or not isinstance(other, dict):
+                continue
+            if str(other.get("parent_thread") or "").strip() != lane:
+                continue
+            if other.get("seat_closed_at") is not None:
+                continue
+            closed = dict(other)
+            closed["seat_closed_at"] = ts
+            closed["seat_close_reason"] = "superseded"
+            closed["superseded_by"] = rid
+            active[other_id] = closed
+            released.append(str(other_id))
+        updated = dict(row)
+        updated["parent_thread"] = lane
+        updated["seat_lane"] = lane
+        updated["seat_closed_at"] = None
+        updated["seat_bound_at"] = ts
+        active[rid] = updated
+        _store.require_seat_authority(operation="retire_predecessor_identity")
+        _store.write_active(active)
+        _store.append_seat_transition_journal(
+            registration_id=rid,
+            seat_lane=lane,
+            seat_bound_at=ts,
+            superseded=released,
+        )
+    return released
+
+
 def bind_driving_seat(registration_id: str) -> None:
     """Bind the driving-operator seat for *registration_id* under ``ports_lock``.
 

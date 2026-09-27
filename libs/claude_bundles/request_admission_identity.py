@@ -2,11 +2,15 @@
 
 Census over ``identity_rows`` (execution-store ``rows`` ∪ registry
 ``seated_rows``). Census reads ``stream_state`` for live streams and
-``seat_state`` for listable registry seats. Bind order: caller wire → N≥2
-refuse → N==1 (origin CSR then single-seat) → N==0 resume chain (watch /
-mailbox / bus CSE / origin CSR) → unresolvable. Watch-row ``registration_id``
-is lease SOT for hop and resume identity when ``census_n==0`` — never
-``superseded_registration_id``.
+``seat_state`` for listable registry seats. Bind order: caller wire checked
+against the census set → N≥2 refuse → N==1 (origin CSR then single-seat) →
+N==0 resume chain (watch / mailbox / bus CSE / origin CSR) → unresolvable.
+A wire id outside a non-empty census is ``seat.wire_id_not_in_census``.
+A wire id with an empty census admits with ``census_mismatch`` so an
+attended seat is not stranded before a row is listable. Watch-row
+``registration_id`` is lease SOT for hop and resume identity when
+``census_n==0`` — never ``superseded_registration_id``. Watch
+``retired_registration_ids`` drop predecessor rows after a successor seat.
 
 N≠1 without a resume bind (``ambiguous_matches`` / ``zero_matches`` /
 ``empty_snap``) refuses at enqueue. ``snap_load_failed`` and
@@ -32,6 +36,7 @@ from claude_bundles.request_admission_census import (
     census_refusal_envelope,
     classify_unresolvable,
     should_refuse_census,
+    wire_id_not_in_census_envelope,
 )
 from claude_bundles.request_admission_resume import resolve_n0_resume_identity
 
@@ -61,6 +66,7 @@ class AdmissionIdentity:
     unresolvable_reason: UnresolvableReason | None = None
     census_n: int = 0
     match_registration_ids: tuple[str, ...] = ()
+    census_mismatch: bool = False
 
 
 def reset_identity_counters_for_tests() -> None:
@@ -157,12 +163,32 @@ def resolve_request_admission_identity(
 ) -> AdmissionIdentity:
     """Resolve caller registration_id for admission bind."""
     tid = (thread_id or "").strip()
-    watch_present = bool(tid and hop_seat_cutover.load_watches(path).get(tid))
+    watch_map = hop_seat_cutover.load_watches(path) if tid else {}
+    watch_row = watch_map.get(tid) if isinstance(watch_map, dict) else None
+    watch_present = bool(watch_row)
     caller = (caller_registration_id or "").strip()
     snap = active_work_snap if active_work_snap is not None else {}
     matches = census_match_ids(tid, snap) if tid else []
+    if isinstance(watch_row, dict):
+        watch_retired = {
+            str(item).strip()
+            for item in (watch_row.get("retired_registration_ids") or [])
+            if str(item).strip()
+        }
+        if watch_retired:
+            matches = [item for item in matches if item not in watch_retired]
     census_n = len(matches)
     match_ids = tuple(matches)
+
+    if caller and census_n >= 1 and caller not in match_ids:
+        return AdmissionIdentity(
+            registration_id=None,
+            source="unresolvable",
+            watch_present=watch_present,
+            unresolvable_reason="wire_id_not_in_census",
+            census_n=census_n,
+            match_registration_ids=match_ids,
+        )
 
     if caller:
         return AdmissionIdentity(
@@ -171,6 +197,7 @@ def resolve_request_admission_identity(
             watch_present=watch_present,
             census_n=census_n,
             match_registration_ids=match_ids,
+            census_mismatch=census_n == 0,
         )
 
     if not tid:
@@ -247,6 +274,7 @@ def gate_request_admission(
     from_agent: str | None = None,
     active_work_snap: dict[str, Any] | None = None,
     path: Path | None = None,
+    audit: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Return ``None`` to admit, or a ProtocolError envelope.
 
@@ -272,6 +300,28 @@ def gate_request_admission(
         snap_load_failed=snap_load_failed,
     )
     _increment(f"identity_source:{identity.source}")
+    if audit is not None:
+        audit["census_mismatch"] = bool(identity.census_mismatch)
+        audit["census_n"] = identity.census_n
+        audit["unresolvable_reason"] = identity.unresolvable_reason
+        audit["registration_id"] = identity.registration_id
+
+    if identity.unresolvable_reason == "wire_id_not_in_census":
+        _increment("census_refuse")
+        _increment("census_refuse:wire_id_not_in_census")
+        _emit_identity_gated(
+            identity=identity,
+            thread_id=tid,
+            outcome="reject",
+            reject_reason="wire_id_not_in_census",
+        )
+        return wire_id_not_in_census_envelope(
+            thread_id=tid,
+            census_n=identity.census_n,
+            identity_source=identity.source,
+            match_registration_ids=identity.match_registration_ids,
+            wire_registration_id=(caller_registration_id or "").strip(),
+        )
 
     if identity.watch_present:
         _increment("watch_lane_requests")
