@@ -85,7 +85,9 @@ def _fetch_cortex_api_health(*, timeout_s: float = 3.0) -> dict[str, Any] | None
 
 def giw_i2_clear(*, queue_snapshot: dict[str, Any] | None = None) -> tuple[bool, str]:
     """Return whether GIW restart is permitted under I2 (no in-flight closeout relay)."""
-    snapshot = queue_snapshot if queue_snapshot is not None else _fetch_json(_GIW_QUEUE_URL)
+    snapshot = (
+        queue_snapshot if queue_snapshot is not None else _fetch_json(_GIW_QUEUE_URL)
+    )
     if snapshot is None:
         return False, "i2_queue_unreachable"
     claimed = int(snapshot.get("claimed") or 0)
@@ -123,6 +125,22 @@ def _fetch_event_service_health() -> dict[str, Any] | None:
 
 def _fetch_agent_bus_health() -> dict[str, Any] | None:
     return _fetch_health_at_base(DEFAULT_AGENT_BUS_URL)
+
+
+def _fetch_manage_whoami() -> dict[str, Any] | None:
+    """Process identity for the manage host. ``whoami`` is the process_live surface.
+
+    Manage is not a child service behind ``sync_restart``. Propagation proves
+    a guarded external reexec by reading this payload before and after.
+    """
+    from services.git_integration_worker.cursor_auto.manage_sock import call_manage
+
+    result = call_manage("whoami", {}, timeout=5.0)
+    if not isinstance(result, dict) or result.get("status") == "error":
+        return None
+    if "pid" not in result:
+        return None
+    return result
 
 
 def resolve_cdp_ask_probe_base_url() -> str | None:
@@ -208,6 +226,7 @@ PROCESS_LIVE_FETCHERS: dict[str, ProcessLiveFetcher] = {
     "event_service": _fetch_event_service_health,
     "cdp_ask": _fetch_cdp_ask_health,
     "agent_bus": _fetch_agent_bus_health,
+    "manage": _fetch_manage_whoami,
 }
 PROCESS_LIVE_EXCLUDED_SERVICES = frozenset(
     {"email_bridge"}
@@ -260,6 +279,7 @@ _IDENTITY_AWARE_PROOF_CLASSES = frozenset(
 
 class IdentityMeasurementError(ValueError):
     """Close chokepoint cannot stamp identity_measurement — row must not close."""
+
 
 IDENTIFIER_FIELDS: tuple[str, ...] = ("pid", "process_start_time", "source_synced_at")
 AGE_FIELDS: tuple[str, ...] = ("process_age_s", "uptime_s")
@@ -385,11 +405,8 @@ def resolve_identity_attestation(
     if before is None:
         return "indeterminate"
     bound_authority = authority_identity
-    if (
-        authority_identity is not None
-        and not _authority_identity_binds_row(
-            authority_identity, service=service, intent_id=intent_id
-        )
+    if authority_identity is not None and not _authority_identity_binds_row(
+        authority_identity, service=service, intent_id=intent_id
     ):
         bound_authority = None
     authority_result = attest_authority_identity(bound_authority)
@@ -402,17 +419,13 @@ def resolve_identity_attestation(
         after_section = _mcp_health_section(after)
         if before_section is None or after_section is None:
             return "indeterminate"
-        return attest_identity_delta(
-            before_section, after_section, service=service
-        )
+        return attest_identity_delta(before_section, after_section, service=service)
     if surface == "liveness":
         before_section = _served_artifact_identity_section(before)
         after_section = _served_artifact_identity_section(after)
         if before_section is None or after_section is None:
             return "indeterminate"
-        return attest_identity_delta(
-            before_section, after_section, service=service
-        )
+        return attest_identity_delta(before_section, after_section, service=service)
     return attest_identity_delta(before, after, service=service)
 
 

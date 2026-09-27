@@ -47,6 +47,7 @@ _SYNC_RESTART_SLUG_RE = re.compile(
 
 _DEFAULT_SAFE_WINDOW: dict[str, SafeWindow] = {
     "git_integration_worker": "drain_required",
+    "manage": "standalone_ok",
     "mcp": "standalone_ok",
     "agent_bus": "harvest",
     "cortex_api": "harvest",
@@ -59,6 +60,7 @@ _DEFAULT_SAFE_WINDOW: dict[str, SafeWindow] = {
 
 _DEFAULT_PROOF_CLASS: dict[str, ProofClass] = {
     "git_integration_worker": "served_artifact",
+    "manage": "process_live",
     "mcp": "client_visible",
     "agent_bus": "served_artifact",
     "cortex_api": "served_artifact",

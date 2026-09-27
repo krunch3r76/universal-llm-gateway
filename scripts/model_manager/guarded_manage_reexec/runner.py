@@ -5,8 +5,9 @@ drain-clear → quit → re-exec ``python -m scripts.model_manager.ui`` →
 charter_resume → dual whoami proof (code_version match AND process_start_time
 later than pre-quit). Dry-run stops before quit and before any pause mutation.
 
-Manage is not in ``VALID_SERVICES`` and has no systemd/supervisord unit. This
-package retries the start leg up to ``max_start_attempts`` times (each attempt
+Manage is not in ``VALID_SERVICES`` and has no systemd/supervisord unit.
+Propagate ``service=manage`` calls this package from outside the manage PID.
+This package retries the start leg up to ``max_start_attempts`` times (each attempt
 gets its own ``boot_timeout_s`` window). After that budget is exhausted,
 recovery is a seat ``tmux`` ``0:0`` re-drive (or the verified target) with
 ``./manage`` per ``services_ws`` safe quit/start recipe.

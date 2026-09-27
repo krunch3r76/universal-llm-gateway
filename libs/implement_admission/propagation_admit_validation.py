@@ -12,6 +12,7 @@ MANAGE_SERVICE_SLUGS = frozenset(
         "event_service",
         "gateway",
         "git_integration_worker",
+        "manage",
         "mcp",
         "rag",
         "stargate",
