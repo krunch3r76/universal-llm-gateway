@@ -23,6 +23,8 @@ if str(_REPO / "libs") not in sys.path:
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp  # noqa: E402
 from playwright.async_api import Page  # noqa: E402
 
+from claude_settings_page import pick_claude_settings_page  # noqa: E402
+
 DEFAULT_MCP_URL = "https://mcp.k-1.me/mcp/life"
 DEFAULT_CONNECTOR_NAME = "toys"
 PERMISSION_GROUP = "Other tools"
@@ -70,11 +72,8 @@ async def _connectors_panel_ready(page: Page) -> bool:
 
 
 async def _open_connectors_panel(page: Page) -> Page:
-    """Navigate the existing Claude tab to Settings → Customize → Connectors."""
-    for tab in page.context.pages:
-        if "claude.ai" in tab.url:
-            page = tab
-            break
+    """Navigate a usable Claude tab to Settings → Customize → Connectors."""
+    page = await pick_claude_settings_page(page)
     await page.bring_to_front()
 
     if "claude.ai" not in page.url:

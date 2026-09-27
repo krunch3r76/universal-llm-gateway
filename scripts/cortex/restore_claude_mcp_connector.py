@@ -42,6 +42,7 @@ if str(_REPO / "libs") not in sys.path:
 from claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp  # noqa: E402
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout  # noqa: E402
 
+from claude_settings_page import pick_claude_settings_page  # noqa: E402
 from restore_claude_mcp_connector_mutate import (  # noqa: E402
     add_custom_connector,
     remove_named_connector,
@@ -51,6 +52,22 @@ DEFAULT_CONNECTOR_NAME = "toys"
 _LEGACY_NAMES = ("vortex",)
 _OAUTH_AUTHORIZE = re.compile(r"https://mcp\.k-1\.me/oauth/authorize")
 _CONNECTION_ISSUE = re.compile(r"connection (issue|expired)", re.I)
+
+
+async def _connection_issue_in_settings(page: Page) -> bool:
+    """True when the settings dialog or a toast reports a connector failure.
+
+    The chat sidebar is excluded. A chat titled "… connection issue" is not
+    the connector toast.
+    """
+    chunks: list[str] = []
+    dialog = page.locator('[role="dialog"]')
+    if await dialog.count():
+        chunks.append(await dialog.first.inner_text())
+    alerts = page.locator('[role="alert"]')
+    for i in range(min(await alerts.count(), 5)):
+        chunks.append(await alerts.nth(i).inner_text())
+    return bool(_CONNECTION_ISSUE.search("\n".join(chunks)))
 
 
 def _host(mcp_url: str) -> str:
@@ -90,10 +107,7 @@ async def _connectors_panel_ready(page: Page) -> bool:
 
 
 async def _open_connectors_panel(page: Page) -> Page:
-    for tab in page.context.pages:
-        if "claude.ai" in tab.url:
-            page = tab
-            break
+    page = await pick_claude_settings_page(page)
     await page.bring_to_front()
 
     if "modal=add-custom-connector" in page.url:
@@ -213,8 +227,7 @@ async def _approve_oauth(page: Page, context, timeout_ms: int) -> Page:
     await approve.first.click()
     await page.wait_for_url(re.compile(r"https://claude\.ai/"), timeout=timeout_ms)
     await page.wait_for_timeout(4000)
-    body = await page.locator("body").inner_text()
-    if _CONNECTION_ISSUE.search(body):
+    if await _connection_issue_in_settings(page):
         raise RuntimeError("claude.ai still shows connection issue after OAuth")
     return page
 
@@ -252,7 +265,8 @@ async def _click_connect_and_oauth(
     if not await connect_btn.count():
         body = await page.locator("body").inner_text()
         mcp_visible = "mcp.k-1.me" in body
-        if not force_reconnect and not _CONNECTION_ISSUE.search(body) and mcp_visible:
+        issue = await _connection_issue_in_settings(page)
+        if not force_reconnect and not issue and mcp_visible:
             return "already_connected"
         raise RuntimeError("Connect/Reconnect button not found")
 
