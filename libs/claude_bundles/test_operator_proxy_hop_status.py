@@ -165,6 +165,18 @@ def test_loader_seam_does_not_touch_disk() -> None:
     assert standing_handoff_text_for_prompt("# no thread") is None
 
 
+def test_authored_hop_block_names_runbook_and_retrieval_skill() -> None:
+    """Birth briefing points at the maestro loop and the authoring skill."""
+    out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
+    start = out.index(HOP_STATUS_MARKER)
+    end = out.index("## Mission seat map (BINDING")
+    block = out[start:end]
+    assert "runbook:maestro-loop" in block
+    assert "- required-skills: Use the `retrieval-before-authoring` skill" in block
+    assert block.index("- lane:") < block.index("- runbook:")
+    assert block.index("- runbook:") < block.index("- required-skills:")
+
+
 def test_mission_ensure_opens_with_this_hop_then_seat_map() -> None:
     out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
     chips_end = out.index(HOP_STATUS_MARKER)

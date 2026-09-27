@@ -2,8 +2,10 @@
 
 Cowork renders the first markdown heading after skill chips as the dispatch
 card. Operator-proxy submits used to open on the seat-map briefing, so the
-human saw doctrine instead of the job. This module hoists a five-line
-mission/settled/live/next/lane block above that briefing.
+human saw doctrine instead of the job. This module hoists the
+mission/settled/live/next/lane block above that briefing, then two static
+lines: ``runbook:maestro-loop`` and the retrieval-before-authoring
+required-skills line.
 
 ``mission`` is the one field that does not change hop to hop — it names what
 the arc is *for*, so the block still orients a reader even when the other
@@ -277,10 +279,20 @@ def _section_first_line(text: str, heading: re.Pattern[str]) -> str | None:
         if line.startswith("|") and set(line.replace("|", "").strip()) <= {"-", ":"}:
             continue
         if line.startswith("|"):
-            cells = [cell.strip() for cell in line.strip("|").split("|") if cell.strip()]
+            cells = [
+                cell.strip() for cell in line.strip("|").split("|") if cell.strip()
+            ]
             line = " — ".join(cells)
         return _clip(line)
     return None
+
+
+# Static lines on every authored hop block. Existing caller-authored blocks
+# stay byte-stable (_hop_already_first); only blocks this module writes grow.
+HOP_RUNBOOK_LINE = "- runbook: runbook:maestro-loop"
+HOP_REQUIRED_SKILLS_LINE = (
+    "- required-skills: Use the `retrieval-before-authoring` skill"
+)
 
 
 def _format_hop_status(fields: dict[str, str]) -> str:
@@ -291,6 +303,8 @@ def _format_hop_status(fields: dict[str, str]) -> str:
         f"- live: {fields['live']}\n"
         f"- next: {fields['next']}\n"
         f"- lane: {fields['lane']}\n"
+        f"{HOP_RUNBOOK_LINE}\n"
+        f"{HOP_REQUIRED_SKILLS_LINE}\n"
     )
 
 
