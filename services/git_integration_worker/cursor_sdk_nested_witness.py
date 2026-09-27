@@ -3,15 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 _IMPLEMENT_CONTRACTS = frozenset({"implement", "pure-mechanical"})
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
-_COMMITS_AHEAD_RE = re.compile(
-    r'(?i)(?:^|[,{])\s*"commits_ahead"\s*:\s*(\d+)'
-)
+_COMMITS_AHEAD_RE = re.compile(r'(?i)(?:^|[,{])\s*"commits_ahead"\s*:\s*(\d+)')
 _SIDECAR_REL = "tmp/reviews/closeouts/{dispatch_id}.md"
 
 
@@ -90,13 +89,44 @@ def _nested_child_has_commits(
     return False
 
 
-def nested_implement_has_commits(*, nest_under_dispatch_id: str) -> bool:
-    """True when a terminal nested implement child authored commits (SF1)."""
+def witness_ledger_path() -> Path | None:
+    """Home gateway ledger when ``DATA_DIR`` points at a different scratch db.
+
+    Stargate sets ``DATA_DIR=/tmp`` for its own scratch. The admit fold runs
+    in that process, and ``CursorDispatchLedger.instance()`` would open
+    ``/tmp/cursor-sdk-dispatch.db``, which does not hold nested implement
+    rows. Those rows live in ``~/.gateway/cursor-sdk-dispatch.db``.
+    """
+    home_db = Path.home() / ".gateway" / "cursor-sdk-dispatch.db"
+    if not home_db.is_file():
+        return None
+    data_dir = os.environ.get("DATA_DIR")
+    if not data_dir:
+        return None
+    env_db = Path(data_dir).expanduser() / "cursor-sdk-dispatch.db"
+    if env_db.resolve() == home_db.resolve():
+        return None
+    return home_db
+
+
+def _ledger_for_witness() -> Any:
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
     )
 
-    ledger = CursorDispatchLedger.instance()
+    home_db = witness_ledger_path()
+    if home_db is None:
+        return CursorDispatchLedger.instance()
+    # Skip ``__init__`` so a read-only witness does not run DDL on the live db.
+    ledger = CursorDispatchLedger.__new__(CursorDispatchLedger)
+    ledger._tasks = {}
+    ledger._db_path = home_db
+    return ledger
+
+
+def nested_implement_has_commits(*, nest_under_dispatch_id: str) -> bool:
+    """True when a terminal nested implement child authored commits (SF1)."""
+    ledger = _ledger_for_witness()
     child_ids = ledger.list_nested_children(parent_dispatch_id=nest_under_dispatch_id)
     if not child_ids:
         return False
@@ -129,4 +159,6 @@ class LedgerNestedImplementWitness:
     """FoldDeps adapter — wires GIW ledger reads at the production boundary."""
 
     def nested_implement_has_commits(self, *, nest_under_dispatch_id: str) -> bool:
-        return nested_implement_has_commits(nest_under_dispatch_id=nest_under_dispatch_id)
+        return nested_implement_has_commits(
+            nest_under_dispatch_id=nest_under_dispatch_id
+        )
