@@ -150,10 +150,16 @@ def test_ensure_converges_when_two_open_seats_exist(
     assert not seat_open(final[second_id], "9497")
 
 
-def test_ensure_raises_when_two_listable_driving_rows_exist(
+def test_ensure_collapses_ambiguous_listable_rows_to_one_successor(
     isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _ensure()
+    """Two listable hosts on a lane retire down to the newest seat."""
+    monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "1")
+    from claude_bundles.hop_cadence_seat_snap import seated_rows_from_registry_records
+    from claude_bundles.request_admission_census import census_match_ids
+
+    first = _ensure()
     reg.register_lane(
         holder="second-root",
         purpose="operator-proxy",
@@ -162,8 +168,77 @@ def test_ensure_raises_when_two_listable_driving_rows_exist(
         launch_chrome=_noop_launch,
         is_listening=lambda _p: False,
     )
-    with pytest.raises(RegistryError, match="ambiguous listable driving"):
-        _ensure()
+    active = reg._store.load_active()
+    active[first.registration_id]["seat_bound_at"] = 50.0
+    reg._store.write_active(active)
+    winner = _ensure()
+    assert winner.registration_id == first.registration_id
+    snap = {
+        "rows": [],
+        "seated_rows": seated_rows_from_registry_records(reg._store.load_active()),
+    }
+    assert census_match_ids("9497", snap) == [first.registration_id]
+
+
+def test_hop_bind_retires_stale_registry_rows(
+    isolated_registry: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """team_dispatch hop mint leaves one census row on the lane."""
+    monkeypatch.setenv("CDP_REGISTRY_SEAT_AUTHORITY", "1")
+    monkeypatch.setattr(reg, "PORT_RANGE", range(9223, 9230))
+    monkeypatch.setattr(reg.cdp_lane, "_launch_chrome", _noop_launch)
+    monkeypatch.setattr(reg.cdp_lane, "is_listening", lambda _port: False)
+    monkeypatch.setattr(
+        "claude_bundles.x_display_capacity.require_chrome_headroom",
+        lambda: None,
+    )
+    from cdp_ask.models import SubmitProjectAskRequest
+    from cdp_ask.runner import bind_execution_lane
+
+    from claude_bundles.hop_cadence_seat_snap import seated_rows_from_registry_records
+    from claude_bundles.request_admission_census import census_match_ids
+
+    reg.register_lane(
+        holder="stale-a",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread="9497",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    reg.register_lane(
+        holder="stale-b",
+        purpose="operator-proxy",
+        mission_kind="root",
+        parent_thread="9497",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    seat = bind_execution_lane(
+        SubmitProjectAskRequest(
+            prompt_text="x",
+            holder="hop",
+            purpose="operator-proxy",
+            mission_kind="hop",
+            parent_thread="9497",
+        ),
+        holder="hop",
+    )
+    snap = {
+        "rows": [],
+        "seated_rows": seated_rows_from_registry_records(reg._store.load_active()),
+    }
+    assert census_match_ids("9497", snap) == [seat.registration_id]
+    # A later non-hop operator-proxy must not reopen a closed predecessor
+    # and close the hop successor (G6 revise, execution 07241d05).
+    again = _ensure()
+    assert again.registration_id == seat.registration_id
+    snap_after = {
+        "rows": [],
+        "seated_rows": seated_rows_from_registry_records(reg._store.load_active()),
+    }
+    assert census_match_ids("9497", snap_after) == [seat.registration_id]
 
 
 def test_ensure_rejects_hop_as_driving_kind(isolated_registry: Path) -> None:

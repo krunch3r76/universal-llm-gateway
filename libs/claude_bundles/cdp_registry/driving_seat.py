@@ -23,9 +23,8 @@ _ROOT_KIND = "root"
 
 
 def _is_driving_kind(mission_kind: str | None) -> bool:
-    """Host-listable rows on a lane count toward the single-host guard (4A)."""
-    _ = mission_kind
-    return True
+    """Host-listable driving rows. Hop Chromes are a separate mint, not a reuse target."""
+    return str(mission_kind or "").strip().lower() != "hop"
 
 
 def _row_registration(row: dict[str, Any]) -> Registration:
@@ -47,11 +46,14 @@ def ensure_driving_operator_seat(
 ) -> Registration:
     """Return the open driving-operator seat for *parent_thread*.
 
-    Host-allocation guard first: two listable driving Chromes on the lane
-    raise ``RegistryError`` even when one is already an open seat. Then
-    seat-axis: open seat (relaunch if dormant) → unbound dormant operator
-    row (bind + relaunch) → existing single listable host (bind only) →
-    mint via ``register_lane``.
+    When more than one listable host is already on the lane, keep the
+    newest ``seat_bound_at`` and retire the others (``seat_closed_at``)
+    so the census collapses to one successor. Rows that already have
+    ``seat_closed_at`` are not candidates: handing one to
+    ``retire_predecessor_identity`` would reopen it and close the hop
+    successor. Then seat-axis: open seat (relaunch if dormant) → unbound
+    dormant operator row (bind + relaunch) → existing single listable
+    host (bind only) → mint via ``register_lane``.
     """
     from claude_bundles import cdp_registry
     from claude_bundles import cdp_registry_store as store
@@ -70,18 +72,29 @@ def ensure_driving_operator_seat(
         raise RegistryError("driving operator seat cannot be mission_kind=hop")
     url = (chat_url or "").strip() or None
 
+    active_rows = store.load_active()
     live = [
         lane
         for lane in cdp_registry.list_active()
         if (lane.purpose or "").strip() in OPERATOR_PURPOSES
         and str(lane.parent_thread or "").strip() == parent
         and _is_driving_kind(lane.mission_kind)
+        and (active_rows.get(lane.registration_id) or {}).get("seat_closed_at") is None
     ]
     if len(live) > 1:
-        ids = ", ".join(sorted(lane.registration_id for lane in live))
-        raise RegistryError(
-            f"ambiguous listable driving operator hosts on parent_thread={parent}: {ids}"
+        active_now = store.load_active()
+        winner = max(
+            live,
+            key=lambda lane: float(
+                (active_now.get(lane.registration_id) or {}).get("seat_bound_at") or 0.0
+            ),
         )
+        from claude_bundles.cdp_registry.session_address import (
+            retire_predecessor_identity,
+        )
+
+        retire_predecessor_identity(winner.registration_id, parent_thread=parent)
+        live = [winner]
 
     active = store.load_active()
     open_seats = [

@@ -91,24 +91,35 @@ def bind_execution_lane(req: SubmitProjectAskRequest, *, holder: str):
     Operator-proxy (non-hop) executions on a named ``parent_thread`` reuse or
     mint the driving operator seat so census can see the seated window after
     hop Chromes go dormant. Hops and non-operator purposes still mint a fresh
-    ``register_lane`` row.
+    ``register_lane`` row. Either operator-purpose bind then retires every
+    other registry row on that lane so a Cowork hop with no occupy target
+    does not leave ``ambiguous_matches``.
     """
     purpose = (req.purpose or "").strip()
     kind = (req.mission_kind or "").strip()
     parent = (req.parent_thread or "").strip()
     if purpose in OPERATOR_PURPOSES and kind != "hop" and parent:
-        return ensure_driving_operator_seat(
+        seat = ensure_driving_operator_seat(
             holder=holder,
             parent_thread=parent,
             purpose=purpose,
             mission_kind=kind or "root",
         )
-    return cdp_registry.register_lane(
-        holder=holder,
-        purpose=req.purpose,
-        mission_kind=req.mission_kind,
-        parent_thread=req.parent_thread,
-    )
+    else:
+        seat = cdp_registry.register_lane(
+            holder=holder,
+            purpose=req.purpose,
+            mission_kind=req.mission_kind,
+            parent_thread=req.parent_thread,
+        )
+    reg_id = str(getattr(seat, "registration_id", "") or "").strip()
+    if purpose in OPERATOR_PURPOSES and parent and reg_id:
+        from claude_bundles.cdp_registry.session_address import (
+            retire_predecessor_identity,
+        )
+
+        retire_predecessor_identity(reg_id, parent_thread=parent)
+    return seat
 
 
 def _persist_session_address(
@@ -604,12 +615,10 @@ async def run_execution(
                 progress=progress, ladder=ladder, archive_uri=archive_uri
             )
             conv_ok = all(r.ok for r in results)
-            fail_error = None if conv_ok else converse_fail_error(
-                last.error if last else None
+            fail_error = (
+                None if conv_ok else converse_fail_error(last.error if last else None)
             )
-            stall = converse_stall_stage(
-                last.error if last else None, conv_ok=conv_ok
-            )
+            stall = converse_stall_stage(last.error if last else None, conv_ok=conv_ok)
             if is_unverifiable_stall(
                 stall,
                 fail_error,
@@ -657,6 +666,7 @@ async def run_execution(
             if delete_after
             else (resolve_archive_path(req.archive_path) if req.archive_path else None)
         )
+
         async def _ask_once(model: str):
             return await run_project_ask(
                 prompt,
@@ -698,9 +708,7 @@ async def run_execution(
             execution_id=execution_id,
         )
         if not result.ok:
-            payload["stall_stage"] = converse_stall_stage(
-                result.error, conv_ok=False
-            )
+            payload["stall_stage"] = converse_stall_stage(result.error, conv_ok=False)
             if is_unverifiable_stall(
                 payload["stall_stage"],
                 result.error,

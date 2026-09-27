@@ -28,6 +28,9 @@ def test_bind_execution_lane_operator_proxy_uses_ensure() -> None:
             return_value=seat,
         ) as ensure,
         patch("cdp_ask.runner.cdp_registry.register_lane") as mint,
+        patch(
+            "claude_bundles.cdp_registry.session_address.retire_predecessor_identity",
+        ) as retire,
     ):
         out = bind_execution_lane(req, holder="op")
     assert out is seat
@@ -38,6 +41,7 @@ def test_bind_execution_lane_operator_proxy_uses_ensure() -> None:
         mission_kind="root",
     )
     mint.assert_not_called()
+    retire.assert_called_once_with("driving-root", parent_thread="9497")
 
 
 def test_bind_execution_lane_hop_still_mints() -> None:
@@ -56,8 +60,12 @@ def test_bind_execution_lane_hop_still_mints() -> None:
             "cdp_ask.runner.cdp_registry.register_lane",
             return_value=minted,
         ) as mint,
+        patch(
+            "claude_bundles.cdp_registry.session_address.retire_predecessor_identity",
+        ) as retire,
     ):
         out = bind_execution_lane(req, holder="hop")
     assert out is minted
     ensure.assert_not_called()
     mint.assert_called_once()
+    retire.assert_called_once_with("hop-row", parent_thread="9497")

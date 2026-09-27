@@ -81,14 +81,11 @@ def run_cse_seating_hook(
         or None
     )
     if not occupy:
-        outcome: dict[str, Any] = {
-            "ok": False,
-            "path": "skipped_no_occupy_target",
-            "reason": "no_occupy_target",
-            "thread_id": str(job.thread_id),
-        }
-        _emit_hook(outcome)
-        return outcome
+        return _seat_successor_without_occupy(
+            job,
+            lane=str(lane or job.thread_id),
+            execution_id=(execution_id or "").strip(),
+        )
 
     new_reg, new_chat = _resolve_successor_identity(job, execution_id)
     from claude_bundles.cse_url import normalize_cse_url
@@ -129,10 +126,150 @@ def run_cse_seating_hook(
                 occupy_target=occupy,
                 conn=conn,
             )
+            outcome["successor_seated"] = True
+        else:
+            outcome["successor_seated"] = False
         conn.commit()
     outcome["thread_id"] = str(job.thread_id)
     outcome["occupy_target"] = occupy
     outcome["superseded_registration_id"] = superseded
+    _emit_hook(outcome)
+    return outcome
+
+
+def _load_identity_snap() -> dict[str, Any]:
+    """Active-work snap plus registry seated rows, for arm-time census."""
+    snap: dict[str, Any] = {}
+    try:
+        from services.git_integration_worker.cursor_auto.cdp_escalation import (
+            read_cdp_lane_snapshot,
+        )
+
+        loaded = read_cdp_lane_snapshot()
+        if isinstance(loaded, dict):
+            snap = loaded
+    except Exception as exc:  # noqa: BLE001 — seating must not crash the hop
+        logger.warning("cse_seating_hook snap load failed: %s", exc)
+        snap = {}
+    try:
+        from claude_bundles.hop_cadence_seat_snap import attach_registry_seated_rows
+
+        return attach_registry_seated_rows(snap)
+    except Exception as exc:  # noqa: BLE001 — registry read is best-effort
+        logger.warning("cse_seating_hook registry attach failed: %s", exc)
+        return snap
+
+
+def _watch_targets() -> list[Any]:
+    """Admission and cadence watch files. One path when they already match."""
+    from claude_bundles.hop_seat_cutover import watches_path as admission_watches_path
+
+    from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
+        watches_path as cadence_watches_path,
+    )
+
+    targets = []
+    for path in (admission_watches_path(), cadence_watches_path()):
+        if path not in targets:
+            targets.append(path)
+    return targets
+
+
+def _persist_successor_watch(
+    *,
+    lane: str,
+    successor: str,
+    execution_id: str,
+    successor_birth_id: str | None,
+    retired_registration_ids: list[str],
+) -> None:
+    """Point the lane watch at the hop successor and drop stale census ids."""
+    from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
+        load_watches,
+        save_watches,
+    )
+
+    updates: dict[str, Any] = {
+        "thread_id": lane,
+        "registration_id": successor,
+        "execution_id": execution_id,
+        "retired_registration_ids": list(retired_registration_ids),
+    }
+    birth = (successor_birth_id or "").strip()
+    if birth:
+        updates["successor_birth_id"] = birth
+    for path in _watch_targets():
+        watches = load_watches(path)
+        row = dict(watches.get(lane) or {"thread_id": lane})
+        row.update(updates)
+        watches[lane] = row
+        save_watches(watches, path)
+
+
+def _seat_successor_without_occupy(
+    job: AutoJob,
+    *,
+    lane: str,
+    execution_id: str,
+) -> dict[str, Any]:
+    """Seat a Cowork/CDP successor that has no occupy_target.
+
+    The census key is ``successor_birth_id`` until a real registration is
+    resolved for ``execution_id``. Predecessor census ids are written onto
+    the watch so the next ``request`` / ``hop`` drops them. Registry
+    ``seat_closed_at`` is applied later by the seat-authority bind
+    (``bind_execution_lane``); this process is not that authority.
+    """
+    from hop_handoff import parse_successor_birth_id
+
+    birth = (parse_successor_birth_id(job.body) or "").strip()
+    resolved_reg, resolved_chat = _resolve_successor_identity(job, execution_id)
+    successor = (resolved_reg or birth).strip()
+    if not successor or not execution_id:
+        outcome = {
+            "ok": False,
+            "path": "skipped_no_occupy_target",
+            "reason": "no_successor_key" if not successor else "no_execution_id",
+            "thread_id": str(job.thread_id),
+            "successor_seated": False,
+        }
+        _emit_hook(outcome)
+        return outcome
+
+    snap = _load_identity_snap()
+    seated = on_successor_seated(
+        snap,
+        parent_thread=lane,
+        registration_id=successor,
+        chat_url=(resolved_chat or ""),
+        execution_id=execution_id,
+        bind_registry=False,
+        bind_thread=False,
+    )
+    retired = [
+        str(item).strip()
+        for item in (seated.get("retired_registration_ids") or [])
+        if str(item).strip() and str(item).strip() != successor
+    ]
+    _persist_successor_watch(
+        lane=lane,
+        successor=successor,
+        execution_id=execution_id,
+        successor_birth_id=birth or None,
+        retired_registration_ids=retired,
+    )
+    outcome = {
+        "ok": True,
+        "path": "seated_without_occupy_target",
+        "reason": "successor_keyed_by_birth_and_execution",
+        "thread_id": str(job.thread_id),
+        "lane_thread_id": lane,
+        "successor_registration_id": successor,
+        "execution_id": execution_id,
+        "successor_birth_id": birth or None,
+        "successor_seated": True,
+        "retired_registration_ids": retired,
+    }
     _emit_hook(outcome)
     return outcome
 
@@ -318,9 +455,7 @@ def on_successor_seated(
 
             retire_predecessor_identity(reg, parent_thread=parent or None)
         except Exception as exc:  # noqa: BLE001 — seat write must not crash hop
-            logger.warning(
-                "retire_predecessor_identity failed reg=%s: %s", reg, exc
-            )
+            logger.warning("retire_predecessor_identity failed reg=%s: %s", reg, exc)
     if bind_thread and parent and reg and url:
         try:
             from agent_bus_store.db.cse_associations import associate_cse
@@ -333,9 +468,7 @@ def on_successor_seated(
                 evidence="cdp.generate.seated",
             )
         except Exception as exc:  # noqa: BLE001 — missing thread is not a hop failure
-            logger.warning(
-                "seated thread bind failed thread=%s: %s", parent, exc
-            )
+            logger.warning("seated thread bind failed thread=%s: %s", parent, exc)
     return seated
 
 

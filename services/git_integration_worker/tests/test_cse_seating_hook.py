@@ -544,6 +544,85 @@ def test_wire_id_outside_census_refused_and_empty_census_flags_mismatch() -> Non
     assert audit["census_mismatch"] is True
 
 
+def test_no_occupy_target_seats_birth_and_retires_stale_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hop verb with no occupy_target keys the successor and drops stale ids."""
+    watch_file = tmp_path / "hop_cadence_watches.json"
+    monkeypatch.setenv("CURSOR_AUTO_HOP_WATCHES_PATH", str(watch_file))
+    birth = "ab" * 16
+    stale = (
+        "469956ec4d2f4ce491732b205877671a",
+        "1ab5aecb3a4f4889b39ed525ab3e848b",
+    )
+    snap = {
+        "rows": [],
+        "seated_rows": [_census_row(stale[0]), _census_row(stale[1])],
+    }
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._load_identity_snap",
+        lambda: snap,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.cse_seating_hook._resolve_successor_identity",
+        lambda _job, _execution_id: (None, None),
+    )
+    body = build_continuity_handoff_body(
+        thread_id=_LANE_T,
+        trigger="no-occupy",
+        source="agent-bus-hop-verb",
+        handoff=StandingHandoffFreshness(
+            status="current",
+            uri=f"cortex://notes/system/threads/{_LANE_T}-standing-handoff.md",
+            mtime_epoch=1.0,
+            age_s=1.0,
+        ),
+        occupy_target=None,
+        successor_birth_id=birth,
+    )
+    job = AutoJob(
+        job_id="job-no-occupy",
+        thread_id=_LANE_T,
+        turn_number=344,
+        subject="continuity hop",
+        body=body,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="cdp/fable-5.1",
+        desired_effort="auto",
+        contract="answer",
+        continuity_hop=True,
+        cse_chat_url="",
+        cse_registration_id="",
+    )
+    execution_id = "140c033e-6e8f-4072-8ef7-ba1c06ad3d3f"
+    outcome = run_cse_seating_hook(job, execution_id=execution_id)
+    assert outcome["path"] == "seated_without_occupy_target"
+    assert outcome["successor_seated"] is True
+    assert outcome["successor_registration_id"] == birth
+    assert outcome["execution_id"] == execution_id
+    assert set(outcome["retired_registration_ids"]) == set(stale)
+
+    from claude_bundles.request_admission_identity import (
+        resolve_request_admission_identity,
+    )
+
+    with patch(
+        "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+        return_value=None,
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id=_LANE_T,
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert identity.unresolvable_reason is None
+    assert identity.registration_id == birth
+    assert identity.source == "watch_resume"
+    assert identity.census_n == 0
+
+
 def test_watch_retired_ids_leave_successor_as_sole_census_match() -> None:
     from claude_bundles.request_admission_identity import (
         resolve_request_admission_identity,

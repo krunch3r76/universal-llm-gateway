@@ -376,7 +376,7 @@ async def complete_continuity_hop(
     birth_id = parse_successor_birth_id(job.body)
     if birth_id:
         hop_payload["successor_birth_id"] = birth_id
-        hop_payload["successor_seated"] = False
+        hop_payload["successor_seated"] = bool(seating.get("successor_seated"))
         try:
             from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
                 persist_successor_birth_id,
