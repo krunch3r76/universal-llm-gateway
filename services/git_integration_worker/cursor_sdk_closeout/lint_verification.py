@@ -43,9 +43,34 @@ def _decode_retained_stream(raw: bytes | str | None) -> tuple[str, bool]:
     if len(text) <= _LINT_OUTPUT_RETAIN_CHARS:
         return text, False
     return (
-        text[:_LINT_OUTPUT_RETAIN_CHARS] + "\n...[truncated]",
+        "...[truncated]\n" + text[-_LINT_OUTPUT_RETAIN_CHARS:],
         True,
     )
+
+
+def _retained_process_streams(
+    raw_stdout: bytes | str | None,
+    raw_stderr: bytes | str | None,
+    *,
+    exit_code: int,
+) -> tuple[str | None, str | None, bool]:
+    """Keep process streams on the verification row, including a clean exit.
+
+    A non-zero exit keeps empty streams as ``""`` so a failure row still
+    records that the pipe was captured. A zero exit with empty pipes stays
+    ``None`` (nothing to show). A zero exit that printed a summary keeps
+    that tail.
+    """
+    if exit_code == 0 and not raw_stdout and not raw_stderr:
+        return None, None, False
+    stdout, trunc_out = _decode_retained_stream(raw_stdout)
+    stderr, trunc_err = _decode_retained_stream(raw_stderr)
+    if exit_code == 0:
+        if not stdout:
+            stdout = None
+        if not stderr:
+            stderr = None
+    return stdout, stderr, trunc_out or trunc_err
 
 
 def _ruff_toolchain_identity() -> tuple[str, str]:
@@ -84,9 +109,10 @@ def run_touched_files_lint(
     print ``All checks passed!`` (specimen auto-00a23d2a4f45). ``cwd`` is
     pinned to ``source_repo`` so config discovery matches in-tree measurement.
 
-    On non-zero exit, stdout/stderr are retained on the verification row
-    (each truncated at ``_LINT_OUTPUT_RETAIN_CHARS``) so a later
-    ``checks_failed`` grade remains interrogable.
+    stdout/stderr are retained on the verification row whenever the process
+    produced them, including exit 0 (each tailed at
+    ``_LINT_OUTPUT_RETAIN_CHARS``). Empty streams stay absent. A passing
+    ruff row with a null stream cannot be dispositioned from the closeout.
 
     The verification row carries ``executable`` / ``tool_version`` for the
     binary PATH resolved (arc 7190) so ``work_outcome`` is falsifiable
@@ -140,13 +166,11 @@ def run_touched_files_lint(
             ),
             "verification:lint_unavailable",
         )
-    stdout: str | None = None
-    stderr: str | None = None
-    output_truncated = False
-    if proc.returncode != 0:
-        stdout, trunc_out = _decode_retained_stream(proc.stdout)
-        stderr, trunc_err = _decode_retained_stream(proc.stderr)
-        output_truncated = trunc_out or trunc_err
+    stdout, stderr, output_truncated = _retained_process_streams(
+        proc.stdout,
+        proc.stderr,
+        exit_code=proc.returncode,
+    )
     return (
         observed_process_verification(
             command=command,
@@ -200,13 +224,11 @@ def run_giw_subtree_f821_lint(
             ),
             "verification:lint_unavailable",
         )
-    stdout: str | None = None
-    stderr: str | None = None
-    output_truncated = False
-    if result.exit_code != 0:
-        stdout, trunc_out = _decode_retained_stream(result.stdout)
-        stderr, trunc_err = _decode_retained_stream(result.stderr)
-        output_truncated = trunc_out or trunc_err
+    stdout, stderr, output_truncated = _retained_process_streams(
+        result.stdout,
+        result.stderr,
+        exit_code=result.exit_code,
+    )
     return (
         observed_process_verification(
             command=result.command,

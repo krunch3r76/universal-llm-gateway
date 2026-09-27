@@ -14,6 +14,75 @@ from typing import Any
 # Must stay aligned with ``libs/agent_bus_store/turns_models`` bus invariants.
 MAX_TURN_BODY_CHARS = 8_000
 _CLOSEOUT_FILE_HEAD = 5
+# Bus-body tails. Exit 0 is falsy in Python; a truthiness filter dropped every
+# passing row, and an unattributed row stores the integer on wrapper_exit_code
+# with exit_code null. The reduced body must still carry both, plus the stream
+# tail a reader uses to disposition the check.
+_BUS_STREAM_TAIL = 240
+_BUS_COMMAND_TAIL = 240
+
+
+def _verification_row_kept(item: object) -> bool:
+    """True when a shrink must keep the row.
+
+    ``exit_code`` 0 and ``None`` are both falsy. Passing rows and unattributed
+    rows (integer on ``wrapper_exit_code``) are the rows a reader needs.
+    """
+    if not isinstance(item, dict):
+        return False
+    if item.get("exit_code") is not None:
+        return True
+    if item.get("wrapper_exit_code") is not None:
+        return True
+    return bool(item.get("stdout") or item.get("stderr"))
+
+
+def _tail_text(value: object, limit: int) -> str | None:
+    if not isinstance(value, str):
+        return None
+    if len(value) <= limit:
+        return value
+    return "...[truncated]\n" + value[-limit:]
+
+
+def _compact_verification_row(item: dict[str, Any]) -> dict[str, Any]:
+    stdout = item.get("stdout")
+    stderr = item.get("stderr")
+    command = item.get("command")
+    cut = (
+        (isinstance(stdout, str) and len(stdout) > _BUS_STREAM_TAIL)
+        or (isinstance(stderr, str) and len(stderr) > _BUS_STREAM_TAIL)
+        or (isinstance(command, str) and len(command) > _BUS_COMMAND_TAIL)
+    )
+    return {
+        "command": (
+            _tail_text(command, _BUS_COMMAND_TAIL)
+            if isinstance(command, str)
+            else command
+        ),
+        "exit_code": item.get("exit_code"),
+        "wrapper_exit_code": item.get("wrapper_exit_code"),
+        "exit_code_register": item.get("exit_code_register"),
+        "invocation_id": item.get("invocation_id"),
+        "basis": item.get("basis"),
+        "stdout": _tail_text(stdout, _BUS_STREAM_TAIL)
+        if isinstance(stdout, str)
+        else stdout,
+        "stderr": _tail_text(stderr, _BUS_STREAM_TAIL)
+        if isinstance(stderr, str)
+        else stderr,
+        "output_truncated": bool(item.get("output_truncated")) or cut,
+    }
+
+
+def _compact_verification(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    verification = payload.get("verification") or []
+    return [
+        _compact_verification_row(item)
+        for item in verification
+        if _verification_row_kept(item)
+    ]
+
 
 def finalize_closeout_body(
     body: str,
@@ -39,14 +108,9 @@ def finalize_closeout_body(
         reduced["capture_status"] = payload["capture_status"]
     if payload.get("evidence_uris"):
         reduced["evidence_uris"] = payload["evidence_uris"]
-    verification = payload.get("verification") or []
-    failed_verification = [
-        item
-        for item in verification
-        if isinstance(item, dict) and item.get("exit_code")
-    ]
-    if failed_verification:
-        reduced["verification"] = failed_verification
+    kept_verification = _compact_verification(payload)
+    if kept_verification:
+        reduced["verification"] = kept_verification
     effects = payload.get("effects")
     if effects is not None:
         reduced["effects_total"] = len(effects)
@@ -102,6 +166,8 @@ def finalize_closeout_body(
         minimal["work_outcome"] = payload["work_outcome"]
     if payload.get("status_incomplete_class") is not None:
         minimal["status_incomplete_class"] = payload["status_incomplete_class"]
+    if kept_verification:
+        minimal["verification"] = kept_verification
     if residue:
         minimal["propagation_residue"] = list(residue[:_CLOSEOUT_FILE_HEAD])
     if body_relocated is not None:

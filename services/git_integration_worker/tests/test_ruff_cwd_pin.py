@@ -130,6 +130,38 @@ def test_run_touched_files_lint_retains_streams_on_nonzero(
     assert verification.tool_version == "0.15.6"
 
 
+def test_run_touched_files_lint_retains_stdout_tail_on_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A clean ruff exit that printed a summary keeps that tail on the row."""
+
+    def fake_run(cmd: list[str], **kwargs: Any) -> MagicMock:
+        del cmd, kwargs
+        proc = MagicMock()
+        proc.returncode = 0
+        proc.stdout = b"All checks passed!\n"
+        proc.stderr = b""
+        return proc
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.lint_verification.subprocess.run",
+        fake_run,
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_closeout.lint_verification._ruff_toolchain_identity",
+        lambda: ("/venv/bin/ruff", "0.15.6"),
+    )
+    verification, note = run_touched_files_lint(
+        _REPO,
+        ChangeSet(created=(_CLEAN_REL,), modified=(), deleted=()),
+    )
+    assert note is None
+    assert verification.exit_code == 0
+    assert verification.exit_code_register == "observed"
+    assert verification.stdout == "All checks passed!\n"
+    assert verification.stderr is None
+
+
 def test_run_touched_files_lint_truncates_oversized_streams(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -164,10 +196,10 @@ def test_run_touched_files_lint_truncates_oversized_streams(
     assert verification.exit_code == 1
     assert verification.output_truncated is True
     assert verification.stderr is not None
-    assert verification.stderr.endswith("\n...[truncated]")
-    assert len(verification.stderr) == _LINT_OUTPUT_RETAIN_CHARS + len(
-        "\n...[truncated]"
-    )
+    marker = "...[truncated]\n"
+    assert verification.stderr.startswith(marker)
+    assert verification.stderr.endswith("x" * 8)
+    assert len(verification.stderr) == _LINT_OUTPUT_RETAIN_CHARS + len(marker)
 
 
 def test_ruff_toolchain_identity_names_path_binary_not_metadata(
@@ -188,7 +220,10 @@ def test_run_giw_subtree_f821_lint_passes_on_clean_subtree() -> None:
     verification, note = run_giw_subtree_f821_lint(_REPO)
     assert note is None
     assert verification.exit_code == 0
-    assert verification.command == "ruff check --select F821 services/git_integration_worker/"
+    assert (
+        verification.command
+        == "ruff check --select F821 services/git_integration_worker/"
+    )
 
 
 def test_run_giw_subtree_f821_lint_pins_cwd_to_source_repo(

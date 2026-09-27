@@ -509,6 +509,58 @@ def test_ac4_residual_twin_work_outcome_shipped_status_complete(tmp_path: Path) 
     assert payload["capture_status"] == "partial"
 
 
+def test_finalize_closeout_body_keeps_zero_and_unattributed_verification() -> None:
+    """Shrink must keep exit 0 and wrapper_exit_code rows, including stream tails.
+
+    ``item.get("exit_code")`` is falsy for 0 and None, so the old keep-filter
+    omitted verification from the bus body (specimen 13015 turn 6).
+    """
+    import json
+
+    from services.git_integration_worker.cursor_sdk_closeout import (
+        finalize_closeout_body,
+    )
+
+    payload = {
+        "schema_version": 1,
+        "status": "partial",
+        "work_outcome": "unverified",
+        "summary": "dispatch d1: 1 tool calls, 1.0s, 100B -> sidecar",
+        "source_ref": "todo:test",
+        "verification": [
+            {
+                "command": "pytest -q services/foo/test_bar.py",
+                "exit_code": 0,
+                "wrapper_exit_code": None,
+                "exit_code_register": "observed",
+                "basis": "shell_tool_result.exitCode",
+                "stdout": "2 passed in 0.01s\n",
+                "stderr": "",
+            },
+            {
+                "command": "ruff check foo.py; echo ruff_exit=$?",
+                "exit_code": None,
+                "wrapper_exit_code": 0,
+                "exit_code_register": "unattributed",
+                "basis": "shell_tool_result.exitCode:unattributed",
+                "stdout": "All checks passed!\nruff_exit=0\n",
+                "stderr": "",
+            },
+        ],
+        "deviations": [f"padding:{index}" for index in range(800)],
+    }
+    reduced = json.loads(finalize_closeout_body(json.dumps(payload)))
+    rows = reduced["verification"]
+    assert rows[0]["exit_code"] == 0
+    assert rows[0]["exit_code_register"] == "observed"
+    assert rows[0]["stdout"] == "2 passed in 0.01s\n"
+    assert rows[1]["exit_code"] is None
+    assert rows[1]["wrapper_exit_code"] == 0
+    assert rows[1]["exit_code_register"] == "unattributed"
+    assert "ruff_exit=0" in rows[1]["stdout"]
+    assert "All checks passed!" in rows[1]["stdout"]
+
+
 def test_finalize_closeout_body_preserves_work_outcome() -> None:
     """AC8 — reduced finalize payload retains work_outcome."""
     import json

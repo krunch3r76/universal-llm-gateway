@@ -86,6 +86,38 @@ def test_is_pytest_witness_denies_gate_d_and_lint() -> None:
     assert is_pytest_witness(pytest_row) is True
 
 
+def test_harvest_keeps_stdout_tail_when_prefix_exceeds_budget() -> None:
+    """Git-diff prefix must not eat the pytest summary (specimen 13015 row 4)."""
+    from services.git_integration_worker.cursor_sdk_test_observation import (
+        _RETAIN_CHARS,
+    )
+
+    tail = "2 passed in 0.01s\n"
+    stdout = ("diff --git a/x b/x\n" + ("x" * (_RETAIN_CHARS + 40))) + tail
+    obs = ToolCallObservation(
+        call_id="call-tail",
+        tool_name="shell",
+        status="completed",
+        arg_bytes=1,
+        result_bytes=1,
+        truncated_fields=(),
+        args={"command": "pytest -q services/foo/test_bar.py"},
+        result={
+            "status": "success",
+            "value": {"stdout": stdout, "stderr": "", "exitCode": 0},
+        },
+    )
+    rows = harvest_test_verifications((obs,))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.exit_code == 0
+    assert row.exit_code_register == "observed"
+    assert row.output_truncated is True
+    assert row.stdout is not None
+    assert row.stdout.startswith("...[truncated]\n")
+    assert row.stdout.endswith(tail)
+
+
 def test_harvest_emits_observed_sibling_for_pytest_shell() -> None:
     obs = _shell_obs(
         call_id="call-pytest-1",

@@ -191,13 +191,18 @@ _RETAIN_CHARS = 4000
 
 
 def _retain_text(raw: object) -> tuple[str | None, bool]:
-    """Cap a retained shell stream; empty/absent stays ``None`` only when missing."""
+    """Cap a retained shell stream to its tail.
+
+    Empty/absent stays ``None`` only when missing. The tail is the pytest/ruff
+    summary; a prefix cap drops that summary when earlier output (a git diff)
+    fills the budget.
+    """
     if raw is None:
         return None, False
     text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
     if len(text) <= _RETAIN_CHARS:
         return text, False
-    return text[:_RETAIN_CHARS] + "\n...[truncated]", True
+    return "...[truncated]\n" + text[-_RETAIN_CHARS:], True
 
 
 def _shell_result_map(obs: ToolCallObservation) -> Mapping[str, object] | None:

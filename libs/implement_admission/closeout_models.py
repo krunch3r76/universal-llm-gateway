@@ -116,9 +116,9 @@ class Verification(BaseModel):
     exit_code_register: ExitCodeRegister = "unknown"
     invocation_id: str | None = None
     basis: str | None = None
-    # Retained process streams for non-zero exits (lint / harvested shells).
-    # Absent on pass and on legacy rows; truncate at pack time so closeout JSON
-    # stays interrogable without unbounded capture.
+    # Retained process streams (lint / harvested shells), including a clean
+    # exit when the process printed a summary. Empty streams stay absent.
+    # Truncate to a tail at pack time so the pytest/ruff summary survives.
     stdout: str | None = None
     stderr: str | None = None
     output_truncated: bool = False
