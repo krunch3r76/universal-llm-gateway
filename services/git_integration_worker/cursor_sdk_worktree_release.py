@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     salvage_commit,
 )
 from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    completing_dispatch_blocks_directory_remove,
     ledger_connection,
     worktree_held_by_live_bridge,
 )
@@ -46,6 +47,7 @@ class ReleaseRefusal(StrEnum):
     RETAIN_ACTIVE = "retain_active"
     UNHARVESTED = "unharvested"
     FOREIGN_LOCK = "foreign_lock"
+    DETACH_FAILED = "detach_failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +58,7 @@ class ReleaseResult:
     salvaged: bool = False
     head_sha: str | None = None
     salvage_refused: bool = False
+    deferred_to_caller: bool = False
 
 
 def reset_unharvested_emit_dedupe() -> None:
@@ -70,6 +73,29 @@ def emit_sdk_lane_b_worktree_removed(**kwargs: object) -> None:
     )
 
     _emit(**kwargs)  # type: ignore[arg-type]
+
+
+def _detach_head(worktree_path: Path) -> bool:
+    """Leave the worktree directory in place and free the branch ref.
+
+    ``git branch -D`` refuses a branch that is still checked out. Detach keeps
+    the caller's cwd valid and lets discharge archive and delete the branch.
+    """
+    proc = subprocess.run(
+        ["git", "-C", str(worktree_path.resolve()), "checkout", "--detach"],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if proc.returncode != 0:
+        logger.warning(
+            "worktree detach failed path=%s err=%s",
+            worktree_path,
+            proc.stderr.strip(),
+        )
+        return False
+    return True
 
 
 def _git_worktree_remove(source_repo: Path, worktree_path: Path) -> bool:
@@ -288,7 +314,11 @@ def release_lane_worktree(
     )
     resolved_thread = thread_id or (record.thread_id if record is not None else None)
 
-    holder_pid = worktree_held_by_live_bridge(worktree_path=wt_path, fresh=True)
+    holder_pid = worktree_held_by_live_bridge(
+        worktree_path=wt_path,
+        fresh=True,
+        ignore_dispatch_id=ignore_dispatch_id,
+    )
     if holder_pid is not None:
         emit_sdk_lane_b_reap_skipped_live_bridge(
             worktree_path=str(wt_path),
@@ -442,6 +472,26 @@ def release_lane_worktree(
                 worktree_path=str(wt_path),
             )
             return ReleaseResult(released=False, refusal=ReleaseRefusal.FOREIGN_LOCK)
+
+    if (
+        ignore_dispatch_id
+        and wt_path.is_dir()
+        and completing_dispatch_blocks_directory_remove(
+            worktree_path=wt_path,
+            dispatch_id=ignore_dispatch_id,
+        )
+    ):
+        if not _detach_head(wt_path):
+            _emit_release_refused(
+                reason=ReleaseRefusal.DETACH_FAILED,
+                dispatch_id=resolved_dispatch,
+                thread_id=resolved_thread,
+                worktree_path=str(wt_path),
+            )
+            return ReleaseResult(
+                released=False, refusal=ReleaseRefusal.DETACH_FAILED
+            )
+        return ReleaseResult(released=False, deferred_to_caller=True)
 
     removed = False
     if wt_path.is_dir():

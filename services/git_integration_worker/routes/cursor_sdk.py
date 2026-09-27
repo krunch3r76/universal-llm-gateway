@@ -4183,6 +4183,8 @@ async def cursor_branch_discharge(
         "archive_skipped_reason": result.archive_skipped_reason,
         "refused_reason": result.refused_reason,
     }
+    if result.worktree_release:
+        payload["worktree_release"] = result.worktree_release
     if result.probe is not None:
         divergence = None
         if result.probe.divergence is not None:
