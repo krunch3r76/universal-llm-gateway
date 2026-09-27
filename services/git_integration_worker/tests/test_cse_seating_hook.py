@@ -387,3 +387,192 @@ async def test_ac4_bypass_hook_leaves_holder_stale(
     assert row["registration_id"] == "reg-old", (
         "bypass must leave holder stale — path assertion, not row-at-rest"
     )
+
+
+_LANE_T = "12286"
+_OCCUPY_REG = "c97c246d71884a03a0ed50cb83471e4b"
+_SUCCESSOR_7_URL = "https://claude.ai/cowork/cse_successor7"
+_SUCCESSOR_8_URL = "https://claude.ai/cowork/cse_successor8"
+
+
+def _census_row(registration_id: str) -> dict[str, str]:
+    return {
+        "registration_id": registration_id,
+        "parent_thread": _LANE_T,
+        "purpose": "operator-proxy",
+        "seat_state": "active",
+        "stream_state": "running",
+        "execution_id": f"exec-{registration_id}",
+        "source": "cse-session-registry",
+    }
+
+
+def test_successor_seat_retires_predecessors_and_follows_seated_row(
+    ledger: CursorDispatchLedger,
+) -> None:
+    """AC1+AC2: second seat leaves census [successor-8]; identity is not occupy."""
+    from claude_bundles.request_admission_census import census_match_ids
+
+    from services.git_integration_worker.cursor_auto.cse_seating_hook import (
+        on_successor_seated,
+    )
+
+    snap: dict[str, object] = {
+        "rows": [],
+        "seated_rows": [_census_row("successor-7"), _census_row(_OCCUPY_REG)],
+    }
+    watches = {
+        _LANE_T: {
+            "thread_id": _LANE_T,
+            "registration_id": _OCCUPY_REG,
+            "chat_url": _OCCUPY_URL,
+        }
+    }
+    thread = {
+        "cse_registration_id": _OCCUPY_REG,
+        "cse_chat_url": _OCCUPY_URL,
+    }
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        upsert_holder(
+            conn,
+            chat_url=_OCCUPY_URL,
+            registration_id=_OCCUPY_REG,
+            lane_thread_id=_LANE_T,
+        )
+        snap = on_successor_seated(
+            snap,
+            parent_thread=_LANE_T,
+            registration_id="successor-7",
+            chat_url=_SUCCESSOR_7_URL,
+            execution_id="exec-7",
+            occupy_target=_OCCUPY_URL,
+            conn=conn,
+            watches=watches,
+            thread_row=thread,
+        )
+        assert census_match_ids(_LANE_T, snap) == ["successor-7"]
+        snap = on_successor_seated(
+            snap,
+            parent_thread=_LANE_T,
+            registration_id="successor-8",
+            chat_url=_SUCCESSOR_8_URL,
+            execution_id="exec-8",
+            occupy_target=_OCCUPY_URL,
+            conn=conn,
+            watches=watches,
+            thread_row=thread,
+        )
+        conn.commit()
+    assert census_match_ids(_LANE_T, snap) == ["successor-8"]
+    with ledger._connect() as conn:
+        seated = get_holder(conn, "cse_successor8")
+        occupy = get_holder(conn, "cse_occupyhop1")
+    assert seated is not None
+    assert seated["registration_id"] == "successor-8"
+    assert occupy is not None
+    assert occupy["registration_id"] == _OCCUPY_REG
+    assert thread["cse_registration_id"] == "successor-8"
+    assert thread["cse_registration_id"] != "c97c246d"
+    assert not str(thread["cse_registration_id"]).startswith("c97c246d")
+    assert watches[_LANE_T]["registration_id"] == "successor-8"
+    assert watches[_LANE_T]["chat_url"] == _SUCCESSOR_8_URL
+
+
+def test_seated_event_writes_watch_from_payload_not_occupy() -> None:
+    from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
+        apply_event_to_watch,
+    )
+
+    row = {
+        "thread_id": _LANE_T,
+        "registration_id": _OCCUPY_REG,
+        "chat_url": _OCCUPY_URL,
+    }
+    updated, action = apply_event_to_watch(
+        row,
+        {
+            "signal": "cdp.generate.seated",
+            "payload": {
+                "parent_thread": _LANE_T,
+                "registration_id": "successor-8",
+                "chat_url": _SUCCESSOR_8_URL,
+                "execution_id": "exec-8",
+            },
+        },
+        now=1.0,
+    )
+    assert action == "seated"
+    assert updated["registration_id"] == "successor-8"
+    assert updated["chat_url"] == _SUCCESSOR_8_URL
+    assert updated["registration_id"] != _OCCUPY_REG
+
+
+def test_wire_id_outside_census_refused_and_empty_census_flags_mismatch() -> None:
+    """AC3: non-empty miss refuses; empty census admits with census_mismatch."""
+    from claude_bundles.request_admission_identity import gate_request_admission
+
+    occupied = {
+        "rows": [],
+        "seated_rows": [_census_row("successor-8")],
+    }
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={_LANE_T: {"thread_id": _LANE_T}},
+    ):
+        refused = gate_request_admission(
+            thread_id=_LANE_T,
+            caller_registration_id=_OCCUPY_REG,
+            active_work_snap=occupied,
+        )
+    assert refused is not None
+    assert refused["code"] == "seat.wire_id_not_in_census"
+    assert refused["data"]["reason"] == "wire_id_not_in_census"
+
+    audit: dict[str, object] = {}
+    with patch(
+        "claude_bundles.hop_seat_cutover.load_watches",
+        return_value={_LANE_T: {"thread_id": _LANE_T}},
+    ):
+        admitted = gate_request_admission(
+            thread_id=_LANE_T,
+            caller_registration_id="attended-wire",
+            active_work_snap={"rows": [], "seated_rows": []},
+            audit=audit,
+        )
+    assert admitted is None
+    assert audit["census_mismatch"] is True
+
+
+def test_watch_retired_ids_leave_successor_as_sole_census_match() -> None:
+    from claude_bundles.request_admission_identity import (
+        resolve_request_admission_identity,
+    )
+
+    snap = {
+        "rows": [],
+        "seated_rows": [_census_row("successor-7"), _census_row("successor-8")],
+    }
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={
+                _LANE_T: {
+                    "thread_id": _LANE_T,
+                    "retired_registration_ids": ["successor-7"],
+                }
+            },
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+    ):
+        identity = resolve_request_admission_identity(
+            thread_id=_LANE_T,
+            caller_registration_id=None,
+            active_work_snap=snap,
+        )
+    assert identity.census_n == 1
+    assert identity.match_registration_ids == ("successor-8",)
+    assert identity.registration_id == "successor-8"

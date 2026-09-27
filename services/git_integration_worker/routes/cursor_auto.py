@@ -218,6 +218,38 @@ async def enqueue(body: EnqueueBody, request: Request):
             },
         )
     queue = get_queue()
+    from claude_bundles.request_admission_identity import gate_request_admission
+
+    wire_audit: dict[str, Any] = {}
+    wire_id = (body.cse_registration_id or "").strip()
+    wire_refusal = (
+        gate_request_admission(
+            thread_id=body.thread_id,
+            caller_registration_id=wire_id,
+            from_agent=body.from_agent,
+            audit=wire_audit,
+        )
+        if wire_id
+        else None
+    )
+    if (
+        wire_refusal is not None
+        and wire_refusal.get("code") == "seat.wire_id_not_in_census"
+    ):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "code": wire_refusal.get("code"),
+                "reason": (
+                    wire_refusal.get("data", {}).get("reason")
+                    if isinstance(wire_refusal.get("data"), dict)
+                    else wire_refusal.get("code")
+                ),
+                "admission": wire_refusal,
+                "census_mismatch": bool(wire_audit.get("census_mismatch")),
+            },
+        )
     is_hop, matched_token = is_continuity_hop_request(
         body.body, wire_flag=bool(body.continuity_hop)
     )
@@ -461,5 +493,6 @@ async def enqueue(body: EnqueueBody, request: Request):
             "queue_position": waiter["queue_position"],
             "queued_age_s": waiter["queued_age_s"],
             "queue": queue.snapshot(),
+            "census_mismatch": bool(wire_audit.get("census_mismatch")),
         },
     )
