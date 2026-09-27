@@ -993,3 +993,152 @@ def test_watch_retired_ids_leave_successor_as_sole_census_match() -> None:
     assert identity.census_n == 1
     assert identity.match_registration_ids == ("successor-8",)
     assert identity.registration_id == "successor-8"
+
+
+def test_dispatch_link_reconcile_flips_holder_and_thread_together(
+    ledger: CursorDispatchLedger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live-hop link seats the successor and binds the thread in one reconcile.
+
+    A later chat_url on a different execution is not the live hop. The live
+    execution with no chat_url leaves the predecessor driving.
+    """
+    import json
+
+    from agent_bus_store.db import admit_dispatch, create_thread_with_turn, init_db
+    from agent_bus_store.db.cse_associations import associate_cse, get_current_cse
+    from agent_bus_store.db.threads_atomic import update_dispatch_link_chat_url
+
+    from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
+        reconcile_succession_confirmations,
+    )
+
+    monkeypatch.setenv("GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    thread_row, *_ = create_thread_with_turn(
+        slug="link-seat",
+        from_agent="dispatch",
+        to_agent="web-anthropic",
+        subject="hop lane",
+        body="body",
+        lifecycle_state="pending",
+    )
+    lane = str(thread_row["id"])
+    birth = "b" * 32
+    pred_reg = "c9b6e8ba" * 4
+    live_exec = "b7cade49-513a-4c83-b5a3-28c0a7657663"
+    decoy_exec = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    successor_url = "https://claude.ai/cowork/cse_successorLink1"
+    decoy_url = "https://claude.ai/cowork/cse_decoyOlderHop1"
+    pred_url = "https://claude.ai/cowork/cse_predecessorDrv1"
+    associate_cse(
+        thread_id=lane,
+        cse_chat_url=pred_url,
+        cse_registration_id=pred_reg,
+        bound_by="test",
+        evidence="predecessor",
+    )
+    admit_dispatch(
+        thread_id=lane,
+        execution_id=live_exec,
+        pipeline_id="team-dispatch",
+        caller_agent="dispatch",
+    )
+    admit_dispatch(
+        thread_id=lane,
+        execution_id=decoy_exec,
+        pipeline_id="team-dispatch",
+        caller_agent="dispatch",
+    )
+    assert (
+        update_dispatch_link_chat_url(
+            thread_id=lane,
+            execution_id=decoy_exec,
+            chat_url=decoy_url,
+            now_ts="2026-09-27T20:22:00Z",
+        )
+        == 1
+    )
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        upsert_holder(
+            conn,
+            chat_url=pred_url,
+            registration_id=pred_reg,
+            execution_id="exec-pred",
+            lane_thread_id=lane,
+        )
+        conn.commit()
+    watch_file = tmp_path / "watches.json"
+    watch_file.write_text(
+        json.dumps(
+            {
+                lane: {
+                    "thread_id": lane,
+                    "registration_id": pred_reg,
+                    "successor_birth_id": birth,
+                    "successor_execution_id": live_exec,
+                    "pending_succession": {"execution_id": live_exec},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    held = reconcile_succession_confirmations(
+        watches_path=watch_file,
+        snapshot_reader=lambda: {"rows": []},
+    )
+    assert held["link_seats"][0]["reason"] == "no_dispatch_link"
+    with ledger._connect() as conn:
+        driving = conn.execute(
+            "SELECT registration_id FROM cse_session_holders "
+            "WHERE lane_thread_id=? AND seat_state='driving'",
+            (lane,),
+        ).fetchall()
+    assert [row["registration_id"] for row in driving] == [pred_reg]
+    assert get_current_cse(thread_id=lane)["cse_registration_id"] == pred_reg
+
+    assert (
+        update_dispatch_link_chat_url(
+            thread_id=lane,
+            execution_id=live_exec,
+            chat_url=successor_url,
+            now_ts="2026-09-27T20:20:07Z",
+        )
+        == 1
+    )
+    flipped = reconcile_succession_confirmations(
+        watches_path=watch_file,
+        snapshot_reader=lambda: {"rows": []},
+    )
+    seat = flipped["link_seats"][0]
+    assert seat["holders_seated"] is True
+    assert seat["thread_bound"] is True
+    assert seat["superseded_holder_ids"]
+    assert seat["successor_registration_id"] == birth
+    assert seat["successor_chat_url"] == successor_url
+    with ledger._connect() as conn:
+        driving = conn.execute(
+            "SELECT registration_id, chat_url, execution_id "
+            "FROM cse_session_holders "
+            "WHERE lane_thread_id=? AND seat_state='driving'",
+            (lane,),
+        ).fetchall()
+        pred = conn.execute(
+            "SELECT seat_state, superseded_by FROM cse_session_holders "
+            "WHERE registration_id=?",
+            (pred_reg,),
+        ).fetchone()
+    assert len(driving) == 1
+    assert driving[0]["registration_id"] == birth
+    assert driving[0]["chat_url"] == successor_url
+    assert driving[0]["execution_id"] == live_exec
+    assert pred is not None
+    assert pred["seat_state"] == "superseded"
+    assert pred["superseded_by"] == birth
+    current = get_current_cse(thread_id=lane)
+    assert current["cse_registration_id"] == birth
+    assert current["cse_chat_url"] == successor_url

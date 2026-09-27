@@ -675,6 +675,98 @@ def reconcile_release_obligations(
     return watches, retries
 
 
+def _live_hop_execution_id(row: dict[str, Any]) -> str | None:
+    """Current hop execution on the watch, not an older link on the same thread.
+
+    The pending claim's execution id wins, then ``successor_execution_id``,
+    then ``last_hop_execution_id``. Satellite ids are not dispatch-link keys.
+    A second hop replaces these fields, so the previous hop's link is not read.
+    """
+    pending = row.get("pending_succession")
+    if isinstance(pending, dict):
+        claimed = normalize_id(pending.get("execution_id"))
+        if claimed:
+            return claimed
+    return normalize_id(row.get("successor_execution_id")) or normalize_id(
+        row.get("last_hop_execution_id")
+    )
+
+
+def reconcile_dispatch_link_seats(
+    *,
+    watches_path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Seat successors whose hop execution already has a dispatch-link chat_url.
+
+    Runs without the CDP registry. A row with no link is left on its
+    predecessor and retried next tick. ``link_seat_execution_id`` records
+    a completed holder-and-thread flip so the same execution is not seated
+    again.
+    """
+    from services.git_integration_worker.cursor_auto.cse_seating_hook import (
+        seat_successor_from_dispatch_link,
+    )
+
+    watches = load_watches(watches_path)
+    results: list[dict[str, Any]] = []
+    changed = False
+    for thread_id, row in list(watches.items()):
+        execution_id = _live_hop_execution_id(row)
+        birth = str(row.get("successor_birth_id") or "").strip()
+        if not execution_id or not birth:
+            continue
+        if str(row.get("link_seat_execution_id") or "") == execution_id:
+            continue
+        try:
+            outcome = seat_successor_from_dispatch_link(
+                lane_thread_id=thread_id,
+                execution_id=execution_id,
+                successor_birth_id=birth,
+            )
+        except Exception as exc:  # noqa: BLE001 — one lane must not stop the scan
+            logger.warning(
+                "dispatch-link seat failed thread=%s exec=%s: %s",
+                thread_id,
+                execution_id,
+                exc,
+            )
+            results.append(
+                {
+                    "thread_id": thread_id,
+                    "ok": False,
+                    "reason": "dispatch_link_seat_failed",
+                    "holders_seated": False,
+                    "thread_bound": False,
+                    "superseded_holder_ids": [],
+                }
+            )
+            continue
+        results.append({"thread_id": thread_id, **outcome})
+        if not (outcome.get("ok") and outcome.get("thread_bound")):
+            continue
+        updated = dict(row)
+        updated["link_seat_execution_id"] = execution_id
+        updated["registration_id"] = birth
+        chat = str(outcome.get("successor_chat_url") or "").strip()
+        if chat:
+            updated["chat_url"] = chat
+        retired = [
+            str(item).strip()
+            for item in (updated.get("retired_registration_ids") or [])
+            if str(item).strip()
+        ]
+        for reg in outcome.get("retired_registration_ids") or []:
+            text = str(reg).strip()
+            if text and text != birth and text not in retired:
+                retired.append(text)
+        updated["retired_registration_ids"] = retired
+        watches[thread_id] = updated
+        changed = True
+    if changed:
+        save_watches(watches, watches_path)
+    return results
+
+
 def reconcile_succession_confirmations(
     *,
     watches_path: Path | None = None,
@@ -683,13 +775,22 @@ def reconcile_succession_confirmations(
     release_fn: Callable[[PredecessorHandle], dict[str, Any]] | None = None,
     stamp_poster: Callable[[str, str], None] | None = None,
 ) -> dict[str, Any]:
-    """Observe live active-work membership and advance watch registration ids once."""
+    """Observe live active-work membership and advance watch registration ids once.
+
+    Before the registry gate, seat any hop whose dispatch link already
+    carries a chat_url. An empty registry snap does not skip that pass.
+    """
+    link_seats = reconcile_dispatch_link_seats(watches_path=watches_path)
     ts = time.time() if now is None else now
     try:
         snap = (snapshot_reader or _default_snapshot_reader)()
     except Exception as exc:  # noqa: BLE001 — reconcile must not crash cadence loop
         logger.warning("hop_cadence confirm snapshot failed: %s", exc)
-        return {"confirmations": [], "error": str(exc)}
+        return {
+            "confirmations": [],
+            "error": str(exc),
+            "link_seats": link_seats,
+        }
     if not isinstance(snap, dict):
         snap = {}
     watches = load_watches(watches_path)
@@ -837,6 +938,7 @@ def reconcile_succession_confirmations(
         "errors": errors,
         "releases": releases,
         "obligation_retries": obligation_retries,
+        "link_seats": link_seats,
     }
 
 
@@ -860,6 +962,7 @@ __all__ = [
     "confirm_succession_claim",
     "persist_release_obligation",
     "query_generate_events_since",
+    "reconcile_dispatch_link_seats",
     "reconcile_release_obligations",
     "reconcile_stall_revocations",
     "reconcile_succession_confirmations",
