@@ -79,7 +79,7 @@ def read_fleet_registry(*, force_refresh: bool = False) -> dict[str, Any]:
             return dict(_cached_doc)
     try:
         doc = _fetch_registry_document()
-    except OSError:
+    except (OSError, http.client.HTTPException, ValueError):
         doc = _unavailable()
     with _cache_lock:
         _cached_doc = dict(doc)
