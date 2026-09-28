@@ -162,14 +162,19 @@ def op_row_for_execution_on_lane(
     thread_id: str,
     execution_id: str,
 ) -> dict[str, Any] | None:
-    """Return the live OP row on ``thread_id`` whose ``execution_id`` matches."""
+    """Return the live OP row on ``thread_id`` whose execution id matches.
+
+    Liveness is ``_row_incumbent_execution_id``: ``stream_state`` when the snap
+    carries it, otherwise ``status`` of ``running``/``pending``. Join-half heal
+    reads the same store rows predecessor capture does; a status-only commission
+    row is live.
+    """
     lane = (thread_id or "").strip()
     target = (execution_id or "").strip()
     if not lane or not target:
         return None
     for row in identity_rows(snap):
-        stream_state = str(row.get("stream_state") or "")
-        if not is_live_stream_state(stream_state):
+        if _row_incumbent_execution_id(row) != target:
             continue
         purpose = str(row.get("purpose") or "").strip().lower()
         if purpose not in _OP_PURPOSES:
@@ -177,9 +182,7 @@ def op_row_for_execution_on_lane(
         row_lane = str(row.get("parent_thread") or "").strip()
         if row_lane != lane:
             continue
-        exec_id = str(row.get("execution_id") or "").strip()
-        if exec_id == target:
-            return row
+        return row
     return None
 
 

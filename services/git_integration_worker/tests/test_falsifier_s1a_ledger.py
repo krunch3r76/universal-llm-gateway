@@ -31,12 +31,20 @@ def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _req(**overrides: object) -> CursorDispatchRequest:
+    """Distinct message per dispatch_id.
+
+    ``work_fingerprint`` is content identity and excludes ``dispatch_id``
+    (``CursorDispatchLedger.work_fingerprint``). Lease and nest fixtures are
+    distinct work, so the body must differ or admit raises ``SourceRefConflict``
+    before the lease gate.
+    """
+    dispatch_id = str(overrides.get("dispatch_id", "disp-1"))
     base = {
         "thread_id": "t1",
         "model": "cursor/composer-2.5",
         "dispatch_id": "disp-1",
         "execution_id": "exec-disp-1",
-        "message": "hello",
+        "message": f"hello-{dispatch_id}",
     }
     base.update(overrides)
     return CursorDispatchRequest(**base)
@@ -76,7 +84,11 @@ def _admit(
 
 
 def test_falsifier_ac3_ledger_distinct_lease_key_parallel_admit() -> None:
-    """AC3 (ledger layer): distinct lease_key values both reach admitted."""
+    """AC3 (ledger layer): distinct lease_key values both reach admitted.
+
+    The second admit uses another thread_id: one worker thread holds one live
+    dispatch (``WorkerThreadOccupied``), which is not the lease under test.
+    """
     ledger = CursorDispatchLedger.instance()
     shared_repo = "/mnt/torus/projects/universal-llm-gateway"
     key_a = "/tmp/worktree-a"
@@ -93,7 +105,7 @@ def test_falsifier_ac3_ledger_distinct_lease_key_parallel_admit() -> None:
     )
     second = _admit(
         ledger,
-        _req(dispatch_id="iso-b"),
+        _req(dispatch_id="iso-b", thread_id="t-iso-b"),
         source_repo=shared_repo,
         lease_key=key_b,
     )

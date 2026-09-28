@@ -2175,11 +2175,23 @@ def test_active_work_busy_with_running_dispatch(client: TestClient) -> None:
     assert data["busy"] is True
 
 
+def _route_writer_lease() -> str:
+    """Lease key the HTTP admit path stores for Lane A.
+
+    ``admit_cursor_dispatch`` sets ``lease_key`` from the launch workspace
+    (``2d1f6d5813``, ``cursor_sdk.py``), not from ``lane_a_lease_key``.
+    """
+    from services.git_integration_worker.config import load_config
+
+    return str(load_config().dispatch_workspace.resolve())
+
+
 def _seed_active_writer(
     *,
     dispatch_id: str = "active-writer",
     contract: str = "implement",
     worker_instance: str = "lazy",
+    lease_key: str | None = None,
 ) -> None:
     ledger = CursorDispatchLedger.instance()
     req = CursorDispatchRequest(
@@ -2208,6 +2220,7 @@ def _seed_active_writer(
         source_repo=source_repo,
         contract=contract,
         worker_instance=worker_instance,
+        lease_key=lease_key,
     )
 
 
@@ -2421,8 +2434,8 @@ def test_implement_composer_admits(_mock_task: MagicMock, client: TestClient) ->
     return_value=MagicMock(done=lambda: False),
 )
 def test_second_implement_writer_202(_mock_task: MagicMock, client: TestClient) -> None:
-    """AC1: second implement writer on same repo returns 202 queued."""
-    _seed_active_writer(dispatch_id="impl-active")
+    """AC1: second implement writer on the route lease returns 202 queued."""
+    _seed_active_writer(dispatch_id="impl-active", lease_key=_route_writer_lease())
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
@@ -2441,8 +2454,17 @@ def test_second_implement_writer_202(_mock_task: MagicMock, client: TestClient) 
     return_value=MagicMock(done=lambda: False),
 )
 def test_second_writer_202(_mock_task: MagicMock, client: TestClient) -> None:
-    """AC1: second non-read-only writer while lease held returns 202 queued."""
-    _seed_active_writer(dispatch_id="writer-active", contract="none")
+    """AC1: second non-read-only writer while lease held returns 202 queued.
+
+    Contract ``none`` is lease-exempt unless ``read_only`` is set
+    (``_effective_read_only``). This AC is a writer, so the body sets
+    ``read_only=False``.
+    """
+    _seed_active_writer(
+        dispatch_id="writer-active",
+        contract="none",
+        lease_key=_route_writer_lease(),
+    )
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
@@ -2450,6 +2472,7 @@ def test_second_writer_202(_mock_task: MagicMock, client: TestClient) -> None:
             execution_id="exec-writer-second",
             handoff_contract="none",
             message="---\ncontract: none\n---\nsecond writer",
+            read_only=False,
         ),
     )
     assert resp.status_code == 202
