@@ -348,7 +348,9 @@ Two legal states for `agent_bus.request(thread=…)` / `cursor_request(thread=�
 | **continue-while-running** | N=1 active-work row | `origin_cse` or `single_seat_active_work` | Prior Auto job still `queued` or `claimed` on that thread. Queued reaches `queue_withdraw`; claimed reaches `run_cancel` or `pre_register_live_run` |
 | **resume-after-terminal** | N=0 after `terminal_done` / `terminal_failed` | `watch_resume` → `mailbox_resume` → `cse_resume` → `origin_cse` | Prior job finished; a watch holder, mailbox, bus CSE, or origin CSR names the seat |
 
-Watch `registration_id` is lease SOT for hop **and** resume identity when `census_n==0`. It is **ignored** when `census_n==1` (continue path unchanged). A watch dict with no `registration_id` is an enroll stub, not a holder: N=0 admits, the same way an unwatched cursor-auto lane does. Do not copy a parent lane's registration onto that stub.
+The N=1 row for a **queued** incumbent uses `stream_state=running` with `source=cursor-auto-queued`. That is a **census membership bit** (`identity_rows` counts live stream state) — not a claim that a process is running. Supersede still chooses `queue_withdraw` from `job.status == queued`, not from canceling a nonexistent process.
+
+When `census_n==0`, a watch row that **holds** a `registration_id` is lease SOT for hop and resume identity. The watch row is **ignored** for continue binding when `census_n==1` (unchanged). A watch dict with **no** `registration_id` is an enroll stub, not a holder: the gate **admits** with `registration_id=None` (the identity projection may still classify `zero_matches` / `empty_snap` — that is not `seat.identity_unresolvable`). Same as an unwatched cursor-auto lane. Do **not** copy a parent lane's `registration_id` onto that stub (parent-holder fallback is rejected).
 
 When no resume identity exists **and** the watch holds a `registration_id`, admission returns `seat.identity_unresolvable` with `retryable:false` — that is a **pivot**, not a retry loop. Escape: `new_slug` + `parent_thread` + `lane_role=sub_mission` (child-thread fallback), not hammering the same `thread=` admission.
 
