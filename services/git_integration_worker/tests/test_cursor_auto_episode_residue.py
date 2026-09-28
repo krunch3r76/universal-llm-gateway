@@ -95,6 +95,8 @@ def test_residue_install_plugin_for_plugin_rule_path():
     block = residue_for_closeout(payload)
     assert block is not None
     assert "install_plugin" in block
+    assert 'HOME=$(getent passwd "$(id -un)" | cut -d: -f6)' in block
+    assert "dispatch_home_host_guard" in block
 
 
 def test_residue_sync_restart_before_install_plugin():

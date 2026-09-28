@@ -185,8 +185,11 @@ def test_repo_overlay_sot_is_present_and_named() -> None:
     assert "caller_must_exit" not in drain  # lead-envelope vocabulary stays out
 
     # The one surviving skill-surface duty: SoT edit implies install in the same run.
+    # Dispatch HOME is an overlay; the obligated command is the passwd-HOME re-invoke.
     surface = (root / "rules" / "skill-surface_ulg.mdc").read_text(encoding="utf-8")
     assert "install-ecosystem-plugin.sh" in surface
+    assert 'HOME="$(getent passwd "$(id -un)" | cut -d: -f6)"' in surface
+    assert "dispatch_home_host_guard" in surface
     assert "Reload Window" not in surface.split("## Invariant", 1)[1]
 
 
