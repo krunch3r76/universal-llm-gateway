@@ -15,6 +15,9 @@ Friction notes (keep when generalizing):
   composer/chat-input text must not false-fire the banner regex.
 - Completion is **structural** (new turn + idle + stable), not min_body/min_growth
   length gates — short replies are valid harvest products (operator bind 2026-07-18).
+  A tool-badge body is not that reply. ``streaming`` pauses between tools, so
+  ``¬streaming`` plus a badge must not complete. The dispatch's proof is the
+  later agent-bus reply, which is posted only after this wait returns.
 - Friction 24666: ``timeout_s`` is an *idle* budget. While Stop / streaming /
   tool_pause is present the idle clock pauses — no wall ceiling (long Cowork
   tool-runs may run arbitrarily long). Idle with no completion still raises.
@@ -32,6 +35,7 @@ import time
 from collections.abc import Awaitable, Callable
 
 from cdp_ask.structural_quiet import StructuralQuietTracker
+from chat_harvest.chrome import is_chrome_only
 
 HARVEST_JS = """
 ({ minMsgChars }) => {
@@ -294,6 +298,15 @@ def _in_flight(state: dict) -> bool:
     return bool(state.get("streaming") or state.get("stop") or state.get("tool_pause"))
 
 
+def _badge_only_body(state: dict) -> bool:
+    """True when the scrape is tool-badge chrome, not assistant prose.
+
+    Cowork drops ``data-is-streaming`` between tool calls. That pause is not
+    the end of the turn, and it is not the agent-bus proof reply.
+    """
+    return is_chrome_only(str(state.get("body") or ""))
+
+
 def _error_banner_message(state: dict, *, on_timeout: bool = False) -> str:
     """Human-readable HarvestIncomplete detail including matched banner text."""
     kind = "error_banner on timeout" if on_timeout else "error_banner detected"
@@ -340,6 +353,8 @@ def _complete_enough(
     ``min_growth`` / ``min_body`` remain for call-site compat; ignored here.
     """
     del min_growth, min_body, base_len
+    if _badge_only_body(state):
+        return False
     cur_len = state.get("body_len", 0)
     cur_n = state.get("n", 0)
     in_flight = _in_flight(state) and not ignore_in_flight
@@ -371,7 +386,7 @@ def _cowork_complete_enough(
     del min_body, min_growth
     cur_len = state.get("body_len", 0)
     cur_n = state.get("n", 0)
-    if cur_len < 1:
+    if cur_len < 1 or _badge_only_body(state):
         return False
 
     grew_n = cur_n > base_n

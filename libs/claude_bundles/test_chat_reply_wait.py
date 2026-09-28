@@ -9,6 +9,7 @@ import pytest
 
 from claude_bundles.chat_reply_wait import (
     HarvestIncomplete,
+    _complete_enough,
     _cowork_complete_enough,
     _in_flight,
     _is_user_prompt_echo,
@@ -461,6 +462,37 @@ async def test_structural_quiet_task_map_working_vetoes_both_tiers(
     assert tracker.quiet_satisfied
     tracker.observe(working)
     assert not tracker.quiet_satisfied
+
+
+def test_streaming_pause_on_tool_badge_is_not_complete() -> None:
+    """A streaming pause that leaves only a tool badge is not the bus reply."""
+    badge = "Loaded tools, ran a command"
+    state = _state(body_len=len(badge), n=1, streaming=False, stop=False, body=badge)
+    assert (
+        _complete_enough(
+            state,
+            base_len=0,
+            base_n=0,
+            min_growth=1,
+            min_body=1,
+        )
+        is False
+    )
+    cowork = {
+        **state,
+        "url": "https://claude.ai/cowork/cse_018abc",
+    }
+    assert (
+        _cowork_complete_enough(
+            cowork,
+            base_len=0,
+            base_n=0,
+            min_growth=1,
+            min_body=1,
+            saw_working=True,
+        )
+        is False
+    )
 
 
 def test_cowork_complete_enough_rejects_len_growth_without_n() -> None:
