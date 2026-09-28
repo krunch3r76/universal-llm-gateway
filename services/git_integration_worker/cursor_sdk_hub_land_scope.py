@@ -24,6 +24,49 @@ _HUB_LAND_SCOPED_OUT_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+def ff_only_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
+    """Fast-forward the hub ``master`` checkout to ``branch_name``.
+
+    Returns True only when that branch is an ancestor of hub master afterward.
+    A dirty hub tree, a non-fast-forward, a missing ref, or a branch with no
+    commits ahead of master returns False and leaves HEAD where it was.
+    Side effects: ``git merge --ff-only`` on the hub master worktree when the
+    preconditions hold.
+    """
+    branch = (branch_name or "").strip()
+    if not branch or branch == "master":
+        return False
+    hub = resolve_hub_git_repo(repo)
+    head = _git_capture(hub, "rev-parse", "--abbrev-ref", "HEAD")
+    if head.returncode != 0 or head.stdout.strip() != "master":
+        return False
+    porcelain = _git_capture(hub, "status", "--porcelain=v1")
+    if porcelain.returncode != 0 or porcelain.stdout.strip():
+        return False
+    ahead = _git_capture(hub, "rev-list", "--count", f"master..{branch}")
+    if ahead.returncode != 0 or not ahead.stdout.strip().isdigit():
+        return False
+    if int(ahead.stdout.strip()) < 1:
+        return False
+    tip = _git_capture(hub, "rev-parse", "--verify", f"{branch}^{{commit}}")
+    if tip.returncode != 0 or not tip.stdout.strip():
+        return False
+    merged = _git_capture(hub, "merge", "--ff-only", branch)
+    if merged.returncode != 0:
+        return False
+    return commit_is_ancestor_of_hub_master(hub, tip.stdout.strip()) is True
+
+
+def _git_capture(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+
+
 def packet_hub_land_scoped_out(prose: str | None) -> bool:
     """True when the packet explicitly excludes hub land from this dispatch's scope.
 

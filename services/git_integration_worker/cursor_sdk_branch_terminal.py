@@ -146,6 +146,55 @@ def _open_debt(
     )
 
 
+def maybe_ff_land_silent_lane(
+    *,
+    repo: Path,
+    branch_name: str,
+    dispatch_id: str,
+    packet_text: str | None,
+    closeout_text: str | None,
+    commits_ahead: int | None,
+) -> bool:
+    """Fast-forward a silent in-scope lane onto hub master.
+
+    Exploratory packets (``do not hub-land``), any declared disposition, a
+    read-only admit, and a branch with nothing ahead are left untouched.
+    Returns True only when hub master now contains the branch tip.
+    Side effects: may fast-forward the hub master worktree.
+    """
+    if (commits_ahead or 0) < 1:
+        return False
+    if _dispatch_read_only(dispatch_id):
+        return False
+    from services.git_integration_worker.cursor_sdk_hub_land_scope import (
+        ff_only_onto_hub_master,
+        packet_hub_land_scoped_out,
+    )
+
+    if packet_hub_land_scoped_out(packet_text):
+        return False
+    verb, _reason, _sha = parse_land_disposition(closeout_text)
+    if verb is not None:
+        return False
+    return ff_only_onto_hub_master(repo, branch_name=branch_name)
+
+
+def _dispatch_read_only(dispatch_id: str) -> bool:
+    """True when this admit is read-only, or when the flag cannot be read."""
+    try:
+        from services.git_integration_worker.cursor_dispatch_ledger import (
+            CursorDispatchLedger,
+        )
+
+        return CursorDispatchLedger.instance().read_read_only(dispatch_id=dispatch_id)
+    except Exception:
+        logger.warning(
+            "lane_b ff-land skipped; read_only unreadable dispatch_id=%s",
+            dispatch_id,
+        )
+        return True
+
+
 def settle_lane_branch(
     *,
     source_repo: Path,
@@ -157,6 +206,7 @@ def settle_lane_branch(
     landed: bool | None,
     head_sha: str | None = None,
     files: list[str] | None = None,
+    packet_text: str | None = None,
 ) -> LaneBranchSettlement:
     """Discharge the lane branch on declaration, else record the debt.
 
@@ -176,6 +226,7 @@ def settle_lane_branch(
             landed=landed,
             head_sha=head_sha,
             files=files,
+            packet_text=packet_text,
         )
     except Exception as exc:
         logger.warning(
@@ -202,6 +253,7 @@ def _settle(
     landed: bool | None,
     head_sha: str | None,
     files: list[str] | None,
+    packet_text: str | None,
 ) -> LaneBranchSettlement:
     verb, reason, unlanded_sha = parse_land_disposition(closeout_text)
 
@@ -252,6 +304,42 @@ def _settle(
         )
 
     if (commits_ahead or 0) >= 1 and landed is not True:
+        if maybe_ff_land_silent_lane(
+            repo=source_repo,
+            branch_name=branch_name,
+            dispatch_id=dispatch_id,
+            packet_text=packet_text,
+            closeout_text=closeout_text,
+            commits_ahead=commits_ahead,
+        ):
+            result = discharge(
+                repo=source_repo,
+                branch_name=branch_name,
+                verb=DISCHARGE_LANDED,
+                completing_dispatch_id=dispatch_id,
+            )
+            if result.inherited:
+                return LaneBranchSettlement(
+                    outcome="inherited",
+                    branch=branch_name,
+                    verb=result.verb,
+                    detail=result.refused_reason,
+                )
+            if result.discharged:
+                remove_land_required_tag(thread_id=thread_id)
+                return LaneBranchSettlement(
+                    outcome="discharged",
+                    branch=branch_name,
+                    verb=result.verb,
+                    archive_tag=result.archive_tag,
+                )
+            # Bytes are on master. A checked-out lane ref is not a strand.
+            return LaneBranchSettlement(
+                outcome="ff_landed",
+                branch=branch_name,
+                verb=DISCHARGE_LANDED,
+                detail=result.refused_reason,
+            )
         return _open_debt(
             source_repo=source_repo,
             branch_name=branch_name,

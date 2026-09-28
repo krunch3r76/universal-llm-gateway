@@ -198,7 +198,7 @@ def test_parse_land_disposition(
 # --- terminal: declared discharges, silence opens debt -----------------------
 
 
-def test_undeclared_terminal_opens_attributed_debt(repo: Path) -> None:
+def test_undeclared_terminal_ff_lands_clean_hub(repo: Path) -> None:
     tip = _branch_with_change(
         repo, branch="cursor-sdk/lane-7229", path="a.py", content="x = 1\n"
     )
@@ -213,6 +213,34 @@ def test_undeclared_terminal_opens_attributed_debt(repo: Path) -> None:
         head_sha=tip,
         files=["a.py"],
     )
+    assert settlement.outcome == "discharged"
+    assert settlement.verb == "landed"
+    ancestor = subprocess.run(
+        ["git", "-C", str(repo), "merge-base", "--is-ancestor", tip, "HEAD"],
+        capture_output=True,
+        check=False,
+    )
+    assert ancestor.returncode == 0
+    assert (repo / "a.py").read_text(encoding="utf-8") == "x = 1\n"
+    assert list_open_debts() == []
+
+
+def test_scoped_out_silence_still_opens_debt(repo: Path) -> None:
+    tip = _branch_with_change(
+        repo, branch="cursor-sdk/lane-7229", path="a.py", content="x = 1\n"
+    )
+    settlement = settle_lane_branch(
+        source_repo=repo,
+        branch_name="cursor-sdk/lane-7229",
+        thread_id="7229",
+        dispatch_id="d-1",
+        closeout_text="did the work, no disposition line",
+        packet_text="intent: do not hub-land; leave the branch",
+        commits_ahead=1,
+        landed=False,
+        head_sha=tip,
+        files=["a.py"],
+    )
     assert settlement.outcome == "debt_opened"
     debt = get_branch_debt(branch_name="cursor-sdk/lane-7229")
     assert debt is not None
@@ -220,8 +248,29 @@ def test_undeclared_terminal_opens_attributed_debt(repo: Path) -> None:
     assert debt.thread_id == "7229"
     assert debt.dispatch_id == "d-1"
     assert debt.tip_sha == tip
-    # Evidence preserved: the branch is not touched when a debt opens.
     assert "cursor-sdk/lane-7229" in _branches(repo)
+    assert not (repo / "a.py").exists()
+
+
+def test_dirty_hub_silence_does_not_ff(repo: Path) -> None:
+    tip = _branch_with_change(
+        repo, branch="cursor-sdk/lane-7230", path="a.py", content="x = 1\n"
+    )
+    (repo / "foreign.py").write_text("peer\n", encoding="utf-8")
+    settlement = settle_lane_branch(
+        source_repo=repo,
+        branch_name="cursor-sdk/lane-7230",
+        thread_id="7230",
+        dispatch_id="d-dirty",
+        closeout_text="status: complete",
+        commits_ahead=1,
+        landed=False,
+        head_sha=tip,
+        files=["a.py"],
+    )
+    assert settlement.outcome == "debt_opened"
+    assert "cursor-sdk/lane-7230" in _branches(repo)
+    assert not (repo / "a.py").exists()
 
 
 def test_declared_landed_discharges_when_master_has_the_content(repo: Path) -> None:
@@ -712,6 +761,7 @@ def test_settle_open_debt_adds_land_required_tag(
         thread_id="7421",
         dispatch_id="d-7421",
         closeout_text="status: partial",
+        packet_text="do not hub-land",
         commits_ahead=1,
         landed=False,
         head_sha=tip,

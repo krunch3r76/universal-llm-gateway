@@ -222,9 +222,13 @@ _LANE_B_BRANCH_CONTRACT_TEMPLATE = (
     "abandoned. A recorded reason is a complete, honest outcome.\n"
     "  - `land_disposition: unlanded <tip sha>` — hub land was out of packet "
     "scope; work stays on the lane branch at the cited tip.\n"
-    "Omitting the line while your branch carries commits master lacks grades the "
-    "closeout `partial` with `land:lane_b_unlanded` and opens the debt. Both "
-    "declared outcomes archive the tip first, so neither loses work."
+    "Omitting the line while the branch carries commits master lacks, and the "
+    "packet did not scope hub land out, fast-forwards that branch onto hub "
+    "master when the hub tree is clean. A dirty tree or a non-fast-forward "
+    "grades the closeout `partial` with `land:lane_b_unlanded` and opens the "
+    "debt. `do not hub-land` keeps the branch; declare "
+    "`land_disposition: unlanded <tip sha>` so that stay is complete. "
+    "Declared discard and unlanded archive the tip first, so neither loses work."
 )
 
 _CONTINUITY_ROOT_TEMPLATE = (
