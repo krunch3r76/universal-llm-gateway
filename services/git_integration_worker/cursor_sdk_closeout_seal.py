@@ -21,6 +21,19 @@ from services.git_integration_worker.cursor_sdk_events import emit_frontier_even
 
 _USAGE_SCOPE = "this dispatch token accounting"
 _USAGE_AUTHORITY = "recorded"
+
+# a:36755 / arc closeout-files-fields-need-a-scope-token — files_* answer
+# authorship/ambient repo attribution; effects[] answers dispatch action movement.
+FILES_ATTRIBUTION_SCOPE = (
+    "repo paths in this closeout files_* fields (authored ChangeSet and ambient movement)"
+)
+FILES_ATTRIBUTION_AUTHORITY = "recorded"
+_FILES_LIST_KEYS = (
+    "files_created",
+    "files_modified",
+    "files_deleted",
+    "files_ambient_repo_movement",
+)
 _USAGE_TOKEN_KEYS = (
     "input_tokens",
     "output_tokens",
@@ -145,6 +158,35 @@ def _qualify_surface_counts(payload: dict[str, Any]) -> None:
         )
 
 
+def _qualify_files_attribution_lists(payload: dict[str, Any]) -> None:
+    """Declare scope on files_* path lists (authorship vs effects[] movement)."""
+    for key in _FILES_LIST_KEYS:
+        if key not in payload:
+            continue
+        payload.setdefault(f"{key}_scope", FILES_ATTRIBUTION_SCOPE)
+        payload.setdefault(f"{key}_authority", FILES_ATTRIBUTION_AUTHORITY)
+
+
+def closeout_files_attribution_declared(payload: dict[str, Any]) -> bool:
+    """True when every present files_* list carries the authorship scope siblings."""
+    for key in _FILES_LIST_KEYS:
+        if key not in payload:
+            continue
+        if payload.get(f"{key}_scope") != FILES_ATTRIBUTION_SCOPE:
+            return False
+        if payload.get(f"{key}_authority") != FILES_ATTRIBUTION_AUTHORITY:
+            return False
+    return True
+
+
+def closeout_git_authorship_lists_empty(payload: dict[str, Any]) -> bool:
+    """True when all files_* path lists are empty (authorship census only)."""
+    for key in _FILES_LIST_KEYS:
+        if payload.get(key):
+            return False
+    return True
+
+
 @event_factory
 def CloseoutSealRefused(path: str, surface: str) -> Event:  # noqa: N802
     return Event(
@@ -166,6 +208,7 @@ def seal_closeout_payload(payload: dict[str, Any]) -> dict[str, Any]:
         )
     _qualify_usage_tokens(payload)
     _qualify_surface_counts(payload)
+    _qualify_files_attribution_lists(payload)
     _qualify_authority_fork(payload)
     _qualify_dense_spec_valid(payload)
     try:
