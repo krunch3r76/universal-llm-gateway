@@ -65,6 +65,31 @@ def register_supervise_task(service: str, task: asyncio.Task[None]) -> None:
     task.add_done_callback(_drop)
 
 
+async def cancel_or_join_supervise_task(service: str, *, join_s: float = 0.5) -> None:
+    """Join a live supervise task, or cancel it when it does not exit.
+
+    Recycle uses this before driving the same intent. Cancel raises
+    ``CancelledError`` inside ``supervise``, which does not call the kill
+    callable. It does not send a signal.
+    """
+    task = _SUPERVISE_BY_SERVICE.get(service)
+    if task is None or task.done():
+        return
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=join_s)
+    except TimeoutError:
+        pass
+    else:
+        return
+    if task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        return
+
+
 async def wait_supervise_exit(service: str, *, timeout_s: float = 15.0) -> bool:
     """Wait until the service's supervise task has released the restart mutex."""
     task = _SUPERVISE_BY_SERVICE.get(service)

@@ -47,7 +47,8 @@ async def drain_stop_git_worker(ctl: ServiceController) -> str:
         return await ctl.git_worker_kill_for("stop")()
 
     supervisor = ctl.build_git_worker_drain_supervisor(
-        kill=ctl.git_worker_kill_for("stop")
+        kill=ctl.git_worker_kill_for("stop"),
+        action="stop",
     )
     result = await run_gated_drain_supervised_blocking(
         ctl.restart_gate,

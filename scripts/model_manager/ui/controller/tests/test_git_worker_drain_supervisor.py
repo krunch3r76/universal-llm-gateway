@@ -1077,9 +1077,9 @@ def test_probe_failure_streak_emits_unreachable_once_without_kill(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """E1: sustained probe failure alerts once; no converge, idle, or kill."""
-    import scripts.model_manager.ui.controller.git_worker_drain_supervisor as sup_mod
+    import scripts.model_manager.ui.controller.git_worker_liveness as live_mod
 
-    monkeypatch.setattr(sup_mod, "_PROBE_UNREACHABLE_WINDOW_S", 0.03)
+    monkeypatch.setattr(live_mod, "PROBE_UNREACHABLE_WINDOW_S", 0.03)
     store = _store(tmp_path)
     intent = store.create_intent(
         service=_SERVICE, action="restart", deadline_at="d", reason="r"

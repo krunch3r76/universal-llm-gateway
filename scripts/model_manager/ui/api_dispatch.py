@@ -464,7 +464,8 @@ async def sync_restart_charter_harvest(
 
     if service == "git_integration_worker":
         supervisor = ctl.build_git_worker_drain_supervisor(
-            kill=ctl.git_worker_kill_for("sync_restart")
+            kill=ctl.git_worker_kill_for("sync_restart"),
+            action="sync_restart",
         )
         result = await run_gated_drain_supervised_blocking(
             ctl.restart_gate,
@@ -621,7 +622,8 @@ async def _git_worker_drain_supervised(
     start so the drain converges without waiting on or killing them.
     """
     supervisor = ctl.build_git_worker_drain_supervisor(
-        kill=ctl.git_worker_kill_for(action)
+        kill=ctl.git_worker_kill_for(action),
+        action=action,
     )
     return await run_gated_drain_supervised(
         ctl.restart_gate,

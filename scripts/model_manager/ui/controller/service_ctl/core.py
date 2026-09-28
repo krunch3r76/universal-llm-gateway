@@ -20,7 +20,7 @@ from scripts.model_manager.observation_event import (
 )
 
 from ...model.build_state import BuildState, BuildStatus, ImageInfo
-from ...model.service_state import ServiceState
+from ...model.service_state import ServiceState, ServiceStatus
 from ..git_worker_drain_supervisor import build_git_worker_drain_supervisor
 from ..gpu_docker_preflight import (
     apply_gpu_runtime_env,
@@ -821,10 +821,24 @@ class ServiceController:
             grace = _DEFAULT_GIT_WORKER_SHUTDOWN_GRACE_S
         return max(grace, 0.0) + _GIT_WORKER_SHUTDOWN_BUFFER_S
 
+    async def _git_worker_process_absent(self) -> bool:
+        """True when the health checker reports the worker stopped."""
+        info = await asyncio.to_thread(self._service_state.check_git_integration_worker)
+        return info.status is ServiceStatus.STOPPED
+
+    async def _git_worker_read_pid(self) -> int | None:
+        """Re-read the worker pid after a force-start. None when no process."""
+        info = await asyncio.to_thread(self._service_state.check_git_integration_worker)
+        pid = info.pid
+        if isinstance(pid, bool) or not isinstance(pid, int):
+            return None
+        return pid
+
     def build_git_worker_drain_supervisor(
         self,
         *,
         kill: Callable[[], Awaitable[str]],
+        action: str,
         idle_escalate_s: float | None = None,
         deadline_s: float | None = None,
         park_first: bool = True,
@@ -833,9 +847,13 @@ class ServiceController:
 
         ``kill`` is the action-appropriate terminal lifecycle: ``stop_*`` for a stop
         intent, ``restart_*`` for restart/sync_restart/recycle_giw.
+        ``start`` is passed only for restart, sync_restart, and recycle_giw.
+        A stop drain must not start the worker.
         ``idle_escalate_s`` enables recycle mode (force after occupant idle).
         ``park_first`` wires the GIW ``park-for-restart`` transport (steer-restart).
         """
+        from ..drain_dead_recovery import drain_supervisor_start
+
         return build_git_worker_drain_supervisor(
             self._restart_intent_store,
             worker_url=GIT_INTEGRATION_WORKER_URL,
@@ -843,12 +861,14 @@ class ServiceController:
                 "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
             ),
             kill=kill,
-            start=self.start_git_integration_worker,
+            start=drain_supervisor_start(action, self.start_git_integration_worker),
             deadline_s=_GIT_WORKER_DRAIN_DEADLINE_S
             if deadline_s is None
             else deadline_s,
             idle_escalate_s=idle_escalate_s,
             park_first=park_first,
+            process_absent=self._git_worker_process_absent,
+            read_pid=self._git_worker_read_pid,
         )
 
     def git_worker_kill_for(self, action: str) -> Callable[[], Awaitable[str]]:

@@ -16,11 +16,12 @@ process with claimed occupants is alert-only: ``manage.restart.timeout``
 pages once and the supervisor keep-awaits. Operator bind 2026-07-24
 (todo:manage-busy-drain-restart): do not auto-SIGKILL in-flight work
 (closeout_relay hazard). Occupancy stall of a reachable process never
-SIGTERMs. A target whose snapshot ``pid`` is null, or whose drain probe is
-unreachable for one heartbeat TTL, has no occupant that can progress: the
-supervisor starts it (the ``start`` callable) and does not SIGTERM first.
-The sole occupant force on a reachable process is recycle
-``idle_escalate_s``. Default deadline is 7 days.
+SIGTERMs. A target is dead only when the drain snapshot has been absent
+for one heartbeat TTL and the health/pid probe does not see a process.
+Restart-class actions then start it (the ``start`` callable) and do not
+SIGTERM first. Stop actions complete without starting. The sole occupant
+force on a reachable process is recycle ``idle_escalate_s``. Default
+deadline is 7 days.
 
 Steer-restart v1 (``todo:cursor-sdk-steer-restart``): live cursor-sdk dispatches
 are not a reason to wait or kill. Step 1b — when the intent carries
@@ -50,8 +51,13 @@ from typing import Any
 from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
-from services.git_integration_worker.drain_progress import HEARTBEAT_TTL_S
 
+from . import git_worker_liveness as _liveness
+from .drain_dead_recovery import (
+    START_ON_DEAD_ACTIONS,
+    force_start_and_validate,
+    lifecycle_result_certifies,
+)
 from .drain_timeout_keep_await import timeout_affordances
 from .restart_intent_store import (
     STATUS_CANCELLED,
@@ -59,6 +65,7 @@ from .restart_intent_store import (
     STATUS_DRAINED_RESTARTING,
     STATUS_FAILED,
     STATUS_FORCE_REQUESTED,
+    STATUS_PENDING_DRAIN,
     Intent,
     RestartIntentStore,
 )
@@ -76,8 +83,6 @@ _SUBSCRIBE_URL = "http://localhost/v1/subscribe"
 _DEFAULT_DEADLINE_S = 604800.0  # 7 days
 _DEFAULT_RECONCILE_INTERVAL_S = 2.0
 _DEFAULT_PROGRESS_INTERVAL_S = 30.0
-# Unreachable for one GIW heartbeat TTL ⇒ no occupant can progress; start.
-_PROBE_UNREACHABLE_WINDOW_S = HEARTBEAT_TTL_S
 # Consecutive reconcile polls confirming a different worker generation.
 _GENERATION_GONE_CONFIRM_WINDOW_S = 6.0
 
@@ -148,6 +153,8 @@ class GitWorkerDrainSupervisor:
     idle_escalate_s: float | None = None
     liveness_state: DrainStateCaller | None = None
     park_for_restart: ParkForRestartCaller | None = None
+    process_absent: Callable[[], Awaitable[bool]] | None = None
+    read_pid: Callable[[], Awaitable[int | None]] | None = None
     _settle_boundary_monotonic: float | None = None
     _idle_last_progress: float | None = None
     _idle_token: tuple[frozenset[str], tuple[tuple[str, str], ...], bool] | None = None
@@ -188,13 +195,19 @@ class GitWorkerDrainSupervisor:
                     await self._on_cancelled(intent)
                     return
                 if outcome == _AWAIT_DEAD:
-                    await self._force_start(intent, reason="dead_target")
+                    if self._may_start(intent):
+                        await self._force_start(intent, reason="dead_target")
+                    else:
+                        await self._complete_stopped_target(intent)
                     return
                 if outcome == _AWAIT_HANDED_OFF:
                     return
                 if outcome == _AWAIT_TIMEOUT:
                     if await self._ceiling_should_force_start():
-                        await self._force_start(intent, reason="deadline_ceiling")
+                        if self._may_start(intent):
+                            await self._force_start(intent, reason="deadline_ceiling")
+                        else:
+                            await self._complete_stopped_target(intent)
                         return
                     # A live pid past the ceiling still pages. Starting would
                     # not replace in-flight work; the 2026-07-24 bind forbids
@@ -401,17 +414,18 @@ class GitWorkerDrainSupervisor:
         Returns ``converged`` | ``idle`` | ``timeout`` | ``cancelled`` |
         ``dead`` | ``handed_off``. Unified loop: matching ``drain.completed``
         plus drain-state reconcile plus optional idle-on-no-progress (recycle
-        mode). A null pid or a probe unreachable for one heartbeat TTL returns
-        ``dead`` before the deadline is consulted, so that branch does not
-        depend on the ceiling ruling. A live occupant past the ceiling is the
-        alert-only timeout.
+        mode). No snapshot for the confirm window, and a health/pid probe that
+        does not see a process, returns ``dead`` before the deadline is
+        consulted. A snapshot that arrives is not dead, whatever its pid
+        field contains. A live occupant past the ceiling is the alert-only
+        timeout.
         """
         last_progress = start
         probe_fail_streak = 0
         probe_unreachable_alerted = False
         generation_gone_streak = 0
         probe_unreachable_threshold = _polls_for_window(
-            _PROBE_UNREACHABLE_WINDOW_S, self.reconcile_interval_s
+            _liveness.unreachable_window_s(), self.reconcile_interval_s
         )
         generation_gone_threshold = _polls_for_window(
             _GENERATION_GONE_CONFIRM_WINDOW_S, self.reconcile_interval_s
@@ -444,8 +458,6 @@ class GitWorkerDrainSupervisor:
                             return _AWAIT_GENERATION_GONE
                     else:
                         generation_gone_streak = 0
-                    if self.start is not None and snapshot.get("pid") is None:
-                        return _AWAIT_DEAD
                     if self._drain_state_matches(snapshot, intent):
                         return _AWAIT_CONVERGED
                     if await self._idle_gate_tripped(snapshot, now, start):
@@ -463,13 +475,16 @@ class GitWorkerDrainSupervisor:
                             consecutive_failures=probe_fail_streak,
                         )
                         probe_unreachable_alerted = True
-                    if (
-                        self.start is not None
-                        and probe_fail_streak >= probe_unreachable_threshold
-                    ):
-                        return _AWAIT_DEAD
-                # Null pid and unreachable-TTL already returned above. A live
-                # occupant past the ceiling is alert-only and does not start.
+                    if probe_fail_streak >= probe_unreachable_threshold:
+                        absent = await self._health_pid_absent()
+                        if _liveness.drain_target_is_dead(
+                            consecutive_snapshot_misses=probe_fail_streak,
+                            miss_threshold=probe_unreachable_threshold,
+                            health_pid_absent=absent,
+                        ):
+                            return _AWAIT_DEAD
+                # The dead predicate already returned above. A live occupant
+                # past the ceiling is alert-only and does not start.
                 if now >= deadline:
                     return _AWAIT_TIMEOUT
                 if agen is None:
@@ -528,6 +543,18 @@ class GitWorkerDrainSupervisor:
             self.store.advance(intent.intent_id, status=STATUS_FAILED)
             await events.emit_manage_restart_failed(
                 intent_id=intent.intent_id, reason=f"kill failed: {exc}"
+            )
+            return
+        if not lifecycle_result_certifies(message, action=current.action):
+            logger.warning(
+                "drain lifecycle did not confirm: intent_id=%s -> %s",
+                intent.intent_id,
+                message[:200],
+            )
+            self.store.advance(intent.intent_id, status=STATUS_FAILED)
+            await events.emit_manage_restart_failed(
+                intent_id=intent.intent_id,
+                reason=f"lifecycle unconfirmed: {message[:200]}",
             )
             return
         logger.info(
@@ -807,29 +834,77 @@ class GitWorkerDrainSupervisor:
         )
         return True
 
-    async def _ceiling_should_force_start(self) -> bool:
-        """True when a ceiling re-probe no longer shows a live pid.
+    def _may_start(self, intent: Intent) -> bool:
+        """Restart-class actions with a start callable may replace a dead target."""
+        return self.start is not None and intent.action in START_ON_DEAD_ACTIONS
 
-        The await loop already returns ``dead`` for a null pid and for a probe
-        that has been unreachable for one heartbeat TTL, without consulting
-        this helper. This re-probe only covers a target that died between that
-        live read and the ceiling. A pid means the process is still the
-        occupant holder, so the ceiling stays alert-only.
+    async def _complete_stopped_target(self, intent: Intent) -> None:
+        """The target is gone and this action must not start it."""
+        current = self.store.get(intent.intent_id)
+        if current is None or current.status != STATUS_PENDING_DRAIN:
+            return
+        self.store.advance(intent.intent_id, status=STATUS_COMPLETED)
+        logger.info(
+            "drain target gone; completed without start: intent_id=%s action=%s",
+            intent.intent_id,
+            intent.action,
+        )
+
+    async def _health_pid_absent(self) -> bool:
+        """True only when the injected probe says no process is present."""
+        if self.process_absent is None:
+            return False
+        try:
+            return bool(await self.process_absent())
+        except Exception:  # noqa: BLE001 — unknown liveness is not "absent"
+            logger.debug("health/pid probe failed", exc_info=True)
+            return False
+
+    async def _ceiling_should_force_start(self) -> bool:
+        """True only after the same consecutive-miss window as the await loop.
+
+        One unanswered probe is not dead. A snapshot that arrives, including
+        one whose pid field is missing, is not dead. The health/pid probe
+        must also report the process absent.
         """
         if self.start is None:
             return False
-        snap = await self._safe_drain_state()
-        if snap is None:
-            return True
-        return snap.get("pid") is None
+        threshold = _polls_for_window(
+            _liveness.unreachable_window_s(), self.reconcile_interval_s
+        )
+        misses = 0
+        while misses < threshold:
+            snap = await self._safe_drain_state()
+            if snap is not None:
+                self._last_probe_snapshot = snap
+                return False
+            misses += 1
+            if misses < threshold:
+                await asyncio.sleep(self.reconcile_interval_s)
+        return _liveness.drain_target_is_dead(
+            consecutive_snapshot_misses=misses,
+            miss_threshold=threshold,
+            health_pid_absent=await self._health_pid_absent(),
+        )
 
     async def _force_start(self, intent: Intent, *, reason: str) -> None:
         """Start the worker and validate. Never the kill/stop callable."""
-        from .drain_dead_recovery import force_start_and_validate
-
-        if self.start is None:
+        if self.start is None or not self._may_start(intent):
             return
-        await force_start_and_validate(self.store, intent, self.start, reason=reason)
+        prior_pid: int | None = None
+        snap = self._last_probe_snapshot
+        if isinstance(snap, dict):
+            pid = snap.get("pid")
+            if isinstance(pid, int) and not isinstance(pid, bool):
+                prior_pid = pid
+        await force_start_and_validate(
+            self.store,
+            intent,
+            self.start,
+            reason=reason,
+            prior_pid=prior_pid,
+            read_pid=self.read_pid,
+        )
 
     async def _safe_drain_state(self) -> dict[str, Any] | None:
         try:
@@ -882,7 +957,7 @@ class GitWorkerDrainSupervisor:
 
 def _polls_for_window(window_s: float, interval_s: float) -> int:
     """Minimum consecutive reconcile polls to cover ``window_s``."""
-    return max(1, int(window_s / max(interval_s, 0.001)))
+    return _liveness.polls_for_window(window_s, interval_s)
 
 
 def build_git_worker_drain_supervisor(
@@ -895,6 +970,8 @@ def build_git_worker_drain_supervisor(
     deadline_s: float = _DEFAULT_DEADLINE_S,
     idle_escalate_s: float | None = None,
     park_first: bool = True,
+    process_absent: Callable[[], Awaitable[bool]] | None = None,
+    read_pid: Callable[[], Awaitable[int | None]] | None = None,
 ) -> GitWorkerDrainSupervisor:
     """Construct a supervisor wired to the live worker + event service.
 
@@ -987,6 +1064,8 @@ def build_git_worker_drain_supervisor(
         idle_escalate_s=idle_escalate_s,
         liveness_state=_liveness_state if idle_escalate_s is not None else None,
         park_for_restart=_park_for_restart if park_first else None,
+        process_absent=process_absent,
+        read_pid=read_pid,
     )
 
 

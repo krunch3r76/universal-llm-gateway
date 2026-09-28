@@ -16,9 +16,10 @@ from typing import TYPE_CHECKING, Any
 
 from scripts.model_manager import observation_event as events
 
-from ..model.service_state import ServiceStatus
+from . import git_worker_liveness as _liveness
 from .drain_dead_recovery import force_start_and_validate
-from .restart_drain import run_gated_drain_supervised
+from .drain_timeout_keep_await import cancel_or_join_supervise_task
+from .restart_drain import GIT_INTEGRATION_WORKER_URL, run_gated_drain_supervised
 
 if TYPE_CHECKING:
     from .service_ctl.core import ServiceController
@@ -94,12 +95,12 @@ def refuse_foreign_service(service: str, params: dict[str, Any]) -> None:
 
 
 async def worker_is_stopped(ctl: ServiceController) -> bool:
-    """True when the health checker reports the worker process is stopped.
+    """True when the shared dead predicate holds.
 
-    A missing checker is not stopped — callers keep the drain path. An
-    exception from the checker is not stopped either; only an explicit
-    ``stopped`` status skips the drain, because that is the case with nothing
-    left to protect.
+    Dead iff the health/pid probe is absent and the drain snapshot has been
+    missing for the same confirm window the supervisor uses. A missing checker
+    is not stopped. An exception from the checker propagates; only an explicit
+    ``stopped`` status is the absent half of the predicate.
     """
     checker = getattr(
         getattr(ctl, "service_state", None), "check_git_integration_worker", None
@@ -107,7 +108,24 @@ async def worker_is_stopped(ctl: ServiceController) -> bool:
     if checker is None:
         return False
     info = await asyncio.to_thread(checker)
-    return getattr(info, "status", None) is ServiceStatus.STOPPED
+    if not _liveness.health_status_means_absent(getattr(info, "status", None)):
+        return False
+    threshold = _liveness.polls_for_window(
+        _liveness.unreachable_window_s(), _liveness.reconcile_interval_s()
+    )
+    misses = 0
+    while misses < threshold:
+        snapshot = await _liveness.probe_drain_snapshot(GIT_INTEGRATION_WORKER_URL)
+        if snapshot is not None:
+            return False
+        misses += 1
+        if misses < threshold:
+            await asyncio.sleep(_liveness.reconcile_interval_s())
+    return _liveness.drain_target_is_dead(
+        consecutive_snapshot_misses=misses,
+        miss_threshold=threshold,
+        health_pid_absent=True,
+    )
 
 
 async def _start_stopped_worker(
@@ -117,11 +135,13 @@ async def _start_stopped_worker(
     store = ctl.restart_intent_store
     intent = store.active_for_service(_SERVICE)
     if intent is not None:
+        await cancel_or_join_supervise_task(_SERVICE)
         message = await force_start_and_validate(
             store,
             intent,
             ctl.start_git_integration_worker,
             reason="recycle_stopped",
+            read_pid=getattr(ctl, "_git_worker_read_pid", None),
         )
         intent_id = intent.intent_id
     else:
@@ -160,6 +180,7 @@ async def recycle_giw(
         return await _start_stopped_worker(ctl, idle_s)
     supervisor = ctl.build_git_worker_drain_supervisor(
         kill=ctl.git_worker_kill_for("recycle_giw"),
+        action="recycle_giw",
         idle_escalate_s=idle_s,
         deadline_s=_RECYCLE_DEADLINE_S,
         park_first=True,

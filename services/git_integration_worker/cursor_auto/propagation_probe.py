@@ -544,6 +544,16 @@ def _proof_before_for_measurement(
     return candidate, False
 
 
+def _int_pid(payload: dict[str, Any] | None) -> int | None:
+    """Return an int pid, or None. ``bool`` is not a pid."""
+    if not isinstance(payload, dict):
+        return None
+    pid = payload.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int):
+        return None
+    return pid
+
+
 def resolve_identity_measurement(
     proof_payload: dict[str, Any],
     *,
@@ -575,6 +585,10 @@ def resolve_identity_measurement(
             "persisted proof_before was not a dict — cannot stamp identity_measurement"
         )
     if isinstance(before, dict):
+        before_pid = _int_pid(before)
+        after_pid = _int_pid(proof_payload)
+        if before_pid is not None and after_pid is not None and before_pid == after_pid:
+            return "absent"
         return "measured"
 
     if (

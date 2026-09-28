@@ -1,9 +1,9 @@
 """Start a git-worker whose drain target is already gone.
 
-A pending drain intent used to keep-await after the process exited: the probe
-failure path only alerted, and every later recycle coalesced onto that intent
-with "drain already in progress". These helpers start the worker without a
-preceding SIGTERM and hand the existing activation row to the verifier.
+A pending drain intent used to keep-await after the process exited. These
+helpers start the worker without a preceding SIGTERM only when the start
+callable reports a new process, and they refuse to start after a stop that
+did not confirm death.
 
 The process image is the checkout. ``code_ref`` on the intent's validation row
 is the verify target, not a commit to check out.
@@ -23,14 +23,60 @@ from .restart_intent_store import Intent, RestartIntentStore
 
 logger = get_logger(__name__)
 
-# Two reconcile misses, not one blip. Still immediate next to the 180s idle
-# gate and the 600s ceiling that previously never started a corpse.
-DEAD_CONFIRM_POLLS = 2
-# After stop returns, start must finish inside this window or it is retried.
-# The timer starts at process-down, so a hang in start cannot leave the gap open.
+# Actions whose drain may start a worker that the liveness predicate calls dead.
+# Stop (and anything else) must leave a gone worker down.
+START_ON_DEAD_ACTIONS = frozenset({"restart", "sync_restart", "recycle_giw"})
+# After a confirmed stop, start must finish inside this window. The in-flight
+# start is joined — it is not cancelled and retried — so a child that is still
+# coming up is not double-spawned.
 START_GAP_S = 15.0
 
 StartCaller = Callable[[], Awaitable[str]]
+ReadPid = Callable[[], Awaitable[int | None]]
+
+
+def drain_supervisor_start(action: str, start: StartCaller) -> StartCaller | None:
+    """Pass ``start`` only for restart-class actions. Stop gets None."""
+    if action in START_ON_DEAD_ACTIONS:
+        return start
+    return None
+
+
+def stop_death_unconfirmed(message: str) -> bool:
+    """True when stop did not prove the process is gone."""
+    text = message.lower()
+    return (
+        "could not confirm death" in text
+        or "may still be running" in text
+        or "cannot stop" in text
+        or "death unconfirmed" in text
+        or "stop failed" in text
+    )
+
+
+def start_spawned_new_process(message: str) -> bool:
+    """True when start's own report is a new process, not a no-op or a crash."""
+    text = message.lower()
+    if "already running" in text:
+        return False
+    if "failed" in text:
+        return False
+    if "error" in text:
+        return False
+    return True
+
+
+def lifecycle_result_certifies(message: str, *, action: str) -> bool:
+    """True when the kill/start return may advance the intent as done.
+
+    Stop is certified only when death was confirmed. Restart-class actions
+    are certified only when death was confirmed and start spawned a process.
+    """
+    if stop_death_unconfirmed(message):
+        return False
+    if action in START_ON_DEAD_ACTIONS and not start_spawned_new_process(message):
+        return False
+    return True
 
 
 def intent_code_ref(intent: Intent) -> str | None:
@@ -46,17 +92,26 @@ def intent_code_ref(intent: Intent) -> str | None:
     return str(code_ref) if code_ref else None
 
 
+def _fail_pending(store: RestartIntentStore, intent: Intent) -> None:
+    current = store.get(intent.intent_id)
+    if current is not None and current.status == STATUS_PENDING_DRAIN:
+        store.advance(intent.intent_id, status=STATUS_FAILED)
+
+
 async def force_start_and_validate(
     store: RestartIntentStore,
     intent: Intent,
     start: StartCaller,
     *,
     reason: str,
+    prior_pid: int | None = None,
+    read_pid: ReadPid | None = None,
 ) -> str:
-    """Start the worker and arm activation verify. Does not SIGTERM.
+    """Start the worker and arm activation verify only if a new process exists.
 
-    ``reason`` is ``dead_target`` or ``deadline_ceiling``. On start failure the
-    intent leaves ``pending_drain`` so a later start is not coalesced away.
+    Does not SIGTERM. ``reason`` is ``dead_target`` or ``deadline_ceiling``.
+    "already running", a failed start, or a re-read pid that still matches
+    ``prior_pid`` leaves the intent failed and does not arm verify.
     """
     code_ref = intent_code_ref(intent)
     logger.warning(
@@ -68,10 +123,36 @@ async def force_start_and_validate(
     try:
         message = await start()
     except Exception:
-        current = store.get(intent.intent_id)
-        if current is not None and current.status == STATUS_PENDING_DRAIN:
-            store.advance(intent.intent_id, status=STATUS_FAILED)
+        _fail_pending(store, intent)
         raise
+    if not start_spawned_new_process(message):
+        logger.warning(
+            "drain force-start did not spawn: intent_id=%s message=%s",
+            intent.intent_id,
+            message[:200],
+        )
+        _fail_pending(store, intent)
+        return message
+    if read_pid is not None:
+        try:
+            observed = await read_pid()
+        except Exception:
+            logger.exception("drain force-start pid re-read failed")
+            observed = None
+        same_process = (
+            isinstance(prior_pid, int)
+            and isinstance(observed, int)
+            and observed == prior_pid
+        )
+        if not isinstance(observed, int) or same_process:
+            logger.warning(
+                "drain force-start pid unchanged: intent_id=%s prior=%s observed=%s",
+                intent.intent_id,
+                prior_pid,
+                observed,
+            )
+            _fail_pending(store, intent)
+            return message
     armed = await arm_verify_after_generation_gone(store, intent)
     if not armed:
         current = store.get(intent.intent_id)
@@ -86,21 +167,32 @@ async def paired_stop_then_start(
     *,
     gap_s: float = START_GAP_S,
 ) -> str:
-    """Stop, then start. Retry start if it misses the post-stop window.
+    """Stop, confirm down, then start. Join a slow start; do not spawn another.
 
-    Stop runs only inside this function, which is also the function that
-    starts. If stop itself fails, start still runs: a half-dead worker is the
-    gap this pairing exists to close.
+    An unconfirmed stop (including a stop that raises) does not start. A start
+    that is still running when ``gap_s`` elapses is awaited, not cancelled,
+    because cancellation does not reap the detached child.
     """
     try:
-        await stop()
+        stop_message = await stop()
     except Exception:
-        logger.exception("git-worker stop failed; starting to close the gap")
+        logger.exception("git-worker stop failed; start withheld")
+        return "git-worker stop failed; start withheld (death unconfirmed)"
+    if stop_death_unconfirmed(stop_message):
+        logger.warning("git-worker stop did not confirm death: %s", stop_message[:200])
+        return stop_message
+    start_task = asyncio.create_task(start())
     try:
-        return await asyncio.wait_for(start(), timeout=gap_s)
-    except Exception:
-        logger.exception(
-            "git-worker start missed the %.1fs post-stop gap; watchdog start",
+        message = await asyncio.wait_for(asyncio.shield(start_task), timeout=gap_s)
+    except TimeoutError:
+        logger.warning(
+            "git-worker start still in flight after %.1fs; joining, not retrying",
             gap_s,
         )
-        return await start()
+        message = await start_task
+    except Exception:
+        logger.exception("git-worker start failed; not retrying")
+        if start_task.done():
+            return "git-worker start failed"
+        return await start_task
+    return message
