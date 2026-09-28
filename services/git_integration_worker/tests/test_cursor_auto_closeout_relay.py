@@ -2230,14 +2230,14 @@ def test_miss_cell_ac1_inline_backtick_deltas_presence_yields_parse_failed() -> 
 
 def test_miss_cell_ac2_substance_without_deltas_candidate_stays_relay_miss() -> None:
     """AC2 — collapse guard: substance without deltas candidate → relay could not locate."""
-    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
-        _extract_table_cell,
-    )
     from services.git_integration_worker.cursor_auto.closeout_relay_common import (
         has_closeout_substance,
     )
     from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
         field_heading_present,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
     )
     from services.git_integration_worker.cursor_auto.closeout_relay_project import (
         project_section2_table,
