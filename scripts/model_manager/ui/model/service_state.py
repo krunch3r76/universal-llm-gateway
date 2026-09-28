@@ -55,6 +55,7 @@ class ServiceInfo:
     container_name: str | None = None
     health_url: str | None = None
     detail: str = ""
+    fail_class: str | None = None
     ownership: ServiceOwnership = ServiceOwnership.UNKNOWN
 
 

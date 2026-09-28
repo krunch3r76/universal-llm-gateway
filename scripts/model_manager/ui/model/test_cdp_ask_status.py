@@ -120,6 +120,7 @@ def test_remote_timeout_while_port_open_is_unhealthy(
 
     assert info.status is ServiceStatus.UNHEALTHY
     assert info.status is not ServiceStatus.STOPPED
+    assert info.fail_class == "timeout"
     assert info.detail == "health probe failed: TimeoutError"
     assert "PID file missing" not in info.detail
 

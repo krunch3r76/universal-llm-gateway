@@ -186,8 +186,10 @@ def build_snapshot(
     ``status`` is copied from the manage ``ServiceInfo`` checker for that slug.
     For ``rag`` in UDS mode that checker is a fail-closed 2.0s GET /stats
     (HTTP 200) plus PID+socket — not process-liveness. ``detail``, ``pid``,
-    and ``health_url`` are copied so a reader can distinguish the checker's
-    already-known fail classes (socket not ready vs probe failed vs exception).
+    ``health_url``, and ``fail_class`` (when the checker sets it) are copied so
+    a reader can distinguish the checker's already-known fail classes (socket
+    not ready vs probe failed vs exception) without collapsing instrument
+    misses into stopped.
     """
     started = time.time()
     before = _tree_probe(root)
@@ -234,6 +236,7 @@ def build_snapshot(
                 "detail": info.detail if info is not None else "",
                 "pid": info.pid if info is not None else None,
                 "health_url": info.health_url if info is not None else None,
+                "fail_class": info.fail_class if info is not None else None,
                 "load_surface_kind": surface,
                 "load_marker": marker,
                 "reported_version": reported,

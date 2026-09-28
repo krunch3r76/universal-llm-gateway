@@ -258,6 +258,7 @@ def test_snapshot_copies_detail_pid_health_url(
                 pid=3471126,
                 health_url="unix:///tmp/universal-protocol/rag.sock/stats",
                 detail="PID 3471126 (17h 42m), probe failed (TimeoutError)",
+                fail_class="timeout",
             )
             if service == "rag"
             else ServiceInfo(name=service, status=ServiceStatus.RUNNING, pid=1)
@@ -301,6 +302,7 @@ def test_snapshot_copies_detail_pid_health_url(
     assert rag["detail"] == "PID 3471126 (17h 42m), probe failed (TimeoutError)"
     assert rag["pid"] == 3471126
     assert rag["health_url"] == "unix:///tmp/universal-protocol/rag.sock/stats"
+    assert rag["fail_class"] == "timeout"
 
 
 def test_omitting_activation_validation_id_preserves_join_miss_path(

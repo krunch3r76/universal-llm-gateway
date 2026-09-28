@@ -206,6 +206,7 @@ def _check_remote(
         port=port,
         health_url=health_url,
         detail=obs.detail or "health probe failed",
+        fail_class=obs.fail_class,
         ownership=ServiceOwnership.MANAGED,
     )
 
@@ -263,6 +264,7 @@ def _check_local(
             pid=pid,
             health_url=health_url,
             detail=detail,
+            fail_class=None if healthy else obs.fail_class,
             ownership=ServiceOwnership.MANAGED,
         )
     if healthy:
