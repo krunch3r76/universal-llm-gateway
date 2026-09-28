@@ -16,6 +16,7 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
 )
 from services.git_integration_worker.cursor_sdk_test_observation import (
     TEST_OBSERVATION_SEMANTICS,
+    _declared_check_exit_from_streams,
     annotate_test_observation_discrepancy,
     harvest_test_verifications,
     is_proven_simple_pytest_command,
@@ -410,6 +411,40 @@ def test_harvest_specimen_a_compound_echo_without_stdout_marker_stays_unattribut
         basis="subprocess.run.returncode",
     )
     assert verification_all_pass([lint, row]) is False
+
+
+_SPECIMEN_13147_CALL_ID = "call-5a19dac8-4e1a-4964-9aad-26c540a228dd-114"
+_SPECIMEN_13147_COMMAND = (
+    "/home/io/.venvs/universal/bin/python -m pytest "
+    "services/git_integration_worker/tests/test_cursor_sdk_test_observation.py -q; "
+    'echo "PYTEST_EXIT:$?"'
+)
+_SPECIMEN_13147_STDOUT = "5 passed in 0.94s\nPYTEST_EXIT:0"
+
+
+def test_declared_check_exit_from_streams_pytest_exit_colon_matches_equals() -> None:
+    """AC1/AC2 — PYTEST_EXIT:0 and PYTEST_EXIT=0 name the same process exit."""
+    command = "pytest -q foo.py; echo PYTEST_EXIT:$?"
+    colon = _declared_check_exit_from_streams(command, "summary\nPYTEST_EXIT:0\n", None)
+    equals = _declared_check_exit_from_streams(command, "summary\nPYTEST_EXIT=0\n", None)
+    assert colon == (0, "PYTEST_EXIT")
+    assert equals == (0, "PYTEST_EXIT")
+
+
+def test_harvest_specimen_13147_pytest_exit_colon_stdout_is_observed() -> None:
+    """AC2/AC3 — replay arc 13147 stdout; colon delimiter must yield observed register."""
+    obs = _shell_obs(
+        call_id=_SPECIMEN_13147_CALL_ID,
+        command=_SPECIMEN_13147_COMMAND,
+        exit_code=0,
+    )
+    obs.result["value"]["stdout"] = _SPECIMEN_13147_STDOUT
+    rows = harvest_test_verifications((obs,))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.exit_code_register == "observed"
+    assert row.exit_code == 0
+    assert row.basis == "shell_stdout.PYTEST_EXIT"
 
 
 def test_harvest_specimen_a_suite_exit_stdout_is_observed() -> None:

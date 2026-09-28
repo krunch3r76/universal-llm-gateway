@@ -27,7 +27,7 @@ TEST_OBSERVATION_SEMANTICS = "presence_legible_absence_not"
 
 # Trailing-echo compound shells that print the process exit in stdout (specimens
 # auto-e93f739c279c, auto-363018bf85e6 RED/green probes).
-_PYTEST_EXIT_STDOUT_RE = re.compile(r"PYTEST_EXIT=(\d+)", re.IGNORECASE)
+_PYTEST_EXIT_STDOUT_RE = re.compile(r"PYTEST_EXIT[:=](\d+)", re.IGNORECASE)
 _SUITE_EXIT_STDOUT_RE = re.compile(r"SUITE_EXIT[:=](\d+)", re.IGNORECASE)
 _RED_EXIT_STDOUT_RE = re.compile(r"RED[_ ]?exit[:=](\d+)", re.IGNORECASE)
 _RED_PROBE_EXIT_STDOUT_RE = re.compile(r"RED_PROBE_EXIT=(\d+)", re.IGNORECASE)
