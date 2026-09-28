@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 from unittest.mock import patch
 
 import pytest
@@ -23,6 +24,32 @@ def test_read_fleet_registry_never_returns_empty_dict() -> None:
     assert doc != {}
     assert doc["availability"] == "unavailable"
     assert doc["seat_count"] is None
+
+
+@pytest.mark.offline
+def test_read_fleet_registry_http_exception_becomes_unavailable() -> None:
+    _reset_fleet_registry_cache_for_tests()
+    with patch(
+        "claude_bundles.cdp_registry_remote_read._fetch_registry_document",
+        side_effect=http.client.HTTPException("bad status line"),
+    ):
+        doc = read_fleet_registry(force_refresh=True)
+    assert doc["availability"] == "unavailable"
+    assert doc["seat_count"] is None
+    assert doc["seats"] is None
+
+
+@pytest.mark.offline
+def test_read_fleet_registry_value_error_becomes_unavailable() -> None:
+    _reset_fleet_registry_cache_for_tests()
+    with patch(
+        "claude_bundles.cdp_registry_remote_read._fetch_registry_document",
+        side_effect=ValueError("invalid port"),
+    ):
+        doc = read_fleet_registry(force_refresh=True)
+    assert doc["availability"] == "unavailable"
+    assert doc["seat_count"] is None
+    assert doc["seats"] is None
 
 
 @pytest.mark.offline

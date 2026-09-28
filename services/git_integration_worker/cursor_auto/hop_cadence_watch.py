@@ -2,7 +2,7 @@
 
 Owned by cursor-auto (not the CDP seat). Persists beside the CDP registry so
 watches survive GIW restart. Callers: ``hop_cadence`` fire path and enqueue
-observe hook. Prefer registry ``started_at`` when ``active.json`` has the row;
+observe hook. Prefer registry ``started_at`` from the registry document when the seat row exists;
 otherwise age from first Auto observe (``seated_at``).
 """
 

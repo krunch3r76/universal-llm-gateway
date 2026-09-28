@@ -143,7 +143,10 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
     async def _tree_state_refresh_loop() -> None:
         while True:
-            await asyncio.to_thread(refresh_tree_state)
+            try:
+                await asyncio.to_thread(refresh_tree_state)
+            except Exception:  # noqa: BLE001 — refresh must not kill the loop
+                logger.warning("tree_state background refresh failed", exc_info=True)
             await asyncio.sleep(15)
 
     @app.on_event("startup")
