@@ -169,7 +169,7 @@ async def execute(
             force = bool(params.get("force", False))
             if service == "git_integration_worker" and not force:
                 return await _git_worker_drain_supervised(
-                    ctl, "stop", park_live=bool(params.get("park_live", False))
+                    ctl, "stop", park_live=giw_park_live_from_params(params)
                 )
             preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
             if preempted is not None:
@@ -206,7 +206,7 @@ async def execute(
             force = bool(params.get("force", False))
             if service == "git_integration_worker" and not force:
                 result = await _git_worker_drain_supervised(
-                    ctl, "restart", park_live=bool(params.get("park_live", False))
+                    ctl, "restart", park_live=giw_park_live_from_params(params)
                 )
             else:
                 preempted = await preempt_giw_keep_await_if_needed(ctl, service, force)
@@ -274,7 +274,7 @@ async def execute(
                     "sync_restart",
                     code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
                     row_id=_optional_attr_str(params, "row_id"),
-                    park_live=bool(params.get("park_live", False)),
+                    park_live=giw_park_live_from_params(params),
                 )
             if service == "stargate" and not force:
                 return await _stargate_idle_drain_supervised(
@@ -640,13 +640,22 @@ async def _stargate_idle_drain_supervised(
     )
 
 
+def giw_park_live_from_params(params: dict[str, Any]) -> bool:
+    """Default True for GIW stop/restart/sync_restart. Explicit false opts out.
+
+    The sweep still parks only resume-eligible occupants (``sdk_agent_id`` on
+    the ledger row and the SDK store dir on disk). Everyone else drain-waits.
+    """
+    return bool(params.get("park_live", True))
+
+
 async def _git_worker_drain_supervised(
     ctl: ServiceController,
     action: str,
     *,
     code_ref: str = "HEAD",
     row_id: str | None = None,
-    park_live: bool = False,
+    park_live: bool = True,
 ) -> dict[str, Any]:
     """Route a non-force git-worker lifecycle action to the drain supervisor.
 
@@ -656,8 +665,9 @@ async def _git_worker_drain_supervised(
     (todo:manage-busy-drain-restart); force=true keeps the existing immediate
     kill path. The terminal lifecycle is action-appropriate: stop vs restart.
     ``code_ref`` / ``row_id`` thread the propagate row identity into mint.
-    ``park_live`` (steer-restart v1) parks live cursor-sdk dispatches at drain
-    start so the drain converges without waiting on or killing them.
+    ``park_live`` defaults true: after ``PARK_LIVE_GRACE_S`` the sweep parks
+    resume-eligible cursor-sdk occupants so the drain does not wait out a
+    heartbeating job. Explicit false drain-waits every occupant.
     """
     supervisor = ctl.build_git_worker_drain_supervisor(
         kill=ctl.git_worker_kill_for(action),

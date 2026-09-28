@@ -159,6 +159,11 @@ propagation:
     safe_window: drain_required
     proof_class: process_live
     # omitted proof → process-identity obligation (compose_proof), never OpenAPI prose
+    # park_live defaults true on sync_restart/restart/stop (omit the key).
+    # Resume-eligible busy occupants (sdk_agent_id + SDK store dir on disk)
+    # park after a 20s grace (park_kind=park_for_restart; resume child keeps
+    # the parent's execution_id). Occupants missing either drain-wait.
+    # park_live: false  — opt out; drain-wait every occupant. Never force.
     hazard: closeout_relay
 ```
 ```

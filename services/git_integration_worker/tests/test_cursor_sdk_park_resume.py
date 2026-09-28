@@ -17,6 +17,10 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
     SourceRefConflict,
 )
+from services.git_integration_worker.cursor_sdk_park_for_restart import (
+    reset_park_marks,
+    signal_park,
+)
 from services.git_integration_worker.cursor_sdk_park_ledger import (
     PARK_KIND_DISCARD,
     load_park_row,
@@ -24,6 +28,7 @@ from services.git_integration_worker.cursor_sdk_park_ledger import (
     open_park_rows,
     park_projection,
 )
+from services.git_integration_worker.cursor_sdk_park_preflight import ParkRefusal
 from services.git_integration_worker.cursor_sdk_park_resume import (
     RESUME_REFUSAL_SAME_PROCESS,
     build_park_resume_request,
@@ -31,9 +36,16 @@ from services.git_integration_worker.cursor_sdk_park_resume import (
     render_park_resume_preamble,
     resume_parked_dispatches,
 )
+from services.git_integration_worker.cursor_sdk_supersede import (
+    register_live_run,
+    unregister_live_run,
+)
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
+)
+from services.git_integration_worker.tests.test_cursor_sdk_park_cancel_resume_spike import (
+    FakeCancellableRun,
 )
 
 _WORK_KEY = "todo:steer-resume"
@@ -112,6 +124,10 @@ def _seed_parked(
     conductor: bool = False,
     work_key: str | None = None,
     park_kind: str = "park_for_restart",
+    finalize: bool = True,
+    omit_sdk_agent_id: bool = False,
+    with_store: bool = True,
+    lease_key: str | None = None,
 ) -> None:
     # Each parked mission owns its work_key: an open park row reserves it (D5.4b).
     work_key = work_key or f"{_WORK_KEY}-{dispatch_id}"
@@ -139,7 +155,7 @@ def _seed_parked(
         ),
         contract="conductor" if conductor else "none",
         source_repo=str(load_config().source_repo),
-        lease_key=str(load_config().source_repo),
+        lease_key=lease_key or str(load_config().source_repo),
         work_key=work_key,
         source_ref=work_key,
         identity_class="declared" if work_key else None,
@@ -149,15 +165,20 @@ def _seed_parked(
     store = tmp_path / f"store-{dispatch_id}"
     store.mkdir(parents=True, exist_ok=True)
     (store / "index.db").write_text("x")
-    ledger.record_state_root(dispatch_id=dispatch_id, state_root=str(store))
+    if with_store:
+        ledger.record_state_root(dispatch_id=dispatch_id, state_root=str(store))
     ledger.record_sdk_identity(
-        dispatch_id=dispatch_id, agent_id=f"agent-{dispatch_id}", run_id="r"
+        dispatch_id=dispatch_id,
+        agent_id=None if omit_sdk_agent_id else f"agent-{dispatch_id}",
+        run_id="r",
     )
     if conductor:
         ledger.merge_record_json(
             dispatch_id=dispatch_id,
             patch={"contract": "conductor", "packet_kind": "conductor"},
         )
+    if not finalize:
+        return
     mark_parked(
         dispatch_id=dispatch_id,
         intent_id="intent-r",
@@ -495,3 +516,108 @@ def test_preamble_and_request_builder_shapes(tmp_path: Path) -> None:
         "ORIGINAL PREAMBLE"
     )
     assert req.lane == "A" and req.worktree_path is None
+
+
+@pytest.mark.asyncio
+async def test_park_eligible_resumes_execution_id_ineligible_not_parked(
+    tmp_path: Path, _admit_stubs: MagicMock
+) -> None:
+    """Eligible busy row parks and the resume child keeps the parent execution_id.
+
+    A row with no sdk_agent_id, or with no SDK store dir, is not cancelled.
+    """
+    reset_park_marks()
+    _seed_parked("elig", thread_id="13116", tmp_path=tmp_path, finalize=False)
+    elig_run = FakeCancellableRun(id="run-elig", agent_id="agent-elig")
+    register_live_run(
+        dispatch_id="elig", thread_id="13116", source_repo="/repo", run=elig_run
+    )
+    try:
+        parked = signal_park(
+            "elig",
+            intent_id="intent-r",
+            drain_epoch=5,
+            actor="manage",
+            reason="deploy",
+        )
+        assert parked.requested and elig_run.cancel_calls == 1
+        mark_parked(
+            dispatch_id="elig",
+            intent_id="intent-r",
+            drain_epoch=5,
+            actor="manage",
+            reason="deploy",
+            requested_at="x",
+            method="run_cancel",
+            tool_call_count=1,
+            last_tool_calls=[],
+            sidecar_uri=None,
+        )
+        assert _row("elig")["park_kind"] == "park_for_restart"
+        parked_at = datetime.now(UTC) - timedelta(seconds=30)
+        with CursorDispatchLedger.instance()._connect() as conn:
+            conn.execute(
+                "UPDATE cursor_sdk_dispatches SET parked_at=? WHERE dispatch_id='elig'",
+                (parked_at.isoformat(),),
+            )
+        summary = await resume_parked_dispatches(
+            cfg=load_config(),
+            controller=_controller(),
+            code_version="abc1234",
+            bus=_bus(),
+        )
+        assert summary.admitted == [("elig", "elig-r1")]
+        child = _row("elig-r1")
+        assert child is not None
+        assert child["execution_id"] == "exec-elig"
+        assert child["resume_of"] == "elig"
+
+        _seed_parked(
+            "young",
+            thread_id="13116-y",
+            tmp_path=tmp_path,
+            finalize=False,
+            omit_sdk_agent_id=True,
+            lease_key=str(tmp_path / "lease-young"),
+        )
+        young_run = FakeCancellableRun(id="run-young")
+        register_live_run(
+            dispatch_id="young",
+            thread_id="13116-y",
+            source_repo="/repo",
+            run=young_run,
+        )
+        refused = signal_park(
+            "young", intent_id="intent-r", drain_epoch=5, actor="manage", reason="r"
+        )
+        assert refused.refusal is ParkRefusal.NOT_RESUMABLE_YET
+        assert young_run.cancel_calls == 0
+        assert _row("young")["status"] == "running"
+        assert _row("young")["park_kind"] is None
+
+        _seed_parked(
+            "nostore",
+            thread_id="13116-n",
+            tmp_path=tmp_path,
+            finalize=False,
+            with_store=False,
+            lease_key=str(tmp_path / "lease-nostore"),
+        )
+        nostore_run = FakeCancellableRun(id="run-nostore")
+        register_live_run(
+            dispatch_id="nostore",
+            thread_id="13116-n",
+            source_repo="/repo",
+            run=nostore_run,
+        )
+        missing = signal_park(
+            "nostore", intent_id="intent-r", drain_epoch=5, actor="manage", reason="r"
+        )
+        assert missing.refusal is ParkRefusal.STATE_ROOT_MISSING
+        assert nostore_run.cancel_calls == 0
+        assert _row("nostore")["status"] == "running"
+        assert _row("nostore")["park_kind"] is None
+    finally:
+        for did in ("elig", "young", "nostore"):
+            unregister_live_run(dispatch_id=did)
+        reset_park_marks()
