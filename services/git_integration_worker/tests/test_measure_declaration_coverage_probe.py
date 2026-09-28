@@ -37,7 +37,9 @@ def test_toy_ground_truth_and_declaration_sets(tmp_path: Path) -> None:
     assert stats["|D\\G|"] == 1
 
 
-def test_empty_ground_truth_exits_nonzero_via_main(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_empty_ground_truth_exits_nonzero_via_main(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     from scripts.measure_declaration_coverage_probe import main
 
     pre = tmp_path / "pre.json"

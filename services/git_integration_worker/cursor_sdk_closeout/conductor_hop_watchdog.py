@@ -109,9 +109,8 @@ async def _stamp_admit_outcome(
     body = build_hop_team_dispatch_body(row, hop_reason_override=hop_reason)
     hop_seq = int((body or {}).get("hop_seq") or 1)
     if ok:
-        successor = (
-            str(detail.get("dispatch_id") or "")
-            or str(detail.get("execution_id") or "")
+        successor = str(detail.get("dispatch_id") or "") or str(
+            detail.get("execution_id") or ""
         )
         if not successor:
             logger.warning(
@@ -219,14 +218,10 @@ async def maybe_fire_conductor_hop_watchdog(*, dispatch_id: str) -> bool:
         hop_fields = hop_fields_from_record_json(str(row.get("record_json") or ""))
         admit_err = hop_fields.get("hop_admit_error")
         attempts = (
-            int(admit_err.get("attempts") or 0)
-            if isinstance(admit_err, dict)
-            else 0
+            int(admit_err.get("attempts") or 0) if isinstance(admit_err, dict) else 0
         )
         if attempts >= cfg.crash_cap_per_row:
-            await park_conductor_hop_mission(
-                row, reason=PARK_REASON_ADMIT_RETRY_CAP
-            )
+            await park_conductor_hop_mission(row, reason=PARK_REASON_ADMIT_RETRY_CAP)
     return stamped
 
 

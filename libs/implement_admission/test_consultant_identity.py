@@ -18,9 +18,7 @@ pytestmark = pytest.mark.offline
 def test_alias_fold_cdp_fable_vs_cursor_fable_same_effort_not_independent() -> None:
     cdp_id = consultant_identity("cdp/fable")
     cursor_id = consultant_identity("cursor/claude-fable-5-1")
-    cursor_knob = consultant_identity(
-        "cursor/claude-fable-5-1", {"effort": "high"}
-    )
+    cursor_knob = consultant_identity("cursor/claude-fable-5-1", {"effort": "high"})
     assert cdp_id.model_identity == "claude-fable-5-1"
     assert cursor_id.model_identity == "claude-fable-5-1"
     assert cursor_knob.model_identity == "claude-fable-5-1"
@@ -96,9 +94,7 @@ def test_cloud_api_rung_is_none_until_recorded() -> None:
 
 
 def test_reasoning_knob_normalizes_to_wire() -> None:
-    assert (
-        consultant_rung("cursor/gpt-5.5", {"reasoning": "extra-high"}) == "xhigh"
-    )
+    assert consultant_rung("cursor/gpt-5.5", {"reasoning": "extra-high"}) == "xhigh"
     assert consultant_rung("cursor/gpt-5.6-sol") == "medium"
 
 

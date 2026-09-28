@@ -11,7 +11,6 @@ from implement_admission.injector_map import (
     nominations_for_lib_path,
     residue_actions_for_nominations,
 )
-from implement_admission.serving_coverage import residue_for_empty_nominations
 from implement_admission.propagation_block_parser import (
     propagation_rows_from_markdown_sources,
 )
@@ -24,6 +23,7 @@ from implement_admission.propagation_row import (
     rows_from_parsed_block,
     rows_from_service_paths,
 )
+from implement_admission.serving_coverage import residue_for_empty_nominations
 
 _MAX_RESIDUE_LINES = 12
 _PLUGIN_PREFIX = "cursor-plugins/ulg-ecosystem/"
@@ -97,9 +97,7 @@ def structured_propagation_rows(
     )
 
     code_ref = resolve_code_ref(decoded)
-    consumer_rows, _escalations = rows_from_lib_consumers(
-        land_paths, code_ref=code_ref
-    )
+    consumer_rows, _escalations = rows_from_lib_consumers(land_paths, code_ref=code_ref)
     if consumer_rows:
         return tuple(consumer_rows)
 

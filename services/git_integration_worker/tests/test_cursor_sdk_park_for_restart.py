@@ -80,7 +80,9 @@ def _signals(events: list[Any]) -> list[str]:
     return [ev.signal for ev in events]
 
 
-def _req(dispatch_id: str, *, thread_id: str, **overrides: Any) -> CursorDispatchRequest:
+def _req(
+    dispatch_id: str, *, thread_id: str, **overrides: Any
+) -> CursorDispatchRequest:
     base: dict[str, Any] = {
         "thread_id": thread_id,
         "model": "cursor/composer-2.5",
@@ -128,7 +130,9 @@ def _admit_running(
         store.mkdir(parents=True, exist_ok=True)
         (store / "index.db").write_text("x")
         ledger.record_state_root(dispatch_id=dispatch_id, state_root=str(store))
-    ledger.record_sdk_identity(dispatch_id=dispatch_id, agent_id=sdk_agent_id, run_id="r")
+    ledger.record_sdk_identity(
+        dispatch_id=dispatch_id, agent_id=sdk_agent_id, run_id="r"
+    )
 
 
 def _register(dispatch_id: str, *, thread_id: str, run: Any) -> None:
@@ -178,7 +182,9 @@ def test_signal_park_cancels_live_run_without_lane_b_disposition(
     assert cancelled["reason"] == f"park_for_restart:{_INTENT}"
     assert disposition_calls == []
     # Idempotent re-signal while the mark is live: no second cancel RPC.
-    again = signal_park("d1", intent_id=_INTENT, drain_epoch=3, actor="manage", reason="x")
+    again = signal_park(
+        "d1", intent_id=_INTENT, drain_epoch=3, actor="manage", reason="x"
+    )
     assert again.requested and run.cancel_calls == 1
 
 
@@ -221,7 +227,10 @@ def test_refusal_precedence_each_code_and_no_mutation(
 
     # 1 NOT_FOUND
     r = signal_park("nope", intent_id=_INTENT, drain_epoch=1, actor="a", reason="r")
-    assert r.refusal is ParkRefusal.NOT_FOUND and REFUSAL_HTTP[r.refusal] == (404, False)
+    assert r.refusal is ParkRefusal.NOT_FOUND and REFUSAL_HTTP[r.refusal] == (
+        404,
+        False,
+    )
 
     # 2 ALREADY_TERMINAL (+ already_parked for same intent)
     _admit_running("term", thread_id="tt", tmp_path=tmp_path)
@@ -280,7 +289,10 @@ def test_refusal_precedence_each_code_and_no_mutation(
     young_run = FakeCancellableRun(id="run-young")
     _register("young", thread_id="ty", run=young_run)
     r = signal_park("young", intent_id=_INTENT, drain_epoch=1, actor="a", reason="r")
-    assert r.refusal is ParkRefusal.NOT_RESUMABLE_YET and REFUSAL_HTTP[r.refusal] == (409, True)
+    assert r.refusal is ParkRefusal.NOT_RESUMABLE_YET and REFUSAL_HTTP[r.refusal] == (
+        409,
+        True,
+    )
     assert young_run.cancel_calls == 0
     ledger.record_sdk_identity(dispatch_id="young", agent_id="agent-y", run_id="r")
     r = signal_park("young", intent_id=_INTENT, drain_epoch=1, actor="a", reason="r")
@@ -291,7 +303,10 @@ def test_refusal_precedence_each_code_and_no_mutation(
     _admit_running("nostore", thread_id="tns", tmp_path=tmp_path, with_store=False)
     _register("nostore", thread_id="tns", run=FakeCancellableRun(id="run-ns"))
     r = signal_park("nostore", intent_id=_INTENT, drain_epoch=1, actor="a", reason="r")
-    assert r.refusal is ParkRefusal.STATE_ROOT_MISSING and REFUSAL_HTTP[r.refusal][0] == 422
+    assert (
+        r.refusal is ParkRefusal.STATE_ROOT_MISSING
+        and REFUSAL_HTTP[r.refusal][0] == 422
+    )
 
     # 8 LANE_B_UNPINNED (lane B record, no active pin)
     _admit_running("laneb", thread_id="tb", tmp_path=tmp_path, lane="B")
@@ -335,7 +350,9 @@ def test_refusal_precedence_each_code_and_no_mutation(
         "RUN_ALREADY_TERMINAL",
     }
     # already_parked is an idempotent 200, not a refusal event
-    assert all(ev.payload["dispatch_id"] != "parked" or ev.payload["refusal"] for ev in refused)
+    assert all(
+        ev.payload["dispatch_id"] != "parked" or ev.payload["refusal"] for ev in refused
+    )
 
 
 def test_preflight_orders_not_live_before_nest_chain(tmp_path: Path) -> None:
@@ -362,7 +379,9 @@ def test_sweep_requests_live_refuses_nested_and_orphan_then_idempotent(
     assert ledger.park_for_nested(parent_id="np", child_id="nc")
     _admit_running("nc", thread_id="t-nc", tmp_path=tmp_path)
     with ledger._connect() as conn:
-        conn.execute("UPDATE cursor_sdk_dispatches SET nest_under='np' WHERE dispatch_id='nc'")
+        conn.execute(
+            "UPDATE cursor_sdk_dispatches SET nest_under='np' WHERE dispatch_id='nc'"
+        )
     _register("nc", thread_id="t-nc", run=FakeCancellableRun(id="run-nc"))
     _admit_running("orphan", thread_id="t-o", tmp_path=tmp_path)
 
@@ -407,7 +426,10 @@ def test_converge_recheck_emits_drain_completed_without_sigterm(
     monkeypatch: pytest.MonkeyPatch, events: list[Any]
 ) -> None:
     controller = WorkAdmissionController(
-        ledger=CursorDispatchLedger.instance(), worker_id="w", pid=1, worker_started_at="b"
+        ledger=CursorDispatchLedger.instance(),
+        worker_id="w",
+        pid=1,
+        worker_started_at="b",
     )
     drain_events: list[str] = []
     monkeypatch.setattr(
@@ -464,7 +486,9 @@ def test_converge_aborts_only_lingering_parked_bridges(
         _abort,
     )
     rechecks: list[bool] = []
-    controller = type("C", (), {"recheck_drain_idle": lambda self: rechecks.append(True)})()
+    controller = type(
+        "C", (), {"recheck_drain_idle": lambda self: rechecks.append(True)}
+    )()
     try:
         aborted = asyncio.run(
             converge_bridges_after_park(
@@ -480,4 +504,8 @@ def test_converge_aborts_only_lingering_parked_bridges(
         orphan_mod._active_clients.clear()
     assert aborted == 1 and aborted_ids == ["parked-1"]
     assert rechecks == [True]
-    assert [ev.payload["dispatch_id"] for ev in events if ev.signal == "sdk.park.bridge_abort_escalated"] == ["parked-1"]
+    assert [
+        ev.payload["dispatch_id"]
+        for ev in events
+        if ev.signal == "sdk.park.bridge_abort_escalated"
+    ] == ["parked-1"]

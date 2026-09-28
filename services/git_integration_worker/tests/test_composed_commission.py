@@ -20,12 +20,10 @@ from services.git_integration_worker.cursor_auto.composed_commission import (
 def _ledger(*, children: list[str], statuses: dict[str, str | None]) -> MagicMock:
     ledger = MagicMock()
     ledger.list_nested_children.return_value = children
-    ledger.dispatch_status_by_id.side_effect = (
-        lambda *, dispatch_id: (
-            {"dispatch_id": dispatch_id, "status": statuses[dispatch_id]}
-            if statuses.get(dispatch_id) is not None
-            else None
-        )
+    ledger.dispatch_status_by_id.side_effect = lambda *, dispatch_id: (
+        {"dispatch_id": dispatch_id, "status": statuses[dispatch_id]}
+        if statuses.get(dispatch_id) is not None
+        else None
     )
     return ledger
 
@@ -165,14 +163,13 @@ def test_state_ledger_row_10_grandchild_non_rollup() -> None:
     """Grandchild under child must not affect parent's aggregation."""
     ledger = MagicMock()
     # Parent P has only immediate child C1; grandchild G nests under C1.
-    ledger.list_nested_children.side_effect = (
-        lambda *, parent_dispatch_id: (
-            ["c1"] if parent_dispatch_id == "parent-p" else []
-        )
+    ledger.list_nested_children.side_effect = lambda *, parent_dispatch_id: (
+        ["c1"] if parent_dispatch_id == "parent-p" else []
     )
-    ledger.dispatch_status_by_id.side_effect = (
-        lambda *, dispatch_id: {"dispatch_id": dispatch_id, "status": "completed"}
-    )
+    ledger.dispatch_status_by_id.side_effect = lambda *, dispatch_id: {
+        "dispatch_id": dispatch_id,
+        "status": "completed",
+    }
     assert (
         compute_composed_commission(parent_dispatch_id="parent-p", ledger=ledger)
         == COMPOSED_COMMISSION_COMPLETE

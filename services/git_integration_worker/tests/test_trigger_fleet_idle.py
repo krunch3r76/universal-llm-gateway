@@ -352,10 +352,14 @@ def test_block_on_queued_consults_restores_strict() -> None:
         tick_empty_strict=False,
         cursor_auto_idle=True,
     )
-    assert eval_fleet_idle(snap, {"grace_s": 0, "block_on_queued_consults": True}) is False
+    assert (
+        eval_fleet_idle(snap, {"grace_s": 0, "block_on_queued_consults": True}) is False
+    )
 
 
-def test_charter_tick_empty_narrow_vs_strict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_charter_tick_empty_narrow_vs_strict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from libs.charter_runner_store.db import open_ledger_db
     from services.git_integration_worker.trigger_service import fleet_idle as fi
 

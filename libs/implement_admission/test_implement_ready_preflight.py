@@ -156,7 +156,12 @@ def test_waiver_matches_current_spec_honors_matching_hash() -> None:
         spec_sha256=_CURRENT_SPEC_HASH,
     )
     assert waiver_matches_current_spec(waiver, _CURRENT_SPEC_HASH) is True
-    assert waiver_matches_current_spec(waiver, _CURRENT_SPEC_HASH.removeprefix("spec_sha256:")) is True
+    assert (
+        waiver_matches_current_spec(
+            waiver, _CURRENT_SPEC_HASH.removeprefix("spec_sha256:")
+        )
+        is True
+    )
 
 
 @pytest.mark.offline
@@ -488,7 +493,10 @@ def test_gate13_pass_deferred_subchecks_annotation(
     gate13 = report.gates[13]
     assert gate13.status == GateStatus.PASSED
     assert list(gate13.deferred_subchecks) == _GATE_13_DEFERRED_SUBCHECKS
-    assert report.to_dict()["gates"][13]["deferred_subchecks"] == _GATE_13_DEFERRED_SUBCHECKS
+    assert (
+        report.to_dict()["gates"][13]["deferred_subchecks"]
+        == _GATE_13_DEFERRED_SUBCHECKS
+    )
 
 
 @pytest.mark.offline
@@ -533,8 +541,13 @@ def test_gate14_deferred_grounding_admits_with_explicit_warning(
     )
     verdict = evaluate_implement_ready(**args)
     report = preflight_implement_ready(
-        **{k: v for k, v in args.items() if k != "skeptic_evidence_grounded"
-           and k != "skeptic_evidence_unresolved" and k != "skeptic_evidence_mode"}
+        **{
+            k: v
+            for k, v in args.items()
+            if k != "skeptic_evidence_grounded"
+            and k != "skeptic_evidence_unresolved"
+            and k != "skeptic_evidence_mode"
+        }
     )
     assert verdict.admitted is False
     assert verdict.code == "skeptic_evidence_missing"

@@ -19,7 +19,9 @@ _GENERATED = Path(__file__).resolve().parent / "generated_adapter_manifest.py"
 _FACADE = "giw"
 
 
-def _served_ops_from_schema(openapi_schema: dict[str, Any]) -> dict[str, dict[str, str]]:
+def _served_ops_from_schema(
+    openapi_schema: dict[str, Any],
+) -> dict[str, dict[str, str]]:
     routes = typed_routes_from_openapi(openapi_schema)
     served: dict[str, dict[str, str]] = {}
     for op, route in sorted(routes.items()):

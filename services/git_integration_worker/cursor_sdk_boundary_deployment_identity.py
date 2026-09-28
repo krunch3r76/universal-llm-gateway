@@ -5,14 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from services.git_integration_worker.cursor_auto.propagation_probe import (
+    process_identity,
+)
 from services.git_integration_worker.cursor_sdk_boundary_contract import (
     BoundaryEmitResult,
     BoundaryShapeViolation,
+    _summarize_value,
     register_boundary_contract,
     validate_at_emit,
-    _summarize_value,
 )
-from services.git_integration_worker.cursor_auto.propagation_probe import process_identity
 
 DEPLOYMENT_IDENTITY_BOUNDARY = "deployment_identity"
 

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-
 from claude_bundles.catalog import clear_skill_catalog_cache
+
 from implement_admission.skill_mcp_classification import (
     SkillClassificationMissingError,
     skill_mcp_predicated,

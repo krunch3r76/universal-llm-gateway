@@ -6,9 +6,9 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from contract_vocab import nested_scope_contracts, vision_required_contracts
 from reasoning_posture_contracts import REASONING_POSTURE_SKIP_CONTRACTS
+
 from services.git_integration_worker.cursor_auto.admit_gates import blocking_admit_gate
 from services.git_integration_worker.cursor_auto.handler import (
     _NESTED_CONTRACTS,
@@ -45,12 +45,7 @@ def _ask_job(**kwargs: object) -> AutoJob:
 
 
 def _recon_directive(*, vision: bool) -> str:
-    body = (
-        "TYPE: DIRECTIVE\n"
-        "density: dense\n"
-        "## Scope\n"
-        "libs/foo\n"
-    )
+    body = "TYPE: DIRECTIVE\ndensity: dense\n## Scope\nlibs/foo\n"
     if vision:
         body += "vision: inventory the files that own this surface\n"
     return body
@@ -154,7 +149,9 @@ async def test_recon_still_blocks_missing_vision() -> None:
     assert "vision_field_missing" in str(gate_out.blocked.get("summary", ""))
 
 
-def test_process_job_ask_nests_read_only_without_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_job_ask_nests_read_only_without_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
     submit = AsyncMock(return_value={"ok": False, "error": "stop"})
@@ -181,7 +178,9 @@ def test_process_job_ask_nests_read_only_without_scope(monkeypatch: pytest.Monke
     assert submit.await_args.kwargs["handoff_contract"] == "sketch"
 
 
-def test_process_job_answer_still_declines_in_seat(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_job_answer_still_declines_in_seat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
     submit = AsyncMock()

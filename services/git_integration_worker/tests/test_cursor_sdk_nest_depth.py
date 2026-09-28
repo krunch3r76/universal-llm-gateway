@@ -9,7 +9,6 @@ from services.git_integration_worker.cursor_sdk_nest_depth import (
     MAX_NEST_DEPTH,
     NestDepthExceeded,
     NestParentNotLive,
-    park_stack_depth,
 )
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
@@ -46,9 +45,7 @@ def _admission(req: CursorDispatchRequest) -> CursorDispatchResponse:
     )
 
 
-def _admit_chain(
-    ledger: CursorDispatchLedger, repo: str, ids: list[str]
-) -> None:
+def _admit_chain(ledger: CursorDispatchLedger, repo: str, ids: list[str]) -> None:
     """Admit a linear nest chain root → … → deepest live holder."""
     parent_id: str | None = None
     for i, dispatch_id in enumerate(ids):
@@ -149,10 +146,14 @@ def test_depth_eleven_rejects_without_new_row() -> None:
             source_repo=repo,
             nest_under=chain[-1],
         )
-    row = ledger._connect().execute(  # noqa: SLF001
-        "SELECT 1 FROM cursor_sdk_dispatches WHERE dispatch_id=?",
-        ("depth-overflow",),
-    ).fetchone()
+    row = (
+        ledger._connect()
+        .execute(  # noqa: SLF001
+            "SELECT 1 FROM cursor_sdk_dispatches WHERE dispatch_id=?",
+            ("depth-overflow",),
+        )
+        .fetchone()
+    )
     assert row is None
 
 

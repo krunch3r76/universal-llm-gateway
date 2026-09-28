@@ -230,5 +230,11 @@ def test_git_diff_paths_between_mid_window_commit(tmp_path: Path) -> None:
 
 def test_git_diff_paths_between_empty_when_sha_missing(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
-    assert git_diff_paths_between(tmp_path, admit_head=None, closeout_head="abc") == frozenset()
-    assert git_diff_paths_between(tmp_path, admit_head="abc", closeout_head=None) == frozenset()
+    assert (
+        git_diff_paths_between(tmp_path, admit_head=None, closeout_head="abc")
+        == frozenset()
+    )
+    assert (
+        git_diff_paths_between(tmp_path, admit_head="abc", closeout_head=None)
+        == frozenset()
+    )

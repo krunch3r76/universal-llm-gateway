@@ -93,7 +93,9 @@ def test_operator_slot_released_when_release_knows_only_dispatch_id() -> None:
 
     asyncio.run(exercise())
 
-    assert _operator_active() == 0, "operator slot leaked — lane wedges after 3 of these"
+    assert _operator_active() == 0, (
+        "operator slot leaked — lane wedges after 3 of these"
+    )
     assert _standard_active() == 0
 
 

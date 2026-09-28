@@ -270,9 +270,13 @@ async def submit_nested_dispatch(
         payload["workspace"] = workspace
     enrolled_roots = resolve_enrolled_root_fields(job.thread_id)
     if enrolled_roots.get("continuity_root_thread_id"):
-        payload["continuity_root_thread_id"] = enrolled_roots["continuity_root_thread_id"]
+        payload["continuity_root_thread_id"] = enrolled_roots[
+            "continuity_root_thread_id"
+        ]
     if enrolled_roots.get("parent_dispatch_thread_id"):
-        payload["parent_dispatch_thread_id"] = enrolled_roots["parent_dispatch_thread_id"]
+        payload["parent_dispatch_thread_id"] = enrolled_roots[
+            "parent_dispatch_thread_id"
+        ]
     operator_contract = (job.contract or "").strip()
     if operator_contract:
         payload["operator_contract"] = operator_contract

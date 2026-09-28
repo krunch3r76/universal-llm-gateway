@@ -84,7 +84,9 @@ def _is_harvestable_cortex_payload(unwrapped: object | None) -> bool:
     return assertion_id_from_payload(unwrapped) is not None
 
 
-def _validate_unwrap_emit(value: object, shape_label: str) -> BoundaryShapeViolation | None:
+def _validate_unwrap_emit(
+    value: object, shape_label: str
+) -> BoundaryShapeViolation | None:
     unwrapped = unwrap_tool_result(value)
     harvestable = _is_harvestable_cortex_payload(unwrapped)
     # Only enforce harvest contract when the input looks like a cortex assert ack.

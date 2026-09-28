@@ -882,9 +882,7 @@ def test_conversation_tail_keeps_lines_after_unregister(
         observe_run_stream(
             _FakeRunWithEvents(
                 events_list=[
-                    _FakeStreamEvent(
-                        interaction_update=_Delta("text-delta", "kept")
-                    ),
+                    _FakeStreamEvent(interaction_update=_Delta("text-delta", "kept")),
                     _FakeStreamEvent(
                         interaction_update=_Delta("thinking-delta", "still")
                     ),

@@ -150,7 +150,11 @@ def fold_nested_boundary_effects(
 
     sources = list(dict.fromkeys([*manifest.capture_sources, "nested_child"]))
     return manifest.model_copy(
-        update={"dispatch_id": parent_dispatch_id, "surfaces": merged_surfaces, "capture_sources": sources}
+        update={
+            "dispatch_id": parent_dispatch_id,
+            "surfaces": merged_surfaces,
+            "capture_sources": sources,
+        }
     )
 
 

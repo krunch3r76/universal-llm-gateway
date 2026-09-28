@@ -145,7 +145,9 @@ def _emit(event: Event) -> None:
     try:
         emit_frontier_event(event)
     except Exception:  # noqa: BLE001 — observation must not break relay
-        logger.exception("mission negotiation event emit failed signal=%s", event.signal)
+        logger.exception(
+            "mission negotiation event emit failed signal=%s", event.signal
+        )
 
 
 def emit_negotiation_opened(**kwargs: str | int) -> None:

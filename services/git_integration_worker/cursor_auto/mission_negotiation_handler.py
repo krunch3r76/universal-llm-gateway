@@ -290,7 +290,8 @@ async def _refuse(
         negotiation_id=negotiation_id or "unknown",
         revision=revision or (row.revision if row is not None else 0),
         in_reply_to_turn=in_reply_to_turn or job.turn_number,
-        proposal_hash=proposal_hash or (row.proposal_hash if row is not None else "sha256:" + "0" * 64),
+        proposal_hash=proposal_hash
+        or (row.proposal_hash if row is not None else "sha256:" + "0" * 64),
         state=state,
         reason=reason,
     )

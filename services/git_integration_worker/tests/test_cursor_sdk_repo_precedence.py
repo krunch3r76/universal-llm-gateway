@@ -56,7 +56,9 @@ def _write(path: Path, rel: str, content: str = "# v1\n") -> None:
 def _commit_all(repo: Path, rels: tuple[str, ...]) -> None:
     for rel in rels:
         _write(repo, rel)
-    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "."], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(repo), "commit", "-m", "baseline"],
         check=True,
@@ -69,7 +71,8 @@ def _manifest_with_write_ops(
     paths: tuple[str, ...],
 ) -> EffectsManifest:
     entries = [
-        EffectEntry(op="write", target=str(repo / path), identity=path) for path in paths
+        EffectEntry(op="write", target=str(repo / path), identity=path)
+        for path in paths
     ]
     return EffectsManifest(
         dispatch_id="d1",
@@ -121,7 +124,9 @@ def _outcome(manifest: EffectsManifest | None = None) -> SdkRunOutcome:
 
 def _commit_as_dispatch(repo: Path, dispatch_id: str, message: str = "lane") -> None:
     name, email = dispatch_git_identity(dispatch_id)
-    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True
+    )
     subprocess.run(
         [
             "git",
@@ -223,7 +228,9 @@ def test_peer_commit_after_lane_still_ambient_for_shared_path(
     assert baseline is not None
     _commit_as_dispatch(tmp_path, dispatch_id, message="lane first")
     _write(tmp_path, rel, "# v2 peer\n")
-    subprocess.run(["git", "-C", str(tmp_path), "add", rel], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "add", rel], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(tmp_path), "commit", "-m", "peer overwrite"],
         check=True,
@@ -338,8 +345,7 @@ def test_l5_ambient_token_is_census_only(tmp_path: Path) -> None:
     ]
     assert ambient_tokens
     assert (
-        disposition_for_deviation(ambient_tokens[0])
-        == DeviationDisposition.CENSUS_ONLY
+        disposition_for_deviation(ambient_tokens[0]) == DeviationDisposition.CENSUS_ONLY
     )
     assert payload.get("capture_status") != "partial" or payload["status"] != "partial"
 
@@ -456,11 +462,7 @@ def test_no_label_ops_job_surface_shell_write_still_lifts(tmp_path: Path) -> Non
         thread_id="t-no-label-lift",
         work_item_ref="todo:closeout-no-label-ops-attribution",
         baseline=baseline,
-        packet_text=(
-            "<scope>\nFiles expected:\n"
-            f"- `{rel}`\n"
-            "</scope>\n"
-        ),
+        packet_text=(f"<scope>\nFiles expected:\n- `{rel}`\n</scope>\n"),
     )
     payload = json.loads(delivery.body)
     assert rel in payload["files_modified"] or rel in payload["files_created"]

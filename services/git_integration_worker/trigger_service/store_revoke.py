@@ -48,6 +48,8 @@ def revoke_trigger(conn: sqlite3.Connection, trigger_id: str) -> TriggerRow:
             (trigger_id,),
         )
     conn.commit()
-    updated = conn.execute("SELECT * FROM triggers WHERE id = ?", (trigger_id,)).fetchone()
+    updated = conn.execute(
+        "SELECT * FROM triggers WHERE id = ?", (trigger_id,)
+    ).fetchone()
     assert updated is not None
     return row_from_db(updated)

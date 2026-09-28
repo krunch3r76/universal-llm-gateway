@@ -270,7 +270,9 @@ def _tree_state_delta_line(row: OutboxRow) -> str | None:
     )
 
 
-def _probe_tree_drift(row: OutboxRow) -> tuple[str | None, int | None, str | None, int | None]:
+def _probe_tree_drift(
+    row: OutboxRow,
+) -> tuple[str | None, int | None, str | None, int | None]:
     source_repo = load_config().source_repo
     tree_state = compute_closeout_tree_state(
         source_repo=source_repo,

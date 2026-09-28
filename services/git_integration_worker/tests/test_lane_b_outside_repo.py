@@ -228,7 +228,9 @@ def test_ac_s1_2_lane_b_dispatch_workspace_write_hard_fails(tmp_path: Path) -> N
     )
     payload = json.loads(delivery.body)
     outside_paths = payload.get("files_outside_repo") or []
-    assert outside_paths, "expected non-empty outside_repo_paths for isolation falsifier"
+    assert outside_paths, (
+        "expected non-empty outside_repo_paths for isolation falsifier"
+    )
     assert any(
         str(dev).startswith("divergence:unknown_root_child:")
         for dev in payload.get("deviations") or []

@@ -9,7 +9,6 @@ import pytest
 
 from services.git_integration_worker import cursor_sdk_stream_capture as capture_mod
 from services.git_integration_worker.cursor_sdk_stream_capture import (
-    ToolCallObservation,
     _json_bytes,
     observe_run_stream,
 )
@@ -29,7 +28,11 @@ from services.git_integration_worker.cursor_sdk_toolcall_retention import (
 
 pytestmark = pytest.mark.offline
 
-_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "item18_attempt9_live_obs_result.json"
+_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "item18_attempt9_live_obs_result.json"
+)
 _LIVE_ASSERTION_ID = 27489
 _NOW_MS = 1_700_000_000_000
 
@@ -108,7 +111,10 @@ def test_ac22b_retention_window_stated_and_past_policy() -> None:
     )
     fields = retention.as_event_fields()
     assert fields["result_retention_window_s"] == RESULT_RETENTION_WINDOW_S
-    assert fields["result_retention_expires_at_unix_ms"] == _NOW_MS + RESULT_RETENTION_WINDOW_S * 1000
+    assert (
+        fields["result_retention_expires_at_unix_ms"]
+        == _NOW_MS + RESULT_RETENTION_WINDOW_S * 1000
+    )
     policy = retention_window_past_policy()
     assert "session boundary" in policy
     body, status, note = result_body_from_toolcall_payload(
@@ -135,7 +141,9 @@ def test_ac22d_event_payload_drop_audit_covers_siblings() -> None:
     assert "frontier.sdk.worker.completed" in signals
     assert "frontier.sdk.worker.delivery_failed" in signals
     toolcall_row = next(
-        row for row in EVENT_PAYLOAD_DROP_AUDIT if row["signal"] == "frontier.sdk.worker.toolcall"
+        row
+        for row in EVENT_PAYLOAD_DROP_AUDIT
+        if row["signal"] == "frontier.sdk.worker.toolcall"
     )
     assert toolcall_row["verdict"] == "fixed_item_22"
 

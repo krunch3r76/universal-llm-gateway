@@ -60,6 +60,8 @@ def is_genuinely_no_code_change(
     if not _git_change_set_empty(git_change_set):
         return False
     return not _manifest_declares_runtime_surface(base)
+
+
 def merge_repo_paths_into_manifest(
     manifest: EffectsManifest | None,
     paths: Iterable[str],
@@ -139,6 +141,8 @@ def merge_stream_tool_calls(
         source_label="stream",
     )
     return cortex_surface.merge_stream_cortex_entries(merged, tool_calls)
+
+
 def merge_artifact_paths(
     manifest: EffectsManifest | None,
     artifact_paths: Iterable[str],
@@ -152,6 +156,8 @@ def merge_artifact_paths(
         source_repo=source_repo,
         source_label="artifacts",
     )
+
+
 def wrapper_effects_for_closeout(
     *,
     thread_id: str,

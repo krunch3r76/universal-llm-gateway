@@ -68,7 +68,11 @@ def test_build_admit_report_body_includes_field_parity_line() -> None:
         propagate_admission=admission,
     )
     body = build_admit_report_body(
-        model={"requested": "auto", "resolved_model_id": "cursor/composer-2.5", "honored": True},
+        model={
+            "requested": "auto",
+            "resolved_model_id": "cursor/composer-2.5",
+            "honored": True,
+        },
         effort={"requested": "medium", "resolved_effort": "medium"},
         escalation={"requested": None, "resolved_escalation": None},
         contract="propagate",
@@ -79,7 +83,9 @@ def test_build_admit_report_body_includes_field_parity_line() -> None:
     assert "dropped_effect=[" in body
 
 
-def test_process_job_propagate_admit_surfaces_field_parity(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_job_propagate_admit_surfaces_field_parity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
     monkeypatch.setattr(

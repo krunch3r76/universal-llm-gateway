@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import pytest
@@ -192,7 +191,9 @@ def test_s1b_reaper_retains_standing_lane_after_terminal(
     assert removed.reaped == 0
     assert wt.is_dir()
     assert branch in _git("branch", "--list", branch, cwd=source_repo).stdout
-    assert lookup_lane_worktree(thread_id=dispatch_id, source_repo=source_repo) is not None
+    assert (
+        lookup_lane_worktree(thread_id=dispatch_id, source_repo=source_repo) is not None
+    )
 
 
 def test_s1b_route_wires_resolve_admit_binding() -> None:
@@ -281,7 +282,7 @@ def test_s1b_route_mint_failure_uses_exc_retryable() -> None:
     from services.git_integration_worker.routes import cursor_sdk as route_mod
 
     source = Path(route_mod.__file__).read_text(encoding="utf-8")
-    assert "retryable=getattr(exc, \"retryable\", False)" in source
+    assert 'retryable=getattr(exc, "retryable", False)' in source
     assert "except WorktreeMintError as exc:" in source
 
 
@@ -372,8 +373,9 @@ def test_ac_b_4_mint_path_matches_git_worktree_list(
     assert record.worktree_path.resolve() == wt.resolve()
     listed = {
         line.removeprefix("worktree ").strip()
-        for line in _git("worktree", "list", "--porcelain", cwd=source_repo)
-        .stdout.splitlines()
+        for line in _git(
+            "worktree", "list", "--porcelain", cwd=source_repo
+        ).stdout.splitlines()
         if line.startswith("worktree ")
     }
     assert str(wt.resolve()) in listed
@@ -573,4 +575,3 @@ def test_migrate_lane_worktrees_pk_retry_after_orphan_new_table(
             for row in conn.execute("PRAGMA table_info(cursor_sdk_lane_worktrees)")
         }
         assert "source_repo" in cols
-

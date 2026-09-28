@@ -53,9 +53,7 @@ def _job_kwargs(**extra: object) -> dict:
 def test_is_parked_waiting_body_shapes() -> None:
     assert is_parked_waiting_body("TYPE: WAITING\nwaiting_on: queue") is True
     assert (
-        is_parked_waiting_body(
-            "TYPE: PARKED\nwaiting_on: cursor-auto serial queue\n"
-        )
+        is_parked_waiting_body("TYPE: PARKED\nwaiting_on: cursor-auto serial queue\n")
         is True
     )
     assert is_parked_waiting_body("TYPE: PARKED\nwake: chat_delivery\n") is False

@@ -42,9 +42,8 @@ def _stargate_covers_giw_path(giw_path: str, stargate_paths: set[str]) -> bool:
         return "/api/v1/providers/cursor/dispatch" in stargate_paths
     if giw_path == "/api/v1/cursor/catalog":
         return "/api/v1/providers/cursor/catalog" in stargate_paths
-    if (
-        giw_path.startswith("/api/v1/cursor/dispatch/")
-        and giw_path.endswith("/conversation")
+    if giw_path.startswith("/api/v1/cursor/dispatch/") and giw_path.endswith(
+        "/conversation"
     ):
         return (
             "/api/v1/providers/cursor/dispatch/{dispatch_id}/conversation"
@@ -65,7 +64,9 @@ def test_giw_api_v1_routes_have_stargate_proxy_coverage(
     stargate_paths = _stargate_api_v1_paths()
 
     uncovered = sorted(
-        path for path in giw_paths if not _stargate_covers_giw_path(path, stargate_paths)
+        path
+        for path in giw_paths
+        if not _stargate_covers_giw_path(path, stargate_paths)
     )
     assert uncovered == [], (
         "GIW /api/v1 routes missing Stargate proxy coverage "

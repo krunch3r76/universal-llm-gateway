@@ -7,8 +7,12 @@ import asyncio
 import json
 import sys
 
-from services.git_integration_worker.cursor_auto.episode_briefing import fetch_thread_turns
-from services.git_integration_worker.cursor_auto.l2_orientation import generate_l2_orientation
+from services.git_integration_worker.cursor_auto.episode_briefing import (
+    fetch_thread_turns,
+)
+from services.git_integration_worker.cursor_auto.l2_orientation import (
+    generate_l2_orientation,
+)
 
 
 async def _run(thread_id: str) -> dict:

@@ -24,7 +24,10 @@ def test_descriptor_drift_fatal_when_served_below_expected():
         return _probe_payload(count=counts[service])
 
     result = check_descriptor_drift(probe_fn=probe)
-    assert any("git_integration_worker: served x-mcp count 8 < expected 9" in msg for msg in result.fatal_messages)
+    assert any(
+        "git_integration_worker: served x-mcp count 8 < expected 9" in msg
+        for msg in result.fatal_messages
+    )
     assert result.exit_code == 1
 
 
@@ -40,7 +43,10 @@ def test_descriptor_drift_warning_when_served_above_expected():
 
     result = check_descriptor_drift(probe_fn=probe)
     assert result.fatal_messages == ()
-    assert any("cortex_api: served x-mcp count 51 > expected 50" in msg for msg in result.warning_messages)
+    assert any(
+        "cortex_api: served x-mcp count 51 > expected 50" in msg
+        for msg in result.warning_messages
+    )
     assert result.exit_code == 0
 
 

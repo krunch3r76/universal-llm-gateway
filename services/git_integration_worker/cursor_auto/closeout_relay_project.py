@@ -55,7 +55,11 @@ def _is_md_table_header_row(c1: str, c2: str, c3: str | None = None) -> bool:
     h2 = _normalize_heading_cell(c2)
     if h1 in _MD_TABLE_HEADER_KEYS and h2 in _MD_TABLE_HEADER_KEYS:
         return True
-    if c3 is not None and h1 in _MD_TABLE_HEADER_KEYS and _normalize_heading_cell(c3) in _MD_TABLE_HEADER_KEYS:
+    if (
+        c3 is not None
+        and h1 in _MD_TABLE_HEADER_KEYS
+        and _normalize_heading_cell(c3) in _MD_TABLE_HEADER_KEYS
+    ):
         return True
     return False
 
@@ -90,9 +94,7 @@ def _split_md_table_line(line: str) -> list[str]:
 def _md_table_to_compact_list(table_text: str) -> str:
     """Render nested markdown table rows as a single-cell ordered list."""
     raw_lines = [
-        line.strip()
-        for line in table_text.splitlines()
-        if line.strip().startswith("|")
+        line.strip() for line in table_text.splitlines() if line.strip().startswith("|")
     ]
     if len(raw_lines) < 2:
         return table_text.strip()
@@ -106,7 +108,9 @@ def _md_table_to_compact_list(table_text: str) -> str:
         cells = _split_md_table_line(line)
         if len(cells) < column_count:
             continue
-        if _is_md_table_header_row(cells[0], cells[1], cells[2] if len(cells) > 2 else None):
+        if _is_md_table_header_row(
+            cells[0], cells[1], cells[2] if len(cells) > 2 else None
+        ):
             continue
         if len(cells) > column_count:
             cells = cells[: column_count - 1] + [" | ".join(cells[column_count - 1 :])]

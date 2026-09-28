@@ -61,7 +61,9 @@ def test_arc6637_turn46_loud_rejection_names_safe_window_fault():
     assert admission.error is not None
     assert admission.error["reason"] == "propagation_block_invalid"
     assert any("invalid_safe_window:normal" in flag for flag in admission.flags)
-    assert admission.error["legal_safe_window"] == "harvest, standalone_ok, drain_required"
+    assert (
+        admission.error["legal_safe_window"] == "harvest, standalone_ok, drain_required"
+    )
 
 
 def test_propagation_block_present_rejects_shorthand_prose_fallback():
@@ -71,24 +73,32 @@ def test_propagation_block_present_rejects_shorthand_prose_fallback():
     from universal_workspace import get_workspace_root
 
     reset_code_version_cache_for_tests()
-    head = subprocess.run(
-        ["git", "-C", str(get_workspace_root()), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-    ).stdout.decode().strip()
+    head = (
+        subprocess.run(
+            ["git", "-C", str(get_workspace_root()), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
     body = _TURN_46_BODY.replace("safe_window: normal", "safe_window: harvest")
-    body = body.replace(
-        "  - service: rag",
-        f"  - service: rag\n    code_ref: {head}",
-        1,
-    ).replace(
-        "  - service: mcp",
-        f"  - service: mcp\n    code_ref: {head}",
-        1,
-    ).replace(
-        "  - service: git_integration_worker",
-        f"  - service: git_integration_worker\n    code_ref: {head}",
-        1,
+    body = (
+        body.replace(
+            "  - service: rag",
+            f"  - service: rag\n    code_ref: {head}",
+            1,
+        )
+        .replace(
+            "  - service: mcp",
+            f"  - service: mcp\n    code_ref: {head}",
+            1,
+        )
+        .replace(
+            "  - service: git_integration_worker",
+            f"  - service: git_integration_worker\n    code_ref: {head}",
+            1,
+        )
     )
     admission = admit_propagate_body(body)
     assert admission.approved

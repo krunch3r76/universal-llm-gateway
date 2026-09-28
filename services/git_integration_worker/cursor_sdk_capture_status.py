@@ -1003,9 +1003,7 @@ def resolve_closeout_capture_fields(
     if baseline is None and residual_expected_paths:
         probeable_paths = filter_probeable_expected_paths(residual_expected_paths)
         if not probeable_paths:
-            all_malformed = _expected_paths_all_malformed_token(
-                residual_expected_paths
-            )
+            all_malformed = _expected_paths_all_malformed_token(residual_expected_paths)
             deviations: list[str] = [all_malformed]
             if deliverables_expected and manifest and _repo_has_shell_entry(manifest):
                 deviations.append("capture:shell_repo_writes_unverified")

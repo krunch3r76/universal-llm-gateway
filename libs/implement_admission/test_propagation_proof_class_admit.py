@@ -34,7 +34,10 @@ propagation:
     assert any(
         "invalid_proof_class:served_artifact" in flag for flag in admission.flags
     )
-    assert any("legal for mcp: client_visible, process_live" in flag for flag in admission.flags)
+    assert any(
+        "legal for mcp: client_visible, process_live" in flag
+        for flag in admission.flags
+    )
 
 
 def test_rag_served_artifact_admits():

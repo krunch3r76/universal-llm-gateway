@@ -50,7 +50,9 @@ def _validate_hop_reason_value(value: Any) -> str:
     if not isinstance(value, str) or not value:
         raise ValueError(f"hop_reason must be non-empty str, got {value!r}")
     if value not in HOP_REASONS:
-        raise ValueError(f"hop_reason must be one of {sorted(HOP_REASONS)!r}, got {value!r}")
+        raise ValueError(
+            f"hop_reason must be one of {sorted(HOP_REASONS)!r}, got {value!r}"
+        )
     return value
 
 
@@ -117,7 +119,9 @@ def merge_hop_admit_error(
     if "status_code" in merged_patch and "last_status_code" not in merged_patch:
         merged_patch["last_status_code"] = merged_patch.pop("status_code")
     attempt = int(base.get("attempts") or 0) + 1
-    normalized = _normalize_hop_admit_error({**base, **merged_patch, "attempts": attempt})
+    normalized = _normalize_hop_admit_error(
+        {**base, **merged_patch, "attempts": attempt}
+    )
     return normalized
 
 
@@ -167,7 +171,9 @@ def stamp_hop_on_record_json(
     if hop_declared is not None:
         data[_HOP_DECLARED_KEY] = _validate_hop_declared(hop_declared)
     if hop_successor is not None:
-        data[_HOP_SUCCESSOR_KEY] = _validate_hop_id(hop_successor, field="hop_successor")
+        data[_HOP_SUCCESSOR_KEY] = _validate_hop_id(
+            hop_successor, field="hop_successor"
+        )
     if hop_admit_error is not None:
         data[_HOP_ADMIT_ERROR_KEY] = _validate_hop_admit_error(hop_admit_error)
     return json.dumps(data, sort_keys=True, separators=(",", ":"))
@@ -180,7 +186,9 @@ def merge_hop_patch(record_json: str, patch: dict[str, Any]) -> str:
         data = {}
     unknown = set(patch) - _HOP_KEYS
     if unknown:
-        raise ValueError(f"merge_hop_patch accepts hop keys only, got {sorted(unknown)!r}")
+        raise ValueError(
+            f"merge_hop_patch accepts hop keys only, got {sorted(unknown)!r}"
+        )
     for key, value in patch.items():
         if key == _HOP_SEQ_KEY:
             data[key] = _validate_hop_seq(value)

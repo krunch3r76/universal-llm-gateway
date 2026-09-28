@@ -102,7 +102,9 @@ class CseHolderReleaseRequest(BaseModel):
     reason: str | None = None
 
 
-@router.post("/cse-holder/release", summary="Release a CSE session holder after detach.")
+@router.post(
+    "/cse-holder/release", summary="Release a CSE session holder after detach."
+)
 async def cse_holder_release(req: CseHolderReleaseRequest) -> dict[str, object]:
     from services.git_integration_worker.cse_session_holders import (
         release_holder_for_registration,

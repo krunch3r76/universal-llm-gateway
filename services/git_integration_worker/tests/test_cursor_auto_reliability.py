@@ -140,7 +140,9 @@ async def test_expired_job_terminates_failed_before_execution():
 @pytest.mark.asyncio
 async def test_unparseable_deadline_terminates_blocked_with_fix_hint():
     bus, queue = _FakeBus(), _FakeQueue()
-    result = await deadline_terminal(_job("deadline: whenever\n"), client=bus, queue=queue)
+    result = await deadline_terminal(
+        _job("deadline: whenever\n"), client=bus, queue=queue
+    )
     assert result["terminal_status"] == "status:blocked"
     assert "deadline_unparseable" in bus.posts[0]["body"]
     assert "ISO-8601" in bus.posts[0]["body"]

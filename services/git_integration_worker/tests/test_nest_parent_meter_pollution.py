@@ -35,7 +35,9 @@ pytestmark = pytest.mark.offline
 
 
 def _init_git_repo(path: Path) -> None:
-    subprocess.run(["git", "init", "-b", "master", str(path)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-b", "master", str(path)], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(path), "config", "user.email", "test@example.com"],
         check=True,
@@ -52,7 +54,9 @@ def _commit(repo: Path, rel: str, *, dispatch_id: str | None = None) -> str:
     target = repo / rel
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# x\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(repo), "add", rel], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "add", rel], check=True, capture_output=True
+    )
     env = dict(os.environ)
     cmd = ["git", "-C", str(repo), "commit", "-m", "c"]
     if dispatch_id is not None:
@@ -304,7 +308,9 @@ def test_landed_matrix_non_b(
 def _init_git_repo_with_commit(path: Path) -> str:
     _init_git_repo(path)
     (path / "README.md").write_text("seed\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(path), "add", "README.md"], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(path), "add", "README.md"], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(path), "commit", "-m", "seed"],
         check=True,

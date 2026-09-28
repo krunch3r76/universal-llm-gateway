@@ -89,7 +89,9 @@ def _clean_truncated_purpose(text: str) -> str:
             cleaned = cleaned[:idx].rstrip(" ,;:")
 
     words = cleaned.split()
-    while len(words) > 1 and words[-1].lower().rstrip(".,;:`\"") in _DANGLING_PURPOSE_TAIL:
+    while (
+        len(words) > 1 and words[-1].lower().rstrip('.,;:`"') in _DANGLING_PURPOSE_TAIL
+    ):
         words.pop()
     return " ".join(words).rstrip(".,;:")
 
@@ -294,9 +296,7 @@ def render_event_line(
         if mode == "pre_envelope":
             sentence = f"{seat_subject} dispatched cursor-sdk on thread {thread}."
         elif mode == "caller_omitted":
-            sentence = (
-                f"{seat} dispatched cursor-sdk {purpose} on thread {thread}."
-            )
+            sentence = f"{seat} dispatched cursor-sdk {purpose} on thread {thread}."
         else:
             sentence = f"{seat} dispatched cursor-sdk to {purpose} on thread {thread}."
     elif signal == "frontier.sdk.worker.completed":
@@ -332,9 +332,7 @@ def render_event_line(
         thread = str(payload.get("thread_id") or "unknown thread")
         contract = str(payload.get("contract") or "unknown contract")
         if mode == "pre_envelope":
-            sentence = (
-                f"cursor-auto {mapping.verb} {thread} (contract {contract})."
-            )
+            sentence = f"cursor-auto {mapping.verb} {thread} (contract {contract})."
         else:
             sentence = (
                 f"cursor-auto {mapping.verb} {thread} (contract {contract}) — "
@@ -353,27 +351,22 @@ def render_event_line(
     elif signal == "giw.trigger.fired":
         exec_id = str(payload.get("execution_id") or "unknown execution")
         sentence = (
-            f"Trigger service {mapping.verb} {purpose} ({seat}) — "
-            f"execution {exec_id}."
+            f"Trigger service {mapping.verb} {purpose} ({seat}) — execution {exec_id}."
         )
     elif signal == "giw.trigger.reconciled":
         terminal = str(payload.get("terminal_status") or "unknown")
         sentence = (
-            f"Trigger service {mapping.verb} {purpose} ({seat}) — "
-            f"terminal {terminal}."
+            f"Trigger service {mapping.verb} {purpose} ({seat}) — terminal {terminal}."
         )
     elif signal == "giw.trigger.fire_failed":
         reason = str(payload.get("reason") or "error not recorded")
         retryable = payload.get("retryable")
         retry_bit = " (retryable)" if retryable else ""
         sentence = (
-            f"Trigger service {mapping.verb} {purpose} ({seat}) — "
-            f"{reason}{retry_bit}."
+            f"Trigger service {mapping.verb} {purpose} ({seat}) — {reason}{retry_bit}."
         )
     elif signal == "giw.trigger.reclaimed":
-        sentence = (
-            f"Trigger service {mapping.verb} {purpose} ({seat})."
-        )
+        sentence = f"Trigger service {mapping.verb} {purpose} ({seat})."
     else:
         return None
 

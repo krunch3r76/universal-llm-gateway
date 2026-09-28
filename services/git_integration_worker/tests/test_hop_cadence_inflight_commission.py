@@ -124,8 +124,7 @@ def test_lane_in_flight_commission_false_for_unrelated_home_lane() -> None:
     )
     q.claim_next()
     assert (
-        lane_in_flight_commission("9999", queue=q, live_run_fn=lambda _t: None)
-        is False
+        lane_in_flight_commission("9999", queue=q, live_run_fn=lambda _t: None) is False
     )
 
 
@@ -148,8 +147,7 @@ def test_lane_in_flight_commission_false_for_aliased_closeout_residual() -> None
     q.claim_next()
     q.mark_nested_sdk_finished(job.job_id)
     assert (
-        lane_in_flight_commission("6655", queue=q, live_run_fn=lambda _t: None)
-        is False
+        lane_in_flight_commission("6655", queue=q, live_run_fn=lambda _t: None) is False
     )
 
 

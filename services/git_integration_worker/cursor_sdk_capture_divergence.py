@@ -241,7 +241,9 @@ def _repo_surface_cross_check(
         reason = _divergence_from_divergent_rel(rel_entry)
         if reason:
             return reason
-    from services.git_integration_worker.cursor_sdk_manifest import manifest_repo_write_paths
+    from services.git_integration_worker.cursor_sdk_manifest import (
+        manifest_repo_write_paths,
+    )
 
     for raw_path in sorted(
         manifest_repo_write_paths(manifest, source_repo=source_repo)
@@ -256,10 +258,7 @@ def _repo_surface_cross_check(
             continue
         if canon.scope == "external_or_unknown":
             if is_no_write_intent_reason(degraded_reason):
-                return (
-                    "capture:stated_intent_no_write_violation:"
-                    f"{canon.original_path}"
-                )
+                return f"capture:stated_intent_no_write_violation:{canon.original_path}"
             continue
         if not _path_exists_in_sandboxes(
             canon.canonical_path, source_repo, cortex_root

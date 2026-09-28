@@ -73,7 +73,9 @@ def test_hop_reasons_reexport_matches_events_vocabulary() -> None:
 
 
 def test_stamp_and_read_round_trip_all_six_keys() -> None:
-    base = json.dumps({"lane": "A", "contract": "implement"}, sort_keys=True, separators=(",", ":"))
+    base = json.dumps(
+        {"lane": "A", "contract": "implement"}, sort_keys=True, separators=(",", ":")
+    )
     stamped = stamp_hop_on_record_json(
         base,
         hop_seq=2,

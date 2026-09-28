@@ -12,17 +12,12 @@ from services.git_integration_worker.cursor_sdk_residual_deliverable_capture imp
 
 class TestExtractInstructedPaths:
     def test_files_expected_inline_scheme_path(self) -> None:
-        prose = (
-            "files_expected: cortex://notes/system/threads/x.md\n"
-            "contract: none\n"
-        )
+        prose = "files_expected: cortex://notes/system/threads/x.md\ncontract: none\n"
         assert extract_instructed_paths(prose) == ("notes/system/threads/x.md",)
 
     def test_files_expected_repo_relative_bullet(self) -> None:
         prose = (
-            "files_expected:\n"
-            "- tasks/journal/2026-06-30-review.md\n"
-            "authority: lead\n"
+            "files_expected:\n- tasks/journal/2026-06-30-review.md\nauthority: lead\n"
         )
         assert extract_instructed_paths(prose) == (
             "tasks/journal/2026-06-30-review.md",
@@ -54,17 +49,11 @@ class TestExtractInstructedPaths:
         assert extract_instructed_paths("") == ()
 
     def test_duplicate_paths_deduped(self) -> None:
-        prose = (
-            "files_expected:\n"
-            "- tasks/journal/x.md\n"
-            "- tasks/journal/x.md\n"
-        )
+        prose = "files_expected:\n- tasks/journal/x.md\n- tasks/journal/x.md\n"
         assert extract_instructed_paths(prose) == ("tasks/journal/x.md",)
 
     def test_comma_separated_files_expected(self) -> None:
-        prose = (
-            "files_expected: cortex://analysis.py, cortex://report.json\n"
-        )
+        prose = "files_expected: cortex://analysis.py, cortex://report.json\n"
         assert extract_instructed_paths(prose) == ("analysis.py", "report.json")
 
     def test_files_expected_none_token(self) -> None:
@@ -116,8 +105,7 @@ class TestLightBoundedCaptureStatus:
         )
         assert status == "partial"
         assert (
-            reason
-            == "divergence:residual_path_absent:tasks/journal/never-written.md"
+            reason == "divergence:residual_path_absent:tasks/journal/never-written.md"
         )
 
     def test_wrote_elsewhere_still_flagged(self, tmp_path: Path) -> None:
@@ -134,6 +122,4 @@ class TestLightBoundedCaptureStatus:
             cortex_root=cortex_root,
         )
         assert status == "partial"
-        assert (
-            reason == "divergence:residual_path_absent:tasks/journal/expected.md"
-        )
+        assert reason == "divergence:residual_path_absent:tasks/journal/expected.md"

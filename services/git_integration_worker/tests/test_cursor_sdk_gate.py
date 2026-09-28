@@ -102,5 +102,7 @@ async def test_orphan_holds_slot_until_finally() -> None:
     worker_unblock.set_result(None)
     await asyncio.wait_for(slot_released.wait(), timeout=5.0)
 
-    assert _STANDARD_GATE.active_count == 0, "slot must be released after thread finally fires"
+    assert _STANDARD_GATE.active_count == 0, (
+        "slot must be released after thread finally fires"
+    )
     t.join(timeout=2.0)

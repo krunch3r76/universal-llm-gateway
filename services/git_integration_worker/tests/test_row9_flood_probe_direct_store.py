@@ -35,8 +35,7 @@ from services.git_integration_worker.cursor_bus import BusReplyResult
 _FLOOD_DECOYS = 250
 _DISPATCH_ID = "auto-row9flood001"
 _ORACLE_SQL = (
-    "SELECT COUNT(*) AS n FROM turns "
-    "WHERE thread = ? AND body LIKE ? AND body LIKE ?"
+    "SELECT COUNT(*) AS n FROM turns WHERE thread = ? AND body LIKE ? AND body LIKE ?"
 )
 
 
@@ -64,7 +63,9 @@ class _App:
         self.state = type("S", (), {"worker_id": worker_id, "worker_boot_ts": "t"})()
 
 
-def _oracle_count(bus_db: Path, thread_id: str, dispatch_id: str) -> tuple[str, list, int]:
+def _oracle_count(
+    bus_db: Path, thread_id: str, dispatch_id: str
+) -> tuple[str, list, int]:
     """Direct-store duplicate count — never GET /turns."""
     params = (
         thread_id,

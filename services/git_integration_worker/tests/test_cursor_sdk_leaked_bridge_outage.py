@@ -347,6 +347,7 @@ def test_drain_completion_gate_exception_does_not_wedge_or_emit_completed(
         "emit_drain_completion_gate_failed",
         lambda **k: gate_failed.append(k),
     )
+
     def _gate_import_error(**_kwargs: object) -> bool:
         raise ImportError("stale module graph")
 

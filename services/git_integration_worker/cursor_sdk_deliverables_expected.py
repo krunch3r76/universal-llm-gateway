@@ -207,9 +207,7 @@ def resolve_lane_b_landed_head(
             HUB_MASTER_HEAD_RECOVERY_EQUALS_TIP,
         )
 
-    recovered_ahead = _count_commits_between(
-        source_repo, branch_point, recovered_sha
-    )
+    recovered_ahead = _count_commits_between(source_repo, branch_point, recovered_sha)
     if recovered_ahead is None or recovered_ahead < 1:
         return (
             lane_head_sha,

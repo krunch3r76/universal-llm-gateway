@@ -357,9 +357,7 @@ def superseded_terminal_summary(
     """
     if dispatch_id:
         disposition = "revert-pending"
-        clause = (
-            "episode void; revert-pending (successor settle reports tree)"
-        )
+        clause = "episode void; revert-pending (successor settle reports tree)"
     else:
         disposition = "revert-skipped"
         clause = "episode void; revert-skipped"

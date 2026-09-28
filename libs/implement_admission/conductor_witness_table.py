@@ -274,9 +274,11 @@ def _witness_g1(*, source_ref: str, cortex: WitnessCortex) -> Witness | None:
         if kind != "architecture":
             full = cortex.entity_get(target, intent="full")
             full_attrs = full.get("attributes") or {}
-            kind = str(
-                full_attrs.get("consult_kind") or full.get("consult_kind") or kind
-            ).strip().lower()
+            kind = (
+                str(full_attrs.get("consult_kind") or full.get("consult_kind") or kind)
+                .strip()
+                .lower()
+            )
         if kind != "architecture":
             blob = " ".join(
                 (

@@ -12,12 +12,10 @@ from services.git_integration_worker.cursor_sdk_boundary_contract import (
     BoundaryShapeViolation,
 )
 from services.git_integration_worker.cursor_sdk_boundary_deployment_identity import (
-    DEPLOYMENT_IDENTITY_BOUNDARY,
     DeploymentIdentityEmit,
     emit_deployment_identity_boundary,
 )
 from services.git_integration_worker.cursor_sdk_boundary_join_key import (
-    JOIN_KEY_BOUNDARY,
     emit_join_key_boundary,
 )
 from services.git_integration_worker.cursor_sdk_boundary_name_gate import (
@@ -25,7 +23,6 @@ from services.git_integration_worker.cursor_sdk_boundary_name_gate import (
     emit_name_gate_boundary,
 )
 from services.git_integration_worker.cursor_sdk_boundary_retention import (
-    RETENTION_BOUNDARY,
     emit_retention_boundary,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
@@ -40,7 +37,11 @@ from services.git_integration_worker.cursor_sdk_toolcall_retention import (
 
 pytestmark = pytest.mark.offline
 
-_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "item18_attempt9_live_obs_result.json"
+_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "item18_attempt9_live_obs_result.json"
+)
 _LIVE_ENTITY = "todo:ac9g-live-falsifier"
 _ASSERTION_ID = 27486
 
@@ -56,7 +57,9 @@ def _production_mcp_args() -> dict[str, object]:
     }
 
 
-def _production_obs(*, call_id: str = "tool_a57a9066-82f0-43d1-b626-bdc3452edc6") -> ToolCallObservation:
+def _production_obs(
+    *, call_id: str = "tool_a57a9066-82f0-43d1-b626-bdc3452edc6"
+) -> ToolCallObservation:
     args = _production_mcp_args()
     return ToolCallObservation(
         call_id=call_id,
@@ -130,7 +133,9 @@ def test_ac17h_retention_catches_metadata_only_legacy() -> None:
         result_retention_expires_at_unix_ms=0,
     )
     with pytest.raises(BoundaryContractError) as exc_info:
-        emit_retention_boundary(legacy, result_bytes=3208, status="completed", strict=True)
+        emit_retention_boundary(
+            legacy, result_bytes=3208, status="completed", strict=True
+        )
     msg = exc_info.value.violation.legible_message()
     assert "boundary=retention" in msg
 

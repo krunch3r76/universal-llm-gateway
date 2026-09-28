@@ -469,4 +469,3 @@ def verify_role_substrate_vocab_conformance(
     if code_lane.get("seat") != "cursor-sdk":
         errors.append("dispatch_lane.code.seat must be 'cursor-sdk'")
     return errors
-

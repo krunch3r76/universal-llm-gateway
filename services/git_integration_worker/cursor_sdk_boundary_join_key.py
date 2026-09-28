@@ -7,11 +7,13 @@ from collections.abc import Mapping
 from services.git_integration_worker.cursor_sdk_boundary_contract import (
     BoundaryEmitResult,
     BoundaryShapeViolation,
+    _summarize_value,
     register_boundary_contract,
     validate_at_emit,
-    _summarize_value,
 )
-from services.git_integration_worker.cursor_sdk_stream_capture import ToolCallObservation
+from services.git_integration_worker.cursor_sdk_stream_capture import (
+    ToolCallObservation,
+)
 
 JOIN_KEY_BOUNDARY = "join_key"
 
@@ -34,7 +36,9 @@ def classify_join_key_shape(value: object) -> str:
     return "unknown_keys"
 
 
-def _validate_join_key_emit(value: object, shape_label: str) -> BoundaryShapeViolation | None:
+def _validate_join_key_emit(
+    value: object, shape_label: str
+) -> BoundaryShapeViolation | None:
     if shape_label in {"empty", "non_mapping", "unknown_keys"}:
         return None
     if shape_label == "dual_axis":
@@ -68,7 +72,6 @@ def emit_join_key_boundary(
     )
 
     for obs in source_observations:
-
         aid = assertion_id_from_cortex_observation(obs)
         if aid is None:
             continue
@@ -86,7 +89,9 @@ def emit_join_key_boundary(
                 arrived=f"index={_summarize_value(index)} missing={','.join(missing)}",
                 detail="join_key index incomplete for observation with harvestable assertion id",
             )
-            result = BoundaryEmitResult(value=index, shape_label=result.shape_label, violation=violation)
+            result = BoundaryEmitResult(
+                value=index, shape_label=result.shape_label, violation=violation
+            )
             if strict:
                 from services.git_integration_worker.cursor_sdk_boundary_contract import (
                     BoundaryContractError,

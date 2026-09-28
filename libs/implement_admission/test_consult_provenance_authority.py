@@ -241,7 +241,10 @@ def test_commit_is_sole_todo_keyed_writer() -> None:
 
     root = Path(__file__).resolve().parents[2]
     writers: list[str] = []
-    scan_roots = (root / "libs" / "implement_admission", root / "scripts" / "model_manager")
+    scan_roots = (
+        root / "libs" / "implement_admission",
+        root / "scripts" / "model_manager",
+    )
     for scan in scan_roots:
         for path in scan.rglob("*.py"):
             if "test_" in path.name or not path.is_file():
@@ -249,14 +252,14 @@ def test_commit_is_sole_todo_keyed_writer() -> None:
             text = path.read_text(encoding="utf-8")
             if TODO_CONSULT_PROVENANCE_DIR in text and "write_text" in text:
                 writers.append(str(path.relative_to(root)))
-    assert writers == [
-        "libs/implement_admission/consult_provenance_record.py"
-    ]
+    assert writers == ["libs/implement_admission/consult_provenance_record.py"]
     assert commit_todo_consult_provenance.__name__ == "commit_todo_consult_provenance"
 
 
 @pytest.mark.offline
-def test_commit_refuses_incomplete_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_commit_refuses_incomplete_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from implement_admission.consult_provenance_record import (
         commit_todo_consult_provenance,
     )
@@ -281,9 +284,7 @@ def test_commit_writes_record_and_builds_event(
 
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     record = _complete_record(tmp_path)
-    uri = commit_todo_consult_provenance(
-        record, stamp_cache=False, files_root=tmp_path
-    )
+    uri = commit_todo_consult_provenance(record, stamp_cache=False, files_root=tmp_path)
     assert uri is not None
     loaded = load_todo_consult_provenance(_TODO, root=tmp_path)
     assert loaded is not None

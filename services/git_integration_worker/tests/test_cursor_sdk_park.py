@@ -83,9 +83,7 @@ def test_nest_under_parks_parent_and_admits_child() -> None:
     assert parked is not None
     assert parked[0] == "parent-1"
     assert ledger.has_parked_parent(source_repo=repo) is True
-    assert (
-        ledger.promote_next_queued(source_repo=repo, worker_instance="w") is None
-    )
+    assert ledger.promote_next_queued(source_repo=repo, worker_instance="w") is None
 
 
 def test_naive_nest_without_park_still_queues() -> None:
@@ -174,9 +172,7 @@ def test_restore_from_park_clears_park_and_unblocks_promote() -> None:
     assert ledger.restore_from_park(parent_id="parent-3") == repo
     assert ledger.find_parked_parent_for_child(child_id="child-3") is None
     # Parent still running — promote must stay blocked until parent terminals.
-    assert (
-        ledger.promote_next_queued(source_repo=repo, worker_instance="w") is None
-    )
+    assert ledger.promote_next_queued(source_repo=repo, worker_instance="w") is None
     ledger.mark_terminal(dispatch_id="parent-3", terminal_status="completed")
     promoted = ledger.promote_next_queued(source_repo=repo, worker_instance="w")
     assert promoted is not None

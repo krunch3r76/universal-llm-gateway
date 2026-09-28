@@ -7,8 +7,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
-from implement_admission.closeout_models import EffectEntry, EffectsManifest, SurfaceSection
+from implement_admission.closeout_models import (
+    EffectEntry,
+    EffectsManifest,
+    SurfaceSection,
+)
 
 from services.git_integration_worker.config import WorkerConfig
 from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBinding
@@ -75,11 +78,16 @@ def projects_layout(tmp_path: Path) -> tuple[Path, Path, Path, frozenset[str]]:
     return hub, satellite, projects_root, roster
 
 
-def test_omit_workspace_resolves_hub(projects_layout: tuple[Path, Path, Path, frozenset[str]]) -> None:
+def test_omit_workspace_resolves_hub(
+    projects_layout: tuple[Path, Path, Path, frozenset[str]],
+) -> None:
     hub, _sat, projects_root, roster = projects_layout
-    assert resolve_dispatch_source_repo(
-        None, hub=hub, projects_root=projects_root, allowlist=roster
-    ) == hub.resolve()
+    assert (
+        resolve_dispatch_source_repo(
+            None, hub=hub, projects_root=projects_root, allowlist=roster
+        )
+        == hub.resolve()
+    )
 
 
 def test_allowlisted_name_resolves_satellite(
@@ -92,7 +100,9 @@ def test_allowlisted_name_resolves_satellite(
     assert resolved == satellite.resolve()
 
 
-def test_unknown_workspace_raises(projects_layout: tuple[Path, Path, Path, frozenset[str]]) -> None:
+def test_unknown_workspace_raises(
+    projects_layout: tuple[Path, Path, Path, frozenset[str]],
+) -> None:
     hub, _sat, projects_root, roster = projects_layout
     with pytest.raises(CursorWorkspaceUnknown):
         resolve_dispatch_source_repo(
@@ -113,7 +123,9 @@ def test_hub_name_raises_use_omit(
         )
 
 
-def test_non_git_satellite_raises(projects_layout: tuple[Path, Path, Path, frozenset[str]]) -> None:
+def test_non_git_satellite_raises(
+    projects_layout: tuple[Path, Path, Path, frozenset[str]],
+) -> None:
     hub, _sat, projects_root, _roster = projects_layout
     bare = projects_root / "bare-sat"
     bare.mkdir()
@@ -274,8 +286,7 @@ def test_9575_class_sentinel_in_files_modified_not_outside(
         work_item_ref=None,
         baseline=baseline,
         packet_text=(
-            "---\nfiles_expected:\n- perps/sentinel.py\n---\n"
-            "contract: implement\n"
+            "---\nfiles_expected:\n- perps/sentinel.py\n---\ncontract: implement\n"
         ),
         files_expected=["perps/sentinel.py"],
         cortex_artifact_paths=[],
@@ -292,12 +303,15 @@ def test_9575_class_sentinel_in_files_modified_not_outside(
     deviations = payload.get("deviations") or payload.get("baseline_deviations") or []
     assert "capture:outside_repo_paths_present" not in deviations
     assert "gate_d:no_expected_files_touched" not in deviations
-    assert payload["head_sha"] != subprocess.run(
-        ["git", "-C", str(hub), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    assert (
+        payload["head_sha"]
+        != subprocess.run(
+            ["git", "-C", str(hub), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    )
 
 
 def test_admit_rejects_unknown_workspace_via_resolver(

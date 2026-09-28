@@ -85,7 +85,9 @@ def _admit_conductor(
 
 
 def test_derive_hop_admitted_by_liaison_vs_watchdog() -> None:
-    assert derive_hop_admitted_by(caller_agent="cursor", hop_reason="planned") == "liaison"
+    assert (
+        derive_hop_admitted_by(caller_agent="cursor", hop_reason="planned") == "liaison"
+    )
     assert (
         derive_hop_admitted_by(caller_agent="conductor-hop", hop_reason="watchdog")
         == "watchdog"

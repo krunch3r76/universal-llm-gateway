@@ -235,9 +235,7 @@ def resolve_cursor_sdk_dispatch_ledger_path() -> Path:
     pinned = os.environ.get(CURSOR_SDK_DISPATCH_LEDGER_ENV, "").strip()
     if pinned:
         db_path = Path(pinned).expanduser()
-        refuse_live_ledger_under_pytest(
-            db_path.parent, ledger_label="dispatch ledger"
-        )
+        refuse_live_ledger_under_pytest(db_path.parent, ledger_label="dispatch ledger")
         db_path.parent.mkdir(parents=True, exist_ok=True)
         return db_path.resolve()
     data_dir = Path(

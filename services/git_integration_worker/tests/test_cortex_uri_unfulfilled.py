@@ -31,8 +31,7 @@ from services.git_integration_worker.cursor_sdk_manifest.offgit_deliverables imp
 from services.git_integration_worker.cursor_sdk_packet import resolve_prompt_preamble
 
 _HOST_PATH = (
-    "/mnt/torus/projects/cortex:/notes/personal/kaywan/"
-    "walgreens-shift-dashboard.html"
+    "/mnt/torus/projects/cortex:/notes/personal/kaywan/walgreens-shift-dashboard.html"
 )
 _OUTSIDE_TOKEN = "cortex:/notes/personal/kaywan/walgreens-shift-dashboard.html"
 
@@ -62,9 +61,7 @@ def test_normalize_expected_rejects_impersonation_keeps_shorthand() -> None:
 
 def test_normalize_offgit_does_not_promote_impersonation() -> None:
     assert _normalize_offgit_uri(None, _OUTSIDE_TOKEN) == _OUTSIDE_TOKEN
-    assert (
-        _normalize_offgit_uri(None, "cortex:notes/foo.md") == "cortex://notes/foo.md"
-    )
+    assert _normalize_offgit_uri(None, "cortex:notes/foo.md") == "cortex://notes/foo.md"
 
 
 def test_salvage_copies_host_path_into_cortex_root(tmp_path) -> None:
@@ -116,10 +113,13 @@ def test_complete_x_partial_work_emits_plane_discrepancy() -> None:
         measurement="partial:work",
     )
     assert merge_plane_discrepancy_markers(marker) is not None
-    assert status_claim_is_polysemous_partial_legend(
-        claim="complete",
-        measurement="partial:work",
-    ) is False
+    assert (
+        status_claim_is_polysemous_partial_legend(
+            claim="complete",
+            measurement="partial:work",
+        )
+        is False
+    )
 
 
 def test_preamble_forbids_cortex_colon_host_path() -> None:

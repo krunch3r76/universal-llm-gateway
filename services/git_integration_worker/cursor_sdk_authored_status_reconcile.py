@@ -48,9 +48,7 @@ def _record_disagreement(
     """Preserve machine grade; record claim divergence without capping primary."""
     machine_status = status.value
     machine_wo = work_outcome.value if work_outcome is not None else None
-    token = (
-        f"status_disagreement:authored_{authored_label}_vs_machine_{machine_status}"
-    )
+    token = f"status_disagreement:authored_{authored_label}_vs_machine_{machine_status}"
     if token not in deviations:
         deviations.append(token)
     disagreement: dict[str, Any] = {
@@ -136,9 +134,7 @@ def refresh_disagreement_after_machine_gate(
     }
     if status_incomplete_class is not None:
         wo = (
-            post_gate_work_outcome.value
-            if post_gate_work_outcome is not None
-            else None
+            post_gate_work_outcome.value if post_gate_work_outcome is not None else None
         )
         refreshed["machine_work_outcome"] = wo
         refreshed["primary_work_outcome"] = wo

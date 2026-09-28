@@ -113,9 +113,7 @@ def external_gate_hop_verdict(row: dict[str, Any]) -> tuple[str, str | None]:
     return "clear", None
 
 
-def _packet_is_conductor(
-    packet_kind: str | None, packet_text: str | None
-) -> bool:
+def _packet_is_conductor(packet_kind: str | None, packet_text: str | None) -> bool:
     if packet_kind == "conductor":
         return True
     if packet_text:

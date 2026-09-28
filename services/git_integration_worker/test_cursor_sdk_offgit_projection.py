@@ -28,10 +28,6 @@ from services.git_integration_worker.cursor_sdk_deliverable_truth import (
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
-from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
-    extract_instructed_paths,
-    fs_write_landed,
-)
 from services.git_integration_worker.cursor_sdk_manifest import (
     _entry_from_tool_call,
     build_effects_manifest,
@@ -40,6 +36,10 @@ from services.git_integration_worker.cursor_sdk_manifest import (
     manifest_offgit_deliverable_uris,
     oob_cortex_write_findings,
     repo_change_set_from_manifest,
+)
+from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
+    extract_instructed_paths,
+    fs_write_landed,
 )
 
 pytestmark = pytest.mark.offline

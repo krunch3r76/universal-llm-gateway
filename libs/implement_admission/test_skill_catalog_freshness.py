@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import pytest
-
 from claude_bundles.catalog import get_skill_catalog
-from implement_admission.skill_catalog_resolver import catalog_source_uris
+
 from implement_admission.skill_catalog_freshness import (
     check_catalog_valid,
     validate_generation_invariants,
 )
+from implement_admission.skill_catalog_resolver import catalog_source_uris
 
 
 @pytest.mark.offline

@@ -111,13 +111,17 @@ async def test_fire_loop_returns_before_reconcile_terminal(store: TriggerStore) 
     client.submit.return_value = {"execution_id": "exec-fast", "status": "running"}
     client.poll.side_effect = slow_poll
 
-    with patch(
-        "services.git_integration_worker.trigger_service.fire.lane_available",
-        return_value=(True, None),
-    ), patch(
-        "services.git_integration_worker.trigger_service.fire.publish_lib_signal",
-    ), patch(
-        "services.git_integration_worker.trigger_service.loop._pager_on_fire",
+    with (
+        patch(
+            "services.git_integration_worker.trigger_service.fire.lane_available",
+            return_value=(True, None),
+        ),
+        patch(
+            "services.git_integration_worker.trigger_service.fire.publish_lib_signal",
+        ),
+        patch(
+            "services.git_integration_worker.trigger_service.loop._pager_on_fire",
+        ),
     ):
         fire_start = time.monotonic()
         fired = fire_once(store, claimed, client=client)
@@ -126,11 +130,14 @@ async def test_fire_loop_returns_before_reconcile_terminal(store: TriggerStore) 
     assert fired.status == "fired"
     assert fire_elapsed < poll_block_s
 
-    with patch(
-        "services.git_integration_worker.trigger_service.fire.CdpAskClient",
-        return_value=client,
-    ), patch(
-        "services.git_integration_worker.trigger_service.fire.publish_lib_signal",
+    with (
+        patch(
+            "services.git_integration_worker.trigger_service.fire.CdpAskClient",
+            return_value=client,
+        ),
+        patch(
+            "services.git_integration_worker.trigger_service.fire.publish_lib_signal",
+        ),
     ):
         reconcile_start = time.monotonic()
         count = await run_reconcile_pass(store)

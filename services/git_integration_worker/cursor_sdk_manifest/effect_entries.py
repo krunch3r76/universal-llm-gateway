@@ -33,7 +33,10 @@ def classify_mcp_capture_branch(turns: Iterable) -> surface_taxonomy.CaptureBran
         tool_type = str(message.get("type") or "")
         if tool_type == surface_taxonomy._MCP_OP:
             saw_mcp = True
-        if tool_type in surface_taxonomy._REPO_FILE_OPS or tool_type == surface_taxonomy._REPO_SHELL_OP:
+        if (
+            tool_type in surface_taxonomy._REPO_FILE_OPS
+            or tool_type == surface_taxonomy._REPO_SHELL_OP
+        ):
             saw_repo_or_shell = True
     if saw_mcp:
         return "A"
@@ -46,6 +49,8 @@ def no_capture_degraded_reason(branch: surface_taxonomy.CaptureBranch) -> str | 
     if branch == "NO_CAPTURE":
         return "no_capture_evidence"
     return None
+
+
 def _iter_tool_call_messages(turns: Iterable) -> Iterable[Mapping[str, Any]]:
     for turn in turns or ():
         inner = getattr(turn, "turn", None)
@@ -71,6 +76,8 @@ def _iter_tool_call_messages(turns: Iterable) -> Iterable[Mapping[str, Any]]:
             )
             if isinstance(message, Mapping):
                 yield message
+
+
 def _entry_from_tool_call(message: Mapping[str, Any]) -> EffectEntry | None:
     tool_type = str(message.get("type") or "tool")
     args = message.get("args") if isinstance(message.get("args"), Mapping) else {}
@@ -82,7 +89,9 @@ def _entry_from_tool_call(message: Mapping[str, Any]) -> EffectEntry | None:
         target = mcp_arguments._mcp_target(tool_name, effective)
         identity = mcp_arguments._mcp_identity(tool_name, effective)
         result = message.get("result")
-        assertion_id = cortex_surface._cortex_result_assertion_id(tool_name, effective, result)
+        assertion_id = cortex_surface._cortex_result_assertion_id(
+            tool_name, effective, result
+        )
         if assertion_id is not None:
             identity = f"assertion:{assertion_id}"
         if tool_name == "dispatch":
@@ -109,14 +118,19 @@ def _entry_from_tool_call(message: Mapping[str, Any]) -> EffectEntry | None:
         return EffectEntry(op="shell", target=command, detail=detail, identity=command)
     if is_subagent_tool_call(tool_type=tool_type):
         return entry_from_subagent_message(message)
-    return EffectEntry(op=tool_type, target=mcp_arguments._string_arg(args, "path"), detail=detail)
+    return EffectEntry(
+        op=tool_type, target=mcp_arguments._string_arg(args, "path"), detail=detail
+    )
 
 
 def _surface_for_tool_call(
     message: Mapping[str, Any], entry: EffectEntry
 ) -> str | None:
     tool_type = str(message.get("type") or "")
-    if tool_type in surface_taxonomy._REPO_FILE_OPS or tool_type == surface_taxonomy._REPO_SHELL_OP:
+    if (
+        tool_type in surface_taxonomy._REPO_FILE_OPS
+        or tool_type == surface_taxonomy._REPO_SHELL_OP
+    ):
         return "repo"
     if is_subagent_tool_call(tool_type=tool_type):
         return SUBAGENTS_SURFACE

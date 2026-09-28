@@ -638,7 +638,9 @@ def _git_repo_at_commit(tmp_path: Path, *, advance: bool = False) -> tuple[Path,
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.email", "witness@test"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "witness@test"], cwd=repo, check=True
+    )
     subprocess.run(["git", "config", "user.name", "witness"], cwd=repo, check=True)
     (repo / "f").write_text("1\n", encoding="utf-8")
     subprocess.run(["git", "add", "f"], cwd=repo, check=True)

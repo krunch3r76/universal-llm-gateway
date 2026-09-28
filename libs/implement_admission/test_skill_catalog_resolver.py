@@ -7,16 +7,16 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from claude_bundles.catalog import get_skill_catalog
+
+from implement_admission.skill_catalog_freshness import check_catalog_valid
 from implement_admission.skill_catalog_resolver import (
     SkillCatalogResolveError,
+    canonical_catalog_slug,
     catalog_digest,
     catalog_source_uris,
-    canonical_catalog_slug,
     resolve_canonical_source_uri,
 )
-from implement_admission.skill_catalog_freshness import check_catalog_valid
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _GENERATOR = _REPO_ROOT / "scripts" / "cortex" / "validate_skill_catalog.py"
@@ -43,10 +43,9 @@ def test_reader_known_and_alias() -> None:
     assert resolve_canonical_source_uri("rule:architecture-invariants").startswith(
         "workspaces://"
     )
-    assert (
-        resolve_canonical_source_uri("session-close-kernel")
-        == resolve_canonical_source_uri("session-close")
-    )
+    assert resolve_canonical_source_uri(
+        "session-close-kernel"
+    ) == resolve_canonical_source_uri("session-close")
     assert resolve_canonical_source_uri("ulg-architecture").startswith("workspaces://")
 
 
@@ -103,7 +102,7 @@ def test_formatter_stable() -> None:
 def test_no_live_entity_get_in_hot_path() -> None:
     source = _MODULE.read_text(encoding="utf-8")
     assert "make_sync_client" not in source
-    assert source.replace('``entity_get``', "").count("entity_get") == 0
+    assert source.replace("``entity_get``", "").count("entity_get") == 0
 
 
 @pytest.mark.offline

@@ -123,9 +123,7 @@ async def sweep_lane_b_writes(
             continue
         message = f"lane-b: {batch.arc_id} seat={batch.seat_id} paths={len(paths)}"
         git_env = integrate_git_env_vars(batch.arc_id, seat=batch.seat_id)
-        result = await commit_paths(
-            str(repo), list(paths), message, git_env=git_env
-        )
+        result = await commit_paths(str(repo), list(paths), message, git_env=git_env)
         if result.committed and result.commit_sha:
             committed.append((result.commit_sha, batch.arc_id, len(paths)))
             ledger.clear_swept_paths(arc_id=batch.arc_id, paths=paths)
@@ -141,6 +139,7 @@ async def sweep_lane_b_writes(
         skipped_unregistered=tuple(sorted(set(skipped_unregistered))),
         skipped_not_dirty=tuple(skipped_not_dirty),
     )
+
 
 async def lane_b_sweeper_loop(app) -> None:
     """Periodic unattended sweep — mirrors ``stale_lease_sweeper`` shape."""

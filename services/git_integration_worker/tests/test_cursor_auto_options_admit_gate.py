@@ -265,12 +265,7 @@ options:
 async def test_state10_no_directive_type_gate_does_not_fire(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    body = (
-        "density: dense\n"
-        "## Scope\n"
-        "libs/foo\n"
-        + _ASYMMETRIC_OPTIONS
-    )
+    body = "density: dense\n## Scope\nlibs/foo\n" + _ASYMMETRIC_OPTIONS
     _pass_through_gates(monkeypatch)
     result = await blocking_admit_gate(
         _implement_job(body),

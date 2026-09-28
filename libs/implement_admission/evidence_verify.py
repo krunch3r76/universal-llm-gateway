@@ -136,9 +136,7 @@ def verify_evidence_uris(
         if published is None:
             missing_digest.append(path)
             continue
-        recomputed = hash_artifact_path(
-            path, source_repo=repo, cortex_root=cortex
-        )
+        recomputed = hash_artifact_path(path, source_repo=repo, cortex_root=cortex)
         if recomputed is None:
             unreadable.append(path)
             continue

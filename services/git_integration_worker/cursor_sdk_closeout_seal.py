@@ -78,9 +78,7 @@ def closeout_surface_decl() -> SurfaceDecl:
     return decl
 
 
-def _qualify_bare_ints(
-    bag: dict[str, Any], *, scope: str, authority: str
-) -> None:
+def _qualify_bare_ints(bag: dict[str, Any], *, scope: str, authority: str) -> None:
     """Attach qualifier siblings on int/float leaves without growing the plain list."""
     for key, value in list(bag.items()):
         if key.endswith("_scope") or key.endswith("_authority"):

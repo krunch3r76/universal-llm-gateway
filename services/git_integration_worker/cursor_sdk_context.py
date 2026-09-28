@@ -297,7 +297,9 @@ def build_local_agent_options(
 
 def steer_spool_dir() -> Path:
     """Per-dispatch steer spool root (bridge reads via ``ULG_STEER_SPOOL_DIR``)."""
-    data_dir = Path(os.environ.get("DATA_DIR", str(Path.home() / ".gateway"))).expanduser()
+    data_dir = Path(
+        os.environ.get("DATA_DIR", str(Path.home() / ".gateway"))
+    ).expanduser()
     return data_dir / "steer-spool"
 
 

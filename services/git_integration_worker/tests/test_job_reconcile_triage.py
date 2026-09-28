@@ -74,13 +74,16 @@ class _App:
 def test_shutdown_claimed_dispatched_stays_open() -> None:
     job = _claimed_dispatched()
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
-        return_value=False,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
-        new_callable=AsyncMock,
-    ) as fetch:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+            new_callable=AsyncMock,
+        ) as fetch,
+    ):
         terminalized = asyncio.run(
             reconcile_open_auto_jobs(post_bus=True, rehydrate=False)
         )
@@ -101,13 +104,16 @@ def test_startup_honors_auto_closeout_turn() -> None:
         "body": f"TYPE: CLOSEOUT\ndispatch_id: {dispatch_id}\n",
     }
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
-        return_value=False,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
-        new_callable=AsyncMock,
-        return_value=([turn], None),
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+            new_callable=AsyncMock,
+            return_value=([turn], None),
+        ),
     ):
         terminalized = asyncio.run(
             reconcile_open_auto_jobs(post_bus=False, rehydrate=True)
@@ -128,13 +134,16 @@ def test_startup_honors_cursor_sdk_turn() -> None:
         "body": "status: complete\n",
     }
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
-        return_value=False,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
-        new_callable=AsyncMock,
-        return_value=([turn], None),
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+            new_callable=AsyncMock,
+            return_value=([turn], None),
+        ),
     ):
         terminalized = asyncio.run(
             reconcile_open_auto_jobs(post_bus=False, rehydrate=True)
@@ -148,13 +157,16 @@ def test_startup_honors_cursor_sdk_turn() -> None:
 def test_startup_bus_unreachable_leaves_claimed() -> None:
     job = _claimed_dispatched()
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
-        return_value=False,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
-        new_callable=AsyncMock,
-        return_value=(None, "bus_http_503"),
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+            new_callable=AsyncMock,
+            return_value=(None, "bus_http_503"),
+        ),
     ):
         terminalized = asyncio.run(
             reconcile_open_auto_jobs(post_bus=False, rehydrate=True)
@@ -168,13 +180,16 @@ def test_startup_bus_unreachable_leaves_claimed() -> None:
 def test_startup_no_closeout_stamps_inflight_lost() -> None:
     job = _claimed_dispatched()
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
-        return_value=False,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
-        new_callable=AsyncMock,
-        return_value=([], None),
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+            new_callable=AsyncMock,
+            return_value=([], None),
+        ),
     ):
         terminalized = asyncio.run(
             reconcile_open_auto_jobs(post_bus=False, rehydrate=True)
@@ -194,19 +209,23 @@ def test_inflight_lost_posts_bus_notify_when_requested() -> None:
     """
     job = _claimed_dispatched()
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
-        return_value=False,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
-        new_callable=AsyncMock,
-        return_value=([], None),
-    ), patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile_honor."
-        "post_reconcile_inflight_lost_terminal",
-        new_callable=AsyncMock,
-        return_value={"status_code": 200},
-    ) as post_terminal:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+            new_callable=AsyncMock,
+            return_value=([], None),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile_honor."
+            "post_reconcile_inflight_lost_terminal",
+            new_callable=AsyncMock,
+            return_value={"status_code": 200},
+        ) as post_terminal,
+    ):
         terminalized = asyncio.run(
             reconcile_open_auto_jobs(post_bus=True, rehydrate=True)
         )
@@ -223,18 +242,22 @@ def test_inflight_lost_bus_post_failure_marks_notify_pending() -> None:
     """
     job = _claimed_dispatched()
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
-        return_value=False,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
-        new_callable=AsyncMock,
-        return_value=([], None),
-    ), patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile_honor."
-        "post_reconcile_inflight_lost_terminal",
-        new_callable=AsyncMock,
-        side_effect=RuntimeError("bus unreachable"),
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile_honor.fetch_turns_from",
+            new_callable=AsyncMock,
+            return_value=([], None),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile_honor."
+            "post_reconcile_inflight_lost_terminal",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("bus unreachable"),
+        ),
     ):
         terminalized = asyncio.run(
             reconcile_open_auto_jobs(post_bus=True, rehydrate=True)
@@ -250,23 +273,29 @@ def test_ac8_skip_outbox_marks_done_not_lost() -> None:
     job = _claimed_dispatched()
     get_ledger().set_relay_phase(job.job_id, relay_phase=RELAY_PHASE_SDK_TERMINAL)
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
-        return_value=False,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_replay.fetch_sdk_closeout_body",
-        new_callable=AsyncMock,
-        return_value="status: complete\n",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_replay.post_operator_closeout",
-        new_callable=AsyncMock,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_replay.read_repo_closeout_sidecar",
-        return_value=None,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_replay."
-        "CursorDispatchLedger.instance",
-    ) as dispatch_ledger_cls:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.job_reconcile.is_never_dispatched",
+            return_value=False,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_replay.fetch_sdk_closeout_body",
+            new_callable=AsyncMock,
+            return_value="status: complete\n",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_replay.post_operator_closeout",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_replay.read_repo_closeout_sidecar",
+            return_value=None,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_replay."
+            "CursorDispatchLedger.instance",
+        ) as dispatch_ledger_cls,
+    ):
         dispatch_ledger_cls.return_value.dispatch_status_by_id.return_value = {
             "status": "complete",
         }
@@ -520,4 +549,3 @@ def test_rehydrate_happy_path_requeues_queued_row() -> None:
     assert record.get("rehydrated") is True
     assert record.get("generation") == 1
     assert fresh.claim_next().job_id == job.job_id
-

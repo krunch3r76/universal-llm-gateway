@@ -35,11 +35,11 @@ from services.git_integration_worker.cursor_sdk_closeout import (
 from services.git_integration_worker.cursor_sdk_deliverables import (
     sidecar_workspaces_ref,
 )
-from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
-    extract_instructed_paths,
-)
 from services.git_integration_worker.cursor_sdk_observed_reconcile import (
     reconcile_observed_vs_committed,
+)
+from services.git_integration_worker.cursor_sdk_residual_deliverable_capture import (
+    extract_instructed_paths,
 )
 from services.git_integration_worker.cursor_sdk_stream_capture import (
     ToolCallObservation,
@@ -190,7 +190,9 @@ def test_ac4_sdk_git_probe_absent_is_annotate() -> None:
 
 
 def test_ac5_stream_only_effect_is_annotate() -> None:
-    assert disposition_for_deviation("stream_only_effect") == DeviationDisposition.ANNOTATE
+    assert (
+        disposition_for_deviation("stream_only_effect") == DeviationDisposition.ANNOTATE
+    )
     obs = ToolCallObservation(
         call_id="stream-1",
         tool_name="write",
@@ -401,7 +403,9 @@ def test_ac8_mirror_missing_declared_deliverable_still_flags(tmp_path: Path) -> 
     )
 
 
-def test_ac1_closeout_shipped_with_unavailable_capture_and_offgit(tmp_path: Path) -> None:
+def test_ac1_closeout_shipped_with_unavailable_capture_and_offgit(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     cortex_root = tmp_path / "cortex"
     repo.mkdir()

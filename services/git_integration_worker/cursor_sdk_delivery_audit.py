@@ -52,12 +52,14 @@ def context_from_ledger_row(row: Any) -> DispatchAuditContext | None:
     """Build nested-dispatch identity from a durable cursor-sdk ledger row."""
     if row is None:
         return None
+
     def value(key: str) -> Any:
         if hasattr(row, "get"):
             return row.get(key)
         if hasattr(row, "keys"):
             return row[key] if key in row.keys() else None
         return getattr(row, key, None)
+
     execution_id = value("execution_id")
     if not execution_id:
         return None

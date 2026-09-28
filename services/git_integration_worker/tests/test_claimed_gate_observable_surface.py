@@ -88,9 +88,7 @@ def test_observer_distinguishes_wedged_pre_admit_from_post_admit_and_answer_cdp(
     assert queue.claim_next().job_id == healthy.job_id
     ledger.mark_admitted(healthy.job_id)
     ledger.mark_terminal(healthy.job_id, status="done", terminal_reason=None)
-    done_view = ledger.observer_state(
-        job_id=healthy.job_id, include_terminal=True
-    )
+    done_view = ledger.observer_state(job_id=healthy.job_id, include_terminal=True)
     assert done_view is not None
     assert done_view["lifecycle_phase"] == PHASE_TERMINAL_DONE
     assert done_view["admitted_at"] is not None

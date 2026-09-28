@@ -425,4 +425,3 @@ effects_expected: raw pull JSON relayed inline
         )
     assert result["terminal_status"] == "status:done"
     assert "hi" in bus.posts[0]["body"]
-

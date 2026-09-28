@@ -128,7 +128,9 @@ def test_unresolvable_slug_is_recorded_not_raised(cursor_dir: Path, hub: Path) -
 
 
 @pytest.mark.offline
-def test_hub_anchor_is_required_for_life_local(cursor_dir: Path, tmp_path: Path) -> None:
+def test_hub_anchor_is_required_for_life_local(
+    cursor_dir: Path, tmp_path: Path
+) -> None:
     """Resolving against a worktree root (no ``.claude``) must not silently mount."""
     worktree = tmp_path / "lane-b"
     worktree.mkdir()

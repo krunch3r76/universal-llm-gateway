@@ -232,8 +232,7 @@ def deployment_state_contradicts_checkpoint(
         return False
     # Current + legacy markers (landed-not-live retired; still detect stale prose).
     claims_post_commit_obligation = (
-        "propagation-owed" in deployment_state
-        or "landed-not-live" in deployment_state
+        "propagation-owed" in deployment_state or "landed-not-live" in deployment_state
     )
     if not claims_post_commit_obligation:
         return False
@@ -245,9 +244,7 @@ def strip_deployment_state_line(body: str) -> str:
     if not _DEPLOYMENT_STATE_LINE_RE.search(body):
         return body
     lines = [
-        line
-        for line in body.splitlines()
-        if not _DEPLOYMENT_STATE_LINE_RE.match(line)
+        line for line in body.splitlines() if not _DEPLOYMENT_STATE_LINE_RE.match(line)
     ]
     return "\n".join(lines).rstrip() + "\n"
 

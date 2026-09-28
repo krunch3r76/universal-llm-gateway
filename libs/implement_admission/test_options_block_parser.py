@@ -8,7 +8,6 @@ from implement_admission.options_block_parser import (
     parse_options_yaml_document,
 )
 
-
 _SYMMETRIC_BLOCK = """\
 ## options
 

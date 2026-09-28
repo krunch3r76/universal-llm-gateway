@@ -23,7 +23,14 @@ _WORKSPACES_REPO_URI_RE = re.compile(
     r"^workspaces://(?P<repo>[^/]+)/(?P<rel>.+)$",
     re.IGNORECASE,
 )
-_UNCHANGED_PREFIXES = ("todo:", "packet:", "agent-bus:", "plan:", "plan_phase:", "task:")
+_UNCHANGED_PREFIXES = (
+    "todo:",
+    "packet:",
+    "agent-bus:",
+    "plan:",
+    "plan_phase:",
+    "task:",
+)
 
 
 def normalize_closeout_source_ref(ref: str) -> str:

@@ -27,7 +27,12 @@ def test_grok_omit_path_fast_true() -> None:
 
 
 def test_anthropic_omit_path_thinking_context_defaults() -> None:
-    for model in ("claude-opus-5", "claude-opus-4-8", "claude-sonnet-5", "claude-fable-5"):
+    for model in (
+        "claude-opus-5",
+        "claude-opus-4-8",
+        "claude-sonnet-5",
+        "claude-fable-5",
+    ):
         cfg = resolve_cursor(model)
         selection = build_model_selection(cfg)
         emitted = {p.id: p.value for p in selection.params}

@@ -112,9 +112,7 @@ def mission_park_state(
         hop_fields = hop_fields_from_record_json(record_json)
         hop_seq = hop_fields.get("hop_seq")
         hop_seq_int = int(hop_seq) if isinstance(hop_seq, int) else None
-        reason = str(
-            _record_dict(record_json).get(HOP_PARK_REASON_KEY) or "hop_parked"
-        )
+        reason = str(_record_dict(record_json).get(HOP_PARK_REASON_KEY) or "hop_parked")
         parked_at = str(mapped.get("terminal_at") or mapped.get("queued_at") or "")
         dispatch_id = str(mapped.get("dispatch_id") or "")
         if not dispatch_id:

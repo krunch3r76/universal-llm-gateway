@@ -305,7 +305,9 @@ def select_closeout_relay_payload(
     if sidecar_text:
         prose = strip_machine_tail(sidecar_text)
         if looks_section2(prose):
-            provenance = sidecar_workspaces_ref(dispatch_id) if dispatch_id else "repo sidecar"
+            provenance = (
+                sidecar_workspaces_ref(dispatch_id) if dispatch_id else "repo sidecar"
+            )
             projected, _claim = project_section2_table(
                 prose,
                 provenance=provenance,
@@ -328,7 +330,9 @@ def select_closeout_relay_payload(
 
     if sdk_body and looks_section2(sdk_body) and not is_wrapper_manifest(sdk_body):
         prose = strip_machine_tail(sdk_body)
-        provenance = sidecar_workspaces_ref(dispatch_id) if dispatch_id else "bus §2 body"
+        provenance = (
+            sidecar_workspaces_ref(dispatch_id) if dispatch_id else "bus §2 body"
+        )
         projected, _claim = project_section2_table(
             prose,
             provenance=provenance,

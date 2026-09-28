@@ -23,9 +23,7 @@ from services.git_integration_worker.ledger_pytest_guard import (
 logger = get_logger(__name__)
 
 # Default TTL for open cursor-sdk rows — longer than supersede/replay, bounded growth.
-CURSOR_SDK_SEAT_RETENTION_S = float(
-    os.getenv("CURSOR_SDK_SEAT_RETENTION_S", "604800")
-)
+CURSOR_SDK_SEAT_RETENTION_S = float(os.getenv("CURSOR_SDK_SEAT_RETENTION_S", "604800"))
 
 _STATUS_OPEN = "open"
 _STATUS_CLOSED = "closed"
@@ -150,7 +148,9 @@ class SeatWriteLedger:
         paths: tuple[str, ...] | list[str],
     ) -> int:
         repo = str(Path(source_repo).resolve())
-        normalized = tuple(dict.fromkeys(p.strip().lstrip("/") for p in paths if p.strip()))
+        normalized = tuple(
+            dict.fromkeys(p.strip().lstrip("/") for p in paths if p.strip())
+        )
         if not normalized:
             return 0
         ts = _now()

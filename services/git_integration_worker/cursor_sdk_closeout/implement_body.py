@@ -190,11 +190,7 @@ def build_implement_closeout_body(
             resolved_work_outcome, degraded_reason
         )
     positive_evidence = False
-    if (
-        source_repo is not None
-        and cortex_root is not None
-        and deliverables_expected
-    ):
+    if source_repo is not None and cortex_root is not None and deliverables_expected:
         positive_evidence = positive_deliverable_evidence(
             files_offgit_produced=offgit_deliverable_uris or [],
             artifact_paths=artifact_paths,

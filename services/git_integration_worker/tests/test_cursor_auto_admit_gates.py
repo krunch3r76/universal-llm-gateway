@@ -55,7 +55,7 @@ def test_has_actionable_scope_tokens() -> None:
     assert has_actionable_scope("TYPE: DIRECTIVE\nsee packet:foo.md")
     assert has_actionable_scope("TYPE: DIRECTIVE\nfiles_expected: a.py")
     assert has_actionable_scope(
-        'TYPE: DIRECTIVE\nProse mentions todo:friction-1 in quotes.'
+        "TYPE: DIRECTIVE\nProse mentions todo:friction-1 in quotes."
     )
 
 
@@ -128,7 +128,9 @@ async def test_blocking_admit_gate_contract_override_waives(
     )
 
 
-def test_process_job_empty_directive_never_nests(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_job_empty_directive_never_nests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
     submit = AsyncMock()

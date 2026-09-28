@@ -93,7 +93,9 @@ def _env_float(name: str, default: float) -> float:
 def load_hop_budget_config() -> HopBudgetConfig:
     """Read env caps (bind §2.6.6 defaults)."""
     return HopBudgetConfig(
-        crash_cap_per_row=_env_int("CONDUCTOR_HOP_CRASH_CAP_PER_ROW", _DEFAULT_CRASH_CAP),
+        crash_cap_per_row=_env_int(
+            "CONDUCTOR_HOP_CRASH_CAP_PER_ROW", _DEFAULT_CRASH_CAP
+        ),
         no_progress_cap=_env_int(
             "CONDUCTOR_HOP_NO_PROGRESS_CAP", _DEFAULT_NO_PROGRESS_CAP
         ),
@@ -218,14 +220,14 @@ def evaluate_hop_budget(
 
     record = record_data(str(row.get("record_json") or ""))
     if record.get(HOP_PARKED_KEY) is True:
-        return HopBudgetVerdict(ok=False, park=False, reason=str(
-            record.get(HOP_PARK_REASON_KEY) or "already_parked"
-        ))
+        return HopBudgetVerdict(
+            ok=False,
+            park=False,
+            reason=str(record.get(HOP_PARK_REASON_KEY) or "already_parked"),
+        )
 
     dispatch_id = str(row.get("dispatch_id") or "")
-    chain = list_mission_terminal_chain(
-        work_key=work_key, exclude_dispatch_id=None
-    )
+    chain = list_mission_terminal_chain(work_key=work_key, exclude_dispatch_id=None)
     mission_hops = len(chain)
     if cfg.mission_cap > 0 and mission_hops >= cfg.mission_cap:
         return HopBudgetVerdict(

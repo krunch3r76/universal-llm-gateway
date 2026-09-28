@@ -146,18 +146,14 @@ class TestContractGate:
         calls = (_tc(tool_name="fs", status="error", arg_bytes=200_000),)
         body = "I'll write the report to cortex://notes/system/x.md."
         assert (
-            residual_deliverable_reason(
-                body=body, tool_calls=calls, contract="none"
-            )
+            residual_deliverable_reason(body=body, tool_calls=calls, contract="none")
             == "deliverable_write_choked"
         )
 
     def test_residual_stated_intent_when_no_structured_signal(self) -> None:
         body = "Saved to notes/system/threads/report.md."
         assert (
-            residual_deliverable_reason(
-                body=body, tool_calls=(), contract="none"
-            )
+            residual_deliverable_reason(body=body, tool_calls=(), contract="none")
             == "stated_intent_no_write"
         )
 
@@ -218,9 +214,7 @@ class TestDeliverablePresentSuppression:
         # Back-compat: omitting deliverable_present preserves prior behavior.
         body = "Saved to notes/system/threads/report.md."
         assert (
-            residual_deliverable_reason(
-                body=body, tool_calls=(), contract="none"
-            )
+            residual_deliverable_reason(body=body, tool_calls=(), contract="none")
             == "stated_intent_no_write"
         )
 

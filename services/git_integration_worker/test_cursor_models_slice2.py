@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-
 import cursor_capabilities.cursor_capabilities as cap_mod
-from cursor_capabilities import CURSOR_DENIED_MODELS, catalog_divergences
+import pytest
+from cursor_capabilities import catalog_divergences
+
 from services.git_integration_worker.cursor_models import resolve_cursor
 
 
@@ -27,6 +27,7 @@ def test_resolve_cursor_grok_omit_fast_true() -> None:
     ListModels' default variant is context=500k. The card pins 256k.
     """
     from cursor_capabilities import default_variant, supported_knobs
+
     from services.git_integration_worker.cursor_models import (
         build_model_selection,
         selected_context_window_tokens,

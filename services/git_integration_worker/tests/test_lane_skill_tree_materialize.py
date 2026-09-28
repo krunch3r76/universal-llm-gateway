@@ -78,9 +78,7 @@ def test_mint_without_materialize_omits_hub_only_skills(
     assert not (wt / ".cursor" / "skills" / "hub-only-skill" / "SKILL.md").is_file()
 
 
-def test_mint_materializes_hub_only_skills(
-    source_repo: Path, tmp_path: Path
-) -> None:
+def test_mint_materializes_hub_only_skills(source_repo: Path, tmp_path: Path) -> None:
     worktree_root = tmp_path / "worktrees"
     hub_skill = source_repo / ".cursor" / "skills" / "hub-only-skill"
     hub_skill.mkdir(parents=True)

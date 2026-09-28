@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import pytest
-
 from agent_bus_store.disposition import (
     body_has_disposition_type,
     first_line_is_disposition_type,
 )
 from agent_bus_store.wait_status import is_disposition_one_correction
 from claude_bundles.pickup_awaits import is_cease_to_act
+
 from services.git_integration_worker.cursor_auto.directive import build_sdk_message
 from services.git_integration_worker.cursor_auto.effect_claim import (
+    effect_claim_injection_lines,
     extract_limb_a_claims,
     extract_limb_c_claims,
-    effect_claim_injection_lines,
     is_effect_claim_scan_eligible,
 )
 
@@ -125,8 +125,12 @@ def test_injection_is_annotate_only_no_blocking_hooks() -> None:
 def test_leg_disposition_matches_disposition_family() -> None:
     first = "TYPE: LEG DISPOSITION (rev 2)"
     assert first_line_is_disposition_type(first) is True
-    assert body_has_disposition_type(f"TYPE: LEG DISPOSITION (rev 2)\nNO ACTION REQUESTED.\n")
-    assert is_cease_to_act(body="TYPE: LEG DISPOSITION (rev 2)\nverdict: yield\n") is True
+    assert body_has_disposition_type(
+        "TYPE: LEG DISPOSITION (rev 2)\nNO ACTION REQUESTED.\n"
+    )
+    assert (
+        is_cease_to_act(body="TYPE: LEG DISPOSITION (rev 2)\nverdict: yield\n") is True
+    )
 
 
 def test_disposition_plus_directive_matches_disposition_family() -> None:
@@ -140,9 +144,7 @@ def test_plain_directive_not_disposition_type() -> None:
 def test_is_disposition_one_correction_accepts_leg_disposition() -> None:
     turn = {
         "body": (
-            "TYPE: LEG DISPOSITION (rev 2)\n"
-            "verdict: one correction\n"
-            "notes follow\n"
+            "TYPE: LEG DISPOSITION (rev 2)\nverdict: one correction\nnotes follow\n"
         )
     }
     assert is_disposition_one_correction(turn) is True

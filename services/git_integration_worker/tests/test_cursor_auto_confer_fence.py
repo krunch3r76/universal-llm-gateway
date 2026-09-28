@@ -209,7 +209,9 @@ def test_relay_confer_wake_and_envelope_non_complete_on_fence(monkeypatch):
         captured["wake_status"] = closeout_status
         return {"ok": True, "status_code": 200}
 
-    async def _fake_confer(job, *, dispatch_id, model_id, status, closeout_body, bus=None):
+    async def _fake_confer(
+        job, *, dispatch_id, model_id, status, closeout_body, bus=None
+    ):
         captured["confer_status"] = status
         captured["confer_body"] = closeout_body
         return {"ok": True, "status_code": 200}

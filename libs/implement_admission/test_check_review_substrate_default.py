@@ -23,7 +23,9 @@ pytestmark = pytest.mark.offline
 def test_standing_default_is_judgment_grok() -> None:
     policy = load_route_policy()
     assert load_check_review_default_model(policy) == "cursor/grok-4.7"
-    assert CHECK_REVIEW_DECISION_CITATION in "decision:code-review-panel-cursor-substrate"
+    assert (
+        CHECK_REVIEW_DECISION_CITATION in "decision:code-review-panel-cursor-substrate"
+    )
     entry = policy["workflows"][CHECK_REVIEW_WORKFLOW]
     assert entry["model"] == "cursor/grok-4.7"
     assert entry["seat"] == "cursor-sdk"

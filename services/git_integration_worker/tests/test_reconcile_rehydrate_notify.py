@@ -107,9 +107,7 @@ def test_ordinary_claimed_lost_notify_wording_unchanged() -> None:
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
 
-    asyncio.run(
-        post_queue_owner_restart_terminal(job, client=bus, queue=get_queue())
-    )
+    asyncio.run(post_queue_owner_restart_terminal(job, client=bus, queue=get_queue()))
 
     body = json.loads(bus.reply.await_args.kwargs["body"])
     assert body["summary"] == (

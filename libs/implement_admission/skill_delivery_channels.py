@@ -7,8 +7,8 @@ import re
 from dataclasses import dataclass
 
 from implement_admission.skill_catalog_resolver import (
-    catalog_digest,
     canonical_catalog_slug,
+    catalog_digest,
     resolve_canonical_source_uri,
 )
 
@@ -73,6 +73,8 @@ def _inline_block_close_index(text: str, payload_start: int) -> int:
         if _inline_block_close_is_structural(text, idx):
             return idx + 4
         cursor = idx + 4
+
+
 _USE_SKILL_RE = re.compile(
     r"Use the `(?P<slug>[a-z0-9][-a-z0-9_]*)` skill",
     re.IGNORECASE,
@@ -163,9 +165,7 @@ def fenced_payload_for_body(body: str) -> str:
     return f"{_AFFORDANCE_FRAMING}\n\n{body}"
 
 
-def _resolve_inline_block(
-    text: str, match: re.Match[str]
-) -> InlineSkillBlock:
+def _resolve_inline_block(text: str, match: re.Match[str]) -> InlineSkillBlock:
     slug = canonical_catalog_slug(match.group("slug"))
     declared = match.group("digest").strip()
     tail = text[match.end() :]
@@ -195,9 +195,7 @@ def _resolve_inline_block(
     raise ValueError(f"inline skill {slug!r} fenced payload digest mismatch")
 
 
-def _next_structural_inline_header(
-    text: str, start: int
-) -> re.Match[str] | None:
+def _next_structural_inline_header(text: str, start: int) -> re.Match[str] | None:
     for match in _INLINE_SKILL_HEADER_RE.finditer(text, start):
         tail = text[match.end() :]
         if re.match(r"\s*```(?:markdown)?\s*\n", tail):
@@ -399,8 +397,7 @@ def format_inline_skill_block(
     payload = fenced_payload_for_body(body)
     digest = _sha256_full(payload)
     header = (
-        f"<!-- skill-inline:{slug} source:{source_uri} rev:{rev} "
-        f"digest:{digest} -->"
+        f"<!-- skill-inline:{slug} source:{source_uri} rev:{rev} digest:{digest} -->"
     )
     return f"\n{header}\n```markdown\n{payload}\n```"
 

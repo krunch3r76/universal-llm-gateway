@@ -189,7 +189,9 @@ def _ac10_fixture(tmp_path: Path) -> dict[str, Any]:
     (write_tree / own_rel).write_text("v2 lane-b\n", encoding="utf-8")
     ambient_file = source_repo / ambient_rel
     ambient_file.parent.mkdir(parents=True, exist_ok=True)
-    ambient_file.write_text("# ambient parallel edit on shared master\n", encoding="utf-8")
+    ambient_file.write_text(
+        "# ambient parallel edit on shared master\n", encoding="utf-8"
+    )
 
     return {
         "cfg": cfg,

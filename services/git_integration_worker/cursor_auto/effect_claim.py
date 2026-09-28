@@ -96,7 +96,9 @@ def extract_limb_a_claims(text: str) -> tuple[str, ...]:
     for sentence in _sentences(text):
         if not _sentence_has_repair_id(sentence):
             continue
-        if not any(_phrase_in_text(sentence, phrase) for phrase in _EFFECT_PREDICATE_PHRASES):
+        if not any(
+            _phrase_in_text(sentence, phrase) for phrase in _EFFECT_PREDICATE_PHRASES
+        ):
             continue
         key = sentence.strip()
         if key not in seen:
@@ -115,10 +117,13 @@ def extract_limb_c_claims(text: str) -> tuple[str, ...]:
         low = sentence.lower()
         if not any(token in low for token in _QUANTIFIER_TOKENS):
             continue
-        if not any(_phrase_in_text(sentence, phrase) for phrase in _EFFECT_PREDICATE_PHRASES):
+        if not any(
+            _phrase_in_text(sentence, phrase) for phrase in _EFFECT_PREDICATE_PHRASES
+        ):
             # Quantifier + unblock/clear language still required for limb C.
             if not any(
-                tok in low for tok in ("unblock", "clear", "free", "restore", "dissolve")
+                tok in low
+                for tok in ("unblock", "clear", "free", "restore", "dissolve")
             ):
                 continue
         key = sentence.strip()

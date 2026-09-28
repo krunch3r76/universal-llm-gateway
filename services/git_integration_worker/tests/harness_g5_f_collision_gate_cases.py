@@ -43,9 +43,7 @@ def provoke_f6a() -> int:
         await acquire_sdk_dispatch_slot(dispatch_id="auto-op-1", timeout=2)
         await acquire_sdk_dispatch_slot(dispatch_id="auto-op-2", timeout=2)
         await acquire_sdk_dispatch_slot(dispatch_id="auto-op-3", timeout=2)
-        await transfer_sdk_dispatch_slot(
-            from_id="auto-op-1", to_id="auto-op-1-child"
-        )
+        await transfer_sdk_dispatch_slot(from_id="auto-op-1", to_id="auto-op-1-child")
         nest_stats = sdk_dispatch_gate_stats(lane="operator")
         leaked = False
         try:
@@ -62,9 +60,7 @@ def provoke_f6a() -> int:
             "active=",
             active,
         )
-        await _force_release(
-            "auto-op-1-child", "auto-op-2", "auto-op-3", "auto-op-4"
-        )
+        await _force_release("auto-op-1-child", "auto-op-2", "auto-op-3", "auto-op-4")
         if leaked or active > 3 or int(nest_stats["active"]) != 3:
             print("F-6a_REPRODUCED")
             return 2
@@ -76,13 +72,13 @@ def provoke_f6a() -> int:
 
 def provoke_f6b() -> int:
     """F-6 deadlock: nest+transfer at limit=1 must keep active==1."""
+    from services.git_integration_worker.cursor_auto.gate_serialize import (
+        plan_nested_dispatch,
+    )
     from services.git_integration_worker.cursor_sdk_gate import (
         acquire_sdk_dispatch_slot,
         sdk_dispatch_gate_stats,
         transfer_sdk_dispatch_slot,
-    )
-    from services.git_integration_worker.cursor_auto.gate_serialize import (
-        plan_nested_dispatch,
     )
 
     async def _run() -> int:
@@ -91,9 +87,7 @@ def provoke_f6b() -> int:
             "auto-parent", "auto-child", "auto-parent2", "auto-naive-child"
         )
         await acquire_sdk_dispatch_slot(dispatch_id="auto-parent", timeout=2)
-        await transfer_sdk_dispatch_slot(
-            from_id="auto-parent", to_id="auto-child"
-        )
+        await transfer_sdk_dispatch_slot(from_id="auto-parent", to_id="auto-child")
         nest_stats = sdk_dispatch_gate_stats(lane="operator")
         await _force_release("auto-child")
         await acquire_sdk_dispatch_slot(dispatch_id="auto-parent2", timeout=2)
@@ -125,6 +119,14 @@ def provoke_f6b() -> int:
 
 def provoke_f7() -> int:
     """F-7: published capacity scalars must match multi-A lease occupancy."""
+    from scripts.model_manager.ui.dispatch_monitor.core.dtos import (
+        SdkDispatchRow,
+    )
+    from scripts.model_manager.ui.dispatch_monitor.core.sdk_posture import (
+        classify_sdk_live,
+        live_writer_count,
+        posture_legend,
+    )
     from services.git_integration_worker.cursor_dispatch_ledger import (
         CursorDispatchLedger,
     )
@@ -137,14 +139,6 @@ def provoke_f7() -> int:
     from services.git_integration_worker.models.cursor_api import (
         CursorDispatchRequest,
         CursorDispatchResponse,
-    )
-    from scripts.model_manager.ui.dispatch_monitor.core.sdk_posture import (
-        live_writer_count,
-        posture_legend,
-        classify_sdk_live,
-    )
-    from scripts.model_manager.ui.dispatch_monitor.core.dtos import (
-        SdkDispatchRow,
     )
 
     data = tempfile.mkdtemp(prefix="g5-f7-")

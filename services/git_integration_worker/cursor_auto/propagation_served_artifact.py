@@ -133,7 +133,9 @@ def served_ops_from_schema(schema: dict[str, Any]) -> dict[str, dict[str, str]]:
 def _fetch_openapi_bytes(url: str, *, timeout_s: float = 5.0) -> bytes | None:
     try:
         if url.startswith("unix://"):
-            sock_base = url[: url.index("/openapi.json")] if "/openapi.json" in url else url
+            sock_base = (
+                url[: url.index("/openapi.json")] if "/openapi.json" in url else url
+            )
             with make_sync_client(sock_base, timeout=timeout_s) as client:
                 resp = client.get("/openapi.json")
         else:

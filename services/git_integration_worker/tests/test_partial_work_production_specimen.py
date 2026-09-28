@@ -243,10 +243,13 @@ def test_complete_x_partial_work_emits_plane_discrepancy_not_legend() -> None:
     )
     assert marker == "status_claim@§2 complete while status@infra partial:work"
     assert merge_plane_discrepancy_markers(marker) is not None
-    assert status_claim_is_polysemous_partial_legend(
-        claim="complete",
-        measurement="partial:work",
-    ) is False
+    assert (
+        status_claim_is_polysemous_partial_legend(
+            claim="complete",
+            measurement="partial:work",
+        )
+        is False
+    )
 
 
 def test_relay_path_partial_work_json_resolves_to_partial_work_status() -> None:

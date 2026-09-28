@@ -13,9 +13,7 @@ from implement_admission.density_triage_create_gate import (
 @pytest.mark.offline
 def test_accepts_implement_gate_triage_values() -> None:
     for value in ("mechanical", "judgment_required", "recon_pending"):
-        validate_todo_density_triage_at_create(
-            "todo:x", {"density_triage": value}
-        )
+        validate_todo_density_triage_at_create("todo:x", {"density_triage": value})
 
 
 @pytest.mark.offline
@@ -26,8 +24,6 @@ def test_rejects_unset_and_unknown() -> None:
     assert unset.value.detail["error"] == "density_triage_required"
 
     with pytest.raises(HTTPException) as bad:
-        validate_todo_density_triage_at_create(
-            "todo:x", {"density_triage": "sparse"}
-        )
+        validate_todo_density_triage_at_create("todo:x", {"density_triage": "sparse"})
     assert bad.value.status_code == 422
     assert "sparse" in bad.value.detail["message"]

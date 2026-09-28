@@ -181,7 +181,9 @@ async def test_concurrent_cursor_sdk_dispatch_serializes(
             request_id_source="stream",
         )
 
-    async def finalize_and_promote(*, req: Any, controller: Any, **_kwargs: Any) -> None:
+    async def finalize_and_promote(
+        *, req: Any, controller: Any, **_kwargs: Any
+    ) -> None:
         await route_mod._mark_terminal_and_promote(
             dispatch_id=req.dispatch_id,
             terminal_status="completed",
@@ -215,10 +217,10 @@ async def test_concurrent_cursor_sdk_dispatch_serializes(
 
     with (
         patch.object(route_mod, "_run_sdk_sync", side_effect=slow_sync),
+        patch.object(route_mod, "validate_dispatch_context", return_value={"ok": True}),
         patch.object(
-            route_mod, "validate_dispatch_context", return_value={"ok": True}
+            route_mod, "capture_wt_baseline_with_hashes", lambda *_a, **_k: {}
         ),
-        patch.object(route_mod, "capture_wt_baseline_with_hashes", lambda *_a, **_k: {}),
         patch.object(route_mod, "_finalize_success", side_effect=finalize_and_promote),
         patch.object(route_mod, "_finalize_failed", side_effect=fail_and_promote),
     ):

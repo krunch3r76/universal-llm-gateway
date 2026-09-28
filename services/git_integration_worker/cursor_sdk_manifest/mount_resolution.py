@@ -54,6 +54,8 @@ def mount_relative_path(mount_root: Path, path: Path) -> str | None:
         return str(path.resolve().relative_to(mount_root.resolve()))
     except ValueError:
         return None
+
+
 def classify_mount_path(
     path: Path,
     *,

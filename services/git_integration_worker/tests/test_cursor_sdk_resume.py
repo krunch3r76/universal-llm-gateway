@@ -241,7 +241,9 @@ def test_reject_resume_ineligible_envelope() -> None:
     assert body["retryable"] is False
 
 
-def test_timeout_retain_blocks_prune(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_timeout_retain_blocks_prune(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     source_repo = tmp_path / "repo"
     source_repo.mkdir()
     wt_path = tmp_path / "wt"
@@ -462,7 +464,8 @@ def test_load_resume_run_context() -> None:
 
 
 def test_empty_state_root_dir_eligible_via_home_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Empty bridge-state column + HOME sdk-agent-store → eligible; store rewritten."""
     homes_root = tmp_path / "homes"
@@ -624,7 +627,8 @@ def test_bridge_death_resume_eligible_while_parent_running(
 
 
 def test_multi_hop_resume_of_finds_ancestor_home_store(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A→B→C chain: B has empty bridge-state; C resolves store via A HOME."""
     homes_root = tmp_path / "homes"

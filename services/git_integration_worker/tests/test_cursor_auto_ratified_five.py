@@ -49,8 +49,14 @@ def test_prefer_dispatch_over_park_holderless_bounded():
 
 
 def test_enforce_synthesized_partial():
-    assert enforce_synthesized_partial("complete", closeout_source="section2_synthesized") == "complete"
-    assert enforce_synthesized_partial("complete", closeout_source="section2_sidecar") == "complete"
+    assert (
+        enforce_synthesized_partial("complete", closeout_source="section2_synthesized")
+        == "complete"
+    )
+    assert (
+        enforce_synthesized_partial("complete", closeout_source="section2_sidecar")
+        == "complete"
+    )
 
 
 def test_pending_synthesized_closeout_requires_ack(monkeypatch):
@@ -116,7 +122,9 @@ def test_pending_synthesized_closeout_newest_wins_descending_transport(monkeypat
         },
     ]
     descending = list(reversed(turns))
-    assert pending_synthesized_closeout(descending, operator_from=operator) == "auto-new"
+    assert (
+        pending_synthesized_closeout(descending, operator_from=operator) == "auto-new"
+    )
     turns.append(
         {
             "turn_number": 43,
@@ -163,7 +171,10 @@ def test_parse_synthesized_ack_rejects_type_ack_alias():
 
 
 def test_parse_synthesized_ack():
-    assert parse_synthesized_ack("synthesized_closeout_ack: auto-deadbeef") == "auto-deadbeef"
+    assert (
+        parse_synthesized_ack("synthesized_closeout_ack: auto-deadbeef")
+        == "auto-deadbeef"
+    )
 
 
 def test_extract_substrate_findings():

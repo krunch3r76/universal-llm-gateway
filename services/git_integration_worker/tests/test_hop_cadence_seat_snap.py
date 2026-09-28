@@ -89,7 +89,11 @@ def test_seated_cse_without_project_ask_visible_to_predecessor_lookup() -> None:
 
 def test_refuse_and_capture_agree_who_is_seated() -> None:
     snap = _idle_store_snap(seated=True)
-    row = {"thread_id": _THREAD, "registration_id": _REG, "last_hop_at": time.time() - 60.0}
+    row = {
+        "thread_id": _THREAD,
+        "registration_id": _REG,
+        "last_hop_at": time.time() - 60.0,
+    }
     handle = capture_predecessor_at_hop(row, snap)
     refuse, reason, evidence = refuse_cadence_hop_for_live_seat(row, snap)
     assert handle.verdict == PredecessorVerdict.INCUMBENT_RECORDED
@@ -113,7 +117,11 @@ def test_dormant_seat_does_not_refuse_successor() -> None:
             _seated_row(seat_state="dormant", stream_state="none"),
         ],
     }
-    row = {"thread_id": _THREAD, "registration_id": _REG, "last_hop_at": time.time() - 60.0}
+    row = {
+        "thread_id": _THREAD,
+        "registration_id": _REG,
+        "last_hop_at": time.time() - 60.0,
+    }
     handle = capture_predecessor_at_hop(row, snap)
     refuse, reason, _evidence = refuse_cadence_hop_for_live_seat(row, snap)
     assert handle.verdict == PredecessorVerdict.INCUMBENT_RECORDED
@@ -224,10 +232,9 @@ def test_s3_stale_seat_no_execution_stream_none() -> None:
 def test_project_stream_state_pending_and_terminal() -> None:
     exec_id = "exec-abc"
     assert project_stream_state(exec_id, stream_index={exec_id: "running"}) == "running"
-    assert (
-        project_stream_state(exec_id, stream_index={exec_id: "completed"})
-        == stream_state_terminal(exec_id)
-    )
+    assert project_stream_state(
+        exec_id, stream_index={exec_id: "completed"}
+    ) == stream_state_terminal(exec_id)
     assert project_stream_state(SEATED_NO_STREAM_EXECUTION) == "none"
 
 

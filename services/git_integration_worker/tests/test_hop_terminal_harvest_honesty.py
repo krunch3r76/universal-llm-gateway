@@ -72,9 +72,7 @@ async def test_commission_ok_posts_armed_not_done(monkeypatch):
     monkeypatch.setattr(hop_mod, "_post_hop_admit_report", AsyncMock(return_value=None))
     monkeypatch.setattr(hop_mod, "emit_cdp_effort_bind", lambda **_: None)
 
-    result = await hop_mod.complete_continuity_hop(
-        claimed, queue=q, client=MagicMock()
-    )
+    result = await hop_mod.complete_continuity_hop(claimed, queue=q, client=MagicMock())
     assert terminals, "hop closer must post a bus turn"
     posted = terminals[0]
     assert posted["terminal_status"] == "status:armed"

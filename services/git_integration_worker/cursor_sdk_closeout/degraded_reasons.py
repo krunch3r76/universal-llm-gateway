@@ -261,21 +261,11 @@ def conductor_closeout_degraded_reason(
     if nested_live:
         return CONDUCTOR_NEST_IN_FLIGHT
     return (
-        conductor_consult_pending_degraded_reason(
-            body=body, packet_text=packet_text
-        )
-        or conductor_row_hop_degraded_reason(
-            body=body, packet_text=packet_text
-        )
-        or conductor_row_pinned_degraded_reason(
-            body=body, packet_text=packet_text
-        )
-        or conductor_g1_pin_s4b_degraded_reason(
-            body=body, packet_text=packet_text
-        )
-        or conductor_q2_score_ratify_degraded_reason(
-            body=body, packet_text=packet_text
-        )
+        conductor_consult_pending_degraded_reason(body=body, packet_text=packet_text)
+        or conductor_row_hop_degraded_reason(body=body, packet_text=packet_text)
+        or conductor_row_pinned_degraded_reason(body=body, packet_text=packet_text)
+        or conductor_g1_pin_s4b_degraded_reason(body=body, packet_text=packet_text)
+        or conductor_q2_score_ratify_degraded_reason(body=body, packet_text=packet_text)
         or conductor_unwitnessed_done_degraded_reason(
             body=body, packet_text=packet_text
         )

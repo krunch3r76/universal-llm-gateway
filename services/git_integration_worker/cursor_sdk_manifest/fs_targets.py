@@ -56,6 +56,8 @@ def resolve_fs_target_absolute(
             return (cortex_root / rel).resolve()
         return (mount_root / rel).resolve()
     return (mount_root / target.lstrip("/")).resolve()
+
+
 def manifest_fs_targets(manifest: EffectsManifest | None) -> list[str]:
     if manifest is None:
         return []

@@ -132,7 +132,11 @@ def park_harvest_owed(
                 return False
         elif not harvest_still_owed(body=body):
             return False
-    sb = scoreboard_body if scoreboard_body is not None else _scoreboard_body_for_row(row)
+    sb = (
+        scoreboard_body
+        if scoreboard_body is not None
+        else _scoreboard_body_for_row(row)
+    )
     if sb and not mission_open(scoreboard_body=sb):
         return False
     from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
@@ -408,9 +412,8 @@ async def fire_consult_pending_continue(row: dict[str, Any]) -> bool:
     ok, detail = await post_conductor_hop_team_dispatch(body)
     record_json = str(row.get("record_json") or "")
     if ok:
-        successor = (
-            str(detail.get("dispatch_id") or "")
-            or str(detail.get("execution_id") or "")
+        successor = str(detail.get("dispatch_id") or "") or str(
+            detail.get("execution_id") or ""
         )
         if not successor:
             logger.warning(
@@ -554,9 +557,8 @@ async def fire_park_harvest_continue(row: dict[str, Any]) -> bool:
     ok, detail = await post_conductor_hop_team_dispatch(body)
     record_json = str(row.get("record_json") or "")
     if ok:
-        successor = (
-            str(detail.get("dispatch_id") or "")
-            or str(detail.get("execution_id") or "")
+        successor = str(detail.get("dispatch_id") or "") or str(
+            detail.get("execution_id") or ""
         )
         if not successor:
             logger.warning(

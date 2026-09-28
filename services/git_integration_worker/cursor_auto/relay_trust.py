@@ -33,7 +33,9 @@ def _closeout_source_from_turn(body: str) -> str | None:
 def synthesized_relay_note(*, closeout_source: str, status: str) -> str | None:
     """Relay vocabulary for synthesized §2 — never mutates executor/wrapper status."""
     if closeout_source == "section2_synthesized" and status == "complete":
-        return "synthesized_§2 — table relay-generated; executor wrapper status preserved"
+        return (
+            "synthesized_§2 — table relay-generated; executor wrapper status preserved"
+        )
     return None
 
 

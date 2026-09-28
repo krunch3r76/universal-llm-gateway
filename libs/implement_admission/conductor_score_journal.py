@@ -152,7 +152,9 @@ def render_sparse_scoreboard(
     journal_uri = scoreboard_journal_uri(slug)
     stop_after_line = f"- **stop_after:** {stop_after}" if stop_after else ""
     labels = row_labels or (
-        dict(_G_LABELS) if is_g_ladder_rows(rows) else {row_id: row_id for row_id in rows}
+        dict(_G_LABELS)
+        if is_g_ladder_rows(rows)
+        else {row_id: row_id for row_id in rows}
     )
     table_rows = "\n".join(
         f"| {row_id} | {labels.get(row_id, row_id)} | {default_row_mode(row_id)} | OPEN | |"

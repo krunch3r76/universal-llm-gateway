@@ -49,8 +49,7 @@ def save_checkpoint(checkpoint: ProjectorCheckpoint) -> None:
     payload = {
         "last_seq": checkpoint.last_seq,
         "epoch_written": checkpoint.epoch_written,
-        "updated_at": checkpoint.updated_at
-        or datetime.now(UTC).isoformat(),
+        "updated_at": checkpoint.updated_at or datetime.now(UTC).isoformat(),
     }
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")

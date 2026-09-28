@@ -195,9 +195,7 @@ def test_falsifier_f_a2_lane_a_zero_runtime_delta() -> None:
 
 def test_falsifier_f_a6_no_lease_lookup_reads_source_repo() -> None:
     """F-A6: writer-conflict / queue / nest-holder SQL uses lease_key, not source_repo."""
-    ledger_path = (
-        Path(__file__).resolve().parents[1] / "cursor_dispatch_ledger.py"
-    )
+    ledger_path = Path(__file__).resolve().parents[1] / "cursor_dispatch_ledger.py"
     source = ledger_path.read_text(encoding="utf-8")
 
     lease_where_patterns = [

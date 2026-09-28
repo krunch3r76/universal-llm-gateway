@@ -59,7 +59,9 @@ def disposition_hint_presence(value: object) -> DispositionHintPresence:
 
 def disposition_hint_label_verdict(value: object) -> DispositionHintLabelVerdict:
     """Whether emission stamps ``disposition_hint_status_of`` for *value*."""
-    return "label" if disposition_hint_presence(value) != "absent" else "no_label_needed"
+    return (
+        "label" if disposition_hint_presence(value) != "absent" else "no_label_needed"
+    )
 
 
 # Observed outcome tokens that may appear on reader-facing ``disposition``.
@@ -102,7 +104,11 @@ def disposition_outcome_presence(value: object) -> DispositionOutcomePresence:
 
 def disposition_outcome_label_verdict(value: object) -> DispositionOutcomeLabelVerdict:
     """Whether emission stamps ``disposition_status_of`` for *value*."""
-    return "label" if disposition_outcome_presence(value) != "absent" else "no_label_needed"
+    return (
+        "label"
+        if disposition_outcome_presence(value) != "absent"
+        else "no_label_needed"
+    )
 
 
 def stamp_disposition_hint_status_of(payload: dict[str, Any]) -> dict[str, Any]:

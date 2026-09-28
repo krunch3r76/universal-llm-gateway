@@ -17,9 +17,7 @@ from services.git_integration_worker.cursor_auto.closeout_tree_state import (
 
 pytestmark = pytest.mark.offline
 
-_VACANCY = (
-    "ledger-registration-unavailable — cursor-sdk paths not in seat write ledger"
-)
+_VACANCY = "ledger-registration-unavailable — cursor-sdk paths not in seat write ledger"
 
 
 def test_deployment_state_contradicts_when_owed_without_commit() -> None:
@@ -89,15 +87,19 @@ def test_compute_closeout_tree_state_uncommitted_never_claims_landed() -> None:
         "admit_head": "abc123",
         "outside_repo": [],
     }
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state.compute_lane_a_checkpoint_value",
-        return_value="deferred: authored paths not yet path-explicit committed",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "CursorDispatchLedger.instance",
-    ) as ledger_cls, patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state.authored_paths_for_dispatch",
-        return_value=("libs/charter_runner_store/db.py", "libs/foo.py"),
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state.compute_lane_a_checkpoint_value",
+            return_value="deferred: authored paths not yet path-explicit committed",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "CursorDispatchLedger.instance",
+        ) as ledger_cls,
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state.authored_paths_for_dispatch",
+            return_value=("libs/charter_runner_store/db.py", "libs/foo.py"),
+        ),
     ):
         ledger_cls.return_value.read_wt_baseline.return_value = usable_baseline
         state = compute_closeout_tree_state(
@@ -166,20 +168,25 @@ def test_compute_closeout_tree_state_threads_wrapper_for_authored_cortex() -> No
         '{"schema_version":1,"files_offgit_produced":'
         '["cortex://notes/system/threads/x.md"]}'
     )
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="authored_cortex: cortex://notes/system/threads/x.md "
-        + ("e" * 64),
-    ) as compute, patch(
-        "implement_admission.closeout_helpers.cortex_files_root",
-        return_value=Path("/tmp/cortex-root"),
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "CursorDispatchLedger.instance",
-    ) as ledger_cls, patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state.authored_paths_for_dispatch",
-        return_value=(),
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "compute_lane_a_checkpoint_value",
+            return_value="authored_cortex: cortex://notes/system/threads/x.md "
+            + ("e" * 64),
+        ) as compute,
+        patch(
+            "implement_admission.closeout_helpers.cortex_files_root",
+            return_value=Path("/tmp/cortex-root"),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "CursorDispatchLedger.instance",
+        ) as ledger_cls,
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state.authored_paths_for_dispatch",
+            return_value=(),
+        ),
     ):
         ledger_cls.return_value.read_wt_baseline.return_value = None
         state = compute_closeout_tree_state(
@@ -326,9 +333,7 @@ def test_compose_rank2_empty_codes_ledger_edit_fires() -> None:
         },
         authored=("services/git_integration_worker/cursor_auto/nested_outcome.py",),
     )
-    assert claim == (
-        "authored-not-committed — 1 path await path-explicit commit"
-    )
+    assert claim == ("authored-not-committed — 1 path await path-explicit commit")
 
 
 def test_compose_rank2_populated_baseline_delta_still_fires() -> None:
@@ -348,9 +353,7 @@ def test_compose_rank2_populated_baseline_delta_still_fires() -> None:
         },
         authored=("services/git_integration_worker/cursor_auto/nested_outcome.py",),
     )
-    assert claim == (
-        "authored-not-committed — 1 path await path-explicit commit"
-    )
+    assert claim == ("authored-not-committed — 1 path await path-explicit commit")
 
 
 def test_compose_rank1_missing_baseline_refuses() -> None:
@@ -372,15 +375,19 @@ def test_rank2_both_directions_via_compute_closeout_tree_state() -> None:
         "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
         "outside_repo": [],
     }
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state.compute_lane_a_checkpoint_value",
-        return_value="deferred: authored paths not yet path-explicit committed",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "CursorDispatchLedger.instance",
-    ) as ledger_cls, patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state.authored_paths_for_dispatch",
-        side_effect=[(), ("services/git_integration_worker/x.py",)],
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state.compute_lane_a_checkpoint_value",
+            return_value="deferred: authored paths not yet path-explicit committed",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "CursorDispatchLedger.instance",
+        ) as ledger_cls,
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state.authored_paths_for_dispatch",
+            side_effect=[(), ("services/git_integration_worker/x.py",)],
+        ),
     ):
         ledger_cls.return_value.read_wt_baseline.side_effect = [
             empty_baseline,
@@ -426,21 +433,26 @@ def test_nr2_wiring_derives_from_has_paths_for_arc() -> None:
         "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
         "outside_repo": [],
     }
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="deferred: authored paths not yet path-explicit committed",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "CursorDispatchLedger.instance",
-    ) as ledger_cls, patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "authored_paths_for_dispatch",
-        return_value=(),
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "SeatWriteLedger.instance",
-    ) as seat_ledger_cls:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "compute_lane_a_checkpoint_value",
+            return_value="deferred: authored paths not yet path-explicit committed",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "CursorDispatchLedger.instance",
+        ) as ledger_cls,
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "authored_paths_for_dispatch",
+            return_value=(),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "SeatWriteLedger.instance",
+        ) as seat_ledger_cls,
+    ):
         ledger_cls.return_value.read_wt_baseline.return_value = usable_baseline
         seat_ledger = seat_ledger_cls.return_value
         seat_ledger.has_paths_for_arc.return_value = True
@@ -460,21 +472,26 @@ def test_nr3_failed_population_vacancy_when_zero_arc_rows() -> None:
         "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
         "outside_repo": [],
     }
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="deferred: authored paths not yet path-explicit committed",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "CursorDispatchLedger.instance",
-    ) as ledger_cls, patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "authored_paths_for_dispatch",
-        return_value=(),
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "SeatWriteLedger.instance",
-    ) as seat_ledger_cls:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "compute_lane_a_checkpoint_value",
+            return_value="deferred: authored paths not yet path-explicit committed",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "CursorDispatchLedger.instance",
+        ) as ledger_cls,
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "authored_paths_for_dispatch",
+            return_value=(),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "SeatWriteLedger.instance",
+        ) as seat_ledger_cls,
+    ):
         ledger_cls.return_value.read_wt_baseline.return_value = usable_baseline
         seat_ledger_cls.return_value.has_paths_for_arc.return_value = False
         state = compute_closeout_tree_state(
@@ -513,14 +530,17 @@ def test_arm_checkpoint_committed_records_authorship_outcome() -> None:
         '"files_modified":["services/git_integration_worker/x.py"],'
         '"propagation_residue":["sync_restart: git_integration_worker — manage(...)"]}'
     )
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="committed abc1234 paths=1",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "emit_authorship_outcome",
-        side_effect=_capture,
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "compute_lane_a_checkpoint_value",
+            return_value="committed abc1234 paths=1",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "emit_authorship_outcome",
+            side_effect=_capture,
+        ),
     ):
         state = compute_closeout_tree_state(
             source_repo=Path("/tmp/unused"),
@@ -539,14 +559,17 @@ def test_arm_checkpoint_committed_records_authorship_outcome() -> None:
 def test_arm_nothing_authored_records_authorship_outcome() -> None:
     """Arm 2 — nothing_authored → outcome=nothing_authored; deployment_state stays None."""
     captured, _capture = _capture_emit()
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="nothing_authored",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "emit_authorship_outcome",
-        side_effect=_capture,
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "compute_lane_a_checkpoint_value",
+            return_value="nothing_authored",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "emit_authorship_outcome",
+            side_effect=_capture,
+        ),
     ):
         state = compute_closeout_tree_state(
             source_repo=Path("/tmp/unused"),
@@ -570,24 +593,30 @@ def test_arm_compose_vacancy_records_via_compute() -> None:
         "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
         "outside_repo": [],
     }
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="deferred: authored paths not yet path-explicit committed",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "CursorDispatchLedger.instance",
-    ) as ledger_cls, patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "authored_paths_for_dispatch",
-        return_value=(),
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "SeatWriteLedger.instance",
-    ) as seat_ledger_cls, patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "emit_authorship_outcome",
-        side_effect=_capture,
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "compute_lane_a_checkpoint_value",
+            return_value="deferred: authored paths not yet path-explicit committed",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "CursorDispatchLedger.instance",
+        ) as ledger_cls,
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "authored_paths_for_dispatch",
+            return_value=(),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "SeatWriteLedger.instance",
+        ) as seat_ledger_cls,
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "emit_authorship_outcome",
+            side_effect=_capture,
+        ),
     ):
         ledger_cls.return_value.read_wt_baseline.return_value = usable_baseline
         seat_ledger_cls.return_value.has_paths_for_arc.return_value = False
@@ -612,24 +641,30 @@ def test_arm_compose_omit_records_via_compute() -> None:
         "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
         "outside_repo": [],
     }
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="deferred: authored paths not yet path-explicit committed",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "CursorDispatchLedger.instance",
-    ) as ledger_cls, patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "authored_paths_for_dispatch",
-        return_value=(),
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "SeatWriteLedger.instance",
-    ) as seat_ledger_cls, patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "emit_authorship_outcome",
-        side_effect=_capture,
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "compute_lane_a_checkpoint_value",
+            return_value="deferred: authored paths not yet path-explicit committed",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "CursorDispatchLedger.instance",
+        ) as ledger_cls,
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "authored_paths_for_dispatch",
+            return_value=(),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "SeatWriteLedger.instance",
+        ) as seat_ledger_cls,
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "emit_authorship_outcome",
+            side_effect=_capture,
+        ),
     ):
         ledger_cls.return_value.read_wt_baseline.return_value = empty_baseline
         seat_ledger_cls.return_value.has_paths_for_arc.return_value = True
@@ -653,24 +688,30 @@ def test_arm_compose_authored_not_committed_records_via_compute() -> None:
         "admit_head": "6cf34833ea361a0b694e8ff169e476c06f329b95",
         "outside_repo": [],
     }
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "compute_lane_a_checkpoint_value",
-        return_value="deferred: authored paths not yet path-explicit committed",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "CursorDispatchLedger.instance",
-    ) as ledger_cls, patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "authored_paths_for_dispatch",
-        return_value=("services/git_integration_worker/x.py",),
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "SeatWriteLedger.instance",
-    ) as seat_ledger_cls, patch(
-        "services.git_integration_worker.cursor_auto.closeout_tree_state."
-        "emit_authorship_outcome",
-        side_effect=_capture,
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "compute_lane_a_checkpoint_value",
+            return_value="deferred: authored paths not yet path-explicit committed",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "CursorDispatchLedger.instance",
+        ) as ledger_cls,
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "authored_paths_for_dispatch",
+            return_value=("services/git_integration_worker/x.py",),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "SeatWriteLedger.instance",
+        ) as seat_ledger_cls,
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_tree_state."
+            "emit_authorship_outcome",
+            side_effect=_capture,
+        ),
     ):
         ledger_cls.return_value.read_wt_baseline.return_value = usable_baseline
         seat_ledger_cls.return_value.has_paths_for_arc.return_value = True

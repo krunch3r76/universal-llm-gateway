@@ -125,10 +125,14 @@ def compute_propagate_parity(
             normalized.append(key)
             continue
         if parity_class == "descriptive":
-            dropped_descriptive.append(_format_drop(key, authored=authored_val, row_val=row_val))
+            dropped_descriptive.append(
+                _format_drop(key, authored=authored_val, row_val=row_val)
+            )
             continue
         if parity_class == "narrowing":
-            dropped_narrowing.append(_format_drop(key, authored=authored_val, row_val=row_val))
+            dropped_narrowing.append(
+                _format_drop(key, authored=authored_val, row_val=row_val)
+            )
             continue
         if parity_class == "bound":
             continue
@@ -288,7 +292,9 @@ def compute_field_parity_for_job(
                 scope="propagate_row",
                 wire_dropped=wire_dropped,
             )
-        return compute_propagate_parity(body, propagate_admission, wire_dropped=wire_dropped)
+        return compute_propagate_parity(
+            body, propagate_admission, wire_dropped=wire_dropped
+        )
     if normalized_contract == EXECUTE_CONTRACT:
         if execute_admission is None:
             return FieldParityReport(
@@ -296,7 +302,9 @@ def compute_field_parity_for_job(
                 scope="execute_row",
                 wire_dropped=wire_dropped,
             )
-        return compute_execute_parity(body, execute_admission, wire_dropped=wire_dropped)
+        return compute_execute_parity(
+            body, execute_admission, wire_dropped=wire_dropped
+        )
     if normalized_contract in _NO_ROW_MODEL_CONTRACTS or envelope is None:
         return FieldParityReport(
             status="uncomputable(no_row_model)",

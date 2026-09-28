@@ -45,7 +45,9 @@ def repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def patch_ledger(ledger: SeatWriteLedger, monkeypatch: pytest.MonkeyPatch) -> SeatWriteLedger:
+def patch_ledger(
+    ledger: SeatWriteLedger, monkeypatch: pytest.MonkeyPatch
+) -> SeatWriteLedger:
     monkeypatch.setattr(
         "services.git_integration_worker.lane_b_sweeper.SeatWriteLedger.instance",
         lambda: ledger,
@@ -79,7 +81,9 @@ def test_sweeper_cannot_touch_unregistered_path(
 
 def test_open_arc_not_swept(repo: Path, patch_ledger: SeatWriteLedger) -> None:
     """Negative: registered path on an open arc is not swept."""
-    patch_ledger.open_arc(arc_id="arc-open", seat_id="ide-composer", source_repo=str(repo))
+    patch_ledger.open_arc(
+        arc_id="arc-open", seat_id="ide-composer", source_repo=str(repo)
+    )
     target = repo / "wip.py"
     target.write_text("wip\n", encoding="utf-8")
     patch_ledger.register_paths(

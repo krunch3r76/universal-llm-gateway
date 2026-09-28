@@ -107,13 +107,19 @@ def probe_rendered_surface(
     )
 
 
-def probe_boot_manifest(manifest: dict[str, Any], *, platform: str = "web") -> SurfaceProbeReport:
+def probe_boot_manifest(
+    manifest: dict[str, Any], *, platform: str = "web"
+) -> SurfaceProbeReport:
     """Walk a boot manifest dict (card markdown + injected artifacts) for pointers."""
     parts: list[str] = []
     card = manifest.get("briefing_card") or manifest.get("briefing_card_md")
     if isinstance(card, str):
         parts.append(card)
-    for key in ("skills_card_markdown", "skills_concise_markdown", "operational_context"):
+    for key in (
+        "skills_card_markdown",
+        "skills_concise_markdown",
+        "operational_context",
+    ):
         val = manifest.get(key)
         if isinstance(val, str):
             parts.append(val)

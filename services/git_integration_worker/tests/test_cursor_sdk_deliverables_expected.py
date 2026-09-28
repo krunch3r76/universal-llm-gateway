@@ -47,7 +47,9 @@ def test_compute_deliverables_expected_true_on_evidence_required() -> None:
 
 
 def test_compute_deliverables_expected_true_on_files_expected_imperative() -> None:
-    prose = "files_expected:\n- services/git_integration_worker/cursor_sdk_closeout.py\n"
+    prose = (
+        "files_expected:\n- services/git_integration_worker/cursor_sdk_closeout.py\n"
+    )
     assert extract_instructed_paths(prose)
     assert (
         compute_deliverables_expected(
@@ -71,9 +73,7 @@ def test_compute_deliverables_expected_false_for_bare_consult() -> None:
 
 def test_g2_trace_ii_auto_625a11ce0892_refuse_landed_at_commits_ahead_zero() -> None:
     """(ii) G₂ REFUSE — landed:true forbidden when commits_ahead=0 (head==branch_point)."""
-    assert (
-        admit_landed_true(ancestry_on_master=True, commits_ahead=0) is False
-    )
+    assert admit_landed_true(ancestry_on_master=True, commits_ahead=0) is False
     assert admit_landed_true(ancestry_on_master=True, commits_ahead=1) is True
     assert admit_landed_true(ancestry_on_master=False, commits_ahead=2) is False
 
@@ -91,9 +91,12 @@ def test_git_land_plane_uncomputable_gitignored_only() -> None:
         git_land_plane_uncomputable,
     )
 
-    assert git_land_plane_uncomputable(
-        untracked=(".claude/skills/prose-discipline/SKILL.md",),
-    ) is True
+    assert (
+        git_land_plane_uncomputable(
+            untracked=(".claude/skills/prose-discipline/SKILL.md",),
+        )
+        is True
+    )
 
 
 def test_git_land_plane_uncomputable_offgit_only() -> None:
@@ -101,9 +104,12 @@ def test_git_land_plane_uncomputable_offgit_only() -> None:
         git_land_plane_uncomputable,
     )
 
-    assert git_land_plane_uncomputable(
-        offgit=("cortex://notes/system/recon/x.md",),
-    ) is True
+    assert (
+        git_land_plane_uncomputable(
+            offgit=("cortex://notes/system/recon/x.md",),
+        )
+        is True
+    )
 
 
 def test_git_land_plane_uncomputable_swamp_only_is_false() -> None:
@@ -111,12 +117,18 @@ def test_git_land_plane_uncomputable_swamp_only_is_false() -> None:
         git_land_plane_uncomputable,
     )
 
-    assert git_land_plane_uncomputable(
-        untracked=(".cursor/rules/foo.mdc",),
-    ) is False
-    assert git_land_plane_uncomputable(
-        untracked=("tmp/reviews/closeouts/auto-x.md",),
-    ) is False
+    assert (
+        git_land_plane_uncomputable(
+            untracked=(".cursor/rules/foo.mdc",),
+        )
+        is False
+    )
+    assert (
+        git_land_plane_uncomputable(
+            untracked=("tmp/reviews/closeouts/auto-x.md",),
+        )
+        is False
+    )
 
 
 def test_git_land_plane_uncomputable_mixed_tracked_is_false() -> None:
@@ -124,10 +136,13 @@ def test_git_land_plane_uncomputable_mixed_tracked_is_false() -> None:
         git_land_plane_uncomputable,
     )
 
-    assert git_land_plane_uncomputable(
-        modified=("services/git_integration_worker/cursor_sdk_closeout.py",),
-        untracked=(".claude/skills/x/SKILL.md",),
-    ) is False
+    assert (
+        git_land_plane_uncomputable(
+            modified=("services/git_integration_worker/cursor_sdk_closeout.py",),
+            untracked=(".claude/skills/x/SKILL.md",),
+        )
+        is False
+    )
 
 
 def test_suppress_vacuous_git_landed_false_when_uncomputable() -> None:

@@ -11,7 +11,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from cursor_capabilities import is_other_models_pool
 
+from services.git_integration_worker.cursor_auto import reflex_read
 from services.git_integration_worker.cursor_auto.knob_compose import compose_model_knobs
 from services.git_integration_worker.cursor_auto.reflex_packet import (
     MAX_SECOND_READ_CHARS,
@@ -27,9 +29,6 @@ from services.git_integration_worker.cursor_auto.reflex_policy import (
     evaluate_reflex,
     reflex_sample_every,
 )
-from cursor_capabilities import is_other_models_pool
-
-from services.git_integration_worker.cursor_auto import reflex_read
 from services.git_integration_worker.cursor_auto.reflex_read import (
     _DEFAULT_EFFORT,
     _DEFAULT_MODEL,

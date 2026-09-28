@@ -30,7 +30,9 @@ class SketchMaterializeContext:
     scope: str | None
 
 
-def load_sketch_context(source_ref: str, *, cortex: CortexReader) -> SketchMaterializeContext:
+def load_sketch_context(
+    source_ref: str, *, cortex: CortexReader
+) -> SketchMaterializeContext:
     ref = parse_source_ref(source_ref)
     if ref.source_kind != "todo":
         msg = f"sketch materializer requires todo: source_ref, got {source_ref!r}"

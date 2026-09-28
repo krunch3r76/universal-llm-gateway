@@ -20,10 +20,19 @@ from services.git_integration_worker.cursor_auto.propagation_probe import (
 
 
 def _sample_before() -> dict:
-    return {"pid": 100, "process_start_time": "2026-01-01T00:00:00Z", "code_version": "abc"}
+    return {
+        "pid": 100,
+        "process_start_time": "2026-01-01T00:00:00Z",
+        "code_version": "abc",
+    }
+
 
 def _sample_after() -> dict:
-    return {"pid": 200, "process_start_time": "2026-01-02T00:00:00Z", "code_version": "abc"}
+    return {
+        "pid": 200,
+        "process_start_time": "2026-01-02T00:00:00Z",
+        "code_version": "abc",
+    }
 
 
 def test_identity_movement_is_required_for_sha_attributed_proof() -> None:
@@ -47,7 +56,9 @@ def test_process_live_obligation_prose_names_no_age_fields() -> None:
     """Obligation must not name AGE_FIELDS — attestation never uses them."""
     proof = compose_proof("mcp", "process_live")
     for field in AGE_FIELDS:
-        assert field not in proof, f"age field {field!r} must not appear in obligation prose"
+        assert field not in proof, (
+            f"age field {field!r} must not appear in obligation prose"
+        )
 
 
 def test_submitted_execution_has_no_after_asserting_proof_key() -> None:
@@ -66,10 +77,14 @@ def test_submitted_execution_has_no_after_asserting_proof_key() -> None:
 def test_process_live_obligation_names_all_identifier_fields() -> None:
     proof = compose_proof("stargate", "process_live")
     for field in IDENTIFIER_FIELDS:
-        assert field in proof, f"identifier field {field!r} must appear in obligation prose"
+        assert field in proof, (
+            f"identifier field {field!r} must appear in obligation prose"
+        )
 
 
-def test_process_live_obligation_identity_clause_derived_from_identifier_fields() -> None:
+def test_process_live_obligation_identity_clause_derived_from_identifier_fields() -> (
+    None
+):
     """Prose identity list must match IDENTIFIER_FIELDS join — not hand-copied."""
     proof = compose_proof("gateway", "process_live")
     expected_clause = "/".join(IDENTIFIER_FIELDS)
@@ -118,7 +133,9 @@ def test_envelope_submitted_has_time_honest_capture_not_proof() -> None:
 
 
 def test_envelope_queued_execution_has_no_proof_or_at_submit() -> None:
-    row = PropagationRow(service="mcp", code_ref="deadbeef", proof_class="client_visible")
+    row = PropagationRow(
+        service="mcp", code_ref="deadbeef", proof_class="client_visible"
+    )
     with patch(
         "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
     ):
@@ -146,4 +163,3 @@ def test_envelope_blocked_execution_has_no_proof_or_at_submit() -> None:
 def test_envelope_no_executions_field_absent_not_empty_proof() -> None:
     assert _disposition_for([]) == "failed"
     # No execution dict exists — proof keys are absent by construction.
-

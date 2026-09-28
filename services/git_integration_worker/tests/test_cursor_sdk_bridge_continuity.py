@@ -29,7 +29,9 @@ def test_bridge_read_timeout_tracks_idle_budget() -> None:
 
 def test_touch_bridge_read_deadline_rearms_from_tool_progress() -> None:
     transport = MagicMock()
-    transport.stream_timeout = httpx.Timeout(connect=30.0, read=600.0, write=120.0, pool=60.0)
+    transport.stream_timeout = httpx.Timeout(
+        connect=30.0, read=600.0, write=120.0, pool=60.0
+    )
     client = MagicMock(_transport=transport)
     touch_bridge_read_deadline(client, idle_budget_s=1800.0)
     updated = transport.stream_timeout

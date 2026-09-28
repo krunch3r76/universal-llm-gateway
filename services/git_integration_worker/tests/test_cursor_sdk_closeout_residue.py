@@ -57,9 +57,7 @@ def test_build_closeout_includes_plugin_install_residue() -> None:
         work_item_ref=None,
         change_set=ChangeSet(
             created=(),
-            modified=(
-                "cursor-plugins/ulg-ecosystem/rules/mcp-tool-awareness_ulg.mdc",
-            ),
+            modified=("cursor-plugins/ulg-ecosystem/rules/mcp-tool-awareness_ulg.mdc",),
             deleted=(),
         ),
     )
@@ -108,7 +106,9 @@ def test_finalize_preserves_propagation_residue() -> None:
     payload = json.loads(body)
     assert payload["propagation_residue"]
     finalized = finalize_closeout_body(body)
-    assert json.loads(finalized)["propagation_residue"] == payload["propagation_residue"]
+    assert (
+        json.loads(finalized)["propagation_residue"] == payload["propagation_residue"]
+    )
 
 
 def test_build_closeout_no_propagation_from_deleted_lib() -> None:

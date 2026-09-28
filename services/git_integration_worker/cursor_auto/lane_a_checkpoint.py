@@ -29,13 +29,9 @@ _TREE_RESIDUE_RE = re.compile(r"(?im)^tree_residue:\s*(\d+)\b")
 _CHECKPOINT_LINE_RE = re.compile(r"(?im)^checkpoint:\s*(.+)$")
 _BOLD_CHECKPOINT_RE = re.compile(r"(?im)^\*\*checkpoint:\*\*\s*(.+)$")
 _CHECKPOINT_CLAIM_LINE_RE = re.compile(r"(?im)^checkpoint_claim:\s*(.+)$")
-_BOLD_CHECKPOINT_CLAIM_RE = re.compile(
-    r"(?im)^\*\*checkpoint_claim:\*\*\s*(.+)$"
-)
+_BOLD_CHECKPOINT_CLAIM_RE = re.compile(r"(?im)^\*\*checkpoint_claim:\*\*\s*(.+)$")
 _CORTEX_URI_PREFIX = "cortex://"
-_UNHASHABLE_CORTEX_DEFERRED = (
-    "deferred: cortex durable write could not be rehashed"
-)
+_UNHASHABLE_CORTEX_DEFERRED = "deferred: cortex durable write could not be rehashed"
 _BASELINE_UNAVAILABLE = (
     "baseline_unavailable: no admit baseline recorded for this dispatch"
 )

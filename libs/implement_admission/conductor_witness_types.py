@@ -131,7 +131,9 @@ def stops_block_reason(tip_body: str, row_id: str) -> str | None:
         if not stops:
             return None
         for token in STOPS_BLOCK_TOKENS:
-            if re.search(rf"(?<![A-Za-z0-9_]){re.escape(token)}(?![A-Za-z0-9_])", stops):
+            if re.search(
+                rf"(?<![A-Za-z0-9_]){re.escape(token)}(?![A-Za-z0-9_])", stops
+            ):
                 return token
         return None
     return None

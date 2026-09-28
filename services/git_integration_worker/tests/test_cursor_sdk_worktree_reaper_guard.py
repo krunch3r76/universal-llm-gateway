@@ -236,7 +236,9 @@ def test_prune_refuses_worktree_held_by_live_bridge(
     assert not result.pruned
     assert result.branch_retained
     assert wt.is_dir()
-    assert lookup_lane_worktree(thread_id=dispatch_id, source_repo=source_repo) is not None
+    assert (
+        lookup_lane_worktree(thread_id=dispatch_id, source_repo=source_repo) is not None
+    )
     assert worktree_held_by_live_bridge(worktree_path=wt) == 4242
 
 
@@ -522,7 +524,9 @@ def test_registry_ghost_row_is_surfaced_not_dropped(
     )
 
     assert sweep.registry_ghost_rows >= 1
-    assert lookup_lane_worktree(thread_id=dispatch_id, source_repo=source_repo) is not None
+    assert (
+        lookup_lane_worktree(thread_id=dispatch_id, source_repo=source_repo) is not None
+    )
 
 
 def test_ghost_row_backlog_is_counted_in_full_but_emits_within_budget(

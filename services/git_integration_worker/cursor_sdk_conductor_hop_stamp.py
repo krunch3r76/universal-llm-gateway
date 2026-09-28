@@ -35,7 +35,10 @@ def derive_hop_admitted_by(*, caller_agent: str | None, hop_reason: str) -> str:
     agent = str(caller_agent or "").lower()
     if "mcp" in agent:
         return "mcp"
-    if agent in {"cursor", "web-anthropic", "dispatch", "liaison"} or "liaison" in agent:
+    if (
+        agent in {"cursor", "web-anthropic", "dispatch", "liaison"}
+        or "liaison" in agent
+    ):
         return "liaison"
     return "conductor-hop"
 
@@ -92,9 +95,18 @@ def derive_hop_lineage(
     next_seq = int(prior_seq) + 1 if isinstance(prior_seq, int) else 1
     body = body_triplet or {}
     hop_reason = str(body.get("hop_reason") or "planned")
-    if hop_reason not in {"spawn", "planned", "crash", "silent", "watchdog", "park_harvest"}:
+    if hop_reason not in {
+        "spawn",
+        "planned",
+        "crash",
+        "silent",
+        "watchdog",
+        "park_harvest",
+    }:
         hop_reason = "planned"
-    admitted_by = derive_hop_admitted_by(caller_agent=caller_agent, hop_reason=hop_reason)
+    admitted_by = derive_hop_admitted_by(
+        caller_agent=caller_agent, hop_reason=hop_reason
+    )
     mismatches: list[dict[str, Any]] = []
     if body_triplet:
         for key, derived in (

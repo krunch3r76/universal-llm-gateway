@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from implement_admission.closeout_models import (
     EffectEntry,
     EffectsManifest,
@@ -115,7 +114,9 @@ def test_breadth_recon_suppressed_when_explore_used() -> None:
             )
         },
     )
-    wrapper = json.dumps({"contract": "investigate", "effects_manifest": manifest.model_dump()})
+    wrapper = json.dumps(
+        {"contract": "investigate", "effects_manifest": manifest.model_dump()}
+    )
     assert (
         breadth_recon_deviation(body="status: complete", wrapper_text=wrapper) is None
     )
@@ -142,7 +143,9 @@ def test_amend_breadth_recon_is_advisory_does_not_clamp_status() -> None:
 def test_finalize_relay_includes_breadth_recon_deviation() -> None:
     wrapper = json.dumps({"contract": "investigate", "effects_manifest": {}})
     result = finalize_relay_payload(
-        CloseoutRelayPayload(body="status: complete", status="complete", source="wrapper"),
+        CloseoutRelayPayload(
+            body="status: complete", status="complete", source="wrapper"
+        ),
         wrapper_text=wrapper,
     )
     assert "recon:breadth_explore_not_used" in result.body

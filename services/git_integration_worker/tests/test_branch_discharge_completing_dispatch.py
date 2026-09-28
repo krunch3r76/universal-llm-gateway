@@ -198,11 +198,7 @@ def test_caller_own_live_bridge_in_lane_discharges_deferred(
     _running("disp-caller", "thr-self-cwd", repo=repo, tree=tree)
     _occupy(
         monkeypatch,
-        [
-            BridgeOccupancy(
-                pid=4242, cwd=str(tree.resolve()), dispatch_id="disp-caller"
-            )
-        ],
+        [BridgeOccupancy(pid=4242, cwd=str(tree.resolve()), dispatch_id="disp-caller")],
     )
     result = discharge_discard(
         repo=repo,
@@ -273,11 +269,7 @@ def test_other_dispatch_live_bridge_still_refused(
     _running("disp-caller", "thr-other-bridge", repo=repo, tree=tree)
     _occupy(
         monkeypatch,
-        [
-            BridgeOccupancy(
-                pid=9999, cwd=str(tree.resolve()), dispatch_id="disp-other"
-            )
-        ],
+        [BridgeOccupancy(pid=9999, cwd=str(tree.resolve()), dispatch_id="disp-other")],
     )
     result = discharge_discard(
         repo=repo,

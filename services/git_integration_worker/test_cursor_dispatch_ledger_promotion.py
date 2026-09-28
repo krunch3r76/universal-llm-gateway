@@ -77,9 +77,7 @@ def test_promote_next_queued_rehomes_orphan_from_dead_worker(
         worker_instance=dead_worker,
     )
 
-    promoted = ledger.promote_next_queued(
-        source_repo=repo, worker_instance=live_worker
-    )
+    promoted = ledger.promote_next_queued(source_repo=repo, worker_instance=live_worker)
 
     assert promoted is not None
     assert promoted.dispatch_id == "cb532cacde64-44e410dc"
@@ -232,9 +230,7 @@ def test_demote_admitted_to_queued_restores_fifo_head(
         worker_instance="worker-a",
     )
     ledger.mark_terminal(dispatch_id=holder.dispatch_id, terminal_status="completed")
-    promoted = ledger.promote_next_queued(
-        source_repo=repo, worker_instance="worker-b"
-    )
+    promoted = ledger.promote_next_queued(source_repo=repo, worker_instance="worker-b")
     assert promoted is not None
     assert promoted.dispatch_id == "queued-head"
 

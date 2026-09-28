@@ -25,9 +25,7 @@ _PARK_PARTIAL_REL = "notes/system/threads/{thread_id}-park-partial-{dispatch_id}
 
 
 def bridge_death_partial_uri(*, thread_id: str, dispatch_id: str) -> str:
-    rel = _BRIDGE_DEATH_PARTIAL_REL.format(
-        thread_id=thread_id, dispatch_id=dispatch_id
-    )
+    rel = _BRIDGE_DEATH_PARTIAL_REL.format(thread_id=thread_id, dispatch_id=dispatch_id)
     return f"cortex://{rel}"
 
 
@@ -164,9 +162,7 @@ def emit_partial_harvest_on_bridge_death(
     )
     resume_eligible = bool(bridge_state is not None and tool_call_count > 0)
 
-    uri = bridge_death_partial_uri(
-        thread_id=resolved_thread, dispatch_id=dispatch_id
-    )
+    uri = bridge_death_partial_uri(thread_id=resolved_thread, dispatch_id=dispatch_id)
     body = _sidecar_body(
         dispatch_id=dispatch_id,
         thread_id=resolved_thread,

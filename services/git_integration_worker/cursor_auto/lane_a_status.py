@@ -18,9 +18,7 @@ _STATUS_CLAIM_LINE_RE = re.compile(
 _BOLD_STATUS_CLAIM_RE = re.compile(
     r"(?im)^\*\*status_claim:\*\*\s*`?(complete|partial|blocked)`?"
 )
-_LEGACY_STATUS_LINE_RE = re.compile(
-    r"(?im)^status:\s*`?(complete|partial|blocked)`?"
-)
+_LEGACY_STATUS_LINE_RE = re.compile(r"(?im)^status:\s*`?(complete|partial|blocked)`?")
 _BOLD_LEGACY_STATUS_RE = re.compile(
     r"(?im)^\*\*status:\*\*\s*`?(complete|partial|blocked)`?"
 )

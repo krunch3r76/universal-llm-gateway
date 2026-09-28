@@ -21,9 +21,7 @@ def test_omit_model_resolves_reviewer_to_terra() -> None:
 
 
 def test_cursor_luna_resolves_sdk_substrate() -> None:
-    resolution = resolve_check_review_model(
-        "cursor-sdk", "cursor/gpt-5.6-luna"
-    )
+    resolution = resolve_check_review_model("cursor-sdk", "cursor/gpt-5.6-luna")
     assert resolution.substrate == "cursor-sdk"
     assert resolution.delivery_from_role == "reviewer"
 

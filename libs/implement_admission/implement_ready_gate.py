@@ -214,7 +214,9 @@ def require_implement_ready(
                 "skeptic_ratified": skeptic_outcome.ratified,
                 "recon_waived": recon_waived,
                 "check_requested": check_requested,
-                "recon_waiver": recon_waiver.to_gate_sibling() if recon_waiver else None,
+                "recon_waiver": recon_waiver.to_gate_sibling()
+                if recon_waiver
+                else None,
                 # Must match evaluate_implement_ready consult axis — omit ⇒
                 # judgment_required fails live doc_validate side-effect guard
                 # with implement_consult_provenance_missing → doc_validate_not_passing.

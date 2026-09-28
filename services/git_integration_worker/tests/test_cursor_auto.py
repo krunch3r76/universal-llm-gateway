@@ -55,8 +55,7 @@ def test_wire_map_auto_by_contract():
         == "cursor/grok-4.7"
     )
     assert (
-        resolve_desired_model("opus-5")["resolved_model_id"]
-        == "cursor/claude-opus-5"
+        resolve_desired_model("opus-5")["resolved_model_id"] == "cursor/claude-opus-5"
     )
     effort = resolve_desired_effort("bogus")
     assert effort["clamped"] and effort["resolved_effort"] == "medium"
@@ -147,12 +146,13 @@ def test_assess_effort_pin_allows_prose_mention_of_model_knobs():
     """AC3: describing the bad pattern in prose while wire pins correctly must admit."""
     prose = (
         "TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfix knob relay\n"
-        "intent: the chip wrongly said model_knobs={\"effort\": \"high\"} in the body\n"
+        'intent: the chip wrongly said model_knobs={"effort": "high"} in the body\n'
         "vision: true guidance pins on wire\n"
     )
     effort, block = assess_effort_pin("high", body=prose)
     assert block is None
     assert effort["resolved_effort"] == "high"
+
 
 def test_process_job_admits_prose_mention_with_wire_effort(monkeypatch):
     """AC3 live admit: prose quotes model_knobs effort; wire desired_effort=high admits."""
@@ -185,7 +185,7 @@ def test_process_job_admits_prose_mention_with_wire_effort(monkeypatch):
         body=(
             "TYPE: DIRECTIVE\ndensity: dense\n## Scope\nfix guidance\n"
             "vision: test\n"
-            "intent: defect was model_knobs={\"effort\": \"high\"} in body per chip\n"
+            'intent: defect was model_knobs={"effort": "high"} in body per chip\n'
         ),
         from_agent="web-anthropic",
         to_agent="cursor",
@@ -605,12 +605,15 @@ def test_gate_serialize_bounded_nest_park_when_gate_held_not_in_seat():
         assert plan["action"] == "nest_park"
         assert plan["reason"] == "gate_at_capacity_prefer_park"
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
-        return_value=gate_stats,
-    ), patch(
-        "services.git_integration_worker.cursor_dispatch_ledger.CursorDispatchLedger.instance"
-    ) as ledger_cls:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
+            return_value=gate_stats,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_dispatch_ledger.CursorDispatchLedger.instance"
+        ) as ledger_cls,
+    ):
         ledger_cls.return_value.lease_snapshot.return_value = {
             "holder_dispatch_id": "peer-holder",
         }
@@ -620,12 +623,15 @@ def test_gate_serialize_bounded_nest_park_when_gate_held_not_in_seat():
 
 
 def test_gate_serialize_bounded_holderless_prefers_dispatch_at_capacity():
-    with patch(
-        "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
-        return_value={"active": 1, "queued": 0, "limit": 1},
-    ), patch(
-        "services.git_integration_worker.cursor_dispatch_ledger.CursorDispatchLedger.instance"
-    ) as ledger_cls:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.gate_serialize.sdk_dispatch_gate_stats",
+            return_value={"active": 1, "queued": 0, "limit": 1},
+        ),
+        patch(
+            "services.git_integration_worker.cursor_dispatch_ledger.CursorDispatchLedger.instance"
+        ) as ledger_cls,
+    ):
         ledger_cls.return_value.lease_snapshot.return_value = {
             "holder_dispatch_id": None,
         }

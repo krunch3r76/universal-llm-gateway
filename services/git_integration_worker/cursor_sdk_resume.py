@@ -180,9 +180,7 @@ def resolve_sdk_store_dir(
     if load_parent_row(ledger, parent_id=parent_id) is None:
         return _store_at_dispatch(dispatch_id=parent_id, state_root=state_root)
     first = True
-    for dispatch_id, row_state_root in _iter_resume_lineage(
-        ledger, start_id=parent_id
-    ):
+    for dispatch_id, row_state_root in _iter_resume_lineage(ledger, start_id=parent_id):
         sr = state_root if first else row_state_root
         first = False
         found = _store_at_dispatch(dispatch_id=dispatch_id, state_root=sr)
@@ -194,9 +192,7 @@ def resolve_sdk_store_dir(
 def resolve_store_bearing_dispatch_id(*, parent_id: str) -> str:
     """Return the lineage dispatch whose HOME holds the SDK store."""
     ledger = CursorDispatchLedger.instance()
-    for dispatch_id, row_state_root in _iter_resume_lineage(
-        ledger, start_id=parent_id
-    ):
+    for dispatch_id, row_state_root in _iter_resume_lineage(ledger, start_id=parent_id):
         if _store_at_dispatch(dispatch_id=dispatch_id, state_root=row_state_root):
             return dispatch_id
     return parent_id
@@ -528,9 +524,7 @@ def start_or_resume_agent(
         agent = client.resume_agent(resume_ctx.sdk_agent_id, agent_options)
         # Resume children exist only when the parent ledger row is terminal, so
         # unconditional force on resume is the deliberate superset of that done-when.
-        run = agent.send(
-            prompt, SendOptions(local=LocalSendOptions(force=True))
-        )
+        run = agent.send(prompt, SendOptions(local=LocalSendOptions(force=True)))
     else:
         agent = client.create_agent(agent_options)
         run = agent.send(prompt)

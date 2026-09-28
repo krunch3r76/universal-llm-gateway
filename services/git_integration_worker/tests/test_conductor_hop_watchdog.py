@@ -308,12 +308,15 @@ async def test_sweep_emits_watchdog_fired_event() -> None:
     def _capture(signal: str, **_kwargs):
         emitted.append(signal)
 
-    with patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
-        AsyncMock(return_value=(True, {"dispatch_id": "succ-watchdog-3"})),
-    ), patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.emit_frontier_sdk_conductor_hop_watchdog_fired",
-        side_effect=lambda **kw: emitted.append("watchdog_fired"),
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.post_conductor_hop_team_dispatch",
+            AsyncMock(return_value=(True, {"dispatch_id": "succ-watchdog-3"})),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.emit_frontier_sdk_conductor_hop_watchdog_fired",
+            side_effect=lambda **kw: emitted.append("watchdog_fired"),
+        ),
     ):
         fired = await sweep_conductor_hop_watchdog(ledger)
     assert fired == 1
@@ -335,18 +338,23 @@ async def test_watchdog_fires_consult_pending_before_park_harvest_continue() -> 
     consult_mock = AsyncMock(return_value=True)
     continue_mock = AsyncMock(return_value=True)
 
-    with patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.consult_pending_continue_owed",
-        return_value=True,
-    ), patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.fire_consult_pending_continue",
-        consult_mock,
-    ), patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.park_harvest_continue_owed",
-        return_value=True,
-    ), patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.fire_park_harvest_continue",
-        continue_mock,
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.consult_pending_continue_owed",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.fire_consult_pending_continue",
+            consult_mock,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.park_harvest_continue_owed",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.fire_park_harvest_continue",
+            continue_mock,
+        ),
     ):
         ok = await maybe_fire_conductor_hop_watchdog(dispatch_id=req.dispatch_id)
     assert ok is True
@@ -373,16 +381,20 @@ async def test_watchdog_fires_park_harvest_continue_before_arm_recipe() -> None:
 
     continue_mock = AsyncMock(return_value=True)
 
-    with patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.park_harvest_continue_owed",
-        return_value=True,
-    ), patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.fire_park_harvest_continue",
-        continue_mock,
-    ), patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.park_harvest_owed",
-        return_value=True,
-    ) as arm_mock:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.park_harvest_continue_owed",
+            return_value=True,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.fire_park_harvest_continue",
+            continue_mock,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop_watchdog.park_harvest_owed",
+            return_value=True,
+        ) as arm_mock,
+    ):
         ok = await maybe_fire_conductor_hop_watchdog(dispatch_id=req.dispatch_id)
     assert ok is True
     continue_mock.assert_awaited_once()

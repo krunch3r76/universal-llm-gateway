@@ -10,7 +10,10 @@ from typing import Any
 import pytest
 
 _SCRIPT = (
-    Path(__file__).resolve().parents[3] / "scripts" / "dev" / "cursor_sdk_pin_bump_check.py"
+    Path(__file__).resolve().parents[3]
+    / "scripts"
+    / "dev"
+    / "cursor_sdk_pin_bump_check.py"
 )
 
 
@@ -135,7 +138,11 @@ def test_guard_runner_monkeypatched(mod, monkeypatch) -> None:
 
 
 def test_build_report_json_keys(mod, monkeypatch) -> None:
-    monkeypatch.setattr(mod, "run_guard_pytest", lambda: mod.CheckResult("guard_pytest", "PASS", "6 passed"))
+    monkeypatch.setattr(
+        mod,
+        "run_guard_pytest",
+        lambda: mod.CheckResult("guard_pytest", "PASS", "6 passed"),
+    )
     report = mod.build_report("repo", sys.executable)
     expected = {
         "bump_eligible",

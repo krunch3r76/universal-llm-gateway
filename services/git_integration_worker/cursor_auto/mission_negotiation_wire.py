@@ -314,7 +314,12 @@ def parse_negotiation_request(
     in_reply_raw = _field_value(text, "in_reply_to_turn")
     hash_raw = (_field_value(text, "proposal_hash") or "").strip()
     idle_deadline = (_field_value(text, "idle_deadline") or "").strip()
-    if revision_raw is None or in_reply_raw is None or not hash_raw or not idle_deadline:
+    if (
+        revision_raw is None
+        or in_reply_raw is None
+        or not hash_raw
+        or not idle_deadline
+    ):
         return NegotiationParseError(
             reason="negotiation.malformed",
             summary="missing required negotiation field",

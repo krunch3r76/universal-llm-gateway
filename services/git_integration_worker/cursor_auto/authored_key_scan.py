@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 
 import yaml
-
 from implement_admission.propagation_block_parser import (
     extract_propagation_yaml_block,
     propagation_block_present,

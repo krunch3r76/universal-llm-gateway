@@ -60,7 +60,10 @@ def test_resolve_entry_gate_g1_without_fold() -> None:
 
 
 def test_resolve_entry_gate_from_fold() -> None:
-    assert resolve_entry_gate(density_triage="judgment_required", fold_entry_gate="G4") == "G4"
+    assert (
+        resolve_entry_gate(density_triage="judgment_required", fold_entry_gate="G4")
+        == "G4"
+    )
 
 
 def test_resolve_entry_gate_g5_mechanical_without_fold() -> None:
@@ -295,8 +298,7 @@ def test_resolve_summon_mode_empty_coord_turn_count_zero() -> None:
         == "confer_and_finish"
     )
     assert (
-        resolve_summon_mode(caller_agent="cursor", summoning_turn_count=3)
-        == "attended"
+        resolve_summon_mode(caller_agent="cursor", summoning_turn_count=3) == "attended"
     )
     assert (
         resolve_summon_mode(caller_agent="cursor", summoning_turn_count=None)
@@ -379,7 +381,9 @@ def test_materialize_conductor_skips_birth_when_tip_exists(tmp_path: Path) -> No
     assert tip_mutated is not None
     journal_before = load_journal(slug, files_root=files_root)
     birth_count_before = sum(
-        1 for record in journal_before if record.get("reason") == "conductor spawn birth"
+        1
+        for record in journal_before
+        if record.get("reason") == "conductor spawn birth"
     )
     assert birth_count_before == 1
 
@@ -401,7 +405,9 @@ def test_materialize_conductor_skips_birth_when_tip_exists(tmp_path: Path) -> No
     assert len(journal_after) == len(journal_before)
 
 
-def test_materialize_conductor_default_confer_and_finish_strings(tmp_path: Path) -> None:
+def test_materialize_conductor_default_confer_and_finish_strings(
+    tmp_path: Path,
+) -> None:
     out_dir = tmp_path / "packets"
     mp = materialize_conductor(
         "todo:layer-conductor-unify",

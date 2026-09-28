@@ -75,8 +75,7 @@ def maybe_discharge_failed_episode(
         completing_dispatch_id=dispatch_id,
     )
     logger.info(
-        "cursor-auto lane_b episode discard job=%s thread=%s branch=%s "
-        "discharged=%s",
+        "cursor-auto lane_b episode discard job=%s thread=%s branch=%s discharged=%s",
         job.job_id,
         job.thread_id,
         record.branch_name,

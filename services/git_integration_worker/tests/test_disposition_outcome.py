@@ -12,10 +12,16 @@ from services.git_integration_worker.cursor_auto.disposition_outcome import (
     m1_nested_relay,
     outcome_disposition_for_stamp,
 )
-from services.git_integration_worker.cursor_auto.handler_terminal import terminal_in_seat
+from services.git_integration_worker.cursor_auto.handler_terminal import (
+    terminal_in_seat,
+)
 from services.git_integration_worker.cursor_auto.queue import AutoJob
-from services.git_integration_worker.cursor_auto.work_journal import append_journal_entry
-from services.git_integration_worker.cursor_auto.wire_map import resolve_contract_disposition
+from services.git_integration_worker.cursor_auto.wire_map import (
+    resolve_contract_disposition,
+)
+from services.git_integration_worker.cursor_auto.work_journal import (
+    append_journal_entry,
+)
 
 
 def test_outcome_token_requires_m1() -> None:

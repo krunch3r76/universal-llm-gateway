@@ -17,7 +17,9 @@ _SHA_A = "abc1230000000000000000000000000000000000"
 _SHA_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 
-def _row(code_ref: str = _SHA_A, *, service: str = "git_integration_worker") -> PropagationRow:
+def _row(
+    code_ref: str = _SHA_A, *, service: str = "git_integration_worker"
+) -> PropagationRow:
     return PropagationRow(
         service=service,
         code_ref=code_ref,
@@ -90,9 +92,7 @@ def test_served_artifact_requires_identity_delta() -> None:
         pid=4242,
         process_start_time="2026-08-11T01:00:00Z",
     )
-    assert (
-        proof_observed(_row(_SHA_A), payload, before=before_same_identity) is False
-    )
+    assert proof_observed(_row(_SHA_A), payload, before=before_same_identity) is False
 
 
 def test_served_artifact_unknown_version_settles_when_artifact_passes() -> None:
@@ -107,7 +107,9 @@ def test_served_artifact_unrelated_mismatch_blocks() -> None:
     payload = _pass_payload(code_ref=_SHA_A, code_version=_SHA_B)
     before = _before_payload(code_version="cccccccccccccccccccccccccccccccccccccccc")
     assert payload["code_ref_relation"] == "unrelated"
-    assert not served_artifact_observed(payload, code_ref=_SHA_A, expected_x_mcp_count=9)
+    assert not served_artifact_observed(
+        payload, code_ref=_SHA_A, expected_x_mcp_count=9
+    )
     assert not proof_observed(_row(_SHA_A), payload, before=before)
 
 
@@ -115,12 +117,15 @@ def test_served_artifact_unknown_does_not_bypass_artifact_failure() -> None:
     payload = _pass_payload(code_ref=_SHA_A, code_version=None, count=3)
     before = _before_payload()
     assert payload["code_ref_relation"] == "unknown"
-    assert not served_artifact_observed(payload, code_ref=_SHA_A, expected_x_mcp_count=9)
+    assert not served_artifact_observed(
+        payload, code_ref=_SHA_A, expected_x_mcp_count=9
+    )
     assert not proof_observed(_row(_SHA_A), payload, before=before)
 
 
 def test_served_artifact_settlement_does_not_close_without_identity(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ) -> None:
     """Settle path shares proof_passes with client_visible — identity owed."""
     from deploy_identity import code_ref_relation as relation_mod
@@ -165,7 +170,9 @@ def test_served_artifact_settlement_does_not_close_without_identity(
 def test_served_artifact_fail_count_shortfall() -> None:
     payload = _pass_payload(code_ref=_SHA_A, code_version=_SHA_A, count=3)
     before = _before_payload()
-    assert not served_artifact_observed(payload, code_ref=_SHA_A, expected_x_mcp_count=9)
+    assert not served_artifact_observed(
+        payload, code_ref=_SHA_A, expected_x_mcp_count=9
+    )
     assert not proof_observed(_row(_SHA_A), payload, before=before)
 
 
@@ -174,7 +181,9 @@ def test_served_artifact_fail_surface_disagreement() -> None:
     before = _before_payload()
     payload["byte_identical"] = False
     payload["surfaces"]["stargate_9999"]["bytes_sha256"] = "other000"
-    assert not served_artifact_observed(payload, code_ref=_SHA_A, expected_x_mcp_count=9)
+    assert not served_artifact_observed(
+        payload, code_ref=_SHA_A, expected_x_mcp_count=9
+    )
     assert not proof_observed(_row(_SHA_A), payload, before=before)
 
 

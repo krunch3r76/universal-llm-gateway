@@ -75,7 +75,9 @@ def _missing_witness_message(row_id: str, *, stops: str | None = None) -> str:
     if row_id == "G3":
         return "hang S4b or S9 spec URI on the tip"
     if row_id == "G4":
-        return "hang a G4 verdict that clears G5 (URI whose body does not withhold/FAIL)"
+        return (
+            "hang a G4 verdict that clears G5 (URI whose body does not withhold/FAIL)"
+        )
     if row_id == "G5":
         return "post SCORE_RESURFACE on summoning thread after G3 journal"
     if row_id == "G6":
@@ -156,7 +158,9 @@ def fold_scoreboard(
         files_root=root,
         rows=rows,
     )
-    witnessed_done = frozenset(row_id for row_id, w in witnesses.items() if w is not None)
+    witnessed_done = frozenset(
+        row_id for row_id, w in witnesses.items() if w is not None
+    )
     row_status: dict[str, str] = {}
     rows_claimed: set[str] = set()
     missing: dict[str, str] = {}
@@ -184,11 +188,7 @@ def fold_scoreboard(
             files_root=root,
             repo=deps.repo,
         )
-        if (
-            g6_id
-            and g6_uri
-            and _uri_resolves(g6_uri, files_root=root, repo=deps.repo)
-        ):
+        if g6_id and g6_uri and _uri_resolves(g6_uri, files_root=root, repo=deps.repo):
             block = _g6_review_failure_reason(
                 g6_uri,
                 files_root=root,

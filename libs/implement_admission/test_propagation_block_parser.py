@@ -131,4 +131,3 @@ def test_safe_window_normal_rejected_with_legal_values():
     assert flags == [
         f"propagation_row_0_invalid_safe_window:normal; legal: {LEGAL_SAFE_WINDOW_LIST}"
     ]
-

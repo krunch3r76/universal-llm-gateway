@@ -314,7 +314,11 @@ def reap_orphan_worktrees(
         if not is_reapable_dispatch_status(status):
             continue
         thread_id = str(row["thread_id"] or "")
-        pin = active_pin(source_repo=source_repo, thread_id=thread_id) if thread_id else None
+        pin = (
+            active_pin(source_repo=source_repo, thread_id=thread_id)
+            if thread_id
+            else None
+        )
         if pin is not None:
             result = prune_dispatch_worktree(
                 dispatch_id=row["dispatch_id"] or thread_id,

@@ -324,9 +324,7 @@ async def resume_parked_dispatches(
             if await _expire(row, bus):
                 summary.expired.append(row.dispatch_id)
             continue
-        if not process_started_after_park(
-            controller.worker_started_at, row.parked_at
-        ):
+        if not process_started_after_park(controller.worker_started_at, row.parked_at):
             if row.dispatch_id not in _SAME_PROCESS_SKIPPED:
                 _SAME_PROCESS_SKIPPED.add(row.dispatch_id)
                 logger.info(
@@ -336,9 +334,7 @@ async def resume_parked_dispatches(
                     controller.worker_started_at,
                     row.parked_at,
                 )
-            summary.refused.append(
-                (row.dispatch_id, RESUME_REFUSAL_SAME_PROCESS)
-            )
+            summary.refused.append((row.dispatch_id, RESUME_REFUSAL_SAME_PROCESS))
             continue
         existing = _existing_child(row.dispatch_id)
         if existing is not None:

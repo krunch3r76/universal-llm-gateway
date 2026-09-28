@@ -64,7 +64,9 @@ def _write_repo_files(repo_root: Path, rel_paths: tuple[str, ...]) -> None:
         target.write_text("# edited\n", encoding="utf-8")
 
 
-def _specimen_manifest(*, dispatch_id: str, thread_id: str, repo_root: Path) -> EffectsManifest:
+def _specimen_manifest(
+    *, dispatch_id: str, thread_id: str, repo_root: Path
+) -> EffectsManifest:
     """13 edit entries across 5 files + 8 shell entries; absolute SDK paths."""
     edit_counts = (3, 3, 2, 2, 3)
     edit_entries: list[EffectEntry] = []
@@ -120,7 +122,9 @@ def test_normalize_repo_path_strips_repo_root(tmp_path: Path) -> None:
     )
 
 
-def test_repo_change_set_from_manifest_dedupes_and_canonicalizes(tmp_path: Path) -> None:
+def test_repo_change_set_from_manifest_dedupes_and_canonicalizes(
+    tmp_path: Path,
+) -> None:
     manifest = _specimen_manifest(
         dispatch_id="d-spec",
         thread_id="t-spec",
@@ -139,7 +143,9 @@ def _commit_repo_files(repo_root: Path, rel_paths: tuple[str, ...]) -> None:
         target = repo_root / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("# baseline\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(repo_root), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo_root), "add", "."], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(repo_root), "commit", "-m", "baseline"],
         check=True,

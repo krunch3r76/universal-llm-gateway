@@ -11,7 +11,6 @@ from pathlib import Path
 import pytest
 
 from services.git_integration_worker.cursor_home import (
-    CursorVenvConfigError,
     is_dispatch_home_path,
     operator_real_home,
     resolve_repo_venv,
@@ -34,7 +33,10 @@ def test_falsifier_operator_real_home_ignores_dispatch_home_env(
 
     pinned = operator_real_home()
     assert not is_dispatch_home_path(pinned, root=dispatch_root)
-    assert pinned == Path(home_mod._passwd_home()).resolve() or pinned == home_mod._passwd_home()
+    assert (
+        pinned == Path(home_mod._passwd_home()).resolve()
+        or pinned == home_mod._passwd_home()
+    )
 
     venv = resolve_repo_venv()
     assert leaked not in venv.parents and venv != leaked / ".venvs" / "universal"
@@ -48,7 +50,14 @@ def test_falsifier_resolve_repo_venv_under_passwd_survives_validate(
     import services.git_integration_worker.cursor_home as home_mod
 
     passwd = home_mod._passwd_home()
-    fake = passwd / ".local" / "share" / "git-integration-worker" / "cursor-dispatch-homes" / "auto-fake-home"
+    fake = (
+        passwd
+        / ".local"
+        / "share"
+        / "git-integration-worker"
+        / "cursor-dispatch-homes"
+        / "auto-fake-home"
+    )
     monkeypatch.setenv("HOME", str(fake))
     # Ensure is_dispatch_home_path sees the real default root.
     venv = resolve_repo_venv()

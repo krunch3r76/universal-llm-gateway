@@ -40,7 +40,7 @@ def _snap(*, registration_id: str, execution_id: str = "exec-successor") -> dict
                 "status": "running",
                 "purpose": "operator-proxy",
             }
-        ]
+        ],
     }
 
 
@@ -103,7 +103,9 @@ def test_refuse_cadence_hop_while_same_registration_still_running():
         "registration_id": "reg-incumbent",
         "last_hop_at": time.time() - 60.0,
     }
-    refuse, reason, evidence = refuse_cadence_hop_for_live_seat(row, _snap(registration_id="reg-incumbent"))
+    refuse, reason, evidence = refuse_cadence_hop_for_live_seat(
+        row, _snap(registration_id="reg-incumbent")
+    )
     assert refuse is True
     assert reason == "seat_live_refuse_at_request"
     assert evidence["registration_id"] == "reg-incumbent"
@@ -111,7 +113,9 @@ def test_refuse_cadence_hop_while_same_registration_still_running():
 
 def test_first_cadence_hop_allowed_while_seat_live():
     row = {"registration_id": "reg-incumbent", "last_hop_at": None}
-    refuse, reason, _ = refuse_cadence_hop_for_live_seat(row, _snap(registration_id="reg-incumbent"))
+    refuse, reason, _ = refuse_cadence_hop_for_live_seat(
+        row, _snap(registration_id="reg-incumbent")
+    )
     assert refuse is False
     assert reason is None
 
@@ -200,12 +204,15 @@ def test_i4_predecessor_refused_15s_after_confirm_holder_readmits():
         "succession_confirmed_at": time.time() - 15.0,
     }
     snap = _snap(registration_id="reg-new", execution_id="satellite-live")
-    with patch(
-        "claude_bundles.hop_seat_cutover.load_watches",
-        return_value={"7188": row},
-    ), patch(
-        "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
-        return_value=None,
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"7188": row},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
     ):
         from claude_bundles.request_admission_identity import gate_request_admission
 
@@ -302,17 +309,22 @@ def test_registration_advanced_once_on_confirm():
     watches = {"6885": dict(row)}
     snap = _snap(registration_id="reg-new", execution_id="satellite-live")
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
-        side_effect=lambda path=None: watches,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
-        side_effect=lambda data, path=None: watches.update(data) or None,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
-    ) as confirmed_mock, patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
-    ) as advanced_mock:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+            side_effect=lambda path=None: watches,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
+            side_effect=lambda data, path=None: watches.update(data) or None,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+        ) as confirmed_mock,
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+        ) as advanced_mock,
+    ):
         result = reconcile_succession_confirmations(snapshot_reader=lambda: snap)
         assert len(result["confirmations"]) == 1
         assert confirmed_mock.call_count == 1
@@ -323,7 +335,10 @@ def test_registration_advanced_once_on_confirm():
         assert advanced_kwargs["superseding_execution_id"] == "satellite-live"
         assert advanced_kwargs["superseded_execution_id"] == "exec-incumbent-old"
         assert watches["6885"]["registration_id"] == "reg-new"
-        assert watches["6885"]["succession_confirm_record"]["prior_registration_id"] == "reg-old"
+        assert (
+            watches["6885"]["succession_confirm_record"]["prior_registration_id"]
+            == "reg-old"
+        )
 
         confirmed_mock.reset_mock()
         advanced_mock.reset_mock()
@@ -349,16 +364,21 @@ def test_confirm_posts_seat_registration_stamp_echoing_birth_id():
     snap = _snap(registration_id="reg-new", execution_id="satellite-live")
     posted: list[tuple[str, str]] = []
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
-        side_effect=lambda path=None: watches,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
-        side_effect=lambda data, path=None: watches.update(data) or None,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+            side_effect=lambda path=None: watches,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
+            side_effect=lambda data, path=None: watches.update(data) or None,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+        ),
     ):
         reconcile_succession_confirmations(
             snapshot_reader=lambda: snap,
@@ -425,15 +445,19 @@ async def test_fire_hop_refuses_repeat_while_registration_streams():
     queue.enqueue.return_value = job
     snap = _snap(registration_id="reg-live")
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence.read_cdp_lane_snapshot",
-        return_value=snap,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence.run_continuity_hop_concurrent",
-        new_callable=AsyncMock,
-        return_value={"ok": True, "execution_id": "exec-new"},
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence.emit_cadence_refuse",
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence.read_cdp_lane_snapshot",
+            return_value=snap,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence.run_continuity_hop_concurrent",
+            new_callable=AsyncMock,
+            return_value={"ok": True, "execution_id": "exec-new"},
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence.emit_cadence_refuse",
+        ),
     ):
         outcome = await fire_hop_for_decision(
             decision,

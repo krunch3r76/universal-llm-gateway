@@ -107,9 +107,7 @@ def test_f1_write_capacity_surface_and_queued_on_projection() -> None:
     key = lane_a_lease_key(Path(repo))
 
     _admit(ledger, _req(dispatch_id="holder"), source_repo=repo, lease_key=key)
-    queued = _admit(
-        ledger, _req(dispatch_id="waiter"), source_repo=repo, lease_key=key
-    )
+    queued = _admit(ledger, _req(dispatch_id="waiter"), source_repo=repo, lease_key=key)
     assert queued is not None
     assert queued.status == "queued"
 
@@ -279,8 +277,9 @@ def test_f4_none_concurrent_omitted_lane_lease_exempt() -> None:
     assert gate["live_writers"] == gate_before["live_writers"]
     assert gate["live_writers"] == 0
     assert gate["active_by_lane"]["A"] == 0
-    assert gate["write_capacity_detail"]["lane_a"]["slots"] == (
-        gate_before["write_capacity_detail"]["lane_a"]["slots"]
+    assert (
+        gate["write_capacity_detail"]["lane_a"]["slots"]
+        == (gate_before["write_capacity_detail"]["lane_a"]["slots"])
     )
 
 

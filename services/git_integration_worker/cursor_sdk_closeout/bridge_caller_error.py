@@ -46,7 +46,9 @@ def bridge_failure_delivery_from_forensics(
         return None
 
     code = _BRIDGE_CLASS_TO_CODE.get(bridge_class, default_code)
-    message = _compose_bridge_death_message(bridge_class=bridge_class, forensics=forensics)
+    message = _compose_bridge_death_message(
+        bridge_class=bridge_class, forensics=forensics
+    )
     retryable = bridge_class not in _NON_RETRYABLE_BRIDGE_CLASSES
     transport = forensics.get("cause")
     if exc is not None:

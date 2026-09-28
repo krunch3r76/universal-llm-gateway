@@ -77,9 +77,7 @@ def _mark_bus_notify_pending(
     )
 
 
-def _open_jobs_union(
-    queue: AutoJobQueue, ledger: AutoJobLedger
-) -> list[AutoJob]:
+def _open_jobs_union(queue: AutoJobQueue, ledger: AutoJobLedger) -> list[AutoJob]:
     seen: set[str] = set()
     merged: list[AutoJob] = []
     for job in ledger.list_open():
@@ -348,7 +346,9 @@ async def startup_auto_job_reconcile(app: Any) -> None:
     await reconcile_open_auto_jobs(post_bus=True, rehydrate=True)
 
 
-async def shutdown_auto_jobs(app: Any, *, timeout_s: float = _SHUTDOWN_TIMEOUT_S) -> None:
+async def shutdown_auto_jobs(
+    app: Any, *, timeout_s: float = _SHUTDOWN_TIMEOUT_S
+) -> None:
     """Best-effort terminalize claimed rows before worker cancel (bounded
     wait). Queued rows are left durable — NOT rehydrated here (that only
     happens at the next startup) — but if this shutdown is drain-triggered,

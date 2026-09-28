@@ -8,20 +8,20 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from agent_bus_store.body_auto_spill import prepare_body_for_insert
+
 from services.git_integration_worker.cursor_auto.handler_terminal import (
     post_terminal_status,
+)
+from services.git_integration_worker.cursor_auto.job_ledger import (
+    AutoJobLedger,
+    get_ledger,
 )
 from services.git_integration_worker.cursor_auto.job_lifecycle import (
     PHASE_TERMINAL_DONE,
     PHASE_TERMINAL_FAILED,
     PHASE_TERMINAL_REPORT_UNDELIVERED,
     terminal_phase_for_status,
-)
-from services.git_integration_worker.cursor_auto.job_ledger import (
-    AutoJobLedger,
-    get_ledger,
 )
 from services.git_integration_worker.cursor_auto.propagation_terminal_payload import (
     compact_propagate_terminal_payload,

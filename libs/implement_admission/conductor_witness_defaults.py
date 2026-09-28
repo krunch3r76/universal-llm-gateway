@@ -111,7 +111,9 @@ class DefaultWitnessBus:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         qs = urlencode({"thread": str(thread_id), "last": _TURNS_PAGE})
         try:
-            with make_sync_client(DEFAULT_AGENT_BUS_URL, timeout=_BUS_TIMEOUT_S) as client:
+            with make_sync_client(
+                DEFAULT_AGENT_BUS_URL, timeout=_BUS_TIMEOUT_S
+            ) as client:
                 resp = client.get(f"/turns?{qs}", headers=headers)
                 if resp.status_code >= 400:
                     return False

@@ -201,9 +201,7 @@ def open_branch_debt(
             thread_id=thread_id,
             dispatch_id=dispatch_id,
         )
-        raise ValueError(
-            "open_branch_debt requires non-null thread_id and dispatch_id"
-        )
+        raise ValueError("open_branch_debt requires non-null thread_id and dispatch_id")
     existing = get_branch_debt(branch_name=branch_name)
     if existing is not None and existing.open:
         return existing

@@ -30,9 +30,13 @@ def test_schema_migrations_and_wal(store: TriggerStore, tmp_path: Path) -> None:
     mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
     conn.close()
     assert mode.lower() == "wal"
-    applied = store._connect().execute(  # noqa: SLF001
-        "SELECT id FROM schema_migrations"
-    ).fetchall()
+    applied = (
+        store._connect()
+        .execute(  # noqa: SLF001
+            "SELECT id FROM schema_migrations"
+        )
+        .fetchall()
+    )
     assert any(row[0] == "001_triggers" for row in applied)
     assert any(row[0] == "002_predicates" for row in applied)
     assert any(row[0] == "003_act_receipt" for row in applied)

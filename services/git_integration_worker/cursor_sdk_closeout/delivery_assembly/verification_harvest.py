@@ -62,8 +62,8 @@ def harvest_closeout_verification(
         verification = [*verification, lint_row]
         if lint_deviation:
             baseline_deviations.append(lint_deviation)
-        giw_f821_verification, giw_f821_deviation = lint_verification_mod.run_giw_subtree_f821_lint(
-            write_tree
+        giw_f821_verification, giw_f821_deviation = (
+            lint_verification_mod.run_giw_subtree_f821_lint(write_tree)
         )
         verification = [*verification, giw_f821_verification]
         if giw_f821_deviation:

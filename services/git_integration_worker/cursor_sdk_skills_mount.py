@@ -156,9 +156,7 @@ def stage_dispatch_skills(
         return SkillsMountResult(rows=())
 
     resolution = classify_cursor_skills(requested, repo_root=source_repo)
-    present_dirs = discoverable_skill_dirs(
-        cursor_dir, workspace_roots=workspace_roots
-    )
+    present_dirs = discoverable_skill_dirs(cursor_dir, workspace_roots=workspace_roots)
     staged_root = cursor_dir / HOME_SKILLS_DIRNAME
 
     rows: list[SkillMountRow] = []

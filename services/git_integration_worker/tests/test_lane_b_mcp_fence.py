@@ -6,7 +6,6 @@ import json
 import subprocess
 from pathlib import Path
 
-import pytest
 from implement_admission.closeout_models import (
     EffectEntry,
     EffectsManifest,
@@ -128,7 +127,9 @@ def test_ac_s5_1_lane_b_workspaces_fs_write_hard_fails(tmp_path: Path) -> None:
         for dev in payload.get("deviations") or []
     )
     assert (
-        disposition_for_deviation(f"divergence:lane_b_workspaces_write:{workspaces_uri}")
+        disposition_for_deviation(
+            f"divergence:lane_b_workspaces_write:{workspaces_uri}"
+        )
         == DeviationDisposition.HARD_FAIL
     )
 
@@ -141,7 +142,9 @@ def test_ac_s5_2_lane_b_cortex_fs_write_not_flagged(tmp_path: Path) -> None:
     _init_git_repo(write_tree)
 
     cortex_uri = "cortex://notes/system/specs/lane-b-deliverable.md"
-    manifest = _fs_manifest(sandbox="cortex", path="notes/system/specs/lane-b-deliverable.md")
+    manifest = _fs_manifest(
+        sandbox="cortex", path="notes/system/specs/lane-b-deliverable.md"
+    )
     binding = CaptureBinding.lane_b(cfg, write_tree)
     baseline = capture_wt_baseline_with_hashes(
         write_tree,

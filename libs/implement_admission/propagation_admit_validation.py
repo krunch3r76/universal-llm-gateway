@@ -38,7 +38,9 @@ def validate_service_slug(service: str) -> str | None:
     """Return an error token when *service* is not a known manage slug."""
     slug = service.strip().lower()
     if slug not in MANAGE_SERVICE_SLUGS:
-        return f"unknown_service:{slug}; valid: {', '.join(sorted(MANAGE_SERVICE_SLUGS))}"
+        return (
+            f"unknown_service:{slug}; valid: {', '.join(sorted(MANAGE_SERVICE_SLUGS))}"
+        )
     return None
 
 
@@ -82,15 +84,9 @@ def validate_proof_class(service: str, proof_class: str) -> str | None:
     pc = proof_class.strip()
     legal = legal_proof_classes(slug)
     if pc not in PROOF_CLASS_VALUES:
-        return (
-            f"unknown_proof_class:{pc}; "
-            f"legal for {slug}: {', '.join(sorted(legal))}"
-        )
+        return f"unknown_proof_class:{pc}; legal for {slug}: {', '.join(sorted(legal))}"
     if pc not in legal:
-        return (
-            f"invalid_proof_class:{pc}; "
-            f"legal for {slug}: {', '.join(sorted(legal))}"
-        )
+        return f"invalid_proof_class:{pc}; legal for {slug}: {', '.join(sorted(legal))}"
     return None
 
 

@@ -824,9 +824,7 @@ def test_gate_c_digest_match_admits(tmp_path: Path) -> None:
         canonical_ref="todo:foo",
         source_kind=SourceKind.TODO,
     )
-    results = [
-        AdapterResult(adapter="todo", status="complete", mutation="done")
-    ]
+    results = [AdapterResult(adapter="todo", status="complete", mutation="done")]
     result = check_closeout_evidence(results, source=source, closeout=closeout)
     assert result.action == "noop"
 
@@ -848,9 +846,7 @@ def test_gate_c_digest_mismatch_trips(tmp_path: Path) -> None:
         canonical_ref="todo:foo",
         source_kind=SourceKind.TODO,
     )
-    results = [
-        AdapterResult(adapter="todo", status="complete", mutation="done")
-    ]
+    results = [AdapterResult(adapter="todo", status="complete", mutation="done")]
     with patch(
         "implement_admission.drift_gates.gate_state",
         return_value=DriftGateState.ENFORCE,
@@ -874,9 +870,7 @@ def test_gate_c_path_without_digest_does_not_admit(tmp_path: Path) -> None:
         canonical_ref="todo:foo",
         source_kind=SourceKind.TODO,
     )
-    results = [
-        AdapterResult(adapter="todo", status="complete", mutation="done")
-    ]
+    results = [AdapterResult(adapter="todo", status="complete", mutation="done")]
     with patch(
         "implement_admission.drift_gates.gate_state",
         return_value=DriftGateState.ENFORCE,

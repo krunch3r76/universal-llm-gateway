@@ -147,10 +147,18 @@ def test_capture_lookup_fails_when_incumbent_missing_from_snapshot() -> None:
 def test_mark_hop_fired_persists_predecessor_handle(tmp_path: Path) -> None:
     watch_path = tmp_path / "watches.json"
     snap = _incumbent_snap()
-    from services.git_integration_worker.cursor_auto.hop_cadence_watch import save_watches
+    from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
+        save_watches,
+    )
 
     save_watches(
-        {"7119": {"thread_id": "7119", "registration_id": "reg-old", "seated_at": _NOW - 100.0}},
+        {
+            "7119": {
+                "thread_id": "7119",
+                "registration_id": "reg-old",
+                "seated_at": _NOW - 100.0,
+            }
+        },
         watch_path,
     )
     mark_hop_fired(
@@ -168,10 +176,18 @@ def test_mark_hop_fired_persists_predecessor_handle(tmp_path: Path) -> None:
 
 def test_mark_hop_fired_refuses_when_lookup_fails(tmp_path: Path) -> None:
     watch_path = tmp_path / "watches.json"
-    from services.git_integration_worker.cursor_auto.hop_cadence_watch import save_watches
+    from services.git_integration_worker.cursor_auto.hop_cadence_watch import (
+        save_watches,
+    )
 
     save_watches(
-        {"7119": {"thread_id": "7119", "registration_id": "reg-old", "seated_at": _NOW - 100.0}},
+        {
+            "7119": {
+                "thread_id": "7119",
+                "registration_id": "reg-old",
+                "seated_at": _NOW - 100.0,
+            }
+        },
         watch_path,
     )
     ok = mark_hop_fired(
@@ -199,17 +215,22 @@ def test_confirm_persists_both_ids_and_emits_events() -> None:
     watches = {"6885": dict(row)}
     snap = _snap(registration_id="reg-new", execution_id="satellite-live")
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
-        side_effect=lambda path=None: watches,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
-        side_effect=lambda data, path=None: watches.update(data) or None,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
-    ) as confirmed_mock, patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
-    ) as advanced_mock:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+            side_effect=lambda path=None: watches,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
+            side_effect=lambda data, path=None: watches.update(data) or None,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+        ) as confirmed_mock,
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+        ) as advanced_mock,
+    ):
         result = reconcile_succession_confirmations(snapshot_reader=lambda: snap)
 
     assert len(result["confirmations"]) == 1
@@ -238,12 +259,15 @@ def test_confirm_fails_loud_when_incumbent_reg_without_exec_id() -> None:
     watches = {"6885": dict(row)}
     snap = _snap(registration_id="reg-new", execution_id="satellite-live")
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
-        side_effect=lambda path=None: watches,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
-    ) as confirmed_mock:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+            side_effect=lambda path=None: watches,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+        ) as confirmed_mock,
+    ):
         result = reconcile_succession_confirmations(snapshot_reader=lambda: snap)
 
     assert result["confirmations"] == []
@@ -298,22 +322,31 @@ def test_admission_count_decrements_when_superseded_terminalized() -> None:
 
     def _release(handle: PredecessorHandle) -> dict[str, Any]:
         snap["admission_count"] -= 1
-        snap["rows"] = [r for r in snap["rows"] if r["execution_id"] != handle.execution_id]
+        snap["rows"] = [
+            r for r in snap["rows"] if r["execution_id"] != handle.execution_id
+        ]
         return {"action": "terminalized", "execution_id": handle.execution_id}
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
-        side_effect=lambda path=None: watches,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
-        side_effect=lambda data, path=None: watches.update(data) or None,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+            side_effect=lambda path=None: watches,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
+            side_effect=lambda data, path=None: watches.update(data) or None,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+        ),
     ):
         before = snap["admission_count"]
-        reconcile_succession_confirmations(snapshot_reader=lambda: snap, release_fn=_release)
+        reconcile_succession_confirmations(
+            snapshot_reader=lambda: snap, release_fn=_release
+        )
         after = snap["admission_count"]
 
     assert before == 3
@@ -326,7 +359,11 @@ def test_advance_registration_on_confirm_uses_prior_from_handle() -> None:
         "superseded_registration_id": "reg-old",
         "superseded_execution_id": _INCUMBENT_EXEC,
     }
-    aw_row = {"registration_id": "reg-new", "execution_id": "exec-1", "status": "running"}
+    aw_row = {
+        "registration_id": "reg-new",
+        "execution_id": "exec-1",
+        "status": "running",
+    }
     updated, transition = advance_registration_on_confirm(
         row,
         matched_key="exec-1",
@@ -415,16 +452,21 @@ def test_confirm_legacy_row_resolves_via_active_work_snapshot() -> None:
         ],
     }
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
-        side_effect=lambda path=None: watches,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
-        side_effect=lambda data, path=None: watches.update(data) or None,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
-    ) as confirmed_mock, patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+            side_effect=lambda path=None: watches,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.save_watches",
+            side_effect=lambda data, path=None: watches.update(data) or None,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+        ) as confirmed_mock,
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_registration_advanced",
+        ),
     ):
         result = reconcile_succession_confirmations(snapshot_reader=lambda: snap)
 
@@ -434,7 +476,10 @@ def test_confirm_legacy_row_resolves_via_active_work_snapshot() -> None:
     assert confirmed_kwargs["prior_registration_id"] == live_reg
     assert confirmed_kwargs["superseded_execution_id"] == live_exec
     assert watches["6885"]["superseded_execution_id"] == live_exec
-    assert watches["6885"]["predecessor_verdict"] == PredecessorVerdict.INCUMBENT_RECORDED.value
+    assert (
+        watches["6885"]["predecessor_verdict"]
+        == PredecessorVerdict.INCUMBENT_RECORDED.value
+    )
 
 
 def test_confirm_legacy_row_lookup_failed_when_incumbent_not_in_snapshot() -> None:
@@ -448,15 +493,20 @@ def test_confirm_legacy_row_lookup_failed_when_incumbent_not_in_snapshot() -> No
     watches = {"6885": dict(row)}
     snap = _snap(registration_id="reg-new", execution_id="satellite-live")
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
-        side_effect=lambda path=None: watches,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
-    ) as confirmed_mock:
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.load_watches",
+            side_effect=lambda path=None: watches,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile.emit_succession_confirmed",
+        ) as confirmed_mock,
+    ):
         result = reconcile_succession_confirmations(snapshot_reader=lambda: snap)
 
     assert result["confirmations"] == []
     assert len(result["errors"]) == 1
-    assert result["errors"][0]["reason"] == "incumbent_registration_without_execution_id"
+    assert (
+        result["errors"][0]["reason"] == "incumbent_registration_without_execution_id"
+    )
     confirmed_mock.assert_not_called()

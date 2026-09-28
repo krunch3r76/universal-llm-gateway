@@ -15,7 +15,9 @@ from services.git_integration_worker.cursor_sdk_cortex_identity import (
     assertion_id_from_cortex_observation,
     merge_stream_cortex_entries,
 )
-from services.git_integration_worker.cursor_sdk_manifest import harvest_cortex_assertion_ids
+from services.git_integration_worker.cursor_sdk_manifest import (
+    harvest_cortex_assertion_ids,
+)
 from services.git_integration_worker.cursor_sdk_observed_reconcile import (
     reconcile_observed_vs_committed,
 )
@@ -30,7 +32,9 @@ _LIVE_ENTITY = "todo:ac9g-live-falsifier"
 _ASSERTION_ID = 27486
 
 
-def _production_mcp_cortex_stream_obs(*, call_id: str = "stream-mcp-cortex-1") -> ToolCallObservation:
+def _production_mcp_cortex_stream_obs(
+    *, call_id: str = "stream-mcp-cortex-1"
+) -> ToolCallObservation:
     """Captured production shape: ``message.name=mcp``, logical tool in ``args.toolName``."""
     return ToolCallObservation(
         call_id=call_id,
@@ -115,7 +119,9 @@ def test_ac_n4_production_shape_merges_stream_cortex_entry() -> None:
             )
         },
     )
-    merged = merge_stream_cortex_entries(manifest, (_production_mcp_cortex_stream_obs(),))
+    merged = merge_stream_cortex_entries(
+        manifest, (_production_mcp_cortex_stream_obs(),)
+    )
     assert merged is not None
     assert harvest_cortex_assertion_ids(merged) == [str(_ASSERTION_ID)]
     entry = merged.surfaces["cortex"].entries[0]

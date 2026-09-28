@@ -71,7 +71,11 @@ REPORTING_CONTRACT_BLOCK = reporting_contract_block()
 
 def reporting_contract_lines(*, lane: str | None = None) -> list[str]:
     """Return the REPORTING CONTRACT block as prompt lines."""
-    block = reporting_contract_block(lane=lane) if lane is not None else REPORTING_CONTRACT_BLOCK
+    block = (
+        reporting_contract_block(lane=lane)
+        if lane is not None
+        else REPORTING_CONTRACT_BLOCK
+    )
     return ["", *block.splitlines()]
 
 

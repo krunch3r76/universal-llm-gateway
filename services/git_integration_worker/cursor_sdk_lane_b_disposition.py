@@ -181,9 +181,7 @@ def mark_lane_b_disposition_for_dispatch(
 
     record = lookup_dispatch_worktree(dispatch_id=dispatch_id)
     branch_name = (
-        record.branch_name
-        if record is not None
-        else branch_name_for_lane(dispatch_id)
+        record.branch_name if record is not None else branch_name_for_lane(dispatch_id)
     )
     repo = source_repo.resolve()
     if record is not None:

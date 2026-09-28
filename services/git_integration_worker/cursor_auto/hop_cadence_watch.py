@@ -447,10 +447,7 @@ def mark_hop_fired(
         exclude_execution_ids=exclude_ids,
     )
     if isinstance(capture, PredecessorConfirmError):
-        if (
-            capture.reason == "predecessor_execution_lookup_failed"
-            and execution_id
-        ):
+        if capture.reason == "predecessor_execution_lookup_failed" and execution_id:
             heal_snap: dict[str, Any] | None = None
             try:
                 if snapshot_reader is not None:
@@ -557,8 +554,7 @@ def mark_hop_fired(
             thread_id=thread_id,
             superseded_registration_id=superseded,
             execution_id=execution_id,
-            satellite_execution_id=sat_id
-            or pending_dict.get("satellite_execution_id"),
+            satellite_execution_id=sat_id or pending_dict.get("satellite_execution_id"),
         )
     return True
 

@@ -112,7 +112,15 @@ def relay_email_search(arguments: dict[str, Any]) -> dict[str, Any]:
             str(guard.get("message") or guard.get("error")),
         )
     params: dict[str, str | int] = {}
-    for key in ("sender", "to", "subject", "mailbox", "account", "date_from", "date_to"):
+    for key in (
+        "sender",
+        "to",
+        "subject",
+        "mailbox",
+        "account",
+        "date_from",
+        "date_to",
+    ):
         value = arguments.get(key)
         if value:
             params[key] = str(value)

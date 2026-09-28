@@ -37,7 +37,5 @@ def test_by_id_running_parent_not_displaced_by_newer_thread_row() -> None:
         dispatch_status_by_id=lambda dispatch_id: parent,
         dispatch_status_by_thread=lambda thread_id: newer,
     )
-    row = resolve_nested_poll_row(
-        ledger, thread_id="11667", dispatch_id="auto-parent"
-    )
+    row = resolve_nested_poll_row(ledger, thread_id="11667", dispatch_id="auto-parent")
     assert row == parent

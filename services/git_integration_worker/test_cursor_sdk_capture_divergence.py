@@ -294,7 +294,9 @@ def test_gitignored_expected_on_disk_non_degrading(tmp_path: Path) -> None:
     source_repo.mkdir()
     cortex_root.mkdir()
     rel = "services/rag/property_index/test.py"
-    (source_repo / ".gitignore").write_text("services/rag/property_index/\n", encoding="utf-8")
+    (source_repo / ".gitignore").write_text(
+        "services/rag/property_index/\n", encoding="utf-8"
+    )
     target = source_repo / rel
     target.parent.mkdir(parents=True)
     target.write_text("ok\n", encoding="utf-8")
@@ -321,7 +323,9 @@ def test_gitignored_expected_absent_hard_partial(tmp_path: Path) -> None:
     source_repo.mkdir()
     cortex_root.mkdir()
     rel = "services/rag/property_index/missing.py"
-    (source_repo / ".gitignore").write_text("services/rag/property_index/\n", encoding="utf-8")
+    (source_repo / ".gitignore").write_text(
+        "services/rag/property_index/\n", encoding="utf-8"
+    )
     assert (
         closeout_divergence_reason(
             deliverables_expected=True,

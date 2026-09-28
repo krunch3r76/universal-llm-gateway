@@ -40,9 +40,7 @@ def recover_capture_head(
     names = {name, f"cursor-sdk/{dispatch}"}
     emails = {email, f"{dispatch}@{DISPATCH_GIT_EMAIL_DOMAIN}"}
     for pattern in ("refs/heads/cursor-sdk/", "refs/heads/"):
-        hit = _first_matching_ref(
-            source_repo, pattern, names=names, emails=emails
-        )
+        hit = _first_matching_ref(source_repo, pattern, names=names, emails=emails)
         if hit[0]:
             return hit
     return _first_matching_reflog(source_repo, names=names, emails=emails)
@@ -68,9 +66,7 @@ def _first_matching_ref(
         if len(parts) != 4:
             continue
         sha, ref, committer_name, committer_email = parts
-        if _identity_match(
-            committer_name, committer_email, names=names, emails=emails
-        ):
+        if _identity_match(committer_name, committer_email, names=names, emails=emails):
             return sha.strip(), ref.strip() or None
     return None, None
 

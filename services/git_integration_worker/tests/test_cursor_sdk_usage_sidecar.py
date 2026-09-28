@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from services.git_integration_worker.cursor_sdk_closeout import (
     SdkRunOutcome,
     prepare_closeout_delivery,
@@ -65,8 +63,6 @@ def test_prepare_closeout_delivery_emits_usage_block_render_proof(
     assert "## usage" in sidecar_text
     assert "model_label: cursor/composer-2.5" in sidecar_text
     assert "total_tokens: 18" in sidecar_text
-    structured = json.loads(
-        sidecar_text.split("## structured_closeout_full\n\n", 1)[1]
-    )
+    structured = json.loads(sidecar_text.split("## structured_closeout_full\n\n", 1)[1])
     assert structured["usage"]["model_label"] == "cursor/composer-2.5"
     assert structured_closeout_has_usage_model_label(structured)

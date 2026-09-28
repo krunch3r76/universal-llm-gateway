@@ -11,9 +11,7 @@ from typing import Any
 
 import yaml
 
-_PROPAGATION_HEADING_RE = re.compile(
-    r"(?im)^##\s+propagation(?:\s*\([^)]*\))?\s*$"
-)
+_PROPAGATION_HEADING_RE = re.compile(r"(?im)^##\s+propagation(?:\s*\([^)]*\))?\s*$")
 _FENCED_YAML_RE = re.compile(
     r"```(?:ya?ml)?\s*\n(?P<body>.*?)\n```",
     re.DOTALL | re.IGNORECASE,
@@ -35,7 +33,9 @@ def _normalize_row(raw: dict[str, Any]) -> dict[str, Any] | None:
     return raw
 
 
-def parse_propagation_yaml_document(yaml_text: str) -> tuple[list[dict[str, Any]], list[str]]:
+def parse_propagation_yaml_document(
+    yaml_text: str,
+) -> tuple[list[dict[str, Any]], list[str]]:
     """Parse a YAML document containing ``propagation: [...]``.
 
     Returns ``(rows, flags)``. Rows missing ``proof_class`` are flagged, not defaulted.

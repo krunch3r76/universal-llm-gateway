@@ -98,12 +98,8 @@ def test_lock_refuses_git_worktree_remove(git_repo: Path, tmp_path: Path) -> Non
 def test_lock_idempotent_same_thread(git_repo: Path, tmp_path: Path) -> None:
     wt = tmp_path / "lane"
     _add_worktree(git_repo, wt)
-    first = lock_lane_worktree(
-        git_repo, wt, dispatch_id="d1", thread_id="t1"
-    )
-    second = lock_lane_worktree(
-        git_repo, wt, dispatch_id="d2", thread_id="t1"
-    )
+    first = lock_lane_worktree(git_repo, wt, dispatch_id="d1", thread_id="t1")
+    second = lock_lane_worktree(git_repo, wt, dispatch_id="d2", thread_id="t1")
     assert first.lock_reason != second.lock_reason
     locked = list_locked_worktrees(git_repo)
     assert len(locked) == 1

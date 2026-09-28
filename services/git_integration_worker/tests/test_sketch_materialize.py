@@ -6,7 +6,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 from systems.frontier_consult.implement_admission_bridge import (
     resolve_source_ref_to_packet,
 )

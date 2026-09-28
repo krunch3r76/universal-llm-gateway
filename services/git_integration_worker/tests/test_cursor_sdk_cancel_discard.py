@@ -62,7 +62,9 @@ def events(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return log
 
 
-def _req(dispatch_id: str, *, thread_id: str = "t1", **overrides: Any) -> CursorDispatchRequest:
+def _req(
+    dispatch_id: str, *, thread_id: str = "t1", **overrides: Any
+) -> CursorDispatchRequest:
     base: dict[str, Any] = {
         "thread_id": thread_id,
         "model": "cursor/composer-2.5",
@@ -138,7 +140,9 @@ def test_preflight_discard_skips_state_root_missing(tmp_path: Path) -> None:
     assert pre.refusal is None
 
 
-def test_signal_discard_idle_returns_idle_discard(tmp_path: Path, events: list[Any]) -> None:
+def test_signal_discard_idle_returns_idle_discard(
+    tmp_path: Path, events: list[Any]
+) -> None:
     _admit("idle-2", tmp_path=tmp_path, running=False)
     result = signal_park(
         "idle-2",

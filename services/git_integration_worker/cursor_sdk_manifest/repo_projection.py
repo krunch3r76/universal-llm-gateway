@@ -87,7 +87,9 @@ def repo_change_set_from_manifest(
     source_repo: Path | None = None,
     mount_root: Path | None = None,
     repo_roots: list[Path] | tuple[Path, ...] | None = None,
-) -> tuple[ChangeSet | None, tuple[str, ...], list[surface_taxonomy.DroppedNonFileEntry]]:
+) -> tuple[
+    ChangeSet | None, tuple[str, ...], list[surface_taxonomy.DroppedNonFileEntry]
+]:
     """Manifest op-intent projection — cross-check input for closeout files_* categories.
 
     Returns ``(change_set, outside_repo_paths, dropped_non_file_entries)``.
@@ -234,6 +236,8 @@ def _classify_manifest_repo_entry(
             return ("outside_repo", resolved.as_posix())
         return None
     return ("repo", path)
+
+
 def _normalize_repo_path(
     raw: str | None,
     repo_root: Path | str | None = None,

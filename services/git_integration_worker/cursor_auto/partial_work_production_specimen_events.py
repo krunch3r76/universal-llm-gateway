@@ -17,8 +17,7 @@ logger = get_logger(__name__)
 
 SIGNAL = "frontier.sdk.closeout.partial_work.production_specimen"
 CODE_REF = (
-    "services.git_integration_worker.cursor_auto.nested_sdk"
-    ":post_operator_closeout"
+    "services.git_integration_worker.cursor_auto.nested_sdk:post_operator_closeout"
 )
 SCHEMA_VERSION = 1
 NATURAL_SPECIMEN_CLASSIFICATION = "unavailable"

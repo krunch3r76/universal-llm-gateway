@@ -39,7 +39,9 @@ def finalize_boundary_manifest(
     if manifest is None:
         return None, []
     hydrated_calls = (
-        hydrate_tool_calls_for_boundary_harvest(tool_calls) if tool_calls else tool_calls
+        hydrate_tool_calls_for_boundary_harvest(tool_calls)
+        if tool_calls
+        else tool_calls
     )
     if hydrated_calls:
         manifest = merge_stream_cortex_entries(manifest, hydrated_calls) or manifest

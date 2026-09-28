@@ -15,8 +15,8 @@ test_cursor_auto_supersede.py.
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
 
 # Allow `python …/harness_g5_f_collision.py` from any cwd.
 _REPO_ROOT = Path(__file__).resolve().parents[3]

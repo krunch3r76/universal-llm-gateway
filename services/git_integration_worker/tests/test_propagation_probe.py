@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import patch
 
+import pytest
 from implement_admission.propagation_row import PropagationRow
 
 from services.git_integration_worker.cursor_auto.propagation_probe import (
@@ -106,10 +106,13 @@ def test_ac17p_proof_observed_reaches_deployment_identity_emit() -> None:
         "services.git_integration_worker.cursor_sdk_boundary_deployment_identity"
         ".emit_deployment_identity_boundary"
     )
-    with patch(emit_path, wraps=__import__(
-        "services.git_integration_worker.cursor_sdk_boundary_deployment_identity",
-        fromlist=["emit_deployment_identity_boundary"],
-    ).emit_deployment_identity_boundary) as emit_mock:
+    with patch(
+        emit_path,
+        wraps=__import__(
+            "services.git_integration_worker.cursor_sdk_boundary_deployment_identity",
+            fromlist=["emit_deployment_identity_boundary"],
+        ).emit_deployment_identity_boundary,
+    ) as emit_mock:
         assert proof_observed(row, after, before=before) is True
         emit_mock.assert_called_once()
         emit_arg = emit_mock.call_args[0][0]
@@ -323,7 +326,9 @@ def test_client_visible_mcp_requires_both_surfaces() -> None:
         },
         "cortex_api": {"code_version": _SHA_OLD},
     }
-    assert proof_observed(row, both_match_identity_changed, before=before_changed) is True
+    assert (
+        proof_observed(row, both_match_identity_changed, before=before_changed) is True
+    )
     assert (
         proof_identity_attestation(
             before_changed,
@@ -360,10 +365,13 @@ def test_client_visible_mcp_mcp_health_only_surface_closes() -> None:
 
 def test_client_visible_mcp_missing_cortex_api() -> None:
     row = _row("mcp", _SHA_A, proof_class="client_visible")
-    assert proof_observed(
-        row,
-        {"mcp_health": {"code_version": _SHA_A}, "cortex_api": None},
-    ) is False
+    assert (
+        proof_observed(
+            row,
+            {"mcp_health": {"code_version": _SHA_A}, "cortex_api": None},
+        )
+        is False
+    )
 
 
 def test_client_visible_mcp_flat_payload_rejected() -> None:
@@ -445,7 +453,9 @@ def test_identity_measurement_empty_before_dict_is_measured() -> None:
     )
 
 
-def test_identity_measurement_harvest_close_without_persisted_before_is_measured() -> None:
+def test_identity_measurement_harvest_close_without_persisted_before_is_measured() -> (
+    None
+):
     assert (
         _resolve(
             proof_payload={
@@ -476,5 +486,8 @@ def test_identity_measurement_malformed_persisted_before_raises() -> None:
     with pytest.raises(IdentityMeasurementError, match="not a dict"):
         _resolve(
             proof_payload={"code_version": _SHA_A},
-            open_row_payload={"proof_before": "not-a-dict", "code_ref_at_submit": _SHA_A},
+            open_row_payload={
+                "proof_before": "not-a-dict",
+                "code_ref_at_submit": _SHA_A,
+            },
         )

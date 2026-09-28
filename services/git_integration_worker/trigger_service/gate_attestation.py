@@ -24,7 +24,9 @@ def load_prompt_body(prompt_uri: str) -> str:
     try:
         path.relative_to(root)
     except ValueError as exc:
-        raise ValueError(f"prompt_uri {prompt_uri!r} escapes CORTEX_FILES_ROOT") from exc
+        raise ValueError(
+            f"prompt_uri {prompt_uri!r} escapes CORTEX_FILES_ROOT"
+        ) from exc
     if not path.is_file():
         raise ValueError(f"prompt_uri not found: {prompt_uri!r} -> {path}")
     return path.read_text(encoding="utf-8")

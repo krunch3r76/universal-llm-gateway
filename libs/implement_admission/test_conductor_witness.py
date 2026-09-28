@@ -140,7 +140,9 @@ def test_parse_journal_ndjson_two_records(live_fixture: tuple[Path, Path]) -> No
     assert len(load_journal(_SLUG, files_root=files_root)) == len(records)
 
 
-def test_fold_live_fixture_entry_gate_and_claimed(live_fixture: tuple[Path, Path]) -> None:
+def test_fold_live_fixture_entry_gate_and_claimed(
+    live_fixture: tuple[Path, Path],
+) -> None:
     files_root, repo = live_fixture
     deps = FoldDeps(
         cortex=_StubCortex(),
@@ -165,7 +167,9 @@ def test_fold_live_fixture_entry_gate_and_claimed(live_fixture: tuple[Path, Path
     assert any(r.get("reason") == "witness_fold" for r in journal)
 
 
-def test_materialize_lists_missing_witnesses(live_fixture: tuple[Path, Path], tmp_path: Path) -> None:
+def test_materialize_lists_missing_witnesses(
+    live_fixture: tuple[Path, Path], tmp_path: Path
+) -> None:
     files_root, repo = live_fixture
     deps = FoldDeps(
         cortex=_StubCortex(),
@@ -230,7 +234,9 @@ def test_derived_from_edge_renders_g1_done(live_fixture: tuple[Path, Path]) -> N
     )
     witnesses = row_witnesses(
         _SLUG,
-        tip_body=(files_root / "notes/system/scoreboards" / f"{_SLUG}-scoreboard.md").read_text(),
+        tip_body=(
+            files_root / "notes/system/scoreboards" / f"{_SLUG}-scoreboard.md"
+        ).read_text(),
         deps=deps,
         files_root=files_root,
     )
@@ -327,9 +333,7 @@ def test_s9_spec_witnesses_g3(tmp_path: Path) -> None:
     specs.mkdir(parents=True)
     (specs / "slug.md").write_text("spec", encoding="utf-8")
     tip_body = (
-        "| ID | Artifact |\n"
-        "|---|---|\n"
-        "| S9 | `cortex://notes/system/specs/slug.md` |\n"
+        "| ID | Artifact |\n|---|---|\n| S9 | `cortex://notes/system/specs/slug.md` |\n"
     )
     deps = FoldDeps(
         cortex=_StubCortex(),
@@ -353,9 +357,7 @@ def test_tip_g2_cell_uri_is_witness(tmp_path: Path) -> None:
     frames = files_root / "notes/system/frames"
     frames.mkdir(parents=True)
     (frames / "hung.md").write_text("frame", encoding="utf-8")
-    tip_body = (
-        "| G2 | Frame | hung | `cortex://notes/system/frames/hung.md` |\n"
-    )
+    tip_body = "| G2 | Frame | hung | `cortex://notes/system/frames/hung.md` |\n"
     deps = FoldDeps(
         cortex=_StubCortex(),
         bus=_StubBus(),
@@ -436,9 +438,7 @@ def test_g4_withhold_blocks_g5_even_with_resurface(tmp_path: Path) -> None:
         "Verdict: G4 **does not** clear G5.\nwithhold G5 completeness\n",
         encoding="utf-8",
     )
-    tip_body = (
-        "| G4 | `cortex://notes/system/reviews/withhold.md` |\n"
-    )
+    tip_body = "| G4 | `cortex://notes/system/reviews/withhold.md` |\n"
     deps = FoldDeps(
         cortex=_StubCortex(),
         bus=_StubBus(resurface=True),
@@ -495,12 +495,16 @@ def test_score_resurface_in_turns_respects_cutoff() -> None:
         score_resurface_in_turns(turns, after_written_at="2026-08-26T06:00:00Z") is True
     )
     assert (
-        score_resurface_in_turns(turns, after_written_at="2026-08-26T07:00:00Z") is False
+        score_resurface_in_turns(turns, after_written_at="2026-08-26T07:00:00Z")
+        is False
     )
-    assert score_resurface_in_turns(
-        [{"subject": "CHECKPOINT 87", "created_at": "2026-08-26T06:30:00Z"}],
-        after_written_at=None,
-    ) is False
+    assert (
+        score_resurface_in_turns(
+            [{"subject": "CHECKPOINT 87", "created_at": "2026-08-26T06:30:00Z"}],
+            after_written_at=None,
+        )
+        is False
+    )
 
 
 @pytest.mark.offline
@@ -553,7 +557,9 @@ def test_ac_p2_3_fold_missing_witnesses_stops(tmp_path: Path) -> None:
 
     open_tip = done_tip.replace("| G4 | Skeptic | DONE |", "| G4 | Skeptic | OPEN |")
     (scoreboards / f"{_SLUG}-scoreboard.md").write_text(open_tip, encoding="utf-8")
-    fold_open = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=False)
+    fold_open = fold_scoreboard(
+        _SLUG, deps=deps, files_root=files_root, write_journal=False
+    )
     assert fold_open is not None
     assert fold_open.blocked_rows.get("G4") == "ROW_PINNED"
     assert "G4" not in fold_open.missing_witnesses
@@ -697,7 +703,9 @@ def test_b0_witnessed_g1_canonical_referent_header(tmp_path: Path) -> None:
     assert fold is not None
     assert row_status_in_tip(fold.folded_body, "G1") == "DONE"
     g1_line = next(
-        line for line in fold.folded_body.splitlines() if line.lstrip().startswith("| G1 |")
+        line
+        for line in fold.folded_body.splitlines()
+        if line.lstrip().startswith("| G1 |")
     )
     parts = [p.strip() for p in g1_line.split("|")]
     assert parts[3] == referent
@@ -771,7 +779,9 @@ def test_b0_consecutive_folds_one_journal_record(tmp_path: Path) -> None:
     assert first.journal_applied is True
     after_first = len(load_journal(_SLUG, files_root=files_root))
     assert after_first >= 1
-    second = fold_scoreboard(_SLUG, deps=deps, files_root=files_root, write_journal=True)
+    second = fold_scoreboard(
+        _SLUG, deps=deps, files_root=files_root, write_journal=True
+    )
     assert second is not None
     assert second.folded_body == second.raw_body
     assert second.journal_applied is False

@@ -53,6 +53,7 @@ def arrival_card_path(thread_id: str) -> Path:
     """
     return standing_handoff_path(thread_id).with_name(f"{thread_id}-arrival-card.md")
 
+
 # Screen budget: ~45 lines × ~90 cols (operator "one screen" on 7119 L2).
 MAX_ARRIVAL_LINES = 45
 MAX_ARRIVAL_CHARS = 4000

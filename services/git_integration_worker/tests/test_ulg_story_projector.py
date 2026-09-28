@@ -6,6 +6,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from systems.frontier_consult.story_wire import (
+    ASKED_BY_UNRESOLVED,
+    PURPOSE_UNSTATED,
+)
 
 from services.git_integration_worker.ulg_story_projector.allowlist import (
     SIGNAL_ALLOWLIST,
@@ -16,16 +20,14 @@ from services.git_integration_worker.ulg_story_projector.checkpoint import (
     load_checkpoint,
     save_checkpoint,
 )
-from services.git_integration_worker.ulg_story_projector.projector import run_projector_once
+from services.git_integration_worker.ulg_story_projector.projector import (
+    run_projector_once,
+)
 from services.git_integration_worker.ulg_story_projector.render import (
     PURPOSE_RENDER_MAX,
     envelope_mode,
     render_event_line,
     truncate_purpose_for_render,
-)
-from systems.frontier_consult.story_wire import (
-    ASKED_BY_UNRESOLVED,
-    PURPOSE_UNSTATED,
 )
 
 
@@ -189,7 +191,10 @@ def test_render_full_envelope_milestone() -> None:
     )
     assert line is not None
     assert not line.startswith("Attention:")
-    assert "cursor-sdk finished event-envelope work for Claude-web (operator seat) in 42s." in line
+    assert (
+        "cursor-sdk finished event-envelope work for Claude-web (operator seat) in 42s."
+        in line
+    )
 
 
 def test_render_malformed_payload_becomes_parse_failure_shape() -> None:
@@ -197,7 +202,9 @@ def test_render_malformed_payload_becomes_parse_failure_shape() -> None:
         render_parse_failure,
     )
 
-    line = render_parse_failure(seq=9, signal="frontier.sdk.worker.completed", reason="boom")
+    line = render_parse_failure(
+        seq=9, signal="frontier.sdk.worker.completed", reason="boom"
+    )
     assert "could not render" in line
     assert "[seq:9 story:- dispatch:-]" in line
 
@@ -320,22 +327,24 @@ def test_monthly_shard_rollover(
     )
     monkeypatch.setattr(
         "services.git_integration_worker.ulg_story_projector.projector.query_events_since_seq",
-        lambda since_seq, limit=200: [
-            {
-                "seq": 1,
-                "signal": "frontier.sdk.worker.dispatched",
-                "ts_unix_ms": 1_735_689_600_000,  # 2025-01-01
-                "payload": _payload(purpose="jan work"),
-            },
-            {
-                "seq": 2,
-                "signal": "frontier.sdk.worker.completed",
-                "ts_unix_ms": 1_738_368_000_000,  # 2025-02-01 UTC
-                "payload": _payload(purpose="feb work"),
-            },
-        ]
-        if since_seq == 0
-        else [],
+        lambda since_seq, limit=200: (
+            [
+                {
+                    "seq": 1,
+                    "signal": "frontier.sdk.worker.dispatched",
+                    "ts_unix_ms": 1_735_689_600_000,  # 2025-01-01
+                    "payload": _payload(purpose="jan work"),
+                },
+                {
+                    "seq": 2,
+                    "signal": "frontier.sdk.worker.completed",
+                    "ts_unix_ms": 1_738_368_000_000,  # 2025-02-01 UTC
+                    "payload": _payload(purpose="feb work"),
+                },
+            ]
+            if since_seq == 0
+            else []
+        ),
     )
 
     run_projector_once()
@@ -349,7 +358,9 @@ def test_monthly_shard_rollover(
 
 def test_checkpoint_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    save_checkpoint(ProjectorCheckpoint(last_seq=77, epoch_written=True, updated_at="t"))
+    save_checkpoint(
+        ProjectorCheckpoint(last_seq=77, epoch_written=True, updated_at="t")
+    )
     loaded = load_checkpoint()
     assert loaded.last_seq == 77
     assert loaded.epoch_written is True
@@ -357,7 +368,7 @@ def test_checkpoint_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 _LONG_PURPOSE = (
-    'A synthesized §2 envelope may report uncertainty about its own parsing, '
+    "A synthesized §2 envelope may report uncertainty about its own parsing, "
     'but must never assert a false negative about the world. Not "unauthored", '
     'not "none captured", not a per-field ref-flatten that discards substance '
     "the relay is already holding in memory."
@@ -421,8 +432,7 @@ def test_render_does_not_mutate_payload_purpose() -> None:
 def test_render_control_case_short_intent_under_cap() -> None:
     """This dispatch's intent line is deliberately short — control case."""
     purpose = (
-        "Cap purpose at render so the wire is skimmable; "
-        "re-render existing long lines."
+        "Cap purpose at render so the wire is skimmable; re-render existing long lines."
     )
     assert len(purpose) <= PURPOSE_RENDER_MAX
     line = render_event_line(

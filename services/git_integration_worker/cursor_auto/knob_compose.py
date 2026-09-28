@@ -27,9 +27,7 @@ from services.git_integration_worker.cursor_auto.wire_map import _MODEL_TABLE
 _SONNET_AUTO_KNOBS = {"thinking": "true", "context": "1m"}
 
 
-def clamp_effort_to_accepted(
-    requested: str, accepted: tuple[str, ...]
-) -> str | None:
+def clamp_effort_to_accepted(requested: str, accepted: tuple[str, ...]) -> str | None:
     """Pick the highest accepted rung at or below *requested* on the effort ladder.
 
     Descriptors disagree on ceiling (grok tops at ``xhigh``, opus at ``max``), so a
@@ -68,9 +66,7 @@ def capability_bare_id(model_id: str) -> str:
     return canonical_cursor_bare_id(raw)
 
 
-def resolve_card_effort(
-    model_id: str, requested: str
-) -> tuple[str | None, str | None]:
+def resolve_card_effort(model_id: str, requested: str) -> tuple[str | None, str | None]:
     """Map *requested* onto the model's effort-like knob.
 
     Returns ``(value, clamp_note)``. ``value`` is None when the model has no
@@ -106,10 +102,7 @@ def resolve_card_effort(
         fallback = accepted[0]
     if fallback is None:
         return None, None
-    note = (
-        f"{requested}→{fallback} (off-ladder; {bare} card default "
-        f"{name}={fallback})"
-    )
+    note = f"{requested}→{fallback} (off-ladder; {bare} card default {name}={fallback})"
     return fallback, note
 
 

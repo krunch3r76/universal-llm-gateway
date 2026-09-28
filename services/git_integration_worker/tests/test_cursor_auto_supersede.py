@@ -198,9 +198,7 @@ def test_process_job_superseded_mid_poll_skips_closeout_relay(monkeypatch):
     )
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.poll_dispatch_terminal_with_liveness",
-        AsyncMock(
-            return_value={"ok": False, "terminal": False, "superseded": True}
-        ),
+        AsyncMock(return_value={"ok": False, "terminal": False, "superseded": True}),
     )
     relay = AsyncMock()
     monkeypatch.setattr(
@@ -259,9 +257,7 @@ def _init_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "config", "user.email", "t@t"], check=True
-    )
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
     subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
     (repo / "tracked.py").write_text("original\n")
     subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
@@ -398,9 +394,7 @@ def test_queued_predecessor_withdrawn_on_same_thread_request():
 
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
-    evidence = asyncio.run(
-        supersede_same_thread_inflight(new, queue=queue, client=bus)
-    )
+    evidence = asyncio.run(supersede_same_thread_inflight(new, queue=queue, client=bus))
 
     assert evidence is not None
     assert evidence["method"] == QUEUE_WITHDRAW

@@ -88,9 +88,7 @@ def emit_sdk_worker_cancelled(
         cleaned = "not_live"
     if terminal_status is None:
         status = (
-            "displaced_pre_live"
-            if cleaned == "pre_register_live_run"
-            else "cancelled"
+            "displaced_pre_live" if cleaned == "pre_register_live_run" else "cancelled"
         )
     else:
         status = terminal_status

@@ -788,7 +788,9 @@ def test_preclamp_checkpoint_claim_silence_when_display_truncates_identical() ->
     )
 
     claim = f"authored_cortex: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
-    measurement = f"authored_cortex@local-master: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    measurement = (
+        f"authored_cortex@local-master: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    )
     payload = _finalize_clamped_checkpoint_payload(claim)
     assert payload.clamped is True
     assert payload.body_full is not None
@@ -836,7 +838,9 @@ def test_preclamp_checkpoint_claim_fires_when_authored_diverges_after_cut() -> N
     )
 
     claim = f"authored_cortex: {_CLAMP_URI_DIVERGE} {_CLAMP_DIGEST}"
-    measurement = f"authored_cortex@local-master: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    measurement = (
+        f"authored_cortex@local-master: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    )
     identical_claim = f"authored_cortex: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
     payload = _finalize_clamped_checkpoint_payload(claim)
     identical_payload = _finalize_clamped_checkpoint_payload(identical_claim)
@@ -916,7 +920,9 @@ async def _relay_closeout_with_checkpoint_claim(
         captured["closeout_body"] = str(kwargs.get("closeout_body") or "")
         return {"ok": True, "status_code": 200}
 
-    async def _passthrough_promote(payload: CloseoutRelayPayload, **_k: object) -> CloseoutRelayPayload:
+    async def _passthrough_promote(
+        payload: CloseoutRelayPayload, **_k: object
+    ) -> CloseoutRelayPayload:
         return payload
 
     monkeypatch.setattr(
@@ -1011,7 +1017,9 @@ async def test_relay_seam_silence_when_preclamp_claim_matches_measurement(
     extracted from clamped ``payload.body`` and false-fired on the mid-cut ``…``.
     """
     claim = f"authored_cortex: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
-    measurement = f"authored_cortex@local-master: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    measurement = (
+        f"authored_cortex@local-master: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    )
     body = await _relay_closeout_with_checkpoint_claim(
         monkeypatch,
         claim=claim,
@@ -1034,7 +1042,9 @@ async def test_relay_seam_fires_when_authored_diverges_after_cut(
     differs. Parent extract from clamped body cannot see ``_CLAMP_URI_DIVERGE``.
     """
     claim = f"authored_cortex: {_CLAMP_URI_DIVERGE} {_CLAMP_DIGEST}"
-    measurement = f"authored_cortex@local-master: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    measurement = (
+        f"authored_cortex@local-master: {_CLAMP_URI_IDENTICAL} {_CLAMP_DIGEST}"
+    )
     body = await _relay_closeout_with_checkpoint_claim(
         monkeypatch,
         claim=claim,

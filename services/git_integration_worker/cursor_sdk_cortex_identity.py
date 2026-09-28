@@ -86,7 +86,9 @@ def _cortex_write_stream_observations(
             continue
         raw_args = obs.args if isinstance(obs.args, Mapping) else {}
         nested = (
-            raw_args.get("args") if isinstance(raw_args.get("args"), Mapping) else raw_args
+            raw_args.get("args")
+            if isinstance(raw_args.get("args"), Mapping)
+            else raw_args
         )
         effective = _effective_mcp_args(nested) if nested else {}
         if _cortex_op_from_args(effective) in _CORTEX_WRITE_OPS:
@@ -104,7 +106,9 @@ def assertion_id_from_cortex_observation(obs: ToolCallObservation) -> int | None
     if obs.tool_name.lower() not in _CORTEX_TOOLS or obs.status != "completed":
         return None
     raw_args = obs.args if isinstance(obs.args, Mapping) else {}
-    nested = raw_args.get("args") if isinstance(raw_args.get("args"), Mapping) else raw_args
+    nested = (
+        raw_args.get("args") if isinstance(raw_args.get("args"), Mapping) else raw_args
+    )
     effective = _effective_mcp_args(nested) if nested else {}
     op = _cortex_op_from_args(effective)
     if op not in _CORTEX_WRITE_OPS:
@@ -117,7 +121,9 @@ def assertion_id_from_cortex_observation(obs: ToolCallObservation) -> int | None
 
 def _entity_key_from_observation(obs: ToolCallObservation) -> str | None:
     raw_args = obs.args if isinstance(obs.args, Mapping) else {}
-    nested = raw_args.get("args") if isinstance(raw_args.get("args"), Mapping) else raw_args
+    nested = (
+        raw_args.get("args") if isinstance(raw_args.get("args"), Mapping) else raw_args
+    )
     effective = _effective_mcp_args(nested) if nested else {}
     return _string_arg(effective, "entity_id", "assertion_id", "id")
 
@@ -246,12 +252,17 @@ def enrich_cortex_identities_from_stream(
     updated_section = section.model_copy(update={"entries": patched})
     if section.source == "conversation":
         updated_section = updated_section.model_copy(
-            update={"cross_check": section.cross_check or "identity_harvest:boundary_response"}
+            update={
+                "cross_check": section.cross_check
+                or "identity_harvest:boundary_response"
+            }
         )
     merged_surfaces = dict(manifest.surfaces)
     merged_surfaces["cortex"] = updated_section
     sources = list(dict.fromkeys([*manifest.capture_sources, "stream"]))
-    return manifest.model_copy(update={"surfaces": merged_surfaces, "capture_sources": sources})
+    return manifest.model_copy(
+        update={"surfaces": merged_surfaces, "capture_sources": sources}
+    )
 
 
 def merge_stream_cortex_entries(
@@ -260,8 +271,8 @@ def merge_stream_cortex_entries(
 ) -> EffectsManifest | None:
     """Enrich conversation identities, then fold stream-only cortex write acks."""
     from services.git_integration_worker.cursor_sdk_manifest import (
-        harvest_cortex_assertion_ids,
         _cortex_entry_from_stream_observation,
+        harvest_cortex_assertion_ids,
     )
 
     manifest = enrich_cortex_identities_from_stream(manifest, tool_calls)
@@ -342,7 +353,11 @@ def merge_stream_cortex_entries(
     coverage = dict(manifest.coverage)
     coverage["cortex"] = "complete"
     return manifest.model_copy(
-        update={"surfaces": merged_surfaces, "capture_sources": sources, "coverage": coverage}
+        update={
+            "surfaces": merged_surfaces,
+            "capture_sources": sources,
+            "coverage": coverage,
+        }
     )
 
 

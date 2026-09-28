@@ -133,7 +133,9 @@ def test_compose_attested_prompt_preserves_body_verbatim(store: TriggerStore) ->
     assert composed.startswith(_ORIGINAL_BODY.rstrip())
     assert "attested_at_utc: 2026-07-31T19:30:00Z" in composed
     assert "pass_snapshot_uri:" in composed
-    assert composed.index(_ORIGINAL_BODY.rstrip()) < composed.index("## FLEET GATE ATTESTATION")
+    assert composed.index(_ORIGINAL_BODY.rstrip()) < composed.index(
+        "## FLEET GATE ATTESTATION"
+    )
 
 
 def test_fleet_reader_invoked_once_across_claim_and_submit(store: TriggerStore) -> None:
@@ -149,17 +151,22 @@ def test_fleet_reader_invoked_once_across_claim_and_submit(store: TriggerStore) 
     client = MagicMock()
     client.submit.return_value = {"execution_id": "exec-attest", "status": "running"}
 
-    with patch(
-        "services.git_integration_worker.trigger_service.store_claim.read_fleet_idle_memoized",
-        side_effect=lambda _reader=None: read_fleet_idle_memoized(reader),
-    ), patch(
-        "services.git_integration_worker.trigger_service.gate_attestation.read_fleet_idle_memoized",
-        side_effect=lambda _reader=None: read_fleet_idle_memoized(reader),
-    ), patch(
-        "services.git_integration_worker.trigger_service.fire.lane_available",
-        return_value=(True, None),
-    ), patch(
-        "services.git_integration_worker.trigger_service.fire.publish_lib_signal",
+    with (
+        patch(
+            "services.git_integration_worker.trigger_service.store_claim.read_fleet_idle_memoized",
+            side_effect=lambda _reader=None: read_fleet_idle_memoized(reader),
+        ),
+        patch(
+            "services.git_integration_worker.trigger_service.gate_attestation.read_fleet_idle_memoized",
+            side_effect=lambda _reader=None: read_fleet_idle_memoized(reader),
+        ),
+        patch(
+            "services.git_integration_worker.trigger_service.fire.lane_available",
+            return_value=(True, None),
+        ),
+        patch(
+            "services.git_integration_worker.trigger_service.fire.publish_lib_signal",
+        ),
     ):
         begin_idle_pass()
         claimed = store.claim_due(now=now)
@@ -197,11 +204,14 @@ def test_lane_busy_retry_path_unchanged(store: TriggerStore) -> None:
     claimed = store.claim_due()
     assert claimed is not None
     client = MagicMock()
-    with patch(
-        "services.git_integration_worker.trigger_service.fire.lane_available",
-        return_value=(False, "lane busy: 1 live operator-proxy session(s)"),
-    ), patch(
-        "services.git_integration_worker.trigger_service.fire.publish_lib_signal",
+    with (
+        patch(
+            "services.git_integration_worker.trigger_service.fire.lane_available",
+            return_value=(False, "lane busy: 1 live operator-proxy session(s)"),
+        ),
+        patch(
+            "services.git_integration_worker.trigger_service.fire.publish_lib_signal",
+        ),
     ):
         updated = fire_once(store, claimed, client=client)
     assert updated.status == "scheduled"

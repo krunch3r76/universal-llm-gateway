@@ -8,16 +8,17 @@ from charter_runner_store.propagation_ledger import (
 )
 from charter_runner_store.propagation_terminal import settle_open_row
 from implement_admission.propagation_row import PropagationRow
+
 from services.git_integration_worker.cursor_auto.propagation_proof_reconcile import (
     reconcile_unsupported_proof_class,
 )
-
 
 _SHA = "d3e17d54b66276a350769501beb90c2988ff3bf1"
 
 
 def test_reconcile_mcp_served_artifact_fails_loud_not_downgrade(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     upsert_open_rows(
@@ -65,7 +66,8 @@ def test_settle_unsupported_proof_class_fails_loud(tmp_path, monkeypatch) -> Non
 
 
 def test_mcp_client_visible_blocked_by_cortex_api_skew_stays_open(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ) -> None:
     monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
     upsert_open_rows(
@@ -92,4 +94,6 @@ def test_mcp_client_visible_blocked_by_cortex_api_skew_stays_open(
     result = settle_open_row(row, lambda _service: payload, defer_if_unreachable=True)
     assert result.outcome == "deferred"
     assert list_open_rows()
-    assert "contradiction" in result.detail.lower() or "observed" in result.detail.lower()
+    assert (
+        "contradiction" in result.detail.lower() or "observed" in result.detail.lower()
+    )

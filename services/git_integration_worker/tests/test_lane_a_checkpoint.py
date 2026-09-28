@@ -841,7 +841,9 @@ def test_checkpoint_claim_discrepancy_silent_when_equivalent() -> None:
     )
 
 
-def test_checkpoint_claim_discrepancy_silent_when_table_cell_carries_field_prefix() -> None:
+def test_checkpoint_claim_discrepancy_silent_when_table_cell_carries_field_prefix() -> (
+    None
+):
     """7065#98 — relay table may echo ``checkpoint_claim:`` inside the Value cell."""
     from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
         annotate_checkpoint_claim_discrepancy,

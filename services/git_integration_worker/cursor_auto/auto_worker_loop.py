@@ -188,9 +188,7 @@ async def auto_concurrent_worker_loop(app: Any) -> None:
                 fail_streak = 0
                 await asyncio.sleep(_CONCURRENT_POLL_INTERVAL_S)
                 continue
-            operator_limit = int(
-                sdk_dispatch_gate_stats(lane="operator")["limit"]
-            )
+            operator_limit = int(sdk_dispatch_gate_stats(lane="operator")["limit"])
             occupancy = ledger_aligned_operator_occupancy()
             if occupancy >= operator_limit:
                 head = queue.head_concurrent_queued()

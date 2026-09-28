@@ -44,7 +44,9 @@ _LIVE_FALSIFIER_ENTITY = "todo:ac9g-live-falsifier"
 _ASSERTION_ID = 27483
 
 
-def _conversation_cortex_manifest(*, entity: str = _LIVE_FALSIFIER_ENTITY) -> EffectsManifest:
+def _conversation_cortex_manifest(
+    *, entity: str = _LIVE_FALSIFIER_ENTITY
+) -> EffectsManifest:
     """Production failure shape: conversation args only, entity_id identity."""
     return EffectsManifest(
         dispatch_id="child-dc37f2f8c11f",

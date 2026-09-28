@@ -25,7 +25,9 @@ _FENCE_EXCEPTION_RE = re.compile(
 
 def extract_fence_exception_lines(prose: str) -> list[str]:
     """Return ``fence_exception:`` lines authored in executor §2 prose."""
-    return [match.group(0).strip() for match in _FENCE_EXCEPTION_RE.finditer(prose or "")]
+    return [
+        match.group(0).strip() for match in _FENCE_EXCEPTION_RE.finditer(prose or "")
+    ]
 
 
 def guard_matches_write(guard_uri: str, write_uri: str) -> bool:

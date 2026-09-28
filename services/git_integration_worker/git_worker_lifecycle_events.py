@@ -199,4 +199,6 @@ def emit_git_worker_dispatch_rejected(envelope: dict[str, Any]) -> None:
 
 
 def log_dispatch_rejection(envelope: dict[str, Any]) -> None:
-    logger.warning("git_worker.dispatch.rejected: %s", json.dumps(envelope, sort_keys=True))
+    logger.warning(
+        "git_worker.dispatch.rejected: %s", json.dumps(envelope, sort_keys=True)
+    )

@@ -12,9 +12,7 @@ _FENCED_YAML_RE = re.compile(
     r"```(?:ya?ml)?\s*\n(?P<body>.*?)\n```",
     re.DOTALL | re.IGNORECASE,
 )
-_INLINE_OPTIONS_RE = re.compile(
-    r"(?im)^options:\s*\n(?P<body>(?:[ \t].*\n?)*)"
-)
+_INLINE_OPTIONS_RE = re.compile(r"(?im)^options:\s*\n(?P<body>(?:[ \t].*\n?)*)")
 _TOP_LEVEL_OPTIONS_KEY_RE = re.compile(r"(?im)^options:\s*")
 
 
@@ -48,7 +46,9 @@ def extract_options_yaml_block(markdown: str) -> str | None:
     return None
 
 
-def _normalize_option_rows(raw_options: Any) -> tuple[list[tuple[str, dict[str, Any]]], str | None]:
+def _normalize_option_rows(
+    raw_options: Any,
+) -> tuple[list[tuple[str, dict[str, Any]]], str | None]:
     if isinstance(raw_options, list):
         rows: list[tuple[str, dict[str, Any]]] = []
         for index, item in enumerate(raw_options):
@@ -71,7 +71,9 @@ def _normalize_option_rows(raw_options: Any) -> tuple[list[tuple[str, dict[str, 
     return [], "options_not_list_or_mapping"
 
 
-def parse_options_yaml_document(yaml_text: str) -> tuple[list[tuple[str, dict[str, Any]]], str | None]:
+def parse_options_yaml_document(
+    yaml_text: str,
+) -> tuple[list[tuple[str, dict[str, Any]]], str | None]:
     """Parse a YAML document containing ``options:`` rows.
 
     Returns ``(rows, parse_error)``. ``parse_error`` is ``None`` on success.
@@ -94,7 +96,9 @@ def parse_options_yaml_document(yaml_text: str) -> tuple[list[tuple[str, dict[st
     return _normalize_option_rows(raw_options)
 
 
-def parse_options_block(markdown: str) -> tuple[list[tuple[str, dict[str, Any]]], str | None, bool]:
+def parse_options_block(
+    markdown: str,
+) -> tuple[list[tuple[str, dict[str, Any]]], str | None, bool]:
     """Parse options rows from a DIRECTIVE body.
 
     Returns ``(rows, parse_error, block_present)``.

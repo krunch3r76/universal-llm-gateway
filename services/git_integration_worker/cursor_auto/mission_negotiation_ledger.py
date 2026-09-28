@@ -193,10 +193,14 @@ class MissionNegotiationLedger:
     def expire_idle(self, thread_id: str, negotiation_id: str) -> TransitionResult:
         row = self.get(thread_id, negotiation_id)
         if row is None or row.state in TERMINAL_STATES:
-            return TransitionResult(ok=False, reason="negotiation.state_refused", prior=row)
+            return TransitionResult(
+                ok=False, reason="negotiation.state_refused", prior=row
+            )
         deadline = parse_idle_deadline(row.idle_deadline)
         if deadline is None or datetime.now(UTC) <= deadline:
-            return TransitionResult(ok=False, reason="negotiation.not_expired", prior=row)
+            return TransitionResult(
+                ok=False, reason="negotiation.not_expired", prior=row
+            )
         self._set_state(thread_id, negotiation_id, "EXPIRED")
         updated = self.get(thread_id, negotiation_id)
         return TransitionResult(ok=True, row=updated, prior=row)
@@ -365,7 +369,9 @@ class MissionNegotiationLedger:
             self._update(row=row, duplicate_key=dup_key)
             return TransitionResult(ok=True, row=row, prior=existing)
 
-        return TransitionResult(ok=False, reason="negotiation.malformed", prior=existing)
+        return TransitionResult(
+            ok=False, reason="negotiation.malformed", prior=existing
+        )
 
     def _maybe_expire(self, row: NegotiationRow) -> NegotiationRow | None:
         deadline = parse_idle_deadline(row.idle_deadline)

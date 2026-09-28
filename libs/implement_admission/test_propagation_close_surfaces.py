@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import pytest
-
 from implement_admission.propagation_close_surfaces import (
     compose_close_surfaces,
     compose_proof_for_surfaces,
@@ -34,7 +32,9 @@ def test_single_consumer_commit_excludes_cortex_api() -> None:
     assert composition.excluded_surfaces[0].import_path == "contradicted"
     assert paths[0] in composition.excluded_surfaces[0].evidence_paths
 
-    proof = compose_proof_for_surfaces("mcp", "client_visible", composition.close_surfaces)
+    proof = compose_proof_for_surfaces(
+        "mcp", "client_visible", composition.close_surfaces
+    )
     assert "cortex-api" not in proof.lower()
     assert "GET /health" in proof
 
@@ -84,12 +84,15 @@ def test_rows_from_lib_consumers_single_consumer_mints_exclusion_record() -> Non
     def fake_verify(slug: str, _path: str) -> str:
         return "verified" if slug == "mcp" else "contradicted"
 
-    with patch(
-        "implement_admission.propagation_close_surfaces.verify_consumer_import",
-        side_effect=fake_verify,
-    ), patch(
-        "implement_admission.propagation_row.verify_consumer_import",
-        side_effect=fake_verify,
+    with (
+        patch(
+            "implement_admission.propagation_close_surfaces.verify_consumer_import",
+            side_effect=fake_verify,
+        ),
+        patch(
+            "implement_admission.propagation_row.verify_consumer_import",
+            side_effect=fake_verify,
+        ),
     ):
         rows, escalations = rows_from_lib_consumers(paths, code_ref="abc123")
 

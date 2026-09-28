@@ -95,7 +95,10 @@ def _relay_cortex_entity_get(arguments: dict[str, Any]) -> dict[str, Any]:
             "status_code": None,
         }
     if not isinstance(parsed, dict):
-        return {"error": f"cortex-api returned {type(parsed).__name__}", "status_code": None}
+        return {
+            "error": f"cortex-api returned {type(parsed).__name__}",
+            "status_code": None,
+        }
     return parsed
 
 

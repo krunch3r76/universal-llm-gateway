@@ -84,8 +84,7 @@ def test_skip_set_unchanged() -> None:
             True,
         ),
         (
-            "TYPE: DIRECTIVE\ndensity: dense\nscope: libs/foo\n"
-            "handoff: none\n",
+            "TYPE: DIRECTIVE\ndensity: dense\nscope: libs/foo\nhandoff: none\n",
             True,
         ),
         (
@@ -114,9 +113,7 @@ def test_unmarked_implement_stays_pure_mechanical() -> None:
     assert resolve_handoff_contract("implement", body=_PROSE_RULING_WORD) == (
         "pure-mechanical"
     )
-    assert resolve_handoff_contract("implement", body=_TURN_343) == (
-        "pure-mechanical"
-    )
+    assert resolve_handoff_contract("implement", body=_TURN_343) == ("pure-mechanical")
 
 
 @pytest.mark.offline

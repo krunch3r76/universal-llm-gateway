@@ -19,7 +19,6 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     changed_paths,
     prepare_closeout_delivery,
 )
-from services.git_integration_worker.cursor_home import dispatch_git_identity
 from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     SalvageResult,
     branch_state,
@@ -300,7 +299,9 @@ def test_ac_s3_6_lane_a_never_commits_or_salvages(source_repo: Path) -> None:
     assert payload.get("commits_ahead") == 0
 
 
-def test_branch_state_counts_since_branch_point(source_repo: Path, tmp_path: Path) -> None:
+def test_branch_state_counts_since_branch_point(
+    source_repo: Path, tmp_path: Path
+) -> None:
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "s3-state"
     wt = mint_dispatch_worktree(
@@ -341,7 +342,9 @@ def test_branch_state_missing_tip_commits_ahead_absent_not_zero(
     assert state.is_empty is False
 
 
-def test_branch_state_measured_zero_stays_zero(source_repo: Path, tmp_path: Path) -> None:
+def test_branch_state_measured_zero_stays_zero(
+    source_repo: Path, tmp_path: Path
+) -> None:
     """Empty divergence after mint is a measured 0 — still refuses vacuous landed."""
     from services.git_integration_worker.cursor_sdk_deliverables_expected import (
         admit_landed_true,
@@ -428,7 +431,8 @@ def test_prune_fails_closed_when_salvage_refused(
 
 
 def test_prune_retains_dirty_empty_branch_when_salvage_does_not_commit(
-    source_repo: Path, tmp_path: Path,
+    source_repo: Path,
+    tmp_path: Path,
 ) -> None:
     """Dirty work on commits_ahead=0 must retain worktree even if salvage is a no-op."""
     worktree_root = tmp_path / "worktrees"

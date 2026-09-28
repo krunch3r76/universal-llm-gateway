@@ -8,20 +8,22 @@ from __future__ import annotations
 
 from implement_admission.propagation_row import PropagationRow
 
+from scripts.model_manager.ui.controller.service_ctl.authority_identity import (
+    normalize_authority_value,
+)
 from services.git_integration_worker.cursor_auto.propagation_probe import (
     attest_authority_identity,
     attest_identity_delta,
     proof_observed,
     resolve_identity_attestation,
 )
-from scripts.model_manager.ui.controller.service_ctl.authority_identity import (
-    normalize_authority_value,
-)
 
 _SHA = "abc1230000000000000000000000000000000000"
 
 
-def _process_live_row(*, service: str = "stargate", code_ref: str = _SHA) -> PropagationRow:
+def _process_live_row(
+    *, service: str = "stargate", code_ref: str = _SHA
+) -> PropagationRow:
     return PropagationRow(
         service=service,
         code_ref=code_ref,
@@ -54,8 +56,7 @@ def test_authority_without_readiness_proven_never_closes() -> None:
     assert attest_authority_identity(authority) == "fall_through"
     row = _process_live_row()
     assert (
-        proof_observed(row, after, before=before, authority_identity=authority)
-        is False
+        proof_observed(row, after, before=before, authority_identity=authority) is False
     )
 
 
@@ -90,8 +91,7 @@ def test_authority_readiness_old_ne_new_closes_without_health_pid() -> None:
     assert attest_authority_identity(authority) == "changed"
     row = _process_live_row()
     assert (
-        proof_observed(row, after, before=before, authority_identity=authority)
-        is True
+        proof_observed(row, after, before=before, authority_identity=authority) is True
     )
 
 
@@ -118,8 +118,7 @@ def test_ac9_authority_unchanged_terminal_blocks_self_report_changed() -> None:
     )
     row = _process_live_row()
     assert (
-        proof_observed(row, after, before=before, authority_identity=authority)
-        is False
+        proof_observed(row, after, before=before, authority_identity=authority) is False
     )
 
 
@@ -146,8 +145,7 @@ def test_ac10_authority_partial_old_or_new_falls_through_never_changed() -> None
     )
     row = _process_live_row()
     assert (
-        proof_observed(row, after, before=before, authority_identity=authority)
-        is False
+        proof_observed(row, after, before=before, authority_identity=authority) is False
     )
 
 
@@ -167,8 +165,7 @@ def test_ac11_cross_source_identity_never_authority_changed() -> None:
     assert attest_authority_identity(authority) == "fall_through"
     row = _process_live_row()
     assert (
-        proof_observed(row, after, before=before, authority_identity=authority)
-        is False
+        proof_observed(row, after, before=before, authority_identity=authority) is False
     )
 
 
@@ -181,10 +178,16 @@ def test_ac12_readiness_proven_requires_exact_true() -> None:
         "identity_source": "manage_host_pid",
     }
     assert attest_authority_identity({**base, "readiness_proven": True}) == "changed"
-    assert attest_authority_identity({**base, "readiness_proven": False}) == "fall_through"
-    assert attest_authority_identity({**base, "readiness_proven": "yes"}) == "fall_through"
+    assert (
+        attest_authority_identity({**base, "readiness_proven": False}) == "fall_through"
+    )
+    assert (
+        attest_authority_identity({**base, "readiness_proven": "yes"}) == "fall_through"
+    )
     assert attest_authority_identity({**base, "readiness_proven": 1}) == "fall_through"
-    assert attest_authority_identity({**base, "readiness_proven": ["x"]}) == "fall_through"
+    assert (
+        attest_authority_identity({**base, "readiness_proven": ["x"]}) == "fall_through"
+    )
     assert attest_authority_identity({**base}) == "fall_through"
 
 
@@ -250,8 +253,7 @@ def test_ac14_authority_service_must_match_row() -> None:
     after = {"code_version": _SHA}
     row = _process_live_row(service="stargate")
     assert (
-        proof_observed(row, after, before=before, authority_identity=authority)
-        is False
+        proof_observed(row, after, before=before, authority_identity=authority) is False
     )
     assert (
         resolve_identity_attestation(
@@ -277,8 +279,7 @@ def test_ac14_authority_without_service_falls_through() -> None:
     row = _process_live_row()
     assert attest_authority_identity(authority) == "changed"
     assert (
-        proof_observed(row, after, before=before, authority_identity=authority)
-        is False
+        proof_observed(row, after, before=before, authority_identity=authority) is False
     )
 
 
@@ -321,8 +322,7 @@ def test_ac14_intent_id_not_blocked_when_either_side_absent() -> None:
     after = {"code_version": _SHA}
     row = _process_live_row()
     assert (
-        proof_observed(row, after, before=before, authority_identity=authority)
-        is True
+        proof_observed(row, after, before=before, authority_identity=authority) is True
     )
     authority_no_intent = {k: v for k, v in authority.items() if k != "intent_id"}
     assert (

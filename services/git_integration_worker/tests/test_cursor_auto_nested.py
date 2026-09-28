@@ -1,4 +1,3 @@
-
 def test_directive_parse_requires_type_line():
     from services.git_integration_worker.cursor_auto.directive import parse_request_body
 

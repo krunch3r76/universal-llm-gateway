@@ -46,12 +46,15 @@ async def maybe_post_substrate_feedback(
             evidence_uris=[f"agent-bus:{job.thread_id}"],
         )
 
-    if entity_id and graph_write and "error" not in graph_write and not graph_write.get(
-        "blocked"
+    if (
+        entity_id
+        and graph_write
+        and "error" not in graph_write
+        and not graph_write.get("blocked")
     ):
         note = (
             "Substrate rot observed during implement — graph write via "
-            "agent_bus(tool=\"substrate_graph_write\")."
+            'agent_bus(tool="substrate_graph_write").'
         )
     elif entity_id and graph_write and graph_write.get("blocked"):
         note = (
@@ -61,12 +64,12 @@ async def maybe_post_substrate_feedback(
     elif entity_id:
         note = (
             "Substrate rot observed during implement — "
-            f"agent_bus(tool=\"substrate_graph_write\") failed for entity_id={entity_id!r}."
+            f'agent_bus(tool="substrate_graph_write") failed for entity_id={entity_id!r}.'
         )
     else:
         note = (
             "Substrate rot observed during implement — resolve entity_id (todo: or "
-            "entity_id: line) then agent_bus(tool=\"substrate_graph_write\", "
+            'entity_id: line) then agent_bus(tool="substrate_graph_write", '
             "entity_id=…, claim=…)."
         )
 

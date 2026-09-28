@@ -20,6 +20,7 @@ from .sdk_git_snapshot import extract_sdk_git_snapshot
 _POST_WAIT_POLL_ATTEMPTS = 3
 _POST_WAIT_POLL_INTERVAL_S = 0.2
 
+
 def count_tool_calls(turns: list) -> int:
     total = 0
     for turn in turns:

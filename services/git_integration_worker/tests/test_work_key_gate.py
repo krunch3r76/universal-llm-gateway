@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import sqlite3
-from unittest.mock import patch
-
 import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import (
@@ -114,7 +110,9 @@ def test_adhoc_key_derivation() -> None:
 
 def test_same_work_key_conductor_rejected_ac5(isolated_ledger) -> None:
     first = _req(dispatch_id="d1", work_key=_WORK_KEY, contract="conductor")
-    second = _req(dispatch_id="d2", thread_id="10002", work_key=_WORK_KEY, contract="conductor")
+    second = _req(
+        dispatch_id="d2", thread_id="10002", work_key=_WORK_KEY, contract="conductor"
+    )
     _admit(isolated_ledger, first, work_key=_WORK_KEY, contract="conductor")
     isolated_ledger.mark_running(dispatch_id="d1")
     with pytest.raises(SourceRefConflict) as excinfo:

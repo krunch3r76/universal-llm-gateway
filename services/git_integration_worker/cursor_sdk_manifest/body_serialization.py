@@ -46,6 +46,8 @@ def compact_manifest_for_body(
     if not manifest.surfaces:
         compact["surfaces"] = {}
     return compact
+
+
 def serialize_effects_manifest_for_body(
     manifest: EffectsManifest | None,
     *,

@@ -99,7 +99,9 @@ def load_check_review_default_model(policy: dict[str, Any]) -> str:
         raise ValueError(f"route policy missing workflows.{CHECK_REVIEW_WORKFLOW}")
     model = entry.get("model")
     if not isinstance(model, str) or not model.strip():
-        raise ValueError(f"workflows.{CHECK_REVIEW_WORKFLOW}.model must be a non-empty string")
+        raise ValueError(
+            f"workflows.{CHECK_REVIEW_WORKFLOW}.model must be a non-empty string"
+        )
     return model.strip()
 
 
@@ -215,9 +217,7 @@ def consultant_identity(
     return ConsultantIdentity(model_identity(model), consultant_rung(model, knobs))
 
 
-def independently_measured(
-    left: ConsultantIdentity, right: ConsultantIdentity
-) -> bool:
+def independently_measured(left: ConsultantIdentity, right: ConsultantIdentity) -> bool:
     """True when two seats differ by model identity or by effort rung on the same model.
 
     ``UNKNOWN_MODEL_IDENTITY`` or an unmeasured rung (``None``) on either side
@@ -280,7 +280,9 @@ def resolve_check_review_model(
         return CheckReviewResolution(
             resolved_model=default_model,
             substrate="api",
-            delivery_from_role=canonical_role if canonical_role in _JUDGMENT_ROLES else None,
+            delivery_from_role=canonical_role
+            if canonical_role in _JUDGMENT_ROLES
+            else None,
         )
 
     backend = ModelId.parse(resolved).backend_type
@@ -294,7 +296,9 @@ def resolve_check_review_model(
     return CheckReviewResolution(
         resolved_model=resolved,
         substrate="api",
-        delivery_from_role=canonical_role if canonical_role in _JUDGMENT_ROLES else None,
+        delivery_from_role=canonical_role
+        if canonical_role in _JUDGMENT_ROLES
+        else None,
     )
 
 

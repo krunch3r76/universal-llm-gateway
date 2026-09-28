@@ -93,7 +93,9 @@ async def test_relay_closeout_emits_relayed_once_with_full_envelope(
     assert event.payload["thread_id"] == "6221"
     assert event.payload["execution_id"] == "exec-auto-relay01"
     assert event.payload["closeout_status"]
-    assert event.payload["receipt_path"].endswith("tmp/reviews/closeouts/auto-relay01.md")
+    assert event.payload["receipt_path"].endswith(
+        "tmp/reviews/closeouts/auto-relay01.md"
+    )
     assert event.payload["asked_by"] == "web-anthropic"
     assert event.payload["purpose"] == "Put the story on the spine."
     assert event.payload["story_id"] == "auto-relay01"

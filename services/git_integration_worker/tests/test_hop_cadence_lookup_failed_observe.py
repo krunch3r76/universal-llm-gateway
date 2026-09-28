@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -116,9 +116,7 @@ def test_emit_raise_still_returns_lookup_failed() -> None:
     with patch(
         "services.git_integration_worker.cursor_auto."
         "hop_cadence_lookup_failed_observe.emit_frontier_event",
-        side_effect=TypeError(
-            "record() got multiple values for argument 'signal'"
-        ),
+        side_effect=TypeError("record() got multiple values for argument 'signal'"),
     ):
         result = capture_predecessor_at_hop(row, snap)
     assert isinstance(result, PredecessorConfirmError)
@@ -141,7 +139,11 @@ def test_empty_snap_distinct_from_rows_present_all_filtered() -> None:
     )
     assert isinstance(empty_result, PredecessorConfirmError)
     assert isinstance(filtered_result, PredecessorConfirmError)
-    assert empty_result.reason == filtered_result.reason == "predecessor_execution_lookup_failed"
+    assert (
+        empty_result.reason
+        == filtered_result.reason
+        == "predecessor_execution_lookup_failed"
+    )
     empty_payload = empty_emit.call_args.args[0].payload
     filtered_payload = filtered_emit.call_args.args[0].payload
     assert empty_payload["snap_kind"] == SNAP_KIND_EMPTY
@@ -204,9 +206,9 @@ def test_read_cdp_lane_snapshot_stamps_observed_at() -> None:
         "free_slots": 2,
         "running_count": 1,
     }
-    before = datetime.now(timezone.utc).isoformat()
+    before = datetime.now(UTC).isoformat()
     snap = read_cdp_lane_snapshot(client=client)
-    after = datetime.now(timezone.utc).isoformat()
+    after = datetime.now(UTC).isoformat()
     assert before <= snap["observed_at"] <= after
     assert snap["rows"] == []
     assert snap["free_slots"] == 2

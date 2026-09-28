@@ -129,7 +129,12 @@ def test_ac2_same_key_write_lease_queue(tmp_path: Path) -> None:
     Path(key).mkdir(parents=True)
     ledger = CursorDispatchLedger.instance()
 
-    _admit(ledger, _req(dispatch_id="holder", thread_id="t-holder"), source_repo=repo, lease_key=key)
+    _admit(
+        ledger,
+        _req(dispatch_id="holder", thread_id="t-holder"),
+        source_repo=repo,
+        lease_key=key,
+    )
     queued = _admit(
         ledger,
         _req(dispatch_id="waiter", thread_id="t-waiter"),
@@ -258,6 +263,7 @@ def test_ac8_falsifier_unconstructible() -> None:
 
     assert std_limit >= 1
     if std_limit >= 2:
+
         async def _hold_two() -> None:
             await acquire_sdk_dispatch_slot(dispatch_id="fals-a")
             await acquire_sdk_dispatch_slot(dispatch_id="fals-b")

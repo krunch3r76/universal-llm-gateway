@@ -56,7 +56,9 @@ class ToolcallResultRetention:
 def _serialize_result(result: object) -> tuple[object | None, int | None]:
     if isinstance(result, (dict, list, str, int, float, bool)) or result is None:
         try:
-            encoded = json.dumps(result, default=str, separators=(",", ":")).encode("utf-8")
+            encoded = json.dumps(result, default=str, separators=(",", ":")).encode(
+                "utf-8"
+            )
             return result, len(encoded)
         except (TypeError, ValueError):
             return {"raw": str(result)}, len(str(result).encode("utf-8"))

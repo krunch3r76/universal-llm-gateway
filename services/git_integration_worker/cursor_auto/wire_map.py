@@ -161,6 +161,8 @@ _JUDGMENT_HANDOFF = "none"
 def _effort_omitted(desired_effort: str | None) -> bool:
     raw = ("" if desired_effort is None else str(desired_effort)).strip().lower()
     return raw == "" or raw == AUTO_EFFORT
+
+
 # Life seats often put CDP models on desired_model by mistake; map → escalation.
 _CDP_DESIRED_MODEL_ALIASES: dict[str, str] = {
     "cdp/opus-5": "cdp/opus-5",
@@ -439,11 +441,15 @@ def resolve_desired_effort(
     if _effort_omitted(desired_effort):
         if contract_key == "implement" and handoff_contract == _JUDGMENT_HANDOFF:
             resolved = "high"
-            why = f"auto chose high for contract=implement (handoff={_JUDGMENT_HANDOFF})"
+            why = (
+                f"auto chose high for contract=implement (handoff={_JUDGMENT_HANDOFF})"
+            )
         else:
             reg = registry or load_workflow_registry()
             resolved = reg.default_effort_for_contract(contract_key)
-            why = f"auto chose {resolved} for contract={contract_key} via contract_effort"
+            why = (
+                f"auto chose {resolved} for contract={contract_key} via contract_effort"
+            )
         return {
             "requested": AUTO_EFFORT,
             "resolved_effort": resolved,

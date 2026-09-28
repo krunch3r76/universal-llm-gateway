@@ -94,8 +94,7 @@ def _split_binding_drift(
     for op in sorted(ref_ops - served_ops):
         meta = reference[op]
         fatals.append(
-            f"FATAL: binding lost for op {op!r} "
-            f"({meta['method']} {meta['path']})"
+            f"FATAL: binding lost for op {op!r} ({meta['method']} {meta['path']})"
         )
     for op in sorted(served_ops - ref_ops):
         meta = served[op]
@@ -161,7 +160,9 @@ def check_served_binding_drift(
             fatals.append(f"{service}: served binding drift probe unreachable")
             continue
         if not payload.get("byte_identical"):
-            fatals.append(f"{service}: served binding drift surfaces not byte-identical")
+            fatals.append(
+                f"{service}: served binding drift surfaces not byte-identical"
+            )
             continue
         served_ops = payload.get("served_ops")
         if not isinstance(served_ops, dict):

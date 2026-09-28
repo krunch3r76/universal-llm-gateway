@@ -315,7 +315,9 @@ def test_terminal_failed_skips_discharge_when_live_sdk_successor(
 
 
 @pytest.mark.asyncio
-async def test_handler_terminal_failed_observes_discharge(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_handler_terminal_failed_observes_discharge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from services.git_integration_worker.cursor_auto.handler_terminal import (
         terminal_failed,
     )

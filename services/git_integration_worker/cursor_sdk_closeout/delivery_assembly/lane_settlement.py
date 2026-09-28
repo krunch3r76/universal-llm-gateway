@@ -259,8 +259,19 @@ def settle_lane_and_dispatch_fields(
         ),
     )
     return (
-        lane_b_lane, lane_b_branch, lane_b_branch_point, capture_head_sha,
-        capture_commits_ahead, capture_commits_ahead_unfiltered, capture_landed,
-        reported_lane, isolation_mat, escalation_harvest, cortex_authoritative,
-        closeout_head, deviations, divergence_reason, landed_resolution_reason,
+        lane_b_lane,
+        lane_b_branch,
+        lane_b_branch_point,
+        capture_head_sha,
+        capture_commits_ahead,
+        capture_commits_ahead_unfiltered,
+        capture_landed,
+        reported_lane,
+        isolation_mat,
+        escalation_harvest,
+        cortex_authoritative,
+        closeout_head,
+        deviations,
+        divergence_reason,
+        landed_resolution_reason,
     )

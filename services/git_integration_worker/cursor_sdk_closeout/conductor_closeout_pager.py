@@ -20,9 +20,7 @@ def _parent_already_terminal(nest_under: str) -> bool:
         CursorDispatchLedger,
     )
 
-    row = CursorDispatchLedger.instance().dispatch_status_by_id(
-        dispatch_id=nest_under
-    )
+    row = CursorDispatchLedger.instance().dispatch_status_by_id(dispatch_id=nest_under)
     if not row:
         return False
     return str(row.get("status") or "") in _PARENT_TERMINAL

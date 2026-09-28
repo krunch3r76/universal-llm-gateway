@@ -11,11 +11,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay import (
     is_wrapper_manifest,
     looks_section2,
     select_closeout_relay_payload,
-    status_from_section2,
     strip_machine_tail,
     synthesize_section2,
 )
-from services.git_integration_worker.cursor_auto.lane_a_status import extract_status_claim
 from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     CloseoutRelayPayload,
 )
@@ -23,6 +21,9 @@ from services.git_integration_worker.cursor_auto.closeout_relay_cortex import (
     _MAX_RELAYED_CORTEX_CHARS,
     cap_relayed_cortex_text,
     read_cortex_text,
+)
+from services.git_integration_worker.cursor_auto.lane_a_status import (
+    extract_status_claim,
 )
 from services.git_integration_worker.cursor_auto.relay_trust import (
     enforce_synthesized_partial,
@@ -2117,7 +2118,9 @@ TYPE: CLOSEOUT
     assert "AC-1" in ac and "AC-2" in ac and "AC-3" in ac
     assert ac.strip() != "…"
     assert extract_field_section(projected_body, "deltas_to_spec") == "none"
-    assert extract_field_section(projected_body, "checkpoint_claim") == "nothing_authored"
+    assert (
+        extract_field_section(projected_body, "checkpoint_claim") == "nothing_authored"
+    )
 
 
 def test_row11_section7_positive_ac_verdict_assertions() -> None:

@@ -23,7 +23,11 @@ from services.git_integration_worker.cursor_sdk_tool_result import (
 
 pytestmark = pytest.mark.offline
 
-_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "item18_attempt9_live_obs_result.json"
+_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "item18_attempt9_live_obs_result.json"
+)
 _LIVE_ASSERTION_ID = 27489
 
 
@@ -117,11 +121,15 @@ def test_ac17c_attempt12_defect_reproduced_and_caught_by_contract(
     assert classify_tool_result_shape(sdk) == "sdk_value_content_text_text"
     assert assertion_id_from_payload(unwrap_tool_result(mcp)) == _LIVE_ASSERTION_ID
 
-    assert assertion_id_from_payload(_legacy_unwrap_without_sdk_value_content(sdk)) is None
+    assert (
+        assertion_id_from_payload(_legacy_unwrap_without_sdk_value_content(sdk)) is None
+    )
 
     import services.git_integration_worker.cursor_sdk_boundary_unwrap as unwrap_mod
 
-    monkeypatch.setattr(unwrap_mod, "unwrap_tool_result", _legacy_unwrap_without_sdk_value_content)
+    monkeypatch.setattr(
+        unwrap_mod, "unwrap_tool_result", _legacy_unwrap_without_sdk_value_content
+    )
 
     with pytest.raises(BoundaryContractError) as exc_info:
         emit_unwrap_boundary(sdk, strict=True)

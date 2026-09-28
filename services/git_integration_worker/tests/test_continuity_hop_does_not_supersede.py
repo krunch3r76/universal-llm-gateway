@@ -95,6 +95,7 @@ def test_verb_shaped_body_plus_wire_flag_matches_type_token():
 async def test_verb_shaped_enqueue_skips_supersede(live_run, monkeypatch):
     """Producer-side hop: wire flag + verb body admits as hop, incumbent survives."""
     from hop_handoff import StandingHandoffFreshness, build_continuity_handoff_body
+
     from services.git_integration_worker.cursor_auto import queue as queue_mod
 
     q = queue_mod.reset_queue_for_tests(durable=False)
@@ -118,7 +119,9 @@ async def test_verb_shaped_enqueue_skips_supersede(live_run, monkeypatch):
         return {"ok": True}
 
     monkeypatch.setattr(routes_mod, "get_queue", lambda: q)
-    monkeypatch.setattr(routes_mod, "get_registry", lambda: MagicMock(is_live=lambda: True))
+    monkeypatch.setattr(
+        routes_mod, "get_registry", lambda: MagicMock(is_live=lambda: True)
+    )
     monkeypatch.setattr(routes_mod, "run_continuity_hop_concurrent", _capture_hop)
 
     hop_body = build_continuity_handoff_body(
@@ -202,7 +205,9 @@ async def test_hop_enqueue_leaves_claimed_job_running(live_run, monkeypatch):
         return {"ok": True}
 
     monkeypatch.setattr(routes_mod, "get_queue", lambda: q)
-    monkeypatch.setattr(routes_mod, "get_registry", lambda: MagicMock(is_live=lambda: True))
+    monkeypatch.setattr(
+        routes_mod, "get_registry", lambda: MagicMock(is_live=lambda: True)
+    )
     monkeypatch.setattr(routes_mod, "run_continuity_hop_concurrent", _capture_hop)
 
     body = EnqueueBody(
@@ -306,7 +311,9 @@ async def test_hop_without_scope_routes_to_cdp_not_blocked(monkeypatch):
         return {"ok": True, "reason": "continuity_hop_cdp_commissioned"}
 
     monkeypatch.setattr(routes_mod, "get_queue", lambda: q)
-    monkeypatch.setattr(routes_mod, "get_registry", lambda: MagicMock(is_live=lambda: True))
+    monkeypatch.setattr(
+        routes_mod, "get_registry", lambda: MagicMock(is_live=lambda: True)
+    )
     monkeypatch.setattr(routes_mod, "run_continuity_hop_concurrent", _capture_hop)
 
     body = EnqueueBody(
@@ -363,11 +370,11 @@ async def test_hop_without_scope_routes_to_cdp_not_blocked(monkeypatch):
 
     monkeypatch.setattr(hop_mod, "commission_cdp_escalation", _track_commission)
     monkeypatch.setattr(hop_mod, "post_terminal_status", _fake_terminal)
-    monkeypatch.setattr(hop_mod, "post_harvest_residual", AsyncMock(return_value={"ok": True}))
-    monkeypatch.setattr(hop_mod, "live_run_for_thread", lambda _t: None)
     monkeypatch.setattr(
-        hop_mod, "_post_hop_admit_report", AsyncMock(return_value=None)
+        hop_mod, "post_harvest_residual", AsyncMock(return_value={"ok": True})
     )
+    monkeypatch.setattr(hop_mod, "live_run_for_thread", lambda _t: None)
+    monkeypatch.setattr(hop_mod, "_post_hop_admit_report", AsyncMock(return_value=None))
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.handler.get_queue",
         lambda: q2,
@@ -393,7 +400,9 @@ async def test_hop_with_scope_vision_still_routes_to_cdp(monkeypatch):
         return {"ok": True}
 
     monkeypatch.setattr(routes_mod, "get_queue", lambda: q)
-    monkeypatch.setattr(routes_mod, "get_registry", lambda: MagicMock(is_live=lambda: True))
+    monkeypatch.setattr(
+        routes_mod, "get_registry", lambda: MagicMock(is_live=lambda: True)
+    )
     monkeypatch.setattr(routes_mod, "run_continuity_hop_concurrent", _capture_hop)
 
     body = EnqueueBody(
@@ -621,8 +630,9 @@ async def test_two_leg_hop_body_loses_nothing(monkeypatch):
     commissioned_prompts: list[str] = []
 
     async def _run_hop(job, *, queue, incumbent=None):
-        from services.git_integration_worker.cursor_auto import continuity_hop as hop_mod
-
+        from services.git_integration_worker.cursor_auto import (
+            continuity_hop as hop_mod,
+        )
         from services.git_integration_worker.tests.commission_spy import commission_spy
 
         commission = commission_spy(execution_id="exec-two-leg")
@@ -666,10 +676,7 @@ async def test_two_leg_hop_body_loses_nothing(monkeypatch):
         turn_number=62,
         subject="hop + publish dual leg",
         body=(
-            "TYPE: CONTINUITY_HANDOFF\n"
-            "scope: CDP successor harvest\n"
-            "\n"
-            f"{publish_leg}"
+            f"TYPE: CONTINUITY_HANDOFF\nscope: CDP successor harvest\n\n{publish_leg}"
         ),
         from_agent="web-anthropic",
         to_agent="cursor",
@@ -711,8 +718,9 @@ async def test_wire_flag_hop_directive_body_loses_nothing(monkeypatch):
     commissioned_prompts: list[str] = []
 
     async def _run_hop(job, *, queue, incumbent=None):
-        from services.git_integration_worker.cursor_auto import continuity_hop as hop_mod
-
+        from services.git_integration_worker.cursor_auto import (
+            continuity_hop as hop_mod,
+        )
         from services.git_integration_worker.tests.commission_spy import commission_spy
 
         commission = commission_spy(execution_id="exec-wire-flag")

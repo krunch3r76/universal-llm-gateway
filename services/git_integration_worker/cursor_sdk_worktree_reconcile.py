@@ -150,7 +150,10 @@ def sweep_vanished_pinned_worktrees(*, source_repo: Path) -> int:
             bridge_pid=bridge_pid,
         )
         count += 1
-        if ledger_status not in ("completed", "failed", "cancelled") and bridge_pid is None:
+        if (
+            ledger_status not in ("completed", "failed", "cancelled")
+            and bridge_pid is None
+        ):
             try:
                 from services.git_integration_worker.cursor_sdk_worktree_remint import (
                     remint_lane_worktree,

@@ -51,7 +51,11 @@ async def test_cadence_hop_passes_claimed_incumbent_to_continuity_hop(monkeypatc
                 "incumbent_subject": incumbent.subject if incumbent else None,
             }
         )
-        return {"ok": True, "reason": "continuity_hop_cdp_commissioned", "execution_id": "e1"}
+        return {
+            "ok": True,
+            "reason": "continuity_hop_cdp_commissioned",
+            "execution_id": "e1",
+        }
 
     monkeypatch.setattr(cadence_mod, "run_continuity_hop_concurrent", _capture_hop)
     monkeypatch.setattr(
@@ -61,7 +65,9 @@ async def test_cadence_hop_passes_claimed_incumbent_to_continuity_hop(monkeypatc
     monkeypatch.setattr(
         cadence_mod,
         "assess_standing_handoff",
-        lambda tid: StandingHandoffFreshness("current", f"cortex://x/{tid}.md", None, 1.0),
+        lambda tid: StandingHandoffFreshness(
+            "current", f"cortex://x/{tid}.md", None, 1.0
+        ),
     )
 
     decision = HopDecision(
@@ -142,9 +148,7 @@ async def test_cadence_hop_residual_re_issue_subject_names_incumbent(monkeypatch
     monkeypatch.setattr(hop_mod, "commission_cdp_escalation", commission)
     monkeypatch.setattr(hop_mod, "post_terminal_status", _fake_terminal)
     monkeypatch.setattr(hop_mod, "live_run_for_thread", lambda _t: None)
-    monkeypatch.setattr(
-        hop_mod, "_post_hop_admit_report", AsyncMock(return_value=None)
-    )
+    monkeypatch.setattr(hop_mod, "_post_hop_admit_report", AsyncMock(return_value=None))
     monkeypatch.setattr(
         cadence_mod, "capacity_blocks_hop", lambda **_: CapacityGateResult.fail_open()
     )
@@ -152,7 +156,9 @@ async def test_cadence_hop_residual_re_issue_subject_names_incumbent(monkeypatch
     monkeypatch.setattr(
         cadence_mod,
         "assess_standing_handoff",
-        lambda tid: StandingHandoffFreshness("current", f"cortex://x/{tid}.md", None, 1.0),
+        lambda tid: StandingHandoffFreshness(
+            "current", f"cortex://x/{tid}.md", None, 1.0
+        ),
     )
 
     decision = HopDecision(
@@ -380,7 +386,9 @@ async def test_cadence_hop_names_queued_incumbent(monkeypatch):
     monkeypatch.setattr(
         cadence_mod,
         "assess_standing_handoff",
-        lambda tid: StandingHandoffFreshness("current", f"cortex://x/{tid}.md", None, 1.0),
+        lambda tid: StandingHandoffFreshness(
+            "current", f"cortex://x/{tid}.md", None, 1.0
+        ),
     )
 
     decision = HopDecision(

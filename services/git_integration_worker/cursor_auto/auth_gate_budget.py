@@ -19,9 +19,7 @@ _RULE1_AC_RE = re.compile(
     r"(?i)ac_verdict:\s*AC\d+\s*=\s*(fail|not_tested)\b"
     r"[^\n]*(blocked_auth|sign.?in|logged.?out|session)"
 )
-_AUTH_TOKEN_RE = re.compile(
-    r"(?i)(SIGN IN|sign-in|logged-out|blocked_auth)"
-)
+_AUTH_TOKEN_RE = re.compile(r"(?i)(SIGN IN|sign-in|logged-out|blocked_auth)")
 _PASSWORD_OVERLAY_RE = re.compile(
     r"(?i)password field.*(?:overlay|null|empty|blocked)"
     r"|(?:overlay|null|empty|blocked).*password field"

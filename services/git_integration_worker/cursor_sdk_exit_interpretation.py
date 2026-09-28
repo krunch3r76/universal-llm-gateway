@@ -75,7 +75,9 @@ def parse_accept_exits(command: str) -> frozenset[int]:
     match = _ACCEPT_EXITS_RE.search(command or "")
     if match is None:
         return frozenset()
-    return frozenset(int(part.strip()) for part in match.group(1).split(",") if part.strip())
+    return frozenset(
+        int(part.strip()) for part in match.group(1).split(",") if part.strip()
+    )
 
 
 def is_ruff_command(command: str) -> bool:

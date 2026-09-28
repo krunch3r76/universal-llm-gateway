@@ -85,7 +85,11 @@ def classify_ambient_cause(
     _, admit_hashes = normalize_wt_baseline(baseline)
     current_hash = _hash_worktree_file(source_repo, path)
     admit_hash = admit_hashes.get(path)
-    if admit_hash is not None and current_hash is not None and current_hash != admit_hash:
+    if (
+        admit_hash is not None
+        and current_hash is not None
+        and current_hash != admit_hash
+    ):
         return "ambient:concurrent_edit"
     if not _path_is_clean(source_repo, path, porcelain):
         return "ambient:concurrent_edit"

@@ -238,9 +238,7 @@ def poll_delivery_ack(
 ) -> dict[str, Any] | None:
     """Return delivered spool row and emit ``…inject.delivered`` when acked."""
     root = spool_dir or steer_spool_dir()
-    row = read_delivery_ack(
-        deposit.dispatch_id, deposit.entry_id, spool_dir=root
-    )
+    row = read_delivery_ack(deposit.dispatch_id, deposit.entry_id, spool_dir=root)
     if row is None:
         return None
     emit_frontier_event(

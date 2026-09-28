@@ -279,10 +279,7 @@ async def process_job(
         wire_dropped=tuple(job.wire_dropped_fields),
     )
     mode_declined: str | None = None
-    if (
-        job.execution_mode_declare_reason
-        == "predicate_unmet_requested_declined"
-    ):
+    if job.execution_mode_declare_reason == "predicate_unmet_requested_declined":
         mode_declined = job.execution_mode_declare_reason
     base_admit_body = build_admit_report_body(
         model=model,
@@ -478,9 +475,7 @@ async def process_job(
         return nest_under
 
     read_only = contract in {"ask", "recon"}
-    resolved_lane, _lane_reason = resolve_nested_checkout_lane(
-        job, read_only=read_only
-    )
+    resolved_lane, _lane_reason = resolve_nested_checkout_lane(job, read_only=read_only)
     message = build_sdk_message(
         job.body,
         contract=contract,

@@ -69,7 +69,9 @@ def label_surface_section(section: SurfaceSection) -> SurfaceSection:
     )
 
 
-def label_manifest_authority(manifest: EffectsManifest | None) -> EffectsManifest | None:
+def label_manifest_authority(
+    manifest: EffectsManifest | None,
+) -> EffectsManifest | None:
     """Label every emitted surface — flat undifferentiated merge is a defect (AC-9e)."""
     if manifest is None:
         return None
@@ -79,7 +81,9 @@ def label_manifest_authority(manifest: EffectsManifest | None) -> EffectsManifes
     return manifest.model_copy(update={"surfaces": labeled})
 
 
-def mixed_source_cross_check(existing: SurfaceSection, incoming_source: str) -> str | None:
+def mixed_source_cross_check(
+    existing: SurfaceSection, incoming_source: str
+) -> str | None:
     """Flag when fold-in would mix authority classes on one surface."""
     existing_auth = authority_for_surface_source(
         existing.surface, existing.source, entry_count=len(existing.entries)

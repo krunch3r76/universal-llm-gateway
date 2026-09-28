@@ -165,7 +165,9 @@ def emit_closeout_replay_skipped(**kwargs: str) -> None:
 
 
 def emit_closeout_replay_discarded(**kwargs: str) -> None:
-    _safe_emit(FrontierSdkAutoCloseoutReplayDiscarded(**kwargs), label="replay_discarded")
+    _safe_emit(
+        FrontierSdkAutoCloseoutReplayDiscarded(**kwargs), label="replay_discarded"
+    )
 
 
 def emit_closeout_replay_deferred(**kwargs: str | int) -> None:
@@ -173,7 +175,9 @@ def emit_closeout_replay_deferred(**kwargs: str | int) -> None:
 
 
 def emit_closeout_replay_abandoned(**kwargs: str | int) -> None:
-    _safe_emit(FrontierSdkAutoCloseoutReplayAbandoned(**kwargs), label="replay_abandoned")
+    _safe_emit(
+        FrontierSdkAutoCloseoutReplayAbandoned(**kwargs), label="replay_abandoned"
+    )
 
 
 def emit_closeout_replay_suppressed_loss_report(**kwargs: str) -> None:

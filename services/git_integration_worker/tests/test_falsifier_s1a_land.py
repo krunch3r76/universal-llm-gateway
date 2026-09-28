@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from git_integrate.git_cas import diff_sha256
 from git_integrate.land import land_op
+
 from services.git_integration_worker.cursor_dispatch_ledger import (
     CursorDispatchLedger,
     _connect,

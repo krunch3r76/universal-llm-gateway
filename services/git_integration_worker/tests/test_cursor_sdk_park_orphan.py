@@ -63,9 +63,7 @@ def _admission(req: CursorDispatchRequest) -> CursorDispatchResponse:
     )
 
 
-def _park_parent_child(
-    ledger: CursorDispatchLedger, *, repo: str
-) -> tuple[str, str]:
+def _park_parent_child(ledger: CursorDispatchLedger, *, repo: str) -> tuple[str, str]:
     parent = _req(dispatch_id="parent-o", execution_id="e-p", message="parent")
     ledger.admit(
         req=parent,
@@ -180,7 +178,9 @@ def test_queue_stall_alarm_emits_on_empty_workers() -> None:
         source_repo=repo,
         contract="implement",
     )
-    sibling = _req(dispatch_id="queued-1", execution_id="e-q", message="q", thread_id="t2")
+    sibling = _req(
+        dispatch_id="queued-1", execution_id="e-q", message="q", thread_id="t2"
+    )
     queued = ledger.admit(
         req=sibling,
         fingerprint=ledger.fingerprint(sibling),

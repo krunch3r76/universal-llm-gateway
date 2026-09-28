@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from universal_concurrency import FifoCapacityGate
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_gate import (
@@ -20,7 +21,6 @@ from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
 )
-from universal_concurrency import FifoCapacityGate
 
 
 @pytest.fixture(autouse=True)

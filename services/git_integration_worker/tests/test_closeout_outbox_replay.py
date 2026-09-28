@@ -93,7 +93,9 @@ class _App:
 def test_replay_discards_superseded_job() -> None:
     job = _enqueue()
     get_ledger().bind_dispatch(job.job_id, dispatch_id="auto-deadbeef001")
-    get_ledger().mark_terminal(job.job_id, status="superseded", terminal_reason="superseded")
+    get_ledger().mark_terminal(
+        job.job_id, status="superseded", terminal_reason="superseded"
+    )
     _persist_row(job_id=job.job_id)
 
     with patch(
@@ -178,16 +180,20 @@ def test_replay_abandons_after_max_attempts() -> None:
         return_value=BusReplyResult(status_code=500, body={"error": "fail"})
     )
 
-    with patch(
-        "services.git_integration_worker.cursor_auto.closeout_replay.fetch_turns_from",
-        new_callable=AsyncMock,
-        return_value=([], None),
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_replay.CursorBusClient",
-        return_value=mock_client,
-    ), patch(
-        "services.git_integration_worker.cursor_auto.closeout_replay._post_abandon_notice",
-        new_callable=AsyncMock,
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_replay.fetch_turns_from",
+            new_callable=AsyncMock,
+            return_value=([], None),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_replay.CursorBusClient",
+            return_value=mock_client,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.closeout_replay._post_abandon_notice",
+            new_callable=AsyncMock,
+        ),
     ):
         asyncio.run(startup_closeout_outbox_replay(_App("new-worker")))
 

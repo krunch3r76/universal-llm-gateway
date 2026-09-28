@@ -86,6 +86,8 @@ _PRESERVE_ON_NO_CODE_CHANGE_SURFACES = frozenset(
     {"cortex", "fs", "agent_bus", "rag", SUBAGENTS_SURFACE}
 )
 _SURFACE_ORDER = ("repo", "cortex", "agent_bus", "fs", "rag", "service", "subagents")
+
+
 def _surface_for_mcp_tool(tool_name: str) -> str:
     if tool_name in _CORTEX_TOOLS:
         return "cortex"

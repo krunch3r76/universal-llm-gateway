@@ -11,9 +11,9 @@ from transport_utils import DEFAULT_CORTEX_URL, make_sync_client
 
 from implement_admission.skill_catalog_resolver import (
     RESOLVER_VERSION,
+    canonical_catalog_slug,
     catalog_digest,
     catalog_source_uris,
-    canonical_catalog_slug,
     resolve_canonical_source_uri,
 )
 

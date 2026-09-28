@@ -12,7 +12,9 @@ _TRIAGE_EFFECTS: tuple[tuple[str, str], ...] = (
     ("recon_pending", "blocked until re-triage after two-axis recon"),
 )
 
-MECHANICAL, JUDGMENT_REQUIRED, RECON_PENDING = tuple(name for name, _ in _TRIAGE_EFFECTS)
+MECHANICAL, JUDGMENT_REQUIRED, RECON_PENDING = tuple(
+    name for name, _ in _TRIAGE_EFFECTS
+)
 
 IMPLEMENT_GATE_TRIAGE = frozenset({MECHANICAL, JUDGMENT_REQUIRED, RECON_PENDING})
 

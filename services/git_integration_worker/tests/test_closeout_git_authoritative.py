@@ -65,7 +65,9 @@ def _write(path: Path, rel: str, content: str = "# v1\n") -> None:
 def _commit_all(repo: Path, rels: tuple[str, ...]) -> None:
     for rel in rels:
         _write(repo, rel)
-    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "."], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(repo), "commit", "-m", "baseline"],
         check=True,
@@ -182,7 +184,12 @@ def test_cursor_and_gitignored_never_in_files_buckets(tmp_path: Path) -> None:
     payload = json.loads(delivery.body)
     assert payload["files_modified"] == ["tracked.py"]
     assert payload["files_created"] == []
-    for bucket in ("files_created", "files_modified", "files_deleted", "files_outside_repo"):
+    for bucket in (
+        "files_created",
+        "files_modified",
+        "files_deleted",
+        "files_outside_repo",
+    ):
         for path in payload.get(bucket, []):
             assert not path.startswith(".cursor/")
             assert not path.startswith(".ignored/")
@@ -249,9 +256,7 @@ def test_manifest_git_disagreement_emits_single_divergence(tmp_path: Path) -> No
     _write(tmp_path, "module.py", "# edited\n")
     manifest = _manifest_with_write_ops(tmp_path, ("module.py",))
     git_cs = ChangeSet(created=(), modified=("module.py",), deleted=())
-    manifest_cs, _, _ = repo_change_set_from_manifest(
-        manifest, source_repo=tmp_path
-    )
+    manifest_cs, _, _ = repo_change_set_from_manifest(manifest, source_repo=tmp_path)
     assert manifest_cs is not None
     assert manifest_cs.created == ("module.py",)
     from services.git_integration_worker.cursor_sdk_closeout import capture_wt_baseline
@@ -330,7 +335,10 @@ def test_ruff_unavailable_still_delivers_with_deviation(tmp_path: Path) -> None:
         )
     payload = json.loads(delivery.body)
     assert "verification:lint_unavailable" in payload["deviations"]
-    assert payload["status"] in {CloseoutStatus.COMPLETE.value, CloseoutStatus.PARTIAL.value}
+    assert payload["status"] in {
+        CloseoutStatus.COMPLETE.value,
+        CloseoutStatus.PARTIAL.value,
+    }
 
 
 def test_mode_only_chmod_without_label_ops_is_not_files_modified(
@@ -406,9 +414,11 @@ def test_manifest_only_on_disk_file_surfaces_with_divergence(tmp_path: Path) -> 
     )
     payload = json.loads(delivery.body)
     ambient = payload.get("files_ambient_repo_movement") or []
-    assert ghost in payload["files_modified"] or ghost in payload.get(
-        "files_untracked_or_ignored", []
-    ) or any(entry["path"] == ghost for entry in ambient)
+    assert (
+        ghost in payload["files_modified"]
+        or ghost in payload.get("files_untracked_or_ignored", [])
+        or any(entry["path"] == ghost for entry in ambient)
+    )
     assert "divergence:manifest_vs_git_labels" in payload["deviations"]
 
 

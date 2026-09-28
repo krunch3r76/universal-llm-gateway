@@ -51,7 +51,9 @@ def _g1_done_body() -> str:
 def test_journal_sparse_to_two_mutations_tip_walk(tmp_path: Path) -> None:
     files_root = tmp_path
     slug = "foo"
-    birth_sha = birth_scoreboard(slug, scoreboard_body=_sparse_body(), files_root=files_root)
+    birth_sha = birth_scoreboard(
+        slug, scoreboard_body=_sparse_body(), files_root=files_root
+    )
     first = forward_mutate_tip(
         slug,
         next_body=_g1_done_body(),
@@ -66,7 +68,9 @@ def test_journal_sparse_to_two_mutations_tip_walk(tmp_path: Path) -> None:
     assert first.tip_sha != birth_sha
     second = forward_mutate_tip(
         slug,
-        next_body=_g1_done_body().replace("G2 | Frame | OPEN", "G2 | Frame | WIP(conductor)"),
+        next_body=_g1_done_body().replace(
+            "G2 | Frame | OPEN", "G2 | Frame | WIP(conductor)"
+        ),
         seat="conductor",
         dispatch_id="d1",
         reason="G2 densify",
@@ -139,7 +143,9 @@ def test_unwitnessed_done_to_claimed_allowed() -> None:
 
 
 def test_reject_rewind_closed_row_unit() -> None:
-    reason = reject_rewind_closed_row(prior_body=_g1_done_body(), next_body=_sparse_body())
+    reason = reject_rewind_closed_row(
+        prior_body=_g1_done_body(), next_body=_sparse_body()
+    )
     assert reason is not None
 
 
@@ -175,7 +181,9 @@ def test_crash_after_journal_before_tip_read_tip_recovers(tmp_path: Path) -> Non
     assert walk_journal_to_tip(slug, files_root=files_root) == new_sha
 
 
-def test_birth_crash_journal_present_tip_absent_read_tip_recovers(tmp_path: Path) -> None:
+def test_birth_crash_journal_present_tip_absent_read_tip_recovers(
+    tmp_path: Path,
+) -> None:
     files_root = tmp_path
     slug = "crash-birth"
     body = _sparse_body()
@@ -225,7 +233,10 @@ def test_ac_p2_5_journal_stops_block_reason(tmp_path: Path) -> None:
 
     class _Cortex:
         def entity_get(self, entity_id: str, **kwargs):  # noqa: ANN003, ANN201
-            return {"id": entity_id, "attributes": {"density_triage": "judgment_required"}}
+            return {
+                "id": entity_id,
+                "attributes": {"density_triage": "judgment_required"},
+            }
 
         def list_relationships(self, entity_id: str, *, type_id: str | None = None):  # noqa: ARG002
             return []

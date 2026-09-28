@@ -59,7 +59,9 @@ def extract_doc_validate_attestation(
         if entry == _DOC_VALIDATE_PASS_TOKEN:
             has_pass_token = True
         elif entry.startswith(_TEMPLATE_VERSION_PREFIX):
-            template_version = entry.removeprefix(_TEMPLATE_VERSION_PREFIX).strip() or None
+            template_version = (
+                entry.removeprefix(_TEMPLATE_VERSION_PREFIX).strip() or None
+            )
         elif entry.startswith(_SKILL_DIGEST_PREFIX):
             skill_digest = entry.removeprefix(_SKILL_DIGEST_PREFIX).strip() or None
     return DocValidateAttestation(

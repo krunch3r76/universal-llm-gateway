@@ -513,7 +513,9 @@ def test_park_harvest_continue_candidates_no_grace() -> None:
 
 
 @pytest.mark.asyncio
-async def test_fire_park_harvest_failed_post_leaves_row_retryable(tmp_path, monkeypatch):
+async def test_fire_park_harvest_failed_post_leaves_row_retryable(
+    tmp_path, monkeypatch
+):
     """F2: failed POST must not stamp hop_park_harvest_fired_at; watchdog retries."""
     ledger = CursorDispatchLedger.instance()
     req = _req()

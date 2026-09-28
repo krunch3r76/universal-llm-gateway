@@ -127,18 +127,27 @@ def test_conversation_task_entry_wire_subagent_type_kind() -> None:
 
 
 def test_subagent_type_from_stream_args_wire_and_legacy() -> None:
-    assert subagent_type_from_stream_args(
-        "Task",
-        {"subagentType": {"kind": "explore"}},
-    ) == "explore"
-    assert subagent_type_from_stream_args(
-        "Task",
-        {"subagentType": {"kind": "generalPurpose"}},
-    ) == "generalPurpose"
-    assert subagent_type_from_stream_args(
-        "Task",
-        {"subagent_type": "explore"},
-    ) == "explore"
+    assert (
+        subagent_type_from_stream_args(
+            "Task",
+            {"subagentType": {"kind": "explore"}},
+        )
+        == "explore"
+    )
+    assert (
+        subagent_type_from_stream_args(
+            "Task",
+            {"subagentType": {"kind": "generalPurpose"}},
+        )
+        == "generalPurpose"
+    )
+    assert (
+        subagent_type_from_stream_args(
+            "Task",
+            {"subagent_type": "explore"},
+        )
+        == "explore"
+    )
 
 
 def test_entry_from_subagent_message_wire_subagent_type_kind() -> None:

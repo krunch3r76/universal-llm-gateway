@@ -488,9 +488,7 @@ def release_lane_worktree(
                 thread_id=resolved_thread,
                 worktree_path=str(wt_path),
             )
-            return ReleaseResult(
-                released=False, refusal=ReleaseRefusal.DETACH_FAILED
-            )
+            return ReleaseResult(released=False, refusal=ReleaseRefusal.DETACH_FAILED)
         return ReleaseResult(released=False, deferred_to_caller=True)
 
     removed = False

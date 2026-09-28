@@ -75,6 +75,8 @@ def _cortex_entry_from_stream_observation(
         detail=detail,
         identity=identity,
     )
+
+
 def harvest_cortex_assertion_ids(manifest: EffectsManifest | None) -> list[str]:
     """Collect deduped assertion ids from cortex-surface manifest entry identities."""
     if manifest is None:

@@ -17,12 +17,17 @@ from implement_admission.closeout_models import (
     SurfaceSection,
 )
 
+from services.git_integration_worker.cursor_sdk_boundary_finalize import (
+    finalize_boundary_manifest,
+)
 from services.git_integration_worker.cursor_sdk_cortex_identity import (
     assertion_id_from_cortex_observation,
     enrich_cortex_identities_from_stream,
     merge_stream_cortex_entries,
 )
-from services.git_integration_worker.cursor_sdk_manifest import harvest_cortex_assertion_ids
+from services.git_integration_worker.cursor_sdk_manifest import (
+    harvest_cortex_assertion_ids,
+)
 from services.git_integration_worker.cursor_sdk_observed_reconcile import (
     reconcile_observed_vs_committed,
 )
@@ -36,13 +41,14 @@ from services.git_integration_worker.cursor_sdk_toolcall_retention import (
     harvest_result_from_observation,
     hydrate_tool_calls_for_boundary_harvest,
 )
-from services.git_integration_worker.cursor_sdk_boundary_finalize import (
-    finalize_boundary_manifest,
-)
 
 pytestmark = pytest.mark.offline
 
-_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "item18_attempt9_live_obs_result.json"
+_FIXTURE = (
+    Path(__file__).resolve().parent
+    / "fixtures"
+    / "item18_attempt9_live_obs_result.json"
+)
 _LIVE_ENTITY = "todo:ac9g-live-falsifier"
 _LIVE_CALL_ID = "tool_168be023-91f8-47a3-a61b-f85a9ff0e23"
 _LIVE_ASSERTION_ID = 27489

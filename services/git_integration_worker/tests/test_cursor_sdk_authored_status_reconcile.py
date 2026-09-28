@@ -47,6 +47,7 @@ def _passing_pytest_obs() -> ToolCallObservation:
         result_body_status="present",
     )
 
+
 _PARTIAL_SECTION2 = """## Closeout
 
 ### §2
@@ -78,12 +79,10 @@ checkpoint_claim: committed deadbeef paths=1
 
 
 def test_reconcile_records_disagreement_when_section2_partial() -> None:
-    status, work_outcome, disagreement, deviations = (
-        reconcile_structured_with_authored(
-            status=CloseoutStatus.COMPLETE,
-            work_outcome=WorkOutcome.SHIPPED,
-            sidecar_markdown=_PARTIAL_SECTION2,
-        )
+    status, work_outcome, disagreement, deviations = reconcile_structured_with_authored(
+        status=CloseoutStatus.COMPLETE,
+        work_outcome=WorkOutcome.SHIPPED,
+        sidecar_markdown=_PARTIAL_SECTION2,
     )
     assert status == CloseoutStatus.COMPLETE
     assert work_outcome == WorkOutcome.SHIPPED
@@ -97,13 +96,11 @@ def test_reconcile_records_disagreement_when_section2_partial() -> None:
 
 def test_reconcile_records_disagreement_when_section2_absent_no_deliverables() -> None:
     """Absent §2 on deliverables_expected=False must record disagreement, not cap."""
-    status, work_outcome, disagreement, deviations = (
-        reconcile_structured_with_authored(
-            status=CloseoutStatus.COMPLETE,
-            work_outcome=WorkOutcome.SHIPPED,
-            sidecar_markdown="# no section2 status\n",
-            deliverables_expected=False,
-        )
+    status, work_outcome, disagreement, deviations = reconcile_structured_with_authored(
+        status=CloseoutStatus.COMPLETE,
+        work_outcome=WorkOutcome.SHIPPED,
+        sidecar_markdown="# no section2 status\n",
+        deliverables_expected=False,
     )
     assert status == CloseoutStatus.COMPLETE
     assert work_outcome == WorkOutcome.SHIPPED
@@ -115,13 +112,11 @@ def test_reconcile_records_disagreement_when_section2_absent_no_deliverables() -
 
 
 def test_reconcile_records_when_sidecar_markdown_empty_no_deliverables() -> None:
-    status, work_outcome, disagreement, deviations = (
-        reconcile_structured_with_authored(
-            status=CloseoutStatus.COMPLETE,
-            work_outcome=WorkOutcome.SHIPPED,
-            sidecar_markdown=None,
-            deliverables_expected=False,
-        )
+    status, work_outcome, disagreement, deviations = reconcile_structured_with_authored(
+        status=CloseoutStatus.COMPLETE,
+        work_outcome=WorkOutcome.SHIPPED,
+        sidecar_markdown=None,
+        deliverables_expected=False,
     )
     assert status == CloseoutStatus.COMPLETE
     assert work_outcome == WorkOutcome.SHIPPED
@@ -132,13 +127,11 @@ def test_reconcile_records_when_sidecar_markdown_empty_no_deliverables() -> None
 
 def test_reconcile_absent_noop_when_deliverables_expected() -> None:
     """Evidence-backed implement path: absent §2 does not record disagreement."""
-    status, work_outcome, disagreement, deviations = (
-        reconcile_structured_with_authored(
-            status=CloseoutStatus.COMPLETE,
-            work_outcome=WorkOutcome.SHIPPED,
-            sidecar_markdown="# no section2 status\n",
-            deliverables_expected=True,
-        )
+    status, work_outcome, disagreement, deviations = reconcile_structured_with_authored(
+        status=CloseoutStatus.COMPLETE,
+        work_outcome=WorkOutcome.SHIPPED,
+        sidecar_markdown="# no section2 status\n",
+        deliverables_expected=True,
     )
     assert status == CloseoutStatus.COMPLETE
     assert work_outcome == WorkOutcome.SHIPPED
@@ -147,13 +140,11 @@ def test_reconcile_absent_noop_when_deliverables_expected() -> None:
 
 
 def test_reconcile_noop_when_section2_complete() -> None:
-    status, work_outcome, disagreement, deviations = (
-        reconcile_structured_with_authored(
-            status=CloseoutStatus.COMPLETE,
-            work_outcome=WorkOutcome.SHIPPED,
-            sidecar_markdown="status_claim: complete — done\n",
-            deliverables_expected=False,
-        )
+    status, work_outcome, disagreement, deviations = reconcile_structured_with_authored(
+        status=CloseoutStatus.COMPLETE,
+        work_outcome=WorkOutcome.SHIPPED,
+        sidecar_markdown="status_claim: complete — done\n",
+        deliverables_expected=False,
     )
     assert status == CloseoutStatus.COMPLETE
     assert work_outcome == WorkOutcome.SHIPPED
@@ -171,13 +162,11 @@ ac_verdict: all 6 AC members pass (table below)
 
 def test_reconcile_authored_complete_does_not_upgrade_checks_failed() -> None:
     """auto-32296c7fe474 class — §2 complete must not launder observed check failure."""
-    status, work_outcome, disagreement, deviations = (
-        reconcile_structured_with_authored(
-            status=CloseoutStatus.PARTIAL,
-            work_outcome=WorkOutcome.CHECKS_FAILED,
-            sidecar_markdown=_COMPLETE_SECTION2_PAPER_OVER,
-            deliverables_expected=True,
-        )
+    status, work_outcome, disagreement, deviations = reconcile_structured_with_authored(
+        status=CloseoutStatus.PARTIAL,
+        work_outcome=WorkOutcome.CHECKS_FAILED,
+        sidecar_markdown=_COMPLETE_SECTION2_PAPER_OVER,
+        deliverables_expected=True,
     )
     assert status == CloseoutStatus.PARTIAL
     assert work_outcome == WorkOutcome.CHECKS_FAILED

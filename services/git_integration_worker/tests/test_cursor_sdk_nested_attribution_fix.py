@@ -31,7 +31,9 @@ from services.git_integration_worker.cursor_sdk_nested_attribution import (
     _child_manifest_from_sidecar,
     fold_nested_boundary_effects,
 )
-from services.git_integration_worker.cursor_sdk_stream_capture import ToolCallObservation
+from services.git_integration_worker.cursor_sdk_stream_capture import (
+    ToolCallObservation,
+)
 
 pytestmark = pytest.mark.offline
 
@@ -202,10 +204,11 @@ def test_ac9n_fixture_vs_production_sidecar_shape_gap(tmp_path: Path) -> None:
     """AC-9n: unit test used raw JSON sidecar; production uses markdown + appendix."""
     child_id = "child-dispatch"
     child_manifest = _cortex_only_manifest()
-    fixture_shape = json.dumps({"effects_manifest": child_manifest.model_dump(mode="json")})
-    production_shape = (
-        "## status\n\ncomplete\n\n## effects_manifest\n\n"
-        + json.dumps(child_manifest.model_dump(mode="json"), indent=2)
+    fixture_shape = json.dumps(
+        {"effects_manifest": child_manifest.model_dump(mode="json")}
+    )
+    production_shape = "## status\n\ncomplete\n\n## effects_manifest\n\n" + json.dumps(
+        child_manifest.model_dump(mode="json"), indent=2
     )
     sidecar_dir = tmp_path / "tmp/reviews/closeouts"
     sidecar_dir.mkdir(parents=True)
@@ -236,7 +239,7 @@ def test_finalize_boundary_manifest_end_to_end_production_shape(tmp_path: Path) 
     sidecar_dir = tmp_path / "tmp/reviews/closeouts"
     sidecar_dir.mkdir(parents=True)
     (sidecar_dir / f"{child_id}.md").write_text(
-        f"## status\n\ncomplete\n\n## effects_manifest\n\n"
+        "## status\n\ncomplete\n\n## effects_manifest\n\n"
         + json.dumps(child_manifest.model_dump(mode="json"), indent=2),
         encoding="utf-8",
     )

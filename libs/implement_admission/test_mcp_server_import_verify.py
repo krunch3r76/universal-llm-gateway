@@ -67,7 +67,9 @@ def test_mcp_server_import_smoke_verified_on_success(tmp_path: Path) -> None:
     with patch(
         "implement_admission.mcp_server_import_verify._run_import", return_value=True
     ) as run:
-        status = mcp_server_import_smoke(["services/mcp-server/server.py"], root=tmp_path)
+        status = mcp_server_import_smoke(
+            ["services/mcp-server/server.py"], root=tmp_path
+        )
     assert status == "verified"
     run.assert_called_once()
     assert run.call_args.args[0] == "server"
@@ -95,13 +97,17 @@ def test_mcp_server_import_smoke_indeterminate_on_subprocess_error(
 ) -> None:
     (tmp_path / "services" / "mcp-server").mkdir(parents=True)
     (tmp_path / "libs").mkdir()
-    (tmp_path / "services" / "mcp-server" / "server.py").write_text("", encoding="utf-8")
+    (tmp_path / "services" / "mcp-server" / "server.py").write_text(
+        "", encoding="utf-8"
+    )
 
     with patch(
         "implement_admission.mcp_server_import_verify._run_import",
         side_effect=OSError("spawn failed"),
     ):
-        status = mcp_server_import_smoke(["services/mcp-server/server.py"], root=tmp_path)
+        status = mcp_server_import_smoke(
+            ["services/mcp-server/server.py"], root=tmp_path
+        )
     assert status == "indeterminate"
 
 

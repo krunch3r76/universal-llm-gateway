@@ -76,7 +76,9 @@ def test_resolve_nested_checkout_lane_contracts(
     expected_lane: str,
     expected_reason: str,
 ) -> None:
-    lane, reason = resolve_nested_checkout_lane(_job(contract=contract), read_only=False)
+    lane, reason = resolve_nested_checkout_lane(
+        _job(contract=contract), read_only=False
+    )
     assert lane == expected_lane
     assert reason == expected_reason
 
@@ -91,7 +93,9 @@ def test_explicit_lane_a_on_implement() -> None:
 
 
 def test_read_only_does_not_select_b() -> None:
-    lane, reason = resolve_nested_checkout_lane(_job(contract="implement"), read_only=True)
+    lane, reason = resolve_nested_checkout_lane(
+        _job(contract="implement"), read_only=True
+    )
     assert lane == "A"
     assert reason == "read_only"
 
@@ -150,9 +154,15 @@ def test_may_nest_under_refuses_foreign_lane_a() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_nest_under_refuses_lane_a_holder(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_resolve_nest_under_refuses_lane_a_holder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     job = _job(contract="implement")
-    gate_plan = {"action": "nest_park", "reason": "gate_at_capacity_prefer_park", "gate": {}}
+    gate_plan = {
+        "action": "nest_park",
+        "reason": "gate_at_capacity_prefer_park",
+        "gate": {},
+    }
 
     monkeypatch.setattr(
         "services.git_integration_worker.cursor_auto.nest_parent.CursorDispatchLedger.instance",
@@ -228,13 +238,17 @@ def test_reflex_read_only_does_not_stamp_b(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_build_sdk_message_lane_b_omits_lane_a_checkpoint() -> None:
-    message = build_sdk_message("TYPE: DIRECTIVE\nscope: foo\n", contract="implement", lane="B")
+    message = build_sdk_message(
+        "TYPE: DIRECTIVE\nscope: foo\n", contract="implement", lane="B"
+    )
     assert "Lane-A checkpoint" not in message
     assert "LAND DISPOSITION" in reporting_contract_block(lane="B")
 
 
 def test_build_sdk_message_lane_a_keeps_checkpoint() -> None:
-    message = build_sdk_message("TYPE: DIRECTIVE\nscope: foo\n", contract="implement", lane="A")
+    message = build_sdk_message(
+        "TYPE: DIRECTIVE\nscope: foo\n", contract="implement", lane="A"
+    )
     assert "Lane-A checkpoint" in message
     assert "status_claim:" in message
 

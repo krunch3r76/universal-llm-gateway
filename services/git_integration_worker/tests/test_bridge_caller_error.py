@@ -18,8 +18,12 @@ def test_spawn_enoent_death_surfaces_classified_code_not_bare_network() -> None:
         "bridge_stderr_tail": ["Error: spawn /bin/bash ENOENT"],
         "cause": "ConnectError: [Errno 111] Connection refused",
     }
-    wrapped = SdkRunAbortedError("Bridge request failed: connection refused", forensics=forensics)
-    wrapped.__cause__ = NetworkError("Bridge request failed: ConnectError: [Errno 111] Connection refused")
+    wrapped = SdkRunAbortedError(
+        "Bridge request failed: connection refused", forensics=forensics
+    )
+    wrapped.__cause__ = NetworkError(
+        "Bridge request failed: ConnectError: [Errno 111] Connection refused"
+    )
 
     delivery = bridge_failure_delivery_from_forensics(forensics=forensics, exc=wrapped)
     assert delivery is not None

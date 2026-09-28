@@ -131,7 +131,9 @@ def build_bridge_command(
         command.append(f"PATH={path_value}")
     if dispatch_id is not None:
         command.append(f"CURSOR_SDK_DISPATCH_ID={dispatch_id}")
-        command.extend(f"{k}={v}" for k, v in dispatch_git_env_vars(dispatch_id).items())
+        command.extend(
+            f"{k}={v}" for k, v in dispatch_git_env_vars(dispatch_id).items()
+        )
         command.extend(f"{k}={v}" for k, v in dispatch_ledger_env_vars().items())
     command.append(bridge_bin)
     return command

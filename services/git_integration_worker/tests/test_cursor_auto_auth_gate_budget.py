@@ -143,8 +143,7 @@ def test_negatives_do_not_count():
         turn_number=2,
         status="complete",
         body_extra=(
-            "Applying as: Kaywan Mansubi\n"
-            "ac_verdict: AC0=pass reason=authenticated"
+            "Applying as: Kaywan Mansubi\nac_verdict: AC0=pass reason=authenticated"
         ),
     )
     # (c) bare session dead without co-occurrence guards on Rule 1 / status
@@ -285,9 +284,7 @@ async def test_post_ack_one_failure_blocks_at_admit(monkeypatch):
         AsyncMock(return_value=turns),
     )
     emit = MagicMock()
-    monkeypatch.setattr(
-        admit_gates, "emit_frontier_sdk_auto_auth_gate_blocked", emit
-    )
+    monkeypatch.setattr(admit_gates, "emit_frontier_sdk_auto_auth_gate_blocked", emit)
     terminal = AsyncMock(
         return_value={"ok": False, "terminal_status": "status:blocked"}
     )
@@ -375,9 +372,7 @@ async def test_admit_gate_blocks_third_implement(monkeypatch):
         AsyncMock(return_value=turns),
     )
     emit = MagicMock()
-    monkeypatch.setattr(
-        admit_gates, "emit_frontier_sdk_auto_auth_gate_blocked", emit
-    )
+    monkeypatch.setattr(admit_gates, "emit_frontier_sdk_auto_auth_gate_blocked", emit)
     terminal = AsyncMock(
         return_value={"ok": False, "terminal_status": "status:blocked"}
     )

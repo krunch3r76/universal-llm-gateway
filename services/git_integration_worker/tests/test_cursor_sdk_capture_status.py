@@ -1758,7 +1758,9 @@ def test_verification_row_kept_keeps_exit_zero_row() -> None:
         _verification_row_kept,
     )
 
-    assert _verification_row_kept({"command": "pytest -q foo.py", "exit_code": 0}) is True
+    assert (
+        _verification_row_kept({"command": "pytest -q foo.py", "exit_code": 0}) is True
+    )
     assert (
         _verification_row_kept(
             {

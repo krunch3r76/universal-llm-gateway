@@ -43,7 +43,10 @@ def test_expand_contract_preserves_operator_implement() -> None:
         parent_dispatch_thread_id="10479",
         admitted_via="cursor-auto",
     )
-    assert expand_contract_for_admit(req, handoff_contract="pure-mechanical") == "implement"
+    assert (
+        expand_contract_for_admit(req, handoff_contract="pure-mechanical")
+        == "implement"
+    )
     assert (
         giw_should_expand_prompt(
             req,
@@ -66,7 +69,9 @@ def test_giw_should_not_expand_wake_or_mechanical() -> None:
         continuity_root_thread_id="10479",
     )
     assert (
-        giw_should_expand_prompt(wake_req, wake_req.message or "", handoff_contract="none")
+        giw_should_expand_prompt(
+            wake_req, wake_req.message or "", handoff_contract="none"
+        )
         is False
     )
 
@@ -123,7 +128,9 @@ def test_cursor_auto_enrolled_sketch_admit_records_prompt_expand_pending(
 
     expand_calls: list[tuple[str, dict[str, str]]] = []
 
-    def _fake_expand(task: str, options: dict[str, str], **_kwargs: object) -> ExpandRun:
+    def _fake_expand(
+        task: str, options: dict[str, str], **_kwargs: object
+    ) -> ExpandRun:
         expand_calls.append((task, options))
         return ExpandRun(ok=True, prompt="TASK'", execution_id="exp-admit-test")
 

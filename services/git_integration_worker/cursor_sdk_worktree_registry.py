@@ -237,8 +237,7 @@ def _emit_registry_transition(
 def _migrate_lane_worktrees_pk(conn: sqlite3.Connection) -> None:
     global _SCHEMA_MIGRATED
     cols = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(cursor_sdk_lane_worktrees)")
+        row[1] for row in conn.execute("PRAGMA table_info(cursor_sdk_lane_worktrees)")
     }
     if not cols:
         return
@@ -336,8 +335,7 @@ def _migrate_lane_worktrees_pk(conn: sqlite3.Connection) -> None:
 def ensure_worktree_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_MINT_MUTEX_DDL)
     cols = {
-        row[1]
-        for row in conn.execute("PRAGMA table_info(cursor_sdk_lane_worktrees)")
+        row[1] for row in conn.execute("PRAGMA table_info(cursor_sdk_lane_worktrees)")
     }
     if cols and "source_repo" not in cols:
         _migrate_lane_worktrees_pk(conn)
@@ -819,9 +817,7 @@ def _resolve_thread_id(
         source_repo=source_repo,
     )
     if record is not None and record.thread_id:
-        repo = source_repo or (
-            Path(record.source_repo) if record.source_repo else None
-        )
+        repo = source_repo or (Path(record.source_repo) if record.source_repo else None)
         return record.thread_id, repo
     return dispatch_id, source_repo
 

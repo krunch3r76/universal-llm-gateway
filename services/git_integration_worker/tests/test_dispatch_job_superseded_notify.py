@@ -8,14 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from agent_bus_store.wait_status import derive_status, is_complete
 
+from services.git_integration_worker.cursor_auto.dispatch_job_superseded_events import (
+    emit_dispatch_job_superseded_notify,
+)
 from services.git_integration_worker.cursor_auto.queue import AutoJobQueue
 from services.git_integration_worker.cursor_auto.supersede import (
     QUEUE_WITHDRAW,
     SUPERSEDED_TERMINAL,
     supersede_same_thread_inflight,
-)
-from services.git_integration_worker.cursor_auto.dispatch_job_superseded_events import (
-    emit_dispatch_job_superseded_notify,
 )
 
 

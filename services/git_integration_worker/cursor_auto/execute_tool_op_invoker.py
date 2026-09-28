@@ -52,7 +52,9 @@ def _base_relay_registry() -> dict[tuple[str, str], RelayFn]:
     registry: dict[tuple[str, str], RelayFn] = {
         ("observability", "query"): _relay_observability_query,
         ("cortex", "search"): lambda args: _relay_cortex_dispatch("search", args),
-        ("cortex", "entity_get"): lambda args: _relay_cortex_dispatch("entity_get", args),
+        ("cortex", "entity_get"): lambda args: _relay_cortex_dispatch(
+            "entity_get", args
+        ),
     }
     if email_bridge_execute_relay_enabled():
         registry[("email", "pull")] = relay_email_pull
@@ -96,7 +98,10 @@ def _relay_cortex_dispatch(op: str, arguments: dict[str, Any]) -> dict[str, Any]
             "status_code": None,
         }
     if not isinstance(parsed, dict):
-        return {"error": f"cortex-api returned {type(parsed).__name__}", "status_code": None}
+        return {
+            "error": f"cortex-api returned {type(parsed).__name__}",
+            "status_code": None,
+        }
     return parsed
 
 
@@ -132,7 +137,9 @@ def _relay_observability_query(arguments: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _fire_tool_op_sync(*, tool: str, op: str, arguments: dict[str, Any]) -> dict[str, Any]:
+def _fire_tool_op_sync(
+    *, tool: str, op: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
     registry = relay_registry()
     relay_fn = registry.get((tool, op))
     if relay_fn is None:

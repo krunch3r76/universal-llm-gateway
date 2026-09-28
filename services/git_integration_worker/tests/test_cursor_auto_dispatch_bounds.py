@@ -14,9 +14,12 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from implement_admission.workflow_registry import (
+    MECHANICAL_WORKFLOW,
+    load_workflow_registry,
+)
 
 from services.git_integration_worker.cursor_auto.admit_gates import blocking_admit_gate
-from implement_admission.workflow_registry import MECHANICAL_WORKFLOW, load_workflow_registry
 from services.git_integration_worker.cursor_auto.dispatch_bounds import (
     clamp_effort_to_model_card,
     is_roaming_tier,
@@ -177,9 +180,10 @@ def test_reasoning_model_never_runs_the_mechanical_leg() -> None:
         handoff_contract=resolve_handoff_contract("implement"),
     )
     assert displaced == "cursor/claude-opus-5"
-    assert out["resolved_model_id"] == load_workflow_registry().workflows[
-        MECHANICAL_WORKFLOW
-    ].model
+    assert (
+        out["resolved_model_id"]
+        == load_workflow_registry().workflows[MECHANICAL_WORKFLOW].model
+    )
     # Opus-intrinsic knobs must not ride along onto the compose tier.
     assert out.get("model_knobs") == {}
     assert out["honored"] is False

@@ -96,10 +96,7 @@ def test_current_preserve_unknown_contract() -> None:
 
 def test_pre_fix_reconstruction_matches_known_collapse() -> None:
     """Document pre-fix wrong answers — not the AC; anchors the refusal demo."""
-    assert (
-        pre_fix_admit_landed_true(ancestry_on_master=None, commits_ahead=3)
-        is False
-    )
+    assert pre_fix_admit_landed_true(ancestry_on_master=None, commits_ahead=3) is False
     assert pre_fix_missing_tip_commits_ahead() == 0
 
 
@@ -112,9 +109,7 @@ def main() -> int:
         try:
             assert_unknown_ancestry_is_null(pre_fix_admit_landed_true)
         except AssertionError:
-            got = pre_fix_admit_landed_true(
-                ancestry_on_master=None, commits_ahead=3
-            )
+            got = pre_fix_admit_landed_true(ancestry_on_master=None, commits_ahead=3)
             failures.append(
                 f"unknown_ancestry: expected None under new contract; "
                 f"pre_fix got {got!r}"
@@ -124,8 +119,7 @@ def main() -> int:
         except AssertionError:
             got = pre_fix_missing_tip_commits_ahead()
             failures.append(
-                f"missing_tip: expected None under new contract; "
-                f"pre_fix got {got!r}"
+                f"missing_tip: expected None under new contract; pre_fix got {got!r}"
             )
         if failures:
             for line in failures:

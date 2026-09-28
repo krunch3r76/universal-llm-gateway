@@ -205,7 +205,9 @@ def test_t1_fallback_t2_heal_still_lands(tmp_path: Path) -> None:
     """Case 6: stale active_work_snap; heal reader supplies the commission row."""
     path = _watches_file(tmp_path)
     _seed_watch(path)
-    heal_snap = {"rows": [_op_row(execution_id=_COMMISSION_EXEC, registration_id=_NEW_REG)]}
+    heal_snap = {
+        "rows": [_op_row(execution_id=_COMMISSION_EXEC, registration_id=_NEW_REG)]
+    }
     calls = {"n": 0}
 
     def _reader() -> dict:
@@ -232,7 +234,9 @@ async def test_fire_hop_rereads_snapshot_after_commission(tmp_path: Path) -> Non
     path = _watches_file(tmp_path)
     _seed_watch(path)
     pre_snap = {"rows": [], "free_slots": 3, "running_count": 0}
-    post_snap = {"rows": [_op_row(execution_id=_COMMISSION_EXEC, registration_id=_NEW_REG)]}
+    post_snap = {
+        "rows": [_op_row(execution_id=_COMMISSION_EXEC, registration_id=_NEW_REG)]
+    }
     reader_calls: list[str] = []
 
     def _reader() -> dict:
@@ -426,4 +430,3 @@ def test_mark_hop_fired_resolves_satellite_and_avoids_self_supersede(
     holder = str(row.get("registration_id") or "").strip()
     superseded = str(row.get("superseded_registration_id") or "").strip()
     assert not (holder and superseded and holder == superseded)
-

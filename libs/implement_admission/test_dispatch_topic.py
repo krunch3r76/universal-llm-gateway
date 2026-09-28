@@ -10,7 +10,9 @@ from implement_admission.dispatch_topic import (
 
 
 def test_extract_dispatch_topic_skips_yaml_frontmatter() -> None:
-    body = "---\npacket_kind: implement\nwork_key: todo:foo\n---\n\nso_what: board topic\n"
+    body = (
+        "---\npacket_kind: implement\nwork_key: todo:foo\n---\n\nso_what: board topic\n"
+    )
     assert extract_dispatch_topic(body) == "board topic"
     assert extract_dispatch_topic("---\nonly frontmatter\n---\n") is None
     assert extract_dispatch_topic("---") is None

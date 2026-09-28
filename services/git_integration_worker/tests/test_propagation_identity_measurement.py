@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 
 import pytest
-from implement_admission.propagation_row import PropagationRow
-
 from charter_runner_store.propagation_ledger import (
     close_row,
     list_open_rows,
@@ -14,6 +12,8 @@ from charter_runner_store.propagation_ledger import (
     set_open_proof_payload,
     upsert_open_rows,
 )
+from implement_admission.propagation_row import PropagationRow
+
 from services.git_integration_worker.cursor_auto.propagation_probe import (
     IdentityMeasurementError,
 )

@@ -77,7 +77,5 @@ def test_normalize_git_branch_list_name_strips_worktree_plus() -> None:
         normalize_git_branch_list_name("+ cursor-sdk/auto-c3c2defa7bac")
         == "cursor-sdk/auto-c3c2defa7bac"
     )
-    assert (
-        normalize_git_branch_list_name("* cursor-sdk/foo") == "cursor-sdk/foo"
-    )
+    assert normalize_git_branch_list_name("* cursor-sdk/foo") == "cursor-sdk/foo"
     assert normalize_git_branch_list_name("  master") == "master"

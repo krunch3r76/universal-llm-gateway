@@ -389,7 +389,9 @@ def predecessor_for_confirm(
     )
 
 
-def predecessor_from_watch(row: dict[str, Any]) -> PredecessorHandle | PredecessorConfirmError:
+def predecessor_from_watch(
+    row: dict[str, Any],
+) -> PredecessorHandle | PredecessorConfirmError:
     """Load persisted predecessor handle for confirm; fail loud on corrupt state."""
     thread_id = str(row.get("thread_id") or "")
     verdict_raw = str(row.get("predecessor_verdict") or "").strip()

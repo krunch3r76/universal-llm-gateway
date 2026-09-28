@@ -74,7 +74,9 @@ def _record_for_branch(
 
 def _is_git_worktree(*, repo: Path, worktree_path: Path) -> bool:
     target = worktree_path.resolve()
-    return any(wt.path.resolve() == target for wt in list_git_worktrees(source_repo=repo))
+    return any(
+        wt.path.resolve() == target for wt in list_git_worktrees(source_repo=repo)
+    )
 
 
 def unpin_registered_lane_worktree(

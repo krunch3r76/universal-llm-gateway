@@ -5,11 +5,13 @@ from __future__ import annotations
 import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_sdk_ledger_hop import (
+    hop_fields_from_record_json,
+)
 from services.git_integration_worker.models.cursor_api import (
     CursorDispatchRequest,
     CursorDispatchResponse,
 )
-from services.git_integration_worker.cursor_sdk_ledger_hop import hop_fields_from_record_json
 
 pytestmark = pytest.mark.offline
 

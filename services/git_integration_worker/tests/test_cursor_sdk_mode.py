@@ -29,7 +29,9 @@ def _req(**overrides: object) -> CursorDispatchRequest:
 def test_resolve_sdk_mode_explicit_plan() -> None:
     req = _req(sdk_mode="plan")
     assert (
-        resolve_sdk_mode(req, contract="consult", packet_text="", effective_read_only=False)
+        resolve_sdk_mode(
+            req, contract="consult", packet_text="", effective_read_only=False
+        )
         == "plan"
     )
 
@@ -37,7 +39,9 @@ def test_resolve_sdk_mode_explicit_plan() -> None:
 def test_resolve_sdk_mode_packet_plan_line() -> None:
     req = _req(message="---\nsdk_mode: plan\n---\nbody")
     assert (
-        resolve_sdk_mode(req, contract="none", packet_text=req.message, effective_read_only=False)
+        resolve_sdk_mode(
+            req, contract="none", packet_text=req.message, effective_read_only=False
+        )
         == "plan"
     )
 
@@ -45,7 +49,9 @@ def test_resolve_sdk_mode_packet_plan_line() -> None:
 def test_resolve_sdk_mode_recon_without_plan_defaults_agent() -> None:
     req = _req()
     assert (
-        resolve_sdk_mode(req, contract="recon", packet_text="", effective_read_only=False)
+        resolve_sdk_mode(
+            req, contract="recon", packet_text="", effective_read_only=False
+        )
         == "agent"
     )
 
@@ -53,7 +59,9 @@ def test_resolve_sdk_mode_recon_without_plan_defaults_agent() -> None:
 def test_resolve_sdk_mode_implement_class_defaults_agent() -> None:
     req = _req()
     assert (
-        resolve_sdk_mode(req, contract="implement", packet_text="", effective_read_only=False)
+        resolve_sdk_mode(
+            req, contract="implement", packet_text="", effective_read_only=False
+        )
         == "agent"
     )
 

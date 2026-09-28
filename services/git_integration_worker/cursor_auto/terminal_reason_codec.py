@@ -7,7 +7,9 @@ from typing import Any
 TERMINAL_REASON_MAX_LEN = 512
 
 TERMINAL_REASON_RECONCILE_INFLIGHT_LOST = "reconcile_inflight_lost"
-TERMINAL_REASON_RESTART_RECONCILE_SUPERSEDED = "restart_reconcile_superseded_by_later_turn"
+TERMINAL_REASON_RESTART_RECONCILE_SUPERSEDED = (
+    "restart_reconcile_superseded_by_later_turn"
+)
 TERMINAL_REASON_CONFER_RELAY_FAILED = "confer_relay_failed"
 TERMINAL_REASON_CLOSEOUT_RELAY_FAILED = "closeout_relay_failed"
 TERMINAL_REASON_DELIBERATE_FALLBACK = "deliberate_failure"
@@ -49,9 +51,7 @@ def deliberate_failure_terminal_reason(
     return TERMINAL_REASON_DELIBERATE_FALLBACK
 
 
-def relay_failure_terminal_reason(
-    relay: dict[str, Any], *, fallback: str
-) -> str:
+def relay_failure_terminal_reason(relay: dict[str, Any], *, fallback: str) -> str:
     """Name a nested relay failure without dropping the relay's own hint."""
     hint = relay.get("reason") or relay.get("skipped")
     if hint is not None and str(hint).strip():

@@ -66,9 +66,7 @@ def test_mount_path_normalizes_to_share_uri(sandbox_roots: tuple[Path, Path]) ->
 def test_files_scheme_maps_to_cortex(sandbox_roots: tuple[Path, Path]) -> None:
     ws, cortex = sandbox_roots
     uri = f"files://{cortex / 'notes/system/specs/example.md'}"
-    ingress = resolve_fs_ingress(
-        uri, workspaces_root_override=ws, cortex_root=cortex
-    )
+    ingress = resolve_fs_ingress(uri, workspaces_root_override=ws, cortex_root=cortex)
     assert ingress.sandbox == "cortex"
     assert ingress.canonical_uri == "cortex://notes/system/specs/example.md"
 
@@ -125,9 +123,7 @@ def test_cortex_file_root_dirs_absent() -> None:
 def test_existence_first_notes_still_file(sandbox_roots: tuple[Path, Path]) -> None:
     _ws, cortex = sandbox_roots
     parsed = parse_schemed_path("cortex://notes/foo.md")
-    assert (
-        infer_sandbox_from_parsed(parsed, cortex_root=cortex) == "cortex"
-    )
+    assert infer_sandbox_from_parsed(parsed, cortex_root=cortex) == "cortex"
 
 
 def test_ephemeral_handoffs_share_uri_ingress(
@@ -194,9 +190,7 @@ def test_top_level_regular_file_roundtrip(
     top_file = cortex / "README.md"
     top_file.write_text("hello\n", encoding="utf-8")
     uri = to_share_uri("cortex", top_file, cortex_root=cortex)
-    ingress = resolve_fs_ingress(
-        uri, workspaces_root_override=ws, cortex_root=cortex
-    )
+    ingress = resolve_fs_ingress(uri, workspaces_root_override=ws, cortex_root=cortex)
     assert ingress.resolved == top_file.resolve()
     assert ingress.sandbox == "cortex"
 
@@ -244,9 +238,7 @@ def test_cortex_root_override_isolates_from_live_mount(
     def _boom() -> Path:
         raise RuntimeError("live mount consulted")
 
-    monkeypatch.setattr(
-        "implement_admission.scheme_resolve.cortex_files_root", _boom
-    )
+    monkeypatch.setattr("implement_admission.scheme_resolve.cortex_files_root", _boom)
     ingress = resolve_fs_ingress(
         "cortex://notes/system/specs/example.md",
         workspaces_root_override=ws,
@@ -288,8 +280,12 @@ def test_egress_colon_segment_refused(
 
 def test_scheme_resolve_has_no_egress_helpers() -> None:
     """Fork F guard: scheme_resolve.py is ingress-only."""
-    text = Path(__file__).resolve().parents[1].joinpath("scheme_resolve.py").read_text(
-        encoding="utf-8"
+    text = (
+        Path(__file__)
+        .resolve()
+        .parents[1]
+        .joinpath("scheme_resolve.py")
+        .read_text(encoding="utf-8")
     )
     forbidden = ("def to_share_uri", "def dual_carry", "def sandbox_rel")
     for name in forbidden:

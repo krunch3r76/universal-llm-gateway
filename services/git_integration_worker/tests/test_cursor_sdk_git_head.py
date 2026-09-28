@@ -22,7 +22,9 @@ pytestmark = pytest.mark.offline
 
 
 def _init_git_repo(path: Path) -> None:
-    subprocess.run(["git", "init", "-b", "master", str(path)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "init", "-b", "master", str(path)], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(path), "config", "user.email", "test@example.com"],
         check=True,
@@ -39,7 +41,9 @@ def _commit(repo: Path, rel: str, *, dispatch_id: str | None = None) -> str:
     target = repo / rel
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("# x\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(repo), "add", rel], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "add", rel], check=True, capture_output=True
+    )
     env = dict(os.environ)
     cmd = ["git", "-C", str(repo), "commit", "-m", "c"]
     if dispatch_id is not None:
@@ -68,23 +72,33 @@ def test_paths_exclusive_to_lane_excludes_peer_touch(tmp_path: Path) -> None:
     admit = _commit(tmp_path, "seed.py")
     rel = "touch.py"
     _commit(tmp_path, rel, dispatch_id=dispatch_id)
-    lane_head = subprocess.run(
-        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-    ).stdout.decode().strip()
+    lane_head = (
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
     (tmp_path / rel).write_text("# peer\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(tmp_path), "add", rel], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(tmp_path), "add", rel], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(tmp_path), "commit", "-m", "peer"],
         check=True,
         capture_output=True,
     )
-    closeout = subprocess.run(
-        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-    ).stdout.decode().strip()
+    closeout = (
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
     lane_refs = observed_lane_git_refs(
         tmp_path,
         dispatch_id=dispatch_id,
@@ -108,11 +122,15 @@ def test_paths_exclusive_to_lane_includes_sole_lane_path(tmp_path: Path) -> None
     admit = _commit(tmp_path, "seed.py")
     rel = "lane_only.py"
     _commit(tmp_path, rel, dispatch_id=dispatch_id)
-    closeout = subprocess.run(
-        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
-        check=True,
-        capture_output=True,
-    ).stdout.decode().strip()
+    closeout = (
+        subprocess.run(
+            ["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+        )
+        .stdout.decode()
+        .strip()
+    )
     exclusive = paths_exclusive_to_lane(
         tmp_path,
         dispatch_id=dispatch_id,
@@ -131,9 +149,7 @@ def _rev_parse(repo: Path) -> str:
     ).stdout.strip()
 
 
-def _cherrypick_as_lander(
-    repo: Path, *, source_sha: str, lander_id: str
-) -> str:
+def _cherrypick_as_lander(repo: Path, *, source_sha: str, lander_id: str) -> str:
     """Cherry-pick *source_sha* onto current HEAD, stamping *lander_id* as committer."""
     name, email = dispatch_git_identity(lander_id)
     env = dict(os.environ)

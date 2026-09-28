@@ -395,10 +395,16 @@ _EXPIRED = "2026-06-12T11:59:00+00:00"
 def test_pin_resolves_newest_active_predicate_row_when_pin_is_inactive() -> None:
     # The named regression: a retracted pin must not latch admission shut
     # while an active, correctly-predicated declaration sits on the entity.
-    stale = _row(35286, predicate=f"has_attribute({_TODO}, implement_ready)",
-                 valid_until=_EXPIRED)
-    fresh = _row(35315, predicate=implement_ready_predicate(_TODO),
-                 observed_at="2026-06-12T11:30:00+00:00")
+    stale = _row(
+        35286,
+        predicate=f"has_attribute({_TODO}, implement_ready)",
+        valid_until=_EXPIRED,
+    )
+    fresh = _row(
+        35315,
+        predicate=implement_ready_predicate(_TODO),
+        observed_at="2026-06-12T11:30:00+00:00",
+    )
     pin = resolve_implement_ready_pin(
         todo_id=_TODO,
         cortex=_StubCortex([stale, fresh]),
@@ -412,8 +418,11 @@ def test_pin_resolves_newest_active_predicate_row_when_pin_is_inactive() -> None
 
 @pytest.mark.offline
 def test_pin_honors_requested_id_when_confirmed_active_and_on_entity() -> None:
-    stale = _row(35286, predicate=f"has_attribute({_TODO}, implement_ready)",
-                 valid_until=_EXPIRED)
+    stale = _row(
+        35286,
+        predicate=f"has_attribute({_TODO}, implement_ready)",
+        valid_until=_EXPIRED,
+    )
     requested = _row(35315, predicate=implement_ready_predicate(_TODO))
     pin = resolve_implement_ready_pin(
         todo_id=_TODO,

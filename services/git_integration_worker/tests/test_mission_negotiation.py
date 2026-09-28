@@ -254,7 +254,9 @@ async def test_handler_bypasses_executable_path(monkeypatch):
     nested = AsyncMock(return_value={"ok": True, "dispatch_id": "auto-x"})
     cdp = AsyncMock(return_value={"ok": True})
     bus = AsyncMock()
-    bus.reply = AsyncMock(return_value=type("R", (), {"status_code": 200, "body": {}})())
+    bus.reply = AsyncMock(
+        return_value=type("R", (), {"status_code": 200, "body": {}})()
+    )
     with (
         patch.object(handler_mod, "blocking_admit_gate", admit),
         patch.object(handler_mod, "settle_supersede", supersede),
@@ -277,7 +279,9 @@ async def test_process_job_negotiation_branch_before_admit(monkeypatch):
     job = _job(_negotiation_body(phase="proposal"))
     admit = AsyncMock()
     bus = AsyncMock()
-    bus.reply = AsyncMock(return_value=type("R", (), {"status_code": 200, "body": {}})())
+    bus.reply = AsyncMock(
+        return_value=type("R", (), {"status_code": 200, "body": {}})()
+    )
     with patch.object(handler_mod, "blocking_admit_gate", admit):
         result = await handler_mod.process_job(job, bus=bus)
     assert result["phase"] == "negotiation"
@@ -290,7 +294,9 @@ async def test_full_exchange_proposal_agree_ratify():
     nid = str(uuid.uuid4())
     mission = _payload()
     bus = AsyncMock()
-    bus.reply = AsyncMock(return_value=type("R", (), {"status_code": 200, "body": {}})())
+    bus.reply = AsyncMock(
+        return_value=type("R", (), {"status_code": 200, "body": {}})()
+    )
 
     proposal = _job(_negotiation_body(phase="proposal", negotiation_id=nid), turn=1)
     r1 = await process_mission_negotiation(proposal, bus=bus, queue=q)
@@ -330,7 +336,9 @@ async def test_refusals_leave_state_unchanged():
     nid = str(uuid.uuid4())
     mission = _payload()
     bus = AsyncMock()
-    bus.reply = AsyncMock(return_value=type("R", (), {"status_code": 200, "body": {}})())
+    bus.reply = AsyncMock(
+        return_value=type("R", (), {"status_code": 200, "body": {}})()
+    )
 
     proposal = _job(_negotiation_body(phase="proposal", negotiation_id=nid), turn=1)
     await process_mission_negotiation(proposal, bus=bus, queue=q)
@@ -432,7 +440,9 @@ async def test_enqueue_skips_supersede_for_negotiation(monkeypatch):
         pid=1234,
         worker_started_at="2026-01-01T00:00:00+00:00",
     )
-    app = type("A", (), {"state": type("S", (), {"admission_controller": controller})()})()
+    app = type(
+        "A", (), {"state": type("S", (), {"admission_controller": controller})()}
+    )()
     request = type("R", (), {"app": app})()
     supersede = AsyncMock(return_value={"method": "queue_withdraw"})
     monkeypatch.setattr(

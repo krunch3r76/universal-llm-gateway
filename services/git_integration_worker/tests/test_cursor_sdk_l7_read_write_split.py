@@ -49,7 +49,9 @@ def _write(path: Path, rel: str, content: str) -> None:
 def _commit_all(repo: Path, rels: tuple[str, ...]) -> None:
     for rel in rels:
         _write(repo, rel, f"# {rel}\n")
-    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "."], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(repo), "commit", "-m", "baseline"],
         check=True,
@@ -58,9 +60,7 @@ def _commit_all(repo: Path, rels: tuple[str, ...]) -> None:
 
 
 def _observed_only_manifest(paths: tuple[str, ...]) -> EffectsManifest:
-    entries = [
-        EffectEntry(op="observed", target=path, identity=path) for path in paths
-    ]
+    entries = [EffectEntry(op="observed", target=path, identity=path) for path in paths]
     return EffectsManifest(
         dispatch_id="d-obs",
         thread_id="t-obs",
@@ -112,7 +112,9 @@ def test_shell_only_manifest_declares_runtime_surface() -> None:
             "repo": SurfaceSection(
                 surface="repo",
                 source="conversation",
-                entries=[EffectEntry(op="shell", target="pytest -q", identity="pytest -q")],
+                entries=[
+                    EffectEntry(op="shell", target="pytest -q", identity="pytest -q")
+                ],
             )
         },
         coverage={"repo": "complete"},

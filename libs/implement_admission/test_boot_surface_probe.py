@@ -39,7 +39,7 @@ def test_probe_boot_manifest_card_markdown() -> None:
     manifest = {
         "briefing_card": (
             "## Skills\n- `git-posture` — "
-            "fs(sandbox=\"workspaces\", path=\".cursor/skills/git-posture/SKILL.md\")"
+            'fs(sandbox="workspaces", path=".cursor/skills/git-posture/SKILL.md")'
         ),
     }
     report = probe_boot_manifest(manifest, platform="web")

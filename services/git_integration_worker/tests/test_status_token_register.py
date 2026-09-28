@@ -158,7 +158,9 @@ def test_post_terminal_status_omits_register_when_disposition_none() -> None:
     assert body["terminal_status_status_of"] == TERMINAL_STATUS_STATUS_OF
 
 
-def test_terminal_in_seat_answer_declined_stamps_planned_and_observed_registers() -> None:
+def test_terminal_in_seat_answer_declined_stamps_planned_and_observed_registers() -> (
+    None
+):
     """Specimen class: hint answered (planned) vs disposition declined (observed)."""
     client = AsyncMock()
     client.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
@@ -287,9 +289,13 @@ def test_post_operator_closeout_composed_commission_orthogonal_to_status() -> No
         )
     sent = client.reply.await_args.kwargs["body"]
     header_lines = sent.split("\n\n", 1)[0].splitlines()
-    status_idx = next(i for i, line in enumerate(header_lines) if line == "status: complete")
+    status_idx = next(
+        i for i, line in enumerate(header_lines) if line == "status: complete"
+    )
     composed_idx = next(
-        i for i, line in enumerate(header_lines) if line.startswith("composed_commission:")
+        i
+        for i, line in enumerate(header_lines)
+        if line.startswith("composed_commission:")
     )
     assert composed_idx > status_idx
     assert f"composed_commission: {COMPOSED_COMMISSION_FAILED}" in sent

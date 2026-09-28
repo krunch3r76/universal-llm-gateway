@@ -25,7 +25,14 @@ from services.git_integration_worker.cursor_sdk_stream_capture import (
 _ASSERTION_IDENTITY_RE = re.compile(r"^assertion:(\d+)$")
 _CORTEX_TOOL_NAMES = frozenset({"cortex", "cortex_brief"})
 _CORTEX_WRITE_OPS = frozenset(
-    {"assert", "supersede", "observe", "friction", "entity_create", "relationship_create"}
+    {
+        "assert",
+        "supersede",
+        "observe",
+        "friction",
+        "entity_create",
+        "relationship_create",
+    }
 )
 _CORTEX_READ_OPS = frozenset(
     {
@@ -56,7 +63,9 @@ def _cortex_sub_op_from_detail(detail: object, *, fallback_op: str = "") -> str:
 
 def _cortex_sub_op_from_observation(obs: ToolCallObservation) -> str:
     args = obs.args if isinstance(obs.args, Mapping) else {}
-    inner = args.get("arguments") if isinstance(args.get("arguments"), Mapping) else args
+    inner = (
+        args.get("arguments") if isinstance(args.get("arguments"), Mapping) else args
+    )
     if isinstance(inner, Mapping):
         return str(inner.get("tool") or args.get("tool") or "").strip().lower()
     return ""

@@ -173,7 +173,11 @@ def derive_handle_topic(
     todo_name: str | None = None,
 ) -> str | None:
     """Stargate admit-path topic derivation."""
-    wire = (contract or packet_kind or extract_contract_from_body(packet_text) or "").strip().lower()
+    wire = (
+        (contract or packet_kind or extract_contract_from_body(packet_text) or "")
+        .strip()
+        .lower()
+    )
     if wire == "conductor":
         if todo_name:
             return conductor_mission_topic(todo_name)

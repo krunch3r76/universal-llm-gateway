@@ -196,9 +196,7 @@ def lock_lane_worktree(
         check=False,
     )
     if proc.returncode != 0:
-        raise RuntimeError(
-            proc.stderr.strip() or f"git worktree lock failed for {wt}"
-        )
+        raise RuntimeError(proc.stderr.strip() or f"git worktree lock failed for {wt}")
     return LockLaneResult(lock_reason=lock_reason, inherited=False)
 
 

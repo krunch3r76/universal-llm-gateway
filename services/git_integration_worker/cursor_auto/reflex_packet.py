@@ -163,7 +163,9 @@ def inject_second_read_block(
     reason: str,
 ) -> str:
     """Append the provenance-stamped second-read block to a relay closeout body."""
-    answer = scrub_envelope_fields(scrub_reserved_status(_clamp(text, MAX_SECOND_READ_CHARS)))
+    answer = scrub_envelope_fields(
+        scrub_reserved_status(_clamp(text, MAX_SECOND_READ_CHARS))
+    )
     if not answer:
         return relay_body
     block = "\n".join(

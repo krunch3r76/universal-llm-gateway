@@ -40,9 +40,7 @@ def resolve_dispatch_workspace(
     if lease_key and is_managed_worktree(Path(lease_key), cfg.worktree_root):
         return Path(lease_key).resolve()
     lane_b_wire = (
-        dispatch.lane == "B"
-        or dispatch.worktree_isolated
-        or dispatch.worktree_path
+        dispatch.lane == "B" or dispatch.worktree_isolated or dispatch.worktree_path
     )
     if lane_b_wire:
         raise ValueError(

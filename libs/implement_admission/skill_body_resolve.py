@@ -45,7 +45,9 @@ def body_digest(source_uri: str | None, slug: str) -> str | None:
     return content_digest(data)
 
 
-def _lookup_entity_row(conn: Any, key: str, entity_id_hint: str) -> dict[str, Any] | None:
+def _lookup_entity_row(
+    conn: Any, key: str, entity_id_hint: str
+) -> dict[str, Any] | None:
     from cortex_store.db import query as db_query
 
     agent_skill_id = f"agent_skill:{key}"

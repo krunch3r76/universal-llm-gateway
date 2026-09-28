@@ -10,23 +10,23 @@ import pytest
 
 from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
 from services.git_integration_worker.cursor_sdk_worktree import mint_dispatch_worktree
+from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
+    ledger_connection,
+)
 from services.git_integration_worker.cursor_sdk_worktree_lock import lock_lane_worktree
+from services.git_integration_worker.cursor_sdk_worktree_prune import (
+    prune_dispatch_worktree,
+    rollback_dispatch_worktree,
+)
 from services.git_integration_worker.cursor_sdk_worktree_registry import (
     ensure_worktree_schema,
     pin_lane_worktree,
     register_lane_worktree,
 )
-from services.git_integration_worker.cursor_sdk_worktree_live_guard import (
-    ledger_connection,
-)
 from services.git_integration_worker.cursor_sdk_worktree_release import (
     ReleaseRefusal,
     release_lane_worktree,
     reset_unharvested_emit_dedupe,
-)
-from services.git_integration_worker.cursor_sdk_worktree_prune import (
-    prune_dispatch_worktree,
-    rollback_dispatch_worktree,
 )
 
 
@@ -156,9 +156,7 @@ def test_ac_s1_9_chokepoint_no_worktree_remove_outside_release() -> None:
                 first = node.args[0]
                 if isinstance(first, ast.List):
                     for elt in first.elts:
-                        if isinstance(elt, ast.Constant) and isinstance(
-                            elt.value, str
-                        ):
+                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
                             args.append(elt.value)
             if "worktree" in args and "remove" in args:
                 offenders.append(str(rel))

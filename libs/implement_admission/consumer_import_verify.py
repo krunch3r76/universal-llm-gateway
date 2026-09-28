@@ -87,7 +87,11 @@ def _lib_file_for_module(root: Path, module: str) -> Path | None:
     if not parts:
         return None
     libs = root / _LIBS_DIR
-    as_mod = libs.joinpath(*parts[:-1], f"{parts[-1]}.py") if len(parts) > 1 else libs / f"{parts[0]}.py"
+    as_mod = (
+        libs.joinpath(*parts[:-1], f"{parts[-1]}.py")
+        if len(parts) > 1
+        else libs / f"{parts[0]}.py"
+    )
     if as_mod.is_file():
         return as_mod
     as_init = libs.joinpath(*parts, "__init__.py")

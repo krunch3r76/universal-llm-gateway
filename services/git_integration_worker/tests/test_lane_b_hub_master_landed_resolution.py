@@ -89,9 +89,7 @@ def _outcome() -> SdkRunOutcome:
     )
 
 
-def _commit_on_hub(
-    repo: Path, dispatch_id: str, rel_path: str, content: str
-) -> str:
+def _commit_on_hub(repo: Path, dispatch_id: str, rel_path: str, content: str) -> str:
     name, email = dispatch_git_identity(dispatch_id)
     path = repo / rel_path
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -141,9 +139,16 @@ def _settle_lane_b(
         gate_d_created_rels=(),
         files_outside_repo=files_outside_repo,
     )
-    _lane, _branch, _branch_point, head_sha, commits_ahead, _unfiltered, landed, *_rest = (
-        fields
-    )
+    (
+        _lane,
+        _branch,
+        _branch_point,
+        head_sha,
+        commits_ahead,
+        _unfiltered,
+        landed,
+        *_rest,
+    ) = fields
     landed_resolution_reason = fields[-1]
     return landed, head_sha, commits_ahead, landed_resolution_reason
 

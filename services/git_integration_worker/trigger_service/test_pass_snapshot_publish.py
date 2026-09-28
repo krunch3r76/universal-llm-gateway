@@ -113,12 +113,15 @@ def test_publish_failure_does_not_wedge_gate(store: TriggerStore) -> None:
     )
     reader = _StaticFleetReader(snap)
 
-    with patch(
-        "services.git_integration_worker.trigger_service.store_claim.read_fleet_idle_memoized",
-        side_effect=lambda _reader=None: read_fleet_idle_memoized(reader),
-    ), patch(
-        "services.git_integration_worker.trigger_service.pass_snapshot_publish.durable_write_text",
-        side_effect=RuntimeError("disk full"),
+    with (
+        patch(
+            "services.git_integration_worker.trigger_service.store_claim.read_fleet_idle_memoized",
+            side_effect=lambda _reader=None: read_fleet_idle_memoized(reader),
+        ),
+        patch(
+            "services.git_integration_worker.trigger_service.pass_snapshot_publish.durable_write_text",
+            side_effect=RuntimeError("disk full"),
+        ),
     ):
         begin_idle_pass()
         claimed = store.claim_due(now=now)
@@ -131,7 +134,9 @@ def test_publish_failure_does_not_wedge_gate(store: TriggerStore) -> None:
     assert updated.last_fleet_verdict == "busy"
 
 
-def test_atomic_write_leaves_no_partial_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_atomic_write_leaves_no_partial_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """AC3: temp+rename — destination never holds partial JSON."""
     cortex_root = tmp_path / "cortex"
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
@@ -165,7 +170,9 @@ def test_atomic_write_leaves_no_partial_file(tmp_path: Path, monkeypatch: pytest
         json.loads(body)
 
 
-def test_snapshot_self_describes_staleness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_snapshot_self_describes_staleness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """AC5: staleness rule is embedded so readers cannot confuse staleness with failure."""
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path / "cortex"))
     snap = _busy_snapshot()
@@ -195,7 +202,9 @@ def test_gate_never_reads_snapshot_file() -> None:
     assert claim_src.count("publish_pass_snapshot") == 2
 
 
-def test_life_fs_read_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_life_fs_read_roundtrip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """AC4: published file is readable at the stable cortex URI."""
     cortex_root = tmp_path / "cortex"
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))

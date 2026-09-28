@@ -185,10 +185,13 @@ def test_specimen_work_driven_complete_x_partial_auto_84c1c42a3720_shape() -> No
         measurement="partial:work",
     )
     assert merge_plane_discrepancy_markers(marker) is not None
-    assert status_claim_is_polysemous_partial_legend(
-        claim="complete",
-        measurement="partial:work",
-    ) is False
+    assert (
+        status_claim_is_polysemous_partial_legend(
+            claim="complete",
+            measurement="partial:work",
+        )
+        is False
+    )
     authority = resolve_status_disagreement_authority(
         claim="complete",
         measurement="partial:work",

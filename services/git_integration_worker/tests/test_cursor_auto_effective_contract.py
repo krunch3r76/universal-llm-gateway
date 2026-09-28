@@ -30,7 +30,11 @@ _DIRECTIVE_MECHANICAL = (
         ("investigate", _DIRECTIVE_MECHANICAL, "investigate"),
         (None, _DIRECTIVE_MECHANICAL, "implement"),
         ("answer", "TYPE: DIRECTIVE\ncontract: Confer\nscope: foo", "confer"),
-        ("answer", "TYPE: DIRECTIVE\ncontract: unknown-token\nscope: foo", "unknown-token"),
+        (
+            "answer",
+            "TYPE: DIRECTIVE\ncontract: unknown-token\nscope: foo",
+            "unknown-token",
+        ),
     ],
 )
 def test_effective_contract(wire: str | None, body: str, expected: str) -> None:
@@ -44,13 +48,13 @@ def test_effective_contract_unknown_body_passes_through_to_wire_map() -> None:
     assert resolved["disposition_hint"] == "answered"
 
 
-def test_process_job_directive_answer_upgrades_to_nested(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_job_directive_answer_upgrades_to_nested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """6202-shaped body must not short-circuit to terminal_in_seat answered."""
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
-    submit = AsyncMock(
-        return_value={"ok": True, "dispatch_id": "d-6202-shape"}
-    )
+    submit = AsyncMock(return_value={"ok": True, "dispatch_id": "d-6202-shape"})
     poll = AsyncMock(
         return_value={
             "terminal": True,
@@ -134,9 +138,7 @@ def test_process_job_ruling_acs_raise_handoff_off_mechanical(
     """Turn-302 specimen: AC-label RULING must not admit as pure-mechanical."""
     bus = AsyncMock()
     bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
-    submit = AsyncMock(
-        return_value={"ok": True, "dispatch_id": "d-turn-302-shape"}
-    )
+    submit = AsyncMock(return_value={"ok": True, "dispatch_id": "d-turn-302-shape"})
     poll = AsyncMock(
         return_value={
             "terminal": True,

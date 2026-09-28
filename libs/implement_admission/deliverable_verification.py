@@ -119,9 +119,7 @@ def is_conductor_self_gate_suspect(
     environment (e.g. sdk_git_probe_absent). Consumers must treat it as
     escalate-and-redrive, never as a confirmed refusal finding.
     """
-    contract = (
-        closeout.effects_manifest.contract if closeout.effects_manifest else None
-    )
+    contract = closeout.effects_manifest.contract if closeout.effects_manifest else None
     if contract != "none":
         return False
     if not g_rows_open:
@@ -278,9 +276,7 @@ def check_deliverable_verification(
         return DriftGateResult(gate_id="d", tripped=False, action="noop")
 
     sidecar_ok = bool(
-        verifiable_evidence_uris(
-            closeout.evidence_uris, source_repo=workspaces_root
-        )
+        verifiable_evidence_uris(closeout.evidence_uris, source_repo=workspaces_root)
     )
     entries = evaluate_deliverable_verification(
         spec=spec,
@@ -333,9 +329,7 @@ def apply_closeout_gate_d(
         return closeout
 
     sidecar_ok = bool(
-        verifiable_evidence_uris(
-            closeout.evidence_uris, source_repo=workspaces_root
-        )
+        verifiable_evidence_uris(closeout.evidence_uris, source_repo=workspaces_root)
     )
     entries = closeout.verification or evaluate_deliverable_verification(
         spec=spec,

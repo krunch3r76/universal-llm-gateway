@@ -85,9 +85,7 @@ def test_terminal_dispatch_releases_its_claim(status: str) -> None:
 
 
 @pytest.mark.offline
-@pytest.mark.parametrize(
-    "status", ["admitted", "running", "queued", "parked_waiting"]
-)
+@pytest.mark.parametrize("status", ["admitted", "running", "queued", "parked_waiting"])
 def test_live_dispatch_keeps_its_claim(status: str) -> None:
     """The safety half: in-flight work must never be unguarded."""
     assert _LEASE in _paths_for(_row(status)), (
@@ -188,6 +186,4 @@ def test_terminal_cwd_branch_releases_past_grace(tmp_path: Path) -> None:
             occupancy=occ,
         )
 
-    assert result is None, (
-        "a terminal dispatch past grace must not hold via cwd alone"
-    )
+    assert result is None, "a terminal dispatch past grace must not hold via cwd alone"

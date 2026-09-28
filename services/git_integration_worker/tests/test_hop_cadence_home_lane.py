@@ -190,7 +190,10 @@ def test_evaluate_watch_home_lane_row_can_still_fire() -> None:
         )
 
         handoff.return_value = StandingHandoffFreshness(
-            "current", "cortex://notes/system/threads/6655-standing-handoff.md", None, 1.0
+            "current",
+            "cortex://notes/system/threads/6655-standing-handoff.md",
+            None,
+            1.0,
         )
         decision = evaluate_watch(row, now=10_000.0, threshold=100.0, cool=1.0)
     assert decision.action == "fire"

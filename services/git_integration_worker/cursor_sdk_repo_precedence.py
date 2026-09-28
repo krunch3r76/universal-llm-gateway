@@ -286,9 +286,7 @@ def resolve_repo_change_set(
         closeout_head=closeout_head,
     )
     declared_paths = frozenset(
-        set(manifest_cs.created)
-        | set(manifest_cs.modified)
-        | set(manifest_cs.deleted)
+        set(manifest_cs.created) | set(manifest_cs.modified) | set(manifest_cs.deleted)
     )
     job_surface = _job_surface_paths(
         files_expected,
@@ -351,19 +349,16 @@ def resolve_repo_change_set(
         if relabeled:
             divergence = True
         current_hash = _hash_worktree_file(source_repo, path) if source_repo else None
-        proved = (
-            source_repo is not None
-            and prove_polarity(
-                claimed=final_op,
-                path=path,
-                source_repo=source_repo,
-                baseline_codes=baseline_codes,
-                baseline_hashes=baseline_hashes,
-                current_porcelain=porcelain,
-                current_hash=current_hash,
-                git_deleted_paths=git_deleted,
-                admit_head=admit_head,
-            )
+        proved = source_repo is not None and prove_polarity(
+            claimed=final_op,
+            path=path,
+            source_repo=source_repo,
+            baseline_codes=baseline_codes,
+            baseline_hashes=baseline_hashes,
+            current_porcelain=porcelain,
+            current_hash=current_hash,
+            git_deleted_paths=git_deleted,
+            admit_head=admit_head,
         )
         if proved:
             _append_bucket(buckets, final_op, path)

@@ -38,10 +38,10 @@ def _bounded_detail(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
     try:
         text = json.dumps(dict(value), separators=(",", ":"))
     except (TypeError, ValueError):
-        return {"raw": str(value)[:surface_taxonomy.DetailCap]}
+        return {"raw": str(value)[: surface_taxonomy.DetailCap]}
     if len(text) <= surface_taxonomy.DetailCap:
         return dict(value)
-    return {"truncated": text[:surface_taxonomy.ResultCap]}
+    return {"truncated": text[: surface_taxonomy.ResultCap]}
 
 
 def _nested_tool_arguments(args: Mapping[str, Any]) -> Mapping[str, Any]:

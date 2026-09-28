@@ -13,7 +13,9 @@ def _json_loads_text(text: str) -> object | None:
         return None
 
 
-def _text_parts_from_content_blocks(content: object, *, sdk_double_wrap: bool) -> list[str]:
+def _text_parts_from_content_blocks(
+    content: object, *, sdk_double_wrap: bool
+) -> list[str]:
     if not isinstance(content, list):
         return []
     parts: list[str] = []
@@ -33,7 +35,9 @@ def _text_parts_from_content_blocks(content: object, *, sdk_double_wrap: bool) -
     return parts
 
 
-def _payload_from_content_blocks(content: object, *, sdk_double_wrap: bool) -> object | None:
+def _payload_from_content_blocks(
+    content: object, *, sdk_double_wrap: bool
+) -> object | None:
     parts = _text_parts_from_content_blocks(content, sdk_double_wrap=sdk_double_wrap)
     if not parts:
         return None
@@ -66,7 +70,9 @@ def unwrap_tool_result(result: object) -> object | None:
             parsed = _json_loads_text(value)
             return parsed if parsed is not None else value
         if isinstance(value, Mapping):
-            from_sdk = _payload_from_content_blocks(value.get("content"), sdk_double_wrap=True)
+            from_sdk = _payload_from_content_blocks(
+                value.get("content"), sdk_double_wrap=True
+            )
             if from_sdk is not None:
                 return from_sdk
             from_mcp = _payload_from_mcp_content_blocks(value.get("content"))

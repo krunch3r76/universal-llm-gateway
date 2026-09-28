@@ -86,7 +86,12 @@ def test_consult_pending_continue_owed_true_with_reply_fn() -> None:
         },
     )
     ledger.mark_terminal(dispatch_id=req.dispatch_id, terminal_status="completed")
-    row = {"dispatch_id": req.dispatch_id, "thread_id": "12291", "status": "completed", "record_json": json.dumps({"closeout_turn": 3, "closeout_body": _CLOSEOUT})}
+    row = {
+        "dispatch_id": req.dispatch_id,
+        "thread_id": "12291",
+        "status": "completed",
+        "record_json": json.dumps({"closeout_turn": 3, "closeout_body": _CLOSEOUT}),
+    }
     with ledger._connect() as conn:
         raw = conn.execute(
             "SELECT * FROM cursor_sdk_dispatches WHERE dispatch_id=?",
@@ -130,13 +135,20 @@ async def test_fire_consult_pending_continue_stamps_key() -> None:
             (req.dispatch_id,),
         ).fetchone()
     row = {k: raw[k] for k in raw.keys()}
-    hop_body = {"hop_seq": 2, "dispatch_thread_id": "12291", "hop_reason": "consult_harvest"}
-    with patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.build_hop_team_dispatch_body",
-        return_value=hop_body,
-    ), patch(
-        "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
-        AsyncMock(return_value=(True, {"dispatch_id": "succ-consult-1"})),
+    hop_body = {
+        "hop_seq": 2,
+        "dispatch_thread_id": "12291",
+        "hop_reason": "consult_harvest",
+    }
+    with (
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.build_hop_team_dispatch_body",
+            return_value=hop_body,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_closeout.conductor_hop.post_conductor_hop_team_dispatch",
+            AsyncMock(return_value=(True, {"dispatch_id": "succ-consult-1"})),
+        ),
     ):
         ok = await fire_consult_pending_continue(row)
     assert ok is True

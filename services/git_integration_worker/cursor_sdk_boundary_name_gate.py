@@ -8,9 +8,9 @@ from typing import Any
 from services.git_integration_worker.cursor_sdk_boundary_contract import (
     BoundaryEmitResult,
     BoundaryShapeViolation,
+    _summarize_value,
     register_boundary_contract,
     validate_at_emit,
-    _summarize_value,
 )
 
 NAME_GATE_BOUNDARY = "name_gate"
@@ -33,7 +33,9 @@ def classify_name_gate_shape(value: object) -> str:
     return "mcp_unresolved"
 
 
-def _validate_name_gate_emit(value: object, shape_label: str) -> BoundaryShapeViolation | None:
+def _validate_name_gate_emit(
+    value: object, shape_label: str
+) -> BoundaryShapeViolation | None:
     if shape_label != "mcp_with_logical":
         return None
     if not isinstance(value, tuple) or len(value) != 2:
@@ -72,7 +74,9 @@ def emit_name_gate_boundary(
             arrived=f"resolved={resolved_name!r} wire={wire_name!r}",
             detail="resolve_stream_tool_name returned wire name — item-18 mcp/cortex mismatch class",
         )
-        result = BoundaryEmitResult(value=(wire_name, args), shape_label=shape, violation=violation)
+        result = BoundaryEmitResult(
+            value=(wire_name, args), shape_label=shape, violation=violation
+        )
         if strict:
             from services.git_integration_worker.cursor_sdk_boundary_contract import (
                 BoundaryContractError,

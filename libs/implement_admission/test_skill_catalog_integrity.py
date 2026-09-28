@@ -6,8 +6,9 @@ import os
 from pathlib import Path
 
 import pytest
-
 from claude_bundles.catalog import get_skill_catalog
+
+from implement_admission.skill_catalog_freshness import check_catalog_valid
 from implement_admission.skill_catalog_resolver import (
     SkillCatalogResolveError,
     canonical_agent_skill_id,
@@ -15,7 +16,6 @@ from implement_admission.skill_catalog_resolver import (
     catalog_source_uris,
     resolve_canonical_source_uri,
 )
-from implement_admission.skill_catalog_freshness import check_catalog_valid
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _CORTEX_FILES_ROOT = Path(

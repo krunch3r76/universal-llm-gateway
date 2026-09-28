@@ -27,18 +27,18 @@ from services.git_integration_worker.cursor_auto.queue import AutoJob
 _TIER_M_DIRECTIVE = (
     "TYPE: DIRECTIVE\n"
     "contract: implement\n"
-    "intent: fire dispatch(tool=\"email\", op=pull, folder=INBOX, limit=3)\n"
+    'intent: fire dispatch(tool="email", op=pull, folder=INBOX, limit=3)\n'
     "tool_op: email.pull\n"
     "effects_expected: raw pull JSON relayed inline in the closeout\n"
     "density: sparse\n"
     "vision: mechanical — tier-M surface asymmetry relay\n"
 )
-_BARE_DIRECTIVE = (
-    "TYPE: DIRECTIVE\ndensity: sparse\nintent: do the email thing\n"
-)
+_BARE_DIRECTIVE = "TYPE: DIRECTIVE\ndensity: sparse\nintent: do the email thing\n"
 
 
-def _job(body: str, *, contract: str = "implement", job_id: str = "j-tier-m") -> AutoJob:
+def _job(
+    body: str, *, contract: str = "implement", job_id: str = "j-tier-m"
+) -> AutoJob:
     return AutoJob(
         job_id=job_id,
         thread_id="6325",

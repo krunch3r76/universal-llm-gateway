@@ -66,4 +66,8 @@ def association_from_record_json(record_json: str) -> dict[str, Any]:
     return out
 
 
-__all__ = ["build_dispatch_association_fields", "association_from_record_json", "extract_dispatch_topic"]
+__all__ = [
+    "build_dispatch_association_fields",
+    "association_from_record_json",
+    "extract_dispatch_topic",
+]

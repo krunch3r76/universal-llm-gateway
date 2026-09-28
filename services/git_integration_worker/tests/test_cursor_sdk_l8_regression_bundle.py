@@ -66,7 +66,9 @@ def _write(path: Path, rel: str, content: str = "# v1\n") -> None:
 def _commit_all(repo: Path, rels: tuple[str, ...]) -> None:
     for rel in rels:
         _write(repo, rel)
-    subprocess.run(["git", "-C", str(repo), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "add", "."], check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "-C", str(repo), "commit", "-m", "baseline"],
         check=True,
@@ -79,7 +81,8 @@ def _manifest_with_write_ops(
     paths: tuple[str, ...],
 ) -> EffectsManifest:
     entries = [
-        EffectEntry(op="write", target=str(repo / path), identity=path) for path in paths
+        EffectEntry(op="write", target=str(repo / path), identity=path)
+        for path in paths
     ]
     return EffectsManifest(
         dispatch_id="d1",
@@ -101,7 +104,8 @@ def _manifest_with_delete_ops(
     paths: tuple[str, ...],
 ) -> EffectsManifest:
     entries = [
-        EffectEntry(op="delete", target=str(repo / path), identity=path) for path in paths
+        EffectEntry(op="delete", target=str(repo / path), identity=path)
+        for path in paths
     ]
     return EffectsManifest(
         dispatch_id="d-delete",

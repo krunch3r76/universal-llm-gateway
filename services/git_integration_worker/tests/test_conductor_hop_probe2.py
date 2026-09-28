@@ -197,7 +197,8 @@ def _admit_predecessor(
     ledger.merge_record_json(
         dispatch_id=dispatch_id,
         patch={
-            "contract": "conductor", "lane": "B",
+            "contract": "conductor",
+            "lane": "B",
             "lane_branch": _LANE_BRANCH,
             "source_ref": _WORK_KEY,
             "summon_mode": "confer_and_finish",
@@ -266,7 +267,9 @@ async def test_probe2_two_row_mechanical_conductor_mission(
     admitted_events: list[dict[str, Any]] = []
     relay_bodies: list[dict[str, Any]] = []
 
-    async def _stargate_relay(body: dict[str, Any], **_kwargs: object) -> tuple[bool, dict]:
+    async def _stargate_relay(
+        body: dict[str, Any], **_kwargs: object
+    ) -> tuple[bool, dict]:
         relay_bodies.append(body)
         payload = _hop_dispatch_payload(body)
         resp = giw_client.post("/api/v1/cursor/dispatch", json=payload)
@@ -373,7 +376,9 @@ def test_probe2_production_closeout_json_has_no_row_hop_tokens() -> None:
 
 
 @pytest.mark.asyncio
-async def test_probe2_axis_a_falsifier_not_triggered_when_predecessor_terminal() -> None:
+async def test_probe2_axis_a_falsifier_not_triggered_when_predecessor_terminal() -> (
+    None
+):
     """Axis-A falsifier: no occupancy refusal while predecessor reads completed."""
     ledger = CursorDispatchLedger.instance()
     predecessor_id = "probe2-falsifier-pred"

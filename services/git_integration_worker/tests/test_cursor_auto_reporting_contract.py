@@ -55,7 +55,9 @@ status: complete
 def test_build_sdk_message_injects_reporting_contract_on_every_contract(
     contract: str,
 ) -> None:
-    message = build_sdk_message("TYPE: DIRECTIVE\nscope: foo\nDo work.", contract=contract)
+    message = build_sdk_message(
+        "TYPE: DIRECTIVE\nscope: foo\nDo work.", contract=contract
+    )
     assert "## REPORTING CONTRACT (mandatory)" in message
     assert "SCOPE DELTA" in message
     assert "ACCESS" in message
@@ -166,13 +168,17 @@ def test_reporting_contract_block_is_deliverable_text() -> None:
 def test_reporting_contract_enumerates_every_projector_field() -> None:
     """Prompt surface and parser surface cannot drift — same generator, all fields."""
     for name in section2_field_names():
-        assert f"`{name}`" in REPORTING_CONTRACT_BLOCK, f"§2 field {name!r} unnamed in prompt"
+        assert f"`{name}`" in REPORTING_CONTRACT_BLOCK, (
+            f"§2 field {name!r} unnamed in prompt"
+        )
     assert section2_field_names() == tuple(field for field, _ in SECTION2_FIELDS)
     assert "etc." not in section2_emit_line()
     assert "verbatim" in section2_emit_line()
 
 
-_PROVENANCE = "workspaces://universal-llm-gateway/tmp/reviews/closeouts/auto-specimen.md"
+_PROVENANCE = (
+    "workspaces://universal-llm-gateway/tmp/reviews/closeouts/auto-specimen.md"
+)
 
 _CLASS_I_ABSENT_CLOSEOUT = """\
 TYPE: CLOSEOUT
@@ -284,7 +290,9 @@ def test_reporting_class_ii_present_parseable_no_deviation() -> None:
     )
 
 
-def test_reporting_class_iii_present_unparseable_reported_unparsed_never_absent() -> None:
+def test_reporting_class_iii_present_unparseable_reported_unparsed_never_absent() -> (
+    None
+):
     """AC class (iii) — locate-miss / parse-miss ⇒ unparsed, never missing_* / blind clamp.
 
     Specimen is a projected table whose access/coverage cells carry relay locate-miss

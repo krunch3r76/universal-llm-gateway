@@ -41,7 +41,9 @@ def classify_retention_shape(value: object) -> str:
     return "unmarked"
 
 
-def _validate_retention_emit(value: object, shape_label: str) -> BoundaryShapeViolation | None:
+def _validate_retention_emit(
+    value: object, shape_label: str
+) -> BoundaryShapeViolation | None:
     if shape_label in {RESULT_BODY_PRESENT, *_EXPLICIT_ABSENT}:
         return None
     if isinstance(value, ToolcallResultRetention):

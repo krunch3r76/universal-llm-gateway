@@ -63,13 +63,9 @@ from services.git_integration_worker.cursor_sdk_ledger_hop import (
 
 logger = get_logger(__name__)
 
-_LIVE_STATUSES = frozenset(
-    {"queued", "admitted", "running", "parked_waiting"}
-)
+_LIVE_STATUSES = frozenset({"queued", "admitted", "running", "parked_waiting"})
 _CLOSEOUT_TOKENS_KEY = "closeout_stop_tokens"
-_HOP_SEQ_LINE_RE = re.compile(
-    r"(?im)^(?:\*\*)?hop_seq(?:\*\*)?:\s*(\d+)\s*$"
-)
+_HOP_SEQ_LINE_RE = re.compile(r"(?im)^(?:\*\*)?hop_seq(?:\*\*)?:\s*(\d+)\s*$")
 _RELAY_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=15.0, pool=5.0)
 SKIP_GATE_NEXT_ADMIT_BLOCKED = "next_admit_blocked"
 
@@ -138,9 +134,7 @@ def _first_open_row_in_scoreboard(scoreboard_body: str) -> str | None:
     return None
 
 
-def _live_entry_gate_for_row(
-    row: dict[str, Any], scoreboard_body: str
-) -> str | None:
+def _live_entry_gate_for_row(row: dict[str, Any], scoreboard_body: str) -> str | None:
     """Entry gate from scoreboard header, fold, or first OPEN row."""
     gate = _scoreboard_entry_gate(scoreboard_body)
     if gate:
@@ -204,7 +198,9 @@ def _next_admit_guard_text(row: dict[str, Any], rec: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def hop_body_build_refused(row: dict[str, Any], rec: dict[str, Any] | None = None) -> bool:
+def hop_body_build_refused(
+    row: dict[str, Any], rec: dict[str, Any] | None = None
+) -> bool:
     """True when NEXT_ADMIT forbids rematerializing a conductor successor (AC7)."""
     data = rec if rec is not None else _record_data(row)
     return next_admit_blocks_hop_body(_next_admit_guard_text(row, data))
@@ -265,8 +261,12 @@ def _hop_skip_gate(
             return "mission_closed"
         thread_id = str(row.get("thread_id") or "")
         dispatch_id = str(row.get("dispatch_id") or "")
-        if thread_id and dispatch_id and live_conductor_row_on_thread(
-            thread_id=thread_id, exclude_dispatch_id=dispatch_id
+        if (
+            thread_id
+            and dispatch_id
+            and live_conductor_row_on_thread(
+                thread_id=thread_id, exclude_dispatch_id=dispatch_id
+            )
         ):
             return "live_sibling"
         if dispatch_id and conductor_has_live_nested(dispatch_id=dispatch_id):
@@ -569,11 +569,7 @@ def build_hop_team_dispatch_body(
     else:
         generation_options["summoning_thread_id_unresolved"] = True
     routing_model = rec.get("model") or row.get("resolved_model")
-    contract = (
-        rec.get("contract")
-        or row.get("contract")
-        or "conductor"
-    )
+    contract = rec.get("contract") or row.get("contract") or "conductor"
     body: dict[str, Any] = {
         "op": "generate",
         "seat": "cursor-sdk",
@@ -703,9 +699,8 @@ async def maybe_fire_conductor_hop_reactor(*, dispatch_id: str) -> None:
     ok, detail = await post_conductor_hop_team_dispatch(body)
     record_json = str(row.get("record_json") or "")
     if ok:
-        successor = (
-            str(detail.get("dispatch_id") or "")
-            or str(detail.get("execution_id") or "")
+        successor = str(detail.get("dispatch_id") or "") or str(
+            detail.get("execution_id") or ""
         )
         if successor:
             merged = merge_hop_patch(

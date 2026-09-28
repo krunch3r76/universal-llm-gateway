@@ -234,9 +234,7 @@ _OVERCLAIM_AC_CONTRADICTED = "overclaim:ac_pass_contradicted"
 _OVERCLAIM_STATUS_REGISTER = "overclaim:status_claim_from_register"
 _INVOCATION_ID_RE = re.compile(r"\b((?:test|lint|gate_d):[\w-]+)\b", re.I)
 _PASS_TOKEN_RE = re.compile(r"\bPASS\b", re.I)
-_STATUS_CLAIM_LINE_RE = re.compile(
-    r"(?im)^(?:\*\*)?status_claim(?:\*\*)?\s*[:=]\s*.+$"
-)
+_STATUS_CLAIM_LINE_RE = re.compile(r"(?im)^(?:\*\*)?status_claim(?:\*\*)?\s*[:=]\s*.+$")
 _DEVIATIONS_LINE_RE = re.compile(r"(?im)^deviations:\s*(.*)$")
 _TABLE_CELL_ROW_RE = re.compile(
     r"(?im)^\|\s*(?P<field>[^|]+?)\s*\|\s*(?P<value>.*?)\s*\|\s*$"
@@ -417,7 +415,9 @@ def _split_ac_clauses(cell: str) -> list[str]:
     return [part.strip() for part in parts if part.strip()]
 
 
-def _amend_ac_clause(clause: str, register: dict[str, dict[str, Any]]) -> tuple[str, str | None]:
+def _amend_ac_clause(
+    clause: str, register: dict[str, dict[str, Any]]
+) -> tuple[str, str | None]:
     """Rewrite one AC clause; return (amended_clause, relay_note_token|None)."""
     if not _PASS_TOKEN_RE.search(clause):
         return clause, None
@@ -429,7 +429,9 @@ def _amend_ac_clause(clause: str, register: dict[str, dict[str, Any]]) -> tuple[
         if row is None:
             return _PASS_TOKEN_RE.sub("UNBOUND", clause), _OVERCLAIM_AC_UNBOUND
         if not _register_row_passes(row):
-            return _PASS_TOKEN_RE.sub("CONTRADICTED", clause), _OVERCLAIM_AC_CONTRADICTED
+            return _PASS_TOKEN_RE.sub(
+                "CONTRADICTED", clause
+            ), _OVERCLAIM_AC_CONTRADICTED
     return clause, None
 
 
@@ -488,9 +490,13 @@ def amend_completion_overclaim(
     if register:
         ac_cell = _extract_table_cell(amended_body, "ac_verdict")
         if ac_cell:
-            amended_ac, ac_notes = _amend_ac_verdict_register_bindings(ac_cell, register)
+            amended_ac, ac_notes = _amend_ac_verdict_register_bindings(
+                ac_cell, register
+            )
             if amended_ac != ac_cell:
-                amended_body = _replace_table_cell(amended_body, "ac_verdict", amended_ac)
+                amended_body = _replace_table_cell(
+                    amended_body, "ac_verdict", amended_ac
+                )
                 relay_note_parts.extend(ac_notes)
 
     sidecar_uri = (

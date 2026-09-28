@@ -85,7 +85,9 @@ def validate_at_emit(
     classify, validate_fn = entry
     shape_label = classify(value)
     violation = validate_fn(value, shape_label)
-    result = BoundaryEmitResult(value=value, shape_label=shape_label, violation=violation)
+    result = BoundaryEmitResult(
+        value=value, shape_label=shape_label, violation=violation
+    )
     if strict and violation is not None:
         raise BoundaryContractError(violation)
     return result

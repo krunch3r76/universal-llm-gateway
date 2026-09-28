@@ -61,9 +61,7 @@ def unserved_line(path: str) -> str:
     Must not share the ``unmapped_serving:`` prefix — that prefix is the
     undeclared-serving alarm, not a successful empty classification.
     """
-    return (
-        f"libs_touched: {path} — declared unserved; no manage restart nominated"
-    )
+    return f"libs_touched: {path} — declared unserved; no manage restart nominated"
 
 
 def residue_for_empty_nominations(path: str) -> tuple[str, ...]:

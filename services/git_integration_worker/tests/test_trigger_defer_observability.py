@@ -7,8 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 from agent_bus_store.auth import require_token
+from fastapi.testclient import TestClient
 
 from services.git_integration_worker.app import create_app
 from services.git_integration_worker.trigger_service.config import fire_interval_s
@@ -51,7 +51,9 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TriggerStore:
     return TriggerStore()
 
 
-def _schedule_idle(store: TriggerStore, *, fire_at: datetime, recur_every_s: int | None = None):
+def _schedule_idle(
+    store: TriggerStore, *, fire_at: datetime, recur_every_s: int | None = None
+):
     return store.schedule(
         created_by="test",
         fire_at=fire_at,
@@ -173,7 +175,9 @@ def test_defer_threshold_emits_degraded_without_cancel(store: TriggerStore) -> N
 def test_coalesce_records_skipped_periods(store: TriggerStore) -> None:
     now = datetime.now(UTC)
     recur_s = 1800
-    row = _schedule_idle(store, fire_at=now - timedelta(minutes=5), recur_every_s=recur_s)
+    row = _schedule_idle(
+        store, fire_at=now - timedelta(minutes=5), recur_every_s=recur_s
+    )
     idle = FleetIdleSnapshot(
         verdict=FleetVerdict.IDLE,
         dispatch_idle=True,
@@ -193,7 +197,9 @@ def test_coalesce_records_skipped_periods(store: TriggerStore) -> None:
     assert rearmed.last_coalesce_skipped == 3
 
 
-def test_route_exposes_defer_fields(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_route_exposes_defer_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path / "cortex"))
     monkeypatch.setenv("AGENT_BUS_TOKEN", "test-token")

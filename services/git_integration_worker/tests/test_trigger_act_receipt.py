@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from claude_bundles.act_receipt import format_act_receipt
+
 from services.git_integration_worker.trigger_service.act_verify import (
     ACT_STATUS_CLAIMED,
     ACT_STATUS_PENDING,
@@ -30,15 +30,24 @@ def store(tmp_path, monkeypatch: pytest.MonkeyPatch) -> TriggerStore:
 
 
 def test_migration_003_applied(store: TriggerStore) -> None:
-    applied = store._connect().execute(  # noqa: SLF001
-        "SELECT id FROM schema_migrations"
-    ).fetchall()
+    applied = (
+        store._connect()
+        .execute(  # noqa: SLF001
+            "SELECT id FROM schema_migrations"
+        )
+        .fetchall()
+    )
     assert any(row[0] == "003_act_receipt" for row in applied)
     cols = {
         row[1]
         for row in store._connect().execute("PRAGMA table_info(triggers)").fetchall()  # noqa: SLF001
     }
-    assert {"act_status", "act_evidence_uri", "act_error", "require_act_receipt"} <= cols
+    assert {
+        "act_status",
+        "act_evidence_uri",
+        "act_error",
+        "require_act_receipt",
+    } <= cols
 
 
 def test_schedule_convenience_default_require_act(store: TriggerStore) -> None:
@@ -155,11 +164,14 @@ def test_missing_receipt_unverified_no_second_submit(store: TriggerStore) -> Non
     client._request.return_value = {"at_hard_limit": False}
     client.submit.return_value = {"execution_id": "exec-4", "status": "running"}
     client.poll.return_value = {"status": "completed"}
-    with patch(
-        "services.git_integration_worker.trigger_service.fire.lane_available",
-        return_value=(True, None),
-    ), patch(
-        "services.git_integration_worker.trigger_service.fire.publish_lib_signal",
+    with (
+        patch(
+            "services.git_integration_worker.trigger_service.fire.lane_available",
+            return_value=(True, None),
+        ),
+        patch(
+            "services.git_integration_worker.trigger_service.fire.publish_lib_signal",
+        ),
     ):
         from services.git_integration_worker.trigger_service.fire import fire_once
 

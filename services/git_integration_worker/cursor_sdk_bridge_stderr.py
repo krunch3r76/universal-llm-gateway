@@ -47,7 +47,9 @@ _MAX_HEAD_BYTES = 1_048_576
 _TAIL_LINES = 40
 _JOIN_TIMEOUT_S = 2.0
 
-BridgeDeathClass = str  # spawn_enoent_missing_cwd | uncaught_exception_bundle | empty | unclassified
+BridgeDeathClass = (
+    str  # spawn_enoent_missing_cwd | uncaught_exception_bundle | empty | unclassified
+)
 
 _SPAWN_ENOENT_RE = re.compile(
     r"spawn\s+.+\s+enoent|errno\s*-2|missing cwd",

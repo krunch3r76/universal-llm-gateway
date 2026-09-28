@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from implement_admission.scheme_resolve import resolve_schemed_packet_file
 from implement_admission.source_ref import parse_source_ref
 from implement_admission.spec import SourceKind
+
 from services.git_integration_worker.cursor_sdk_closeout_trigger import (
     build_closeout_trigger_payload,
     normalize_closeout_source_ref,
 )
-from services.git_integration_worker.cursor_sdk_deliverables import sidecar_workspaces_ref
+from services.git_integration_worker.cursor_sdk_deliverables import (
+    sidecar_workspaces_ref,
+)
 
 
 def test_normalize_sidecar_to_packet() -> None:

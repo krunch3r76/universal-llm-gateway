@@ -221,7 +221,9 @@ def merge_stream_subagent_calls(
     )
 
 
-def ensure_subagents_surface(manifest: EffectsManifest | None) -> EffectsManifest | None:
+def ensure_subagents_surface(
+    manifest: EffectsManifest | None,
+) -> EffectsManifest | None:
     """Always emit subagents surface — explicit empty when no Task invocations (AC-9b)."""
     if manifest is None:
         return None

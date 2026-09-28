@@ -419,7 +419,11 @@ async def resolve_cortex_pinned_deliverables(
             divergent.append(f"pinned_deliverable_write_failed:{rel}")
             continue
         uri = result.get("uri")
-        if isinstance(uri, str) and uri.startswith("cortex://") and pinned_write_digest(result):
+        if (
+            isinstance(uri, str)
+            and uri.startswith("cortex://")
+            and pinned_write_digest(result)
+        ):
             uris.append(uri)
             if f"pinned_deliverable_wrong_sandbox:{rel}" not in divergent:
                 satisfied.append(rel)
