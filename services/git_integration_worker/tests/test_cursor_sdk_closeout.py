@@ -568,7 +568,7 @@ def test_prepare_closeout_delivery_demotes_compound_pytest_and_wires_annotator(
     )
     result = {
         "status": "success",
-        "value": {"exitCode": 0, "stdout": "1 passed\n", "stderr": ""},
+        "value": {"exitCode": 0, "stdout": "1 passed\nSUITE_EXIT:0\n", "stderr": ""},
     }
     obs = ToolCallObservation(
         call_id="call-compound-pytest",
@@ -601,8 +601,12 @@ def test_prepare_closeout_delivery_demotes_compound_pytest_and_wires_annotator(
     payload = json.loads(delivery.body)
     verification = payload["verification"]
     assert len(verification) == 1
-    assert verification[0]["exit_code_register"] == "unattributed"
-    assert "wrapper_exit_demoted:call-compound-pytest" in payload["deviations"]
+    assert verification[0]["exit_code_register"] == "observed"
+    assert verification[0]["exit_code"] == 0
+    assert verification[0]["basis"] == "shell_stdout.SUITE_EXIT"
+    assert "wrapper_exit_demoted:call-compound-pytest" not in payload.get(
+        "deviations", []
+    )
 
 
 def test_prepare_closeout_delivery_implement_clean_complete(tmp_path: Path) -> None:

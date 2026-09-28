@@ -442,6 +442,36 @@ def attribution_effects_paths(
     return tuple(sorted(ordered))
 
 
+def merge_landed_hub_effects_paths(
+    base: Iterable[str],
+    *,
+    hub_repo: Path | None,
+    head_sha: str | None,
+    landed: bool | None,
+) -> tuple[str, ...]:
+    """Append hub merge commit paths when a lane dispatch landed on master.
+
+    Hub git shells can advance master while the lane worktree change-set is
+    empty at closeout; ``effects[]`` must still name the landed paths (a:36739).
+    """
+    ordered = list(base)
+    if landed is not True:
+        return tuple(sorted(set(ordered)))
+    sha = (head_sha or "").strip()
+    if not sha or hub_repo is None:
+        return tuple(sorted(set(ordered)))
+    from services.git_integration_worker.cursor_sdk_git_head import (
+        land_paths_from_merge_sha,
+    )
+
+    seen = set(ordered)
+    for path in land_paths_from_merge_sha(hub_repo, sha):
+        if path not in seen:
+            seen.add(path)
+            ordered.append(path)
+    return tuple(sorted(ordered))
+
+
 def partition_gitignored_from_change_set(
     change_set: ChangeSet,
     *,

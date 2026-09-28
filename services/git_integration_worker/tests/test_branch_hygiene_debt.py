@@ -1055,8 +1055,17 @@ def test_commit_exists_patchability_sentinel(
 
 
 def test_ledger_path_refuses_the_live_gateway_dir(monkeypatch) -> None:
-    from services.git_integration_worker.cursor_dispatch_ledger import _ledger_path
+    from services.git_integration_worker.cursor_dispatch_ledger import (
+        CURSOR_SDK_DISPATCH_LEDGER_ENV,
+        _ledger_path,
+    )
 
+    if os.environ.get(CURSOR_SDK_DISPATCH_LEDGER_ENV, "").strip():
+        pytest.skip(
+            "CURSOR_SDK_DISPATCH_LEDGER is pinned; "
+            "_ledger_path does not consult DATA_DIR (a:36744)"
+        )
+    monkeypatch.delenv(CURSOR_SDK_DISPATCH_LEDGER_ENV, raising=False)
     real_gateway = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway"
     monkeypatch.setenv("DATA_DIR", str(real_gateway))
     monkeypatch.setenv("PYTEST_CURRENT_TEST", "test_branch_hygiene_debt")

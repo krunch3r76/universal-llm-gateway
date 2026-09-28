@@ -42,6 +42,7 @@ from services.git_integration_worker.cursor_sdk_capture_status import (
     apply_capture_incompleteness_gate,
     apply_escalation_harvest_gate,
     attribution_effects_paths,
+    merge_landed_hub_effects_paths,
     positive_deliverable_evidence,
     project_status_from_work_outcome,
     resolve_work_outcome,
@@ -457,11 +458,16 @@ def build_implement_closeout_body(
                 payload["files_expected"] = plan_files_expected
             if plan_acceptance:
                 payload["acceptance_criteria"] = plan_acceptance
-        effects = attribution_effects_paths(
-            created=repo_files.created,
-            modified=repo_files.modified,
-            deleted=repo_files.deleted,
-            files_untracked_or_ignored=files_untracked_or_ignored or [],
+        effects = merge_landed_hub_effects_paths(
+            attribution_effects_paths(
+                created=repo_files.created,
+                modified=repo_files.modified,
+                deleted=repo_files.deleted,
+                files_untracked_or_ignored=files_untracked_or_ignored or [],
+            ),
+            hub_repo=hub_repo,
+            head_sha=head_sha,
+            landed=landed,
         )
         # §4.7 / a:26354 — off-git cortex URIs belong in effects so operator
         # disposition via closeout schema sees durable writes even when the repo ChangeSet is empty.

@@ -283,8 +283,8 @@ _E93F_RESULT = {
 }
 
 
-def test_specimen_auto_e93f739c279c_harvests_unattributed_trailing_echo() -> None:
-    """Replay live e93f shell: trailing echo makes outer exit unattributed."""
+def test_specimen_auto_e93f739c279c_harvests_observed_from_pytest_exit_stdout() -> None:
+    """Replay live e93f shell: PYTEST_EXIT in stdout names the process exit."""
     obs = ToolCallObservation(
         call_id=_E93F_CALL_ID,
         tool_name="shell",
@@ -300,15 +300,13 @@ def test_specimen_auto_e93f739c279c_harvests_unattributed_trailing_echo() -> Non
     rows = harvest_test_verifications((obs,))
     assert len(rows) == 1
     row = rows[0]
-    assert row.exit_code_register == "unattributed"
-    assert row.exit_code is None
-    assert row.wrapper_exit_code == 0
-    assert row.basis == (
-        "shell_tool_result.exitCode:unattributed;signal=;executionTime=637"
-    )
+    assert row.exit_code_register == "observed"
+    assert row.exit_code == 0
+    assert row.wrapper_exit_code is None
+    assert row.basis == "shell_stdout.PYTEST_EXIT"
     assert row.stdout is not None and "10 passed" in row.stdout
     assert row.stderr == ""
-    assert is_pytest_witness(row) is False
+    assert is_pytest_witness(row) is True
     assert row.invocation_id == f"test:{_E93F_CALL_ID}"
 
 
@@ -387,8 +385,8 @@ _SPECIMEN_A_COMMAND = (
 )
 
 
-def test_harvest_specimen_a_compound_echo_is_unattributed_and_blocks_all_pass() -> None:
-    """Specimen auto-46c3c9c57994 — pipeline+tee+echo masks pytest exit."""
+def test_harvest_specimen_a_compound_echo_without_stdout_marker_stays_unattributed() -> None:
+    """RED — pipeline+tee+echo with no SUITE_EXIT line cannot name pytest exit."""
     obs = _shell_obs(
         call_id=_SPECIMEN_A_CALL_ID,
         command=_SPECIMEN_A_COMMAND,
@@ -412,6 +410,36 @@ def test_harvest_specimen_a_compound_echo_is_unattributed_and_blocks_all_pass() 
         basis="subprocess.run.returncode",
     )
     assert verification_all_pass([lint, row]) is False
+
+
+def test_harvest_specimen_a_suite_exit_stdout_is_observed() -> None:
+    """GREEN — SUITE_EXIT in stdout attributes the pytest process exit."""
+    obs = _shell_obs(
+        call_id=_SPECIMEN_A_CALL_ID,
+        command=_SPECIMEN_A_COMMAND,
+        exit_code=0,
+    )
+    obs.result["value"]["stdout"] = "62 passed in 1.2s\nSUITE_EXIT:0\n"
+    rows = harvest_test_verifications((obs,))
+    row = rows[0]
+    assert row.exit_code_register == "observed"
+    assert row.exit_code == 0
+    assert row.basis == "shell_stdout.SUITE_EXIT"
+
+
+def test_harvest_compound_red_exit_echo_stdout_is_observed() -> None:
+    """GREEN — RED_exit echo after pytest names the probe exit (auto-363018bf shape)."""
+    command = (
+        "pytest -q services/git_integration_worker/tests/test_x.py; "
+        'EC=$?; echo "RED_exit:$EC"'
+    )
+    obs = _shell_obs(call_id="call-red-exit-echo", command=command, exit_code=0)
+    obs.result["value"]["stdout"] = "1 failed\nRED_exit:1\n"
+    rows = harvest_test_verifications((obs,))
+    row = rows[0]
+    assert row.exit_code_register == "observed"
+    assert row.exit_code == 1
+    assert row.basis == "shell_stdout.RED_exit"
 
 
 def test_multiline_pytest_exit_is_observed_without_stdout_echo() -> None:

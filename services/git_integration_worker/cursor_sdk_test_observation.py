@@ -25,6 +25,13 @@ from services.git_integration_worker.cursor_sdk_tool_result import unwrap_tool_r
 
 TEST_OBSERVATION_SEMANTICS = "presence_legible_absence_not"
 
+# Trailing-echo compound shells that print the process exit in stdout (specimens
+# auto-e93f739c279c, auto-363018bf85e6 RED/green probes).
+_PYTEST_EXIT_STDOUT_RE = re.compile(r"PYTEST_EXIT=(\d+)", re.IGNORECASE)
+_SUITE_EXIT_STDOUT_RE = re.compile(r"SUITE_EXIT[:=](\d+)", re.IGNORECASE)
+_RED_EXIT_STDOUT_RE = re.compile(r"RED[_ ]?exit[:=](\d+)", re.IGNORECASE)
+_RED_PROBE_EXIT_STDOUT_RE = re.compile(r"RED_PROBE_EXIT=(\d+)", re.IGNORECASE)
+
 _CONTAMINATED_AGREEMENT_MARKER = (
     "test_claim@§2 pytest success without pytest witness sibling"
 )
@@ -312,6 +319,29 @@ def _shell_exit_code(obs: ToolCallObservation) -> int | None:
     return _coerce_exit_code(raw_exit)
 
 
+def _declared_check_exit_from_streams(
+    command: str,
+    stdout: str | None,
+    stderr: str | None,
+) -> tuple[int, str] | None:
+    """Recover process exit from compound-wrapper stdout when the seat echoed it."""
+    if not is_pytest_command(command):
+        return None
+    haystacks = [stdout or "", stderr or ""]
+    patterns: tuple[tuple[re.Pattern[str], str], ...] = (
+        (_PYTEST_EXIT_STDOUT_RE, "PYTEST_EXIT"),
+        (_SUITE_EXIT_STDOUT_RE, "SUITE_EXIT"),
+        (_RED_PROBE_EXIT_STDOUT_RE, "RED_PROBE_EXIT"),
+        (_RED_EXIT_STDOUT_RE, "RED_exit"),
+    )
+    for text in haystacks:
+        for pattern, label in patterns:
+            match = pattern.search(text)
+            if match is not None:
+                return int(match.group(1)), label
+    return None
+
+
 def _shell_harvest_basis(
     payload: Mapping[str, object] | None,
     *,
@@ -375,6 +405,19 @@ def _harvest_shell_pytest(obs: ToolCallObservation) -> Verification | None:
             output_truncated=trunc_out or trunc_err,
         )
     unattributed = not is_proven_simple_pytest_command(command)
+    if unattributed:
+        declared = _declared_check_exit_from_streams(command, stdout, stderr)
+        if declared is not None:
+            proc_exit, label = declared
+            return observed_process_verification(
+                command=command,
+                exit_code=proc_exit,
+                invocation_id=invocation_id,
+                basis=f"shell_stdout.{label}",
+                stdout=stdout,
+                stderr=stderr,
+                output_truncated=trunc_out or trunc_err,
+            )
     pack = (
         unattributed_process_verification
         if unattributed
