@@ -230,11 +230,17 @@ def fill_judgment_cell(
     provenance: str,
     cap: Callable[[str, str], str] | None = default_relay_cell_cap,
 ) -> str:
-    """Return extracted field text or relay uncertainty — never false absence."""
+    """Return extracted field text or relay uncertainty — never false absence.
+
+    Heading presence is read on *body*, the same string extraction just saw.
+    Re-stripping the machine tail here is a different body: on the no-prose
+    sidecar path that strip is empty by construction, and it used to license
+    an absence cell for a heading the raw body still contained.
+    """
     extracted = extract_field_section(body, field)
     if extracted:
         return cap(extracted, provenance) if cap is not None else extracted
-    if has_closeout_substance(body) and field_heading_present(body, field):
+    if field_heading_present(body, field):
         return (
             f"parse_failed — could not extract §2 field `{field}` "
             f"(authoritative sidecar: {provenance})"
@@ -256,6 +262,11 @@ def build_ac_verdict_cell(
         return value
     excerpt = strip_machine_tail(body).strip()
     if not excerpt:
+        if field_heading_present(body, "ac_verdict"):
+            return (
+                "parse_failed — could not extract §2 field `ac_verdict` "
+                f"(authoritative sidecar: {provenance})"
+            )
         return relay_parse_miss_cell("ac_verdict", provenance)
     prefix = unclassified_relay_prefix(provenance=provenance, body=body)
     if "://" in provenance:

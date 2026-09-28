@@ -164,16 +164,25 @@ def _undecorate_field_line(line: str) -> str:
     return f"{label}:{rest}"
 
 
-def _plain_field_match(stripped_line: str) -> tuple[str, str] | None:
-    """Return ``(canonical field, rest)`` when *stripped_line* is a §2 field line."""
-    normalized = _undecorate_field_line(stripped_line)
-    match = _PLAIN_FIELD_LINE_RE.match(normalized)
+def _grammar_field_match(line: str) -> tuple[str, str] | None:
+    """Return ``(canonical field, rest)`` when *line* matches the plain §2 grammar."""
+    match = _PLAIN_FIELD_LINE_RE.match(line)
     if match is None:
         return None
     canonical = _canonical_field_for_plain_heading(match.group("field"))
     if canonical is None:
         return None
     return canonical, match.group("rest").strip()
+
+
+def _raw_plain_field_match(stripped_line: str) -> tuple[str, str] | None:
+    """Plain grammar on the line as written. Bold and decoration do not match."""
+    return _grammar_field_match(stripped_line)
+
+
+def _plain_field_match(stripped_line: str) -> tuple[str, str] | None:
+    """Return ``(canonical field, rest)`` when *stripped_line* is a §2 field line."""
+    return _grammar_field_match(_undecorate_field_line(stripped_line))
 
 
 def _ac_subsection_heading(normalized_heading: str) -> bool:
@@ -339,12 +348,18 @@ def _next_field_boundary(body: str, start: int) -> int:
 
 
 def _extract_plain_same_line(body: str, field: str) -> str | None:
-    """Join every same-line rest for *field*. The first line is not a sample."""
-    rests = [
-        rest
-        for _start, _end, heading, rest in _plain_field_line_spans(body)
-        if heading == field and rest
-    ]
+    """Join raw ``field: rest`` lines. Bold and decorated lines are not this channel.
+
+    The first raw line is not a sample of the others. A rest that becomes visible
+    only after decoration stripping is a different recognizer and must not be
+    concatenated into this value.
+    """
+    rests: list[str] = []
+    for start, end, _heading, _rest in _plain_field_line_spans(body):
+        raw = _raw_plain_field_match(body[start:end].strip())
+        if raw is None or raw[0] != field or not raw[1]:
+            continue
+        rests.append(raw[1])
     if not rests:
         return None
     return "; ".join(rests)
@@ -358,7 +373,7 @@ def _extract_plain_section(body: str, field: str) -> str | None:
             offset += len(line)
             continue
         stripped = line.strip()
-        parsed = _plain_field_match(stripped) if stripped else None
+        parsed = _raw_plain_field_match(stripped) if stripped else None
         if parsed is not None:
             canonical, rest = parsed
             if canonical == field:
@@ -369,6 +384,35 @@ def _extract_plain_section(body: str, field: str) -> str | None:
                 section = body[start:end].strip()
                 return section or None
         offset += len(line)
+    return None
+
+
+def _extract_decorated_same_line(body: str, field: str) -> str | None:
+    """One decorated rest for *field*. Disagreeing decorations establish no value."""
+    fenced = fenced_spans(body)
+    rests: list[str] = []
+    offset = 0
+    for line in body.splitlines(keepends=True):
+        stripped = line.strip()
+        line_start = offset
+        offset += len(line)
+        if (
+            in_fenced_span(fenced, line_start)
+            or not stripped
+            or stripped.startswith("#")
+        ):
+            continue
+        if _raw_plain_field_match(stripped) is not None:
+            continue
+        if _BOLD_FIELD_LINE_RE.match(stripped) or _BOLD_HEADING_ONLY_RE.match(stripped):
+            continue
+        parsed = _plain_field_match(stripped)
+        if parsed is None or parsed[0] != field or not parsed[1]:
+            continue
+        rests.append(parsed[1])
+    unique = list(dict.fromkeys(rests))
+    if len(unique) == 1:
+        return unique[0]
     return None
 
 
@@ -503,14 +547,22 @@ def extract_field_section(body: str, field: str) -> str | None:
     plain_section = _extract_plain_section(body, field)
     if plain_section:
         return plain_section
+    decorated_checked = False
     for exact_only in (True, False):
         same_line = _extract_bold_same_line(body, field, exact_only=exact_only)
         if same_line is not None and same_line.strip():
             return same_line
-        for extractor in (_extract_bold_section, _extract_atx_section):
-            section = extractor(body, field, exact_only=exact_only)
-            if section:
-                return section
+        section = _extract_bold_section(body, field, exact_only=exact_only)
+        if section:
+            return section
+        if not decorated_checked:
+            decorated_checked = True
+            decorated = _extract_decorated_same_line(body, field)
+            if decorated:
+                return decorated
+        atx = _extract_atx_section(body, field, exact_only=exact_only)
+        if atx:
+            return atx
     return None
 
 

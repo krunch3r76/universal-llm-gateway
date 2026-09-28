@@ -2323,6 +2323,82 @@ def test_q1_normalizer_does_not_flatten_distinguishing_shapes() -> None:
     assert "mentioned in prose" not in narrative_cell
 
 
+def test_bold_plus_decorated_same_field_keeps_bold_rest() -> None:
+    """One bold line plus one decorated same-field line is that bold rest, not a join."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+
+    prose = (
+        "**deltas_to_spec:** SCOPE DELTA — Q2 not done\n"
+        "- deltas_to_spec: none\n"
+        "**ac_verdict:** PASS\n"
+    )
+    body, _status = project_section2_table(
+        prose, provenance="workspaces://test/bold-plus-decorated"
+    )
+    cell = _extract_table_cell(body, "deltas_to_spec") or ""
+    assert cell == "SCOPE DELTA — Q2 not done", cell
+
+
+def test_bold_field_line_does_not_feed_plain_join() -> None:
+    """A ``**field:**`` line stays on the bold extractor; a second alias is not joined."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+
+    prose = (
+        "**status_claim:** partial\n"
+        "**next:** Operator fires the held propagate.\n"
+        "**next steps:** none\n"
+        "**ac_verdict:** PASS\n"
+    )
+    body, _status = project_section2_table(
+        prose, provenance="workspaces://test/bold-not-joined"
+    )
+    cell = _extract_table_cell(body, "next") or ""
+    assert cell == "Operator fires the held propagate.", cell
+
+
+def test_tail_only_seen_heading_is_parse_failed_not_absence() -> None:
+    """A heading on the raw sidecar is parse_failed when no value was established."""
+    import json
+
+    from services.git_integration_worker.cursor_auto.closeout_relay import (
+        synthesize_section2,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+
+    wrapper = json.dumps(
+        {
+            "schema_version": 1,
+            "status": "partial",
+            "effects_manifest": {"schema_version": 1},
+        }
+    )
+    sidecar = (
+        "\n## structured_closeout_full\n"
+        "See **deltas_to_spec:** in the table above for the delta.\n"
+    )
+    body = synthesize_section2(
+        wrapper_text=wrapper,
+        sidecar_text=sidecar,
+        dispatch_id="tail-heading-no-value",
+    )
+    assert body is not None
+    cell = _extract_table_cell(body, "deltas_to_spec") or ""
+    assert cell.startswith("parse_failed"), cell
+    assert "relay could not locate" not in cell.casefold()
+
+
 def test_repeated_verdict_alias_lines_all_reach_ac_verdict_cell() -> None:
     """The first ``VERDICT:`` line is not a sample of the field."""
     from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
