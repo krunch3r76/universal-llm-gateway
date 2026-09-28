@@ -192,6 +192,11 @@ def test_propagation_block_invalid_refusal_projects_invalid_flags(
     )
     assert admission["fix_hint"] == PROPAGATE_BLOCK_INVALID_FIX_HINT
     assert admission["fix_hint"] != PROPAGATE_MISSING_FIX_HINT
+    assert admission["legal_safe_window"] == [
+        "harvest",
+        "standalone_ok",
+        "drain_required",
+    ]
 
 
 def test_retired_tokens_are_gone_from_every_enqueue_path(

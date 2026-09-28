@@ -315,6 +315,90 @@ async def test_run_propagation_queues_when_manage_defers() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_propagation_stargate_busy_yields_queued_restart_intent() -> None:
+    """Busy stargate must surface queued + restart_intent_id, not harvest_wanted."""
+    from services.git_integration_worker.cursor_auto.handler_propagation import (
+        run_propagation_in_seat,
+    )
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    body = _SHORTHAND_BODY.replace("mcp", "stargate")
+    job = AutoJob(
+        job_id="job-stargate-busy",
+        thread_id=12286,
+        turn_number=1,
+        from_agent="cursor-auto",
+        to_agent="cursor",
+        subject="restart stargate",
+        body=body,
+        contract="propagate",
+        desired_model="auto",
+        desired_effort="medium",
+        require_attended=False,
+        request_id="req-stargate-busy",
+    )
+
+    class _Queue:
+        def mark_done(
+            self,
+            job_id: str,
+            *,
+            failed: bool = False,
+            terminal_reason: str | None = None,
+        ) -> None:
+            return None
+
+    posted: list[dict[str, object]] = []
+
+    class _Client:
+        async def reply(self, **kwargs):  # type: ignore[no-untyped-def]
+            posted.append(kwargs)
+            return type("R", (), {"status_code": 200, "body": ""})()
+
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.upsert_open_rows",
+            return_value=["stargate:cafebabe00000000000000000000000000000000:sync_restart"],
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.sync_restart_service",
+            return_value={
+                "status": "deferred",
+                "state": "draining",
+                "restart_intent_id": "intent-stargate-12286",
+                "activation_validation_id": "val-stargate-1",
+                "reason": "Stargate restart intent armed",
+                "idle_ceiling_s": 600.0,
+            },
+        ),
+        patch(
+            "charter_runner_store.propagation_validation.queries.bind_validation_to_row",
+            return_value=1,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
+        ),
+    ):
+        result = await run_propagation_in_seat(
+            job,
+            client=_Client(),
+            queue=_Queue(),
+            model={"requested": "auto", "resolved_model_id": "cursor/composer-2.5"},
+            effort={"requested": None, "resolved_effort": "medium"},
+            gate_plan={"action": "in_seat"},
+        )
+    assert result["disposition"] == "queued"
+    assert posted
+    payload = json.loads(str(posted[-1]["body"]))
+    executions = payload.get("executions") or []
+    assert executions
+    assert executions[0]["status"] == "queued"
+    manage = executions[0].get("manage") or {}
+    assert manage.get("restart_intent_id") == "intent-stargate-12286"
+    assert "harvest_wanted" not in str(payload.get("summary") or "").lower()
+
+
+@pytest.mark.asyncio
 async def test_run_propagation_forwards_row_sha_to_manage() -> None:
     """GIW propagate must pass the ledger row SHA into manage sync_restart."""
     from services.git_integration_worker.cursor_auto.handler_propagation import (

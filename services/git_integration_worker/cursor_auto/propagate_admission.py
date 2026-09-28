@@ -21,7 +21,7 @@ from charter_runner_store.propagation_code_ref_mint import (
 )
 from deploy_identity.code_version import normalize_code_ref, resolve_code_version
 from implement_admission.propagation_admit_validation import (
-    LEGAL_SAFE_WINDOW_LIST,
+    LEGAL_SAFE_WINDOW_TOKENS,
     validate_service_slug,
 )
 from implement_admission.propagation_block_parser import (
@@ -92,7 +92,7 @@ def _rows_from_structured_block(
                 f"## propagation block rejected: {', '.join(flags)}",
                 PROPAGATE_BLOCK_INVALID_FIX_HINT,
                 invalid_flags=list(flags),
-                legal_safe_window=LEGAL_SAFE_WINDOW_LIST,
+                legal_safe_window=list(LEGAL_SAFE_WINDOW_TOKENS),
             ),
         )
     if not raw_rows:
@@ -116,7 +116,7 @@ def _rows_from_structured_block(
                 f"## propagation block rejected: {', '.join(parse_flags) or 'no valid rows'}",
                 PROPAGATE_BLOCK_INVALID_FIX_HINT,
                 invalid_flags=list(parse_flags),
-                legal_safe_window=LEGAL_SAFE_WINDOW_LIST,
+                legal_safe_window=list(LEGAL_SAFE_WINDOW_TOKENS),
             ),
         )
     return tuple(rows), all_flags, None

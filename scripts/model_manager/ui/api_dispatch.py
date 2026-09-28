@@ -23,11 +23,13 @@ from .controller.restart_drain import (
     BackgroundCompleteHook,
     BackgroundFailedHook,
     LocalServiceDrainSupervisor,
+    StargateIdleDrainSupervisor,
     run_gated,
     run_gated_deferred,
     run_gated_drain_supervised,
     run_gated_drain_supervised_blocking,
     run_gated_self_holder_drain_supervised,
+    run_gated_stargate_idle_drain_supervised,
     sole_busy_holder_matches,
 )
 from .controller.restart_intent_consumer import project_restart_intent_consumer
@@ -273,6 +275,13 @@ async def execute(
                     code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
                     row_id=_optional_attr_str(params, "row_id"),
                     park_live=bool(params.get("park_live", False)),
+                )
+            if service == "stargate" and not force:
+                return await _stargate_idle_drain_supervised(
+                    ctl,
+                    "sync_restart",
+                    code_ref=_optional_attr_str(params, "code_ref") or "HEAD",
+                    row_id=_optional_attr_str(params, "row_id"),
                 )
             if not force and caller_dispatch_id:
                 work = await ctl.restart_gate.probe(service)
@@ -600,6 +609,35 @@ def _optional_attr_str(params: dict[str, Any], key: str) -> str | None:
         return None
     text = value.strip()
     return text or None
+
+
+async def _stargate_idle_drain_supervised(
+    ctl: ServiceController,
+    action: str,
+    *,
+    code_ref: str = "HEAD",
+    row_id: str | None = None,
+) -> dict[str, Any]:
+    """Non-force stargate sync_restart — durable intent + idle/ceiling supervisor."""
+    supervisor = StargateIdleDrainSupervisor(
+        gate=ctl.restart_gate,
+        store=ctl.restart_intent_store,
+        lifecycle=lambda: _lifecycle_with_restart_window(
+            ctl,
+            "stargate",
+            action,
+            lambda: _sync_restart(ctl, "stargate"),
+        ),
+    )
+    return await run_gated_stargate_idle_drain_supervised(
+        ctl.restart_gate,
+        action,
+        store=ctl.restart_intent_store,
+        supervisor=supervisor,
+        reason=f"manage {action} (stargate idle drain)",
+        code_ref=code_ref,
+        row_id=row_id,
+    )
 
 
 async def _git_worker_drain_supervised(
