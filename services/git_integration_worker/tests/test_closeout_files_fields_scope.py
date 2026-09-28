@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from services.git_integration_worker.cursor_sdk_closeout_seal import (
+    EFFECTS_MOVEMENT_SCOPE,
+    closeout_effects_movement_declared,
     closeout_files_attribution_declared,
     closeout_git_authorship_lists_empty,
     seal_closeout_payload,
@@ -50,6 +52,15 @@ def _genuine_no_op_shape() -> dict:
             "surface_counts": {"repo": 0},
         },
     }
+
+
+def test_seal_qualifies_effects_movement_list_when_nonempty() -> None:
+    sealed = seal_closeout_payload(_specimen_13154_shape())
+    assert sealed["effects"]
+    assert sealed["effects_scope"] == EFFECTS_MOVEMENT_SCOPE
+    assert sealed["effects_authority"] == "recorded"
+    assert closeout_effects_movement_declared(sealed)
+    assert sealed["effects_scope"] != sealed["files_created_scope"]
 
 
 def test_seal_qualifies_files_attribution_lists() -> None:

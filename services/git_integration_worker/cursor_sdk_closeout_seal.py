@@ -28,6 +28,13 @@ FILES_ATTRIBUTION_SCOPE = (
     "repo paths in this closeout files_* fields (authored ChangeSet and ambient movement)"
 )
 FILES_ATTRIBUTION_AUTHORITY = "recorded"
+# effects[] holds dispatch-touched in-repo paths plus merged off-git deliverable URIs
+# (implement_body §4.7) — not the files_* authorship / ambient ChangeSet legs.
+EFFECTS_MOVEMENT_SCOPE = (
+    "repo paths and off-git URIs in this closeout effects[] "
+    "(dispatch action movement, not files_* authorship legs)"
+)
+EFFECTS_MOVEMENT_AUTHORITY = "recorded"
 _FILES_LIST_KEYS = (
     "files_created",
     "files_modified",
@@ -167,6 +174,24 @@ def _qualify_files_attribution_lists(payload: dict[str, Any]) -> None:
         payload.setdefault(f"{key}_authority", FILES_ATTRIBUTION_AUTHORITY)
 
 
+def _qualify_effects_movement_list(payload: dict[str, Any]) -> None:
+    """Declare scope on effects[] (dispatch movement vs files_* authorship)."""
+    if "effects" not in payload:
+        return
+    payload.setdefault("effects_scope", EFFECTS_MOVEMENT_SCOPE)
+    payload.setdefault("effects_authority", EFFECTS_MOVEMENT_AUTHORITY)
+
+
+def closeout_effects_movement_declared(payload: dict[str, Any]) -> bool:
+    """True when effects[] carries the dispatch-movement scope siblings."""
+    if "effects" not in payload:
+        return True
+    return (
+        payload.get("effects_scope") == EFFECTS_MOVEMENT_SCOPE
+        and payload.get("effects_authority") == EFFECTS_MOVEMENT_AUTHORITY
+    )
+
+
 def closeout_files_attribution_declared(payload: dict[str, Any]) -> bool:
     """True when every present files_* list carries the authorship scope siblings."""
     for key in _FILES_LIST_KEYS:
@@ -209,6 +234,7 @@ def seal_closeout_payload(payload: dict[str, Any]) -> dict[str, Any]:
     _qualify_usage_tokens(payload)
     _qualify_surface_counts(payload)
     _qualify_files_attribution_lists(payload)
+    _qualify_effects_movement_list(payload)
     _qualify_authority_fork(payload)
     _qualify_dense_spec_valid(payload)
     try:
