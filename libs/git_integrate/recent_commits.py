@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import os
 import re
-import subprocess
 from pathlib import Path
 from typing import Any
+
+from git_integrate.worktree_git import git_run, rev_parse_head
 
 DEFAULT_N = 15
 HOP_N = 8
@@ -44,38 +45,46 @@ def log_oneline(
     if since_bound is not None and _SHA_RE.fullmatch(since_bound) is None:
         raise ValueError(f"since must be a git SHA (7-40 hex), got {since_bound!r}")
 
-    head = _rev_parse(repo)
+    head, head_err = rev_parse_head(repo, timeout=_GIT_TIMEOUT_S)
     resolved_since: str = since_bound if since_bound is not None else f"last {n}"
-    empty: dict[str, Any] = {
-        "head": head or "",
-        "commits": [],
+    meta = {
         "since": resolved_since,
-        "truncated": False,
         "liveness_authority": 'fleet_liveness(code_ref="<sha>")',
         "timestamps_are_liveness_evidence": False,
         "deprecated_timestamp_fallback": True,
     }
     if not head:
-        return empty
+        return {
+            **meta,
+            "git_read_status": "failed",
+            "git_read_reason": head_err or "git rev-parse HEAD failed",
+            "head": None,
+            "commits": None,
+            "truncated": False,
+        }
 
     spec = [f"{since_bound}..HEAD"] if since_bound else []
     try:
-        proc = subprocess.run(
+        proc = git_run(
+            repo,
             [
-                "git",
-                "-C",
-                str(repo),
                 "log",
                 *spec,
                 f"--format={_LOG_FORMAT}",
                 f"--max-count={n + 1}",
             ],
-            capture_output=True,
-            check=True,
             timeout=_GIT_TIMEOUT_S,
+            check=True,
         )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-        return empty
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        return {
+            **meta,
+            "git_read_status": "failed",
+            "git_read_reason": f"git log failed: {exc}",
+            "head": head,
+            "commits": None,
+            "truncated": False,
+        }
 
     rows = [
         line.decode("utf-8", errors="replace") if isinstance(line, bytes) else line
@@ -102,6 +111,8 @@ def format_hop_slice(
     query_path: str = QUERY_PATH,
 ) -> str:
     """Render the L2 hop ``recent_commits`` section (query pointer always kept)."""
+    if result.get("git_read_status") == "failed":
+        return format_hop_unavailable(query_path=query_path)
     head = str(result.get("head") or "")
     if not head:
         return format_hop_unavailable(query_path=query_path)
@@ -142,20 +153,6 @@ def source_repo_path() -> Path:
             "/mnt/torus/projects/universal-llm-gateway",
         )
     )
-
-
-def _rev_parse(repo: Path) -> str:
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "HEAD"],
-            capture_output=True,
-            check=True,
-            timeout=_GIT_TIMEOUT_S,
-        )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-        return ""
-    sha = proc.stdout.decode("utf-8", errors="replace").strip()
-    return sha
 
 
 def _parse_log_row(row: str) -> dict[str, str] | None:
