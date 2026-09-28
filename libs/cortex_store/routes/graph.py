@@ -90,9 +90,12 @@ def analyze_impact_semantic(
 ) -> ImpactAnalysisResponse:
     """Semantic impact analysis — find assertions affected by a proposed claim.
 
-    Uses entity-scoped hybrid search (FTS5 + vector) to identify assertions
-    that may need revision if this claim is asserted. Exposes likely_supersedes
-    for pre-write supersession guidance. Also available as an MCP tool.
+    Uses entity-scoped hybrid search (FTS5 recall + embedding cosine) to
+    identify assertions that may need revision if this claim is asserted.
+    ``similarity`` is that cosine. Exposes likely_supersedes for pre-write
+    supersession guidance. Also available as an MCP tool. This route and the
+    assert nudge both call ``analyze_assertion_impact``; the nudge does not
+    tell the caller to invoke this route again.
     """
     conn = cortex_conn()
     try:

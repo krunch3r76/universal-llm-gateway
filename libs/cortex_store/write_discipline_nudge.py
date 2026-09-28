@@ -77,8 +77,8 @@ def build_assert_nudge(
         reasons.append("likely_reassertion")
         ids = impact.likely_supersedes[:5]
         suggestions.append(
-            "similar claim(s) already on entity — prefer supersede(...) or "
-            f"analyze_impact before assert (likely_supersedes={ids})"
+            "similar claim(s) already on entity — prefer supersede(...) "
+            f"for likely_supersedes={ids}"
         )
         analyze_hint["likely_supersedes"] = ids
     elif impact.touched_assertions:
@@ -87,14 +87,17 @@ def build_assert_nudge(
             reasons.append("similar_existing_claims")
             suggestions.append(
                 f"{len(impact.touched_assertions)} similar claim(s) on entity "
-                f"(top sim={top.similarity:.2f}, assertion #{top.assertion_id}) — "
-                "call analyze_impact before assert"
+                f"(top cosine={top.similarity:.2f}, assertion #{top.assertion_id}) — "
+                f"review assertion #{top.assertion_id} before assert"
             )
             analyze_hint["touched_count"] = len(impact.touched_assertions)
             analyze_hint["top_similarity"] = top.similarity
 
     if entity_type in _CONTAINER_TYPES:
-        if relationship_count == 0 and assertion_count >= _SPARSE_EDGE_ASSERTION_THRESHOLD:
+        if (
+            relationship_count == 0
+            and assertion_count >= _SPARSE_EDGE_ASSERTION_THRESHOLD
+        ):
             reasons.append("sparse_edges_hub_bloat")
             suggestions.append(
                 "edge-first (decision:session-close-edge-first-enrichment): "

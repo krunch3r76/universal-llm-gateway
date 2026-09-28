@@ -430,12 +430,22 @@ class AssertionList(BaseModel):
 
 
 class TouchedAssertionItem(BaseModel):
-    """Assertion touched by a proposed claim in C1 impact analysis."""
+    """Assertion whose embedding cosine to the proposed claim cleared 0.72.
+
+    ``similarity`` is that cosine in [0, 1]. It is not an FTS rank ratio
+    (the top FTS row of any non-empty result is identically 1.0 under
+    within-set normalization, and that ratio is not reported).
+    """
 
     assertion_id: int
     claim: str
     confidence: str
-    similarity: float
+    similarity: float = Field(
+        description=(
+            "Embedding cosine of the proposed claim against this assertion, "
+            "in [0, 1]. Not an FTS rank ratio."
+        )
+    )
     entity_id: str
     retrieval_source: str
 

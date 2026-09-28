@@ -28,6 +28,9 @@ from .polarity import build_candidate_query, detect_polarity_conflict
 
 logger = get_logger("cortex-api.belief-guard")
 
+# Gate embedding cosine (claim vs candidate), not an FTS rank ratio.
+# abs(rank)/max(abs(rank)) over the FTS result is identically 1.0 for the
+# top row whenever FTS returns anything, so those thresholds cannot bind on it.
 TOUCHED_COSINE_THRESHOLD = 0.72
 SUPERSEDE_COSINE_THRESHOLD = 0.85
 CONTRADICTION_SIMILARITY_THRESHOLD = 0.80
@@ -124,7 +127,15 @@ def _entity_hybrid_search(
     entity_id: str,
     limit: int = 20,
 ) -> list[SimilarAssertion]:
-    """Hybrid FTS5 + vector search for similar assertions on the same entity."""
+    """Hybrid FTS5 recall plus embedding-cosine similarity on one entity.
+
+    FTS (``build_candidate_query``) only recalls candidates. Similarity is the
+    embedding cosine of this claim against that assertion. A within-set BM25
+    ratio is not a similarity: the top FTS row is identically 1.0 whenever any
+    row comes back, so ``TOUCHED_COSINE_THRESHOLD`` and
+    ``SUPERSEDE_COSINE_THRESHOLD`` would not bind. Rows the vector search did
+    not score are omitted rather than reported as that ratio.
+    """
     fts_rows = _entity_fts_search(conn, claim_text, entity_id, limit * 2)
     # ∀ new entity: no FTS candidates ⟹ no active assertions ⟹ no contradiction possible.
     # reindex_assertion_fts is always called at assertion creation, so empty FTS means
@@ -134,31 +145,26 @@ def _entity_hybrid_search(
         return []
     vector_results = _entity_vector_search(claim_text, entity_id, limit * 2)
 
-    max_rank = max((abs(r.get("rank", 0)) for r in fts_rows), default=1.0) or 1.0
     merged: dict[int, dict] = {}
 
     for row in fts_rows:
         aid = row["id"]
-        bm25 = abs(row.get("rank", 0)) / max_rank
         merged[aid] = {
             "assertion_id": aid,
             "claim": row.get("claim", ""),
             "confidence": row.get("confidence", ""),
             "entity_id": entity_id,
             "predicate_form": row.get("predicate_form"),
-            "bm25": bm25,
             "cosine": None,
-            "similarity": bm25,
             "source": "fts",
         }
 
     for vr in vector_results:
         aid = vr["assertion_id"]
-        cosine = vr.get("cosine_similarity", 0.0)
+        cosine = float(vr.get("cosine_similarity", 0.0))
         if aid in merged:
             m = merged[aid]
             m["cosine"] = cosine
-            m["similarity"] = max(m["bm25"], cosine)
             m["source"] = "both"
         else:
             merged[aid] = {
@@ -167,9 +173,7 @@ def _entity_hybrid_search(
                 "confidence": "",
                 "entity_id": entity_id,
                 "predicate_form": None,
-                "bm25": None,
                 "cosine": cosine,
-                "similarity": cosine,
                 "source": "vector",
             }
 
@@ -188,15 +192,14 @@ def _entity_hybrid_search(
                 merged[aid]["confidence"] = by_id[aid]["confidence"]
                 merged[aid]["predicate_form"] = by_id[aid].get("predicate_form")
 
-    sorted_items = sorted(
-        merged.values(), key=lambda x: x.get("similarity", 0.0), reverse=True
-    )
+    scored = [m for m in merged.values() if m["cosine"] is not None]
+    sorted_items = sorted(scored, key=lambda x: x["cosine"], reverse=True)
     return [
         SimilarAssertion(
             assertion_id=item["assertion_id"],
             claim=item["claim"],
             confidence=item["confidence"],
-            similarity=round(item["similarity"], 4),
+            similarity=round(item["cosine"], 4),
             entity_id=item["entity_id"],
             retrieval_source=item["source"],
             predicate_form=item.get("predicate_form"),
@@ -225,9 +228,11 @@ def analyze_assertion_impact(
 ) -> ImpactAnalysis:
     """Compute semantic impact of a proposed assertion before commit.
 
-    Uses entity-scoped hybrid search to find existing assertions affected
-    by the new claim. Returns touched assertions, likely supersession
-    targets, implicated entities, and an impact score (0-1).
+    Uses entity-scoped hybrid search. ``similarity`` is embedding cosine.
+    Touched requires cosine >= ``TOUCHED_COSINE_THRESHOLD`` (0.72).
+    ``likely_supersedes`` requires cosine >= ``SUPERSEDE_COSINE_THRESHOLD``
+    (0.85) plus the functor and confidence gates. An FTS-only row has no
+    cosine and clears neither threshold.
     """
     from .graph_utils import extract_entity_ids
 
