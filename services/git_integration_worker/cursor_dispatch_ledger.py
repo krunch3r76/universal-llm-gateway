@@ -1586,6 +1586,14 @@ class CursorDispatchLedger:
                             record_json=record_json,
                             lineage=lineage,
                         )
+                    elif body_triplet and all(v is not None for v in hop_triplet):
+                        record_json = stamp_hop_on_record_json(
+                            record_json,
+                            hop_seq=hop_seq,  # type: ignore[arg-type]
+                            hop_from=hop_from,  # type: ignore[arg-type]
+                            hop_reason=hop_reason,  # type: ignore[arg-type]
+                            hop_declared=hop_declared,
+                        )
                 elif body_triplet and all(v is not None for v in hop_triplet):
                     record_json = stamp_hop_on_record_json(
                         record_json,

@@ -131,7 +131,7 @@ def list_mission_terminal_chain(
             "SELECT * FROM cursor_sdk_dispatches "
             "WHERE work_key=? AND status IN ('completed','failed','cancelled') "
             "ORDER BY CASE WHEN json_extract(record_json, '$.hop_seq') IS NULL "
-            "THEN 1 ELSE 0 END, json_extract(record_json, '$.hop_seq'), "
+            "THEN 0 ELSE 1 END, json_extract(record_json, '$.hop_seq'), "
             "COALESCE(terminal_at, queued_at)",
             (work_key,),
         ).fetchall()
