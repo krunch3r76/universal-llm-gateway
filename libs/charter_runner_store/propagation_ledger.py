@@ -68,7 +68,22 @@ def _row_key(row: PropagationRow) -> str:
 
 
 DEFER_HARVEST_WANTED = "harvest_wanted"
+# Open row whose in-flight probe did not answer. Not a harvest obligation:
+# charter fire and the harvest-wanted consumer both skip it. An operator
+# re-fire is what runs the probe again.
+DEFER_PROBE_UNDETERMINED = "probe_undetermined"
 STALE_CONSUMPTION_CLAIM_S = 600.0
+
+
+def open_row_in_harvest_fire_set(defer_reason: str | None) -> bool:
+    """Whether an open row is an obligation the charter harvest may restart.
+
+    ``harvest_wanted`` is excluded here because
+    ``consume_harvest_wanted_at_tick`` is its consumer. ``probe_undetermined``
+    is excluded from both: the busy probe returned no determination, so the
+    row must not become a later restart.
+    """
+    return defer_reason not in {DEFER_HARVEST_WANTED, DEFER_PROBE_UNDETERMINED}
 
 
 def upsert_open_rows(
@@ -740,6 +755,8 @@ def release_consumption_claim(
 
 __all__ = [
     "DEFER_HARVEST_WANTED",
+    "DEFER_PROBE_UNDETERMINED",
+    "open_row_in_harvest_fire_set",
     "OpenPropagationProjection",
     "STALE_CONSUMPTION_CLAIM_S",
     "bump_age_for_open_rows",

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from charter_runner_store.propagation_ledger import (
+    DEFER_PROBE_UNDETERMINED,
     close_row,
     fail_row,
     mark_harvest_wanted,
@@ -74,8 +75,23 @@ def execution_terminal_proof_fields(
     return fields
 
 
+def manage_probe_undetermined(manage_result: dict[str, Any]) -> bool:
+    """True when manage deferred because the in-flight probe did not answer.
+
+    ``state=probe_error`` and ``determination=undetermined`` are the structured
+    discriminators. The reason string is not read: it contains the words
+    "in-flight work", and a substring match records a finding the probe did
+    not make.
+    """
+    if str(manage_result.get("state") or "") == "probe_error":
+        return True
+    return str(manage_result.get("determination") or "") == "undetermined"
+
+
 def _preempted_work_label(manage_result: dict[str, Any]) -> str:
     """Human-readable label for work preempted by self-preempt force."""
+    if manage_probe_undetermined(manage_result):
+        return ""
     reason = str(manage_result.get("reason") or "")
     active = manage_result.get("active_work")
     if isinstance(active, dict):
@@ -103,7 +119,10 @@ def deferred_is_self_preemptable(service: str, manage_result: dict[str, Any]) ->
     """True when a busy deferral is the commissioning seat's own CSE/MCP heat.
 
     Durable drain intents (GIW-style) are not self-preempt — those stay queued.
+    ``state=probe_error`` is not a busy finding and is not self-preemptable.
     """
+    if manage_probe_undetermined(manage_result):
+        return False
     if service not in _FORCE_ALLOWED_SERVICES:
         return False
     if restart_intent_persisted(manage_result):
@@ -122,6 +141,26 @@ def execution_for_manage_deferred(
     reason = str(
         manage_result.get("reason") or manage_result.get("state") or "manage_deferred"
     )
+    if manage_probe_undetermined(manage_result):
+        # No restart_intent_id. An intent persisted off an unknown would fire
+        # later without a determination that the restart was safe. The open
+        # row stays, and both auto-fire paths skip DEFER_PROBE_UNDETERMINED.
+        set_defer_reason(row_id, DEFER_PROBE_UNDETERMINED)
+        manage_out = dict(manage_result)
+        manage_out["determination"] = "undetermined"
+        return {
+            "service": row.service,
+            "row_id": row_id,
+            "status": "blocked",
+            "reason": reason,
+            "determination": "undetermined",
+            "manage": manage_out,
+            "next": (
+                "in-flight-work probe returned no determination — "
+                "no restart_intent_id; open row will not auto-fire; "
+                "operator re-fire required"
+            ),
+        }
     if restart_intent_persisted(manage_result):
         from charter_runner_store.propagation_validation import (
             deferred_activation_bind_failure,
@@ -604,6 +643,13 @@ def _summary_for(disposition: str, executions: list[dict[str, Any]]) -> str:
         return base
     if disposition == "blocked":
         reasons = ", ".join(str(item.get("reason") or "?") for item in executions)
+        if any(item.get("determination") == "undetermined" for item in executions):
+            return (
+                f"Auto propagation restart blocked for {services} — "
+                f"in-flight-work probe undetermined (reason={reasons}). "
+                "No restart_intent_id was persisted. The open ledger row stays "
+                "and will not auto-fire. Operator re-fire required."
+            )
         return (
             f"Auto propagation restart blocked for {services} — manage busy deferral "
             f"with no drain queue (reason={reasons}). Nothing will fire automatically."
@@ -642,6 +688,7 @@ __all__ = [
     "MCP_DISCONNECT_ADVISORY",
     "deferred_is_self_preemptable",
     "execution_for_manage_deferred",
+    "manage_probe_undetermined",
     "execution_terminal_proof_fields",
     "restart_intent_persisted",
     "run_propagation_in_seat",

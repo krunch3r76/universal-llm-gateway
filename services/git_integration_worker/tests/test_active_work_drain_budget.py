@@ -172,8 +172,11 @@ def test_probe_timeout_reason_names_exception_class(
 
     assert raw == ""
     assert result["state"] == "probe_error"
+    assert result["determination"] == "undetermined"
     assert result["reason"] == "could not determine in-flight work: ReadTimeout"
     assert report["restart_would_defer"] is True
+    assert report["determination"] == "undetermined"
+    assert report["busy"] is False
     assert report["active_work"]["error"] == "ReadTimeout"
     print(
         f"reason={result['reason']!r} busy_report_error={report['active_work']['error']!r}"

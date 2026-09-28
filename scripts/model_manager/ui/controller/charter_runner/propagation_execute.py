@@ -23,6 +23,7 @@ from charter_runner_store.propagation_ledger import (
     close_row,
     fail_row,
     list_open_rows,
+    open_row_in_harvest_fire_set,
     scoreboard_projection,
     set_defer_reason,
     upsert_open_rows,
@@ -582,7 +583,8 @@ async def execute_propagation_plan(
     open_rows = [
         row
         for row in list_open_rows()
-        if row.defer_reason != "harvest_wanted" and not _pending_activation_row(row)
+        if open_row_in_harvest_fire_set(row.defer_reason)
+        and not _pending_activation_row(row)
     ]
     queue_snapshot = _fetch_json(_GIW_QUEUE_URL)
 

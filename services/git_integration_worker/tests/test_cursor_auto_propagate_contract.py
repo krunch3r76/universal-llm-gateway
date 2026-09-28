@@ -358,7 +358,9 @@ async def test_run_propagation_stargate_busy_yields_queued_restart_intent() -> N
     with (
         patch(
             "services.git_integration_worker.cursor_auto.handler_propagation.upsert_open_rows",
-            return_value=["stargate:cafebabe00000000000000000000000000000000:sync_restart"],
+            return_value=[
+                "stargate:cafebabe00000000000000000000000000000000:sync_restart"
+            ],
         ),
         patch(
             "services.git_integration_worker.cursor_auto.handler_propagation.sync_restart_service",
@@ -684,6 +686,159 @@ async def test_run_propagation_self_preempt_vetoed_by_allow_self_preempt_false()
     assert manage_calls[0]["force"] is False
     summary = str(result.get("summary") or "")
     assert "self-preempt vetoed" in summary.lower()
+
+
+@pytest.mark.asyncio
+async def test_probe_error_deferral_is_undetermined_not_a_preempt_finding() -> None:
+    """A probe that did not answer must not be recorded as in-flight work.
+
+    Specimen shape from agent-bus:13138: manage ``state=probe_error`` with reason
+    ``could not determine in-flight work: ReadTimeout``. The reason embeds the
+    self-preempt marker, so a substring read stamps ``would_preempt`` and
+    ``harvest_wanted``.
+    """
+    from services.git_integration_worker.cursor_auto.handler_propagation import (
+        run_propagation_in_seat,
+    )
+    from services.git_integration_worker.cursor_auto.queue import AutoJob
+
+    body = _MCP_YAML_BODY.replace(
+        "proof_class: client_visible",
+        "proof_class: client_visible\n    allow_self_preempt: false",
+    )
+    job = AutoJob(
+        job_id="job-mcp-probe-error",
+        thread_id=13138,
+        turn_number=3,
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        subject="restart mcp probe error",
+        body=body,
+        contract="propagate",
+        desired_model="auto",
+        desired_effort="medium",
+        require_attended=False,
+        request_id="req-mcp-probe-error",
+    )
+
+    class _Queue:
+        def mark_done(
+            self,
+            job_id: str,
+            *,
+            failed: bool = False,
+            terminal_reason: str | None = None,
+        ) -> None:
+            pass
+
+    posted: list[dict[str, object]] = []
+
+    class _Client:
+        async def reply(self, **kwargs):  # type: ignore[no-untyped-def]
+            posted.append(kwargs)
+            return type("R", (), {"status_code": 200, "body": ""})()
+
+    manage_calls: list[dict[str, object]] = []
+
+    def _manage(service: str, *, reason: str = "", force: bool = False, **_kw: object):
+        manage_calls.append({"service": service, "force": force})
+        return {
+            "status": "deferred",
+            "state": "probe_error",
+            "reason": "could not determine in-flight work: ReadTimeout",
+            "retry_after_s": 30,
+        }
+
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.upsert_open_rows",
+            return_value=["mcp:deadbeef:sync_restart"],
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.sync_restart_service",
+            side_effect=_manage,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.mark_harvest_wanted",
+        ) as mock_harvest,
+        patch(
+            "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
+        ) as mock_defer,
+        patch(
+            "scripts.model_manager.ui.controller.charter_runner.propagation_execute.dispatch_proof_probe",
+            return_value=type(
+                "P",
+                (),
+                {
+                    "error": None,
+                    "payload": {"code_version": "deadbeef", "pid": 1},
+                    "proof_class_requested": "client_visible",
+                    "proof_class_executed": "client_visible",
+                },
+            )(),
+        ),
+    ):
+        result = await run_propagation_in_seat(
+            job,
+            client=_Client(),
+            queue=_Queue(),
+            model={"requested": "auto", "resolved_model_id": "cursor/composer-2.5"},
+            effort={"requested": None, "resolved_effort": "medium"},
+            gate_plan={"action": "in_seat"},
+        )
+
+    payload = json.loads(str(posted[-1]["body"]))
+    execution = payload["executions"][0]
+    print("PROBE_ERROR_EXECUTION " + json.dumps(execution, sort_keys=True))
+    print("PROBE_ERROR_DISPOSITION " + str(result.get("disposition")))
+    print("PROBE_ERROR_SUMMARY " + str(result.get("summary")))
+    print("PROBE_ERROR_MANAGE_CALLS " + json.dumps(manage_calls))
+
+    from charter_runner_store.propagation_ledger import (
+        DEFER_PROBE_UNDETERMINED,
+        open_row_in_harvest_fire_set,
+    )
+
+    from services.git_integration_worker.cursor_auto.handler_propagation import (
+        deferred_is_self_preemptable,
+    )
+
+    probe = {
+        "status": "deferred",
+        "state": "probe_error",
+        "reason": "could not determine in-flight work: ReadTimeout",
+    }
+    assert deferred_is_self_preemptable("mcp", probe) is False
+    assert deferred_is_self_preemptable(
+        "mcp",
+        {"status": "deferred", "state": "busy", "reason": "cdp_ask_live"},
+    )
+
+    assert result["disposition"] == "blocked"
+    assert execution["status"] == "blocked"
+    assert execution["determination"] == "undetermined"
+    assert execution["manage"]["determination"] == "undetermined"
+    assert execution.get("would_preempt") in (None, "")
+    assert "would_preempt" not in execution
+    assert not execution.get("self_preempt_suppressed")
+    assert "restart_intent_id" not in execution
+    assert "restart_intent_id" not in execution.get("manage", {})
+    assert execution["manage"]["state"] == "probe_error"
+    assert "could not determine" in str(execution.get("reason"))
+    assert "in-flight work" not in str(execution.get("would_preempt") or "")
+    summary = str(result.get("summary") or "")
+    assert "would_preempt" not in summary
+    assert "charter tick will consume" not in summary.lower()
+    assert "busy deferral" not in summary.lower()
+    assert len(manage_calls) == 1
+    assert manage_calls[0]["force"] is False
+    mock_harvest.assert_not_called()
+    mock_defer.assert_called_once_with(
+        "mcp:deadbeef:sync_restart", DEFER_PROBE_UNDETERMINED
+    )
+    assert open_row_in_harvest_fire_set(DEFER_PROBE_UNDETERMINED) is False
+    assert open_row_in_harvest_fire_set("harvest_wanted") is False
+    assert open_row_in_harvest_fire_set(None) is True
 
 
 # 7233#214 shape: ## propagation + unfenced YAML. Shorthand must not win.

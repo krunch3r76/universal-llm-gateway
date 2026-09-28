@@ -306,11 +306,22 @@ class ActiveWork:
     detail: dict[str, Any] = field(default_factory=dict)
 
 
+# Structured discriminator for a codeblind caller. ``probe_error`` is not a
+# busy finding; the reason string is prose and is not this field.
+_DETERMINATION_BY_STATE = {
+    "busy": "busy",
+    "in_progress": "in_progress",
+    "probe_error": "undetermined",
+}
+
+
 @dataclass(slots=True, kw_only=True)
 class DrainOutcome:
     """A deferral outcome — the restart did NOT proceed.
 
     state ∈ {"busy", "in_progress", "probe_error"}.
+    ``to_result`` adds ``determination`` so a caller can tell a busy finding
+    from a probe that did not answer without reading ``reason``.
     """
 
     state: str
@@ -323,7 +334,7 @@ class DrainOutcome:
         """Render the JSON-RPC result dict returned over manage.sock."""
         from .busy_work_summary import format_active_work_summary
 
-        return {
+        result = {
             "status": "deferred",
             "state": self.state,
             "service": self.service,
@@ -332,6 +343,10 @@ class DrainOutcome:
             "active_work": self.active_work,
             "active_work_summary": format_active_work_summary(self.active_work),
         }
+        determination = _DETERMINATION_BY_STATE.get(self.state)
+        if determination is not None:
+            result["determination"] = determination
+        return result
 
 
 @runtime_checkable
@@ -546,14 +561,15 @@ class RestartDrainGate:
     async def busy_report(self, services: Iterable[str]) -> dict[str, dict[str, Any]]:
         """Per-service busy read model (pull). Probes WITHOUT acquiring any slot.
 
-        For each service, returns
-        ``{"busy": bool, "restart_would_defer": bool, "active_work": {...}}``.
+        For each service, returns ``busy``, ``restart_would_defer``,
+        ``determination``, and ``active_work``.
 
         ``restart_would_defer`` ⟺ ``busy`` ∨ a restart is already in progress ∨
-        the probe failed. Probe failure is reported as ``busy=False`` with
-        ``restart_would_defer=True`` (fail closed: a non-force restart would
-        defer with ``state=probe_error``) and an ``error`` entry in
-        ``active_work`` — identical fail-closed posture to ``evaluate``.
+        the probe failed. Probe failure is ``busy=False``,
+        ``determination=undetermined``, ``restart_would_defer=True`` (fail
+        closed: a non-force restart would defer with ``state=probe_error``)
+        and an ``error`` entry in ``active_work``. ``busy=False`` alone is
+        not an idle finding — read ``determination``.
         """
         report: dict[str, dict[str, Any]] = {}
         for service in services:
@@ -564,12 +580,20 @@ class RestartDrainGate:
                 report[service] = {
                     "busy": False,
                     "restart_would_defer": True,
+                    "determination": "undetermined",
                     "active_work": {"error": describe_probe_exc(exc)},
                 }
                 continue
+            if work.busy:
+                determination = "busy"
+            elif in_progress:
+                determination = "in_progress"
+            else:
+                determination = "idle"
             report[service] = {
                 "busy": work.busy,
                 "restart_would_defer": work.busy or in_progress,
+                "determination": determination,
                 "active_work": work.detail,
             }
         return report
