@@ -43,12 +43,12 @@ class CodeRefLiveness:
     reason: str
 
 
-def _default_probe(service: str) -> dict[str, Any] | None:
+def _default_probe_cited(service: str) -> tuple[dict[str, Any] | None, str | None]:
     from services.git_integration_worker.cursor_auto.propagation_probe import (
-        probe_process_live,
+        probe_process_live_cited,
     )
 
-    return probe_process_live(service)
+    return probe_process_live_cited(service)
 
 
 def observe_code_ref_live(
@@ -63,27 +63,40 @@ def observe_code_ref_live(
     (``code_ref_satisfied``); ``no`` means a readable version that does not
     satisfy; ``unknown`` means unreachable or unreadable probe. The
     ``observation`` dict always carries the probe payload (or an explicit
-    unreachability record) so callers can cite evidence.
+    unreachability record) so callers can cite evidence. A miss from the
+    default probe keeps the exception or response text on ``probe_error``
+    and as ``reason``. An injected probe that returns None still uses the
+    generic unreachability sentence, because that callable did not supply text.
     """
     resolved = normalize_code_ref(code_ref)
-    probe_fn = probe or _default_probe
-    payload = probe_fn(service)
+    miss: str | None = None
+    if probe is None:
+        payload, miss = _default_probe_cited(service)
+    else:
+        payload = probe(service)
     if not isinstance(payload, dict):
+        observation: dict[str, Any] = {
+            "probe_reachable": False,
+            "service": service,
+            "code_ref": resolved,
+        }
+        reason = "probe unreachable or returned no payload"
+        if isinstance(miss, str) and miss:
+            observation["probe_error"] = miss
+            reason = miss
         return CodeRefLiveness(
             answer="unknown",
             service=service,
             code_ref=resolved,
             observed_code_version=None,
             relation=None,
-            observation={
-                "probe_reachable": False,
-                "service": service,
-                "code_ref": resolved,
-            },
-            reason="probe unreachable or returned no payload",
+            observation=observation,
+            reason=reason,
         )
     raw_version = payload.get("code_version")
-    observed = raw_version if isinstance(raw_version, str) and raw_version.strip() else None
+    observed = (
+        raw_version if isinstance(raw_version, str) and raw_version.strip() else None
+    )
     relation = code_ref_relation_from_observed(resolved, observed)
     citation = {
         **payload,

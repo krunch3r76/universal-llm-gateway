@@ -6,6 +6,7 @@ keys are the process_live satisfiability oracle (adding a fetcher unlocks a slug
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import subprocess
@@ -44,6 +45,29 @@ _GATEWAY_INTERNAL_HEALTH = (
 # derive from these keys — adding a fetcher unlocks the slug without a second hardcode.
 ProcessLiveFetcher = Callable[[], dict[str, Any] | None]
 
+# Last miss text for the current context. Cleared at the start of a cited probe
+# so a prior call cannot leak into this one. Not a failure-class label.
+_probe_miss: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "process_live_probe_miss", default=None
+)
+
+
+def _exception_text(exc: BaseException) -> str:
+    """Return the exception class and message as text."""
+    message = str(exc)
+    name = type(exc).__name__
+    if message:
+        return f"{name}: {message}"
+    return name
+
+
+def _record_miss(text: str) -> None:
+    _probe_miss.set(text)
+
+
+def _clear_miss() -> None:
+    _probe_miss.set(None)
+
 
 def row_key(row: PropagationRow) -> str:
     """Stable identity key for a propagation row (service, code_ref, action)."""
@@ -55,28 +79,45 @@ def _fetch_json(url: str, *, timeout_s: float = 3.0) -> dict[str, Any] | None:
         with httpx.Client(timeout=timeout_s) as client:
             resp = client.get(url)
         if resp.status_code != 200:
+            _record_miss(f"HTTP {resp.status_code}: {resp.text}")
             return None
         data = resp.json()
-        return data if isinstance(data, dict) else None
-    except (httpx.HTTPError, ValueError, OSError):
+        if not isinstance(data, dict):
+            _record_miss(f"JSON {type(data).__name__}: {resp.text}")
+            return None
+    except (httpx.HTTPError, ValueError, OSError) as exc:
+        _record_miss(_exception_text(exc))
         return None
+    _clear_miss()
+    return data
 
 
 def _fetch_health_at_base(
     base_url: str, *, timeout_s: float = 3.0
 ) -> dict[str, Any] | None:
-    """GET ``/health`` from a UDS or TCP service base URL; None on failure."""
+    """GET ``/health`` from a UDS or TCP service base URL; None on failure.
+
+    On failure the exception or response body is kept on the context miss
+    text so a liveness row can quote it. Success still returns the JSON object.
+    """
     if not base_url or not str(base_url).strip():
+        _record_miss("health base URL is empty")
         return None
     try:
         with make_sync_client(str(base_url).strip(), timeout=timeout_s) as client:
             resp = client.get("/health")
         if resp.status_code != 200:
+            _record_miss(f"HTTP {resp.status_code}: {resp.text}")
             return None
         data = resp.json()
-        return data if isinstance(data, dict) else None
-    except (httpx.HTTPError, ValueError, OSError):
+        if not isinstance(data, dict):
+            _record_miss(f"JSON {type(data).__name__}: {resp.text}")
+            return None
+    except (httpx.HTTPError, ValueError, OSError) as exc:
+        _record_miss(_exception_text(exc))
         return None
+    _clear_miss()
+    return data
 
 
 def _fetch_cortex_api_health(*, timeout_s: float = 3.0) -> dict[str, Any] | None:
@@ -137,9 +178,12 @@ def _fetch_manage_whoami() -> dict[str, Any] | None:
 
     result = call_manage("whoami", {}, timeout=5.0)
     if not isinstance(result, dict) or result.get("status") == "error":
+        _record_miss(f"manage whoami: {result!r}")
         return None
     if "pid" not in result:
+        _record_miss(f"manage whoami payload had no pid: {result!r}")
         return None
+    _clear_miss()
     return result
 
 
@@ -169,6 +213,7 @@ def _fetch_cdp_ask_health() -> dict[str, Any] | None:
     """Probe cdp-ask satellite ``/health`` via manage-equivalent URL resolution."""
     base = resolve_cdp_ask_probe_base_url()
     if not base:
+        _record_miss("cdp_ask probe base URL is unset")
         return None
     return _fetch_health_at_base(base)
 
@@ -204,15 +249,23 @@ def _fetch_gateway_health() -> dict[str, Any] | None:
             timeout=5,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        _record_miss(_exception_text(exc))
         return None
     if proc.returncode != 0 or not proc.stdout.strip():
+        detail = proc.stderr.strip() or proc.stdout.strip()
+        _record_miss(detail or f"docker exec exit {proc.returncode}")
         return None
     try:
         data = json.loads(proc.stdout)
-    except ValueError:
+    except ValueError as exc:
+        _record_miss(_exception_text(exc))
         return None
-    return data if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        _record_miss(f"JSON {type(data).__name__}: {proc.stdout}")
+        return None
+    _clear_miss()
+    return data
 
 
 PROCESS_LIVE_FETCHERS: dict[str, ProcessLiveFetcher] = {
@@ -241,15 +294,34 @@ def process_live_probeable_services() -> frozenset[str]:
     return frozenset(PROCESS_LIVE_FETCHERS)
 
 
+def probe_process_live_cited(
+    service: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Return ``(payload, miss_text)`` for one process-live probe.
+
+    ``miss_text`` is the exception or response body when the fetcher returns
+    nothing, or a sentence when the slug has no fetcher. It is not a
+    failure-class label. Callers that only need ready/not-ready keep using
+    :func:`probe_process_live`, which still returns None on a miss.
+    """
+    _clear_miss()
+    fetcher = PROCESS_LIVE_FETCHERS.get(service)
+    if fetcher is None:
+        return None, f"no process-live fetcher for {service}"
+    payload = fetcher()
+    if not isinstance(payload, dict):
+        return None, _probe_miss.get() or f"probe for {service} returned no payload"
+    return payload, None
+
+
 def probe_process_live(service: str) -> dict[str, Any] | None:
     """Fetch health/liveness JSON for proof-of-live closure.
 
     Returns None when the slug has no fetcher or the probe request fails.
+    The miss text is discarded here; :func:`probe_process_live_cited` keeps it.
     """
-    fetcher = PROCESS_LIVE_FETCHERS.get(service)
-    if fetcher is None:
-        return None
-    return fetcher()
+    payload, _miss = probe_process_live_cited(service)
+    return payload
 
 
 def probe_for_row(row: PropagationRow) -> dict[str, Any] | None:
@@ -747,6 +819,7 @@ __all__ = [
     "giw_i2_clear",
     "probe_for_row",
     "probe_process_live",
+    "probe_process_live_cited",
     "process_identity",
     "process_live_probeable_services",
     "proof_identity_attestation",

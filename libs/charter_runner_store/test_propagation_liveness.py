@@ -79,6 +79,55 @@ def test_observe_unknown_when_probe_unreachable() -> None:
     assert result.observation["probe_reachable"] is False
 
 
+def test_defect_a_email_bridge_specimen_keeps_miss_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sidecar specimen 1, fleet_liveness observed_at 2026-09-28T10:56:40.965798Z.
+
+    email_bridge was running (PID 1050932) while liveness.reason was only
+    "probe unreachable or returned no payload" and observation carried no
+    error text. A ReadTimeout on a fetcher that does run must keep that
+    exception text the same way.
+    """
+    import httpx
+
+    ref = "383cdb59b02ae4f05837575c17d1f88199b11e8d"
+    excluded = observe_code_ref_live("email_bridge", ref)
+    assert excluded.answer == "unknown"
+    assert excluded.observation["probe_reachable"] is False
+    assert excluded.observation["probe_error"] == (
+        "no process-live fetcher for email_bridge"
+    )
+    assert excluded.reason == excluded.observation["probe_error"]
+
+    def _client(*_args: object, **_kwargs: object) -> object:
+        class _Raising:
+            def __enter__(self) -> _Raising:
+                return self
+
+            def __exit__(self, *_exc: object) -> bool:
+                return False
+
+            def get(self, _path: str) -> object:
+                raise httpx.ReadTimeout("timed out")
+
+        return _Raising()
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.propagation_probe.make_sync_client",
+        _client,
+    )
+    timed = observe_code_ref_live("agent_bus", ref)
+    assert timed.observation["probe_reachable"] is False
+    assert timed.observation["probe_error"] == "ReadTimeout: timed out"
+    assert timed.reason == "ReadTimeout: timed out"
+    from services.git_integration_worker.cursor_auto.propagation_probe import (
+        probe_process_live,
+    )
+
+    assert probe_process_live("email_bridge") is None
+
+
 def test_observe_unknown_when_code_version_missing() -> None:
     result = observe_code_ref_live(
         "cortex_api",
