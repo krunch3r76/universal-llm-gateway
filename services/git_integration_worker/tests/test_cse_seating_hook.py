@@ -42,6 +42,7 @@ def _isolate_cse_seating_dispatch_ledger(
     )
     CursorDispatchLedger._instance = None
 
+
 _OCCUPY_URL = "https://claude.ai/cowork/cse_occupyhop1"
 _PREDECESSOR_URL = "https://claude.ai/cowork/cse_predecessor1"
 _LANE = "99001"
@@ -1156,3 +1157,219 @@ def test_dispatch_link_reconcile_flips_holder_and_thread_together(
     current = get_current_cse(thread_id=lane)
     assert current["cse_registration_id"] == birth
     assert current["cse_chat_url"] == successor_url
+
+
+def test_resolve_hop_successor_registration_id_prefers_op_row() -> None:
+    from claude_bundles.request_admission_census import (
+        resolve_hop_successor_registration_id,
+    )
+
+    exec_id = "140c033e-6e8f-4072-8ef7-ba1c06ad3d3f"
+    mint = "ec59f47871884a03a0ed50cb83471e4b"
+    snap = {
+        "rows": [
+            {
+                "registration_id": mint,
+                "parent_thread": _LANE_T,
+                "purpose": "operator-proxy",
+                "stream_state": "running",
+                "execution_id": exec_id,
+            }
+        ],
+        "seated_rows": [],
+    }
+    assert (
+        resolve_hop_successor_registration_id(
+            snap, parent_thread=_LANE_T, execution_id=exec_id
+        )
+        == mint
+    )
+
+
+def test_hop_mint_not_retired_when_seat_keys_birth_id(
+    ledger: CursorDispatchLedger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mint from register_lane is the successor; birth id alone must not retire it."""
+    from claude_bundles.request_admission_census import census_match_ids
+
+    from services.git_integration_worker.cursor_auto.cse_seating_hook import (
+        on_successor_seated,
+    )
+
+    birth = "aa" * 16
+    mint = "ec59f47871884a03a0ed50cb83471e4b"
+    pred = "469956ec4d2f4ce491732b205877671a"
+    exec_id = "140c033e-6e8f-4072-8ef7-ba1c06ad3d3f"
+    mint_url = "https://claude.ai/cowork/cse_mintSuccessor1"
+    snap: dict[str, object] = {
+        "rows": [
+            {
+                "registration_id": mint,
+                "parent_thread": _LANE_T,
+                "purpose": "operator-proxy",
+                "stream_state": "running",
+                "execution_id": exec_id,
+            }
+        ],
+        "seated_rows": [_census_row(pred), _census_row(mint)],
+    }
+    associate = MagicMock()
+    monkeypatch.setattr(
+        "agent_bus_store.db.cse_associations.associate_cse",
+        associate,
+    )
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        seated = on_successor_seated(
+            snap,
+            parent_thread=_LANE_T,
+            registration_id=birth,
+            chat_url=mint_url,
+            execution_id=exec_id,
+            conn=conn,
+            bind_thread=True,
+        )
+        conn.commit()
+    assert mint not in (seated.get("retired_registration_ids") or [])
+    assert pred in (seated.get("retired_registration_ids") or [])
+    assert census_match_ids(_LANE_T, seated) == [mint]
+    associate.assert_called_once()
+    assert associate.call_args.kwargs["cse_registration_id"] == mint
+
+
+def test_second_hop_advances_thread_association_to_next_mint(
+    ledger: CursorDispatchLedger,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_bus_store.db import create_thread_with_turn, init_db
+    from agent_bus_store.db.cse_associations import associate_cse, get_current_cse
+
+    from services.git_integration_worker.cursor_auto.cse_seating_hook import (
+        on_successor_seated,
+    )
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    thread_row, *_ = create_thread_with_turn(
+        slug="hop-mint-twice",
+        from_agent="dispatch",
+        to_agent="web-anthropic",
+        subject="lane",
+        body="body",
+        lifecycle_state="pending",
+    )
+    lane = str(thread_row["id"])
+    exec1 = "11111111-1111-1111-1111-111111111111"
+    exec2 = "22222222-2222-2222-2222-222222222222"
+    mint1 = "a1" * 16
+    mint2 = "b2" * 16
+    pred = "c3" * 16
+    url1 = "https://claude.ai/cowork/cse_mintHopOne01"
+    url2 = "https://claude.ai/cowork/cse_mintHopTwo02"
+    snap: dict[str, object] = {
+        "rows": [],
+        "seated_rows": [_census_row(pred)],
+    }
+    associate_cse(
+        thread_id=lane,
+        cse_chat_url="https://claude.ai/cowork/cse_predecessor0",
+        cse_registration_id=pred,
+        bound_by="test",
+        evidence="setup",
+    )
+    with ledger._connect() as conn:
+        ensure_schema(conn)
+        snap = on_successor_seated(
+            snap,
+            parent_thread=lane,
+            registration_id=mint1,
+            chat_url=url1,
+            execution_id=exec1,
+            conn=conn,
+            bind_thread=True,
+        )
+        snap = on_successor_seated(
+            snap,
+            parent_thread=lane,
+            registration_id=mint2,
+            chat_url=url2,
+            execution_id=exec2,
+            conn=conn,
+            bind_thread=True,
+        )
+        conn.commit()
+    current = get_current_cse(thread_id=lane)
+    assert current["cse_registration_id"] == mint2
+    assert current["cse_chat_url"] == url2
+
+
+def test_live_hop_execution_id_prefers_hook_written_execution() -> None:
+    from services.git_integration_worker.cursor_auto.hop_cadence_stall_reconcile import (
+        _live_hop_execution_id,
+    )
+
+    live = "b7cade49-513a-4c83-b5a3-28c0a7657663"
+    stale = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    row = {
+        "execution_id": live,
+        "successor_execution_id": stale,
+        "last_hop_execution_id": stale,
+    }
+    assert _live_hop_execution_id(row) == live
+
+
+def test_harvest_dispatch_link_url_follows_mint_execution_not_retired(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_bus_store.db import admit_dispatch, create_thread_with_turn, init_db
+    from agent_bus_store.db.threads_atomic import update_dispatch_link_chat_url
+
+    from services.git_integration_worker.cursor_auto.cse_seating_hook import (
+        _chat_url_from_dispatch_link,
+    )
+
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    init_db()
+    thread_row, *_ = create_thread_with_turn(
+        slug="harvest-mint-url",
+        from_agent="dispatch",
+        to_agent="web-anthropic",
+        subject="hop",
+        body="body",
+        lifecycle_state="pending",
+    )
+    lane = str(thread_row["id"])
+    live_exec = "b7cade49-513a-4c83-b5a3-28c0a7657663"
+    retired_exec = "cccccccc-dddd-eeee-ffff-000000000001"
+    mint_url = "https://claude.ai/cowork/cse_liveMintUrl01"
+    retired_url = "https://claude.ai/cowork/cse_retiredMintUrl"
+    admit_dispatch(
+        thread_id=lane,
+        execution_id=live_exec,
+        pipeline_id="team-dispatch",
+        caller_agent="dispatch",
+    )
+    admit_dispatch(
+        thread_id=lane,
+        execution_id=retired_exec,
+        pipeline_id="team-dispatch",
+        caller_agent="dispatch",
+    )
+    update_dispatch_link_chat_url(
+        thread_id=lane,
+        execution_id=retired_exec,
+        chat_url=retired_url,
+        now_ts="2026-09-27T20:22:00Z",
+    )
+    update_dispatch_link_chat_url(
+        thread_id=lane,
+        execution_id=live_exec,
+        chat_url=mint_url,
+        now_ts="2026-09-27T20:20:07Z",
+    )
+    assert _chat_url_from_dispatch_link(live_exec) == mint_url
+    assert _chat_url_from_dispatch_link(retired_exec) == retired_url

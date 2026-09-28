@@ -678,15 +678,19 @@ def reconcile_release_obligations(
 def _live_hop_execution_id(row: dict[str, Any]) -> str | None:
     """Current hop execution on the watch, not an older link on the same thread.
 
-    The pending claim's execution id wins, then ``successor_execution_id``,
-    then ``last_hop_execution_id``. Satellite ids are not dispatch-link keys.
-    A second hop replaces these fields, so the previous hop's link is not read.
+    The pending claim's execution id wins, then the hook-written ``execution_id``,
+    then ``successor_execution_id``, then ``last_hop_execution_id``. Satellite ids
+    are not dispatch-link keys. A second hop replaces these fields, so the
+    previous hop's link is not read.
     """
     pending = row.get("pending_succession")
     if isinstance(pending, dict):
         claimed = normalize_id(pending.get("execution_id"))
         if claimed:
             return claimed
+    hooked = normalize_id(row.get("execution_id"))
+    if hooked:
+        return hooked
     return normalize_id(row.get("successor_execution_id")) or normalize_id(
         row.get("last_hop_execution_id")
     )
@@ -746,7 +750,9 @@ def reconcile_dispatch_link_seats(
             continue
         updated = dict(row)
         updated["link_seat_execution_id"] = execution_id
-        updated["registration_id"] = birth
+        seated_reg = str(outcome.get("successor_registration_id") or "").strip()
+        if seated_reg:
+            updated["registration_id"] = seated_reg
         chat = str(outcome.get("successor_chat_url") or "").strip()
         if chat:
             updated["chat_url"] = chat
@@ -755,9 +761,10 @@ def reconcile_dispatch_link_seats(
             for item in (updated.get("retired_registration_ids") or [])
             if str(item).strip()
         ]
+        keep_reg = seated_reg or birth
         for reg in outcome.get("retired_registration_ids") or []:
             text = str(reg).strip()
-            if text and text != birth and text not in retired:
+            if text and text != keep_reg and text not in retired:
                 retired.append(text)
         updated["retired_registration_ids"] = retired
         watches[thread_id] = updated

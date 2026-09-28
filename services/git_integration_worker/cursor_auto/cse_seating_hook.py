@@ -295,7 +295,17 @@ def _seat_successor_without_occupy(
 
     birth = (parse_successor_birth_id(job.body) or "").strip()
     resolved_reg, resolved_chat = _resolve_successor_identity(job, execution_id)
-    successor = (resolved_reg or birth).strip()
+    snap = _load_identity_snap()
+    from claude_bundles.request_admission_census import (
+        resolve_hop_successor_registration_id,
+    )
+
+    mint = resolve_hop_successor_registration_id(
+        snap,
+        parent_thread=lane,
+        execution_id=execution_id,
+    )
+    successor = (mint or resolved_reg or birth).strip()
     if not successor or not execution_id:
         outcome = {
             "ok": False,
@@ -310,7 +320,6 @@ def _seat_successor_without_occupy(
     chat = (resolved_chat or "").strip() or (
         _chat_url_from_dispatch_link(execution_id) or ""
     )
-    snap = _load_identity_snap()
     holder_regs: list[str] = []
     superseded_holders: list[str] = []
     holders_seated = False
@@ -365,7 +374,7 @@ def _seat_successor_without_occupy(
             chat_url=chat,
             execution_id=execution_id,
             bind_registry=holders_seated,
-            bind_thread=False,
+            bind_thread=bool(chat and successor),
         )
         conn.commit()
     retired = [
@@ -432,6 +441,17 @@ def seat_successor_from_dispatch_link(
             "thread_bound": False,
             "superseded_holder_ids": [],
         }
+    snap = _load_identity_snap()
+    from claude_bundles.request_admission_census import (
+        resolve_hop_successor_registration_id,
+    )
+
+    successor_reg = (
+        resolve_hop_successor_registration_id(
+            snap, parent_thread=lane, execution_id=exec_id
+        )
+        or birth
+    )
     chat = _chat_url_from_dispatch_link(exec_id) or ""
     if not chat:
         return {
@@ -472,11 +492,13 @@ def seat_successor_from_dispatch_link(
 
     with CursorDispatchLedger.instance()._connect() as conn:
         ensure_schema(conn)
-        retired_regs = _live_holder_registration_ids(conn, lane=lane, successor=birth)
+        retired_regs = _live_holder_registration_ids(
+            conn, lane=lane, successor=successor_reg
+        )
         seated = seat_successor_on_lane(
             conn,
             chat_url=chat,
-            registration_id=birth,
+            registration_id=successor_reg,
             lane_thread_id=lane,
             execution_id=exec_id,
         )
@@ -506,7 +528,7 @@ def seat_successor_from_dispatch_link(
         associate_cse(
             thread_id=lane,
             cse_chat_url=chat,
-            cse_registration_id=birth,
+            cse_registration_id=successor_reg,
             bound_by="cse_seating_hook",
             evidence="thread_dispatch_links.chat_url",
         )
@@ -524,7 +546,7 @@ def seat_successor_from_dispatch_link(
             "lane_thread_id": lane,
             "execution_id": exec_id,
             "successor_birth_id": birth,
-            "successor_registration_id": birth,
+            "successor_registration_id": successor_reg,
             "successor_chat_url": chat,
             "holders_seated": True,
             "thread_bound": False,
@@ -540,7 +562,7 @@ def seat_successor_from_dispatch_link(
         "lane_thread_id": lane,
         "execution_id": exec_id,
         "successor_birth_id": birth,
-        "successor_registration_id": birth,
+        "successor_registration_id": successor_reg,
         "successor_chat_url": chat,
         "holders_seated": True,
         "thread_bound": True,
@@ -732,6 +754,17 @@ def on_successor_seated(
     parent = (parent_thread or "").strip()
     reg = (registration_id or "").strip()
     url = (chat_url or "").strip()
+    from claude_bundles.request_admission_census import (
+        resolve_hop_successor_registration_id,
+    )
+
+    mint = resolve_hop_successor_registration_id(
+        snap,
+        parent_thread=parent,
+        execution_id=execution_id,
+    )
+    if mint:
+        reg = mint
     seated = retire_predecessors_on_seat(
         snap,
         parent_thread=parent,

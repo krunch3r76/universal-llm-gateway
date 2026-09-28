@@ -61,6 +61,47 @@ def _row_counts_for_census(row: dict[str, Any]) -> bool:
     return seat_state in _HOST_LISTABLE_STATUSES
 
 
+def resolve_hop_successor_registration_id(
+    snap: dict[str, Any],
+    *,
+    parent_thread: str,
+    execution_id: str | None,
+) -> str | None:
+    """``register_lane`` mint for a hop's satellite execution on the lane.
+
+    Successor retire/bind identity is the mint registration, not the bus
+    ``successor_birth_id`` alone. Prefer the live OP row for *execution_id*;
+    fall back to a registry seated row on the lane with the same execution.
+    """
+    lane = (parent_thread or "").strip()
+    exec_id = (execution_id or "").strip()
+    if not lane or not exec_id:
+        return None
+    for row in identity_rows(snap):
+        if not is_live_stream_state(str(row.get("stream_state") or "")):
+            continue
+        purpose = str(row.get("purpose") or "").strip().lower()
+        if purpose not in {"operator-proxy", "mission", "operator_proxy"}:
+            continue
+        if str(row.get("parent_thread") or "").strip() != lane:
+            continue
+        if str(row.get("execution_id") or "").strip() == exec_id:
+            reg = str(row.get("registration_id") or "").strip()
+            if reg:
+                return reg
+    for row in identity_rows(snap):
+        if str(row.get("parent_thread") or "").strip() != lane:
+            continue
+        if str(row.get("purpose") or "") not in OPERATOR_PURPOSES:
+            continue
+        if str(row.get("execution_id") or "").strip() != exec_id:
+            continue
+        reg = str(row.get("registration_id") or "").strip()
+        if reg:
+            return reg
+    return None
+
+
 def census_match_ids(thread_id: str, snap: dict[str, Any]) -> list[str]:
     """Unique operator-purpose registration ids on ``thread_id`` from the union."""
     retired = {
