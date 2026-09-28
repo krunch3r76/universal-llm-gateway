@@ -234,6 +234,10 @@ class TeamDispatchGenerateBody(_DispatchCommon):
     mission_kind: str | None = None
     # Bus private-request parent lane (hop/side parent). Not SDK nest_under.
     parent_thread: str | None = None
+    # Hop only (mission_kind=hop): CSE registration of the seat being replaced.
+    # The external-gate check excludes that seat's live generate and still
+    # refuses any other live gate on the lane. Ignored unless mission_kind=hop.
+    predecessor_registration_id: str | None = None
     # Conductor hop successor wire (bind §2.6.4): triplet admitted together on GIW.
     hop_from: str | None = None
     hop_seq: int | None = Field(default=None, ge=0)

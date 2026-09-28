@@ -277,6 +277,7 @@ async def complete_continuity_hop(
         mission_kind="hop",
         parent_thread=str(job.thread_id),
         prompt_override=prepend_orientation(job.body, orientation.get("block")),
+        predecessor_registration_id=job.cse_registration_id,
     )
     effort_echo = {
         "requested_effort": effort.get("requested"),

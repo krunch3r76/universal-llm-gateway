@@ -124,6 +124,7 @@ async def commission_cdp_escalation(
     prompt_override: str | None = None,
     advisor_brief: str | None = None,
     prompt_uri: str | None = None,
+    predecessor_registration_id: str | None = None,
 ) -> dict[str, Any]:
     """POST one CDP generate leg to Stargate ``/api/v1/team/dispatch``.
 
@@ -167,6 +168,9 @@ async def commission_cdp_escalation(
         body["mission_kind"] = mission_kind
     if parent_thread:
         body["parent_thread"] = parent_thread
+    predecessor = (predecessor_registration_id or "").strip()
+    if predecessor:
+        body["predecessor_registration_id"] = predecessor
     effort = (reasoning_effort or "").strip().lower()
     if effort:
         body["reasoning_effort"] = effort

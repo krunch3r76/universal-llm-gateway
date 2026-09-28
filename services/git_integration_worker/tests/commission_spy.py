@@ -31,6 +31,7 @@ def commission_spy(
         parent_thread: str | None = None,
         stargate_url: str | None = None,
         prompt_override: str | None = None,
+        predecessor_registration_id: str | None = None,
     ) -> dict[str, Any]:
         if reasoning_effort is ...:
             raise AssertionError(
@@ -45,6 +46,7 @@ def commission_spy(
                 "purpose": purpose,
                 "mission_kind": mission_kind,
                 "parent_thread": parent_thread,
+                "predecessor_registration_id": predecessor_registration_id,
                 "body": job_body,
                 "prompt_override": prompt_override,
                 # What Stargate actually receives as the prompt.

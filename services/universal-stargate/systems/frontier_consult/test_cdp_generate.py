@@ -944,7 +944,7 @@ def test_refuse_second_external_gate_probe_fail_closed(
             raise ConnectionError("cdp_ask unreachable")
 
     monkeypatch.setattr(
-        "cdp_ask.client.CdpAskClient",
+        "cdp_ask.lane_snapshot.CdpAskClient",
         lambda: _BrokenClient(),
     )
     with pytest.raises(FrontierEndpointError) as exc:
@@ -1022,6 +1022,154 @@ def test_refuse_second_external_gate_seated_rows_only(
         thread_id="10128",
         request_id="req-b1",
     )
+
+
+def test_hop_from_live_own_generate_exempts_sole_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hop excludes the caller's own generate; a harvested row is not required."""
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    caller = "96d6a7df-6a58-4255-9b2a-fe72d7b6d6cd"
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [
+                {
+                    "execution_id": caller,
+                    "parent_thread": "12286",
+                    "status": "running",
+                    "stream_state": "running",
+                    "purpose": "operator-proxy",
+                    "registration_id": "reg-caller",
+                }
+            ]
+        },
+    )
+    refuse_second_external_gate_at_fire(
+        purpose="operator-proxy",
+        parent_thread="12286",
+        thread_id="12286",
+        request_id="req-hop-own",
+        exclude_execution_id="new-exec-not-in-snap",
+        hop_own_generate=True,
+        predecessor_registration_id="reg-caller",
+    )
+
+
+def test_hop_exempt_does_not_clear_a_second_live_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Excluding the caller still refuses when another live gate occupies the lane."""
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    caller = "96d6a7df-6a58-4255-9b2a-fe72d7b6d6cd"
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [
+                {
+                    "execution_id": caller,
+                    "parent_thread": "12286",
+                    "status": "running",
+                    "stream_state": "running",
+                    "purpose": "operator-proxy",
+                    "registration_id": "reg-caller",
+                },
+                {
+                    "execution_id": "successor-already-live",
+                    "parent_thread": "12286",
+                    "status": "running",
+                    "stream_state": "running",
+                    "purpose": "operator-proxy",
+                    "registration_id": "reg-successor",
+                },
+            ]
+        },
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        refuse_second_external_gate_at_fire(
+            purpose="operator-proxy",
+            parent_thread="12286",
+            thread_id="12286",
+            request_id="req-hop-two",
+            exclude_execution_id="new-exec-not-in-snap",
+            hop_own_generate=True,
+            predecessor_registration_id="reg-caller",
+        )
+    assert exc.value.code == "cdp_external_gate_live"
+
+
+def test_hop_sole_live_gate_exempt_without_registration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No registration: the sole live gate on the lane is the caller's generate."""
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [
+                {
+                    "execution_id": "96d6a7df-6a58-4255-9b2a-fe72d7b6d6cd",
+                    "parent_thread": "12286",
+                    "status": "running",
+                    "stream_state": "running",
+                    "purpose": "operator-proxy",
+                }
+            ]
+        },
+    )
+    refuse_second_external_gate_at_fire(
+        purpose="operator-proxy",
+        parent_thread="12286",
+        thread_id="12286",
+        request_id="req-hop-sole",
+        exclude_execution_id="new-exec-not-in-snap",
+        hop_own_generate=True,
+    )
+
+
+def test_non_hop_does_not_exempt_own_generate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """predecessor_registration_id is ignored unless hop_own_generate is set."""
+    from systems.frontier_consult.admission import FrontierEndpointError
+    from systems.frontier_consult.cdp_generate import (
+        refuse_second_external_gate_at_fire,
+    )
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate._read_lane_snapshot_for_gate",
+        lambda **_: {
+            "rows": [
+                {
+                    "execution_id": "exec-live-gate",
+                    "parent_thread": "12286",
+                    "status": "running",
+                    "stream_state": "running",
+                    "purpose": "operator-proxy",
+                    "registration_id": "reg-caller",
+                }
+            ]
+        },
+    )
+    with pytest.raises(FrontierEndpointError) as exc:
+        refuse_second_external_gate_at_fire(
+            purpose="operator-proxy",
+            parent_thread="12286",
+            thread_id="12286",
+            request_id="req-non-hop",
+            predecessor_registration_id="reg-caller",
+        )
+    assert exc.value.code == "cdp_external_gate_live"
 
 
 def test_refuse_second_external_gate_ignores_terminal_stream(
