@@ -12,9 +12,10 @@ attended seat is not stranded before a row is listable. Watch-row
 ``census_n==0`` — never ``superseded_registration_id``. Watch
 ``retired_registration_ids`` drop predecessor rows after a successor seat.
 
-N≠1 without a resume bind (``ambiguous_matches`` / ``zero_matches`` /
-``empty_snap``) refuses at enqueue. ``snap_load_failed`` and
-``missing_thread_id`` still admit.
+N≠1 without a resume bind refuses at enqueue when the watch holds a
+``registration_id`` (``ambiguous_matches`` always; ``zero_matches`` /
+``empty_snap`` only then). A registration-less enroll stub does not refuse.
+``snap_load_failed`` and ``missing_thread_id`` still admit.
 """
 
 from __future__ import annotations
@@ -63,6 +64,7 @@ class AdmissionIdentity:
     registration_id: str | None
     source: IdentitySource
     watch_present: bool
+    watch_has_holder: bool = False
     unresolvable_reason: UnresolvableReason | None = None
     census_n: int = 0
     match_registration_ids: tuple[str, ...] = ()
@@ -166,6 +168,10 @@ def resolve_request_admission_identity(
     watch_map = hop_seat_cutover.load_watches(path) if tid else {}
     watch_row = watch_map.get(tid) if isinstance(watch_map, dict) else None
     watch_present = bool(watch_row)
+    watch_has_holder = bool(
+        isinstance(watch_row, dict)
+        and str(watch_row.get("registration_id") or "").strip()
+    )
     caller = (caller_registration_id or "").strip()
     snap = active_work_snap if active_work_snap is not None else {}
     matches = census_match_ids(tid, snap) if tid else []
@@ -185,6 +191,7 @@ def resolve_request_admission_identity(
             registration_id=None,
             source="unresolvable",
             watch_present=watch_present,
+            watch_has_holder=watch_has_holder,
             unresolvable_reason="wire_id_not_in_census",
             census_n=census_n,
             match_registration_ids=match_ids,
@@ -195,6 +202,7 @@ def resolve_request_admission_identity(
             registration_id=caller,
             source="caller_supplied",
             watch_present=watch_present,
+            watch_has_holder=watch_has_holder,
             census_n=census_n,
             match_registration_ids=match_ids,
             census_mismatch=census_n == 0,
@@ -205,6 +213,7 @@ def resolve_request_admission_identity(
             registration_id=None,
             source="unresolvable",
             watch_present=False,
+            watch_has_holder=False,
             unresolvable_reason="missing_thread_id",
             census_n=0,
         )
@@ -214,6 +223,7 @@ def resolve_request_admission_identity(
             registration_id=None,
             source="unresolvable",
             watch_present=watch_present,
+            watch_has_holder=watch_has_holder,
             unresolvable_reason="ambiguous_matches",
             census_n=census_n,
             match_registration_ids=match_ids,
@@ -226,6 +236,7 @@ def resolve_request_admission_identity(
                 registration_id=origin,
                 source="origin_cse",
                 watch_present=watch_present,
+                watch_has_holder=watch_has_holder,
                 census_n=census_n,
                 match_registration_ids=match_ids,
             )
@@ -233,6 +244,7 @@ def resolve_request_admission_identity(
             registration_id=matches[0],
             source="single_seat_active_work",
             watch_present=watch_present,
+            watch_has_holder=watch_has_holder,
             census_n=census_n,
             match_registration_ids=match_ids,
         )
@@ -248,6 +260,7 @@ def resolve_request_admission_identity(
                 registration_id=resume_reg,
                 source=resume_source,
                 watch_present=watch_present,
+                watch_has_holder=watch_has_holder,
                 census_n=census_n,
                 match_registration_ids=match_ids,
             )
@@ -256,6 +269,7 @@ def resolve_request_admission_identity(
         registration_id=None,
         source="unresolvable",
         watch_present=watch_present,
+        watch_has_holder=watch_has_holder,
         unresolvable_reason=classify_unresolvable(
             tid=tid,
             snap=snap,
@@ -278,9 +292,10 @@ def gate_request_admission(
 ) -> dict[str, Any] | None:
     """Return ``None`` to admit, or a ProtocolError envelope.
 
-    Census N≠1 refuses at enqueue on watched hop lanes
-    (``ambiguous_matches`` always; ``zero_matches`` / ``empty_snap`` when
-    ``watch_present``). Unwatched cursor-auto continues admit on N=0.
+    Census N≠1 refuses at enqueue on hop lanes whose watch holds a
+    registration (``ambiguous_matches`` always; ``zero_matches`` /
+    ``empty_snap`` only when ``watch_has_holder``). A registration-less
+    enroll stub and an unwatched cursor-auto lane both admit on N=0.
     ``snap_load_failed`` and ``missing_thread_id`` still admit. Live loads attach registry ``seated_rows``; injected test snaps
     are left unchanged.
     """
@@ -341,6 +356,7 @@ def gate_request_admission(
     if identity.source == "unresolvable" and should_refuse_census(
         unresolvable_reason=identity.unresolvable_reason,
         watch_present=identity.watch_present,
+        watch_has_holder=identity.watch_has_holder,
     ):
         _increment("census_refuse")
         _increment(f"census_refuse:{identity.unresolvable_reason}")

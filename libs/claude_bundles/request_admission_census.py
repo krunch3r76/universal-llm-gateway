@@ -42,8 +42,10 @@ REFUSE_CENSUS_REASONS: frozenset[UnresolvableReason] = frozenset(
     }
 )
 
-# ``zero_matches`` / ``empty_snap`` bind hop-seat lanes (watch present). Unwatched
-# cursor-auto threads have no CSE census row — admit rather than refuse continue.
+# ``zero_matches`` / ``empty_snap`` bind hop-seat lanes whose watch holds a
+# registration. A registration-less enroll stub is not that lease — admit,
+# same as an unwatched cursor-auto thread. Unwatched threads have no CSE
+# census row and already admit rather than refuse continue.
 _WATCHED_ONLY_REFUSE_REASONS: frozenset[UnresolvableReason] = frozenset(
     {"zero_matches", "empty_snap"}
 )
@@ -53,21 +55,41 @@ def should_refuse_census(
     *,
     unresolvable_reason: UnresolvableReason | None,
     watch_present: bool,
+    watch_has_holder: bool = False,
 ) -> bool:
-    """Return whether enqueue should refuse on census miss."""
+    """Return whether enqueue should refuse on census miss.
+
+    ``zero_matches`` / ``empty_snap`` refuse only when the watch row is
+    present and holds a ``registration_id``. An enroll stub (a watch dict
+    with no holder) does not refuse.
+    """
     if unresolvable_reason not in REFUSE_CENSUS_REASONS:
         return False
     if unresolvable_reason in {"ambiguous_matches", "wire_id_not_in_census"}:
         return True
-    return watch_present
+    if unresolvable_reason not in _WATCHED_ONLY_REFUSE_REASONS:
+        return False
+    return watch_present and watch_has_holder
 
 
 def claimed_auto_job_counts_for_census(observer: dict[str, Any]) -> bool:
-    """True when a persisted cursor-auto job row should count as census N=1."""
-    if str(observer.get("status") or "") != "claimed":
-        return False
+    """True when a persisted cursor-auto job row should count as census N=1.
+
+    Claimed incumbents count in the supersede-candidate phases, before nested
+    SDK finish. Queued incumbents count on status alone: their phase is
+    ``queued``, not a claimed phase, and they have no process to cancel.
+    Counting the row lets same-thread admission reach enqueue. ``queue_withdraw``
+    versus ``run_cancel`` is decided later from job status, not from this
+    predicate. ``done`` and ``failed`` stay excluded. A relay phase already
+    past nested SDK finish stays excluded for both statuses.
+    """
     relay = str(observer.get("relay_phase") or "none")
     if relay in _RELAY_PAST_NESTED:
+        return False
+    status = str(observer.get("status") or "")
+    if status == "queued":
+        return True
+    if status != "claimed":
         return False
     phase = str(observer.get("lifecycle_phase") or "")
     return phase in _CLAIMED_SUPERSEDE_PHASES
@@ -78,8 +100,14 @@ def census_row_from_claimed_auto_job(
     thread_id: str,
     job_id: str,
     cse_registration_id: str | None = None,
+    source: str = "cursor-auto-claimed",
 ) -> dict[str, Any]:
-    """Synthetic identity row for a claimed in-flight Auto job on ``thread_id``."""
+    """Synthetic identity row for a live Auto incumbent on ``thread_id``.
+
+    ``stream_state=running`` is the census membership bit (``identity_rows``
+    counts live stream state). It is not a claim that a process exists.
+    Queued incumbents pass ``source=cursor-auto-queued``.
+    """
     tid = (thread_id or "").strip()
     jid = (job_id or "").strip()
     reg = (cse_registration_id or "").strip() or f"cursor-auto-job:{jid}"
@@ -89,7 +117,7 @@ def census_row_from_claimed_auto_job(
         "purpose": "operator-proxy",
         "stream_state": "running",
         "status": "running",
-        "source": "cursor-auto-claimed",
+        "source": source,
         "job_id": jid,
     }
 

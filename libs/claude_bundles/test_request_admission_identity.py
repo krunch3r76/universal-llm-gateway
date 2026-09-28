@@ -204,11 +204,20 @@ def test_census_hop_plus_driving_is_n2() -> None:
 
 
 def test_gate_refuses_empty_snap_on_watched_lane():
-    """AC3: empty_snap is N=0 — refuse at enqueue, do not fail-open."""
+    """Holder present and resume miss: empty_snap still refuses, does not fail-open."""
     with (
         patch(
             "claude_bundles.hop_seat_cutover.load_watches",
-            return_value={"7188": {"thread_id": "7188"}},
+            return_value={
+                "7188": {
+                    "thread_id": "7188",
+                    "registration_id": "5420b367-holder",
+                }
+            },
+        ),
+        patch(
+            "claude_bundles.request_admission_identity.resolve_n0_resume_identity",
+            return_value=(None, None),
         ),
         patch(
             "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
@@ -508,7 +517,7 @@ def test_n0_never_binds_superseded_registration_id_from_watch():
 
 
 def test_watch_row_without_registration_id_still_unresolvable():
-    """AC-R5: watch present without registration_id still refuses."""
+    """Enroll stub has no holder, so identity stays unresolved. The gate admits."""
     with (
         patch(
             "claude_bundles.hop_seat_cutover.load_watches",
@@ -695,7 +704,7 @@ def test_identity_gated_emits_on_both_outcomes_and_unwatched():
 
     assert emit_mock.call_count == 3
     outcomes = [c.kwargs["outcome"] for c in emit_mock.call_args_list]
-    assert outcomes == ["reject", "admit", "reject"]
+    assert outcomes == ["admit", "admit", "reject"]
     watch_flags = [c.kwargs["identity"].watch_present for c in emit_mock.call_args_list]
     assert watch_flags == [True, False, True]
 
@@ -961,6 +970,7 @@ def test_origin_cse_does_not_pick_one_when_census_n_ge_2():
 
 
 def test_gate_refuses_zero_matches():
+    """Holder present and resume miss: zero_matches still refuses."""
     snap = {
         "rows": [
             {
@@ -976,7 +986,16 @@ def test_gate_refuses_zero_matches():
     with (
         patch(
             "claude_bundles.hop_seat_cutover.load_watches",
-            return_value={"7188": {"thread_id": "7188"}},
+            return_value={
+                "7188": {
+                    "thread_id": "7188",
+                    "registration_id": "5420b367-holder",
+                }
+            },
+        ),
+        patch(
+            "claude_bundles.request_admission_identity.resolve_n0_resume_identity",
+            return_value=(None, None),
         ),
         patch(
             "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
@@ -1181,8 +1200,8 @@ def test_claimed_auto_job_same_thread_request_admits_with_census_n1():
     assert identity.registration_id == "cursor-auto-job:a6cc6bde"
 
 
-def test_terminal_job_without_live_claim_still_identity_unresolvable():
-    """585f5e68 terminal lane: no claimed row and no resume bind still refuses."""
+def test_registration_less_stub_after_terminal_admits():
+    """Enroll stub with no holder admits after terminal. Census stays 0."""
     with (
         patch(
             "claude_bundles.hop_seat_cutover.load_watches",
@@ -1202,7 +1221,210 @@ def test_terminal_job_without_live_claim_still_identity_unresolvable():
             caller_registration_id=None,
             active_work_snap={"rows": []},
         )
-    assert refusal is not None
-    assert refusal["code"] == "seat.identity_unresolvable"
-    assert refusal["data"]["census_n"] == 0
-    assert refusal["data"]["reason"] == "empty_snap"
+        identity = resolve_request_admission_identity(
+            thread_id="13075",
+            caller_registration_id=None,
+            active_work_snap={"rows": []},
+        )
+    assert refusal is None
+    assert identity.census_n == 0
+    assert identity.unresolvable_reason == "empty_snap"
+    assert identity.watch_present is True
+    assert identity.watch_has_holder is False
+
+
+def _other_lane_snap() -> dict:
+    return {
+        "rows": [
+            {
+                "execution_id": "other-lane",
+                "registration_id": "5420b367-other",
+                "parent_thread": "9999",
+                "purpose": "operator-proxy",
+                "status": "running",
+                "stream_state": "running",
+            }
+        ]
+    }
+
+
+def test_queued_same_thread_request_reaches_queue_withdraw_not_identity_unresolvable(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    """Queued incumbent is census N=1, so admission reaches queue_withdraw.
+
+    Counting the row does not arm a process cancel. Supersede still emits
+    ``queue_withdraw`` from ``job.status == queued``.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from claude_bundles.request_admission_census import (
+        attach_claimed_job_census_rows,
+        census_row_from_claimed_auto_job,
+        claimed_auto_job_counts_for_census,
+    )
+    from services.git_integration_worker.cursor_auto import supersede as auto_supersede
+    from services.git_integration_worker.cursor_auto.queue import AutoJobQueue
+    from services.git_integration_worker.cursor_auto.supersede import (
+        QUEUE_WITHDRAW,
+        supersede_same_thread_inflight,
+    )
+
+    view = {
+        "status": "queued",
+        "lifecycle_phase": "queued",
+        "relay_phase": "none",
+        "thread_id": "13101",
+        "job_id": "15a74103",
+    }
+    assert (
+        claimed_auto_job_counts_for_census(
+            {**view, "status": "done", "lifecycle_phase": "terminal_done"}
+        )
+        is False
+    )
+    assert (
+        claimed_auto_job_counts_for_census(
+            {**view, "status": "failed", "lifecycle_phase": "terminal_failed"}
+        )
+        is False
+    )
+    snap = _other_lane_snap()
+    if claimed_auto_job_counts_for_census(view):
+        snap = attach_claimed_job_census_rows(
+            snap,
+            [
+                census_row_from_claimed_auto_job(
+                    thread_id="13101",
+                    job_id="15a74103",
+                )
+            ],
+        )
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={"13101": {"thread_id": "13101"}},
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
+            return_value=None,
+        ),
+    ):
+        refusal = gate_request_admission(
+            thread_id="13101",
+            caller_registration_id=None,
+            from_agent="web-anthropic",
+            active_work_snap=snap,
+        )
+        identity = resolve_request_admission_identity(
+            thread_id="13101",
+            caller_registration_id=None,
+            from_agent="web-anthropic",
+            active_work_snap=snap,
+        )
+    assert refusal is None, refusal
+    assert identity.census_n == 1
+    assert identity.source == "single_seat_active_work"
+    assert identity.registration_id == "cursor-auto-job:15a74103"
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "CURSOR_SDK_DISPATCH_LEDGER", str(tmp_path / "cursor-sdk-dispatch.db")
+    )
+    from services.git_integration_worker.cursor_auto.mission_negotiation_ledger import (
+        MissionNegotiationLedger,
+    )
+
+    MissionNegotiationLedger.reset_for_tests()
+    queue = AutoJobQueue(durable=False)
+    old = queue.enqueue(
+        thread_id="13101",
+        turn_number=1,
+        subject="turn 1",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    assert old.status == "queued"
+    new = queue.enqueue(
+        thread_id="13101",
+        turn_number=2,
+        subject="turn 2",
+        body="TYPE: DIRECTIVE\n",
+        from_agent="web-anthropic",
+        to_agent="cursor",
+        desired_model="auto",
+        desired_effort="medium",
+        contract="implement",
+    )
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=AsyncMock(status_code=200, body={}))
+    try:
+        evidence = asyncio.run(
+            supersede_same_thread_inflight(new, queue=queue, client=bus)
+        )
+    finally:
+        auto_supersede._PENDING.clear()
+    assert evidence is not None
+    assert evidence["method"] == QUEUE_WITHDRAW
+    assert evidence["method"] != "run_cancel"
+
+
+def test_child_lane_terminal_request_admits_without_zero_matches_refusal():
+    """Registration-less child stub admits after terminal; parent holder is not bound.
+
+    Specimen shape: thread 13106 watch has no registration_id; parent 12286
+    holds one; from_agent is web-anthropic. Census stays 0. The gate must not
+    return census_n=0 zero_matches, and must not adopt the parent registration.
+    """
+    parent_reg = "71c461830ed34d108376495ba524a484"
+    with (
+        patch(
+            "claude_bundles.hop_seat_cutover.load_watches",
+            return_value={
+                "13106": {
+                    "thread_id": "13106",
+                    "enroll_source": "first_auto_observe",
+                },
+                "12286": {
+                    "thread_id": "12286",
+                    "registration_id": parent_reg,
+                },
+            },
+        ),
+        patch(
+            "claude_bundles.request_admission_identity._resolve_origin_cse_registration",
+            return_value=None,
+        ),
+        patch(
+            "claude_bundles.request_admission_resume._resolve_bus_cse_registration",
+            return_value=None,
+        ),
+    ):
+        refusal = gate_request_admission(
+            thread_id="13106",
+            caller_registration_id=None,
+            from_agent="web-anthropic",
+            active_work_snap=_other_lane_snap(),
+        )
+        identity = resolve_request_admission_identity(
+            thread_id="13106",
+            caller_registration_id=None,
+            from_agent="web-anthropic",
+            active_work_snap=_other_lane_snap(),
+        )
+    assert refusal is None, refusal
+    assert identity.census_n == 0
+    assert identity.unresolvable_reason == "zero_matches"
+    assert identity.registration_id is None
+    assert identity.registration_id != parent_reg
+    assert identity.watch_present is True
+    assert identity.watch_has_holder is False

@@ -31,10 +31,12 @@ def census_row_from_ledger_row(row: Any) -> dict[str, Any] | None:
             data = {}
         if isinstance(data, dict):
             reg = str(data.get("cse_registration_id") or "").strip() or None
+    status = str(view.get("status") or "")
     return census_row_from_claimed_auto_job(
         thread_id=str(view.get("thread_id") or ""),
         job_id=str(view.get("job_id") or ""),
         cse_registration_id=reg,
+        source=("cursor-auto-queued" if status == "queued" else "cursor-auto-claimed"),
     )
 
 
@@ -43,7 +45,7 @@ def attach_claimed_job_from_ledger(
     *,
     thread_id: str,
 ) -> dict[str, Any]:
-    """Attach the incumbent claimed job for ``thread_id`` when present locally."""
+    """Attach the incumbent queued or claimed job for ``thread_id`` when present."""
     tid = (thread_id or "").strip()
     if not tid:
         return snap
@@ -52,10 +54,12 @@ def attach_claimed_job_from_ledger(
     view = get_ledger().observer_state(thread_id=tid)
     if view is None or not claimed_auto_job_counts_for_census(view):
         return snap
+    status = str(view.get("status") or "")
     row = census_row_from_claimed_auto_job(
         thread_id=tid,
         job_id=str(view.get("job_id") or ""),
         cse_registration_id=None,
+        source=("cursor-auto-queued" if status == "queued" else "cursor-auto-claimed"),
     )
     return attach_claimed_job_census_rows(snap, [row])
 
