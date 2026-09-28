@@ -500,6 +500,75 @@ def test_quoted_pytest_with_k_expression_literal_survives_strip() -> None:
     assert '-k "not slow"' in rows[0].command
 
 
+# Specimen agent-bus:13042 / friction a:36693 — env prefix + unquoted venv pytest + tail pipe.
+_SPECIMEN_13042_COMMAND = (
+    "cd /mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13042 && "
+    "env -u CURSOR_SDK_DISPATCH_LEDGER $HOME/.venvs/universal/bin/pytest "
+    "libs/claude_bundles/test_cdp_registry_document.py "
+    "libs/claude_bundles/test_cdp_registry_remote_read.py -q --tb=short 2>&1 | tail -20"
+)
+_SPECIMEN_13042_QUOTED_PYTEST_COMMAND = (
+    "cd /mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13042 && "
+    "env -u CURSOR_SDK_DISPATCH_LEDGER "
+    '"$HOME/.venvs/universal/bin/pytest" '
+    "libs/claude_bundles/test_cdp_registry_document.py "
+    "libs/claude_bundles/test_cdp_registry_remote_read.py -q --tb=short 2>&1 | tail -20"
+)
+_SPECIMEN_13042_STDOUT = (
+    "........................................                                 [100%]\n"
+    "40 passed in 1.02s\n"
+)
+
+
+def test_specimen_13042_unquoted_venv_env_prefix_tail_harvested_observed() -> None:
+    """Miss specimen — unquoted ``$HOME/.venvs/.../pytest`` with ``env -u`` and ``| tail``."""
+    assert is_pytest_command(_SPECIMEN_13042_COMMAND)
+    assert is_proven_simple_pytest_command(_SPECIMEN_13042_COMMAND)
+    obs = ToolCallObservation(
+        call_id="call-specimen-13042-unquoted",
+        tool_name="shell",
+        status="completed",
+        arg_bytes=400,
+        result_bytes=200,
+        truncated_fields=(),
+        args={"command": _SPECIMEN_13042_COMMAND},
+        result={
+            "status": "success",
+            "value": {
+                "exitCode": 0,
+                "stdout": _SPECIMEN_13042_STDOUT,
+                "stderr": "",
+            },
+        },
+    )
+    rows = harvest_test_verifications((obs,))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.exit_code_register == "observed"
+    assert row.exit_code == 0
+    assert "libs/claude_bundles/test_cdp_registry_document.py" in row.command
+    assert "libs/claude_bundles/test_cdp_registry_remote_read.py" in row.command
+    assert is_pytest_witness(row) is True
+    assert row.stdout is not None and "40 passed" in row.stdout
+
+
+def test_specimen_13042_quoted_pytest_env_prefix_tail_harvested_observed() -> None:
+    """Same specimen shape with quoted venv pytest path."""
+    assert is_pytest_command(_SPECIMEN_13042_QUOTED_PYTEST_COMMAND)
+    assert is_proven_simple_pytest_command(_SPECIMEN_13042_QUOTED_PYTEST_COMMAND)
+    obs = _shell_obs(
+        call_id="call-specimen-13042-quoted",
+        command=_SPECIMEN_13042_QUOTED_PYTEST_COMMAND,
+        exit_code=0,
+    )
+    rows = harvest_test_verifications((obs,))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.exit_code_register == "observed"
+    assert is_pytest_witness(row) is True
+    assert "test_cdp_registry_document.py" in row.command
+
+
 def test_wrapper_unavailable_harvest_emits_null_not_zero() -> None:
     """AC2 — compound wrapper cannot be recorded as process exit 0."""
     obs = _shell_obs(
