@@ -8,7 +8,6 @@ derivation. Wire registration (``tools/list``) stays separate — see
 from __future__ import annotations
 
 import os
-import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -170,27 +169,22 @@ def life_workspaces_write_refusal_message() -> str:
 
 
 def _git_head_at(repo: Path) -> str | None:
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "HEAD"],
-            capture_output=True,
-            check=True,
-            timeout=10,
-        )
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
-        return None
-    sha = proc.stdout.decode("utf-8", errors="replace").strip()
-    return sha or None
+    from git_integrate.worktree_git import rev_parse_head
+
+    sha, _err = rev_parse_head(repo, timeout=10)
+    return sha
 
 
 def workspaces_git_head(root: Path, rel_path: str = "") -> tuple[str | None, str | None]:
     """Return ``(head_sha, unknown_reason)`` for a workspaces root + optional rel path."""
     root = root.resolve()
     if (root / ".git").exists():
-        head = _git_head_at(root)
+        from git_integrate.worktree_git import rev_parse_head
+
+        head, err = rev_parse_head(root, timeout=10)
         if head:
             return head, None
-        return None, "git rev-parse HEAD failed at workspaces root"
+        return None, err or "git rev-parse HEAD failed at workspaces root"
 
     if rel_path.strip():
         from tools._project_paths import candidate_paths
@@ -199,10 +193,12 @@ def workspaces_git_head(root: Path, rel_path: str = "") -> tuple[str | None, str
             repo = candidate.parent if candidate.is_file() else candidate
             while repo != root and repo != repo.parent:
                 if (repo / ".git").exists():
-                    head = _git_head_at(repo)
+                    from git_integrate.worktree_git import rev_parse_head
+
+                    head, err = rev_parse_head(repo, timeout=10)
                     if head:
                         return head, None
-                    return None, f"git rev-parse HEAD failed at {repo}"
+                    return None, err or f"git rev-parse HEAD failed at {repo}"
                 repo = repo.parent
 
     return None, "workspaces root is not a git repository"

@@ -187,18 +187,13 @@ def _git_ls_files_in_repo(
     sub_dir: str = "",
 ) -> list[str]:
     """Run git ls-files in a single repo, return paths relative to repo root."""
-    cmd = ["git", "-C", str(repo), "ls-files"]
+    from git_integrate.worktree_git import git_run
+
+    args = ["ls-files"]
     if sub_dir:
-        cmd.extend(["--", sub_dir])
-    env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+        args.extend(["--", sub_dir])
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=env,
-        )
+        result = git_run(repo, args, timeout=10)
     except FileNotFoundError:
         logger.warning("git command not found or inaccessible.")
         return []
@@ -206,14 +201,16 @@ def _git_ls_files_in_repo(
         logger.warning("git ls-files timed out: %s", e)
         return []
     if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
         logger.warning(
             "git ls-files failed in %s (rc=%d): %s",
             repo,
             result.returncode,
-            result.stderr.strip(),
+            stderr,
         )
         return []
-    return [f for f in result.stdout.splitlines() if f]
+    text = result.stdout.decode("utf-8", errors="replace")
+    return [f for f in text.splitlines() if f]
 
 
 def _filesystem_listing(
