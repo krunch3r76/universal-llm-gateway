@@ -313,12 +313,22 @@ def test_ledger_db_path_stable_across_home_swap(
 def test_register_lane_worktree_writes_pinned_db_across_home_swap(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AC-W1-1..3: ``register_lane_worktree`` writes through the pinned ledger DB."""
+    """AC-W1-1..3: ``register_lane_worktree`` writes through the pinned ledger DB.
+
+    The autouse ledger pin wins over ``HOME``. Without an explicit
+    ``CURSOR_SDK_DISPATCH_LEDGER``, the path assert compared the fixture DB
+    to ``<real-home>/.gateway`` and failed even though the row survived the
+    swap. Pin the DB the same way as ``test_ledger_db_path_stable_across_home_swap``.
+    """
     real_home = tmp_path / "real-home"
     real_home.mkdir()
     swapped_home = tmp_path / "dispatch-home"
     swapped_home.mkdir()
+    ledger_db = real_home / ".gateway" / "cursor-sdk-dispatch.db"
     monkeypatch.delenv("DATA_DIR", raising=False)
+    monkeypatch.setenv(
+        "CURSOR_SDK_DISPATCH_LEDGER", str(ledger_db)
+    )  # GIW bridge pin (friction a:36673)
     monkeypatch.setenv("HOME", str(real_home))
     CursorDispatchLedger._instance = None
 

@@ -91,11 +91,20 @@ def test_d3_cross_family_openai_executor_gets_cursor_opus() -> None:
     assert sel.identity.model_identity == "claude-opus-5"
 
 
-def test_d3_cross_family_cursor_executor_gets_openai() -> None:
+def test_d3_cursor_executor_gets_check_review_default() -> None:
+    """Non-OpenAI executors take workflows.check_review.model.
+
+    Retired name ``test_d3_cross_family_cursor_executor_gets_openai`` asserted
+    an implicit ``cursor/gpt-5.6-terra`` route. Terra is Other-Models and is
+    not the standing check/review default (``cursor/grok-4.7``). The spawn
+    caller ``_attempt_spawn_for_completion`` still selects through this
+    function; what is unreachable is the implicit terra alternate.
+    """
     sel = select_independent_reviewer("cursor/claude-sonnet-5")
     assert sel is not None
-    assert sel.model == "cursor/gpt-5.6-terra"
-    assert sel.identity.model_identity == "gpt-5.6-terra"
+    assert sel.model == "cursor/grok-4.7"
+    assert sel.identity.model_identity == "grok-4.7"
+    assert sel.model != "cursor/gpt-5.6-terra"
 
 
 def test_cdp_fable_executor_gets_independent_reviewer() -> None:
@@ -185,12 +194,15 @@ def test_ac7_unset_auto_review_child_no_spawn() -> None:
 async def test_ac1_exactly_one_spawn_duplicate_none() -> None:
     _write_generate_ctx("exec-dedupe")
     spawn_mock = AsyncMock(return_value={"execution_id": "child-exec-1"})
-    with patch(
-        "systems.frontier_consult.review_child_spawn_hook.spawn_generate_lane_review_child",
-        spawn_mock,
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
-        side_effect=_terminal_stub,
+    with (
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.spawn_generate_lane_review_child",
+            spawn_mock,
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
+            side_effect=_terminal_stub,
+        ),
     ):
         await handle_worker_completed_event(
             execution_id="exec-dedupe",
@@ -219,12 +231,15 @@ async def test_ac2_crash_after_pending_reconciled_once() -> None:
         reviewer_model="openai/gpt-5.5",
     )
     spawn_mock = AsyncMock(return_value={"execution_id": "child-crash-1"})
-    with patch(
-        "systems.frontier_consult.review_child_spawn_hook.spawn_generate_lane_review_child",
-        spawn_mock,
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
-        side_effect=_terminal_stub,
+    with (
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.spawn_generate_lane_review_child",
+            spawn_mock,
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
+            side_effect=_terminal_stub,
+        ),
     ):
         from systems.frontier_consult.review_child_spawn_hook import (
             reconcile_pending_spawns,
@@ -238,15 +253,19 @@ async def test_ac2_crash_after_pending_reconciled_once() -> None:
 @pytest.mark.asyncio
 async def test_ac3_context_miss_emits_context_missing() -> None:
     published: list[str] = []
-    with patch(
-        "systems.frontier_consult.review_child_spawn_hook.publish_frontier_event",
-        side_effect=lambda ev: published.append(ev.signal),
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook.CONTEXT_MISS_MAX_ATTEMPTS",
-        2,
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook.CONTEXT_MISS_RETRY_SECONDS",
-        0,
+    with (
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.publish_frontier_event",
+            side_effect=lambda ev: published.append(ev.signal),
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.CONTEXT_MISS_MAX_ATTEMPTS",
+            2,
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.CONTEXT_MISS_RETRY_SECONDS",
+            0,
+        ),
     ):
         await handle_worker_completed_event(
             execution_id="exec-miss",
@@ -272,18 +291,23 @@ async def test_ac3_race_resolves_after_context_write() -> None:
         )
 
     spawn_mock = AsyncMock(return_value={"execution_id": "child-race-1"})
-    with patch(
-        "systems.frontier_consult.review_child_spawn_hook.publish_frontier_event",
-        side_effect=lambda ev: published.append(ev.signal),
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook.asyncio.sleep",
-        new=AsyncMock(side_effect=_late_write_and_sleep),
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook.spawn_generate_lane_review_child",
-        spawn_mock,
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
-        side_effect=_terminal_stub,
+    with (
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.publish_frontier_event",
+            side_effect=lambda ev: published.append(ev.signal),
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.asyncio.sleep",
+            new=AsyncMock(side_effect=_late_write_and_sleep),
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.spawn_generate_lane_review_child",
+            spawn_mock,
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
+            side_effect=_terminal_stub,
+        ),
     ):
         await handle_worker_completed_event(
             execution_id="exec-race",
@@ -298,15 +322,19 @@ async def test_ac3_race_resolves_after_context_write() -> None:
 async def test_ac9_spawn_emits_review_child_spawned_event() -> None:
     _write_generate_ctx("exec-emit")
     published: list[str] = []
-    with patch(
-        "systems.frontier_consult.review_child_spawn_hook.publish_frontier_event",
-        side_effect=lambda ev: published.append(ev.signal),
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook.spawn_generate_lane_review_child",
-        AsyncMock(return_value={"execution_id": "child-emit-1"}),
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
-        side_effect=_terminal_stub,
+    with (
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.publish_frontier_event",
+            side_effect=lambda ev: published.append(ev.signal),
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.spawn_generate_lane_review_child",
+            AsyncMock(return_value={"execution_id": "child-emit-1"}),
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
+            side_effect=_terminal_stub,
+        ),
     ):
         await handle_worker_completed_event(
             execution_id="exec-emit",
@@ -370,20 +398,23 @@ async def test_a24105_spawn_body_thread_is_coord() -> None:
     )
     ctx = read_admission_context("exec-a24105b")
     assert ctx is not None
-    with patch(
-        "systems.frontier_consult.route.team_dispatch",
-        _capture,
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook._build_generate_lane_review_prompt",
-        AsyncMock(
-            return_value=_ReviewPromptBuild(
-                prompt="review prompt",
-                prompt_bind_mode="explicit_inline",
-                prompt_turn_number=None,
-                latest_read_outcome="skipped",
-                bound_prompt_class="caller_prompt",
-                bound_prompt_digest="abc:review prompt",
-            )
+    with (
+        patch(
+            "systems.frontier_consult.route.team_dispatch",
+            _capture,
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook._build_generate_lane_review_prompt",
+            AsyncMock(
+                return_value=_ReviewPromptBuild(
+                    prompt="review prompt",
+                    prompt_bind_mode="explicit_inline",
+                    prompt_turn_number=None,
+                    latest_read_outcome="skipped",
+                    bound_prompt_class="caller_prompt",
+                    bound_prompt_digest="abc:review prompt",
+                )
+            ),
         ),
     ):
         result = await spawn_generate_lane_review_child(
@@ -430,20 +461,23 @@ async def test_openai_executor_review_child_uses_cursor_sdk_generate() -> None:
     )
     ctx = read_admission_context("exec-openai-parent")
     assert ctx is not None
-    with patch(
-        "systems.frontier_consult.route.team_dispatch",
-        _capture,
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook._build_generate_lane_review_prompt",
-        AsyncMock(
-            return_value=_ReviewPromptBuild(
-                prompt="review prompt",
-                prompt_bind_mode="frozen_turn",
-                prompt_turn_number=12,
-                latest_read_outcome="ok",
-                bound_prompt_class="caller_prompt",
-                bound_prompt_digest="abc:review prompt",
-            )
+    with (
+        patch(
+            "systems.frontier_consult.route.team_dispatch",
+            _capture,
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook._build_generate_lane_review_prompt",
+            AsyncMock(
+                return_value=_ReviewPromptBuild(
+                    prompt="review prompt",
+                    prompt_bind_mode="frozen_turn",
+                    prompt_turn_number=12,
+                    latest_read_outcome="ok",
+                    bound_prompt_class="caller_prompt",
+                    bound_prompt_digest="abc:review prompt",
+                )
+            ),
         ),
     ):
         result = await spawn_generate_lane_review_child(
@@ -668,12 +702,15 @@ async def test_suppressed_path_sim_stage_a_no_spawn_on_coord() -> None:
         dispatch_lane="path-sim-admit-gate",
     )
     spawn_mock = AsyncMock(return_value={"execution_id": "child-should-not"})
-    with patch(
-        "systems.frontier_consult.review_child_spawn_hook.spawn_generate_lane_review_child",
-        spawn_mock,
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
-        side_effect=_terminal_stub,
+    with (
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.spawn_generate_lane_review_child",
+            spawn_mock,
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.durable_catch_up_terminal",
+            side_effect=_terminal_stub,
+        ),
     ):
         await handle_worker_completed_event(
             execution_id="exec-path-sim",
@@ -716,19 +753,22 @@ async def test_a6655_spawn_fail_closed_on_frozen_read_failure() -> None:
     ctx = read_admission_context("exec-fail-closed")
     assert ctx is not None
     dispatch_mock = AsyncMock(return_value={"execution_id": "child-should-not"})
-    with patch(
-        "systems.frontier_consult.review_child_spawn_hook._dispatch_review_child",
-        dispatch_mock,
-    ), patch(
-        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
-        AsyncMock(
-            side_effect=FrontierEndpointError(
-                request_id="req-fc",
-                field="dispatch_thread_id",
-                reason="not a prompt",
-                status_code=422,
-                code="dispatch_thread_latest_not_prompt",
-            )
+    with (
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook._dispatch_review_child",
+            dispatch_mock,
+        ),
+        patch(
+            "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+            AsyncMock(
+                side_effect=FrontierEndpointError(
+                    request_id="req-fc",
+                    field="dispatch_thread_id",
+                    reason="not a prompt",
+                    status_code=422,
+                    code="dispatch_thread_latest_not_prompt",
+                )
+            ),
         ),
     ):
         result = await spawn_generate_lane_review_child(
@@ -767,15 +807,19 @@ async def test_a6655_spawn_uses_frozen_turn_not_latest() -> None:
     )
     ctx = read_admission_context("exec-frozen")
     assert ctx is not None
-    with patch(
-        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
-        read_at,
-    ), patch(
-        "systems.frontier_consult.dispatch_thread_context.read_latest_dispatch_thread_body",
-        read_latest,
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook._dispatch_review_child",
-        AsyncMock(return_value={"execution_id": "child-frozen"}),
+    with (
+        patch(
+            "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+            read_at,
+        ),
+        patch(
+            "systems.frontier_consult.dispatch_thread_context.read_latest_dispatch_thread_body",
+            read_latest,
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook._dispatch_review_child",
+            AsyncMock(return_value={"execution_id": "child-frozen"}),
+        ),
     ):
         await spawn_generate_lane_review_child(
             request_id="req-frozen",
@@ -812,15 +856,19 @@ async def test_a6655_prompt_bind_instrumentation_emitted() -> None:
     )
     ctx = read_admission_context("exec-instrument")
     assert ctx is not None
-    with patch(
-        "systems.frontier_consult.review_child_spawn_hook.publish_frontier_event",
-        side_effect=lambda ev: published.append(ev.signal),
-    ), patch(
-        "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
-        AsyncMock(return_value="Worker thread `x` should not pass — caller brief."),
-    ), patch(
-        "systems.frontier_consult.review_child_spawn_hook._dispatch_review_child",
-        AsyncMock(return_value={"execution_id": "child-inst"}),
+    with (
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook.publish_frontier_event",
+            side_effect=lambda ev: published.append(ev.signal),
+        ),
+        patch(
+            "systems.frontier_consult.dispatch_thread_context.read_dispatch_thread_body_at_turn",
+            AsyncMock(return_value="Worker thread `x` should not pass — caller brief."),
+        ),
+        patch(
+            "systems.frontier_consult.review_child_spawn_hook._dispatch_review_child",
+            AsyncMock(return_value={"execution_id": "child-inst"}),
+        ),
     ):
         await spawn_generate_lane_review_child(
             request_id="req-inst",
