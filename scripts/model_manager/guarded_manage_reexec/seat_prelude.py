@@ -104,9 +104,14 @@ def giw_has_claimed_occupants(busy: dict[str, Any]) -> bool:
 
 
 def _service_stopped(manage_call: ManageCall, service: str) -> bool:
+    """True only when manage reports the service process is genuinely stopped.
+
+    Instrument misses (unhealthy, unknown, error) must not nudge restart
+    convergence — a timeout-derived unhealthy is not a stopped process.
+    """
     health = manage_call("health", {"service": service})
     status = str(health.get("status") or "").lower()
-    return status in {"stopped", "unhealthy", "unknown", "error"}
+    return status == "stopped"
 
 
 def _nudge_dead_intent_converge(

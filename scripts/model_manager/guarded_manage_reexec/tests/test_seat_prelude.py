@@ -13,6 +13,7 @@ from scripts.model_manager.guarded_manage_reexec.pane import (
 )
 from scripts.model_manager.guarded_manage_reexec.runner import run_guarded_reexec
 from scripts.model_manager.guarded_manage_reexec.seat_prelude import (
+    _nudge_dead_intent_converge,
     giw_has_claimed_occupants,
     resolve_manage_inflight_for_seat,
     wait_nonterminal_intents_clear,
@@ -24,6 +25,38 @@ from scripts.model_manager.ui.controller.restart_intent_store import (
 
 def _store(tmp_path: Path) -> RestartIntentStore:
     return RestartIntentStore(db_path=tmp_path / "restart-intents.db")
+
+
+def test_timeout_derived_unhealthy_does_not_nudge_sync_restart() -> None:
+    """AC1: unhealthy from a slow probe must not be treated as stopped."""
+    calls: list[str] = []
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        if method == "health":
+            return {
+                "status": "unhealthy",
+                "detail": "health probe failed: TimeoutError",
+            }
+        calls.append(method)
+        return {}
+
+    _nudge_dead_intent_converge(manage_call, [{"service": "cdp_ask"}])
+    assert "sync_restart" not in calls
+
+
+def test_unknown_health_does_not_nudge_sync_restart() -> None:
+    calls: list[str] = []
+
+    def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
+        del params, kwargs
+        if method == "health":
+            return {"status": "unknown"}
+        calls.append(method)
+        return {}
+
+    _nudge_dead_intent_converge(manage_call, [{"service": "mcp"}])
+    assert "sync_restart" not in calls
 
 
 def test_wait_nonterminal_intent_until_cleared(tmp_path: Path) -> None:
