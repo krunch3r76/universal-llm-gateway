@@ -51,6 +51,10 @@ class AutoJob:
     workspace: str | None = None
     # D4 work identity for lane-B conductor concurrent admission (optional).
     work_key: str | None = None
+    # ``wire`` | ``derived`` when ``work_key`` was set at enqueue.
+    work_key_source: str | None = None
+    # When ``execution_mode`` is serial, why concurrent class was not used.
+    serial_reason: str | None = None
     # Enqueue-time reason from ``resolve_execution_mode_at_enqueue`` (reporting).
     execution_mode_declare_reason: str | None = None
     # Declared execution mode (S-3). "serial" (default) uses the exclusive
@@ -478,6 +482,33 @@ class AutoJobQueue:
             "same_thread_pending": pending,
             "same_thread_claimed": claimed,
         }
+
+    def has_claimed_concurrent_work_key(self, work_key: str | None) -> bool:
+        """True when a claimed concurrent job already holds this work_key."""
+        key = normalize_work_key(work_key)
+        if not key:
+            return False
+        with self._lock:
+            for job in self._jobs.values():
+                if job.status != "claimed":
+                    continue
+                if not is_concurrent_execution_mode(job.execution_mode):
+                    continue
+                if normalize_work_key(job.work_key) == key:
+                    return True
+        return False
+
+    def in_memory_thread_lane_counts(
+        self,
+        thread_id: str,
+        *,
+        exclude_job_id: str | None = None,
+    ) -> dict[str, int]:
+        """Process-local peer counts — safe before durable ledger is opened."""
+        with self._lock:
+            return self._thread_lane_counts_unlocked(
+                thread_id, exclude_job_id=exclude_job_id
+            )
 
     def thread_lane_counts(
         self,

@@ -61,6 +61,9 @@ def build_admit_report_body(
     field_parity_report: FieldParityReport | None = None,
     execution_mode: str | None = None,
     execution_mode_declined: str | None = None,
+    work_key: str | None = None,
+    work_key_source: str | None = None,
+    serial_reason: str | None = None,
 ) -> str:
     """Compose the admit / admit-report body lines (no I/O, no gating)."""
     header = (
@@ -87,8 +90,15 @@ def build_admit_report_body(
     )
     if execution_mode is not None:
         body += f"\nexecution_mode={execution_mode}"
+    if work_key:
+        if work_key_source:
+            body += f"\nwork_key={work_key} (source={work_key_source})"
+        else:
+            body += f"\nwork_key={work_key}"
     if execution_mode_declined:
         body += f"\nexecution_mode_declined={execution_mode_declined}"
+    if serial_reason:
+        body += f"\nserial_reason={serial_reason}"
     if override_rule:
         body += f"\n{override_rule}"
     if effort_rule:
