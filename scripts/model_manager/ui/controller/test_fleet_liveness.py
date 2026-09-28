@@ -586,3 +586,96 @@ def test_index_behind_head_when_ref_moves_without_checkout(
         in checkout["index_behind_head_paths"]
     )
     assert path.read_text(encoding="utf-8") == "old\n"
+
+
+def test_defect_b_cdp_ask_specimen_does_not_read_remote_pid_in_local_proc(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Sidecar specimen 2, same fleet_liveness sample 2026-09-28T10:56:40.965798Z.
+
+    cdp_ask probe_reachable was true with pid 3000629 from
+    http://10.0.0.76:8770/health while load_marker.error was
+    proc_start_unavailable. That pid is not on this host; the row must say
+    so without consulting local /proc.
+    """
+    empty_probe = {
+        "raw": "",
+        "paths": {},
+        "errors": [],
+        "branch": "master",
+        "head_sha": "head",
+        "clock": {},
+    }
+    probes = iter((empty_probe, empty_probe))
+    monkeypatch.setattr(live, "_tree_probe", lambda *_: next(probes))
+    specimen_pid = 3000629
+    specimen_url = "http://10.0.0.76:8770/health"
+    local_pid = 1050900
+
+    def _info(_state: object, service: str) -> ServiceInfo:
+        if service == "cdp_ask":
+            return ServiceInfo(
+                name="cdp-ask",
+                status=ServiceStatus.RUNNING,
+                pid=specimen_pid,
+                health_url=specimen_url,
+                detail="PID 3000629; registry_hygiene=running",
+            )
+        if service == "agent_bus":
+            return ServiceInfo(
+                name="agent-bus",
+                status=ServiceStatus.RUNNING,
+                pid=local_pid,
+                health_url="unix:///tmp/universal-protocol/agent-bus.sock/health",
+                detail="PID 1050900",
+            )
+        return ServiceInfo(name=service, status=ServiceStatus.RUNNING, pid=1)
+
+    monkeypatch.setattr(live, "_service_info", _info)
+    monkeypatch.setattr(
+        live,
+        "_container_start",
+        lambda _container: {
+            "kind": "container_started_at",
+            "value_utc": None,
+            "granularity_s": 0.001,
+            "clock_domain": "docker_host",
+            "error": "test",
+        },
+    )
+    monkeypatch.setattr(
+        live,
+        "_mcp_reported_version",
+        lambda _container: {
+            "field": "code_version",
+            "value": None,
+            "denotes": "test",
+            "error": "test",
+        },
+    )
+    consulted: list[int | None] = []
+
+    def _start(pid: int | None) -> dict[str, object]:
+        consulted.append(pid)
+        return {
+            "kind": "host_proc_start",
+            "value_utc": None,
+            "granularity_s": 0.01,
+            "clock_domain": "host_proc",
+            "error": "proc_start_unavailable",
+        }
+
+    monkeypatch.setattr(live, "_process_start", _start)
+    result = live.build_snapshot(tmp_path, SimpleNamespace())
+    cdp = next(row for row in result["services"] if row["service"] == "cdp_ask")
+    assert cdp["status"] == "running"
+    assert cdp["pid"] == specimen_pid
+    assert specimen_pid not in consulted
+    marker = cdp["load_marker"]
+    assert marker["value_utc"] is None
+    assert marker["error"] == (
+        f"pid {specimen_pid} reported by {specimen_url} is not on this host; "
+        "local /proc was not read"
+    )
+    assert marker["error"] != "proc_start_unavailable"
+    assert local_pid in consulted
