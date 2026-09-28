@@ -1,8 +1,0 @@
-models:
-  # Claude-family: code review over un-baselined subsystems requires navigation
-  # and judgment that frontier models degrade on without rich architecture docs
-  # and docstrings. Revert manually per todo:subsystem-baseline-tracking.
-  review_model:
-    model: anthropic/claude-sonnet-4-6
-  validate_model:
-    model: anthropic/claude-sonnet-4-6

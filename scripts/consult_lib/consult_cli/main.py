@@ -14,7 +14,7 @@ from typing import Any
 from uuid import uuid4
 
 from consult_lib.model_selection import load_roles, split_role_config
-from consult_lib.pipeline import get_pipeline_id
+from consult_lib.pipeline import CODE_REVIEW_PIPELINE_RETIRED, get_pipeline_id
 
 from .direct_branch import _run_direct_branch
 from .parser import _build_parser, _handle_admin_flags, print_role_listing
@@ -22,20 +22,13 @@ from .reviewer_pipeline import _run_pipeline_branch
 
 
 def _normalize_role_specific_args(args: Any) -> None:
-    """Apply role-specific CLI normalization before dispatch.
+    """Refuse the retired reviewer pipeline before any dispatch.
 
-    Reviewer mode always runs through the ``code-review`` pipeline over explicit
-    context files. RAG flags are disabled here so shared parser defaults never
-    leak into reviewer artifacts, logs, or follow-up debugging.
+    Code review that leaves the tab is ``purpose=review`` on CDP Opus.
     """
     if args.role != "reviewer":
         return
-
-    args.pipeline = True
-    args.no_rag = True
-    args.no_rag_pipeline = True
-    args.rag_pipeline = None
-    args.rag_top_k = None
+    raise SystemExit(CODE_REVIEW_PIPELINE_RETIRED)
 
 
 def _read_question_from_source(

@@ -1,9 +1,11 @@
 Review either the current meaningful `git status` file set, or an explicitly
 requested file/range, against workspace invariants and shared rules.
 
-**Recommended reviewer (2026-08-25):** `team_dispatch(model=cdp/opus-5,
-purpose=review)` when choosing a seat — optional; defer if attended-blocking;
-background on conductor. Command default (`web-claude` handoff) stays valid.
+**Code review request (binding):** in this tab, apply `review-task-guidance`
+Code Review Dimension and do not dispatch. A review that leaves the tab is
+`team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)`.
+`cdp/opus-5` is the same class. Do not call model `code-review`. Later sections
+that name a `web-claude` handoff as the default are not this request.
 
 Related skills:
 - `agent-skills/architecture-invariants.md` (cortex) — universal invariant layer; MCP reviewers MUST read via `fs` before findings
@@ -32,9 +34,9 @@ Override scope is also supported: if the user supplies a file/path and/or
 `since <git-ref>`, review that explicit selection even if the change has
 already been committed and no longer appears in `git status`.
 
-Default mode uses **`web-anthropic`**: `team_dispatch(op="handoff")` → `web-anthropic`
-(`claude-web` / `web-claude` are legacy aliases). Uses its full MCP toolset and supports multi-turn dialectic until
-convergence. Packet on disk; Stargate posts a short bus pointer.
+Default dispatch is **`purpose=review`**: `team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)`.
+`cdp/opus-5` is the same class. In this tab, apply `review-task-guidance` and do not dispatch.
+A `web-anthropic` handoff is not the code-review request.
 
 **`claude-cursor`**: same handoff primitive → dedicated Cursor IDE thread.
 
@@ -71,8 +73,8 @@ Other dispatch modes:
 /diff-review [model] [path] [since <git-ref-or-alias>]
 ```
 
-`model` — optional model family, `gpt-5.x` shorthand, or full model ID.
-Default (omitted): `web-anthropic` (`claude-web` / `web-claude` alias).
+`model` — optional. Omitted means the code-review request:
+`team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)`.
 
 `path` — optional file or directory path to review. If present, it overrides
 the default `git status` file discovery and narrows the review to that path.
@@ -89,7 +91,7 @@ All resolve to `HEAD~1`.
 
 | Argument | Mode | Model | claude-web |
 |---|---|---|---|
-| omitted | `web-claude` | `claude-web` | primary |
+| omitted | `purpose-review` | `cdp/opus-5.5` | code-review request |
 | `openai` | `team-reviewer` + expansion | `openai/gpt-5.5` | fallback (gap-triggered) |
 | `gpt-5.5` / `gpt-5` | `team-reviewer` + expansion | `openai/gpt-5.5` | fallback (gap-triggered) |
 | `gpt-5.4` | `team-reviewer` + expansion | `openai/gpt-5.4` | fallback (gap-triggered) |
@@ -153,8 +155,8 @@ GPT_VERSION_ALIASES = {
     "gpt-5": "openai/gpt-5.5",
 }
 
-REVIEW_MODEL = "claude-web"
-REVIEW_MODE = "web-claude"
+REVIEW_MODEL = "cdp/opus-5.5"
+REVIEW_MODE = "purpose-review"
 BOOT = None
 AB_MODE = False
 PATH_ARG = None
@@ -253,12 +255,12 @@ else:
     SINCE_REF = SINCE_ARG
 ```
 
-**Model resolution invariant** (shared with `/session-review`): omitted args →
-**`web-claude`**. Any token that resolves to a concrete model id
-(`openai/gpt-5.5`, `anthropic/claude-opus-4-7`, etc.) uses **`team-reviewer`**
-unless `team-inline`/`raw`, `web-claude`, `claude-web`, `claude-cursor`, or
-`--grok` was explicitly selected.
-This ensures MCP-grounded frontier review when a model token is supplied.
+**Model resolution invariant:** omitted args → **`purpose-review`**. Fire
+`team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)`
+and stop. Do not continue into a `web-claude` handoff. `cdp/opus-5` is the same
+class. An explicit `web-claude` / `claude-web` / `--grok` / `team-reviewer` token
+is not the code-review request; say so and use `purpose-review` unless the
+operator named that seat for a non-review handoff.
 
 Report the resolved review mode, model/agent, path override (if any), and
 `since` ref (if any) before proceeding.
@@ -1054,6 +1056,11 @@ the thread body. Capture `THREAD_ID`. Triage grok-build findings immediately
 grok-build findings only. No `agent_bus` close needed (no thread).
 
 ### 4w. Manual-seat handoff (`claude-web` | `claude-cursor`)
+
+This section is not the code-review request. That request is
+`team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)`.
+Continue here only when the operator named this seat for a handoff that is
+not the code review.
 
 Use when `REVIEW_MODE ∈ {web-claude, cursor-claude}`. Operator may say only
 `to claude-web` / `to claude-cursor` — that implies `team_dispatch(op="handoff", …)`.

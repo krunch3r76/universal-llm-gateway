@@ -68,41 +68,26 @@ If any match is found:
 - Ensure each segment matches `[a-z]+` and total segments are 2-5.
 - Re-run this gate before continuing.
 
-### 3. Model semantics (`-r reviewer`)
+### 3. Code review request
 
-The sample invocation uses `-r reviewer` and `--models openrouter/openai/gpt-5.4`. That does
-**not** guarantee the literal string `openai/gpt-5.4` is the only model that runs:
+`scripts/consult -r reviewer` is retired with the `code-review` pipeline.
+A code review that leaves the tab is
+`team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)`.
+`cdp/opus-5` is the same class. In this tab, apply `review-task-guidance`
+and do not dispatch. Do not call model `code-review`.
 
-- **Reviewer = pipeline mode**: `scripts/consult` forces `--pipeline` for
-  `reviewer`. Execution goes through the **`code-review`** virtual model
-  (`pipelines/code_review/chain.yaml`: review → validate → merge), not a single
-  raw chat completion.
-- **`--models` → `model_ref_overrides`**: The first ID overrides pipeline ref
-  **`review_model`**; the second (if present) overrides **`validate_model`**.
-  With only one ID, **`validate_model`** still comes from
-  `pipelines/code_review/models.yaml` (currently `openrouter/openai/gpt-5.3-codex`).
-- **No `--models`**: Stargate **selects** models for the reviewer role (sticky
-  key `consult-review` in `scripts/consult-roles.yaml`). Selection can return
-  **local** catalog models (for example Hermes-class IDs) when that matches
-  requirements and availability — not necessarily a frontier cloud ID.
-- **Fallback**: If the primary cloud model raises `ProxyClientError`, the
-  generate handler may try **fallback** candidates from the same step’s
-  `model_requirements`, which can change the effective model mid-run.
+### 4. Dispatch the review
 
-To see what actually ran: consult stderr (`Pipeline reviewer model overrides`,
-batch messages), consult run artifacts, or Event Service
-`pipeline-trace` / `ModelFallbackResolved` for the execution.
+Do not run `scripts/consult -r reviewer`. Send the prompt below as
+`team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)`.
 
-### 4. Run consultation review
+Prompt body (whole files, not a patch):
 
-```bash
-source ~/.venvs/universal/bin/activate
-
-PROMPT="$(cat <<'EOF'
+```text
 The attached files are:
 1. A phase specification (the intended implementation plan)
 2. A phase summary (what was actually implemented)
-3. A git diff of the changed files
+3. The current contents of the changed files
 
 Review the implementation for:
 
@@ -131,19 +116,10 @@ Review the implementation for:
 
 For each finding, provide the concrete fix (file path, current code, corrected
 code). Do not describe problems without solutions.
-EOF
-)"
-
-./scripts/consult \
-  -r reviewer \
-  --models openrouter/google/gemini-3-flash-preview openrouter/google/gemini-3-flash-preview  \
-  --no-rag \
-  -f {PHASE_SPEC} \
-  -f {SUMMARY} \
-  -f /tmp/review-phase-diff.patch \
-  -o {REVIEW_OUT} \
-  "$PROMPT"
 ```
+
+Stage `{PHASE_SPEC}`, `{SUMMARY}`, and the changed files as whole files.
+Do not POST model `code-review`. Do not attach `/tmp/review-phase-diff.patch`.
 
 ### 5. Present Findings
 

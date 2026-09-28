@@ -1,10 +1,13 @@
-"""Pipeline consultation: generic and code-review pipeline execution."""
+"""Pipeline consultation for consult roles that still have a virtual model.
+
+The code-review pipeline is retired. A code review that leaves the tab is
+``team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)``.
+"""
 
 from __future__ import annotations
 
-import json
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -12,12 +15,19 @@ import httpx
 
 from .constants import DEFAULT_STARGATE_URL
 
+CODE_REVIEW_PIPELINE_RETIRED = (
+    "The code-review pipeline is retired. "
+    "A code review that leaves this tab is "
+    "team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none). "
+    "cdp/opus-5 is the same class. "
+    "In this tab, apply review-task-guidance and do not call model code-review."
+)
+
 _PIPELINE_MAP: dict[str, str] = {
     "researcher": "consult-researcher",
     "architect": "consult-architect",
     "planner": "consult-planner",
     "prompt_engineer": "consult-prompt-engineer",
-    "reviewer": "code-review",
     "modularizer": "modularize",
 }
 
@@ -175,10 +185,12 @@ def fetch_pipeline_batches(
     stargate_url: str,
     files: list[str],
     *,
-    pipeline: str = "code-review",
+    pipeline: str,
     timeout: float = 30.0,
 ) -> dict[str, Any]:
     """Fetch token-budgeted batch plan from Stargate estimator endpoint."""
+    if pipeline == "code-review":
+        raise PipelineError(CODE_REVIEW_PIPELINE_RETIRED)
     items = [{"name": path, "chars": Path(path).stat().st_size} for path in files]
     payload = {"pipeline": pipeline, "items": items}
     with httpx.Client(timeout=timeout) as client:
@@ -201,41 +213,9 @@ def query_code_review_batch(
     timeout: float,
     pipeline_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run a single code-review batch via pipeline model."""
-    batch_files = [str(path) for path in batch.get("items", [])]
-    parts: list[str] = []
-    for file_path in batch_files:
-        content = Path(file_path).read_text(errors="replace")
-        parts.append(f"### {file_path}\n{content}")
-    body: dict[str, Any] = {
-        "model": "code-review",
-        "messages": [{"role": "user", "content": "\n\n".join(parts)}],
-        "stream": False,
-    }
-    if pipeline_options:
-        body["pipeline_options"] = pipeline_options
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(
-            f"{stargate_url.rstrip('/')}/v1/chat/completions",
-            json=body,
-            params={"disable_profile": "true"},
-        )
-    execution_id = response.headers.get("X-Pipeline-Execution-Id")
-    response.raise_for_status()
-    data = response.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-    try:
-        parsed = json.loads(content) if isinstance(content, str) else content
-    except Exception:
-        parsed = content
-    usage = data.get("usage", {}) if isinstance(data, dict) else {}
-    return {
-        "batch": batch,
-        "result": parsed,
-        "prompt_tokens": usage.get("prompt_tokens", 0),
-        "completion_tokens": usage.get("completion_tokens", 0),
-        "execution_id": execution_id,
-    }
+    """Refuse. The code-review virtual model is retired."""
+    del stargate_url, batch, timeout, pipeline_options
+    raise PipelineError(CODE_REVIEW_PIPELINE_RETIRED)
 
 
 def run_code_review_pipeline(
@@ -245,91 +225,12 @@ def run_code_review_pipeline(
     timeout: float,
     pipeline_options: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Estimate and execute code-review batches in parallel."""
-    import sys
-
-    estimate = fetch_pipeline_batches(stargate_url, files, timeout=min(timeout, 30.0))
-    warnings = estimate.get("warnings", []) if isinstance(estimate, dict) else []
-    for warning in warnings:
-        print(
-            f"Estimator warning [{warning.get('code', 'unknown')}]: "
-            f"{warning.get('name', '?')} - {warning.get('message', '')}",
-            file=sys.stderr,
-        )
-
-    batches = estimate.get("batches", []) if isinstance(estimate, dict) else []
-    if not batches:
-        return [
-            {
-                "batch": {
-                    "items": files,
-                    "tokens": estimate.get("total_source_tokens", 0),
-                },
-                "result": {
-                    "status": "no_batches",
-                    "message": "Estimator returned no batches",
-                },
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-            }
-        ]
-
-    results: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=len(batches)) as pool:
-        future_to_batch: dict[Any, tuple[int, dict[str, Any]]] = {}
-        for idx, batch in enumerate(batches):
-            future = pool.submit(
-                query_code_review_batch,
-                stargate_url=stargate_url,
-                batch=batch,
-                timeout=timeout,
-                pipeline_options=pipeline_options,
-            )
-            future_to_batch[future] = (idx, batch)
-        for future in as_completed(future_to_batch):
-            batch_index, batch = future_to_batch[future]
-            try:
-                result = future.result()
-            except Exception as exc:
-                error_text = f"{type(exc).__name__}: {exc}"
-                print(
-                    f"Code-review batch {batch_index + 1} failed: {error_text}",
-                    file=sys.stderr,
-                )
-                results.append(
-                    {
-                        "batch_index": batch_index,
-                        "batch": batch,
-                        "error": error_text,
-                        "prompt_tokens": 0,
-                        "completion_tokens": 0,
-                        "execution_id": getattr(exc, "execution_id", None),
-                    }
-                )
-                continue
-            result["batch_index"] = batch_index
-            results.append(result)
-    results.sort(key=lambda item: int(item.get("batch_index", 0)))
-    if not any("error" not in result for result in results):
-        error_summary = "; ".join(
-            str(result.get("error", "unknown batch failure")) for result in results
-        )
-        raise RuntimeError(f"All review batches failed: {error_summary}")
-    return results
+    """Refuse. Code review is a purpose=review generate, not this pipeline."""
+    del stargate_url, files, timeout, pipeline_options
+    raise PipelineError(CODE_REVIEW_PIPELINE_RETIRED)
 
 
 def build_reviewer_pipeline_model_overrides(models: list[str]) -> dict[str, str]:
-    """Map reviewer target models to code-review pipeline model refs.
-
-    Override IDs are passed through verbatim to the pipeline; they do not need
-    to exist in any config. The pipeline uses them as literal model IDs.
-    """
-    overrides: dict[str, str] = {}
-    if not models:
-        return overrides
-    overrides["review_model"] = models[0]
-    overrides["review"] = models[0]
-    if len(models) > 1:
-        overrides["validate_model"] = models[1]
-        overrides["validate"] = models[1]
-    return overrides
+    """Refuse. Reviewer model overrides targeted the retired code-review pipeline."""
+    del models
+    raise PipelineError(CODE_REVIEW_PIPELINE_RETIRED)

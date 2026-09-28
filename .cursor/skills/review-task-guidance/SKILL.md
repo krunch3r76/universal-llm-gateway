@@ -9,6 +9,20 @@ related_skills: ["multi-model-review"]
 
 This file is the SOT for `<task_guidance>` embedded in `/session-review` and `/diff-review` packets. Packet builders MUST embed by section reference, not by maintaining inline copies.
 
+## Where the review runs
+
+Two places. One request shape when a code review leaves the tab.
+
+**In this tab.** The attended seat reviews here. Apply `Code Review Dimension` below (and `Session Critique Dimension` when the command is `/session-review`). Do not call model `code-review`. Do not start a pipeline.
+
+**Dispatch.** A code review that leaves the tab is exactly:
+
+`team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)`
+
+`cdp/opus-5` is the same class. `cdp/fable` is the one-shot fallback after Opus completes without proof, not a second review shape. Conductor after-ship review uses this call. The packet body is `Code Review Dimension`. The seat reads whole files. Verdicts are ADMIT / RATIFY / REJECT / RETURN / SCOPE-DRIFT.
+
+There is no `contract=review`. `role=reviewer` is not this request. `pipelines/code_review` is removed.
+
 ## Embed contract
 
 At packet build time, read this SOT section body verbatim into the packet guidance surface:

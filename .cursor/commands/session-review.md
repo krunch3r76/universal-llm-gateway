@@ -1,16 +1,13 @@
 # /session-review
 
-**Recommended reviewer (2026-08-25):** `team_dispatch(model=cdp/opus-5,
-purpose=review)` with the session arc + touched files staged to `cortex://`.
-Optional — defer when the harvest would block the next attended move; fire in
-the background when the seat is conductor / unattended (latency ≠ skip).
-Does not restore silent Terra G4. Command default below (`web-anthropic` handoff)
-remains valid; prefer CDP generate when you are choosing.
+**Code review request (binding):** in this tab, apply `review-task-guidance`
+and do not dispatch. A code review that leaves the tab is
+`team_dispatch(op=generate, model=cdp/opus-5.5, purpose=review, contract=none)`
+with the session arc and touched files staged to `cortex://`. `cdp/opus-5` is
+the same class. Do not call model `code-review`. A `web-anthropic` handoff is
+the session-critique lane, not a substitute for that code review.
 
-Session review across three dispatchers — **`web-anthropic` (default)** (`claude-web` /
-`web-claude` are legacy aliases per `agent-identity-signoff.mdc`),
-sync `frontier-mcp` (model-token path), or async grok-build (`--grok`). Covers two
-dimensions simultaneously:
+Session review covers two dimensions simultaneously:
 
 1. **Code review**: invariant violations, correctness, quality-gate compliance
    (the diff-review dimension)
@@ -23,9 +20,10 @@ conversation** — what files were actually worked on and why — not from
 scope source. Use `/diff-review` when you want a git-status/diff-driven code
 review without session context.
 
-**web-anthropic** (default): async multi-turn via `team_dispatch(op="handoff")` →
-`web-anthropic` (alias `claude-web`); full MCP toolset. Best for session critique (Cortex/RAG grounding,
-multi-turn dialectic). Packet on disk; Stargate posts a short bus pointer.
+**Session critique lane:** `team_dispatch(op="handoff")` → `web-anthropic`
+(alias `claude-web`); full MCP toolset. This lane is session critique, not the
+code-review request. The code-review request is the `purpose=review` generate
+above. Packet on disk; Stargate posts a short bus pointer.
 
 **cursor-claude**: same handoff primitive → `claude-cursor` (dedicated Cursor IDE
 thread; operator opens the bus thread in Cursor, Opus optional).
