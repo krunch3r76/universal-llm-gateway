@@ -8,7 +8,11 @@ from datetime import datetime
 from fastapi import HTTPException, status
 from openapi_mcp.binding import x_mcp
 
-from ...body_auto_spill import build_turn_created, prepare_body_for_insert
+from ...body_auto_spill import (
+    build_turn_created,
+    over_briefing_refusal_detail,
+    prepare_body_for_insert,
+)
 from ...checkpoint_auto_stamp_wiring import load_thread_tags
 from ...db import SlugExists, create_turn, get_thread, normalize_thread_id
 from ...db.turns import UnreadTurnsExist
@@ -190,6 +194,11 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
     except Exception as exc:
         _raise_spill_http(exc, thread_id=thread_id)
         raise  # pragma: no cover — _raise_spill_http always raises
+    if refusal := over_briefing_refusal_detail(prepared):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=refusal,
+        )
     try:
         thread_row, turn_id, ts, turn_number, marked_read = await asyncio.to_thread(
             create_turn,

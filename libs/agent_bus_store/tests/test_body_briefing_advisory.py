@@ -189,7 +189,10 @@ def test_prepare_body_auto_spill_suppresses_advisory(tmp_path, monkeypatch) -> N
         write_sidecar.return_value = type(
             "Sidecar",
             (),
-            {"uri": "cortex://notes/system/threads/1140-auto-overflow.md", "sha256": "abc"},
+            {
+                "uri": "cortex://notes/system/threads/1140-auto-overflow.md",
+                "sha256": "abc",
+            },
         )()
         prepared = prepare_body_for_insert(
             thread="1140",
@@ -238,10 +241,15 @@ def test_post_turns_refuses_over_briefing_before_insert(tmp_path, monkeypatch) -
         assert detail["body_chars"] == len(body)
         assert detail["target_chars"] == BRIEFING_TARGET_CHARS
         assert "sidecar_content" in detail["message"]
-        assert client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").status_code == 404
+        assert (
+            client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").status_code
+            == 404
+        )
 
 
-def test_post_turns_refuses_agent_bus_12286_turn845_specimen(tmp_path, monkeypatch) -> None:
+def test_post_turns_refuses_agent_bus_12286_turn845_specimen(
+    tmp_path, monkeypatch
+) -> None:
     """AC4 — agent-bus:12286 turn 845 shape (3139 chars, default profile, no sidecar)."""
     body = "a" * 3139
     app = _app(tmp_path, monkeypatch)
@@ -284,7 +292,9 @@ def test_post_turns_allow_long_body_exempt_from_refusal(tmp_path, monkeypatch) -
         assert resp.status_code == 201, resp.text
 
 
-def test_post_turns_directive_envelope_exempt_from_refusal(tmp_path, monkeypatch) -> None:
+def test_post_turns_directive_envelope_exempt_from_refusal(
+    tmp_path, monkeypatch
+) -> None:
     body = "TYPE: DIRECTIVE\n" + ("x" * BRIEFING_TARGET_CHARS)
     app = _app(tmp_path, monkeypatch)
     with TestClient(app) as client:
@@ -303,13 +313,114 @@ def test_post_turns_directive_envelope_exempt_from_refusal(tmp_path, monkeypatch
         assert resp.status_code == 201, resp.text
 
 
-def test_post_turns_checkpoint_profile_exempt_from_refusal(tmp_path, monkeypatch) -> None:
+def test_post_turns_checkpoint_profile_exempt_from_refusal(
+    tmp_path, monkeypatch
+) -> None:
     body = "x" * (BRIEFING_TARGET_CHARS + 3000)
     app = _app(tmp_path, monkeypatch)
     with TestClient(app) as client:
         thread_id = _seed_thread(client)
         resp = client.post(
             "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "CHECKPOINT wave 5",
+                "body": body,
+                "after_turn": 1,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+
+def _parked_specimen_body() -> str:
+    """agent-bus:12286 turn 846 shape: TYPE: PARKED, 2247 chars, no sidecar."""
+    prefix = "TYPE: PARKED\n"
+    body = prefix + ("p" * (2247 - len(prefix)))
+    assert len(body) == 2247
+    return body
+
+
+def test_send_refuses_agent_bus_12286_turn846_parked_specimen(
+    tmp_path, monkeypatch
+) -> None:
+    """AC4 — continue-send path (not /turns). PARKED is not an inline-contract prefix."""
+    body = _parked_specimen_body()
+    app = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        thread_id = _seed_thread(client)
+        resp = client.post(
+            "/threads/send",
+            json={
+                "thread": thread_id,
+                "from": "web-anthropic",
+                "to": "cursor",
+                "subject": "TYPE: PARKED — specimen",
+                "body": body,
+                "after_turn": 1,
+            },
+        )
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["reason"] == "over_briefing_target"
+        assert detail["body_chars"] == 2247
+        assert detail["target_chars"] == BRIEFING_TARGET_CHARS
+        assert "sidecar_content" in detail["message"]
+        assert "sidecar_content" in detail["suggestion"]
+        assert (
+            client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").status_code
+            == 404
+        )
+
+
+def test_send_allow_long_body_exempt_from_refusal(tmp_path, monkeypatch) -> None:
+    body = _parked_specimen_body()
+    app = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        thread_id = _seed_thread(client)
+        resp = client.post(
+            "/threads/send",
+            json={
+                "thread": thread_id,
+                "from": "web-anthropic",
+                "to": "cursor",
+                "subject": "TYPE: PARKED — allowed",
+                "body": body,
+                "after_turn": 1,
+                "allow_long_body": True,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+
+def test_send_sidecar_content_exempt_from_refusal(tmp_path, monkeypatch) -> None:
+    body = _parked_specimen_body()
+    app = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        thread_id = _seed_thread(client)
+        resp = client.post(
+            "/threads/send",
+            json={
+                "thread": thread_id,
+                "from": "web-anthropic",
+                "to": "cursor",
+                "subject": "TYPE: PARKED — sidecar",
+                "body": body,
+                "after_turn": 1,
+                "sidecar_content": "substantive parked notes",
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+
+def test_send_checkpoint_profile_exempt_from_refusal(tmp_path, monkeypatch) -> None:
+    body = "x" * (BRIEFING_TARGET_CHARS + 3000)
+    app = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        thread_id = _seed_thread(client)
+        resp = client.post(
+            "/threads/send",
             json={
                 "thread": thread_id,
                 "from": "cursor",

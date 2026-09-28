@@ -10,6 +10,9 @@ from unittest.mock import patch
 import pytest
 
 from services.git_integration_worker.cursor_auto.directive import has_actionable_scope
+from services.git_integration_worker.cursor_auto.handler_terminal import (
+    parse_shielded_terminal_body,
+)
 from services.git_integration_worker.cursor_auto.propagate_admission import (
     admit_propagate_body,
 )
@@ -391,7 +394,7 @@ async def test_run_propagation_stargate_busy_yields_queued_restart_intent() -> N
         )
     assert result["disposition"] == "queued"
     assert posted
-    payload = json.loads(str(posted[-1]["body"]))
+    payload = parse_shielded_terminal_body(str(posted[-1]["body"]))
     executions = payload.get("executions") or []
     assert executions
     assert executions[0]["status"] == "queued"
@@ -600,7 +603,7 @@ async def test_run_propagation_self_preempts_mcp_busy_deferral() -> None:
     assert "MCP will disconnect momentarily" in summary
 
     assert posted
-    payload = json.loads(str(posted[-1]["body"]))
+    payload = parse_shielded_terminal_body(str(posted[-1]["body"]))
     escalations = payload.get("self_preempt_escalations")
     assert escalations
     assert escalations[0]["service"] == "mcp"
@@ -787,7 +790,7 @@ async def test_probe_error_deferral_is_undetermined_not_a_preempt_finding() -> N
             gate_plan={"action": "in_seat"},
         )
 
-    payload = json.loads(str(posted[-1]["body"]))
+    payload = parse_shielded_terminal_body(str(posted[-1]["body"]))
     execution = payload["executions"][0]
     print("PROBE_ERROR_EXECUTION " + json.dumps(execution, sort_keys=True))
     print("PROBE_ERROR_DISPOSITION " + str(result.get("disposition")))

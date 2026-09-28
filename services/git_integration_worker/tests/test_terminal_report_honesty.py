@@ -296,6 +296,73 @@ def test_propagate_terminal_soft_spill_writes_sidecar_pointer() -> None:
     assert len(prepared.body) < len(body)
 
 
+def test_over_target_terminal_body_gets_closeout_prefix_shield() -> None:
+    """AC2 — JSON over the briefing target is prefixed; allow_long_body stays false."""
+    from agent_bus_store.body_briefing_advisory import briefing_advisory
+    from agent_bus_store.turns_models import BRIEFING_TARGET_CHARS
+
+    async def _run() -> None:
+        client = AsyncMock()
+        client.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+        queue = _RecordingQueue()
+        await post_terminal_status(
+            _job(),
+            client=client,
+            queue=queue,
+            summary="s" * (BRIEFING_TARGET_CHARS + 50),
+            disposition="propagated",
+            contract="propagate",
+            payload={"summary": "s" * (BRIEFING_TARGET_CHARS + 50)},
+        )
+        body = client.reply.await_args.kwargs["body"]
+        assert body.startswith("TYPE: CLOSEOUT\n")
+        parsed = json.loads(body.split("\n", 1)[1])
+        assert parsed["summary"].startswith("s")
+        assert client.reply.await_args.kwargs["allow_long_body"] is False
+        assert (
+            briefing_advisory(
+                body=body,
+                subject=None,
+                allow_long_body=False,
+                has_sidecar=False,
+            )
+            is None
+        )
+
+    asyncio.run(_run())
+
+
+def test_restart_recovered_over_target_body_gets_closeout_prefix_shield() -> None:
+    """AC2 — handler_terminal restart post uses the same prefix shield."""
+    from agent_bus_store.body_briefing_advisory import briefing_advisory
+    from agent_bus_store.turns_models import BRIEFING_TARGET_CHARS
+
+    from services.git_integration_worker.cursor_auto.handler_terminal import (
+        post_queue_owner_restart_recovered,
+    )
+
+    async def _run() -> None:
+        client = AsyncMock()
+        client.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+        job = _job()
+        job.job_id = "j" * (BRIEFING_TARGET_CHARS + 80)
+        await post_queue_owner_restart_recovered(job, client=client, generation=3)
+        body = client.reply.await_args.kwargs["body"]
+        assert body.startswith("TYPE: CLOSEOUT\n")
+        assert client.reply.await_args.kwargs["allow_long_body"] is False
+        assert (
+            briefing_advisory(
+                body=body,
+                subject=None,
+                allow_long_body=False,
+                has_sidecar=False,
+            )
+            is None
+        )
+
+    asyncio.run(_run())
+
+
 def test_allow_long_body_disabled_on_terminal_post() -> None:
     async def _run() -> None:
         client = AsyncMock()
