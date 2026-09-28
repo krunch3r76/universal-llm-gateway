@@ -30,6 +30,7 @@ from claude_bundles.cdp_registry_document import registry_document_supports_seat
 SEATED_NO_STREAM_EXECUTION = "__none:seated_no_stream__"
 SEATED_ROWS_KEY = "seated_rows"
 SEAT_ROWS_KEY = "seat_rows"
+CURSOR_AUTO_CLAIMED_ROWS_KEY = "cursor_auto_claimed_rows"
 SEATED_SOURCE = "cse-session-registry"
 SEAT_SOURCE = "cse-session-registry:seat-axis"
 
@@ -72,11 +73,7 @@ def build_stream_index_from_snap(snap: Mapping[str, Any]) -> StreamIndex:
     raw_streams = snap.get("execution_streams")
     extra: StreamIndex = {}
     if isinstance(raw_streams, Mapping):
-        extra = {
-            str(k): str(v)
-            for k, v in raw_streams.items()
-            if str(k or "").strip()
-        }
+        extra = {str(k): str(v) for k, v in raw_streams.items() if str(k or "").strip()}
     return merge_stream_index(
         build_stream_index_from_rows(store_rows),
         extra,
@@ -167,9 +164,7 @@ def seated_rows_from_registry_records(
         values = [row for row in records if isinstance(row, Mapping)]
     out: list[dict[str, Any]] = []
     for record in values:
-        projected = seated_row_from_registry_record(
-            record, stream_index=stream_index
-        )
+        projected = seated_row_from_registry_record(record, stream_index=stream_index)
         if projected is not None:
             out.append(projected)
     return out
@@ -388,9 +383,7 @@ def identity_rows(snap: dict[str, Any]) -> list[dict[str, Any]]:
     seat_leg = [
         row
         for row in (
-            snap.get(SEAT_ROWS_KEY)
-            if isinstance(snap.get(SEAT_ROWS_KEY), list)
-            else []
+            snap.get(SEAT_ROWS_KEY) if isinstance(snap.get(SEAT_ROWS_KEY), list) else []
         )
         if isinstance(row, dict)
     ]
@@ -408,6 +401,21 @@ def identity_rows(snap: dict[str, Any]) -> list[dict[str, Any]]:
         seen.add(registration_id)
         out.append(row)
     for row in seat_leg:
+        registration_id = str(row.get("registration_id") or "").strip()
+        if not registration_id or registration_id in seen:
+            continue
+        seen.add(registration_id)
+        out.append(row)
+    claimed = [
+        row
+        for row in (
+            snap.get(CURSOR_AUTO_CLAIMED_ROWS_KEY)
+            if isinstance(snap.get(CURSOR_AUTO_CLAIMED_ROWS_KEY), list)
+            else []
+        )
+        if isinstance(row, dict)
+    ]
+    for row in claimed:
         registration_id = str(row.get("registration_id") or "").strip()
         if not registration_id or registration_id in seen:
             continue
