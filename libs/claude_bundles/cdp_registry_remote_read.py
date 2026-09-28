@@ -27,6 +27,7 @@ def _project_ask_base_url() -> str:
 
 
 def _fetch_registry_document() -> dict[str, Any]:
+    """Synchronous hub→cdp_ask GET; blocks up to 0.5s (same as CdpAskClient on this path)."""
     base = _project_ask_base_url()
     parsed = urlparse(base)
     host = parsed.hostname or "127.0.0.1"
@@ -35,7 +36,10 @@ def _fetch_registry_document() -> dict[str, Any]:
     if parsed.path and parsed.path != "/":
         path = f"{parsed.path.rstrip('/')}{path}"
 
-    conn = http.client.HTTPConnection(host, port, timeout=0.5)
+    if parsed.scheme == "https":
+        conn = http.client.HTTPSConnection(host, port, timeout=0.5)
+    else:
+        conn = http.client.HTTPConnection(host, port, timeout=0.5)
     try:
         conn.request("GET", path)
         response = conn.getresponse()
@@ -66,7 +70,11 @@ def _unavailable() -> dict[str, Any]:
 
 
 def read_fleet_registry(*, force_refresh: bool = False) -> dict[str, Any]:
-    """Return the registry document; never an empty dict or load_active."""
+    """Return the registry document; never an empty dict or load_active.
+
+    Replaces hub-local active.json reads with a short HTTP round-trip; results are
+    cached for ``_CACHE_TTL_S`` seconds to limit repeated 0.5s blocking fetches.
+    """
     global _cached_doc, _cached_at
     now = time.monotonic()
     with _cache_lock:

@@ -79,6 +79,7 @@ def build_registry_document(active: Mapping[str, Any]) -> dict[str, Any]:
             continue
         registration_id = str(record.get("registration_id") or key or "").strip()
         if not registration_id:
+            # Vocabulary row with no registration_id and empty map key — omit silently.
             continue
         started = record.get("started_at")
         started_at: float | None
