@@ -12,6 +12,7 @@ from openapi_mcp.binding import x_mcp
 from ..auth import require_token
 from ..body_auto_spill import (
     build_turn_created,
+    over_briefing_refusal_detail,
     prepare_body_for_insert,
     spill_error_http,
 )
@@ -120,6 +121,11 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             raise
         status_code, detail = mapped
         raise HTTPException(status_code=status_code, detail=detail) from exc
+    if refusal := over_briefing_refusal_detail(prepared):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=refusal,
+        )
     att_dicts = [a.model_dump() for a in turn.attachments] if turn.attachments else None
     try:
         turn_id, ts, turn_number = await asyncio.to_thread(

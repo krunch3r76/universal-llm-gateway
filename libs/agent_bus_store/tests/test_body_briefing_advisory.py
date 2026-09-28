@@ -201,31 +201,26 @@ def test_prepare_body_auto_spill_suppresses_advisory(tmp_path, monkeypatch) -> N
     assert prepared.sidecar_uri is not None
 
 
-def test_post_turns_returns_advisory_and_emits_event(tmp_path, monkeypatch) -> None:
-    body = "a" * (BRIEFING_TARGET_CHARS + 1)
-    events: list[dict[str, object]] = []
-
-    def _capture(signal: str, payload: dict[str, object], *, role: str = "observation") -> None:
-        events.append({"signal": signal, "payload": payload, "role": role})
-
-    monkeypatch.setattr(
-        "agent_bus_store.events.turn_body_advisory._publish",
-        _capture,
+def _seed_thread(client: TestClient) -> str:
+    seed = client.post(
+        "/threads/with-turn",
+        json={
+            "slug": "advisory-seed",
+            "from": "cursor",
+            "to": "web",
+            "subject": "seed",
+            "body": "hello",
+        },
     )
+    assert seed.status_code == 201, seed.text
+    return seed.json()["thread"]["id"]
+
+
+def test_post_turns_refuses_over_briefing_before_insert(tmp_path, monkeypatch) -> None:
+    body = "a" * (BRIEFING_TARGET_CHARS + 1)
     app = _app(tmp_path, monkeypatch)
     with TestClient(app) as client:
-        seed = client.post(
-            "/threads/with-turn",
-            json={
-                "slug": "advisory-seed",
-                "from": "cursor",
-                "to": "web",
-                "subject": "seed",
-                "body": "hello",
-            },
-        )
-        assert seed.status_code == 201, seed.text
-        thread_id = seed.json()["thread"]["id"]
+        thread_id = _seed_thread(client)
         resp = client.post(
             "/turns",
             json={
@@ -237,15 +232,91 @@ def test_post_turns_returns_advisory_and_emits_event(tmp_path, monkeypatch) -> N
                 "after_turn": 1,
             },
         )
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["reason"] == "over_briefing_target"
+        assert detail["body_chars"] == len(body)
+        assert detail["target_chars"] == BRIEFING_TARGET_CHARS
+        assert "sidecar_content" in detail["message"]
+        assert client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").status_code == 404
+
+
+def test_post_turns_refuses_agent_bus_12286_turn845_specimen(tmp_path, monkeypatch) -> None:
+    """AC4 — agent-bus:12286 turn 845 shape (3139 chars, default profile, no sidecar)."""
+    body = "a" * 3139
+    app = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        thread_id = _seed_thread(client)
+        resp = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "evidentiary discipline",
+                "body": body,
+                "after_turn": 1,
+            },
+        )
+        assert resp.status_code == 422, resp.text
+        detail = resp.json()["detail"]
+        assert detail["reason"] == "over_briefing_target"
+        assert detail["body_chars"] == 3139
+
+
+def test_post_turns_allow_long_body_exempt_from_refusal(tmp_path, monkeypatch) -> None:
+    body = "a" * (BRIEFING_TARGET_CHARS + 1)
+    app = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        thread_id = _seed_thread(client)
+        resp = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "long allowed",
+                "body": body,
+                "after_turn": 1,
+                "allow_long_body": True,
+            },
+        )
         assert resp.status_code == 201, resp.text
-        data = resp.json()
-        assert data["briefing_advisory"]["reason"] == "over_briefing_target"
-        turn = client.get(
-            f"/turns/by-number?thread={thread_id}&turn_number=2"
-        ).json()
-        assert turn["body"] == body
-        assert any(e["signal"] == "mcp.agentbus.turn.body_over_briefing" for e in events)
-        advisory_events = [
-            e for e in events if e["signal"] == "mcp.agentbus.turn.body_over_briefing"
-        ]
-        assert "body" not in advisory_events[0]["payload"]
+
+
+def test_post_turns_directive_envelope_exempt_from_refusal(tmp_path, monkeypatch) -> None:
+    body = "TYPE: DIRECTIVE\n" + ("x" * BRIEFING_TARGET_CHARS)
+    app = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        thread_id = _seed_thread(client)
+        resp = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "directive",
+                "body": body,
+                "after_turn": 1,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+
+def test_post_turns_checkpoint_profile_exempt_from_refusal(tmp_path, monkeypatch) -> None:
+    body = "x" * (BRIEFING_TARGET_CHARS + 3000)
+    app = _app(tmp_path, monkeypatch)
+    with TestClient(app) as client:
+        thread_id = _seed_thread(client)
+        resp = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "CHECKPOINT wave 5",
+                "body": body,
+                "after_turn": 1,
+            },
+        )
+        assert resp.status_code == 201, resp.text

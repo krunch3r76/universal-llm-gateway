@@ -109,6 +109,31 @@ def sidecar_content_limit_error(content: str) -> dict[str, object] | None:
     return sidecar_content_too_large_envelope(body_chars=len(content))
 
 
+def over_briefing_target_envelope(
+    *,
+    body_chars: int,
+    target_chars: int,
+) -> dict[str, object]:
+    """Structured 422 detail when inline body exceeds briefing target without exemption."""
+    return {
+        "reason": "over_briefing_target",
+        "body_chars": body_chars,
+        "target_chars": target_chars,
+        "message": (
+            f"Turn body is {body_chars:,} chars; inline briefing target is "
+            f"{target_chars:,}. Move substantive content to sidecar_content on send "
+            "(or fs write to notes/system/threads/) and post a short briefing with a "
+            "pointer."
+        ),
+        "suggestion": (
+            "Write substantive content to a durable sidecar (sidecar_content on send or "
+            "fs write to notes/system/threads/) and post a short briefing with a pointer."
+        ),
+        "retryable": True,
+        "source": "agent_bus_store.turns",
+    }
+
+
 def body_too_large_envelope(*, limit: int, body_chars: int) -> dict[str, object]:
     """Structured 413 detail for oversized turn bodies."""
     return {

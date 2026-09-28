@@ -33,6 +33,7 @@ from .turns_models import (
     MAX_SIDECAR_CONTENT_CHARS,
     MAX_TURN_BODY_CHARS,
     body_too_large_envelope,
+    over_briefing_target_envelope,
     sidecar_content_too_large_envelope,
     sidecar_write_failed_envelope,
 )
@@ -206,6 +207,17 @@ def prepare_body_for_insert(
     )
 
 
+def over_briefing_refusal_detail(prepared: PreparedBody) -> dict[str, object] | None:
+    """Return 422 detail when ``over_briefing_target`` fired; else ``None``."""
+    advisory = prepared.advisory
+    if advisory is None or advisory.reason != "over_briefing_target":
+        return None
+    return over_briefing_target_envelope(
+        body_chars=advisory.body_chars,
+        target_chars=advisory.target_chars,
+    )
+
+
 def spill_error_http(
     exc: BaseException,
     *,
@@ -314,6 +326,7 @@ __all__ = [
     "BodyTooLargeError",
     "PreparedBody",
     "build_turn_created",
+    "over_briefing_refusal_detail",
     "SidecarContentTooLargeError",
     "SidecarWriteError",
     "prepare_body_for_insert",
