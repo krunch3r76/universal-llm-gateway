@@ -61,9 +61,11 @@ def test_arc6637_turn46_loud_rejection_names_safe_window_fault():
     assert admission.error is not None
     assert admission.error["reason"] == "propagation_block_invalid"
     assert any("invalid_safe_window:normal" in flag for flag in admission.flags)
-    assert (
-        admission.error["legal_safe_window"] == "harvest, standalone_ok, drain_required"
-    )
+    assert admission.error["legal_safe_window"] == [
+        "harvest",
+        "standalone_ok",
+        "drain_required",
+    ]
 
 
 def test_propagation_block_present_rejects_shorthand_prose_fallback():

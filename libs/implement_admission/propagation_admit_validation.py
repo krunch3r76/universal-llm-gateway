@@ -21,7 +21,12 @@ MANAGE_SERVICE_SLUGS = frozenset(
 
 SAFE_WINDOW_VALUES = frozenset({"harvest", "standalone_ok", "drain_required"})
 
-LEGAL_SAFE_WINDOW_LIST = "harvest, standalone_ok, drain_required"
+LEGAL_SAFE_WINDOW_TOKENS: tuple[str, ...] = (
+    "harvest",
+    "standalone_ok",
+    "drain_required",
+)
+LEGAL_SAFE_WINDOW_LIST = ", ".join(LEGAL_SAFE_WINDOW_TOKENS)
 
 PROOF_CLASS_VALUES = frozenset({"process_live", "client_visible", "served_artifact"})
 
@@ -93,6 +98,7 @@ def validate_proof_class(service: str, proof_class: str) -> str | None:
 __all__ = [
     "CLIENT_VISIBLE_SERVICES",
     "LEGAL_SAFE_WINDOW_LIST",
+    "LEGAL_SAFE_WINDOW_TOKENS",
     "MANAGE_SERVICE_SLUGS",
     "PROOF_CLASS_VALUES",
     "SAFE_WINDOW_VALUES",

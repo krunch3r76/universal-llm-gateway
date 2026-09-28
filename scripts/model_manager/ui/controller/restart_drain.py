@@ -59,6 +59,11 @@ _PROBE_TIMEOUT_S = 5.0
 # would target the wrong endpoint and every non-force stargate restart would
 # return state=probe_error (perpetual deferral). Pin the host port explicitly.
 STARGATE_PROBE_URL = f"http://localhost:{os.environ.get('STARGATE_PORT', '9999')}"
+# Operator-proxy propagate (inv 39): CDP generates have no GIW park path — after
+# this ceiling the supervisor runs sync_restart while requests may still be in
+# flight (self-preempt force). Idle predicate reads Stargate ``/admin/active-work``
+# ``busy`` (``requests_in_flight`` + async pipelines).
+STARGATE_OPERATOR_IDLE_CEILING_S = 600.0
 GIT_INTEGRATION_WORKER_URL = os.environ.get(
     "GIT_INTEGRATION_WORKER_URL", "http://127.0.0.1:8091"
 )
@@ -759,6 +764,123 @@ class LocalServiceDrainSupervisor:
             raise
 
 
+def stargate_idle_from_active_work(detail: dict[str, Any]) -> bool:
+    """True when Stargate active-work reports no in-flight work."""
+    if not detail:
+        return True
+    if "busy" in detail:
+        return not bool(detail.get("busy"))
+    total = detail.get("total")
+    if isinstance(total, int):
+        return total <= 0
+    in_flight = detail.get("requests_in_flight")
+    async_running = detail.get("async_pipelines_running")
+    if isinstance(in_flight, int) and isinstance(async_running, int):
+        return in_flight + async_running <= 0
+    return not bool(detail.get("busy", True))
+
+
+@dataclass(slots=True, kw_only=True)
+class StargateIdleDrainSupervisor:
+    """Wait for Stargate idle (active-work probe), then lifecycle; ceiling force."""
+
+    gate: RestartDrainGate
+    store: Any
+    lifecycle: Callable[[], Awaitable[str]]
+    deadline_s: float = STARGATE_OPERATOR_IDLE_CEILING_S
+    poll_interval_s: float = _SELF_HOLDER_POLL_INTERVAL_S
+
+    async def supervise(self, intent: Any) -> None:
+        from .restart_intent_states import (
+            STATUS_COMPLETED,
+            STATUS_DRAINED_RESTARTING,
+            STATUS_FAILED,
+            STATUS_FORCE_REQUESTED,
+        )
+
+        loop = asyncio.get_running_loop()
+        ceiling = loop.time() + self.deadline_s
+        intent_id = intent.intent_id
+        escalated = False
+        try:
+            while True:
+                work = await self.gate.probe("stargate")
+                if stargate_idle_from_active_work(work.detail):
+                    break
+                if loop.time() >= ceiling:
+                    escalated = True
+                    self.store.advance(intent_id, status=STATUS_FORCE_REQUESTED)
+                    break
+                await asyncio.sleep(self.poll_interval_s)
+            self.store.advance(intent_id, status=STATUS_DRAINED_RESTARTING)
+            await self.lifecycle()
+            self.store.advance(intent_id, status=STATUS_COMPLETED)
+            if escalated:
+                logger.info(
+                    "stargate drain supervisor completed after idle-ceiling force "
+                    "(intent_id=%s)",
+                    intent_id,
+                )
+        except Exception:
+            current = self.store.get(intent_id)
+            if current is not None and current.status != STATUS_COMPLETED:
+                self.store.advance(intent_id, status=STATUS_FAILED)
+            raise
+
+
+async def run_gated_stargate_idle_drain_supervised(
+    gate: RestartDrainGate,
+    action: str,
+    *,
+    store: Any,
+    supervisor: StargateIdleDrainSupervisor,
+    reason: str,
+    code_ref: str = "HEAD",
+    row_id: str | None = None,
+) -> dict[str, Any]:
+    """Arm a durable restart intent when Stargate active-work reports busy."""
+    outcome = await gate.evaluate("stargate", force=True, supervised_drain=True)
+    if outcome is not None:
+        existing = store.active_for_service("stargate")
+        if existing is not None:
+            validation_id = mint_activation_validation(
+                store, existing, code_ref=code_ref, row_id=row_id
+            )
+            return drain_deferred_result(
+                existing,
+                reason="drain already in progress for this service",
+                activation_validation_id=validation_id,
+            )
+        return outcome.to_result()
+
+    deadline_at = (
+        datetime.now(UTC) + timedelta(seconds=supervisor.deadline_s)
+    ).isoformat()
+    try:
+        intent = store.create_intent(
+            service="stargate",
+            action=action,
+            deadline_at=deadline_at,
+            reason=reason,
+        )
+        validation_id = mint_activation_validation(
+            store, intent, code_ref=code_ref, row_id=row_id
+        )
+    except Exception:
+        await gate.release("stargate")
+        raise
+    await open_service_window(store, "stargate", reason=f"stargate idle drain {action}")
+    _spawn_supervised(gate, "stargate", supervisor, intent)
+    result = drain_deferred_result(intent, activation_validation_id=validation_id)
+    result["idle_ceiling_s"] = supervisor.deadline_s
+    result["guidance"] = (
+        "Stargate restart intent armed — fires when active-work reports idle, "
+        f"or self-preempts at {int(supervisor.deadline_s)}s ceiling. "
+        "Query restart_intent_status or fleet_liveness after converge."
+    )
+    return result
+
+
 async def run_gated_self_holder_drain_supervised(
     gate: RestartDrainGate,
     action: str,
@@ -935,6 +1057,8 @@ async def resume_drain_supervision(
 
 
 __all__ = [
+    "STARGATE_OPERATOR_IDLE_CEILING_S",
+    "StargateIdleDrainSupervisor",
     "ActiveWork",
     "BackgroundCompleteHook",
     "BackgroundFailedHook",
@@ -959,5 +1083,7 @@ __all__ = [
     "run_gated_drain_supervised",
     "run_gated_drain_supervised_blocking",
     "run_gated_self_holder_drain_supervised",
+    "run_gated_stargate_idle_drain_supervised",
     "sole_busy_holder_matches",
+    "stargate_idle_from_active_work",
 ]

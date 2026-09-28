@@ -115,6 +115,7 @@ the window classification now tells you is only what recovery to expect:
 | **This** CSE streaming | `force` — MCP surface dies mid-stream; recover via **continuity** after healthy |
 | **Other** window streaming | `force` permitted; peer recovers by `chat_url`. Prefer a short wait if not urgent — courtesy, not a gate |
 | **`git_integration_worker`** | **Never force** — drain-gated; arm it, report `restart_intent_id`, exit |
+| **`stargate`** (propagate / non-force `sync_restart`) | **Do not** put `force: true` on the YAML row (admit refuses). Busy Stargate arms a durable `restart_intent_id` via manage — fires when `/admin/active-work` is idle (`requests_in_flight` + async pipelines); **600s** idle ceiling then self-preempt restart (CDP in-flight is the expected casualty — recover via continuity). Receipt `disposition: queued`, not `harvest_wanted`. Human `manage sync_restart stargate force=true` remains the immediate kill shortcut. |
 
 Tooling MCP restart ⇒ continuity protocol (not warm follow-up). Ordered sequence:
 
