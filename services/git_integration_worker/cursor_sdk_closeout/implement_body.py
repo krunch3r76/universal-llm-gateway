@@ -121,6 +121,7 @@ def build_implement_closeout_body(
     resolved_model: str | None = None,
     sdk_mode: Literal["agent", "plan"] | None = None,
     packet_text: str | None = None,
+    hub_repo: Path | None = None,
     worker_open_forks: list[dict[str, Any]] | None = None,
     acceptance_criteria: list[str] | None = None,
 ) -> str:
@@ -227,12 +228,17 @@ def build_implement_closeout_body(
     )
 
     pre_lane_b_status = status
+    closeout_prose = sidecar_markdown or ""
     status, deviations = apply_lane_b_land_incompleteness(
         status,
         lane=lane,
         landed=landed,
         commits_ahead=commits_ahead,
         deviations=deviations,
+        closeout_text=closeout_prose,
+        packet_text=packet_text,
+        branch_name=branch,
+        hub_repo=hub_repo,
     )
     from implement_admission.plan_closeout_fields import (
         authority_fork_from_open_forks,

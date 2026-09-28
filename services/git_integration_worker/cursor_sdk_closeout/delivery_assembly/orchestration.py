@@ -219,6 +219,7 @@ def _assemble_closeout_delivery(
         resolved_model=resolved_model,
         sdk_mode=resolved_sdk_mode,
         packet_text=packet_text,
+        hub_repo=binding.receipt_tree if binding is not None else source_repo,
     )
     return receipt_finalization.finalize_closeout_receipt(
         source_repo=source_repo,

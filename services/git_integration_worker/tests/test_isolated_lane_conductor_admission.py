@@ -30,7 +30,6 @@ from services.git_integration_worker.cursor_auto.queue_health_events import (
 
 @pytest.fixture(autouse=True)
 def _isolated_auto_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv("CURSOR_SDK_DISPATCH_LEDGER", raising=False)
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     AutoJobLedger.reset_for_tests()
     reset_queue_for_tests(durable=True)
@@ -222,10 +221,9 @@ def test_f6_concurrent_never_via_claim_next() -> None:
     assert queue.claim_next() is None
 
 
-def test_ac4_missing_work_key_without_child_lane_stays_serial() -> None:
-    """Lane B alone derives a work_key; omit lane + parentage → serial."""
+def test_ac4_missing_work_key_stays_serial() -> None:
     assert (
-        declared_execution_mode(contract="investigate", lane=None, work_key=None)
+        declared_execution_mode(contract="investigate", lane="B", work_key=None)
         == "serial"
     )
 

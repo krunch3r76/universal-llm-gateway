@@ -147,21 +147,49 @@ def settle_lane_and_dispatch_fields(
                 binding.receipt_tree,
                 head_sha=lane_b_head_sha,
                 branch=record.branch_name,
+                hub_repo=binding.receipt_tree,
             )
             # G₂: measured 0 refuses vacuous True; unknown ancestry/meter → None.
             from services.git_integration_worker.cursor_sdk_deliverables_expected import (
                 admit_landed_true,
             )
 
+            hub_work = None
+            if lane_b_commits_ahead is not None and lane_b_commits_ahead >= 1:
+                if state.merged_into_master or state.content_landed:
+                    hub_work = True
             lane_b_landed = admit_landed_true(
                 ancestry_on_master=plane_obs.landed_local_master,
                 commits_ahead=lane_b_commits_ahead,
+                hub_master_has_work=hub_work,
             )
             landed_resolution_reason = annotate_landed_resolution_disagreement(
                 landed_resolution_reason,
                 landed=lane_b_landed,
                 ancestry_on_master=plane_obs.landed_local_master,
             )
+            # Dispatch commit already on hub master, but head_sha must name the
+            # hub tip when later commits sit above it. Equal tips stay put so a
+            # fast-forward lane advance keeps its meter and reason.
+            if (
+                lane_b_landed is True
+                and plane_obs.landed_local_master is True
+                and lane_b_branch_point
+            ):
+                from services.git_integration_worker.cursor_sdk_hub_land_scope import (
+                    resolve_hub_master_tip_meter,
+                )
+
+                projected = resolve_hub_master_tip_meter(
+                    binding.receipt_tree,
+                    branch_point=lane_b_branch_point,
+                )
+                if projected is not None:
+                    tip_sha, tip_ahead = projected
+                    current = (lane_b_head_sha or "").lower()
+                    if tip_sha != current and tip_ahead >= 1:
+                        lane_b_head_sha = tip_sha
+                        lane_b_commits_ahead = tip_ahead
             if outcome.status != "finished" and not state.safe_to_delete:
                 from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
                     mark_lane_b_disposition,

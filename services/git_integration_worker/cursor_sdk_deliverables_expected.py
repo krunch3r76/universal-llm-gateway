@@ -119,6 +119,7 @@ def admit_landed_true(
     *,
     ancestry_on_master: bool | None,
     commits_ahead: int | None,
+    hub_master_has_work: bool | None = None,
 ) -> bool | None:
     """G₂ — project structured ``landed`` to {True, False, None}.
 
@@ -126,8 +127,17 @@ def admit_landed_true(
     (measured ``commits_ahead=0``): the SHA is already on master without this
     dispatch advancing anything — emit ``False``, not ``True``. Unknown
     ancestry or an unmeasured meter must stay ``None`` (preserve-no-data);
-    definite ancestry ``False`` stays ``False``. Side effects: none (pure).
+    definite ancestry ``False`` stays ``False``.
+
+    When dispatch content reached hub master but the lane tip SHA differs
+    (cherry-pick / hub-path commit), ``hub_master_has_work=True`` admits landed
+    under the same ``commits_ahead >= 1`` meter without treating lane-tip
+    ancestry as hub landed. Side effects: none (pure).
     """
+    if hub_master_has_work is True:
+        if commits_ahead is None:
+            return None
+        return commits_ahead >= 1
     if ancestry_on_master is None:
         return None
     if ancestry_on_master is False:

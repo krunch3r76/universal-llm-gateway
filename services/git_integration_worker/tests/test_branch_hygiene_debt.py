@@ -160,6 +160,7 @@ def test_lane_b_preamble_states_the_branch_contract() -> None:
     assert "cursor-sdk/lane-7229" in preamble
     assert "land_disposition: landed" in preamble
     assert "land_disposition: discard" in preamble
+    assert "land_disposition: unlanded" in preamble
 
 
 def test_lane_a_gets_no_branch_contract() -> None:
@@ -175,17 +176,21 @@ def test_lane_a_gets_no_branch_contract() -> None:
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("land_disposition: landed", ("landed", None)),
+        ("land_disposition: landed", ("landed", None, None)),
         (
             "land_disposition: `discard`\nland_reason: superseded",
-            ("discard", "superseded"),
+            ("discard", "superseded", None),
         ),
-        ("LAND_DISPOSITION:  Landed  ", ("landed", None)),
-        ("nothing declared here", (None, None)),
+        ("LAND_DISPOSITION:  Landed  ", ("landed", None, None)),
+        (
+            "land_disposition: unlanded abcdef0123456789",
+            ("unlanded", None, "abcdef0123456789"),
+        ),
+        ("nothing declared here", (None, None, None)),
     ],
 )
 def test_parse_land_disposition(
-    text: str, expected: tuple[str | None, str | None]
+    text: str, expected: tuple[str | None, str | None, str | None]
 ) -> None:
     assert parse_land_disposition(text) == expected
 

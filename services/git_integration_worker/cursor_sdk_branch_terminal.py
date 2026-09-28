@@ -28,6 +28,7 @@ from services.git_integration_worker.cursor_sdk_branch_debt_tags import (
 from services.git_integration_worker.cursor_sdk_branch_discharge import (
     DISCHARGE_DISCARD,
     DISCHARGE_LANDED,
+    DISCHARGE_UNLANDED,
     discharge,
 )
 from services.git_integration_worker.cursor_sdk_events import (
@@ -36,6 +37,10 @@ from services.git_integration_worker.cursor_sdk_events import (
 
 logger = get_logger(__name__)
 
+_UNLANDED_DISPOSITION_RE = re.compile(
+    r"^\s*land_disposition\s*:\s*[`\"']?unlanded[`\"']?\s+([0-9a-f]{7,40})\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 _DISPOSITION_RE = re.compile(
     r"^\s*land_disposition\s*:\s*[`\"']?([A-Za-z_-]+)[`\"']?\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -57,17 +62,24 @@ class LaneBranchSettlement:
     detail: str | None = None
 
 
-def parse_land_disposition(text: str | None) -> tuple[str | None, str | None]:
-    """Extract ``land_disposition`` and ``land_reason`` from closeout prose."""
+def parse_land_disposition(
+    text: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    """Extract ``land_disposition``, ``land_reason``, and optional unlanded tip sha."""
     if not text:
-        return None, None
+        return None, None, None
+    unlanded_match = _UNLANDED_DISPOSITION_RE.search(text)
+    if unlanded_match is not None:
+        reason_match = _REASON_RE.search(text)
+        reason = reason_match.group(1).strip() if reason_match else None
+        return "unlanded", reason, unlanded_match.group(1).strip().lower()
     match = _DISPOSITION_RE.search(text)
     if match is None:
-        return None, None
+        return None, None, None
     verb = match.group(1).strip().lower()
     reason_match = _REASON_RE.search(text)
     reason = reason_match.group(1).strip() if reason_match else None
-    return verb, reason
+    return verb, reason, None
 
 
 def _caller_agent_for(dispatch_id: str) -> str | None:
@@ -191,14 +203,15 @@ def _settle(
     head_sha: str | None,
     files: list[str] | None,
 ) -> LaneBranchSettlement:
-    verb, reason = parse_land_disposition(closeout_text)
+    verb, reason, unlanded_sha = parse_land_disposition(closeout_text)
 
-    if verb in {DISCHARGE_LANDED, DISCHARGE_DISCARD}:
+    if verb in {DISCHARGE_LANDED, DISCHARGE_DISCARD, DISCHARGE_UNLANDED}:
         result = discharge(
             repo=source_repo,
             branch_name=branch_name,
             verb=verb,
             reason=reason,
+            declared_tip_sha=unlanded_sha,
             completing_dispatch_id=dispatch_id,
         )
         if result.inherited:
