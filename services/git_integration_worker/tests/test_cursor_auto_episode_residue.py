@@ -41,6 +41,51 @@ def test_residue_sync_restart_for_giw_py_path():
     assert "charter tick executes sync_restart" not in block
 
 
+def test_residue_upload_slug_for_claude_ai_skill():
+    payload = _closeout_payload(
+        files_modified=[
+            "cursor-plugins/ulg-ecosystem/skills/hypothesize-simulate/SKILL.md",
+        ],
+    )
+    block = residue_for_closeout(payload)
+    assert block is not None
+    assert "install_plugin" in block
+    assert (
+        "upload_slug: scripts/cortex/claude-ai-sync-jupiter upload "
+        "--slugs hypothesize-simulate --replace"
+    ) in block
+    install_idx = block.index("install_plugin")
+    upload_idx = block.index("upload_slug:")
+    assert install_idx < upload_idx
+
+
+def test_residue_no_upload_for_cursor_only_skill():
+    payload = _closeout_payload(
+        files_modified=[
+            "cursor-plugins/ulg-ecosystem/skills/git-posture/SKILL.md",
+        ],
+    )
+    block = residue_for_closeout(payload)
+    assert block is not None
+    assert "install_plugin" in block
+    assert "upload_slug:" not in block
+
+
+def test_residue_upload_slug_for_life_local_without_plugin_install():
+    payload = _closeout_payload(
+        files_modified=[
+            ".claude/skills/document-review-timeline-linkage-audit/SKILL.md",
+        ],
+    )
+    block = residue_for_closeout(payload)
+    assert block is not None
+    assert "install_plugin:" not in block
+    assert (
+        "upload_slug: scripts/cortex/claude-ai-sync-jupiter upload "
+        "--slugs document-review-timeline-linkage-audit --replace"
+    ) in block
+
+
 def test_residue_install_plugin_for_plugin_rule_path():
     payload = _closeout_payload(
         files_modified=[
@@ -125,7 +170,7 @@ def test_residue_elides_overflow_instead_of_raising():
     assert block is not None
     assert "elided" in block
     assert len(block.splitlines()) <= 12
-    assert block.rstrip().endswith("install_plugin remains manual.")
+    assert block.rstrip().endswith("install_plugin and upload_slug remain manual.")
 
 
 def test_residue_prefers_propagation_residue_field():

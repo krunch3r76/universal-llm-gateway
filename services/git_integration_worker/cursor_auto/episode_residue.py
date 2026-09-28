@@ -28,6 +28,11 @@ from implement_admission.serving_coverage import residue_for_empty_nominations
 _MAX_RESIDUE_LINES = 12
 _PLUGIN_PREFIX = "cursor-plugins/ulg-ecosystem/"
 _PLUGIN_CENSUS = ("SKILLS_CENSUS.txt", "RULES_ULG_CENSUS.txt")
+_SKILL_DIR_PREFIXES = (
+    "cursor-plugins/ulg-ecosystem/skills/",
+    ".cursor/skills/",
+    ".claude/skills/",
+)
 
 _SERVICE_SLUGS = {
     "services/agent-bus/": "agent_bus",
@@ -145,11 +150,34 @@ def _install_plugin_line() -> str:
     )
 
 
+def _upload_slug_line(slug: str) -> str:
+    return (
+        "upload_slug: scripts/cortex/claude-ai-sync-jupiter upload "
+        f"--slugs {slug} --replace"
+    )
+
+
+def _skill_slug(path: str) -> str | None:
+    """Directory name under a skill SoT root, or None."""
+    for prefix in _SKILL_DIR_PREFIXES:
+        if path.startswith(prefix):
+            slug = path[len(prefix) :].split("/", 1)[0]
+            return slug or None
+    return None
+
+
+def _claude_ai_slugs() -> frozenset[str]:
+    """Catalog Customize targets (shared_sync ∪ life_local)."""
+    from claude_bundles.catalog import get_skill_catalog
+
+    return frozenset(get_skill_catalog().claude_ai_targets())
+
+
 def _unresolved_line(path: str) -> str:
     return f"unresolved: {path} — service dir has no manage slug; lead must resolve"
 
 
-def _actions_for_path(path: str) -> tuple[str, ...]:
+def _actions_for_path(path: str, *, claude_slugs: frozenset[str]) -> tuple[str, ...]:
     if is_lib_test_module(path):
         return ()
 
@@ -160,9 +188,15 @@ def _actions_for_path(path: str) -> tuple[str, ...]:
             )
             return (_sync_restart_line(slug, tags=tags),)
 
+    actions: list[str] = []
     basename = path.rsplit("/", 1)[-1]
     if path.startswith(_PLUGIN_PREFIX) or basename in _PLUGIN_CENSUS:
-        return (_install_plugin_line(),)
+        actions.append(_install_plugin_line())
+    skill_slug = _skill_slug(path)
+    if skill_slug and skill_slug in claude_slugs:
+        actions.append(_upload_slug_line(skill_slug))
+    if actions:
+        return tuple(actions)
 
     if path.startswith("services/") and path.endswith(".py"):
         return (_unresolved_line(path),)
@@ -180,16 +214,20 @@ def residue_actions(paths: Sequence[str]) -> tuple[str, ...]:
     """Map changed paths to deduplicated residue action lines in stable order."""
     sync_restart: set[str] = set()
     install_plugin: set[str] = set()
+    upload_slug: set[str] = set()
     unresolved: set[str] = set()
     unmapped_serving: set[str] = set()
     libs_touched: set[str] = set()
 
+    claude_slugs = _claude_ai_slugs()
     for path in paths:
-        for action in _actions_for_path(path):
+        for action in _actions_for_path(path, claude_slugs=claude_slugs):
             if action.startswith("sync_restart:"):
                 sync_restart.add(action)
             elif action.startswith("install_plugin:"):
                 install_plugin.add(action)
+            elif action.startswith("upload_slug:"):
+                upload_slug.add(action)
             elif action.startswith("unresolved:"):
                 unresolved.add(action)
             elif action.startswith("unmapped_serving:"):
@@ -200,6 +238,7 @@ def residue_actions(paths: Sequence[str]) -> tuple[str, ...]:
     ordered: list[str] = []
     ordered.extend(sorted(sync_restart))
     ordered.extend(sorted(install_plugin))
+    ordered.extend(sorted(upload_slug))
     ordered.extend(sorted(unresolved))
     ordered.extend(sorted(unmapped_serving))
     ordered.extend(sorted(libs_touched))
@@ -247,7 +286,7 @@ def build_residue_block(
         "Owner: path-derived obligation candidates only — fire sync_restart/propagate "
         "after observe (code_version + code_ref_relation) or strike; "
         "git_integration_worker requires contract:propagate with relay-loss hazard; "
-        "install_plugin remains manual."
+        "install_plugin and upload_slug remain manual."
     )
     return "\n".join(lines)
 
