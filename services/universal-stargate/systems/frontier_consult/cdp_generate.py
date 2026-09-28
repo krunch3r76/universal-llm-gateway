@@ -124,23 +124,17 @@ def _read_lane_snapshot_for_gate(*, request_id: str) -> dict[str, Any]:
         ) from exc
 
 
-def _live_external_gate_for_lane(
+def _live_external_gate_rows(
     snap: dict[str, Any],
     mission_lane: str,
-    *,
-    exclude_execution_id: str | None = None,
-) -> bool:
-    from claude_bundles.hop_cadence_id_map import (
-        ids_match_exclude,
-        normalize_exclude_ids,
-    )
+) -> list[dict[str, Any]]:
+    """Live occupancy rows on ``mission_lane`` (same filter as the fire gate)."""
     from claude_bundles.hop_cadence_seat_snap import identity_rows, is_live_stream_state
 
     lane = (mission_lane or "").strip()
     if not lane or not snap:
-        return False
-    exclude = normalize_exclude_ids(exclude_execution_id)
-
+        return []
+    found: list[dict[str, Any]] = []
     for aw_row in identity_rows(snap):
         stream_state = str(aw_row.get("stream_state") or "")
         if not is_live_stream_state(stream_state):
@@ -148,12 +142,56 @@ def _live_external_gate_for_lane(
         purpose = str(aw_row.get("purpose") or "").strip().lower()
         if purpose not in _GATE_OCCUPANCY_PURPOSES:
             continue
+        parent = str(aw_row.get("parent_thread") or "").strip()
+        if parent == lane:
+            found.append(aw_row)
+    return found
+
+
+def _hop_own_generate_execution_id(
+    snap: dict[str, Any],
+    mission_lane: str,
+    registration_id: str | None,
+) -> str | None:
+    """Execution of the hopping seat's own live generate, else None.
+
+    A registration match names the caller even when other gates are live;
+    those other rows stay blocking. With no registration, the sole live
+    gate on the lane is the caller. Two or more live gates and no match
+    return None so the gate still refuses — a hop must not clear a second
+    successor by dropping every occupant.
+    """
+    rows = _live_external_gate_rows(snap, mission_lane)
+    reg = (registration_id or "").strip()
+    if reg:
+        for row in rows:
+            if str(row.get("registration_id") or "").strip() == reg:
+                exec_id = str(row.get("execution_id") or "").strip()
+                return exec_id or None
+        return None
+    if len(rows) == 1:
+        exec_id = str(rows[0].get("execution_id") or "").strip()
+        return exec_id or None
+    return None
+
+
+def _live_external_gate_for_lane(
+    snap: dict[str, Any],
+    mission_lane: str,
+    *,
+    exclude_execution_id: str | frozenset[str] | set[str] | None = None,
+) -> bool:
+    from claude_bundles.hop_cadence_id_map import (
+        ids_match_exclude,
+        normalize_exclude_ids,
+    )
+
+    exclude = normalize_exclude_ids(exclude_execution_id)
+    for aw_row in _live_external_gate_rows(snap, mission_lane):
         exec_id = str(aw_row.get("execution_id") or "").strip()
         if exec_id and ids_match_exclude(exec_id, exclude):
             continue
-        parent = str(aw_row.get("parent_thread") or "").strip()
-        if parent == lane:
-            return True
+        return True
     return False
 
 
@@ -163,9 +201,15 @@ def refuse_second_external_gate_at_fire(
     parent_thread: str | None,
     thread_id: str,
     request_id: str,
-    exclude_execution_id: str | None = None,
+    exclude_execution_id: str | frozenset[str] | set[str] | None = None,
+    hop_own_generate: bool = False,
+    predecessor_registration_id: str | None = None,
 ) -> None:
     """P1.3 — refuse a second gate while one is still streaming for the lane.
+
+    ``hop_own_generate`` excludes only the hopping seat's own generate
+    (registration match, or the sole live gate when registration is absent).
+    Any other live gate on the lane still raises ``cdp_external_gate_live``.
 
     Probe faults on the occupancy read are fail-closed (``cdp_gate_probe_failed``);
     hop cadence intentionally fail-opens the same probe class — see
@@ -176,10 +220,15 @@ def refuse_second_external_gate_at_fire(
     lane = (parent_thread or thread_id or "").strip()
     if not lane:
         return
+    from claude_bundles.hop_cadence_id_map import normalize_exclude_ids
+
     snap = _read_lane_snapshot_for_gate(request_id=request_id)
-    if _live_external_gate_for_lane(
-        snap, lane, exclude_execution_id=exclude_execution_id
-    ):
+    exclude = normalize_exclude_ids(exclude_execution_id)
+    if hop_own_generate:
+        own = _hop_own_generate_execution_id(snap, lane, predecessor_registration_id)
+        if own:
+            exclude = exclude | frozenset({own})
+    if _live_external_gate_for_lane(snap, lane, exclude_execution_id=exclude):
         raise FrontierEndpointError(
             request_id=request_id,
             field="purpose",
@@ -190,6 +239,29 @@ def refuse_second_external_gate_at_fire(
             status_code=409,
             code="cdp_external_gate_live",
         )
+
+
+def _refuse_external_gate_for_generate(
+    *,
+    purpose: str,
+    parent_thread: str | None,
+    thread_id: str,
+    request_id: str,
+    execution_id: str,
+    mission_kind: str | None,
+    predecessor_registration_id: str | None,
+) -> None:
+    """Fire-gate. Hop commissions exclude the caller's own generate only."""
+    hop = (mission_kind or "").strip().lower() == "hop"
+    refuse_second_external_gate_at_fire(
+        purpose=purpose,
+        parent_thread=parent_thread,
+        thread_id=thread_id,
+        request_id=request_id,
+        exclude_execution_id=execution_id,
+        hop_own_generate=hop,
+        predecessor_registration_id=(predecessor_registration_id if hop else None),
+    )
 
 
 def reject_cursor_sdk_seat_with_cdp(
@@ -460,12 +532,16 @@ async def dispatch_cdp_generate(
             mission_kind=mission_kind,
             thread_id=provisional_thread,
         )
-        refuse_second_external_gate_at_fire(
+        _refuse_external_gate_for_generate(
             purpose=purpose,
             parent_thread=parent_thread,
             thread_id=provisional_thread,
             request_id=request_id,
-            exclude_execution_id=execution_id,
+            execution_id=execution_id,
+            mission_kind=mission_kind,
+            predecessor_registration_id=getattr(
+                body, "predecessor_registration_id", None
+            ),
         )
     elif (purpose or "").strip().lower() in _LANE_BIND_PURPOSES:
         parent_thread, mission_kind = default_operator_seat_binding(
@@ -474,12 +550,16 @@ async def dispatch_cdp_generate(
             mission_kind=mission_kind,
             thread_id=provisional_thread,
         )
-        refuse_second_external_gate_at_fire(
+        _refuse_external_gate_for_generate(
             purpose=purpose,
             parent_thread=parent_thread,
             thread_id=provisional_thread,
             request_id=request_id,
-            exclude_execution_id=execution_id,
+            execution_id=execution_id,
+            mission_kind=mission_kind,
+            predecessor_registration_id=getattr(
+                body, "predecessor_registration_id", None
+            ),
         )
 
     thread_subject = f"cdp generate — {request_id}"
@@ -489,9 +569,7 @@ async def dispatch_cdp_generate(
     )
 
     thread_id = dispatch_thread
-    caller_supplied_thread = bool(
-        thread_id and str(thread_id).strip().isdigit()
-    )
+    caller_supplied_thread = bool(thread_id and str(thread_id).strip().isdigit())
     if caller_supplied_thread:
         pointer_turn = await post_pointer_turn(
             request_id=request_id,
