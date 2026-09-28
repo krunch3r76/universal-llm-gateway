@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Poll agent-bus until a consult reply lands; page operator once.
 
+CDP generates are bound to ``dispatch_thread_id``. Completion is
+``proof_reply_from`` on that thread. ``streaming=false`` on the Cowork page
+is not completion — the flag pauses between tool calls. A ``cdp FAILED``
+turn whose archive is only a tool badge (``Loaded tools, ran a command``)
+is ``producer_terminal_no_reply``, not the reply. Read the archive before
+re-dispatching.
+
 Prefer detached arm via scripts/watch-supervise.sh (a:32280) so Cursor Shell
 abort cannot kill the poller. In-window wake = supervise tail of the log
 (default exit-on-complete when state.json status=complete; --forever debug-only).

@@ -216,9 +216,12 @@ Sealed CDP / tick-charter R-admit have **no human in loop**. Cowork questions = 
 ## Completion predicate (MUST)
 
 ```
-complete(turn) ⇐ assistant_body ∧ ¬streaming ∧ ¬Stop ∧ stable_length
+complete(turn) ⇐ assistant_prose ∧ ¬streaming ∧ ¬Stop ∧ stable_length
   ∧ ¬error_banner ∧ turn_count_incremented ∧ ¬tool_pause_state
+  ∧ ¬tool_badge_only
 ```
+
+Cowork drops `data-is-streaming` between tool calls. `¬streaming` plus a scrape that is only a tool badge (`Loaded tools, ran a command`, `Ran a command`, `Used … integration`) is not complete. The watching seat's proof is the agent-bus `proof_reply_from` on the `dispatch_thread_id` from `team_dispatch` — that turn is posted after harvest returns. A `cdp FAILED` envelope whose archive is badge-only is that pause, not the reply.
 
 `¬ complete(h) ⇒ ¬delete ∧ friction`. Stop detection only in generation/composer roots — sidebar Stop excluded (24873). `error_banner`: banner/toast only, exclude composer (25486); `Overloaded` may linger after completion — structural completion wins (25684). Cowork CSE fallback + detail: L3 `operations-annex.md`.
 

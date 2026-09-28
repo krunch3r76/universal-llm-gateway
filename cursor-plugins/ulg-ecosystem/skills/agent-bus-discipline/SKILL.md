@@ -27,7 +27,7 @@ Topic overlap ≠ thread continuity. Prior thread can be evidence context; new t
 
 ## Dispatch polling
 
-After `team_dispatch` / handoff with `poll_hint`, poll using `agent_bus(wait, thread=N, after_turn=T, completion=<from poll_hint>, from_agent=...)`. CDP handoffs ship `completion="proof_reply_from"` — do not downgrade to `first_reply_from`; chrome-only CDP envelope turns yield `predicate_unmet`, not `complete`.
+After `team_dispatch` / handoff with `poll_hint`, poll using `agent_bus(wait, thread=N, after_turn=T, completion=<from poll_hint>, from_agent=...)`. A CDP generate is bound to `dispatch_thread_id`. Done for the watching seat is `proof_reply_from` on that thread — do not downgrade to `first_reply_from`, and do not treat `streaming=false` on the Cowork page as that signal. Streaming pauses between tools. A tool-badge scrape (`Loaded tools, ran a command`) and a `cdp FAILED` envelope whose archive is only that badge are `predicate_unmet`, not the reply. `producer_terminal_no_reply` after that envelope means the harvest closed early — read `archive_uri` before re-dispatching.
 
 ```python
 agent_bus(tool="wait", arguments=poll_hint.arguments_json)
