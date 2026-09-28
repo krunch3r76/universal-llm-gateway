@@ -52,35 +52,57 @@ def _store(tmp_path: Any) -> RestartIntentStore:
     return RestartIntentStore(db_path=tmp_path / "restart-intents.db")
 
 
-def test_refuse_dispatch_home_before_any_manage_call(
+def test_dispatch_home_proceeds_with_operator_home_pin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Overlay HOME ⇒ refuse before whoami/quit (M2 / AC1)."""
+    """Dispatch HOME no longer hard-refuses; seat pins operator_real_home for paths."""
     dispatch_root = tmp_path / "cursor-dispatch-homes"
     overlay = dispatch_root / "auto-refuse-home"
     overlay.mkdir(parents=True)
+    operator = tmp_path / "operator-home"
+    operator.mkdir()
     import services.git_integration_worker.cursor_home as home_mod
 
     monkeypatch.setattr(home_mod, "_DISPATCH_HOME_ROOT", dispatch_root)
     monkeypatch.setenv("CURSOR_DISPATCH_HOME_ROOT", str(dispatch_root))
     monkeypatch.setenv("HOME", str(overlay))
+    monkeypatch.setattr(home_mod, "operator_real_home", lambda **_: operator)
 
-    calls: list[str] = []
+    store = _store(tmp_path)
 
     def manage_call(method: str, params=None, **kwargs):  # noqa: ANN001
         del params, kwargs
-        calls.append(method)
-        raise AssertionError("must not call manage under dispatch HOME")
+        if method == "whoami":
+            return {
+                "pid": 9,
+                "code_version": "deadbeef",
+                "process_start_time": "2026-08-10T00:00:00+00:00",
+            }
+        if method == "busy_status":
+            return {
+                "process": {"manage_inflight": 1, "activities": []},
+                "charter_hold": {"held": True, "pause_drain_clear": True},
+            }
+        if method == "charter_hold_status":
+            return {
+                "held": True,
+                "pause_drain_clear": True,
+                "tick_in_flight": False,
+                "live_charter_shaped_dispatches": [],
+            }
+        raise AssertionError(method)
 
     result = run_guarded_reexec(
         target_ref="deadbeef",
         dry_run=True,
         manage_call=manage_call,
+        intent_db=store._db_path,  # noqa: SLF001
+        run_cmd=_ok_tmux(9),
+        tree_contains_fn=lambda pid, ancestor: pid == ancestor,
     )
     assert result.status == "dry-run"
-    assert result.reason == "dispatch_home_host_refusal"
-    assert result.executed is False
-    assert calls == []
+    assert result.reason == "checks_passed_stopped_before_quit"
+    assert result.checks["seat_prelude"]["seat_operator_home"] == str(operator)
 
 
 def test_refuse_nonterminal_restart_intent(tmp_path: Any) -> None:
@@ -311,6 +333,8 @@ def test_run_refuses_when_tmux_pane_mismatches(tmp_path: Any) -> None:
     def run_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         if cmd[:2] == ["tmux", "display-message"]:
             return subprocess.CompletedProcess(cmd, 0, stdout="99\n", stderr="")
+        if cmd[:2] == ["tmux", "list-panes"]:
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="no match")
         if cmd[:2] == ["tmux", "send-keys"]:
             sends.append(cmd)
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")

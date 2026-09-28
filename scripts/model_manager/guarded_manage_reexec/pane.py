@@ -60,9 +60,7 @@ def read_tmux_pane_pid(
     run_cmd: RunCmd,
 ) -> tuple[int | None, dict[str, Any]]:
     """Resolve ``#{pane_pid}`` for ``tmux_target``; None when unobservable."""
-    proc = run_cmd(
-        ["tmux", "display-message", "-p", "-t", tmux_target, "#{pane_pid}"]
-    )
+    proc = run_cmd(["tmux", "display-message", "-p", "-t", tmux_target, "#{pane_pid}"])
     detail = {
         "tmux_target": tmux_target,
         "returncode": proc.returncode,
@@ -75,6 +73,41 @@ def read_tmux_pane_pid(
     if not text.isdigit():
         return None, detail
     return int(text), detail
+
+
+def find_tmux_target_hosting_manage(
+    manage_pid: int,
+    *,
+    run_cmd: RunCmd,
+    tree_contains_fn: TreeContainsFn | None = None,
+) -> tuple[str | None, dict[str, Any]]:
+    """Scan tmux panes for one whose #{pane_pid} tree contains manage."""
+    contains = tree_contains_fn or pid_descends_from
+    proc = run_cmd(
+        [
+            "tmux",
+            "list-panes",
+            "-a",
+            "-F",
+            "#{session_name}:#{window_index}.#{pane_index}\t#{pane_pid}",
+        ]
+    )
+    detail: dict[str, Any] = {
+        "returncode": proc.returncode,
+        "stdout_lines": (proc.stdout or "").count("\n"),
+    }
+    if proc.returncode != 0:
+        return None, detail
+    for line in (proc.stdout or "").splitlines():
+        if "\t" not in line:
+            continue
+        target, pane_pid_s = line.split("\t", 1)
+        if not pane_pid_s.strip().isdigit():
+            continue
+        pane_pid = int(pane_pid_s.strip())
+        if contains(manage_pid, pane_pid):
+            return target.strip(), detail | {"matched_pane_pid": pane_pid}
+    return None, detail
 
 
 def observe_tmux_pane_hosts_manage(

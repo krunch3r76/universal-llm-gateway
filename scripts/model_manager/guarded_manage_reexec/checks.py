@@ -145,7 +145,9 @@ def observe_open_restart_windows(
     return RefuseFinding(reason="open_restart_window", offenders=offenders)
 
 
-def observe_manage_inflight(busy: dict[str, Any]) -> tuple[RefuseFinding | None, int, int, list[str]]:
+def observe_manage_inflight(
+    busy: dict[str, Any],
+) -> tuple[RefuseFinding | None, int, int, list[str]]:
     """Refuse when other manage.sock handlers or named activities are live.
 
     Returns ``(finding|None, raw_inflight, others_inflight, activities)``.
@@ -262,7 +264,11 @@ def collect_refuse_report(
                     hold_status=hold,
                 )
         else:
-            hold = busy.get("charter_hold") if isinstance(busy.get("charter_hold"), dict) else {}
+            hold = (
+                busy.get("charter_hold")
+                if isinstance(busy.get("charter_hold"), dict)
+                else {}
+            )
         pause_clear = bool(hold.get("pause_drain_clear")) if hold else None
         held = bool(hold.get("held")) if hold else None
         drain_finding = observe_drain_clear(hold or {})

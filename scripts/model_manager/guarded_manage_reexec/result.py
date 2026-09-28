@@ -74,9 +74,7 @@ def prove_pickup(
     version_ok = isinstance(after_ver, str) and after_ver == target_ref
     before_ts = parse_iso(before.get("process_start_time"))
     after_ts = parse_iso(after.get("process_start_time"))
-    start_ok = (
-        before_ts is not None and after_ts is not None and after_ts > before_ts
-    )
+    start_ok = before_ts is not None and after_ts is not None and after_ts > before_ts
     if version_ok and start_ok:
         return True, True, "proof_satisfied"
     parts: list[str] = []
