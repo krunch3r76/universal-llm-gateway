@@ -398,9 +398,13 @@ class GitWorkerDrainSupervisor:
     ) -> str:
         """Await drain convergence, idle escalate, deadline timeout, or cancel.
 
-        Returns ``converged`` | ``idle`` | ``timeout`` | ``cancelled``. Unified
-        loop: matching ``drain.completed`` plus drain-state reconcile plus
-        optional idle-on-no-progress (recycle mode). Timeout stays alert-only.
+        Returns ``converged`` | ``idle`` | ``timeout`` | ``cancelled`` |
+        ``dead`` | ``handed_off``. Unified loop: matching ``drain.completed``
+        plus drain-state reconcile plus optional idle-on-no-progress (recycle
+        mode). A null pid or a probe unreachable for one heartbeat TTL returns
+        ``dead`` before the deadline is consulted, so that branch does not
+        depend on the ceiling ruling. A live occupant past the ceiling is the
+        alert-only timeout.
         """
         last_progress = start
         probe_fail_streak = 0
@@ -424,8 +428,6 @@ class GitWorkerDrainSupervisor:
                 if self._abort_kind(intent) is not None:
                     return _AWAIT_CANCELLED
                 now = time.monotonic()
-                if now >= deadline:
-                    return _AWAIT_TIMEOUT
                 if now - last_progress >= self.progress_interval_s:
                     await self._emit_progress(intent, now - start)
                     last_progress = now
@@ -466,6 +468,10 @@ class GitWorkerDrainSupervisor:
                         and probe_fail_streak >= probe_unreachable_threshold
                     ):
                         return _AWAIT_DEAD
+                # Null pid and unreachable-TTL already returned above. A live
+                # occupant past the ceiling is alert-only and does not start.
+                if now >= deadline:
+                    return _AWAIT_TIMEOUT
                 if agen is None:
                     await asyncio.sleep(self.reconcile_interval_s)
                     continue
@@ -802,11 +808,13 @@ class GitWorkerDrainSupervisor:
         return True
 
     async def _ceiling_should_force_start(self) -> bool:
-        """True when the ceiling fired and the worker has no live pid.
+        """True when a ceiling re-probe no longer shows a live pid.
 
-        One fresh drain-state read. A pid means the process is still the
-        occupant holder, so the ceiling stays alert-only. No snapshot, or a
-        snapshot with ``pid`` null, is the dead target the ceiling must start.
+        The await loop already returns ``dead`` for a null pid and for a probe
+        that has been unreachable for one heartbeat TTL, without consulting
+        this helper. This re-probe only covers a target that died between that
+        live read and the ceiling. A pid means the process is still the
+        occupant holder, so the ceiling stays alert-only.
         """
         if self.start is None:
             return False

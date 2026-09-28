@@ -244,6 +244,41 @@ def test_dead_pid_drain_converges_and_starts(
     assert got is not None and got.status == STATUS_VERIFYING_ACTIVATION
 
 
+def test_dead_pid_after_ceiling_starts_without_ceiling_ruling(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A null pid starts on the dead branch even when the ceiling refuses."""
+    _patch_validate(monkeypatch)
+
+    async def _ceiling_must_not_run(self: GitWorkerDrainSupervisor) -> bool:
+        raise AssertionError("null pid must not consult the ceiling ruling")
+
+    monkeypatch.setattr(
+        GitWorkerDrainSupervisor,
+        "_ceiling_should_force_start",
+        _ceiling_must_not_run,
+    )
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE, action="sync_restart", deadline_at="d", reason="r"
+    )
+
+    async def drain_state() -> dict[str, Any]:
+        return _snap(pid=None, active_count=1)
+
+    async def begin_drain(_body: dict[str, Any]) -> dict[str, Any]:
+        return _snap()
+
+    kill = _Kill()
+    start = _Start()
+    sup = _supervisor(store, drain_state, begin_drain, kill, start, deadline_s=0.0)
+    _run(asyncio.wait_for(sup.supervise(intent), timeout=2.0))
+    assert start.calls == 1
+    assert kill.calls == 0
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_VERIFYING_ACTIVATION
+
+
 def test_unreachable_probe_drain_converges_and_starts(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
