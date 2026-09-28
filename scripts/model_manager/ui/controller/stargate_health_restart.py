@@ -115,7 +115,12 @@ class StargateHealthRestart:
 
 
 async def _force_restart_stargate(controller: ServiceController) -> dict[str, object]:
-    """Same chokepoint as manage restart, with force because drain-13102 is absent."""
+    """Stop then start stargate.
+
+    The new process loads the pipeline registry. That load reuses the on-disk
+    snapshot when sources and availability decisions are unchanged, so a flap
+    does not full-build the registry once per restart.
+    """
     from ..api_dispatch import _lifecycle_with_restart_window, _restart_cycle
     from .restart_drain import run_gated
 
