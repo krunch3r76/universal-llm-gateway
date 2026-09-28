@@ -184,7 +184,7 @@ def test_dispatch_thread_id_exempt_for_wrap_generate() -> None:
     assert require_dispatch_thread_id("generate", "", contract="wrap") is None
 
 
-# ── F17378 — packet_path on generate; source_ref implement-only ──────────────
+# ── F17378 — packet_path on residual generate; source_ref is materializer-only ─
 
 
 def test_packet_path_ok_on_residual_generate() -> None:

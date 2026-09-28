@@ -17,9 +17,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from team_dispatch_vocab import (
+    MATERIALIZER_CONTRACTS,
+    RESIDUAL_CONTRACTS,
+    TEAM_DISPATCH_CONTRACTS,
+)
 from universal_logging import get_logger
-
-from team_dispatch_vocab import MATERIALIZER_CONTRACTS, RESIDUAL_CONTRACTS, TEAM_DISPATCH_CONTRACTS
 
 logger = get_logger(__name__)
 
@@ -192,8 +195,15 @@ def reject_unsupported_packet_inputs(
             field="contract",
         )
     if wire in MATERIALIZER_CONTRACTS and source_ref is None:
+        message = f"source_ref is required for contract={wire!r}"
+        if wire == "implement":
+            message += (
+                ". implement is the materialized work-item path, not a "
+                "generic repo-write; an ad-hoc edit uses contract='none' "
+                "with prompt or packet_path"
+            )
         return _validation_error(
-            f"source_ref is required for contract={wire!r}",
+            message,
             field="source_ref",
             code=f"{wire}_requires_source_ref",
         )
@@ -263,8 +273,11 @@ def validate_inline_prompt_inputs(
     if contract in ("implement", "wrap", "sketch", "conductor") and inline_fields:
         field = inline_fields[0]
         return _validation_error(
-            f"{field} is not supported with contract={contract!r}; "
-            "use packet_path or source_ref for implement/wrap",
+            f"{field} is not supported with contract={contract!r}. "
+            "implement, wrap, sketch, and conductor are materializer "
+            "contracts: source_ref, and the server owns the packet. "
+            "implement is not a generic repo-write. An ad-hoc edit uses "
+            "contract='none' with prompt or packet_path.",
             field=field,
             code="inline_prompt_not_supported",
         )
@@ -344,6 +357,7 @@ def validate_force(
             code="force_reason_required",
         )
     return None
+
 
 def reject_pointer_body_on_generate(
     op: str,
@@ -427,7 +441,9 @@ def require_explicit_cursor_seat_for_handoff(
 
 _LANE_REQUIRED_MESSAGE = (
     "lane is required for top-level seat=cursor-sdk generate/to_thread. "
-    "In-repo implement uses lane B; pass A only as the named exception "
+    "Lane B is the default checkout for in-repo generate, including "
+    "contract=none. contract=implement is not implied by a write. "
+    "Pass A only as the named exception "
     "(bind-only / empty files_expected / out-of-repo) with a one-line reason. "
     "Omit only when nest_under or resume_of inherits parent isolation. "
     "See agent_skill:consult-routing § cursor-sdk checkout lane. "
@@ -470,6 +486,4 @@ def require_cursor_sdk_checkout_lane(
     )
     if not seat_sdk and not model_only:
         return None
-    return _validation_error(
-        _LANE_REQUIRED_MESSAGE, field="lane", code="lane_required"
-    )
+    return _validation_error(_LANE_REQUIRED_MESSAGE, field="lane", code="lane_required")

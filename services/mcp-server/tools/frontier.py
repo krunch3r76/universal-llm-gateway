@@ -335,9 +335,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             Literal["A", "B"] | None,
             Field(
                 description=(
-                    "In-repo implement uses lane B. Required GIW checkout "
-                    "lane on top-level seat='cursor-sdk' generate/to_thread. "
-                    "Pass 'B' for in-repo implement / nonempty files_expected. "
+                    "Lane B is the default checkout for every top-level "
+                    "cursor-sdk generate, including contract=none repo writes. "
+                    "contract=implement is not implied by a write. The lane "
+                    "parameter is required on top-level seat='cursor-sdk' "
+                    "generate/to_thread. Pass 'B' for any in-repo generate. "
                     "Pass 'A' only as the named exception (bind-only, empty "
                     "files_expected, cortex-only, out-of-repo) with a one-line "
                     "reason. Distinct from dispatch_lane (path-sim routing). "
@@ -386,7 +388,9 @@ def register_frontier_tools(mcp: FastMCP) -> None:
                 description=(
                     "Stable work identity for cursor-sdk admits (D4 grammar: "
                     "todo:, plan:, agent-bus:, packet:, friction:, decision:). "
-                    "Required for write-class / Lane B; allowed on every contract "
+                    "Required for write-class / Lane B. write-class is the "
+                    "lane/read_only admit, including contract=none; it does "
+                    "not select contract=implement. Allowed on every contract "
                     "including none."
                 ),
             ),
@@ -458,23 +462,23 @@ def register_frontier_tools(mcp: FastMCP) -> None:
     ) -> dict[str, Any]:
         """Team-seat dispatch to Stargate. Returns `{execution_id, pipeline, started_at, status}`. Poll `agent_bus(tool="wait")` via `poll_hint`. Role-less one-shots: `pipeline(op="async", pipeline_id="chat-dispatch")`.
 
-**Ops:** `generate` | `to_thread` | `handoff` | `steer`.
+        **Ops:** `generate` | `to_thread` | `handoff` | `steer`.
 
-**Global (generate/to_thread):** exactly one of `role`|`seat` · `contract` REQUIRED (no derivation) · `dispatch_thread_id` required (exempt `contract=wrap`) · at most one explicit of `packet_path`|`prompt`|`sidecar_ref` (else latest gated bus turn on `dispatch_thread_id`) · `messages[]` ¬a param · `transcript_id` provenance-only (¬forwarded to role).
+        **Global (generate/to_thread):** exactly one of `role`|`seat` · `contract` REQUIRED (no derivation) · `dispatch_thread_id` required (exempt `contract=wrap`) · at most one explicit of `packet_path`|`prompt`|`sidecar_ref` (else latest gated bus turn on `dispatch_thread_id`) · `messages[]` ¬a param · `transcript_id` provenance-only (¬forwarded to role).
 
-**steer:** `dispatch_id` + `steer`∈{`park_for_restart`,`cancel_discard`,`inject`} + `reason`. `directive` required iff `inject`. `ttl_s` default 300. GIW 404/409/422/503 fail-closed. `inject`→202. `park_for_restart` keeps the inherited `execution_id` until the resume CLOSEOUT. `cancel_discard` ends the link.
+        **steer:** `dispatch_id` + `steer`∈{`park_for_restart`,`cancel_discard`,`inject`} + `reason`. `directive` required iff `inject`. `ttl_s` default 300. GIW 404/409/422/503 fail-closed. `inject`→202. `park_for_restart` keeps the inherited `execution_id` until the resume CLOSEOUT. `cancel_discard` ends the link.
 
-**handoff:** `seat`∈{`web-anthropic`,`cursor`}. Requires `subject` + (`seat`|`role`) + (`packet_path`|`source_ref`). Packet AC with no contract signal → **422 `handoff_contract_ambiguous`**. `packet_path` = repo-relative from checkout root (strip leading `universal-llm-gateway/`). `source_ref`: `todo:`|`plan:`|`plan_phase:`|`plan:{slug}/phase-N`|`agent-bus:`|`packet:`. Bare path → **422 `source_ref_unparseable`**. `pointer_body` is handoff-only.
+        **handoff:** `seat`∈{`web-anthropic`,`cursor`}. Requires `subject` + (`seat`|`role`) + (`packet_path`|`source_ref`). Packet AC with no contract signal → **422 `handoff_contract_ambiguous`**. `packet_path` = repo-relative from checkout root (strip leading `universal-llm-gateway/`). `source_ref`: `todo:`|`plan:`|`plan_phase:`|`plan:{slug}/phase-N`|`agent-bus:`|`packet:`. Bare path → **422 `source_ref_unparseable`**. `pointer_body` is handoff-only.
 
-**generate:** `contract`∈{`none`,`pure-mechanical`,`implement`,`wrap`}. `wrap`: `source_ref` required; forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. In-repo implement uses lane B. Lane A is bind-only and needs a one-line reason. CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `contract=none`, `lane=A`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
+        **generate:** `contract`∈{`none`,`pure-mechanical`,`implement`,`wrap`,`sketch`,`conductor`}. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `contract=none` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the default checkout for in-repo generate, including `contract=none`. Lane A is the bind-only exception and needs a one-line reason. CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `contract=none`, `lane=A`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
 
-**to_thread:** `contract`∈{`none`,`pure-mechanical`}. `thread` required.
+        **to_thread:** `contract`∈{`none`,`pure-mechanical`}. `thread` required.
 
-**cursor-sdk 422:** `nest_under_sdk_only`; `CURSOR_NEST_DEPTH_EXCEEDED` (depth 10, 11th refused, `retryable=false`); `resume_of_sdk_only` (XOR `nest_under`, requires `reuse_thread`); `lane_sdk_only`; `lane_required`; `CURSOR_LANE_B_WORKTREE_MISSING`; `workspace_sdk_only`; `reasoning_effort_not_supported`. `work_key` D4: `todo:`|`plan:`|`agent-bus:`|`packet:`|`friction:`|`decision:` (required on write-class / lane B). Skills: **422** `skills_cursor_unresolvable` | `skills_mcp_predicated` | `cdp_skills_path_sim_rejected`. `force=true` skips Gates 2–4 only, requires `force_reason`, never Gate 1 or the write-lease FIFO.
+        **cursor-sdk 422:** `nest_under_sdk_only`; `CURSOR_NEST_DEPTH_EXCEEDED` (depth 10, 11th refused, `retryable=false`); `resume_of_sdk_only` (XOR `nest_under`, requires `reuse_thread`); `lane_sdk_only`; `lane_required`; `CURSOR_LANE_B_WORKTREE_MISSING`; `workspace_sdk_only`; `reasoning_effort_not_supported`. `work_key` D4: `todo:`|`plan:`|`agent-bus:`|`packet:`|`friction:`|`decision:` (required on write-class / lane B; write-class is the lane admit, not `contract=implement`). Skills: **422** `skills_cursor_unresolvable` | `skills_mcp_predicated` | `cdp_skills_path_sim_rejected`. `force=true` skips Gates 2–4 only, requires `force_reason`, never Gate 1 or the write-lease FIFO.
 
-**Tool surface:** `mcp` None = per-model default; `False` = inline-only MCP-class. `server_tools` None = all card built-ins; `False` suppress (provider-neutral no-op). xAI: no client MCP. Anthropic: remote connector default when MCP on. `knob_resolution` reports reasoning knob outcome; no default parity claim.
+        **Tool surface:** `mcp` None = per-model default; `False` = inline-only MCP-class. `server_tools` None = all card built-ins; `False` suppress (provider-neutral no-op). xAI: no client MCP. Anthropic: remote connector default when MCP on. `knob_resolution` reports reasoning knob outcome; no default parity claim.
 
-Depth: `agent_skill:dispatch-workflow` · `agent_skill:consult-routing` · `agent_skill:handoff-packet-authoring` · `agent_skill:conductor`.
+        Depth: `agent_skill:dispatch-workflow` · `agent_skill:consult-routing` · `agent_skill:handoff-packet-authoring` · `agent_skill:conductor`.
         """
         prompt_input_err = validate_inline_prompt_inputs(
             op, contract, packet_path, source_ref, prompt, sidecar_ref

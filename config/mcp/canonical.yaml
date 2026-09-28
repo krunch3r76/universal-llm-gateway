@@ -4598,8 +4598,11 @@ tools:
     envelope rejects 422 dispatch_thread_latest_is_pointer — post a fresh prompt turn or pass
     split_thread=true.\nGenerateRoles = generate/to_thread roles (reviewer/synthesizer/artisan/skeptic).\n\
     cursor-sdk ∈ GenerateTargets via auto_dispatchable (substrate=sdk); ¬ cloud CapabilityDispatch.\n\
+    \  contract=implement is the materialized work-item path (source_ref required; inline prompt
+    refused) — not a generic repo-write. Ad-hoc edits use contract=none with prompt or packet_path.\n\
     \  Default output_contract=thread for sdk; packet_path honored for cursor-sdk generate
-    across {sketch,pure-mechanical,implement}; source_ref implement-only; dispatch-thread
+    across {none,sketch,pure-mechanical,implement}; source_ref is the materializer input
+    (implement|wrap|sketch|conductor), not the generic write channel; dispatch-thread
     latest turn is fallback when no packet;\n  poll via poll_hint (agent-bus wait), NOT pipeline(op=result),
     until the execution registry (Track 2).\n¬ web-consult/web-implement/cursor-consult/cursor-implement
     (handoff-only). Async. Mutating. See agent_skill:dispatch."
