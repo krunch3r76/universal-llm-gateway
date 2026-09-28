@@ -16,7 +16,9 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 ExpectedSize = Literal["small", "large", "auto"]
 HarvestSource = Literal["chat", "output-file", "auto"]
-HarvestProvenance = Literal["output-file", "cortex-uri", "chat", "chat-large", "artifact-card"]
+HarvestProvenance = Literal[
+    "output-file", "cortex-uri", "chat", "chat-large", "artifact-card"
+]
 
 # A Cowork completion card ("written the verdict to the output file") runs a few
 # hundred chars; a real transcript runs tens of thousands. Above this bound the
@@ -33,6 +35,7 @@ def cortex_files_root_from_env() -> Path | None:
         return Path(raw).expanduser().resolve()
     default = Path.home() / "mcp-data" / "files"
     return default if default.is_dir() else None
+
 
 _CORTEX_URI = re.compile(r"cortex://[^\s`'\"<>]+")
 _OUTPUT_DOWNLOAD_JS = """
@@ -207,22 +210,31 @@ async def download_cowork_output(
     *,
     timeout_ms: int = 15000,
 ) -> OutputDownloadResult | None:
-    """Resolve Cowork Output bytes: classic download, then filename-button preview.
+    """Resolve Cowork Output bytes: classic, preview-menu Download, then preview text.
 
     Order (fail-closed callers unchanged):
     1. Classic download affordance (``_OUTPUT_DOWNLOAD_JS`` + ``expect_download``).
-    2. Filename-button → preview-panel ``innerText`` extract (sibling module).
-    3. ``None`` — callers decide soft fallback (``auto``) vs hard fail
+    2. Preview menu: More ways to open, then the Download item
+       (``download_via_preview_menu``). The Outputs row has no download
+       attribute; those bytes are the file.
+    3. Filename-button → preview-panel ``innerText`` extract (sibling module).
+    4. ``None`` — callers decide soft fallback (``auto``) vs hard fail
        (``output-file``).
 
-    Provenance for both successful paths remains ``output-file`` at
+    Provenance for every successful path remains ``output-file`` at
     ``resolve_harvest_body`` (Outputs-panel deliverable body).
     """
     classic = await _download_via_classic_affordance(page, timeout_ms=timeout_ms)
     if classic is not None and classic.content.strip():
         return classic
-    from claude_bundles.cowork_output_preview import extract_cowork_output_preview
+    from claude_bundles.cowork_output_preview import (
+        download_via_preview_menu,
+        extract_cowork_output_preview,
+    )
 
+    menu_download = await download_via_preview_menu(page, timeout_ms=timeout_ms)
+    if menu_download is not None and menu_download.content_bytes:
+        return menu_download
     preview = await extract_cowork_output_preview(page)
     if preview is not None and preview.content.strip():
         return preview
@@ -246,7 +258,8 @@ async def resolve_harvest_body(
 
     ``harvest_source=output-file`` raises ``OutputDownloadError`` on miss/empty.
     ``harvest_source=auto`` with ``expected_size=large`` tries Output download
-    (classic affordance, then filename-button preview extract), then a chat
+    (classic affordance, then preview-menu Download, then filename-button
+    preview extract), then a chat
     ``cortex://`` pointer; on both miss it measures the scraped body — over
     ``THIN_CHAT_BODY_MAX_CHARS`` yields ``provenance=chat-large``, at or under
     it raises ``OutputDownloadError`` (fail-closed — no thin chat archive).

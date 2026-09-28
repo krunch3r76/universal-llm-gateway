@@ -3,11 +3,15 @@
 Cowork Outputs rows sometimes render as plain ``<button>`` labels (filename
 only) — no ``download`` attr / aria-label. Click opens a preview panel; the
 deliverable body is recoverable from the deepest large text container.
+
+When that preview exposes More ways to open, the file bytes are the menu
+Download item rather than the panel text.
 """
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from playwright.async_api import Page
@@ -23,6 +27,13 @@ _OUTPUT_FILENAME_RE = re.compile(
 
 # Preview chrome / empty panels are far below a real deliverable body.
 MIN_PREVIEW_BODY_CHARS = 120
+
+# How long to wait for preview chrome after the Outputs row click. A miss
+# falls through to innerText extract, so this stays well under download timeout.
+_PREVIEW_MENU_REVEAL_MS = 1500
+
+# One leading run of private-use / icon chrome before a filename label.
+_LEADING_NON_FILENAME_RE = re.compile(r"^[^\w.\- ]+")
 
 _OUTPUT_FILENAME_BUTTON_JS = """
 () => {
@@ -172,8 +183,75 @@ async def extract_cowork_output_preview(
     )
 
 
+def _filename_from_outputs_row(label: str, suggested: str) -> str:
+    """Prefer the Outputs row label after one leading chrome run is removed."""
+    stripped = _LEADING_NON_FILENAME_RE.sub("", (label or "").strip(), count=1).strip()
+    if stripped:
+        return stripped
+    fallback = (suggested or "").strip()
+    return fallback or "cowork-output"
+
+
+async def download_via_preview_menu(
+    page: Page,
+    *,
+    timeout_ms: int = 15000,
+) -> OutputDownloadResult | None:
+    """Return file bytes from the Download item inside More ways to open.
+
+    The Outputs row has no download attribute. The file is the Download
+    item in More ways to open, not the preview panel text and not the chat
+    paste. Returns None on any miss and does not raise.
+    """
+    try:
+        from claude_bundles.cowork_output_download import OutputDownloadResult
+
+        tagged = await page.evaluate(_OUTPUT_FILENAME_BUTTON_JS)
+        if not tagged:
+            return None
+        raw_label = str(tagged.get("filename") or "")
+        row = page.locator("[data-cdp-output-filename='1']").first
+        if not await row.count():
+            return None
+        await row.click(force=True)
+        reveal_ms = min(timeout_ms, _PREVIEW_MENU_REVEAL_MS)
+        more = page.locator('[aria-label="More ways to open"][aria-haspopup="menu"]')
+        await more.first.wait_for(state="visible", timeout=reveal_ms)
+        await more.first.click(force=True)
+        menu = page.locator('[role="menu"]:visible')
+        await menu.first.wait_for(state="visible", timeout=reveal_ms)
+        opened = menu.first
+        item = opened.get_by_role("menuitem", name="Download", exact=True)
+        if not await item.count():
+            item = opened.get_by_role("button", name="Download", exact=True)
+        if not await item.count():
+            return None
+        async with page.expect_download(timeout=timeout_ms) as download_info:
+            await item.first.click(force=True)
+        download = await download_info.value
+        suggested = download.suggested_filename or ""
+        path = await download.path()
+        if not path:
+            return None
+        raw = Path(path).read_bytes()
+        if not raw:
+            return None
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("utf-8", errors="replace")
+        return OutputDownloadResult(
+            filename=_filename_from_outputs_row(raw_label, suggested),
+            content=text,
+            content_bytes=raw,
+        )
+    except Exception:
+        return None
+
+
 __all__ = [
     "MIN_PREVIEW_BODY_CHARS",
+    "download_via_preview_menu",
     "extract_cowork_output_preview",
     "is_thin_or_chrome_preview",
     "looks_like_output_filename",
