@@ -57,6 +57,55 @@ def ff_only_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
     return commit_is_ancestor_of_hub_master(hub, tip.stdout.strip()) is True
 
 
+def clean_merge_onto_hub_master(repo: Path, *, branch_name: str) -> bool:
+    """Merge *branch_name* into hub master when git reports no conflict.
+
+    The fast-forward actuator refuses the ordinary case: master has commits
+    the lane does not. This lands that case only when the merge is textual
+    and conflict-free. A dirty hub tree, a missing ref, a non-master checkout,
+    a branch with nothing ahead, or a branch that is not actually behind
+    master returns False and leaves HEAD where it was. A conflict aborts the
+    merge and leaves HEAD where it was. Returns True only when the branch tip
+    is an ancestor of hub master afterward.
+    Side effects: ``git merge --no-edit`` on the hub master worktree when the
+    preconditions hold and the merge does not conflict.
+    """
+    branch = (branch_name or "").strip()
+    if not branch or branch == "master":
+        return False
+    hub = resolve_hub_git_repo(repo)
+    head = _git_capture(hub, "rev-parse", "--abbrev-ref", "HEAD")
+    if head.returncode != 0 or head.stdout.strip() != "master":
+        return False
+    porcelain = _git_capture(hub, "status", "--porcelain=v1")
+    if porcelain.returncode != 0 or porcelain.stdout.strip():
+        return False
+    ahead = _git_capture(hub, "rev-list", "--count", f"master..{branch}")
+    if ahead.returncode != 0 or not ahead.stdout.strip().isdigit():
+        return False
+    if int(ahead.stdout.strip()) < 1:
+        return False
+    behind = _git_capture(hub, "rev-list", "--count", f"{branch}..master")
+    if behind.returncode != 0 or not behind.stdout.strip().isdigit():
+        return False
+    if int(behind.stdout.strip()) < 1:
+        return False
+    tip = _git_capture(hub, "rev-parse", "--verify", f"{branch}^{{commit}}")
+    if tip.returncode != 0 or not tip.stdout.strip():
+        return False
+    merged = _git_capture(hub, "merge", "--no-edit", branch)
+    if merged.returncode != 0:
+        _abort_merge_if_started(hub)
+        return False
+    return commit_is_ancestor_of_hub_master(hub, tip.stdout.strip()) is True
+
+
+def _abort_merge_if_started(hub: Path) -> None:
+    merging = _git_capture(hub, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+    if merging.returncode == 0:
+        _git_capture(hub, "merge", "--abort")
+
+
 def _git_capture(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-C", str(repo), *args],

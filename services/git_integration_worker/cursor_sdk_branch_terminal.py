@@ -155,18 +155,21 @@ def maybe_ff_land_silent_lane(
     closeout_text: str | None,
     commits_ahead: int | None,
 ) -> bool:
-    """Fast-forward a silent in-scope lane onto hub master.
+    """Land a silent in-scope lane onto hub master.
 
-    Exploratory packets (``do not hub-land``), any declared disposition, a
-    read-only admit, and a branch with nothing ahead are left untouched.
+    Fast-forward when master has not moved. When a peer commit landed first
+    and git can merge with no conflict, merge. Exploratory packets
+    (``do not hub-land``), any declared disposition, a read-only admit, a
+    branch with nothing ahead, and a textual conflict are left untouched.
     Returns True only when hub master now contains the branch tip.
-    Side effects: may fast-forward the hub master worktree.
+    Side effects: may fast-forward or merge the hub master worktree.
     """
     if (commits_ahead or 0) < 1:
         return False
     if _dispatch_read_only(dispatch_id):
         return False
     from services.git_integration_worker.cursor_sdk_hub_land_scope import (
+        clean_merge_onto_hub_master,
         ff_only_onto_hub_master,
         packet_hub_land_scoped_out,
     )
@@ -176,7 +179,9 @@ def maybe_ff_land_silent_lane(
     verb, _reason, _sha = parse_land_disposition(closeout_text)
     if verb is not None:
         return False
-    return ff_only_onto_hub_master(repo, branch_name=branch_name)
+    if ff_only_onto_hub_master(repo, branch_name=branch_name):
+        return True
+    return clean_merge_onto_hub_master(repo, branch_name=branch_name)
 
 
 def _dispatch_read_only(dispatch_id: str) -> bool:

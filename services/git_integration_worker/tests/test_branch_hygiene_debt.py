@@ -225,6 +225,96 @@ def test_undeclared_terminal_ff_lands_clean_hub(repo: Path) -> None:
     assert list_open_debts() == []
 
 
+def test_undeclared_terminal_clean_diverged_lane_merges(repo: Path) -> None:
+    """A peer commit on another path is the ordinary non-fast-forward.
+
+    Fast-forward-only refuses it. A conflict-free merge must put the lane tip
+    on master. Overlapping-line conflicts are a different test.
+    """
+    tip = _branch_with_change(
+        repo, branch="cursor-sdk/lane-13147", path="lane.py", content="lane = 1\n"
+    )
+    _land_on_master(repo, path="peer.py", content="peer = 1\n")
+    not_ff = subprocess.run(
+        ["git", "-C", str(repo), "merge-base", "--is-ancestor", "HEAD", tip],
+        capture_output=True,
+        check=False,
+    )
+    assert not_ff.returncode != 0
+    settlement = settle_lane_branch(
+        source_repo=repo,
+        branch_name="cursor-sdk/lane-13147",
+        thread_id="13147",
+        dispatch_id="d-diverged",
+        closeout_text="did the work, no disposition line",
+        commits_ahead=1,
+        landed=False,
+        head_sha=tip,
+        files=["lane.py"],
+    )
+    assert settlement.outcome == "discharged"
+    assert settlement.verb == "landed"
+    ancestor = subprocess.run(
+        ["git", "-C", str(repo), "merge-base", "--is-ancestor", tip, "HEAD"],
+        capture_output=True,
+        check=False,
+    )
+    assert ancestor.returncode == 0
+    parents = subprocess.run(
+        ["git", "-C", str(repo), "rev-list", "--parents", "-n", "1", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    assert len(parents) == 3
+    assert (repo / "lane.py").read_text(encoding="utf-8") == "lane = 1\n"
+    assert (repo / "peer.py").read_text(encoding="utf-8") == "peer = 1\n"
+    assert list_open_debts() == []
+
+
+def test_undeclared_terminal_conflicting_diverged_lane_opens_debt(repo: Path) -> None:
+    """A textual conflict is the peer-WIP refusal. The hub stays unmerged."""
+    tip = _branch_with_change(
+        repo, branch="cursor-sdk/lane-13147", path="shared.py", content="lane\n"
+    )
+    _land_on_master(repo, path="shared.py", content="master\n")
+    head_before = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    settlement = settle_lane_branch(
+        source_repo=repo,
+        branch_name="cursor-sdk/lane-13147",
+        thread_id="13147",
+        dispatch_id="d-conflict",
+        closeout_text="did the work, no disposition line",
+        commits_ahead=1,
+        landed=False,
+        head_sha=tip,
+        files=["shared.py"],
+    )
+    assert settlement.outcome == "debt_opened"
+    head_after = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert head_after == head_before
+    merge_head = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+        capture_output=True,
+        check=False,
+    )
+    assert merge_head.returncode != 0
+    assert (repo / "shared.py").read_text(encoding="utf-8") == "master\n"
+    assert "cursor-sdk/lane-13147" in _branches(repo)
+    debt = get_branch_debt(branch_name="cursor-sdk/lane-13147")
+    assert debt is not None and debt.open
+
+
 def test_scoped_out_silence_still_opens_debt(repo: Path) -> None:
     tip = _branch_with_change(
         repo, branch="cursor-sdk/lane-7229", path="a.py", content="x = 1\n"
