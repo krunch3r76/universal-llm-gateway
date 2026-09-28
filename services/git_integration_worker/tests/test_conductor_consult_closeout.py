@@ -30,6 +30,7 @@ _CONDUCTOR_PACKET = """\
 ---
 
 work_key: todo:fixture-slug
+packet_kind: conductor
 contract: conductor
 lane: B
 ---

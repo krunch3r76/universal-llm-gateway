@@ -76,7 +76,9 @@ def test_live_branch_is_never_touched(repo: Path) -> None:
     """A ref that still exists is land-or-discard work, not reconciliation's call."""
     branch = "cursor-sdk/lane-live"
     sha = _lane_commit(repo, branch, "live\n")
-    open_branch_debt(branch_name=branch, thread_id="live", tip_sha=sha)
+    open_branch_debt(
+        branch_name=branch, thread_id="live", dispatch_id="d-live", tip_sha=sha
+    )
 
     report = reconcile_open_branch_debts(source_repo=repo, apply=True)
 
@@ -87,7 +89,9 @@ def test_live_branch_is_never_touched(repo: Path) -> None:
 def test_archived_tip_discharges_the_stale_row(repo: Path) -> None:
     branch = "cursor-sdk/lane-archived"
     sha = _lane_commit(repo, branch, "archived\n")
-    open_branch_debt(branch_name=branch, thread_id="arch", tip_sha=sha)
+    open_branch_debt(
+        branch_name=branch, thread_id="arch", dispatch_id="d-arch", tip_sha=sha
+    )
     tag = archive_branch(repo=repo, branch_name=branch)
     _git("branch", "-D", branch, cwd=repo)
 
@@ -106,7 +110,9 @@ def test_reachable_orphan_tip_is_archived_then_discharged(repo: Path) -> None:
     """A tip that survives ref deletion is preserved before the row is retired."""
     branch = "cursor-sdk/lane-recover"
     sha = _lane_commit(repo, branch, "recover\n")
-    open_branch_debt(branch_name=branch, thread_id="rec", tip_sha=sha)
+    open_branch_debt(
+        branch_name=branch, thread_id="rec", dispatch_id="d-rec", tip_sha=sha
+    )
     _git("branch", "-D", branch, cwd=repo)
 
     report = reconcile_open_branch_debts(source_repo=repo, apply=True)
@@ -124,7 +130,12 @@ def test_reachable_orphan_tip_is_archived_then_discharged(repo: Path) -> None:
 def test_unverifiable_tip_is_reported_and_never_claims_landed(repo: Path) -> None:
     """Recording ``landed`` for work we cannot inspect is worse than an open row."""
     branch = "cursor-sdk/lane-gone"
-    open_branch_debt(branch_name=branch, thread_id="gone", tip_sha=_MISSING_SHA)
+    open_branch_debt(
+        branch_name=branch,
+        thread_id="gone",
+        dispatch_id="d-gone",
+        tip_sha=_MISSING_SHA,
+    )
 
     report = reconcile_open_branch_debts(source_repo=repo, apply=True)
 
@@ -137,7 +148,12 @@ def test_unverifiable_tip_is_reported_and_never_claims_landed(repo: Path) -> Non
 def test_indeterminate_row_does_not_suppress_aged_debt_announcement(repo: Path) -> None:
     """Stamping ``escalated_at`` here would silence the lane's only recovery route."""
     branch = "cursor-sdk/lane-gone-quiet"
-    open_branch_debt(branch_name=branch, thread_id="9621", tip_sha=_MISSING_SHA)
+    open_branch_debt(
+        branch_name=branch,
+        thread_id="9621",
+        dispatch_id="d-9621",
+        tip_sha=_MISSING_SHA,
+    )
 
     reconcile_open_branch_debts(source_repo=repo, apply=True)
 
@@ -147,7 +163,9 @@ def test_indeterminate_row_does_not_suppress_aged_debt_announcement(repo: Path) 
 def test_dry_run_grades_without_mutating(repo: Path) -> None:
     branch = "cursor-sdk/lane-dry"
     sha = _lane_commit(repo, branch, "dry\n")
-    open_branch_debt(branch_name=branch, thread_id="dry", tip_sha=sha)
+    open_branch_debt(
+        branch_name=branch, thread_id="dry", dispatch_id="d-dry", tip_sha=sha
+    )
     archive_branch(repo=repo, branch_name=branch)
     _git("branch", "-D", branch, cwd=repo)
 
@@ -160,12 +178,27 @@ def test_dry_run_grades_without_mutating(repo: Path) -> None:
 
 def test_summary_counts_every_grading(repo: Path) -> None:
     live_sha = _lane_commit(repo, "cursor-sdk/lane-a", "a\n")
-    open_branch_debt(branch_name="cursor-sdk/lane-a", tip_sha=live_sha)
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-a",
+        thread_id="lane-a",
+        dispatch_id="d-lane-a",
+        tip_sha=live_sha,
+    )
     arch_sha = _lane_commit(repo, "cursor-sdk/lane-b", "b\n")
-    open_branch_debt(branch_name="cursor-sdk/lane-b", tip_sha=arch_sha)
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-b",
+        thread_id="lane-b",
+        dispatch_id="d-lane-b",
+        tip_sha=arch_sha,
+    )
     archive_branch(repo=repo, branch_name="cursor-sdk/lane-b")
     _git("branch", "-D", "cursor-sdk/lane-b", cwd=repo)
-    open_branch_debt(branch_name="cursor-sdk/lane-c", tip_sha=_MISSING_SHA)
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-c",
+        thread_id="lane-c",
+        dispatch_id="d-lane-c",
+        tip_sha=_MISSING_SHA,
+    )
 
     summary = reconcile_open_branch_debts(source_repo=repo, apply=False).summary()
 

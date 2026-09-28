@@ -118,8 +118,11 @@ def test_second_dispatch_reuses_lane_tree(source_repo: Path, tmp_path: Path) -> 
     assert first.lease_key == second.lease_key
     assert first.binding_kind == "minted"
     assert second.binding_kind == "reused"
-    assert first.workspace == lane_worktree_dir(worktree_root, "t-lane").resolve()
-    record = lookup_lane_worktree(thread_id="t-lane")
+    assert (
+        first.workspace
+        == lane_worktree_dir(worktree_root, "t-lane", source_repo=source_repo).resolve()
+    )
+    record = lookup_lane_worktree(thread_id="t-lane", source_repo=source_repo)
     assert record is not None
     assert record.branch_name == lane_branch_name("t-lane")
     assert record.last_dispatch_id == "disp-2"
@@ -237,7 +240,9 @@ def test_lane_tree_survives_terminal(source_repo: Path, tmp_path: Path) -> None:
     )
     assert not result.pruned
     assert wt.is_dir()
-    assert lookup_lane_worktree(thread_id="t-survive") is not None
+    assert (
+        lookup_lane_worktree(thread_id="t-survive", source_repo=source_repo) is not None
+    )
 
 
 def test_sequential_lane_work_is_visible(source_repo: Path, tmp_path: Path) -> None:

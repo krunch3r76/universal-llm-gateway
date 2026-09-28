@@ -69,7 +69,6 @@ def worker_cfg(tmp_path: Path, git_repo: Path) -> WorkerConfig:
         host="127.0.0.1",
         port=8091,
         source_repo=git_repo,
-        hub=git_repo,
         worktree_root=wt_root,
         dispatch_workspace=dispatch_ws,
         green_gate_cmd=["true"],
@@ -92,7 +91,7 @@ def client(
     monkeypatch.setattr(
         route_mod,
         "validate_dispatch_context",
-        lambda _repo: {"setting_sources": ["projectSettings"]},
+        lambda *_a, **_k: {"setting_sources": ["projectSettings"]},
     )
 
     async def _noop_acquire(**kwargs: object) -> str:
@@ -554,7 +553,6 @@ def test_ac_s2_7_nest_under_lane_b_inherits_parent_tree(
     parent = resolve_admit_binding(
         req=parent_req,
         source_repo=git_repo,
-        hub=git_repo,
         worktree_root=worker_cfg.worktree_root,
         dispatch_workspace_default=worker_cfg.dispatch_workspace,
         lane="B",
@@ -590,7 +588,6 @@ def test_ac_s2_7_nest_under_lane_b_inherits_parent_tree(
     child = resolve_admit_binding(
         req=child_req,
         source_repo=git_repo,
-        hub=git_repo,
         worktree_root=worker_cfg.worktree_root,
         dispatch_workspace_default=worker_cfg.dispatch_workspace,
         lane="A",

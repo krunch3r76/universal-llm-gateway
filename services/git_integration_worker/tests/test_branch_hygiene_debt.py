@@ -415,6 +415,7 @@ def test_discharge_landed_idempotent_when_ref_already_retired(repo: Path) -> Non
     open_branch_debt(
         branch_name="cursor-sdk/lane-7413",
         thread_id="7413",
+        dispatch_id="d-7413-idem",
         tip_sha=tip,
     )
     _git("branch", "-D", "cursor-sdk/lane-7413", cwd=repo)
@@ -438,7 +439,11 @@ def test_discard_archives_then_deletes(repo: Path) -> None:
     tip = _branch_with_change(
         repo, branch="cursor-sdk/lane-7083", path="f.py", content="scrap = 1\n"
     )
-    open_branch_debt(branch_name="cursor-sdk/lane-7083", thread_id="7083")
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-7083",
+        thread_id="7083",
+        dispatch_id="d-7083",
+    )
     result = discharge_discard(
         repo=repo,
         branch_name="cursor-sdk/lane-7083",
@@ -485,9 +490,21 @@ def test_discharge_refuses_a_checked_out_branch(repo: Path, tmp_path: Path) -> N
 
 
 def test_lane_hygiene_names_the_owing_lane() -> None:
-    open_branch_debt(branch_name="cursor-sdk/lane-7229", thread_id="7229")
-    open_branch_debt(branch_name="cursor-sdk/lane-7165", thread_id="7229")
-    open_branch_debt(branch_name="cursor-sdk/lane-7208", thread_id="7208")
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-7229",
+        thread_id="7229",
+        dispatch_id="d-7229-hygiene",
+    )
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-7165",
+        thread_id="7229",
+        dispatch_id="d-7165-hygiene",
+    )
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-7208",
+        thread_id="7208",
+        dispatch_id="d-7208-hygiene",
+    )
 
     snapshot = lane_hygiene_snapshot()
     assert snapshot["open_debts"] == 3
@@ -531,7 +548,11 @@ def test_aged_debt_escalates_without_deleting(repo: Path, monkeypatch) -> None:
     _branch_with_change(
         repo, branch="cursor-sdk/lane-7229", path="i.py", content="k = 1\n"
     )
-    open_branch_debt(branch_name="cursor-sdk/lane-7229", thread_id="7229")
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-7229",
+        thread_id="7229",
+        dispatch_id="d-7229-escalate",
+    )
     _age_debt("cursor-sdk/lane-7229", days=3)
 
     assert escalate_aged_debts() == 1
@@ -544,13 +565,21 @@ def test_aged_debt_escalates_without_deleting(repo: Path, monkeypatch) -> None:
 
 
 def test_fresh_debt_does_not_escalate() -> None:
-    open_branch_debt(branch_name="cursor-sdk/lane-7300", thread_id="7300")
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-7300",
+        thread_id="7300",
+        dispatch_id="d-7300",
+    )
     assert escalate_aged_debts() == 0
 
 
 def test_admit_refusal_only_past_the_hard_horizon(monkeypatch) -> None:
     monkeypatch.setenv("CURSOR_SDK_BRANCH_DEBT_REFUSAL_HORIZON_S", str(14 * 86400))
-    open_branch_debt(branch_name="cursor-sdk/lane-7229", thread_id="7229")
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-7229",
+        thread_id="7229",
+        dispatch_id="d-7229-refusal",
+    )
 
     _age_debt("cursor-sdk/lane-7229", days=3)
     assert debt_admit_refusal("7229") is None
@@ -564,7 +593,11 @@ def test_admit_refusal_only_past_the_hard_horizon(monkeypatch) -> None:
 
 def test_admit_refusal_is_lane_scoped(monkeypatch) -> None:
     monkeypatch.setenv("CURSOR_SDK_BRANCH_DEBT_REFUSAL_HORIZON_S", str(14 * 86400))
-    open_branch_debt(branch_name="cursor-sdk/lane-7229", thread_id="7229")
+    open_branch_debt(
+        branch_name="cursor-sdk/lane-7229",
+        thread_id="7229",
+        dispatch_id="d-7229-scoped",
+    )
     _age_debt("cursor-sdk/lane-7229", days=20)
     assert debt_admit_refusal("7208") is None
 
@@ -743,6 +776,7 @@ def test_discard_unpins_registered_worktree_then_deletes_branch(
         worktree_path=tree,
         branch_name="cursor-sdk/lane-9601",
         branch_point="master",
+        source_repo=repo,
     )
     result = discharge_discard(
         repo=repo,
@@ -753,7 +787,7 @@ def test_discard_unpins_registered_worktree_then_deletes_branch(
     assert not result.inherited
     assert "cursor-sdk/lane-9601" not in _branches(repo)
     assert not tree.exists()
-    assert lookup_lane_worktree(thread_id="9601") is None
+    assert lookup_lane_worktree(thread_id="9601", source_repo=repo) is None
 
 
 def test_discard_inherits_when_second_auto_job_is_queued(
@@ -775,6 +809,7 @@ def test_discard_inherits_when_second_auto_job_is_queued(
         worktree_path=tree,
         branch_name="cursor-sdk/lane-9602",
         branch_point="master",
+        source_repo=repo,
     )
     queue = reset_queue_for_tests(durable=False)
     queue.enqueue(
@@ -810,7 +845,7 @@ def test_discard_inherits_when_second_auto_job_is_queued(
     assert "inherited" in (result.refused_reason or "")
     assert "cursor-sdk/lane-9602" in _branches(repo)
     assert tree.exists()
-    assert lookup_lane_worktree(thread_id="9602") is not None
+    assert lookup_lane_worktree(thread_id="9602", source_repo=repo) is not None
     settlement = settle_lane_branch(
         source_repo=repo,
         branch_name="cursor-sdk/lane-9602",
