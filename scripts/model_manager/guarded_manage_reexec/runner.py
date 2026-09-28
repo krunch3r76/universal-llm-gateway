@@ -23,18 +23,18 @@ from typing import Any
 
 from transport_utils import MANAGE_SOCKET
 
-from services.git_integration_worker.dispatch_home_host_guard import (
-    DispatchHomeHostRefusal,
-    refuse_host_target_if_dispatch_home,
-)
-
 from .checks import (
     RefuseFinding,
     collect_refuse_report,
     observe_drain_clear,
+    observe_nonterminal_intents,
 )
 from .client import call_manage
-from .pane import TreeContainsFn, observe_tmux_pane_hosts_manage
+from .pane import (
+    TreeContainsFn,
+    find_tmux_target_hosting_manage,
+    observe_tmux_pane_hosts_manage,
+)
 from .result import (
     DEFAULT_BOOT_TIMEOUT_S,
     DEFAULT_QUIT_TIMEOUT_S,
@@ -42,10 +42,20 @@ from .result import (
     GuardedReexecResult,
     prove_pickup,
 )
+from .seat_prelude import (
+    PANE_RULING,
+    intent_store_for_manage,
+    resolve_manage_inflight_for_seat,
+    run_giw_paired_start,
+    run_giw_paired_stop,
+    seat_operator_home,
+    seat_python_bin,
+    wait_nonterminal_intents_clear,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_TMUX_TARGET = "0:0"
-DEFAULT_PYTHON = str(Path.home() / ".venvs" / "universal" / "bin" / "python")
+DEFAULT_PYTHON = str(seat_operator_home() / ".venvs" / "universal" / "bin" / "python")
 
 ManageCall = Callable[..., dict[str, Any]]
 RunCmd = Callable[[list[str]], subprocess.CompletedProcess[str]]
@@ -122,32 +132,14 @@ def run_guarded_reexec(
     boot_timeout_s: float = DEFAULT_BOOT_TIMEOUT_S,
     max_start_attempts: int = 3,
     tree_contains_fn: TreeContainsFn | None = None,
+    intent_wait_s: float = 600.0,
+    inflight_wait_s: float = 120.0,
 ) -> GuardedReexecResult:
     """Run refuse/require/proof path; dry_run never quits or pauses charter hold."""
     manage_call = manage_call or call_manage
     run_cmd = run_cmd or _default_run
-
-    try:
-        refuse_host_target_if_dispatch_home(tool="guarded_manage_reexec")
-    except DispatchHomeHostRefusal as exc:
-        return GuardedReexecResult(
-            status="dry-run" if dry_run else "refused",
-            reason="dispatch_home_host_refusal",
-            dry_run=dry_run,
-            checks={
-                "findings": [
-                    {
-                        "reason": "dispatch_home_host_refusal",
-                        "offenders": [{"message": str(exc)}],
-                    }
-                ],
-                "refused": True,
-            },
-            target_ref=target_ref,
-            executed=False,
-            boot_timeout_s=boot_timeout_s,
-            quit_timeout_s=quit_timeout_s,
-        )
+    python_bin = seat_python_bin(python_bin, default=DEFAULT_PYTHON)
+    seat_home = seat_operator_home()
 
     def _busy() -> dict[str, Any]:
         return manage_call("busy_status", {}, sock_path=sock_path)
@@ -178,16 +170,19 @@ def run_guarded_reexec(
     # Dry-run skips mutate-path drain require; observes drain read-only below.
     manage_pid = whoami_before.get("pid")
     manage_pid_i = int(manage_pid) if isinstance(manage_pid, int) else None
+    store = intent_store_for_manage(db_path=intent_db, manage_pid=manage_pid_i)
     report = collect_refuse_report(
         busy_status_fn=_busy,
         hold_status_fn=_hold,
-        db_path=intent_db,
+        store=store,
         manage_pid=manage_pid_i,
         require_drain_clear=False,
     )
     if dry_run:
         _dry_run_attach_drain(report, _hold())
 
+    tmux_effective = tmux_target
+    pane_meta: dict[str, Any] = {"pane_ruling": PANE_RULING}
     if manage_pid_i is None:
         _attach_pane_finding(
             report,
@@ -197,22 +192,121 @@ def run_guarded_reexec(
             ),
         )
     else:
-        _attach_pane_finding(
-            report,
-            observe_tmux_pane_hosts_manage(
-                tmux_target=tmux_target,
-                manage_pid=manage_pid_i,
+        pane_finding = observe_tmux_pane_hosts_manage(
+            tmux_target=tmux_effective,
+            manage_pid=manage_pid_i,
+            run_cmd=run_cmd,
+            tree_contains_fn=tree_contains_fn,
+        )
+        if pane_finding is not None and pane_finding.reason == "tmux_pane_pid_mismatch":
+            resolved, scan = find_tmux_target_hosting_manage(
+                manage_pid_i,
                 run_cmd=run_cmd,
                 tree_contains_fn=tree_contains_fn,
-            ),
+            )
+            if resolved:
+                tmux_effective = resolved
+                pane_meta |= {
+                    "tmux_target_requested": tmux_target,
+                    "tmux_target_effective": tmux_effective,
+                    "tmux_scan": scan,
+                }
+                pane_finding = observe_tmux_pane_hosts_manage(
+                    tmux_target=tmux_effective,
+                    manage_pid=manage_pid_i,
+                    run_cmd=run_cmd,
+                    tree_contains_fn=tree_contains_fn,
+                )
+        _attach_pane_finding(report, pane_finding)
+
+    prelude: dict[str, Any] = {
+        "seat_operator_home": str(seat_home),
+        **pane_meta,
+    }
+    giw_paired_required = False
+
+    if not dry_run and manage_pid_i is not None:
+        intent_wait = wait_nonterminal_intents_clear(
+            store=store,
+            manage_call=manage_call,
+            timeout_s=intent_wait_s,
         )
+        prelude["intent_wait"] = {
+            "cleared": intent_wait.cleared,
+            "waited_s": intent_wait.waited_s,
+            "last_offenders": intent_wait.last_offenders,
+        }
+        if not intent_wait.cleared:
+            report.findings = [
+                f for f in report.findings if f.reason != "nonterminal_restart_intent"
+            ]
+            report.findings.append(
+                RefuseFinding(
+                    reason="nonterminal_restart_intent",
+                    offenders=intent_wait.last_offenders,
+                )
+            )
+            report.refused = True
+        else:
+            report.findings = [
+                f for f in report.findings if f.reason != "nonterminal_restart_intent"
+            ]
+
+        inflight = resolve_manage_inflight_for_seat(
+            _busy(),
+            manage_pid=manage_pid_i,
+            manage_call=manage_call,
+            timeout_s=inflight_wait_s,
+        )
+        prelude["inflight_wait"] = {
+            "cleared": inflight.cleared,
+            "waited_s": inflight.waited_s,
+            "giw_paired_required": inflight.giw_paired_required,
+            "giw_paired_refused_occupants": inflight.giw_paired_refused_occupants,
+        }
+        if inflight.giw_paired_refused_occupants:
+            report.findings.append(
+                RefuseFinding(
+                    reason="giw_claimed_occupants",
+                    offenders=[{"detail": "never kill GIW with claimed occupants"}],
+                )
+            )
+            report.refused = True
+        elif inflight.giw_paired_required:
+            giw_paired_required = True
+            report.findings = [
+                f
+                for f in report.findings
+                if f.reason != "manage_inflight_or_activities"
+            ]
+            report.refused = bool(report.findings)
+        elif not inflight.cleared:
+            report.refused = True
+        else:
+            report.findings = [
+                f
+                for f in report.findings
+                if f.reason != "manage_inflight_or_activities"
+            ]
+            report.refused = bool(report.findings)
+    elif dry_run:
+        intent_finding = observe_nonterminal_intents(store)
+        if intent_finding is not None:
+            prelude["intent_wait"] = {
+                "cleared": False,
+                "dry_run": True,
+                "offenders": intent_finding.offenders,
+            }
+
+    report_dict = report.as_dict()
+    report_dict["seat_prelude"] = prelude
 
     if report.refused:
         return GuardedReexecResult(
             status="dry-run" if dry_run else "refused",
             reason=";".join(f.reason for f in report.findings) or "refused",
             dry_run=dry_run,
-            checks=report.as_dict(),
+            checks=report_dict,
             whoami_before=whoami_before,
             target_ref=target_ref,
             executed=False,
@@ -225,13 +319,30 @@ def run_guarded_reexec(
             status="dry-run",
             reason="checks_passed_stopped_before_quit",
             dry_run=True,
-            checks=report.as_dict(),
+            checks=report_dict,
             whoami_before=whoami_before,
             target_ref=target_ref,
             executed=False,
             boot_timeout_s=boot_timeout_s,
             quit_timeout_s=quit_timeout_s,
         )
+
+    giw_paired: dict[str, Any] | None = None
+    if giw_paired_required:
+        stop_payload = run_giw_paired_stop(manage_call, manage_pid=manage_pid_i or 0)
+        giw_paired = {"stop": stop_payload}
+        if stop_payload.get("status") == "refused":
+            return GuardedReexecResult(
+                status="refused",
+                reason="giw_claimed_occupants",
+                dry_run=False,
+                checks={**report_dict, "giw_paired": giw_paired},
+                whoami_before=whoami_before,
+                target_ref=target_ref,
+                executed=False,
+                boot_timeout_s=boot_timeout_s,
+                quit_timeout_s=quit_timeout_s,
+            )
 
     # ── mutate path (operator-authorized only; this dispatch does not run it)
     pause = manage_call(
@@ -252,9 +363,7 @@ def run_guarded_reexec(
             checks={
                 "pause": pause,
                 "hold_after": hold_after,
-                "findings": [
-                    {"reason": drain.reason, "offenders": drain.offenders}
-                ],
+                "findings": [{"reason": drain.reason, "offenders": drain.offenders}],
             },
             whoami_before=whoami_before,
             target_ref=target_ref,
@@ -263,7 +372,7 @@ def run_guarded_reexec(
             quit_timeout_s=quit_timeout_s,
         )
 
-    _tmux_send(tmux_target, "q", run_cmd=run_cmd)
+    _tmux_send(tmux_effective, "q", run_cmd=run_cmd)
     if not _wait_sock(
         sock_path, manage_call=manage_call, timeout_s=quit_timeout_s, want_up=False
     ):
@@ -282,7 +391,7 @@ def run_guarded_reexec(
     start_attempt = 0
     sock_up = False
     for attempt in range(1, max_start_attempts + 1):
-        _tmux_send(tmux_target, start_cmd, run_cmd=run_cmd)
+        _tmux_send(tmux_effective, start_cmd, run_cmd=run_cmd)
         if _wait_sock(
             sock_path,
             manage_call=manage_call,
@@ -319,6 +428,9 @@ def run_guarded_reexec(
         )
 
     whoami_after = manage_call("whoami", {}, sock_path=sock_path)
+    if giw_paired_required:
+        giw_paired = giw_paired or {}
+        giw_paired["start"] = run_giw_paired_start(manage_call)
     manage_call("charter_resume", {}, sock_path=sock_path)
     version_ok, start_ok, proof_reason = prove_pickup(
         before=whoami_before, after=whoami_after, target_ref=target_ref
@@ -340,5 +452,8 @@ def run_guarded_reexec(
             "pause": pause,
             "hold_after": hold_after,
             "start_attempts": start_attempt,
+            "seat_prelude": prelude,
+            "giw_paired": giw_paired,
+            "tmux_target_effective": tmux_effective,
         },
     )
