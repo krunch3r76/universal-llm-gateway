@@ -72,6 +72,8 @@ DEFER_HARVEST_WANTED = "harvest_wanted"
 # charter fire and the harvest-wanted consumer both skip it. An operator
 # re-fire is what runs the probe again.
 DEFER_PROBE_UNDETERMINED = "probe_undetermined"
+# Terminal defer on a seat-retracted obligation (status=failed, not open).
+DEFER_OPERATOR_RETRACTED = "operator_retracted"
 STALE_CONSUMPTION_CLAIM_S = 600.0
 
 
@@ -354,6 +356,56 @@ def reopen_closed_row(
             WHERE row_id=? AND status='closed'
             """,
             (reason, now, row_id),
+        )
+        return cur.rowcount > 0
+    finally:
+        if own_conn:
+            db.close()
+
+
+def retract_row(
+    row_id: str,
+    *,
+    reason: str,
+    authority: str | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> bool:
+    """Terminalize an open obligation without harvest consumption — seat retraction.
+
+    Leaves ``status=failed`` with ``defer_reason=operator_retracted`` so the row
+    is immutable history and is excluded from ``list_harvest_wanted_rows``.
+    """
+    own_conn = conn is None
+    db = conn or open_ledger_db()
+    now = time.time()
+    payload: dict[str, Any] = {
+        "retracted": True,
+        "failure_reason": reason,
+        "status_claim_kind": _STATUS_CLAIM_KIND,
+    }
+    if authority:
+        payload["authority"] = authority
+    try:
+        cur = execute_with_retry(
+            db,
+            """
+            UPDATE propagation_ledger
+            SET status='failed',
+                proof_payload=?,
+                closed_at=?,
+                defer_reason=?,
+                reason=?,
+                updated_at=?
+            WHERE row_id=? AND status='open'
+            """,
+            (
+                json.dumps(payload),
+                now,
+                DEFER_OPERATOR_RETRACTED,
+                reason,
+                now,
+                row_id,
+            ),
         )
         return cur.rowcount > 0
     finally:
@@ -755,6 +807,7 @@ def release_consumption_claim(
 
 __all__ = [
     "DEFER_HARVEST_WANTED",
+    "DEFER_OPERATOR_RETRACTED",
     "DEFER_PROBE_UNDETERMINED",
     "open_row_in_harvest_fire_set",
     "OpenPropagationProjection",
@@ -770,6 +823,7 @@ __all__ = [
     "reclaim_stale_consumption_claims",
     "release_consumption_claim",
     "reopen_closed_row",
+    "retract_row",
     "scoreboard_projection",
     "set_defer_reason",
     "set_open_proof_payload",

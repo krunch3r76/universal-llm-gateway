@@ -11,11 +11,13 @@ from implement_admission.propagation_row import PropagationRow
 
 from charter_runner_store.propagation_ledger import (
     DEFER_HARVEST_WANTED,
+    DEFER_OPERATOR_RETRACTED,
     list_harvest_wanted_rows,
     list_open_rows,
     mark_harvest_wanted,
     reclaim_stale_consumption_claims,
     release_consumption_claim,
+    retract_row,
     try_claim_for_consumption,
     upsert_open_rows,
 )
@@ -352,3 +354,30 @@ async def test_decline_reclaim_idempotent_across_ticks(tmp_path, monkeypatch) ->
     outcome_path = propagation_outcomes_path()
     assert not outcome_path.is_file() or len(outcome_path.read_text().strip().splitlines()) == 0
 
+
+def test_retract_row_ejects_from_harvest_wanted_pool(tmp_path, monkeypatch) -> None:
+    """Seat retraction terminalizes the row — charter tick consumer must not see it."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    row_id = upsert_open_rows([_mcp_row()])[0]
+    mark_harvest_wanted(row_id)
+    assert list_harvest_wanted_rows()
+
+    ok = retract_row(
+        row_id,
+        reason="operator ruling — agent-bus:12286 turn 736",
+        authority="agent-bus:12286 turn 736",
+    )
+    assert ok
+    assert list_harvest_wanted_rows() == []
+    assert list_open_rows() == []
+    db = __import__(
+        "charter_runner_store.propagation_ledger", fromlist=["open_ledger_db"]
+    ).open_ledger_db()
+    row = db.execute(
+        "SELECT status, defer_reason, reason FROM propagation_ledger WHERE row_id=?",
+        (row_id,),
+    ).fetchone()
+    db.close()
+    assert row["status"] == "failed"
+    assert row["defer_reason"] == DEFER_OPERATOR_RETRACTED
+    assert "12286 turn 736" in row["reason"]
