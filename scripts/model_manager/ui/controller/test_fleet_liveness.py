@@ -453,7 +453,7 @@ def test_code_ref_validation_labeled_derived_under_manage_authority(
     monkeypatch.setattr(
         live,
         "current_validation",
-        lambda service, code_ref: {
+        lambda service, code_ref, activation_validation_id=None: {
             "verdict": "running_committed_code",
             "liveness": {
                 "answer": "yes",
