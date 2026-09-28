@@ -348,8 +348,11 @@ async def test_run_propagation_stargate_busy_yields_queued_restart_intent() -> N
         ) -> None:
             return None
 
+    posted: list[dict[str, object]] = []
+
     class _Client:
         async def reply(self, **kwargs):  # type: ignore[no-untyped-def]
+            posted.append(kwargs)
             return type("R", (), {"status_code": 200, "body": ""})()
 
     with (
@@ -375,19 +378,6 @@ async def test_run_propagation_stargate_busy_yields_queued_restart_intent() -> N
         patch(
             "services.git_integration_worker.cursor_auto.handler_propagation.set_defer_reason",
         ),
-        patch(
-            "scripts.model_manager.ui.controller.charter_runner.propagation_execute.dispatch_proof_probe",
-            return_value=type(
-                "P",
-                (),
-                {
-                    "error": None,
-                    "payload": {"code_version": "cafebabe", "pid": 1},
-                    "proof_class_requested": "process_live",
-                    "proof_class_executed": "process_live",
-                },
-            )(),
-        ),
     ):
         result = await run_propagation_in_seat(
             job,
@@ -398,12 +388,14 @@ async def test_run_propagation_stargate_busy_yields_queued_restart_intent() -> N
             gate_plan={"action": "in_seat"},
         )
     assert result["disposition"] == "queued"
-    executions = result.get("executions") or []
+    assert posted
+    payload = json.loads(str(posted[-1]["body"]))
+    executions = payload.get("executions") or []
     assert executions
     assert executions[0]["status"] == "queued"
     manage = executions[0].get("manage") or {}
     assert manage.get("restart_intent_id") == "intent-stargate-12286"
-    assert "harvest_wanted" not in str(result.get("summary") or "").lower()
+    assert "harvest_wanted" not in str(payload.get("summary") or "").lower()
 
 
 @pytest.mark.asyncio
