@@ -24,9 +24,23 @@ from services.git_integration_worker.cursor_auto.hop_cadence import (
 )
 from services.git_integration_worker.cursor_auto.hop_cadence_watch import HopDecision
 from services.git_integration_worker.cursor_auto.queue import AutoJob, AutoJobQueue
-from services.git_integration_worker.cursor_dispatch_ledger import CursorDispatchLedger
+from services.git_integration_worker.cursor_dispatch_ledger import (
+    CURSOR_SDK_DISPATCH_LEDGER_ENV,
+    CursorDispatchLedger,
+)
 
 pytestmark = pytest.mark.offline
+
+
+@pytest.fixture(autouse=True)
+def _isolate_cse_seating_dispatch_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Never read the production ledger when GIW exports CURSOR_SDK_DISPATCH_LEDGER."""
+    monkeypatch.setenv(
+        CURSOR_SDK_DISPATCH_LEDGER_ENV, str(tmp_path / "cursor-sdk-dispatch.db")
+    )
+    CursorDispatchLedger._instance = None
 
 _OCCUPY_URL = "https://claude.ai/cowork/cse_occupyhop1"
 _PREDECESSOR_URL = "https://claude.ai/cowork/cse_predecessor1"
