@@ -291,6 +291,12 @@ def gate_request_admission(
     else:
         snap, snap_load_failed = load_active_work_snap_result()
         snap = attach_registry_seated_rows(snap)
+        if tid and not snap_load_failed:
+            from claude_bundles.request_admission_worker_snap import (
+                attach_claimed_job_from_worker,
+            )
+
+            snap = attach_claimed_job_from_worker(snap, tid)
     identity = resolve_request_admission_identity(
         thread_id=tid or None,
         caller_registration_id=caller_registration_id,
@@ -332,12 +338,9 @@ def gate_request_admission(
             registration_id=identity.registration_id,
         )
 
-    if (
-        identity.source == "unresolvable"
-        and should_refuse_census(
-            unresolvable_reason=identity.unresolvable_reason,
-            watch_present=identity.watch_present,
-        )
+    if identity.source == "unresolvable" and should_refuse_census(
+        unresolvable_reason=identity.unresolvable_reason,
+        watch_present=identity.watch_present,
     ):
         _increment("census_refuse")
         _increment(f"census_refuse:{identity.unresolvable_reason}")

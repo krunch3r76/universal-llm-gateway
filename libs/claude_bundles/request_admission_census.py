@@ -12,8 +12,17 @@ from typing import Any, Literal
 from universal_protocol.errors import ProtocolError
 
 from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES
-from claude_bundles.hop_cadence_seat_snap import identity_rows, is_live_stream_state
+from claude_bundles.hop_cadence_seat_snap import (
+    CURSOR_AUTO_CLAIMED_ROWS_KEY,
+    identity_rows,
+    is_live_stream_state,
+)
 from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
+
+_CLAIMED_SUPERSEDE_PHASES = frozenset(
+    {"claimed_pre_admit", "admitted", "bound"},
+)
+_RELAY_PAST_NESTED = frozenset({"sdk_terminal", "closeout_posted"})
 
 UnresolvableReason = Literal[
     "missing_thread_id",
@@ -51,6 +60,59 @@ def should_refuse_census(
     if unresolvable_reason in {"ambiguous_matches", "wire_id_not_in_census"}:
         return True
     return watch_present
+
+
+def claimed_auto_job_counts_for_census(observer: dict[str, Any]) -> bool:
+    """True when a persisted cursor-auto job row should count as census N=1."""
+    if str(observer.get("status") or "") != "claimed":
+        return False
+    relay = str(observer.get("relay_phase") or "none")
+    if relay in _RELAY_PAST_NESTED:
+        return False
+    phase = str(observer.get("lifecycle_phase") or "")
+    return phase in _CLAIMED_SUPERSEDE_PHASES
+
+
+def census_row_from_claimed_auto_job(
+    *,
+    thread_id: str,
+    job_id: str,
+    cse_registration_id: str | None = None,
+) -> dict[str, Any]:
+    """Synthetic identity row for a claimed in-flight Auto job on ``thread_id``."""
+    tid = (thread_id or "").strip()
+    jid = (job_id or "").strip()
+    reg = (cse_registration_id or "").strip() or f"cursor-auto-job:{jid}"
+    return {
+        "parent_thread": tid,
+        "registration_id": reg,
+        "purpose": "operator-proxy",
+        "stream_state": "running",
+        "status": "running",
+        "source": "cursor-auto-claimed",
+        "job_id": jid,
+    }
+
+
+def attach_claimed_job_census_rows(
+    snap: dict[str, Any],
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Attach job-keyed census rows without mutating execution-store ``rows``."""
+    if not rows:
+        return snap
+    out = dict(snap)
+    existing = [
+        row
+        for row in (
+            out.get(CURSOR_AUTO_CLAIMED_ROWS_KEY)
+            if isinstance(out.get(CURSOR_AUTO_CLAIMED_ROWS_KEY), list)
+            else []
+        )
+        if isinstance(row, dict)
+    ]
+    out[CURSOR_AUTO_CLAIMED_ROWS_KEY] = [*existing, *rows]
+    return out
 
 
 def _row_counts_for_census(row: dict[str, Any]) -> bool:
