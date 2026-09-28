@@ -169,6 +169,8 @@ def _assemble_closeout_delivery(
         thread_id=thread_id,
         gate_d_created_rels=gate_d_created_rels,
         files_outside_repo=all_outside_repo,
+        packet_text=packet_text,
+        closeout_text=text,
     )
     from services.git_integration_worker.cursor_sdk_mode import sdk_mode_for_dispatch
 

@@ -39,6 +39,8 @@ def settle_lane_and_dispatch_fields(
     thread_id: str,
     gate_d_created_rels: tuple[str, ...],
     files_outside_repo: tuple[str, ...] = (),
+    packet_text: str | None = None,
+    closeout_text: str | None = None,
 ) -> tuple[
     str | None,
     str | None,
@@ -138,6 +140,21 @@ def settle_lane_and_dispatch_fields(
                 lane_b_head_sha = resolved_head
             if resolved_ahead is not None:
                 lane_b_commits_ahead = resolved_ahead
+            # Silence on an in-scope lane fast-forwards before the landed flag
+            # is frozen. A later grade must not call complete work partial
+            # after the bytes are already on master.
+            from services.git_integration_worker.cursor_sdk_branch_terminal import (
+                maybe_ff_land_silent_lane,
+            )
+
+            maybe_ff_land_silent_lane(
+                repo=binding.receipt_tree,
+                branch_name=record.branch_name,
+                dispatch_id=dispatch_id,
+                packet_text=packet_text,
+                closeout_text=closeout_text,
+                commits_ahead=state.commits_ahead,
+            )
             # landed@local-master — ancestry probe + G₂ meter; unknown stays None.
             from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
                 probe_three_planes,

@@ -122,6 +122,7 @@ def _settle_lane_b(
     binding: CaptureBinding,
     dispatch_id: str,
     files_outside_repo: tuple[str, ...] = (),
+    packet_text: str | None = None,
 ) -> tuple[bool | None, str | None, int | None, str | None]:
     fields = settle_lane_and_dispatch_fields(
         binding=binding,
@@ -138,6 +139,7 @@ def _settle_lane_b(
         thread_id="t-landed-resolution",
         gate_d_created_rels=(),
         files_outside_repo=files_outside_repo,
+        packet_text=packet_text,
     )
     (
         _lane,
@@ -276,7 +278,7 @@ def test_ac3_noop_dispatch_reports_landed_false(
 def test_ac3_unmerged_lane_branch_stays_not_landed_11611_shape(
     source_repo: Path, tmp_path: Path
 ) -> None:
-    """AC3 — work on unmerged lane branch must not become landed via recovery."""
+    """Recovery must not invent a land when the packet scoped hub land out."""
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "auto-11611-shape"
     wt = mint_dispatch_worktree(
@@ -306,11 +308,49 @@ def test_ac3_unmerged_lane_branch_stays_not_landed_11611_shape(
         binding=binding,
         dispatch_id=dispatch_id,
         files_outside_repo=(),
+        packet_text="do not hub-land",
     )
     assert landed is False
     assert head_sha == state.head_sha
     assert commits_ahead == state.commits_ahead
     assert reason is None
+
+
+def test_silence_ff_lands_unmerged_lane_on_clean_hub(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """In-scope silence fast-forwards; landed is the ancestry probe after that merge."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "auto-ff-silence"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/lane-{dispatch_id}"
+    (wt / "lane_only.py").write_text("lane\n", encoding="utf-8")
+    commit_on_terminal(
+        dispatch_id=dispatch_id,
+        worktree_path=wt,
+        branch_name=branch,
+    )
+    tip = _git("rev-parse", branch, cwd=source_repo).stdout.strip()
+    cfg = _cfg(source_repo, worktree_root)
+    binding = _lane_b_binding(cfg, wt)
+    landed, head_sha, _ahead, _reason = _settle_lane_b(
+        source_repo=source_repo,
+        binding=binding,
+        dispatch_id=dispatch_id,
+        files_outside_repo=(),
+    )
+    assert landed is True
+    assert head_sha == tip
+    ancestor = subprocess.run(
+        ["git", "-C", str(source_repo), "merge-base", "--is-ancestor", tip, "master"],
+        capture_output=True,
+        check=False,
+    )
+    assert ancestor.returncode == 0
 
 
 def test_ac4_lane_branch_advance_unchanged_11618_shape(

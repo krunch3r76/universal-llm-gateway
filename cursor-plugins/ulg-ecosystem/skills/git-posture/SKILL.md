@@ -364,9 +364,11 @@ destructive:
 | Landed | `land_disposition: landed` | Content probe against `master` — assertion is not accepted |
 | Discarded | `land_disposition: discard` + `land_reason:` | The recorded reason |
 
-Silence opens an attributed **branch debt** carried in the dispatch ledger,
-shown to whoever dispatches into that lane next. Aged debt escalates on the
-owning bus thread; at the hard horizon the lane's Lane-B admit is refused.
+Silence on an in-scope lane fast-forwards the branch onto hub master when that
+merge is clean. A dirty tree, a non-fast-forward, or `do not hub-land` leaves
+an attributed **branch debt** in the dispatch ledger, shown to whoever
+dispatches into that lane next. Aged debt escalates on the owning bus thread;
+at the hard horizon the lane's Lane-B admit is refused.
 Nothing is deleted on a timer — sweeping aged residue would destroy the
 evidence and clear the owner, which is the failure this replaced.
 
