@@ -25,12 +25,20 @@ def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _req(**overrides: object) -> CursorDispatchRequest:
+    """Distinct message per dispatch_id.
+
+    ``work_fingerprint`` is content identity and excludes ``dispatch_id``
+    (``CursorDispatchLedger.work_fingerprint``). These fixtures are distinct
+    writers on one lease, so the body must differ or admit raises
+    ``SourceRefConflict`` before the lease gate.
+    """
+    dispatch_id = str(overrides.get("dispatch_id", "disp-1"))
     base = {
         "thread_id": "t1",
         "model": "cursor/composer-2.5",
         "dispatch_id": "disp-1",
         "execution_id": "exec-disp-1",
-        "message": "hello",
+        "message": f"hello-{dispatch_id}",
     }
     base.update(overrides)
     return CursorDispatchRequest(**base)
