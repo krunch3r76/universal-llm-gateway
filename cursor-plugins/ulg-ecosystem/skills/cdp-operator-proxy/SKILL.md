@@ -358,7 +358,7 @@ on the code surface. Interim `scripts.local/claude-ai/life-project-dispatch.sh` 
 | Verb | Duty |
 |---|---|
 | DIRECTIVE | Fields + wire contract: skill `directive-authoring-standard` D1–D2. Judgment AC on `contract: implement` ⇒ that skill's **Judgment marker** (`RULING` / `AC<n> — RULING`); unmarked implement admits mechanical + Composer redirect |
-| DISPOSITION | After CLOSEOUT: `verdict: ratify \| one_correction \| transport_blocked` · **residual-commission gate** before treating the episode as closed · on mission close fire the inv 22(d)(2) debrief `notify` |
+| DISPOSITION | After CLOSEOUT: `verdict: ratify \| one_correction \| transport_blocked` · **residual-commission gate** before treating the episode as closed · `one_correction ⇒ hypothesize-simulate trace (frame/rival/killed)` · on mission close fire the inv 22(d)(2) debrief `notify` |
 | CHECKPOINT | Cursor-owned at seams — ¬ operator-authored on tick roots |
 
 **Closeout discriminator** (cursor authors, you disposition): spec silent-and-open ⇒
