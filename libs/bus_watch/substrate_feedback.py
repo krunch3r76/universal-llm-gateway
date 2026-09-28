@@ -27,8 +27,17 @@ _PYTEST_FAIL_SUMMARY_RE = re.compile(
     re.IGNORECASE,
 )
 _PYTEST_FAILED_LINE_RE = re.compile(r"^FAILED\s+", re.IGNORECASE)
+_PYTEST_FAILED_NODE_RE = re.compile(r"^FAILED\s+(\S+)", re.IGNORECASE)
+_PYTEST_PASSED_NODE_RE = re.compile(r"^PASSED\s+(\S+)", re.IGNORECASE)
 _PYTEST_ERROR_LINE_RE = re.compile(r"^E\s+")
 _PYTEST_CONTEXT_LINE_RE = re.compile(r"^>\s+")
+# Explicit red-before marker. Bare "falsifier" is too common in closeouts to
+# open a span; the seat declares the probe with RED_PROBE / red-before.
+_RED_PROBE_MARKER_RE = re.compile(
+    r"\bRED_PROBE(?:_EXIT\s*=\s*\d+)?\b|\bred[-_ ]before\b",
+    re.IGNORECASE,
+)
+_GREEN_PROBE_EXIT_RE = re.compile(r"\bGREEN_PROBE_EXIT\s*=\s*0\b", re.IGNORECASE)
 
 _FAILURE_SEMANTICS_RE = re.compile(
     r"(?:"
@@ -84,6 +93,69 @@ def _line_has_failure_semantics(line: str) -> bool:
     return _FAILURE_SEMANTICS_RE.search(line) is not None
 
 
+def _is_pytest_failure_line(line: str) -> bool:
+    """True for pytest failure anchors, not generic prose that says failed."""
+    if _PYTEST_FAILED_LINE_RE.match(line):
+        return True
+    if _PYTEST_ERROR_LINE_RE.match(line):
+        return True
+    if _PYTEST_CONTEXT_LINE_RE.match(line):
+        return True
+    return _PYTEST_FAIL_SUMMARY_RE.search(line) is not None
+
+
+def _line_closes_green_probe(line: str) -> bool:
+    """True when a later verdict closes an intentional red-before span."""
+    if _GREEN_PROBE_EXIT_RE.search(line):
+        return True
+    if re.search(r"\bfailed\b", line, flags=re.IGNORECASE):
+        return False
+    return _PASSING_RUN_RE.search(line) is not None
+
+
+def _falsifier_suppressed_lines(text: str) -> set[str]:
+    """Pytest failure lines that are the red half of a red-then-green bracket.
+
+    Two independent tells, either is enough:
+
+    - **Declared probe** — a ``RED_PROBE`` / ``red-before`` marker and a later
+      green verdict (``GREEN_PROBE_EXIT=0`` or a passing pytest summary) in
+      the same episode. Failure lines in that window are the intentional red
+      half. A failure after the green verdict stays rot.
+    - **Same node id** — ``FAILED path::node`` followed later by
+      ``PASSED path::node``.
+    """
+    lines = text.splitlines()
+    suppressed: set[str] = set()
+
+    pending: dict[str, list[str]] = {}
+    for raw in lines:
+        stripped = raw.strip()
+        failed = _PYTEST_FAILED_NODE_RE.match(stripped)
+        if failed:
+            pending.setdefault(failed.group(1), []).append(stripped)
+            continue
+        passed = _PYTEST_PASSED_NODE_RE.match(stripped)
+        if passed is None:
+            continue
+        node = passed.group(1)
+        if node in pending:
+            suppressed.update(pending.pop(node))
+
+    segment_start = 0
+    for idx, raw in enumerate(lines):
+        if not _line_closes_green_probe(raw):
+            continue
+        window = lines[segment_start:idx]
+        if any(_RED_PROBE_MARKER_RE.search(line) for line in window):
+            for line in window:
+                stripped = line.strip()
+                if stripped and _is_pytest_failure_line(stripped):
+                    suppressed.add(stripped)
+        segment_start = idx + 1
+    return suppressed
+
+
 def _pytest_line_informativeness(line: str) -> int:
     """Rank pytest failure lines within one event (higher = more informative)."""
     if _PYTEST_FAILED_LINE_RE.match(line):
@@ -124,15 +196,22 @@ def _findings_from_closeout_json(payload: dict[str, Any]) -> list[str] | None:
 
     verification = payload.get("verification")
     failing: list[str] = []
-    if isinstance(verification, list):
-        for row in verification:
-            if not isinstance(row, dict):
-                continue
+    rows = (
+        [row for row in verification if isinstance(row, dict)]
+        if isinstance(verification, list)
+        else []
+    )
+    if rows:
+        for index, row in enumerate(rows):
             exit_code = row.get("exit_code")
             register = str(row.get("exit_code_register") or "").lower()
             if isinstance(exit_code, int) and exit_code != 0:
+                if _later_green_same_command(rows, index):
+                    continue
                 cmd = str(row.get("command") or "verification")
-                failing.append(f"{cmd} exit_code={exit_code} ({register or 'observed'})")
+                failing.append(
+                    f"{cmd} exit_code={exit_code} ({register or 'observed'})"
+                )
             elif register == "observed" and exit_code == 0:
                 continue
     if failing:
@@ -145,6 +224,19 @@ def _findings_from_closeout_json(payload: dict[str, Any]) -> list[str] | None:
         return []
 
     return None
+
+
+def _later_green_same_command(rows: list[dict[str, Any]], index: int) -> bool:
+    """True when a later verification row reruns this command and exits 0."""
+    command = str(rows[index].get("command") or "").strip()
+    if not command:
+        return False
+    for later in rows[index + 1 :]:
+        if str(later.get("command") or "").strip() != command:
+            continue
+        if later.get("exit_code") == 0:
+            return True
+    return False
 
 
 def extract_substrate_findings(text: str | None) -> list[str]:
@@ -166,13 +258,15 @@ def extract_substrate_findings(text: str | None) -> list[str]:
             if from_json is not None:
                 return from_json
 
+    suppressed = _falsifier_suppressed_lines(text)
     findings: list[str] = []
     for line in text.splitlines():
         if not _line_has_failure_semantics(line):
             continue
         cleaned = line.strip()
-        if cleaned and cleaned not in findings:
-            findings.append(cleaned)
+        if not cleaned or cleaned in suppressed or cleaned in findings:
+            continue
+        findings.append(cleaned)
     return _collapse_pytest_findings(findings)
 
 

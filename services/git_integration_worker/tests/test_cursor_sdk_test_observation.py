@@ -414,6 +414,36 @@ def test_harvest_specimen_a_compound_echo_is_unattributed_and_blocks_all_pass() 
     assert verification_all_pass([lint, row]) is False
 
 
+def test_multiline_pytest_exit_is_observed_without_stdout_echo() -> None:
+    """Backslash-continued pytest keeps the shell exit as the process exit.
+
+    Seats were echoing ``exit=$?`` because a wrapped invocation was demoted to
+    ``exit_code=None`` / ``unattributed``. The shell exit is the pytest exit
+    when the continuation is still one pytest process.
+    """
+    command = (
+        "cd /mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13141 && \\\n"
+        "$HOME/.venvs/universal/bin/pytest \\\n"
+        "  services/git_integration_worker/tests/test_cursor_sdk_test_observation.py \\\n"
+        "  -q --tb=line"
+    )
+    assert is_pytest_command(command) is True
+    assert is_proven_simple_pytest_command(command) is True
+    obs = _shell_obs(
+        call_id="call-multiline-pytest-no-echo",
+        command=command,
+        exit_code=1,
+    )
+    rows = harvest_test_verifications((obs,))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.exit_code == 1
+    assert row.exit_code_register == "observed"
+    assert row.wrapper_exit_code is None
+    assert wrapper_exit_demotion_deviation(row) is None
+    assert is_pytest_witness(row) is True
+
+
 def test_is_proven_simple_allows_ruff_and_pytest_and_chain() -> None:
     assert is_proven_simple_pytest_command("pytest -q foo.py") is True
     assert (
