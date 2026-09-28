@@ -199,6 +199,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
     try:
         from systems.pipeline.executor import PipelineExecutor
         from systems.pipeline.registry import PipelineRegistry
+        from systems.pipeline.registry.snapshot import default_snapshot_dir
     except Exception as exc:  # pragma: no cover - import guard
         logger.warning("Pipeline system not available: %s", exc)
         proxy.pipeline_registry = None
@@ -252,6 +253,7 @@ async def initialize_pipeline_system(proxy: StargateProxy) -> None:
             is_model_available=create_model_checker(proxy),
             config_defaults=pipelines_config.get("defaults", {}),
             config_base_dir=config_base_dir,
+            snapshot_dir=default_snapshot_dir(),
         )
 
         # Wire pipeline registry to gateway manager (if local gateway exists)

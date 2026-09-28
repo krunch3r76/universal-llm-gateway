@@ -44,6 +44,7 @@ class PipelineRegistry:
         is_model_available: Callable[[str], bool] | None = None,
         config_defaults: dict[str, Any] | None = None,
         config_base_dir: Path | None = None,
+        snapshot_dir: Path | None = None,
     ):
         """
         Initialize registry.
@@ -65,6 +66,8 @@ class PipelineRegistry:
         self._is_model_available = is_model_available
         self._config_defaults = config_defaults or {}
         self._config_base_dir = config_base_dir or Path.cwd()
+        self._snapshot_dir = snapshot_dir
+        self.last_load_was_full = False
         self.pipelines: dict[str, PipelineSpec] = {}
         self.prompts: dict[str, Any] = {}
         self._validation_errors: list[str] = []
@@ -89,12 +92,48 @@ class PipelineRegistry:
         Pipelines resolve models only from their own search path.
         Later paths override earlier for same pipeline ID only.
 
+        When a snapshot dir is set (constructor or
+        ``STARGATE_PIPELINE_REGISTRY_SNAPSHOT_DIR``), a process restart reuses
+        the last build if the YAML fingerprint and the availability decisions
+        from that build still hold. ``last_load_was_full`` is True only for
+        the YAML walk.
+
         Pre: search_paths ≠ ∅
         Post: pipelines ∪ models ∪ prompts loaded ∧ validated
 
         Raises:
             PipelineConfigError: If validation errors found
         """
+        from .snapshot import persist, snapshot_dir_for, try_restore
+
+        snapshot_dir = snapshot_dir_for(self)
+        if snapshot_dir is not None and try_restore(self, snapshot_dir):
+            self.last_load_was_full = False
+            return
+        decisions = self._load_from_sources()
+        self.last_load_was_full = True
+        if snapshot_dir is not None:
+            persist(self, snapshot_dir, decisions)
+
+    def _load_from_sources(self) -> list[tuple[str, bool]]:
+        """Walk search paths. Return availability decisions taken during the walk."""
+        decisions: dict[str, bool] = {}
+        original = self._is_model_available
+        if original is not None:
+
+            def _recording(model_id: str) -> bool:
+                if model_id not in decisions:
+                    decisions[model_id] = bool(original(model_id))
+                return decisions[model_id]
+
+            self._is_model_available = _recording
+        try:
+            self._load_from_sources_body()
+        finally:
+            self._is_model_available = original
+        return sorted(decisions.items())
+
+    def _load_from_sources_body(self) -> None:
         self._validation_errors = []
         self._catalog_skips = []
         self._permanently_unavailable = []
@@ -178,6 +217,7 @@ class PipelineRegistry:
             is_model_available=self._is_model_available,
             config_defaults=self._config_defaults,
             config_base_dir=self._config_base_dir,
+            snapshot_dir=self._snapshot_dir,
         )
         fresh.load()
 
