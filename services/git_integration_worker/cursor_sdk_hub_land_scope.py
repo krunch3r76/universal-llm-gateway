@@ -129,6 +129,57 @@ def commit_is_ancestor_of_hub_master(
     return ancestor.returncode == 0
 
 
+def resolve_hub_master_tip_meter(
+    hub_repo: Path, *, branch_point: str
+) -> tuple[str, int] | None:
+    """Return ``(hub master tip, commits since branch_point)``.
+
+    ``None`` when the hub master ref is absent or the range cannot be counted.
+    Callers project closeout ``head_sha`` onto this tip once a dispatch commit
+    is an ancestor and later hub commits sit above it.
+    """
+    base = (branch_point or "").strip().lower()
+    if not base:
+        return None
+    git_repo = resolve_hub_git_repo(hub_repo)
+    ref = resolve_hub_master_ref(hub_repo=git_repo)
+    try:
+        tip_proc = subprocess.run(
+            ["git", "-C", str(git_repo), "rev-parse", "--verify", ref],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if tip_proc.returncode != 0:
+        return None
+    tip = tip_proc.stdout.strip().lower()
+    if not tip:
+        return None
+    try:
+        count_proc = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(git_repo),
+                "rev-list",
+                "--count",
+                f"{base}..{tip}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if count_proc.returncode != 0 or not count_proc.stdout.strip().isdigit():
+        return None
+    return tip, int(count_proc.stdout.strip())
+
+
 def commit_reachable_on_branch_ref(
     source_repo: Path,
     *,

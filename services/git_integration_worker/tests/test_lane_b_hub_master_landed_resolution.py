@@ -191,6 +191,42 @@ def test_ac2_hub_master_commit_reports_landed_true_11616_shape(
     assert reason == HUB_MASTER_HEAD_RECOVERED
 
 
+def test_ac2_head_sha_names_hub_master_tip_when_master_advances(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """Ancestor dispatch commit ⇒ landed true and head_sha is hub master tip."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "auto-11616-advanced"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch_point = resolve_master_branch_point(source_repo)
+    hub_rel = "services/hub_master_fix.py"
+    hub_sha = _commit_on_hub(source_repo, dispatch_id, hub_rel, "fix\n")
+    (source_repo / "later.md").write_text("later\n", encoding="utf-8")
+    _git("add", "later.md", cwd=source_repo)
+    _git("commit", "-m", "later unrelated", cwd=source_repo)
+    master_tip = _git("rev-parse", "HEAD", cwd=source_repo).stdout.strip()
+    assert master_tip != hub_sha
+
+    cfg = _cfg(source_repo, worktree_root)
+    binding = _lane_b_binding(cfg, wt)
+    landed, head_sha, commits_ahead, reason = _settle_lane_b(
+        source_repo=source_repo,
+        binding=binding,
+        dispatch_id=dispatch_id,
+        files_outside_repo=(hub_rel,),
+    )
+    assert landed is True
+    assert head_sha == master_tip
+    assert head_sha != hub_sha
+    assert head_sha != branch_point
+    assert commits_ahead == 2
+    assert reason == HUB_MASTER_HEAD_RECOVERED
+
+
 def test_ac3_noop_dispatch_reports_landed_false(
     source_repo: Path, tmp_path: Path
 ) -> None:

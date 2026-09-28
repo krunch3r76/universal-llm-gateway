@@ -168,6 +168,28 @@ def settle_lane_and_dispatch_fields(
                 landed=lane_b_landed,
                 ancestry_on_master=plane_obs.landed_local_master,
             )
+            # Dispatch commit already on hub master, but head_sha must name the
+            # hub tip when later commits sit above it. Equal tips stay put so a
+            # fast-forward lane advance keeps its meter and reason.
+            if (
+                lane_b_landed is True
+                and plane_obs.landed_local_master is True
+                and lane_b_branch_point
+            ):
+                from services.git_integration_worker.cursor_sdk_hub_land_scope import (
+                    resolve_hub_master_tip_meter,
+                )
+
+                projected = resolve_hub_master_tip_meter(
+                    binding.receipt_tree,
+                    branch_point=lane_b_branch_point,
+                )
+                if projected is not None:
+                    tip_sha, tip_ahead = projected
+                    current = (lane_b_head_sha or "").lower()
+                    if tip_sha != current and tip_ahead >= 1:
+                        lane_b_head_sha = tip_sha
+                        lane_b_commits_ahead = tip_ahead
             if outcome.status != "finished" and not state.safe_to_delete:
                 from services.git_integration_worker.cursor_sdk_lane_b_disposition import (
                     mark_lane_b_disposition,

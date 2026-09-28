@@ -443,9 +443,7 @@ def discharge_unlanded(
             verb=DISCHARGE_UNLANDED,
             refused_reason="unlanded requires a tip sha",
         )
-    if not commit_reachable_on_branch_ref(
-        repo, branch_name=branch_name, sha=declared
-    ):
+    if not commit_reachable_on_branch_ref(repo, branch_name=branch_name, sha=declared):
         return DischargeResult(
             discharged=False,
             branch=branch_name,
