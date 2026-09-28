@@ -30,6 +30,7 @@ from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     annotate_plane_discrepancy,
     apply_landed_admit_gate,
     checkpoint_claims_committed,
+    land_disposition_measurement_from_plane,
     parse_capture_plane_keys,
     probe_three_planes,
     qualify_checkpoint_value,
@@ -64,6 +65,7 @@ class CloseoutTreeState:
     deployment_state: str | None
     plane_line: str
     plane_discrepancy: str | None = None
+    land_disposition_measurement: str | None = None
 
 
 def compose_deployment_authorship(
@@ -209,6 +211,7 @@ def compute_closeout_tree_state(
     checkpoint = qualify_checkpoint_value(checkpoint)
     deployment_state = qualify_deployment_state(deployment_state)
     plane_line = render_plane_headline(plane)
+    land_measurement = land_disposition_measurement_from_plane(plane)
     discrepancy = annotate_plane_discrepancy(
         checkpoint=checkpoint,
         deployment_state=deployment_state,
@@ -219,6 +222,7 @@ def compute_closeout_tree_state(
         deployment_state=deployment_state,
         plane_line=plane_line,
         plane_discrepancy=discrepancy,
+        land_disposition_measurement=land_measurement,
     )
 
 

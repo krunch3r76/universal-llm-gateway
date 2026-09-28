@@ -22,6 +22,7 @@ from services.git_integration_worker.cursor_auto.closeout_plane_probe import (
     inject_plane_discrepancy_line,
     inject_plane_line,
     inject_plane_register_line,
+    inject_qualified_land_disposition,
     merge_plane_discrepancy_markers,
     merge_plane_register_markers,
     status_claim_is_dual_register_honesty,
@@ -304,6 +305,10 @@ async def relay_closeout_outcome(
     )
     relay_body = inject_checkpoint_line(relay_body, value=tree_state.checkpoint)
     relay_body = inject_plane_line(relay_body, value=tree_state.plane_line)
+    relay_body = inject_qualified_land_disposition(
+        relay_body,
+        measurement=tree_state.land_disposition_measurement,
+    )
     claim_discrepancy = annotate_checkpoint_claim_discrepancy(
         claim=checkpoint_claim,
         measurement=tree_state.checkpoint,

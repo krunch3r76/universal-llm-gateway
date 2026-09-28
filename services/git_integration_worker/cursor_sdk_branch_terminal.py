@@ -45,6 +45,10 @@ _DISPOSITION_RE = re.compile(
     r"^\s*land_disposition\s*:\s*[`\"']?([A-Za-z_-]+)[`\"']?\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
+_DISPOSITION_VALUE_RE = re.compile(
+    r"^\s*land_disposition\s*:\s*(.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
 _REASON_RE = re.compile(
     r"^\s*land_reason\s*:\s*(.+?)\s*$",
     re.IGNORECASE | re.MULTILINE,
@@ -62,6 +66,21 @@ class LaneBranchSettlement:
     detail: str | None = None
 
 
+def _land_disposition_verb_from_value(value: str) -> str | None:
+    """Map a relay-qualified value back to the settlement verb (compute unchanged)."""
+    text = value.strip().strip("`\"'")
+    if text.lower().startswith("unlanded"):
+        return "unlanded"
+    lead = text.split("·", 1)[0].strip().lower()
+    if lead in {"landed", "landed@local-master"}:
+        return "landed"
+    if lead.startswith("tip@lane-b"):
+        return "landed"
+    if lead == "discard":
+        return "discard"
+    return None
+
+
 def parse_land_disposition(
     text: str | None,
 ) -> tuple[str | None, str | None, str | None]:
@@ -73,6 +92,20 @@ def parse_land_disposition(
         reason_match = _REASON_RE.search(text)
         reason = reason_match.group(1).strip() if reason_match else None
         return "unlanded", reason, unlanded_match.group(1).strip().lower()
+    value_match = _DISPOSITION_VALUE_RE.search(text)
+    if value_match is not None:
+        raw_value = value_match.group(1).strip()
+        if raw_value.lower().startswith("unlanded"):
+            parts = raw_value.split()
+            sha = parts[1].strip().lower() if len(parts) > 1 else None
+            reason_match = _REASON_RE.search(text)
+            reason = reason_match.group(1).strip() if reason_match else None
+            return "unlanded", reason, sha
+        verb = _land_disposition_verb_from_value(raw_value)
+        if verb is not None:
+            reason_match = _REASON_RE.search(text)
+            reason = reason_match.group(1).strip() if reason_match else None
+            return verb, reason, None
     match = _DISPOSITION_RE.search(text)
     if match is None:
         return None, None, None

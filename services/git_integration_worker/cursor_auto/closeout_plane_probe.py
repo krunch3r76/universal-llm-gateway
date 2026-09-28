@@ -29,6 +29,7 @@ _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.I)
 _PLANE_LINE_RE = re.compile(r"(?im)^plane:\s*.+$")
 _PLANE_DISCREPANCY_RE = re.compile(r"(?im)^plane-discrepancy:\s*.+$")
 _PLANE_REGISTER_RE = re.compile(r"(?im)^plane-register:\s*.+$")
+_LAND_DISPOSITION_LINE_RE = re.compile(r"(?im)^land_disposition\s*:\s*(.+?)\s*$")
 _PLANE_INFIX = r"(?:@[\w.-]+(?:\([^)]*\))?)?"
 _PENDING_TAIL_RE = re.compile(r"\s+\(\+\d+\s+pending\)\s*$", re.I)
 _TRUNCATION_ELLIPSIS_RE = re.compile(
@@ -433,6 +434,55 @@ def qualify_deployment_state(deployment_state: str | None) -> str | None:
     return f"{text} @local-master"
 
 
+def land_disposition_measurement_from_plane(obs: PlaneObservation) -> str | None:
+    """Project the landed axis into ``land_disposition`` vocabulary (same tokens as ``plane:``).
+
+    Returns None when lane-B head is unresolved — relay keeps the authored line.
+    """
+    if obs.is_unknown:
+        return None
+    if obs.landed_local_master is True:
+        return "landed@local-master"
+    if obs.landed_local_master is False:
+        parts: list[str] = []
+        if obs.commit_exists is True:
+            branch_token = f"({obs.branch})" if obs.branch else ""
+            parts.append(f"tip@lane-B{branch_token}")
+        parts.append("NOT landed@local-master")
+        return " · ".join(parts)
+    if obs.commit_exists is True:
+        branch_token = f"({obs.branch})" if obs.branch else ""
+        reason = obs.unknown_reason or "landed axis unmeasured"
+        return (
+            f"tip@lane-B{branch_token} · unknown@local-master ({reason})"
+        )
+    return None
+
+
+def inject_qualified_land_disposition(
+    body: str,
+    *,
+    measurement: str | None,
+) -> str:
+    """Replace bare ``land_disposition: landed`` with a plane-qualified measurement.
+
+    Only amends the unqualified ``landed`` verb; discard/unlanded and already-
+    qualified values are left untouched. Terminal settlement runs on the worker
+    sidecar before relay — this is a reader-facing projection at assembly time.
+    """
+    if not measurement:
+        return body
+    match = _LAND_DISPOSITION_LINE_RE.search(body)
+    if not match:
+        return body
+    authored = match.group(1).strip().strip("`\"'")
+    lead = authored.split("·", 1)[0].strip().lower()
+    if lead != "landed":
+        return body
+    line = f"land_disposition: {measurement}"
+    return _LAND_DISPOSITION_LINE_RE.sub(line, body, count=1)
+
+
 def checkpoint_claims_committed(checkpoint: str) -> bool:
     """True when checkpoint discloses a path-explicit commit; ``@plane`` infix OK."""
     lead = checkpoint.strip().split()[0] if checkpoint.strip() else ""
@@ -687,6 +737,8 @@ __all__ = [
     "inject_plane_discrepancy_line",
     "inject_plane_register_line",
     "inject_plane_line",
+    "inject_qualified_land_disposition",
+    "land_disposition_measurement_from_plane",
     "parse_capture_plane_keys",
     "preserve_plane_lines",
     "probe_three_planes",
