@@ -12,6 +12,10 @@ from services.git_integration_worker.cursor_sdk_capture_binding import CaptureBi
 from services.git_integration_worker.cursor_sdk_dispatch_context import (
     SdkDispatchContext,
 )
+from services.git_integration_worker.tests.cursor_bus_hermetic import (
+    install_cursor_bus_hermetic,
+    skip_cursor_bus_hermetic_for_node,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
@@ -119,6 +123,16 @@ def _pin_isolated_dispatch_ledger_per_test(
     )
     SeatWriteLedger.reset_instance()
     CursorDispatchLedger._instance = None
+
+
+@pytest.fixture(autouse=True)
+def _cursor_bus_default_is_test_double(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Block live agent-bus posts from ``client or CursorBusClient()`` defaults."""
+    if skip_cursor_bus_hermetic_for_node(request.node.nodeid):
+        return
+    install_cursor_bus_hermetic(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
