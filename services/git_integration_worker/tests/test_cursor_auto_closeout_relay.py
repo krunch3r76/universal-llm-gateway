@@ -2257,6 +2257,144 @@ def test_miss_cell_ac2_substance_without_deltas_candidate_stays_relay_miss() -> 
     assert not cell.casefold().startswith("parse_failed")
 
 
+def test_q1_line_start_decorations_extract_value_not_absence() -> None:
+    """Q1 — bullet, blockquote, and emphasis labels are the field, not a miss."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+
+    shapes = (
+        "- deltas_to_spec: none",
+        "> deltas_to_spec: none",
+        "*deltas_to_spec:* none",
+        "`deltas_to_spec: none`",
+    )
+    for line in shapes:
+        prose = f"**status_claim:** partial\n{line}\n**ac_verdict:** PASS\n"
+        body, _status = project_section2_table(
+            prose, provenance="workspaces://test/q1-decorations"
+        )
+        cell = _extract_table_cell(body, "deltas_to_spec") or ""
+        assert cell == "none", (line, cell)
+        assert "relay could not locate" not in cell.casefold()
+
+
+def test_q1_normalizer_does_not_flatten_distinguishing_shapes() -> None:
+    """Falsifier — hyphenated lookalikes, fences, and mid-sentence mentions stay out."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+
+    provenance = "workspaces://test/q1-falsifier"
+    kin = project_section2_table(
+        "**status_claim:** partial\nnext-of-kin: alice\n**ac_verdict:** PASS\n",
+        provenance=provenance,
+    )[0]
+    kin_cell = _extract_table_cell(kin, "next") or ""
+    assert kin_cell.startswith("relay could not locate"), kin_cell
+    assert "alice" not in kin_cell
+
+    fenced = project_section2_table(
+        "**status_claim:** partial\n"
+        "```\n"
+        "deltas_to_spec: fake\n"
+        "```\n"
+        "**ac_verdict:** PASS\n",
+        provenance=provenance,
+    )[0]
+    fenced_cell = _extract_table_cell(fenced, "deltas_to_spec") or ""
+    assert fenced_cell.startswith("relay could not locate"), fenced_cell
+    assert "fake" not in fenced_cell
+
+    narrative = project_section2_table(
+        "**status_claim:** partial\n"
+        "See deltas_to_spec: mentioned in prose.\n"
+        "**ac_verdict:** PASS\n",
+        provenance=provenance,
+    )[0]
+    narrative_cell = _extract_table_cell(narrative, "deltas_to_spec") or ""
+    assert narrative_cell.startswith("relay could not locate"), narrative_cell
+    assert "mentioned in prose" not in narrative_cell
+
+
+def test_repeated_verdict_alias_lines_all_reach_ac_verdict_cell() -> None:
+    """The first ``VERDICT:`` line is not a sample of the field."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+
+    prose = (
+        "VERDICT: Q1 MOVE — closeout_relay_cortex_fields.py:211\n"
+        "VERDICT: Q2 STAND — closeout_relay_cortex_fields.py:315\n"
+        "VERDICT: Q3 MOVE — closeout_relay.py:183\n"
+    )
+    body, _status = project_section2_table(
+        prose, provenance="workspaces://test/verdict-lines"
+    )
+    cell = _extract_table_cell(body, "ac_verdict") or ""
+    assert "Q1 MOVE — closeout_relay_cortex_fields.py:211" in cell
+    assert "Q2 STAND — closeout_relay_cortex_fields.py:315" in cell
+    assert "Q3 MOVE — closeout_relay.py:183" in cell
+
+
+def test_q3_tail_cut_sidecar_emits_miss_only_when_reader_misses() -> None:
+    """Q3 — the no-prose branch reads the raw sidecar instead of always missing."""
+    import json
+
+    from services.git_integration_worker.cursor_auto.closeout_relay import (
+        synthesize_section2,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+
+    wrapper = json.dumps(
+        {
+            "schema_version": 1,
+            "status": "partial",
+            "effects_manifest": {"schema_version": 1},
+        }
+    )
+    kept = synthesize_section2(
+        wrapper_text=wrapper,
+        sidecar_text="\n## effects_manifest\n**deltas_to_spec:** survived the cut\n",
+        dispatch_id="q3-kept",
+    )
+    assert kept is not None
+    kept_cell = _extract_table_cell(kept, "deltas_to_spec") or ""
+    assert kept_cell == "survived the cut", kept_cell
+    assert not kept_cell.startswith("relay could not locate")
+
+    empty = synthesize_section2(
+        wrapper_text=wrapper,
+        sidecar_text=None,
+        dispatch_id="q3-empty",
+    )
+    assert empty is not None
+    empty_cell = _extract_table_cell(empty, "deltas_to_spec") or ""
+    assert empty_cell.startswith("relay could not locate"), empty_cell
+
+    machine_only = synthesize_section2(
+        wrapper_text=wrapper,
+        sidecar_text='\n## effects_manifest\n{"schema_version": 1}\n',
+        dispatch_id="q3-machine",
+    )
+    assert machine_only is not None
+    machine_cell = _extract_table_cell(machine_only, "deltas_to_spec") or ""
+    assert machine_cell.startswith("relay could not locate"), machine_cell
+    machine_ac = _extract_table_cell(machine_only, "ac_verdict") or ""
+    assert machine_ac.startswith("relay could not locate"), machine_ac
+
+
 @pytest.mark.asyncio
 async def test_post_operator_closeout_subject_matches_body_blocked_ac14_5() -> None:
     """AC-14-5 — M7 class: blocked envelope must not post status:done subject."""

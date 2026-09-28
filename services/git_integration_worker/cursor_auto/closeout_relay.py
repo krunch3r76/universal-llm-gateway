@@ -24,6 +24,8 @@ from services.git_integration_worker.cursor_auto.closeout_relay_common import (
     _as_str_list,
     _order_preserving_dedup,
     _table_cell,
+    build_ac_verdict_cell,
+    fill_judgment_cell,
     is_wrapper_manifest,
     looks_section2,
     relay_parse_miss_cell,
@@ -61,6 +63,20 @@ def _append_fence_exception_lines(projected: str, prose: str) -> str:
     if not extras:
         return projected
     return projected.rstrip() + "\n\n" + "\n".join(extras) + "\n"
+
+
+def _cell_when_reader_misses(body: str, field: str, provenance: str) -> str:
+    """Ask the field reader. A blank body is the only path that skips it.
+
+    The no-sidecar-prose branch used to emit ``relay_parse_miss_cell`` without
+    consulting the reader. A tail cut that empties ``strip_machine_tail`` can
+    still leave the field in the raw sidecar; that text is what the reader sees.
+    """
+    if not body.strip():
+        return relay_parse_miss_cell(field, provenance)
+    if field == "ac_verdict":
+        return build_ac_verdict_cell(body, provenance=provenance, cap=None)
+    return fill_judgment_cell(body, field, provenance=provenance, cap=None)
 
 
 def _evidence_cell_from_parts(
@@ -179,11 +195,16 @@ def synthesize_section2(
             )
         return projected
 
-    ac_verdict = relay_parse_miss_cell("ac_verdict", provenance)
-    deltas_to_spec = relay_parse_miss_cell("deltas_to_spec", provenance)
-    decisions_taken = relay_parse_miss_cell("decisions_taken", provenance)
-    next_cell = relay_parse_miss_cell("next", provenance)
-    open_forks = relay_parse_miss_cell("open forks", provenance)
+    # Keep the leading newline. strip_machine_tail keys on "\n## …", and
+    # stripping here would turn a tail-only sidecar into fake prose.
+    reader_body = sidecar_text or ""
+    ac_verdict = _cell_when_reader_misses(reader_body, "ac_verdict", provenance)
+    deltas_to_spec = _cell_when_reader_misses(reader_body, "deltas_to_spec", provenance)
+    decisions_taken = _cell_when_reader_misses(
+        reader_body, "decisions_taken", provenance
+    )
+    next_cell = _cell_when_reader_misses(reader_body, "next", provenance)
+    open_forks = _cell_when_reader_misses(reader_body, "open forks", provenance)
 
     if effects_union:
         pointer = sidecar_workspaces_ref(dispatch_id) if dispatch_id else provenance

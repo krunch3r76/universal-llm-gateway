@@ -101,6 +101,81 @@ def _normalize_heading_key(text: str) -> str:
     return re.sub(r"[_\-\s]+", "", text.casefold())
 
 
+# Line-start decorations only. A bare ``*`` without trailing space is emphasis,
+# not a list marker, so ``*deltas_to_spec:*`` is left for label unwrapping.
+_LEADING_DECORATION_RE = re.compile(r"^(?:>\s*|[-+]\s+|\*\s+|\d+[.)]\s+)")
+_OUTER_MARKUP = (
+    ("```", "```"),
+    ("`", "`"),
+    ("**", "**"),
+    ("~~", "~~"),
+    ("*", "*"),
+    ("__", "__"),
+    ("_", "_"),
+)
+
+
+def _unwrap_outer_markup(text: str) -> str:
+    changed = True
+    while changed and text:
+        changed = False
+        for open_mark, close_mark in _OUTER_MARKUP:
+            if (
+                text.startswith(open_mark)
+                and text.endswith(close_mark)
+                and len(text) > len(open_mark) + len(close_mark)
+            ):
+                text = text[len(open_mark) : -len(close_mark)].strip()
+                changed = True
+                break
+    return text
+
+
+def _strip_label_markup(label: str) -> str:
+    """Drop emphasis and code markers around a label; keep interior underscores."""
+    label = label.replace("`", "").replace("*", "").strip()
+    while len(label) >= 2 and label.startswith("_") and label.endswith("_"):
+        label = label[1:-1].strip()
+    return label
+
+
+def _undecorate_field_line(line: str) -> str:
+    """Strip line-start decorations so the plain §2 grammar can see the label.
+
+    Blockquotes, list markers, and emphasis or code spans that wrap the label
+    are removed. Hyphens stay, and nothing after the first colon is searched
+    for a second label. A field mentioned mid-sentence therefore does not
+    become that field's value.
+    """
+    text = line.strip()
+    while True:
+        nxt = _LEADING_DECORATION_RE.sub("", text, count=1).lstrip()
+        if nxt == text:
+            break
+        text = nxt
+    text = _unwrap_outer_markup(text)
+    if ":" not in text:
+        return text
+    label, rest = text.split(":", 1)
+    label = _strip_label_markup(label)
+    rest = re.sub(r"^[`*_]+", "", rest)
+    if not label:
+        return text
+    return f"{label}:{rest}"
+
+
+def _plain_field_match(stripped_line: str) -> tuple[str, str] | None:
+    """Return ``(canonical field, rest)`` when *stripped_line* is a §2 field line."""
+    normalized = _undecorate_field_line(stripped_line)
+    match = _PLAIN_FIELD_LINE_RE.match(normalized)
+    if match is None:
+        return None
+    canonical = _canonical_field_for_plain_heading(match.group("field"))
+    if canonical is None:
+        return None
+    return canonical, match.group("rest").strip()
+
+
 def _ac_subsection_heading(normalized_heading: str) -> bool:
     """True when *normalized_heading* is an AC-n subsection label, not §2 ac_verdict."""
     return bool(re.fullmatch(r"ac\d+.*", normalized_heading))
@@ -190,11 +265,9 @@ def _line_field_heading_candidate(stripped_line: str, field: str) -> bool:
     """Decoration-tolerant §2 heading candidate on one non-fenced line (presence only)."""
     if not stripped_line:
         return False
-    plain = _PLAIN_FIELD_LINE_RE.match(stripped_line)
-    if plain is not None:
-        canonical = _canonical_field_for_plain_heading(plain.group("field"))
-        if canonical == field:
-            return True
+    parsed = _plain_field_match(stripped_line)
+    if parsed is not None and parsed[0] == field:
+        return True
     for match in _INLINE_CODE_FIELD_RE.finditer(stripped_line):
         segment = match.group(1).strip()
         if _authored_label_matches_field(segment, field):
@@ -221,15 +294,11 @@ def _plain_field_line_spans(body: str) -> list[tuple[int, int, str, str]]:
         if in_fenced_span(fenced, offset) or not stripped or stripped.startswith("#"):
             offset += len(line)
             continue
-        match = _PLAIN_FIELD_LINE_RE.match(stripped)
-        if match is None:
+        parsed = _plain_field_match(stripped)
+        if parsed is None:
             offset += len(line)
             continue
-        canonical = _canonical_field_for_plain_heading(match.group("field"))
-        if canonical is None:
-            offset += len(line)
-            continue
-        rest = match.group("rest").strip()
+        canonical, rest = parsed
         spans.append((offset, offset + len(line), canonical, rest))
         offset += len(line)
     return spans
@@ -270,10 +339,15 @@ def _next_field_boundary(body: str, start: int) -> int:
 
 
 def _extract_plain_same_line(body: str, field: str) -> str | None:
-    for _start, _end, heading, rest in _plain_field_line_spans(body):
-        if heading == field and rest:
-            return rest
-    return None
+    """Join every same-line rest for *field*. The first line is not a sample."""
+    rests = [
+        rest
+        for _start, _end, heading, rest in _plain_field_line_spans(body)
+        if heading == field and rest
+    ]
+    if not rests:
+        return None
+    return "; ".join(rests)
 
 
 def _extract_plain_section(body: str, field: str) -> str | None:
@@ -284,11 +358,10 @@ def _extract_plain_section(body: str, field: str) -> str | None:
             offset += len(line)
             continue
         stripped = line.strip()
-        match = _PLAIN_FIELD_LINE_RE.match(stripped) if stripped else None
-        if match is not None:
-            canonical = _canonical_field_for_plain_heading(match.group("field"))
+        parsed = _plain_field_match(stripped) if stripped else None
+        if parsed is not None:
+            canonical, rest = parsed
             if canonical == field:
-                rest = match.group("rest").strip()
                 if rest:
                     return rest
                 start = offset + len(line)
