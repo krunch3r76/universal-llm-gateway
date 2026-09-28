@@ -33,8 +33,22 @@ _CONTAMINATED_AGREEMENT_MARKER = (
 # ``shlex`` collapses newlines, so line anchors on the raw command are required
 # for compound gate shells (specimen auto-e93f739c279c). Rejects ``echo pytest``.
 _PYTEST_INVOKE_RE = re.compile(
-    r"(?:^|[\n;|&]|\|\||&&)\s*(?:[^\s;|&]*/)?pytest\b",
+    r"(?:^|[\n;|&]|\|\||&&)\s*(?:(?:[^\s;|&]+/)*pytest|pytest)\b",
     flags=re.MULTILINE,
+)
+# Quoted executable paths (``"$HOME/.../bin/pytest"``) — unwrap before blanket quote removal.
+_QUOTED_PYTEST_EXE_RE = re.compile(
+    r'"(?:\\.|[^"\\])*/pytest"',
+    flags=re.IGNORECASE,
+)
+_QUOTED_PYTHON_M_PYTEST_RE = re.compile(
+    r'"(?:python3? -m pytest)(?:\\.|[^"\\])*"',
+    flags=re.IGNORECASE,
+)
+# ``-k "expr"`` — unwrap so selector literals survive blanket quote removal.
+_QUOTED_K_EXPR_RE = re.compile(
+    r'-k\s+"((?:\\.|[^"\\])*)"',
+    flags=re.IGNORECASE,
 )
 
 # Heredoc bodies and quoted strings mention pytest in prose / rg patterns without
@@ -98,9 +112,26 @@ def is_proven_simple_pytest_command(command: str) -> bool:
     )
 
 
+def _unwrap_quoted(match: re.Match[str]) -> str:
+    """Keep inner token text; drop delimiters only."""
+    return match.group(0)[1:-1]
+
+
 def _strip_shell_literals(command: str) -> str:
-    """Remove heredoc bodies and quoted strings so prose cannot fake invoke-position."""
+    """Remove heredoc bodies and non-invoke quoted strings.
+
+    Quoted pytest executables (``"$VAR/bin/pytest"``, ``"python -m pytest …"``)
+    are unwrapped so invoke-position matching sees the path. Other quoted
+    strings are blanked so ``rg '…|pytest…'`` / heredoc prose cannot mint
+    false siblings; ``-k "expr"`` literals stay in the raw command for harvest.
+    """
     cleaned = _HEREDOC_BODY_RE.sub("\n", command)
+    cleaned = _QUOTED_PYTHON_M_PYTEST_RE.sub(_unwrap_quoted, cleaned)
+    cleaned = _QUOTED_PYTEST_EXE_RE.sub(_unwrap_quoted, cleaned)
+    cleaned = _QUOTED_K_EXPR_RE.sub(
+        lambda m: f"-k {m.group(1)}",
+        cleaned,
+    )
     cleaned = _SINGLE_QUOTED_RE.sub(" ", cleaned)
     cleaned = _DOUBLE_QUOTED_RE.sub(" ", cleaned)
     return cleaned

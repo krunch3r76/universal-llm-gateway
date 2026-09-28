@@ -428,6 +428,78 @@ def test_is_proven_simple_allows_ruff_and_pytest_and_chain() -> None:
     )
 
 
+# Specimen auto-5dccdbd360d0 / thread 13032 turn 6 (quoted venv pytest path).
+_SPECIMEN_13032_COMMAND = (
+    "cd /mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13032 && "
+    '"$HOME/.venvs/universal/bin/ruff" check '
+    "services/git_integration_worker/tests/test_cursor_sdk_capture_status.py && "
+    '"$HOME/.venvs/universal/bin/pytest" -q '
+    "services/git_integration_worker/tests/test_cursor_sdk_capture_status.py"
+)
+_SPECIMEN_13032_STDOUT = (
+    "All checks passed!\n"
+    "..............................................................           [100%]\n"
+    "62 passed in 1.25s\n"
+)
+_SPECIMEN_13032_RESULT = {
+    "status": "success",
+    "value": {
+        "exitCode": 0,
+        "signal": "",
+        "stdout": _SPECIMEN_13032_STDOUT,
+        "stderr": "",
+        "executionTime": 2387,
+    },
+}
+
+
+def test_specimen_13032_quoted_pytest_path_harvested_observed() -> None:
+    """Quoted ``$HOME/.venvs/.../pytest`` must not vanish during literal strip."""
+    from services.git_integration_worker.cursor_sdk_test_observation import (
+        _strip_shell_literals,
+    )
+
+    assert is_pytest_command(_SPECIMEN_13032_COMMAND)
+    assert is_proven_simple_pytest_command(_SPECIMEN_13032_COMMAND)
+    stripped = _strip_shell_literals(_SPECIMEN_13032_COMMAND)
+    assert "$HOME/.venvs/universal/bin/pytest" in stripped
+    obs = ToolCallObservation(
+        call_id="tool_24c24c1b-ed11-4ea0-af29-b1d8b8443cd",
+        tool_name="shell",
+        status="completed",
+        arg_bytes=340,
+        result_bytes=233,
+        truncated_fields=(),
+        args={"command": _SPECIMEN_13032_COMMAND, "timeout": 120000},
+        result=_SPECIMEN_13032_RESULT,
+        result_body=_SPECIMEN_13032_RESULT,
+        result_body_status="present",
+    )
+    rows = harvest_test_verifications((obs,))
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.exit_code_register == "observed"
+    assert row.exit_code == 0
+    assert row.stdout is not None and "62 passed" in row.stdout
+
+
+def test_quoted_pytest_with_k_expression_literal_survives_strip() -> None:
+    from services.git_integration_worker.cursor_sdk_test_observation import (
+        _strip_shell_literals,
+    )
+
+    command = '"$VENV/bin/pytest" -k "not slow" path'
+    assert is_pytest_command(command)
+    assert is_proven_simple_pytest_command(command)
+    stripped = _strip_shell_literals(command)
+    assert "not slow" in stripped
+    obs = _shell_obs(call_id="call-k-slow", command=command, exit_code=0)
+    rows = harvest_test_verifications((obs,))
+    assert len(rows) == 1
+    assert rows[0].command == command
+    assert '-k "not slow"' in rows[0].command
+
+
 def test_wrapper_unavailable_harvest_emits_null_not_zero() -> None:
     """AC2 — compound wrapper cannot be recorded as process exit 0."""
     obs = _shell_obs(
