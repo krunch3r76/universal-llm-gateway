@@ -57,8 +57,8 @@ def _resolve_hop_seat_request_refusal(
 ) -> dict[str, Any] | None:
     """Bind identity and refuse superseded predecessor writes when fenced.
 
-    Also returns ``seat.identity_unresolvable`` when census N≠1 on the
-    default path (``ambiguous_matches`` / ``zero_matches`` / ``empty_snap``).
+    Refuses ``ambiguous_matches``; ``zero_matches`` / ``empty_snap`` only when
+    the watch holds a ``registration_id`` (registration-less enroll stub admits on N=0).
     """
     from claude_bundles.request_admission_identity import gate_request_admission
 
