@@ -209,6 +209,7 @@ def probe_three_planes(
     head_sha: str | None,
     branch: str | None = None,
     as_of: str | None = None,
+    hub_repo: Path | None = None,
 ) -> PlaneObservation:
     """Probe commit / local-master / origin planes for *head_sha* (local refs only).
 
@@ -236,7 +237,15 @@ def probe_three_planes(
             unknown_reason="commit absent from ODB",
             as_of=stamp,
         )
-    landed = _is_ancestor_of_ref(source_repo, head_sha, "refs/heads/master")
+    from services.git_integration_worker.cursor_sdk_hub_land_scope import (
+        commit_is_ancestor_of_hub_master,
+        resolve_hub_git_repo,
+        resolve_hub_master_ref,
+    )
+
+    hub = resolve_hub_git_repo(hub_repo or source_repo)
+    master_ref = resolve_hub_master_ref(hub_repo=hub)
+    landed = commit_is_ancestor_of_hub_master(hub, head_sha, master_ref=master_ref)
     published = _is_ancestor_of_ref(source_repo, head_sha, "refs/remotes/origin/master")
     working_tree_blocked = False
     hub_porcelain: str | None = None

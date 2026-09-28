@@ -47,6 +47,7 @@ logger = get_logger(__name__)
 _GIT_TIMEOUT_S = 60.0
 DISCHARGE_LANDED = "landed"
 DISCHARGE_DISCARD = "discard"
+DISCHARGE_UNLANDED = "unlanded"
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,6 +423,55 @@ def discharge_landed(
     )
 
 
+def discharge_unlanded(
+    *,
+    repo: Path,
+    branch_name: str,
+    declared_tip_sha: str,
+    completing_dispatch_id: str | None = None,
+) -> DischargeResult:
+    """Archive a lane branch left intentionally off master; tip sha must match."""
+    from services.git_integration_worker.cursor_sdk_hub_land_scope import (
+        commit_reachable_on_branch_ref,
+    )
+
+    declared = (declared_tip_sha or "").strip().lower()
+    if not declared:
+        return DischargeResult(
+            discharged=False,
+            branch=branch_name,
+            verb=DISCHARGE_UNLANDED,
+            refused_reason="unlanded requires a tip sha",
+        )
+    if not commit_reachable_on_branch_ref(
+        repo, branch_name=branch_name, sha=declared
+    ):
+        return DischargeResult(
+            discharged=False,
+            branch=branch_name,
+            verb=DISCHARGE_UNLANDED,
+            refused_reason=f"tip {declared} not reachable on {branch_name}",
+        )
+    rev = _git(repo.resolve(), "rev-parse", "--verify", f"{branch_name}^{{commit}}")
+    actual_tip = rev.stdout.strip().lower() if rev.returncode == 0 else None
+    if actual_tip and actual_tip != declared:
+        return DischargeResult(
+            discharged=False,
+            branch=branch_name,
+            verb=DISCHARGE_UNLANDED,
+            refused_reason=(
+                f"declared tip {declared} does not match branch tip {actual_tip}"
+            ),
+        )
+    return _finish(
+        repo=repo,
+        branch_name=branch_name,
+        verb=DISCHARGE_UNLANDED,
+        note=f"unlanded {declared}",
+        completing_dispatch_id=completing_dispatch_id,
+    )
+
+
 def discharge_discard(
     *,
     repo: Path,
@@ -470,6 +520,7 @@ def discharge(
     branch_name: str,
     verb: str,
     reason: str | None = None,
+    declared_tip_sha: str | None = None,
     completing_dispatch_id: str | None = None,
 ) -> DischargeResult:
     """Dispatch on the declared verb — the single entry point a closeout names."""
@@ -487,12 +538,20 @@ def discharge(
             reason=reason or "",
             completing_dispatch_id=completing_dispatch_id,
         )
+    if normalized == DISCHARGE_UNLANDED:
+        return discharge_unlanded(
+            repo=repo,
+            branch_name=branch_name,
+            declared_tip_sha=declared_tip_sha or "",
+            completing_dispatch_id=completing_dispatch_id,
+        )
     return DischargeResult(
         discharged=False,
         branch=branch_name,
         verb=normalized or "(unset)",
         refused_reason=(
             f"unknown land_disposition {normalized!r} — "
-            f"expected {DISCHARGE_LANDED!r} or {DISCHARGE_DISCARD!r}"
+            f"expected {DISCHARGE_LANDED!r}, {DISCHARGE_DISCARD!r}, "
+            f"or {DISCHARGE_UNLANDED!r} <sha>"
         ),
     )

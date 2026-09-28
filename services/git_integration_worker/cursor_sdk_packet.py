@@ -220,6 +220,8 @@ _LANE_B_BRANCH_CONTRACT_TEMPLATE = (
     "the paths that disagree.\n"
     "  - `land_disposition: discard` + `land_reason: <why>` — deliberately "
     "abandoned. A recorded reason is a complete, honest outcome.\n"
+    "  - `land_disposition: unlanded <tip sha>` — hub land was out of packet "
+    "scope; work stays on the lane branch at the cited tip.\n"
     "Omitting the line while your branch carries commits master lacks grades the "
     "closeout `partial` with `land:lane_b_unlanded` and opens the debt. Both "
     "declared outcomes archive the tip first, so neither loses work."

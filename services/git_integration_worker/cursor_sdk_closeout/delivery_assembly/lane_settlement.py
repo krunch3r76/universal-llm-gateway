@@ -147,15 +147,21 @@ def settle_lane_and_dispatch_fields(
                 binding.receipt_tree,
                 head_sha=lane_b_head_sha,
                 branch=record.branch_name,
+                hub_repo=binding.receipt_tree,
             )
             # G₂: measured 0 refuses vacuous True; unknown ancestry/meter → None.
             from services.git_integration_worker.cursor_sdk_deliverables_expected import (
                 admit_landed_true,
             )
 
+            hub_work = None
+            if lane_b_commits_ahead is not None and lane_b_commits_ahead >= 1:
+                if state.merged_into_master or state.content_landed:
+                    hub_work = True
             lane_b_landed = admit_landed_true(
                 ancestry_on_master=plane_obs.landed_local_master,
                 commits_ahead=lane_b_commits_ahead,
+                hub_master_has_work=hub_work,
             )
             landed_resolution_reason = annotate_landed_resolution_disagreement(
                 landed_resolution_reason,
