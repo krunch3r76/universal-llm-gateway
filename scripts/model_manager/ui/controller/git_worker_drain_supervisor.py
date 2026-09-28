@@ -11,12 +11,16 @@ Owns the deferred-drain lifecycle for ONE restart intent:
      same epoch, draining, active_count==0 — before any kill;
   4. SIGTERM via the injected kill callable (``stop_git_integration_worker``).
 
-Timeout and occupancy stall are alert-only: a passed deadline emits
-``manage.restart.timeout`` (stuck-op identity + explicit-force affordance) and
-keep-awaits. Stall never SIGTERMs. The sole occupant force is recycle
-``idle_escalate_s`` (default 180s, ``occupant_progress_fresh``). Default
-deadline is 7 days (assume drain inevitable under normal holds —
-todo:manage-busy-drain-restart); progress heartbeats remain the visibility path.
+A passed deadline while the drain-state probe still shows a live
+process with claimed occupants is alert-only: ``manage.restart.timeout``
+pages once and the supervisor keep-awaits. Operator bind 2026-07-24
+(todo:manage-busy-drain-restart): do not auto-SIGKILL in-flight work
+(closeout_relay hazard). Occupancy stall of a reachable process never
+SIGTERMs. A target whose snapshot ``pid`` is null, or whose drain probe is
+unreachable for one heartbeat TTL, has no occupant that can progress: the
+supervisor starts it (the ``start`` callable) and does not SIGTERM first.
+The sole occupant force on a reachable process is recycle
+``idle_escalate_s``. Default deadline is 7 days.
 
 Steer-restart v1 (``todo:cursor-sdk-steer-restart``): live cursor-sdk dispatches
 are not a reason to wait or kill. Step 1b — when the intent carries
@@ -46,6 +50,7 @@ from typing import Any
 from universal_logging import get_logger
 
 from scripts.model_manager import observation_event as events
+from services.git_integration_worker.drain_progress import HEARTBEAT_TTL_S
 
 from .drain_timeout_keep_await import timeout_affordances
 from .restart_intent_store import (
@@ -65,14 +70,14 @@ _DRAIN_COMPLETED_SIGNAL = "git_worker.drain.completed"
 _DRAIN_SIGNAL_FILTER = "git_worker.drain.*"
 _SUBSCRIBE_URL = "http://localhost/v1/subscribe"
 
-# Operator bind 2026-07-24 (todo:manage-busy-drain-restart): assume drain is
-# inevitable under normal holds (incl. long cursor-sdk windows). Timeout stays
-# alert-only (never auto-SIGKILL); bar is days, not minutes.
+# Operator bind 2026-07-24 (todo:manage-busy-drain-restart): a live pid past
+# the ceiling is alert-only (never auto-SIGKILL in-flight work). A dead probe
+# at that ceiling force-starts. Bar is days, not minutes, for the live case.
 _DEFAULT_DEADLINE_S = 604800.0  # 7 days
 _DEFAULT_RECONCILE_INTERVAL_S = 2.0
 _DEFAULT_PROGRESS_INTERVAL_S = 30.0
-# Sustained drain-state probe failure before alert-only unreachable signal.
-_PROBE_UNREACHABLE_WINDOW_S = 120.0
+# Unreachable for one GIW heartbeat TTL ⇒ no occupant can progress; start.
+_PROBE_UNREACHABLE_WINDOW_S = HEARTBEAT_TTL_S
 # Consecutive reconcile polls confirming a different worker generation.
 _GENERATION_GONE_CONFIRM_WINDOW_S = 6.0
 
@@ -92,6 +97,8 @@ _AWAIT_TIMEOUT = "timeout"
 _AWAIT_CANCELLED = "cancelled"
 _AWAIT_IDLE = "idle"
 _AWAIT_GENERATION_GONE = "generation_gone"
+_AWAIT_DEAD = "dead"
+_AWAIT_HANDED_OFF = "handed_off"
 
 # Park refusals a restart cannot clear by waiting: recycle falls through to kill.
 _PARK_HARD_REFUSALS = frozenset({"CANCEL_FAILED", "NEST_CHAIN", "STATE_ROOT_MISSING"})
@@ -133,6 +140,7 @@ class GitWorkerDrainSupervisor:
     drain_state: DrainStateCaller
     subscribe_events: SubscribeFactory
     kill: KillCaller
+    start: KillCaller | None = None
     cancel_drain: CancelDrainCaller | None = None
     deadline_s: float = _DEFAULT_DEADLINE_S
     reconcile_interval_s: float = _DEFAULT_RECONCILE_INTERVAL_S
@@ -148,13 +156,14 @@ class GitWorkerDrainSupervisor:
     _last_probe_snapshot: dict[str, Any] | None = None
 
     async def supervise(self, intent: Intent) -> None:
-        """Drive one intent from begin-drain to SIGTERM.
+        """Drive one intent from begin-drain to a terminal lifecycle.
 
-        Deadline is alert-only: ``manage.restart.timeout`` pages once, the row
-        stays ``pending_drain``, and this task keep-awaits until converge,
-        cancel, or force-preempt. Cancel is observed until ``_final_epoch_check``
-        returns ok; after that the store advances to ``drained_restarting``
-        (kill committed) so manage cancel refuses.
+        When ``start`` is set, a deadline ceiling or a dead probe force-starts
+        and returns — the row must not stay ``pending_drain`` with no process.
+        Otherwise a deadline emits ``manage.restart.timeout`` and keep-awaits.
+        Cancel is observed until ``_final_epoch_check`` returns ok; after that
+        the store advances to ``drained_restarting`` (kill committed) so manage
+        cancel refuses.
         """
         self._settle_boundary_monotonic = None
         self._idle_last_progress = None
@@ -178,7 +187,18 @@ class GitWorkerDrainSupervisor:
                         return
                     await self._on_cancelled(intent)
                     return
+                if outcome == _AWAIT_DEAD:
+                    await self._force_start(intent, reason="dead_target")
+                    return
+                if outcome == _AWAIT_HANDED_OFF:
+                    return
                 if outcome == _AWAIT_TIMEOUT:
+                    if await self._ceiling_should_force_start():
+                        await self._force_start(intent, reason="deadline_ceiling")
+                        return
+                    # A live pid past the ceiling still pages. Starting would
+                    # not replace in-flight work; the 2026-07-24 bind forbids
+                    # that auto-kill. A dead probe force-starts above.
                     if not timeout_alerted:
                         await self._on_timeout(intent)
                         timeout_alerted = True
@@ -417,9 +437,13 @@ class GitWorkerDrainSupervisor:
                     if self._generation_gone(snapshot, intent):
                         generation_gone_streak += 1
                         if generation_gone_streak >= generation_gone_threshold:
+                            if await self._reconcile_observed_start(intent, snapshot):
+                                return _AWAIT_HANDED_OFF
                             return _AWAIT_GENERATION_GONE
                     else:
                         generation_gone_streak = 0
+                    if self.start is not None and snapshot.get("pid") is None:
+                        return _AWAIT_DEAD
                     if self._drain_state_matches(snapshot, intent):
                         return _AWAIT_CONVERGED
                     if await self._idle_gate_tripped(snapshot, now, start):
@@ -437,6 +461,11 @@ class GitWorkerDrainSupervisor:
                             consecutive_failures=probe_fail_streak,
                         )
                         probe_unreachable_alerted = True
+                    if (
+                        self.start is not None
+                        and probe_fail_streak >= probe_unreachable_threshold
+                    ):
+                        return _AWAIT_DEAD
                 if agen is None:
                     await asyncio.sleep(self.reconcile_interval_s)
                     continue
@@ -724,6 +753,76 @@ class GitWorkerDrainSupervisor:
         return ops
 
     # --------------------------------------------------------------- helpers
+
+    async def _reconcile_observed_start(
+        self, intent: Intent, snapshot: dict[str, Any]
+    ) -> bool:
+        """Validate a pending activation when a new pid serves the code_ref.
+
+        True means the intent is completed and the caller must not start again.
+        """
+        from charter_runner_store.propagation_validation import (
+            latest_validation_for_intent,
+        )
+
+        from .git_worker_activation_verify import reconcile_out_of_band_start
+        from .restart_intent_store import STATUS_COMPLETED, STATUS_PENDING_DRAIN
+
+        current = self.store.get(intent.intent_id)
+        if current is None or current.status != STATUS_PENDING_DRAIN:
+            return False
+        pid = snapshot.get("pid")
+        code_version = snapshot.get("code_version")
+        if not isinstance(pid, int):
+            return False
+        if not isinstance(code_version, str) or not code_version.strip():
+            return False
+        try:
+            validation = latest_validation_for_intent(intent.intent_id)
+        except Exception:
+            logger.debug("out-of-band validation lookup failed", exc_info=True)
+            return False
+        if validation is None or validation.outcome != "pending":
+            return False
+        outcome = reconcile_out_of_band_start(
+            validation_id=validation.validation_id,
+            observed_pid=pid,
+            observed_code_version=code_version,
+            prior_pid=None,
+            pid_changed=True,
+        )
+        if outcome != "validated":
+            return False
+        self.store.advance_if_status(
+            intent.intent_id,
+            from_status=STATUS_PENDING_DRAIN,
+            to_status=STATUS_COMPLETED,
+            reason="out-of-band start satisfied code_ref",
+        )
+        return True
+
+    async def _ceiling_should_force_start(self) -> bool:
+        """True when the ceiling fired and the worker has no live pid.
+
+        One fresh drain-state read. A pid means the process is still the
+        occupant holder, so the ceiling stays alert-only. No snapshot, or a
+        snapshot with ``pid`` null, is the dead target the ceiling must start.
+        """
+        if self.start is None:
+            return False
+        snap = await self._safe_drain_state()
+        if snap is None:
+            return True
+        return snap.get("pid") is None
+
+    async def _force_start(self, intent: Intent, *, reason: str) -> None:
+        """Start the worker and validate. Never the kill/stop callable."""
+        from .drain_dead_recovery import force_start_and_validate
+
+        if self.start is None:
+            return
+        await force_start_and_validate(self.store, intent, self.start, reason=reason)
+
     async def _safe_drain_state(self) -> dict[str, Any] | None:
         try:
             return await self.drain_state()
@@ -784,6 +883,7 @@ def build_git_worker_drain_supervisor(
     worker_url: str,
     events_query_socket: str,
     kill: KillCaller,
+    start: KillCaller | None = None,
     deadline_s: float = _DEFAULT_DEADLINE_S,
     idle_escalate_s: float | None = None,
     park_first: bool = True,
@@ -873,6 +973,7 @@ def build_git_worker_drain_supervisor(
         drain_state=_drain_state,
         subscribe_events=_subscribe,
         kill=kill,
+        start=start,
         cancel_drain=_cancel_drain,
         deadline_s=deadline_s,
         idle_escalate_s=idle_escalate_s,

@@ -266,7 +266,9 @@ async def run_activation_verify(
                 )
 
                 observed = payload.get("code_version")
-                relation = code_ref_relation_from_observed(validation.code_ref, observed)
+                relation = code_ref_relation_from_observed(
+                    validation.code_ref, observed
+                )
                 identity = resolve_identity_measurement(
                     {"proof_before": validation.pre_observation, **payload},
                     service=intent.service,
@@ -274,7 +276,10 @@ async def run_activation_verify(
                     code_ref=validation.code_ref,
                     open_row_payload=validation.pre_observation,
                 )
-                if identity in {"changed", "measured"} and relation in {"equal", "ancestor"}:
+                if identity in {"changed", "measured"} and relation in {
+                    "equal",
+                    "ancestor",
+                }:
                     if advance_validation(
                         validation_id,
                         outcome="validated",
@@ -383,6 +388,7 @@ def schedule_activation_verify(
     store: RestartIntentStore, intent_id: str, validation_id: str
 ) -> None:
     """Schedule verify on a tracked task that does not hold the restart gate."""
+
     async def _task() -> None:
         try:
             await run_activation_verify(store, intent_id, validation_id)
@@ -412,13 +418,78 @@ async def resume_activation_verify(
     await run_activation_verify(store, intent_id, validation.validation_id)
 
 
+def reconcile_out_of_band_start(
+    *,
+    validation_id: str,
+    observed_pid: int,
+    observed_code_version: str,
+    prior_pid: int | None = None,
+    pid_changed: bool = False,
+) -> str:
+    """Move a pending activation after an out-of-band process start.
+
+    A pid change, including ``prior_pid is None`` to a live pid, plus an
+    observed ``code_version`` closes the pending row: ``validated`` when
+    ``code_ref`` is equal or an ancestor of the observed version, otherwise
+    ``superseded``. The same pid without ``pid_changed`` leaves the row
+    pending. Returns ``validated``, ``superseded``, or ``unchanged``.
+    """
+    from deploy_identity.code_ref_relation import code_ref_relation_from_observed
+
+    if not isinstance(observed_pid, int):
+        return "unchanged"
+    if not isinstance(observed_code_version, str) or not observed_code_version.strip():
+        return "unchanged"
+    if prior_pid == observed_pid and not pid_changed:
+        return "unchanged"
+    validation = get_validation(validation_id)
+    if validation is None or validation.outcome != "pending":
+        return "unchanged"
+    relation = code_ref_relation_from_observed(
+        validation.code_ref, observed_code_version
+    )
+    post = {
+        "pid": observed_pid,
+        "code_version": observed_code_version,
+        "probe_reachable": True,
+        "source": "out_of_band_start",
+        "prior_pid": prior_pid,
+    }
+    if relation in {"equal", "ancestor"}:
+        advance_validation(
+            validation_id,
+            outcome="validated",
+            post_observation=post,
+            observed_code_version=observed_code_version,
+            code_ref_relation=relation,
+            identity_measurement="measured",
+        )
+        return "validated"
+    advance_validation(
+        validation_id,
+        outcome="superseded",
+        post_observation=post,
+        observed_code_version=observed_code_version,
+        code_ref_relation=relation,
+        identity_measurement="measured",
+        failure_reason="out_of_band_start",
+    )
+    return "superseded"
+
+
 def arms_activation_verify(action: str) -> bool:
     """Return whether manage must drive post-kill activation verification."""
     return action in _VERIFY_ACTIONS
 
 
 __all__ = [
-    "ACTIVATION_IDLE_TIMEOUT_S", "arms_activation_verify", "mint_activation_validation",
-    "record_kill_boundary_and_arm_verify", "arm_verify_after_generation_gone",
-    "resume_activation_verify", "run_activation_verify", "schedule_activation_verify",
+    "ACTIVATION_IDLE_TIMEOUT_S",
+    "arms_activation_verify",
+    "mint_activation_validation",
+    "record_kill_boundary_and_arm_verify",
+    "arm_verify_after_generation_gone",
+    "resume_activation_verify",
+    "run_activation_verify",
+    "schedule_activation_verify",
+    "reconcile_out_of_band_start",
 ]

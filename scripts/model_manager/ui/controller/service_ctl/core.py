@@ -843,7 +843,10 @@ class ServiceController:
                 "EVENTS_QUERY_SOCK", "/tmp/universal-protocol/events-query.sock"
             ),
             kill=kill,
-            deadline_s=_GIT_WORKER_DRAIN_DEADLINE_S if deadline_s is None else deadline_s,
+            start=self.start_git_integration_worker,
+            deadline_s=_GIT_WORKER_DRAIN_DEADLINE_S
+            if deadline_s is None
+            else deadline_s,
             idle_escalate_s=idle_escalate_s,
             park_first=park_first,
         )
@@ -861,14 +864,17 @@ class ServiceController:
         await reconcile_pending_restart_intents(self)
 
     async def restart_git_integration_worker(self) -> str:
-        """Restart git-integration-worker (stop then start)."""
-        await self.stop_git_integration_worker()
-        return await self.start_git_integration_worker()
+        """Restart git-integration-worker (stop, then start, with a gap watchdog)."""
+        from ..drain_dead_recovery import paired_stop_then_start
+
+        return await paired_stop_then_start(
+            self.stop_git_integration_worker,
+            self.start_git_integration_worker,
+        )
 
     async def rebuild_git_integration_worker(self, *, no_cache: bool = False) -> str:  # noqa: ARG002
         """Rebuild git-integration-worker — host process, so rebuild = restart."""
-        await self.stop_git_integration_worker()
-        return await self.start_git_integration_worker()
+        return await self.restart_git_integration_worker()
 
     def _cdp_ask_lifecycle_noop(self, action: str) -> str | None:
         state = cdp_ask_manage_state()

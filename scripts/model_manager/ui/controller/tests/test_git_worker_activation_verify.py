@@ -416,3 +416,74 @@ def test_run_activation_verify_discharges_when_validation_already_resolved(
     assert got is not None
     assert got.status == "activation_unverified"
     assert got.reason == "validation_resolved_superseded"
+
+
+def test_out_of_band_start_reconciles_pending_activation(tmp_path, monkeypatch) -> None:
+    """A new pid plus observed code_version closes a pending activation row."""
+    monkeypatch.setenv("CHARTER_RUNNER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.propagation_probe.probe_process_live",
+        lambda _service: {"probe_reachable": False},
+    )
+    from scripts.model_manager.ui.controller.git_worker_activation_verify import (
+        reconcile_out_of_band_start,
+    )
+
+    store = RestartIntentStore(db_path=tmp_path / "intents.db")
+    intent = store.create_intent(
+        service="git_integration_worker",
+        action="sync_restart",
+        deadline_at="d",
+        reason="r",
+    )
+    validation_id = mint_pending_validation_for_intent(
+        intent, code_ref=_RESOLVABLE_CODE_REF
+    )
+    same = reconcile_out_of_band_start(
+        validation_id=validation_id,
+        observed_pid=100,
+        observed_code_version=_RESOLVABLE_CODE_REF,
+        prior_pid=100,
+    )
+    assert same == "unchanged"
+    assert get_validation(validation_id).outcome == "pending"
+
+    outcome = reconcile_out_of_band_start(
+        validation_id=validation_id,
+        observed_pid=3199316,
+        observed_code_version=_RESOLVABLE_CODE_REF,
+        prior_pid=None,
+    )
+    assert outcome == "validated"
+    row = get_validation(validation_id)
+    assert row is not None
+    assert row.outcome == "validated"
+    assert row.post_observation is not None
+    assert row.post_observation["pid"] == 3199316
+    assert row.code_ref_relation == "equal"
+    assert row.observed_code_version == _RESOLVABLE_CODE_REF
+
+    other = store.create_intent(
+        service="stargate",
+        action="sync_restart",
+        deadline_at="d",
+        reason="r2",
+    )
+    other_id = mint_pending_validation_for_intent(
+        other, code_ref=_RESOLVABLE_CODE_REF
+    )
+    with patch(
+        "deploy_identity.code_ref_relation.code_ref_relation_from_observed",
+        return_value="unrelated",
+    ):
+        superseded = reconcile_out_of_band_start(
+            validation_id=other_id,
+            observed_pid=42,
+            observed_code_version="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            prior_pid=None,
+        )
+    assert superseded == "superseded"
+    other_row = get_validation(other_id)
+    assert other_row is not None
+    assert other_row.outcome == "superseded"
+    assert other_row.failure_reason == "out_of_band_start"

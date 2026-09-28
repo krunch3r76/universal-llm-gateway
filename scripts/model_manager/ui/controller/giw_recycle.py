@@ -10,11 +10,14 @@ for a reason a restart cannot clear.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import TYPE_CHECKING, Any
 
 from scripts.model_manager import observation_event as events
 
+from ..model.service_state import ServiceStatus
+from .drain_dead_recovery import force_start_and_validate
 from .restart_drain import run_gated_drain_supervised
 
 if TYPE_CHECKING:
@@ -87,16 +90,74 @@ def refuse_foreign_service(service: str, params: dict[str, Any]) -> None:
         )
     unexpected = sorted(set(params) - {"service"})
     if unexpected:
-        raise ValueError(
-            "recycle_giw accepts no parameters: " + ", ".join(unexpected)
+        raise ValueError("recycle_giw accepts no parameters: " + ", ".join(unexpected))
+
+
+async def worker_is_stopped(ctl: ServiceController) -> bool:
+    """True when the health checker reports the worker process is stopped.
+
+    A missing checker is not stopped — callers keep the drain path. An
+    exception from the checker is not stopped either; only an explicit
+    ``stopped`` status skips the drain, because that is the case with nothing
+    left to protect.
+    """
+    checker = getattr(
+        getattr(ctl, "service_state", None), "check_git_integration_worker", None
+    )
+    if checker is None:
+        return False
+    info = await asyncio.to_thread(checker)
+    return getattr(info, "status", None) is ServiceStatus.STOPPED
+
+
+async def _start_stopped_worker(
+    ctl: ServiceController, idle_s: float
+) -> dict[str, Any]:
+    """Start a stopped worker even when a drain intent is still pending."""
+    store = ctl.restart_intent_store
+    intent = store.active_for_service(_SERVICE)
+    if intent is not None:
+        message = await force_start_and_validate(
+            store,
+            intent,
+            ctl.start_git_integration_worker,
+            reason="recycle_stopped",
         )
+        intent_id = intent.intent_id
+    else:
+        message = await ctl.start_git_integration_worker()
+        intent_id = ""
+    if intent_id:
+        await events.emit_manage_recycle_drain_attempted(
+            intent_id=intent_id, idle_s=idle_s
+        )
+    return {
+        "status": "ok",
+        "state": "started",
+        "service": _SERVICE,
+        "reason": "worker stopped; started regardless of drain state",
+        "message": message,
+        "restart_intent_id": intent_id or None,
+        "recycle": True,
+        "idle_s": idle_s,
+        "idle_gate": "occupant_progress",
+        "idle_action": "park_first",
+    }
 
 
-async def recycle_giw(ctl: ServiceController, params: dict[str, Any], service: str) -> dict[str, Any]:
-    """Arm drain-gated GIW recycle and return the deferred 202 envelope."""
+async def recycle_giw(
+    ctl: ServiceController, params: dict[str, Any], service: str
+) -> dict[str, Any]:
+    """Arm drain-gated GIW recycle, or start the worker when it is already stopped.
+
+    A stopped process has no occupants. Waiting on a pending drain intent would
+    return "drain already in progress" and never start it.
+    """
     refuse_foreign_service(service, params)
     idle_s = recycle_idle_s()
     await events.emit_manage_recycle_requested()
+    if await worker_is_stopped(ctl):
+        return await _start_stopped_worker(ctl, idle_s)
     supervisor = ctl.build_git_worker_drain_supervisor(
         kill=ctl.git_worker_kill_for("recycle_giw"),
         idle_escalate_s=idle_s,
