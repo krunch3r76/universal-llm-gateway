@@ -1,9 +1,13 @@
 """Belief guard — C1 semantic impact analysis + C2 write-path contradiction check.
 
 Enforces entity-local belief consistency (AGM G3) on the assertion write path.
-C2 runs before INSERT: conflicts with confirmed assertions block (HTTP 409),
-conflicts with believed assertions proceed with review_status='flagged'.
-force=True + supersedes_id bypasses C2 for explicit, auditable revision.
+C2 runs before INSERT. A 409 block requires embedding cosine at or above
+``CONTRADICTION_SIMILARITY_THRESHOLD`` (0.80), confidence ``confirmed``, and
+``detect_polarity_conflict``. An FTS rank ratio is not a similarity and never
+blocks. When embeddings are unavailable, polarity hits are flagged
+(``retrieval_source=fts``, log line ``c2_degraded=lexical``) and the write
+proceeds. The assert nudge and ``guard_assertion_write`` share one pre-INSERT
+hybrid recall so MCP assert does not search twice. ``force=True`` bypasses C2.
 
 Exempt callers (bypass audit — Phase C):
 - POST /assertions/supersede — explicit supersession path, has C1 validation instead
@@ -16,6 +20,7 @@ Exempt callers (bypass audit — Phase C):
 
 from __future__ import annotations
 
+import contextvars
 import sqlite3
 from dataclasses import dataclass, field
 
@@ -34,11 +39,6 @@ logger = get_logger("cortex-api.belief-guard")
 TOUCHED_COSINE_THRESHOLD = 0.72
 SUPERSEDE_COSINE_THRESHOLD = 0.85
 CONTRADICTION_SIMILARITY_THRESHOLD = 0.80
-# Minimum normalized BM25 similarity to treat a polarity conflict as a real
-# contradiction. sim=0.0 means no term overlap — never a valid block signal.
-# ∀ sim < threshold: skip polarity check entirely (false-positive suppressor for
-# high-density entities where diverse claims share incidental vocabulary).
-CONTRADICTION_MIN_SIM_THRESHOLD = 0.35
 
 _CONFIDENCE_RANK = {"confirmed": 3, "believed": 2, "suspected": 1, "hypothesized": 0}
 
@@ -52,7 +52,11 @@ _EVENT_LOG_ANCHOR_PREFIXES = ("thread:",)
 
 
 def is_event_log_entity(entity_id: str) -> bool:
-    """True iff ``entity_id`` is an append-only conversation-log anchor."""
+    """True iff ``entity_id`` is an append-only conversation-log anchor.
+
+    ``thread:*`` ids store immutable turn records, so the C2 cosine gate
+    must not treat them as belief claims.
+    """
     return entity_id.startswith(_EVENT_LOG_ANCHOR_PREFIXES)
 
 
@@ -77,6 +81,41 @@ class SimilarAssertion:
     entity_id: str
     retrieval_source: str
     predicate_form: str | None = None
+
+
+@dataclass
+class _LexicalHit:
+    assertion_id: int
+    claim: str
+    confidence: str
+
+
+@dataclass
+class CandidateRecall:
+    """One pre-INSERT hybrid recall shared by the assert nudge and C2.
+
+    ``scored`` rows carry embedding cosine only. ``lexical_rows`` is filled
+    only when embeddings cannot score, and those rows have no similarity
+    field, so an FTS rank ratio cannot be stored under that name.
+    """
+
+    scored: list[SimilarAssertion]
+    embeddings_unavailable: bool
+    lexical_rows: list[_LexicalHit] = field(default_factory=list)
+
+
+# Set by ``_entity_vector_search`` for the in-flight recall. A patched search
+# leaves the value the caller stored (False), so tests that inject cosine are
+# not treated as the lexical-degraded path.
+_vector_unavailable: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "c2_vector_unavailable", default=False
+)
+_last_recall: contextvars.ContextVar[CandidateRecall | None] = contextvars.ContextVar(
+    "c2_last_recall", default=None
+)
+_staged_recall: contextvars.ContextVar[tuple[str, str, CandidateRecall] | None] = (
+    contextvars.ContextVar("c2_staged_recall", default=None)
+)
 
 
 def _entity_fts_search(
@@ -110,40 +149,44 @@ def _entity_vector_search(
     entity_id: str,
     n_results: int = 20,
 ) -> list[dict]:
-    """Vector search scoped to a single entity via ChromaDB metadata filter."""
+    """Vector search scoped to a single entity via ChromaDB metadata filter.
+
+    Sets ``_vector_unavailable`` when embeddings are unconfigured or the
+    search raises, so C2 can flag lexical evidence instead of blocking.
+    """
     if not cortex_embeddings.is_configured() or not vector_store.is_initialized():
+        _vector_unavailable.set(True)
         return []
     try:
         embedding = cortex_embeddings.embed_query(claim_text)
-        return vector_store.search_by_entity(embedding, entity_id, n_results)
+        hits = vector_store.search_by_entity(embedding, entity_id, n_results)
     except Exception:
         logger.warning("Entity vector search failed — FTS only", exc_info=True)
+        _vector_unavailable.set(True)
         return []
+    _vector_unavailable.set(False)
+    return hits
 
 
-def _entity_hybrid_search(
+def _assemble_hybrid(
     conn: sqlite3.Connection,
     claim_text: str,
     entity_id: str,
     limit: int = 20,
-) -> list[SimilarAssertion]:
-    """Hybrid FTS5 recall plus embedding-cosine similarity on one entity.
+) -> CandidateRecall:
+    """FTS recall plus cosine scores, with a lexical fallback when embeddings are down.
 
-    FTS (``build_candidate_query``) only recalls candidates. Similarity is the
-    embedding cosine of this claim against that assertion. A within-set BM25
-    ratio is not a similarity: the top FTS row is identically 1.0 whenever any
-    row comes back, so ``TOUCHED_COSINE_THRESHOLD`` and
-    ``SUPERSEDE_COSINE_THRESHOLD`` would not bind. Rows the vector search did
-    not score are omitted rather than reported as that ratio.
+    Empty FTS skips the embedding call: a new entity has no indexed assertions,
+    so a Stargate round-trip cannot find a contradiction. Similarity on scored
+    rows is embedding cosine only. Unscored rows are omitted, not filled with
+    ``abs(rank)/max(rank)``.
     """
     fts_rows = _entity_fts_search(conn, claim_text, entity_id, limit * 2)
-    # ∀ new entity: no FTS candidates ⟹ no active assertions ⟹ no contradiction possible.
-    # reindex_assertion_fts is always called at assertion creation, so empty FTS means
-    # the entity has no indexed assertions. Skip the embedding HTTP call entirely to
-    # avoid blocking the write path on a Stargate round-trip that yields nothing.
     if not fts_rows:
-        return []
+        return CandidateRecall(scored=[], embeddings_unavailable=False)
+    _vector_unavailable.set(False)
     vector_results = _entity_vector_search(claim_text, entity_id, limit * 2)
+    unavailable = _vector_unavailable.get()
 
     merged: dict[int, dict] = {}
 
@@ -194,7 +237,7 @@ def _entity_hybrid_search(
 
     scored = [m for m in merged.values() if m["cosine"] is not None]
     sorted_items = sorted(scored, key=lambda x: x["cosine"], reverse=True)
-    return [
+    scored_rows = [
         SimilarAssertion(
             assertion_id=item["assertion_id"],
             claim=item["claim"],
@@ -206,6 +249,79 @@ def _entity_hybrid_search(
         )
         for item in sorted_items[:limit]
     ]
+    lexical: list[_LexicalHit] = []
+    if unavailable:
+        lexical = [
+            _LexicalHit(
+                assertion_id=row["id"],
+                claim=row.get("claim", ""),
+                confidence=row.get("confidence", ""),
+            )
+            for row in fts_rows
+        ]
+    return CandidateRecall(
+        scored=scored_rows,
+        embeddings_unavailable=unavailable,
+        lexical_rows=lexical,
+    )
+
+
+def _entity_hybrid_search(
+    conn: sqlite3.Connection,
+    claim_text: str,
+    entity_id: str,
+    limit: int = 20,
+) -> list[SimilarAssertion]:
+    """Hybrid FTS5 recall plus embedding-cosine similarity on one entity.
+
+    FTS (``build_candidate_query``) only recalls candidates. Similarity is the
+    embedding cosine of this claim against that assertion. A within-set BM25
+    ratio is not a similarity: the top FTS row is identically 1.0 whenever any
+    row comes back, so ``TOUCHED_COSINE_THRESHOLD`` and
+    ``SUPERSEDE_COSINE_THRESHOLD`` would not bind. Rows the vector search did
+    not score are omitted rather than reported as that ratio. The full recall,
+    including the embeddings-unavailable flag, is stashed for C2 so the assert
+    nudge and the guard share this single search.
+    """
+    recall = _assemble_hybrid(conn, claim_text, entity_id, limit)
+    _last_recall.set(recall)
+    return recall.scored
+
+
+def stage_candidate_recall(entity_id: str, claim: str, recall: CandidateRecall) -> None:
+    """Park one hybrid recall for the next C2 guard on this entity and claim.
+
+    The assert nudge calls this via ``analyze_assertion_impact``. The guard
+    consumes the park so MCP assert does not run a second hybrid search.
+    """
+    _staged_recall.set((entity_id, claim, recall))
+
+
+def take_staged_candidate_recall(entity_id: str, claim: str) -> CandidateRecall | None:
+    """Return the parked recall when entity and claim match, else leave it.
+
+    A mismatch is not consumed: a different write in the same context must not
+    steal the nudge's search result. A match is cleared so it cannot leak.
+    """
+    staged = _staged_recall.get()
+    if staged is None:
+        return None
+    staged_entity, staged_claim, recall = staged
+    if staged_entity != entity_id or staged_claim != claim:
+        return None
+    _staged_recall.set(None)
+    return recall
+
+
+def clear_staged_candidate_recall() -> None:
+    """Drop a parked recall after the create path finishes or aborts early."""
+    _staged_recall.set(None)
+
+
+def _take_last_recall() -> CandidateRecall | None:
+    recall = _last_recall.get()
+    _last_recall.set(None)
+    return recall
 
 
 # ── C1: Semantic Impact Analysis ─────────────────────────────────────────
@@ -228,15 +344,19 @@ def analyze_assertion_impact(
 ) -> ImpactAnalysis:
     """Compute semantic impact of a proposed assertion before commit.
 
-    Uses entity-scoped hybrid search. ``similarity`` is embedding cosine.
+    Uses one entity-scoped hybrid search. ``similarity`` is embedding cosine.
     Touched requires cosine >= ``TOUCHED_COSINE_THRESHOLD`` (0.72).
     ``likely_supersedes`` requires cosine >= ``SUPERSEDE_COSINE_THRESHOLD``
     (0.85) plus the functor and confidence gates. An FTS-only row has no
-    cosine and clears neither threshold.
+    cosine and clears neither threshold. The same recall is staged so
+    ``guard_assertion_write`` does not search again on this claim.
     """
     from .graph_utils import extract_entity_ids
 
     similar = _entity_hybrid_search(conn, claim, entity_id, limit=20)
+    recall = _take_last_recall()
+    if recall is not None:
+        stage_candidate_recall(entity_id, claim, recall)
     touched = [s for s in similar if s.similarity >= TOUCHED_COSINE_THRESHOLD]
 
     conf_rank = _CONFIDENCE_RANK.get(confidence, 0)
@@ -267,66 +387,82 @@ def analyze_assertion_impact(
 
 @dataclass
 class ConflictDetail:
+    """One entity-local polarity conflict attached to an assertion write.
+
+    ``similarity`` is embedding cosine. When embeddings are unavailable the
+    value is 0.0 and ``retrieval_source`` is ``fts``; that 0.0 is not an FTS
+    rank ratio and must not satisfy the C2 block threshold.
+    """
+
     assertion_id: int
     claim: str
     confidence: str
     similarity: float
+    retrieval_source: str = "vector"
 
 
 @dataclass
 class ContradictionResult:
     conflicts: list[ConflictDetail] = field(default_factory=list)
     safe: bool = True
+    embeddings_unavailable: bool = False
 
 
 def check_write_contradiction(
     conn: sqlite3.Connection,
     entity_id: str,
     claim: str,
+    *,
+    recall: CandidateRecall | None = None,
 ) -> ContradictionResult:
-    """Detect entity-local semantic contradictions before assertion commit.
+    """Detect entity-local contradictions before assertion commit.
 
-    Uses FTS5 with normalized BM25 scores. The write path must not block on a
-    model HTTP round-trip; vector search improves recall but runs post-commit.
-    Scoped to entity-local only (AGM G3, not global consistency).
-
-    ∀ contradiction block: sim >= CONTRADICTION_MIN_SIM_THRESHOLD.
-    sim=0.0 (no term overlap) is never a valid block signal — high-density
-    entities accumulate diverse assertions that share incidental vocabulary
-    (e.g. entity name, common verbs) without being topically related.
+    A conflict is a polarity clash against a candidate from the shared hybrid
+    recall. Blocking cosine is applied by ``guard_assertion_write``: only
+    cosine >= ``CONTRADICTION_SIMILARITY_THRESHOLD`` on a confirmed assertion
+    can 409. When embeddings are unavailable, polarity hits are returned with
+    ``retrieval_source=fts`` and similarity 0.0 so the guard flags and never
+    blocks. Scoped to the entity (AGM G3), not global consistency. Passing
+    ``recall`` does not run another hybrid search.
     """
-    fts_rows = _entity_fts_search(conn, claim, entity_id, limit=10)
-    if not fts_rows:
+    if recall is None:
+        _entity_hybrid_search(conn, claim, entity_id, limit=20)
+        recall = _take_last_recall()
+    if recall is None:
         return ContradictionResult()
 
-    max_rank = max((abs(r.get("rank", 0)) for r in fts_rows), default=1.0) or 1.0
-    similar = [
-        SimilarAssertion(
-            assertion_id=r["id"],
-            claim=r["claim"],
-            confidence=r["confidence"],
-            similarity=round(abs(r.get("rank", 0)) / max_rank, 4),
-            entity_id=entity_id,
-            retrieval_source="fts",
-        )
-        for r in fts_rows
-    ]
-
     conflicts: list[ConflictDetail] = []
-    for s in similar:
-        if s.similarity < CONTRADICTION_MIN_SIM_THRESHOLD:
-            continue
-        if not detect_polarity_conflict(claim, s.claim):
+    if recall.embeddings_unavailable:
+        for row in recall.lexical_rows:
+            if not row.claim or not detect_polarity_conflict(claim, row.claim):
+                continue
+            conflicts.append(
+                ConflictDetail(
+                    assertion_id=row.assertion_id,
+                    claim=row.claim,
+                    confidence=row.confidence,
+                    similarity=0.0,
+                    retrieval_source="fts",
+                )
+            )
+        return ContradictionResult(
+            conflicts=conflicts,
+            safe=not conflicts,
+            embeddings_unavailable=True,
+        )
+
+    for item in recall.scored:
+        if not detect_polarity_conflict(claim, item.claim):
             continue
         conflicts.append(
             ConflictDetail(
-                assertion_id=s.assertion_id,
-                claim=s.claim,
-                confidence=s.confidence,
-                similarity=s.similarity,
+                assertion_id=item.assertion_id,
+                claim=item.claim,
+                confidence=item.confidence,
+                similarity=item.similarity,
+                retrieval_source=item.retrieval_source,
             )
         )
-
     return ContradictionResult(conflicts=conflicts, safe=not conflicts)
 
 
@@ -350,29 +486,41 @@ def guard_assertion_write(
     *,
     force: bool = False,
 ) -> WriteGuardResult:
-    """Run C2 contradiction check. Returns immediately if force=True.
+    """Run the C2 cosine gate before INSERT. ``force=True`` allows the write.
 
-    Event-log anchor entities (``thread:*``) are exempt: their assertions are
-    immutable turn records, not belief claims, so C2 must not run on them.
+    Event-log anchors (``thread:*``) are exempt: their rows are immutable turn
+    records, not belief claims. Otherwise the guard consumes the recall staged
+    by the assert nudge, or runs one ``_entity_hybrid_search`` when nothing was
+    staged (HTTP create). Block only when cosine >=
+    ``CONTRADICTION_SIMILARITY_THRESHOLD``, confidence is ``confirmed``, and
+    ``detect_polarity_conflict`` is true. A lower cosine still flags. When
+    embeddings are unavailable, polarity hits flag with ``retrieval_source=fts``
+    and one log line ``c2_degraded=lexical``; that path never returns
+    ``allowed=False``.
     """
-    if force:
-        return WriteGuardResult(allowed=True)
-    if is_event_log_entity(entity_id):
+    staged = take_staged_candidate_recall(entity_id, claim)
+    if force or is_event_log_entity(entity_id):
         return WriteGuardResult(allowed=True)
 
-    result = check_write_contradiction(conn, entity_id, claim)
+    recall = staged
+    if recall is None:
+        _entity_hybrid_search(conn, claim, entity_id, limit=20)
+        recall = _take_last_recall()
+    result = check_write_contradiction(conn, entity_id, claim, recall=recall)
+    if result.embeddings_unavailable and result.conflicts:
+        logger.warning(
+            "c2_degraded=lexical entity_id=%s retrieval_source=fts "
+            "polarity_conflicts=%d",
+            entity_id,
+            len(result.conflicts),
+        )
     if result.safe:
         return WriteGuardResult(allowed=True)
 
-    # Hard-block (409) only on genuine high-similarity confirmed near-duplicates.
-    # A polarity conflict above the 0.35 candidate floor but below
-    # CONTRADICTION_SIMILARITY_THRESHOLD is NOT a contradiction — on high-density
-    # service/decision entities, distinct claims share incidental vocabulary and
-    # score ~0.4–0.7 against unrelated confirmed assertions. Blocking those
-    # silently suppresses legitimate distinct writes (notably `friction`
-    # observations on busy service entities — agent-bus:1193 hazard 2).
-    # Sub-threshold confirmed conflicts and all believed conflicts proceed with
-    # review_status='flagged' and the conflict pointer attached as a warning.
+    # 409 only when cosine clears CONTRADICTION_SIMILARITY_THRESHOLD on a
+    # confirmed assertion that also polarity-conflicts. A lower cosine, any
+    # believed conflict, and every lexical-degraded hit proceed with
+    # review_status='flagged'. Rank ratios are not consulted.
     blocking = [
         c
         for c in result.conflicts
