@@ -300,6 +300,9 @@ async def process_job(
         field_parity_report=parity_report,
         execution_mode=job.execution_mode,
         execution_mode_declined=mode_declined,
+        work_key=job.work_key,
+        work_key_source=job.work_key_source,
+        serial_reason=job.serial_reason,
     )
     briefing = await maybe_briefing_for_admit(job.thread_id, contract=contract)
     admit = await client.reply(

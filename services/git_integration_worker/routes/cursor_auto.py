@@ -29,6 +29,10 @@ from services.git_integration_worker.cursor_auto.directive import (
     parse_request_body,
     split_continuity_hop_legs,
 )
+from services.git_integration_worker.cursor_auto.enqueue_admission import (
+    admission_execution_fields,
+    resolve_enqueue_admission,
+)
 from services.git_integration_worker.cursor_auto.execution_mode import (
     resolve_execution_mode_at_enqueue,
 )
@@ -105,6 +109,9 @@ class EnqueueBody(BaseModel):
     workspace: str | None = None
     # D4 work identity for lane-B conductor concurrent admission (optional).
     work_key: str | None = None
+    # Bus parentage (distinct from GIW checkout ``lane``).
+    parent_thread: str | None = None
+    lane_role: str | None = None
     # Declared execution mode (S-3). Claim paths never infer from contract;
     # enqueue maps ``contract:propagate`` via ``declared_execution_mode``.
     execution_mode: str = "serial"
@@ -353,13 +360,21 @@ async def enqueue(body: EnqueueBody, request: Request):
         hop_body, deferred_body = split_continuity_hop_legs(
             body.body, matched_token=matched_token
         )
-    mode_resolution = resolve_execution_mode_at_enqueue(
+    execution_mode_wire_set = "execution_mode" in body.model_fields_set
+    admission_resolution = resolve_enqueue_admission(
+        queue=queue,
+        thread_id=body.thread_id,
         contract=body.contract,
-        requested=body.execution_mode,
+        requested_execution_mode=body.execution_mode,
+        execution_mode_wire_set=execution_mode_wire_set,
         continuity_hop=is_hop,
         lane=body.lane,
-        work_key=body.work_key,
+        wire_work_key=body.work_key,
+        lane_role=body.lane_role,
+        parent_thread=body.parent_thread,
     )
+    mode_resolution_mode = admission_resolution.execution_mode
+    mode_resolution_reason = admission_resolution.execution_mode_declare_reason
     job = queue.enqueue(
         thread_id=body.thread_id,
         turn_number=body.turn_number,
@@ -380,18 +395,20 @@ async def enqueue(body: EnqueueBody, request: Request):
         wire_dropped_fields=tuple(body.wire_dropped_fields),
         prompt_uri=body.prompt_uri,
         advisor_brief=body.advisor_brief,
-        lane=body.lane,
+        lane=admission_resolution.effective_lane or body.lane,
         workspace=body.workspace,
-        work_key=body.work_key,
-        execution_mode=mode_resolution.mode,
-        execution_mode_declare_reason=mode_resolution.reason,
+        work_key=admission_resolution.work_key,
+        work_key_source=admission_resolution.work_key_source,
+        serial_reason=admission_resolution.serial_reason,
+        execution_mode=mode_resolution_mode,
+        execution_mode_declare_reason=mode_resolution_reason,
     )
     emit_execution_mode_declared(
         job_id=job.job_id,
-        execution_mode=mode_resolution.mode,
-        reason=mode_resolution.reason,
-        work_key=body.work_key,
-        lane=body.lane,
+        execution_mode=mode_resolution_mode,
+        reason=mode_resolution_reason,
+        work_key=admission_resolution.work_key,
+        lane=admission_resolution.effective_lane or body.lane,
         contract=body.contract,
     )
     deferred_job_id: str | None = None
@@ -416,15 +433,17 @@ async def enqueue(body: EnqueueBody, request: Request):
             # Deferred sibling is the executor DIRECTIVE, not the advisor brief.
             prompt_uri=None,
             advisor_brief=None,
-            lane=body.lane,
+            lane=admission_resolution.effective_lane or body.lane,
             workspace=body.workspace,
-            work_key=body.work_key,
+            work_key=admission_resolution.work_key,
+            work_key_source=admission_resolution.work_key_source,
+            serial_reason=admission_resolution.serial_reason,
             execution_mode=resolve_execution_mode_at_enqueue(
                 contract=body.contract,
                 requested=body.execution_mode,
                 continuity_hop=False,
-                lane=body.lane,
-                work_key=body.work_key,
+                lane=admission_resolution.effective_lane or body.lane,
+                work_key=admission_resolution.work_key,
             ).mode,
         )
         deferred_job_id = deferred.job_id
@@ -500,6 +519,7 @@ async def enqueue(body: EnqueueBody, request: Request):
         controller=getattr(request.app.state, "admission_controller", None),
     )
     job_admission = _project_job_admission(job, is_hop=is_hop, scope=scope)
+    job_admission.update(admission_execution_fields(admission_resolution))
     emit_frontier_sdk_auto_job_admission_projected(
         thread_id=body.thread_id,
         job_id=job.job_id,
