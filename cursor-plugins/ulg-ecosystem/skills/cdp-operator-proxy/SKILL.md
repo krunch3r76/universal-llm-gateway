@@ -415,6 +415,8 @@ When harvesting CLOSEOUT land claims, run the **seven-state recipe** below — *
 | 4 | If `files_expected: none`, render **NO LAND CLAIM MADE** (state 4) — not LANDED, not silent pass |
 | 5 | On command error or unreadable ref/repo, render **INDETERMINATE** (state 7) — neither LANDED nor NOT LANDED |
 
+**Probe order.** The path-scoped probe and content probe must be the last git reads in the episode, after any amend, rebase or reset; if a commit is mutated after probing, re-probe.
+
 Quote path-scoped SHA + probe output in DISPOSITION evidence. A hedge on an unread probe is
 still unobserved — worse than a bare error because it reads calibrated.
 
