@@ -145,8 +145,10 @@ def _sync_restart_line(slug: str, *, tags: str | None = None) -> str:
 
 def _install_plugin_line() -> str:
     return (
-        "install_plugin: scripts/cursor/install-ecosystem-plugin.sh "
-        "— then Cursor Developer → Reload Window"
+        'install_plugin: HOME=$(getent passwd "$(id -un)" | cut -d: -f6) '
+        "scripts/cursor/install-ecosystem-plugin.sh "
+        "— bare invocation under cursor-sdk dispatch HOME is REFUSED "
+        "(dispatch_home_host_guard)"
     )
 
 
