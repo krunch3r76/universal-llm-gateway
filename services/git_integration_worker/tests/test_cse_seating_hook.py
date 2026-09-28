@@ -32,27 +32,20 @@ from services.git_integration_worker.cursor_dispatch_ledger import (
 pytestmark = pytest.mark.offline
 
 
-@pytest.fixture(autouse=True)
-def _isolate_cse_seating_dispatch_ledger(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Never read the production ledger when GIW exports CURSOR_SDK_DISPATCH_LEDGER."""
+@pytest.fixture()
+def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CursorDispatchLedger:
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv(
         CURSOR_SDK_DISPATCH_LEDGER_ENV, str(tmp_path / "cursor-sdk-dispatch.db")
     )
     CursorDispatchLedger._instance = None
+    return CursorDispatchLedger.instance()
+
 
 
 _OCCUPY_URL = "https://claude.ai/cowork/cse_occupyhop1"
 _PREDECESSOR_URL = "https://claude.ai/cowork/cse_predecessor1"
 _LANE = "99001"
-
-
-@pytest.fixture()
-def ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> CursorDispatchLedger:
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    CursorDispatchLedger._instance = None
-    return CursorDispatchLedger.instance()
 
 
 def _hop_body(*, occupy: str | None = _OCCUPY_URL, superseded: str = "reg-old") -> str:
