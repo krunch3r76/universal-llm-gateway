@@ -34,13 +34,34 @@ Authoring the DIRECTIVE body: Use the `directive-authoring-standard` skill. A ju
 **Not:** IDE cursor lead · charter-runner tick windows (Opus at path-sim R-admit/R-after
 only) · steady-state orchestration without the operator-proxy bus shape.
 
+## ulg-code ops verbs on the operator seat (BINDING — operator 2026-09-28)
+
+The operator seat holds **ulg-code** for lifecycle and dispatch ops. Repo writes stay
+behind cursor-auto's lease (inv 3). Direct life-seat calls:
+
+| Verb | Allowed use on this seat |
+|---|---|
+| **`manage`** | `status`, `health`, `wait_healthy`, `sync_restart`, `busy_status`, `cancel_restart_intent` |
+| **`team_dispatch`** | `op=generate` for hop/successor windows with `purpose=operator-proxy` on the **same** private lane; `op=steer` with `park_for_restart` \| `cancel_discard` |
+| **`observability`** | Diagnosis only — ¬ substitute for `manage` / fleet gates |
+| **`cse_session`** | Warm follow-up / reattach per § Refresh ≠ follow-up |
+
+**Still forbidden** as life-seat MCP tools: `claudeburst`, `panel_dispatch`, `pipeline`, and
+any repo write (`fs` mutate on workspaces, patch paths, git). Commission cursor-auto for
+capture and implement.
+
+**`manage` force on `stargate`:** permitted from this seat (operator precedents 2026-09-28
+05:13Z · 06:13Z; agent-bus:12286 turns 568/570). A boot that does not bind after upload is a
+**code fault** — one restart with proof, never a retry loop.
+
 ## Cowork operator loop (life seat)
 
 Invoked command for this seat: `runbook:maestro-loop` (trigger / refuse / steps 1–10 / falsifier). These lines are the rules that transfer across hops and models. A cited id is a specimen of a regression or of the commit that closed it; it is not live state. A predecessor "then do X" is a claim — one live read of its premise before you commission it (entry 4: the cap was already 12).
 
 - Child lane: an admitted `request` stands. Commission a child with `agent_bus(request, new_slug=<lane-slug>, parent_thread=<lane>, lane_role=sub_mission, to=cursor)`. DISPOSITION, SEAT_REGISTRATION, and PARKED go on the parent by `send`. `seat.identity_unresolvable` or a same-child `census_n=0` is a regression of 585f5e68 — file friction, then mint a fresh child so the lane keeps moving. Falsifier: a:36655 closed by a:36669 (`commit:585f5e68`); turn 376 admitted after that repair.
 - Address: `send(to=cursor-auto)` is refused — cursor-auto is a role, not a bus address. Use `to=cursor`. Falsifier: entry 1 wire refuse.
-- Hop: update the standing handoff, then `agent_bus(hop, thread=<lane>, from_agent=web-anthropic, desired_model=cdp/fable-5.1, reason=…)`. `hop` takes `desired_model` (admit coalesces it); `escalation=` is `unsupported argument`. If the hop returns `seat.identity_unresolvable`, that is the same 585f5e68 regression — file friction, then commission a child `team_dispatch(model=cdp/fable-5.1, purpose=operator-proxy, dispatch_thread_id=<lane>, handoff_prompt=<handoff '## First acts'>)` and keep operating until `TYPE: SEAT_STAND_DOWN`. Falsifier: arrival that worked without that fallback, turns 380→384 `seating_hook.path=seated_without_occupy_target`.
+- Hop: update the standing handoff, then `agent_bus(hop, thread=<lane>, from_agent=web-anthropic, desired_model=cdp/opus-5, reason=…)`. Successor default `desired_model=cdp/opus-5`; pin **Fable** only as advisor on an explicit fork. `hop` takes `desired_model` (admit coalesces it); `escalation=` is `unsupported argument`. If the hop returns `seat.identity_unresolvable`, that is the same 585f5e68 regression — file friction, then commission `team_dispatch(model=cdp/opus-5, purpose=operator-proxy, dispatch_thread_id=<lane>, handoff_prompt=<handoff '## First acts'>)` and keep operating until `TYPE: SEAT_STAND_DOWN`. Falsifier: arrival that worked without that fallback, turns 380→384 `seating_hook.path=seated_without_occupy_target`.
+- Judgment lanes pin `desired_model=grok-4.7` on the wire — the `RULING` marker does not route (12286 turn 563 specimen).
 - Successor first acts: `Use the <slug> skill` for each birth slug, and `Use the retrieval-before-authoring skill` when the deliverable is a prompt → handoff head only (`fs` `offset=0` `limit=50`; never unbounded — the file overflows the tool ceiling) → journal → `fetch(last=3)` → `mark_read(through_turn, agent=web-anthropic)` (no `from_agent` on `mark_read`) → `send` `TYPE: SEAT_REGISTRATION` quoting the birth record. Falsifier: entry 6 arrival, ~4 min to first commission.
 - Identity: your identity is your birth record (CDP generate admit: model, `execution_id`, dispatch id, session URL). `thread_get(...).cse_*` and `cse_session_holders` are `relayed`, not identity — holders can still point at the predecessor after a hop. Falsifier: entry 5 wrote cse_01AoM9… into 12993; entry 6 holder-first returned predecessor 517cdefb, not successor 7830a322.
 - Poll: `agent_bus_read(job_state, thread=<child>, job_id=<id>, include_terminal=true)`. `wait` returns `predicate_unmet` immediately — that envelope is chrome, not a block; do not use it as the poll. `thread_get` on the operator lane is huge — do not use it. Sleep ≤290 s between polls. Quiet longer than ~10 min trips the quiet-with-WIP watchdog even after `TYPE: PARKED`. A `job_state_unreachable` blip: wait ~60 s and re-issue the same read; do not re-dispatch. Falsifier: entry 1; entry 5 blip at 17:44Z.
@@ -302,9 +323,12 @@ Auth-gate failures exhaust retry budget — unblock with `auth_gate_ack: <thread
 
 ## Mission boot & continuity hop (BINDING)
 
-**Life seat cannot `team_dispatch`.** Life→cursor operator-proxy — mint a Life
-Cowork CSE that drives cursor, not a life conversation and not
-claude.ai→claude.ai chat — is **`life_dispatch`** on `/mcp/life` — server-pinned
+**Life seat MAY fire `team_dispatch(model=cdp/opus-5, purpose=operator-proxy,
+dispatch_thread_id=<lane>, handoff_prompt=<standing handoff head>)` when
+`agent_bus(hop)` 409s or Auto is unreachable; the **`hop` verb remains preferred.**
+Life→cursor operator-proxy — mint a Life Cowork CSE that drives cursor, not a life
+conversation and not claude.ai→claude.ai chat — is **`life_dispatch`** on `/mcp/life` —
+server-pinned
 project UUID; `prompt` or `thread` (`to=life|dispatch`, not `from=life`).
 Correspondence stays in the current CSE. Opening or refreshing an operator-proxy
 **request-lane** window is still **commission cursor-auto**.
@@ -329,7 +353,8 @@ on the code surface. Interim `scripts.local/claude-ai/life-project-dispatch.sh` 
 
 **Hop ≠ backtrack:** hop skips supersede on in-flight work; true backtrack = second DIRECTIVE.
 
-**Anti-patterns:** hand-authored CONTINUITY_HANDOFF; life team_dispatch; second lane; stale warm follow-up; silence wait; DIRECTIVE-only hop.
+**Anti-patterns:** hand-authored CONTINUITY_HANDOFF; life `team_dispatch` outside hop-409 /
+Auto-unreachable fallback; second lane; stale warm follow-up; silence wait; DIRECTIVE-only hop.
 
 **Auto-owned hop cadence:** cursor-auto self-fires on CSE/watch age; life seat is subject. Detail: `cdp-continuity-hop-cadence.md`.
 
