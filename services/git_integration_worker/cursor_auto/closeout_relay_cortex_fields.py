@@ -50,6 +50,13 @@ _BOLD_HEADING_ONLY_RE = re.compile(
 _PLAIN_FIELD_LINE_RE = re.compile(
     r"(?im)^(?P<field>[a-z][a-z0-9_ ]*?)\s*:\s*(?P<rest>.*)$",
 )
+_INLINE_CODE_FIELD_RE = re.compile(r"`([^`\n]+)`")
+_EMBEDDED_BOLD_FIELD_COLON_RE = re.compile(
+    r"\*\*(?P<heading>[^*\n]+?):\*\*",
+)
+_EMBEDDED_BOLD_HEADING_ONLY_RE = re.compile(
+    r"(?<!\*)\*\*(?P<heading>[^*\n]+?)\*\*(?!\*)",
+)
 _FENCE_OPEN_RE = re.compile(r"^[ \t]*(?P<marker>`{3,}|~{3,})")
 
 
@@ -171,6 +178,39 @@ def _canonical_field_for_plain_heading(raw_field: str) -> str | None:
     return None
 
 
+def _authored_label_matches_field(label: str, field: str) -> bool:
+    """Presence-only: True when a decorated label names *field* (exact aliases)."""
+    cleaned = label.strip().rstrip(":").strip()
+    if not cleaned:
+        return False
+    return _heading_matches_field(cleaned, field, exact_only=True)
+
+
+def _line_field_heading_candidate(stripped_line: str, field: str) -> bool:
+    """Decoration-tolerant §2 heading candidate on one non-fenced line (presence only)."""
+    if not stripped_line:
+        return False
+    plain = _PLAIN_FIELD_LINE_RE.match(stripped_line)
+    if plain is not None:
+        canonical = _canonical_field_for_plain_heading(plain.group("field"))
+        if canonical == field:
+            return True
+    for match in _INLINE_CODE_FIELD_RE.finditer(stripped_line):
+        segment = match.group(1).strip()
+        if _authored_label_matches_field(segment, field):
+            return True
+        if ":" in segment:
+            prefix = segment.split(":", 1)[0].strip()
+            if _authored_label_matches_field(prefix, field):
+                return True
+    for pattern in (_EMBEDDED_BOLD_FIELD_COLON_RE, _EMBEDDED_BOLD_HEADING_ONLY_RE):
+        for match in pattern.finditer(stripped_line):
+            heading = _normalize_field_heading(match.group("heading"))
+            if _heading_matches_field(heading, field, exact_only=True):
+                return True
+    return False
+
+
 def _plain_field_line_spans(body: str) -> list[tuple[int, int, str, str]]:
     """Collect plain ``field: rest`` §2 lines (reporting-contract inline format)."""
     spans: list[tuple[int, int, str, str]] = []
@@ -268,6 +308,13 @@ def field_heading_present(body: str, field: str) -> bool:
         if _heading_matches_field(heading, field):
             return True
     fenced = fenced_spans(body)
+    offset = 0
+    for line in body.splitlines(keepends=True):
+        if not in_fenced_span(fenced, offset):
+            stripped = line.strip()
+            if _line_field_heading_candidate(stripped, field):
+                return True
+        offset += len(line)
     for match in _ATX_HEADING_RE.finditer(body):
         if not in_fenced_span(fenced, match.start()) and _heading_matches_field(
             match.group(2).strip(), field

@@ -2204,6 +2204,59 @@ def test_envelope_status_to_subject_token_complete_aliases_done() -> None:
     assert envelope_status_to_subject_token("complete") == "status:done"
 
 
+# --- todo:closeout-relay-miss-cell-reads-as-absence (agent-bus:12286) ---
+
+
+def test_miss_cell_ac1_inline_backtick_deltas_presence_yields_parse_failed() -> None:
+    """AC1 — inline `` `deltas_to_spec:` `` candidate → parse_failed, not relay miss."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+
+    prose = (
+        "**status_claim:** partial\n\n"
+        "Some narrative. `deltas_to_spec:` Diagnosis only.\n\n"
+        "**ac_verdict:** PASS\n"
+    )
+    provenance = "workspaces://test/closeout-relay-miss-ac1"
+    body, _status = project_section2_table(prose, provenance=provenance)
+    cell = _extract_table_cell(body, "deltas_to_spec") or ""
+    assert cell.startswith("parse_failed"), cell
+    assert "relay could not locate" not in cell.casefold()
+
+
+def test_miss_cell_ac2_substance_without_deltas_candidate_stays_relay_miss() -> None:
+    """AC2 — collapse guard: substance without deltas candidate → relay could not locate."""
+    from services.git_integration_worker.cursor_auto.closeout_relay_effects import (
+        _extract_table_cell,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_common import (
+        has_closeout_substance,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_cortex_fields import (
+        field_heading_present,
+    )
+    from services.git_integration_worker.cursor_auto.closeout_relay_project import (
+        project_section2_table,
+    )
+
+    prose = (
+        "**status_claim:** partial\n"
+        "**ac_verdict:** PASS — scoped work delivered\n"
+        "**evidence:** pytest output quoted inline\n"
+    )
+    assert has_closeout_substance(prose)
+    assert not field_heading_present(prose, "deltas_to_spec")
+    provenance = "workspaces://test/closeout-relay-miss-ac2"
+    body, _status = project_section2_table(prose, provenance=provenance)
+    cell = _extract_table_cell(body, "deltas_to_spec") or ""
+    assert cell.startswith("relay could not locate"), cell
+    assert not cell.casefold().startswith("parse_failed")
+
+
 @pytest.mark.asyncio
 async def test_post_operator_closeout_subject_matches_body_blocked_ac14_5() -> None:
     """AC-14-5 — M7 class: blocked envelope must not post status:done subject."""
