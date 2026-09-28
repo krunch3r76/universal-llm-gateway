@@ -48,7 +48,7 @@ from services.git_integration_worker.cursor_home import (
     CursorVenvConfigError,
     dispatch_home_path,
     operator_real_home,
-    prune_stale_dispatch_homes,
+    prune_stale_dispatch_homes,  # noqa: F401 — route_mod monkeypatch surface
     resolve_repo_venv,
     setup_cursor_dispatch_home,
     validate_repo_venv,
@@ -148,7 +148,7 @@ from services.git_integration_worker.cursor_sdk_events import (
     emit_sdk_lane_b_minted,
     emit_sdk_lane_b_worktree_missing_observed,
     emit_sdk_lane_selected,
-    emit_sdk_restart_bridge_reap_failed,
+    emit_sdk_restart_bridge_reap_failed,  # noqa: F401 — route_mod monkeypatch surface
     emit_sdk_skills_mounted,
     emit_sdk_worker_completed,
     emit_sdk_worker_delivery_failed,
@@ -207,7 +207,7 @@ from services.git_integration_worker.cursor_sdk_orphan import (
     clear_dispatch_orphan_state,
     is_dispatch_orphaned,
     mark_dispatch_orphaned,
-    reap_orphan_bridge_os,
+    reap_orphan_bridge_os,  # noqa: F401 — route_mod monkeypatch surface
     register_active_client,
 )
 from services.git_integration_worker.cursor_sdk_packet import (
@@ -323,6 +323,9 @@ from services.git_integration_worker.models.cursor_api import (
     LaneWorktreeReleaseRequest,
     ParkDispatchRequest,
     ParkForRestartRequest,
+)
+from services.git_integration_worker.routes.cursor_sdk_startup_reconcile import (
+    startup_ledger_reconcile,  # noqa: F401 — re-exported public surface
 )
 
 logger = get_logger(__name__)
@@ -1741,92 +1744,6 @@ async def bridge_sweeper(app: FastAPI) -> None:
                 stale_result.killed,
                 stale_result.kill_failed,
             )
-
-
-async def startup_ledger_reconcile(app: FastAPI) -> None:
-    """Reconcile restart survivors: OS-reap bridges before lease release.
-
-    For each ledger ``running`` orphan, reap via env∧bridge identity, emit
-    honest ``bridge_aborted``, then release/restore and mark terminal; finally
-    promote queued heads.
-    """
-    removed = await asyncio.to_thread(prune_stale_dispatch_homes)
-    if removed:
-        logger.info("startup dispatch_home prune removed=%d", removed)
-    cfg: WorkerConfig = app.state.worker_config
-    wt_sweep = await asyncio.to_thread(
-        reap_orphan_worktrees,
-        source_repo=cfg.source_repo,
-        worktree_root=cfg.worktree_root,
-    )
-    if wt_sweep.reaped:
-        logger.info(
-            "startup orphan worktree reaper reaped=%d salvaged=%d branches_retained=%d",
-            wt_sweep.reaped,
-            wt_sweep.salvaged,
-            wt_sweep.branches_retained,
-        )
-    from services.git_integration_worker.cursor_sdk_gate import (
-        reclaim_cross_lane_phantom_holders,
-    )
-
-    reclaimed = await reclaim_cross_lane_phantom_holders()
-    if reclaimed:
-        logger.info("startup cross-lane phantom gate holders reclaimed=%s", reclaimed)
-    ledger = CursorDispatchLedger.instance()
-    controller = app.state.admission_controller
-    # Snapshot before startup_reconcile mutates status — survivors it marks
-    # failed would otherwise never reach running_orphans() and skip ES terminal.
-    survivors = {orphan.dispatch_id: orphan for orphan in ledger.running_orphans()}
-    repos = await asyncio.to_thread(
-        ledger.startup_reconcile, worker_instance=controller.worker_id
-    )
-    for orphan in ledger.running_orphans():
-        survivors.setdefault(orphan.dispatch_id, orphan)
-    for orphan in survivors.values():
-        reap = await asyncio.to_thread(reap_orphan_bridge_os, orphan.dispatch_id)
-        if reap.kill_failed:
-            emit_sdk_restart_bridge_reap_failed(
-                dispatch_id=orphan.dispatch_id,
-                thread_id=orphan.thread_id,
-            )
-        await release_or_restore_for_child(dispatch_id=orphan.dispatch_id)
-        survivor_prune = await asyncio.to_thread(
-            salvage_restart_survivor_worktree,
-            dispatch_id=orphan.dispatch_id,
-            source_repo=cfg.source_repo,
-        )
-        if survivor_prune.pruned and (
-            survivor_prune.salvaged or survivor_prune.branch_retained
-        ):
-            logger.info(
-                "startup survivor worktree salvaged dispatch_id=%s salvaged=%s "
-                "branch_retained=%s",
-                orphan.dispatch_id,
-                survivor_prune.salvaged,
-                survivor_prune.branch_retained,
-            )
-        lease_key = await asyncio.to_thread(
-            ledger.mark_terminal,
-            dispatch_id=orphan.dispatch_id,
-            terminal_status="failed",
-        )
-        emit_restart_survivor_terminal(orphan, bridge_aborted=reap.bridge_aborted)
-        if lease_key:
-            repos.append(lease_key)
-    # Parked rows re-enter before queued heads: they held their write lease
-    # when the restart began, so lineage continuity outranks FIFO newcomers.
-    await _resume_parked_rows(
-        controller=controller,
-        cfg=cfg,
-        code_version=str(getattr(app.state, "worker_version", "unknown")),
-    )
-    for lease_key in sorted(set(repos)):
-        await _promote_queued_for_lease(
-            lease_key=lease_key,
-            controller=controller,
-            request=None,
-        )
 
 
 async def _terminate_link(
