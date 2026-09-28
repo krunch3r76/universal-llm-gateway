@@ -427,9 +427,9 @@ still unobserved — worse than a bare error because it reads calibrated.
 | Field | Value |
 |---|---|
 | `hub_source_path` | `/mnt/torus/projects/.cursor/rules/provenance-discipline.mdc` |
-| `hub_source_sha256` | `58e944611df1a3e2ba5b3c258b38419222008905624a442e2b0725e27874911d` |
+| `hub_source_sha256` | `2b6e07b16a44764efefe5400e5180dccbc660d8cd38e30e2d8bb8af403a4ce72` |
 | `mirror_locus` | § Closeout harvest — land claim read-back (steps table above) |
-| `attested_at` | 2026-08-12 |
+| `attested_at` | 2026-09-28 |
 
 **Check** — read `hub_source_sha256`; compare hub digest if readable. Verdicts: **IN SYNC** · **DRIFT** · **INDETERMINATE** · **NOT ATTESTED** (states 1–6 per original table). **Update protocol:** recompute sha256 + `attested_at` with mirror edit.
 
