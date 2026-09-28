@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -31,7 +31,8 @@ def _enqueue(queue: AutoJobQueue, *, thread_id: str, turn_number: int):
         turn_number=turn_number,
         subject=f"turn {turn_number}",
         body="## Scope\nAC4 settle\n",
-        from_agent="web-anthropic",
+        # Harness operator — must not address web-anthropic if bus client is live.
+        from_agent="cursor",
         to_agent="cursor",
         desired_model="auto",
         desired_effort="medium",
@@ -51,7 +52,8 @@ def test_a2_second_request_in_bind_before_register_live_run_window(
       first job was not process-stopped by the second request.
     """
     auto_id = "auto-ac4settle01"
-    thread_id = "ac4-scratch-pre-live"
+    # Numeric thread id — non-numeric ids auto-mint a new bus thread per POST /turns.
+    thread_id = "5867"
     monkeypatch.setattr(
         auto_supersede,
         "_bound_auto_dispatch_id",
@@ -70,7 +72,11 @@ def test_a2_second_request_in_bind_before_register_live_run_window(
     assert old.job_id
 
     new = _enqueue(queue, thread_id=thread_id, turn_number=2)
-    evidence = asyncio.run(supersede_same_thread_inflight(new, queue=queue))
+    bus = AsyncMock()
+    bus.reply = AsyncMock(return_value=MagicMock(status_code=200, body={}))
+    evidence = asyncio.run(
+        supersede_same_thread_inflight(new, queue=queue, client=bus)
+    )
     auto_supersede._PENDING.clear()
 
     assert evidence is not None

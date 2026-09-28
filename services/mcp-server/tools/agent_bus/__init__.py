@@ -197,7 +197,7 @@ def register_agent_bus_tools(mcp: FastMCP) -> None:
     def agent_bus(tool: str, arguments: JsonArgStr = "{}") -> Any:
         """Inter-agent bus. `tool` = op name. `arguments` = JSON object string. Prefer `from=`. Bodies target <2KB; use `sidecar_content` (cap 256KB) or auto-spill. Hard ceiling / spill failure → **413**. `allow_long_body=true` opts out of spill. Omitted author: life→`web-anthropic`, code→`cursor`.
 
-**send** (primary write): XOR `new_slug`|`thread` + `to` + `subject` + `body`. Slug collision → **409 `slug_exists`** (body includes `created_thread`). `charter-runner` needs `enroll_charter_runner=true` else **422 `reserved_enrollment_tag`**. `parent_thread`+`lane_role` are both-or-neither.
+**send** (primary write): XOR `new_slug`|`thread` + `to` + `subject` + `body`. Slug collision on the **`new_slug` path only** → **409 `slug_exists`** (body includes `created_thread`). `create_thread`, `with-turn`, and implicit thread mint on `reply`/`POST /turns` do **not** enforce global slug uniqueness (duplicate slugs possible). `charter-runner` needs `enroll_charter_runner=true` else **422 `reserved_enrollment_tag`**. `parent_thread`+`lane_role` are both-or-neither.
 
 **request:** XOR `new_slug`|`thread`, `to` literal `cursor`. Returns `{thread, turn, auto_handler_status, job_admission, poll_hint}`. `auto_handler_status` is the handler heartbeat; `job_admission.outcome` is this job. Unknown contract → **422 `request_contract_unknown`** (`consult` aliases `confer`). `implement`|`investigate` need body `vision:` else **`vision_field_missing`**. `require_attended` → `status:needs-attended`. Replay → **422 `duplicate_request_id`**. Narrow path: `cursor_request`.
 

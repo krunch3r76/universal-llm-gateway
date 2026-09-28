@@ -147,3 +147,45 @@ def test_post_on_behalf_bypasses_unread_gate(tmp_path) -> None:
         )
         assert ok.status_code == 201, ok.text
         assert ok.json()["on_behalf"] is True
+
+
+def test_implicit_thread_mint_allows_duplicate_slug(tmp_path) -> None:
+    """POST /turns with unknown non-numeric thread id mints a new row per call.
+
+    send(new_slug=...) enforces slug_exists; this path does not (friction a:36787).
+    """
+    import sqlite3
+
+    slug = "ac4-scratch-pre-live"
+    db_path = tmp_path / "bus.db"
+    with TestClient(_app(tmp_path)) as client:
+        first = client.post(
+            "/turns",
+            json={
+                "thread": slug,
+                "from": "cursor-auto",
+                "to": "cursor",
+                "subject": "mint-a",
+                "body": "a",
+            },
+        )
+        second = client.post(
+            "/turns",
+            json={
+                "thread": slug,
+                "from": "cursor-auto",
+                "to": "cursor",
+                "subject": "mint-b",
+                "body": "b",
+            },
+        )
+        assert first.status_code == 201, first.text
+        assert second.status_code == 201, second.text
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT id, slug FROM threads WHERE slug = ?", (slug,)
+    ).fetchall()
+    conn.close()
+    assert len(rows) == 2
+    assert rows[0]["id"] != rows[1]["id"]
