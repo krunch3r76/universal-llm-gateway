@@ -172,6 +172,10 @@ async def recycle_giw(
 
     A stopped process has no occupants. Waiting on a pending drain intent would
     return "drain already in progress" and never start it.
+
+    ``park_live`` stays false here. Restart/sync_restart/stop default it true
+    in ``api_dispatch`` (grace, then park resume-eligible occupants). Recycle
+    still parks at occupant idle and force-kills only on a hard park refusal.
     """
     refuse_foreign_service(service, params)
     idle_s = recycle_idle_s()
@@ -192,6 +196,7 @@ async def recycle_giw(
         store=ctl.restart_intent_store,
         supervisor=supervisor,
         reason="manage recycle_giw (drain then idle-escalate)",
+        park_live=False,
     )
     intent_id = str(result.get("restart_intent_id") or "")
     if intent_id:

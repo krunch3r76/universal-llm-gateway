@@ -25,11 +25,15 @@ deadline is 7 days.
 
 Steer-restart v1 (``todo:cursor-sdk-steer-restart``): live cursor-sdk dispatches
 are not a reason to wait or kill. Step 1b — when the intent carries
-``park_live`` — asks GIW to *park* them (``POST /api/v1/cursor/park-for-restart``:
-bridge ``CancelRun``, row terminal ``cancelled`` + park columns, GIW auto-resume
-after restart); refusals fall back to keep-await exactly as before. Recycle
-mode is park-first: occupant idle tries the same sweep before ``_sigterm`` and
-kills only when park is refused for a reason a restart cannot clear.
+``park_live`` (the default for GIW stop/restart/sync_restart) — waits
+``PARK_LIVE_GRACE_S`` then asks GIW to *park* them
+(``POST /api/v1/cursor/park-for-restart``: bridge ``CancelRun``, row terminal
+``cancelled`` + park columns, GIW auto-resume after restart). The sweep parks
+only resume-eligible occupants (``sdk_agent_id`` on the ledger row and the SDK
+store dir on disk — ``preflight_park``); everyone else stays live and this loop
+drain-waits. Recycle mode does not set ``park_live``: occupant idle tries the
+same sweep before ``_sigterm`` and kills only when park is refused for a reason
+a restart cannot clear.
 
 All worker/event transports are injected callables so the lifecycle is unit
 testable with a fake worker + fake event feed + fake kill (AC-2..AC-5). The
@@ -109,6 +113,12 @@ _AWAIT_HANDED_OFF = "handed_off"
 _PARK_HARD_REFUSALS = frozenset({"CANCEL_FAILED", "NEST_CHAIN", "STATE_ROOT_MISSING"})
 # Recycle park-first tries the sweep at most this many idle windows before force.
 _PARK_IDLE_MAX_ATTEMPTS = 3
+# Wait this long after begin-drain before step 1b. A heartbeating occupant is
+# never idle, so park-on-_AWAIT_IDLE never fires for a restart. 20s lets a
+# short call finish; still-busy resume-eligible occupants are then parked.
+# Falsifier of this gate versus unconditional park: CancelRun on an occupant
+# with no sdk_agent_id, or whose SDK store dir is absent, cannot resume.
+PARK_LIVE_GRACE_S = 20.0
 
 
 def _field(ev: dict[str, Any], key: str) -> Any:
@@ -155,6 +165,7 @@ class GitWorkerDrainSupervisor:
     park_for_restart: ParkForRestartCaller | None = None
     process_absent: Callable[[], Awaitable[bool]] | None = None
     read_pid: Callable[[], Awaitable[int | None]] | None = None
+    park_live_grace_s: float = PARK_LIVE_GRACE_S
     _settle_boundary_monotonic: float | None = None
     _idle_last_progress: float | None = None
     _idle_token: tuple[frozenset[str], tuple[tuple[str, str], ...], bool] | None = None
@@ -186,7 +197,7 @@ class GitWorkerDrainSupervisor:
             if await self._abort_if_requested(intent):
                 return
             if intent.park_live:
-                await self._park_live(intent)
+                await self._park_live_after_grace(intent)
             while True:
                 outcome = await self._await_drain_completed(intent, deadline, t0)
                 if outcome == _AWAIT_CANCELLED:
@@ -343,11 +354,40 @@ class GitWorkerDrainSupervisor:
             logger.debug("park summary persist failed", exc_info=True)
         return summary
 
+    async def _park_live_after_grace(self, intent: Intent) -> None:
+        """Wait ``park_live_grace_s``, then park if the drain is still busy.
+
+        ``park_live_grace_s <= 0`` parks immediately (tests of step 1b). A drain
+        that converges during the grace skips the sweep. Cancel during the grace
+        returns without parking; the caller observes the abort next.
+        """
+        if self.park_live_grace_s > 0:
+            grace_end = time.monotonic() + self.park_live_grace_s
+            while time.monotonic() < grace_end:
+                if self._abort_kind(intent) is not None:
+                    return
+                snapshot = await self._safe_drain_state()
+                if snapshot is not None and self._drain_state_matches(snapshot, intent):
+                    return
+                remaining = grace_end - time.monotonic()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(self.reconcile_interval_s, remaining))
+            if self._abort_kind(intent) is not None:
+                return
+            snapshot = await self._safe_drain_state()
+            if snapshot is not None and self._drain_state_matches(snapshot, intent):
+                return
+        await self._park_live(intent)
+
     async def _park_live(self, intent: Intent) -> None:
         """Step 1b: park live cursor-sdk dispatches so drain converges without kill.
 
-        Refusals do not fail the intent — the loop proceeds to keep-await exactly
-        as before, with the refused occupants visible in ``_stuck_ops``.
+        GIW ``preflight_park`` parks an occupant only when ``sdk_agent_id`` is on
+        the ledger row and ``resolve_sdk_store_dir`` finds the store on disk.
+        ``NOT_RESUMABLE_YET`` and ``STATE_ROOT_MISSING`` are not requested; those
+        occupants stay in the drain set and this loop keep-awaits them. Other
+        refusals do not fail the intent either.
         """
         summary = await self._run_park_sweep(
             intent, reason=intent.reason or "manage restart (park_live)"
@@ -1069,4 +1109,8 @@ def build_git_worker_drain_supervisor(
     )
 
 
-__all__ = ["GitWorkerDrainSupervisor", "build_git_worker_drain_supervisor"]
+__all__ = [
+    "PARK_LIVE_GRACE_S",
+    "GitWorkerDrainSupervisor",
+    "build_git_worker_drain_supervisor",
+]

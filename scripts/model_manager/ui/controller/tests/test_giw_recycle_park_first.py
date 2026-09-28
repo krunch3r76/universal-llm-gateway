@@ -79,6 +79,7 @@ def _sup(
         progress_interval_s=999.0,
         idle_escalate_s=idle_escalate_s,
         park_for_restart=park,
+        park_live_grace_s=0.0,
     )
 
 

@@ -19,7 +19,10 @@ from typing import Any
 
 import pytest
 
-from scripts.model_manager.ui.api_dispatch import orchestrate_cancel_restart_intent
+from scripts.model_manager.ui.api_dispatch import (
+    giw_park_live_from_params,
+    orchestrate_cancel_restart_intent,
+)
 from scripts.model_manager.ui.controller.drain_timeout_keep_await import (
     cas_force_preempt,
     preempt_keep_awaiting_giw,
@@ -27,6 +30,7 @@ from scripts.model_manager.ui.controller.drain_timeout_keep_await import (
     timeout_affordances,
 )
 from scripts.model_manager.ui.controller.git_worker_drain_supervisor import (
+    PARK_LIVE_GRACE_S,
     GitWorkerDrainSupervisor,
 )
 from scripts.model_manager.ui.controller.restart_intent_store import (
@@ -153,6 +157,7 @@ def _supervisor(
     deadline_s: float = 5.0,
     idle_escalate_s: float | None = None,
     park_for_restart: Any | None = None,
+    park_live_grace_s: float = 0.0,
 ) -> GitWorkerDrainSupervisor:
     return GitWorkerDrainSupervisor(
         store=store,
@@ -165,6 +170,7 @@ def _supervisor(
         progress_interval_s=999.0,
         idle_escalate_s=idle_escalate_s,
         park_for_restart=park_for_restart,
+        park_live_grace_s=park_live_grace_s,
     )
 
 
@@ -1409,3 +1415,139 @@ def test_preempt_keep_awaiting_waits_then_clears() -> None:
     result = _run(preempt_keep_awaiting_giw(_Store(), wait_exit=_wait))
     assert result is None
     assert "intent_id='i1'" in timeout_affordances("i1")[1]
+
+
+def test_giw_park_live_defaults_true() -> None:
+    """sync_restart/restart/stop omit park_live → True; explicit false opts out."""
+    assert PARK_LIVE_GRACE_S == 20.0
+    assert PARK_LIVE_GRACE_S <= 60.0
+    assert giw_park_live_from_params({}) is True
+    assert giw_park_live_from_params({"park_live": True}) is True
+    assert giw_park_live_from_params({"park_live": False}) is False
+
+
+class _BusyUntilPark:
+    """Drain stays busy until the park callback releases it."""
+
+    def __init__(self) -> None:
+        self.begun = False
+        self.released = False
+
+    async def drain_state(self) -> dict[str, Any]:
+        if not self.begun:
+            return _snap(draining=False, epoch=0, active=1)
+        if self.released:
+            return _snap(draining=True, epoch=1, active=0)
+        return _snap(
+            draining=True,
+            epoch=1,
+            active=1,
+            ops=[{"op_id": "elig", "kind": "cursor_sdk"}],
+        )
+
+    async def begin_drain(self, body: dict[str, Any]) -> dict[str, Any]:
+        self.begun = True
+        return _snap(
+            draining=True,
+            epoch=1,
+            active=1,
+            ops=[{"op_id": "elig", "kind": "cursor_sdk"}],
+        )
+
+
+def test_park_live_grace_parks_busy_occupant_within_grace(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """Busy park_live intent parks at the end of the grace, then the drain kills."""
+    grace_s = 0.05
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE,
+        action="sync_restart",
+        deadline_at="d",
+        reason="r",
+        park_live=True,
+    )
+    worker = _BusyUntilPark()
+    parked_at: list[float] = []
+    t0 = time.monotonic()
+
+    async def _park(
+        intent_id: str, drain_epoch: int | None, reason: str
+    ) -> dict[str, Any]:
+        parked_at.append(time.monotonic())
+        assert intent_id == intent.intent_id
+        assert drain_epoch == 1
+        worker.released = True
+        return {
+            "requested": ["dispatch-elig"],
+            "refused": [],
+            "already_parked": [],
+            "live_after": 0,
+        }
+
+    kill = _Kill()
+    sup = _supervisor(
+        store,
+        worker,  # type: ignore[arg-type]
+        _Feed([]),
+        kill,
+        park_for_restart=_park,
+        park_live_grace_s=grace_s,
+    )
+    _run(sup.supervise(intent))
+    assert len(parked_at) == 1
+    elapsed = parked_at[0] - t0
+    assert grace_s <= elapsed <= grace_s + 0.25
+    assert kill.calls == 1
+    signals = [s for s, _ in events_log]
+    assert "manage.restart.park_live_requested" in signals
+
+
+def test_park_refused_non_eligible_occupant_drain_waits(
+    tmp_path: Any, events_log: list[tuple[str, dict[str, Any]]]
+) -> None:
+    """A sweep that requests nothing leaves the busy occupant; no SIGTERM."""
+    store = _store(tmp_path)
+    intent = store.create_intent(
+        service=_SERVICE,
+        action="restart",
+        deadline_at="d",
+        reason="r",
+        park_live=True,
+    )
+    worker = _BusyUntilPark()
+    calls: list[str] = []
+
+    async def _park(
+        intent_id: str, drain_epoch: int | None, reason: str
+    ) -> dict[str, Any]:
+        calls.append(intent_id)
+        return {
+            "requested": [],
+            "refused": [
+                {"dispatch_id": "dispatch-young", "refusal": "NOT_RESUMABLE_YET"}
+            ],
+            "already_parked": [],
+            "live_after": 1,
+        }
+
+    kill = _Kill()
+    sup = _supervisor(
+        store,
+        worker,  # type: ignore[arg-type]
+        _Feed([]),
+        kill,
+        deadline_s=5.0,
+        park_for_restart=_park,
+        park_live_grace_s=0.05,
+    )
+
+    def _parked() -> bool:
+        return len(calls) == 1
+
+    _run(_supervise_until(sup, intent, done=_parked, hold_s=1.0))
+    assert kill.calls == 0
+    got = store.get(intent.intent_id)
+    assert got is not None and got.status == STATUS_PENDING_DRAIN
+    assert worker.released is False

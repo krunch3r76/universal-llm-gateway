@@ -76,7 +76,8 @@ def sync_restart_service(
     an activation validation keyed to the row SHA rather than process HEAD.
     ``caller_job_id`` is the executing cursor-auto job. manage applies it only
     for ``agent_bus``, so that job is not counted as in-flight work against
-    its own propagate.
+    its own propagate. ``git_integration_worker`` omits ``park_live`` here:
+    manage defaults it true (20s grace, then park resume-eligible occupants).
     """
     params: dict[str, Any] = {"service": service}
     if reason:

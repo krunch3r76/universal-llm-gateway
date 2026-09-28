@@ -230,7 +230,7 @@ def register_manage_tools(mcp: FastMCP) -> None:
         clear_wip: bool = False,
         reenroll: bool = False,
         intent_id: str = "",
-        park_live: bool = False,
+        park_live: bool = True,
         caller_dispatch_id: str = "",
     ) -> dict[str, Any]:
         """Service lifecycle — start, stop, restart, sync_restart, rebuild, health, wait_healthy.
@@ -239,9 +239,11 @@ def register_manage_tools(mcp: FastMCP) -> None:
         service: service name (required for most actions)
         timeout: seconds to wait for wait_healthy (default 120)
         force: bypass the drain check for stop/restart/sync_restart (default False)
-        park_live: for git_integration_worker stop/restart/sync_restart — park live
-                   cursor-sdk dispatches at drain start instead of keep-await/kill
-                   (steer-restart v1; default False)
+        park_live: for git_integration_worker stop/restart/sync_restart — after a
+                   20s grace, park resume-eligible live cursor-sdk dispatches
+                   (sdk_agent_id and SDK store dir on disk) instead of waiting
+                   out a heartbeating job. Non-eligible occupants drain-wait.
+                   Default True. Pass false to drain-wait every occupant.
         caller_dispatch_id: cursor-sdk dispatch id for self-holder busy-skip drain
                    (defaults to CURSOR_SDK_DISPATCH_ID env when set). When the sole
                    busy holder matches, sync_restart mints restart_intent_id and defers
@@ -421,8 +423,11 @@ def register_manage_tools(mcp: FastMCP) -> None:
             params["timeout"] = timeout
         if force and action in {"stop", "restart", "sync_restart"}:
             params["force"] = True
-        if park_live and action in {"stop", "restart", "sync_restart"}:
-            params["park_live"] = True
+        if (
+            service == "git_integration_worker"
+            and action in {"stop", "restart", "sync_restart"}
+        ):
+            params["park_live"] = bool(park_live)
         effective_caller = (
             caller_dispatch_id or os.environ.get("CURSOR_SDK_DISPATCH_ID", "")
         ).strip()
