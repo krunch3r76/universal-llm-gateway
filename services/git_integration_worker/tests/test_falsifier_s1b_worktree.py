@@ -142,7 +142,7 @@ def test_falsifier_f_a4_prune_on_terminal_and_reaper_path(
         worktree_root=worktree_root,
         dispatch_id=orphan_id,
     )
-    unregister_lane_worktree(thread_id=orphan_id)
+    unregister_lane_worktree(thread_id=orphan_id, source_repo=source_repo)
     assert orphan_wt.is_dir()
     sweep = reap_orphan_worktrees(
         source_repo=source_repo,

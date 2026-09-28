@@ -85,7 +85,10 @@ def test_ac_w0_minted_on_fresh_lane(source_repo: Path, tmp_path: Path) -> None:
     )
     assert isinstance(binding, AdmitBindingResult)
     assert binding.binding_kind == "minted"
-    assert binding.workspace == lane_worktree_dir(worktree_root, "t-bind").resolve()
+    assert (
+        binding.workspace
+        == lane_worktree_dir(worktree_root, "t-bind", source_repo=source_repo).resolve()
+    )
 
 
 def test_ac_w0_reused_on_second_dispatch(source_repo: Path, tmp_path: Path) -> None:
@@ -121,7 +124,7 @@ def test_ac_w0_adopted_on_unregistered_existing_dir(
         dispatch_id="orphan-adopt",
         thread_id="t-adopt",
     )
-    unregister_lane_worktree(thread_id="t-adopt")
+    unregister_lane_worktree(thread_id="t-adopt", source_repo=source_repo)
 
     binding = resolve_admit_binding(
         req=_req(dispatch_id="adopt-1", thread_id="t-adopt"),
@@ -133,7 +136,9 @@ def test_ac_w0_adopted_on_unregistered_existing_dir(
     )
     assert binding.binding_kind == "adopted"
     assert binding.workspace == orphan.resolve()
-    assert lookup_lane_worktree(thread_id="t-adopt") is not None
+    assert (
+        lookup_lane_worktree(thread_id="t-adopt", source_repo=source_repo) is not None
+    )
 
 
 def test_ac_w0_lane_a_binding_kind(source_repo: Path, tmp_path: Path) -> None:

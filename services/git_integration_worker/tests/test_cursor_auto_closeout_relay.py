@@ -1668,7 +1668,14 @@ def test_6630_overclaim_still_downgrades_with_deviation_ac5c() -> None:
 
 # --- arc 6637 — plain field: value format + relay_parse_failed status ---
 
+_ARC6637_FIXTURE_DIR = (
+    Path(__file__).resolve().parent / "fixtures" / "arc6637_closeouts"
+)
 _ARC6637_FIXTURE_IDS = ("auto-9ca4df4d4a88", "auto-39cbe5d54b0f")
+
+
+def _arc6637_fixture_path(dispatch_id: str) -> Path:
+    return _ARC6637_FIXTURE_DIR / f"{dispatch_id}.md"
 
 
 @pytest.mark.parametrize("dispatch_id", _ARC6637_FIXTURE_IDS)
@@ -1686,7 +1693,7 @@ def test_arc6637_real_closeout_fixtures_parse_without_relay_miss(
         sidecar_workspaces_ref,
     )
 
-    path = Path("tmp/reviews/closeouts") / f"{dispatch_id}.md"
+    path = _arc6637_fixture_path(dispatch_id)
     assert path.is_file(), f"fixture sidecar missing: {path}"
     prose = strip_machine_tail(path.read_text(encoding="utf-8"))
     provenance = sidecar_workspaces_ref(dispatch_id)
@@ -1709,7 +1716,7 @@ def test_arc6637_plain_colon_format_root_cause_not_section2_heading() -> None:
         extract_field_section,
     )
 
-    path = Path("tmp/reviews/closeouts/auto-9ca4df4d4a88.md")
+    path = _arc6637_fixture_path("auto-9ca4df4d4a88")
     prose = strip_machine_tail(path.read_text(encoding="utf-8"))
     assert "## §2 closeout" not in prose.splitlines()[0]
     assert _extract_bold_same_line(prose, "ac_verdict") is None
@@ -1719,7 +1726,7 @@ def test_arc6637_plain_colon_format_root_cause_not_section2_heading() -> None:
 
 def test_arc6637_9ca4df4d4a88_select_relay_complete_not_partial() -> None:
     """AC1+AC3 — authored complete plain-colon closeout relays complete after fix."""
-    path = Path("tmp/reviews/closeouts/auto-9ca4df4d4a88.md")
+    path = _arc6637_fixture_path("auto-9ca4df4d4a88")
     payload = select_closeout_relay_payload(
         sdk_body=None,
         sidecar_text=path.read_text(encoding="utf-8"),
@@ -1762,7 +1769,7 @@ _ARC6637_G7_FIXTURE_IDS = ("auto-958206cbe1bc", "auto-39cbe5d54b0f")
 
 
 def _load_closeout_fixture(dispatch_id: str) -> tuple[str, str | None]:
-    path = Path("tmp/reviews/closeouts") / f"{dispatch_id}.md"
+    path = _arc6637_fixture_path(dispatch_id)
     assert path.is_file(), f"fixture sidecar missing: {path}"
     text = path.read_text(encoding="utf-8")
     sdk_body = None

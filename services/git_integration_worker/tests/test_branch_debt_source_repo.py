@@ -109,6 +109,7 @@ def test_open_branch_debt_stores_source_repo_token(
     debt = open_branch_debt(
         branch_name="cursor-sdk/lane-sat",
         thread_id="9953",
+        dispatch_id="d-9953",
         source_repo="sat-bot",
     )
     assert debt.source_repo == "sat-bot"
@@ -126,6 +127,7 @@ def test_discharge_uses_satellite_repo_from_debt_row(
     open_branch_debt(
         branch_name=branch,
         thread_id="9953",
+        dispatch_id="d-9953-discharge",
         source_repo="sat-bot",
     )
     repo = resolve_debt_source_repo("sat-bot", hub=hub, projects_root=projects_root)
