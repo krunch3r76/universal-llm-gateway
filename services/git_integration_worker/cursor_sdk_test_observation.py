@@ -61,6 +61,51 @@ _SINGLE_QUOTED_RE = re.compile(r"'[^']*'")
 _DOUBLE_QUOTED_RE = re.compile(r'"(?:\\.|[^"\\])*"')
 _PIPEFAIL_RE = re.compile(r"set\s+-o\s+pipefail", flags=re.IGNORECASE)
 _CHAIN_SPLIT_RE = re.compile(r"&&|\n|;")
+# Leading ``cd <dir> &&`` (quoted or bare path) before the substantive shell.
+_LEADING_CD_AND_RE = re.compile(
+    r"^cd\s+(?:[^\s;|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')\s+&&\s*",
+    flags=re.IGNORECASE,
+)
+# ``env -u VAR`` / ``env VAR=val`` prefix chains (specimen lane-13042 / a:36693).
+_LEADING_ENV_PREFIX_RE = re.compile(
+    r"^env\s+(?:(?:-u\s+\S+)|(?:\S+=\S+))"
+    r"(?:\s+(?:(?:-u\s+\S+)|(?:\S+=\S+)))*\s+",
+    flags=re.IGNORECASE,
+)
+_TRAILING_PIPE_TAIL_RE = re.compile(
+    r"\s+2>&1\s*\|\s*tail\s+-?\d+\s*$",
+    flags=re.IGNORECASE,
+)
+_TRAILING_PIPE_HEAD_RE = re.compile(
+    r"\s*\|\s*(?:tail|head)\s+-?\d+\s*$",
+    flags=re.IGNORECASE,
+)
+# Unquoted venv pytest executable (quoted form handled in ``_strip_shell_literals``).
+_UNQUOTED_VENV_PYTEST_RE = re.compile(
+    r"(?:\$HOME|~)/\.venvs/[^/\s]+/bin/pytest\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _normalize_for_pytest_detection(command: str) -> str:
+    """Peel common seat wrappers before invoke-position pytest matching.
+
+    Does not alter harvest exit/stdout semantics — only detection predicates.
+    """
+    cmd = command.strip()
+    while True:
+        stripped = _LEADING_CD_AND_RE.sub("", cmd, count=1).strip()
+        if stripped == cmd:
+            break
+        cmd = stripped
+    while True:
+        match = _LEADING_ENV_PREFIX_RE.match(cmd)
+        if match is None:
+            break
+        cmd = cmd[match.end() :].strip()
+    cmd = _TRAILING_PIPE_TAIL_RE.sub("", cmd)
+    cmd = _TRAILING_PIPE_HEAD_RE.sub("", cmd)
+    return cmd.strip()
 
 
 def _chain_segments(command: str) -> list[str]:
@@ -87,7 +132,7 @@ def is_proven_simple_pytest_command(command: str) -> bool:
     - **Allow** — ``pytest | …`` pipeline only when ``set -o pipefail`` appears
       earlier in the raw script (pipefail binds pipeline exit to pytest).
     """
-    cmd = command.strip()
+    cmd = _normalize_for_pytest_detection(command.strip())
     if not cmd or not is_pytest_command(cmd):
         return False
 
@@ -146,7 +191,7 @@ def is_pytest_command(command: str) -> bool:
     Quoted strings and heredoc bodies are stripped first so narrative / ``rg``
     pattern text cannot mint a false observed test sibling.
     """
-    cmd = command.strip()
+    cmd = _normalize_for_pytest_detection(command.strip())
     if not cmd:
         return False
     executable = _strip_shell_literals(cmd)
@@ -156,6 +201,8 @@ def is_pytest_command(command: str) -> bool:
     if "python -m pytest" in lower or "python3 -m pytest" in lower:
         return True
     if "-m pytest" in lower:
+        return True
+    if _UNQUOTED_VENV_PYTEST_RE.search(executable):
         return True
     return _PYTEST_INVOKE_RE.search(executable) is not None
 
