@@ -61,6 +61,9 @@ _SINGLE_QUOTED_RE = re.compile(r"'[^']*'")
 _DOUBLE_QUOTED_RE = re.compile(r'"(?:\\.|[^"\\])*"')
 _PIPEFAIL_RE = re.compile(r"set\s+-o\s+pipefail", flags=re.IGNORECASE)
 _CHAIN_SPLIT_RE = re.compile(r"&&|\n|;")
+# Shell backslash-newline wrap. A continued pytest argv is one process; splitting
+# on the raw newline made the last segment ``-q`` and demoted the shell exit.
+_LINE_CONTINUATION_RE = re.compile(r"\\\s*\r?\n")
 # Leading ``cd <dir> &&`` (quoted or bare path) before the substantive shell.
 _LEADING_CD_AND_RE = re.compile(
     r"^cd\s+(?:[^\s;|&]+|\"(?:\\.|[^\"\\])*\"|'[^']*')\s+&&\s*",
@@ -87,12 +90,17 @@ _UNQUOTED_VENV_PYTEST_RE = re.compile(
 )
 
 
+def _join_shell_continuations(command: str) -> str:
+    """Join backslash-newline wraps so one pytest argv stays one chain segment."""
+    return _LINE_CONTINUATION_RE.sub(" ", command)
+
+
 def _normalize_for_pytest_detection(command: str) -> str:
     """Peel common seat wrappers before invoke-position pytest matching.
 
     Does not alter harvest exit/stdout semantics — only detection predicates.
     """
-    cmd = command.strip()
+    cmd = _join_shell_continuations(command.strip())
     while True:
         stripped = _LEADING_CD_AND_RE.sub("", cmd, count=1).strip()
         if stripped == cmd:
