@@ -10,6 +10,51 @@ from claude_bundles.cdp_registry.models import _RESERVED_STATUSES, STATUS_DORMAN
 
 _VOCABULARY_STATUSES = _RESERVED_STATUSES | {STATUS_DORMANT}
 
+SEAT_FIELD_SCHEMA = 1
+
+
+def _optional_iso_at(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    try:
+        ts = float(value)
+    except (TypeError, ValueError):
+        return None
+    return datetime.fromtimestamp(ts, UTC).isoformat()
+
+
+def _seat_axis_fields(record: Mapping[str, Any]) -> dict[str, Any]:
+    execution_raw = record.get("execution_id")
+    execution_id: str | None
+    if execution_raw is None:
+        execution_id = None
+    else:
+        text = str(execution_raw).strip()
+        execution_id = text or None
+    lane_raw = record.get("seat_lane")
+    seat_lane: str | None
+    if lane_raw is None:
+        seat_lane = None
+    else:
+        text = str(lane_raw).strip()
+        seat_lane = text or None
+    return {
+        "execution_id": execution_id,
+        "seat_lane": seat_lane,
+        "seat_bound_at": _optional_iso_at(record.get("seat_bound_at")),
+        "seat_closed_at": _optional_iso_at(record.get("seat_closed_at")),
+    }
+
+
+def registry_document_supports_seat_axis(doc: Mapping[str, Any]) -> bool:
+    """True when the document carries seat-axis fields (not a legacy vocabulary-only doc)."""
+    if str(doc.get("availability") or "") != "ok":
+        return False
+    return int(doc.get("seat_field_schema") or 0) == SEAT_FIELD_SCHEMA
+
 
 def build_registry_document(active: Mapping[str, Any]) -> dict[str, Any]:
     """Filter vocabulary rows and return the registry document shape."""
@@ -46,20 +91,21 @@ def build_registry_document(active: Mapping[str, Any]) -> dict[str, Any]:
                 started_at = None
         parent = record.get("parent_thread")
         purpose = record.get("purpose")
-        seats.append(
-            {
-                "registration_id": registration_id,
-                "status": status,
-                "started_at": started_at,
-                "parent_thread": str(parent) if parent is not None else None,
-                "purpose": str(purpose) if purpose is not None else None,
-            }
-        )
+        seat_row: dict[str, Any] = {
+            "registration_id": registration_id,
+            "status": status,
+            "started_at": started_at,
+            "parent_thread": str(parent) if parent is not None else None,
+            "purpose": str(purpose) if purpose is not None else None,
+        }
+        seat_row.update(_seat_axis_fields(record))
+        seats.append(seat_row)
 
     seats.sort(key=lambda row: row["registration_id"])
     return {
         "availability": "ok",
         "observed_at": observed_at,
+        "seat_field_schema": SEAT_FIELD_SCHEMA,
         "seat_count": len(seats),
         "blank_status_omitted": blank_omitted,
         "unknown_status_omitted": unknown_omitted,

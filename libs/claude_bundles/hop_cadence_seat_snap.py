@@ -21,9 +21,11 @@ Identity union field guide (R2′):
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from datetime import datetime
 from typing import Any
 
 from claude_bundles.cdp_registry.models import _HOST_LISTABLE_STATUSES, seat_open
+from claude_bundles.cdp_registry_document import registry_document_supports_seat_axis
 
 SEATED_NO_STREAM_EXECUTION = "__none:seated_no_stream__"
 SEATED_ROWS_KEY = "seated_rows"
@@ -173,6 +175,28 @@ def seated_rows_from_registry_records(
     return out
 
 
+def _parse_document_at_field(value: Any) -> Any:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return value
+
+
+def _record_from_document_seat(seat: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(seat)
+    for key in ("seat_bound_at", "seat_closed_at"):
+        if key in out:
+            out[key] = _parse_document_at_field(out.get(key))
+    return out
+
+
 def _active_map_from_registry_document(
     doc: Mapping[str, Any],
 ) -> dict[str, Mapping[str, Any]]:
@@ -186,7 +210,7 @@ def _active_map_from_registry_document(
         registration_id = str(seat.get("registration_id") or "").strip()
         if not registration_id:
             continue
-        out[registration_id] = seat
+        out[registration_id] = _record_from_document_seat(seat)
     return out
 
 
@@ -317,12 +341,13 @@ def attach_registry_seated_rows(snap: dict[str, Any]) -> dict[str, Any]:
             seated_rows_from_registry_records(raw, stream_index=stream_index),
         )
     if need_seat:
-        out = attach_seat_rows(
-            out,
-            seat_rows_from_registry_records(
-                raw, stream_index=stream_index, observed_at=observed_at
-            ),
-        )
+        if registry_document_supports_seat_axis(doc):
+            out = attach_seat_rows(
+                out,
+                seat_rows_from_registry_records(
+                    raw, stream_index=stream_index, observed_at=observed_at
+                ),
+            )
     retired = [
         str(rid).strip()
         for rid, row in raw.items()

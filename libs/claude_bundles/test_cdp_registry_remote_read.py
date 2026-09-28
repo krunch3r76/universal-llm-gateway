@@ -96,3 +96,68 @@ def test_attach_unavailable_does_not_inject_empty_lists() -> None:
     assert "seated_rows" not in out
     assert "seat_rows" not in out
     assert out.get("registry_availability") == "unavailable"
+
+
+@pytest.mark.offline
+def test_fallback_read_document_with_seat_fields_yields_open_seat_row() -> None:
+    from claude_bundles.hop_cadence_seat_snap import attach_registry_seated_rows
+
+    snap = {
+        "rows": [],
+        "running_count": 0,
+        "execution_streams": {"exec-1": "running"},
+    }
+    payload = {
+        "availability": "ok",
+        "seat_field_schema": 1,
+        "seat_count": 1,
+        "seats": [
+            {
+                "registration_id": "reg-1",
+                "status": "active",
+                "started_at": 1.0,
+                "parent_thread": "10479",
+                "purpose": "operator-proxy",
+                "execution_id": "exec-1",
+                "seat_lane": "10479",
+                "seat_bound_at": "2023-11-14T22:13:20+00:00",
+                "seat_closed_at": None,
+            }
+        ],
+    }
+    with patch(
+        "claude_bundles.cdp_registry_remote_read.read_fleet_registry",
+        return_value=payload,
+    ):
+        out = attach_registry_seated_rows(snap)
+    assert len(out["seat_rows"]) == 1
+    row = out["seat_rows"][0]
+    assert row["execution_id"] == "exec-1"
+    assert row["stream_state"] == "running"
+
+
+@pytest.mark.offline
+def test_fallback_read_legacy_document_omits_seat_rows() -> None:
+    from claude_bundles.hop_cadence_seat_snap import attach_registry_seated_rows
+
+    snap = {"rows": [], "running_count": 0}
+    payload = {
+        "availability": "ok",
+        "seat_count": 1,
+        "seats": [
+            {
+                "registration_id": "reg-legacy",
+                "status": "active",
+                "started_at": 1.0,
+                "parent_thread": "10479",
+                "purpose": "operator-proxy",
+            }
+        ],
+    }
+    with patch(
+        "claude_bundles.cdp_registry_remote_read.read_fleet_registry",
+        return_value=payload,
+    ):
+        out = attach_registry_seated_rows(snap)
+    assert "seat_rows" not in out
+    assert out.get("seat_rows") is None

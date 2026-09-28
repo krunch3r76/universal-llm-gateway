@@ -33,3 +33,24 @@ def test_seats_sorted_by_registration_id() -> None:
     doc = build_registry_document(active)
     ids = [row["registration_id"] for row in doc["seats"]]
     assert ids == ["a", "z"]
+
+
+@pytest.mark.offline
+def test_document_emits_seat_axis_fields() -> None:
+    active = {
+        "r1": {
+            "registration_id": "r1",
+            "status": "active",
+            "execution_id": "exec-1",
+            "seat_lane": "10479",
+            "seat_bound_at": 1_700_000_000.0,
+            "seat_closed_at": None,
+        },
+    }
+    doc = build_registry_document(active)
+    assert doc["seat_field_schema"] == 1
+    seat = doc["seats"][0]
+    assert seat["execution_id"] == "exec-1"
+    assert seat["seat_lane"] == "10479"
+    assert seat["seat_bound_at"] is not None
+    assert seat["seat_closed_at"] is None
