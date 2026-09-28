@@ -498,9 +498,12 @@ async def _reconcile_loop() -> None:
 
 
 async def start_cdp_generate_reconcile() -> None:
-    """Boot one reconcile pass, then start the periodic poll-only catch-up loop."""
+    """Start the reconcile loop without running a pass before returning.
+
+    An awaited boot pass held the caller — lifespan yield, and therefore the
+    :9999 bind — on that pass. The loop's first iteration is the boot pass.
+    """
     global _reconcile_task
-    await reconcile_cdp_inflight_legs()
     if _reconcile_task is None or _reconcile_task.done():
         _reconcile_task = asyncio.create_task(
             _reconcile_loop(), name="cdp-generate-reconcile"

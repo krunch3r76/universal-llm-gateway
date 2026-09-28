@@ -244,16 +244,13 @@ async def lifespan(app: FastAPI):
     try:
         await proxy.startup(app)
         if _federation_config.mode == StargateMode.MASTER:
-            from systems.frontier_consult.review_child_spawn_hook import (
-                start_review_child_spawn_listener,
+            # Bind :9999 before these loops. They used to be awaited here, so a
+            # stuck import or socket call never reached the yield.
+            from systems.frontier_consult.master_post_bind import (
+                schedule_master_post_bind,
             )
 
-            await start_review_child_spawn_listener()
-            from systems.frontier_consult.cdp_generate_reconcile import (
-                start_cdp_generate_reconcile,
-            )
-
-            await start_cdp_generate_reconcile()
+            schedule_master_post_bind()
         logger.info(
             "🔍 Lifespan: Startup completed successfully, yielding to application..."
         )

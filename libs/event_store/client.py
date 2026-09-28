@@ -13,12 +13,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Opening handshake bound. A silent query socket must not pin the caller.
+SUBSCRIBE_OPEN_TIMEOUT_S = 10.0
+
 
 async def subscribe_events(
     query_sock: str,
     *,
     filter: dict[str, str] | None = None,
     resume_from: int | None = None,
+    open_timeout: float = SUBSCRIBE_OPEN_TIMEOUT_S,
 ) -> AsyncIterator[dict[str, Any]]:
     """Async iterator yielding events matching the filter.
 
@@ -36,6 +40,7 @@ async def subscribe_events(
         query_sock,
         uri="ws://localhost/v1/subscribe",
         max_size=None,
+        open_timeout=open_timeout,
     ) as ws:
         subscribe_msg: dict[str, Any] = {"type": "subscribe"}
         if filter:

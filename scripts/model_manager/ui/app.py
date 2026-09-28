@@ -135,6 +135,7 @@ class ModelManagerApp(App):
         self._api_server: ManageAPIServer | None = None
         self._digest_tick_loop: DigestTickLoop | None = None
         self._charter_tick_loop: CharterRunnerTickLoop | None = None
+        self._stargate_health_restart = None
         # Set when on_mount aborts startup; ``run`` turns it into a stderr line
         # plus a non-zero process exit (Textual has already torn the frame down
         # by then, so a notify() would never be seen).
@@ -242,6 +243,24 @@ class ModelManagerApp(App):
                 timeout=15,
             )
 
+        try:
+            from scripts.model_manager.ui.controller.stargate_health_restart import (
+                StargateHealthRestart,
+            )
+
+            self._stargate_health_restart = StargateHealthRestart(
+                self._service_controller
+            )
+            self._stargate_health_restart.start()
+        except Exception as e:
+            logger.exception("Failed to start stargate health restart: %s", e)
+            self._stargate_health_restart = None
+            self.notify(
+                f"stargate health restart unavailable: {e}",
+                severity="warning",
+                timeout=15,
+            )
+
     async def reload_charter_tick(self) -> dict:
         """Restart the charter runner loop in place. Wired to ``charter_reload``.
 
@@ -333,6 +352,12 @@ class ModelManagerApp(App):
             except Exception as e:
                 logger.exception("Error stopping charter runner tick loop: %s", e)
             self._charter_tick_loop = None
+        if self._stargate_health_restart is not None:
+            try:
+                await self._stargate_health_restart.stop()
+            except Exception as e:
+                logger.exception("Error stopping stargate health restart: %s", e)
+            self._stargate_health_restart = None
         if self._api_server is not None:
             try:
                 await self._api_server.stop()

@@ -598,23 +598,46 @@ async def handle_worker_completed_event(
     await _attempt_spawn_for_completion(terminal=terminal, ctx=ctx)
 
 
+def _pending_spawn_candidate(
+    parent_execution_id: str, parent_thread_id: str
+) -> tuple[AdmissionContext, DurableTerminalEvent] | None:
+    """Sync event-service read. Callers must run this off the event-loop thread.
+
+    ``query_event_service`` inside ``durable_catch_up_terminal`` is a blocking
+    HTTP call (5s timeout). On the asyncio thread it stalls bind and /health.
+    """
+    ctx = read_admission_context(parent_execution_id)
+    if ctx is None or not should_spawn_review_child(ctx):
+        return None
+    terminal = durable_catch_up_terminal(
+        execution_id=parent_execution_id,
+        thread_id=parent_thread_id,
+        dispatch_id=None,
+    )
+    if terminal is None:
+        return None
+    return ctx, terminal
+
+
 async def reconcile_pending_spawns() -> None:
-    for row in list_pending_spawn_states():
-        ctx = read_admission_context(row.parent_execution_id)
-        if ctx is None or not should_spawn_review_child(ctx):
-            continue
-        terminal = durable_catch_up_terminal(
-            execution_id=row.parent_execution_id,
-            thread_id=row.parent_thread_id or "",
-            dispatch_id=None,
+    rows = await asyncio.to_thread(list_pending_spawn_states)
+    for row in rows:
+        candidate = await asyncio.to_thread(
+            _pending_spawn_candidate,
+            row.parent_execution_id,
+            row.parent_thread_id or "",
         )
-        if terminal is None:
+        if candidate is None:
             continue
+        ctx, terminal = candidate
         await _attempt_spawn_for_completion(terminal=terminal, ctx=ctx)
 
 
 async def _listen_loop() -> None:
-    from event_store.client import subscribe_events
+    # Yield before the subscribe import/handshake so scheduling this task
+    # cannot do socket I/O on the turn that creates it.
+    await asyncio.sleep(0)
+    from event_store.client import SUBSCRIBE_OPEN_TIMEOUT_S, subscribe_events
     from transport_utils import EVENTS_QUERY_SOCK
 
     while True:
@@ -622,6 +645,7 @@ async def _listen_loop() -> None:
             async for raw in subscribe_events(
                 EVENTS_QUERY_SOCK,
                 filter={"signal": "frontier.sdk.worker.completed"},
+                open_timeout=SUBSCRIBE_OPEN_TIMEOUT_S,
             ):
                 payload = raw.get("payload")
                 if isinstance(payload, str):
