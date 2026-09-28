@@ -309,12 +309,18 @@ class NearDuplicateWarning(BaseModel):
 
 
 class ContradictionConflict(BaseModel):
-    """A conflicting assertion detected by C2 write-path contradiction check."""
+    """A conflicting assertion from the C2 write-path contradiction check.
+
+    ``similarity`` is embedding cosine. ``retrieval_source`` ``fts`` means
+    embeddings were unavailable, so ``similarity`` is not an FTS rank ratio
+    and the write is flagged rather than rejected.
+    """
 
     assertion_id: int
     claim: str
     confidence: str
     similarity: float
+    retrieval_source: str | None = None
 
 
 class ActionHint(BaseModel):

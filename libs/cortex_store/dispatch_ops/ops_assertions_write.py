@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import HTTPException
 from universal_logging import get_logger
 
+from ..belief_guard import take_staged_candidate_recall
 from ..db import cortex_conn
 from ..entity_aliases import resolve_entity_reference
 from ..routes.assertions import _create_assertion_impl
@@ -115,6 +116,7 @@ def _op_assert(
         return validation_error_response(missing)
     assert entity_id is not None
     write_nudge = None
+    staged_recall = None
     with cortex_conn() as conn:
         try:
             resolved = resolve_entity_reference(
@@ -142,6 +144,8 @@ def _op_assert(
                 exc_info=True,
             )
             write_nudge = None
+        if isinstance(claim, str):
+            staged_recall = take_staged_candidate_recall(canonical_entity_id, claim)
     entity_id = canonical_entity_id
     assert confidence is not None
     if confidence not in _VALID_CONFIDENCE:
@@ -197,7 +201,7 @@ def _op_assert(
     projection_tag = None
     if seeded_by is not None:
         body["seeded_by"], projection_tag = _project_seeded_by(seeded_by)
-    result = _create_assertion_impl(body)
+    result = _create_assertion_impl(body, candidate_recall=staged_recall)
     if "error" not in result:
         if seeded_by is not None:
             result["seeded_by_input"] = seeded_by

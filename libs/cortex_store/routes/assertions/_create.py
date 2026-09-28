@@ -20,7 +20,12 @@ from ...assertion_quality import (
     check_derived_extract_primary,
     validate_assertion,
 )
-from ...belief_guard import guard_assertion_write
+from ...belief_guard import (
+    CandidateRecall,
+    clear_staged_candidate_recall,
+    guard_assertion_write,
+    stage_candidate_recall,
+)
 from ...claim_hash import compute_claim_hash
 from ...db import WRITE_LOCK, cortex_conn, decode_row, json_encode, query
 from ...enrichment import reindex_assertion_fts
@@ -62,9 +67,7 @@ from ._shared import (
 )
 
 
-@router.post(
-    "", response_model=AssertionCreateResponse, openapi_extra=x_mcp("assert")
-)
+@router.post("", response_model=AssertionCreateResponse, openapi_extra=x_mcp("assert"))
 def create_assertion(
     body: AssertionCreate, response: Response
 ) -> AssertionCreateResponse:
@@ -149,14 +152,13 @@ def create_assertion(
             validation_warnings = []
         validation_warnings.extend(brevity_warnings)
 
-    provenance_warnings = (
-        check_derived_extract_primary(body.evidence_uris)
-        + check_chunk_locality(
-            derivation_type=body.derivation_type,
-            claim=body.claim,
-            evidence_uris=body.evidence_uris,
-            chunk_id=body.chunk_id,
-        )
+    provenance_warnings = check_derived_extract_primary(
+        body.evidence_uris
+    ) + check_chunk_locality(
+        derivation_type=body.derivation_type,
+        claim=body.claim,
+        evidence_uris=body.evidence_uris,
+        chunk_id=body.chunk_id,
     )
     if provenance_warnings:
         if validation_warnings is None:
@@ -222,9 +224,7 @@ def create_assertion(
         entity_type_row = query(
             conn, "SELECT type FROM entities WHERE id = ?", (body.entity_id,)
         )
-        entity_type = (
-            str(entity_type_row[0]["type"]) if entity_type_row else None
-        )
+        entity_type = str(entity_type_row[0]["type"]) if entity_type_row else None
 
         # C2: Write-path contradiction check (entity-local, AGM G3)
         contradiction_warnings_out: list[ContradictionConflict] | None = None
@@ -257,6 +257,7 @@ def create_assertion(
                     claim=c.claim,
                     confidence=c.confidence,
                     similarity=c.similarity,
+                    retrieval_source=c.retrieval_source,
                 )
                 for c in guard.contradiction_warnings
             ]
@@ -420,7 +421,8 @@ def create_assertion(
                 if contradiction_warnings_out:
                     c2_notes = "; ".join(
                         f"Semantic contradiction: #{c.assertion_id} "
-                        f"(sim={c.similarity:.2f})"
+                        f"(sim={c.similarity:.2f}, "
+                        f"source={c.retrieval_source or 'cosine'})"
                         for c in contradiction_warnings_out
                     )
                     conn.execute(
@@ -559,13 +561,32 @@ def create_assertion(
     )
 
 
-def _create_assertion_impl(payload: dict[str, object]) -> dict[str, object]:
+def _create_assertion_impl(
+    payload: dict[str, object],
+    *,
+    candidate_recall: CandidateRecall | None = None,
+) -> dict[str, object]:
+    """Create one assertion. A staged recall is the nudge's hybrid search.
+
+    HTTP callers omit ``candidate_recall`` and the guard searches once.
+    MCP assert passes the nudge recall so the guard does not search again.
+    The park is cleared on the way out, including when create raises before
+    the guard consumes it.
+    """
     response = Response()
     try:
         body = AssertionCreate.model_validate(payload)
     except ValidationError as exc:
         raise _payload_validation_exception(exc) from exc
-    result = create_assertion(body, response)
+    staged_here = False
+    if candidate_recall is not None:
+        stage_candidate_recall(body.entity_id, body.claim, candidate_recall)
+        staged_here = True
+    try:
+        result = create_assertion(body, response)
+    finally:
+        if staged_here:
+            clear_staged_candidate_recall()
     return result.model_dump(mode="json")
 
 

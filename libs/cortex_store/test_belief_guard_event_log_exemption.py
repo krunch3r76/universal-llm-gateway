@@ -16,6 +16,7 @@ Synthetic in-memory FTS only — no live cortex DB.
 from __future__ import annotations
 
 import sqlite3
+from unittest.mock import patch
 
 from .belief_guard import guard_assertion_write, is_event_log_entity
 
@@ -23,7 +24,8 @@ _SCHEMA = """
 CREATE TABLE entities (id TEXT PRIMARY KEY, type TEXT, name TEXT);
 CREATE TABLE assertions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity_id TEXT, claim TEXT, confidence TEXT, superseded_by INTEGER
+    entity_id TEXT, claim TEXT, confidence TEXT, superseded_by INTEGER,
+    predicate_form TEXT
 );
 CREATE VIRTUAL TABLE assertions_fts USING fts5(assertion_id UNINDEXED, indexed_text);
 """
@@ -56,11 +58,20 @@ def test_event_log_predicate_classifies_thread_anchors() -> None:
     assert not is_event_log_entity("case:boe19p-flintridge-appeal-2026")
 
 
-def test_antonym_pair_blocks_on_ordinary_entity() -> None:
-    """Guard intact: confirmed antonym pair on a belief entity hard-blocks."""
+@patch("cortex_store.belief_guard._entity_vector_search")
+def test_antonym_pair_blocks_on_ordinary_entity(mock_vector) -> None:
+    """Guard intact: confirmed antonym pair blocks when cosine clears 0.80.
+
+    The block is the embedding cosine, not the FTS rank ratio of the single
+    indexed row. The vector search is stubbed so the test does not call out.
+    """
     conn = _conn()
     eid = "decision:audit-posture"
     _seed_confirmed(conn, eid, "Citation audit is complete")
+    aid = conn.execute("SELECT id FROM assertions").fetchone()["id"]
+    mock_vector.return_value = [
+        {"assertion_id": aid, "cosine_similarity": 0.91},
+    ]
 
     result = guard_assertion_write(conn, eid, "Citation audit is incomplete")
 
