@@ -19,6 +19,9 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     changed_paths,
     prepare_closeout_delivery,
 )
+from services.git_integration_worker.cursor_sdk_branch_terminal import (
+    settle_lane_branch,
+)
 from services.git_integration_worker.cursor_sdk_lane_b_commit import (
     SalvageResult,
     branch_state,
@@ -325,6 +328,88 @@ def test_branch_state_counts_since_branch_point(
     assert state.commits_ahead >= 1
     assert state.head_sha == _git("rev-parse", branch, cwd=source_repo).stdout.strip()
     assert not state.merged_into_master
+
+
+def test_read_only_review_salvage_omits_cursor_skills_and_does_not_merge(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Salvage-only review dirt: skills stay uncommitted, hub master stays put."""
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_sdk_branch_terminal._dispatch_read_only",
+        lambda dispatch_id: True,
+    )
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "review-salvage"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/lane-{dispatch_id}"
+    (wt / "review_note.txt").write_text("notes\n", encoding="utf-8")
+    skill = wt / ".cursor" / "skills" / "stray" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# stray\n", encoding="utf-8")
+    master_before = _git("rev-parse", "master", cwd=source_repo).stdout.strip()
+    result = commit_on_terminal(
+        dispatch_id=dispatch_id,
+        worktree_path=wt,
+        branch_name=branch,
+        packet_text="files_expected:\n- services/unrelated.py\n",
+    )
+    assert result.committed
+    names = _git(
+        "show", "--name-only", "--format=", "HEAD", cwd=wt
+    ).stdout.splitlines()
+    assert "review_note.txt" in names
+    assert not any(name.startswith(".cursor/skills/") for name in names)
+    assert skill.read_text(encoding="utf-8") == "# stray\n"
+    tip = _git("rev-parse", branch, cwd=source_repo).stdout.strip()
+    settlement = settle_lane_branch(
+        source_repo=source_repo,
+        branch_name=branch,
+        thread_id="13484",
+        dispatch_id=dispatch_id,
+        closeout_text="review only, no disposition",
+        packet_text="land: silent\n",
+        commits_ahead=1,
+        landed=False,
+        head_sha=tip,
+        files=["review_note.txt"],
+    )
+    assert settlement.outcome == "debt_opened"
+    assert _git("rev-parse", "master", cwd=source_repo).stdout.strip() == master_before
+
+
+def test_commit_on_terminal_keeps_scoped_cursor_skill(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "skill-scoped"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/lane-{dispatch_id}"
+    scoped = wt / ".cursor" / "skills" / "wanted" / "SKILL.md"
+    stray = wt / ".cursor" / "skills" / "stray" / "SKILL.md"
+    scoped.parent.mkdir(parents=True)
+    stray.parent.mkdir(parents=True)
+    scoped.write_text("# wanted\n", encoding="utf-8")
+    stray.write_text("# stray\n", encoding="utf-8")
+    result = commit_on_terminal(
+        dispatch_id=dispatch_id,
+        worktree_path=wt,
+        branch_name=branch,
+        packet_text="files_expected:\n- .cursor/skills/wanted/SKILL.md\n",
+    )
+    assert result.committed
+    names = _git(
+        "show", "--name-only", "--format=", "HEAD", cwd=wt
+    ).stdout.splitlines()
+    assert ".cursor/skills/wanted/SKILL.md" in names
+    assert ".cursor/skills/stray/SKILL.md" not in names
 
 
 def test_branch_state_missing_tip_commits_ahead_absent_not_zero(

@@ -153,7 +153,7 @@ complete` may still be independent of origin publish.
 
 ### Branch discharge is a closeout requirement, not a grading footnote
 
-`∀ Lane-B closeout: declare(land_disposition) ∨ ff_land(clean in-scope hub) ∨ own(branch_debt)`.
+`∀ Lane-B closeout: declare(land_disposition) ∨ (packet line land: silent ∧ ff_land(clean hub)) ∨ own(branch_debt)`.
 
 The grade above says what the harvest *is*; discharge says what happens to the
 branch. Every Lane-B closeout carries one of two lines:
@@ -163,10 +163,12 @@ branch. Every Lane-B closeout carries one of two lines:
 | `land_disposition: landed` | The work is on master | GIW **content-probes** it, archives the tip, deletes the branch |
 | `land_disposition: discard` + `land_reason: <why>` | Deliberately abandoned | Archives the tip, deletes the branch, records the reason |
 
-Omit the line while the branch carries commits master lacks and the packet did
-not scope hub land out: GIW fast-forwards that branch onto hub master when the
-hub tree is clean (`git merge --ff-only`). A dirty tree or a non-fast-forward
-opens an attributed **branch debt** (`cursor_sdk_branch_debts`) naming your
+Omit the line while the branch carries commits master lacks: the branch stays
+for a guarded land. GIW fast-forwards or clean-merges onto hub master only when
+the packet contains a line-start `land: silent` and the hub tree can take the
+merge. Without that token the branch stays and debt opens. With the token, a
+dirty tree or a conflict still opens an attributed **branch debt**
+(`cursor_sdk_branch_debts`) naming your
 thread, dispatch, and caller. `do not hub-land` keeps the branch (declare
 `land_disposition: unlanded <tip>`). Debt surfaces in `busy_status` /
 `lane_hygiene` and in the admit response at this lane's *next* dispatch,

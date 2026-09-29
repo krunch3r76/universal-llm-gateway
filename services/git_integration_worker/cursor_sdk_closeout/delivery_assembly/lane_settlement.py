@@ -80,6 +80,7 @@ def settle_lane_and_dispatch_fields(
                 dispatch_id=dispatch_id,
                 worktree_path=write_tree,
                 branch_name=record.branch_name,
+                packet_text=packet_text,
             )
             state = branch_state(
                 binding.receipt_tree,

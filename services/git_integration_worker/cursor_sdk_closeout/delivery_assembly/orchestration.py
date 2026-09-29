@@ -243,6 +243,7 @@ def _assemble_closeout_delivery(
         execution_id=execution_id,
         finalize_oversize=finalize_oversize,
         post_closeout_sidecar_fn=post_closeout_sidecar_fn,
+        packet_text=packet_text,
     )
 
 

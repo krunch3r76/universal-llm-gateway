@@ -316,10 +316,43 @@ def test_ac3_unmerged_lane_branch_stays_not_landed_11611_shape(
     assert reason is None
 
 
+def test_silence_without_token_does_not_merge(
+    source_repo: Path, tmp_path: Path
+) -> None:
+    """No ``land: silent`` line leaves the lane off hub master."""
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "auto-no-token"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    branch = f"cursor-sdk/lane-{dispatch_id}"
+    (wt / "lane_only.py").write_text("lane\n", encoding="utf-8")
+    commit_on_terminal(
+        dispatch_id=dispatch_id,
+        worktree_path=wt,
+        branch_name=branch,
+    )
+    tip = _git("rev-parse", branch, cwd=source_repo).stdout.strip()
+    master_before = _git("rev-parse", "master", cwd=source_repo).stdout.strip()
+    cfg = _cfg(source_repo, worktree_root)
+    binding = _lane_b_binding(cfg, wt)
+    landed, head_sha, _ahead, _reason = _settle_lane_b(
+        source_repo=source_repo,
+        binding=binding,
+        dispatch_id=dispatch_id,
+        files_outside_repo=(),
+    )
+    assert landed is not True
+    assert head_sha == tip
+    assert _git("rev-parse", "master", cwd=source_repo).stdout.strip() == master_before
+
+
 def test_silence_ff_lands_unmerged_lane_on_clean_hub(
     source_repo: Path, tmp_path: Path
 ) -> None:
-    """In-scope silence fast-forwards; landed is the ancestry probe after that merge."""
+    """``land: silent`` fast-forwards; landed is the ancestry probe after that merge."""
     worktree_root = tmp_path / "worktrees"
     dispatch_id = "auto-ff-silence"
     wt = mint_dispatch_worktree(
@@ -342,6 +375,7 @@ def test_silence_ff_lands_unmerged_lane_on_clean_hub(
         binding=binding,
         dispatch_id=dispatch_id,
         files_outside_repo=(),
+        packet_text="land: silent\n",
     )
     assert landed is True
     assert head_sha == tip

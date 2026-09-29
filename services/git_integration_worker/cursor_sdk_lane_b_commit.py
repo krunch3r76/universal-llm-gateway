@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -16,6 +17,10 @@ logger = get_logger(__name__)
 
 _GIT_TIMEOUT_S = 60.0
 _ERROR_LIMIT = 500
+_CURSOR_SKILLS_PREFIX = ".cursor/skills/"
+_FILES_EXPECTED_LINE_RE = re.compile(r"(?i)^files_expected:\s*(.*)$")
+_TOP_LEVEL_FIELD_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*:\s")
+_SKILL_SCOPE_TOKEN_RE = re.compile(r"\.cursor/skills(?:/[\w./-]*)?")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,12 +96,100 @@ def _rev_parse(repo_or_wt: Path, ref: str) -> str | None:
     return sha or None
 
 
+def _files_expected_field_text(prose: str) -> str:
+    """Return the ``files_expected:`` field body, bullets included."""
+    lines = prose.splitlines()
+    block: list[str] = []
+    in_field = False
+    for line in lines:
+        stripped = line.strip()
+        if not in_field:
+            match = _FILES_EXPECTED_LINE_RE.match(stripped)
+            if not match:
+                continue
+            in_field = True
+            inline = match.group(1).strip()
+            if inline:
+                block.append(inline)
+            continue
+        if not stripped:
+            continue
+        if _TOP_LEVEL_FIELD_RE.match(stripped):
+            break
+        block.append(stripped)
+    return "\n".join(block)
+
+
+def _is_cursor_skills_path(rel_path: str) -> bool:
+    norm = rel_path.replace("\\", "/").lstrip("./")
+    return norm == ".cursor/skills" or norm.startswith(_CURSOR_SKILLS_PREFIX)
+
+
+def packet_scopes_cursor_skill_path(packet_text: str | None, rel_path: str) -> bool:
+    """True when ``files_expected:`` names *rel_path* or a directory prefix of it.
+
+    Body prose outside that field does not scope a skill path in. A token of
+    ``.cursor/skills`` with no child scopes the whole tree.
+    """
+    if not packet_text or not _is_cursor_skills_path(rel_path):
+        return False
+    field = _files_expected_field_text(packet_text)
+    if not field:
+        return False
+    norm = rel_path.replace("\\", "/").lstrip("./")
+    for match in _SKILL_SCOPE_TOKEN_RE.finditer(field):
+        token = match.group(0).rstrip("/")
+        if token == ".cursor/skills":
+            return True
+        if norm == token or norm.startswith(token + "/"):
+            return True
+    return False
+
+
+def _drop_unscoped_cursor_skills(wt: Path, packet_text: str | None) -> str | None:
+    """Unstage ``.cursor/skills/`` paths the packet does not scope in.
+
+    Returns an error string when git fails, else None. Paths the packet
+    names in ``files_expected:`` stay staged.
+    """
+    listed = subprocess.run(
+        ["git", "-C", str(wt), "diff", "--cached", "--name-only", "-z"],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if listed.returncode != 0:
+        return _truncate(listed.stderr.strip() or "diff --cached failed")
+    drop = [
+        name
+        for name in listed.stdout.split("\0")
+        if name
+        and _is_cursor_skills_path(name)
+        and not packet_scopes_cursor_skill_path(packet_text, name)
+    ]
+    if not drop:
+        return None
+    reset = subprocess.run(
+        ["git", "-C", str(wt), "reset", "-q", "--", *drop],
+        capture_output=True,
+        text=True,
+        timeout=_GIT_TIMEOUT_S,
+        check=False,
+    )
+    if reset.returncode != 0:
+        return _truncate(reset.stderr.strip() or "reset unscoped skills failed")
+    return None
+
+
 def salvage_commit(
     worktree_path: Path,
     *,
     message: str,
     dispatch_id: str,
     thread_id: str | None = None,
+    packet_text: str | None = None,
+    respect_skill_scope: bool = False,
 ) -> SalvageResult:
     """Commit all dirty paths in the worktree; no-op when clean.
 
@@ -145,6 +238,21 @@ def salvage_commit(
             error=_truncate(err),
         )
 
+    if respect_skill_scope:
+        dropped = _drop_unscoped_cursor_skills(wt, packet_text)
+        if dropped:
+            logger.error(
+                "lane_b salvage skill unstage refused path=%s err=%s",
+                wt,
+                dropped,
+            )
+            return SalvageResult(
+                committed=False,
+                head_sha=head,
+                refused=True,
+                error=dropped,
+            )
+
     git_env = {**os.environ, **dispatch_git_env_vars(dispatch_id, thread_id=thread_id)}
     commit = subprocess.run(
         ["git", "-C", str(wt), "commit", "-m", message],
@@ -175,14 +283,22 @@ def commit_on_terminal(
     dispatch_id: str,
     worktree_path: Path,
     branch_name: str,
+    packet_text: str | None = None,
 ) -> SalvageResult:
-    """Durability commit at terminal after porcelain capture (Lane-B only)."""
+    """Durability commit at terminal after porcelain capture (Lane-B only).
+
+    ``.cursor/skills/`` stays unstaged unless ``files_expected:`` in
+    *packet_text* scopes that path in. Mint-time skill-tree copies are not
+    packet work (friction a:36881).
+    """
     _ = branch_name
     message = f"cursor-sdk: lane-b terminal {dispatch_id}"
     return salvage_commit(
         worktree_path,
         message=message,
         dispatch_id=dispatch_id,
+        packet_text=packet_text,
+        respect_skill_scope=True,
     )
 
 

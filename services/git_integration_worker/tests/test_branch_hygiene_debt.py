@@ -51,6 +51,7 @@ from services.git_integration_worker.cursor_sdk_branch_discharge import (
     probe_landed,
 )
 from services.git_integration_worker.cursor_sdk_branch_terminal import (
+    packet_requests_silent_land,
     parse_land_disposition,
     settle_lane_branch,
 )
@@ -168,6 +169,7 @@ def test_lane_b_preamble_states_the_branch_contract() -> None:
     assert "land_disposition: landed" in preamble
     assert "land_disposition: discard" in preamble
     assert "land_disposition: unlanded" in preamble
+    assert "land: silent" in preamble
 
 
 def test_lane_a_gets_no_branch_contract() -> None:
@@ -205,7 +207,50 @@ def test_parse_land_disposition(
 # --- terminal: declared discharges, silence opens debt -----------------------
 
 
-def test_undeclared_terminal_ff_lands_clean_hub(repo: Path) -> None:
+def test_silent_land_token_is_line_start_only() -> None:
+    assert packet_requests_silent_land("land: silent\n")
+    assert packet_requests_silent_land("  land: silent\n")
+    assert not packet_requests_silent_land("please land: silent now\n")
+    assert not packet_requests_silent_land("land: silent extra\n")
+    assert not packet_requests_silent_land(None)
+
+
+def test_undeclared_terminal_without_silent_token_does_not_merge(repo: Path) -> None:
+    tip = _branch_with_change(
+        repo, branch="cursor-sdk/lane-7229", path="a.py", content="x = 1\n"
+    )
+    head_before = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    settlement = settle_lane_branch(
+        source_repo=repo,
+        branch_name="cursor-sdk/lane-7229",
+        thread_id="7229",
+        dispatch_id="d-1",
+        closeout_text="did the work, no disposition line",
+        commits_ahead=1,
+        landed=False,
+        head_sha=tip,
+        files=["a.py"],
+    )
+    assert settlement.outcome == "debt_opened"
+    head_after = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert head_after == head_before
+    assert not (repo / "a.py").exists()
+    assert "cursor-sdk/lane-7229" in _branches(repo)
+    debt = get_branch_debt(branch_name="cursor-sdk/lane-7229")
+    assert debt is not None and debt.open
+
+
+def test_silent_land_token_ff_lands_clean_hub(repo: Path) -> None:
     tip = _branch_with_change(
         repo, branch="cursor-sdk/lane-7229", path="a.py", content="x = 1\n"
     )
@@ -215,6 +260,7 @@ def test_undeclared_terminal_ff_lands_clean_hub(repo: Path) -> None:
         thread_id="7229",
         dispatch_id="d-1",
         closeout_text="did the work, no disposition line",
+        packet_text="land: silent\n",
         commits_ahead=1,
         landed=False,
         head_sha=tip,
@@ -254,6 +300,7 @@ def test_undeclared_terminal_clean_diverged_lane_merges(repo: Path) -> None:
         thread_id="13147",
         dispatch_id="d-diverged",
         closeout_text="did the work, no disposition line",
+        packet_text="scope:\nland: silent\n",
         commits_ahead=1,
         landed=False,
         head_sha=tip,

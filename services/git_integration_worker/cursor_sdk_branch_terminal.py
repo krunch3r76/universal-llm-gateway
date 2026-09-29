@@ -3,7 +3,9 @@
 This is where the ``land:lane_b_unlanded`` grade stops evaporating. A closeout
 that declares ``land_disposition:`` gets the branch retired on the spot; one that
 stays silent while the branch carries commits master lacks leaves an attributed
-debt behind instead of an anonymous branch.
+debt behind instead of an anonymous branch. Hub land at that silence is opt-in:
+only a packet line ``land: silent`` (see ``packet_requests_silent_land``)
+fast-forwards or clean-merges.
 
 A refused ``landed`` claim also opens a debt: an assertion the tree does not
 support is residue plus a false report, not a clean exit.
@@ -53,6 +55,9 @@ _REASON_RE = re.compile(
     r"^\s*land_reason\s*:\s*(.+?)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
+# Line-start opt-in. ``land: silent`` alone on the line (leading whitespace
+# allowed). A mention mid-sentence or with trailing words does not opt in.
+_SILENT_LAND_OPT_IN_RE = re.compile(r"(?im)^[ \t]*land:[ \t]+silent[ \t]*$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,6 +184,19 @@ def _open_debt(
     )
 
 
+def packet_requests_silent_land(packet_text: str | None) -> bool:
+    """True when the packet opts into closeout hub land.
+
+    Opt-in token, line-start, off by default: ``land: silent``.
+    Leading whitespace is allowed; the rest of the line must be empty.
+    ``do not hub-land``, a declared ``land_disposition``, and a read-only
+    admit still refuse the land even when this line is present.
+    """
+    if not packet_text:
+        return False
+    return _SILENT_LAND_OPT_IN_RE.search(packet_text) is not None
+
+
 def maybe_ff_land_silent_lane(
     *,
     repo: Path,
@@ -188,12 +206,15 @@ def maybe_ff_land_silent_lane(
     closeout_text: str | None,
     commits_ahead: int | None,
 ) -> bool:
-    """Land a silent in-scope lane onto hub master.
+    """Land a silent in-scope lane onto hub master, only when opted in.
 
-    Fast-forward when master has not moved. When a peer commit landed first
-    and git can merge with no conflict, merge. Exploratory packets
-    (``do not hub-land``), any declared disposition, a read-only admit, a
-    branch with nothing ahead, and a textual conflict are left untouched.
+    The packet must contain a line-start ``land: silent`` (see
+    ``packet_requests_silent_land``). Without that token the branch is left
+    for a guarded land. Fast-forward when master has not moved. When a peer
+    commit landed first and git can merge with no conflict, merge.
+    Exploratory packets (``do not hub-land``), any declared disposition, a
+    read-only admit, a branch with nothing ahead, and a textual conflict
+    are left untouched even when the token is present.
     Returns True only when hub master now contains the branch tip.
     Side effects: may fast-forward or merge the hub master worktree.
     """
@@ -211,6 +232,8 @@ def maybe_ff_land_silent_lane(
         return False
     verb, _reason, _sha = parse_land_disposition(closeout_text)
     if verb is not None:
+        return False
+    if not packet_requests_silent_land(packet_text):
         return False
     if ff_only_onto_hub_master(repo, branch_name=branch_name):
         return True
