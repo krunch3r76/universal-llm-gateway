@@ -8,7 +8,8 @@ Cursor settings for ``setting_sources=all``. That HOME, the repo venv, the
 dispatch stamp, and the git identity reach the bridge through its **argv**:
 ``launch_sdk_bridge`` hands ``Client.launch_bridge`` a ``command`` list of the
 form ``[/usr/bin/env, HOME=…, VIRTUAL_ENV=…, PATH=…, CURSOR_SDK_DISPATCH_ID=…,
-GIT_*=…, <bridge-bin>]``. The SDK forwards the list verbatim as ``argv[0..n]``
+GIT_*=…, NODE_OPTIONS=--require <preload>, CURSOR_SDK_SHELL_FALLBACK_CWD=<lane>,
+<bridge-bin>]``. The SDK forwards the list verbatim as ``argv[0..n]``
 and appends its own ``--workspace`` / ``--state-root`` / callback flags after
 it; ``env(1)`` applies the assignments and execs the bridge in place, so the
 ``Popen`` the SDK holds *is* the bridge — its pid, its stderr, its environ.
@@ -95,6 +96,11 @@ def resolve_bridge_bin() -> str:
     return os.path.abspath(raw)
 
 
+def shell_cwd_preload_path() -> Path:
+    """Absolute preload beside this module — the worker checkout, not the lane."""
+    return Path(__file__).resolve().parent / "cursor_sdk_shell_cwd_preload.cjs"
+
+
 def build_bridge_command(
     *,
     bridge_bin: str,
@@ -102,6 +108,7 @@ def build_bridge_command(
     repo_venv: Path | None,
     real_home: Path | str | None,
     dispatch_id: str | None,
+    lane_path: Path | str | None = None,
 ) -> list[str]:
     """``Client.launch_bridge(command=)`` argv: ``env(1)`` assignments then the bridge.
 
@@ -114,7 +121,10 @@ def build_bridge_command(
     None; ``CURSOR_SDK_DISPATCH_ID``/``GIT_*`` when ``dispatch_id`` is None —
     the bridge then inherits GIW's values for those keys, unchanged. PATH is
     always complete: the dispatch prepend, then GIW's PATH when non-empty.
-    Reads ``os.environ["PATH"]`` and the operator's cursor-agent shim; writes
+    When ``lane_path`` is set, ``NODE_OPTIONS`` (``--require`` of the shell-cwd
+    preload, in front of any ``NODE_OPTIONS`` already in ``os.environ``) and
+    ``CURSOR_SDK_SHELL_FALLBACK_CWD`` are assigned just before the binary.
+    Reads ``os.environ["PATH"]`` and ``os.environ["NODE_OPTIONS"]``; writes
     nothing.
     """
     if not os.path.isabs(bridge_bin) or "=" in bridge_bin or bridge_bin.startswith("-"):
@@ -135,6 +145,13 @@ def build_bridge_command(
             f"{k}={v}" for k, v in dispatch_git_env_vars(dispatch_id).items()
         )
         command.extend(f"{k}={v}" for k, v in dispatch_ledger_env_vars().items())
+    if lane_path is not None:
+        preload = shell_cwd_preload_path()
+        prior = os.environ.get("NODE_OPTIONS", "").strip()
+        require = f"--require {preload}"
+        node_options = f"{require} {prior}".strip()
+        command.append(f"NODE_OPTIONS={node_options}")
+        command.append(f"CURSOR_SDK_SHELL_FALLBACK_CWD={lane_path}")
     command.append(bridge_bin)
     return command
 
@@ -171,6 +188,7 @@ def launch_sdk_bridge(
         repo_venv=repo_venv,
         real_home=real_home,
         dispatch_id=ctx.dispatch_id,
+        lane_path=ctx.dispatch_workspace,
     )
     logger.info(
         "cursor sdk bridge launch: dispatch_id=%s bridge_bin=%s",

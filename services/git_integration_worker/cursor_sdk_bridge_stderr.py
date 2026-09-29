@@ -55,6 +55,7 @@ _SPAWN_ENOENT_RE = re.compile(
     r"spawn\s+.+\s+enoent|errno\s*-2|missing cwd",
     re.IGNORECASE,
 )
+_SHELL_CWD_MISSING_RE = re.compile(r"^shell_cwd_missing (?P<path>.+)$")
 _UNCAUGHT_BUNDLE_RE = re.compile(
     r"(?:^|\s)(?:error|typeerror|referenceerror|syntaxerror):",
     re.IGNORECASE,
@@ -121,16 +122,28 @@ def _resolve_bridge_process(client: Any) -> subprocess.Popen[str] | None:
     return process
 
 
+def parse_shell_cwd_missing(text: str | None) -> str | None:
+    """Return the path from the last ``shell_cwd_missing <path>`` stderr line."""
+    if not text:
+        return None
+    found: str | None = None
+    for line in text.splitlines():
+        match = _SHELL_CWD_MISSING_RE.match(line.strip())
+        if match and match.group("path"):
+            found = match.group("path")
+    return found
+
+
 def bridge_spawn_cwd_forensics(tap: BridgeStderrTap | None) -> dict[str, Any]:
     """Lane-root spawn cwd plus the shell cwd the failing bash spawn used.
 
     ``bridge_spawn_cwd`` stays the directory GIW passed when it launched the
-    node bridge (the lane root). ``bridge_shell_cwd`` is the in-flight shell
-    tool's ``workingDirectory`` when one was recorded, otherwise the last
-    bash-snapshot PWD (stderr text or the dispatch's shell-cwd record).
-    The exists bit on the shell path is the one that explains
-    ``spawn /bin/bash ENOENT``; the lane root can be present while that
-    path is already gone.
+    node bridge (the lane root). ``bridge_shell_cwd`` prefers a
+    ``shell_cwd_missing <path>`` line from the stderr tail (the cwd the bash
+    spawn actually used), then the in-flight shell tool's ``workingDirectory``,
+    then the last bash-snapshot PWD. The exists bit on the shell path is the
+    one that explains ``spawn /bin/bash ENOENT``; the lane root can be present
+    while that path is already gone.
     """
     if tap is None or not tap.spawn_cwd:
         return {}
@@ -151,9 +164,11 @@ def bridge_spawn_cwd_forensics(tap: BridgeStderrTap | None) -> dict[str, Any]:
     if proc_cwd is not None:
         if os.path.normpath(proc_cwd) != os.path.normpath(tap.spawn_cwd):
             snapshot["bridge_process_cwd"] = proc_cwd
+    tail_text = "\n".join(tap.tail())
+    missing = parse_shell_cwd_missing(tail_text)
     recorded = shell_spawn_cwd(tap.dispatch_id)
-    from_tail = parse_bash_snapshot_pwd("\n".join(tap.tail()))
-    shell_cwd = resolve_shell_spawn_cwd(
+    from_tail = parse_bash_snapshot_pwd(tail_text)
+    shell_cwd = missing or resolve_shell_spawn_cwd(
         working_directory=recorded,
         snapshot_pwd=from_tail,
     )

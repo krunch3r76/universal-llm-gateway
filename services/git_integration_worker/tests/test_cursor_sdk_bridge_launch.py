@@ -228,6 +228,140 @@ def test_build_bridge_command_omits_optional_pairs(tmp_path, monkeypatch) -> Non
     )
 
 
+def test_build_bridge_command_arms_shell_cwd_preload(tmp_path, monkeypatch) -> None:
+    """Missing-cwd fallback reaches the bridge as env(1) assignments.
+
+    ``NODE_OPTIONS`` keeps any value already in the worker environment, with
+    ``--require <preload>`` in front. Both assignments sit before the binary.
+    """
+    lane = tmp_path / "lane-root"
+    lane.mkdir()
+    monkeypatch.setenv("NODE_OPTIONS", "--trace-warnings")
+    command = build_bridge_command(
+        bridge_bin=sys.executable,
+        dispatch_home=tmp_path / "home",
+        repo_venv=None,
+        real_home=None,
+        dispatch_id=None,
+        lane_path=lane,
+    )
+    preload = (
+        Path(bridge_launch.__file__).resolve().parent
+        / "cursor_sdk_shell_cwd_preload.cjs"
+    )
+    bin_idx = _first_non_assignment(command)
+    assert command[bin_idx] == sys.executable
+    head = command[:bin_idx]
+    assert f"CURSOR_SDK_SHELL_FALLBACK_CWD={lane}" in head
+    assert f"NODE_OPTIONS=--require {preload} --trace-warnings" in head
+
+
+def _vendored_node() -> Path | None:
+    import cursor_sdk
+
+    node = (
+        Path(cursor_sdk.__file__).resolve().parent
+        / "_vendor"
+        / "bridge"
+        / "bin"
+        / "node"
+    )
+    return node if node.is_file() else None
+
+
+def test_shell_cwd_preload_rewrites_missing_bash_cwd(tmp_path: Path) -> None:
+    """Vendored node: missing bash cwd is ENOENT until the preload rewrites it.
+
+    The child bash must not inherit the preload require or the fallback path.
+    Skipped when the wheel did not stage ``bin/node``.
+    """
+    node = _vendored_node()
+    if node is None:
+        pytest.skip("vendored cursor-sdk bin/node is absent")
+    preload = (
+        Path(bridge_launch.__file__).resolve().parent
+        / "cursor_sdk_shell_cwd_preload.cjs"
+    )
+    missing = tmp_path / "missing-cwd"
+    fallback = tmp_path / "fallback"
+    fallback.mkdir()
+    probe = tmp_path / "probe.cjs"
+    probe.write_text(
+        "\n".join(
+            [
+                "const { spawn } = require('child_process');",
+                "const missing = process.argv[2];",
+                "const mode = process.argv[3];",
+                "function run(commandArgs, cwd) {",
+                "  const child = spawn('/bin/bash', commandArgs, { cwd });",
+                "  if (child.stdout) {",
+                "    child.stdout.on('data', (buf) => process.stdout.write(buf));",
+                "  }",
+                "  if (child.stderr) {",
+                "    child.stderr.on('data', (buf) => process.stderr.write(buf));",
+                "  }",
+                "  child.on('error', (err) => {",
+                "    process.stderr.write(String(err.code) + '\\n');",
+                "    process.exit(1);",
+                "  });",
+                "  child.on('close', (code) => {",
+                "    process.exit(code == null ? 1 : code);",
+                "  });",
+                "}",
+                "if (mode === 'env') {",
+                "  const expr =",
+                "    'printf %s \"$NODE_OPTIONS|$CURSOR_SDK_SHELL_FALLBACK_CWD\"';",
+                "  run(['-c', expr], process.cwd());",
+                "} else {",
+                "  run(['-c', 'pwd'], missing);",
+                "}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    plain_env = os.environ.copy()
+    plain_env.pop("NODE_OPTIONS", None)
+    plain_env.pop("CURSOR_SDK_SHELL_FALLBACK_CWD", None)
+    plain = subprocess.run(
+        [str(node), str(probe), str(missing), "plain"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=plain_env,
+    )
+    assert plain.returncode != 0
+    assert "ENOENT" in plain.stderr
+
+    armed = os.environ.copy()
+    armed["NODE_OPTIONS"] = f"--require {preload}"
+    armed["CURSOR_SDK_SHELL_FALLBACK_CWD"] = str(fallback)
+    rewritten = subprocess.run(
+        [str(node), str(probe), str(missing), "rewrite"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=armed,
+    )
+    assert rewritten.returncode == 0, rewritten.stderr
+    assert f"shell_cwd_missing {missing}" in rewritten.stderr
+    assert rewritten.stdout.strip() == str(fallback)
+
+    inherited = subprocess.run(
+        [str(node), str(probe), str(missing), "env"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        env=armed,
+    )
+    assert inherited.returncode == 0, inherited.stderr
+    assert str(preload) not in inherited.stdout
+    assert str(fallback) not in inherited.stdout
+
+
 def test_resolve_bridge_bin_is_absolute_file() -> None:
     """The pinned wheel must resolve to an absolute, existing launcher."""
     resolved = resolve_bridge_bin()
