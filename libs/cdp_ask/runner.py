@@ -6,7 +6,10 @@ import hashlib
 import os
 import re
 import subprocess
+import threading
+import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -228,6 +231,84 @@ def cortex_files_root() -> Path:
     if raw:
         return Path(raw).expanduser().resolve()
     return (Path.home() / "mcp-data" / "files").resolve()
+
+
+@dataclass(frozen=True)
+class HarvestRootHealth:
+    harvest_root: str
+    harvest_root_ok: bool
+
+
+_HARVEST_ROOT_HEALTH_CACHE_TTL_S = 30.0
+_harvest_root_health_lock = threading.Lock()
+_cached_harvest_root_health: HarvestRootHealth | None = None
+_cached_harvest_root_health_at: float | None = None
+
+
+def _harvest_root_dir_accessible(root: Path) -> bool:
+    """Probe harvest root with wall-clock timeout — never bare ``Path.is_dir``."""
+    completed = subprocess.run(
+        ["timeout", "2", "test", "-d", str(root)],
+        check=False,
+        capture_output=True,
+        timeout=3,
+    )
+    return completed.returncode == 0
+
+
+def resolve_harvest_root_health() -> HarvestRootHealth:
+    """Resolve harvest-root reachability off the /health request path."""
+    root = cortex_files_root()
+    root_s = str(root)
+    if not _harvest_root_dir_accessible(root):
+        return HarvestRootHealth(harvest_root=root_s, harvest_root_ok=False)
+    try:
+        _raise_harvest_root_mismatch_if_misconfigured(root)
+    except HarvestRootMismatchError:
+        return HarvestRootHealth(harvest_root=root_s, harvest_root_ok=False)
+    return HarvestRootHealth(harvest_root=root_s, harvest_root_ok=True)
+
+
+def peek_harvest_root_health() -> HarvestRootHealth:
+    """Return cached harvest-root health for /health; miss or TTL → degraded false."""
+    with _harvest_root_health_lock:
+        if (
+            _cached_harvest_root_health is None
+            or _cached_harvest_root_health_at is None
+        ):
+            return HarvestRootHealth("", False)
+        if (
+            time.monotonic() - _cached_harvest_root_health_at
+            > _HARVEST_ROOT_HEALTH_CACHE_TTL_S
+        ):
+            return HarvestRootHealth(
+                _cached_harvest_root_health.harvest_root,
+                False,
+            )
+        return _cached_harvest_root_health
+
+
+def note_harvest_root_health(state: HarvestRootHealth) -> None:
+    """Record a harvest-root sample for ``peek_harvest_root_health``."""
+    global _cached_harvest_root_health, _cached_harvest_root_health_at
+    with _harvest_root_health_lock:
+        _cached_harvest_root_health = state
+        _cached_harvest_root_health_at = time.monotonic()
+
+
+def refresh_harvest_root_health() -> HarvestRootHealth:
+    """Run ``resolve_harvest_root_health`` off the request path and refresh cache."""
+    state = resolve_harvest_root_health()
+    note_harvest_root_health(state)
+    return state
+
+
+def _reset_harvest_root_health_cache_for_tests() -> None:
+    """Clear the in-process harvest-root cache (tests only)."""
+    global _cached_harvest_root_health, _cached_harvest_root_health_at
+    with _harvest_root_health_lock:
+        _cached_harvest_root_health = None
+        _cached_harvest_root_health_at = None
 
 
 def verify_harvest_root() -> Path:

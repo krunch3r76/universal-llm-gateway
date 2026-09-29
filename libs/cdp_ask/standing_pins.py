@@ -1,7 +1,8 @@
 """Standing CDP pin health projection for cdp-ask /health.
 
-Rebuilds display and standing-pin state from systemd + CDP probes on each
-health request. Advisory only — not journal-backed authority.
+Background refresh rebuilds display and standing-pin state from systemd + CDP
+probes; ``peek_health_projections`` serves the cache on /health. Advisory only —
+not journal-backed authority.
 """
 
 from __future__ import annotations
@@ -9,6 +10,8 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
+import time
 import tomllib
 import urllib.error
 import urllib.request
@@ -254,9 +257,15 @@ def _probe_display(display: str) -> str:
 
 _prev_states: dict[str, StandingState] = {}
 
+_HEALTH_PROJECTION_CACHE_TTL_S = 30.0
+_health_projection_lock = threading.Lock()
+_cached_displays: dict[str, str] | None = None
+_cached_standing_pins: dict[str, StandingPinHealth] | None = None
+_cached_health_projection_at: float | None = None
+
 
 def probe_health() -> tuple[dict[str, str], dict[str, StandingPinHealth]]:
-    """Return ``(displays, standing_pins)`` for /health."""
+    """Return ``(displays, standing_pins)`` from live probes (background refresh)."""
     displays = {":2": _probe_display(":2"), ":3": _probe_display(":3")}
     standing: dict[str, StandingPinHealth] = {}
     try:
@@ -272,3 +281,48 @@ def probe_health() -> tuple[dict[str, str], dict[str, StandingPinHealth]]:
     except Exception:
         logger.warning("standing_pins probe_health failed", exc_info=True)
     return displays, standing
+
+
+def peek_health_projections() -> tuple[dict[str, str], dict[str, StandingPinHealth]]:
+    """Return cached displays and standing pins for /health; miss or TTL → empty."""
+    with _health_projection_lock:
+        if (
+            _cached_displays is None
+            or _cached_standing_pins is None
+            or _cached_health_projection_at is None
+        ):
+            return {}, {}
+        if (
+            time.monotonic() - _cached_health_projection_at
+            > _HEALTH_PROJECTION_CACHE_TTL_S
+        ):
+            return {}, {}
+        return dict(_cached_displays), dict(_cached_standing_pins)
+
+
+def note_health_projections(
+    displays: dict[str, str],
+    standing_pins: dict[str, StandingPinHealth],
+) -> None:
+    """Record a health projection sample for ``peek_health_projections``."""
+    global _cached_displays, _cached_standing_pins, _cached_health_projection_at
+    with _health_projection_lock:
+        _cached_displays = dict(displays)
+        _cached_standing_pins = dict(standing_pins)
+        _cached_health_projection_at = time.monotonic()
+
+
+def refresh_health_projections() -> tuple[dict[str, str], dict[str, StandingPinHealth]]:
+    """Run ``probe_health`` off the request path and refresh the cache."""
+    displays, standing = probe_health()
+    note_health_projections(displays, standing)
+    return displays, standing
+
+
+def _reset_health_projection_cache_for_tests() -> None:
+    """Clear the in-process health projection cache (tests only)."""
+    global _cached_displays, _cached_standing_pins, _cached_health_projection_at
+    with _health_projection_lock:
+        _cached_displays = None
+        _cached_standing_pins = None
+        _cached_health_projection_at = None

@@ -15,31 +15,70 @@ from deploy_identity.tree_state import (
 from fastapi.testclient import TestClient
 
 from cdp_ask.app import create_app
+from cdp_ask.runner import (
+    HarvestRootHealth,
+    _reset_harvest_root_health_cache_for_tests,
+    note_harvest_root_health,
+)
+from cdp_ask.standing_pins import (
+    _reset_health_projection_cache_for_tests,
+    note_health_projections,
+)
+
+
+def _disable_health_background_refresh(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CDP_ASK_TREE_STATE_REFRESH", "0")
+    monkeypatch.setenv("CDP_ASK_HEALTH_CACHE_REFRESH", "0")
+
+
+def _stub_startup_health_refresh(
+    monkeypatch: pytest.MonkeyPatch, root: str, *, harvest_ok: bool
+) -> None:
+    """Avoid NFS/subprocess work during TestClient startup lifespans."""
+
+    def _harvest() -> HarvestRootHealth:
+        state = HarvestRootHealth(root, harvest_ok)
+        note_harvest_root_health(state)
+        return state
+
+    def _pins() -> tuple[dict[str, str], dict]:
+        note_health_projections({}, {})
+        return {}, {}
+
+    monkeypatch.setattr("cdp_ask.runner.refresh_harvest_root_health", _harvest)
+    monkeypatch.setattr("cdp_ask.standing_pins.refresh_health_projections", _pins)
 
 
 @pytest.mark.offline
 def test_health_zero_git_subprocess(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    monkeypatch.setenv("CDP_ASK_TREE_STATE_REFRESH", "0")
+    _disable_health_background_refresh(monkeypatch)
     _reset_tree_state_cache_for_tests()
+    _reset_harvest_root_health_cache_for_tests()
+    _reset_health_projection_cache_for_tests()
     note_tree_state("clean")
+    note_harvest_root_health(HarvestRootHealth(str(tmp_path), True))
+    _stub_startup_health_refresh(monkeypatch, str(tmp_path), harvest_ok=True)
     app = create_app()
     with patch(
         "deploy_identity.tree_state.resolve_tree_state",
         side_effect=AssertionError("git on request path"),
     ):
-        with patch("cdp_ask.standing_pins.probe_health", return_value=({}, {})):
-            with TestClient(app) as client:
-                payload = client.get("/health").json()
+        with TestClient(app) as client:
+            payload = client.get("/health").json()
     assert payload["tree_state"] == "clean"
 
 
 @pytest.mark.offline
 def test_health_uses_peek_not_resolve(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    monkeypatch.setenv("CDP_ASK_TREE_STATE_REFRESH", "0")
+    _disable_health_background_refresh(monkeypatch)
     _reset_tree_state_cache_for_tests()
+    _reset_harvest_root_health_cache_for_tests()
+    _reset_health_projection_cache_for_tests()
     note_tree_state("clean")
+    note_harvest_root_health(HarvestRootHealth(str(tmp_path), True))
+    _stub_startup_health_refresh(monkeypatch, str(tmp_path), harvest_ok=True)
 
     def _boom(root=None):
         time.sleep(10)
@@ -60,11 +99,15 @@ def test_health_uses_peek_not_resolve(tmp_path, monkeypatch) -> None:
 @pytest.mark.offline
 def test_health_tree_state_unknown_when_cache_stale(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
-    monkeypatch.setenv("CDP_ASK_TREE_STATE_REFRESH", "0")
+    _disable_health_background_refresh(monkeypatch)
     _reset_tree_state_cache_for_tests()
+    _reset_harvest_root_health_cache_for_tests()
+    _reset_health_projection_cache_for_tests()
     import deploy_identity.tree_state as ts
 
     note_tree_state("clean")
+    note_harvest_root_health(HarvestRootHealth(str(tmp_path), True))
+    _stub_startup_health_refresh(monkeypatch, str(tmp_path), harvest_ok=True)
     monkeypatch.setattr(ts, "_TREE_STATE_CACHE_TTL_S", 0.0)
     app = create_app()
     with TestClient(app) as client:
@@ -98,3 +141,55 @@ def test_tree_state_refresh_loop_survives_refresh_exception(
         asyncio.run(_two_iterations())
     assert calls["n"] == 2
     assert "tree_state background refresh failed" in caplog.text
+
+
+@pytest.mark.offline
+def test_health_stalled_harvest_root_stat_cached_false_without_latency(
+    tmp_path, monkeypatch
+) -> None:
+    """Stalled harvest-root refresh must not block /health (AC2)."""
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    _disable_health_background_refresh(monkeypatch)
+    _reset_tree_state_cache_for_tests()
+    _reset_harvest_root_health_cache_for_tests()
+    _reset_health_projection_cache_for_tests()
+    note_tree_state("clean")
+    note_harvest_root_health(HarvestRootHealth(str(tmp_path), False))
+    _stub_startup_health_refresh(monkeypatch, str(tmp_path), harvest_ok=False)
+
+    def _slow_resolve() -> HarvestRootHealth:
+        time.sleep(10)
+        return HarvestRootHealth("", False)
+
+    monkeypatch.setattr(
+        "cdp_ask.runner.resolve_harvest_root_health",
+        _slow_resolve,
+    )
+    app = create_app()
+    with TestClient(app) as client:
+        started = time.monotonic()
+        payload = client.get("/health").json()
+        elapsed = time.monotonic() - started
+    assert elapsed < 2.0
+    assert payload["harvest_root_ok"] is False
+    assert payload["status"] == "fail_closed"
+
+
+@pytest.mark.offline
+def test_health_request_path_no_subprocess(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
+    _disable_health_background_refresh(monkeypatch)
+    _reset_tree_state_cache_for_tests()
+    _reset_harvest_root_health_cache_for_tests()
+    _reset_health_projection_cache_for_tests()
+    note_tree_state("clean")
+    note_harvest_root_health(HarvestRootHealth(str(tmp_path), True))
+    _stub_startup_health_refresh(monkeypatch, str(tmp_path), harvest_ok=True)
+    app = create_app()
+    with TestClient(app) as client:
+        with patch(
+            "subprocess.run",
+            side_effect=AssertionError("subprocess on /health request path"),
+        ):
+            payload = client.get("/health").json()
+    assert payload["harvest_root_ok"] is True

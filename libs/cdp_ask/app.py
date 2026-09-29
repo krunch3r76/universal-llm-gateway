@@ -64,9 +64,12 @@ from cdp_ask.page_liveness import LadderCallbacks
 from cdp_ask.registry_hygiene_loop import RegistryHygieneLoop
 from cdp_ask.runner import (
     HarvestRootMismatchError,
+    peek_harvest_root_health,
+    refresh_harvest_root_health,
     run_execution,
     verify_harvest_root,
 )
+from cdp_ask.standing_pins import peek_health_projections, refresh_health_projections
 
 logger = logging.getLogger(__name__)
 
@@ -107,8 +110,8 @@ class HealthResponse(BaseModel):
     ``tree_state`` is checkout porcelain (dirty|clean|unknown). It does not
     upgrade ``code_version`` into proof-of-live on a dirty tree.
 
-    ``displays`` and ``standing_pins`` are advisory projections rebuilt on
-    each probe — not journal-backed authority.
+    ``displays`` and ``standing_pins`` are advisory projections served from a
+    background-refreshed cache — not journal-backed authority.
     """
 
     status: str
@@ -140,6 +143,8 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
     execution_store.bind_deregister(_deregister)
     execution_store.bind_occupancy(occupancy)
     _tree_refresh_task: asyncio.Task[None] | None = None
+    _health_cache_refresh_task: asyncio.Task[None] | None = None
+    _health_code_version = resolve_code_version()
 
     async def _tree_state_refresh_loop() -> None:
         while True:
@@ -149,11 +154,29 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
                 logger.warning("tree_state background refresh failed", exc_info=True)
             await asyncio.sleep(15)
 
+    async def _health_cache_refresh_loop() -> None:
+        while True:
+            try:
+                await asyncio.to_thread(refresh_harvest_root_health)
+            except Exception:  # noqa: BLE001 — refresh must not kill the loop
+                logger.warning(
+                    "harvest_root health background refresh failed", exc_info=True
+                )
+            try:
+                await asyncio.to_thread(refresh_health_projections)
+            except Exception:  # noqa: BLE001 — refresh must not kill the loop
+                logger.warning(
+                    "standing_pins health background refresh failed", exc_info=True
+                )
+            await asyncio.sleep(15)
+
     @app.on_event("startup")
     async def _startup() -> None:
-        nonlocal _tree_refresh_task
+        nonlocal _tree_refresh_task, _health_cache_refresh_task
         os.environ.setdefault("CDP_REGISTRY_SEAT_AUTHORITY", "1")
         verify_harvest_root()
+        await asyncio.to_thread(refresh_harvest_root_health)
+        await asyncio.to_thread(refresh_health_projections)
         reaped = await execution_store.boot_reconcile()
         if reaped:
             logger.warning("boot reconcile reaped orphaned lanes: %s", reaped)
@@ -162,15 +185,27 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         refresh_flag = os.environ.get("CDP_ASK_TREE_STATE_REFRESH", "1").strip().lower()
         if refresh_flag not in ("0", "false", "no"):
             _tree_refresh_task = asyncio.create_task(_tree_state_refresh_loop())
+        health_refresh_flag = os.environ.get(
+            "CDP_ASK_HEALTH_CACHE_REFRESH", "1"
+        ).strip().lower()
+        if health_refresh_flag not in ("0", "false", "no"):
+            _health_cache_refresh_task = asyncio.create_task(
+                _health_cache_refresh_loop()
+            )
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
-        nonlocal _tree_refresh_task
+        nonlocal _tree_refresh_task, _health_cache_refresh_task
         if _tree_refresh_task is not None:
             _tree_refresh_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await _tree_refresh_task
             _tree_refresh_task = None
+        if _health_cache_refresh_task is not None:
+            _health_cache_refresh_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await _health_cache_refresh_task
+            _health_cache_refresh_task = None
         await registry_hygiene.stop()
         await execution_store.stop()
 
@@ -404,33 +439,16 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
     @app.get("/health", response_model=HealthResponse)
     async def health() -> HealthResponse:
-        try:
-            root = verify_harvest_root()
-        except RuntimeError:
-            return HealthResponse(
-                status="fail_closed",
-                harvest_root="",
-                harvest_root_ok=False,
-                registry_hygiene="stopped",
-                code_version=resolve_code_version(),
-                pid=os.getpid(),
-                tree_state=peek_tree_state(),
-            )
+        harvest = peek_harvest_root_health()
         hygiene_status = "running" if registry_hygiene.running else "stopped"
-        from cdp_ask.standing_pins import probe_health
-
-        try:
-            displays, standing_pins = await asyncio.wait_for(
-                asyncio.to_thread(probe_health), timeout=0.8
-            )
-        except TimeoutError:
-            displays, standing_pins = {}, {}
+        displays, standing_pins = peek_health_projections()
+        status = "ok" if harvest.harvest_root_ok else "fail_closed"
         return HealthResponse(
-            status="ok",
-            harvest_root=str(root),
-            harvest_root_ok=True,
+            status=status,
+            harvest_root=harvest.harvest_root,
+            harvest_root_ok=harvest.harvest_root_ok,
             registry_hygiene=hygiene_status,
-            code_version=resolve_code_version(),
+            code_version=_health_code_version,
             pid=os.getpid(),
             tree_state=peek_tree_state(),
             displays=displays,
