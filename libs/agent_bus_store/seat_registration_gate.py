@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from claude_bundles.operator_proxy_mission import MISSION_SKILL_SLUGS
@@ -17,12 +16,6 @@ _STANDING_EFFORT_PREFIX = "standing-effort:"
 _SEAT_REGISTRATION_PREFIX = "TYPE: SEAT_REGISTRATION"
 _STANDING_BIND_LINE = "TYPE: STANDING_BIND"
 _LANE_AUTO_TAG = "lane:cursor-auto"
-
-_ADMIT_MODEL_RE = re.compile(
-    r"requested_model=\S+ resolved=(\S+) \(admit-plane\)"
-)
-_ADMIT_EFFORT_RE = re.compile(r"requested_effort=\S+ resolved=(.*)")
-
 
 def _first_non_empty_line(body: str) -> str | None:
     for line in body.splitlines():
@@ -103,25 +96,6 @@ def _has_maestro_fetch_decision(body: str) -> bool:
         if "fetch-decision:" in text and "runbook:maestro-loop" in text:
             return True
     return False
-
-
-def _latest_admit_report_resolved(thread_id: str) -> tuple[str | None, str | None]:
-    from .db.turns import get_turns
-
-    resolved_model: str | None = None
-    resolved_effort: str | None = None
-    for row in get_turns(thread=thread_id, include_superseded=False):
-        subject = row.get("subject") or ""
-        if not subject.startswith("status:admit-report"):
-            continue
-        turn_body = row.get("body") or ""
-        model_match = _ADMIT_MODEL_RE.search(turn_body)
-        effort_match = _ADMIT_EFFORT_RE.search(turn_body)
-        if model_match:
-            resolved_model = model_match.group(1)
-        if effort_match:
-            resolved_effort = effort_match.group(1).strip()
-    return resolved_model, resolved_effort
 
 
 def apply_standing_bind(
@@ -258,32 +232,6 @@ def seat_registration_refusal(
                 "then repeat SEAT_REGISTRATION echoing those values."
             ),
             "missing": ["model", "effort"],
-        }
-
-    admit_model, admit_effort = _latest_admit_report_resolved(thread_id)
-    if admit_model is None or admit_effort is None:
-        return {
-            "reason": "seat_registration_admit_report",
-            "fix_hint": (
-                "no status:admit-report turn on this thread; registration cannot "
-                "confirm resolved model and effort."
-            ),
-            "missing": ["status:admit-report"],
-        }
-
-    if (
-        admit_model.casefold() != standing_model.casefold()
-        or admit_effort.casefold() != standing_effort.casefold()
-    ):
-        return {
-            "reason": "seat_registration_bind_mismatch",
-            "fix_hint": (
-                f"standing bind model={standing_model} effort={standing_effort}; "
-                f"admit-report resolved model={admit_model} effort={admit_effort}; "
-                "registration must echo the standing tags and the admit-report must "
-                "equal them."
-            ),
-            "missing": [],
         }
 
     return None

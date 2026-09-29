@@ -177,32 +177,6 @@ def test_open_children_none_with_active_child_422(bus_db: TestClient) -> None:
     assert child_id in resp.json()["detail"]["fix_hint"]
 
 
-def test_admit_model_mismatch_standing_extra_422(bus_db: TestClient) -> None:
-    parent = create_thread(thread_id=None, slug="sr-mismatch")
-    thread_id = parent["id"]
-    _tag_lane_auto(thread_id)
-    standing_model = "cdp/opus-5.5-extra"
-    _post_standing_bind(bus_db, thread_id, model=standing_model, effort="high")
-    _post_admit_report(
-        bus_db, thread_id, model="cdp/opus-5.5", effort="high"
-    )
-    resp = bus_db.post(
-        "/threads/send",
-        json={
-            "thread": thread_id,
-            "from": "web-anthropic",
-            "to": "cursor-auto",
-            "subject": "registration",
-            "body": _registration_body(model=standing_model, effort="high"),
-        },
-    )
-    assert resp.status_code == 422
-    detail = resp.json()["detail"]
-    assert detail["reason"] == "seat_registration_bind_mismatch"
-    assert "cdp/opus-5.5-extra" in detail["fix_hint"]
-    assert "cdp/opus-5.5" in detail["fix_hint"]
-
-
 def test_cursor_auto_stamp_exempt_201(bus_db: TestClient) -> None:
     parent = create_thread(thread_id=None, slug="sr-cursor-auto")
     thread_id = parent["id"]
