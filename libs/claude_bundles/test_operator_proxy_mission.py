@@ -102,6 +102,10 @@ def test_structural_briefing_a7_escalate_is_agent_bus_not_team_dispatch() -> Non
     assert out.index("team_dispatch") > seat_idx
 
 
+def test_mission_skill_slugs_include_lane_act_gates() -> None:
+    assert "lane-act-gates" in MISSION_SKILL_SLUGS
+
+
 def test_legal_subset_forbidden_disjoint_a9() -> None:
     assert LIFE_SURFACE_LEGAL_TOOLS.isdisjoint(LIFE_SURFACE_FORBIDDEN_TOOLS)
     for tool in LIFE_SURFACE_LEGAL_TOOLS:

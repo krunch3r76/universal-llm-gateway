@@ -42,6 +42,7 @@ MISSION_SKILL_SLUGS: tuple[str, ...] = (
     # Spine/genus/species on new/pivoted lanes — decision:thread-genus +
     # Fable 9518 (cortex://notes/system/threads/agent-bus-type-genus-chip-gap-consult.md).
     "agent-bus-discipline",
+    "lane-act-gates",
 )
 
 # Hand-maintained mirror of config/mcp/canonical.yaml surface_primary_domains.life
