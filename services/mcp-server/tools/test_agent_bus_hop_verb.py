@@ -213,8 +213,9 @@ def _relay_via_test_client(client: TestClient, sent: list[dict[str, Any]]):
 def test_hop_split_stores_header_under_briefing_shield(tmp_path, monkeypatch) -> None:
     """Lane 12286 specimen, observed 2026-09-29 00:0xZ.
 
-    Unsplit hop body is 3045 characters and POST /turns refuses it. The hop
-    verb stores the structural header and writes the doctrine tail to the sidecar.
+    Unsplit hop body is 3045 characters; the store auto-spills bare overshoots,
+    but the hop verb still stores the structural header and writes doctrine tail
+    to the sidecar.
     """
     handoff = StandingHandoffFreshness(
         status="current",
@@ -251,22 +252,6 @@ def test_hop_split_stores_header_under_briefing_shield(tmp_path, monkeypatch) ->
         )
         assert seed.status_code == 201, seed.text
         thread_id = seed.json()["thread"]["id"]
-        refused = client.post(
-            "/turns",
-            json={
-                "thread": thread_id,
-                "from": "cursor",
-                "to": "web",
-                "subject": "unsplit hop body",
-                "body": specimen,
-                "after_turn": 1,
-            },
-        )
-        assert refused.status_code == 422, refused.text
-        detail = refused.json()["detail"]
-        assert detail["reason"] == "over_briefing_target"
-        assert detail["body_chars"] == 3045
-        assert detail["target_chars"] == 2000
 
         relay = _relay_via_test_client(client, sent)
         with (

@@ -11,7 +11,6 @@ from fastapi import HTTPException, status
 from ...body_auto_spill import (
     BodyTooLargeError,
     PreparedBody,
-    over_briefing_refusal_detail,
     prepare_body_for_insert,
     spill_error_http,
 )
@@ -118,13 +117,6 @@ def run_new_thread_send(
         )
     except Exception as exc:
         _map_prepare_failure(exc, thread_id=thread_id)
-    if refusal := over_briefing_refusal_detail(prepared):
-        _raise_post_mint_http(
-            thread_id=thread_id,
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=refusal,
-            orphan_reason="over_briefing_target",
-        )
     prepare_ms = (time.monotonic() - t_prepare) * 1000.0
 
     t_insert = time.monotonic()

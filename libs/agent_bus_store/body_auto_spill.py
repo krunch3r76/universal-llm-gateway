@@ -29,6 +29,7 @@ from .checkpoint_projection_wiring import maybe_project_checkpoint_body
 from .checkpoint_stance_lint import orchestration_stance_advisory
 from .db.connection import write_connect
 from .turns_models import (
+    BRIEFING_TARGET_CHARS,
     MAX_LONG_TURN_BODY_CHARS,
     MAX_SIDECAR_CONTENT_CHARS,
     MAX_TURN_BODY_CHARS,
@@ -112,6 +113,51 @@ class PreparedBody:
     sidecar_uri: str | None = None
     sidecar_sha256: str | None = None
     advisory: BriefingAdvisory | None = None
+    auto_spilled: bool = False
+    inline_chars: int | None = None
+
+
+def briefing_inline_head(body: str, target_chars: int) -> str:
+    """Prefix of *body* ending at the last paragraph break at or before *target_chars*."""
+    if len(body) <= target_chars:
+        return body
+    window = body[:target_chars]
+    para_break = window.rfind("\n\n")
+    if para_break >= 0:
+        return body[:para_break].rstrip()
+    line_break = window.rfind("\n")
+    if line_break >= 0:
+        return body[:line_break].rstrip()
+    return body[:target_chars].rstrip()
+
+
+def _spill_over_briefing_target(
+    *,
+    thread: str,
+    subject: str,
+    body: str,
+    from_agent: str,
+) -> PreparedBody:
+    """Write full *body* to a sidecar; keep a paragraph-bounded head inline."""
+    sidecar = write_thread_sidecar_for_send(
+        thread=thread,
+        subject=subject,
+        content=body,
+        from_agent=from_agent,
+        sidecar_slug=auto_overflow_slug(
+            turn_number=_prospective_spill_turn_number(thread)
+        ),
+        oversized=False,
+    )
+    head = briefing_inline_head(body, BRIEFING_TARGET_CHARS)
+    stored = append_sidecar_pointer_line(head, sidecar_uri=sidecar.uri)
+    return PreparedBody(
+        body=stored,
+        sidecar_uri=sidecar.uri,
+        sidecar_sha256=sidecar.sha256,
+        auto_spilled=True,
+        inline_chars=len(head),
+    )
 
 
 class BodyTooLargeError(Exception):
@@ -177,6 +223,13 @@ def prepare_body_for_insert(
                 has_sidecar=False,
                 thread_tags=thread_tags,
                 supersedes_turn=supersedes_turn,
+            )
+        if advisory is not None and advisory.reason == "over_briefing_target":
+            return _spill_over_briefing_target(
+                thread=thread,
+                subject=subject,
+                body=body,
+                from_agent=from_agent,
             )
         return PreparedBody(body=body, advisory=advisory)
 
@@ -311,6 +364,8 @@ def build_turn_created(
         created_at=created_at,
         sidecar_uri=prepared.sidecar_uri,
         sidecar_sha256=prepared.sidecar_sha256,
+        auto_spilled=prepared.auto_spilled or None,
+        inline_chars=prepared.inline_chars,
         briefing_advisory=advisory_dict,
         on_behalf=on_behalf or None,
         superseded_turn_number=superseded_turn_number,
@@ -325,6 +380,7 @@ __all__ = [
     "BriefingAdvisory",
     "BodyTooLargeError",
     "PreparedBody",
+    "briefing_inline_head",
     "build_turn_created",
     "over_briefing_refusal_detail",
     "SidecarContentTooLargeError",
