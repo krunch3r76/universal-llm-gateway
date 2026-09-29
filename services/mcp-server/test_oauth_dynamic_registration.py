@@ -37,6 +37,7 @@ def test_protected_resource_metadata_path_scoped_life() -> None:
     metadata = _service().build_protected_resource_metadata(resource_path="mcp/life")
 
     assert metadata["resource"] == "https://mcp.k-1.me/mcp/life"
+    assert metadata["scopes_supported"] == ["mcp"]
 
 
 def test_resource_metadata_url_for_code() -> None:
@@ -108,7 +109,7 @@ def test_dynamic_registration_accepts_optional_refresh_token_grant() -> None:
     )
 
     assert str(registration["client_id"]).startswith("dyn-")
-    assert registration["grant_types"] == ["authorization_code"]
+    assert registration["grant_types"] == ["authorization_code", "refresh_token"]
 
 
 def test_dynamic_registration_rejects_refresh_token_without_authorization_code() -> (

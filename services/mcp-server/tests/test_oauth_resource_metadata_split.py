@@ -29,7 +29,9 @@ def test_path_suffix_selects_life_and_code_resources() -> None:
     life = svc.build_protected_resource_metadata(resource_path="mcp/life")
     code = svc.build_protected_resource_metadata(resource_path="mcp/code")
     assert life["resource"] == "https://mcp.k-1.me/mcp/life"
+    assert life["scopes_supported"] == ["mcp"]
     assert code["resource"] == "https://mcp.k-1.me/mcp/code"
+    assert code["scopes_supported"] == ["mcp"]
 
 
 def test_www_authenticate_metadata_url_is_path_aware() -> None:

@@ -120,7 +120,15 @@ class OAuthService:
             "resource": resource,
             "authorization_servers": [self._config.issuer],
             "bearer_methods_supported": ["header"],
+            # Claude requests these when the 401 challenge omits scope.
+            # An empty list aborts start-auth after DCR, before /authorize.
+            "scopes_supported": list(self._config.supported_scopes or ["mcp"]),
         }
+
+    def www_authenticate_scope(self) -> str:
+        """Space-separated scope for the 401 challenge Claude reads first."""
+        scopes = self._config.supported_scopes or ["mcp"]
+        return " ".join(str(scope) for scope in scopes if str(scope).strip())
 
     def resource_metadata_url_for(self, mcp_path: str) -> str:
         """Return path-scoped resource-metadata URL for a MCP mount (``/mcp/life``)."""
@@ -184,24 +192,30 @@ class OAuthService:
                 redirect_uris=redirect_uris,
             )
         )
+        granted = _granted_dynamic_grant_types(grant_types)
         record(
             "mcp.oauth.dynamic_client.registered",
             client_id=client_id,
             token_endpoint_auth_method=token_auth_method,
+            grant_types=granted,
             redirect_hosts=sorted(
                 {urlparse(uri).hostname or "" for uri in redirect_uris}
             ),
         )
+        issued_at = int(time.time())
         registration: dict[str, object] = {
             "client_id": client_id,
-            "client_id_issued_at": int(time.time()),
+            "client_id_issued_at": issued_at,
             "redirect_uris": redirect_uris,
-            "grant_types": ["authorization_code"],
+            "grant_types": granted,
             "response_types": ["code"],
             "token_endpoint_auth_method": token_auth_method,
         }
         if client_secret is not None:
             registration["client_secret"] = client_secret
+            # RFC 7591: 0 means the secret does not expire. Claude's broker
+            # rejects a confidential-client registration that omits it.
+            registration["client_secret_expires_at"] = 0
         return registration
 
     def validate_authorization_request(
@@ -447,6 +461,21 @@ def _list_subset(value: object, allowed: set[str]) -> bool:
         return False
     values = {item for item in value if isinstance(item, str)}
     return bool(values) and values.issubset(allowed)
+
+
+def _granted_dynamic_grant_types(value: object) -> list[str]:
+    """Echo the caller's allowed grant types, authorization_code first.
+
+    Claude registers ``refresh_token`` alongside ``authorization_code`` and
+    treats a response that drops ``refresh_token`` as a failed registration
+    even when the HTTP status is 201.
+    """
+    if not isinstance(value, list):
+        return ["authorization_code"]
+    granted = [
+        item for item in ("authorization_code", "refresh_token") if item in value
+    ]
+    return granted or ["authorization_code"]
 
 
 def _valid_dynamic_grant_types(value: object) -> bool:

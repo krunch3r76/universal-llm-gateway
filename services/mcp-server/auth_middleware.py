@@ -127,7 +127,8 @@ class AuthMiddleware:
             meta_url = self._oauth_service.resource_metadata_url_for(request_path)
         else:
             meta_url = self._oauth_service.resource_metadata_url
-        return f'Bearer realm="mcp", resource_metadata="{meta_url}"'
+        scope = self._oauth_service.www_authenticate_scope()
+        return f'Bearer realm="mcp", resource_metadata="{meta_url}", scope="{scope}"'
 
     def _resolve_profile(self, auth_header: str) -> str:
         """Map static bearer tokens to MCP request profiles.
