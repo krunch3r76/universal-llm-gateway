@@ -54,6 +54,7 @@ async def land_op(
     expected_diff_sha256: str,
     source_repo: str,
     green_gate_cmd: list[str],
+    suite_digest_cmd: list[str] | None = None,
     commit_message: str = "",
     remove_worktree: bool = True,
     max_attempts: int = 5,
@@ -174,6 +175,7 @@ async def land_op(
         worktree_path=worktree_path,
         source_repo=source_repo,
         green_gate_cmd=green_gate_cmd,
+        suite_digest_cmd=suite_digest_cmd,
         max_attempts=max_attempts,
         t0=t0,
     )

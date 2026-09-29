@@ -29,9 +29,13 @@ from git_integrate.schema import (
     RC_DIRTY_MASTER,
     RC_GATE_FAILED,
     RC_INTEGRATE_CONFLICT,
+    RC_SUITE_DIGEST_MISMATCH,
+    RC_SUITE_DIGEST_UNCOMPUTABLE,
 )
 
 _GATE_TIMEOUT = 300.0
+_SUITE_DIGEST_TIMEOUT = 1800.0
+_SUITE_FIELDS = ("computed", "anchor", "added", "removed")
 _GATE_OUTPUT_TAIL_LINES = 20
 _logger = get_logger(__name__)
 
@@ -85,6 +89,17 @@ async def worktree_remove_clean(worktree_path: str) -> str:
     return ""
 
 
+def _suite_digest_reason(stderr: str, gate_exit: int) -> str:
+    """Refusal text carrying computed, anchor, added, and removed counts."""
+    fields = dict.fromkeys(_SUITE_FIELDS, "?")
+    for line in stderr.splitlines():
+        key, _, value = line.partition(" ")
+        if key in fields and value:
+            fields[key] = value.strip()
+    counts = " ".join(f"{key}={fields[key]}" for key in _SUITE_FIELDS)
+    return f"suite digest gate exited {gate_exit} {counts}"
+
+
 async def integrate_retry_loop(
     *,
     integration_id: str,
@@ -95,6 +110,7 @@ async def integrate_retry_loop(
     green_gate_cmd: list[str],
     max_attempts: int,
     t0: float,
+    suite_digest_cmd: list[str] | None = None,
 ) -> dict[str, Any]:
     """Merge, gate, and CAS-advance master with optimistic retry.
 
@@ -184,6 +200,38 @@ async def integrate_retry_loop(
                 **_bounded_gate_output(gate.stdout, gate.stderr),
             )
 
+        if suite_digest_cmd is not None:
+            suite = await _run_command(
+                suite_digest_cmd,
+                cwd=worktree_path,
+                timeout=_SUITE_DIGEST_TIMEOUT,
+            )
+            if suite.returncode != 0:
+                await reset_hard_to(worktree_path, arc_tip_before)
+                duration_s = time.monotonic() - t0
+                reason_code = (
+                    RC_SUITE_DIGEST_MISMATCH
+                    if suite.returncode == 2
+                    else RC_SUITE_DIGEST_UNCOMPUTABLE
+                )
+                emit_git_integrate_gate_failed(
+                    integration_id=integration_id,
+                    arc=arc,
+                    phase=phase,
+                    gate_cmd=" ".join(suite_digest_cmd),
+                    gate_exit=suite.returncode,
+                    duration_s=duration_s,
+                )
+                return envelope(
+                    integration_id=integration_id,
+                    status="rejected",
+                    reason_code=reason_code,
+                    reason=_suite_digest_reason(suite.stderr, suite.returncode),
+                    gate_exit=suite.returncode,
+                    duration_s=duration_s,
+                    **_bounded_gate_output(suite.stdout, suite.stderr),
+                )
+
         plan = await asyncio.to_thread(
             plan_hub_sync, source_repo, master_before, candidate
         )
@@ -211,9 +259,7 @@ async def integrate_retry_loop(
             # already names the new blob, so a path we are about to update
             # shows modified. The second plan, above, is the one that runs
             # after the gate and before the ref moves.
-            hub_porcelain = await asyncio.to_thread(
-                apply_hub_sync, plan, adv.new_sha
-            )
+            hub_porcelain = await asyncio.to_thread(apply_hub_sync, plan, adv.new_sha)
             working_tree = (
                 "NOT landed@working-tree"
                 if hub_porcelain.strip()

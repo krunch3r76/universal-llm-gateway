@@ -35,7 +35,11 @@ from services.git_integration_worker.admission import (
     Ticket,
     WorkAdmissionController,
 )
-from services.git_integration_worker.config import WorkerConfig, load_config
+from services.git_integration_worker.config import (
+    WorkerConfig,
+    load_config,
+    suite_digest_gate_cmd,
+)
 from services.git_integration_worker.cursor_sdk_land_lease import (
     DirtyMasterRefused,
     LandLeaseAcquireTimeout,
@@ -373,6 +377,7 @@ async def integrate(req: IntegrateRequest, request: Request) -> IntegrateRespons
                 expected_diff_sha256=req.expected_diff_sha256,
                 source_repo=str(cfg.source_repo),
                 green_gate_cmd=list(cfg.green_gate_cmd),
+                suite_digest_cmd=suite_digest_gate_cmd(),
                 remove_worktree=req.remove_worktree,
             )
     except Draining503 as exc:
@@ -416,6 +421,7 @@ async def land(req: LandRequest, request: Request) -> IntegrateResponse:
                 commit_message=req.commit_message,
                 source_repo=str(cfg.source_repo),
                 green_gate_cmd=list(cfg.green_gate_cmd),
+                suite_digest_cmd=suite_digest_gate_cmd(),
                 remove_worktree=req.remove_worktree,
             )
     except Draining503 as exc:
