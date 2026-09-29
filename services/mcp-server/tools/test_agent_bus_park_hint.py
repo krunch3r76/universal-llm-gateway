@@ -55,8 +55,36 @@ def test_build_poll_hint_wait_arguments_unchanged():
         from_agent="web-anthropic",
     )
     args = hint["arguments_json"]
+    assert hint["tool"] == "job_state"
     assert args["thread"] == "99"
-    assert args["after_turn"] == 7
-    assert args["completion"] == "status:done"
-    assert args["wait_seconds"] == 0
+    assert args["include_terminal"] is True
+    assert "job_id" not in args
+    assert "wait_seconds" not in args
     assert "status:superseded" in hint["alternate_completions"]
+
+
+def test_build_poll_hint_success_arm_includes_job_id_and_thread():
+    hint = build_poll_hint(
+        thread_id="child-1",
+        after_turn=2,
+        from_agent="cursor",
+        job_id="j1",
+    )
+    assert hint["tool"] == "job_state"
+    args = hint["arguments_json"]
+    assert args["thread"] == "child-1"
+    assert args["job_id"] == "j1"
+    assert args["include_terminal"] is True
+
+
+def test_build_poll_hint_degraded_arm_thread_only_job_state():
+    hint = build_poll_hint(
+        thread_id="child-2",
+        after_turn=1,
+        from_agent="cursor",
+    )
+    assert hint["tool"] == "job_state"
+    args = hint["arguments_json"]
+    assert args["thread"] == "child-2"
+    assert args["include_terminal"] is True
+    assert "job_id" not in args

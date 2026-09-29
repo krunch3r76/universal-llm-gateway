@@ -39,16 +39,18 @@ def build_poll_hint(
     thread_id: str,
     after_turn: int,
     from_agent: str = "",
+    job_id: str | None = None,
 ) -> dict[str, Any]:
     """Compose the ``poll_hint`` returned by ``agent_bus.request``."""
+    arguments: dict[str, Any] = {
+        "thread": str(thread_id),
+        "include_terminal": True,
+    }
+    if job_id:
+        arguments["job_id"] = str(job_id)
     hint: dict[str, Any] = {
-        "tool": "wait",
-        "arguments_json": {
-            "thread": str(thread_id),
-            "after_turn": after_turn,
-            "completion": "status:done",
-            "wait_seconds": 0,
-        },
+        "tool": "job_state",
+        "arguments_json": arguments,
         "suggested_interval_s": _SUGGESTED_INTERVAL_S,
         "max_expected_latency_s": _MAX_EXPECTED_LATENCY_S,
         "alternate_completions": [

@@ -407,6 +407,9 @@ def _request_impl(
             thread_id=thread_id,
             after_turn=turn_number,
             from_agent=from_agent,
+            job_id=str(enqueue_body["job_id"])
+            if enqueue_body.get("job_id")
+            else None,
         ),
         "enqueue": enq,
         "tags": merged_tags,
