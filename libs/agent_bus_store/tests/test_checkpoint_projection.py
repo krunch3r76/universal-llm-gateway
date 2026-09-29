@@ -707,13 +707,16 @@ def test_send_continue_checkpoint_body_too_large_413(tmp_path, monkeypatch) -> N
                 "lane_row_count",
                 "compressed",
             ):
-                assert detail[key] == {
-                    "authored_chars": 6900,
-                    "derived_chars": 2100,
-                    "cited_row_count": 2,
-                    "lane_row_count": 1,
-                    "compressed": True,
-                }[key]
+                assert (
+                    detail[key]
+                    == {
+                        "authored_chars": 6900,
+                        "derived_chars": 2100,
+                        "cited_row_count": 2,
+                        "lane_row_count": 1,
+                        "compressed": True,
+                    }[key]
+                )
 
 
 def test_send_new_slug_checkpoint_body_too_large_413(tmp_path, monkeypatch) -> None:
@@ -1038,12 +1041,20 @@ def test_summary_mode_lists_active_sub_missions_only() -> None:
     assert "child_lanes: 2 active · 1 closed · registry:" in body
 
 
-def test_stale_in_flight_excluded_from_cp_projection() -> None:
+def test_stale_in_flight_excluded_from_cp_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from agent_bus_store.checkpoint_projection_producers import (
         filter_cp_projection_producer_links,
         filter_visible_producer_links,
     )
     from agent_bus_store.db.lineage import LineageDispatchLink
+    from agent_bus_store.sdk_liveness import LivenessVerdict
+
+    monkeypatch.setattr(
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        lambda **_kwargs: (LivenessVerdict.DEFER, "probe_unreachable:test", None),
+    )
 
     now = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
     fresh = LineageDispatchLink(
@@ -1072,6 +1083,36 @@ def test_stale_in_flight_excluded_from_cp_projection() -> None:
     assert len(wait_rows) == 2
     assert len(cp_rows) == 1
     assert cp_rows[0].execution_id == "fresh-exec"
+
+
+def test_past_grace_live_witness_renders_in_flight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Null-terminal past grace with a live GIW witness renders in_flight."""
+    from agent_bus_store.checkpoint_projection_producers import (
+        filter_cp_projection_producer_links,
+    )
+    from agent_bus_store.db.lineage import LineageDispatchLink
+    from agent_bus_store.sdk_liveness import LivenessVerdict
+
+    monkeypatch.setattr(
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        lambda **_kwargs: (LivenessVerdict.SKIP_LIVE, "worker_live", None),
+    )
+    now = datetime(2026, 9, 29, 12, 0, tzinfo=UTC)
+    link = LineageDispatchLink(
+        execution_id="67aae3ee-ff0b-4e63-bfad-de87ceac2f93",
+        pipeline_id="cursor-sdk-generate",
+        caller_agent="cursor-sdk",
+        linked_at="2026-09-29T06:00:00Z",
+        terminal_status=None,
+        terminal_at=None,
+        delivery_at=None,
+    )
+    rows = filter_cp_projection_producer_links((link,), lane_thread_id="12286", now=now)
+    assert len(rows) == 1
+    assert rows[0].state == "in_flight"
+    assert link.terminal_status is None
 
 
 def test_maybe_project_checkpoint_refreshes_transcript_projection(
@@ -1199,7 +1240,9 @@ def test_summary_caps_entity_rows() -> None:
         resolvers=_resolvers(rows=row_map),
     )
     entity_section = body.split("### Entity / assertion rows")[1].split("## Residue")[0]
-    entity_rows = [line for line in entity_section.splitlines() if line.startswith("- a:")]
+    entity_rows = [
+        line for line in entity_section.splitlines() if line.startswith("- a:")
+    ]
     assert len(body) <= MAX_TURN_BODY_CHARS
     assert len(entity_rows) == CHECKPOINT_MAX_CHILD_ROWS
     assert (
@@ -1222,8 +1265,9 @@ def test_producers_summary_names_basis() -> None:
         resolvers=_resolvers(producers=(row,)),
     )
     assert (
-        "basis: in_flight iff terminal_status=null ∧ linked_at within"
-        " producer liveness grace; older null-terminal is unknown"
+        "basis: in_flight when terminal_status is null and either"
+        " linked_at is inside the grace or the GIW witness is live;"
+        " an older null-terminal link without a live witness is unknown"
     ) in body
 
 

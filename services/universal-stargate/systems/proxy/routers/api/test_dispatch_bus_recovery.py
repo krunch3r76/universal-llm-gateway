@@ -7,6 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from agent_bus_store.sdk_liveness import LivenessVerdict
 from fastapi.testclient import TestClient
 
 from systems.proxy.routers.api.dispatch_bus_recovery import (
@@ -272,8 +273,14 @@ async def test_resolver_running_when_link_present_nonterminal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolver_unknown_when_stream_died_without_terminal_write() -> None:
+async def test_resolver_unknown_when_stream_died_without_terminal_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Stale non-terminal link is not recovered as running (a:36832)."""
+    monkeypatch.setattr(
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        lambda **_kwargs: (LivenessVerdict.DEFER, "probe_unreachable:test", None),
+    )
     responses = [
         _FakeResponse(
             200,
@@ -303,6 +310,88 @@ async def test_resolver_unknown_when_stream_died_without_terminal_write() -> Non
     assert recovered["status"] == "unknown"
     assert recovered["liveness_reason"] == "no_liveness_signal"
     assert recovered["completed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_recover_running_when_past_grace_skip_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Past grace and SKIP_LIVE recover as running, with no terminal write."""
+    monkeypatch.setattr(
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        lambda **_kwargs: (LivenessVerdict.SKIP_LIVE, "worker_live", None),
+    )
+    responses = [
+        _FakeResponse(
+            200,
+            {
+                "thread_id": "045",
+                "pipeline_id": "cursor-sdk-generate",
+                "terminal_status": None,
+                "terminal_at": None,
+                "delivery_at": None,
+                "linked_at": "2026-09-22T02:44:02Z",
+            },
+        ),
+        _FakeResponse(200, {"turns": []}),
+    ]
+
+    with patch(
+        "systems.proxy.routers.api.dispatch_bus_recovery.make_async_client",
+        return_value=_FakeClientContext(responses),
+    ):
+        recovered = await recover_execution_from_bus_thread(
+            "67aae3ee-ff0b-4e63-bfad-de87ceac2f93",
+            url="unix:///tmp/agent-bus.sock",
+            auth_token="test-token",
+        )
+
+    assert recovered is not None
+    assert recovered["status"] == "running"
+    assert recovered["completed_at"] is None
+    assert "liveness_reason" not in recovered
+    assert "terminal_status" not in recovered
+
+
+@pytest.mark.asyncio
+async def test_recover_unknown_when_past_grace_heartbeat_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Past grace and heartbeat_stale recover as unknown / stream_dead_no_terminal."""
+    monkeypatch.setattr(
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        lambda **_kwargs: (LivenessVerdict.ALLOW_ORPHAN, "heartbeat_stale", None),
+    )
+    responses = [
+        _FakeResponse(
+            200,
+            {
+                "thread_id": "045",
+                "pipeline_id": "cursor-sdk-generate",
+                "terminal_status": None,
+                "terminal_at": None,
+                "delivery_at": None,
+                "linked_at": "2026-09-22T02:44:02Z",
+            },
+        ),
+        _FakeResponse(200, {"turns": []}),
+    ]
+
+    with patch(
+        "systems.proxy.routers.api.dispatch_bus_recovery.make_async_client",
+        return_value=_FakeClientContext(responses),
+    ):
+        recovered = await recover_execution_from_bus_thread(
+            "67aae3ee-ff0b-4e63-bfad-de87ceac2f93",
+            url="unix:///tmp/agent-bus.sock",
+            auth_token="test-token",
+        )
+
+    assert recovered is not None
+    assert recovered["status"] == "unknown"
+    assert recovered["liveness_reason"] == "stream_dead_no_terminal"
+    assert recovered["completed_at"] is None
+    assert "terminal_status" not in recovered
 
 
 @pytest.mark.asyncio

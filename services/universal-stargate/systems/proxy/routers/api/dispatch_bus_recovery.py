@@ -21,6 +21,7 @@ from agent_bus_store.cursor_sdk_dispatch_turn import (
     sdk_terminal_closeout_turn,
 )
 from agent_bus_store.producer_projection import nonterminal_link_state
+from agent_bus_store.sdk_liveness import reader_liveness_witness
 from transport_utils import make_async_client
 from universal_logging import get_logger
 
@@ -252,9 +253,17 @@ async def recover_execution_from_bus_thread(
                         closeout = sdk_terminal_closeout_turn(turns)
 
             if closeout is None:
+                clock = datetime.now(UTC)
+                witness = reader_liveness_witness(
+                    thread_id=thread_id,
+                    execution_id=execution_id,
+                    linked_at=link.get("linked_at"),
+                    now=clock,
+                )
                 state, reason = nonterminal_link_state(
                     linked_at=link.get("linked_at"),
-                    now=datetime.now(UTC),
+                    now=clock,
+                    liveness_witness=witness,
                 )
                 record = _build_recovered_record(
                     execution_id=execution_id,

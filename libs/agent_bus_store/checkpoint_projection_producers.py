@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from .db.lineage import LineageDispatchLink
-from .producer_projection import nonterminal_link_state
+from .producer_projection import LivenessWitness, nonterminal_link_state
+from .sdk_liveness import reader_liveness_witness
 
 _TERMINAL_RETENTION = timedelta(hours=24)
 _STALE_IN_FLIGHT_RETENTION = timedelta(hours=24)
@@ -48,10 +49,39 @@ def _model_or_seat(link: LineageDispatchLink) -> str:
     return link.pipeline_id
 
 
-def _producer_state(link: LineageDispatchLink, *, now: datetime) -> str:
+def _cached_witness(
+    link: LineageDispatchLink,
+    *,
+    thread_id: str,
+    now: datetime,
+    cache: dict[str, LivenessWitness | None],
+) -> LivenessWitness | None:
+    """Probe each null-terminal execution_id at most once for this filter call."""
+    if link.terminal_status:
+        return None
+    if link.execution_id not in cache:
+        cache[link.execution_id] = reader_liveness_witness(
+            thread_id=thread_id,
+            execution_id=link.execution_id,
+            linked_at=link.linked_at,
+            now=now,
+        )
+    return cache[link.execution_id]
+
+
+def _producer_state(
+    link: LineageDispatchLink,
+    *,
+    now: datetime,
+    liveness_witness: LivenessWitness | None = None,
+) -> str:
     if link.terminal_status:
         return "terminal"
-    state, _reason = nonterminal_link_state(linked_at=link.linked_at, now=now)
+    state, _reason = nonterminal_link_state(
+        linked_at=link.linked_at,
+        now=now,
+        liveness_witness=liveness_witness,
+    )
     return state
 
 
@@ -87,6 +117,7 @@ def filter_visible_producer_links(
     """Keep in-flight links and terminal links not older than 24h."""
     instant = now or datetime.now(UTC)
     rows: list[ProducerDispatchRow] = []
+    witness_cache: dict[str, LivenessWitness | None] = {}
     for link in links:
         if link.terminal_status is None:
             visible = True
@@ -99,7 +130,16 @@ def filter_visible_producer_links(
                 lane_thread_id=lane_thread_id,
                 execution_id=link.execution_id,
                 model_or_seat=_model_or_seat(link),
-                state=_producer_state(link, now=instant),
+                state=_producer_state(
+                    link,
+                    now=instant,
+                    liveness_witness=_cached_witness(
+                        link,
+                        thread_id=lane_thread_id,
+                        now=instant,
+                        cache=witness_cache,
+                    ),
+                ),
                 linked_at=link.linked_at,
             )
         )
@@ -119,6 +159,7 @@ def filter_cp_projection_producer_links(
     """
     instant = now or datetime.now(UTC)
     rows: list[ProducerDispatchRow] = []
+    witness_cache: dict[str, LivenessWitness | None] = {}
     for link in links:
         if link.terminal_status is None:
             if not _in_flight_fresh(link, now=instant):
@@ -130,7 +171,16 @@ def filter_cp_projection_producer_links(
                 lane_thread_id=lane_thread_id,
                 execution_id=link.execution_id,
                 model_or_seat=_model_or_seat(link),
-                state=_producer_state(link, now=instant),
+                state=_producer_state(
+                    link,
+                    now=instant,
+                    liveness_witness=_cached_witness(
+                        link,
+                        thread_id=lane_thread_id,
+                        now=instant,
+                        cache=witness_cache,
+                    ),
+                ),
                 linked_at=link.linked_at,
             )
         )
@@ -174,8 +224,9 @@ def render_producers_section(
         registry = transcript_projection_registry_uri(root_thread)
         parts.append(
             f"producers: {in_flight} in_flight · registry: {registry}"
-            " · basis: in_flight iff terminal_status=null ∧ linked_at within"
-            " producer liveness grace; older null-terminal is unknown"
+            " · basis: in_flight when terminal_status is null and either"
+            " linked_at is inside the grace or the GIW witness is live;"
+            " an older null-terminal link without a live witness is unknown"
         )
         return parts
     ordered = _sort_producer_rows_for_display(rows)

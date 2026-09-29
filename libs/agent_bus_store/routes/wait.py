@@ -12,7 +12,8 @@ lives here, never in the MCP handler.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from datetime import UTC, datetime
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from openapi_mcp.binding import x_mcp
@@ -25,6 +26,7 @@ from ..db import (
     normalize_thread_id,
 )
 from ..producer_projection import project_thread_producers
+from ..sdk_liveness import reader_liveness_witness
 from ..wait_status import (
     DEAD_WAIT_DETAIL,
     DEAD_WAIT_ERROR,
@@ -49,6 +51,39 @@ router = APIRouter(dependencies=[Depends(require_token)])
 # remains a separate historical SSE/tools ceiling — do not conflate with wait.
 MAX_WAIT_SECONDS = 60.0
 _POLL_INTERVAL_SECONDS = 1.0
+
+
+def _pinned_reader_witness(
+    *,
+    thread_id: str,
+    execution_id: str | None,
+    dispatch_links: list[dict[str, Any]],
+    now: datetime,
+) -> tuple[
+    Literal["live", "dead"] | None,
+    dict[str, Literal["live", "dead"] | None] | None,
+]:
+    """Probe only the pinned execution_id, at most once, for this snapshot.
+
+    Unpinned ``producers[]`` rows stay on the admit-grace path. Probing every
+    past-grace link made ``wait`` cost grow with N, one GIW call each, using
+    the probe's existing timeout. Does not write ``terminal_status``.
+    """
+    if not execution_id:
+        return None, None
+    row = next(
+        (link for link in dispatch_links if link.get("execution_id") == execution_id),
+        None,
+    )
+    if row is None or row.get("terminal_status"):
+        return None, None
+    witness = reader_liveness_witness(
+        thread_id=thread_id,
+        execution_id=execution_id,
+        linked_at=row.get("linked_at"),
+        now=now,
+    )
+    return witness, {execution_id: witness}
 
 
 def _snapshot(
@@ -106,11 +141,24 @@ def _snapshot(
         after_turn=after_turn,
         turns=turns,
     )
+    clock = datetime.now(UTC)
+    pinned_witness, witness_map = _pinned_reader_witness(
+        thread_id=thread_id,
+        execution_id=execution_id,
+        dispatch_links=dispatch_links,
+        now=clock,
+    )
     producer = classify_producer_link(
         execution_id=execution_id,
         dispatch_links=dispatch_links,
+        now=clock,
+        liveness_witness=pinned_witness,
     )
-    producers = project_thread_producers(dispatch_links)
+    producers = project_thread_producers(
+        dispatch_links,
+        now=clock,
+        liveness_witnesses=witness_map,
+    )
     return {
         "thread_id": thread_id,
         "complete": complete,
@@ -184,9 +232,7 @@ async def wait_thread_route(
             detail=f"Thread {thread_id} not found",
         )
     turns = get_thread_turns_asc(thread_id)
-    if is_dead_wait_no_auto_producer(
-        turns, after_turn=after_turn, completion=comp
-    ):
+    if is_dead_wait_no_auto_producer(turns, after_turn=after_turn, completion=comp):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={

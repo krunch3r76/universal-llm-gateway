@@ -44,6 +44,7 @@ class DispatchLinkView:
     terminal_status: str | None
     terminal_at: str | None = None
     linked_at: str | None = None
+    liveness_witness: Literal["live", "dead"] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,12 +125,16 @@ def _link_counts_as_live_wip(lnk: DispatchLinkView, *, now: datetime) -> bool:
     """True only when the link carries a positive liveness signal.
 
     A null ``terminal_status`` whose ``linked_at`` is missing or past the
-    admit grace is ``unknown``, not live WIP (a:36832). This does not write
-    ``terminal_status``.
+    admit grace is ``unknown``, not live WIP, unless ``liveness_witness`` is
+    ``live`` (a:36832). This does not write ``terminal_status``.
     """
     if lnk.terminal_status is not None:
         return False
-    state, _reason = nonterminal_link_state(linked_at=lnk.linked_at, now=now)
+    state, _reason = nonterminal_link_state(
+        linked_at=lnk.linked_at,
+        now=now,
+        liveness_witness=lnk.liveness_witness,
+    )
     return state == "in_flight"
 
 

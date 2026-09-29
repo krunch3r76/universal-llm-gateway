@@ -287,3 +287,30 @@ def test_dead_stream_without_terminal_write_is_not_wip_in_flight() -> None:
     assert verdict.reason is None
     assert verdict.skip_reason == "no_wip"
     assert verdict.wip_execution_ids == ()
+
+
+def test_live_witness_past_grace_counts_as_wip_in_flight() -> None:
+    """A grace-stale link with liveness_witness=live is wip_in_flight."""
+    snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id="67aae3ee-ff0b-4e63-bfad-de87ceac2f93",
+                terminal_status=None,
+                linked_at=_ts(7200),
+                liveness_witness="live",
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="earlier",
+                body="still here",
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is True
+    assert verdict.reason == "wip_in_flight"
+    assert verdict.wip_execution_ids == ("67aae3ee-ff0b-4e63-bfad-de87ceac2f93",)

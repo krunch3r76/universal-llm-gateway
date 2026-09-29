@@ -15,7 +15,9 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
+
+from .producer_projection import producer_liveness_grace
 
 logger = logging.getLogger("agent-bus.sdk_liveness")
 
@@ -212,3 +214,45 @@ def evaluate_link_liveness(
             reason,
         )
     return verdict, reason, terminal_status
+
+
+def _linked_at_within_grace(linked_at: object, now: datetime) -> bool:
+    """True when ``linked_at`` parses and its age is inside the admit grace."""
+    if linked_at is None or linked_at == "":
+        return False
+    try:
+        parsed = parse_ts(str(linked_at))
+    except (ValueError, TypeError):
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    clock = now if now.tzinfo is not None else now.replace(tzinfo=UTC)
+    return clock - parsed <= producer_liveness_grace()
+
+
+def reader_liveness_witness(
+    *,
+    thread_id: str,
+    execution_id: str,
+    linked_at: object,
+    now: datetime,
+) -> Literal["live", "dead"] | None:
+    """Witness whether a null-terminal link is live, without writing ``terminal_status``.
+
+    Inside the admit grace this returns None and does not call GIW, so a dead
+    probe cannot override ``admit_grace``. Past the grace, ``SKIP_LIVE`` is
+    ``live`` and ``ALLOW_ORPHAN`` / ``heartbeat_stale`` is ``dead``. Probe
+    errors, timeouts, and every other verdict return None. Does not call
+    ``terminate_dispatch``.
+    """
+    if _linked_at_within_grace(linked_at, now):
+        return None
+    verdict, reason, _terminal = evaluate_link_liveness(
+        thread_id=thread_id,
+        link_execution_id=execution_id,
+    )
+    if verdict is LivenessVerdict.SKIP_LIVE:
+        return "live"
+    if verdict is LivenessVerdict.ALLOW_ORPHAN and reason == "heartbeat_stale":
+        return "dead"
+    return None
