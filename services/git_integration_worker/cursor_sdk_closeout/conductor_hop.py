@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -148,14 +149,17 @@ def _live_entry_gate_for_row(row: dict[str, Any], scoreboard_body: str) -> str |
                     fold_scoreboard,
                     resolve_entry_gate_from_fold,
                 )
-                from implement_admission.conductor_witness_defaults import (
-                    DefaultWitnessCortex,
+
+                from services.git_integration_worker.cursor_sdk_nested_witness import (
+                    fold_deps_with_ledger,
                 )
-                from implement_admission.conductor_witness_types import FoldDeps
 
                 fold = fold_scoreboard(
                     slug,
-                    deps=FoldDeps(cortex=DefaultWitnessCortex()),
+                    deps=fold_deps_with_ledger(
+                        f"todo:{slug}",
+                        repo=_fold_repo(row),
+                    ),
                     write_journal=False,
                 )
                 if fold is not None:
@@ -364,6 +368,16 @@ def live_conductor_row_on_thread(
     return any(_is_conductor_row({k: row[k] for k in row.keys()}) for row in rows)
 
 
+_DEFAULT_FOLD_REPO = Path("/mnt/torus/projects/universal-llm-gateway")
+
+
+def _fold_repo(row: dict[str, Any]) -> Path:
+    raw = row.get("source_repo")
+    if isinstance(raw, str) and raw.strip():
+        return Path(raw)
+    return _DEFAULT_FOLD_REPO
+
+
 def mission_open_for_row(
     row: dict[str, Any],
     *,
@@ -380,12 +394,17 @@ def mission_open_for_row(
         return True
     try:
         from implement_admission.conductor_witness import fold_scoreboard
-        from implement_admission.conductor_witness_defaults import DefaultWitnessCortex
-        from implement_admission.conductor_witness_types import FoldDeps
+
+        from services.git_integration_worker.cursor_sdk_nested_witness import (
+            fold_deps_with_ledger,
+        )
 
         fold = fold_scoreboard(
             slug,
-            deps=FoldDeps(cortex=DefaultWitnessCortex()),
+            deps=fold_deps_with_ledger(
+                f"todo:{slug}",
+                repo=_fold_repo(row),
+            ),
             write_journal=False,
         )
         if fold is None:

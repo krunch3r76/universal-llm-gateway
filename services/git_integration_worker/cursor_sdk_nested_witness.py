@@ -8,10 +8,16 @@ import re
 from pathlib import Path
 from typing import Any
 
-_IMPLEMENT_CONTRACTS = frozenset({"implement", "pure-mechanical"})
+# ``none`` authors lane commits on conductor resumes (cursor-auto). The
+# commits check below is the witness; the contract label is not.
+_IMPLEMENT_CONTRACTS = frozenset({"implement", "pure-mechanical", "none"})
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
 _COMMITS_AHEAD_RE = re.compile(r'(?i)(?:^|[,{])\s*"commits_ahead"\s*:\s*(\d+)')
 _SIDECAR_REL = "tmp/reviews/closeouts/{dispatch_id}.md"
+_DISPATCH_ON_THREAD_RE = re.compile(
+    r"dispatch\s+`([0-9a-f-]{8,})`\s+on thread\s+(\d+)",
+    re.IGNORECASE,
+)
 
 
 def _parse_record_json(raw: str | None) -> dict[str, Any]:
@@ -89,24 +95,64 @@ def _nested_child_has_commits(
     return False
 
 
-def witness_ledger_path() -> Path | None:
-    """Home gateway ledger when ``DATA_DIR`` points at a different scratch db.
+def _production_ledger_path() -> Path:
+    """Operator gateway ledger. Never ``Path.home()`` (dispatch HOME overlay)."""
+    from services.git_integration_worker.cursor_home import operator_real_home
 
-    Stargate sets ``DATA_DIR=/tmp`` for its own scratch. The admit fold runs
-    in that process, and ``CursorDispatchLedger.instance()`` would open
-    ``/tmp/cursor-sdk-dispatch.db``, which does not hold nested implement
-    rows. Those rows live in ``~/.gateway/cursor-sdk-dispatch.db``.
+    return operator_real_home() / ".gateway" / "cursor-sdk-dispatch.db"
+
+
+def _process_ledger_path() -> Path | None:
+    """Ledger path this process would open, or None when that is already production.
+
+    ``CURSOR_SDK_DISPATCH_LEDGER`` wins, else ``DATA_DIR``. Unset both means
+    ``CursorDispatchLedger.instance()`` already uses ``operator_real_home()``.
     """
-    home_db = Path.home() / ".gateway" / "cursor-sdk-dispatch.db"
-    if not home_db.is_file():
+    pinned = os.environ.get("CURSOR_SDK_DISPATCH_LEDGER", "").strip()
+    if pinned:
+        return Path(pinned).expanduser()
+    data_dir = os.environ.get("DATA_DIR", "").strip()
+    if data_dir:
+        return Path(data_dir).expanduser() / "cursor-sdk-dispatch.db"
+    return None
+
+
+def _pytest_blocks_live_redirect(prod: Path) -> bool:
+    """Do not retarget a pytest process onto the real passwd gateway db."""
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    import pwd
+
+    live = (
+        Path(pwd.getpwuid(os.getuid()).pw_dir) / ".gateway" / "cursor-sdk-dispatch.db"
+    )
+    try:
+        return prod.resolve() == live.resolve()
+    except OSError:
+        return False
+
+
+def witness_ledger_path() -> Path | None:
+    """Production ledger when this process would open a different db.
+
+    Stargate sets ``DATA_DIR=/tmp``. A cursor-sdk dispatch sets ``HOME`` to an
+    overlay and may point ``DATA_DIR`` at that overlay. Nested implement rows
+    live in the operator gateway ledger, not ``Path.home()``.
+    """
+    prod = _production_ledger_path()
+    if not prod.is_file():
         return None
-    data_dir = os.environ.get("DATA_DIR")
-    if not data_dir:
+    if _pytest_blocks_live_redirect(prod):
         return None
-    env_db = Path(data_dir).expanduser() / "cursor-sdk-dispatch.db"
-    if env_db.resolve() == home_db.resolve():
+    process = _process_ledger_path()
+    if process is None:
         return None
-    return home_db
+    try:
+        if process.resolve() == prod.resolve():
+            return None
+    except OSError:
+        return prod
+    return prod
 
 
 def _ledger_for_witness() -> Any:
@@ -155,6 +201,56 @@ def nested_implement_has_commits(*, nest_under_dispatch_id: str) -> bool:
     return False
 
 
+def _dispatch_ids_on_thread(ledger: Any, thread_id: str) -> list[str]:
+    with ledger._connect() as conn:
+        rows = conn.execute(
+            "SELECT dispatch_id FROM cursor_sdk_dispatches WHERE thread_id=?",
+            (thread_id,),
+        ).fetchall()
+    return [str(row["dispatch_id"]) for row in rows]
+
+
+def parent_ids_for_tip(
+    ledger: Any,
+    tip_body: str,
+    explicit_parent_id: str | None,
+) -> list[str]:
+    """Parent ids the G5 witness should try, explicit id first.
+
+    The scoreboard names the hop-1 conductor (``dispatch `<id>` on thread N``).
+    The nested child that authored the commits may sit under a later dispatch
+    on that same thread, which the hop-1 id does not nest.
+    """
+    ordered: list[str] = []
+    if explicit_parent_id:
+        ordered.append(explicit_parent_id)
+    threads: list[str] = []
+    for match in _DISPATCH_ON_THREAD_RE.finditer(tip_body or ""):
+        dispatch_id, thread_id = match.group(1), match.group(2)
+        if dispatch_id not in ordered:
+            ordered.append(dispatch_id)
+        if thread_id not in threads:
+            threads.append(thread_id)
+    for thread_id in threads:
+        for dispatch_id in _dispatch_ids_on_thread(ledger, thread_id):
+            if dispatch_id not in ordered:
+                ordered.append(dispatch_id)
+    return ordered
+
+
+def nested_parent_with_commits(
+    *,
+    tip_body: str,
+    explicit_parent_id: str | None,
+) -> str | None:
+    """Return a parent dispatch id whose nested child authored commits."""
+    ledger = _ledger_for_witness()
+    for parent_id in parent_ids_for_tip(ledger, tip_body, explicit_parent_id):
+        if nested_implement_has_commits(nest_under_dispatch_id=parent_id):
+            return parent_id
+    return None
+
+
 class LedgerNestedImplementWitness:
     """FoldDeps adapter — wires GIW ledger reads at the production boundary."""
 
@@ -162,3 +258,37 @@ class LedgerNestedImplementWitness:
         return nested_implement_has_commits(
             nest_under_dispatch_id=nest_under_dispatch_id
         )
+
+    def parent_with_commits(
+        self,
+        *,
+        tip_body: str,
+        explicit_parent_id: str | None,
+    ) -> str | None:
+        return nested_parent_with_commits(
+            tip_body=tip_body,
+            explicit_parent_id=explicit_parent_id,
+        )
+
+
+def fold_deps_with_ledger(
+    source_ref: str,
+    *,
+    repo: Path,
+    summon_mode: str | None = None,
+    summoning_thread_id: str | None = None,
+) -> Any:
+    """Fold readers for every process that folds, including the production ledger."""
+    from implement_admission.conductor_witness_defaults import (
+        DefaultWitnessCortex,
+        fold_deps_for_admit,
+    )
+
+    return fold_deps_for_admit(
+        source_ref,
+        cortex=DefaultWitnessCortex(),
+        repo=repo,
+        summon_mode=summon_mode,
+        summoning_thread_id=summoning_thread_id,
+        nested_implement=LedgerNestedImplementWitness(),
+    )
