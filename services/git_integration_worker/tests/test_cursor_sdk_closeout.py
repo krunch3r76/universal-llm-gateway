@@ -2270,6 +2270,62 @@ def test_finalize_closeout_body_oversize_with_relocation_pointer() -> None:
     assert "effects_manifest" not in payload
 
 
+def test_finalize_closeout_body_minimal_sheds_keys_preserves_relocation() -> None:
+    long_observation = "o" * 7500
+    verification = [
+        {
+            "command": "pytest services/git_integration_worker/tests/test_cursor_sdk_closeout.py -q",
+            "exit_code": 0,
+            "stdout": "x" * 500,
+            "stderr": "",
+        }
+        for _ in range(5)
+    ]
+    payload = {
+        "schema_version": 1,
+        "status": "finished",
+        "summary": "dispatch minimal-shed: propagation and verification exceed bus floor",
+        "source_ref": "todo:test",
+        "propagation": [{"observation": long_observation, "kind": "test"}],
+        "verification": verification,
+    }
+    body_relocated = {
+        "uri": "cortex://notes/system/threads/t-minimal-shed.md",
+        "sha256": "abc123",
+        "body_chars": 12000,
+    }
+    body = finalize_closeout_body(
+        json.dumps(payload),
+        body_relocated=body_relocated,
+    )
+    parsed = json.loads(body)
+    assert len(body) <= MAX_TURN_BODY_CHARS
+    assert parsed["body_relocated"]["uri"] == body_relocated["uri"]
+
+
+def test_finalize_closeout_body_specimen_13373_spill_parses_with_relocation() -> None:
+    fixture = (
+        Path(__file__).resolve().parent
+        / "fixtures"
+        / "closeout_13373_10b0065be3ad_spill.json"
+    )
+    if not fixture.is_file():
+        pytest.skip("specimen spill fixture not present")
+    full_body = fixture.read_text(encoding="utf-8")
+    body_relocated = {
+        "uri": "cortex://notes/system/threads/13373-cursor-sdk-closeout-10b0065be3ad-17ccced3.md",
+        "sha256": "8c64af4cc62ca9a0eaa99dfabb39c7453afda961e2a2d12762296f5ea6130a15",
+        "body_chars": len(full_body),
+    }
+    body = finalize_closeout_body(full_body, body_relocated=body_relocated)
+    parsed = json.loads(body)
+    assert len(body) <= MAX_TURN_BODY_CHARS
+    assert (
+        parsed["body_relocated"]["uri"]
+        == "cortex://notes/system/threads/13373-cursor-sdk-closeout-10b0065be3ad-17ccced3.md"
+    )
+
+
 def _oversize_effects_manifest(
     *,
     dispatch_id: str,
