@@ -12,6 +12,8 @@ from cursor_capabilities.model_pools import OTHER_MODELS_BARE
     [
         "claude-sonnet-5",
         "cursor/claude-sonnet-5",
+        "claude-sonnet-5-5",
+        "cursor/claude-sonnet-5-5",
         "cursor/claude-opus-5",
         "cursor/claude-opus-5-5",
         "cursor/gpt-5.6-terra",

@@ -54,6 +54,12 @@ def test_normalize_picker_request_strips_cdp_prefix() -> None:
     assert normalize_picker_request("cdp/fable") == "fable-5.1"
     assert normalize_picker_request("fable") == "fable-5.1"
     assert normalize_picker_request("opus-5") == "opus-5"
+    assert normalize_picker_request("cdp/sonnet") == "sonnet-5.5"
+    assert normalize_picker_request("cdp/sonnet5") == "sonnet-5.5"
+    assert normalize_picker_request("sonnet") == "sonnet-5.5"
+    assert normalize_picker_request("cdp/sonnet-5.5") == "sonnet-5.5"
+    assert normalize_picker_request("cdp/sonnet5.5") == "sonnet-5.5"
+    assert normalize_picker_request("cdp/sonnet-5") == "sonnet-5"
 
 
 @pytest.mark.offline
@@ -74,6 +80,9 @@ def test_normalize_picker_request_strips_cdp_prefix() -> None:
         ("cdp/fable-5.1", "max", "cdp/fable-5.1-max"),
         ("cdp/sonnet-5", "max", "cdp/sonnet-5-max"),
         ("cdp/sonnet-5", "extra", "cdp/sonnet-5-extra"),
+        ("cdp/sonnet-5.5", "extra", "cdp/sonnet-5.5-extra"),
+        ("cdp/sonnet", "extra", "cdp/sonnet-5.5-extra"),
+        ("cdp/sonnet5", "extra", "cdp/sonnet-5.5-extra"),
     ],
 )
 def test_compose_cdp_model_with_effort(
@@ -98,6 +107,7 @@ def test_parse_model_request_max_effort() -> None:
         ("fable-5.1", "high"),
         ("opus-5", "high"),
         ("sonnet-5", "extra"),
+        ("sonnet-5.5", "extra"),
         ("haiku-4.5", None),
     ],
 )

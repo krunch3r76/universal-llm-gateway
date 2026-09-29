@@ -29,7 +29,7 @@ gap: `life-to-code-request-lane` (`lane:life-to-code`).
 
 ### CDP transport (MCP `project_ask` removed)
 
-Product = `team_dispatch(model=cdp/opus-5.5|cdp/fable-5.1|cdp/sonnet-5)` → poll `poll_hint`.
+Product = `team_dispatch(model=cdp/opus-5.5|cdp/fable-5.1|cdp/sonnet|cdp/sonnet-5.5)` → poll `poll_hint`. `cdp/sonnet` is Sonnet 5.5. `cdp/sonnet-5` remains the older generation.
 
 Reasoning strength, low → high. Walk effort `high` → `extra` → `max` inside a rung before the next wire. Opus 5 reasons harder than Opus 5.5. Fable 5 reasons harder than Fable 5.1. Opus versions share one usage channel. Fable versions share the other. Fable can exhaust while Opus remains. Name the full wire. Bare `cdp/opus` aliases to `cdp/opus-5.5`. Bare `cdp/fable` aliases to `cdp/fable-5.1`.
 
@@ -50,7 +50,7 @@ merges `ulg-for-llms` + `reasoning-posture`. `ask` also prepends the arch pair
 and adds `hypothesize-simulate`; `review` adds `consult-posture` and
 `hypothesize-simulate`; `mission` / `operator-proxy` add
 `cdp-operator-proxy` and `hypothesize-simulate`. Caller `skills=` is additive.
-Omitted purpose + `cdp/sonnet-5` → `produce`; omitted + opus/fable → `ask`.
+Omitted purpose + `cdp/sonnet` → `produce`; omitted + opus/fable → `ask`.
 Stock container skills (`docx`/`xlsx`/`pptx`/`pdf`/`skill-creator`/…) are a
 **prompt verb**, never `skills=` (`cdp_skills_unknown` 422 is the collision
 guard). Consults about claude.ai / Cowork / the picker itself prime
@@ -65,8 +65,8 @@ guard). Consults about claude.ai / Cowork / the picker itself prime
 | GATED REVIEW pre-go-live (score-play M3) | `cdp/opus-5.5` | xhigh — pin `reasoning_effort="high"` minimum; xhigh on critical path | pre-LAND gate; fires on M3 predicates only. Transport fail ≡ stop past gate (`conductor` a:32226) | `review` |
 | R-admit / verifier / mission / M-Arch | `cdp/opus-5.5` | high | fresh (R); mission followup | `review` or `mission` |
 | G6 pre-land arc review (score-play M4) | `cdp/opus-5.5` | **House default:** high — pin `reasoning_effort="high"` (do not inherit conductor admit `effort:max`). **Under `conductor_profile=fable-scarce`:** floor **`extra`/`xhigh`**; **`max` when invariant-touching** (M2/M3 attr meaning) | **default-on at G6 — after G5 implement, before any land or DONE claim** — **review harvest ≺ land ≺ DONE** (`conductor` stronger-model gates · a:32146). CDP stall / empty FAILED / `cdp-ask` down ≡ no harvest ≡ **HARD STOP** — ¬ DEFERRED-and-proceed; ¬ silent Cursor substitute. Latency-only while CDP healthy: poll / hop+watcher / `PARKED_TRANSPORT` until harvest. Stage closeout + `files_expected` to `cortex://`; ¬ diff artifact. Skip only under full-skip (runbook:score-play § Explicit skip). ¬ a silent G4 | `review` |
-| Docs / closeouts / spec polish / office I/O / dashboards | `cdp/sonnet-5` | **Extra** default; **Max** via `reasoning_effort=max` | pipeline or fresh; office → `harvest_source=output-file` | `produce` |
-| Skill authoring | `cdp/opus-5.5` draft · `cdp/sonnet-5` revise | high / Extra | fresh, output-file → cortex staging | `produce` |
+| Docs / closeouts / spec polish / office I/O / dashboards | `cdp/sonnet` | **Extra** default; **Max** via `reasoning_effort=max` | pipeline or fresh; office → `harvest_source=output-file` | `produce` |
+| Skill authoring | `cdp/opus-5.5` draft · `cdp/sonnet` revise | high / Extra | fresh, output-file → cortex staging | `produce` |
 | Haiku | `cdp/haiku-4.5` | — | **no recipe** until Sonnet caps | — |
 
 Standing: verifier ≠ producer; independent check ≠ author; Other Models /

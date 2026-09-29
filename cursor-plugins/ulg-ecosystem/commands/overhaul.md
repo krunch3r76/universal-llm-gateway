@@ -70,8 +70,8 @@ scan. Do not start Manual/Bulk/Deep planning until the cite is on the thread.
 | Architectural strengthen | CDP `team_dispatch(model=cdp/fable)` **Fable 5.1** when opportunity scan fires (see below) | same CDP Fable (not Stargate) |
 | Architecture doc review | `/review-arch-doc` (CDP default) | `/review-arch-doc team-generate` |
 | Bulk split plans | `scripts/modularize plan` — one file at a time; green when plan audits clean | same, batched when user directs |
-| Doc generation | step 9 — **CDP Sonnet 5** draft (`team_dispatch(model=cdp/sonnet-5)`; red gate) — **¬** Stargate `doc-generate` | Stargate `doc-generate` (paid API — operator must approve cost) |
-| Docstring enhance (§5.6) | CDP Sonnet `team_dispatch(model=cdp/sonnet-5)` (`/docstring-enhance`) — **¬** Stargate API | `/docstring-enhance frontier` (paid API — operator must approve cost) |
+| Doc generation | step 9 — **CDP Sonnet** draft (`team_dispatch(model=cdp/sonnet)`; red gate) — **¬** Stargate `doc-generate` | Stargate `doc-generate` (paid API — operator must approve cost) |
+| Docstring enhance (§5.6) | CDP Sonnet `team_dispatch(model=cdp/sonnet)` (`/docstring-enhance`) — **¬** Stargate API | `/docstring-enhance frontier` (paid API — operator must approve cost) |
 
 ### Fable opportunity scanning (standing — operator 2026-07-19)
 
@@ -720,7 +720,7 @@ summary) and ask the user before firing the CDP Sonnet draft. Skip this step
 entirely if the user defers architecture doc work.
 
 **Gradual transport (BINDING):** Jupiter CDP
-`team_dispatch(model=cdp/sonnet-5, purpose=produce)` (effort Extra default;
+`team_dispatch(model=cdp/sonnet, purpose=produce)` (effort Extra default;
 Max via `reasoning_effort=max` — SOT: `consult-routing` § CDP transport).
 Prefer `team_dispatch(model=cdp/…)`; IF6 = CLI
 `scripts/cortex/claude-ai-sync-jupiter project-ask`. Use the
@@ -756,7 +756,7 @@ then use the curl recipe under §9b below.
 ```
 team_dispatch(
   op="generate",
-  model="cdp/sonnet-5",
+  model="cdp/sonnet",
   contract="none",
   purpose="produce",
   packet_path="tmp/reviews/overhaul-{subsystem}-doc-draft-packet.md",
@@ -886,7 +886,7 @@ Do not split code and doc updates into separate commits.
   mid-flight redirect → keep applied work, CDP only remaining unapplied (¬ revert to re-plan)
 - Honor **three-tier stop model** — green autonomous; yellow concern; red rare (strong-reasoning pass before operator)
 - ¬ invoke Stargate `doc-generate` on the **gradual** path — step 9 = CDP Sonnet 5
-  (`team_dispatch(model=cdp/sonnet-5)`); Stargate `doc-generate` is **frontier-only** after explicit
+  (`team_dispatch(model=cdp/sonnet)`); Stargate `doc-generate` is **frontier-only** after explicit
   operator cost approval (paid Sonnet+Gemini API)
 - ¬ invoke Stargate `docstring-enhance` on the **gradual** path — §5.6 /
   `/docstring-enhance` = CDP Sonnet; frontier API only with cost approval
@@ -990,8 +990,8 @@ scan. Do not start Manual/Bulk/Deep planning until the cite is on the thread.
 | Architectural strengthen | CDP `team_dispatch(model=cdp/fable)` **Fable 5.1** when opportunity scan fires (see below) | same CDP Fable (not Stargate) |
 | Architecture doc review | `/review-arch-doc` (CDP default) | `/review-arch-doc team-generate` |
 | Bulk split plans | `scripts/modularize plan` — one file at a time; green when plan audits clean | same, batched when user directs |
-| Doc generation | step 9 — **CDP Sonnet 5** draft (`team_dispatch(model=cdp/sonnet-5)`; red gate) — **¬** Stargate `doc-generate` | Stargate `doc-generate` (paid API — operator must approve cost) |
-| Docstring enhance (§5.6) | CDP Sonnet `team_dispatch(model=cdp/sonnet-5)` (`/docstring-enhance`) — **¬** Stargate API | `/docstring-enhance frontier` (paid API — operator must approve cost) |
+| Doc generation | step 9 — **CDP Sonnet** draft (`team_dispatch(model=cdp/sonnet)`; red gate) — **¬** Stargate `doc-generate` | Stargate `doc-generate` (paid API — operator must approve cost) |
+| Docstring enhance (§5.6) | CDP Sonnet `team_dispatch(model=cdp/sonnet)` (`/docstring-enhance`) — **¬** Stargate API | `/docstring-enhance frontier` (paid API — operator must approve cost) |
 
 ### Fable opportunity scanning (standing — operator 2026-07-19)
 
@@ -1640,7 +1640,7 @@ summary) and ask the user before firing the CDP Sonnet draft. Skip this step
 entirely if the user defers architecture doc work.
 
 **Gradual transport (BINDING):** Jupiter CDP
-`team_dispatch(model=cdp/sonnet-5, purpose=produce)` (effort Extra default;
+`team_dispatch(model=cdp/sonnet, purpose=produce)` (effort Extra default;
 Max via `reasoning_effort=max` — SOT: `consult-routing` § CDP transport).
 Prefer `team_dispatch(model=cdp/…)`; IF6 = CLI
 `scripts/cortex/claude-ai-sync-jupiter project-ask`. Use the
@@ -1676,7 +1676,7 @@ then use the curl recipe under §9b below.
 ```
 team_dispatch(
   op="generate",
-  model="cdp/sonnet-5",
+  model="cdp/sonnet",
   contract="none",
   purpose="produce",
   packet_path="tmp/reviews/overhaul-{subsystem}-doc-draft-packet.md",
@@ -1806,7 +1806,7 @@ Do not split code and doc updates into separate commits.
   mid-flight redirect → keep applied work, CDP only remaining unapplied (¬ revert to re-plan)
 - Honor **three-tier stop model** — green autonomous; yellow concern; red rare (strong-reasoning pass before operator)
 - ¬ invoke Stargate `doc-generate` on the **gradual** path — step 9 = CDP Sonnet 5
-  (`team_dispatch(model=cdp/sonnet-5)`); Stargate `doc-generate` is **frontier-only** after explicit
+  (`team_dispatch(model=cdp/sonnet)`); Stargate `doc-generate` is **frontier-only** after explicit
   operator cost approval (paid Sonnet+Gemini API)
 - ¬ invoke Stargate `docstring-enhance` on the **gradual** path — §5.6 /
   `/docstring-enhance` = CDP Sonnet; frontier API only with cost approval

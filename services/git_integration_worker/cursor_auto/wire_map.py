@@ -43,6 +43,7 @@ _MODEL_TABLE: dict[str, str] = {
     "grok-4.7": "cursor/grok-4.7",
     "opus-5": "cursor/claude-opus-5",
     "sonnet-5": "cursor/claude-sonnet-5",
+    "sonnet-5-5": "cursor/claude-sonnet-5-5",
 }
 BINDABLE_WIRE_IDS: tuple[str, ...] = tuple(sorted(_MODEL_TABLE))
 _BINDABLE_MODEL_IDS: frozenset[str] = frozenset(_MODEL_TABLE.values())
@@ -149,11 +150,14 @@ def _lookup_explicit_model(raw: str) -> str | None:
 _EFFORT_LADDER: tuple[str, ...] = WIRE_LADDER
 _EFFORT_VALUES = frozenset(_EFFORT_LADDER)
 BINDABLE_EFFORT_VALUES: tuple[str, ...] = _EFFORT_LADDER
-# Judgment: opus + fable. ``cdp/sonnet-5`` is a producer alias, not a binder.
+# Judgment: opus + fable. Sonnet wires are producer aliases, not binders.
+# ``cdp/sonnet`` and ``cdp/sonnet5`` resolve to Sonnet 5.5.
+# ``cdp/sonnet-5`` remains the older generation.
 BINDABLE_CDP_ESCALATIONS: tuple[str, ...] = (
     "cdp/opus-5",
     "cdp/fable",
     "cdp/sonnet-5",
+    "cdp/sonnet-5.5",
 )
 _JUDGMENT_HANDOFF = "none"
 
@@ -172,8 +176,10 @@ _CDP_DESIRED_MODEL_ALIASES: dict[str, str] = {
     "cdp/fable-5": "cdp/fable",
     "cdp/fable5": "cdp/fable",
     "cdp/sonnet-5": "cdp/sonnet-5",
-    "cdp/sonnet": "cdp/sonnet-5",
-    "cdp/sonnet5": "cdp/sonnet-5",
+    "cdp/sonnet": "cdp/sonnet-5.5",
+    "cdp/sonnet5": "cdp/sonnet-5.5",
+    "cdp/sonnet-5.5": "cdp/sonnet-5.5",
+    "cdp/sonnet5.5": "cdp/sonnet-5.5",
 }
 _CONTRACTS = frozenset(CANONICAL_CONTRACTS)
 
@@ -273,7 +279,8 @@ def assess_model_pin(
 def resolve_escalation(escalation: str | None) -> dict[str, Any]:
     """Map wire ``escalation`` hint → resolved CDP model or absent.
 
-    Values ``cdp/opus-5``, ``cdp/fable``, and producer alias ``cdp/sonnet-5``
+    Values ``cdp/opus-5``, ``cdp/fable``, and producer aliases ``cdp/sonnet``
+    (Sonnet 5.5), ``cdp/sonnet-5.5``, and older ``cdp/sonnet-5``
     honor; absent/empty ⇒ no CDP leg; unknown ⇒ ``rejected`` for admit refusal.
     """
     raw = (escalation or "").strip().lower()

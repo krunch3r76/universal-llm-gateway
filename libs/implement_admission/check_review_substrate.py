@@ -59,6 +59,7 @@ _IDENTITY_ALIASES: dict[str, str] = {
     "fable-5": "claude-fable-5",
     "opus-5": "claude-opus-5",
     "sonnet-5": "claude-sonnet-5",
+    "sonnet-5.5": "claude-sonnet-5-5",
     "haiku-4.5": "claude-haiku-4-5",
 }
 

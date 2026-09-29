@@ -10,7 +10,7 @@ architecture doc refresh. Stargate API pipeline is frontier-only override.
 ```
 
 Where `{path}` is a Python file or directory relative to the project root.
-**Default transport:** `team_dispatch(model=cdp/sonnet-5, purpose=produce)`
+**Default transport:** `team_dispatch(model=cdp/sonnet, purpose=produce)`
 (effort Extra default; Max via `reasoning_effort=max` — `consult-routing` § CDP
 transport). Prefer `team_dispatch(model=cdp/…)`; CLI `project-ask` = escape
 only. Use `frontier` only when the operator explicitly approves paid Stargate
@@ -74,7 +74,7 @@ engage `/no-silent-inference` + `/evidence-review-discipline`).
 ```
 team_dispatch(
   op="generate",
-  model="cdp/sonnet-5",
+  model="cdp/sonnet",
   contract="none",
   purpose="produce",
   packet_path="tmp/reviews/docstring-enhance-{slug}-cdp-packet.md",
@@ -86,7 +86,7 @@ team_dispatch(
 
 **Escape only** (team_dispatch CDP unavailable): CLI
 `scripts/cortex/claude-ai-sync-jupiter project-ask --converse --no-uuid
---model sonnet-5 --prompt-file …`. Never curl :8765 for project-ask.
+--model sonnet --prompt-file …`. Never curl :8765 for project-ask.
 
 ### 5. Materialize apply payload + apply
 

@@ -37,6 +37,7 @@ def test_cdp_picker_forwarded_for_sonnet_5() -> None:
     from claude_bundles.cdp_model_endpoint import picker_from_model_id
 
     assert picker_from_model_id("cdp/sonnet-5") == "sonnet-5"
+    assert picker_from_model_id("cdp/sonnet") == "sonnet-5.5"
     assert picker_from_model_id("cdp/opus-5") == "opus-5"
 
 

@@ -25,6 +25,7 @@ _GOVERNED_INSTRUCTION_PROFILES: dict[str, str] = {
     "claude-opus-5-5": "reasoner",
     "claude-opus-4-8": "reasoner",
     "claude-sonnet-5": "reasoner",
+    "claude-sonnet-5-5": "reasoner",
     "claude-fable-5": "reasoner",
     "claude-fable-5-1": "reasoner",
     "gpt-5.5": "reasoner",
@@ -39,12 +40,17 @@ def test_model_capability_default_instruction_profile_is_mechanical() -> None:
 
 
 def test_governed_rows_carry_instruction_profile_classifications() -> None:
-    assert len(CURSOR_MODEL_CAPABILITIES) == 19
+    assert len(CURSOR_MODEL_CAPABILITIES) == 20
     opus5 = CURSOR_MODEL_CAPABILITIES["claude-opus-5"]
     opus55 = CURSOR_MODEL_CAPABILITIES["claude-opus-5-5"]
     assert opus55.knobs == opus5.knobs
     assert opus55.fixed_params == opus5.fixed_params
     assert opus55.default_variant == opus5.default_variant
+    sonnet5 = CURSOR_MODEL_CAPABILITIES["claude-sonnet-5"]
+    sonnet55 = CURSOR_MODEL_CAPABILITIES["claude-sonnet-5-5"]
+    assert sonnet55.knobs == sonnet5.knobs
+    assert sonnet55.fixed_params == sonnet5.fixed_params
+    assert sonnet55.default_variant == sonnet5.default_variant
     for model_id, expected in _GOVERNED_INSTRUCTION_PROFILES.items():
         assert CURSOR_MODEL_CAPABILITIES[model_id].instruction_profile == expected
 

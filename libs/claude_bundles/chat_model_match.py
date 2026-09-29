@@ -19,6 +19,7 @@ _EFFORT_TOKENS = EFFORT_TOKENS - {"none", "minimal"}  # picker/family strip set
 PREDICTED_MODEL_LABELS: tuple[str, ...] = (
     "Opus 5.5",
     "Opus 5",
+    "Sonnet 5.5",
     "Sonnet 5",
     "Haiku 4.5",
     "Fable 5.1",
@@ -40,14 +41,18 @@ def sealed_ask_default_effort(family: str) -> str | None:
     return None
 
 
-# Bare aliases land on the lower reasoning rung of each family.
+# Bare aliases land on the current generation of each family.
 # Strength, low → high: opus-5.5, opus-5, fable-5.1, fable-5.
 # Opus 5 reasons harder than Opus 5.5. Fable 5 reasons harder than Fable 5.1.
 # ``cdp/fable`` → fable-5.1; pin ``cdp/fable-5`` for the stronger Fable.
 # ``cdp/opus`` → opus-5.5; pin ``cdp/opus-5`` for the stronger Opus.
+# ``cdp/sonnet`` and ``sonnet5`` → sonnet-5.5; pin ``sonnet-5`` for the older generation.
 _PICKER_FAMILY_ALIASES: dict[str, str] = {
     "fable": "fable-5.1",
     "opus": "opus-5.5",
+    "sonnet": "sonnet-5.5",
+    "sonnet5": "sonnet-5.5",
+    "sonnet5.5": "sonnet-5.5",
 }
 
 
@@ -55,7 +60,8 @@ def normalize_picker_request(model: str) -> str:
     """Strip ``cdp/<picker>`` and canonicalize bare aliases for UI selection.
 
     Examples: ``cdp/fable`` → ``fable-5.1``, ``cdp/opus`` → ``opus-5.5``,
-    ``cdp/opus-5`` → ``opus-5``, ``cdp/opus-5.5`` → ``opus-5.5``.
+    ``cdp/opus-5`` → ``opus-5``, ``cdp/opus-5.5`` → ``opus-5.5``,
+    ``cdp/sonnet`` → ``sonnet-5.5``, ``cdp/sonnet-5`` → ``sonnet-5``.
     """
     key = (model or "opus-5").strip()
     if "/" in key:

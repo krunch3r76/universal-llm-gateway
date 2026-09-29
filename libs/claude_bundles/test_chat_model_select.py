@@ -29,6 +29,9 @@ def test_parse_strips_effort_tokens() -> None:
 def test_family_pattern_matches_live_ui_labels() -> None:
     assert family_pattern("sonnet-5").search("Sonnet 5")
     assert family_pattern("sonnet-5").search("Sonnet 5 High")
+    assert family_pattern("sonnet-5").search("Sonnet 5.5") is None
+    assert family_pattern("sonnet-5.5").search("Sonnet 5.5")
+    assert family_pattern("sonnet-5.5").search("Sonnet 5") is None
     assert family_pattern("opus-5").search("Opus 5 Extra")
     assert family_pattern("opus-5").search("Opus 5.5") is None
     assert family_pattern("opus-5.5").search("Opus 5.5")
@@ -55,10 +58,12 @@ def test_match_model_request_discovers_sonnet_without_allowlist() -> None:
 def test_prediction_list_is_try_first_not_availability_gate() -> None:
     """Predicted labels cover common SKUs; unknown names still discover via UI."""
     assert match_model_request("sonnet-5", list(PREDICTED_MODEL_LABELS)) == "Sonnet 5"
+    assert match_model_request("sonnet-5.5", list(PREDICTED_MODEL_LABELS)) == "Sonnet 5.5"
     assert match_model_request("opus-5", list(PREDICTED_MODEL_LABELS)) == "Opus 5"
     assert match_model_request("opus-5.5", list(PREDICTED_MODEL_LABELS)) == "Opus 5.5"
     assert "Opus 5.5" in PREDICTED_MODEL_LABELS
     assert "Sonnet 5" in PREDICTED_MODEL_LABELS
+    assert "Sonnet 5.5" in PREDICTED_MODEL_LABELS
     # Not in prediction list ⇒ None here; select_from_ui falls through to live radios.
     assert match_model_request("glorp-9", list(PREDICTED_MODEL_LABELS)) is None
 

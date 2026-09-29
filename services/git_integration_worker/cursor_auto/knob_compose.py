@@ -146,7 +146,7 @@ def compose_model_knobs(
                 and "fast" not in knobs
             ):
                 knobs["fast"] = "false"
-            if bare == "claude-sonnet-5":
+            if bare in {"claude-sonnet-5", "claude-sonnet-5-5"}:
                 card_knobs = supported_knobs(bare)
                 for knob_name, knob_value in _SONNET_AUTO_KNOBS.items():
                     if knob_name in card_knobs and knob_name not in knobs:

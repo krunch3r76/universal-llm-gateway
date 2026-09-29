@@ -207,6 +207,21 @@ CURSOR_MODEL_CAPABILITIES: Final[dict[str, ModelCapability]] = {
         },
         instruction_profile="reasoner",
     ),
+    # Sonnet 5.5. Knob surface mirrored from claude-sonnet-5.
+    # No ListModels probe on this admission (2026-09-28).
+    "claude-sonnet-5-5": ModelCapability(
+        knobs={
+            "thinking": KnobSpec(accepted=("false", "true"), default="true"),
+            "context": KnobSpec(accepted=("300k", "1m"), default="1m"),
+            "effort": KnobSpec(accepted=_FULL_EFFORT),
+        },
+        default_variant={
+            "thinking": "true",
+            "context": "1m",
+            "effort": "high",
+        },
+        instruction_profile="reasoner",
+    ),
     # Live ListModels probe 2026-07-14 — same knob surface as claude-sonnet-5
     # (thinking/context/effort; no fast; no cyber fixed_param).
     "claude-fable-5": ModelCapability(

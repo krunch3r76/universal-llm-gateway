@@ -397,6 +397,7 @@ roles:
       - cursor/gpt-5.6-luna
       - cursor/grok-4.7
       - cursor/claude-sonnet-5
+      - cursor/claude-sonnet-5-5
       - anthropic/claude-sonnet-5
       - anthropic/claude-sonnet-4-6
       - anthropic/claude-opus-5
