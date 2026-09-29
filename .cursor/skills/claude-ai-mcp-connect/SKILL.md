@@ -196,6 +196,7 @@ UI **Connected** ⇏ tools work — stale CSE/chat sessions keep dead handles af
 | `scripts/cortex/claude-ai-sync-jupiter` | `ensure-chrome` · `restore-connector` · `set-tool-permissions` · `refresh-connector` · `refresh-operator-connectors` |
 | `scripts/cortex/restore_claude_mcp_connector.py` | Playwright Connect + Approve |
 | `scripts/cortex/set_claude_tool_permissions.py` | Playwright permission repair + reload verification |
+| `scripts/cortex/claude_code_tool_permissions.py` | ulg-code allowlist: manage, observability, team_dispatch |
 | `scripts/mcp-fastmcp-remote-bridge.py` | Cursor stdio→HTTP bridge |
 
 ¬ commit `oauth.clients[].client_secret` into skills/docs — read live from `~/.gateway/mcp.yaml`.

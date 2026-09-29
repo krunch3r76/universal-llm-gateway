@@ -1,4 +1,9 @@
-"""Pick a claude.ai tab that can open Settings → Connectors."""
+"""Pick a claude.ai tab that can open Customize → Connectors.
+
+The permission and restore scripts call this before they touch a connector.
+The Yours list lives on ``/new#customize/connectors`` and stays selected even
+when the account menu is hidden by the settings surface.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +18,19 @@ _SKIP_PREFIXES = (
 
 
 async def pick_claude_settings_page(page: Page) -> Page:
-    """Return a claude.ai page whose account menu can open the connectors list.
+    """Return a claude.ai page that can show Customize → Connectors.
 
-    Falls back to any tab with a visible account menu, then to a fresh
-    ``/new`` tab when every existing claude.ai tab hides that menu.
+    ``/new#customize/connectors`` wins even when the account menu is hidden.
+    Otherwise use a tab with a visible account menu, then a fresh ``/new`` tab.
+    Claude Code's settings hash is not the connector list.
     """
+    # The live connectors list is this hash. The account menu is hidden while
+    # that settings surface is open, so a menu-only scan skips the right tab.
+    for tab in page.context.pages:
+        url = tab.url or ""
+        if url.startswith("https://claude.ai/new#customize/connectors"):
+            return tab
+
     fallback = None
     for tab in page.context.pages:
         url = tab.url or ""
