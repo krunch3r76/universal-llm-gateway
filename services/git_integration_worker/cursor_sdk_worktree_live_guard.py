@@ -265,7 +265,9 @@ def live_bridge_worktree_paths(
     Three cwd signals, unioned with the dispatch's ledger and registry claims:
     the node bridge cwd, descendant cwds (a bash standing in a scratch tree),
     and the recorded shell spawn cwd (in-flight ``workingDirectory``, else the
-    bash-snapshot PWD). The env stamp catches a bridge that has chdir'd away
+    bash-snapshot PWD). Directories named ``{held}-*`` beside a held lane are
+    held too, so a scratch worktree added before any shell enters it is not
+    reconciled away. The env stamp catches a bridge that has chdir'd away
     from its lane; the cwd signals catch a bridge whose ledger row has already
     gone terminal within the grace, or was never written; a row known terminal
     past the grace withdraws the cwd claims as well (a:33686).
@@ -289,7 +291,37 @@ def live_bridge_worktree_paths(
             )
             if path is not None:
                 held.add(path)
+    _hold_hyphen_prefixed_siblings(held)
     return held
+
+
+def _hold_hyphen_prefixed_siblings(held: set[str]) -> None:
+    """Hold ``{lane}-*`` directories beside each path already in ``held``.
+
+    ``git worktree add`` of a scratch tree lands next to the registered lane.
+    That parent is ``worktree_root/<repo>/``, not ``worktree_root`` itself, so
+    the scan is the held path's parent (which is ``worktree_root`` when the
+    lane is a direct child). The hyphen is the boundary: a live ``lane-1335``
+    does not hold ``lane-13350``. One pass, so a sibling does not widen the
+    hold further. A stale bridge claim never enters ``held``, so this hold
+    lapses with it.
+    """
+    extra: set[str] = set()
+    for path in held:
+        lane = Path(path)
+        prefix = f"{lane.name}-"
+        try:
+            children = list(lane.parent.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            try:
+                is_dir = child.is_dir()
+            except OSError:
+                continue
+            if is_dir and child.name.startswith(prefix):
+                extra.add(str(child.resolve()))
+    held.update(extra)
 
 
 def live_ledger_worktree_paths(*, worktree_root: Path) -> set[str]:

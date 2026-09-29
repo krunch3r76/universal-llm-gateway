@@ -427,6 +427,88 @@ def test_reconcile_leaves_unregistered_tree_held_by_shell_spawn_cwd(
     assert wt.is_dir()
 
 
+def test_reconcile_holds_sibling_scratch_prefixed_by_live_lane(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A live lane holds ``lane-{thread}-*`` before any shell enters it.
+
+    13350 archived ``lane-13350-12458`` after ``git worktree add`` while the
+    bridge still stood in the registered lane. Occupancy cwd is that lane;
+    nothing records a shell spawn cwd.
+    """
+    worktree_root = tmp_path / "worktrees"
+    thread_id = "sib-hold"
+    dispatch_id = "guard-sib-hold"
+    lane = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
+    sibling = lane.parent / f"{lane.name}-12458"
+    _git(
+        "worktree",
+        "add",
+        "-b",
+        "cursor-sdk/sib-hold-12458",
+        str(sibling),
+        "HEAD",
+        cwd=source_repo,
+    )
+    _stub_occupancy(
+        monkeypatch,
+        BridgeOccupancy(pid=881, cwd=str(lane), dispatch_id=dispatch_id),
+    )
+
+    reconciled, surfaced = reconcile_unregistered_worktrees(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+    )
+
+    assert (reconciled, surfaced) == (0, 0)
+    assert sibling.is_dir()
+
+
+def test_reconcile_does_not_hold_lane_suffix_without_hyphen(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``lane-{thread}0`` shares a string prefix but is not a sibling hold."""
+    worktree_root = tmp_path / "worktrees"
+    thread_id = "sib-bound"
+    dispatch_id = "guard-sib-bound"
+    lane = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+        thread_id=thread_id,
+    )
+    decoy = lane.parent / f"{lane.name}0"
+    _git(
+        "worktree",
+        "add",
+        "-b",
+        "cursor-sdk/sib-bound-nohyphen",
+        str(decoy),
+        "HEAD",
+        cwd=source_repo,
+    )
+    occupancy = (BridgeOccupancy(pid=882, cwd=str(lane), dispatch_id=dispatch_id),)
+    _stub_occupancy(monkeypatch, *occupancy)
+    held = live_bridge_worktree_paths(
+        worktree_root=worktree_root,
+        occupancy=list(occupancy),
+    )
+    assert str(decoy.resolve()) not in held
+
+    reconciled, surfaced = reconcile_unregistered_worktrees(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+    )
+
+    assert (reconciled, surfaced) == (1, 0)
+    assert not decoy.exists()
+
+
 def test_live_bridge_paths_include_shell_child_cwd(tmp_path: Path) -> None:
     """A bash child inside a scratch tree pins that tree, not only the node cwd."""
     root = tmp_path / "worktrees"
