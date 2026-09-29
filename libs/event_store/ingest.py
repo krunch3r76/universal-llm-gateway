@@ -64,6 +64,8 @@ class IngestServer:
         self._drop_notice_last_emit_ts: float = 0.0
         self._drop_notice_pending_count: int = 0
         self._drop_notice_last_signal: str = ""
+        self._subscriber_overflow_last_log_ts: float = 0.0
+        self._subscriber_overflow_pending: int = 0
 
     async def start(self) -> None:
         """Bind UDS socket and start the DB writer task."""
@@ -258,13 +260,21 @@ class IngestServer:
         self._fan_out(notice)
 
     def _fan_out(self, event: dict[str, Any]) -> None:
-        """Push event to all live subscriber queues (non-blocking)."""
+        """Push event to all live subscriber queues (non-blocking).
+
+        Overflow is counted and logged at most once per
+        ``drop_notice_interval_sec``. A warning per full queue per event runs
+        on this event-loop thread and, with hundreds of stuck subscribers,
+        dirties the log fast enough to stall the thread in writeback. Query
+        handlers then miss the client timeout while ``/health`` still answers.
+        """
         dead: list[asyncio.Queue[dict[str, Any]]] = []
+        overflow = 0
         for sq in self._subscriber_queues:
             try:
                 sq.put_nowait(event)
             except asyncio.QueueFull:
-                logger.warning("Subscriber queue full; dropping one event")
+                overflow += 1
                 try:
                     sq.get_nowait()
                     drop_notice = {
@@ -281,6 +291,24 @@ class IngestServer:
 
         for sq in dead:
             self._subscriber_queues.discard(sq)
+        if overflow:
+            self._note_subscriber_overflow(overflow)
+
+    def _note_subscriber_overflow(self, count: int) -> None:
+        """Aggregate subscriber-queue overflows into one warning per interval."""
+        self._subscriber_overflow_pending += count
+        now = time.monotonic()
+        if now - self._subscriber_overflow_last_log_ts < self._drop_notice_interval_sec:
+            return
+        pending = self._subscriber_overflow_pending
+        subscribers = len(self._subscriber_queues)
+        self._subscriber_overflow_pending = 0
+        self._subscriber_overflow_last_log_ts = now
+        logger.warning(
+            "Subscriber queues full; dropped %d event deliveries across %d subscribers",
+            pending,
+            subscribers,
+        )
 
     def get_metrics(self) -> dict[str, int]:
         return {
