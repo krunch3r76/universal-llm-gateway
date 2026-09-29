@@ -150,6 +150,68 @@ def emit_skill_context_loaded(
     return event
 
 
+@event_factory
+def cdp_skill_fetch_decision(
+    *,
+    ref: str,
+    decision: str,
+    reason: str = "",
+    required: list[str] | None = None,
+    observed: list[str] | None = None,
+    sha256: str = "",
+    nbytes: int = 0,
+) -> Event:
+    """Staged-fetch decision. A skip is a row, not an absent event.
+
+    ``decision`` is ``in_context``, ``resolved``, or ``skipped``. ``resolved``
+    hashes bytes the harness held. ``in_context`` is an attestation that the
+    body was loaded. Neither is a seat self-report.
+    """
+    return Event(
+        signal="cdp.skill.fetch_decision",
+        role="observation",
+        scope="node",
+        payload={
+            "ref": str(ref),
+            "decision": str(decision),
+            "reason": str(reason or ""),
+            "required": list(required or []),
+            "observed": list(observed or []),
+            "sha256": str(sha256 or ""),
+            "nbytes": int(nbytes),
+        },
+    )
+
+
+def emit_skill_fetch_decision(
+    *,
+    ref: str,
+    decision: str,
+    reason: str = "",
+    required: list[str] | None = None,
+    observed: list[str] | None = None,
+    sha256: str = "",
+    nbytes: int = 0,
+) -> Event | None:
+    """Best-effort ``cdp.skill.fetch_decision``; never raises."""
+    if decision not in {"in_context", "resolved", "skipped"}:
+        return None
+    try:
+        event = cdp_skill_fetch_decision(
+            ref=ref,
+            decision=decision,
+            reason=reason,
+            required=required,
+            observed=observed,
+            sha256=sha256,
+            nbytes=nbytes,
+        )
+    except Exception:  # noqa: BLE001 — receipt must not fail the panel
+        return None
+    _mirror_to_event_service(event)
+    return event
+
+
 def _mirror_to_event_service(event: Event) -> None:
     """Best-effort UDS ingest — silent when the events sock is down."""
     sock_path = os.environ.get(

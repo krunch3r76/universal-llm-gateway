@@ -3,9 +3,14 @@
 Cowork renders the first markdown heading after skill chips as the dispatch
 card. Operator-proxy submits used to open on the seat-map briefing, so the
 human saw doctrine instead of the job. This module hoists the
-mission/settled/live/next/lane block above that briefing, then two static
-lines: ``runbook:maestro-loop`` and the retrieval-before-authoring
-required-skills line.
+mission/settled/live/next/lane block above that briefing, then the
+success-condition line and one ``fetch-decision`` receipt per arrival ref.
+
+The runbook Trigger cannot bind a seat that has not read it. This composer
+writes the success condition before the seat's first token. That is what
+breaks the circle. The step list is not copied. A pointer
+(``- runbook:``) is not a receipt; an existing block that lacks the receipt
+is grafted, then left byte-stable.
 
 ``mission`` is the one field that does not change hop to hop — it names what
 the arc is *for*, so the block still orients a reader even when the other
@@ -16,7 +21,8 @@ DIRECTIVE ``vision:`` convention (``directive.py`` / admit-gate), else a
 
 Callers: ``ensure_operator_proxy_mission_prompt`` (pure string transform) and
 ``cdp_ask.runner.resolve_prompt`` (optional standing-handoff sidecar fill).
-An existing This-hop block already above the seat map is left byte-stable.
+An existing This-hop block that already carries the fetch receipt is left
+byte-stable. A block without the receipt is grafted, then stable.
 ``(unspecified)`` is an honest hole, not idle and not invented progress.
 """
 
@@ -26,6 +32,11 @@ import re
 from collections.abc import Callable
 
 from hop_handoff.standing_handoff import standing_handoff_path
+
+from claude_bundles.fetch_decision import (
+    decision_lines,
+    receipts_present,
+)
 
 # CONSUMERS = import-nomination (GIW). INJECTORS = seat paste (cdp_ask).
 CONSUMERS: tuple[str, ...] = ("git_integration_worker",)
@@ -114,27 +125,82 @@ def ensure_hop_status_first(
     *,
     standing_handoff_text: str | None = None,
     field_source: str | None = None,
+    in_context_refs: tuple[str, ...] = (),
+    resolved_bodies: dict[str, str] | None = None,
 ) -> str:
-    """Guarantee ``This hop`` sits above the seat map. Idempotent.
+    """Guarantee ``This hop`` sits above the seat map. Idempotent once receipted.
 
-    When the marker is already the first heading and precedes the seat map,
-    *rest_body* is returned unchanged (no sidecar re-fill). Missing blocks
-    are authored from *field_source* (default: the body minus an existing
-    hop block), then *standing_handoff_text*, then ``(unspecified)``.
-    Pass the pre-briefing caller as *field_source* so seat-map doctrine
-    cannot become the ``next:`` line.
+    A block that already carries the success condition and every
+    ``fetch-decision`` is returned unchanged (no sidecar re-fill). A block
+    that lacks them is grafted; seat field lines are not rewritten.
+    Missing blocks are authored from *field_source* (default: the body minus
+    an existing hop block), then *standing_handoff_text*, then
+    ``(unspecified)``. Pass the pre-briefing caller as *field_source* so
+    seat-map doctrine cannot become the ``next:`` line.
+
+    ``in_context_refs`` / ``resolved_bodies`` apply only when this call
+    authors or grafts the receipt. A second call will not upgrade a
+    ``skipped`` line already present.
     """
     body = rest_body or ""
     existing, remainder = _split_hop_block(body)
     if existing is not None and _hop_already_first(body):
-        return body
+        return _graft_receipts(
+            body,
+            in_context_refs=in_context_refs,
+            resolved_bodies=resolved_bodies,
+        )
     if existing is not None:
-        return f"{existing.rstrip()}\n\n{remainder.lstrip()}"
+        hoisted = f"{existing.rstrip()}\n\n{remainder.lstrip()}"
+        return _graft_receipts(
+            hoisted,
+            in_context_refs=in_context_refs,
+            resolved_bodies=resolved_bodies,
+        )
     source = remainder if field_source is None else field_source
     block = _format_hop_status(
-        _collect_fields(source, standing_handoff_text=standing_handoff_text)
+        _collect_fields(source, standing_handoff_text=standing_handoff_text),
+        in_context_refs=in_context_refs,
+        resolved_bodies=resolved_bodies,
     )
     return f"{block}\n{remainder.lstrip()}"
+
+
+def _graft_receipts(
+    text: str,
+    *,
+    in_context_refs: tuple[str, ...] = (),
+    resolved_bodies: dict[str, str] | None = None,
+) -> str:
+    """Append the receipt to the first hop block when it is missing.
+
+    Seat field lines stay. A block that already has the receipt is returned
+    unchanged, including whitespace.
+    """
+    idx = text.find(HOP_STATUS_MARKER)
+    if idx < 0:
+        return text
+    after = text[idx + len(HOP_STATUS_MARKER) :]
+    next_heading = re.search(r"^## ", after, re.MULTILINE)
+    if next_heading:
+        end = idx + len(HOP_STATUS_MARKER) + next_heading.start()
+    else:
+        end = len(text)
+    block = text[idx:end]
+    if receipts_present(block):
+        return text
+    addition = decision_lines(
+        in_context_refs=in_context_refs,
+        resolved_bodies=resolved_bodies,
+    )
+    prefix = text[:end].rstrip()
+    suffix = text[end:]
+    grafted = f"{prefix}\n{addition}\n"
+    if suffix:
+        if not suffix.startswith("\n"):
+            grafted += "\n"
+        grafted += suffix.lstrip("\n")
+    return grafted
 
 
 def _hop_already_first(body: str) -> bool:
@@ -287,15 +353,16 @@ def _section_first_line(text: str, heading: re.Pattern[str]) -> str | None:
     return None
 
 
-# Static lines on every authored hop block. Existing caller-authored blocks
-# stay byte-stable (_hop_already_first); only blocks this module writes grow.
-HOP_RUNBOOK_LINE = "- runbook: runbook:maestro-loop"
-HOP_REQUIRED_SKILLS_LINE = (
-    "- required-skills: Use the `retrieval-before-authoring` skill"
-)
-
-
-def _format_hop_status(fields: dict[str, str]) -> str:
+def _format_hop_status(
+    fields: dict[str, str],
+    *,
+    in_context_refs: tuple[str, ...] = (),
+    resolved_bodies: dict[str, str] | None = None,
+) -> str:
+    receipt = decision_lines(
+        in_context_refs=in_context_refs,
+        resolved_bodies=resolved_bodies,
+    )
     return (
         f"{HOP_STATUS_MARKER}\n"
         f"- mission: {fields['mission']}\n"
@@ -303,8 +370,7 @@ def _format_hop_status(fields: dict[str, str]) -> str:
         f"- live: {fields['live']}\n"
         f"- next: {fields['next']}\n"
         f"- lane: {fields['lane']}\n"
-        f"{HOP_RUNBOOK_LINE}\n"
-        f"{HOP_REQUIRED_SKILLS_LINE}\n"
+        f"{receipt}\n"
     )
 
 

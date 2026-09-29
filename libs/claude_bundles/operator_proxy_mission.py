@@ -2,8 +2,8 @@
 
 When cursor launches a CDP Opus mission (``purpose`` in
 ``OPERATOR_PROXY_MISSION_PURPOSES``), the sealed prompt MUST open with
-Claude-slug skill chips, a this-hop status card (runbook + required-skills
-lines included), and the
+Claude-slug skill chips, a this-hop status card (success-condition +
+fetch-decision receipts included), and the
 Opus-operator / Fable-advisor briefing. Idempotent: already-prefixed
 prompts are left intact aside from injecting a missing briefing or
 hoisting a missing this-hop block above the seat map.

@@ -117,7 +117,7 @@ def test_mission_sidecar_heading_fills_when_prompt_silent() -> None:
     assert "- mission: Restore lane continuity for the propagation arc." in out
 
 
-def test_existing_block_above_seat_map_is_byte_stable() -> None:
+def test_existing_block_above_seat_map_keeps_fields_and_gains_receipt() -> None:
     body = (
         f"{HOP_STATUS_MARKER}\n"
         "- settled: already bound\n"
@@ -127,10 +127,13 @@ def test_existing_block_above_seat_map_is_byte_stable() -> None:
         "- residual: keep this extra line\n"
         f"\n{_SEAT}"
     )
-    assert ensure_hop_status_first(body) == body
-    assert (
-        ensure_hop_status_first(body, standing_handoff_text="## Settled\nNO\n") == body
-    )
+    out = ensure_hop_status_first(body, standing_handoff_text="## Settled\nNO\n")
+    assert "- settled: already bound" in out
+    assert "- residual: keep this extra line" in out
+    assert "NO" not in out
+    assert "- success-condition:" in out
+    assert "fetch-decision: runbook:maestro-loop skipped reason=not_in_context" in out
+    assert ensure_hop_status_first(out) == out
 
 
 def test_existing_block_after_seat_map_is_hoisted() -> None:
@@ -165,16 +168,27 @@ def test_loader_seam_does_not_touch_disk() -> None:
     assert standing_handoff_text_for_prompt("# no thread") is None
 
 
-def test_authored_hop_block_names_runbook_and_retrieval_skill() -> None:
-    """Birth briefing points at the maestro loop and the authoring skill."""
+def test_authored_hop_block_carries_success_condition_and_fetch_receipt() -> None:
+    """Birth briefing binds the success condition and records the unread step list."""
+    from claude_bundles.fetch_decision import (
+        arrival_bind_failure,
+        step_list_in_force,
+    )
+
     out = ensure_operator_proxy_mission_prompt("# Mission\nDo the thing.\n")
     start = out.index(HOP_STATUS_MARKER)
     end = out.index("## Mission seat map (BINDING")
     block = out[start:end]
-    assert "runbook:maestro-loop" in block
-    assert "- required-skills: Use the `retrieval-before-authoring` skill" in block
-    assert block.index("- lane:") < block.index("- runbook:")
-    assert block.index("- runbook:") < block.index("- required-skills:")
+    assert arrival_bind_failure(block) is None
+    assert "- success-condition:" in block
+    assert "fetch-decision: runbook:maestro-loop skipped reason=not_in_context" in block
+    assert (
+        "fetch-decision: skill:retrieval-before-authoring skipped reason=not_in_context"
+        in block
+    )
+    assert block.index("- lane:") < block.index("- success-condition:")
+    assert not step_list_in_force(block, "runbook:maestro-loop")
+    assert "- runbook: runbook:maestro-loop" not in block
 
 
 def test_mission_ensure_opens_with_this_hop_then_seat_map() -> None:

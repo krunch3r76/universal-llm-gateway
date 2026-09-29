@@ -202,7 +202,8 @@ separate plane.
 37. **Conductor commission** — SOT: skill `directive-authoring-standard` D4. Recipe of record: `agent_skill:conductor` § **First-utterance spawn** (wire via `cursor_request(contract=investigate, lane="B", …)`). This skill does not duplicate it.
 38. **Mission negotiation** — SOT: skill `directive-authoring-standard` D5. Field contract: `cursor_request` **Mission negotiation** clause + `cortex://notes/system/specs/directive-loop-mission-negotiation.md`.
 39. **Autonomy default** — `recovery_path=human` ∨ ¬supervisor(process) ∨ manage ∉ `VALID_SERVICES` ⇒ substrate deficiency ⇒ implement autonomous recovery. ¬ `operator_only_gate` · ¬ `TYPE: OPERATOR_GATE` · ¬ wake(human). Naming who can recover today is observation; treating that answer as the arc terminal is the defect. Sibling of inv 8 (missing tool ≠ gate).
-40. **Attended IDE cursor ≠ human hand (BINDING — operator 2026-08-20, agent-bus:9501).** `request` / `operator_request` / `cursor_request` / `propagate` enqueue AutoJobQueue. `send(to=cursor)` does **not**. `Auto_wedged` (serial_occupant=null ∧ waiters>0, or queued_age not advancing) ⇏ `operator_gate`. Code-seat ops the IDE cursor holds (`manage`, GIW restart, …) ⇒ `send` a commission that seat can execute; ¬ page the human to run them. Same-thread `request` on a wedged lane `queue_withdraw`s the queued predecessor — do not re-issue that way. `COME TO IDE` ⇔ ¬live(IDE cursor session) — instantiate the seat **after** the send; page body = open Cursor so that seat executes the already-posted commission. ¬ `only your hand` · ¬ `tag=operator-gate` · ¬ DISPOSITION `no commission fired`. Ground: 9501 turn 184.
+40. **Attended IDE cursor ≠ human hand.** `decision:attended-ide-cursor-is-not-a-human-hand`.
+    Specimen: agent-bus:9501 turn 184.
 
 ## Blocked → ask ladder (BINDING)
 
