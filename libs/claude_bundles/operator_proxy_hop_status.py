@@ -31,6 +31,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
+from hop_handoff.body import parse_successor_birth_id
 from hop_handoff.standing_handoff import standing_handoff_path
 
 from claude_bundles.fetch_decision import (
@@ -44,6 +45,11 @@ INJECTORS: tuple[str, ...] = ("cdp_ask",)
 
 HOP_STATUS_MARKER = "## This hop (read first)"
 UNSPECIFIED = "(unspecified)"
+_FIRST_ACTS_LINE = (
+    "- first-acts: skill reloads → handoff head (fs offset=0 limit=50) → journal → "
+    "fetch(last=3) → mark_read(through_turn, agent=web-anthropic) → send "
+    "TYPE: SEAT_REGISTRATION quoting successor_birth_id"
+)
 _MAX_FIELD = 120
 _SEAT_MAP_MARKER = "## Mission seat map (BINDING"
 
@@ -162,6 +168,7 @@ def ensure_hop_status_first(
         _collect_fields(source, standing_handoff_text=standing_handoff_text),
         in_context_refs=in_context_refs,
         resolved_bodies=resolved_bodies,
+        source_text=body,
     )
     return f"{block}\n{remainder.lstrip()}"
 
@@ -193,9 +200,10 @@ def _graft_receipts(
         in_context_refs=in_context_refs,
         resolved_bodies=resolved_bodies,
     )
+    successor = _successor_inject_lines(text)
     prefix = text[:end].rstrip()
     suffix = text[end:]
-    grafted = f"{prefix}\n{addition}\n"
+    grafted = f"{prefix}\n{addition}\n{successor}\n"
     if suffix:
         if not suffix.startswith("\n"):
             grafted += "\n"
@@ -353,16 +361,24 @@ def _section_first_line(text: str, heading: re.Pattern[str]) -> str | None:
     return None
 
 
+def _successor_inject_lines(source_text: str) -> str:
+    """First-acts line and echoed birth id (``absent`` when the prompt omits it)."""
+    birth_id = parse_successor_birth_id(source_text or "") or "absent"
+    return f"{_FIRST_ACTS_LINE}\n- successor_birth_id: {birth_id}"
+
+
 def _format_hop_status(
     fields: dict[str, str],
     *,
     in_context_refs: tuple[str, ...] = (),
     resolved_bodies: dict[str, str] | None = None,
+    source_text: str = "",
 ) -> str:
     receipt = decision_lines(
         in_context_refs=in_context_refs,
         resolved_bodies=resolved_bodies,
     )
+    successor = _successor_inject_lines(source_text)
     return (
         f"{HOP_STATUS_MARKER}\n"
         f"- mission: {fields['mission']}\n"
@@ -371,6 +387,7 @@ def _format_hop_status(
         f"- next: {fields['next']}\n"
         f"- lane: {fields['lane']}\n"
         f"{receipt}\n"
+        f"{successor}\n"
     )
 
 

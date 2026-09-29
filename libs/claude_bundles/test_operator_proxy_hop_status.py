@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest import mock
+
 import pytest
 
 from claude_bundles.operator_proxy_hop_status import (
@@ -205,3 +207,29 @@ def test_mission_ensure_idempotent_with_this_hop() -> None:
     twice = ensure_operator_proxy_mission_prompt(once)
     assert twice.rstrip("\n") == once.rstrip("\n")
     assert once.count(HOP_STATUS_MARKER) == 1
+
+
+def test_hop_block_echoes_successor_birth_id_from_prompt() -> None:
+    birth = "abcdefabcdefabcdefabcdefabcdefab"
+    body = (
+        f"{_SEAT}\n"
+        f"successor_birth_id: {birth}\n"
+        "TYPE: CONTINUITY_HANDOFF\n"
+    )
+    out = ensure_hop_status_first(body)
+    start = out.index(HOP_STATUS_MARKER)
+    end = out.index("## Mission seat map")
+    block = out[start:end]
+    assert "- first-acts: skill reloads" in block
+    assert "TYPE: SEAT_REGISTRATION quoting successor_birth_id" in block
+    assert f"- successor_birth_id: {birth}" in block
+    assert block.index("- first-acts:") < block.index(f"- successor_birth_id: {birth}")
+    assert block.index("fetch-decision:") < block.index("- first-acts:")
+
+
+def test_hop_block_successor_birth_id_absent_without_header() -> None:
+    with mock.patch("hop_handoff.body.mint_successor_birth_id") as mint:
+        out = ensure_hop_status_first(f"{_SEAT}\nthread_id: 9501\n")
+        mint.assert_not_called()
+    assert "- successor_birth_id: absent" in out
+    assert "- first-acts: skill reloads" in out
