@@ -112,6 +112,9 @@ class HealthResponse(BaseModel):
 
     ``displays`` and ``standing_pins`` are advisory projections served from a
     background-refreshed cache — not journal-backed authority.
+
+    ``harvest_root_ok`` reports cached harvest-root reachability; it does not
+    gate ``status``. ``status`` is ``ok`` whenever this process serves ``/health``.
     """
 
     status: str
@@ -442,7 +445,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         harvest = peek_harvest_root_health()
         hygiene_status = "running" if registry_hygiene.running else "stopped"
         displays, standing_pins = peek_health_projections()
-        status = "ok" if harvest.harvest_root_ok else "fail_closed"
+        status = "ok"
         return HealthResponse(
             status=status,
             harvest_root=harvest.harvest_root,

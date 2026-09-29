@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from unittest.mock import patch
 
@@ -19,6 +20,7 @@ from cdp_ask.runner import (
     HarvestRootHealth,
     _reset_harvest_root_health_cache_for_tests,
     note_harvest_root_health,
+    refresh_harvest_root_health,
 )
 from cdp_ask.standing_pins import (
     _reset_health_projection_cache_for_tests,
@@ -144,35 +146,56 @@ def test_tree_state_refresh_loop_survives_refresh_exception(
 
 
 @pytest.mark.offline
-def test_health_stalled_harvest_root_stat_cached_false_without_latency(
+def test_health_stalled_harvest_root_refresh_does_not_block_request_path(
     tmp_path, monkeypatch
 ) -> None:
-    """Stalled harvest-root refresh must not block /health (AC2)."""
+    """Stalled background harvest-root stat must not block concurrent /health (AC2)."""
     monkeypatch.setenv("CORTEX_FILES_ROOT", str(tmp_path))
     _disable_health_background_refresh(monkeypatch)
     _reset_tree_state_cache_for_tests()
     _reset_harvest_root_health_cache_for_tests()
     _reset_health_projection_cache_for_tests()
     note_tree_state("clean")
-    note_harvest_root_health(HarvestRootHealth(str(tmp_path), False))
-    _stub_startup_health_refresh(monkeypatch, str(tmp_path), harvest_ok=False)
 
-    def _slow_resolve() -> HarvestRootHealth:
-        time.sleep(10)
-        return HarvestRootHealth("", False)
+    def _pins() -> tuple[dict[str, str], dict]:
+        note_health_projections({}, {})
+        return {}, {}
+
+    monkeypatch.setattr("cdp_ask.standing_pins.refresh_health_projections", _pins)
+
+    accessible_calls = {"n": 0}
+
+    def _blocking_accessible(_root) -> bool:
+        accessible_calls["n"] += 1
+        if accessible_calls["n"] >= 2:
+            time.sleep(10)
+        return False
 
     monkeypatch.setattr(
-        "cdp_ask.runner.resolve_harvest_root_health",
-        _slow_resolve,
+        "cdp_ask.runner._harvest_root_dir_accessible",
+        _blocking_accessible,
     )
+
     app = create_app()
     with TestClient(app) as client:
+        refresh_entered = threading.Event()
+
+        def _run_refresh() -> None:
+            refresh_entered.set()
+            refresh_harvest_root_health()
+
+        worker = threading.Thread(target=_run_refresh, daemon=True)
+        worker.start()
+        assert refresh_entered.wait(timeout=2.0)
+        time.sleep(0.05)
+
         started = time.monotonic()
         payload = client.get("/health").json()
         elapsed = time.monotonic() - started
+
     assert elapsed < 2.0
     assert payload["harvest_root_ok"] is False
-    assert payload["status"] == "fail_closed"
+    assert payload["status"] == "ok"
 
 
 @pytest.mark.offline
