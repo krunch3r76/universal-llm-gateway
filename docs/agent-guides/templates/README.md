@@ -25,7 +25,7 @@ Paste-ready **claude.ai Life project instructions** for ULG users with MCP life 
 - Pairing `outbound-voice-spec` + `prose-discipline` on Customize
 - Need a de-personalized starting block (User fills in role/relationships — no operator name in public template)
 
-**Cursor counterpart:** `outbound-voice-spec_ulg` rule on life-representation / correspondence liaison seats.
+**Cursor counterpart:** plugin skill `outbound-voice-spec` (`shared_sync`), plus `outbound-voice-spec_ulg` on life-representation / correspondence liaison seats.
 
 ## Adding New Templates
 

@@ -440,7 +440,10 @@ skills:
     surface_class: cursor_only
     mcp_surface_required: none
   outbound-voice-spec:
-    surface_class: life_local
+    # Promoted 2026-09-28 from life_local. life_local kept the body off both
+    # Cursor layers, so a seat filed letters in the operator's name without
+    # the spec. shared_sync is the Cursor census skill and the claude.ai slug.
+    surface_class: shared_sync
     mcp_surface_required: none
   prose-discipline:
     surface_class: life_local

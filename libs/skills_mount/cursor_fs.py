@@ -13,7 +13,7 @@ Three source layers, in precedence order:
 3. ``.claude/skills/{slug}/SKILL.md`` — ``surface_class: life_local`` bodies.
 
 Layer 3 is the one that needs explaining. ``life_local`` slugs (``prose-discipline``,
-``outbound-voice-spec``, …) are deliberately absent from both Cursor layers:
+…) are deliberately absent from both Cursor layers:
 ``config/skills.yaml`` routes them to claude.ai Customize, and
 ``catalog._validate_sot_coverage`` *forbids* them a ``.cursor/skills`` body. ``.claude``
 is also gitignored, so the tree exists only in the hub checkout — never in a Lane-B

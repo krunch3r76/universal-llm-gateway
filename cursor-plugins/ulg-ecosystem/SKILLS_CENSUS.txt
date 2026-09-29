@@ -37,6 +37,7 @@ operator-posture
 operator-proxy-substrate
 orchestrator-workflow
 orchestration-lanes
+outbound-voice-spec
 over-refusal-prompt-framing
 pager-notify
 path-sim
