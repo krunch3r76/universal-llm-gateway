@@ -241,6 +241,128 @@ def test_ac_e_2_bridge_exit_event_carries_death_class(
     assert _captured_exits[0]["bridge_spawn_cwd_exists"] is False
 
 
+def test_shell_cwd_forensics_stats_working_directory_not_the_lane_root(
+    tmp_path: Path,
+) -> None:
+    """The exists bit that matters is the shell spawn cwd, not the lane root.
+
+    13350 set ``workingDirectory`` on the dying shell tool while the lane root
+    was still a directory. Statting ``tap.spawn_cwd`` reported present.
+    """
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        note_shell_tool_call,
+        reset_shell_spawn_state,
+    )
+
+    lane = tmp_path / "lane-root"
+    lane.mkdir()
+    shell_cwd = tmp_path / "lane-scratch-removed"
+    reset_shell_spawn_state()
+    note_shell_tool_call(
+        "d-shell-cwd",
+        tool_name="shell",
+        status="running",
+        args={"command": "ls", "workingDirectory": str(shell_cwd)},
+    )
+    proc = _spawn(
+        "import sys; sys.stderr.write("
+        "'__CURSOR_BASH_STATE_START__\\n/tmp/snapshot-not-used\\n"
+        "__CURSOR_BASH_STATE_END__\\n"
+        "Error: spawn /bin/bash ENOENT\\n'); sys.exit(1)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-shell-cwd",
+        thread_id="t-shell",
+        client=_FakeClient(proc),
+        spawn_cwd=str(lane),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_spawn_cwd"] == str(lane)
+    assert snapshot["bridge_spawn_cwd_exists"] is True
+    assert snapshot["bridge_shell_cwd"] == str(shell_cwd)
+    assert snapshot["bridge_shell_cwd_exists"] is False
+    from services.git_integration_worker.cursor_sdk_closeout.bridge_caller_error import (
+        bridge_failure_delivery_from_forensics,
+    )
+
+    delivery = bridge_failure_delivery_from_forensics(
+        forensics={
+            "bridge_death_class": "spawn_enoent_missing_cwd",
+            **snapshot,
+        }
+    )
+    assert delivery is not None
+    assert f"shell_cwd={shell_cwd} (missing at capture)" in delivery.message
+    assert f"spawn_cwd={lane} (present at capture)" in delivery.message
+
+
+def test_shell_cwd_forensics_uses_bash_snapshot_when_directory_unset(
+    tmp_path: Path,
+) -> None:
+    """A spawn with no ``workingDirectory`` uses the last bash-snapshot PWD."""
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        reset_shell_spawn_state,
+    )
+
+    lane = tmp_path / "lane-root"
+    lane.mkdir()
+    missing = tmp_path / "baseline-removed"
+    reset_shell_spawn_state()
+    proc = _spawn(
+        "import sys; sys.stderr.write("
+        f"'__CURSOR_BASH_STATE_START__\\n{missing}\\n"
+        "__CURSOR_BASH_STATE_END__\\n"
+        "Error: spawn /bin/bash ENOENT\\n'); sys.exit(1)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-snapshot-cwd",
+        thread_id="t-snap",
+        client=_FakeClient(proc),
+        spawn_cwd=str(lane),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_spawn_cwd_exists"] is True
+    assert snapshot["bridge_shell_cwd"] == str(missing)
+    assert snapshot["bridge_shell_cwd_exists"] is False
+
+
+def test_shell_spawn_cwd_keeps_top_level_cd_and_ignores_subshell(
+    tmp_path: Path,
+) -> None:
+    """A finished top-level ``cd`` is the next spawn's cwd; ``( cd ... )`` is not."""
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        note_shell_tool_call,
+        reset_shell_spawn_state,
+        shell_spawn_cwd,
+    )
+
+    removed = tmp_path / "baseline-removed"
+    reset_shell_spawn_state()
+    note_shell_tool_call(
+        "d-cd",
+        tool_name="shell",
+        status="completed",
+        args={"command": f"cd {removed}\nls", "workingDirectory": ""},
+    )
+    note_shell_tool_call(
+        "d-cd",
+        tool_name="shell",
+        status="completed",
+        args={"command": f"( cd {tmp_path / 'other'} )", "workingDirectory": ""},
+    )
+    note_shell_tool_call(
+        "d-cd",
+        tool_name="shell",
+        status="running",
+        args={"command": "pwd"},
+    )
+    assert shell_spawn_cwd("d-cd") == str(removed)
+
+
 def test_bridge_death_snapshot_requires_spawn_cwd_fields() -> None:
     """Fails the arc if bridge death forensics omit configured cwd + exists bit."""
     proc = _spawn("import sys; sys.stderr.write('dying\\n'); sys.exit(2)")

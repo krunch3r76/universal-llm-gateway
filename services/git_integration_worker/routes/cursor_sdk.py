@@ -1133,6 +1133,17 @@ def _run_sdk_sync(
 
         def _on_tool_call(observation: object = None) -> None:
             live_counter.note_progress(observation)
+            if observation is not None:
+                from services.git_integration_worker.cursor_sdk_shell_cwd import (
+                    note_shell_tool_call,
+                )
+
+                note_shell_tool_call(
+                    ctx.dispatch_id,
+                    tool_name=str(getattr(observation, "tool_name", "") or ""),
+                    status=str(getattr(observation, "status", "") or ""),
+                    args=getattr(observation, "args", None),
+                )
             touch_bridge_read_deadline(
                 client,
                 idle_budget_s=outer_idle_s,
