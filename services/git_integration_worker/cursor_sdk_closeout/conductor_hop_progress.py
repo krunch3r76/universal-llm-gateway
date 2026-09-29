@@ -72,14 +72,19 @@ def _slug_for_row(row: dict[str, Any]) -> str | None:
     return work_key.split(":", 1)[1].strip() or None
 
 
-def _fold_for_slug(slug: str) -> Any | None:
+def _fold_for_slug(slug: str, row: dict[str, Any]) -> Any | None:
     from implement_admission.conductor_witness import fold_scoreboard
-    from implement_admission.conductor_witness_defaults import DefaultWitnessCortex
-    from implement_admission.conductor_witness_types import FoldDeps
+
+    from services.git_integration_worker.cursor_sdk_closeout.conductor_hop import (
+        _fold_repo,
+    )
+    from services.git_integration_worker.cursor_sdk_nested_witness import (
+        fold_deps_with_ledger,
+    )
 
     return fold_scoreboard(
         slug,
-        deps=FoldDeps(cortex=DefaultWitnessCortex()),
+        deps=fold_deps_with_ledger(f"todo:{slug}", repo=_fold_repo(row)),
         write_journal=False,
     )
 
@@ -102,7 +107,7 @@ def entry_gate_for_row(row: dict[str, Any], *, live: bool = True) -> str:
     try:
         from implement_admission.conductor_witness import resolve_entry_gate_from_fold
 
-        fold = _fold_for_slug(slug)
+        fold = _fold_for_slug(slug, row)
         if fold is not None:
             return resolve_entry_gate_from_fold(fold)
     except Exception as exc:  # noqa: BLE001 — fold is advisory
@@ -122,7 +127,7 @@ def witnessed_done_for_row(row: dict[str, Any], *, live: bool = True) -> frozens
     if slug is None:
         return frozenset()
     try:
-        fold = _fold_for_slug(slug)
+        fold = _fold_for_slug(slug, row)
         if fold is not None:
             return fold.witnessed_done
     except Exception as exc:  # noqa: BLE001 — fold is advisory

@@ -32,6 +32,8 @@ from ._card_patch import apply_fold_summary_to_card, derive_settled_live_next
 logger = logging.getLogger(__name__)
 
 _REPO = Path("/mnt/torus/projects/universal-llm-gateway")
+
+
 def _format_scoreboard_pin(uri: str, sha256: str | None) -> str:
     short = (sha256 or "")[:8]
     return f"Scoreboard: {uri} · sha256:{short}" if short else f"Scoreboard: {uri}"
@@ -195,10 +197,15 @@ def run_tail_mechanical(
 
     source_ref = f"todo:{slug}"
     try:
+        from services.git_integration_worker.cursor_sdk_nested_witness import (
+            LedgerNestedImplementWitness,
+        )
+
         deps = fold_deps_for_admit(
             source_ref,
             cortex=DefaultWitnessCortex(),
             repo=_REPO,
+            nested_implement=LedgerNestedImplementWitness(),
         )
         # Projection only. The witness fold rewrites operator-recorded DONE
         # gates to CLAIMED; CHECKPOINT fires far more often and on more roots
@@ -313,9 +320,7 @@ class ContinuityCheckpointTailMechanicalHandler(BaseHandler):
         tags = list(options.get("tags") or [])
         if not tags:
             tags = await asyncio.to_thread(_safe_thread_tags, thread)
-        tip_body, tip_error = await asyncio.to_thread(
-            _safe_tip_checkpoint_body, thread
-        )
+        tip_body, tip_error = await asyncio.to_thread(_safe_tip_checkpoint_body, thread)
         files_root = None
         root_env = options.get("files_root")
         if root_env:

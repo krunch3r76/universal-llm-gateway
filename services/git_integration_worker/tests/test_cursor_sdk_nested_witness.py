@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,6 +12,7 @@ import pytest
 from services.git_integration_worker.cursor_sdk_nested_witness import (
     _nested_child_has_commits,
     nested_implement_has_commits,
+    nested_parent_with_commits,
     witness_ledger_path,
 )
 
@@ -55,10 +57,27 @@ def test_nested_child_has_commits_false_for_zero_commits() -> None:
     )
 
 
-def test_witness_ledger_path_prefers_home_when_data_dir_differs(
+def test_nested_child_has_commits_true_for_contract_none() -> None:
+    assert (
+        _nested_child_has_commits(
+            dispatch_id="child-none",
+            contract="none",
+            status="completed",
+            record_json=json.dumps(
+                {"closeout_body": '{"status":"complete","commits_ahead":2}'}
+            ),
+            wt_baseline=json.dumps({"admit_head": "deadbeef"}),
+            source_repo=None,
+            worktree_path=None,
+        )
+        is True
+    )
+
+
+def test_witness_ledger_path_prefers_production_when_data_dir_differs(
     tmp_path, monkeypatch
 ) -> None:
-    home = tmp_path / "home"
+    home = tmp_path / "operator"
     gateway = home / ".gateway"
     gateway.mkdir(parents=True)
     home_db = gateway / "cursor-sdk-dispatch.db"
@@ -66,7 +85,11 @@ def test_witness_ledger_path_prefers_home_when_data_dir_differs(
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     monkeypatch.setenv("DATA_DIR", str(scratch))
-    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.delenv("CURSOR_SDK_DISPATCH_LEDGER", raising=False)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.operator_real_home",
+        lambda: home,
+    )
     assert witness_ledger_path() == home_db
 
 
@@ -111,3 +134,120 @@ def test_nested_implement_has_commits_reads_ledger_children(monkeypatch) -> None
         )
     sql = conn.execute.call_args[0][0]
     assert "worktree_path" not in sql
+
+
+def _init_ledger(path: Path, rows: list[tuple]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """CREATE TABLE cursor_sdk_dispatches (
+            dispatch_id TEXT PRIMARY KEY,
+            contract TEXT,
+            status TEXT,
+            record_json TEXT,
+            wt_baseline TEXT,
+            source_repo TEXT,
+            thread_id TEXT
+        )"""
+    )
+    conn.executemany(
+        "INSERT INTO cursor_sdk_dispatches VALUES (?,?,?,?,?,?,?)",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_nested_implement_reads_production_ledger_when_data_dir_differs(
+    tmp_path, monkeypatch
+) -> None:
+    """Folding process DATA_DIR is not the ledger that holds the nested child."""
+    home = tmp_path / "operator"
+    prod_db = home / ".gateway" / "cursor-sdk-dispatch.db"
+    child_record = json.dumps(
+        {
+            "nest_under": "parent-prod",
+            "closeout_body": '{"status":"complete","commits_ahead":1}',
+        }
+    )
+    _init_ledger(
+        prod_db,
+        [
+            (
+                "child-prod",
+                "none",
+                "completed",
+                child_record,
+                json.dumps({"admit_head": "deadbeef"}),
+                None,
+                "13263",
+            )
+        ],
+    )
+    scratch = tmp_path / "scratch"
+    _init_ledger(scratch / "cursor-sdk-dispatch.db", [])
+    monkeypatch.setenv("DATA_DIR", str(scratch))
+    monkeypatch.delenv("CURSOR_SDK_DISPATCH_LEDGER", raising=False)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.operator_real_home",
+        lambda: home,
+    )
+    assert nested_implement_has_commits(nest_under_dispatch_id="parent-prod") is True
+
+
+def test_parent_with_commits_finds_thread_mate_not_named_on_the_tip(
+    tmp_path, monkeypatch
+) -> None:
+    home = tmp_path / "operator"
+    prod_db = home / ".gateway" / "cursor-sdk-dispatch.db"
+    child_record = json.dumps(
+        {
+            "nest_under": "auto-d472d61ad300",
+            "closeout_body": '{"commits_ahead":2}',
+        }
+    )
+    _init_ledger(
+        prod_db,
+        [
+            (
+                "cdcf4de7419b-8b9e9196",
+                "conductor",
+                "completed",
+                "{}",
+                None,
+                None,
+                "13263",
+            ),
+            (
+                "auto-d472d61ad300",
+                "none",
+                "completed",
+                "{}",
+                None,
+                None,
+                "13263",
+            ),
+            (
+                "34fba76c33b1-3df12bdb",
+                "none",
+                "completed",
+                child_record,
+                None,
+                None,
+                "13301",
+            ),
+        ],
+    )
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setenv("DATA_DIR", str(scratch))
+    monkeypatch.delenv("CURSOR_SDK_DISPATCH_LEDGER", raising=False)
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_home.operator_real_home",
+        lambda: home,
+    )
+    tip = "hop 1 dispatch `cdcf4de7419b-8b9e9196` on thread 13263. G3 plan nest."
+    assert (
+        nested_parent_with_commits(tip_body=tip, explicit_parent_id=None)
+        == "auto-d472d61ad300"
+    )

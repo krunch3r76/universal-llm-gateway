@@ -467,13 +467,20 @@ def _row_witnesses_g_ladder(
             )
     elif deps.nested_implement is not None:
         dispatch_id = _conductor_dispatch_id(tip_body)
-        if dispatch_id and deps.nested_implement.nested_implement_has_commits(
+        finder = getattr(deps.nested_implement, "parent_with_commits", None)
+        hit: str | None = None
+        if callable(finder):
+            found = finder(tip_body=tip_body, explicit_parent_id=dispatch_id)
+            hit = str(found) if found else None
+        elif dispatch_id and deps.nested_implement.nested_implement_has_commits(
             nest_under_dispatch_id=dispatch_id,
         ):
+            hit = dispatch_id
+        if hit:
             witnesses["G5"] = Witness(
                 row="G5",
                 source="ledger:nested_implement",
-                detail=dispatch_id,
+                detail=hit,
             )
     if witnesses.get("G5") is None and summon != "attended":
         l1_sha = artifacts.get("L1")

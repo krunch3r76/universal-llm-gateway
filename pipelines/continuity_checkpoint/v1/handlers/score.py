@@ -61,10 +61,15 @@ def project_work_item_fold(
     """Project work-item Status from witnesses. Does not journal (phase A)."""
     fold_deps = deps
     if fold_deps is None:
+        from services.git_integration_worker.cursor_sdk_nested_witness import (
+            LedgerNestedImplementWitness,
+        )
+
         fold_deps = fold_deps_for_admit(
             f"todo:{slug}",
             cortex=DefaultWitnessCortex(),
             repo=_REPO,
+            nested_implement=LedgerNestedImplementWitness(),
         )
     try:
         fold = fold_scoreboard(
