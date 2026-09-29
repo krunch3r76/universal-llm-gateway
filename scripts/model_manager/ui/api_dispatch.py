@@ -167,6 +167,8 @@ async def execute(
         case "stop":
             require_service(service)
             force = bool(params.get("force", False))
+            if service == "git_integration_worker" and force:
+                return refuse_giw_force_lifecycle()
             if service == "git_integration_worker" and not force:
                 return await _git_worker_drain_supervised(
                     ctl, "stop", park_live=giw_park_live_from_params(params)
@@ -204,6 +206,8 @@ async def execute(
                     ctl, service, result, restart_scheduled=True
                 )
             force = bool(params.get("force", False))
+            if service == "git_integration_worker" and force:
+                return refuse_giw_force_lifecycle()
             if service == "git_integration_worker" and not force:
                 result = await _git_worker_drain_supervised(
                     ctl, "restart", park_live=giw_park_live_from_params(params)
@@ -268,6 +272,8 @@ async def execute(
             force = bool(params.get("force", False))
             caller_dispatch_id = _optional_attr_str(params, "caller_dispatch_id")
             caller_job_id = _optional_attr_str(params, "caller_job_id")
+            if service == "git_integration_worker" and force:
+                return refuse_giw_force_lifecycle()
             if service == "git_integration_worker" and not force:
                 return await _git_worker_drain_supervised(
                     ctl,
@@ -638,6 +644,22 @@ async def _stargate_idle_drain_supervised(
         code_ref=code_ref,
         row_id=row_id,
     )
+
+
+def refuse_giw_force_lifecycle() -> dict[str, str]:
+    """Refusal payload when force=true on git_integration_worker lifecycle actions."""
+    return {
+        "error": (
+            "force is not permitted for git_integration_worker stop, restart, "
+            "or sync_restart."
+        ),
+        "reason": "giw_force_refused",
+        "fix_hint": (
+            "Omit force on manage calls for git_integration_worker so "
+            "api_dispatch takes the supervised drain path "
+            "(_git_worker_drain_supervised)."
+        ),
+    }
 
 
 def giw_park_live_from_params(params: dict[str, Any]) -> bool:

@@ -55,6 +55,24 @@ _VALID_ACTIONS = frozenset(
     }
 )
 
+_GIW_FORCE_REFUSED_REASON = "giw_force_refused"
+_GIW_LIFECYCLE_FORCE_ACTIONS = frozenset({"stop", "restart", "sync_restart"})
+
+
+def _refuse_giw_force() -> dict[str, str]:
+    return {
+        "error": (
+            "force is not permitted for git_integration_worker stop, restart, "
+            "or sync_restart."
+        ),
+        "reason": _GIW_FORCE_REFUSED_REASON,
+        "fix_hint": (
+            "Omit force on manage calls for git_integration_worker so "
+            "api_dispatch takes the supervised drain path "
+            "(_git_worker_drain_supervised)."
+        ),
+    }
+
 
 def _call_manage(
     body: dict[str, Any], *, timeout: float = _DEFAULT_TIMEOUT
@@ -421,11 +439,17 @@ def register_manage_tools(mcp: FastMCP) -> None:
             params["service"] = service
         if action == "wait_healthy":
             params["timeout"] = timeout
-        if force and action in {"stop", "restart", "sync_restart"}:
+        if (
+            service == "git_integration_worker"
+            and force
+            and action in _GIW_LIFECYCLE_FORCE_ACTIONS
+        ):
+            return _refuse_giw_force()
+        if force and action in _GIW_LIFECYCLE_FORCE_ACTIONS:
             params["force"] = True
         if (
             service == "git_integration_worker"
-            and action in {"stop", "restart", "sync_restart"}
+            and action in _GIW_LIFECYCLE_FORCE_ACTIONS
         ):
             params["park_live"] = bool(park_live)
         effective_caller = (
