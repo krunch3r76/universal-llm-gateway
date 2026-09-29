@@ -6,7 +6,7 @@ Verified on Jupiter CDP ask profile (:9223) 2026-07-16:
 - Cowork exposes approval control (aria ``Manually approve`` /
   ``Automatically approve`` / skip).
 - Menu radios: Manually approve | Automatically approve | Skip all approvals.
-- Cowork + Auto default on bare ``/new`` (friction 25051).
+- Cowork + Skip all approvals default on bare ``/new`` (friction 25051).
 - Chat via ``ensure_chat_compose`` — **operator-gated only** until dogfood passes.
 - Toggle repair + poll-until-attest (friction 25052 — dual-primary Q1 bind).
 
@@ -266,8 +266,12 @@ async def _open_approval_menu(page) -> dict[str, Any]:
     }
 
 
-async def set_approval_mode(page, mode: ApprovalMode = "auto") -> dict[str, Any]:
-    """Set Cowork approval mode. Requires Cowork compose chrome."""
+async def set_approval_mode(page, mode: ApprovalMode = "skip") -> dict[str, Any]:
+    """Click the Cowork approval radio. Default selects Skip all approvals.
+
+    Requires Cowork compose chrome. ``auto`` and ``manual`` remain clickable
+    menu radios; the ship path uses this skip default.
+    """
     before = await compose_mode_fingerprint(page)
     wanted_aria = _APPROVAL_ARIA[mode]
     # approval_label falls back to the chip's short text when aria is absent
@@ -355,7 +359,7 @@ async def ensure_chat_compose(page) -> dict[str, Any]:
 
 
 async def ensure_cowork_auto(page) -> dict[str, Any]:
-    """Select Cowork mode and Automatically approve (>> Auto).
+    """Select Cowork mode and Skip all approvals (>> Skip).
 
     Default on bare ``/new`` for automated CDP (friction 25051). Call after
     landing on ``https://claude.ai/new``, before model pick / send. No-op-ish
@@ -363,15 +367,16 @@ async def ensure_cowork_auto(page) -> dict[str, Any]:
     ``chip_missing`` — callers may continue without failing hard).
 
     One bounded retry on approval-only failure — Cowork attest can succeed
-    while the Manual→Auto menu click flakes (b7ea437d / 10:13 Manual fingerprint).
+    while the menu click to Skip all approvals flakes (b7ea437d / 10:13
+    Manual fingerprint).
     """
     mode = await select_compose_mode(page, "cowork")
     if not mode.get("ok"):
         return {"ok": False, "step": "cowork", "mode": mode}
-    approval = await set_approval_mode(page, "auto")
+    approval = await set_approval_mode(page, "skip")
     if not approval.get("ok"):
         await page.wait_for_timeout(800)
-        approval = await set_approval_mode(page, "auto")
+        approval = await set_approval_mode(page, "skip")
         approval["retried"] = True
     return {
         "ok": bool(approval.get("ok")),
@@ -382,12 +387,13 @@ async def ensure_cowork_auto(page) -> dict[str, Any]:
 
 
 async def ensure_approval_auto(page) -> dict[str, Any]:
-    """Re-apply Automatically approve when the approval chip exists.
+    """Re-apply Skip all approvals when the approval chip exists.
 
     Used immediately before Start task / warm Send so model-picker or paste
-    cannot ship Cowork+Manual after ``ensure_cowork_auto`` already attested
-    on ``/new``. Skips when chrome is absent (Chat / Project shell). Does not
-    toggle Cowork — callers that need the chip use ``ensure_cowork_auto``.
+    cannot ship Cowork+Manual or Cowork+Auto after ``ensure_cowork_auto``
+    already attested on ``/new``. Skips when chrome is absent (Chat / Project
+    shell). Does not toggle Cowork — callers that need the chip use
+    ``ensure_cowork_auto``.
     """
     before = await compose_mode_fingerprint(page)
     if not before.get("approval"):
@@ -398,9 +404,9 @@ async def ensure_approval_auto(page) -> dict[str, Any]:
             "before": before,
             "after": before,
         }
-    approval = await set_approval_mode(page, "auto")
+    approval = await set_approval_mode(page, "skip")
     if not approval.get("ok"):
         await page.wait_for_timeout(800)
-        approval = await set_approval_mode(page, "auto")
+        approval = await set_approval_mode(page, "skip")
         approval["retried"] = True
     return approval

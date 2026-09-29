@@ -2,10 +2,11 @@
 
 Dual-primary (friction 25051/25052): selector repair + poll-until-attest, not
 poll-only. Chip toggle may attest Cowork while approval is still Manual.
-Ship gate (Start task): Cowork requires aria ``Automatically approve`` —
-``mode==cowork`` alone or any approval chip (Manual/Skip) is not success.
+Ship gate (Start task): Cowork requires ``Skip all approvals`` (aria-less
+short text ``Skip`` counts) — ``mode==cowork`` alone or Manual/Auto is not
+success.
 Chat success: ``mode==chat`` and approval is None. Project-shell rows without
-chips are a named skip, not a silent Auto waiver on ``/new``.
+chips are a named skip, not a silent Skip waiver on ``/new``.
 
 a:31319 (2026-08-30): Anthropic dropped the descriptive aria-label on the
 approval chip — a live census against a fresh ``/new`` tab found a bare
@@ -120,12 +121,18 @@ def _approval_is_auto(fp: dict[str, Any]) -> bool:
     return bool(_AUTO_ARIA_RE.search(_approval_aria(fp)))
 
 
+def _approval_is_skip(fp: dict[str, Any]) -> bool:
+    """True iff the label is Skip all approvals or the short text Skip."""
+    return bool(_SKIP_ARIA_RE.search(_approval_aria(fp)))
+
+
 def cowork_auto_refuse_reason(fp: dict[str, Any]) -> str | None:
     """Fail-closed refuse text when a Cowork dispatch must not Start task.
 
-    Callers (``send_prompt``) raise this string so Manual/Skip cannot ship.
+    Callers (``send_prompt``) raise this string so Manual/Auto cannot ship.
+    None iff the label matches Skip all approvals or the short text Skip.
     Chat (no approval chrome) and Project-shell rows without chips return
-    None — named skip, not a silent Auto waiver on ``/new`` or ``/cowork/cse_``.
+    None — named skip, not a silent Skip waiver on ``/new`` or ``/cowork/cse_``.
     """
     aria = _approval_aria(fp)
     mode = fp.get("mode")
@@ -133,20 +140,18 @@ def cowork_auto_refuse_reason(fp: dict[str, Any]) -> str | None:
         return None
     if not aria and mode != "cowork":
         return None
-    if _AUTO_ARIA_RE.search(aria):
+    if _SKIP_ARIA_RE.search(aria):
         return None
     if _MANUAL_ARIA_RE.search(aria):
         return (
-            "cowork dispatch refused: approval aria "
-            f"{aria!r} (need Automatically approve)"
+            f"cowork dispatch refused: approval aria {aria!r} (need Skip all approvals)"
         )
-    if _SKIP_ARIA_RE.search(aria):
+    if _AUTO_ARIA_RE.search(aria):
         return (
-            "cowork dispatch refused: approval aria "
-            f"{aria!r} (need Automatically approve; Skip all is not Auto)"
+            f"cowork dispatch refused: approval aria {aria!r} (need Skip all approvals)"
         )
     return (
-        "cowork dispatch refused: Automatically approve not attested "
+        "cowork dispatch refused: Skip all approvals not attested "
         f"(mode={mode!r} approval={fp.get('approval')!r})"
     )
 
@@ -157,10 +162,14 @@ def _compose_attested(
     *,
     require_auto: bool = True,
 ) -> bool:
-    """Cowork ship-attest. ``require_auto=False`` is chip/title only (Manual ok)."""
+    """Cowork ship-attest. ``require_auto=True`` requires Skip all approvals.
+
+    ``require_auto=False`` is chip/title only so the Cowork chip can attest
+    before the radio flip (Manual or Auto ok at that step).
+    """
     if mode == "cowork":
         if require_auto:
-            return fp.get("mode") == "cowork" and _approval_is_auto(fp)
+            return fp.get("mode") == "cowork" and _approval_is_skip(fp)
         return fp.get("mode") == "cowork" or bool(fp.get("approval"))
     return fp.get("mode") == "chat" and not fp.get("approval")
 
@@ -176,8 +185,9 @@ async def await_compose_attest(
     """Poll ``compose_mode_fingerprint`` until mode attests or timeout.
 
     Default ``require_auto=True`` is the Start-task ship gate: Cowork must
-    show Automatically approve. Chip toggle (``select_compose_mode``) passes
-    ``require_auto=False`` so Cowork+Manual can attest mode before Auto flip.
+    show Skip all approvals (aria-less ``Skip`` counts). Chip toggle
+    (``select_compose_mode``) passes ``require_auto=False`` so the Cowork
+    chip can attest before the radio flip.
     """
     elapsed = 0.0
     last = await compose_mode_fingerprint(page)

@@ -180,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     mode_group.add_argument(
         "--cowork-auto",
         action="store_true",
-        help="Cowork + Automatically approve on /new (default; explicit no-op)",
+        help="Cowork + Skip all approvals on /new (default; explicit no-op)",
     )
     mode_group.add_argument(
         "--no-cowork-auto",

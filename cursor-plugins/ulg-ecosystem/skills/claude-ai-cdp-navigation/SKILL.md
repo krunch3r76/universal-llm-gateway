@@ -120,7 +120,7 @@ Satellite `execution_id` / Playwright / MCP socket are attach handles. Cowork is
 ensure_chrome(port, profile) ⇒ attach_cdp
 ⇒ pick_chat_page(prefer /chat/ ∨ /new; ¬ Project shell for harvest)
 ⇒ [project_uuid ⇒ goto(project_url)] ∨ goto(/new)
-⇒ [/new ⇒ ensure_cowork_auto]   # Cowork + Auto default (25051/25052)
+⇒ [/new ⇒ ensure_cowork_auto]   # Cowork + Skip all approvals default (25051/25052)
 ⇒ [/new ∧ operator Chat ⇒ ensure_chat_compose]
 ⇒ select_model(<live UI>)  # picker SOT — ¬ harness allowlist
 ⇒ click(Start task ∨ Send message)  # ¬Enter
@@ -133,19 +133,19 @@ ensure_chrome(port, profile) ⇒ attach_cdp
 
 ## Chat vs Cowork (compose on `/new`)
 
-**Operator bind (25051/25052):** **Cowork + Auto default** on bare `/new`. Chat = operator opt-in (`--chat` / `chat_compose=true`) only.
+**Operator bind (25051/25052):** **Cowork + Skip all approvals default** on bare `/new`. Chat = operator opt-in (`--chat` / `chat_compose=true`) only.
 
 ```
 ∀ new project-ask on bare /new:
-  ensure_cowork_auto MUST attest mode=cowork ∧ approval aria Automatically approve
-  Cowork+Manual / Skip all ⇏ attested; Project shell without chips = named skip
+  ensure_cowork_auto MUST attest mode=cowork ∧ approval aria Skip all approvals
+  Cowork+Manual / Automatically approve ⇏ attested; aria-less Skip counts; Project shell without chips = named skip
   select_*_no_attest ⇒ reopen friction — NOT "retry Chat"
   submit(/new) ⇐ Start task ∨ Send message; submit(warm) ⇐ live_discover  # ¬ Enter
 ```
 
 | Dispatch | Default | Opt-in |
 |---|---|---|
-| Automated `/new` | Cowork + Auto | — |
+| Automated `/new` | Cowork + Skip all approvals | — |
 | Short bus-nudge Chat | Chat | `--chat` / `chat_compose=true` |
 | Bound Project UUID | Cowork Project shell | automatic |
 

@@ -117,7 +117,7 @@ def emit_compose_attested_from_result(
 ) -> Event | None:
     """Project ensure_cowork_auto result onto dual-id compose_attested telemetry.
 
-    Prefers ``approval.after`` so a successful Auto flip is not reported as the
+    Prefers ``approval.after`` so a successful Skip flip is not reported as the
     pre-flip Manual fingerprint from the mode block. Best-effort emit; never
     raises. ``ok`` follows the ensure result, not the nested mode chip alone.
     """
@@ -132,8 +132,8 @@ def emit_compose_attested_from_result(
         if isinstance(mode_block.get("click_probe"), dict)
         else {}
     )
-    # Prefer approval.after so Cowork+Auto emit is not the pre-flip Manual
-    # fingerprint from the mode block (ensure_cowork_auto sequences mode then Auto).
+    # Prefer approval.after so Cowork+Skip emit is not the pre-flip Manual
+    # fingerprint from the mode block (ensure_cowork_auto sequences mode then Skip).
     fp = (
         approval_block.get("after")
         or mode_block.get("compose_mode_fingerprint")

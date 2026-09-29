@@ -18,6 +18,7 @@ from claude_bundles.chat_cowork_mode import (  # noqa: E402
     set_approval_mode,
 )
 from claude_bundles.compose_attest import (  # noqa: E402
+    _approval_is_auto,
     _compose_attested,
     cowork_auto_refuse_reason,
 )
@@ -94,29 +95,33 @@ def test_compose_attested_cowork_manual_must_fail() -> None:
     reason = cowork_auto_refuse_reason(fp)
     assert reason is not None
     assert "Manually approve" in reason
-    assert "Automatically approve" in reason
-
-
-def test_compose_attested_cowork_skip_must_fail() -> None:
-    fp = {
-        "mode": "cowork",
-        "approval": {"aria": "Skip all approvals", "text": "Skip"},
-    }
-    assert _compose_attested(fp, "cowork") is False
-    reason = cowork_auto_refuse_reason(fp)
-    assert reason is not None
     assert "Skip all approvals" in reason
 
 
-def test_compose_attested_cowork_auto_passes() -> None:
-    fp = {
+def test_cowork_auto_refuse_reason_skip_passes_auto_refuses() -> None:
+    """Ship gate: Skip all approvals passes; Automatically approve refuses."""
+    skip_fp = {
+        "title": "New task - Claude",
+        "mode": "cowork",
+        "approval": {"aria": "Skip all approvals", "text": "Skip"},
+        "url": "https://claude.ai/new",
+    }
+    assert _compose_attested(skip_fp, "cowork") is True
+    assert cowork_auto_refuse_reason(skip_fp) is None
+
+    auto_fp = {
         "title": "New task - Claude",
         "mode": "cowork",
         "approval": {"aria": "Automatically approve", "text": "Auto"},
         "url": "https://claude.ai/new",
     }
-    assert _compose_attested(fp, "cowork") is True
-    assert cowork_auto_refuse_reason(fp) is None
+    assert _compose_attested(auto_fp, "cowork") is False
+    assert _approval_is_auto(auto_fp) is True
+    assert _approval_is_auto(skip_fp) is False
+    reason = cowork_auto_refuse_reason(auto_fp)
+    assert reason is not None
+    assert "Automatically approve" in reason
+    assert "Skip all approvals" in reason
 
 
 def test_compose_attested_project_shell_without_chips_skips() -> None:

@@ -33,12 +33,12 @@ Cross-ref: `expand-growth-loop_ws.mdc` · `agent-bus-multitask` (our seat's fan 
 | Control | UI | Code |
 |---|---|---|
 | Mode | Chat ↔ Cowork chips (title `New chat` ↔ `New task`) | `ensure_cowork_auto` / `ensure_chat_compose` |
-| Approval | Manual → **Automatically approve** (Cowork only) | `set_approval_mode("auto")` |
+| Approval | Manual / Auto → **Skip all approvals** (Cowork only) | `set_approval_mode("skip")` |
 | Submit (bare `/new`) | Cowork: **Start task** · Chat: **Send message** | `send_prompt` — `await_submit_visible`; ¬ Enter |
 | Submit (warm `/cowork/cse_*`, `/chat/*`) | Composer-local **Send** | `discover_live_submit`; composer refocus + 300ms settle |
 
 ```
-ensure_cowork_auto(page)  ⇐ select(Cowork) ∧ set(Automatically approve)
+ensure_cowork_auto(page)  ⇐ select(Cowork) ∧ set(Skip all approvals)
 ensure_chat_compose(page) ⇐ select(Chat) ∧ attest(title New chat)
 submit(/new) ⇐ Start task ∨ Send message  # mode_locked; ¬ Enter
 submit(warm) ⇐ resolve_submit_strategy → live_discover → discover_live_submit

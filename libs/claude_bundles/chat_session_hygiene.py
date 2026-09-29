@@ -204,7 +204,12 @@ async def _delete_via_header(page) -> dict:
 
 async def _delete_via_sidebar(page, *, title: str) -> dict:
     if not title:
-        return {"ok": False, "step": "sidebar-not-found", "path": "sidebar", "title": ""}
+        return {
+            "ok": False,
+            "step": "sidebar-not-found",
+            "path": "sidebar",
+            "title": "",
+        }
 
     r1 = await page.evaluate(_SIDEBAR_CLICK_MORE_JS, title)
     if not r1.get("ok"):
@@ -293,7 +298,12 @@ async def delete_current_chat(page) -> dict:
 async def delete_chat_if_active(page, *, return_to: str | None = None) -> dict:
     """Delete when on a chat URL; optionally navigate after."""
     if not in_active_chat(page.url or ""):
-        return {"ok": True, "step": "skip_not_in_chat", "url": page.url, "cleanup_ok": True}
+        return {
+            "ok": True,
+            "step": "skip_not_in_chat",
+            "url": page.url,
+            "cleanup_ok": True,
+        }
 
     result = await delete_current_chat(page)
     result["cleanup_ok"] = bool(result.get("ok"))
@@ -463,9 +473,9 @@ async def goto_fresh_compose(
 ) -> str:
     """Land on a clean compose surface (Project chrome or bare /new).
 
-    On bare ``/new``, default ``ensure_cowork_auto=True`` selects Cowork + Auto
-    (friction 25051 — Chat CDP Send path broken). Pass ``ensure_cowork_auto=False``
-    only on **operator-gated** Chat dispatches.
+    On bare ``/new``, default ``ensure_cowork_auto=True`` selects Cowork +
+    Skip all approvals (friction 25051 — Chat CDP Send path broken). Pass
+    ``ensure_cowork_auto=False`` only on **operator-gated** Chat dispatches.
 
     ``stargate_execution_id`` / ``satellite_execution_id`` thread into
     ``cdp.generate.compose_attested`` on both arms (arc 6928 / 7034 B1 producer).

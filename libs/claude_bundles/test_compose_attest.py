@@ -294,16 +294,30 @@ def test_approval_label_prefers_aria_falls_back_to_text() -> None:
     assert approval_label({"approval": None}) == ""
 
 
-def test_compose_attested_cowork_auto_text_only_passes() -> None:
-    """Direct regression for a:31319 — no aria, just the short "Auto" label."""
+def test_compose_attested_cowork_skip_text_only_passes() -> None:
+    """Aria-less short text Skip is the ship gate (a:31319 shape)."""
+    fp = {
+        "title": "New task - Claude",
+        "mode": "cowork",
+        "approval": {"aria": "", "text": "Skip", "via": "text"},
+        "url": "https://claude.ai/new",
+    }
+    assert _compose_attested(fp, "cowork") is True
+    assert cowork_auto_refuse_reason(fp) is None
+
+
+def test_compose_attested_cowork_auto_text_only_refuses() -> None:
+    """Aria-less short text Auto is not the ship gate."""
     fp = {
         "title": "New task - Claude",
         "mode": "cowork",
         "approval": {"aria": "", "text": "Auto", "via": "text"},
         "url": "https://claude.ai/new",
     }
-    assert _compose_attested(fp, "cowork") is True
-    assert cowork_auto_refuse_reason(fp) is None
+    assert _compose_attested(fp, "cowork") is False
+    reason = cowork_auto_refuse_reason(fp)
+    assert reason is not None
+    assert "Skip all approvals" in reason
 
 
 def test_cowork_auto_refuse_reason_text_only_manual_still_refuses() -> None:
@@ -317,4 +331,4 @@ def test_cowork_auto_refuse_reason_text_only_manual_still_refuses() -> None:
     assert _compose_attested(fp, "cowork") is False
     reason = cowork_auto_refuse_reason(fp)
     assert reason is not None
-    assert "Automatically approve" in reason
+    assert "Skip all approvals" in reason
