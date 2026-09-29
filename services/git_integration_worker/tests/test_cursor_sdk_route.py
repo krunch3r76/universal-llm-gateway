@@ -1002,6 +1002,44 @@ async def test_dispatch_exception_posts_failure_turn_and_event(
 
 
 @pytest.mark.asyncio
+async def test_cursor_sdk_dispatch_envelope_fills_empty_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CURSOR_SDK_DISPATCH must not publish message \"\" when str(exc) is empty."""
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    req = CursorDispatchRequest(
+        thread_id="t-empty-msg",
+        model="cursor/grok-4.7",
+        dispatch_id="disp-empty-msg",
+        execution_id="exec-empty-msg",
+        message="hello",
+    )
+    _seed_running_row(req)
+    bus = _mock_bus()
+    monkeypatch.setattr(route_mod, "emit_sdk_worker_failed", lambda **_k: None)
+    monkeypatch.setattr(route_mod, "_mark_terminal_and_promote", AsyncMock())
+
+    await route_mod._finalize_failed(
+        req=req,
+        bus=bus,
+        reply_to="dispatch",
+        controller=_make_controller(),
+        code="CURSOR_SDK_DISPATCH",
+        message="",
+        subject_suffix="FAILED",
+        error="TimeoutError: ",
+        exc=TimeoutError(),
+    )
+
+    raw = bus.reply.await_args.kwargs["body"]
+    payload = json.loads(raw.removeprefix("```json\n").removesuffix("\n```"))
+    assert payload["code"] == "CURSOR_SDK_DISPATCH"
+    assert payload["message"] != ""
+    assert payload["message"].startswith("TimeoutError:")
+
+
+@pytest.mark.asyncio
 async def test_finalize_failed_terminates_before_reply(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2308,7 +2346,9 @@ def _pin_temp_lane_b_repo(
         ["git", "config", "user.name", "t"], cwd=repo, check=True, capture_output=True
     )
     (repo / "README.md").write_text("seed\n", encoding="utf-8")
-    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "add", "README.md"], cwd=repo, check=True, capture_output=True
+    )
     subprocess.run(
         ["git", "commit", "-m", "seed"], cwd=repo, check=True, capture_output=True
     )
@@ -3038,6 +3078,93 @@ async def test_closeout_failure_is_retryable_and_non_lossy(
     assert env["data"]["sidecar_ref"] == (
         "workspaces://universal-llm-gateway/tmp/reviews/closeouts/disp-closeout-fail.md"
     )
+
+
+def test_slot_release_timeout_keeps_finished_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A TimeoutError from slot release must not discard a finished SdkRunOutcome."""
+    from services.git_integration_worker.cursor_sdk_stream_capture import StreamCapture
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    repo_venv = _fake_repo_venv(tmp_path)
+    dispatch_home = tmp_path / "dispatch-home"
+    dispatch_home.mkdir()
+    monkeypatch.setattr(route_mod, "resolve_repo_venv", lambda **_: repo_venv)
+
+    def _release_times_out(*_args: object, **_kwargs: object) -> str:
+        raise TimeoutError()
+
+    monkeypatch.setattr(
+        route_mod, "release_or_restore_for_child_sync", _release_times_out
+    )
+
+    class _Run:
+        id = "run-finished"
+
+        def stream(self):
+            return iter([])
+
+        def wait(self) -> MagicMock:
+            return MagicMock(
+                result="status: complete", status="finished", duration_ms=10
+            )
+
+        def conversation(self) -> list[object]:
+            return []
+
+    class _Agent:
+        id = "agent-finished"
+
+        def send(self, _prompt: str) -> _Run:
+            return _Run()
+
+        def list_artifacts(self) -> list[str]:
+            return []
+
+    def _fake_launch_bridge(*_args: object, **_kwargs: object) -> MagicMock:
+        client = MagicMock()
+        client.create_agent.return_value = _Agent()
+        client.close = MagicMock()
+        return client
+
+    monkeypatch.setattr(
+        route_mod, "setup_cursor_dispatch_home", lambda _did, **_: dispatch_home
+    )
+    monkeypatch.setattr(
+        route_mod, "resolve_cursor", lambda _mid: MagicMock(model_id="grok-4.7")
+    )
+    monkeypatch.setattr(
+        route_mod, "build_model_selection", lambda _cfg, _ov: MagicMock(params=[])
+    )
+    monkeypatch.setattr(
+        route_mod, "build_agent_options", lambda *_a, **_k: MagicMock(local=True)
+    )
+    monkeypatch.setattr(bridge_launch_mod.Client, "launch_bridge", _fake_launch_bridge)
+    monkeypatch.setattr(
+        route_mod, "_start_heartbeat", lambda **_kw: (MagicMock(), MagicMock())
+    )
+    monkeypatch.setattr(
+        route_mod,
+        "observe_run_stream",
+        lambda *_a, **_k: StreamCapture(tool_calls=()),
+    )
+
+    outcome = route_mod._run_sdk_sync(
+        ctx=_ctx(
+            route_mod._CONFIG.source_repo,
+            dispatch_id="disp-slot-timeout",
+            thread_id="13391",
+            dispatch_workspace=route_mod._CONFIG.dispatch_workspace,
+        ),
+        prompt="hello",
+        config_model_id="cursor/grok-4.7",
+        selection_overrides=None,
+        resolved_model="grok-4.7",
+        gate_loop=MagicMock(),
+    )
+    assert outcome.body == "status: complete"
+    assert outcome.status == "finished"
 
 
 def test_run_sdk_sync_folds_stream_paths_and_artifacts(

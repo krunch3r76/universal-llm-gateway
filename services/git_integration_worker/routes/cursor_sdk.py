@@ -87,6 +87,7 @@ from services.git_integration_worker.cursor_sdk_closeout import (
     format_delivery_fallback_body,
     merge_degraded_reasons,
     prepare_closeout_delivery_async,
+    provider_error_reason,
     read_post_wait_snapshot,
     resolve_completion_outcome,
     resolve_run_outcome_label,
@@ -1274,6 +1275,7 @@ def _run_sdk_sync(
                 sdk_request_id=stream_capture.sdk_request_id,
                 request_id_source=stream_capture.request_id_source,
                 lines=stream_capture.lines,
+                provider_error=stream_capture.provider_error,
             )
             persist_dispatch_usage(
                 CursorDispatchLedger.instance(),
@@ -1365,6 +1367,7 @@ def _run_sdk_sync(
                 sdk_git=post_wait.sdk_git,
                 stream_only_deviations=stream_deviations,
                 model_knobs_emitted=model_knobs_emitted,
+                provider_error=stream_capture.provider_error,
             )
         except BaseException as exc:
             sdk_request_id, request_id_source = request_id_from_sdk_error(exc)
@@ -1392,7 +1395,17 @@ def _run_sdk_sync(
         # Release the capacity slot from this thread — not from the async
         # coroutine — so a timed-out orphan thread holds the slot until exit.
         # A1: if a parked parent waits for this child, transfer (no waiter wake).
-        release_or_restore_for_child_sync(gate_loop, dispatch_id=ctx.dispatch_id)
+        # A waiter TimeoutError must not replace a settled return: Future.result
+        # raises TimeoutError() with an empty message, and a finally that
+        # propagates it discards a finished SdkRunOutcome (run 4bce501cb95a).
+        try:
+            release_or_restore_for_child_sync(gate_loop, dispatch_id=ctx.dispatch_id)
+        except TimeoutError:
+            logger.warning(
+                "cursor sdk slot release timed out; keeping settled run: "
+                "dispatch_id=%s",
+                ctx.dispatch_id,
+            )
 
 
 async def _mark_terminal_and_promote(
@@ -2722,6 +2735,29 @@ async def _finalize_bridge_abort_partial(
     )
 
 
+def _nonempty_dispatch_message(
+    message: str,
+    *,
+    exc: BaseException | None,
+    provider_error: str | None = None,
+) -> str:
+    """Never publish a blank CURSOR_SDK_DISPATCH ``message``.
+
+    ``TimeoutError()`` stringifies to ``""``. The envelope then carries
+    ``<type>: <str>`` (still non-empty when ``str`` is empty) or the provider
+    status sentence.
+    """
+    text = (message or "").strip()
+    if text:
+        return text
+    if exc is not None:
+        return f"{type(exc).__name__}: {exc}"
+    provider = (provider_error or "").strip()
+    if provider:
+        return f"provider_error: {provider}"
+    return "cursor-sdk dispatch failed"
+
+
 async def _finalize_failed(
     *,
     req: CursorDispatchRequest,
@@ -2753,7 +2789,16 @@ async def _finalize_failed(
         else None
     )
     effective_code = delivery.code if delivery else code
-    effective_message = delivery.message if delivery else message
+    provider_error = None
+    if isinstance(forensics, dict):
+        raw_provider = forensics.get("provider_error")
+        if isinstance(raw_provider, str):
+            provider_error = raw_provider
+    effective_message = _nonempty_dispatch_message(
+        delivery.message if delivery else message,
+        exc=exc,
+        provider_error=provider_error,
+    )
     effective_retryable = delivery.retryable if delivery else retryable
     effective_error = (
         delivery.worker_error
@@ -2899,7 +2944,8 @@ async def _finalize_success(
         )
         if _is_conductor:
             degraded_reason = (
-                _conductor_reason
+                provider_error_reason(outcome)
+                or _conductor_reason
                 or empty_assistant_turn_reason(outcome)
                 or empty_output_degraded_reason(outcome)
                 or residual_deliverable_reason(
@@ -2912,7 +2958,8 @@ async def _finalize_success(
             )
         else:
             degraded_reason = (
-                empty_assistant_turn_reason(outcome)
+                provider_error_reason(outcome)
+                or empty_assistant_turn_reason(outcome)
                 or empty_output_degraded_reason(outcome)
                 or _conductor_reason
                 or residual_deliverable_reason(

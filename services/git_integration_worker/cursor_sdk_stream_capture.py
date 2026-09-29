@@ -101,6 +101,9 @@ class StreamCapture:
     # Assistant text and thinking the drain used to drop. Same lines as the
     # live run handle when one is registered; readable after a cursor there.
     lines: tuple[RunLine, ...] = ()
+    # Last ``type=status`` ERROR message (SDKStatusMessage.message). Empty
+    # RUNNING/other statuses are ignored. Wins over empty_assistant_turn.
+    provider_error: str | None = None
 
     @property
     def tool_call_count(self) -> int:
@@ -287,6 +290,17 @@ def _record_usage_message(
             token_delta_sum[0] += tokens
 
 
+def _note_provider_status(message: Any, holder: list[str]) -> None:
+    """Keep the last non-empty ``type=status`` ERROR sentence."""
+    if str(getattr(message, "type", "") or "") != "status":
+        return
+    if str(getattr(message, "status", "") or "").upper() != "ERROR":
+        return
+    text = str(getattr(message, "message", "") or "").strip()
+    if text:
+        holder[:] = [text]
+
+
 def _process_tool_call_message(
     message: Any,
     *,
@@ -331,6 +345,7 @@ def observe_run_stream(
     token_delta_sum = [0]
     captured_request: list[tuple[str, str]] = []
     retained: list[RunLine] = []
+    provider_errors: list[str] = []
 
     def _emit(call_id: str, message: Any) -> None:
         observation = _observation_from_message(message)
@@ -396,6 +411,7 @@ def observe_run_stream(
                     )
                 sdk_message = getattr(event, "sdk_message", None)
                 if sdk_message is not None:
+                    _note_provider_status(sdk_message, provider_errors)
                     if getattr(sdk_message, "type", "") == "request":
                         request_id = getattr(sdk_message, "request_id", None)
                         if request_id and not captured_request:
@@ -413,6 +429,7 @@ def observe_run_stream(
                         )
         else:
             for message in run.stream():
+                _note_provider_status(message, provider_errors)
                 retain_stream_prose(message, dispatch_id=dispatch_id, local=retained)
                 _record_usage_message(
                     message,
@@ -447,6 +464,7 @@ def observe_run_stream(
         sdk_request_id=sdk_request_id,
         request_id_source=request_id_source,
         lines=tuple(retained),
+        provider_error=provider_errors[-1] if provider_errors else None,
     )
 
 
@@ -474,6 +492,7 @@ def finalize_request_id_capture(
         sdk_request_id=str(request_id),
         request_id_source="post_wait",
         lines=capture.lines,
+        provider_error=capture.provider_error,
     )
 
 
@@ -493,6 +512,7 @@ def finalize_stream_capture_usage(
         sdk_request_id=capture.sdk_request_id,
         request_id_source=capture.request_id_source,
         lines=capture.lines,
+        provider_error=capture.provider_error,
     )
 
 
