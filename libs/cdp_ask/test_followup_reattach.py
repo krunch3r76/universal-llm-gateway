@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -124,15 +125,11 @@ def _patch_list_active(
         )
         return
 
-    calls = {"n": 0}
-
     def _list_active() -> list[_FakeReg]:
-        calls["n"] += 1
-        if reattach_empty:
-            # Resolve may call list_active multiple times before reattach runs.
-            if calls["n"] == 4:
-                return []
-            return [reg]
+        if reattach_empty and inspect.stack()[1].function == "ensure_cse_attached":
+            # 4dc48cd7e6 matches chat_url on the attachment journal, so a
+            # fixed list_active call index no longer falls on the mint probe.
+            return []
         return [reg]
 
     monkeypatch.setattr("claude_bundles.cdp_registry.list_active", _list_active)
@@ -390,7 +387,7 @@ async def test_operator_mint_with_lane_yields_seat_open_after_bind(
     monkeypatch.setattr(
         reg.cdp_lane,
         "_launch_chrome",
-        lambda port, profile: (profile.mkdir(parents=True, exist_ok=True) or 1),
+        lambda port, profile: profile.mkdir(parents=True, exist_ok=True) or 1,
     )
     monkeypatch.setattr(
         "cdp_ask.followup_reattach.connect_cdp",

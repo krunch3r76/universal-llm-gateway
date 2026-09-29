@@ -217,9 +217,9 @@ def apply_driving_seat_bind(
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """Mutate *active* to bind a driving-operator seat and close predecessors.
 
-    No-op when the row is not a driving operator (purpose not in
-    ``OPERATOR_PURPOSES`` or ``mission_kind == hop``) or ``parent_thread``
-    is empty. Caller must hold ``ports_lock``.
+    No-op when purpose is outside ``OPERATOR_PURPOSES`` or ``parent_thread``
+    is empty. Hop successors with an operator purpose bind this seat.
+    Caller must hold ``ports_lock``.
     """
     from claude_bundles.what_is_running_view import OPERATOR_PURPOSES
 

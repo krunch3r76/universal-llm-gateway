@@ -80,19 +80,25 @@ def test_seat_row_projection_field_set() -> None:
     assert "port" not in projected
 
 
-def test_hop_row_is_never_seat_open() -> None:
+def test_hop_successor_binds_driving_seat() -> None:
+    """Hop operator rows take the driving seat (4dc48cd7e6)."""
     active = {
         "reg-hop": _registry_record(
+            registration_id="reg-hop",
             mission_kind="hop",
             seat_lane=None,
             seat_bound_at=None,
         )
     }
-    bound, _released = apply_driving_seat_bind(active, "reg-hop")
-    assert bound is None
-    row = active["reg-hop"]
-    assert seat_open(row) is False
-    assert seat_row_from_registry_record(row) is None
+    bound, released = apply_driving_seat_bind(active, "reg-hop")
+    assert released == []
+    assert bound is not None
+    assert bound["mission_kind"] == "hop"
+    assert bound["parent_thread"] == "10479"
+    assert seat_open(bound) is True
+    projected = seat_row_from_registry_record(bound)
+    assert projected is not None
+    assert projected["registration_id"] == "reg-hop"
 
 
 def test_select_registration_id_picks_max_seat_bound_at_with_reason() -> None:
@@ -170,7 +176,9 @@ def test_two_seat_open_rows_selects_newest_bound_at() -> None:
         ),
     ]
     seat_rows = seat_rows_from_registry_records(records)
-    candidates = _candidates_from_seat_rows(seat_rows, "10479", frozenset({"operator-proxy"}))
+    candidates = _candidates_from_seat_rows(
+        seat_rows, "10479", frozenset({"operator-proxy"})
+    )
     reg_id, reason = _select_registration_id(candidates)
     assert reg_id == "reg-new"
     assert reason is not None
@@ -235,7 +243,9 @@ def test_http_resolution_picks_same_registration_id(records: list[dict]) -> None
 
 
 def test_http_path_enriches_chat_url_from_provenance() -> None:
-    seat_rows = seat_rows_from_registry_records([_registry_record(registration_id="reg-remote")])
+    seat_rows = seat_rows_from_registry_records(
+        [_registry_record(registration_id="reg-remote")]
+    )
     with patch(
         "cdp_ask.operator_seat_resolve._chat_url_from_provenance",
         return_value="https://claude.ai/chat/provenance",
@@ -289,7 +299,9 @@ def test_provenance_identity_mismatch_yields_no_chat_url() -> None:
 
 
 def test_http_provenance_failure_falls_back_to_null_chat_url() -> None:
-    seat_rows = seat_rows_from_registry_records([_registry_record(registration_id="reg-remote")])
+    seat_rows = seat_rows_from_registry_records(
+        [_registry_record(registration_id="reg-remote")]
+    )
     with (
         patch(
             "cdp_ask.operator_seat_resolve._chat_url_from_provenance",
