@@ -100,38 +100,13 @@ def _entity_get_body_response(
     """
     from markdown_sections import SectionError, list_sections, read_section
 
-    from ..db import query as db_query
-    from ..routes._skill_index import slug_from_row
-    from ..routes.boot._skill_trigger import _resolve_skill_file
+    from ..runbook_inline_body import read_entity_source_markdown
 
-    rows = db_query(
-        conn,
-        "SELECT id, name, source_uri FROM entities WHERE id = ?",
-        (resolved_id,),
-    )
-    if not rows:
-        return {"error": f"Entity not found: {resolved_id}"}
-    row = rows[0]
-    source_uri = row.get("source_uri")
-    if not source_uri or not str(source_uri).strip():
-        return {"error": "entity_has_no_source_uri", "entity_id": resolved_id}
-
-    slug = slug_from_row(row)
-    path = _resolve_skill_file(source_uri, slug)
-    if path is None:
-        return {
-            "error": "entity_body_not_resolvable",
-            "entity_id": resolved_id,
-            "source_uri": source_uri,
-        }
-    try:
-        body_text = path.read_text(encoding="utf-8")
-    except OSError:
-        return {
-            "error": "entity_body_not_readable",
-            "entity_id": resolved_id,
-            "source_uri": source_uri,
-        }
+    loaded = read_entity_source_markdown(conn, resolved_id)
+    if "error" in loaded:
+        return loaded
+    body_text = loaded["body_text"]
+    source_uri = loaded["source_uri"]
 
     base: dict[str, Any] = {
         "entity_id": resolved_id,
@@ -206,6 +181,7 @@ def _entity_get_single(
     raw_id: bool = False,
     section: str | None = None,
     full_body: bool | None = None,
+    include_body: bool | None = None,
 ) -> dict[str, Any]:
     try:
         canonical_id = _resolve_read_entity_id(
@@ -242,6 +218,7 @@ def _entity_get_single(
             entity_id=resolved_id,
             top_k=top_k,
             debug=debug,
+            include_body=include_body,
         )
     return _get_entity_impl(
         conn,
@@ -293,6 +270,7 @@ def _entity_get_batch(
     raw_id: bool = False,
     section: str | None = None,
     full_body: bool | None = None,
+    include_body: bool | None = None,
 ) -> dict[str, Any]:
     if not isinstance(entity_ids, list):
         return {"error": "entity_ids must be a list", "status_code": 400}
@@ -334,6 +312,7 @@ def _entity_get_batch(
                     raw_id=raw_id,
                     section=section,
                     full_body=full_body,
+                    include_body=include_body,
                 )
             except HTTPException as exc:
                 result = _http_error_dict(exc)
@@ -402,7 +381,8 @@ def _op_entity_get(
     raw_id: bool = False,
     section: str | None = None,
     full_body: bool | None = None,
-    **_: object,
+    include_body: bool | None = None,
+    **extra: object,
 ) -> dict[str, Any]:
     """Dispatch surface for entity_get (v2.4 §6.1).
 
@@ -417,11 +397,17 @@ def _op_entity_get(
     intent in {"cluster","impact"} — reserved; rejected until later phases.
     ``entity_ids`` — batch read; same ``intent``/options for every id; returns
     ``{"items": [...], "count": N}`` (batch mode supports ``body`` and ``card`` only).
+    ``include_body`` — on intent=card for ``type=runbook``, inline markdown from
+    ``source_uri`` (default on). Set false to omit. Ignored for other types
+    (surfaces ``validation_warnings``).
     """
+    from ._entity_get_param_surface import attach_entity_get_param_warnings
+
+    dropped_keys = sorted(extra.keys())
     if entity_ids is not None and entity_id is not None:
         return {"error": "both_entity_id_and_entity_ids", "status_code": 400}
     if entity_ids is not None:
-        return _entity_get_batch(
+        batch_result = _entity_get_batch(
             entity_ids,
             intent=intent,
             include_edges=include_edges,
@@ -434,6 +420,14 @@ def _op_entity_get(
             raw_id=raw_id,
             section=section,
             full_body=full_body,
+            include_body=include_body,
+        )
+        return attach_entity_get_param_warnings(
+            batch_result,
+            dropped_keys=dropped_keys,
+            include_body=include_body,
+            entity_type=None,
+            intent=intent,
         )
     if not entity_id:
         return {"error": "entity_id is required"}
@@ -484,7 +478,7 @@ def _op_entity_get(
     ):
         return {"error": "top_k must be int in [1, 50]"}
     with cortex_conn() as conn:
-        return _entity_get_single(
+        result = _entity_get_single(
             conn,
             entity_id=entity_id,
             intent=intent,
@@ -498,7 +492,16 @@ def _op_entity_get(
             raw_id=raw_id,
             section=section,
             full_body=full_body,
+            include_body=include_body,
         )
+    entity_type = result.get("type") if isinstance(result, dict) else None
+    return attach_entity_get_param_warnings(
+        result,
+        dropped_keys=dropped_keys,
+        include_body=include_body,
+        entity_type=str(entity_type) if entity_type is not None else None,
+        intent=intent,
+    )
 
 
 def _op_entity_create(

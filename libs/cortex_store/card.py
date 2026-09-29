@@ -247,6 +247,7 @@ def get_entity_card(
     source: str = "agent",
     agent: str = "web",
     session_id: str | None = None,
+    include_body: bool | None = None,
 ) -> dict[str, object]:
     """Build the Card v0 payload via projection-aware fetch + adapter dispatch."""
     rows_materialized = 0
@@ -444,6 +445,14 @@ def get_entity_card(
                 f"{existing}; {hint}" if isinstance(existing, str) and existing else hint
             )
     attach_terminal_facts(conn, payload, entity_id=entity_id)
+    from .runbook_inline_body import maybe_attach_runbook_body
+
+    maybe_attach_runbook_body(
+        payload,
+        conn,
+        dict(e),
+        include_body=include_body,
+    )
     return payload
 
 

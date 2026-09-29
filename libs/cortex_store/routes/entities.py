@@ -259,6 +259,13 @@ def get_entity(
             "Tunable; default 7. Applies to intent=card and intent=card-md."
         ),
     ),
+    include_body: bool | None = Query(
+        None,
+        description=(
+            "intent=card only: for type=runbook, inline markdown from source_uri "
+            "(default on when omitted). Set false to omit the body field."
+        ),
+    ),
 ) -> dict[str, object] | str:
     """Fetch one entity at the requested intent."""
     source = request.headers.get("x-cortex-source", "agent")
@@ -300,6 +307,7 @@ def get_entity(
                 source=source,
                 agent=agent,
                 session_id=session_id,
+                include_body=include_body,
             )
         return get_entity_impl(
             conn,
