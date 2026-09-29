@@ -78,6 +78,22 @@ def test_mint_without_materialize_omits_hub_only_skills(
     assert not (wt / ".cursor" / "skills" / "hub-only-skill" / "SKILL.md").is_file()
 
 
+def test_materialize_equal_roots_preserves_skill_dirs(tmp_path: Path) -> None:
+    """Equal hub/lane roots must not rmtree the source skill tree (12286 ENOENT)."""
+    root = tmp_path / "same-root"
+    for name in ("skill-a", "skill-b"):
+        skill_dir = root / ".cursor" / "skills" / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\nname: {name}\n---\nbody\n", encoding="utf-8"
+        )
+    materialize_hub_skill_trees_for_lane(hub_root=root, lane_root=root)
+    for name in ("skill-a", "skill-b"):
+        path = root / ".cursor" / "skills" / name / "SKILL.md"
+        assert path.is_file(), name
+        assert name in path.read_text(encoding="utf-8")
+
+
 def test_mint_materializes_hub_only_skills(source_repo: Path, tmp_path: Path) -> None:
     worktree_root = tmp_path / "worktrees"
     hub_skill = source_repo / ".cursor" / "skills" / "hub-only-skill"
