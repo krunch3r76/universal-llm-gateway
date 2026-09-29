@@ -147,6 +147,23 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             detail={"error": str(e), "reason": "supersedes_turn_invalid"},
         ) from e
     try:
+        from agent_bus_store.open_children import mark_harvested_closeouts
+
+        await asyncio.to_thread(
+            mark_harvested_closeouts,
+            parent_thread_id=turn.thread,
+            body=turn.body,
+            from_agent=turn.from_agent,
+        )
+    except Exception:
+        from universal_logging import get_logger
+
+        get_logger(__name__).warning(
+            "mark_harvested_closeouts failed: thread=%s",
+            turn.thread,
+            exc_info=True,
+        )
+    try:
         loop = asyncio.get_running_loop()
         loop.run_in_executor(
             None,

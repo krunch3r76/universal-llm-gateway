@@ -222,6 +222,23 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {thread_id} not found",
         )
+    try:
+        from agent_bus_store.open_children import mark_harvested_closeouts
+
+        await asyncio.to_thread(
+            mark_harvested_closeouts,
+            parent_thread_id=thread_id,
+            body=body.body,
+            from_agent=body.from_agent,
+        )
+    except Exception:
+        from universal_logging import get_logger
+
+        get_logger(__name__).warning(
+            "mark_harvested_closeouts failed: thread=%s",
+            thread_id,
+            exc_info=True,
+        )
     thread_row = await asyncio.to_thread(get_thread, thread_id) or thread_row
     turn_created = build_turn_created(
         prepared,
