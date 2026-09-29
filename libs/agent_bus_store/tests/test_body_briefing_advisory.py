@@ -6,13 +6,20 @@ from unittest.mock import patch
 
 from agent_bus_store import create_app
 from agent_bus_store.auth import require_token
-from agent_bus_store.body_auto_spill import prepare_body_for_insert
+from agent_bus_store.body_auto_spill import (
+    briefing_inline_head,
+    prepare_body_for_insert,
+)
 from agent_bus_store.body_briefing_advisory import (
     CHECKPOINT_PROFILE_SCHEMA_ADVISORY_MIN,
     CHECKPOINT_PROFILE_SILENT_MAX,
     briefing_advisory,
 )
 from agent_bus_store.turns_models import BRIEFING_TARGET_CHARS, MAX_TURN_BODY_CHARS
+from cortex_store.dispatch_ops._thread_sidecar import (
+    append_sidecar_pointer_line,
+    content_sha256,
+)
 from fastapi.testclient import TestClient
 
 
@@ -169,7 +176,14 @@ def test_default_profile_still_fires_over_target() -> None:
     assert advisory.reason == "over_briefing_target"
 
 
-def test_prepare_body_advisory_does_not_mutate_body() -> None:
+def test_prepare_body_over_briefing_auto_spills(tmp_path, monkeypatch) -> None:
+    """AC1/AC2 — parent baseline: refused 422 before briefing-target auto-spill."""
+    cortex_root = tmp_path / "cortex-files"
+    cortex_root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
+    import cortex_store.dispatch_ops._thread_sidecar as sidecar_mod
+
+    monkeypatch.setattr(sidecar_mod, "_FILES_ROOT", cortex_root)
     body = "y" * (BRIEFING_TARGET_CHARS + 1)
     prepared = prepare_body_for_insert(
         thread="1140",
@@ -177,8 +191,15 @@ def test_prepare_body_advisory_does_not_mutate_body() -> None:
         body=body,
         from_agent="cursor",
     )
-    assert prepared.body == body
-    assert prepared.advisory is not None
+    assert prepared.auto_spilled is True
+    assert prepared.sidecar_uri is not None
+    assert prepared.sidecar_sha256 == content_sha256(body)
+    assert prepared.advisory is None
+    head = briefing_inline_head(body, BRIEFING_TARGET_CHARS)
+    assert prepared.inline_chars == len(head)
+    assert prepared.body == append_sidecar_pointer_line(
+        head, sidecar_uri=prepared.sidecar_uri
+    )
 
 
 def test_prepare_body_auto_spill_suppresses_advisory(tmp_path, monkeypatch) -> None:
@@ -219,7 +240,10 @@ def _seed_thread(client: TestClient) -> str:
     return seed.json()["thread"]["id"]
 
 
-def test_post_turns_refuses_over_briefing_before_insert(tmp_path, monkeypatch) -> None:
+def test_post_turns_auto_spills_over_briefing_before_insert(
+    tmp_path, monkeypatch
+) -> None:
+    """AC1 — live /turns 201 envelope with auto_spilled fields."""
     body = "a" * (BRIEFING_TARGET_CHARS + 1)
     app = _app(tmp_path, monkeypatch)
     with TestClient(app) as client:
@@ -235,22 +259,24 @@ def test_post_turns_refuses_over_briefing_before_insert(tmp_path, monkeypatch) -
                 "after_turn": 1,
             },
         )
-        assert resp.status_code == 422, resp.text
-        detail = resp.json()["detail"]
-        assert detail["reason"] == "over_briefing_target"
-        assert detail["body_chars"] == len(body)
-        assert detail["target_chars"] == BRIEFING_TARGET_CHARS
-        assert "sidecar_content" in detail["message"]
-        assert (
-            client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").status_code
-            == 404
+        assert resp.status_code == 201, resp.text
+        turn = resp.json()
+        assert turn["auto_spilled"] is True
+        assert turn["sidecar_uri"]
+        assert turn["sidecar_sha256"] == content_sha256(body)
+        assert turn["inline_chars"] == len(
+            briefing_inline_head(body, BRIEFING_TARGET_CHARS)
         )
+        stored = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=2"
+        ).json()
+        assert stored["body"].endswith(f"Sidecar: {turn['sidecar_uri']}")
 
 
-def test_post_turns_refuses_agent_bus_12286_turn845_specimen(
+def test_post_turns_auto_spills_agent_bus_12286_turn845_specimen(
     tmp_path, monkeypatch
 ) -> None:
-    """AC4 — agent-bus:12286 turn 845 shape (3139 chars, default profile, no sidecar)."""
+    """agent-bus:12286 turn 845 shape (3139 chars, default profile, no sidecar)."""
     body = "a" * 3139
     app = _app(tmp_path, monkeypatch)
     with TestClient(app) as client:
@@ -266,10 +292,8 @@ def test_post_turns_refuses_agent_bus_12286_turn845_specimen(
                 "after_turn": 1,
             },
         )
-        assert resp.status_code == 422, resp.text
-        detail = resp.json()["detail"]
-        assert detail["reason"] == "over_briefing_target"
-        assert detail["body_chars"] == 3139
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["auto_spilled"] is True
 
 
 def test_post_turns_allow_long_body_exempt_from_refusal(tmp_path, monkeypatch) -> None:
@@ -342,10 +366,10 @@ def _parked_specimen_body() -> str:
     return body
 
 
-def test_send_refuses_agent_bus_12286_turn846_parked_specimen(
+def test_send_auto_spills_agent_bus_12286_turn846_parked_specimen(
     tmp_path, monkeypatch
 ) -> None:
-    """AC4 — continue-send path (not /turns). PARKED is not an inline-contract prefix."""
+    """AC1 — continue-send path (not /turns). PARKED is not an inline-contract prefix."""
     body = _parked_specimen_body()
     app = _app(tmp_path, monkeypatch)
     with TestClient(app) as client:
@@ -361,16 +385,13 @@ def test_send_refuses_agent_bus_12286_turn846_parked_specimen(
                 "after_turn": 1,
             },
         )
-        assert resp.status_code == 422, resp.text
-        detail = resp.json()["detail"]
-        assert detail["reason"] == "over_briefing_target"
-        assert detail["body_chars"] == 2247
-        assert detail["target_chars"] == BRIEFING_TARGET_CHARS
-        assert "sidecar_content" in detail["message"]
-        assert "sidecar_content" in detail["suggestion"]
-        assert (
-            client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").status_code
-            == 404
+        assert resp.status_code == 201, resp.text
+        payload = resp.json()
+        assert payload["auto_spilled"] is True
+        assert payload["sidecar_uri"]
+        assert payload["turn"]["auto_spilled"] is True
+        assert payload["inline_chars"] == len(
+            briefing_inline_head(body, BRIEFING_TARGET_CHARS)
         )
 
 
@@ -412,6 +433,44 @@ def test_send_sidecar_content_exempt_from_refusal(tmp_path, monkeypatch) -> None
             },
         )
         assert resp.status_code == 201, resp.text
+
+
+def test_briefing_auto_spill_keeps_disposition_leadin_and_full_sidecar(
+    tmp_path, monkeypatch
+) -> None:
+    """AC2 — verdict/plane lead-in stays inline; sidecar holds the full body."""
+    app = _app(tmp_path, monkeypatch)
+    cortex_root = tmp_path / "cortex-files"
+    lead = "TYPE: DISPOSITION\nverdict: complete\nplane: code\n\n"
+    tail = "detail " * 500
+    body = lead + tail
+    assert len(body) > BRIEFING_TARGET_CHARS
+    with TestClient(app) as client:
+        thread_id = _seed_thread(client)
+        resp = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "disposition specimen",
+                "body": body,
+                "after_turn": 1,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        turn = resp.json()
+        stored = client.get(
+            f"/turns/by-number?thread={thread_id}&turn_number=2"
+        ).json()
+        inline, pointer = stored["body"].rsplit("\n\nSidecar: ", 1)
+        assert inline.startswith("TYPE: DISPOSITION")
+        assert "verdict: complete" in inline
+        assert "plane: code" in inline
+        assert len(inline) <= BRIEFING_TARGET_CHARS
+        sidecar_path = cortex_root / turn["sidecar_uri"].removeprefix("cortex://")
+        sidecar_text = sidecar_path.read_text(encoding="utf-8")
+        assert body in sidecar_text
 
 
 def test_send_checkpoint_profile_exempt_from_refusal(tmp_path, monkeypatch) -> None:

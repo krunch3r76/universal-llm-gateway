@@ -314,6 +314,20 @@ class TurnCreated(BaseModel):
             "write_thread_sidecar_for_send); None when no sidecar was written."
         ),
     )
+    auto_spilled: bool | None = Field(
+        default=None,
+        description=(
+            "True when the store auto-spilled an over-briefing-target inline body "
+            "to a cortex sidecar (briefing-target path, distinct from 8k soft spill)."
+        ),
+    )
+    inline_chars: int | None = Field(
+        default=None,
+        description=(
+            "Character length of the inline head before the Sidecar: pointer when "
+            "auto_spilled is true."
+        ),
+    )
     briefing_advisory: dict[str, object] | None = Field(
         default=None,
         description=(
@@ -599,6 +613,8 @@ class TurnSendCreated(BaseModel):
     marked_read: int = 0
     sidecar_uri: str | None = None
     sidecar_sha256: str | None = None
+    auto_spilled: bool | None = None
+    inline_chars: int | None = None
 
 
 class ThreadClose(BaseModel):
