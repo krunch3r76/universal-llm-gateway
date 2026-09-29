@@ -120,8 +120,20 @@ def _files_expected_field_text(prose: str) -> str:
     return "\n".join(block)
 
 
+def _normalize_repo_rel(rel_path: str) -> str:
+    """Drop a literal ``./`` prefix and leading slashes.
+
+    ``str.lstrip("./")`` is a character set. It also deletes the leading dot
+    of ``.cursor/skills/...``, so the prefix check never matches.
+    """
+    norm = rel_path.replace("\\", "/").strip()
+    while norm.startswith("./"):
+        norm = norm[2:]
+    return norm.lstrip("/")
+
+
 def _is_cursor_skills_path(rel_path: str) -> bool:
-    norm = rel_path.replace("\\", "/").lstrip("./")
+    norm = _normalize_repo_rel(rel_path)
     return norm == ".cursor/skills" or norm.startswith(_CURSOR_SKILLS_PREFIX)
 
 
@@ -136,7 +148,7 @@ def packet_scopes_cursor_skill_path(packet_text: str | None, rel_path: str) -> b
     field = _files_expected_field_text(packet_text)
     if not field:
         return False
-    norm = rel_path.replace("\\", "/").lstrip("./")
+    norm = _normalize_repo_rel(rel_path)
     for match in _SKILL_SCOPE_TOKEN_RE.finditer(field):
         token = match.group(0).rstrip("/")
         if token == ".cursor/skills":
