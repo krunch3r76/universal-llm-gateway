@@ -1,7 +1,7 @@
 ---
 name: claude-ai-mcp-connect
-description: "Connect or restore claude.ai toys MCP (/mcp/life) — operator restore defaults to refresh-connector (not plain restore); OAuth DCR, permission repair, dual-endpoint."
-trigger_match_terms: ["claude-ai-mcp-connect", "claude.ai", "claude_ai_mcp_connect", "connect", "defaults", "life", "mcp", "operator", "plain", "refresh-connector", "restore", "toys"]
+description: "Connect or restore claude.ai toys (/mcp/life) and ulg-code (/mcp/code). Operator pair is refresh-operator-connectors. ulg-code allows only manage, observability, team_dispatch."
+trigger_match_terms: ["claude-ai-mcp-connect", "claude.ai", "claude_ai_mcp_connect", "connect", "defaults", "life", "mcp", "operator", "plain", "refresh-connector", "refresh-operator-connectors", "restore", "toys", "ulg-code"]
 generator_version: "1.0.0"
 ---
 
@@ -25,7 +25,8 @@ Operator asks to **restore / fix / reconnect toys** (incl. "connection expired",
 **claude.ai connector display name (SETTLED):** `toys` — product label for what’s available.
 **Cursor CallMcpTool / mcp.json ids (BOUND):** `vortex-life` → `/mcp/life`, `vortex-code` → `/mcp/code`. Legacy monolithic `user-vortex` retired.
 **If UI still shows `vortex`:** rename or remove+re-add as `toys` → `/mcp/life` (OAuth rules below).
-**Cursor coding seats:** `https://<mcp-host>/mcp/code` via `~/.cursor/mcp.json` (`vortex-code`) — ¬ this skill.
+**claude.ai code connector (SETTLED):** `ulg-code` → `https://<mcp-host>/mcp/code`. Tool policy is the ops allowlist below, not the toys blanket.
+**Cursor coding seats:** same URL via `~/.cursor/mcp.json` (`vortex-code`). That file is not this skill's UI path.
 
 ### Dual-endpoint invariant (BINDING)
 
@@ -41,7 +42,7 @@ Cross-ref: `agent-skills/jupiter-browser-via-mcp` · `claude-ai-bundle-sync` (Sk
 
 ## When to load
 
-- Operator: "connect claude.ai to MCP", "restore toys connection", "rewire toys connector", "MCP connection expired", "toys not working"
+- Operator: "connect claude.ai to MCP", "restore toys connection", "rewire toys connector", "MCP connection expired", "toys not working", "reconnect ulg-code", "disable ulg-code tools"
 - Dual-endpoint cutover / anyone proposing bare `/mcp` as the live URL
 - Toast: `Couldn't register with vortex's sign-in service`
 
@@ -84,11 +85,32 @@ scripts/cortex/claude-ai-sync-jupiter restore-connector \
 
 `restore-connector` opens Connectors; if life URL exists under a legacy name (`vortex`) and `--connector-name toys`, **Remove → Add custom** then OAuth. Otherwise Connect/Reconnect + Approve. Returns `restored` | `already_connected` | `renamed_readded`. `--force-reconnect` forces Disconnect then Connect even when Connected. **`refresh-connector`** = `restore-connector --force-reconnect` then `set-tool-permissions`.
 
-`set-tool-permissions` targets only the `toys` life connector's `Other tools`
-group. It returns `changed` or `already_set`, and reload-verifies `Always allow`
-plus a non-empty tools surface. `refresh-connector` composes forced reconnect
-with that permission repair; ordinary `restore-connector` does not broaden
-permissions.
+`set-tool-permissions` selects the policy from the URL. `/mcp/life` (name
+`toys`) sets the `Other tools` blanket to Always allow and returns `changed`
+or `already_set`. `/mcp/code` (name `ulg-code`) sets per-tool radios: Always
+allow only **Manage Services**, **Observability**, and **Team Dispatch**;
+every other radio, including read-only tools and Tool Search, is Blocked.
+Playwright `locator.click` is required — a DOM `element.click()` does not
+persist. Code-ops stdout is the status word plus `code-ops allow=3 blocked=<n>`
+after reload. `refresh-connector` is forced reconnect, then that repair.
+It strips `--add-only` before the permission script. Ordinary
+`restore-connector` does not change permissions.
+
+### Operator pair (toys + ulg-code)
+
+Reconnect both, or re-apply the ulg-code allowlist after a schema change:
+
+```bash
+scripts/cortex/claude-ai-sync-jupiter refresh-operator-connectors
+```
+
+Order is fixed: toys (`/mcp/life`) first, then ulg-code with `--add-only` so
+the life row is not removed. Permissions only, when both are already Connected:
+
+```bash
+scripts/cortex/claude-ai-sync-jupiter set-tool-permissions \
+  --mcp-url 'https://<mcp-host>/mcp/code' --connector-name ulg-code
+```
 
 ∀ automation: `BROWSER_CDP_URL=http://127.0.0.1:9222` on Jupiter; SSH wrapper sets it.
 
@@ -171,7 +193,7 @@ UI **Connected** ⇏ tools work — stale CSE/chat sessions keep dead handles af
 
 | Script | Role |
 |---|---|
-| `scripts/cortex/claude-ai-sync-jupiter` | `ensure-chrome` · `restore-connector` · `set-tool-permissions` · `refresh-connector` |
+| `scripts/cortex/claude-ai-sync-jupiter` | `ensure-chrome` · `restore-connector` · `set-tool-permissions` · `refresh-connector` · `refresh-operator-connectors` |
 | `scripts/cortex/restore_claude_mcp_connector.py` | Playwright Connect + Approve |
 | `scripts/cortex/set_claude_tool_permissions.py` | Playwright permission repair + reload verification |
 | `scripts/mcp-fastmcp-remote-bridge.py` | Cursor stdio→HTTP bridge |
