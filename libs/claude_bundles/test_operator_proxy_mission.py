@@ -106,6 +106,10 @@ def test_structural_briefing_commission_is_ulg_code_team_dispatch() -> None:
     assert "lane-act-gates" in MISSION_SKILL_SLUGS
 
 
+def test_mission_skill_slugs_include_lane_act_gates() -> None:
+    assert "lane-act-gates" in MISSION_SKILL_SLUGS
+
+
 def test_legal_subset_forbidden_disjoint_a9() -> None:
     assert LIFE_SURFACE_LEGAL_TOOLS.isdisjoint(LIFE_SURFACE_FORBIDDEN_TOOLS)
     for tool in LIFE_SURFACE_LEGAL_TOOLS:

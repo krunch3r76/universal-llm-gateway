@@ -95,6 +95,37 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
     """Create one turn, enforcing unread and status invariants from storage logic."""
     turn.thread = await asyncio.to_thread(normalize_thread_id, turn.thread)
     thread_tags = await asyncio.to_thread(load_thread_tags, turn.thread)
+    from ..seat_registration_gate import (
+        apply_standing_bind,
+        seat_registration_refusal,
+    )
+
+    standing_refusal = await asyncio.to_thread(
+        apply_standing_bind,
+        thread_id=turn.thread,
+        from_agent=turn.from_agent,
+        body=turn.body,
+        tags=thread_tags,
+    )
+    if standing_refusal is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=standing_refusal,
+        )
+    thread_tags = await asyncio.to_thread(load_thread_tags, turn.thread)
+    seat_refusal = await asyncio.to_thread(
+        seat_registration_refusal,
+        thread_id=turn.thread,
+        from_agent=turn.from_agent,
+        subject=turn.subject,
+        body=turn.body,
+        tags=thread_tags,
+    )
+    if seat_refusal is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=seat_refusal,
+        )
     storage_supersedes, echo_turn_number, echo_turn_id = await asyncio.to_thread(
         _resolve_send_supersedes,
         thread_id=turn.thread,
@@ -146,6 +177,23 @@ async def create_turn(turn: TurnCreate) -> TurnCreated:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"error": str(e), "reason": "supersedes_turn_invalid"},
         ) from e
+    try:
+        from agent_bus_store.open_children import mark_harvested_closeouts
+
+        await asyncio.to_thread(
+            mark_harvested_closeouts,
+            parent_thread_id=turn.thread,
+            body=turn.body,
+            from_agent=turn.from_agent,
+        )
+    except Exception:
+        from universal_logging import get_logger
+
+        get_logger(__name__).warning(
+            "mark_harvested_closeouts failed: thread=%s",
+            turn.thread,
+            exc_info=True,
+        )
     try:
         loop = asyncio.get_running_loop()
         loop.run_in_executor(

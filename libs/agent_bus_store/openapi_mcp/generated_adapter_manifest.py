@@ -7,7 +7,7 @@ Regenerate:
 
 from __future__ import annotations
 
-OPENAPI_SHA256 = "6af9aeaaea03e658512a2c0bce74500ef2fdc80fe5a897b742ac09e259e00255"
+OPENAPI_SHA256 = "858bdd6b44ed90eee83f27f427f67622898697b3fa5ed3741c8b3c542bf6d6d6"
 FACADE_TOOL = "agent-bus"
 SERVED_OPS: dict[str, dict[str, str]] = {
     "branch_associate": {
@@ -75,6 +75,11 @@ SERVED_OPS: dict[str, dict[str, str]] = {
         "path": "/threads/{thread_id}/turns/read-state",
         "operation_id": "bulk_mark_read_state_route_threads__thread_id__turns_read_state_patch",
     },
+    "open_children": {
+        "method": "GET",
+        "path": "/threads/{thread_id}/open-children",
+        "operation_id": "open_children_route_threads__thread_id__open_children_get",
+    },
     "post": {
         "method": "POST",
         "path": "/threads/with-turn",
@@ -132,7 +137,7 @@ SERVED_OPS: dict[str, dict[str, str]] = {
     },
 }
 NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
-    "@components": "07e3b802cfa338e6387fec21caa17dd2eeb6ebb551a488471dd78e3a59dc8b0a",
+    "@components": "1d8709f320369c05252fe6a185240b7cb2499b2e3f1482ca37ed559d849122d1",
     "@info": "a8986fa23eba4ccbefb9d1d606b05ebcfa8474d790ceb9a8d83b4b3be5c8e983",
     "GET /dispatch-links/{execution_id}": "bec5bf28fc7e55d2aaae6fdd2f4af55a177f74f7030987e27c7bd9d73ebe86a3",
     "GET /health": "1863eebbca661a08d0f2f879e48af294a3e3619e30ff42052a2ffdb33010d20c",
@@ -152,7 +157,7 @@ NON_BINDING_PATH_FINGERPRINTS: dict[str, str] = {
     "POST /threads/{thread_id}/cse-associate": "53b29011b1b08907286ffff3e9a3f7907ba3cd643bd1ac9f032521193ce01d5a",
     "POST /threads/{thread_id}/dispatch-admit": "27aad9c96e97de4adbe40143028f8c440509ac92d8aff28b7f21e75c86c2ed82",
     "POST /threads/{thread_id}/dispatch-claim-and-post": "4451b725f714794ab82d68c1654f4b46441122bd4ad9f6624853fa0e0b04002e",
-    "POST /threads/{thread_id}/dispatch-terminate": "069bc1d52a990d3220dbaa715d3c2b5390450b7c3b3958feb9c6fdd9dfa6a5bb",
+    "POST /threads/{thread_id}/dispatch-terminate": "7d0134029e2ebb637b6f3c1e7fd4c9ff991a366149b806cbb927e17f6f324ff4",
     "POST /threads/{thread_id}/rename": "b324915b8c6a73f4ce1d6baec4d71b6e0ec21e65a7e5fef3f217ad508540353d",
     "POST /threads/{thread_id}/resume-fence/arm": "59cf0c063d4f918c72af8f0ed45ffa6688cba2f84d82400ffa1086e8f7d9842a",
 }

@@ -170,6 +170,37 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=citation_refusal,
         )
+    from ...seat_registration_gate import (
+        apply_standing_bind,
+        seat_registration_refusal,
+    )
+
+    standing_refusal = await asyncio.to_thread(
+        apply_standing_bind,
+        thread_id=thread_id,
+        from_agent=body.from_agent,
+        body=body.body,
+        tags=thread_tags,
+    )
+    if standing_refusal is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=standing_refusal,
+        )
+    thread_tags = await asyncio.to_thread(load_thread_tags, thread_id)
+    seat_refusal = await asyncio.to_thread(
+        seat_registration_refusal,
+        thread_id=thread_id,
+        from_agent=body.from_agent,
+        subject=body.subject,
+        body=body.body,
+        tags=thread_tags,
+    )
+    if seat_refusal is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=seat_refusal,
+        )
     storage_supersedes, echo_turn_number, echo_turn_id = await asyncio.to_thread(
         _resolve_send_supersedes,
         thread_id=thread_id,
@@ -221,6 +252,23 @@ async def send_route(body: TurnSendCreate) -> TurnSendCreated:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Thread {thread_id} not found",
+        )
+    try:
+        from agent_bus_store.open_children import mark_harvested_closeouts
+
+        await asyncio.to_thread(
+            mark_harvested_closeouts,
+            parent_thread_id=thread_id,
+            body=body.body,
+            from_agent=body.from_agent,
+        )
+    except Exception:
+        from universal_logging import get_logger
+
+        get_logger(__name__).warning(
+            "mark_harvested_closeouts failed: thread=%s",
+            thread_id,
+            exc_info=True,
         )
     thread_row = await asyncio.to_thread(get_thread, thread_id) or thread_row
     turn_created = build_turn_created(
