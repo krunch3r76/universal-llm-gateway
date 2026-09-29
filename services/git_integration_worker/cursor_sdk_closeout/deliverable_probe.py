@@ -9,15 +9,22 @@ imports that sibling by defining module, not through ``__init__``.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
+from implement_admission.admission_read import frontmatter_list_value
 from implement_admission.closeout_models import ImplementCloseout, Verification
 from implement_admission.deliverable_verification import (
     build_gate_d_verification,
     evaluate_deliverable_verification,
 )
-from implement_admission.normalize import _files_from_packet
+from implement_admission.normalize import (
+    _MAX_FILE_PATH_LEN,
+    _extract_block,
+    _files_from_packet,
+    _strip_fenced_blocks,
+)
 from implement_admission.spec import CloseoutStatus, ImplementSpec
 
 from services.git_integration_worker.cursor_sdk_capture_status import ChangeSet
@@ -32,6 +39,55 @@ def _files_expected_from_packet(packet_text: str | None) -> list[str]:
     return _files_from_packet(packet_text)
 
 
+def _accept_cortex_pin_uri(candidate: str) -> bool:
+    """Pin targets must be file-like cortex URIs (not directories or scrape garbage)."""
+    if not candidate.startswith("cortex://"):
+        return False
+    if not candidate or len(candidate) > _MAX_FILE_PATH_LEN:
+        return False
+    if any(ch.isspace() for ch in candidate):
+        return False
+    # Trailing slash ⇒ directory; pin writer rejects these — drop at collection.
+    if candidate.endswith("/"):
+        return False
+    return True
+
+
+def _cortex_from_scope(scope_text: str) -> list[str]:
+    paths = re.findall(r"`([^`]+)`", scope_text)
+    return [p.strip() for p in paths if _accept_cortex_pin_uri(p.strip())]
+
+
+def _cortex_uris_from_packet(packet_text: str | None) -> list[str]:
+    """Cortex deliverables for pinning — same scrape window as ``_files_from_packet``."""
+    if not packet_text:
+        return []
+    frontmatter_files = frontmatter_list_value(packet_text, "files_expected")
+    if frontmatter_files is not None:
+        seen: set[str] = set()
+        out: list[str] = []
+        for raw in frontmatter_files:
+            candidate = raw.strip()
+            if _accept_cortex_pin_uri(candidate) and candidate not in seen:
+                seen.add(candidate)
+                out.append(candidate)
+        return out
+
+    seen: set[str] = set()
+    out: list[str] = []
+    scope_text = _extract_block(packet_text, "scope") or ""
+    for candidate in _cortex_from_scope(scope_text):
+        if candidate not in seen:
+            seen.add(candidate)
+            out.append(candidate)
+    for raw in re.findall(r"`([^`]+)`", _strip_fenced_blocks(packet_text)):
+        candidate = raw.strip()
+        if _accept_cortex_pin_uri(candidate) and candidate not in seen:
+            seen.add(candidate)
+            out.append(candidate)
+    return out
+
+
 def _files_expected_for_pinning(
     packet_text: str | None,
     deliverables_expected: bool,
@@ -40,7 +96,13 @@ def _files_expected_for_pinning(
     if residual_expected_paths:
         return list(residual_expected_paths)
     if deliverables_expected:
-        return _files_expected_from_packet(packet_text)
+        files = _files_expected_from_packet(packet_text)
+        seen = set(files)
+        for uri in _cortex_uris_from_packet(packet_text):
+            if uri not in seen:
+                seen.add(uri)
+                files.append(uri)
+        return files
     return []
 
 

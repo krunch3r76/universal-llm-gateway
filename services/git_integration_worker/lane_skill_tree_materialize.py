@@ -26,6 +26,8 @@ def materialize_hub_skill_trees_for_lane(
     """Mirror hub working-tree skill SOT directories into ``lane_root``."""
     hub = hub_root.resolve()
     lane = lane_root.resolve()
+    if hub == lane:
+        return
     for parts in _SKILL_TREE_ROOTS:
         src_base = hub.joinpath(*parts)
         if not src_base.is_dir():
@@ -38,6 +40,8 @@ def materialize_hub_skill_trees_for_lane(
             if not (child / "SKILL.md").is_file():
                 continue
             dest = dst_base / child.name
+            if child.resolve() == dest.resolve():
+                continue
             if dest.exists():
                 shutil.rmtree(dest)
             shutil.copytree(child, dest)

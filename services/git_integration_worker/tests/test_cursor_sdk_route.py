@@ -2720,6 +2720,7 @@ async def test_gated_residual_captures_wt_baseline(
         dispatch_id="gate-lb-disp",
         execution_id="exec-gate-lb",
         handoff_contract="none",
+        read_only=False,
         message="---\ncontract: none\n---\np",
     )
     fake_baseline = {

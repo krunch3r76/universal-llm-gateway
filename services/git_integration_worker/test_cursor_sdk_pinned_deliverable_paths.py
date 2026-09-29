@@ -71,6 +71,72 @@ def test_files_expected_for_pinning_empty_for_non_deliverable_consult() -> None:
     assert result == []
 
 
+_MIXED_URI_PACKET = """\
+<scope>
+Deliver:
+- `workspaces://universal-llm-gateway/pkg/foo.py`
+- `libs/implement_admission/normalize.py`
+- `cortex://notes/system/specs/pin-target.md`
+</scope>
+"""
+
+
+_FRONTMATTER_BODY_LEAK_PACKET = """\
+---
+files_expected:
+  - libs/foo/bar.py
+---
+
+<scope>
+Do not pin body prose: `cortex://notes/system/specs/body-leak.md`
+</scope>
+"""
+
+
+def test_files_expected_for_pinning_frontmatter_blocks_body_cortex_scrape() -> None:
+    result = _files_expected_for_pinning(
+        _FRONTMATTER_BODY_LEAK_PACKET,
+        deliverables_expected=True,
+        residual_expected_paths=(),
+    )
+    assert result == ["libs/foo/bar.py"]
+    assert "cortex://notes/system/specs/body-leak.md" not in result
+
+
+_FENCED_CORTEX_LEAK_PACKET = """\
+<scope>
+Pin `cortex://notes/system/specs/scope-target.md` only.
+</scope>
+
+```
+Example — not in scope:
+`cortex://notes/system/specs/fenced-leak.md`
+```
+"""
+
+
+def test_files_expected_for_pinning_skips_fenced_cortex_tokens() -> None:
+    result = _files_expected_for_pinning(
+        _FENCED_CORTEX_LEAK_PACKET,
+        deliverables_expected=True,
+        residual_expected_paths=(),
+    )
+    assert result == ["cortex://notes/system/specs/scope-target.md"]
+    assert "cortex://notes/system/specs/fenced-leak.md" not in result
+
+
+def test_files_expected_for_pinning_plain_paths_and_cortex_not_workspaces() -> None:
+    """Cortex URIs supplement repo paths; workspaces:// stays out of pinning scope."""
+    result = _files_expected_for_pinning(
+        _MIXED_URI_PACKET,
+        deliverables_expected=True,
+        residual_expected_paths=(),
+    )
+    assert "libs/implement_admission/normalize.py" in result
+    assert "cortex://notes/system/specs/pin-target.md" in result
+    assert "workspaces://universal-llm-gateway/pkg/foo.py" not in result
+
+
 def test_resolve_cortex_pinned_deliverables_rejects_directory_target(
     tmp_path: Path,
 ) -> None:
