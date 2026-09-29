@@ -13,6 +13,7 @@ import httpx
 from transport_utils import DEFAULT_AGENT_BUS_URL, make_async_client
 
 from .admission import FrontierEndpointError
+from .operator_packet_author_gate import operator_packet_author_refusal
 
 _PLACEHOLDER_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"<\s*INSERT[^>\n]*>", re.IGNORECASE),
@@ -511,6 +512,15 @@ async def resolve_generate_prompt_resolution(
                 status_code=422,
                 code="packet_path_empty",
             )
+        if (fix_hint := operator_packet_author_refusal(text)) is not None:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="packet_path",
+                reason=fix_hint,
+                status_code=422,
+                code="operator_packet_author_route",
+                details={"fix_hint": fix_hint},
+            )
         reject_unresolved_placeholders(
             request_id=request_id, text=text, field="packet_path"
         )
@@ -555,6 +565,15 @@ async def resolve_generate_prompt_resolution(
                 reason=f"sidecar_ref {ref!r} resolved to an empty file",
                 status_code=422,
                 code="sidecar_ref_empty",
+            )
+        if (fix_hint := operator_packet_author_refusal(text)) is not None:
+            raise FrontierEndpointError(
+                request_id=request_id,
+                field="sidecar_ref",
+                reason=fix_hint,
+                status_code=422,
+                code="operator_packet_author_route",
+                details={"fix_hint": fix_hint},
             )
         reject_unresolved_placeholders(
             request_id=request_id, text=text, field="sidecar_ref"

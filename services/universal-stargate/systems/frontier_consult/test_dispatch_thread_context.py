@@ -17,6 +17,10 @@ from systems.frontier_consult.dispatch_thread_context import (
     resolve_generate_prompt_body,
     resolve_generate_prompt_resolution,
 )
+from systems.frontier_consult.operator_packet_author_gate import (
+    FIX_HINT,
+    operator_packet_author_refusal,
+)
 
 
 def test_allowed_prompt_recipients_api_role() -> None:
@@ -342,3 +346,111 @@ async def test_multiple_explicit_prompt_sources_fail_closed() -> None:
             prompt="Review this.",
         )
     assert excinfo.value.code == "multiple_prompt_sources"
+
+
+def _operator_sidecar_without_escape() -> str:
+    return (
+        "---\n"
+        "from_agent: web-anthropic\n"
+        "to: cursor-sdk\n"
+        "---\n"
+        "Implement the delete-everything packet.\n"
+    )
+
+
+def test_operator_packet_author_refusal_direct() -> None:
+    assert operator_packet_author_refusal(_operator_sidecar_without_escape()) == FIX_HINT
+    assert operator_packet_author_refusal("from_agent: cursor-sdk\n\nDo work.") is None
+
+
+@pytest.mark.asyncio
+async def test_operator_packet_sidecar_refused_without_escape() -> None:
+    fixture = _operator_sidecar_without_escape()
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context._read_schemed_prompt_file",
+        return_value=fixture,
+    ):
+        with pytest.raises(FrontierEndpointError) as excinfo:
+            await resolve_generate_prompt_resolution(
+                request_id="req-gate3-refuse",
+                role="cursor-sdk",
+                dispatch_thread_id="13443",
+                sidecar_ref="cortex://notes/system/threads/bad-packet.md",
+            )
+    assert excinfo.value.status_code == 422
+    assert excinfo.value.code == "operator_packet_author_route"
+    assert excinfo.value.field == "sidecar_ref"
+    assert excinfo.value.details is not None
+    assert "lane-act-gates step 3" in excinfo.value.details["fix_hint"]
+
+
+@pytest.mark.asyncio
+async def test_operator_packet_sidecar_passes_with_retrieval_line() -> None:
+    fixture = (
+        "---\n"
+        "from_agent: web-anthropic\n"
+        "---\n"
+        "retrieval:\n"
+        "  scope: llm_prompting\n"
+        "Body after retrieval block.\n"
+    )
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context._read_schemed_prompt_file",
+        return_value=fixture,
+    ):
+        resolution = await resolve_generate_prompt_resolution(
+            request_id="req-gate3-retrieval",
+            role="cursor-sdk",
+            dispatch_thread_id="13443",
+            sidecar_ref="cortex://notes/system/threads/ok-packet.md",
+        )
+    assert "Body after retrieval block." in resolution.text
+
+
+@pytest.mark.asyncio
+async def test_operator_packet_sidecar_passes_with_authored_by_line() -> None:
+    fixture = (
+        "---\n"
+        "from_agent: web-anthropic\n"
+        "---\n"
+        "authored_by: operator · reason: author route skipped under hop pressure\n"
+        "Packet body.\n"
+    )
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context._read_schemed_prompt_file",
+        return_value=fixture,
+    ):
+        resolution = await resolve_generate_prompt_resolution(
+            request_id="req-gate3-authored",
+            role="cursor-sdk",
+            dispatch_thread_id="13443",
+            sidecar_ref="cortex://notes/system/threads/operator-packet.md",
+        )
+    assert resolution.text.strip().endswith("Packet body.")
+
+
+@pytest.mark.asyncio
+async def test_operator_packet_cursor_sdk_from_agent_ungated() -> None:
+    fixture = "---\nfrom_agent: cursor-sdk\n---\nNo retrieval or authored_by line.\n"
+    with patch(
+        "systems.frontier_consult.dispatch_thread_context._read_schemed_prompt_file",
+        return_value=fixture,
+    ):
+        resolution = await resolve_generate_prompt_resolution(
+            request_id="req-gate3-cursor-sdk",
+            role="cursor-sdk",
+            dispatch_thread_id="13443",
+            sidecar_ref="cortex://notes/system/threads/sdk-packet.md",
+        )
+    assert "No retrieval" in resolution.text
+
+
+@pytest.mark.asyncio
+async def test_inline_prompt_unaffected_by_operator_packet_gate() -> None:
+    resolution = await resolve_generate_prompt_resolution(
+        request_id="req-gate3-inline",
+        role="cursor-sdk",
+        dispatch_thread_id="13443",
+        prompt="hello",
+    )
+    assert resolution.text == "hello"
