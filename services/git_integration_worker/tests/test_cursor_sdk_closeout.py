@@ -1136,7 +1136,9 @@ def test_prepare_closeout_delivery_with_baseline_computes_files(
         baseline=baseline,
     )
     payload = json.loads(delivery.body)
-    assert payload["files_created"] == ["new_file.py"]
+    assert payload["files_created"] == []
+    ambient = payload.get("files_ambient_repo_movement") or []
+    assert any(entry["path"] == "new_file.py" for entry in ambient)
     assert payload["verification"] != []
 
 

@@ -71,6 +71,28 @@ def test_files_expected_for_pinning_empty_for_non_deliverable_consult() -> None:
     assert result == []
 
 
+_MIXED_URI_PACKET = """\
+<scope>
+Deliver:
+- `workspaces://universal-llm-gateway/pkg/foo.py`
+- `libs/implement_admission/normalize.py`
+- `cortex://notes/system/specs/pin-target.md`
+</scope>
+"""
+
+
+def test_files_expected_for_pinning_plain_paths_and_cortex_not_workspaces() -> None:
+    """Cortex URIs supplement repo paths; workspaces:// stays out of pinning scope."""
+    result = _files_expected_for_pinning(
+        _MIXED_URI_PACKET,
+        deliverables_expected=True,
+        residual_expected_paths=(),
+    )
+    assert "libs/implement_admission/normalize.py" in result
+    assert "cortex://notes/system/specs/pin-target.md" in result
+    assert "workspaces://universal-llm-gateway/pkg/foo.py" not in result
+
+
 def test_resolve_cortex_pinned_deliverables_rejects_directory_target(
     tmp_path: Path,
 ) -> None:

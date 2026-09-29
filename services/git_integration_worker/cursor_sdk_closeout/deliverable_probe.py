@@ -9,6 +9,7 @@ imports that sibling by defining module, not through ``__init__``.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,23 @@ def _files_expected_from_packet(packet_text: str | None) -> list[str]:
     return _files_from_packet(packet_text)
 
 
+_CORTEX_BACKTICK_RE = re.compile(r"`(cortex://[^`]+)`")
+
+
+def _cortex_uris_from_packet(packet_text: str | None) -> list[str]:
+    """Backticked cortex deliverables for pinning (``_files_from_packet`` drops URIs)."""
+    if not packet_text:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in _CORTEX_BACKTICK_RE.findall(packet_text):
+        candidate = raw.strip()
+        if candidate and candidate not in seen:
+            seen.add(candidate)
+            out.append(candidate)
+    return out
+
+
 def _files_expected_for_pinning(
     packet_text: str | None,
     deliverables_expected: bool,
@@ -40,7 +58,13 @@ def _files_expected_for_pinning(
     if residual_expected_paths:
         return list(residual_expected_paths)
     if deliverables_expected:
-        return _files_expected_from_packet(packet_text)
+        files = _files_expected_from_packet(packet_text)
+        seen = set(files)
+        for uri in _cortex_uris_from_packet(packet_text):
+            if uri not in seen:
+                seen.add(uri)
+                files.append(uri)
+        return files
     return []
 
 
