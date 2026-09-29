@@ -79,6 +79,8 @@ def classify_artifact_path(
         return "shared"
     if any(marker in base for marker in _SHARED_NAME_MARKERS):
         return "shared"
+    if base.endswith("-standing-handoff.md"):
+        return "shared"
     if any(marker in base or marker in rel for marker in _CONSULT_NAME_MARKERS):
         return "consult"
     return "unclassified"
