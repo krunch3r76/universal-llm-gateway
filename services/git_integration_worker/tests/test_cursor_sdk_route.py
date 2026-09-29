@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -2286,16 +2287,67 @@ def test_plan_implement_conflict_422(_mock_task: MagicMock, client: TestClient) 
     assert resp.json()["code"] == "CURSOR_SDK_MODE_CONFLICT"
 
 
+def _pin_temp_lane_b_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    client: TestClient,
+) -> None:
+    """Point admit at a temp git repo so lane=B mint does not touch the hub."""
+    repo = tmp_path / "lane_b_repo"
+    repo.mkdir()
+    subprocess.run(
+        ["git", "init", "-b", "master"], cwd=repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "t@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "t"], cwd=repo, check=True, capture_output=True
+    )
+    (repo / "README.md").write_text("seed\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "seed"], cwd=repo, check=True, capture_output=True
+    )
+    wt = tmp_path / "worktrees"
+    wt.mkdir()
+    dw = tmp_path / "dispatch_ws"
+    dw.mkdir()
+    from services.git_integration_worker.config import WorkerConfig
+    from services.git_integration_worker.routes import cursor_sdk as route_mod
+
+    cfg = WorkerConfig(
+        host="127.0.0.1",
+        port=8091,
+        source_repo=repo,
+        worktree_root=wt,
+        dispatch_workspace=dw,
+        green_gate_cmd=["true"],
+    )
+    monkeypatch.setattr(route_mod, "_CONFIG", cfg)
+    client.app.state.worker_config = cfg
+
+
 @patch(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
 )
-def test_plan_read_only_admits(_mock_task: MagicMock, client: TestClient) -> None:
-    """AC-3: plan mode admits as read-only consult."""
+def test_plan_read_only_admits(
+    _mock_task: MagicMock,
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AC-3: plan mode admits as read-only consult on lane B."""
+    _pin_temp_lane_b_repo(tmp_path, monkeypatch, client)
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
             sdk_mode="plan",
+            lane="B",
             handoff_contract="consult",
             message="plan-first spec bind",
         ),
@@ -2309,13 +2361,18 @@ def test_plan_read_only_admits(_mock_task: MagicMock, client: TestClient) -> Non
     return_value=MagicMock(done=lambda: False),
 )
 def test_plan_without_read_only_forces_read_only_admit(
-    _mock_task: MagicMock, client: TestClient
+    _mock_task: MagicMock,
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC-3: sdk_mode=plan without read_only still admits lease-exempt."""
+    """AC-3: sdk_mode=plan without read_only still admits lease-exempt on lane B."""
+    _pin_temp_lane_b_repo(tmp_path, monkeypatch, client)
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_dispatch_body(
             sdk_mode="plan",
+            lane="B",
             read_only=False,
             handoff_contract="none",
             message="---\nsdk_mode: plan\n---\nplan body",

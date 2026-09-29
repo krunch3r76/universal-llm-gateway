@@ -109,23 +109,21 @@ slugs are left in place. Per-slug outcome: `frontier.sdk.worker.skills.mounted`.
 
 ## D-lane — explicit checkout lane (top-level generate)
 
-Lane B is the default for every top-level cursor-sdk generate. The checkout is a throwaway worktree, including read-only, `sdk_mode=plan`, `contract=none`, bind-only, and cortex-only. `lane=` is a **wire parameter** on `team_dispatch(op=generate|to_thread, seat=cursor-sdk)`.
+Lane B is the only checkout for top-level cursor-sdk generate. Pass `lane="B"`. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`; the error carries `fix_hint`). In-repo generates and empty `files_expected` use a lane-B worktree, including `sdk_mode=plan` and other read-only admits. Plan mode on lane B is read-only and does not take the write lease. `cortex://` paths and paths outside the repo are 422 `CURSOR_LANE_B_SCOPE_REFUSED`. `lane=` is a **wire parameter** on `team_dispatch(op=generate|to_thread, seat=cursor-sdk)`.
 Packet prose does not select a lane. SOT: `consult-routing` § cursor-sdk checkout lane.
-
-Lane A is the exception: one shared-master write slot. `write_lease_slots("A")` returns 1 unless an operator environment switch is already set. A seat does not set that switch, and does not pass `lane="A"` because the work writes nothing or to avoid minting a tree. `CURSOR_LANE_B_READ_ONLY` is not a caller reason to switch to A.
 
 | Situation | Pass |
 |---|---|
-| top-level generate, including implement, bind-only, cortex-only, read-only, and `sdk_mode=plan` | `lane="B"` |
-| `CURSOR_LANE_B_SCOPE_REFUSED` (paths outside the repo) | fix the scope onto the repo, or `lane="A"` quoting that refusal |
-| operator explicitly requests shared master | `lane="A"` quoting that request |
+| top-level generate, including implement, bind-only, empty `files_expected`, read-only, and `sdk_mode=plan` | `lane="B"` |
+| `cortex://` or paths outside the repo | fix the scope onto the repo (422 `CURSOR_LANE_B_SCOPE_REFUSED`; lane A is not an escape) |
 | `nest_under` / `resume_of` | omit (inherit) |
 
 Omit on a **top-level** generate is not “no preference”: MCP + Stargate 422
-`lane_required`. GIW empty-scope → Lane A (`opt_out`) even when the Lane-B
-regime is on — that is inference after a named or inherited lane, not a
-license to omit. After admit, quote `sdk.lane.selected` or
-`busy_status.active_by_lane` before naming the lane.
+`lane_required`. `contract=wrap` is exempt. GIW empty-scope omit still selects
+Lane A inside `select_lane` (`opt_out`) even when the Lane-B regime is on —
+that is inference, not a license to omit or to pass `lane="A"`. Explicit wire
+`lane="A"` is 422 `CURSOR_LANE_A_REFUSED` at admit. After admit, quote
+`sdk.lane.selected` or `busy_status.active_by_lane` before naming the lane.
 Preflight: `manage(busy_status)` for the **lease holder** on the lane you will
 pass, not only service-up.
 
@@ -140,7 +138,7 @@ pass, not only service-up.
 - [ ] Every fork is bound in the dispatch.
 - [ ] Propagation named for every touched surface that needs one (service restart, plugin install), or `propagation: none` stated.
 - [ ] cursor-sdk `op=generate`: before `team_dispatch`, verify `dispatch_thread_id` has `lifecycle_state=pending ∧ turn_count=0`; otherwise halt and fix. Response `consolidation_split_warning` is too late. **Conductor carve-out:** `` may pass a continuity root with turns (mint child) or a pending-empty *child* of the root — still never a lifecycle-null empty thread.
-- [ ] Top-level cursor-sdk generate: pass `lane="B"` (throwaway worktree), including cortex-only, read-only, and `sdk_mode=plan`. Lane A is the exception. Do not pass it because the work writes nothing or to avoid a tree. `lane="A"` only on `CURSOR_LANE_B_SCOPE_REFUSED` or an explicit operator request for shared master. Omit only `nest_under` / `resume_of`. After admit, quote the lane event / `active_by_lane`.
+- [ ] Top-level cursor-sdk generate: pass `lane="B"` (throwaway worktree), including read-only and `sdk_mode=plan`. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). `cortex://` and paths outside the repo stay 422 `CURSOR_LANE_B_SCOPE_REFUSED`. Omit only `nest_under` / `resume_of`. After admit, quote the lane event / `active_by_lane`.
 
 ## Gate-2 implement-ready checklist
 

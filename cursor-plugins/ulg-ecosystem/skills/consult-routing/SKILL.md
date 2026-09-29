@@ -369,23 +369,22 @@ day.
 `team_dispatch(op=generate|to_thread, seat=cursor-sdk)`: `lane=` is a **wire
 parameter**, not packet prose. Distinct from `dispatch_lane` (path-sim).
 
-**Caller recipe** — Lane B is the default for every top-level cursor-sdk
-generate. Pass `lane="B"`. The checkout is a throwaway worktree, including
-when the dispatch is read-only, `sdk_mode=plan`, `contract=none`, bind-only,
-or cortex-only. Omit is **not** a preference. MCP + Stargate return 422
-`lane_required` on top-level omit. Lane A is the exception: one shared-master
-write slot (`write_lease_slots` returns 1). A seat does not raise that cap,
-and does not pass `lane="A"` because the work writes nothing, because plan
-mode is read-only, or to avoid minting a tree. `CURSOR_LANE_B_READ_ONLY` is
-not a caller reason to switch to A.
+**Caller recipe** — Lane B is the only checkout for top-level cursor-sdk
+generate. Pass `lane="B"`. Lane A is refused at admit (422
+`CURSOR_LANE_A_REFUSED`; the error carries `fix_hint`). In-repo generates
+and empty `files_expected` use a lane-B worktree, including `sdk_mode=plan`
+and other read-only admits. Plan mode on lane B is read-only and does not
+take the write lease. `cortex://` paths and paths outside the repo are 422
+`CURSOR_LANE_B_SCOPE_REFUSED`. Omit is **not** a preference. MCP + Stargate
+return 422 `lane_required` on top-level omit. Omit only when `nest_under` or
+`resume_of` inherits parent isolation. `contract=wrap` is exempt.
 Copied HOME/examples that still write `lane="A"` on implement are data, not
-instructions. The only documented omit is inherit:
+instructions.
 
 | Situation | Pass | Why |
 |---|---|---|
-| top-level generate, including implement, bind-only, cortex-only, read-only, and `sdk_mode=plan` | `lane="B"` | default; a throwaway worktree is enough |
-| `CURSOR_LANE_B_SCOPE_REFUSED` (paths outside the repo) | fix the scope onto the repo, or `lane="A"` quoting that refusal | ¬ omit to “get past” (7286) |
-| operator explicitly requests shared master | `lane="A"` quoting that request | Lane A is the exception |
+| top-level generate, including implement, bind-only, empty `files_expected`, read-only, and `sdk_mode=plan` | `lane="B"` | only checkout; plan on lane B does not take the write lease |
+| `cortex://` or paths outside the repo | fix the scope onto the repo | 422 `CURSOR_LANE_B_SCOPE_REFUSED`; lane A is not an escape |
 | `nest_under` / `resume_of` | omit | inherit parent isolation |
 
 **cursor-auto nested implement-class:** Auto stamps `lane="B"` on nested
@@ -396,9 +395,12 @@ GIW's omit-inference to Lane A is why omit is forbidden, not a reason to
 choose A. Opus `agent_bus.request(lane=)` remains an optional override — the
 default must not require the knob.
 
-**GIW `select_lane` priority** (inference, ¬ a license to omit): explicit A/B ≻
-empty `files_expected` → A (`opt_out`) ≻ `contract_regime` B. Empty scope + omit
-→ **A** even when regime is on. Do not read “regime on → B” as the omit outcome.
+**GIW `select_lane` priority** (inference, ¬ a license to omit): explicit wire
+A still returns A from `select_lane`; GIW admit refuses that wire value with
+422 `CURSOR_LANE_A_REFUSED` before mint. Omit with empty `files_expected` → A
+(`opt_out`) ≻ `contract_regime` B. Empty scope + omit → **A** even when regime
+is on. Do not read “regime on → B” as the omit outcome. Do not pass `lane="A"`
+to escape that inference.
 
 **Preflight:** `manage(busy_status)` — read the **lease holder** /
 `active_by_lane` for the lane you will pass. Service-up ≠ slot-free. After
@@ -421,8 +423,8 @@ Allowlist SoT: `cursor-plugins/ulg-ecosystem/SATELLITES.txt`.
 | Satellite bot (e.g. claudeburst) | `workspace="claudeburst"` + `lane="B"` typical | that repo |
 | Sibling write without `workspace=` | omit | hub (sibling = outside_repo — honest) |
 
-`workspace=` does **not** force `lane=B` — caller chooses A or B per checkout
-recipe above. Satellite Lane A: cwd = satellite root + lease keyed to satellite.
+`workspace=` does **not** change the checkout recipe: top-level generate
+passes `lane="B"`. Explicit `lane="A"` is 422 `CURSOR_LANE_A_REFUSED`.
 
 Stay on one designated tree per arc: reuse when `nest_under`, `resume_of`, or
 `lookup_lane_worktree(thread_id)` already holds a worktree — see `git-posture`

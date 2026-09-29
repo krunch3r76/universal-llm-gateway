@@ -270,13 +270,15 @@ def test_giw_rejects_omitted_read_only_none_contract_on_lane_b(
     _mock_task: MagicMock,
     client: TestClient,
 ) -> None:
-    """Falsifier: omitted read_only on none + lane=B still 422 (default policy)."""
+    """Omitted read_only on none + lane=B admits read-only. CURSOR_LANE_B_READ_ONLY is gone."""
     resp = client.post(
         "/api/v1/cursor/dispatch",
         json=_cursor_auto_body(),
     )
-    assert resp.status_code == 422
-    assert resp.json()["code"] == "CURSOR_LANE_B_READ_ONLY"
+    assert resp.status_code == 200
+    assert resp.json()["admitted"] is True
+    ledger = CursorDispatchLedger.instance()
+    assert ledger.read_read_only(dispatch_id="auto-wire-test") is True
 
 
 @patch(

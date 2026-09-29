@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -78,4 +79,38 @@ async def test_worker_refusal_rolls_back_worker_and_parent_links() -> None:
         worker_thread_id="11794",
         execution_id="exec-1",
         parent_dispatch_thread_id="11788",
+    )
+
+
+_LANE_A_FIX_HINT = (
+    'Pass lane="B". Lane A is refused at admit. '
+    "In-repo work and empty files_expected use a lane-B worktree. "
+    "sdk_mode=plan on lane B is read-only and does not take the write lease. "
+    "cortex:// paths and paths outside the repo remain 422 "
+    "CURSOR_LANE_B_SCOPE_REFUSED."
+)
+
+
+def test_worker_dispatch_error_projects_fix_hint() -> None:
+    """Worker data.fix_hint is copied onto FrontierEndpointError.details."""
+    from .admission import FrontierEndpointError
+    from .cursor_sdk_generate import _worker_dispatch_error
+
+    with pytest.raises(FrontierEndpointError) as exc:
+        _worker_dispatch_error(
+            request_id="req-fix-hint",
+            detail={
+                "status_code": 422,
+                "code": "CURSOR_LANE_A_REFUSED",
+                "message": "lane='A' is refused at admit",
+                "data": {"fix_hint": _LANE_A_FIX_HINT},
+            },
+        )
+    err = exc.value
+    assert err.details is not None
+    assert err.details["fix_hint"] == _LANE_A_FIX_HINT
+    assert err.to_dict()["details"]["fix_hint"] == _LANE_A_FIX_HINT
+    print(
+        "AC2 stargate details.fix_hint="
+        + json.dumps(err.to_dict()["details"]["fix_hint"])
     )

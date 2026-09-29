@@ -1,8 +1,7 @@
 """Refuse omitted checkout lane on top-level cursor-sdk generate.
 
 ``team_dispatch(op=generate, seat=cursor-sdk)`` must pass a checkout lane.
-In-repo implement uses lane B. Pass ``lane="A"`` only as the named exception
-(bind-only / empty files_expected / out-of-repo) with a one-line reason.
+Pass ``lane="B"``. Lane A is refused at admit with ``CURSOR_LANE_A_REFUSED``.
 Documented omit paths: ``nest_under`` inherit, ``resume_of`` inherit.
 ``contract=wrap`` is exempt — wrap never posts GIW.
 """
@@ -14,10 +13,8 @@ from .admission import FrontierEndpointError
 LANE_REQUIRED_CODE = "lane_required"
 LANE_REQUIRED_REASON = (
     "lane is required for top-level seat=cursor-sdk generate. "
-    "In-repo implement uses lane B; pass A only as the named exception "
-    "(bind-only / empty files_expected / out-of-repo) with a one-line reason. "
+    'Pass lane="B". Lane A is refused at admit with CURSOR_LANE_A_REFUSED. '
     "Omit only when nest_under or resume_of inherits parent isolation. "
-    "See consult-routing § cursor-sdk checkout lane. "
     "contract=wrap is exempt (no GIW checkout)."
 )
 RESUME_OF_XOR_NEST_UNDER_CODE = "resume_of_xor_nest_under"

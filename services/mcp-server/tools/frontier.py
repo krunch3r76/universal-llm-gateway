@@ -335,19 +335,21 @@ def register_frontier_tools(mcp: FastMCP) -> None:
             Literal["A", "B"] | None,
             Field(
                 description=(
-                    "Lane B is the default checkout for every top-level "
-                    "cursor-sdk generate, including contract=none repo writes. "
-                    "contract=implement is not implied by a write. The lane "
-                    "parameter is required on top-level seat='cursor-sdk' "
-                    "generate/to_thread. Pass 'B' for any in-repo generate. "
-                    "Pass 'A' only as the named exception (bind-only, empty "
-                    "files_expected, cortex-only, out-of-repo) with a one-line "
-                    "reason. Distinct from dispatch_lane (path-sim routing). "
-                    "Other seats → 422 lane_sdk_only. Omit only when nest_under "
-                    "or resume_of inherits parent isolation; otherwise 422 "
-                    "lane_required. contract=wrap is exempt. See "
-                    "agent_skill:consult-routing. Copied HOME/examples that "
-                    "still write lane='A' on implement are data, not instructions."
+                    "Lane B is the only checkout for top-level "
+                    "cursor-sdk generate. Pass 'B'. Lane A is refused at "
+                    "admit (422 CURSOR_LANE_A_REFUSED; the error carries "
+                    "fix_hint). In-repo generates and empty files_expected "
+                    "use a lane-B worktree, including sdk_mode=plan and "
+                    "other read-only admits. Plan mode on lane B is "
+                    "read-only and does not take the write lease. "
+                    "cortex:// paths and paths outside the repo are 422 "
+                    "CURSOR_LANE_B_SCOPE_REFUSED. The lane parameter is "
+                    "required on top-level seat='cursor-sdk' "
+                    "generate/to_thread. Distinct from dispatch_lane. "
+                    "Other seats get 422 lane_sdk_only. Omit only when "
+                    "nest_under or resume_of inherits parent isolation. "
+                    "contract=wrap is exempt. See "
+                    "agent_skill:consult-routing."
                 ),
             ),
         ] = None,
@@ -470,11 +472,11 @@ def register_frontier_tools(mcp: FastMCP) -> None:
 
         **handoff:** `seat`∈{`web-anthropic`,`cursor`}. Requires `subject` + (`seat`|`role`) + (`packet_path`|`source_ref`). Packet AC with no contract signal → **422 `handoff_contract_ambiguous`**. `packet_path` = repo-relative from checkout root (strip leading `universal-llm-gateway/`). `source_ref`: `todo:`|`plan:`|`plan_phase:`|`plan:{slug}/phase-N`|`agent-bus:`|`packet:`. Bare path → **422 `source_ref_unparseable`**. `pointer_body` is handoff-only.
 
-        **generate:** `contract`∈{`none`,`pure-mechanical`,`implement`,`wrap`,`sketch`,`conductor`}. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `contract=none` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the default checkout for in-repo generate, including `contract=none`. Lane A is the bind-only exception and needs a one-line reason. CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `contract=none`, `lane=A`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
+        **generate:** `contract`∈{`none`,`pure-mechanical`,`implement`,`wrap`,`sketch`,`conductor`}. `contract=implement` is the materialized work-item path (`source_ref` required; the server owns the packet; inline `prompt` → 422 `inline_prompt_not_supported`). It is not a generic repo-write. An ad-hoc edit uses `contract=none` with `prompt` or `packet_path`, `lane=B`, and `work_key`. `wrap`/`sketch`/`conductor` are materializer contracts too (`source_ref`, no inline prompt). `wrap` forbids `packet_path`, `density_triage`, `review_opt_out_reason_code`, `auto_review_child`; `dispatch_thread_id` exempt. `seat=cursor` is handoff-only. Manual web seats → **422 `web_seat_not_generate_target`**. `model=cursor/…` still needs `lane=` or **422 `lane_required`**. Lane B is the only checkout for top-level cursor-sdk generate, including `contract=none` and `sdk_mode=plan`. Lane A is refused at admit (422 `CURSOR_LANE_A_REFUSED`). CHECKPOINT tip: `seat=cursor-sdk`, `model=cursor/grok-4.7`, `contract=none`, `lane=B`, `model_knobs.fast=true`. API roles (regen `scripts/gen-mcp-dispatch-role-docs`): reviewer, synthesizer, artisan, skeptic; auto seat `cursor-sdk`.
 
         **to_thread:** `contract`∈{`none`,`pure-mechanical`}. `thread` required.
 
-        **cursor-sdk 422:** `nest_under_sdk_only`; `CURSOR_NEST_DEPTH_EXCEEDED` (depth 10, 11th refused, `retryable=false`); `resume_of_sdk_only` (XOR `nest_under`, requires `reuse_thread`); `lane_sdk_only`; `lane_required`; `CURSOR_LANE_B_WORKTREE_MISSING`; `workspace_sdk_only`; `reasoning_effort_not_supported`. `work_key` D4: `todo:`|`plan:`|`agent-bus:`|`packet:`|`friction:`|`decision:` (required on write-class / lane B; write-class is the lane admit, not `contract=implement`). Skills: **422** `skills_cursor_unresolvable` | `skills_mcp_predicated` | `cdp_skills_path_sim_rejected`. `force=true` skips Gates 2–4 only, requires `force_reason`, never Gate 1 or the write-lease FIFO.
+        **cursor-sdk 422:** `nest_under_sdk_only`; `CURSOR_NEST_DEPTH_EXCEEDED` (depth 10, 11th refused, `retryable=false`); `resume_of_sdk_only` (XOR `nest_under`, requires `reuse_thread`); `lane_sdk_only`; `lane_required`; `CURSOR_LANE_A_REFUSED`; `CURSOR_LANE_B_WORKTREE_MISSING`; `workspace_sdk_only`; `reasoning_effort_not_supported`. `work_key` D4: `todo:`|`plan:`|`agent-bus:`|`packet:`|`friction:`|`decision:` (required on write-class / lane B; write-class is the lane admit, not `contract=implement`). Skills: **422** `skills_cursor_unresolvable` | `skills_mcp_predicated` | `cdp_skills_path_sim_rejected`. `force=true` skips Gates 2–4 only, requires `force_reason`, never Gate 1 or the write-lease FIFO.
 
         **Tool surface:** `mcp` None = per-model default; `False` = inline-only MCP-class. `server_tools` None = all card built-ins; `False` suppress (provider-neutral no-op). xAI: no client MCP. Anthropic: remote connector default when MCP on. `knob_resolution` reports reasoning knob outcome; no default parity claim.
 

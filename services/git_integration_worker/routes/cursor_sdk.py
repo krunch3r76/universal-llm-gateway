@@ -3125,14 +3125,24 @@ async def admit_cursor_dispatch(
             invalid_fields=["sdk_mode", "handoff_contract"],
         )
     effective_read_only = enforce_plan_read_only(resolved_sdk_mode, effective_read_only)
-    if effective_read_only and wire_lane_explicit(req) == "B":
+    if wire_lane_explicit(req) == "A":
         return _reject_pre_admission(
             req,
-            worker_error_code="CURSOR_LANE_B_READ_ONLY",
+            worker_error_code="CURSOR_LANE_A_REFUSED",
             failure_layer="validation",
             http_status=422,
-            detail_summary="read_only=true is incompatible with lane='B'",
-            invalid_fields=["read_only", "lane"],
+            detail_summary="lane='A' is refused at admit",
+            invalid_fields=["lane"],
+            retryable=False,
+            extra_data={
+                "fix_hint": (
+                    'Pass lane="B". Lane A is refused at admit. '
+                    "In-repo work and empty files_expected use a lane-B worktree. "
+                    "sdk_mode=plan on lane B is read-only and does not take the write lease. "
+                    "cortex:// paths and paths outside the repo remain 422 "
+                    "CURSOR_LANE_B_SCOPE_REFUSED."
+                )
+            },
         )
     if effective_read_only and contract == "implement":
         return _reject_pre_admission(

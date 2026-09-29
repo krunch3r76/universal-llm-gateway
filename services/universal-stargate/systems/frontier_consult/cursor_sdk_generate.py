@@ -46,17 +46,23 @@ def _worker_dispatch_error(
 ) -> None:
     from .admission import FrontierEndpointError
 
+    details = {
+        k: detail[k]
+        for k in ("status_code", "code", "blocking_dispatch_id")
+        if detail.get(k) is not None
+    }
+    data = detail.get("data")
+    if isinstance(data, dict):
+        fix_hint = data.get("fix_hint")
+        if isinstance(fix_hint, str) and fix_hint:
+            details["fix_hint"] = fix_hint
     raise FrontierEndpointError(
         request_id=request_id,
         field="worker_dispatch",
         reason=str(detail.get("message") or "worker dispatch failed"),
         status_code=int(detail.get("status_code") or 502),
         code=str(detail.get("code") or "CURSOR_WORKER_DISPATCH_FAILED"),
-        details={
-            k: detail[k]
-            for k in ("status_code", "code", "blocking_dispatch_id")
-            if detail.get(k) is not None
-        },
+        details=details,
     )
 
 

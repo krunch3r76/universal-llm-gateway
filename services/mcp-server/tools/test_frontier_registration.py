@@ -1040,15 +1040,17 @@ def test_team_dispatch_lane_descriptor_requires_named_lane() -> None:
     field_infos = [a for a in get_args(hint) if isinstance(a, FieldInfo)]
     assert field_infos, "lane must carry Annotated[..., Field(description=...)]"
     desc = field_infos[0].description or ""
-    assert "lane_required" in desc, desc
+    assert "CURSOR_LANE_A_REFUSED" in desc, desc
+    assert "Pass 'B'" in desc, desc
+    assert "CURSOR_LANE_B_SCOPE_REFUSED" in desc, desc
     assert "nest_under" in desc, desc
     assert "resume_of" in desc, desc
-    assert "implement uses lane B" in desc, desc
     doc = fn.__doc__ or ""
     assert "lane_required" in doc
     assert "nest_under" in doc
     assert "resume_of" in doc
-    assert "implement uses lane B" in doc
+    assert "CURSOR_LANE_A_REFUSED" in doc
+    assert "lane=B" in doc
 
 
 def test_team_dispatch_generate_forwards_lane() -> None:

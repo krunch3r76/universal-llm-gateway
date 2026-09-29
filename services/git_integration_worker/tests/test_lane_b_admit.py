@@ -385,13 +385,26 @@ def test_scope_refused_names_absolute_outside_repo_offender(git_repo: Path) -> N
 def test_ac_s2_6_read_only_lane_b_422(
     _mock_task: MagicMock, client: TestClient
 ) -> None:
-    """AC-S2.6: read_only + lane='B' ⇒ 422 CURSOR_LANE_B_READ_ONLY."""
+    """read_only + lane='B' admits. CURSOR_LANE_B_READ_ONLY is gone.
+
+    Contract stays ``none``: ``CURSOR_READONLY_IMPLEMENT_CONFLICT`` still
+    refuses read_only implement.
+    """
     resp = client.post(
         "/api/v1/cursor/dispatch",
-        json=_body(read_only=True, lane="B"),
+        json=_body(
+            read_only=True,
+            lane="B",
+            handoff_contract="none",
+            message="---\ncontract: none\n---\nread",
+            dispatch_id="disp-ro-b",
+            execution_id="exec-ro-b",
+        ),
     )
-    assert resp.status_code == 422
-    assert resp.json()["code"] == "CURSOR_LANE_B_READ_ONLY"
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["admitted"] is True
+    assert CursorDispatchLedger.instance().read_read_only(dispatch_id="disp-ro-b") is True
 
 
 @patch(
@@ -435,6 +448,89 @@ def test_lane_b_shared_master_lease_is_422(
     assert row is None
 
 
+_LANE_A_FIX_HINT = (
+    'Pass lane="B". Lane A is refused at admit. '
+    "In-repo work and empty files_expected use a lane-B worktree. "
+    "sdk_mode=plan on lane B is read-only and does not take the write lease. "
+    "cortex:// paths and paths outside the repo remain 422 "
+    "CURSOR_LANE_B_SCOPE_REFUSED."
+)
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+@patch(
+    "services.git_integration_worker.routes.cursor_sdk.emit_write_lease_acquired",
+)
+def test_plan_lane_b_admits_read_only_without_write_lease(
+    mock_emit: MagicMock,
+    _mock_task: MagicMock,
+    client: TestClient,
+) -> None:
+    """AC1: sdk_mode=plan on lane B admits read-only and does not take the write lease."""
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_body(
+            lane="B",
+            handoff_contract="none",
+            message="---\nsdk_mode: plan\n---\nplan body",
+            dispatch_id="disp-plan-b",
+            execution_id="exec-plan-b",
+        ),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["admitted"] is True
+    ledger = CursorDispatchLedger.instance()
+    read_only = ledger.read_read_only(dispatch_id="disp-plan-b")
+    assert read_only is True
+    from services.git_integration_worker.cursor_sdk_mode import (
+        sdk_mode_from_record_json,
+    )
+
+    row = _ledger_row("disp-plan-b")
+    sdk_mode = sdk_mode_from_record_json(row["record_json"])
+    assert sdk_mode == "plan"
+    mock_emit.assert_not_called()
+    print(
+        "AC1 receipt "
+        f"admitted={body['admitted']} "
+        f"read_only={int(read_only)} "
+        f"sdk_mode={sdk_mode} "
+        f"emit_write_lease_acquired_called={mock_emit.called}"
+    )
+
+
+@patch(
+    "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
+    return_value=MagicMock(done=lambda: False),
+)
+def test_explicit_lane_a_refused_with_fix_hint(
+    _mock_task: MagicMock,
+    client: TestClient,
+) -> None:
+    """AC2: wire lane=A is 422 CURSOR_LANE_A_REFUSED with the fix_hint sentence."""
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_body(
+            lane="A",
+            dispatch_id="disp-lane-a",
+            execution_id="exec-lane-a",
+        ),
+    )
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert payload["code"] == "CURSOR_LANE_A_REFUSED"
+    assert payload["data"]["fix_hint"] == _LANE_A_FIX_HINT
+    print(
+        json.dumps(
+            {"code": payload["code"], "data": {"fix_hint": payload["data"]["fix_hint"]}}
+        )
+    )
+
+
 @patch(
     "services.git_integration_worker.admission.WorkAdmissionController.create_tracked_task",
     return_value=MagicMock(done=lambda: False),
@@ -442,8 +538,12 @@ def test_lane_b_shared_master_lease_is_422(
 def test_explicit_lane_b_nest_under_lane_a_parent_is_422(
     _mock_task: MagicMock,
     client: TestClient,
+    git_repo: Path,
 ) -> None:
-    """Explicit lane=B under a Lane-A parent inherits shared master → 422."""
+    """Explicit lane=A is 422. A seeded Lane-A parent still makes a lane=B nest 422."""
+    from services.git_integration_worker.cursor_sdk_workspace import lane_a_lease_key
+    from services.git_integration_worker.models.cursor_api import CursorDispatchResponse
+
     parent = client.post(
         "/api/v1/cursor/dispatch",
         json=_body(
@@ -454,7 +554,36 @@ def test_explicit_lane_b_nest_under_lane_a_parent_is_422(
             source_ref="todo:parent-a",
         ),
     )
-    assert parent.status_code == 200
+    assert parent.status_code == 422
+    assert parent.json()["code"] == "CURSOR_LANE_A_REFUSED"
+    parent_req = CursorDispatchRequest(
+        thread_id="6701",
+        model="cursor/composer-2.5",
+        dispatch_id="parent-a",
+        execution_id="exec-parent-a",
+        message="parent",
+        lane="A",
+        handoff_contract="implement",
+    )
+    ledger = CursorDispatchLedger.instance()
+    ledger.admit(
+        req=parent_req,
+        fingerprint=ledger.fingerprint(parent_req),
+        execution_id=parent_req.execution_id,
+        caller_agent=None,
+        resolved_model="composer-2.5",
+        admission=CursorDispatchResponse(
+            admitted=True,
+            dispatch_id="parent-a",
+            thread_id="6701",
+            model_id="composer-2.5",
+        ),
+        source_repo=str(git_repo.resolve()),
+        lease_key=lane_a_lease_key(git_repo),
+        contract="implement",
+        worker_instance="worker-a",
+        read_only=False,
+    )
     child = client.post(
         "/api/v1/cursor/dispatch",
         json=_body(
@@ -553,6 +682,7 @@ def test_ac_s2_7_nest_under_lane_b_inherits_parent_tree(
     parent = resolve_admit_binding(
         req=parent_req,
         source_repo=git_repo,
+        hub=git_repo,
         worktree_root=worker_cfg.worktree_root,
         dispatch_workspace_default=worker_cfg.dispatch_workspace,
         lane="B",
@@ -588,6 +718,7 @@ def test_ac_s2_7_nest_under_lane_b_inherits_parent_tree(
     child = resolve_admit_binding(
         req=child_req,
         source_repo=git_repo,
+        hub=git_repo,
         worktree_root=worker_cfg.worktree_root,
         dispatch_workspace_default=worker_cfg.dispatch_workspace,
         lane="A",
@@ -772,8 +903,10 @@ def test_auto_residual_empty_scope_stays_a(git_repo: Path) -> None:
     assert reason == "opt_out"
 
 
-def test_scope_refused_retries_named_a(git_repo: Path) -> None:
-    """CURSOR_LANE_B_SCOPE_REFUSED retry uses explicit lane=A, not omit."""
+def test_scope_refused_retries_named_a(
+    git_repo: Path, client: TestClient
+) -> None:
+    """select_lane still returns A for explicit A. HTTP admit refuses that wire lane."""
     from services.git_integration_worker.cursor_sdk_lane_select import LaneScopeRefused
 
     req = CursorDispatchRequest(
@@ -809,3 +942,17 @@ def test_scope_refused_retries_named_a(git_repo: Path) -> None:
     )
     assert lane == "A"
     assert reason == "opt_out"
+    resp = client.post(
+        "/api/v1/cursor/dispatch",
+        json=_body(
+            lane="A",
+            dispatch_id="scope-a-http",
+            execution_id="exec-scope-a-http",
+            message=(
+                "---\ncontract: implement\nfiles_expected:\n"
+                "- workspaces://other-repo/foo.py\n---\n"
+            ),
+        ),
+    )
+    assert resp.status_code == 422
+    assert resp.json()["code"] == "CURSOR_LANE_A_REFUSED"
