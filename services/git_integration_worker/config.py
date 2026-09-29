@@ -81,3 +81,13 @@ def load_config() -> WorkerConfig:
         ),
         green_gate_cmd=_parse_green_gate_cmd(),
     )
+
+
+def suite_digest_gate_cmd() -> list[str]:
+    """Check-mode argv. No environment variable replaces this command."""
+    python = Path.home() / ".venvs/universal/bin/python"
+    return [
+        str(python),
+        "-m",
+        "services.git_integration_worker.giw_suite_digest_gate",
+    ]

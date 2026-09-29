@@ -22,7 +22,8 @@ router = APIRouter(tags=["git-proxy"])
 _DEFAULT_HOST = os.environ.get("GIT_INTEGRATION_WORKER_HOST", "127.0.0.1")
 _DEFAULT_PORT = int(os.environ.get("GIT_INTEGRATION_WORKER_PORT", "8091"))
 _WORKER_BASE_URL = f"http://{_DEFAULT_HOST}:{_DEFAULT_PORT}"
-_PROXY_TIMEOUT = float(os.environ.get("GIT_INTEGRATION_PROXY_TIMEOUT", "600"))
+# Suite-digest land budget: 5 attempts * (green-gate 300 + suite 1800) + 120s.
+_PROXY_TIMEOUT = float(os.environ.get("GIT_INTEGRATION_PROXY_TIMEOUT", "10620"))
 
 _HOP_BY_HOP = frozenset(
     {

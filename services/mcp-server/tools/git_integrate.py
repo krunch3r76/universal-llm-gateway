@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 _SYNC_TIMEOUT = 60.0
-# integrate runs pull + green-gate + CAS; budget above sync probes.
-_INTEGRATE_TIMEOUT = 300.0
+# Suite-digest land budget: 5 attempts * (green-gate 300 + suite 1800) + 120s.
+_INTEGRATE_TIMEOUT = 10620.0
 
 
 async def _relay(

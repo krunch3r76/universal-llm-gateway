@@ -17,6 +17,8 @@ from git_integrate.schema import (
     RC_DIFF_MISMATCH,
     RC_GATE_FAILED,
     RC_INTEGRATE_CONFLICT,
+    RC_SUITE_DIGEST_MISMATCH,
+    RC_SUITE_DIGEST_UNCOMPUTABLE,
     RC_WORKTREE_MISSING,
 )
 
@@ -360,3 +362,72 @@ async def test_success_teardown_removes_worktree(
 
     assert out["status"] == "completed"
     assert not arc_worktree.exists()
+
+
+def _exit_gate(code: int) -> list[str]:
+    return ["bash", "-lc", f"exit {code}"]
+
+
+async def _suite_digest_refuses(
+    source_repo: Path,
+    arc_worktree: Path,
+    event_log: list[tuple[str, dict[str, Any]]],
+    *,
+    exit_code: int,
+    reason_code: str,
+) -> None:
+    arc_tip_before = _head_sha(arc_worktree)
+    master_before = _ref_sha(source_repo, "refs/heads/master")
+    sha = diff_sha256(str(arc_worktree))
+    out = await integrate_op(
+        arc="test-arc",
+        phase="phase-3",
+        worktree_path=str(arc_worktree),
+        approval="approved",
+        expected_diff_sha256=sha,
+        source_repo=str(source_repo),
+        green_gate_cmd=_passing_gate(),
+        suite_digest_cmd=_exit_gate(exit_code),
+    )
+    assert out["status"] == "rejected"
+    assert out["reason_code"] == reason_code
+    assert out["gate_exit"] == exit_code
+    assert _head_sha(arc_worktree) == arc_tip_before
+    assert _ref_sha(source_repo, "refs/heads/master") == master_before
+    assert _ref_sha(source_repo, "refs/heads/master") != _head_sha(arc_worktree)
+    assert "computed=" in out["reason"]
+    assert "anchor=" in out["reason"]
+    assert "added=" in out["reason"]
+    assert "removed=" in out["reason"]
+    signals = [name for name, _payload in event_log]
+    assert "git.integrate.gate.failed" in signals
+
+
+@pytest.mark.asyncio
+async def test_suite_digest_mismatch_leaves_arc_at_pretip(
+    source_repo: Path,
+    arc_worktree: Path,
+    event_log: list[tuple[str, dict[str, Any]]],
+) -> None:
+    await _suite_digest_refuses(
+        source_repo,
+        arc_worktree,
+        event_log,
+        exit_code=2,
+        reason_code=RC_SUITE_DIGEST_MISMATCH,
+    )
+
+
+@pytest.mark.asyncio
+async def test_suite_digest_uncomputable_leaves_arc_at_pretip(
+    source_repo: Path,
+    arc_worktree: Path,
+    event_log: list[tuple[str, dict[str, Any]]],
+) -> None:
+    await _suite_digest_refuses(
+        source_repo,
+        arc_worktree,
+        event_log,
+        exit_code=9,
+        reason_code=RC_SUITE_DIGEST_UNCOMPUTABLE,
+    )
