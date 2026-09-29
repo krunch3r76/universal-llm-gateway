@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from chat_harvest.test_chrome import (
     SPECIMEN_346_BODY,
     SPECIMEN_347_BODY,
@@ -91,8 +93,7 @@ def test_status_ignores_read_at_when_no_later_turn():
     pending_read = [_turn(1, "cursor", read_at="2026-06-03T12:00:00Z")]
     for turns in (pending_unread, pending_read):
         assert (
-            derive_status(thread, turns, after_turn=1, completion=comp)
-            == "no_new_turn"
+            derive_status(thread, turns, after_turn=1, completion=comp) == "no_new_turn"
         )
 
     # Qualifying reply lands → complete.
@@ -299,8 +300,12 @@ def test_proof_reply_from_specimen_346_predicate_unmet():
         ),
     ]
     assert not is_complete(thread, turns, after_turn=1, completion=comp)
-    assert qualifying_proof_reply(turns, after_turn=1, from_agent="web-anthropic") is None
-    assert derive_status(thread, turns, after_turn=1, completion=comp) == "predicate_unmet"
+    assert (
+        qualifying_proof_reply(turns, after_turn=1, from_agent="web-anthropic") is None
+    )
+    assert (
+        derive_status(thread, turns, after_turn=1, completion=comp) == "predicate_unmet"
+    )
 
 
 def test_proof_reply_from_specimen_347_complete():
@@ -368,7 +373,9 @@ def test_proof_reply_from_failed_envelope_predicate_unmet():
         ),
     ]
     assert not is_complete(thread, turns, after_turn=1, completion=comp)
-    assert derive_status(thread, turns, after_turn=1, completion=comp) == "predicate_unmet"
+    assert (
+        derive_status(thread, turns, after_turn=1, completion=comp) == "predicate_unmet"
+    )
 
 
 def test_proof_reply_from_failed_link_producer_terminal():
@@ -449,6 +456,7 @@ def test_classify_producer_link_unknown_without_execution_id() -> None:
         "linked_at": None,
         "delivery_at": None,
         "source": "thread_dispatch_links",
+        "liveness_reason": "execution_omitted",
     }
 
 
@@ -472,11 +480,12 @@ def test_classify_producer_link_unlinked_when_row_missing() -> None:
         "linked_at": None,
         "delivery_at": None,
         "source": "thread_dispatch_links",
+        "liveness_reason": "no_row",
     }
 
 
 def test_classify_producer_link_in_flight_from_gate0_payload() -> None:
-    """Gate-0 captured row: agent-bus:10142 cdp-generate admit."""
+    """Gate-0 captured row stays in_flight only inside the admit grace."""
     row = {
         "execution_id": "d6a93d64-18a9-4779-8238-89d6af49e415",
         "pipeline_id": "cdp-generate",
@@ -487,6 +496,7 @@ def test_classify_producer_link_in_flight_from_gate0_payload() -> None:
     assert classify_producer_link(
         execution_id="d6a93d64-18a9-4779-8238-89d6af49e415",
         dispatch_links=[row],
+        now=datetime(2026, 9, 7, 5, 42, 0, tzinfo=UTC),
     ) == {
         "execution_id": "d6a93d64-18a9-4779-8238-89d6af49e415",
         "pipeline_id": "cdp-generate",
@@ -495,7 +505,57 @@ def test_classify_producer_link_in_flight_from_gate0_payload() -> None:
         "linked_at": "2026-09-07T05:41:20Z",
         "delivery_at": None,
         "source": "thread_dispatch_links",
+        "liveness_reason": "admit_grace",
     }
+
+
+def test_dead_stream_without_terminal_write_is_not_in_flight() -> None:
+    """a:36832 specimen: stream died, link never terminalized.
+
+    Seven days after admit the row is still terminal_status NULL and
+    delivery_at NULL. The reader reports unknown, not in_flight, and does
+    not write terminal_status. A live witness still reads in_flight. A dead
+    witness reports stream_dead_no_terminal without a terminal write.
+    a:36651 (live producer wrongly terminalized) stays the writer-side guard
+    in test_terminal_execution_scope.py.
+    """
+    row = {
+        "execution_id": "96f5f3f0-2867-477a-99e5-d79573d77d1e",
+        "pipeline_id": "cdp-generate",
+        "linked_at": "2026-09-22T02:44:02Z",
+        "terminal_status": None,
+        "delivery_at": None,
+    }
+    observed = datetime(2026, 9, 29, 6, 5, 58, tzinfo=UTC)
+    stale = classify_producer_link(
+        execution_id=row["execution_id"],
+        dispatch_links=[row],
+        now=observed,
+    )
+    assert stale["state"] == "unknown"
+    assert stale["liveness_reason"] == "no_liveness_signal"
+    assert stale["terminal_status"] is None
+    assert row["terminal_status"] is None
+
+    dead = classify_producer_link(
+        execution_id=row["execution_id"],
+        dispatch_links=[row],
+        now=observed,
+        liveness_witness="dead",
+    )
+    assert dead["state"] == "unknown"
+    assert dead["liveness_reason"] == "stream_dead_no_terminal"
+    assert row["terminal_status"] is None
+
+    live = classify_producer_link(
+        execution_id=row["execution_id"],
+        dispatch_links=[row],
+        now=observed,
+        liveness_witness="live",
+    )
+    assert live["state"] == "in_flight"
+    assert live["liveness_reason"] == "witness_live"
+    assert row["terminal_status"] is None
 
 
 def test_cursor_sdk_park_and_resume_do_not_complete_wait() -> None:
@@ -537,15 +597,18 @@ def test_cursor_sdk_park_and_resume_do_not_complete_wait() -> None:
 
 
 def test_classify_producer_link_terminal() -> None:
-    assert classify_producer_link(
-        execution_id="exec-done",
-        dispatch_links=[
-            {
-                "execution_id": "exec-done",
-                "pipeline_id": "cdp-generate",
-                "linked_at": "2026-09-07T05:41:20Z",
-                "terminal_status": "failed",
-                "delivery_at": "2026-09-07T06:00:00Z",
-            }
-        ],
-    )["state"] == "terminal"
+    assert (
+        classify_producer_link(
+            execution_id="exec-done",
+            dispatch_links=[
+                {
+                    "execution_id": "exec-done",
+                    "pipeline_id": "cdp-generate",
+                    "linked_at": "2026-09-07T05:41:20Z",
+                    "terminal_status": "failed",
+                    "delivery_at": "2026-09-07T06:00:00Z",
+                }
+            ],
+        )["state"]
+        == "terminal"
+    )

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -19,6 +20,7 @@ from agent_bus_store.cursor_sdk_dispatch_turn import (
     infer_cursor_sdk_terminal_status,
     sdk_terminal_closeout_turn,
 )
+from agent_bus_store.producer_projection import nonterminal_link_state
 from transport_utils import make_async_client
 from universal_logging import get_logger
 
@@ -250,13 +252,20 @@ async def recover_execution_from_bus_thread(
                         closeout = sdk_terminal_closeout_turn(turns)
 
             if closeout is None:
-                return _build_recovered_record(
+                state, reason = nonterminal_link_state(
+                    linked_at=link.get("linked_at"),
+                    now=datetime.now(UTC),
+                )
+                record = _build_recovered_record(
                     execution_id=execution_id,
                     pipeline_id=pipeline_id,
                     thread_id=thread_id,
-                    status="running",
+                    status="running" if state == "in_flight" else "unknown",
                     completed_at=None,
                 )
+                if state != "in_flight":
+                    record["liveness_reason"] = reason
+                return record
             status = infer_cursor_sdk_terminal_status(
                 str(closeout.get("subject") or "")
             )

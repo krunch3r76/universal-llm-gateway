@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,6 +12,10 @@ from fastapi.testclient import TestClient
 from systems.proxy.routers.api.dispatch_bus_recovery import (
     recover_execution_from_bus_thread,
 )
+
+
+def _fresh_linked_at() -> str:
+    return (datetime.now(UTC) - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class _FakeResponse:
@@ -54,6 +59,7 @@ async def test_recover_running_when_only_parked_turn_present() -> None:
                 "pipeline_id": "cursor-sdk-generate",
                 "terminal_status": None,
                 "terminal_at": None,
+                "linked_at": _fresh_linked_at(),
             },
         ),
         _FakeResponse(
@@ -242,6 +248,7 @@ async def test_resolver_running_when_link_present_nonterminal() -> None:
                 "pipeline_id": "cursor-sdk-generate",
                 "terminal_status": None,
                 "terminal_at": None,
+                "linked_at": _fresh_linked_at(),
             },
         ),
         _FakeResponse(200, {"turns": []}),
@@ -261,6 +268,40 @@ async def test_resolver_running_when_link_present_nonterminal() -> None:
     assert recovered["status"] == "running"
     assert recovered["execution_id"] == "exec-running"
     assert recovered["target_thread"] == "045"
+    assert recovered["completed_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_resolver_unknown_when_stream_died_without_terminal_write() -> None:
+    """Stale non-terminal link is not recovered as running (a:36832)."""
+    responses = [
+        _FakeResponse(
+            200,
+            {
+                "thread_id": "045",
+                "pipeline_id": "cdp-generate",
+                "terminal_status": None,
+                "terminal_at": None,
+                "delivery_at": None,
+                "linked_at": "2026-09-22T02:44:02Z",
+            },
+        ),
+        _FakeResponse(200, {"turns": []}),
+    ]
+
+    with patch(
+        "systems.proxy.routers.api.dispatch_bus_recovery.make_async_client",
+        return_value=_FakeClientContext(responses),
+    ):
+        recovered = await recover_execution_from_bus_thread(
+            "96f5f3f0-2867-477a-99e5-d79573d77d1e",
+            url="unix:///tmp/agent-bus.sock",
+            auth_token="test-token",
+        )
+
+    assert recovered is not None
+    assert recovered["status"] == "unknown"
+    assert recovered["liveness_reason"] == "no_liveness_signal"
     assert recovered["completed_at"] is None
 
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from .db.lineage import LineageDispatchLink
+from .producer_projection import nonterminal_link_state
 
 _TERMINAL_RETENTION = timedelta(hours=24)
 _STALE_IN_FLIGHT_RETENTION = timedelta(hours=24)
@@ -47,8 +48,11 @@ def _model_or_seat(link: LineageDispatchLink) -> str:
     return link.pipeline_id
 
 
-def _producer_state(link: LineageDispatchLink) -> str:
-    return "terminal" if link.terminal_status else "in_flight"
+def _producer_state(link: LineageDispatchLink, *, now: datetime) -> str:
+    if link.terminal_status:
+        return "terminal"
+    state, _reason = nonterminal_link_state(linked_at=link.linked_at, now=now)
+    return state
 
 
 def _terminal_visible(link: LineageDispatchLink, *, now: datetime) -> bool:
@@ -95,7 +99,7 @@ def filter_visible_producer_links(
                 lane_thread_id=lane_thread_id,
                 execution_id=link.execution_id,
                 model_or_seat=_model_or_seat(link),
-                state=_producer_state(link),
+                state=_producer_state(link, now=instant),
                 linked_at=link.linked_at,
             )
         )
@@ -126,7 +130,7 @@ def filter_cp_projection_producer_links(
                 lane_thread_id=lane_thread_id,
                 execution_id=link.execution_id,
                 model_or_seat=_model_or_seat(link),
-                state=_producer_state(link),
+                state=_producer_state(link, now=instant),
                 linked_at=link.linked_at,
             )
         )
@@ -170,7 +174,8 @@ def render_producers_section(
         registry = transcript_projection_registry_uri(root_thread)
         parts.append(
             f"producers: {in_flight} in_flight · registry: {registry}"
-            " · basis: link.terminal_status=null ∧ linked_at≤24h (¬liveness)"
+            " · basis: in_flight iff terminal_status=null ∧ linked_at within"
+            " producer liveness grace; older null-terminal is unknown"
         )
         return parts
     ordered = _sort_producer_rows_for_display(rows)

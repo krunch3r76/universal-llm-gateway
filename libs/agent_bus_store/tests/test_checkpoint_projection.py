@@ -1221,7 +1221,10 @@ def test_producers_summary_names_basis() -> None:
         residue="Settled.",
         resolvers=_resolvers(producers=(row,)),
     )
-    assert "basis: link.terminal_status=null ∧ linked_at≤24h (¬liveness)" in body
+    assert (
+        "basis: in_flight iff terminal_status=null ∧ linked_at within"
+        " producer liveness grace; older null-terminal is unknown"
+    ) in body
 
 
 def test_maybe_project_checkpoint_emits_producers_projected_event(

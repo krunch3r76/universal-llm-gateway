@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -130,6 +131,9 @@ async def test_recover_running_without_wait_has_no_result() -> None:
                     "pipeline_id": "cursor-sdk-generate",
                     "terminal_status": None,
                     "terminal_at": None,
+                    "linked_at": (datetime.now(UTC) - timedelta(seconds=30)).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
                 },
             )
         ],

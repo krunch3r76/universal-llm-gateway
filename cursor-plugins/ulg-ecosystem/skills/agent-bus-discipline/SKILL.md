@@ -46,7 +46,7 @@ Dispatch-link liveness is substrate-derived — not thread_count, not unrelated 
 | Need | Recipe |
 |---|---|
 | Pin one dispatch | `agent_bus(wait, wait_seconds=0, execution_id=<id>, …)` — use `poll_hint.arguments_json` when armed (CDP admits ship `execution_id`) |
-| Read one producer | Response `producer.state` ∈ `{in_flight, terminal, unlinked, unknown}` — authority `thread_dispatch_links`; `unknown` ⇒ call omitted `execution_id`; `unlinked` ⇒ admit never linked |
+| Read one producer | Response `producer.state` ∈ `{in_flight, terminal, unlinked, unknown}` — authority `thread_dispatch_links`, and `in_flight` only with a positive signal (`liveness_reason` `admit_grace` or `witness_live`). `unknown` + `no_liveness_signal` means cannot tell (stale or missing `linked_at`, no terminal write): not occupied and not finished. `unknown` + `stream_dead_no_terminal` means the producer is dead and the link was not terminalized — still not a terminal write. `unknown` + `execution_omitted` means the call omitted `execution_id`. `unlinked` means admit never linked. |
 | Scan the lane | Same `wait` response `producers[]` when unpinned — all links on the thread (24h terminal window) |
 | Watcher arm | `watch-bus-consult-and-page.py --execution-id <id>`; `tmp/watchers/<label>.state.json` carries `producer`, `verdict`, `stall_reason`; `predicate_unmet` while `verdict=in_flight` ⇒ keep polling |
 | CHECKPOINT read | Server-rendered `### In-flight producers` under `## Derived` (O14 D3); `_none linked_` = explicit negative |

@@ -22,6 +22,8 @@ from claude_bundles.pickup_awaits import (
     format_unbound_pickup_labels,
 )
 
+from .producer_projection import nonterminal_link_state
+
 QuietReason = Literal["wip_in_flight", "closeout_unharvested", "pickup_unbound"]
 SkipReason = Literal[
     "lifecycle_out",
@@ -41,6 +43,7 @@ class DispatchLinkView:
     execution_id: str
     terminal_status: str | None
     terminal_at: str | None = None
+    linked_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,14 +120,28 @@ def infer_seat(turns: Sequence[LaneTurnView]) -> str | None:
     return None
 
 
+def _link_counts_as_live_wip(lnk: DispatchLinkView, *, now: datetime) -> bool:
+    """True only when the link carries a positive liveness signal.
+
+    A null ``terminal_status`` whose ``linked_at`` is missing or past the
+    admit grace is ``unknown``, not live WIP (a:36832). This does not write
+    ``terminal_status``.
+    """
+    if lnk.terminal_status is not None:
+        return False
+    state, _reason = nonterminal_link_state(linked_at=lnk.linked_at, now=now)
+    return state == "in_flight"
+
+
 def _classify_wip(
     *,
     seat: str,
     links: Sequence[DispatchLinkView],
     turns: Sequence[LaneTurnView],
+    now: datetime,
 ) -> tuple[QuietReason | None, tuple[str, ...], tuple[str, ...]]:
     """Return ``(reason, execution_ids, unbound_turn_labels)`` for first WIP class."""
-    in_flight = [lnk for lnk in links if lnk.terminal_status is None]
+    in_flight = [lnk for lnk in links if _link_counts_as_live_wip(lnk, now=now)]
     if in_flight:
         return (
             "wip_in_flight",
@@ -174,7 +191,7 @@ def evaluate_quiet_with_wip(snap: QuietWithWipSnapshot) -> QuietWithWipVerdict:
         return QuietWithWipVerdict(fire=False, skip_reason="licensed_park")
 
     reason, exec_ids, unbound_labels = _classify_wip(
-        seat=snap.seat, links=snap.links, turns=snap.turns
+        seat=snap.seat, links=snap.links, turns=snap.turns, now=snap.now
     )
     if reason is None:
         return QuietWithWipVerdict(fire=False, skip_reason="no_wip")

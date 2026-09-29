@@ -43,6 +43,7 @@ def test_fires_on_silent_path() -> None:
             DispatchLinkView(
                 execution_id="exec-inflight",
                 terminal_status=None,
+                linked_at=_ts(30),
             ),
         ),
         turns=(
@@ -218,7 +219,13 @@ def test_two_lanes_evaluate_independently() -> None:
     """N lanes ⇒ N independent verdicts (composition claim made testable)."""
     quiet_wip = _snap(
         thread_id="lane-a",
-        links=(DispatchLinkView(execution_id="a1", terminal_status=None),),
+        links=(
+            DispatchLinkView(
+                execution_id="a1",
+                terminal_status=None,
+                linked_at=_ts(30),
+            ),
+        ),
         turns=(
             LaneTurnView(
                 turn_number=1,
@@ -253,3 +260,30 @@ def test_two_lanes_evaluate_independently() -> None:
     assert v_a.fire is True and v_a.reason == "wip_in_flight"
     assert v_b.fire is False and v_b.skip_reason == "no_wip"
     assert v_a.fire != v_b.fire
+
+
+def test_dead_stream_without_terminal_write_is_not_wip_in_flight() -> None:
+    """qwa emitter must not call a stale null-terminal link live WIP (a:36832)."""
+    snap = _snap(
+        links=(
+            DispatchLinkView(
+                execution_id="96f5f3f0-2867-477a-99e5-d79573d77d1e",
+                terminal_status=None,
+                linked_at=_ts(7200),
+            ),
+        ),
+        turns=(
+            LaneTurnView(
+                turn_number=1,
+                from_agent=SEAT,
+                created_at=_ts(2 * THRESHOLD_S),
+                subject="earlier",
+                body="still here",
+            ),
+        ),
+    )
+    verdict = evaluate_quiet_with_wip(snap)
+    assert verdict.fire is False
+    assert verdict.reason is None
+    assert verdict.skip_reason == "no_wip"
+    assert verdict.wip_execution_ids == ()

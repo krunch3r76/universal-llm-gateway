@@ -123,7 +123,7 @@ def _load_lane(
             return None
         lifecycle = trow["bus_lifecycle_state"] or ""
         link_rows = conn.execute(
-            "SELECT execution_id, terminal_status, terminal_at "
+            "SELECT execution_id, terminal_status, terminal_at, linked_at "
             "FROM thread_dispatch_links WHERE thread_id = ?",
             (thread_id,),
         ).fetchall()
@@ -137,6 +137,7 @@ def _load_lane(
             execution_id=r["execution_id"],
             terminal_status=r["terminal_status"],
             terminal_at=r["terminal_at"],
+            linked_at=r["linked_at"],
         )
         for r in link_rows
     ]

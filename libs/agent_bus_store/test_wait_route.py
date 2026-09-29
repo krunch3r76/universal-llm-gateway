@@ -47,6 +47,7 @@ def test_wait_zero_returns_snapshot_no_new_turn(tmp_path) -> None:
             "linked_at": None,
             "delivery_at": None,
             "source": "thread_dispatch_links",
+            "liveness_reason": "execution_omitted",
         }
         assert body["producers"] == []
 
@@ -368,6 +369,7 @@ def test_wait_producer_unlinked_when_execution_id_has_no_row(tmp_path) -> None:
             "linked_at": None,
             "delivery_at": None,
             "source": "thread_dispatch_links",
+            "liveness_reason": "no_row",
         }
 
 
