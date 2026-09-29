@@ -88,6 +88,24 @@ def test_render_bundle_uses_entity_fallback() -> None:
     assert len(entity) >= MIN_BUNDLE_DESCRIPTION_LEN
 
 
+def test_render_bundle_drops_related_skills() -> None:
+    """CDP render keeps name + description only. related_skills does not survive."""
+    raw = (
+        "---\n"
+        "name: example-skill\n"
+        "description: Use when checking that related skills do not survive render.\n"
+        "related_skills: [lane-act-gates, retrieval-before-authoring]\n"
+        "---\n\n"
+        "# Example skill\n\n"
+        "Body stays.\n"
+    )
+    rendered = render_bundle("example-skill", raw)
+    assert "related_skills" not in rendered.split("---", 2)[1]
+    assert "name: example-skill" in rendered
+    assert "description:" in rendered
+    assert "Body stays." in rendered
+
+
 def test_fit_claude_ai_description_truncates_at_word_boundary() -> None:
     long = "On entering ANY lead/orchestrator session — " + ("detail " * 40)
     fitted = fit_claude_ai_description(long)

@@ -18,6 +18,7 @@ from claude_bundles.cowork_skill_delivery import (
     SkillDeliveryError,
     induction_panel_ready,
 )
+from claude_bundles.events_skill_delivery import emit_skill_fetch_decision
 
 # Witness 12829 scraped an empty open grid well before the induction reply.
 # Replies on the prior witnesses landed about 9–21s after the user line.
@@ -47,9 +48,21 @@ async def wait_for_induction_panel(
         report = await scrape_loaded_skills(page)
         last_observed = list(report.skills)
         if induction_panel_ready(required, last_observed):
+            _emit_fetch_decisions(
+                required,
+                observed=last_observed,
+                decision="in_context",
+                reason="",
+            )
             return report
         if time.monotonic() >= deadline:
             elapsed = time.monotonic() - started
+            _emit_fetch_decisions(
+                required,
+                observed=last_observed,
+                decision="skipped",
+                reason="panel_timeout",
+            )
             raise SkillDeliveryError(
                 "induction Context → Skills panel not ready before work prompt: "
                 f"required={required} observed={last_observed} "
@@ -57,3 +70,24 @@ async def wait_for_induction_panel(
                 "(decision:web-seat-skill-body-delivery)"
             )
         await page.wait_for_timeout(interval_ms)
+
+
+def _emit_fetch_decisions(
+    required: list[str],
+    *,
+    observed: list[str],
+    decision: str,
+    reason: str,
+) -> None:
+    """One ``cdp.skill.fetch_decision`` row per required slug. Never raises."""
+    for slug in required:
+        token = str(slug).strip()
+        if not token:
+            continue
+        emit_skill_fetch_decision(
+            ref=token,
+            decision=decision,
+            reason=reason,
+            required=list(required),
+            observed=list(observed),
+        )
