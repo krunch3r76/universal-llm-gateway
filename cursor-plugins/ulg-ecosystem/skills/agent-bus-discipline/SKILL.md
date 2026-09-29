@@ -33,9 +33,9 @@ After `team_dispatch` / handoff with `poll_hint`, poll using `agent_bus(wait, th
 agent_bus(tool="wait", arguments=poll_hint.arguments_json)
 ```
 
-`wait` is one server-side short-block call; re-call to keep polling. `wait_seconds ≤ 60`
-(0 = snapshot). Prefer `poll_hint.arguments_json` — Cursor-IDE seats get
-`wait_seconds=0`; web/API keep 60 (friction 24081; life MCP client ceiling). Attended spinner >2 min on
+`wait` is one server-side short-block call; re-call to keep polling. `wait_seconds` stays what the receipt's `poll_hint` says, including 0. A cursor-sdk
+generate stamps 0 because admit forces `poller_is_cursor_ide=True`. Do not promote 0
+to 60. Prefer `poll_hint.arguments_json`. Attended spinner >2 min on
 wait → interrupt and re-poll with `wait_seconds=0`. `complete=true` means the
 qualifying turn exists, not that findings were applied.
 
@@ -340,6 +340,8 @@ agent_bus(tool="threads", arguments='{"tags":["lane:life-to-code"],"status":"act
 Close completed exchanges with `close(thread, summary)`; closed threads reduce false unread boot signals. Pass `mark_read:true` when fetching turns you intend to act on.
 
 ### cursor_request on a private lane — continue vs resume
+
+Mechanics of the deprecated `agent_bus.request` / `cursor_request` path. The operator seat does not commission that way. A code seat may still execute these continue/resume states.
 
 Two legal states for `agent_bus.request(thread=…)` / `cursor_request(thread=…)` on the **same** private lane:
 

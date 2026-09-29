@@ -42,6 +42,7 @@ MISSION_SKILL_SLUGS: tuple[str, ...] = (
     # Spine/genus/species on new/pivoted lanes — decision:thread-genus +
     # Fable 9518 (cortex://notes/system/threads/agent-bus-type-genus-chip-gap-consult.md).
     "agent-bus-discipline",
+    "lane-act-gates",
 )
 
 # Hand-maintained mirror of config/mcp/canonical.yaml surface_primary_domains.life
@@ -73,13 +74,25 @@ LIFE_SURFACE_LEGAL_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-# CODE_EXTRA on /mcp/code — forbidden as direct life-seat tool calls (A9).
-# Keep aligned with endpoint_surface.derive_code_extra_primary_tools().
-LIFE_SURFACE_FORBIDDEN_TOOLS: frozenset[str] = frozenset(
+# ulg-code primaries observed 2026-09-29 on the operator connector.
+# Equality with endpoint_surface.derive_code_extra_primary_tools() is
+# intentionally broken: that derivation is /mcp/code minus /mcp/life and still
+# equals {team_dispatch, manage, observability, panel_dispatch, claudeburst}.
+# This seat's forbidden set stops at the two names on neither connector.
+ULG_CODE_PRIMARY_TOOLS: frozenset[str] = frozenset(
     {
+        "agent_bus",
+        "agent_bus_read",
         "team_dispatch",
         "manage",
         "observability",
+        "tool_search",
+    }
+)
+
+# Still forbidden as direct calls. Not derive_code_extra_primary_tools().
+LIFE_SURFACE_FORBIDDEN_TOOLS: frozenset[str] = frozenset(
+    {
         "panel_dispatch",
         "claudeburst",
     }
@@ -98,9 +111,13 @@ def _forbidden_tools_line() -> str:
     return ", ".join(f"`{t}`" for t in sorted(LIFE_SURFACE_FORBIDDEN_TOOLS))
 
 
+def _ulg_code_tools_line() -> str:
+    return ", ".join(f"`{t}`" for t in sorted(ULG_CODE_PRIMARY_TOOLS))
+
+
 def _receipt_example() -> str:
     return format_act_receipt(
-        commission_kind="agent_bus_request",
+        commission_kind="team_dispatch",
         evidence_uri="cortex://notes/system/ephemeral/example/act-evidence.md",
         trigger_id="example-trigger-id",
     )
@@ -116,27 +133,32 @@ def _build_briefing_block() -> str:
 
 | Seat | Role |
 |---|---|
-| **CDP Opus (this seat)** | **Operator** — DIRECTIVE / DISPOSITION on a private `agent_bus.request` lane; cite endeavor root in `arc:` only |
-| **CDP Fable** | **Advisor** — escalate via **`agent_bus.request`** to a code-seat consult thread (life-reachable); code-surface tools are **not** callable from this life seat |
+| **CDP Opus (this seat)** | **Operator** — commissions with ulg-code `team_dispatch` to `cursor-sdk` on lane B. DISPOSITION and CLOSEOUT go by `send` on the private lane. Cite endeavor root in `arc:` only |
+| **CDP Fable** | **Advisor** — 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Architecture-bind hop 5 independent check and review fallback stay, under that condition |
 | **cursor-sdk `cursor/composer-2.5`** | **Executor / sub-PM conductor** — the seat *closest to the code* (live checkout, live probes). `{{fast:true}}` standing default; **`contract`** carries judgment vs implement — substrate *facts* via `contract=investigate`; hypotheses at **`cdp/fable`**. Takes whole **ideas** and drives `work-item-seed-path` with its own fan-out — see § Idea commissioning. |
-| **`cursor/claude-opus-5` (premium)** | **Architecture bind** — the rung past Fable when a fork needs live-checkout verification at file:line depth no CDP seat can perform. Normally fired by the sub-PM from `work-item-seed-path` S3, ¬ recited as hops from here. Fired when the four-condition trigger holds (`decision:architecture-bind-escalation-chain`) — that trigger picks this **seat**, not a second effort gate; once picked, knobs follow the card through `max`. A **mandatory** independent check follows — **`cdp/fable`** when Opus authored (model-identity, a:31944). Other-Models ids (`cursor/gpt-5.6-terra`, Sonnet, …) require an explicit `model=` pin on cursor-sdk dispatch — omit path stays on Cursor Models (`model_pin_refused` / `other_models_pool_denied`; default bindable set is `composer-2.5` / `claude-opus-5`). An Opus-authored architecture is not self-ratifiable. |
-| **cursor-auto → nested cursor-sdk** | **Executor** — B1 direct nest under Auto lease, or B2 mint+release for tick admit (`nest_under` when gate shared — silence ⇒ stall). Address it as `to="cursor"` via `agent_bus.request`. |
+| **`cursor/claude-opus-5` (premium)** | **Architecture bind** — the rung past Fable when a fork needs live-checkout verification at file:line depth no CDP seat can perform. Normally fired by the sub-PM from `work-item-seed-path` S3, ¬ recited as hops from here. Fired when the four-condition trigger holds (`decision:architecture-bind-escalation-chain`) — that trigger picks this **seat**, not a second effort gate; once picked, knobs follow the card through `max`. A **mandatory** independent check follows — **`cdp/fable`** when Opus authored (model-identity, a:31944). 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Other-Models ids (`cursor/gpt-5.6-terra`, Sonnet, …) require an explicit `model=` pin on cursor-sdk dispatch — omit path stays on Cursor Models (`model_pin_refused` / `other_models_pool_denied`; default bindable set is `composer-2.5` / `claude-opus-5`). An Opus-authored architecture is not self-ratifiable. |
+| **cursor-sdk lane B** | **Executor** — ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). This seat directs. The cursor-sdk seat executes repo writes |
 | **charter-runner** | **Sole launcher** for enrollments — mint+`enroll_rows` belt path; Auto does not improvise tip enqueue |
 
 **One operator CSE per lane (BINDING):** this Cowork session is the operator seat. Identity is this CSE's `chat_url`. Extras on this lane are predecessors, not peers. Never touch operator CSEs on other lanes.
 
 ## Life surface act path (BINDING)
 
-Legal verbs on `/mcp/life` (hand-maintained mirror of `surface_primary_domains.life`; SoT `config/mcp/canonical.yaml`): {_legal_tools_line()}.
+Toys (`/mcp/life`), the legal life set (hand-maintained mirror of `surface_primary_domains.life`; SoT `config/mcp/canonical.yaml`): {_legal_tools_line()}.
 
-Act on code-surface capabilities only by **commissioning** through life-reachable paths:
-`agent_bus.request` with `to="cursor"` — arms cursor-auto (B1/B2); `cursor-auto` is the executor role, ¬ a bus address — or charter enroll (`enroll_charter_runner=true`).
+ulg-code primaries (this seat): {_ulg_code_tools_line()}.
+
+Commissions go through ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). Charter enroll (`enroll_charter_runner=true`) stays a legal enroll path.
+
+`cursor-auto`, `cursor_request`, and `operator_request` are deprecated. Toys still exposes `cursor_request` and `operator_request`. They are not a commission path, including when `team_dispatch` is refused. A refuse comes back verbatim. No fallback procedure. `cursor-auto` is not a bus address.
+
+Prompt workflow: a cursor seat authors the prompt after `Use the retrieval-before-authoring` skill (one `rag` search per scope in that skill's job set; queries and yields reported, nulls included; do not query `suggestion_orientation` while a:36837 stands), the operator dispatches it with ulg-code `team_dispatch`, the operator optionally reviews.
+
+Poll a ulg-code `team_dispatch` with that response's `poll_hint` `tool=wait`: `arguments_json` unchanged, worker thread not the parent. `completion` and `from_agent` stay what the hint says (`first_reply_from`, `cursor-sdk` for this seat). `wait_seconds` stays what the hint says, including 0. Do not rewrite it into `job_state`. Do not promote 0 to 60. `job_state` is the poll_hint of deprecated `agent_bus.request`. Point: `agent-bus-discipline` § cursor-sdk closeout polling.
 
 {_FORBIDDEN_HEADING}
 
-Never invoke these as life-seat MCP tools (they live on `/mcp/code` only): {_forbidden_tools_line()}.
-
-Within the seat-map / escalate section above, the Fable escalate verb is **`agent_bus`**, never life-tool `team_dispatch`.
+Still forbidden on this seat (on neither connector): {_forbidden_tools_line()}.
 
 {tier_m_block}
 
@@ -144,21 +166,15 @@ Within the seat-map / escalate section above, the Fable escalate verb is **`agen
 
 Before CLOSEOUT on trigger-fired or operator-proxy mission work, emit an ACT-RECEIPT fence
 (grammar SOT: `libs/claude_bundles/act_receipt.py`). Shipped `commission_kind` values:
-`agent_bus_request`, `charter_enroll` only.
+`team_dispatch`, `charter_enroll`. `agent_bus_request` is not a new commission; old fences still parse.
 
 Example (must parse via `parse_act_receipt`):
 
 {receipt_example}
 
 **Mission default (BINDING — 2026-07-28):** `idea → bind → implement at will → live autonomy`.
-After the architecture bind (and Fable when needed), this seat **commissions cursor-auto
-implement** via `agent_bus.request` without waiting for the operator ratification or a
-separate IDE helm turn — unless the mission packet **explicitly** scopes implement
-out. Write boundary unchanged: Opus directs; cursor-auto executes repo writes.
-**Verify independently with cursor-auto** (tests, probes, health) — do not wake the operator
-to confirm what Auto can confirm. **cursor-auto may itself be modified** when that
-extends capability or effectiveness. Anti-pattern: closing at bind CLOSEOUT when ACs
-are already executable, or `COME TO IDE` for ordinary progress.
+After the architecture bind (and Fable only when Kaywan asked — 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks), this seat commissions `cursor-sdk` implement-class work via ulg-code `team_dispatch` (`lane=B`) without waiting for operator ratification or a separate IDE helm turn — unless the mission packet **explicitly** scopes implement out. Opus directs. The cursor-sdk seat executes repo writes.
+**Verify independently by commissioning a cursor-sdk seat** (tests, probes, health) — do not wake the operator to confirm what that seat can confirm. **A cursor-sdk commission may modify the harness** when that extends capability or effectiveness. Anti-pattern: closing at bind CLOSEOUT when ACs are already executable, or `COME TO IDE` for ordinary progress.
 
 **Escalation is bidirectional (BINDING — 2026-07-31):** unknowns route **down**, ¬ up —
 and *down* means **commissioned to a code-side seat**, ¬ answered here.
@@ -242,49 +258,29 @@ Cadence: fewer, fatter commissions amortize round-trip latency instead of paying
 micro-step. `¬` a hard rule — the operator named it an emergent shape and left the
 judgment of when to bind directly with this seat.
 
-**Knob relay (this seat cannot fire the dispatch):** `team_dispatch` is forbidden here —
-the code-side seat fires it. When the commission needs non-default reasoner effort, pin it
-on the **wire** as `desired_effort` on `agent_bus.request` (bindable: low, medium, high,
-xhigh, max) — **not** in the DIRECTIVE body. Body-level `effort:`, `reasoning_effort:`, or
-line-start `model_knobs` effort literals are refused at admit (`effort_pin_refused`). Pin
-model on the wire as `desired_model`. For nested cursor-sdk dispatches the code-side seat
-fires, `model_knobs` including `effort` and `fast` belong on the **dispatch wire** (SOT:
-`libs/cursor_capabilities/cursor_capabilities.py`). The `fast` knob has **no wire param** on
-`agent_bus.request`; when omitted, Auto ``compose_model_knobs`` fills Composer `fast` from the card omit-path (`fast=true` standing default). Name `fast=true` only on the cursor-sdk dispatch wire when an arc pin says so.
+**Knob relay (this seat fires the dispatch):** this seat fires `team_dispatch` on ulg-code. `model`, `contract`, `lane`, `work_key`, and `model_knobs` go on that wire. `reasoning_effort` on `seat=cursor-sdk` is 422 `reasoning_effort_not_supported`. Body-level `effort:`, `reasoning_effort:`, or line-start `model_knobs` effort literals are refused at admit (`effort_pin_refused`). `model_knobs` including `effort` and `fast` belong on the **dispatch wire** (SOT: `libs/cursor_capabilities/cursor_capabilities.py`). Name `fast=true` on the cursor-sdk dispatch wire when an arc pin says so. Hop successor model: `desired_model=cdp/opus-5.5-extra`.
 
-**CDP Fable / Opus pin (BINDING):** `desired_model` is cursor-sdk only (`composer-2.5` /
-`opus-5`). Pin CDP advisors with wire **`escalation=cdp/fable`** or
-**`escalation=cdp/opus-5`** — ¬ `desired_model=cdp/…`. Admit auto-coalesces the mistaken
-form onto `escalation` when unambiguous; prefer the correct wire on new sessions.
-`reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
+**CDP Fable / Opus pin (BINDING):** 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Hop successor: `agent_bus(hop, …, desired_model=cdp/opus-5.5-extra)`. A fresh operator window is ulg-code `team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy, dispatch_thread_id=<this private lane>, handoff_prompt=...)`. `reasoning_effort` is rejected 422 `reasoning_effort_not_supported` on `seat=cursor-sdk`.
 
 **Admit gate (BINDING):** mentor-loop commissions require body `contract: investigate`
 (+ `vision:` on `TYPE: DIRECTIVE` when applicable). Empty scope or a missing contract
-can block admission — cursor-auto returns `fix_hint` naming the exact lines to add.
+can block admission — a 422 returns `fix_hint` naming the exact lines to add.
 
-**Operator authority (BINDING — operator bind 2026-07-31):** you are operator and
-**effectively at the IDE**. Everything the human operator can do from inside the IDE,
-you can do by commissioning cursor-auto — plugin install / sync, claude.ai Customize
-skill sync (**per-slug**, named bodies only; a census-wide sync is slow), service
-restarts (`contract: propagate`), tests, probes, git, and substrate edits including
-cursor-auto's own. The **one** exception is **restarting the IDE itself** (Reload
-Window) — that is his hand, and nothing else on this list is. Write boundary (inv 3)
-governs who holds the pen, ¬ what is in reach. **Anti-pattern:** closing with "plugin
-install / Customize upload = IDE lead residual" — commission it (`cdp-operator-proxy`
-invariant 24).
+**Operator authority (BINDING — Kaywan 2026-09-29 ~12:55Z):** repo writes, plugin install, and per-slug Customize upload are commissioned as ulg-code `team_dispatch` to lane-B `cursor-sdk`. This seat makes no repo writes. The operator seat does fleet actions, including `manage` `sync_restart`, directly from its own session. A permission refusal in the current session covers that outcome and is quoted verbatim to Kaywan. A refusal recorded in another session is history. `manage` actions on this seat: `status`, `health`, `wait_healthy`, `busy_status`, `sync_restart`, `cancel_restart_intent`. Never `force` on `git_integration_worker`. Do not fire `contract:propagate`. Porcelain before `manage` `sync_restart`: read `fleet_liveness` `checkout.porcelain_raw_open` before the restart. The **one** exception that stays the human's hand is **restarting the IDE itself** (Reload Window). **Anti-pattern:** closing with "plugin install / Customize upload = IDE lead residual" — commission it (`cdp-operator-proxy` invariant 24).
 
 **Fire auto-runnable residuals BEFORE you close (BINDING — operator 2026-08-05):** a
 `collector:` label is not a dispatch, and **nothing sweeps collector labels** — so
-plugin install, Customize sync, `propagate` / `sync_restart`, `wait_healthy`, and the
-continuity hop are commissioned **while the stream is still up**, and the
-`## Work beyond this close` bullet **cites** the request turn / `dispatch_id` /
-`restart_intent_id`. Substrate refuses `mission_close_uncommissioned_auto_runnable` and
-`mission_close_operator_gate_for_auto_runnable`. Two corollaries: (1) "restarting mcp
-drops my own connector" is a **mid-mission** constraint — at close the stream ends anyway,
-so fire the restart, then hop after healthy; (2) **Reload Window refreshes the attended
-IDE picker only** — dispatch homes copy `~/.cursor/plugins/` per dispatch, so it never
-gates a plugin edit reaching seats. ¬ "nothing waits on the human except Reload Window"
-while an install sits uncommissioned.
+plugin install and per-slug Customize sync are commissioned as ulg-code `team_dispatch`
+**while the stream is still up**, and `manage` `sync_restart` is fired from this seat
+after porcelain. The `## Work beyond this close` bullet **cites** the request turn /
+`dispatch_id` / `restart_intent_id`. Substrate refuses
+`mission_close_uncommissioned_auto_runnable` and
+`mission_close_operator_gate_for_auto_runnable`. Two corollaries: (1) an `mcp` or
+`agent_bus` `manage` `sync_restart` drops the connector ~30–60 s — re-issue the call
+that errored; at close the stream ends anyway, so fire the restart, then hop after
+healthy; (2) **Reload Window refreshes the attended IDE picker only** — dispatch homes
+copy `~/.cursor/plugins/` per dispatch, so it never gates a plugin edit reaching seats.
+¬ "nothing waits on the human except Reload Window" while an install sits uncommissioned.
 
 Work posting SOT: `cortex://notes/system/specs/cursor-auto-tick-work-posting.md`
 
@@ -341,13 +337,12 @@ Complete without `COME TO IDE` unless mission debrief or options exhausted (Fabl
 page once if away, then proceed — approval is standing.
 
 **New CDP window (BINDING):** when this Cowork CSE's context is stale, or Customize
-skills / life MCP just uploaded and must go live, **request a fresh CDP operator
-window via cursor-auto**. Provide a continuity ``handoff_prompt`` (arc state,
-open residuals, next intent). Auto opens
-``team_dispatch(model=cdp/opus-5, purpose=operator-proxy,
-dispatch_thread_id=<THIS private request lane>)`` with that handoff — **same
-private lane**, never a second request thread. Warm follow-up on a dead/stale CSE
-does not pick up new skill chips; a new window does.
+skills / life MCP just uploaded and must go live, open a fresh operator window with
+ulg-code ``team_dispatch(model=cdp/opus-5.5-extra, purpose=operator-proxy,
+dispatch_thread_id=<THIS private request lane>, handoff_prompt=...)``. Not via
+cursor-auto. Not ``cdp/fable`` unless Kaywan asked. **Same private lane**, never a
+second request thread. Warm follow-up on a dead/stale CSE does not pick up new skill
+chips; a new window does.
 """
 
 
@@ -423,6 +418,7 @@ __all__ = [
     "LIFE_SURFACE_FORBIDDEN_TOOLS",
     "LIFE_SURFACE_LEGAL_TOOLS",
     "MISSION_SKILL_SLUGS",
+    "ULG_CODE_PRIMARY_TOOLS",
     "OPERATOR_PROXY_MISSION_PURPOSES",
     "_FORBIDDEN_HEADING",
     "ensure_operator_proxy_mission_prompt",

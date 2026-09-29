@@ -116,11 +116,34 @@ def test_operator_proxy_life_surface_legal_tools_matches_derive() -> None:
 
 
 def test_operator_proxy_forbidden_tools_matches_code_extra_derive() -> None:
-    """Gate LIFE_SURFACE_FORBIDDEN_TOOLS against derive_code_extra_primary_tools."""
-    from claude_bundles.operator_proxy_mission import LIFE_SURFACE_FORBIDDEN_TOOLS
+    """Forbidden set is the code-extra names this seat still must not call.
+
+    Equality with derive_code_extra_primary_tools() is intentionally broken:
+    team_dispatch, manage, and observability are ulg-code primaries.
+    """
+    from claude_bundles.operator_proxy_mission import (
+        LIFE_SURFACE_FORBIDDEN_TOOLS,
+        ULG_CODE_PRIMARY_TOOLS,
+    )
     from endpoint_surface import derive_code_extra_primary_tools
 
-    assert LIFE_SURFACE_FORBIDDEN_TOOLS == derive_code_extra_primary_tools()
+    derived = derive_code_extra_primary_tools()
+    assert LIFE_SURFACE_FORBIDDEN_TOOLS == frozenset({"panel_dispatch", "claudeburst"})
+    assert LIFE_SURFACE_FORBIDDEN_TOOLS < derived
+    assert derived - LIFE_SURFACE_FORBIDDEN_TOOLS == frozenset(
+        {"team_dispatch", "manage", "observability"}
+    )
+    assert ULG_CODE_PRIMARY_TOOLS == frozenset(
+        {
+            "agent_bus",
+            "agent_bus_read",
+            "team_dispatch",
+            "manage",
+            "observability",
+            "tool_search",
+        }
+    )
+    assert LIFE_SURFACE_FORBIDDEN_TOOLS != derived
 
 
 def test_life_tools_list_exact_primary_set(life_server: dict) -> None:
@@ -501,9 +524,7 @@ def test_life_fs_workspaces_md_list_succeeds(life_server: dict) -> None:
     assert "error" not in result, result.get("error")
     assert "sections" in result or "headings" in result
     assert "workspaces_resolved_root" in result
-    assert (
-        "workspaces_read_at_head" in result or "workspaces_head_unknown" in result
-    )
+    assert "workspaces_read_at_head" in result or "workspaces_head_unknown" in result
 
 
 def test_life_workspaces_enabled_grant_preserves_md_ops(
@@ -567,9 +588,7 @@ def test_life_fs_workspaces_read_reports_root_and_head(life_server: dict) -> Non
     )
     assert "error" not in result, result
     assert "workspaces_resolved_root" in result
-    assert (
-        "workspaces_read_at_head" in result or "workspaces_head_unknown" in result
-    )
+    assert "workspaces_read_at_head" in result or "workspaces_head_unknown" in result
 
 
 def test_life_fs_workspaces_md_read_reports_root_and_head(life_server: dict) -> None:
@@ -582,9 +601,7 @@ def test_life_fs_workspaces_md_read_reports_root_and_head(life_server: dict) -> 
     )
     assert "error" not in result, result
     assert "workspaces_resolved_root" in result
-    assert (
-        "workspaces_read_at_head" in result or "workspaces_head_unknown" in result
-    )
+    assert "workspaces_read_at_head" in result or "workspaces_head_unknown" in result
 
 
 def test_life_read_and_md_read_share_resolved_root_read_only(
@@ -598,8 +615,7 @@ def test_life_read_and_md_read_share_resolved_root_read_only(
     assert "error" not in read_result, read_result
     assert "error" not in md_result, md_result
     assert (
-        read_result["workspaces_resolved_root"]
-        == md_result["workspaces_resolved_root"]
+        read_result["workspaces_resolved_root"] == md_result["workspaces_resolved_root"]
     )
 
 
@@ -632,8 +648,7 @@ def test_life_read_and_md_read_share_resolved_root_when_write_enabled(
     assert "life-tree-only" in md_result.get("content", "")
     assert read_result["workspaces_resolved_root"] == str(life_root.resolve())
     assert (
-        read_result["workspaces_resolved_root"]
-        == md_result["workspaces_resolved_root"]
+        read_result["workspaces_resolved_root"] == md_result["workspaces_resolved_root"]
     )
 
 
@@ -709,9 +724,10 @@ def test_life_fs_workspaces_md_replace_refused_out_of_lease(life_server: dict) -
     )
     assert "error" in result
     assert "/mcp/life surface" in result["error"]
-    assert "READ-ONLY" in result["error"] or "not in the life workspaces grant" in result[
-        "error"
-    ]
+    assert (
+        "READ-ONLY" in result["error"]
+        or "not in the life workspaces grant" in result["error"]
+    )
 
 
 def test_life_fs_cortex_md_replace_permitted_with_write_lease(
@@ -796,7 +812,9 @@ def test_life_overflow_excludes_project_write_tools(life_server: dict) -> None:
         "copy_project_file",
     }
     present = blocked & set(life_server["overflow_reg"])
-    assert not present, f"write-capable project tools leaked to life overflow: {sorted(present)}"
+    assert not present, (
+        f"write-capable project tools leaked to life overflow: {sorted(present)}"
+    )
     assert "read_project_file" not in life_server["overflow_reg"]
 
 
@@ -906,4 +924,3 @@ def test_life_dispatch_email_blocks_mutating_op(life_server: dict) -> None:
             arguments='{"message_ids":["x"],"folder":"Archive"}',
         )
     assert payload.get("error") == "life_surface_read_only"
-

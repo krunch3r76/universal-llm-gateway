@@ -66,6 +66,7 @@ is itself one of these chips — do not assert a loaded set you did not verify;
 state what you actually hold.
 
 **Not loadable here:** {carve} are `cursor_only` — not attachable or
-self-fetchable on this seat by any channel. Commission a cursor seat via
-`agent_bus.request`; ¬ chase them. Split: `decision:operator-proxy-skill-surface-split`.
+self-fetchable on this seat by any channel. Commission a cursor seat via ulg-code
+`team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`); ¬ chase them. Split:
+`decision:operator-proxy-skill-surface-split`.
 """

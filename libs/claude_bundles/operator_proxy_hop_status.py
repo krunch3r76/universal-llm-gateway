@@ -46,7 +46,8 @@ INJECTORS: tuple[str, ...] = ("cdp_ask",)
 HOP_STATUS_MARKER = "## This hop (read first)"
 UNSPECIFIED = "(unspecified)"
 _FIRST_ACTS_LINE = (
-    "- first-acts: skill reloads → handoff head (fs offset=0 limit=50) → journal → "
+    "- first-acts: skill reloads (`lane-act-gates` with the birth slugs) → "
+    "handoff head (fs offset=0 limit=50) → journal → "
     "fetch(last=3) → mark_read(through_turn, agent=web-anthropic) → send "
     "TYPE: SEAT_REGISTRATION quoting successor_birth_id"
 )

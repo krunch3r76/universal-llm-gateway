@@ -60,7 +60,9 @@ def test_project_ask_absent_both_surfaces(life_server: dict, code_server: dict) 
     assert "project_ask" not in code_server["primary"]
     assert "project_ask" not in life_server["tool_names"]
     assert "project_ask" not in code_server["tool_names"]
-    assert LIFE_SURFACE_FORBIDDEN_TOOLS == derive_code_extra_primary_tools()
+    derived = derive_code_extra_primary_tools()
+    assert LIFE_SURFACE_FORBIDDEN_TOOLS == frozenset({"panel_dispatch", "claudeburst"})
+    assert LIFE_SURFACE_FORBIDDEN_TOOLS < derived
     assert "project_ask" not in LIFE_SURFACE_FORBIDDEN_TOOLS
     assert "cse_session" not in LIFE_SURFACE_FORBIDDEN_TOOLS
 

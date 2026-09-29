@@ -89,17 +89,21 @@ def test_ensure_adds_missing_chip_only() -> None:
     assert "## Mission seat map (BINDING" in out
 
 
-def test_structural_briefing_a7_escalate_is_agent_bus_not_team_dispatch() -> None:
-    """F7/A7: escalate verb is agent_bus; team_dispatch only under FORBIDDEN heading."""
+def test_structural_briefing_commission_is_ulg_code_team_dispatch() -> None:
+    """Seat map and act path name ulg-code team_dispatch; forbidden line does not."""
     out = ensure_operator_proxy_mission_prompt("# Mission\n")
-    seat_section = out.split("## Life surface act path")[0]
-    assert "agent_bus" in seat_section.lower()
-    assert "team_dispatch" not in seat_section
-    forbidden_idx = out.index(_FORBIDDEN_HEADING)
-    seat_idx = out.index("## Mission seat map")
-    team_dispatch_after_forbidden = "team_dispatch" in out[forbidden_idx:]
-    assert team_dispatch_after_forbidden
-    assert out.index("team_dispatch") > seat_idx
+    act = out.split("## Life surface act path", 1)[1]
+    act_head = act.split(_FORBIDDEN_HEADING, 1)[0]
+    assert "team_dispatch" in act_head
+    assert "ulg-code" in act_head
+    assert "lane=B" in act_head or "`lane=B`" in act_head
+    forbidden = out.split(_FORBIDDEN_HEADING, 1)[1]
+    forbidden_body = forbidden.split("\n## ", 1)[0]
+    for name in ("team_dispatch", "manage", "observability"):
+        assert f"`{name}`" not in forbidden_body
+    assert "`panel_dispatch`" in forbidden_body
+    assert "`claudeburst`" in forbidden_body
+    assert "lane-act-gates" in MISSION_SKILL_SLUGS
 
 
 def test_legal_subset_forbidden_disjoint_a9() -> None:
@@ -132,25 +136,22 @@ def test_briefing_receipt_example_parses_d3() -> None:
     start = out.index(marker)
     end = out.index("```", start + len(marker))
     fence = out[start : end + 3]
-    assert parse_act_receipt(fence) is not None
+    parsed = parse_act_receipt(fence)
+    assert parsed is not None
+    assert parsed.commission_kind == "team_dispatch"
 
 
-def test_propagate_contract_documents_allow_self_preempt() -> None:
-    """M3: operator briefing surfaces allow_self_preempt (skill already did)."""
+def test_operator_restart_is_manage_sync_restart_not_propagate() -> None:
+    """Kaywan 2026-09-29 ~12:55Z: this seat restarts with manage sync_restart."""
     from claude_bundles.operator_proxy_tier_m import tier_m_authoring_block
 
     block = tier_m_authoring_block()
-    assert "allow_self_preempt" in block
-    assert "defaults **True**" in block or "defaults **True**".replace(
-        "*", ""
-    ) in block.replace("*", "")
-    assert "force: false" in block.lower() or "``force: false``" in block
-    assert (
-        "not** the auto-escalation veto" in block
-        or "not the auto-escalation veto" in block
-    )
-    # Shorthand + structured example surfaces both name the knob.
-    assert block.count("allow_self_preempt") >= 2
+    assert "manage" in block and "sync_restart" in block
+    assert "directly from its own session" in block
+    assert "Never" in block and "git_integration_worker" in block
+    assert "Do not fire" in block and "contract:propagate" in block
+    assert "cannot (or should not) call" not in block
+    assert "via\ncursor-auto" not in block
 
 
 def test_skill_surface_introspects_instead_of_asserting_loaded() -> None:

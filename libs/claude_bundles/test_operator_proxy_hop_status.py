@@ -211,16 +211,13 @@ def test_mission_ensure_idempotent_with_this_hop() -> None:
 
 def test_hop_block_echoes_successor_birth_id_from_prompt() -> None:
     birth = "abcdefabcdefabcdefabcdefabcdefab"
-    body = (
-        f"{_SEAT}\n"
-        f"successor_birth_id: {birth}\n"
-        "TYPE: CONTINUITY_HANDOFF\n"
-    )
+    body = f"{_SEAT}\nsuccessor_birth_id: {birth}\nTYPE: CONTINUITY_HANDOFF\n"
     out = ensure_hop_status_first(body)
     start = out.index(HOP_STATUS_MARKER)
     end = out.index("## Mission seat map")
     block = out[start:end]
     assert "- first-acts: skill reloads" in block
+    assert "lane-act-gates" in block
     assert "TYPE: SEAT_REGISTRATION quoting successor_birth_id" in block
     assert f"- successor_birth_id: {birth}" in block
     rule_line = (
@@ -230,7 +227,9 @@ def test_hop_block_echoes_successor_birth_id_from_prompt() -> None:
     )
     assert rule_line in block
     assert block.index("- first-acts:") < block.index(f"- successor_birth_id: {birth}")
-    assert block.index(f"- successor_birth_id: {birth}") < block.index("- rule-plus-specimen:")
+    assert block.index(f"- successor_birth_id: {birth}") < block.index(
+        "- rule-plus-specimen:"
+    )
     assert block.index("fetch-decision:") < block.index("- first-acts:")
 
 

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any
 
 SHIPPED_COMMISSION_KINDS: frozenset[str] = frozenset(
-    {"agent_bus_request", "charter_enroll"}
+    {"agent_bus_request", "charter_enroll", "team_dispatch"}
 )
 FENCE_TAG = "act-receipt"
 _FENCE_RE = re.compile(

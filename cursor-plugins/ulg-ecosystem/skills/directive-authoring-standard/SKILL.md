@@ -117,20 +117,20 @@ Self-attestation ("minted before this sentence") ≠ compliance.
 
 DIRECTIVE names: conductor role, a root thread (`new_slug` or existing `role:root`), charter/scope.
 
-**Transport:** this seat has no `team_dispatch`. Commission rides `cursor_request` → cursor-auto → nested `team_dispatch(seat=cursor-sdk)`. Same indirection as NEW_CDP_WINDOW.
+**Transport:** this seat has ulg-code `team_dispatch`. Commission is `team_dispatch(op=generate, seat=cursor-sdk, lane=B, ...)`. The cursor-sdk seat nests its own further dispatches. `cursor_request` is not the wire.
 
 **Reachability:** no `conductor` contract token exists; body prose is the instruction. `contract=implement` redirects the executor to `cursor/composer-2.5` regardless of `desired_model` — use `contract=investigate` so the mechanical-executor redirect never fires.
 
 **Composer + lane (BINDING):**
 - Omit `model=` — Composer is the only cursor_sdk seat; `model_knobs={"fast":"true"}` on the wire unless an arc pin names otherwise.
-- Name CDP escalation model (`cdp/fable` or `cdp/opus-5`) in the directive when the leg needs independent intelligence beyond Composer enumerate.
-- Pass `lane="B"` on the wire (`cursor_request` / nested `team_dispatch`) for every top-level generate, including read-only, plan, and bind-only. The checkout is a throwaway worktree. `lane=` is a **wire parameter**, not packet prose. Omit on `agent_bus.request` + empty `files_expected` selects Lane A; `team_dispatch` top-level omit is 422 `lane_required`, not A. `lane="A"` only on `CURSOR_LANE_B_SCOPE_REFUSED` or an explicit operator request for shared master. Bind-only and empty scope are not that exception.
+- Name a CDP escalation model in the directive when the leg needs independent intelligence beyond Composer enumerate. 2026-09-29: Fable credits near spent; no `cdp/fable` seat unless Kaywan asks. Hop successor model is `desired_model=cdp/opus-5.5-extra`.
+- Pass `lane="B"` on the wire (`team_dispatch`) for every top-level generate, including read-only, plan, and bind-only. The checkout is a throwaway worktree. `lane=` is a **wire parameter**, not packet prose. `team_dispatch` top-level omit is 422 `lane_required`. `lane="A"` only on `CURSOR_LANE_B_SCOPE_REFUSED` or an explicit operator request for shared master. Bind-only and empty scope are not that exception.
 
-Full recipe (mandatory conductor Use-line, six-block packet): `agent_skill:conductor` § **First-utterance spawn** — this skill does not duplicate it. Wire shape: `cursor_request(contract=investigate, lane="B", …)` → cursor-auto → nested `team_dispatch(seat=cursor-sdk, contract=conductor, …)`. Packet tier table: `conductor`.
+Full recipe (mandatory conductor Use-line, six-block packet): `agent_skill:conductor` § **First-utterance spawn** — this skill does not duplicate it. Operator wire: `team_dispatch(op=generate, seat=cursor-sdk, lane=B, contract=investigate, …)`. The cursor-sdk seat nests further dispatches. `contract=implement` redirects the executor to Composer, so a conductor-class commission uses the contract the conductor recipe names, on `team_dispatch`, not on `cursor_request`. Packet tier table: `conductor`.
 
 This seat: frame the Question, ratify conductor Leg-boundary DISPOSITIONs, hold true operator-only gates — ¬ personally drive each nested admit/poll/harvest.
 
-Seat-map branch: `cursor-auto=executor` for single-DIRECTIVE work; `cursor-sdk conductor=executor-of-executors` once framing closes.
+Seat-map branch: `cursor-sdk` is the executor for single-DIRECTIVE work; `cursor-sdk conductor=executor-of-executors` once framing closes.
 
 **Exception:** UNFRAMED — Question still contested, or live architecture fork — stays on this seat until framing closes. A conductor cannot resolve what this seat has not decided to ask.
 
@@ -138,7 +138,7 @@ Evidence: agent-bus:7244 (cdp/opus DIRECTIVE loop, 8h44m then dead gap, IDE stan
 
 ## D5 — Mission negotiation
 
-Before the mission is framed enough for D4, this seat and cursor-auto MAY negotiate shape headlessly — no live chat, no human mediation. Same `TYPE: DIRECTIVE` / `contract: confer` envelope; add `negotiation_phase: proposal|counter|agree|ratify` plus closed 12-field set: negotiation_phase, negotiation_id, revision, in_reply_to_turn, proposal_hash, parent_thread, objective, scope, out_of_scope, acceptance, vision, idle_deadline (explicit `parent_thread:` as a body line, distinct from the tool argument `parent_thread`). `proposal_hash` = sha256: over sorted compact JSON of the six payload fields (parent_thread, objective, scope, out_of_scope, acceptance, vision). Auto replies `TYPE: DISPOSITION` with closed `negotiation.*` vocabulary.
+Before the mission is framed enough for D4, this seat and the cursor-sdk executor MAY negotiate shape headlessly — no live chat, no human mediation. The operator wire is ulg-code `team_dispatch`, not `agent_bus.request` / `cursor_request`. Same `TYPE: DIRECTIVE` / `contract: confer` envelope; add `negotiation_phase: proposal|counter|agree|ratify` plus closed 12-field set: negotiation_phase, negotiation_id, revision, in_reply_to_turn, proposal_hash, parent_thread, objective, scope, out_of_scope, acceptance, vision, idle_deadline (explicit `parent_thread:` as a body line, distinct from the tool argument `parent_thread`). `proposal_hash` = sha256: over sorted compact JSON of the six payload fields (parent_thread, objective, scope, out_of_scope, acceptance, vision). Auto replies `TYPE: DISPOSITION` with closed `negotiation.*` vocabulary.
 
 Ordinary DIRECTIVEs without `negotiation_phase` are unaffected. Additive — not a replacement for attended charter-birth (`cortex://notes/system/playbooks/attended-charter-birth-with-cursor.md`) when a human is in chat.
 
@@ -151,7 +151,7 @@ Live field contract: full grammar in `cortex://notes/system/specs/directive-loop
 | `desired_model=auto` on a dense job | Pin composer-2.5 |
 | `allow_long_body=true` on `agent_bus.request` | Rejected on `request`; `sidecar_content`; keep the ten §2 fields in `body` |
 | cdp/opus drives a framed 5-G-row mission turn-by-turn over the DIRECTIVE loop | Commission a conductor (D4) once the Question is framed; adjudicate Legs, don't drive them |
-| `lane="B"` only in packet prose | Wire `lane="B"` on `cursor_request` / `agent_bus.request` |
+| `lane="B"` only in packet prose | Wire `lane="B"` on `team_dispatch` |
 | Restating conductor first-utterance spawn / negotiation field lists in `cdp-operator-proxy` | Point here; recipe of record stays on `agent_skill:conductor` § First-utterance spawn |
 | Bolded "rule on this fork" AC with no `RULING` token (`contract: implement`) | `AC<n> — RULING:` then the fork. Turn 343 AC2 was a genuine withheld-lean judgment AC and still admitted mechanical |
 

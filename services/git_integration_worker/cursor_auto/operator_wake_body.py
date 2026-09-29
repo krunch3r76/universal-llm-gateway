@@ -14,6 +14,7 @@ SKILL_RELOAD_LINE = (
     "Use the hypothesize-simulate skill; "
     "Use the completion-provenance-discipline skill; "
     "Use the agent-bus-discipline skill; "
+    "Use the lane-act-gates skill; "
     "Use the retrieval-before-authoring skill. "
     "Then read cortex://notes/system/threads/{lane}-standing-handoff.md "
     "(first section) and cortex://notes/system/maestro/journal.md "

@@ -20,6 +20,10 @@ DEGRADE_LADDER_HEADING = (
 )
 
 _TIER_M_TEMPLATE = """\
+This seat does not commission with ``agent_bus.request``. Commissions are ulg-code
+``team_dispatch`` (``op=generate``, ``seat=cursor-sdk``, ``lane=B``). The fence
+below is not an act path.
+
 ```
 TYPE: DIRECTIVE
 contract: implement
@@ -109,75 +113,21 @@ effectful (`email.send`, `email.move`, `email.delete`, `cortex.assert`) and all 
 `fs.*`, `manage.*`, `pipeline.*`. A refusal names the reason, the allowed set, and
 a `fix_hint`; a multi-op ask is refused as judgment — route it `implement`."""
 
-PROPAGATE_HEADING = "## `contract: propagate` — operator restart request (BINDING)"
+PROPAGATE_HEADING = "## Operator restart — `manage` `sync_restart` (BINDING)"
 
 _PROPAGATE_CONTRACT = """\
-**Status: live (2026-07-29)** — operators request drain-gated service restarts via
-cursor-auto without tier-M ``manage.*``. Auto mints structured propagation ledger
-rows and fires ``sync_restart`` through manage.sock when the safe-window matrix and
-GIW I2 permit. Tier-M ``execute`` + ``manage.sync_restart`` remains denied.
+**Status: Kaywan 2026-09-29 ~12:55Z.** The operator seat does fleet actions, including
+``manage`` ``sync_restart``, directly from its own session. A permission refusal in
+the current session covers that outcome and is quoted verbatim to Kaywan. A refusal
+recorded in another session is history. ``manage`` actions: ``status``, ``health``,
+``wait_healthy``, ``busy_status``, ``sync_restart``, ``cancel_restart_intent``. Never
+``force`` on ``git_integration_worker``. Do not fire ``contract:propagate``. Porcelain
+before ``manage`` ``sync_restart``: read ``fleet_liveness`` ``checkout.porcelain_raw_open``
+before the restart. ``contract:propagate`` rides deprecated ``agent_bus.request`` and
+is not this seat's restart verb. There is no fallback procedure.
 
-Use when landed code must go live and the operator seat cannot (or should not) call
-``manage`` from Cowork directly.
-
-**Shorthand (one service):**
-
-```
-TYPE: DIRECTIVE
-contract: propagate
-scope: propagation sync_restart mcp
-code_ref: <land SHA or omit for HEAD>
-allow_self_preempt: true
-effects_expected: propagation row persisted; restart executed or deferred with reason
-density: sparse
-budget: ≤1
-```
-
-``allow_self_preempt`` defaults **True**. When True, cursor-auto may auto-escalate
-to ``force=true`` on self-heat busy deferrals for ``mcp``/``cdp_ask``. Set
-``allow_self_preempt: false`` to veto that auto-escalation. Explicit ``force: false``
-is **not** the auto-escalation veto.
-
-**Structured (multi-service or explicit matrix):**
-
-```
-TYPE: DIRECTIVE
-contract: propagate
-scope: propagation sync_restart
-effects_expected: propagation rows persisted; per-row execution status relayed inline
-
-## propagation
-```yaml
-propagation:
-  - service: mcp
-    code_ref: <land SHA>
-    proof_class: client_visible
-    allow_self_preempt: true  # default; false vetoes auto-escalation (force: false does not)
-    # omitted proof → composed from proof_class (not from service default)
-  - service: git_integration_worker
-    code_ref: <land SHA>
-    safe_window: drain_required
-    proof_class: process_live
-    # omitted proof → process-identity obligation (compose_proof), never OpenAPI prose
-    # park_live defaults true on sync_restart/restart/stop (omit the key).
-    # Resume-eligible busy occupants (sdk_agent_id + SDK store dir on disk)
-    # park after a 20s grace (park_kind=park_for_restart; resume child keeps
-    # the parent's execution_id). Occupants missing either drain-wait.
-    # park_live: false  — opt out; drain-wait every occupant. Never force.
-    hazard: closeout_relay
-```
-```
-
-Omitted ``proof`` is composed from ``proof_class`` at mint time. ``process_live``
-yields process-identity prose; do not rely on the service's default class.
-
-**Derivation tags (BINDING):** a propagation row ``reason`` carries
-``derived:`` / ``import_path:`` tags **iff** a generator derived the row
-(path-prefix service mint, CONSUMERS/INJECTORS mint, or tagged RESIDUE coerce). Hand-authored
-rows in this DIRECTIVE stay **untagged** — do not invent tags. Absence means
-seat-authored; that silence is informative only while every derived row is tagged.
-
-Closeout carries ``propagation[]``, ``row_ids``, and ``executions[]`` per service.
+Reading an old propagate closeout: the row carries ``propagation[]``, ``row_ids``,
+and ``executions[]`` per service.
 ``disposition: executed`` only when proof-of-live observed; ``queued`` when manage
 deferred **with a persisted restart intent** (``restart_intent_id`` present — manage
 owns the queue and will fire after drain); ``blocked`` when manage deferred busy
@@ -192,9 +142,9 @@ for **claimed / in-flight** jobs: nesting propagate inside such a dispatch **los
 the parent closeout when the restart lands** — AutoJobQueue is process-local and a
 GIW drain/restart kills claimed/in-flight jobs (dead, not expired).
 **Queued-not-yet-claimed** jobs survive restart with ``enqueued_at`` preserved
-(agent-bus:9530 turn 50). The nested seat cannot observe the restart it blocks. Fire
-propagate from a seat outside the GIW lease (parent cursor-auto after nested exit,
-or operator-proxy top-level)."""
+(agent-bus:9530 turn 50). The nested seat cannot observe the restart it blocks. This seat does not fire
+``contract:propagate``. Its restart verb is ``manage`` ``sync_restart``, never
+``force`` on ``git_integration_worker``."""
 
 _DEGRADE_LADDER = """\
 Two fields, two subjects. `auto_handler_status` is the **Auto handler's**
@@ -212,11 +162,13 @@ first.
   lanes were recorded as armed while they were already gone.
 - `job_admission.outcome: deferred` — every body-pure gate passed and the
   thread-state gates listed in `coverage.deferred` have not run yet. This is the
-  normal armed reading: poll the returned `poll_hint` in one continuous hold up
-  to `wait_seconds ≤ 60` (life MCP client ceiling); re-arm only after an empty
-  return or for nests that outlast one hold. A later terminal refusal from a
-  deferred gate is still possible — `agent_bus_read(job_state)` is
-  authority-of-record.
+  normal armed reading: for a ulg-code `team_dispatch`, poll that response's
+  `poll_hint` (`tool=wait`, `arguments_json` unchanged). `wait_seconds` stays what
+  the hint says, including 0. Do not promote 0 to 60. `job_state` is the poll_hint
+  of deprecated `agent_bus.request`, not the commission poll. A later terminal
+  refusal from a deferred gate is still possible — re-call the same hint. A
+  `predicate_unmet` envelope means the completion is not satisfied yet; do not
+  re-dispatch on it.
 - `job_admission.outcome: admitted` — the ladder completed synchronously
   (`execute` / `propagate` approval short-circuits the thread-state gates). Poll
   as for `deferred`.
@@ -226,7 +178,9 @@ first.
   `reason` says which path (continuity hop, static-pin refusal, no live
   handler). Nothing is running.
 - `no-auto-handler` — the turn was written but nothing will act on it; the ask is
-  parked. Re-`request` after liveness returns, or `send` + park. Never long-wait.
+  parked. This seat does not re-issue ``agent_bus.request``. Commission the next
+  act with ulg-code ``team_dispatch``, or ``send`` a DISPOSITION and park. Never
+  long-wait.
 - `status:blocked (reason)` — authoring defect; fix per `missed_tokens` +
   `fix_hint` and re-issue on the same thread (same-thread re-issue supersedes the
   first eligible predecessor, queued or claimed — `queue_withdraw` destroys a

@@ -325,13 +325,13 @@ def test_life_dispatch_block_delegates_code_extra_over_the_bus() -> None:
     # carve-out spelled out (call-by-name is what kept the seat probing).
     for name in sorted(_code_extra()):
         assert f"`{name}`" in block, name
-    assert "absence is REAL" in block
-    assert "GATES §1" in block
-    # Sanctioned transport present; direct-call prescription absent.
-    assert 'agent_bus(tool="request", to="cursor"' in block
-    assert "life-to-code-request-lane" in block
+    assert "Toys omits them" in block
+    assert "absence is REAL" not in block
+    assert 'agent_bus(tool="request", to="cursor"' not in block
+    assert "does not commission via `agent_bus.request`" in block
+    assert "team_dispatch" in block
+    assert "ulg-code" in block
     assert "call directly" not in block
-    assert "team_dispatch(op=" not in block
 
 
 def test_code_seat_dispatch_block_keeps_direct_call_form() -> None:
@@ -347,7 +347,8 @@ def test_code_seat_dispatch_block_keeps_direct_call_form() -> None:
 def test_life_capability_verify_names_cursor_request_not_quality_gate() -> None:
     joined = "\n".join(render_orientation_blocks(family="claude", agent="claude-web"))
     assert "## Seat capability verify — life MCP" in joined
-    assert "cursor_request(contract=verify" in joined
+    assert "team_dispatch" in joined
+    assert "cursor_request(contract=verify" not in joined
     assert "does not expose `quality_gate`" in joined
 
 
@@ -356,14 +357,17 @@ def test_life_card_carries_no_direct_dispatch_instruction() -> None:
     card, _ = render_briefing_card(family="claude", agent="claude-web", domain="life")
     assert "## MCP server primary — `/mcp/life`" in card
     assert "`team_dispatch`/`panel_dispatch` are server-primary" not in card
-    assert 'agent_bus(tool="request", to="cursor"' in card
+    assert 'agent_bus(tool="request", to="cursor"' not in card
+    assert "team_dispatch" in card
 
 
 def test_cursor_card_unaffected_by_surface_split() -> None:
     # Cursor's thinned set (friction 25727) renders neither endpoint-dependent
     # body, so the split must be invisible there.
     joined = "\n".join(
-        render_orientation_blocks(family="claude", agent="claude-cursor", domain="coding")
+        render_orientation_blocks(
+            family="claude", agent="claude-cursor", domain="coding"
+        )
     )
     assert "/mcp/life" not in joined
     assert "/mcp/code" not in joined

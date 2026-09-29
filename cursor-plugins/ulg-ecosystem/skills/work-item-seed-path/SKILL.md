@@ -425,12 +425,13 @@ must re-run S1–S6 in-seat after spawn.
 | expected S6 = spawn conductor | receipt quotes `dispatch_id` + scoreboard URI + Lane B |
 
 Cadence: fewer, fatter commissions amortize round-trip latency vs. paying it per
-micro-step. **Life seats** commission via `agent_bus.request` with `desired_model` and
-`desired_effort` on the **wire** — do not pin effort in the DIRECTIVE body
-(`effort_pin_refused`). **Code-side** `team_dispatch` shape: `seat=cursor-sdk` · omit `model=` ·
+micro-step. **The operator seat** commissions via ulg-code `team_dispatch`
+(`seat=cursor-sdk`, `lane=B`, `model_knobs` on that wire). Do not pin
+`desired_effort` on `agent_bus.request`. **Code-side** `team_dispatch` shape stays
+scoped to code seats: `seat=cursor-sdk` · omit `model=` ·
 `model_knobs={"fast":"true"}` on the dispatch
-wire when Fast is intended — ULG grok/composer omit-path is **`fast=false`**; pin `{fast:true}` explicitly (`fast` has no wire param on `agent_bus.request`;
-`reasoning_effort` is rejected 422 on `seat=cursor-sdk`). Operator-proxy SOT:
+wire when Fast is intended — ULG grok/composer omit-path is **`fast=false`**; pin `{fast:true}` explicitly
+(`reasoning_effort` is rejected 422 on `seat=cursor-sdk`). Operator-proxy SOT:
 `libs/claude_bundles/operator_proxy_mission.py` § Knob relay.
 
 ## Entry surfaces
@@ -439,7 +440,7 @@ wire when Fast is intended — ULG grok/composer omit-path is **`fast=false`**; 
 |---|---|
 | Cursor IDE | `/work-item-seed …` (thin command) |
 | Headless / Auto / CDP | Use the `work-item-seed-path` skill |
-| Commissioned conductor | `agent_bus.request` (life) or `team_dispatch` (code) — see § Commissioning register |
+| Commissioned conductor | ulg-code `team_dispatch` (`seat=cursor-sdk`, `lane=B`) — see § Commissioning register |
 
 ```
 /work-item-seed {idea}

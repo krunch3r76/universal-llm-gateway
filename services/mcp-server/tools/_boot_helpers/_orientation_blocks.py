@@ -56,8 +56,8 @@ _GATES_STRIP = """\
 3. **Bus cite** — ∀ named agent-bus thread or child lane: `{id} {slug}` (`thread_get`). Never a bare number. Continuity/resume prose expands every id before the first use."""
 
 _GATES_CAPABILITY_VERIFY_LINE = (
-    "3. **Capability verify (web)** — before ANY \"this seat cannot run Y\" claim: "
-    "`tool_search(\"Y\")` then `quality_gate`; lead seats close-verify on-seat."
+    '3. **Capability verify (web)** — before ANY "this seat cannot run Y" claim: '
+    '`tool_search("Y")` then `quality_gate`; lead seats close-verify on-seat.'
 )
 
 # inject-channel block key: mcp-binding-block
@@ -107,12 +107,13 @@ def _dispatch_consult_block_life() -> str:
     legs, ``agent_bus`` to a code seat, or honest deferral.
     """
     return f"""\
-## Dispatch & Consult — life surface: delegate, ¬ dispatch
-`/mcp/life` omits the code-infra primaries: {_code_only_primary_names()}. Their absence is REAL — the one carve-out from GATES §1: ¬ call them by name, ¬ route them through `dispatch`, ¬ read an empty `tool_search` as a deferred bind. Life→code is teach + bus, never a new life-intent verb.
-- **Cognitive leg** (reasoning, adjudication, cortex/rag/fs reads, bus synthesis) → run it in-seat. Consulting a MODEL is not a build-harness errand.
-- **Needs code MCP** (dispatch a model/seat, build, deploy, observability, repo write) → `agent_bus(tool="request", to="cursor", new_slug|thread=…, subject=…, body=…, contract=…, desired_model=?)` — life-callable Cursor Auto channel; poll the returned `poll_hint` with `agent_bus(tool="wait", …)`. Attended seat instead → `agent_bus(tool="send", to="cursor", …)`. CSE continuity hop on an existing private lane → `agent_bus(tool="hop", thread=…, reason=…)` — ¬ `request` + hand-authored `TYPE: CONTINUITY_HANDOFF`; ¬ a contract token. Substrate graph assert → `agent_bus(tool="substrate_graph_write", entity_id=…, claim=…)` — wraps cortex assert; ¬ mint on 404. Substrate friction file → `agent_bus(tool="substrate_friction_file", owner=…, note=…)` — wraps cortex friction; ¬ mint on 404. Substrate entity mint → `agent_bus(tool="substrate_entity_mint", id=…, type=…, name=…)` — wraps cortex entity_create; 409 on collision.
+## Dispatch & Consult — life surface
+`/mcp/life` does not list these names: {_code_only_primary_names()}. Toys omits them. The operator seat's ulg-code connector lists `agent_bus`, `agent_bus_read`, `team_dispatch`, `manage`, `observability`, `tool_search`, and those are the primary verbs. `panel_dispatch` and `claudeburst` are on neither connector. A life seat with no ulg-code connector does not invent a call. The operator seat does not commission via `agent_bus.request`.
+- **Cognitive leg** (reasoning, adjudication, cortex/rag/fs reads, bus synthesis) → run it in-seat.
+- **Commission** (dispatch a model/seat, repo write, implement) → ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`). Poll that response's `poll_hint` (`tool=wait`, `arguments_json` unchanged). Do not rewrite it into `job_state`.
+- CSE continuity hop on an existing private lane → `agent_bus(tool="hop", thread=…, reason=…)` — ¬ hand-authored `TYPE: CONTINUITY_HANDOFF`; ¬ a contract token. Substrate graph assert → `agent_bus(tool="substrate_graph_write", entity_id=…, claim=…)` — wraps cortex assert; ¬ mint on 404. Substrate friction file → `agent_bus(tool="substrate_friction_file", owner=…, note=…)` — wraps cortex friction; ¬ mint on 404. Substrate entity mint → `agent_bus(tool="substrate_entity_mint", id=…, type=…, name=…)` — wraps cortex entity_create; 409 on collision.
 - **Neither** → honest deferral + `cortex(tool="friction", …)`; ¬ silent substitution.
-Full table: skill `consult-routing` § Surface gate. Capability gap: skill `life-to-code-request-lane` (`lane:life-to-code`)."""
+Full table: skill `consult-routing` § Surface gate."""
 
 
 # Co-located liveness block (2a durable home). Trimmed per F4-A finding (thread
@@ -128,7 +129,7 @@ Seed: `entity_create` + `relationship_create child_of`. Refs: skill `entity-life
 # inject-channel block key: liveness-block
 _LIVENESS_BLOCK = """\
 ## Git posture & liveness — disk + cortex canonical; git ≠ project index
-A change is LIVE only when LOADED into the running process at its last deploy/restart — git commit/master is neither necessary nor sufficient. Before claiming a surface changed, ask: (1) WHICH substrate? (2) did its LOAD EVENT fire? (3) what does the LIVE PROBE say? — service behavior→`sync_restart`+observability · MCP surface→mcp restart+boot manifest · routing→`/v1/models` · agent-context→`cortex_brief`. ¬ infer existence/canonicality/done-ness from git; commit is NOT a completion gate.
+A change is LIVE only when LOADED into the running process at its last deploy/restart — git commit/master is neither necessary nor sufficient. Before claiming a surface changed, ask: (1) WHICH substrate? (2) did its LOAD EVENT fire? (3) what does the LIVE PROBE say? — service behavior→`sync_restart`+observability · MCP surface→mcp restart+boot manifest · routing→`/v1/models` · agent-context→`cortex_brief`. ¬ infer existence/canonicality/done-ness from git; commit is NOT a completion gate. The operator seat's `manage` actions are `status`, `health`, `wait_healthy`, `busy_status`, `sync_restart`, `cancel_restart_intent`; never `force` on `git_integration_worker`. That seat does fleet actions, including `manage` `sync_restart`, directly from its own session. A permission refusal in the current session covers that outcome and is quoted verbatim to Kaywan; a refusal recorded in another session is history.
 Detail: skill `git-posture` (`agent_skill:git-posture`). Tag: `[universal:git-posture]`."""
 
 # inject-channel block key: cursor-model-economics-block
@@ -172,7 +173,9 @@ def _seat_mcp_surface(agent: str | None) -> Literal["life", "code"]:
     """
     from agent_seat.profiles import seat_capability_map  # noqa: PLC0415
 
-    return "code" if "mcp_code" in seat_capability_map().get(agent or "", ()) else "life"
+    return (
+        "code" if "mcp_code" in seat_capability_map().get(agent or "", ()) else "life"
+    )
 
 
 def _render_server_primary_manifest_line(surface: Literal["life", "code"]) -> str:
@@ -282,7 +285,7 @@ Arbitrary pytest paths (`services/rag/`, integration) + `tools/pipeline_test rep
 _SEAT_CAPABILITY_VERIFY_BLOCK_LIFE = """\
 ## Seat capability verify — life MCP (probe before refusing)
 Absence of a shell ≠ a step is unavailable. Before ANY "this seat cannot run Y" claim, run `tool_search("Y")` and bind to the catalog row for **this endpoint** — `/mcp/life` does not expose `quality_gate` (code-surface overflow only).
-- **Code verification on this seat** → commission cursor-auto: `cursor_request(contract=verify, subject=…, body=…)` (or `agent_bus.request` with `contract=verify`) — cursor executes `quality_gate` + liveness on the code MCP surface; harvest via `poll_hint` / bus closeout. ¬ claim `quality_gate` is callable here.
+- **Code verification on this seat** → ulg-code `team_dispatch` (`op=generate`, `seat=cursor-sdk`, `lane=B`) — the cursor-sdk seat runs `quality_gate` and liveness; harvest via that call's `poll_hint` (`tool=wait`). ¬ claim `quality_gate` is callable here.
 - Security replay and deep pytest paths remain code-seat or handoff work — same as code surface routing.
 Full catalog: skill `lead-seat-boot` § Surface gate + skill `consult-routing`."""
 
