@@ -80,6 +80,25 @@ def heartbeat_freshness(last_heartbeat_at: str | None) -> str:
     return "live"
 
 
+def _park_for_restart_holds(payload: dict[str, Any]) -> bool:
+    """True when a cancelled row is a live ``park_for_restart``, not its end.
+
+    The resume child keeps the parent's ``execution_id``. ``cancel_discard``
+    and ``park.state == expired`` end the execution and stay terminal.
+    ``park_kind`` is read from the dispatch-status ``park`` block or the row.
+    """
+    park = payload.get("park")
+    kind = payload.get("park_kind")
+    state = None
+    if isinstance(park, dict):
+        if kind is None:
+            kind = park.get("park_kind")
+        state = park.get("state")
+    if kind != "park_for_restart":
+        return False
+    return state != "expired"
+
+
 def classify_probe(
     probe: ProbeResult,
     *,
@@ -92,6 +111,10 @@ def classify_probe(
     the only link even when the probe's execution_id string differs. When the
     thread has another link, a terminal probe for a different execution_id is
     that sibling — it must not stamp this link.
+
+    A ``cancelled`` probe that ``_park_for_restart_holds`` is not death. The
+    resume child is still the execution, so the verdict is ``SKIP_LIVE``.
+    Heartbeat age does not change a live status.
     """
     if probe.error is not None:
         return LivenessVerdict.DEFER, probe.error, None
@@ -119,6 +142,8 @@ def classify_probe(
 
     bus_terminal = _WORKER_TERMINAL_TO_BUS.get(status)
     if bus_terminal is not None:
+        if _park_for_restart_holds(payload):
+            return LivenessVerdict.SKIP_LIVE, "park_resume_holds_execution", None
         probe_execution_id = payload.get("execution_id")
         execution_id_mismatch = (
             link_execution_id
@@ -198,9 +223,19 @@ def evaluate_link_liveness(
     link_execution_id: str | None,
     sole_link: bool = True,
     probe_fn=probe_dispatch_status,
+    probe_capture: dict[str, Any] | None = None,
 ) -> tuple[LivenessVerdict, str, str | None]:
-    """Probe GIW and classify whether orphan-reconcile or admitted-TTL reap may proceed."""
+    """Probe GIW and classify whether orphan-reconcile or admitted-TTL reap may proceed.
+
+    When ``probe_capture`` is set, it receives the probe ``execution_id`` so a
+    terminal backfill can fan out only when that id is the link's id.
+    """
     probe = probe_fn(thread_id)
+    if probe_capture is not None:
+        payload = probe.payload if isinstance(probe.payload, dict) else None
+        probe_capture["execution_id"] = (
+            None if payload is None else payload.get("execution_id")
+        )
     verdict, reason, terminal_status = classify_probe(
         probe,
         link_execution_id=link_execution_id,

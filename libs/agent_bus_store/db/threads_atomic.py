@@ -512,15 +512,24 @@ def terminate_dispatch(
     execution_id: str | None = None,
     archive_uri: str | None = None,
     chat_url: str | None = None,
+    fan_out: bool = False,
 ) -> dict[str, Any] | None:
     """Mark dispatch link(s) terminal — sets terminal_status, terminal_at, delivery_at.
 
+    When ``execution_id`` is set and ``fan_out`` is true, every null link with
+    that execution_id is stamped, on this thread and on others. ``fan_out``
+    defaults false so the update stays ``thread_id AND execution_id``. Callers
+    pass true only for a terminal that ends the execution. A
+    ``park_for_restart`` cancel is not that terminal: the resume child keeps
+    the execution_id, and stamping every link would close the live child.
+
     When ``execution_id`` is omitted, updates the sole non-terminal link only if
-    the thread has exactly one link. A second link is not stamped — sibling
-    failure must not terminalize a live producer. Idempotent: rows already
-    terminal are skipped via the NULL guard.
+    the thread has exactly one link. ``fan_out`` does not widen that branch.
+    A second link is not stamped — sibling failure must not terminalize a live
+    producer. Idempotent: rows already terminal are skipped via the NULL guard.
     ``archive_uri`` is persisted on failed delivery when harvest proof exists.
     ``chat_url`` refreshes the link projection at terminal when provided.
+    Returns the argument thread and does not transition any other thread.
     """
     if terminal_status not in ("completed", "failed"):
         raise ValueError(
@@ -536,22 +545,29 @@ def terminate_dispatch(
             return None
 
         if execution_id is not None:
+            if fan_out:
+                where = "WHERE execution_id = ? AND terminal_status IS NULL"
+                where_params: tuple[Any, ...] = (execution_id,)
+            else:
+                where = (
+                    "WHERE thread_id = ? AND execution_id = ? "
+                    "AND terminal_status IS NULL"
+                )
+                where_params = (thread_id, execution_id)
             if chat_url is not None:
                 conn.execute(
                     "UPDATE thread_dispatch_links "
                     "SET terminal_status = ?, terminal_at = ?, delivery_at = ?, "
                     "archive_uri = COALESCE(?, archive_uri), "
                     "chat_url = COALESCE(?, chat_url) "
-                    "WHERE thread_id = ? AND execution_id = ? "
-                    "AND terminal_status IS NULL",
+                    f"{where}",
                     (
                         terminal_status,
                         ts,
                         ts,
                         archive_uri,
                         chat_url,
-                        thread_id,
-                        execution_id,
+                        *where_params,
                     ),
                 )
             else:
@@ -559,9 +575,8 @@ def terminate_dispatch(
                     "UPDATE thread_dispatch_links "
                     "SET terminal_status = ?, terminal_at = ?, delivery_at = ?, "
                     "archive_uri = COALESCE(?, archive_uri) "
-                    "WHERE thread_id = ? AND execution_id = ? "
-                    "AND terminal_status IS NULL",
-                    (terminal_status, ts, ts, archive_uri, thread_id, execution_id),
+                    f"{where}",
+                    (terminal_status, ts, ts, archive_uri, *where_params),
                 )
         else:
             # Omitted execution_id is the 1:1 convenience. A second link on the

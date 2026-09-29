@@ -127,7 +127,13 @@ async def dispatch_claim_and_post_route(
 async def dispatch_terminate_route(
     thread_id: str, body: DispatchTerminate
 ) -> ThreadDetail:
-    """Mark dispatch link terminal_status (completed or failed)."""
+    """Mark dispatch link terminal_status (completed or failed).
+
+    An ``execution_id`` fans the stamp out to every null link with that id.
+    ``maybe_auto_close_after_dispatch_terminate`` stays on this thread only.
+    A ``park_for_restart`` parent does not call this route; the resume child's
+    completed terminate is the execution-ending stamp.
+    """
     from agent_bus_store.disposition import maybe_auto_close_after_dispatch_terminate
 
     thread_id = normalize_thread_id(thread_id)
@@ -136,6 +142,7 @@ async def dispatch_terminate_route(
         terminal_status=body.terminal_status,
         execution_id=body.execution_id,
         archive_uri=body.archive_uri,
+        fan_out=body.execution_id is not None,
     )
     if row is None:
         raise HTTPException(

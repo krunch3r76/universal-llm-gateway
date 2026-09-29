@@ -180,13 +180,21 @@ def _backfill_terminal_link(
     link: dict[str, Any],
     *,
     status: str,
+    probe_execution_id: str | None,
 ) -> bool:
     thread_id = link["thread_id"]
     execution_id = link["execution_id"]
+    # Fan out only when the probe names this execution. A sole-link mismatch
+    # may still stamp this thread; it must not stamp another thread's row.
+    fan_out = (
+        probe_execution_id is not None
+        and str(probe_execution_id) == str(execution_id)
+    )
     terminate_dispatch(
         thread_id=thread_id,
         terminal_status=status,
         execution_id=execution_id,
+        fan_out=fan_out,
     )
     with connect() as conn:
         row = conn.execute(
@@ -275,10 +283,12 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
             return False
         prior_deferred_reason = link_row["liveness_probe_deferred_reason"]
 
+    probe_capture: dict[str, Any] = {}
     verdict, reason, terminal_status = evaluate_link_liveness(
         thread_id=thread_id,
         link_execution_id=execution_id,
         sole_link=sole_link,
+        probe_capture=probe_capture,
     )
     if verdict is LivenessVerdict.SKIP_LIVE:
         _clear_liveness_deferred(thread_id=thread_id, execution_id=execution_id)
@@ -292,9 +302,11 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
         return False
     if verdict is LivenessVerdict.TERMINAL_BACKFILL:
         assert terminal_status is not None
+        raw_probe_id = probe_capture.get("execution_id")
         return _backfill_terminal_link(
             link,
             status=terminal_status,
+            probe_execution_id=None if raw_probe_id is None else str(raw_probe_id),
         )
 
     if _link_table_blocks_orphan_post(thread_id=thread_id, execution_id=execution_id):
@@ -335,6 +347,7 @@ def _reap_orphan_link(link: dict[str, Any]) -> bool:
         thread_id=thread_id,
         terminal_status="failed",
         execution_id=execution_id,
+        fan_out=False,
     )
 
     # execution_id_mismatch means a *different* dispatch now holds the thread —
