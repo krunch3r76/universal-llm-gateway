@@ -25,6 +25,11 @@ _SEED_TABLES: dict[str, tuple[str, ...]] = {
         "from_type",
         "to_type",
     ),
+    "session_edge_types": (
+        "type",
+        "description",
+        "directional",
+    ),
 }
 
 
@@ -133,6 +138,17 @@ def apply_canonical_schema_snapshot(conn: sqlite3.Connection) -> None:
                 "UPDATE relationship_types SET inverse = ? WHERE type = ? AND inverse IS NULL",
                 (row["inverse"], row["type"]),
             )
+    for row in seed.get("session_edge_types", []):
+        conn.execute(
+            "INSERT OR IGNORE INTO session_edge_types "
+            "(type, description, directional) "
+            "VALUES (?, ?, ?)",
+            (
+                row["type"],
+                row["description"],
+                row["directional"],
+            ),
+        )
 
     conn.commit()
 

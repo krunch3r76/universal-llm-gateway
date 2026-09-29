@@ -981,6 +981,123 @@
         "to_type": "legal_instrument",
         "type": "trustee_of"
       }
+    ],
+    "session_edge_types": [
+      {
+        "description": "Structural parallel between nodes",
+        "directional": 0,
+        "type": "analogous_to"
+      },
+      {
+        "description": "from_node was caused or triggered by to_node",
+        "directional": 1,
+        "type": "caused_by"
+      },
+      {
+        "description": "Source entity is a child member of the target container",
+        "directional": 1,
+        "type": "child_of"
+      },
+      {
+        "description": "Temporal continuation — this session resumes a prior session",
+        "directional": 1,
+        "type": "continues"
+      },
+      {
+        "description": "Tension or conflict between nodes",
+        "directional": 0,
+        "type": "contradicts"
+      },
+      {
+        "description": "Independent evidence supports the same claim",
+        "directional": 1,
+        "type": "corroborates"
+      },
+      {
+        "description": "from_node depends on to_node being current/valid",
+        "directional": 1,
+        "type": "depends_on"
+      },
+      {
+        "description": "from_node was derived from or produced using to_node",
+        "directional": 1,
+        "type": "derived_from"
+      },
+      {
+        "description": "Multiple claims form a behavioral or temporal pattern",
+        "directional": 1,
+        "type": "establishes_pattern"
+      },
+      {
+        "description": "from_node supports or provides evidence for to_node",
+        "directional": 1,
+        "type": "evidence_for"
+      },
+      {
+        "description": "Entity/assertion expects a future state",
+        "directional": 1,
+        "type": "expects"
+      },
+      {
+        "description": "from_node builds on or develops to_node",
+        "directional": 1,
+        "type": "extends"
+      },
+      {
+        "description": "Causal forward link for open threads",
+        "directional": 1,
+        "type": "leads_to"
+      },
+      {
+        "description": "Source entity is the parent container of the target member",
+        "directional": 1,
+        "type": "parent_of"
+      },
+      {
+        "description": "Entity/assertion promises a future state",
+        "directional": 1,
+        "type": "promises"
+      },
+      {
+        "description": "General connection made through reasoning",
+        "directional": 0,
+        "type": "reasoned_about"
+      },
+      {
+        "description": "General thematic or topical connection",
+        "directional": 0,
+        "type": "relates_to"
+      },
+      {
+        "description": "from_node (project, plan, or plan_phase) requires to_node (agent_skill) be loaded and applied during execution per the entity's required_skills manifest",
+        "directional": 1,
+        "type": "requires"
+      },
+      {
+        "description": "Evidence suggests motive behind an action or pattern",
+        "directional": 1,
+        "type": "reveals_motive"
+      },
+      {
+        "description": "Indicates that the from_node is superseded by the to_node (inverse of supersedes)",
+        "directional": 1,
+        "type": "superseded_by"
+      },
+      {
+        "description": "from_node replaces or updates to_node",
+        "directional": 1,
+        "type": "supersedes"
+      },
+      {
+        "description": "Condition spawns a closable child todo entity",
+        "directional": 1,
+        "type": "triggers"
+      },
+      {
+        "description": "Evidence weakens or casts doubt on a claim",
+        "directional": 1,
+        "type": "undermines"
+      }
     ]
   },
   "tables": {

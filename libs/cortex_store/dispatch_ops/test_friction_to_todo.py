@@ -13,7 +13,7 @@ from cortex_store.dispatch_ops._friction_close_impl import close_friction_assert
 from cortex_store.dispatch_ops.ops_entities import _op_entity_get
 from cortex_store.dispatch_ops.state_card import state_card_defaults
 
-_SKILL_ENTITY = "agent_skill:test-promoted"
+_SKILL_ENTITY = "agent_skill:advisor-timing"
 _TODO_ID = "todo:promoted-sample"
 _FRICTION_CLAIM = "[tool_error] promoted friction fixture claim"
 
@@ -113,7 +113,7 @@ def test_promoted_todo_attributes(friction_db: int) -> None:
     assert entity["source_uri"] == "cortex://notes/system/specs/promoted-sample.md"
 
     attrs = entity.get("attributes") or {}
-    assert "test-promoted" in attrs.get("required_skills", [])
+    assert "advisor-timing" in attrs.get("required_skills", [])
     assert attrs.get("seed_contract_ack")
     assert attrs.get("density_triage") == "recon_pending"
     defaults = state_card_defaults()

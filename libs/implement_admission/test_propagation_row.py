@@ -85,7 +85,7 @@ def test_legacy_residue_preserves_line_tags_without_inventing():
 def test_prose_only_runtime_land_sets_advisory():
     payload = {
         "propagation_residue": ["libs_touched: libs/foo.py — lead decides"],
-        "files_modified": ["libs/admission_common/__init__.py"],
+        "files_modified": ["libs/foo/__init__.py"],
         "evidence_uris": {"git_refs": ["sha-prose"]},
     }
     rows, _skipped, prose = rows_from_closeout_payload(payload)
