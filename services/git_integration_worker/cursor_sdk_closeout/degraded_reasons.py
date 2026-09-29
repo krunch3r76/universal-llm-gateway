@@ -139,6 +139,18 @@ def empty_output_degraded_reason(outcome: SdkRunOutcome) -> str | None:
     return None
 
 
+def provider_error_reason(outcome: SdkRunOutcome) -> str | None:
+    """Provider ``type=status`` ERROR text, ahead of a hollow assistant turn.
+
+    A weekly-limit (or any other) status ERROR with an empty body must not be
+    reported as ``empty_assistant_turn``. The sentence is the cause.
+    """
+    text = (outcome.provider_error or "").strip()
+    if not text:
+        return None
+    return f"provider_error: {text}"
+
+
 def empty_assistant_turn_reason(outcome: SdkRunOutcome) -> str | None:
     """Hollow-model-no-op guard for friction 24299 — contract- and status-independent.
 

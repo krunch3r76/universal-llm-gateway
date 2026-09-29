@@ -1489,6 +1489,64 @@ def test_empty_assistant_turn_reason_none_when_tools_ran() -> None:
     assert empty_assistant_turn_reason(outcome) is None
 
 
+def test_provider_status_error_outranks_empty_assistant_turn() -> None:
+    """A status=ERROR stream with an empty body names the provider sentence."""
+    from dataclasses import dataclass
+
+    from services.git_integration_worker.cursor_sdk_closeout.degraded_reasons import (
+        provider_error_reason,
+    )
+    from services.git_integration_worker.cursor_sdk_stream_capture import (
+        observe_run_stream,
+    )
+
+    weekly = "Weekly usage limit reached. It resets in 6 days."
+
+    @dataclass
+    class _Msg:
+        type: str
+        request_id: str = ""
+        status: str = ""
+        message: str = ""
+
+    @dataclass
+    class _Ev:
+        sdk_message: object
+
+    class _Run:
+        def events(self):
+            return iter(
+                [
+                    _Ev(_Msg(type="request", request_id="req-weekly")),
+                    _Ev(_Msg(type="status", status="RUNNING")),
+                    _Ev(_Msg(type="status", status="ERROR", message=weekly)),
+                ]
+            )
+
+    capture = observe_run_stream(
+        _Run(),
+        dispatch_id="d-weekly",
+        thread_id="t-weekly",
+        resolved_model="claude-opus-5",
+    )
+    assert capture.tool_call_count == 0
+    outcome = SdkRunOutcome(
+        body="",
+        status="error",
+        duration_ms=1,
+        tool_call_count=capture.tool_call_count,
+        provider_error=capture.provider_error,
+    )
+    reason = (
+        provider_error_reason(outcome)
+        or empty_assistant_turn_reason(outcome)
+        or empty_output_degraded_reason(outcome)
+    )
+    assert reason is not None
+    assert weekly in reason
+    assert reason.startswith("provider_error:")
+
+
 def test_empty_assistant_turn_maps_failed_with_reason_in_summary() -> None:
     outcome = SdkRunOutcome(
         body="", status="aborted", duration_ms=100, tool_call_count=0

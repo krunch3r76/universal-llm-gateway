@@ -50,6 +50,8 @@ class SdkRunOutcome:
     stream_only_deviations: tuple[str, ...] = ()
     # Params actually passed to the bridge (ModelSelection.params at run start).
     model_knobs_emitted: dict[str, str] | None = None
+    # Last stream ``type=status`` ERROR sentence (SDKStatusMessage.message).
+    provider_error: str | None = None
 
 
 @dataclass(frozen=True)
