@@ -277,12 +277,17 @@ async def apply_kernel_tick_for_root(
     try:
         row = load_root(conn, root_id)
         if row is None:
-            return KernelTickOutcome(
-                "kernel_unseeded",
-                skipped_reason="migrate_typed_admit",
-                fire_attempt_outcome=FireAttemptOutcome.REFUSED_PRE_FIRE,
-                fire_attempt_reason="migrate_typed_admit",
-            )
+            from .seed_phase1 import ensure_root_ledger_seed
+
+            if ensure_root_ledger_seed(root_id):
+                row = load_root(conn, root_id)
+            if row is None:
+                return KernelTickOutcome(
+                    "kernel_unseeded",
+                    skipped_reason="migrate_typed_admit",
+                    fire_attempt_outcome=FireAttemptOutcome.REFUSED_PRE_FIRE,
+                    fire_attempt_reason="migrate_typed_admit",
+                )
         typed_authority = typed_record_valid(row)
         has_wip = _tip_has_wip(turns)
         tip = parse_tip_checkpoint(turns)

@@ -398,6 +398,16 @@ async def execute(
                 raise ValueError("charter_root_status requires 'root_id'")
             return await ctl.charter_root_status(root_id=root_id)
 
+        case "charter_cap_stop_clear":
+            root_id = str(params.get("root_id") or "").strip()
+            if not root_id:
+                raise ValueError("charter_cap_stop_clear requires 'root_id'")
+            return await ctl.charter_cap_stop_clear(
+                root_id=root_id,
+                set_by=str(params.get("set_by") or "manage"),
+                force=bool(params.get("force", False)),
+            )
+
         case "fleet_sync_restart":
             return await _fleet(ctl, build=False, scope=str(params.get("scope", "all")))
 
@@ -412,7 +422,8 @@ async def execute(
                 "cancel_restart_intent, "
                 "whoami, charter_reload, charter_pause, charter_resume, "
                 "charter_hold_status, charter_block_root, charter_unblock_root, "
-                "charter_root_status, recycle_giw, fleet_sync_restart, fleet_rebuild_deploy"
+                "charter_root_status, charter_cap_stop_clear, recycle_giw, "
+                "fleet_sync_restart, fleet_rebuild_deploy"
             )
 
 

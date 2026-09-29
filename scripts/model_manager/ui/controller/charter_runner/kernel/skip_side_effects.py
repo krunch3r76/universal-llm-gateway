@@ -26,6 +26,8 @@ async def apply_skip_side_effects(
     caps: CapStore,
     fire_attempt_outcome: FireAttemptOutcome | None = None,
     fire_attempt_reason: str | None = None,
+    admission_mode: str = "generate",
+    unattended_stale_override: float | None = None,
 ) -> int:
     """Emit skip events / state-close / SOS for one root; return new state_closes."""
     consult_pending = False
@@ -68,12 +70,8 @@ async def apply_skip_side_effects(
         row_rejections = empty_hopper_row_rejections(parsed)
         rows_considered = 0
         if parsed is not None:
-            rows_considered = sum(
-                1 for row in parsed.next_pickup if item_is_gated(row)
-            )
-        skipped_by_reason["empty_hopper"] = (
-            skipped_by_reason.get("empty_hopper", 0) + 1
-        )
+            rows_considered = sum(1 for row in parsed.next_pickup if item_is_gated(row))
+        skipped_by_reason["empty_hopper"] = skipped_by_reason.get("empty_hopper", 0) + 1
         await events.emit_manage_charter_tick_root_skipped(
             root=root_id,
             reason="empty_hopper",
@@ -92,9 +90,7 @@ async def apply_skip_side_effects(
             checkpoint_turn=checkpoint_turn_number(ckpt),
         )
     elif skipped_reason:
-        skipped_by_reason[skipped_reason] = (
-            skipped_by_reason.get(skipped_reason, 0) + 1
-        )
+        skipped_by_reason[skipped_reason] = skipped_by_reason.get(skipped_reason, 0) + 1
     elif old_decision_label == "kernel_unseeded":
         skipped_by_reason["kernel_unseeded"] = (
             skipped_by_reason.get("kernel_unseeded", 0) + 1
@@ -103,6 +99,20 @@ async def apply_skip_side_effects(
             root=root_id,
             reason="kernel_unseeded",
             checkpoint_turn=None,
+        )
+
+    if not admitted and old_decision_label == "NOOP" and skipped_reason is None:
+        from ..state_close import MAX_STATE_CLOSES_PER_TICK
+        from ..unattended_stale import maybe_apply_stale_window_stop
+
+        state_closes_this_tick = await maybe_apply_stale_window_stop(
+            root_id=root_id,
+            turns=turns,
+            caps=caps,
+            admission_mode=admission_mode,
+            unattended_stale_override=unattended_stale_override,
+            state_closes_this_tick=state_closes_this_tick,
+            max_state_closes=MAX_STATE_CLOSES_PER_TICK,
         )
 
     caps_view = CapsView.from_cap_store(caps, root_id)

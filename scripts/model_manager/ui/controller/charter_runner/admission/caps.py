@@ -95,6 +95,8 @@ class CapStore:
         intent_dir: Path | None = None,
         revise_dir: Path | None = None,
         revise_cap: int | None = None,
+        stop_dir: Path | None = None,
+        recovery_dir: Path | None = None,
     ) -> None:
         self._caps = caps or WindowCaps.from_env()
         self._roots: dict[str, _RootState] = {}
@@ -111,8 +113,11 @@ class CapStore:
         self._heal_counts: dict[str, int] = {}
         # Consult-stall generations are independent and monotonic across root resets.
         self._consult_stall_heals: dict[str, int] = {}
-        self._stop_dir = charter_runner_data_dir() / _STOP_DIR
-        self._recovery_dir = charter_runner_data_dir() / _RECOVERY_DIR
+        data_root = charter_runner_data_dir()
+        self._stop_dir = stop_dir if stop_dir is not None else data_root / _STOP_DIR
+        self._recovery_dir = (
+            recovery_dir if recovery_dir is not None else data_root / _RECOVERY_DIR
+        )
         self._load_stops()
 
     def _stop_path(self, root_id: str) -> Path:

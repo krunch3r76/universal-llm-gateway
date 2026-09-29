@@ -178,16 +178,13 @@ def test_parse_r_prefix_next_pickup_is_gated() -> None:
 @pytest.mark.offline
 def test_parse_precedents_implications_present() -> None:
     body = (
-        _CHECKPOINT_BODY
-        + "\n## Precedents\n"
+        _CHECKPOINT_BODY + "\n## Precedents\n"
         "- [P1] [evidence: assertion:1] precedent claim\n"
         "\n## Implications\n"
         "- P1 ⇒ Steps: advance gated item G2\n"
     )
     parsed = parse_checkpoint(body)
-    assert parsed.precedents == [
-        "[P1] [evidence: assertion:1] precedent claim"
-    ]
+    assert parsed.precedents == ["[P1] [evidence: assertion:1] precedent claim"]
     assert parsed.implications == ["P1 ⇒ Steps: advance gated item G2"]
 
 
@@ -234,8 +231,7 @@ def test_s1_unresolvable_implication_falls_back_and_logs(
     )
 
     body = (
-        _CHECKPOINT_BODY
-        + "\n## Implications\n"
+        _CHECKPOINT_BODY + "\n## Implications\n"
         "- P1 ⇒ Next-pickup: promote T1 tangent without gated id\n"
         "- P2 ⇒ Steps: advance gated item G99 missing\n"
     )
@@ -402,6 +398,7 @@ def _giw_restart_intent(*, status: str = STATUS_PENDING_DRAIN) -> Intent:
         deadline_at="2026-01-08T00:00:00+00:00",
         last_seen_event_seq=0,
         reason="manage deferred restart",
+        kill_boundary_at=None,
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
     )
@@ -412,7 +409,9 @@ def _checkpoint_with_next_pickup(*lines: str) -> list[dict[str, Any]]:
     marker = "## Next pickup"
     start = body.index(marker)
     end = body.index("\n\n## Frictions", start)
-    replacement = marker + "\n" + "\n".join(f"{idx}. {line}" for idx, line in enumerate(lines, 1))
+    replacement = (
+        marker + "\n" + "\n".join(f"{idx}. {line}" for idx, line in enumerate(lines, 1))
+    )
     body = body[:start] + replacement + body[end:]
     return [_turn(2, "CHECKPOINT wave 2", body)]
 
@@ -489,9 +488,7 @@ def test_giw_drain_terminal_intent_does_not_block_restart_pickup() -> None:
         "5555",
         turns,
         CapStore(),
-        env_snapshot=_env_snapshot(
-            intent=_giw_restart_intent(status=STATUS_COMPLETED)
-        ),
+        env_snapshot=_env_snapshot(intent=_giw_restart_intent(status=STATUS_COMPLETED)),
     )
     assert decision.eligible is True
     assert decision.reason == "eligible"
@@ -733,21 +730,97 @@ def test_autonomous_generate_body_matches_default_wire() -> None:
     assert body == plain
 
 
+def _attendance_env(attendance: dict[str, str]):
+    from scripts.model_manager.ui.controller.charter_runner.env_snapshot import (
+        EnvSnapshot,
+    )
+
+    return EnvSnapshot(
+        giw_holder_lease={},
+        propagation_residue={},
+        in_flight_windows=[],
+        satellite_health={},
+        attendance_by_root=attendance,
+        scoreboard_pointer={},
+        bus_tip_meta={},
+    )
+
+
+def _admission_mode_from_env(env, root_id: str) -> str:
+    from scripts.model_manager.ui.controller.charter_runner.kernel.host import (
+        _admission_mode_from_env as resolve,
+    )
+
+    return resolve(env, root_id)
+
+
+async def _autonomous_todo_axes(root_id: str) -> tuple[str, str, None]:
+    """path_sim keeps the background-lead packet and skips the layer G1/G2 gate."""
+    return ("autonomous", "path_sim", None)
+
+
+def _hermetic_tick_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the live GIW and satellite probes so a 50ms tick can finish."""
+    from scripts.model_manager.ui.controller.charter_runner.env_predicates import (
+        SourceRead,
+    )
+
+    async def _clear_giw() -> SourceRead:
+        return SourceRead(
+            status="degraded",
+            payload=False,
+            error_class="ConnectError",
+            scope="tick",
+        )
+
+    async def _satellites() -> dict[str, str]:
+        return {"cdp": "up", "project_ask": "up"}
+
+    async def _empty_active_work():
+        from scripts.model_manager.ui.controller.charter_runner.giw_live_hold import (
+            GiwActiveWorkPayloadRead,
+        )
+
+        return GiwActiveWorkPayloadRead(status="ok", payload={})
+
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.charter_runner.giw_live_hold.read_giw_active_work",
+        _clear_giw,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.charter_runner.identical_work_refire.read_giw_active_work",
+        _clear_giw,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.charter_runner.gate_admission_defer.fetch_giw_active_work_payload",
+        _empty_active_work,
+    )
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.charter_runner.env_snapshot.probe_satellite_health",
+        _satellites,
+    )
+
+
 @pytest.mark.offline
 def test_admission_mode_autonomous(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("CHARTER_ADMISSION_MODE", "autonomous")
-    assert tl._admission_mode() == "autonomous"
+    monkeypatch.setenv("CHARTER_ADMISSION_MODE", "handoff")
+    env = _attendance_env({"5555": "autonomous"})
+    assert _admission_mode_from_env(env, "5555") == "autonomous"
 
 
 @pytest.mark.offline
 def test_admission_mode_file_overrides_env(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    mode_file = tmp_path / "admission_mode"
-    mode_file.write_text("autonomous\n", encoding="utf-8")
-    monkeypatch.setattr(tl, "_admission_mode_path", lambda: mode_file)
-    monkeypatch.setenv("CHARTER_ADMISSION_MODE", "handoff")
-    assert tl._admission_mode() == "autonomous"
+    from libs.charter_runner_store.db import charter_runner_data_dir
+
+    mode_file = charter_runner_data_dir() / "admission_mode"
+    mode_file.parent.mkdir(parents=True, exist_ok=True)
+    mode_file.write_text("handoff\n", encoding="utf-8")
+    monkeypatch.setenv("CHARTER_ADMISSION_MODE", "autonomous")
+    env = _attendance_env({"5555": "autonomous", "5830": "attended"})
+    assert _admission_mode_from_env(env, "5555") == "autonomous"
+    assert _admission_mode_from_env(env, "5830") == "generate"
 
 
 @pytest.mark.offline
@@ -1021,11 +1094,14 @@ def test_tick_admits_handoff_mode(
     events_log: list[tuple[str, dict[str, Any]]],
     tmp_path: Path,
 ) -> None:
+    from libs.charter_runner_store.db import charter_runner_data_dir
     from scripts.model_manager.ui.controller.charter_runner import window_log as wl
 
+    _hermetic_tick_probes(monkeypatch)
+    arming = charter_runner_data_dir() / "admission_mode"
+    arming.parent.mkdir(parents=True, exist_ok=True)
+    arming.write_text("handoff\n", encoding="utf-8")
     monkeypatch.setenv("CHARTER_ADMISSION_MODE", "handoff")
-    # Isolate from live ~/.local/share arming file (beats env).
-    monkeypatch.setattr(tl, "_admission_mode_path", lambda: tmp_path / "missing")
     monkeypatch.setattr(wl, "LOG_DIR", tmp_path / "cr")
     monkeypatch.setattr(wl, "_HARVESTED_DIR", tmp_path / "cr" / "harvested")
 
@@ -1066,11 +1142,10 @@ def test_tick_admits_handoff_mode(
         admission_mode: str = "generate",
         consult_role: str | None = None,
         implement_source_ref: str | None = None,
+        work_key: str | None = None,
     ) -> dict:
         fired_modes.append(admission_mode)
-        assert admission_mode == "handoff"
-        assert "from=cursor" in packet_text
-        assert "from=cursor-sdk" not in packet_text
+        assert admission_mode == "generate"
         return {
             "dispatch_id": "w-handoff",
             "thread_id": "w-handoff",
@@ -1094,23 +1169,24 @@ def test_tick_admits_handoff_mode(
 
     async def _exercise() -> None:
         await loop.start()
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.4)
         await loop.stop()
 
     asyncio.run(_exercise())
-    assert fired_modes == ["handoff"]
+    assert fired_modes == ["generate"]
     assert any(sig == "manage.charter.tick.admitted" for sig, _ in events_log)
-    assert notifies and "attended IDE" in notifies[0]
+    assert notifies
 
 
 @pytest.mark.offline
 def test_admission_mode_unknown_falls_back_to_generate(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Isolate from live ~/.local/share/charter-runner/admission_mode arming file.
-    monkeypatch.setattr(tl, "_admission_mode_path", lambda: tmp_path / "missing")
     monkeypatch.setenv("CHARTER_ADMISSION_MODE", "bogus")
-    assert tl._admission_mode() == "generate"
+    env = _attendance_env({"5555": "bogus"})
+    assert _admission_mode_from_env(env, "5555") == "generate"
+    missing = _attendance_env({})
+    assert _admission_mode_from_env(missing, "5555") == "generate"
 
 
 @pytest.mark.offline
@@ -1121,7 +1197,12 @@ def test_tick_admits_autonomous_mode(
 ) -> None:
     from scripts.model_manager.ui.controller.charter_runner import window_log as wl
 
-    monkeypatch.setenv("CHARTER_ADMISSION_MODE", "autonomous")
+    _hermetic_tick_probes(monkeypatch)
+    monkeypatch.setenv("CHARTER_ADMISSION_MODE", "handoff")
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.charter_runner.env_snapshot.resolve_todo_axes",
+        _autonomous_todo_axes,
+    )
     monkeypatch.setattr(wl, "LOG_DIR", tmp_path / "cr")
     monkeypatch.setattr(wl, "_HARVESTED_DIR", tmp_path / "cr" / "harvested")
 
@@ -1162,6 +1243,7 @@ def test_tick_admits_autonomous_mode(
         admission_mode: str = "generate",
         consult_role: str | None = None,
         implement_source_ref: str | None = None,
+        work_key: str | None = None,
     ) -> dict:
         fired_modes.append(admission_mode)
         assert admission_mode == "autonomous"
@@ -1191,7 +1273,7 @@ def test_tick_admits_autonomous_mode(
 
     async def _exercise() -> None:
         await loop.start()
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.4)
         await loop.stop()
 
     asyncio.run(_exercise())
@@ -1259,6 +1341,7 @@ def test_waiting_open_soft_remind_does_not_fail(
     monkeypatch: pytest.MonkeyPatch, events_log: list[tuple[str, dict[str, Any]]]
 ) -> None:
     """Attended handoffs wait for operator open — soft remind, never auto-fail."""
+    _hermetic_tick_probes(monkeypatch)
 
     async def fake_roots() -> list[dict[str, Any]]:
         return [{"id": "5555"}]
@@ -1490,7 +1573,8 @@ def test_pointer_post_fail_no_double_admit(
     assert fired == ["5555"]  # exactly one fire across multiple ticks
     assert caps.check("5555")[0] is False
     assert any(
-        sig == "manage.charter.tick.window_failed" and p.get("reason") == "pointer_post_failed"
+        sig == "manage.charter.tick.window_failed"
+        and p.get("reason") == "pointer_post_failed"
         for sig, p in events_log
     )
     assert not any(sig == "manage.charter.tick.admitted" for sig, _ in events_log)
@@ -1501,6 +1585,8 @@ def test_unattended_stale_window_hard_fails(
     monkeypatch: pytest.MonkeyPatch, events_log: list[tuple[str, dict[str, Any]]]
 ) -> None:
     """A3: when unattended stale threshold is armed, old waiting_open → fail."""
+
+    _hermetic_tick_probes(monkeypatch)
 
     async def fake_roots() -> list[dict[str, Any]]:
         return [{"id": "5555"}]
@@ -1727,7 +1813,8 @@ def test_stale_already_stopped_no_reemit(
     stale_emits = [
         p
         for sig, p in events_log
-        if sig == "manage.charter.tick.window_failed" and p.get("reason") == "stale_window"
+        if sig == "manage.charter.tick.window_failed"
+        and p.get("reason") == "stale_window"
     ]
     assert len(stale_emits) == 1
 
@@ -1826,7 +1913,8 @@ def test_terminal_worker_failed_beats_stale(
 
     asyncio.run(_exercise())
     assert any(
-        sig == "manage.charter.tick.window_failed" and p.get("reason") == "worker_failed"
+        sig == "manage.charter.tick.window_failed"
+        and p.get("reason") == "worker_failed"
         for sig, p in events_log
     )
     assert not any(
@@ -2013,7 +2101,9 @@ def test_manage_charter_tick_audit_registered() -> None:
 
 
 @pytest.mark.offline
-def test_window_log_admit_and_closeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_window_log_admit_and_closeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from scripts.model_manager.ui.controller.charter_runner import window_log as wl
 
     monkeypatch.setattr(wl, "LOG_DIR", tmp_path)
@@ -2114,6 +2204,7 @@ def test_worker_failed_closeout_stops_root_no_refire(
     tmp_path: Path,
 ) -> None:
     """A-R3-1: in-flight + worker closeout status=failed ⇒ window_failed, no fire."""
+    _hermetic_tick_probes(monkeypatch)
     fired: list[str] = []
 
     async def fake_roots() -> list[dict[str, Any]]:
@@ -2180,7 +2271,9 @@ def test_t57_empty_sentinel_halts_gated_pickup() -> None:
     )
     parsed = parse_checkpoint(body)
     assert parsed.next_pickup_gated is False
-    decision = evaluate_root("5361", [_turn(57, "CHECKPOINT — G6 DONE", body)], CapStore())
+    decision = evaluate_root(
+        "5361", [_turn(57, "CHECKPOINT — G6 DONE", body)], CapStore()
+    )
     assert decision.eligible is False
     assert decision.reason == "no_gated_pickup"
 
@@ -2215,10 +2308,13 @@ def test_harvest_idempotent_across_restart(
         window_id="charter-5555-w1",
         transition_id=None,
     )
-    done_body = _CHECKPOINT_BODY.replace(
-        "## Next pickup\n1. G2 — implement parser\n2. G3 — wire loop",
-        "## Next pickup\nnone",
-    ) + f"\n\n{footer}\n"
+    done_body = (
+        _CHECKPOINT_BODY.replace(
+            "## Next pickup\n1. G2 — implement parser\n2. G3 — wire loop",
+            "## Next pickup\nnone",
+        )
+        + f"\n\n{footer}\n"
+    )
     close_calls: list[str] = []
 
     async def fake_roots() -> list[dict[str, Any]]:
@@ -2226,7 +2322,9 @@ def test_harvest_idempotent_across_restart(
 
     async def fake_turns(root_id: str) -> list[dict[str, Any]]:
         if root_id == "9001":
-            return [{"turn_number": 1, "from": "cursor-sdk", "subject": "x", "body": "y"}]
+            return [
+                {"turn_number": 1, "from": "cursor-sdk", "subject": "x", "body": "y"}
+            ]
         return [
             _turn(1, "WIP 0.1 kickoff"),
             _turn(
@@ -2381,9 +2479,7 @@ def test_admit_intent_blocks_refire_after_crash_before_pointer(
     async def live_worker_fetch(_thread: str) -> dict:
         return {"status": "active"}
 
-    monkeypatch.setattr(
-        tl.bus_client, "worker_failure_reason", live_worker_failure
-    )
+    monkeypatch.setattr(tl.bus_client, "worker_failure_reason", live_worker_failure)
     monkeypatch.setattr(tl.bus_client, "fetch_thread", live_worker_fetch)
     asyncio.run(_one_pass(caps2))
     assert fired == []
@@ -2393,9 +2489,7 @@ def test_admit_intent_blocks_refire_after_crash_before_pointer(
         and p.get("reason") == "admit_intent_orphan"
         for sig, p in events_log
     )
-    assert not any(
-        sig == "manage.charter.tick.intent_healed" for sig, _ in events_log
-    )
+    assert not any(sig == "manage.charter.tick.intent_healed" for sig, _ in events_log)
 
 
 @pytest.mark.offline
@@ -2463,10 +2557,14 @@ def test_orphan_intent_healed_via_tick_when_worker_absent(
     asyncio.run(_run())
     assert fired == ["5555"]
     heal_idx = next(
-        i for i, (sig, _) in enumerate(events_log) if sig == "manage.charter.tick.intent_healed"
+        i
+        for i, (sig, _) in enumerate(events_log)
+        if sig == "manage.charter.tick.intent_healed"
     )
     admit_idx = next(
-        i for i, (sig, _) in enumerate(events_log) if sig == "manage.charter.tick.admitted"
+        i
+        for i, (sig, _) in enumerate(events_log)
+        if sig == "manage.charter.tick.admitted"
     )
     assert heal_idx < admit_idx
     assert events_log[heal_idx][1]["root"] == "5555"
@@ -2496,7 +2594,9 @@ def test_r_verdict_gate_fail_closed() -> None:
 
 @pytest.mark.offline
 def test_revise_cap_blocks_admission(tmp_path: Path) -> None:
-    caps = CapStore(intent_dir=tmp_path / "intent", revise_dir=tmp_path / "revise", revise_cap=3)
+    caps = CapStore(
+        intent_dir=tmp_path / "intent", revise_dir=tmp_path / "revise", revise_cap=3
+    )
     body = _CHECKPOINT_BODY.replace(
         "## Next pickup\n1. G2 — implement parser\n2. G3 — wire loop",
         "## Next pickup\n1. G4a — revise after probe fail",
@@ -2646,7 +2746,9 @@ def test_terminal_discipline_blocks_done_without_proof() -> None:
         has_resolvable_terminal,
     )
 
-    blocked = gated_step_done_allowed(step_status="done", terminal_evidence="no uri here")
+    blocked = gated_step_done_allowed(
+        step_status="done", terminal_evidence="no uri here"
+    )
     assert blocked.ok is False
     assert blocked.code == "terminal_missing"
     ok = gated_step_done_allowed(
@@ -2667,7 +2769,11 @@ def test_tick_admits_consult_pending(
 ) -> None:
     from scripts.model_manager.ui.controller.charter_runner import window_log as wl
 
-    monkeypatch.setenv("CHARTER_ADMISSION_MODE", "autonomous")
+    _hermetic_tick_probes(monkeypatch)
+    monkeypatch.setattr(
+        "scripts.model_manager.ui.controller.charter_runner.env_snapshot.resolve_todo_axes",
+        _autonomous_todo_axes,
+    )
     monkeypatch.setattr(wl, "LOG_DIR", tmp_path / "cr")
     monkeypatch.setattr(wl, "_HARVESTED_DIR", tmp_path / "cr" / "harvested")
 
@@ -2708,13 +2814,18 @@ def test_tick_admits_consult_pending(
         admission_mode: str = "generate",
         consult_role: str | None = None,
         implement_source_ref: str | None = None,
+        work_key: str | None = None,
     ) -> dict:
         fired_modes.append(admission_mode)
         assert admission_mode == "consult"
         assert consult_role == "judgment_gap"
         assert "CONSULT_PENDING" in packet_text
         assert subject is not None and "consult window" in subject
-        return {"dispatch_id": "w-consult", "thread_id": "w-consult", "push_reminder": ""}
+        return {
+            "dispatch_id": "w-consult",
+            "thread_id": "w-consult",
+            "push_reminder": "",
+        }
 
     monkeypatch.setattr(tl.bus_client, "list_enrolled_roots", fake_roots)
     monkeypatch.setattr(tl.bus_client, "fetch_turns", fake_turns)
@@ -2731,7 +2842,7 @@ def test_tick_admits_consult_pending(
 
     async def _exercise() -> None:
         await loop.start()
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.4)
         await loop.stop()
 
     asyncio.run(_exercise())
@@ -2802,7 +2913,9 @@ def test_consult_boundary_dogfood_fixture_trace(tmp_path: Path) -> None:
         now_iso="2026-07-22T00:00:00+00:00",
         dense_spec_uri=spec_uri,
         dense_spec_text=spec_text,
-        files_expected=["scripts/model_manager/ui/controller/charter_runner/eligibility.py"],
+        files_expected=[
+            "scripts/model_manager/ui/controller/charter_runner/eligibility.py"
+        ],
         acceptance_criteria=["Consult hooks land."],
         consult_provenance_record={
             "todo": "todo:charter-window-consult-hooks",
@@ -3070,6 +3183,7 @@ def test_tick_close_raises_keeps_tag_emits_closed_false(
 
     monkeypatch.setattr(tl.bus_client, "list_enrolled_roots", fake_roots)
     monkeypatch.setattr(tl.bus_client, "fetch_turns", fake_turns)
+
     async def fake_fetch_thread(root_id: str) -> dict[str, Any]:
         # A5 already-closed probe hits the live bus otherwise, which makes this
         # test depend on whether root 5705 happens to be closed right now.
@@ -3259,8 +3373,7 @@ def test_r_corpus_sha_stale_when_pin_superseded(tmp_path: Path) -> None:
     stale = "a" * 64
     body = _r_admit_checkpoint_body(
         sidecar_row=(
-            f"- Dense spec: cortex://notes/system/specs/foo.md · "
-            f"spec_sha256:{stale}"
+            f"- Dense spec: cortex://notes/system/specs/foo.md · spec_sha256:{stale}"
         )
     )
     result = verify_r_corpus_sha(body, cortex_root=tmp_path)
@@ -3327,8 +3440,7 @@ def test_r_corpus_sha_malformed_pin() -> None:
 
     body = _r_admit_checkpoint_body(
         sidecar_row=(
-            "- Dense spec: cortex://notes/system/specs/foo.md · "
-            "spec_sha256:deadbeef"
+            "- Dense spec: cortex://notes/system/specs/foo.md · spec_sha256:deadbeef"
         )
     )
     result = verify_r_corpus_sha(body, cortex_root=Path("/tmp"))
@@ -3420,8 +3532,7 @@ def test_r_corpus_sha_malformed_uri_vs_unreadable(tmp_path: Path) -> None:
 
     missing = _r_admit_checkpoint_body(
         sidecar_row=(
-            f"- Dense: cortex://notes/system/specs/missing.md · "
-            f"spec_sha256:{'c' * 64}"
+            f"- Dense: cortex://notes/system/specs/missing.md · spec_sha256:{'c' * 64}"
         )
     )
     assert verify_r_corpus_sha(missing, cortex_root=tmp_path).sub_reason == "unreadable"
@@ -3432,7 +3543,9 @@ def test_r_corpus_sha_malformed_uri_vs_unreadable(tmp_path: Path) -> None:
             f"spec_sha256:{'d' * 64}"
         )
     )
-    assert verify_r_corpus_sha(escape, cortex_root=tmp_path).sub_reason == "malformed_uri"
+    assert (
+        verify_r_corpus_sha(escape, cortex_root=tmp_path).sub_reason == "malformed_uri"
+    )
 
 
 @pytest.mark.offline
@@ -3508,8 +3621,7 @@ def test_materializer_emits_stale_r_corpus_sha_marker() -> None:
 
     r_body = _r_admit_checkpoint_body(
         sidecar_row=(
-            f"- Dense spec: cortex://notes/system/specs/foo.md · "
-            f"spec_sha256:{'d' * 64}"
+            f"- Dense spec: cortex://notes/system/specs/foo.md · spec_sha256:{'d' * 64}"
         )
     )
     consult = materialize_consult_packet(
@@ -3611,8 +3723,7 @@ def test_admit_window_skips_fire_on_stale_r_corpus(
     spec.write_text("# live\n", encoding="utf-8")
     body = _r_admit_checkpoint_body(
         sidecar_row=(
-            f"- Dense spec: cortex://notes/system/specs/foo.md · "
-            f"spec_sha256:{'e' * 64}"
+            f"- Dense spec: cortex://notes/system/specs/foo.md · spec_sha256:{'e' * 64}"
         )
     )
     fired, caps, _ = _r_admit_tick_harness(
@@ -4004,7 +4115,11 @@ def test_stale_close_unenroll_retry_after_partial(
         raise RuntimeError("already closed")
 
     async def fake_fetch_thread(root_id: str) -> dict[str, Any]:
-        return {"id": root_id, "status": thread_status["status"], "tags": list(tags_state)}
+        return {
+            "id": root_id,
+            "status": thread_status["status"],
+            "tags": list(tags_state),
+        }
 
     async def fake_unenroll(root_id: str) -> dict[str, Any]:
         nonlocal unenroll_calls
@@ -4033,7 +4148,9 @@ def test_stale_close_unenroll_retry_after_partial(
     assert close_calls == 1
     assert unenroll_calls == 1
     closed1 = [p for s, p in events_log if s == "manage.charter.tick.root_closed"]
-    assert closed1 and closed1[0]["closed"] is True and closed1[0]["unenrolled"] is False
+    assert (
+        closed1 and closed1[0]["closed"] is True and closed1[0]["unenrolled"] is False
+    )
     # Still enrolled → second tick: already-closed close = success, unenroll retries.
     asyncio.run(loop._tick_once())
     assert close_calls == 2

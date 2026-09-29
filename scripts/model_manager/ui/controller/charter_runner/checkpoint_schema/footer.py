@@ -292,6 +292,29 @@ def validate_checkpoint_footer(body: str) -> ValidationResult:
     return ValidationResult(ok=not errors, errors=tuple(errors))
 
 
+def repair_checkpoint_footer_body(body: str) -> tuple[str, bool]:
+    """Replace JSON-null next_pickup fields with the empty-hopper sentinel strings."""
+    data, _err = _extract_footer_json(body)
+    if data is None:
+        return body, False
+    next_pickup = data.get("next_pickup")
+    if not isinstance(next_pickup, dict):
+        return body, False
+    changed = False
+    for key in ("gid", "lane", "executor"):
+        if next_pickup.get(key) is None:
+            next_pickup[key] = EMPTY_GATED_PICKUP_SENTINEL[key]
+            changed = True
+    if not changed:
+        return body, False
+    match = _FENCE_RE.search(body)
+    if not match:
+        return body, False
+    new_json = json.dumps(data, indent=2, sort_keys=True)
+    repaired = body[: match.start(1)] + new_json + body[match.end(1) :]
+    return repaired, True
+
+
 __all__ = [
     "EMPTY_GATED_PICKUP_SENTINEL",
     "FOOTER_FENCE",
@@ -302,5 +325,6 @@ __all__ = [
     "footer_kwargs_for_window",
     "is_exhausted_hopper_footer",
     "output_format_footer_requirement",
+    "repair_checkpoint_footer_body",
     "validate_checkpoint_footer",
 ]

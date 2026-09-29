@@ -19,6 +19,7 @@ from .footer import (
     footer_kwargs_for_window,
     is_exhausted_hopper_footer,
     output_format_footer_requirement,
+    repair_checkpoint_footer_body,
     validate_checkpoint_footer,
 )
 from .parse import (
@@ -64,6 +65,7 @@ __all__ = [
     "output_format_footer_requirement",
     "parse_checkpoint",
     "pickup_detent",
+    "repair_checkpoint_footer_body",
     "resolve_checkpoint_body",
     "split_sections",
     "strip_sidecar_frontmatter",

@@ -7,15 +7,17 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from scripts.model_manager.ui.controller.charter_runner.admission import CapStore
+from scripts.model_manager.ui.controller.charter_runner.admission import (
+    CapStore,
+    evaluate_root,
+)
 from scripts.model_manager.ui.controller.charter_runner.checkpoint_admit_gate import (
     validate_arc_for_admit,
 )
 from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
+    append_footer_to_packet,
+    footer_kwargs_for_window,
     parse_checkpoint,
-)
-from scripts.model_manager.ui.controller.charter_runner.admission import (
-    evaluate_root,
 )
 from scripts.model_manager.ui.controller.charter_runner.harvest import (
     completed_windows,
@@ -27,10 +29,6 @@ from scripts.model_manager.ui.controller.charter_runner.window_terminal_contract
     parse_stop_vocabulary_window_terminals,
     required_arc,
     terminal_verb,
-)
-from scripts.model_manager.ui.controller.charter_runner.checkpoint_schema import (
-    append_footer_to_packet,
-    footer_kwargs_for_window,
 )
 
 _CONSULT_SUBJECT = (
@@ -357,12 +355,11 @@ def test_evaluate_root_allows_g4_implement_after_r_admit(
     turns = [
         _turn(1, "CHECKPOINT wave 10 — G4 Stage-B implement", _G4_POST_R_ADMIT_BODY),
     ]
-    monkeypatch.setenv("CHARTER_ADMISSION_MODE", "autonomous")
     monkeypatch.setattr(
         "scripts.model_manager.ui.controller.charter_runner.window_terminal_contract.default_density_triage_lookup",
         lambda _ref: "judgment_required",
     )
-    decision = evaluate_root("5975", turns, CapStore())
+    decision = evaluate_root("5975", turns, CapStore(), admission_mode="autonomous")
     assert decision.reason != "arc_lane_too_weak"
     assert decision.eligible is True
 
@@ -413,12 +410,11 @@ def test_evaluate_root_allows_g2_judgment_when_judgment_required(
     turns = [
         _turn(1, "CHECKPOINT wave 1 — G2 densify next", _G2_JUDGMENT_BODY),
     ]
-    monkeypatch.setenv("CHARTER_ADMISSION_MODE", "autonomous")
     monkeypatch.setattr(
         "scripts.model_manager.ui.controller.charter_runner.window_terminal_contract.default_density_triage_lookup",
         lambda _ref: "judgment_required",
     )
-    decision = evaluate_root("5975", turns, CapStore())
+    decision = evaluate_root("5975", turns, CapStore(), admission_mode="autonomous")
     assert decision.eligible is True
     assert decision.reason != "arc_lane_too_weak"
 
@@ -468,9 +464,7 @@ async def test_harvest_skips_second_close_for_same_window(
     monkeypatch.setattr(harvest, "after_window_terminal_harvested", hook)
     monkeypatch.setattr(harvest.window_log, "already_harvested", lambda _r, _w: False)
     monkeypatch.setattr(harvest.window_log, "append_closeout", lambda **_k: None)
-    monkeypatch.setattr(
-        harvest.bus_client, "fetch_turns", AsyncMock(return_value=[])
-    )
+    monkeypatch.setattr(harvest.bus_client, "fetch_turns", AsyncMock(return_value=[]))
     monkeypatch.setattr(
         harvest.bus_client,
         "fetch_thread",
