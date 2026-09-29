@@ -11,7 +11,9 @@ tags means seat-authored — do not invent tags here.
 from __future__ import annotations
 
 import re
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from charter_runner_store.propagation_code_ref_mint import (
@@ -19,7 +21,11 @@ from charter_runner_store.propagation_code_ref_mint import (
     admit_error_for_unresolvable_code_ref,
     require_resolvable_code_ref,
 )
-from deploy_identity.code_version import normalize_code_ref, resolve_code_version
+from deploy_identity.code_version import (
+    is_valid_sha40,
+    normalize_code_ref,
+    resolve_code_version,
+)
 from implement_admission.propagation_admit_validation import (
     LEGAL_SAFE_WINDOW_TOKENS,
     validate_service_slug,
@@ -49,6 +55,8 @@ from services.git_integration_worker.cursor_auto.fix_hints import (
 
 PROPAGATE_CONTRACT = "propagate"
 
+_GIT_PROBE_TIMEOUT_S = 10.0
+
 _SCOPE_PROPAGATION_RE = re.compile(r"(?im)^scope:\s*propagation\b")
 _SCOPE_SYNC_RESTART_RE = re.compile(
     r"(?im)^scope:\s*propagation\s+sync_restart\s+([a-z][a-z0-9_]*)\s*$"
@@ -66,6 +74,7 @@ class PropagateAdmission:
     rows: tuple[PropagationRow, ...] = ()
     flags: tuple[str, ...] = ()
     error: dict[str, Any] | None = None
+    warning: str | None = None
     consumed_keys: frozenset[str] = frozenset()
 
     @property
@@ -226,6 +235,181 @@ def _validate_admitted_rows(
     return tuple(resolved), None
 
 
+def read_propagate_porcelain(source_repo: Path) -> str:
+    """``git status --porcelain=v1`` text for propagate admit (no ``-z``)."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(source_repo), "status", "--porcelain=v1"],
+            capture_output=True,
+            check=True,
+            timeout=_GIT_PROBE_TIMEOUT_S,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return ""
+    return proc.stdout.decode("utf-8", errors="replace")
+
+
+def _porcelain_path_from_line(line: str) -> str:
+    if len(line) < 3:
+        return ""
+    rest = line[3:]
+    if " -> " in rest:
+        rest = rest.split(" -> ", 1)[1]
+    rest = rest.strip()
+    if rest.startswith('"') and rest.endswith('"'):
+        return rest[1:-1]
+    return rest
+
+
+def propagate_paths_for_admit(
+    source_repo: Path,
+    *,
+    code_ref: str,
+    served_version: str,
+) -> tuple[frozenset[str], bool]:
+    """Path set for porcelain gate. Second value True when git probe failed."""
+    if is_valid_sha40(served_version):
+        cmd = [
+            "git",
+            "-C",
+            str(source_repo),
+            "diff",
+            "--name-only",
+            f"{served_version}..{code_ref}",
+        ]
+    else:
+        cmd = [
+            "git",
+            "-C",
+            str(source_repo),
+            "diff-tree",
+            "--no-commit-id",
+            "-r",
+            "--name-only",
+            "-m",
+            code_ref,
+        ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            check=True,
+            timeout=_GIT_PROBE_TIMEOUT_S,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return frozenset(), True
+    paths = frozenset(
+        chunk.decode("utf-8", errors="replace")
+        for chunk in proc.stdout.splitlines()
+        if chunk.strip()
+    )
+    return paths, False
+
+
+def _porcelain_gate(
+    rows: tuple[PropagationRow, ...],
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Refuse when landed paths are index-dirty; warn on other index M/D paths."""
+    if not rows:
+        return None, None
+    source_repo = load_config().source_repo
+    served = resolve_code_version()
+    use_single_commit_paths = not is_valid_sha40(served)
+    propagation_paths: set[str] = set()
+    for row in rows:
+        paths, probe_failed = propagate_paths_for_admit(
+            source_repo,
+            code_ref=row.code_ref,
+            served_version=served,
+        )
+        if probe_failed:
+            return (
+                _error(
+                    "propagate_tree_probe_failed",
+                    "Could not resolve paths touched by this propagation code_ref.",
+                    (
+                        "Fix the hub checkout or retry after git is reachable; "
+                        "propagate will not admit on an empty path set when git fails."
+                    ),
+                ),
+                None,
+            )
+        propagation_paths.update(paths)
+
+    porcelain = read_propagate_porcelain(source_repo)
+    refusing: list[str] = []
+    unnamed_dirty: list[str] = []
+    for line in porcelain.splitlines():
+        if not line:
+            continue
+        index_status = line[0]
+        if index_status not in ("M", "D"):
+            continue
+        path = _porcelain_path_from_line(line)
+        if not path:
+            continue
+        if path in propagation_paths:
+            refusing.append(path)
+        else:
+            unnamed_dirty.append(path)
+
+    if refusing:
+        sorted_paths = sorted(set(refusing))
+        return (
+            _error(
+                "propagate_porcelain_named_path",
+                (
+                    "Porcelain shows index M or D on path(s) named by this "
+                    f"propagation: {', '.join(sorted_paths)}"
+                ),
+                (
+                    "Land or reset index changes on those paths before propagate "
+                    "(first column M or D in git status --porcelain=v1)."
+                ),
+                paths=sorted_paths,
+            ),
+            None,
+        )
+
+    warning_parts: list[str] = []
+    if use_single_commit_paths:
+        warning_parts.append(
+            "Served code version is not a sha40; propagation path set uses "
+            "diff-tree on code_ref only (not a range from served version)."
+        )
+    if unnamed_dirty:
+        warning_parts.append(
+            "Porcelain index M or D outside propagation path set: "
+            + ", ".join(sorted(set(unnamed_dirty)))
+        )
+    warning = " ".join(warning_parts) if warning_parts else None
+    return None, warning
+
+
+def _admit_enriched_rows(
+    rows: tuple[PropagationRow, ...],
+    version_pins: tuple[bool, ...],
+    *,
+    flags: tuple[str, ...],
+    consumed: frozenset[str],
+) -> PropagateAdmission:
+    gate_error, warning = _porcelain_gate(rows)
+    if gate_error is not None:
+        return PropagateAdmission(
+            flags=flags,
+            consumed_keys=consumed,
+            error=gate_error,
+            warning=warning,
+        )
+    enriched = _enrich_admitted_rows(rows, version_pins)
+    return PropagateAdmission(
+        rows=enriched,
+        flags=flags,
+        consumed_keys=consumed,
+        warning=warning,
+    )
+
+
 def admit_propagate_body(body: str) -> PropagateAdmission:
     """Resolve a ``propagate`` DIRECTIVE body into propagation rows."""
     text = body or ""
@@ -253,8 +437,9 @@ def admit_propagate_body(body: str) -> PropagateAdmission:
             )
         raw_rows, _ = parse_propagation_block(text)
         version_pins = _version_pins_from_parsed_block(raw_rows)
-        enriched = _enrich_admitted_rows(validated, version_pins)
-        return PropagateAdmission(rows=enriched, flags=flags, consumed_keys=consumed)
+        return _admit_enriched_rows(
+            validated, version_pins, flags=flags, consumed=consumed
+        )
 
     try:
         shorthand_rows = _rows_from_shorthand(text)
@@ -268,10 +453,11 @@ def admit_propagate_body(body: str) -> PropagateAdmission:
         version_pin = code_ref_is_version_pin(
             code_ref_match.group(1).strip() if code_ref_match else None
         )
-        enriched = _enrich_admitted_rows(shorthand_rows, (version_pin,))
-        return PropagateAdmission(
-            rows=enriched,
-            consumed_keys=consumed_keys_from_shorthand(text),
+        return _admit_enriched_rows(
+            shorthand_rows,
+            (version_pin,),
+            flags=(),
+            consumed=consumed_keys_from_shorthand(text),
         )
 
     return PropagateAdmission(
@@ -304,5 +490,7 @@ __all__ = [
     "admit_propagate_body",
     "consumed_keys_from_shorthand",
     "consumed_keys_from_yaml_block",
+    "propagate_paths_for_admit",
+    "read_propagate_porcelain",
     "rows_from_admission_payload",
 ]

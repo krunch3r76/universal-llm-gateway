@@ -15,6 +15,7 @@ from services.git_integration_worker.cursor_auto.handler_terminal import (
 )
 from services.git_integration_worker.cursor_auto.propagate_admission import (
     admit_propagate_body,
+    propagate_paths_for_admit,
 )
 
 _RESOLVED_HEAD_SHA = "deadbeef00000000000000000000000000000000"
@@ -40,6 +41,34 @@ def _resolve_propagate_test_code_refs(monkeypatch: pytest.MonkeyPatch) -> None:
         "charter_runner_store.propagation_code_ref_mint.require_resolvable_code_ref",
         _fake,
     )
+
+
+@pytest.fixture(autouse=True)
+def _propagate_porcelain_gate_clean(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default injected porcelain/git probes — tests do not read live checkout."""
+
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.propagate_admission.read_propagate_porcelain",
+        lambda _repo: "",
+    )
+    monkeypatch.setattr(
+        "services.git_integration_worker.cursor_auto.propagate_admission.propagate_paths_for_admit",
+        lambda _repo, *, code_ref, served_version: (frozenset(), False),
+    )
+
+
+_SERV_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+_CODE_REF_SHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+
+def _porcelain_propagate_body(*, code_ref: str = _CODE_REF_SHA) -> str:
+    return f"""\
+TYPE: DIRECTIVE
+contract: propagate
+scope: propagation sync_restart mcp
+code_ref: {code_ref}
+effects_expected: propagation row persisted; restart executed or deferred
+"""
 
 
 _MCP_YAML_BODY = """\
@@ -69,6 +98,114 @@ effects_expected: propagation row persisted; restart executed or deferred
 def test_propagation_scope_is_actionable() -> None:
     assert has_actionable_scope("scope: propagation sync_restart mcp")
     assert has_actionable_scope("## propagation\n```yaml\npropagation: []\n```")
+
+
+def test_admit_refuses_porcelain_index_m_on_named_propagation_path() -> None:
+    body = _porcelain_propagate_body()
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.propagate_admission.resolve_code_version",
+            return_value=_SERV_SHA,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.propagate_admission.propagate_paths_for_admit",
+            return_value=(frozenset({"f.txt"}), False),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.propagate_admission.read_propagate_porcelain",
+            return_value="M  f.txt\n",
+        ),
+    ):
+        admission = admit_propagate_body(body)
+    assert not admission.approved
+    assert admission.error is not None
+    assert admission.error["reason"] == "propagate_porcelain_named_path"
+    assert admission.rows == ()
+
+
+def test_admit_warns_on_unnamed_porcelain_index_m() -> None:
+    body = _porcelain_propagate_body()
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.propagate_admission.resolve_code_version",
+            return_value=_SERV_SHA,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.propagate_admission.propagate_paths_for_admit",
+            return_value=(frozenset({"f.txt"}), False),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.propagate_admission.read_propagate_porcelain",
+            return_value="M  other.txt\n",
+        ),
+    ):
+        admission = admit_propagate_body(body)
+    assert admission.approved
+    assert admission.error is None
+    assert admission.warning is not None
+    assert "other.txt" in admission.warning
+
+
+def test_admit_tree_probe_failure_refuses_with_zero_rows() -> None:
+    body = _porcelain_propagate_body()
+    with patch(
+        "services.git_integration_worker.cursor_auto.propagate_admission.propagate_paths_for_admit",
+        return_value=(frozenset(), True),
+    ):
+        admission = admit_propagate_body(body)
+    assert not admission.approved
+    assert admission.error is not None
+    assert admission.error["reason"] == "propagate_tree_probe_failed"
+    assert admission.rows == ()
+
+
+def test_propagate_paths_unknown_served_uses_diff_tree_not_range_diff() -> None:
+    recorded: list[list[str]] = []
+
+    def _run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        recorded.append(cmd)
+        if "diff-tree" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, b"libs/x.py\n", b"")
+        raise AssertionError(f"unexpected git invocation: {cmd!r}")
+
+    repo = Path("/tmp/propagate-admit-path-probe")
+    with patch(
+        "services.git_integration_worker.cursor_auto.propagate_admission.subprocess.run",
+        side_effect=_run,
+    ):
+        paths, failed = propagate_paths_for_admit(
+            repo,
+            code_ref=_CODE_REF_SHA,
+            served_version="unknown",
+        )
+    assert not failed
+    assert paths == frozenset({"libs/x.py"})
+    range_cmds = [c for c in recorded if len(c) > 4 and c[4] == "diff"]
+    assert range_cmds == []
+    diff_tree_cmds = [c for c in recorded if "diff-tree" in c]
+    assert len(diff_tree_cmds) == 1
+    assert _CODE_REF_SHA in diff_tree_cmds[0]
+
+
+def test_admit_worktree_only_porcelain_m_does_not_refuse() -> None:
+    body = _porcelain_propagate_body()
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.propagate_admission.resolve_code_version",
+            return_value=_SERV_SHA,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.propagate_admission.propagate_paths_for_admit",
+            return_value=(frozenset({"f.txt"}), False),
+        ),
+        patch(
+            "services.git_integration_worker.cursor_auto.propagate_admission.read_propagate_porcelain",
+            return_value=" M f.txt\n",
+        ),
+    ):
+        admission = admit_propagate_body(body)
+    assert admission.approved
+    assert admission.error is None
 
 
 def test_admit_yaml_propagation_rows() -> None:

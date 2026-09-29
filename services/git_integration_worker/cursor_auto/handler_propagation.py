@@ -268,6 +268,8 @@ async def run_propagation_in_seat(
         "gate_plan": gate_plan,
         "request_turn": job.turn_number,
     }
+    if admission.warning:
+        payload["warning"] = admission.warning
     if escalations:
         payload["self_preempt_escalations"] = escalations
     payload = compact_propagate_terminal_payload(payload)
