@@ -558,6 +558,177 @@ def test_dead_stream_without_terminal_write_is_not_in_flight() -> None:
     assert row["terminal_status"] is None
 
 
+def _past_grace_row() -> dict:
+    return {
+        "execution_id": "67aae3ee-ff0b-4e63-bfad-de87ceac2f93",
+        "pipeline_id": "cursor-sdk-generate",
+        "linked_at": "2026-09-29T06:38:48Z",
+        "terminal_status": None,
+        "delivery_at": None,
+    }
+
+
+def test_reader_witness_skip_live_is_in_flight_without_terminal_write(
+    monkeypatch,
+) -> None:
+    """Past grace, SKIP_LIVE reads in_flight / witness_live and does not terminalize."""
+    from agent_bus_store.sdk_liveness import LivenessVerdict, reader_liveness_witness
+
+    monkeypatch.setattr(
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        lambda **_kwargs: (LivenessVerdict.SKIP_LIVE, "worker_live", None),
+    )
+    row = _past_grace_row()
+    observed = datetime(2026, 9, 29, 6, 44, tzinfo=UTC)
+    witness = reader_liveness_witness(
+        thread_id="12286",
+        execution_id=row["execution_id"],
+        linked_at=row["linked_at"],
+        now=observed,
+    )
+    assert witness == "live"
+    classified = classify_producer_link(
+        execution_id=row["execution_id"],
+        dispatch_links=[row],
+        now=observed,
+        liveness_witness=witness,
+    )
+    assert classified["state"] == "in_flight"
+    assert classified["liveness_reason"] == "witness_live"
+    assert classified["terminal_status"] is None
+    assert row["terminal_status"] is None
+
+
+def test_reader_witness_heartbeat_stale_is_unknown_without_terminal_write(
+    monkeypatch,
+) -> None:
+    """Past grace, heartbeat_stale reads unknown / stream_dead_no_terminal."""
+    from agent_bus_store.sdk_liveness import LivenessVerdict, reader_liveness_witness
+
+    monkeypatch.setattr(
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        lambda **_kwargs: (LivenessVerdict.ALLOW_ORPHAN, "heartbeat_stale", None),
+    )
+    row = _past_grace_row()
+    observed = datetime(2026, 9, 29, 6, 44, tzinfo=UTC)
+    witness = reader_liveness_witness(
+        thread_id="12286",
+        execution_id=row["execution_id"],
+        linked_at=row["linked_at"],
+        now=observed,
+    )
+    assert witness == "dead"
+    classified = classify_producer_link(
+        execution_id=row["execution_id"],
+        dispatch_links=[row],
+        now=observed,
+        liveness_witness=witness,
+    )
+    assert classified["state"] == "unknown"
+    assert classified["liveness_reason"] == "stream_dead_no_terminal"
+    assert classified["terminal_status"] is None
+    assert row["terminal_status"] is None
+
+
+def test_reader_witness_defer_stays_no_liveness_signal(monkeypatch) -> None:
+    """Past grace, DEFER (probe error or timeout) stays unknown / no_liveness_signal."""
+    from agent_bus_store.sdk_liveness import LivenessVerdict, reader_liveness_witness
+
+    monkeypatch.setattr(
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        lambda **_kwargs: (LivenessVerdict.DEFER, "probe_unreachable:timeout", None),
+    )
+    row = _past_grace_row()
+    observed = datetime(2026, 9, 29, 6, 44, tzinfo=UTC)
+    witness = reader_liveness_witness(
+        thread_id="12286",
+        execution_id=row["execution_id"],
+        linked_at=row["linked_at"],
+        now=observed,
+    )
+    assert witness is None
+    classified = classify_producer_link(
+        execution_id=row["execution_id"],
+        dispatch_links=[row],
+        now=observed,
+        liveness_witness=witness,
+    )
+    assert classified["state"] == "unknown"
+    assert classified["liveness_reason"] == "no_liveness_signal"
+    assert row["terminal_status"] is None
+
+
+def test_reader_witness_other_verdicts_do_not_map_to_live_or_dead(
+    monkeypatch,
+) -> None:
+    """404, mismatch, and terminal backfill stay None. They are not death or life."""
+    from agent_bus_store.sdk_liveness import LivenessVerdict, reader_liveness_witness
+
+    observed = datetime(2026, 9, 29, 6, 44, tzinfo=UTC)
+    cases = (
+        (LivenessVerdict.ALLOW_ORPHAN, "probe_not_found", None),
+        (LivenessVerdict.ALLOW_ORPHAN, "execution_id_mismatch", None),
+        (LivenessVerdict.TERMINAL_BACKFILL, "probe_terminal", "failed"),
+    )
+
+    def _probe_for(verdict, reason, terminal):
+        def _probe(**_kwargs):
+            return verdict, reason, terminal
+
+        return _probe
+
+    for verdict, reason, terminal in cases:
+        monkeypatch.setattr(
+            "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+            _probe_for(verdict, reason, terminal),
+        )
+        witness = reader_liveness_witness(
+            thread_id="12286",
+            execution_id="67aae3ee-ff0b-4e63-bfad-de87ceac2f93",
+            linked_at="2026-09-29T06:38:48Z",
+            now=observed,
+        )
+        assert witness is None, reason
+
+
+def test_reader_witness_inside_grace_does_not_probe(monkeypatch) -> None:
+    """Inside the admit grace the probe is not called and classification stays admit_grace."""
+    from agent_bus_store.sdk_liveness import reader_liveness_witness
+
+    def _boom(**_kwargs):
+        raise AssertionError("probe called inside grace")
+
+    monkeypatch.setattr(
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        _boom,
+    )
+    observed = datetime(2026, 9, 29, 6, 39, 0, tzinfo=UTC)
+    linked_at = "2026-09-29T06:38:48Z"
+    row = {
+        "execution_id": "67aae3ee-ff0b-4e63-bfad-de87ceac2f93",
+        "pipeline_id": "cursor-sdk-generate",
+        "linked_at": linked_at,
+        "terminal_status": None,
+        "delivery_at": None,
+    }
+    witness = reader_liveness_witness(
+        thread_id="12286",
+        execution_id=row["execution_id"],
+        linked_at=linked_at,
+        now=observed,
+    )
+    assert witness is None
+    classified = classify_producer_link(
+        execution_id=row["execution_id"],
+        dispatch_links=[row],
+        now=observed,
+        liveness_witness=witness,
+    )
+    assert classified["state"] == "in_flight"
+    assert classified["liveness_reason"] == "admit_grace"
+    assert row["terminal_status"] is None
+
+
 def test_cursor_sdk_park_and_resume_do_not_complete_wait() -> None:
     """Park and resume notices are not the dispatch reply the watcher waits for."""
     thread = {"status": ThreadStatus.ACTIVE}

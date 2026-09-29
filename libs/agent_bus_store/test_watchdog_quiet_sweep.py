@@ -269,3 +269,65 @@ def test_migration_006_backfills_null_mission_lanes(bus_db) -> None:
     assert o_state is None
     assert mission_id in _candidate_thread_ids()
     assert other_id not in _candidate_thread_ids()
+
+
+def test_sweep_past_grace_live_witness_is_wip(bus_db, monkeypatch) -> None:
+    """Past-grace null-terminal links probe once each; a live witness is WIP."""
+    from agent_bus_store.sdk_liveness import LivenessVerdict
+
+    seat = "web-anthropic"
+    thread_row, *_ = create_thread_with_turn(
+        slug="quiet-witness",
+        from_agent=seat,
+        to_agent="cursor-auto",
+        subject="commission work",
+        body="please run the implement",
+        lifecycle_state="pending",
+    )
+    thread_id = thread_row["id"]
+    for execution_id in ("exec-a", "exec-b"):
+        admit_dispatch(
+            thread_id=thread_id,
+            execution_id=execution_id,
+            pipeline_id="cursor-sdk-generate",
+            caller_agent=seat,
+        )
+    old = (datetime.now(UTC) - timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with connect() as conn:
+        conn.execute(
+            "UPDATE turns SET created_at = ? WHERE thread = ?",
+            (old, thread_id),
+        )
+        conn.execute(
+            "UPDATE threads SET bus_lifecycle_state = 'active', updated_at = ? "
+            "WHERE id = ?",
+            (old, thread_id),
+        )
+        conn.execute(
+            "UPDATE thread_dispatch_links SET linked_at = ? WHERE thread_id = ?",
+            (old, thread_id),
+        )
+    calls: list[str | None] = []
+
+    def _probe(**kwargs):
+        calls.append(kwargs.get("link_execution_id"))
+        return LivenessVerdict.SKIP_LIVE, "worker_live", None
+
+    monkeypatch.setattr(
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        _probe,
+    )
+    with patch(
+        "agent_bus_store.quiet_sweep._licensed_park",
+        return_value=False,
+    ):
+        n = sweep_quiet_with_wip(threshold_s=60.0)
+
+    assert sorted(calls) == ["exec-a", "exec-b"]
+    assert n == 1
+    with connect() as conn:
+        stored = conn.execute(
+            "SELECT terminal_status FROM thread_dispatch_links WHERE thread_id = ?",
+            (thread_id,),
+        ).fetchall()
+    assert all(row["terminal_status"] is None for row in stored)

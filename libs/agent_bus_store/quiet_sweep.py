@@ -11,7 +11,9 @@ import json
 import logging
 import os
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Literal
 
 from claude_bundles.cdp_registry_store import load_sessions
 from claude_bundles.cse_session_common import is_parked_body
@@ -32,6 +34,7 @@ from .quiet_with_wip import (
     parse_iso_ts,
     seat_park_licence,
 )
+from .sdk_liveness import reader_liveness_witness
 
 logger = logging.getLogger("agent-bus.quiet-sweep")
 
@@ -244,13 +247,26 @@ def sweep_quiet_with_wip(*, threshold_s: float | None = None) -> int:
             continue
         if _alarm_open(thread_id):
             continue
+        witness_cache: dict[str, Literal["live", "dead"] | None] = {}
+        witnessed: list[DispatchLinkView] = []
+        for lnk in links:
+            if lnk.terminal_status is None:
+                if lnk.execution_id not in witness_cache:
+                    witness_cache[lnk.execution_id] = reader_liveness_witness(
+                        thread_id=thread_id,
+                        execution_id=lnk.execution_id,
+                        linked_at=lnk.linked_at,
+                        now=now_dt,
+                    )
+                lnk = replace(lnk, liveness_witness=witness_cache[lnk.execution_id])
+            witnessed.append(lnk)
         snap = QuietWithWipSnapshot(
             thread_id=thread_id,
             seat=seat,
             now=now_dt,
             threshold_s=thresh,
             lifecycle=lifecycle,
-            links=tuple(links),
+            links=tuple(witnessed),
             turns=tuple(turns),
             licensed_park=_licensed_park(thread_id, links, turns),
             alarm_open=False,

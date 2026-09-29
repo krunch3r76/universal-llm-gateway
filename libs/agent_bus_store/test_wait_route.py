@@ -250,8 +250,7 @@ def test_wait_status_done_with_admit_turn_is_predicate_unmet(tmp_path) -> None:
         assert admit.status_code == 201
 
         empty = client.get(
-            f"/threads/{thread_id}/wait"
-            "?after_turn=2&wait=0&completion=status:done"
+            f"/threads/{thread_id}/wait?after_turn=2&wait=0&completion=status:done"
         )
         assert empty.status_code == 200
         assert empty.json()["status"] == "no_new_turn"
@@ -259,8 +258,7 @@ def test_wait_status_done_with_admit_turn_is_predicate_unmet(tmp_path) -> None:
         assert empty.json()["qualifying_reply_turn"] is None
 
         advanced = client.get(
-            f"/threads/{thread_id}/wait"
-            "?after_turn=1&wait=0&completion=status:done"
+            f"/threads/{thread_id}/wait?after_turn=1&wait=0&completion=status:done"
         )
         assert advanced.status_code == 200
         body = advanced.json()
@@ -403,7 +401,9 @@ def test_wait_producer_in_flight_when_link_row_exists(tmp_path) -> None:
         body = resp.json()
         assert body["producer"]["state"] == "in_flight"
         assert body["producer"]["pipeline_id"] == "cdp-generate"
-        assert body["producer"]["execution_id"] == "d6a93d64-18a9-4779-8238-89d6af49e415"
+        assert (
+            body["producer"]["execution_id"] == "d6a93d64-18a9-4779-8238-89d6af49e415"
+        )
         assert body["producer"]["linked_at"] is not None
         assert body["producers"] == [body["producer"]]
 
@@ -477,3 +477,78 @@ def test_wait_producers_orders_in_flight_before_recent_terminal(tmp_path) -> Non
             "exec-old-terminal",
         ]
         assert body["producer"]["state"] == "unknown"
+
+
+def test_wait_probes_only_pinned_past_grace_link(tmp_path, monkeypatch) -> None:
+    """N past-grace links: wait probes the pinned execution_id once.
+
+    Unpinned producers[] rows stay on the grace path (unknown /
+    no_liveness_signal) and terminal_status is not written.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from agent_bus_store.db import admit_dispatch
+    from agent_bus_store.db.connection import connect
+    from agent_bus_store.sdk_liveness import LivenessVerdict
+
+    calls: list[str | None] = []
+
+    def _probe(**kwargs):
+        calls.append(kwargs.get("link_execution_id"))
+        return LivenessVerdict.SKIP_LIVE, "worker_live", None
+
+    monkeypatch.setattr(
+        "agent_bus_store.sdk_liveness.evaluate_link_liveness",
+        _probe,
+    )
+    n_links = 8
+    with TestClient(_app(tmp_path)) as client:
+        created = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "wait-pinned-probe",
+                "from": "claude-cursor",
+                "to": "web-anthropic",
+                "subject": "handoff",
+                "body": "brief",
+                "lifecycle_state": "pending",
+            },
+        )
+        assert created.status_code == 201
+        thread_id = created.json()["thread"]["id"]
+        for i in range(n_links):
+            admit_dispatch(
+                thread_id=thread_id,
+                execution_id=f"exec-{i}",
+                pipeline_id="cursor-sdk-generate",
+            )
+        old = (datetime.now(UTC) - timedelta(hours=6)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with connect() as conn:
+            conn.execute(
+                "UPDATE thread_dispatch_links SET linked_at = ? WHERE thread_id = ?",
+                (old, thread_id),
+            )
+            conn.commit()
+        resp = client.get(
+            f"/threads/{thread_id}/wait"
+            "?after_turn=1&wait=0&completion=first_reply_from"
+            "&from_agent=web-anthropic&execution_id=exec-0"
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert calls == ["exec-0"]
+        assert body["producer"]["state"] == "in_flight"
+        assert body["producer"]["liveness_reason"] == "witness_live"
+        assert body["producer"]["terminal_status"] is None
+        by_id = {row["execution_id"]: row for row in body["producers"]}
+        assert by_id["exec-0"]["state"] == "in_flight"
+        assert by_id["exec-0"]["liveness_reason"] == "witness_live"
+        assert by_id["exec-1"]["state"] == "unknown"
+        assert by_id["exec-1"]["liveness_reason"] == "no_liveness_signal"
+        with connect() as conn:
+            stored = conn.execute(
+                "SELECT terminal_status FROM thread_dispatch_links WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchall()
+        assert stored
+        assert all(row["terminal_status"] is None for row in stored)

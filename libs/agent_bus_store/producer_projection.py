@@ -10,6 +10,7 @@ read ``in_flight`` forever (friction a:36832). This module does not write
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
@@ -160,13 +161,18 @@ def project_thread_producers(
     dispatch_links: list[dict[str, Any]],
     *,
     now: datetime | None = None,
+    liveness_witnesses: Mapping[str, LivenessWitness | None] | None = None,
 ) -> list[dict[str, Any]]:
     """Classify dispatch links for the additive ``producers`` wait field.
 
-    Non-terminal links are listed first in ``linked_at`` order (their
-    ``state`` is ``in_flight`` only inside the admit grace; older rows are
-    ``unknown``). Then terminal links whose ``delivery_at`` or ``linked_at``
+    Non-terminal links are listed first in ``linked_at`` order. ``state`` is
+    ``in_flight`` inside the admit grace, or when ``liveness_witnesses`` maps
+    that ``execution_id`` to ``live``. Older rows without a live witness are
+    ``unknown``. Then terminal links whose ``delivery_at`` or ``linked_at``
     falls within the last 24 hours.
+
+    ``liveness_witnesses`` defaults to None, which keeps every row on the grace
+    path. This function does not probe GIW and does not write ``terminal_status``.
     """
     if not dispatch_links:
         return []
@@ -184,6 +190,11 @@ def project_thread_producers(
             execution_id=str(link.get("execution_id") or ""),
             dispatch_links=dispatch_links,
             now=clock,
+            liveness_witness=(
+                None
+                if liveness_witnesses is None
+                else liveness_witnesses.get(str(link.get("execution_id") or ""))
+            ),
         )
         for link in ordered
         if link.get("execution_id")
