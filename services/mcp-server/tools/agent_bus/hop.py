@@ -89,7 +89,7 @@ def _hop_dispatch(
         return seat_refusal
 
     handoff = assess_standing_handoff(thread_id)
-    body = build_continuity_handoff_body(
+    full_body = build_continuity_handoff_body(
         thread_id=thread_id,
         trigger=trigger,
         source=_VERB_SOURCE,
@@ -97,6 +97,9 @@ def _hop_dispatch(
         occupy_target=(cse_chat_url or "").strip() or None,
         superseded_registration_id=cse_registration_id,
     )
+    header, sep, tail = full_body.partition("\n\n")
+    stored_body = header if sep else full_body
+    sidecar_content = tail if sep else None
     hop_subject = (subject or "").strip() or (
         f"CONTINUITY HANDOFF — hop (thread {thread_id})"
     )
@@ -105,10 +108,10 @@ def _hop_dispatch(
         thread=thread_id,
         to="cursor",
         subject=hop_subject,
-        body=body,
+        body=stored_body,
         from_agent=from_agent,
         tags=None,
-        sidecar_content=None,
+        sidecar_content=sidecar_content,
         sidecar_slug=None,
         desired_model=desired_model or "auto",
         desired_effort=desired_effort or "auto",
@@ -119,6 +122,7 @@ def _hop_dispatch(
         cse_chat_url=cse_chat_url,
         cse_registration_id=cse_registration_id,
         continuity_hop=True,
+        enqueue_body=full_body,
     )
     if isinstance(result, dict) and "error" in result:
         return result
@@ -130,7 +134,7 @@ def _hop_dispatch(
     )
     stamped = dict(result)
     stamped["continuity_hop"] = True
-    birth_id = parse_successor_birth_id(body)
+    birth_id = parse_successor_birth_id(full_body)
     stamped["successor"] = {
         "handle": "successor_birth_id",
         "names": "successor",

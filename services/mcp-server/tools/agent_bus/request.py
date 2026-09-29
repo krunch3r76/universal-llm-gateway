@@ -131,6 +131,7 @@ def _request_impl(
     advisor_brief: str | None = None,
     census_mismatch: bool = False,
     work_key: str | None = None,
+    enqueue_body: str | None = None,
 ) -> dict[str, Any]:
     """Write turn via send path, then arm/enqueue Auto when live."""
     from pager_notify.so_what import resolve_so_what_summary
@@ -268,11 +269,12 @@ def _request_impl(
         return degraded
 
     capture_identity = is_chat_delivery_capable(from_agent) or continuity_hop
+    auto_job_body = body if enqueue_body is None else enqueue_body
     enq = enqueue_auto_job(
         thread_id=thread_id,
         turn_number=turn_number,
         subject=subject,
-        body=body,
+        body=auto_job_body,
         from_agent=from_agent,
         to_agent=to,
         desired_model=desired_model,

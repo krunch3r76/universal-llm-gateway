@@ -3,10 +3,19 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 from unittest.mock import MagicMock, patch
 
+from agent_bus_store import create_app
+from agent_bus_store.auth import require_token
+from agent_bus_store.body_briefing_advisory import INLINE_CONTRACT_PREFIXES
 from contract_vocab import CANONICAL_CONTRACTS
-from hop_handoff import StandingHandoffFreshness
+from fastapi.testclient import TestClient
+from hop_handoff import (
+    StandingHandoffFreshness,
+    build_continuity_handoff_body,
+    parse_successor_birth_id,
+)
 
 from tools.agent_bus.hop import _hop_dispatch
 from tools.agent_bus.request_intake import reset_request_id_registry_for_tests
@@ -152,3 +161,156 @@ def test_enqueue_includes_continuity_hop_when_true() -> None:
         )
     payload = client.post.call_args.kwargs["json"]
     assert payload["continuity_hop"] is True
+
+
+def _hop_store_app(tmp_path, monkeypatch):
+    """Same temp-db harness as ``test_body_briefing_advisory._app``."""
+    cortex_root = tmp_path / "cortex-files"
+    cortex_root.mkdir()
+    monkeypatch.setenv("CORTEX_FILES_ROOT", str(cortex_root))
+    monkeypatch.setenv("AGENT_BUS_DB_PATH", str(tmp_path / "bus.db"))
+    import cortex_store.dispatch_ops._thread_sidecar as sidecar_mod
+
+    monkeypatch.setattr(sidecar_mod, "_FILES_ROOT", cortex_root)
+    app = create_app(db_path=str(tmp_path / "bus.db"))
+    app.dependency_overrides[require_token] = lambda: None
+    return app, cortex_root
+
+
+def _relay_via_test_client(client: TestClient, sent: list[dict[str, Any]]):
+    def relay(
+        service: str,
+        method: str,
+        path: str,
+        body: dict | None = None,
+        **_kwargs: Any,
+    ) -> dict:
+        if service != "agent-bus":
+            return {"error": f"unexpected relay: {service} {method} {path}"}
+        if method == "GET":
+            resp = client.get(path)
+        elif method == "POST":
+            if path == "/threads/send" and isinstance(body, dict):
+                sent.append(body)
+            resp = client.post(path, json=body)
+        else:
+            return {"error": f"unexpected relay: {service} {method} {path}"}
+        if resp.status_code >= 400:
+            try:
+                detail = resp.json().get("detail", resp.text)
+            except ValueError:
+                detail = resp.text
+            return {
+                "error": f"HTTP {resp.status_code}",
+                "status_code": resp.status_code,
+                "detail": detail,
+            }
+        return resp.json()
+
+    return relay
+
+
+def test_hop_split_stores_header_under_briefing_shield(tmp_path, monkeypatch) -> None:
+    """Lane 12286 specimen, observed 2026-09-29 00:0xZ.
+
+    Unsplit hop body is 3045 characters and POST /turns refuses it. The hop
+    verb stores the structural header and writes the doctrine tail to the sidecar.
+    """
+    handoff = StandingHandoffFreshness(
+        status="current",
+        uri="cortex://notes/system/threads/12286-standing-handoff.md",
+        mtime_epoch=1.0,
+        age_s=10.0,
+    )
+    specimen = build_continuity_handoff_body(
+        thread_id="12286",
+        trigger="r" * 38,
+        source="agent-bus-hop-verb",
+        handoff=handoff,
+    )
+    assert len(specimen) == 3045, len(specimen)
+
+    app, cortex_root = _hop_store_app(tmp_path, monkeypatch)
+    sent: list[dict[str, Any]] = []
+    captured_enqueue: dict[str, Any] = {}
+
+    def fake_enqueue(**kwargs: Any) -> dict[str, Any]:
+        captured_enqueue.update(kwargs)
+        return {"ok": True, "auto_handler_status": "auto-handler-live"}
+
+    with TestClient(app) as client:
+        seed = client.post(
+            "/threads/with-turn",
+            json={
+                "slug": "hop-split-seed",
+                "from": "cursor",
+                "to": "web",
+                "subject": "seed",
+                "body": "hello",
+            },
+        )
+        assert seed.status_code == 201, seed.text
+        thread_id = seed.json()["thread"]["id"]
+        refused = client.post(
+            "/turns",
+            json={
+                "thread": thread_id,
+                "from": "cursor",
+                "to": "web",
+                "subject": "unsplit hop body",
+                "body": specimen,
+                "after_turn": 1,
+            },
+        )
+        assert refused.status_code == 422, refused.text
+        detail = refused.json()["detail"]
+        assert detail["reason"] == "over_briefing_target"
+        assert detail["body_chars"] == 3045
+        assert detail["target_chars"] == 2000
+
+        relay = _relay_via_test_client(client, sent)
+        with (
+            patch(
+                "tools.agent_bus.hop.assess_standing_handoff",
+                return_value=handoff,
+            ),
+            patch("tools.agent_bus.send.relay", side_effect=relay),
+            patch("tools.agent_bus._shared.relay", side_effect=relay),
+            patch(
+                "tools.agent_bus.request.probe_auto_liveness",
+                return_value={"live": True},
+            ),
+            patch(
+                "tools.agent_bus.request.enqueue_auto_job",
+                side_effect=fake_enqueue,
+            ),
+        ):
+            result = _hop_dispatch(
+                thread=thread_id,
+                reason="r" * 38,
+                from_agent="web-anthropic",
+            )
+
+        assert result.get("continuity_hop") is True, result
+        stored = client.get(f"/turns/by-number?thread={thread_id}&turn_number=2").json()
+        stored_body = stored["body"]
+        assert len(stored_body) <= 2000
+        assert stored_body.splitlines()[0] == "TYPE: CONTINUITY_HANDOFF"
+        assert "successor_birth_id:" in stored_body
+        assert "Sidecar:" in stored_body
+        assert "KEEP-ALIVE" not in stored_body
+
+        sidecar_uri = result["sidecar_uri"]
+        sidecar_text = (cortex_root / sidecar_uri.removeprefix("cortex://")).read_text(
+            encoding="utf-8"
+        )
+        assert "KEEP-ALIVE" in sidecar_text
+
+        enqueue_body = str(captured_enqueue["body"])
+        assert "KEEP-ALIVE" in enqueue_body
+        assert parse_successor_birth_id(enqueue_body) == parse_successor_birth_id(
+            stored_body
+        )
+        assert sent, "hop did not POST /threads/send"
+        assert sent[-1].get("allow_long_body") is not True
+        assert "TYPE: CONTINUITY_HANDOFF" not in INLINE_CONTRACT_PREFIXES
