@@ -1,13 +1,19 @@
 """Restart stargate when /health stays dead while the process is up.
 
-``check_stargate`` already marks a live PID unhealthy when ``/health`` misses
-the 2s probe. This loop is the missing act: after ``N`` consecutive unhealthy
-probes past a boot grace, force a restart. ``13102``'s idle-drain supervisor
-is not in tree, so the restart uses ``force=True`` (drain skipped).
+``check_stargate`` marks a live PID unhealthy when ``/health`` misses the 2s
+probe. This loop is the act: after ``N`` consecutive dead probes past a boot
+grace, force a restart. ``13102``'s idle-drain supervisor is not in tree, so
+the restart uses ``force=True`` (drain skipped).
+
+A timeout after TCP accept is not a dead probe. The port is open and the
+handler did not finish inside the client budget; the same endpoint often
+answers a slightly longer probe. Counting those misses force-restarts a
+process that is still serving.
 
 Falsifier: status ``running`` or ``stopped`` resets the streak and does not
-restart. Unhealthy during the boot grace does not increment. Restart fires
-only when the post-grace unhealthy streak reaches ``N``.
+restart. Unhealthy during the boot grace does not increment. A timeout-class
+detail holds the streak and does not restart. Restart fires only when the
+post-grace streak of non-timeout unhealthy probes reaches ``N``.
 """
 
 from __future__ import annotations
@@ -26,6 +32,30 @@ STARGATE_HEALTH_RESTART_N = 3
 STARGATE_HEALTH_PROBE_S = 5.0
 STARGATE_BOOT_GRACE_S = 60.0
 
+# Exception class names ``check_stargate`` / ``observe_cdp_ask_health`` put in
+# the probe detail. httpx timeouts are not ``TimeoutError``.
+_SLOW_ANSWER_MARKERS = (
+    "TimeoutError",
+    "TimeoutException",
+    "ReadTimeout",
+    "ConnectTimeout",
+    "WriteTimeout",
+    "PoolTimeout",
+)
+
+
+def detail_is_slow_answer(detail: str | None) -> bool:
+    """True when the probe note names an HTTP timeout, not a dead listener.
+
+    ``check_stargate`` calls ``/health`` only after TCP accept succeeds. A
+    timeout there means the process accepted and did not finish the response
+    inside the client budget. ``ConnectError`` and ``port not responding``
+    do not match.
+    """
+    if not detail:
+        return False
+    return any(marker in detail for marker in _SLOW_ANSWER_MARKERS)
+
 
 def note_stargate_probe(
     streak: int,
@@ -34,15 +64,19 @@ def note_stargate_probe(
     uptime_s: float | None,
     n: int = STARGATE_HEALTH_RESTART_N,
     boot_grace_s: float = STARGATE_BOOT_GRACE_S,
+    detail: str | None = None,
 ) -> tuple[int, bool]:
     """Return ``(new_streak, should_restart)`` for one probe.
 
     ``unhealthy`` before ``boot_grace_s`` holds the streak (startup has not
-    had time to bind). Any other status clears it.
+    had time to bind). A slow answer holds it too: the miss is not evidence
+    the process is dead. Any other non-unhealthy status clears it.
     """
     if status != "unhealthy":
         return 0, False
     if uptime_s is None or uptime_s < boot_grace_s:
+        return streak, False
+    if detail_is_slow_answer(detail):
         return streak, False
     streak += 1
     return streak, streak >= n
@@ -100,7 +134,10 @@ class StargateHealthRestart:
         info = await asyncio.to_thread(self._controller.service_state.check_stargate)
         uptime_s = process_uptime_s(info.pid) if info.pid is not None else None
         self._streak, restart = note_stargate_probe(
-            self._streak, info.status.value, uptime_s=uptime_s
+            self._streak,
+            info.status.value,
+            uptime_s=uptime_s,
+            detail=info.detail,
         )
         if not restart:
             return

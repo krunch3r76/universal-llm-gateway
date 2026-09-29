@@ -36,3 +36,39 @@ def test_unknown_uptime_does_not_restart() -> None:
     streak, restart = note_stargate_probe(2, "unhealthy", uptime_s=None)
     assert streak == 2
     assert restart is False
+
+
+def test_timeout_detail_does_not_advance_or_restart() -> None:
+    """The detail string ``check_stargate`` records for an httpx read timeout."""
+    detail = "PID 1152034 (2h 3m), health probe failed: ReadTimeout"
+    streak = 0
+    for _ in range(5):
+        streak, restart = note_stargate_probe(
+            streak, "unhealthy", uptime_s=120.0, detail=detail
+        )
+        assert restart is False
+    assert streak == 0
+
+
+def test_timeout_holds_existing_hard_miss_streak() -> None:
+    streak, restart = note_stargate_probe(
+        2,
+        "unhealthy",
+        uptime_s=120.0,
+        detail="PID 1, health probe failed: TimeoutError",
+    )
+    assert (streak, restart) == (2, False)
+    streak, restart = note_stargate_probe(
+        streak, "unhealthy", uptime_s=125.0, detail="PID 1, port not responding"
+    )
+    assert (streak, restart) == (3, True)
+
+
+def test_connect_error_still_counts() -> None:
+    streak, restart = note_stargate_probe(
+        2,
+        "unhealthy",
+        uptime_s=120.0,
+        detail="PID 1, health probe failed: ConnectError",
+    )
+    assert (streak, restart) == (3, True)
