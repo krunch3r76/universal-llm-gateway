@@ -75,6 +75,11 @@ skills:
     # shared_sync leaf under cdp-operator-proxy; description-gated on claude.ai.
     surface_class: shared_sync
     mcp_surface_required: life
+  skill-authoring-gate:
+    # Write-time gate for skill bodies (ceiling, dated invariant → decision:, admitted shape).
+    # shared_sync so the operator seat holds it; no MCP tool required to apply the gate.
+    surface_class: shared_sync
+    mcp_surface_required: none
   directive-authoring-standard:
     # DIRECTIVE-authoring sibling of cdp-operator-proxy. shared_sync: CDP/web-anthropic
     # authors TYPE: DIRECTIVE on the operator-proxy lane (same audience as the proxy).

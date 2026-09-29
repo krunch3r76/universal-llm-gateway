@@ -9,6 +9,7 @@ advisor-timing
 cheap-recon-before-escalation
 cdp-operator-proxy
 lane-act-gates
+skill-authoring-gate
 directive-authoring-standard
 cursor-model-economics
 claude-ai-cdp-navigation
