@@ -104,6 +104,29 @@ def test_shared_write_requires_expected_sha256(
     assert ok["status"] == "written"
 
 
+def test_standing_handoff_classified_shared_requires_expected_sha256(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/77-standing-handoff.md"
+    ops_text.write_file_impl(rel, "leg-0\n")
+    rejected = ops_text.write_file_impl(rel, "leg-0\nleg-1\n")
+    assert rejected["reason"] == "expected_sha256.required"
+
+
+def test_threads_other_file_stays_unclassified_no_cas(
+    sandbox_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ops_write, "record", lambda *_a, **_k: None)
+    rel = "notes/system/threads/77-other.md"
+    ops_text.write_file_impl(rel, "first\n")
+    second = ops_text.write_file_impl(rel, "first\nsecond\n")
+    assert second.get("reason") != "expected_sha256.required"
+    assert (sandbox_root / rel).read_text(encoding="utf-8") == "first\nsecond\n"
+
+
 def test_shared_append_stale_base_refuses(
     sandbox_root: Path,
     monkeypatch: pytest.MonkeyPatch,
