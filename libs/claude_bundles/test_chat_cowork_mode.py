@@ -13,7 +13,9 @@ from playwright.async_api import async_playwright  # noqa: E402
 from claude_bundles.chat_cowork_mode import (  # noqa: E402
     _APPROVAL_ARIA,
     _APPROVAL_MENU,
+    _COWORK_APPROVAL_DEGRADED_ATTR,
     _open_approval_menu,
+    ensure_cowork_auto,
     exclusive_radio_text_match,
     set_approval_mode,
 )
@@ -47,6 +49,29 @@ _ARIA_LESS_WITH_MENU_HTML = """
 <script>
 document.getElementById('chip').addEventListener('click', () => {
   document.getElementById('menu').style.display = 'block';
+});
+</script>
+</body></html>
+"""
+
+# menuitem (not menuitemradio) — DOM variant for approval flyout rows.
+_ARIA_LESS_WITH_MENUITEM_HTML = """
+<!doctype html><html><head><title>New task - Claude</title></head><body>
+<button id="chip">Auto</button>
+<div id="menu" style="display:none">
+  <div role="menuitem">Automatically approve</div>
+  <div role="menuitem">Manually approve</div>
+  <div role="menuitem">Skip all approvals</div>
+</div>
+<script>
+document.getElementById('chip').addEventListener('click', () => {
+  document.getElementById('menu').style.display = 'block';
+});
+document.querySelectorAll('[role=menuitem]').forEach((row) => {
+  row.addEventListener('click', () => {
+    const t = (row.innerText || '').trim();
+    if (/skip/i.test(t)) document.getElementById('chip').innerText = 'Skip';
+  });
 });
 </script>
 </body></html>
@@ -217,6 +242,74 @@ async def test_open_approval_menu_accepts_click_that_opens_menu() -> None:
             await page.set_content(_ARIA_LESS_WITH_MENU_HTML)
             result = await _open_approval_menu(page)
             assert result["ok"] is True
-            assert result["opened_via"] == "text"
+            assert result["opened_via"] in ("text", "js_chip")
         finally:
             await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_open_approval_menu_accepts_menuitem_rows() -> None:
+    """Approval flyout may expose menuitem instead of menuitemradio."""
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_ARIA_LESS_WITH_MENUITEM_HTML)
+            result = await _open_approval_menu(page)
+            assert result["ok"] is True
+            assert result["opened_via"] in ("text", "js_chip")
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_set_approval_mode_selects_skip_via_menuitem() -> None:
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_ARIA_LESS_WITH_MENUITEM_HTML)
+            result = await set_approval_mode(page, "skip")
+            assert result["ok"] is True
+            assert result["step"] == "selected_skip"
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_ensure_cowork_auto_degrades_when_skip_unattainable_on_auto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Launch must not die when the chip is Auto but Skip cannot be selected."""
+    mode_ok = {"ok": True, "step": "selected_cowork"}
+    skip_fail = {
+        "ok": False,
+        "step": "approval_control_missing",
+        "before": {
+            "title": "New task - Claude",
+            "mode": "cowork",
+            "approval": {"aria": "", "text": "Auto", "via": "text"},
+            "url": "https://claude.ai/new",
+        },
+    }
+
+    async def mock_select(_page, _mode: str) -> dict:
+        return mode_ok
+
+    skip_mock = AsyncMock(side_effect=[skip_fail, skip_fail])
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.select_compose_mode",
+        mock_select,
+    )
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.set_approval_mode",
+        skip_mock,
+    )
+    page = AsyncMock()
+
+    result = await ensure_cowork_auto(page)
+    assert result["ok"] is True
+    assert result["step"] == "cowork_auto_degraded"
+    assert result["approval_degraded"] == "skip_unattainable"
+    assert result["approval"]["degraded"] is True
+    assert getattr(page, _COWORK_APPROVAL_DEGRADED_ATTR) == "skip_unattainable"

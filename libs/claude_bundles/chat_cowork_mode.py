@@ -24,6 +24,7 @@ from typing import Any, Literal
 
 from claude_bundles.compose_attest import (
     _POLL_MS,
+    _approval_is_auto,
     approval_label,
     await_compose_attest,
     compose_mode_fingerprint,
@@ -65,6 +66,14 @@ _APPROVAL_RADIO_TOKEN = {
 
 _APPROVAL_RADIO_ALL = tuple(_APPROVAL_RADIO_TOKEN.values())
 
+# Playwright page attr — set when ensure accepts Cowork+Auto because Skip menu
+# could not be opened; ``project_ask`` send path reads it to avoid a second
+# fail-closed after a degraded launch.
+_COWORK_APPROVAL_DEGRADED_ATTR = "_cowork_approval_degraded"
+
+_APPROVAL_MENU_OPEN_POLL_MS = 400
+_APPROVAL_MENU_OPEN_TIMEOUT_MS = 2500
+
 
 def exclusive_radio_text_match(text: str, token: str) -> bool:
     """True iff ``text`` names ``token`` and no sibling approval label.
@@ -76,6 +85,70 @@ def exclusive_radio_text_match(text: str, token: str) -> bool:
         return False
     others = [o for o in _APPROVAL_RADIO_ALL if o.lower() != token.lower()]
     return not any(re.search(re.escape(o), text, re.I) for o in others)
+
+
+async def _approval_menu_probe(page) -> dict[str, Any]:
+    """Count visible approval menu rows across menuitemradio/menuitem/option."""
+    raw = await page.evaluate(
+        """() => {
+          const pat = /approve|manual|skip|^auto$/i;
+          const roles = ['menuitemradio', 'menuitem', 'option', 'radio'];
+          const items = [];
+          for (const role of roles) {
+            for (const el of document.querySelectorAll(`[role="${role}"]`)) {
+              if (!el.offsetParent) continue;
+              const t = (el.innerText || '').replace(/\\s+/g, ' ');
+              if (!pat.test(t)) continue;
+              items.push({role, text: t.slice(0, 80)});
+            }
+          }
+          return {count: items.length, items: items.slice(0, 12)};
+        }"""
+    )
+    if not isinstance(raw, dict):
+        return {"count": 0, "items": []}
+    return {
+        "count": int(raw.get("count") or 0),
+        "items": list(raw.get("items") or []),
+    }
+
+
+async def _wait_approval_menu(page) -> dict[str, Any]:
+    """Poll after chip click until ≥2 approval rows or timeout."""
+    elapsed = 0
+    last = await _approval_menu_probe(page)
+    while elapsed < _APPROVAL_MENU_OPEN_TIMEOUT_MS:
+        if last.get("count", 0) >= 2:
+            return {"ok": True, "menu": last, "polled_ms": elapsed}
+        await page.wait_for_timeout(_APPROVAL_MENU_OPEN_POLL_MS)
+        elapsed += _APPROVAL_MENU_OPEN_POLL_MS
+        last = await _approval_menu_probe(page)
+    return {"ok": False, "menu": last, "polled_ms": elapsed}
+
+
+async def _click_approval_chip_js(page) -> bool:
+    """Click the compact Manual/Auto/Skip chip (aria-less production shape)."""
+    return bool(
+        await page.evaluate(
+            """() => {
+          const re = /^(auto|manual|skip)$/i;
+          let best = null;
+          for (const el of document.querySelectorAll('button, [role="button"]')) {
+            const text = (el.innerText || '').trim();
+            if (!re.test(text)) continue;
+            if (!el.offsetParent) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width < 28 || r.width > 140 || r.height < 16 || r.height > 48) {
+              continue;
+            }
+            if (!best || r.width < best.w) best = {el, w: r.width};
+          }
+          if (!best) return false;
+          best.el.click();
+          return true;
+        }"""
+        )
+    )
 
 
 async def _chip_missing_payload(
@@ -233,10 +306,11 @@ async def _open_approval_menu(page) -> dict[str, Any]:
 
     a:31319 — the chip's aria-label can be entirely absent, and a click
     landing on *some* button is not proof the approval dropdown opened (the
-    click might land on an unrelated aria-less control). Verify a
-    ``menuitemradio`` actually appeared before reporting success; on
-    exhaustion, dump every Auto/approve/manual/skip-like candidate so the
-    next occurrence is a one-look diagnosis instead of a fresh investigation.
+    click might land on an unrelated aria-less control). Verify approval menu
+    rows (``menuitemradio`` / ``menuitem`` / ``option``) actually appeared
+    before reporting success; on exhaustion, dump every Auto/approve/manual/
+    skip-like candidate so the next occurrence is a one-look diagnosis instead
+    of a fresh investigation.
     """
     for aria_re in (
         _APPROVAL_ARIA["auto"],
@@ -246,9 +320,24 @@ async def _open_approval_menu(page) -> dict[str, Any]:
         loc = page.get_by_label(aria_re)
         if await loc.count():
             await loc.first.click(force=True)
-            await page.wait_for_timeout(1000)
-            if await page.get_by_role("menuitemradio").count():
-                return {"ok": True, "opened_via": "aria", "pattern": aria_re.pattern}
+            waited = await _wait_approval_menu(page)
+            if waited.get("ok"):
+                return {
+                    "ok": True,
+                    "opened_via": "aria",
+                    "pattern": aria_re.pattern,
+                    "menu": waited.get("menu"),
+                    "polled_ms": waited.get("polled_ms"),
+                }
+    if await _click_approval_chip_js(page):
+        waited = await _wait_approval_menu(page)
+        if waited.get("ok"):
+            return {
+                "ok": True,
+                "opened_via": "js_chip",
+                "menu": waited.get("menu"),
+                "polled_ms": waited.get("polled_ms"),
+            }
     # Fallback: visible Manual/Auto/Skip button text (chip may carry no aria).
     for pat in (r"^Manual\b", r"^Auto\b", r"^Skip\b"):
         loc = page.locator('button, [role="button"]').filter(
@@ -256,12 +345,20 @@ async def _open_approval_menu(page) -> dict[str, Any]:
         )
         if await loc.count():
             await loc.first.click(force=True)
-            await page.wait_for_timeout(1000)
-            if await page.get_by_role("menuitemradio").count():
-                return {"ok": True, "opened_via": "text", "pattern": pat}
+            waited = await _wait_approval_menu(page)
+            if waited.get("ok"):
+                return {
+                    "ok": True,
+                    "opened_via": "text",
+                    "pattern": pat,
+                    "menu": waited.get("menu"),
+                    "polled_ms": waited.get("polled_ms"),
+                }
+    menu = await _approval_menu_probe(page)
     return {
         "ok": False,
         "step": "approval_control_missing",
+        "menu_probe": menu,
         "candidates": await collect_approval_candidates(page),
     }
 
@@ -295,14 +392,18 @@ async def set_approval_mode(page, mode: ApprovalMode = "skip") -> dict[str, Any]
     radio_token = _APPROVAL_RADIO_TOKEN[mode]
     exclusive = await page.evaluate(
         """(token) => {
-          const radios = [...document.querySelectorAll('[role=menuitemradio]')];
+          const roles = ['menuitemradio', 'menuitem', 'option'];
+          const radios = [];
+          for (const role of roles) {
+            radios.push(...document.querySelectorAll(`[role="${role}"]`));
+          }
           const all = ['Manually approve', 'Automatically approve', 'Skip all approvals'];
           const others = all.filter((x) => x.toLowerCase() !== token.toLowerCase());
           for (const el of radios) {
             const t = (el.innerText || '').replace(/\\s+/g, ' ');
             if (!exclusiveRadioTextMatch(t, token, others)) continue;
             el.click();
-            return {ok: true, text: t.slice(0, 120)};
+            return {ok: true, text: t.slice(0, 120), role: el.getAttribute('role') || ''};
           }
           return {ok: false, count: radios.length};
           function exclusiveRadioTextMatch(t, token, others) {
@@ -318,6 +419,8 @@ async def set_approval_mode(page, mode: ApprovalMode = "skip") -> dict[str, Any]
         item = page.get_by_role("menuitemradio", name=menu_re)
         if await item.count() == 0:
             item = page.get_by_role("menuitem", name=menu_re)
+        if await item.count() == 0:
+            item = page.get_by_role("option", name=menu_re)
         if await item.count() == 0:
             return {
                 "ok": False,
@@ -378,8 +481,36 @@ async def ensure_cowork_auto(page) -> dict[str, Any]:
         await page.wait_for_timeout(800)
         approval = await set_approval_mode(page, "skip")
         approval["retried"] = True
+    if approval.get("ok"):
+        setattr(page, _COWORK_APPROVAL_DEGRADED_ATTR, None)
+        return {
+            "ok": True,
+            "step": "cowork_auto",
+            "mode": mode,
+            "approval": approval,
+        }
+    after_fp = (
+        approval.get("after")
+        or approval.get("before")
+        or await compose_mode_fingerprint(page)
+    )
+    if _approval_is_auto(after_fp):
+        setattr(page, _COWORK_APPROVAL_DEGRADED_ATTR, "skip_unattainable")
+        approval = {
+            **approval,
+            "degraded": True,
+            "degraded_reason": "skip_unattainable",
+            "accepted_approval": "auto",
+        }
+        return {
+            "ok": True,
+            "step": "cowork_auto_degraded",
+            "approval_degraded": "skip_unattainable",
+            "mode": mode,
+            "approval": approval,
+        }
     return {
-        "ok": bool(approval.get("ok")),
+        "ok": False,
         "step": "cowork_auto",
         "mode": mode,
         "approval": approval,
