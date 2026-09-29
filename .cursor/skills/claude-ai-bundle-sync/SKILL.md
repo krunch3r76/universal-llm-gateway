@@ -295,9 +295,10 @@ After an MCP surface change with a healthy Connected UI, permissions alone:
 scripts/cortex/claude-ai-sync-jupiter set-tool-permissions
 ```
 
-The permission command targets only `toys` → `/mcp/life` → `Other tools`, returns
-`changed` or `already_set`, and reload-verifies `Always allow` plus tool
-availability.
+The permission command targets `toys` → `/mcp/life` → `Other tools` unless the
+URL is `/mcp/code`. ulg-code uses the ops allowlist (manage, observability,
+team_dispatch only). Both connectors: `refresh-operator-connectors` in
+`claude-ai-mcp-connect`.
 
 **Remote VPN (UI still shows dead):** Jupiter OAuth can succeed while your laptop
 browser cannot reach `<mcp-host>`. On the remote machine while on VPN:
