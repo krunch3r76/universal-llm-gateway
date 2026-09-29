@@ -82,6 +82,27 @@ def ledger_aligned_operator_occupancy() -> int:
     return gate_active
 
 
+def operator_admission_occupancy() -> int:
+    """Operator slots consumed by live writers or claimed conductor jobs.
+
+    A slot is an open ledger job with ``status == "claimed"`` and
+    ``execution_mode == "isolated_lane_conductor"``. The limit reader stays
+    ``operator_dispatch_limit``; this function only reports occupancy.
+    """
+    from services.git_integration_worker.cursor_auto.execution_mode import (
+        ISOLATED_LANE_CONDUCTOR_MODE,
+    )
+    from services.git_integration_worker.cursor_auto.job_ledger import get_ledger
+
+    claimed_slots = sum(
+        1
+        for job in get_ledger().list_open()
+        if job.status == "claimed"
+        and job.execution_mode == ISOLATED_LANE_CONDUCTOR_MODE
+    )
+    return max(ledger_aligned_operator_occupancy(), claimed_slots)
+
+
 def plan_nested_dispatch(
     *, work_bounded: bool, park_available: bool = True
 ) -> dict[str, Any]:
@@ -90,7 +111,7 @@ def plan_nested_dispatch(
     Returns a disposition plan (pure decision; does not acquire the gate).
     """
     stats = sdk_dispatch_gate_stats(lane="operator")
-    active = ledger_aligned_operator_occupancy()
+    active = operator_admission_occupancy()
     limit = int(stats["limit"])
     queued = int(stats["queued"])
     gate = {
@@ -128,6 +149,10 @@ def prefer_dispatch_over_park(
     upgrades to ``dispatch_now``.
     """
     if not work_bounded:
+        return gate_plan
+    from services.git_integration_worker.cursor_sdk_gate import operator_dispatch_limit
+
+    if operator_admission_occupancy() >= operator_dispatch_limit():
         return gate_plan
     action = gate_plan.get("action")
     reason = str(gate_plan.get("reason") or "")

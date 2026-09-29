@@ -174,6 +174,23 @@ def test_f11_keyless_concurrent_jobs_both_claimable() -> None:
     assert {c1.job_id, c2.job_id} == {j1.job_id, j2.job_id}
 
 
+def test_operator_admission_occupancy_counts_claimed_conductor() -> None:
+    from services.git_integration_worker.cursor_auto.gate_serialize import (
+        operator_admission_occupancy,
+    )
+
+    queue = get_queue()
+    _enqueue_conductor(queue, work_key="todo:occ", thread_id="occ")
+    with patch(
+        "services.git_integration_worker.cursor_auto.gate_serialize.ledger_aligned_operator_occupancy",
+        return_value=0,
+    ):
+        claimed = queue.claim_next_concurrent()
+        assert claimed is not None
+        assert claimed.execution_mode == ISOLATED_LANE_CONDUCTOR_MODE
+        assert operator_admission_occupancy() == 1
+
+
 def test_f13_health_projection_fields() -> None:
     queue = get_queue()
     _enqueue_conductor(queue)
@@ -183,36 +200,39 @@ def test_f13_health_projection_fields() -> None:
             return_value=99,
         ),
         patch(
-            "services.git_integration_worker.cursor_sdk_gate.sdk_dispatch_gate_stats",
-            return_value={"limit": 3},
+            "services.git_integration_worker.cursor_sdk_gate.operator_dispatch_limit",
+            return_value=3,
         ),
     ):
         snap = queue_admission_health()
     assert "concurrent_occupants" in snap
     assert "concurrent_pending_headroom_held" in snap
+    assert snap["concurrent_pending_headroom_held"] == 1
     assert snap["projection_only"] is True
 
 
 def test_f15_headroom_hold_rising_edge_once() -> None:
     from services.git_integration_worker.cursor_auto.queue_health_events import (
-        _headroom_hold_emitted,
         emit_concurrent_headroom_held,
     )
 
     reset_rising_edge_state_for_tests()
-    emit_concurrent_headroom_held(
-        job_id="j1",
-        thread_id="t",
-        work_key="todo:a",
-        execution_mode=ISOLATED_LANE_CONDUCTOR_MODE,
-    )
-    emit_concurrent_headroom_held(
-        job_id="j1",
-        thread_id="t",
-        work_key="todo:a",
-        execution_mode=ISOLATED_LANE_CONDUCTOR_MODE,
-    )
-    assert "j1" in _headroom_hold_emitted
+    with patch(
+        "services.git_integration_worker.cursor_auto.queue_health_events.emit_frontier_event"
+    ) as emit:
+        emit_concurrent_headroom_held(
+            job_id="j1",
+            thread_id="t",
+            work_key="todo:a",
+            execution_mode=ISOLATED_LANE_CONDUCTOR_MODE,
+        )
+        emit_concurrent_headroom_held(
+            job_id="j1",
+            thread_id="t",
+            work_key="todo:a",
+            execution_mode=ISOLATED_LANE_CONDUCTOR_MODE,
+        )
+    assert emit.call_count == 1
 
 
 def test_f6_concurrent_never_via_claim_next() -> None:
@@ -233,9 +253,20 @@ def test_f3_fourth_job_stays_queued_at_gate_capacity() -> None:
     keys = [f"todo:k{i}" for i in range(4)]
     for i, wk in enumerate(keys):
         _enqueue_conductor(queue, work_key=wk, thread_id=f"t{i}", turn=1)
-    assert queue.claim_next_concurrent() is not None
-    assert queue.claim_next_concurrent() is not None
-    assert queue.claim_next_concurrent() is not None
+    with (
+        patch(
+            "services.git_integration_worker.cursor_auto.gate_serialize.ledger_aligned_operator_occupancy",
+            return_value=0,
+        ),
+        patch(
+            "services.git_integration_worker.cursor_sdk_gate.operator_dispatch_limit",
+            return_value=3,
+        ),
+    ):
+        assert queue.claim_next_concurrent() is not None
+        assert queue.claim_next_concurrent() is not None
+        assert queue.claim_next_concurrent() is not None
+        assert queue.claim_next_concurrent() is None
     fourth = queue.head_concurrent_queued()
     assert fourth is not None
     assert fourth.work_key == keys[3]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.git_integration_worker.cursor_auto.gate_serialize import (
     prefer_dispatch_over_park,
@@ -43,9 +43,33 @@ def test_prefer_dispatch_over_park_holderless_bounded():
         "reason": "nest_park_without_holder",
         "gate": {"active": 1, "queued": 0, "limit": 1},
     }
-    out = prefer_dispatch_over_park(plan, work_bounded=True)
+    with patch(
+        "services.git_integration_worker.cursor_auto.gate_serialize.operator_admission_occupancy",
+        return_value=0,
+        create=True,
+    ):
+        out = prefer_dispatch_over_park(plan, work_bounded=True)
     assert out["action"] == "dispatch_now"
     assert out["reason"] == "holderless_bounded_prefer_dispatch"
+
+
+def test_prefer_dispatch_over_park_at_operator_capacity_unchanged():
+    plan = {
+        "action": "nest_park",
+        "reason": "nest_park_without_holder",
+        "gate": {"active": 3, "queued": 0, "limit": 3},
+    }
+    from services.git_integration_worker.cursor_sdk_gate import operator_dispatch_limit
+
+    with patch(
+        "services.git_integration_worker.cursor_auto.gate_serialize.operator_admission_occupancy",
+        return_value=operator_dispatch_limit(),
+        create=True,
+    ):
+        out = prefer_dispatch_over_park(plan, work_bounded=True)
+    assert out is plan
+    assert out["action"] == "nest_park"
+    assert out["reason"] == "nest_park_without_holder"
 
 
 def test_enforce_synthesized_partial():

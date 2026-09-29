@@ -184,7 +184,7 @@ def queue_admission_health() -> dict[str, Any]:
         if j.status == "claimed" and is_concurrent_execution_mode(j.execution_mode)
     ]
     from services.git_integration_worker.cursor_auto.gate_serialize import (
-        ledger_aligned_operator_occupancy,
+        operator_admission_occupancy,
     )
     from services.git_integration_worker.cursor_sdk_gate import (
         OPERATOR_DISPATCH_CONCURRENCY_DEFAULT,
@@ -194,7 +194,7 @@ def queue_admission_health() -> dict[str, Any]:
     )
 
     operator_limit = operator_dispatch_limit()
-    occupancy = ledger_aligned_operator_occupancy()
+    occupancy = operator_admission_occupancy()
     operator_slots = [
         {"slot": index, "holder_dispatch_id": holder_id}
         for index, holder_id in enumerate(

@@ -11,6 +11,7 @@ from typing import Any
 from work_key_grammar import normalize_work_key
 
 from services.git_integration_worker.cursor_auto.execution_mode import (
+    ISOLATED_LANE_CONDUCTOR_MODE,
     is_concurrent_execution_mode,
 )
 
@@ -135,8 +136,22 @@ class AutoJobQueue:
 
         Skips (leaves ``queued``) when another claimed concurrent job holds
         the same non-empty ``work_key`` — FIFO among same-key waiters.
+
+        After that skip, an ``isolated_lane_conductor`` job stays ``queued``
+        when operator admission occupancy is already at
+        ``operator_dispatch_limit``. ``lease_free_propagate`` is not subject
+        to that check.
         """
+        from services.git_integration_worker.cursor_auto.gate_serialize import (
+            operator_admission_occupancy,
+        )
+        from services.git_integration_worker.cursor_sdk_gate import (
+            operator_dispatch_limit,
+        )
+
+        at_operator_limit = operator_admission_occupancy() >= operator_dispatch_limit()
         skipped_same_key: AutoJob | None = None
+        skipped_headroom: AutoJob | None = None
         with self._lock:
             held_work_keys = {
                 normalize_work_key(other.work_key)
@@ -156,6 +171,13 @@ class AutoJobQueue:
                     if skipped_same_key is None:
                         skipped_same_key = job
                     continue
+                if (
+                    job.execution_mode == ISOLATED_LANE_CONDUCTOR_MODE
+                    and at_operator_limit
+                ):
+                    if skipped_headroom is None:
+                        skipped_headroom = job
+                    continue
                 job.status = "claimed"
                 claimed = job
                 break
@@ -171,6 +193,17 @@ class AutoJobQueue:
                 thread_id=skipped_same_key.thread_id,
                 work_key=skipped_same_key.work_key or "",
                 execution_mode=skipped_same_key.execution_mode,
+            )
+        if skipped_headroom is not None:
+            from services.git_integration_worker.cursor_auto.queue_health_events import (
+                emit_concurrent_headroom_held,
+            )
+
+            emit_concurrent_headroom_held(
+                job_id=skipped_headroom.job_id,
+                thread_id=skipped_headroom.thread_id,
+                work_key=skipped_headroom.work_key,
+                execution_mode=skipped_headroom.execution_mode,
             )
         if claimed is None:
             return None

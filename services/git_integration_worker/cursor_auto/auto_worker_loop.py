@@ -10,7 +10,7 @@ from typing import Any
 from universal_logging import get_logger
 
 from services.git_integration_worker.cursor_auto.gate_serialize import (
-    ledger_aligned_operator_occupancy,
+    operator_admission_occupancy,
 )
 from services.git_integration_worker.cursor_auto.handler import process_job
 from services.git_integration_worker.cursor_auto.liveness import get_registry
@@ -22,7 +22,7 @@ from services.git_integration_worker.cursor_auto.queue_health_events import (
 from services.git_integration_worker.cursor_auto.terminal_reason_codec import (
     format_exception_reason,
 )
-from services.git_integration_worker.cursor_sdk_gate import sdk_dispatch_gate_stats
+from services.git_integration_worker.cursor_sdk_gate import operator_dispatch_limit
 
 logger = get_logger(__name__)
 
@@ -188,8 +188,8 @@ async def auto_concurrent_worker_loop(app: Any) -> None:
                 fail_streak = 0
                 await asyncio.sleep(_CONCURRENT_POLL_INTERVAL_S)
                 continue
-            operator_limit = int(sdk_dispatch_gate_stats(lane="operator")["limit"])
-            occupancy = ledger_aligned_operator_occupancy()
+            operator_limit = operator_dispatch_limit()
+            occupancy = operator_admission_occupancy()
             if occupancy >= operator_limit:
                 head = queue.head_concurrent_queued()
                 if head is not None:
