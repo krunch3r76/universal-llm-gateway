@@ -1,7 +1,7 @@
 """MAX_TURN_BODY_CHARS bus invariant and the deterministic oversize-body reduction ladder.
 
 ``finalize_closeout_body`` shrinks ImplementCloseout JSON through effects-head
-truncation, then summary clipping, then a minimal payload, then a hard slice.
+truncation, then summary clipping, then a minimal payload, then whole-key shedding.
 ``MAX_TURN_BODY_CHARS`` must stay aligned with ``libs/agent_bus_store/turns_models``.
 ``_CLOSEOUT_FILE_HEAD`` is the per-list keep count on the first reduction rung.
 """
@@ -20,6 +20,44 @@ _CLOSEOUT_FILE_HEAD = 5
 # tail a reader uses to disposition the check.
 _BUS_STREAM_TAIL = 240
 _BUS_COMMAND_TAIL = 240
+# Keys dropped from the minimal payload, in order, when JSON still exceeds the bus limit.
+_MINIMAL_SHED_KEYS = (
+    "propagation",
+    "propagation_residue",
+    "verification",
+    "evidence_uris",
+)
+
+
+def _shrink_minimal_summary_until_fits(minimal: dict[str, Any]) -> str:
+    """Clip ``minimal["summary"]`` and re-dump until the body fits or summary is exhausted."""
+    result = json.dumps(minimal, separators=(",", ":"))
+    summary = str(minimal.get("summary", ""))
+    while len(result) > MAX_TURN_BODY_CHARS and len(summary) > 20:
+        summary = summary[:-10]
+        minimal["summary"] = summary
+        result = json.dumps(minimal, separators=(",", ":"))
+    return result
+
+
+def _fit_minimal_body(minimal: dict[str, Any]) -> str:
+    """Return valid JSON for the minimal closeout floor within ``MAX_TURN_BODY_CHARS``.
+
+    Sheds bulky optional keys in ``_MINIMAL_SHED_KEYS`` order, then clips summary again.
+    Never returns a character prefix of JSON — the bus reply must always parse.
+    """
+    result = _shrink_minimal_summary_until_fits(minimal)
+    for key in _MINIMAL_SHED_KEYS:
+        if len(result) <= MAX_TURN_BODY_CHARS:
+            return result
+        if key in minimal:
+            del minimal[key]
+            result = json.dumps(minimal, separators=(",", ":"))
+    result = _shrink_minimal_summary_until_fits(minimal)
+    if len(result) > MAX_TURN_BODY_CHARS:
+        minimal["summary"] = ""
+        result = json.dumps(minimal, separators=(",", ":"))
+    return result
 
 
 def _verification_row_kept(item: object) -> bool:
@@ -177,8 +215,4 @@ def finalize_closeout_body(
         minimal["propagation"] = list(propagation[:_CLOSEOUT_FILE_HEAD])
     if body_relocated is not None:
         minimal["body_relocated"] = body_relocated
-    result = json.dumps(minimal, separators=(",", ":"))
-    while len(result) > MAX_TURN_BODY_CHARS and len(minimal["summary"]) > 20:
-        minimal["summary"] = str(minimal["summary"])[:-10]
-        result = json.dumps(minimal, separators=(",", ":"))
-    return result[:MAX_TURN_BODY_CHARS] if len(result) > MAX_TURN_BODY_CHARS else result
+    return _fit_minimal_body(minimal)

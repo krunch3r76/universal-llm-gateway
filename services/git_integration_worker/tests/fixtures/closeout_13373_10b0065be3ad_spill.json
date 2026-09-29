@@ -1,0 +1,325 @@
+{
+  "schema_version": 1,
+  "status": "partial",
+  "work_outcome": "checks_failed",
+  "escalation_harvest": "none",
+  "summary": "dispatch 10b0065be3ad-17ccced3: 110 tool calls, 934.3s, 3734B -> sidecar",
+  "deviations": [
+    "capture:shell_repo_writes_unverified",
+    "capture:gitignored_present_unattributed",
+    "divergence:unknown_root_child:/home/io/.gateway/cdp-registry/active.json",
+    "stream_only_effect",
+    "degraded:sdk_git_probe_absent",
+    "capture:non_file_manifest_entry_dropped",
+    "divergence:manifest_vs_git_labels",
+    "land:lane_b_unlanded"
+  ],
+  "files_created": [],
+  "files_modified": [
+    "scripts/cortex/cdp_approval_census.py",
+    "libs/claude_bundles/chat_cowork_mode.py",
+    "libs/claude_bundles/project_ask.py",
+    "libs/claude_bundles/test_chat_cowork_mode.py",
+    "libs/claude_bundles/test_project_ask.py"
+  ],
+  "files_deleted": [],
+  "files_ambient_repo_movement": [],
+  "capture_status": "partial",
+  "effects_manifest": {
+    "schema_version": 1,
+    "dispatch_id": "10b0065be3ad-17ccced3",
+    "thread_id": "13373",
+    "digest": "1735eb7ea609c56ed68b336870592be36384bfaee529c828dd3ee28cda444539",
+    "surface_counts": {
+      "repo": 64,
+      "service": 5,
+      "subagents": 0,
+      "agent_bus": 1,
+      "repo_scope": "this closeout effects_manifest surface entry counts",
+      "repo_authority": "derived",
+      "service_scope": "this closeout effects_manifest surface entry counts",
+      "service_authority": "derived",
+      "subagents_scope": "this closeout effects_manifest surface entry counts",
+      "subagents_authority": "derived",
+      "agent_bus_scope": "this closeout effects_manifest surface entry counts",
+      "agent_bus_authority": "derived"
+    },
+    "capture_sources": [
+      "conversation",
+      "stream",
+      "wrapper"
+    ],
+    "external_effects": "scoped_out",
+    "contract": "none"
+  },
+  "public_api_changed": false,
+  "verification": [
+    {
+      "command": "gate_d:passed",
+      "exit_code": 0,
+      "wrapper_exit_code": null,
+      "exit_code_register": "derived",
+      "invocation_id": "gate_d:a0c0078be3384d1dbc073aa831fc78a4",
+      "basis": "gate_d_boolean_pass",
+      "stdout": null,
+      "stderr": null,
+      "output_truncated": false,
+      "executable": null,
+      "tool_version": null
+    },
+    {
+      "command": "ruff check 5 touched files",
+      "exit_code": 0,
+      "wrapper_exit_code": null,
+      "exit_code_register": "observed",
+      "invocation_id": "lint:15d685b4ab094ac39177339f0c3b7c81",
+      "basis": "subprocess.run.returncode",
+      "stdout": "All checks passed!\n",
+      "stderr": null,
+      "output_truncated": false,
+      "executable": "/home/io/.venvs/universal/bin/ruff",
+      "tool_version": "0.15.6"
+    },
+    {
+      "command": "ruff check --select F821 services/git_integration_worker/",
+      "exit_code": 0,
+      "wrapper_exit_code": null,
+      "exit_code_register": "observed",
+      "invocation_id": "lint-giw-f821:22788292aa0f40ef83fd04ee7a10eab2",
+      "basis": "subprocess.run.returncode",
+      "stdout": "All checks passed!\n",
+      "stderr": null,
+      "output_truncated": false,
+      "executable": null,
+      "tool_version": null
+    },
+    {
+      "command": "export TOP=\"/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13373\"; cd \"$TOP\" && \"$HOME/.venvs/universal/bin/python\" -m pytest libs/claude_bundles/test_chat_cowork_mode.py libs/claude_bundles/test_project_ask.py -q",
+      "exit_code": 1,
+      "wrapper_exit_code": null,
+      "exit_code_register": "observed",
+      "invocation_id": "test:call-b615e6f5-b75e-4a0e-93b3-fb77437e685d-66\nfc_0385fb5e-61cd-957e-b12a-7bfee05aac55_1",
+      "basis": "shell_tool_result.exitCode;signal=;executionTime=3123",
+      "stdout": "...[truncated]\nion_absent ___________________\n\n    @pytest.mark.asyncio\n    async def test_set_approval_mode_skip_option_absent() -> None:\n        \"\"\"Menu opens with Manual and Auto only \u2014 named failure, no confirm.\"\"\"\n        async with async_playwright() as pw:\n>           browser = await pw.chromium.launch(headless=True)\n                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nlibs/claude_bundles/test_chat_cowork_mode.py:383: \n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n/home/io/.local/share/git-integration-worker/cursor-dispatch-homes/10b0065be3ad-17ccced3-home/.venvs/universal/lib/python3.12/site-packages/playwright/async_api/_generated.py:14547: in launch\n    await self._impl_obj.launch(\n/home/io/.local/share/git-integration-worker/cursor-dispatch-homes/10b0065be3ad-17ccced3-home/.venvs/universal/lib/python3.12/site-packages/playwright/_impl/_browser_type.py:97: in launch\n    await self._channel.send(\n/home/io/.local/share/git-integration-worker/cursor-dispatch-homes/10b0065be3ad-17ccced3-home/.venvs/universal/lib/python3.12/site-packages/playwright/_impl/_connection.py:69: in send\n    return await self._connection.wrap_api_call(\n_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ \n\nself = <playwright._impl._connection.Connection object at 0x715a6573da60>\ncb = <function Channel.send.<locals>.<lambda> at 0x715a66831440>\nis_internal = False, title = None\n\n    async def wrap_api_call(\n        self, cb: Callable[[], Any], is_internal: bool = False, title: str = None\n    ) -> Any:\n        if self._api_zone.get():\n            return await cb()\n        task = asyncio.current_task(self._loop)\n        st: List[inspect.FrameInfo] = getattr(\n            task, \"__pw_stack__\", None\n        ) or inspect.stack(0)\n    \n        parsed_st = _extract_stack_trace_information_from_stack(st, is_internal, title)\n        self._api_zone.set(parsed_st)\n        try:\n            return await cb()\n        except Exception as error:\n>           raise rewrite_error(error, f\"{parsed_st['apiName']}: {error}\") from None\nE           playwright._impl._errors.Error: BrowserType.launch: Executable doesn't exist at /home/io/.local/share/git-integration-worker/cursor-dispatch-homes/10b0065be3ad-17ccced3-home/.cache/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-linux64/chrome-headless-shell\nE           \u2554\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2557\nE           \u2551 Looks like Playwright was just installed or updated.       \u2551\nE           \u2551 Please run the following command to download new browsers: \u2551\nE           \u2551                                                            \u2551\nE           \u2551     playwright install                                     \u2551\nE           \u2551                                                            \u2551\nE           \u2551 <3 Playwright Team                                         \u2551\nE           \u255a\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u255d\n\n/home/io/.local/share/git-integration-worker/cursor-dispatch-homes/10b0065be3ad-17ccced3-home/.venvs/universal/lib/python3.12/site-packages/playwright/_impl/_connection.py:559: Error\n=========================== short test summary info ============================\nFAILED libs/claude_bundles/test_chat_cowork_mode.py::test_open_approval_menu_rejects_click_that_does_not_open_menu\nFAILED libs/claude_bundles/test_chat_cowork_mode.py::test_open_approval_menu_accepts_click_that_opens_menu\nFAILED libs/claude_bundles/test_chat_cowork_mode.py::test_open_approval_menu_accepts_menuitem_rows\nFAILED libs/claude_bundles/test_chat_cowork_mode.py::test_set_approval_mode_selects_skip_via_menuitem\nFAILED libs/claude_bundles/test_chat_cowork_mode.py::test_ensure_cowork_auto_fails_closed_when_skip_unattained_on_auto\nFAILED libs/claude_bundles/test_chat_cowork_mode.py::test_set_approval_mode_confirms_skip_dialog\nFAILED libs/claude_bundles/test_chat_cowork_mode.py::test_set_approval_mode_skip_option_absent\n7 failed, 23 passed in 2.39s\n",
+      "stderr": "",
+      "output_truncated": true,
+      "executable": null,
+      "tool_version": null
+    },
+    {
+      "command": "export TOP=\"/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13373\"; cd \"$TOP\" && \"$HOME/.venvs/universal/bin/ruff\" format libs/claude_bundles/test_chat_cowork_mode.py && \"$HOME/.venvs/universal/bin/ruff\" check libs/claude_bundles/test_chat_cowork_mode.py && PLAYWRIGHT_BROWSERS_PATH=/home/io/.cache/ms-playwright \"$HOME/.venvs/universal/bin/python\" -m pytest libs/claude_bundles/test_chat_cowork_mode.py libs/claude_bundles/test_project_ask.py -q",
+      "exit_code": 0,
+      "wrapper_exit_code": null,
+      "exit_code_register": "observed",
+      "invocation_id": "test:call-614006e3-a71f-47da-8c65-ba6b418efd0b-69\nfc_e11dce76-ad05-9e9a-add3-5af1e7c43e8e_0",
+      "basis": "shell_tool_result.exitCode;signal=;executionTime=12060",
+      "stdout": "1 file left unchanged\nAll checks passed!\n..............................                                           [100%]\n30 passed in 11.25s\n",
+      "stderr": "",
+      "output_truncated": false,
+      "executable": null,
+      "tool_version": null
+    },
+    {
+      "command": "export TOP=\"/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13373\"; cd \"$TOP\" && git status --porcelain && PLAYWRIGHT_BROWSERS_PATH=/home/io/.cache/ms-playwright \"$HOME/.venvs/universal/bin/python\" -m pytest libs/claude_bundles/test_chat_cowork_mode.py libs/claude_bundles/test_project_ask.py -q --tb=no -k \"fails_closed or auto_refuses or confirms_skip_dialog or skip_option_absent\"",
+      "exit_code": 0,
+      "wrapper_exit_code": null,
+      "exit_code_register": "observed",
+      "invocation_id": "test:call-06aa157c-dbf1-4e3b-b011-f4d480f350f4-109\nfc_4a39be2c-53d5-9eca-9431-53a6abaed72f_3",
+      "basis": "shell_tool_result.exitCode;signal=;executionTime=3194",
+      "stdout": ".....                                                                    [100%]\n5 passed, 25 deselected in 2.36s\n",
+      "stderr": "",
+      "output_truncated": false,
+      "executable": null,
+      "tool_version": null
+    }
+  ],
+  "evidence_uris": {
+    "dispatch_ids": [
+      "10b0065be3ad-17ccced3"
+    ],
+    "bus_threads": [
+      "13373"
+    ],
+    "artifact_paths": [
+      "workspaces://universal-llm-gateway/tmp/reviews/closeouts/10b0065be3ad-17ccced3.md"
+    ],
+    "artifact_digests": {
+      "workspaces://universal-llm-gateway/tmp/reviews/closeouts/10b0065be3ad-17ccced3.md": "556218f05e01759e33180b1c37d53449379f78e4e1f152bf611ef1b3b2400f19"
+    },
+    "cortex_assertions": [],
+    "git_refs": [
+      "2ebbffef3b167198c8a3fc7545f9a16c8fc77790"
+    ]
+  },
+  "source_ref": "workspaces://universal-llm-gateway/tmp/reviews/closeouts/10b0065be3ad-17ccced3.md",
+  "packet_sha256": null,
+  "adapter_results": [],
+  "propagation_residue": [
+    "sync_restart: cdp_ask \u2014 manage(action=\"sync_restart\", service=\"cdp_ask\"); derived:consumers; import_path:verified",
+    "sync_restart: git_integration_worker \u2014 manage(action=\"sync_restart\", service=\"git_integration_worker\"); derived:consumers; import_path:verified",
+    "libs_touched: libs/claude_bundles/project_ask.py \u2014 shared lib; lead must decide consumer 'mcp' (contradicted); derived:consumers; import_path:contradicted; import_grammar_blind:dynamic|from_import_name|service_relative",
+    "libs_touched: libs/claude_bundles/project_ask.py \u2014 shared lib; lead must decide consumer 'stargate' (contradicted); derived:consumers; import_path:contradicted; import_grammar_blind:dynamic|from_import_name|service_relative"
+  ],
+  "propagation": [
+    {
+      "service": "cdp_ask",
+      "action": "sync_restart",
+      "code_ref": "2ebbffef3b167198c8a3fc7545f9a16c8fc77790",
+      "safe_window": "harvest",
+      "hazard": null,
+      "reason": "shared lib land: libs/claude_bundles/chat_cowork_mode.py; path-derived obligation; liveness: unknown; derived:consumers; import_path:verified",
+      "proof": "service health/liveness \u2192 AFTER restart VERIFY code_ref is ancestor-of-or-equal-to observed code_version AND VERIFY process identity changed (pid/process_start_time/source_synced_at) since the pre-restart probe (cdp_ask)",
+      "proof_class": "process_live",
+      "proof_class_requested": "process_live",
+      "expected_x_mcp_count": null,
+      "mint_thread": null,
+      "mint_turn": null,
+      "force": false,
+      "allow_self_preempt": true,
+      "close_surfaces": [
+        "code_version"
+      ],
+      "excluded_surfaces": null,
+      "liveness_emission": {
+        "answer": "no",
+        "observed_code_version": "ac67feeb066c7efc248762f2fb8f6a9c78c63a57",
+        "relation": "descendant-of-observed",
+        "observation": "{\"code_ref\": \"2ebbffef3b167198c8a3fc7545f9a16c8fc77790\", \"code_ref_relation\": \"descendant-of-observed\", \"code_version\": \"ac67feeb066c7efc248762f2fb8f6a9c78c63a57\", \"displays\": {\":2\": \"live\", \":3\": \"live\"}, \"harvest_root\": \"/mnt/torus/mcp-data/files\", \"harvest_root_ok\": true, \"observed_code_version\": \"ac67feeb066c7efc248762f2fb8f6a9c78c63a57\", \"pid\": 3516114, \"probe_reachable\": true, \"registry_hygiene\": \"running\", \"service\": \"cdp_ask\", \"standing_pins\": {\"calendar\": {\"observed_at\": \"2026-09-29T15:48:09.743596+00:00\", \"source\": \"systemd+cdp\", \"state\": \"UP\"}, \"ess\": {\"observed_at\": \"2026-09-29T15:48:09.729357+00:00\", \"source\": \"systemd+cdp\", \"state\": \"UP\"}, \"fleet\": {\"observed_at\": \"2026-09-29T15:48:09.697818+00:00\", \"source\": \"systemd+cdp\", \"state\": \"UP\"}, \"messages\": {\"observed_at\": \"2026-09-29T15:48:09.715841+00:00\", \"source\": \"systemd+cdp\", \"state\": \"UP\"}}, \"status\": \"ok\", \"tree_state\": \"unknown\"}"
+      }
+    },
+    {
+      "service": "git_integration_worker",
+      "action": "sync_restart",
+      "code_ref": "2ebbffef3b167198c8a3fc7545f9a16c8fc77790",
+      "safe_window": "drain_required",
+      "hazard": null,
+      "reason": "shared lib land: libs/claude_bundles/project_ask.py; path-derived obligation; liveness: unknown; derived:consumers; import_path:verified",
+      "proof": "GET served OpenAPI (direct + stargate) \u2192 served OpenAPI from every client-reachable surface \u2192 all surfaces byte-identical, document parses; AFTER restart VERIFY code_ref is ancestor-of-or-equal-to observed code_version AND VERIFY process identity changed (pid/process_start_time/source_synced_at) since the pre-restart probe",
+      "proof_class": "served_artifact",
+      "proof_class_requested": "served_artifact",
+      "expected_x_mcp_count": null,
+      "mint_thread": null,
+      "mint_turn": null,
+      "force": false,
+      "allow_self_preempt": true,
+      "close_surfaces": [
+        "surfaces"
+      ],
+      "excluded_surfaces": null,
+      "liveness_emission": {
+        "answer": "no",
+        "observed_code_version": "7d60b146e9e1362855b02bccddaa93126a571214",
+        "relation": "descendant-of-observed",
+        "observation": "{\"code_ref\": \"2ebbffef3b167198c8a3fc7545f9a16c8fc77790\", \"code_ref_relation\": \"descendant-of-observed\", \"code_version\": \"7d60b146e9e1362855b02bccddaa93126a571214\", \"handler_count\": 1, \"handlers\": {\"cursor-auto-primary\": {\"age_s\": 0.085}}, \"heartbeat_ttl_s\": 30.0, \"lane\": \"cursor-auto\", \"live\": true, \"observed_code_version\": \"7d60b146e9e1362855b02bccddaa93126a571214\", \"pid\": 868189, \"probe_reachable\": true, \"queue_health\": {\"admit_eligible_pending\": 0, \"amber\": false, \"amber_threshold_s\": 120.0, \"concurrent_occupants\": [], \"concurrent_pending_headroom_held\": 0, \"occupant_idle_s\": null, \"oldest_waiter_age_s\": null, \"operator_slot_limit\": 12, \"operator_slot_limit_default\": 3, \"operator_slot_limit_env\": \"CURSOR_SDK_OPERATOR_DISPATCH_CONCURRENCY\", \"operator_slots\": [], \"projection_only\": true, \"red\": false, \"red_reason\": null, \"red_threshold_s\": 90.0, \"serial_occupant_job_id\": null}, \"service\": \"git_integration_worker\", \"uptime_s\": 11365.983, \"wire_skew_aggregate\": {}}"
+      }
+    }
+  ],
+  "usage": {
+    "input_tokens": 6937249,
+    "output_tokens": 87920,
+    "cache_read_tokens": 6534784,
+    "cache_write_tokens": 0,
+    "total_tokens": 13559953,
+    "reasoning_tokens": 61788,
+    "model_label": "cursor/grok-4.7",
+    "input_tokens_scope": "this dispatch token accounting",
+    "input_tokens_authority": "recorded",
+    "output_tokens_scope": "this dispatch token accounting",
+    "output_tokens_authority": "recorded",
+    "cache_read_tokens_scope": "this dispatch token accounting",
+    "cache_read_tokens_authority": "recorded",
+    "cache_write_tokens_scope": "this dispatch token accounting",
+    "cache_write_tokens_authority": "recorded",
+    "total_tokens_scope": "this dispatch token accounting",
+    "total_tokens_authority": "recorded",
+    "reasoning_tokens_scope": "this dispatch token accounting",
+    "reasoning_tokens_authority": "recorded"
+  },
+  "usage_capture_status": "captured",
+  "lane": "B",
+  "isolation_materialized": true,
+  "branch": "cursor-sdk/lane-13373",
+  "branch_point": "ac67feeb066c7efc248762f2fb8f6a9c78c63a57",
+  "head_sha": "2ebbffef3b167198c8a3fc7545f9a16c8fc77790",
+  "commits_ahead": 1,
+  "landed": false,
+  "tool_call_count": 110,
+  "status_incomplete_class": "work",
+  "files_untracked_or_ignored": [
+    ".cursor/rules/topology_ws.mdc"
+  ],
+  "files_outside_repo": [
+    "/home/io/.gateway/cdp-registry/active.json"
+  ],
+  "dropped_non_file_entries": [
+    {
+      "surface": "repo",
+      "op": "shell",
+      "target": "export TOP=\"/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13373\"; cd \"$TOP\" && ssh -o BatchMode=yes -o ConnectTimeout=10 krunch3r@jupiter \"cd '$TOP' && ~/.venvs/universal/bin/python -\" << 'PY'\nimport asyncio, json, sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path('.').resolve() / 'libs'))\nfrom claude_bundles.chat_cowork_mode import select_compose_mode\nfrom claude_bundles.compose_attest import compose_mode_fingerprint\nfrom claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp\n\nOPEN = r\"\"\"() => {\n  const re = /^(auto|manual|skip)$/i;\n  let best = null;\n  for (const el of document.querySelectorAll('button, [role=\"button\"]')) {\n    const text = (el.innerText || '').trim();\n    if (!re.test(text) || !el.offsetParent) continue;\n    const r = el.getBoundingClientRect();\n    if (r.width < 28 || r.width > 140 || r.height < 16 || r.height > 48) continue;\n    if (!best || r.width < best.w) best = {el, w: r.width};\n  }\n  if (!best) return {ok:false};\n  best.el.click();\n  return {ok:true, expanded: best.el.getAttribute('aria-expanded')};\n}\"\"\"\n\nTREE = r\"\"\"() => {\n  const rows = [...document.querySelectorAll('[role=menuitemradio]')];\n  const skip = rows.find(el => /skip all approvals/i.test(el.innerText || ''));\n  if (!skip) return {found:false, n: rows.length};\n  const kids = [...skip.querySelectorAll('*')].slice(0, 20).map(el => ({\n    tag: el.tagName,\n    role: el.getAttribute('role') || '',\n    text: (el.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 40),\n    pe: getComputedStyle(el).pointerEvents,\n  }));\n  const descId = skip.getAttribute('aria-describedby') || '';\n  const desc = descId ? document.getElementById(descId.split(' ')[0]) : null;\n  return {\n    found: true,\n    checked: rows.map(el => ({\n      t: (el.innerText||'').replace(/\\s+/g,' ').trim().slice(0,40),\n      ariaChecked: el.getAttribute('aria-checked'),\n      tab: el.getAttribute('tabindex'),\n    })),\n    skip_pe: getComputedStyle(skip).pointerEvents,\n    kids,\n    desc: desc ? (desc.innerText || desc.textContent || '').slice(0, 200) : None,\n    outer: (skip.outerHTML || '').slice(0, 1200),\n  };\n}\"\"\"\n\nARM = r\"\"\"() => {\n  window.__ev = [];\n  const push = (e) => {\n    const el = e.target;\n    if (!el || !el.closest) return;\n    const row = el.closest('[role=menuitemradio], [role=menu], button');\n    window.__ev.push({\n      type: e.type,\n      trusted: e.isTrusted,\n      tag: el.tagName,\n      role: el.getAttribute && (el.getAttribute('role') || ''),\n      text: ((row && row.innerText) || el.innerText || '').replace(/\\s+/g,' ').trim().slice(0,40),\n    });\n  };\n  for (const t of ['pointerdown','pointerup','mousedown','mouseup','click']) {\n    document.addEventListener(t, push, true);\n  }\n  return true;\n}\"\"\"\n\nEV = r\"\"\"() => (window.__ev || []).slice(0, 30)\"\"\"\n\nCHECKED = r\"\"\"() => [...document.querySelectorAll('[role=menuitemradio]')].map(el => ({\n  t: (el.innerText||'').replace(/\\s+/g,' ').trim().slice(0,40),\n  ariaChecked: el.getAttribute('aria-checked'),\n}))\"\"\"\n\nasync def main():\n    pw, _b, ctx, _ = await connect_cdp(DEFAULT_CDP_URL)\n    page = await ctx.new_page()\n    report = {}\n    try:\n        await page.goto('https://claude.ai/new', wait_until='domcontentloaded', timeout=30000)\n        await select_compose_mode(page, 'cowork')\n        report['open'] = await page.evaluate(OPEN)\n        await page.wait_for_timeout(500)\n        report['tree'] = await page.evaluate(TREE)\n        await page.evaluate(ARM)\n        box = await page.get_by_role('menuitemradio', name=__import__('re').compile(r'Skip all approvals', __import__('re').I)).first.bounding_box()\n        report['box'] = box\n        if box:\n            x = box['x'] + box['width'] / 2\n            y = box['y'] + min(16, box['height'] / 2)\n            await page.mouse.move(x, y)\n            await page.mouse.down()\n            await page.wait_for_timeout(50)\n            await page.mouse.up()\n        await page.wait_for_timeout(200)\n        report['events'] = await page.evaluate(EV)\n        report['checked_200'] = await page.evaluate(CHECKED)\n        report['fp_200'] = await compose_mode_fingerprint(page)\n        # keyboard fallback if still auto\n        label = ((report['fp_200'].get('approval') or {}).get('text'))\n        if label != 'Skip':\n            # reopen if needed\n            expanded = await page.evaluate(r\"\"\"() => {\n              const re = /^(auto|manual|skip)$/i;\n              for (const el of document.querySelectorAll('button')) {\n                if (re.test((el.innerText||'').trim()) && el.offsetParent) return el.getAttribute('aria-expanded');\n              }\n              return null;\n            }\"\"\")\n            report['expanded_after_mouse'] = expanded\n            if expanded != 'true':\n                report['reopen'] = await page.evaluate(OPEN)\n                await page.wait_for_timeout(400)\n            # focus skip row and press Enter\n            await page.evaluate(r\"\"\"() => {\n              const rows = [...document.querySelectorAll('[role=menuitemradio]')];\n              const skip = rows.find(el => /skip all approvals/i.test(el.innerText || ''));\n              if (skip) skip.focus();\n            }\"\"\")\n            await page.keyboard.press('Enter')\n            await page.wait_for_timeout(400)\n            report['after_enter'] = {\n                'checked': await page.evaluate(CHECKED),\n                'fp': await compose_mode_fingerprint(page),\n            }\n            still = ((report['after_enter']['fp'].get('approval') or {}).get('text'))\n            if still != 'Skip':\n                if report['after_enter']['checked'] == [] or True:\n                    exp = await page.evaluate(r\"\"\"() => {\n                      const re = /^(auto|manual|skip)$/i;\n                      for (const el of document.querySelectorAll('button')) {\n                        if (re.test((el.innerText||'').trim()) && el.offsetParent) return el.getAttribute('aria-expanded');\n                      }\n                      return null;\n                    }\"\"\")\n                    if exp != 'true':\n                        await page.evaluate(OPEN)\n                        await page.wait_for_timeout(300)\n                    await page.keyboard.press('ArrowDown')\n                    await page.keyboard.press('ArrowDown')\n                    await page.keyboard.press('Enter')\n                    await page.wait_for_timeout(400)\n                    report['after_arrows'] = {\n                        'checked': await page.evaluate(CHECKED),\n                        'fp': await compose_mode_fingerprint(page),\n                    }\n        await page.keyboard.press('Escape')\n        print(json.dumps(report, indent=2, default=str))\n    finally:\n        await page.close()\n        await pw.stop()\n\nasyncio.run(main())\nPY",
+      "reason": "non_file"
+    },
+    {
+      "surface": "repo",
+      "op": "shell",
+      "target": "export TOP=\"/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13373\"; cd \"$TOP\" && ssh -o BatchMode=yes -o ConnectTimeout=10 krunch3r@jupiter \"cd '$TOP' && ~/.venvs/universal/bin/python -\" << 'PY'\nimport asyncio, json, re, sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path('.').resolve() / 'libs'))\nfrom claude_bundles.chat_cowork_mode import select_compose_mode\nfrom claude_bundles.compose_attest import compose_mode_fingerprint\nfrom claude_bundles.skills_ui_panel import DEFAULT_CDP_URL, connect_cdp\n\nCHIP = \"[data-ulg-trace-chip='1']\"\nMARK = r\"\"\"() => {\n  const re = /^(auto|manual|skip)$/i;\n  let best = null;\n  for (const el of document.querySelectorAll('button, [role=\"button\"]')) {\n    const text = (el.innerText || '').trim();\n    if (!re.test(text) || !el.offsetParent) continue;\n    const r = el.getBoundingClientRect();\n    if (r.width < 28 || r.width > 140 || r.height < 16 || r.height > 48) continue;\n    if (!best || r.width < best.w) best = {el, w: r.width};\n  }\n  if (!best) return false;\n  best.el.setAttribute('data-ulg-trace-chip', '1');\n  return {\n    expanded: best.el.getAttribute('aria-expanded'),\n    text: (best.el.innerText || '').trim(),\n  };\n}\"\"\"\n\nSNAP = r\"\"\"() => {\n  const chip = document.querySelector('[data-ulg-trace-chip=\"1\"]');\n  const rows = [...document.querySelectorAll('[role=menuitemradio]')].map(el => ({\n    t: (el.innerText||'').replace(/\\s+/g,' ').trim().slice(0, 40),\n    checked: el.getAttribute('aria-checked'),\n    highlighted: el.hasAttribute('data-highlighted'),\n  }));\n  const dialogs = [...document.querySelectorAll('[role=dialog], [role=alertdialog]')].map(el => ({\n    text: (el.innerText||'').replace(/\\s+/g,' ').trim().slice(0, 120),\n    hidden: el.hidden || el.getAttribute('aria-hidden'),\n  }));\n  const buttons = [...document.querySelectorAll('button')].map(el => (el.innerText||'').trim().replace(/\\s+/g,' ').slice(0, 24)).filter(t => /auto|manual|skip|confirm|allow|continue/i.test(t)).slice(0, 12);\n  return {\n    chip: chip ? {\n      text: (chip.innerText||'').trim(),\n      expanded: chip.getAttribute('aria-expanded'),\n      controls: chip.getAttribute('aria-controls'),\n    } : None,\n    rows,\n    dialogs,\n    buttons,\n  };\n}\"\"\"\n\nasync def label(page):\n    fp = await compose_mode_fingerprint(page)\n    return (fp.get('approval') or {}).get('text')\n\nasync def fresh(page):\n    await page.goto('https://claude.ai/new', wait_until='domcontentloaded', timeout=30000)\n    mode = await select_compose_mode(page, 'cowork')\n    mark = await page.evaluate(MARK)\n    return {'mode': mode.get('step'), 'mark': mark}\n\nasync def main():\n    pw, _b, ctx, _ = await connect_cdp(DEFAULT_CDP_URL)\n    page = await ctx.new_page()\n    out = {}\n    try:\n        out['fresh'] = await fresh(page)\n        # Trusted pointer open only \u2014 menu must start closed.\n        await page.locator(CHIP).click(timeout=8000)\n        await page.wait_for_timeout(500)\n        out['after_trusted_open'] = await page.evaluate(SNAP)\n        loc = page.get_by_role('menuitemradio', name=re.compile(r'Skip all approvals', re.I))\n        out['skip_count'] = await loc.count()\n        if await loc.count():\n            await loc.first.hover()\n            await page.wait_for_timeout(150)\n            await loc.first.click(timeout=5000)\n            await page.wait_for_timeout(600)\n        out['after_trusted_row'] = await page.evaluate(SNAP)\n        out['label_trusted'] = await label(page)\n\n        # Second attempt: trusted open + Space on highlighted skip\n        await fresh(page)\n        await page.locator(CHIP).click(timeout=8000)\n        await page.wait_for_timeout(400)\n        # highlight starts on Manual; two ArrowDown to Skip, then Space\n        await page.keyboard.press('ArrowDown')\n        await page.keyboard.press('ArrowDown')\n        await page.wait_for_timeout(100)\n        out['before_space'] = await page.evaluate(SNAP)\n        await page.keyboard.press('Space')\n        await page.wait_for_timeout(500)\n        out['after_space'] = await page.evaluate(SNAP)\n        out['label_space'] = await label(page)\n        await page.keyboard.press('Escape')\n        print(json.dumps(out, indent=2, default=str))\n    finally:\n        await page.close()\n        await pw.stop()\n\nasyncio.run(main())\nPY",
+      "reason": "non_file"
+    },
+    {
+      "surface": "repo",
+      "op": "observed",
+      "target": "/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13373",
+      "reason": "non_file"
+    },
+    {
+      "surface": "repo",
+      "op": "observed",
+      "target": "/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13373/libs/claude_bundles",
+      "reason": "non_file"
+    },
+    {
+      "surface": "repo",
+      "op": "observed",
+      "target": "/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13373/scripts/cortex",
+      "reason": "non_file"
+    },
+    {
+      "surface": "repo",
+      "op": "observed",
+      "target": "/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13373/services",
+      "reason": "non_file"
+    },
+    {
+      "surface": "repo",
+      "op": "observed",
+      "target": "/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13373/libs",
+      "reason": "non_file"
+    },
+    {
+      "surface": "repo",
+      "op": "observed",
+      "target": "/mnt/torus/projects/ulg-arc-worktrees/universal-llm-gateway/lane-13373/libs/cdp_ask",
+      "reason": "non_file"
+    }
+  ],
+  "open_forks": [],
+  "authority_fork": false,
+  "effects": [
+    "libs/claude_bundles/chat_cowork_mode.py",
+    "libs/claude_bundles/project_ask.py",
+    "libs/claude_bundles/test_chat_cowork_mode.py",
+    "libs/claude_bundles/test_project_ask.py",
+    "scripts/cortex/cdp_approval_census.py"
+  ],
+  "files_created_scope": "repo paths in this closeout files_* fields (authored ChangeSet and ambient movement)",
+  "files_created_authority": "recorded",
+  "files_modified_scope": "repo paths in this closeout files_* fields (authored ChangeSet and ambient movement)",
+  "files_modified_authority": "recorded",
+  "files_deleted_scope": "repo paths in this closeout files_* fields (authored ChangeSet and ambient movement)",
+  "files_deleted_authority": "recorded",
+  "files_ambient_repo_movement_scope": "repo paths in this closeout files_* fields (authored ChangeSet and ambient movement)",
+  "files_ambient_repo_movement_authority": "recorded",
+  "effects_scope": "repo paths and off-git URIs in this closeout effects[] (dispatch action movement, not files_* authorship legs)",
+  "effects_authority": "recorded",
+  "authority_fork_scope": "open_forks kind=authority on this closeout",
+  "authority_fork_authority": "derived"
+}
