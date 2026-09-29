@@ -13,7 +13,6 @@ from playwright.async_api import async_playwright  # noqa: E402
 from claude_bundles.chat_cowork_mode import (  # noqa: E402
     _APPROVAL_ARIA,
     _APPROVAL_MENU,
-    _COWORK_APPROVAL_DEGRADED_ATTR,
     _open_approval_menu,
     ensure_cowork_auto,
     exclusive_radio_text_match,
@@ -277,10 +276,10 @@ async def test_set_approval_mode_selects_skip_via_menuitem() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ensure_cowork_auto_degrades_when_skip_unattainable_on_auto(
+async def test_ensure_cowork_auto_fails_closed_when_skip_unattained_on_auto(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Launch must not die when the chip is Auto but Skip cannot be selected."""
+    """Chip stays Auto and Skip is not attested: launch fails closed."""
     mode_ok = {"ok": True, "step": "selected_cowork"}
     skip_fail = {
         "ok": False,
@@ -305,11 +304,97 @@ async def test_ensure_cowork_auto_degrades_when_skip_unattainable_on_auto(
         "claude_bundles.chat_cowork_mode.set_approval_mode",
         skip_mock,
     )
-    page = AsyncMock()
+
+    class _Page:
+        async def wait_for_timeout(self, _ms: int) -> None:
+            return None
+
+    page = _Page()
 
     result = await ensure_cowork_auto(page)
-    assert result["ok"] is True
-    assert result["step"] == "cowork_auto_degraded"
-    assert result["approval_degraded"] == "skip_unattainable"
-    assert result["approval"]["degraded"] is True
-    assert getattr(page, _COWORK_APPROVAL_DEGRADED_ATTR) == "skip_unattainable"
+    assert result["ok"] is False
+    assert result["step"] == "cowork_skip_unattained"
+    assert not hasattr(page, "_cowork_approval_" + "degraded")
+
+
+# Live shape (Jupiter /new, 2026-09-29): aria-less Auto chip, menuitemradio
+# rows, and a confirm dialog. The chip stays Auto until "Yes, continue".
+_SKIP_CONFIRM_DIALOG_HTML = """
+<!doctype html><html><head><title>New task - Claude</title></head><body>
+<button id="chip" style="width:46px;height:24px">Auto</button>
+<div id="menu" role="menu" style="display:none">
+  <div role="menuitemradio">Manually approve</div>
+  <div role="menuitemradio">Automatically approve</div>
+  <div role="menuitemradio" id="skip">Skip all approvals</div>
+</div>
+<div id="dialog" role="dialog" style="display:none">
+  <p>Skip all approvals?</p>
+  <button type="button" id="cancel">Cancel</button>
+  <button type="button" id="yes">Yes, continue</button>
+</div>
+<script>
+document.getElementById('chip').addEventListener('click', () => {
+  document.getElementById('menu').style.display = 'block';
+});
+document.getElementById('skip').addEventListener('click', () => {
+  document.getElementById('menu').style.display = 'none';
+  document.getElementById('dialog').style.display = 'block';
+});
+document.getElementById('yes').addEventListener('click', () => {
+  document.getElementById('dialog').style.display = 'none';
+  document.getElementById('chip').innerText = 'Skip';
+});
+</script>
+</body></html>
+"""
+
+_SKIP_ROW_ABSENT_HTML = """
+<!doctype html><html><head><title>New task - Claude</title></head><body>
+<button id="chip" style="width:46px;height:24px">Auto</button>
+<div id="menu" role="menu" style="display:none">
+  <div role="menuitemradio">Manually approve</div>
+  <div role="menuitemradio">Automatically approve</div>
+</div>
+<script>
+document.getElementById('chip').addEventListener('click', () => {
+  document.getElementById('menu').style.display = 'block';
+});
+</script>
+</body></html>
+"""
+
+
+@pytest.mark.asyncio
+async def test_set_approval_mode_confirms_skip_dialog() -> None:
+    """Observed shape: row click opens the confirm dialog; Yes sets Skip."""
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_SKIP_CONFIRM_DIALOG_HTML)
+            result = await set_approval_mode(page, "skip")
+            assert result["ok"] is True
+            assert result["step"] == "selected_skip"
+            assert (await page.locator("#chip").inner_text()).strip() == "Skip"
+            assert result["confirm"]["confirmed"] is True
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_set_approval_mode_skip_option_absent() -> None:
+    """Menu opens with Manual and Auto only — named failure, no confirm."""
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.set_content(_SKIP_ROW_ABSENT_HTML)
+            result = await set_approval_mode(page, "skip")
+            assert result["ok"] is False
+            assert result["step"] == "skip_option_absent"
+            assert result["rows"]
+            assert not any(
+                "skip" in (row.get("text") or "").lower() for row in result["rows"]
+            )
+        finally:
+            await browser.close()

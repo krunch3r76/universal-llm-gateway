@@ -386,22 +386,11 @@ async def _submit_composer_draft(
     draft_text: str,
 ) -> None:
     """Submit the current composer draft; fail-closed when controls are missing."""
-    from claude_bundles.chat_cowork_mode import (
-        _COWORK_APPROVAL_DEGRADED_ATTR,
-        ensure_approval_auto,
-    )
-    from claude_bundles.compose_attest import _approval_is_auto
+    from claude_bundles.chat_cowork_mode import ensure_approval_auto
 
     auto = await ensure_approval_auto(page)
     fp = auto.get("after") or await compose_mode_fingerprint(page)
     refuse = cowork_auto_refuse_reason(fp)
-    if (
-        refuse
-        and getattr(page, _COWORK_APPROVAL_DEGRADED_ATTR, None)
-        == "skip_unattainable"
-        and _approval_is_auto(fp)
-    ):
-        refuse = None
     if refuse:
         raise RuntimeError(refuse)
 

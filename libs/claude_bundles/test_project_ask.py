@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -236,3 +237,34 @@ def test_registration_owns_port_rejects_reassigned(
     monkeypatch.setattr(reg._store, "load_active", lambda: active)
     assert not abort.registration_owns_port(r.registration_id, r.port)
     reg._release_driver_lock(r.registration_id)
+
+
+@pytest.mark.asyncio
+async def test_submit_composer_draft_auto_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cowork+Auto at re-attest raises; Start task is not clicked."""
+    fp = {
+        "title": "New task - Claude",
+        "mode": "cowork",
+        "approval": {"aria": "", "text": "Auto", "via": "text"},
+        "url": "https://claude.ai/new",
+    }
+
+    async def fake_ensure(_page) -> dict:
+        return {"ok": False, "after": fp}
+
+    monkeypatch.setattr(
+        "claude_bundles.chat_cowork_mode.ensure_approval_auto",
+        fake_ensure,
+    )
+    click = AsyncMock()
+    monkeypatch.setattr(
+        "claude_bundles.composer_submit.click_submit_button",
+        click,
+    )
+    from claude_bundles.project_ask import _submit_composer_draft
+
+    with pytest.raises(RuntimeError, match="cowork dispatch refused"):
+        await _submit_composer_draft(AsyncMock(), composer=AsyncMock(), draft_text="hi")
+    click.assert_not_awaited()

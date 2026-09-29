@@ -24,7 +24,6 @@ from typing import Any, Literal
 
 from claude_bundles.compose_attest import (
     _POLL_MS,
-    _approval_is_auto,
     approval_label,
     await_compose_attest,
     compose_mode_fingerprint,
@@ -66,10 +65,11 @@ _APPROVAL_RADIO_TOKEN = {
 
 _APPROVAL_RADIO_ALL = tuple(_APPROVAL_RADIO_TOKEN.values())
 
-# Playwright page attr — set when ensure accepts Cowork+Auto because Skip menu
-# could not be opened; ``project_ask`` send path reads it to avoid a second
-# fail-closed after a degraded launch.
-_COWORK_APPROVAL_DEGRADED_ATTR = "_cowork_approval_degraded"
+# Live confirm (Jupiter /new, 2026-09-29): the Skip menuitemradio does not
+# change the chip. It opens role=dialog "Skip all approvals?" whose
+# "Yes, continue" button is what sets the chip text to Skip.
+_SKIP_CONFIRM_DIALOG_RE = re.compile(r"Skip all approvals\?", re.I)
+_SKIP_CONFIRM_BUTTON_RE = re.compile(r"^Yes, continue$", re.I)
 
 _APPROVAL_MENU_OPEN_POLL_MS = 400
 _APPROVAL_MENU_OPEN_TIMEOUT_MS = 2500
@@ -124,6 +124,83 @@ async def _wait_approval_menu(page) -> dict[str, Any]:
         elapsed += _APPROVAL_MENU_OPEN_POLL_MS
         last = await _approval_menu_probe(page)
     return {"ok": False, "menu": last, "polled_ms": elapsed}
+
+
+async def _approval_chip_snapshot(page) -> dict[str, Any]:
+    """Chip attrs for a failure payload (same size window as the JS opener)."""
+    raw = await page.evaluate(
+        """() => {
+          const re = /^(auto|manual|skip)$/i;
+          let best = null;
+          for (const el of document.querySelectorAll('button, [role="button"]')) {
+            const text = (el.innerText || '').trim();
+            if (!re.test(text) || !el.offsetParent) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width < 28 || r.width > 140 || r.height < 16 || r.height > 48) {
+              continue;
+            }
+            if (!best || r.width < best.w) best = {el, w: r.width};
+          }
+          if (!best) return {found: false};
+          const el = best.el;
+          return {
+            found: true,
+            text: (el.innerText || '').trim(),
+            outerHTML: (el.outerHTML || '').slice(0, 600),
+            attrs: {
+              'aria-expanded': el.getAttribute('aria-expanded'),
+              'aria-haspopup': el.getAttribute('aria-haspopup'),
+              'data-state': el.getAttribute('data-state'),
+              'aria-controls': el.getAttribute('aria-controls'),
+              id: el.id || '',
+            },
+          };
+        }"""
+    )
+    return raw if isinstance(raw, dict) else {"found": False}
+
+
+async def _confirm_skip_dialog(page) -> dict[str, Any]:
+    """Click ``Yes, continue`` if the Skip-all confirm dialog is up.
+
+    No dialog and an already-Skip chip is success (older UI, or the row
+    click itself committed). A dialog without that button fails closed —
+    Cancel and Close are never clicked.
+    """
+    elapsed = 0
+    while elapsed <= 1200:
+        fp = await compose_mode_fingerprint(page)
+        if fp.get("approval") and _APPROVAL_ARIA["skip"].search(approval_label(fp)):
+            return {"confirmed": False, "already_skip": True, "polled_ms": elapsed}
+        dialog = page.get_by_role("dialog").filter(has_text=_SKIP_CONFIRM_DIALOG_RE)
+        if await dialog.count() and await dialog.first.is_visible():
+            yes = dialog.get_by_role("button", name=_SKIP_CONFIRM_BUTTON_RE)
+            if await yes.count() == 0:
+                try:
+                    text = (await dialog.first.inner_text())[:300]
+                except Exception:
+                    text = ""
+                return {
+                    "confirmed": False,
+                    "ok": False,
+                    "step": "skip_confirm_missing",
+                    "dialog_text": text,
+                    "polled_ms": elapsed,
+                }
+            try:
+                await yes.first.click(timeout=5000)
+            except Exception as exc:
+                return {
+                    "confirmed": False,
+                    "ok": False,
+                    "step": "skip_confirm_unattained",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "polled_ms": elapsed,
+                }
+            return {"confirmed": True, "polled_ms": elapsed}
+        await page.wait_for_timeout(200)
+        elapsed += 200
+    return {"confirmed": False, "dialog": False, "polled_ms": elapsed}
 
 
 async def _click_approval_chip_js(page) -> bool:
@@ -422,16 +499,40 @@ async def set_approval_mode(page, mode: ApprovalMode = "skip") -> dict[str, Any]
         if await item.count() == 0:
             item = page.get_by_role("option", name=menu_re)
         if await item.count() == 0:
+            items = list((opened.get("menu") or {}).get("items") or [])
+            no_skip = (
+                mode == "skip"
+                and bool(items)
+                and not any(
+                    re.search(r"skip", str(row.get("text") or ""), re.I)
+                    for row in items
+                )
+            )
             return {
                 "ok": False,
-                "step": "menu_item_missing",
+                "step": "skip_option_absent" if no_skip else "menu_item_missing",
                 "wanted": mode,
                 "opened": opened,
                 "before": before,
                 "exclusive": exclusive,
+                "rows": items,
                 "candidates": await collect_approval_candidates(page),
+                "chip": await _approval_chip_snapshot(page),
             }
         await item.first.click(force=True)
+    confirm: dict[str, Any] | None = None
+    if mode == "skip":
+        confirm = await _confirm_skip_dialog(page)
+        if confirm.get("ok") is False:
+            return {
+                "ok": False,
+                "step": str(confirm.get("step") or "skip_confirm_unattained"),
+                "opened": opened,
+                "before": before,
+                "confirm": confirm,
+                "candidates": await collect_approval_candidates(page),
+                "chip": await _approval_chip_snapshot(page),
+            }
     await page.wait_for_timeout(1200)
     after = await compose_mode_fingerprint(page)
     ok = bool(after.get("approval") and wanted_aria.search(approval_label(after)))
@@ -442,8 +543,11 @@ async def set_approval_mode(page, mode: ApprovalMode = "skip") -> dict[str, Any]
         "before": before,
         "after": after,
     }
+    if confirm is not None:
+        result["confirm"] = confirm
     if not ok:
         result["candidates"] = await collect_approval_candidates(page)
+        result["chip"] = await _approval_chip_snapshot(page)
     return result
 
 
@@ -471,7 +575,8 @@ async def ensure_cowork_auto(page) -> dict[str, Any]:
 
     One bounded retry on approval-only failure — Cowork attest can succeed
     while the menu click to Skip all approvals flakes (b7ea437d / 10:13
-    Manual fingerprint).
+    Manual fingerprint). Skip unattested fails closed. Auto and Manual are
+    never accepted.
     """
     mode = await select_compose_mode(page, "cowork")
     if not mode.get("ok"):
@@ -482,7 +587,6 @@ async def ensure_cowork_auto(page) -> dict[str, Any]:
         approval = await set_approval_mode(page, "skip")
         approval["retried"] = True
     if approval.get("ok"):
-        setattr(page, _COWORK_APPROVAL_DEGRADED_ATTR, None)
         return {
             "ok": True,
             "step": "cowork_auto",
@@ -494,26 +598,17 @@ async def ensure_cowork_auto(page) -> dict[str, Any]:
         or approval.get("before")
         or await compose_mode_fingerprint(page)
     )
-    if _approval_is_auto(after_fp):
-        setattr(page, _COWORK_APPROVAL_DEGRADED_ATTR, "skip_unattainable")
-        approval = {
-            **approval,
-            "degraded": True,
-            "degraded_reason": "skip_unattainable",
-            "accepted_approval": "auto",
-        }
-        return {
-            "ok": True,
-            "step": "cowork_auto_degraded",
-            "approval_degraded": "skip_unattainable",
-            "mode": mode,
-            "approval": approval,
-        }
+    step = (
+        "skip_option_absent"
+        if approval.get("step") == "skip_option_absent"
+        else "cowork_skip_unattained"
+    )
     return {
         "ok": False,
-        "step": "cowork_auto",
+        "step": step,
         "mode": mode,
         "approval": approval,
+        "fingerprint": after_fp,
     }
 
 
