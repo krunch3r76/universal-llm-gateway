@@ -67,12 +67,18 @@ def _git(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
 def _isolated_ledger(tmp_path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     CursorDispatchLedger._instance = None
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        reset_shell_spawn_state,
+    )
+
     reset_ghost_row_reports()
     reset_occupancy_cache()
+    reset_shell_spawn_state()
     yield
     CursorDispatchLedger._instance = None
     reset_ghost_row_reports()
     reset_occupancy_cache()
+    reset_shell_spawn_state()
 
 
 @pytest.fixture
@@ -376,6 +382,72 @@ def test_prune_proceeds_when_no_bridge_holds_the_tree(
 
     assert result.pruned
     assert not wt.exists()
+
+
+def test_reconcile_leaves_unregistered_tree_held_by_shell_spawn_cwd(
+    source_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A shell cwd under a scratch tree holds it even when the node cwd is elsewhere.
+
+    The node bridge stays at the lane root. The dying spawn's cwd is the
+    in-flight shell ``workingDirectory`` (or a bash child standing there).
+    """
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        note_shell_tool_call,
+        reset_shell_spawn_state,
+    )
+
+    worktree_root = tmp_path / "worktrees"
+    dispatch_id = "guard-shell-cwd"
+    wt = mint_dispatch_worktree(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+        dispatch_id=dispatch_id,
+    )
+    unregister_lane_worktree(thread_id=dispatch_id, source_repo=source_repo)
+    reset_shell_spawn_state()
+    note_shell_tool_call(
+        dispatch_id,
+        tool_name="shell",
+        status="running",
+        args={"command": "ls", "workingDirectory": str(wt)},
+    )
+    _stub_occupancy(
+        monkeypatch,
+        BridgeOccupancy(pid=778, cwd=str(tmp_path), dispatch_id=dispatch_id),
+    )
+
+    reconciled, surfaced = reconcile_unregistered_worktrees(
+        source_repo=source_repo,
+        worktree_root=worktree_root,
+    )
+
+    assert reconciled == 0
+    assert surfaced == 0
+    assert wt.is_dir()
+
+
+def test_live_bridge_paths_include_shell_child_cwd(tmp_path: Path) -> None:
+    """A bash child inside a scratch tree pins that tree, not only the node cwd."""
+    root = tmp_path / "worktrees"
+    lane = root / "lane-root"
+    scratch = root / "lane-scratch"
+    nested = scratch / "services"
+    lane.mkdir(parents=True)
+    nested.mkdir(parents=True)
+    held = live_bridge_worktree_paths(
+        worktree_root=root,
+        occupancy=[
+            BridgeOccupancy(
+                pid=1,
+                cwd=str(lane),
+                dispatch_id="d-child",
+                shell_cwds=(str(nested),),
+            )
+        ],
+    )
+    assert str(scratch.resolve()) in held
+    assert str(lane.resolve()) in held
 
 
 def test_reconcile_leaves_unregistered_tree_held_by_live_bridge(

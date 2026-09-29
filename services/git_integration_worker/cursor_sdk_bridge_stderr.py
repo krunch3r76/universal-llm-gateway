@@ -122,9 +122,24 @@ def _resolve_bridge_process(client: Any) -> subprocess.Popen[str] | None:
 
 
 def bridge_spawn_cwd_forensics(tap: BridgeStderrTap | None) -> dict[str, Any]:
-    """Observed spawn cwd fields at capture time (configured path + process cwd)."""
+    """Lane-root spawn cwd plus the shell cwd the failing bash spawn used.
+
+    ``bridge_spawn_cwd`` stays the directory GIW passed when it launched the
+    node bridge (the lane root). ``bridge_shell_cwd`` is the in-flight shell
+    tool's ``workingDirectory`` when one was recorded, otherwise the last
+    bash-snapshot PWD (stderr text or the dispatch's shell-cwd record).
+    The exists bit on the shell path is the one that explains
+    ``spawn /bin/bash ENOENT``; the lane root can be present while that
+    path is already gone.
+    """
     if tap is None or not tap.spawn_cwd:
         return {}
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        parse_bash_snapshot_pwd,
+        resolve_shell_spawn_cwd,
+        shell_spawn_cwd,
+    )
+
     snapshot: dict[str, Any] = {
         "bridge_spawn_cwd": tap.spawn_cwd,
         "bridge_spawn_cwd_exists": os.path.isdir(tap.spawn_cwd),
@@ -136,6 +151,15 @@ def bridge_spawn_cwd_forensics(tap: BridgeStderrTap | None) -> dict[str, Any]:
     if proc_cwd is not None:
         if os.path.normpath(proc_cwd) != os.path.normpath(tap.spawn_cwd):
             snapshot["bridge_process_cwd"] = proc_cwd
+    recorded = shell_spawn_cwd(tap.dispatch_id)
+    from_tail = parse_bash_snapshot_pwd("\n".join(tap.tail()))
+    shell_cwd = resolve_shell_spawn_cwd(
+        working_directory=recorded,
+        snapshot_pwd=from_tail,
+    )
+    if shell_cwd:
+        snapshot["bridge_shell_cwd"] = shell_cwd
+        snapshot["bridge_shell_cwd_exists"] = os.path.isdir(shell_cwd)
     return snapshot
 
 
@@ -230,6 +254,8 @@ def _on_eof(tap: BridgeStderrTap) -> None:
         bridge_spawn_cwd=cwd_fields.get("bridge_spawn_cwd"),
         bridge_spawn_cwd_exists=cwd_fields.get("bridge_spawn_cwd_exists"),
         bridge_process_cwd=cwd_fields.get("bridge_process_cwd"),
+        bridge_shell_cwd=cwd_fields.get("bridge_shell_cwd"),
+        bridge_shell_cwd_exists=cwd_fields.get("bridge_shell_cwd_exists"),
     )
 
 

@@ -31,6 +31,8 @@ def FrontierSdkBridgeExited(  # noqa: N802
     bridge_spawn_cwd: str | None = None,
     bridge_spawn_cwd_exists: bool | None = None,
     bridge_process_cwd: str | None = None,
+    bridge_shell_cwd: str | None = None,
+    bridge_shell_cwd_exists: bool | None = None,
 ) -> Event:
     # Distinct from frontier.sdk.worker.failed, which reports what the HTTP
     # client saw after the fact (connection refused). This reports why the
@@ -56,6 +58,10 @@ def FrontierSdkBridgeExited(  # noqa: N802
         payload["bridge_spawn_cwd_exists"] = bridge_spawn_cwd_exists
     if bridge_process_cwd is not None:
         payload["bridge_process_cwd"] = bridge_process_cwd
+    if bridge_shell_cwd is not None:
+        payload["bridge_shell_cwd"] = bridge_shell_cwd
+    if bridge_shell_cwd_exists is not None:
+        payload["bridge_shell_cwd_exists"] = bridge_shell_cwd_exists
     return Event(
         signal="frontier.sdk.bridge.exited",
         payload=payload,
@@ -77,6 +83,8 @@ def emit_sdk_bridge_exited(
     bridge_spawn_cwd: str | None = None,
     bridge_spawn_cwd_exists: bool | None = None,
     bridge_process_cwd: str | None = None,
+    bridge_shell_cwd: str | None = None,
+    bridge_shell_cwd_exists: bool | None = None,
 ) -> None:
     """Publish an unexpected bridge subprocess exit with its captured stderr tail."""
     emit_frontier_event(
@@ -93,12 +101,15 @@ def emit_sdk_bridge_exited(
             bridge_spawn_cwd=bridge_spawn_cwd,
             bridge_spawn_cwd_exists=bridge_spawn_cwd_exists,
             bridge_process_cwd=bridge_process_cwd,
+            bridge_shell_cwd=bridge_shell_cwd,
+            bridge_shell_cwd_exists=bridge_shell_cwd_exists,
         )
     )
     logger.error(
         "cursor sdk bridge exited unexpectedly: dispatch_id=%s thread_id=%s "
         "exit_code=%s signal=%s bridge_death_class=%s spawn_cwd=%s "
-        "spawn_cwd_exists=%s process_cwd=%s elapsed_s=%s stderr_bytes=%s log=%s",
+        "spawn_cwd_exists=%s process_cwd=%s shell_cwd=%s shell_cwd_exists=%s "
+        "elapsed_s=%s stderr_bytes=%s log=%s",
         dispatch_id,
         thread_id,
         exit_code,
@@ -107,6 +118,8 @@ def emit_sdk_bridge_exited(
         bridge_spawn_cwd,
         bridge_spawn_cwd_exists,
         bridge_process_cwd,
+        bridge_shell_cwd,
+        bridge_shell_cwd_exists,
         elapsed_s,
         stderr_bytes,
         log_path,

@@ -234,6 +234,27 @@ def _dispatch_worktree_paths(dispatch_id: str) -> set[str]:
     return paths
 
 
+def _shell_and_bridge_cwds(bridge: BridgeOccupancy) -> list[str]:
+    """Node cwd, bash-child cwds, and the recorded shell spawn cwd.
+
+    The node process stays at the lane root. The directory a reap must not
+    delete is whichever of those three a live shell is in or about to spawn
+    into. Empty strings are dropped; the caller still applies the stale-claim
+    gate before trusting the list.
+    """
+    from services.git_integration_worker.cursor_sdk_shell_cwd import shell_spawn_cwd
+
+    claims: list[str] = []
+    if bridge.cwd:
+        claims.append(bridge.cwd)
+    claims.extend(path for path in bridge.shell_cwds if path)
+    if bridge.dispatch_id:
+        recorded = shell_spawn_cwd(bridge.dispatch_id)
+        if recorded:
+            claims.append(recorded)
+    return claims
+
+
 def live_bridge_worktree_paths(
     *,
     worktree_root: Path,
@@ -241,23 +262,25 @@ def live_bridge_worktree_paths(
 ) -> set[str]:
     """Worktree paths under ``worktree_root`` held by a live cursor-sdk bridge.
 
-    Two independent signals, unioned: the bridge's own cwd, and the worktree
-    that its ``CURSOR_SDK_DISPATCH_ID`` resolves to through ledger lease key or
-    lane registry row. The env stamp catches a bridge that has chdir'd away
-    from its lane; the cwd catches a bridge whose ledger row has already gone
-    terminal within the grace, or was never written; a row known terminal past
-    the grace withdraws the cwd claim as well (a:33686).
+    Three cwd signals, unioned with the dispatch's ledger and registry claims:
+    the node bridge cwd, descendant cwds (a bash standing in a scratch tree),
+    and the recorded shell spawn cwd (in-flight ``workingDirectory``, else the
+    bash-snapshot PWD). The env stamp catches a bridge that has chdir'd away
+    from its lane; the cwd signals catch a bridge whose ledger row has already
+    gone terminal within the grace, or was never written; a row known terminal
+    past the grace withdraws the cwd claims as well (a:33686).
     """
     bridges = occupancy if occupancy is not None else _occupancy_snapshot()
     held: set[str] = set()
     for bridge in bridges:
         stale = bool(bridge.dispatch_id) and _dispatch_claim_stale(bridge.dispatch_id)
-        if bridge.cwd and not stale:
-            path = containing_worktree_under_root(
-                path=bridge.cwd, worktree_root=worktree_root
-            )
-            if path is not None:
-                held.add(path)
+        if not stale:
+            for claim in _shell_and_bridge_cwds(bridge):
+                path = containing_worktree_under_root(
+                    path=claim, worktree_root=worktree_root
+                )
+                if path is not None:
+                    held.add(path)
         if not bridge.dispatch_id:
             continue
         for claimed in _dispatch_worktree_paths(bridge.dispatch_id):
@@ -338,10 +361,10 @@ def worktree_held_by_live_bridge(
             and bridge.dispatch_id == ignore_dispatch_id
         ):
             continue
-        claims = set()
+        claims: set[str] = set()
         stale = bool(bridge.dispatch_id) and _dispatch_claim_stale(bridge.dispatch_id)
-        if bridge.cwd and not stale:
-            claims.add(bridge.cwd)
+        if not stale:
+            claims.update(_shell_and_bridge_cwds(bridge))
         if bridge.dispatch_id:
             claims |= _dispatch_worktree_paths(bridge.dispatch_id)
         for claim in claims:
@@ -384,13 +407,15 @@ def completing_dispatch_blocks_directory_remove(
             continue
         if not bridge.cwd:
             return True
-        try:
-            cwd_path = Path(bridge.cwd).resolve()
-        except (OSError, RuntimeError):
-            return True
-        if cwd_path == target:
-            return True
-        resolved = containing_worktree_under_root(path=cwd_path, worktree_root=root)
-        if resolved == str(target):
-            return True
+        claims = _shell_and_bridge_cwds(bridge)
+        for claim in claims:
+            try:
+                cwd_path = Path(claim).resolve()
+            except (OSError, RuntimeError):
+                return True
+            if cwd_path == target:
+                return True
+            resolved = containing_worktree_under_root(path=cwd_path, worktree_root=root)
+            if resolved == str(target):
+                return True
     return False

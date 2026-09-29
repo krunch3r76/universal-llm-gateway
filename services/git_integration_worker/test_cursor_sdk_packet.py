@@ -433,15 +433,25 @@ def test_lane_b_worktree_preamble_absent_without_lane_or_path() -> None:
     assert "LANE-B WORKTREE (mandatory)" not in lane_b_no_path
 
 
-def test_lane_b_worktree_preamble_absent_on_freeform() -> None:
+def test_lane_b_worktree_preamble_reaches_freeform_packet() -> None:
+    """Packet and sidecar runs are contract ``none`` and must still see the cwd rule.
+
+    The rest of the lane-B harness stays off: freeform means the caller prompt
+    is the task, not that a removed shell cwd is safe.
+    """
     text = resolve_prompt_preamble(
         handoff_contract=None,
         prompt_preamble=None,
         inferred_contract="none",
         lane="B",
+        has_packet_path=True,
         lane_worktree=_LANE_B_WORKTREE_PATH,
     )
-    assert "LANE-B WORKTREE (mandatory)" not in text
+    assert "LANE-B WORKTREE (mandatory)" in text
+    assert _LANE_B_WORKTREE_PATH in text
+    assert "spawn /bin/bash ENOENT" in text
+    assert "LANE-B REPO EDITS" not in text
+    assert "LANE-B BRANCH CONTRACT" not in text
 
 
 def test_lane_b_worktree_preamble_idempotent_when_packet_has_block() -> None:
@@ -454,7 +464,10 @@ def test_lane_b_worktree_preamble_idempotent_when_packet_has_block() -> None:
         existing_text=packet,
         lane_worktree=_LANE_B_WORKTREE_PATH,
     )
-    assert text.count("LANE-B WORKTREE (mandatory)") == 1
+    # The packet already carries the only copy. The preamble must not add another,
+    # so the prompt the worker concatenates still contains the block once.
+    assert text.count("LANE-B WORKTREE (mandatory)") == 0
+    assert (text + packet).count("LANE-B WORKTREE (mandatory)") == 1
 
 
 def test_lane_b_worktree_path_matches_lane_worktree_dir(tmp_path: Path) -> None:

@@ -77,7 +77,18 @@ def _compose_bridge_death_message(
     cwd = forensics.get("bridge_spawn_cwd")
     cwd_exists = forensics.get("bridge_spawn_cwd_exists")
     proc_cwd = forensics.get("bridge_process_cwd")
+    shell_cwd = forensics.get("bridge_shell_cwd")
+    shell_exists = forensics.get("bridge_shell_cwd_exists")
     parts: list[str] = [f"cursor-sdk bridge death ({bridge_class})"]
+    if isinstance(shell_cwd, str) and shell_cwd:
+        shell_bit = (
+            "missing"
+            if shell_exists is False
+            else "present"
+            if shell_exists is True
+            else "unknown"
+        )
+        parts.append(f"shell_cwd={shell_cwd} ({shell_bit} at capture)")
     if isinstance(cwd, str) and cwd:
         exists_bit = (
             "missing"

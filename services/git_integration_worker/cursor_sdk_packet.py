@@ -523,6 +523,28 @@ def _bare_skill_slug(skill_id: str) -> str:
     return raw
 
 
+def _append_lane_b_worktree(
+    parts: list[str],
+    *,
+    lane: str | None,
+    lane_worktree: str | None,
+    existing_text: str | None,
+) -> None:
+    """Append the shell-cwd warning when this lane-B run does not already carry it.
+
+    Freeform ``none`` skips the rest of the lane harness. It does not skip this
+    block: packet and sidecar dispatches are ``none``, and a top-level ``cd``
+    into a directory the run then deletes is what kills them.
+    """
+    if lane != "B" or not lane_worktree:
+        return
+    if "LANE-B WORKTREE" in (existing_text or ""):
+        return
+    if any("LANE-B WORKTREE" in part for part in parts):
+        return
+    parts.append(_LANE_B_WORKTREE_TEMPLATE.format(lane_worktree=lane_worktree))
+
+
 def _skill_invoke_block(
     skills: Sequence[str] | None,
     *texts: str | None,
@@ -573,6 +595,8 @@ def resolve_prompt_preamble(
     Non-mechanical contracts get ``/reasoning-posture`` plus the Use-line unless
     *prompt_preamble* or *existing_text* already carries those cues (idempotent).
     Freeform ``none`` still skips the harness stack; posture is the judgment floor.
+    The lane-B worktree cwd warning is the exception: packet and sidecar runs
+    are freeform, and they are the runs that ``cd`` into a directory they delete.
 
     Lane-B dispatches additionally carry the branch contract: the obligation to
     declare a land disposition arrives with the work rather than after residue
@@ -628,6 +652,12 @@ def resolve_prompt_preamble(
         parts = _prefix_reasoning_posture(
             contract, parts, prompt_preamble, existing_text
         )
+        _append_lane_b_worktree(
+            parts,
+            lane=lane,
+            lane_worktree=lane_worktree,
+            existing_text=existing_text,
+        )
         if not parts:
             return ""
         return "\n\n".join(parts) + "\n\n"
@@ -653,8 +683,12 @@ def resolve_prompt_preamble(
                 branch=lane_branch or "your lane branch"
             )
         )
-        if lane_worktree and "LANE-B WORKTREE" not in (existing_text or ""):
-            parts.append(_LANE_B_WORKTREE_TEMPLATE.format(lane_worktree=lane_worktree))
+        _append_lane_b_worktree(
+            parts,
+            lane=lane,
+            lane_worktree=lane_worktree,
+            existing_text=existing_text,
+        )
     is_conductor_packet = contract == "conductor" or (
         has_packet_path
         and bool(existing_text)

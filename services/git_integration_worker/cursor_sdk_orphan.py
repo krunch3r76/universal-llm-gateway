@@ -104,12 +104,17 @@ class BridgeOccupancy:
 
     ``cwd`` is the bridge's working directory at scan time; ``dispatch_id`` is
     the ``CURSOR_SDK_DISPATCH_ID`` env stamp when the bridge was launched by a
-    GIW dispatch overlay. Either one alone is enough to pin a worktree.
+    GIW dispatch overlay. ``shell_cwds`` are descendant cwds, including a bash
+    the bridge has spawned into some other tree. Any one of those is enough
+    to pin a worktree.
     """
 
     pid: int
     cwd: str | None
     dispatch_id: str | None
+    # Cwds of descendant processes (the shell tool's bash). The bridge cwd
+    # itself stays the lane root; these are the directories a spawn will use.
+    shell_cwds: tuple[str, ...] = ()
 
 
 _occupancy_cache: tuple[float, list[BridgeOccupancy]] | None = None
@@ -121,22 +126,64 @@ def reset_live_bridge_occupancy_cache() -> None:
     _occupancy_cache = None
 
 
+def _descendant_cwds(proc: psutil.Process) -> tuple[str, ...]:
+    """Cwds of processes this bridge has spawned, including a live bash.
+
+    The bridge process itself stays at the lane root. A shell tool's bash is
+    a child, and that child's cwd is a directory the reaper must not delete.
+    A process that vanishes mid-scan is skipped.
+    """
+    found: list[str] = []
+    try:
+        children = proc.children(recursive=True)
+    except (psutil.Error, OSError, AttributeError):
+        return ()
+    for child in children:
+        try:
+            cwd = child.cwd()
+        except (psutil.Error, OSError):
+            continue
+        if cwd:
+            found.append(cwd)
+    return tuple(found)
+
+
 def _collapse_bridge_process_groups(
-    entries: list[tuple[int, int | None, str | None, str | None]],
+    entries: list[tuple[int, int | None, str | None, str | None, tuple[str, ...]]],
 ) -> list[BridgeOccupancy]:
     """Keep one ``BridgeOccupancy`` per bridge process group (wrapper + node child).
 
     When ``spawn`` launches a bridge, the outer ``sh`` wrapper and its ``node``
     child both match bridge identity. Counting both inflated occupancy and
     blocked restart/drain completion (friction a:33561). Prefer the outermost
-    process — its death takes the pair down.
+    process — its death takes the pair down. Descendant cwds collected on a
+    dropped child are rolled up so a bash under the node child is not lost.
     """
-    bridge_pids = {pid for pid, _, _, _ in entries}
+    bridge_pids = {pid for pid, _, _, _, _ in entries}
+    own_cwds = {pid: shell_cwds for pid, _, _, _, shell_cwds in entries}
+    children_of: dict[int, list[int]] = {pid: [] for pid, *_rest in entries}
+    for pid, ppid, _cwd, _dispatch_id, _shell_cwds in entries:
+        if ppid is not None and ppid in bridge_pids:
+            children_of[ppid].append(pid)
+
+    def _rolled(pid: int) -> list[str]:
+        acc = list(own_cwds[pid])
+        for child in children_of.get(pid, ()):
+            acc.extend(_rolled(child))
+        return acc
+
     collapsed: list[BridgeOccupancy] = []
-    for pid, ppid, cwd, dispatch_id in entries:
+    for pid, ppid, cwd, dispatch_id, _shell_cwds in entries:
         if ppid is not None and ppid in bridge_pids:
             continue
-        collapsed.append(BridgeOccupancy(pid=pid, cwd=cwd, dispatch_id=dispatch_id))
+        collapsed.append(
+            BridgeOccupancy(
+                pid=pid,
+                cwd=cwd,
+                dispatch_id=dispatch_id,
+                shell_cwds=tuple(_rolled(pid)),
+            )
+        )
     return collapsed
 
 
@@ -158,7 +205,7 @@ def live_bridge_occupancy(*, fresh: bool = False) -> list[BridgeOccupancy]:
         if cached is not None and now - cached[0] < _OCCUPANCY_SCAN_TTL_S:
             return cached[1]
 
-    raw: list[tuple[int, int | None, str | None, str | None]] = []
+    raw: list[tuple[int, int | None, str | None, str | None, tuple[str, ...]]] = []
     for proc in psutil.process_iter(["pid"]):
         try:
             if not is_cursor_sdk_bridge_process(proc):
@@ -175,9 +222,10 @@ def live_bridge_occupancy(*, fresh: bool = False) -> list[BridgeOccupancy]:
                 dispatch_id = proc.environ().get(_ENV_DISPATCH_ID)
             except (psutil.AccessDenied, OSError):
                 dispatch_id = None
+            shell_cwds = _descendant_cwds(proc)
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
-        raw.append((proc.pid, ppid, cwd, dispatch_id))
+        raw.append((proc.pid, ppid, cwd, dispatch_id, shell_cwds))
     found = _collapse_bridge_process_groups(raw)
     _occupancy_cache = (now, found)
     return found
