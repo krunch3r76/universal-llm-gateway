@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 import re
@@ -542,6 +543,37 @@ def resolve_content_proof_targets(
     return targets
 
 
+def _build_ladder_progress(
+    req: SubmitProjectAskRequest,
+    *,
+    execution_id: str,
+) -> LadderAdvanceState:
+    if not execution_id.strip():
+        raise ValueError(
+            "execution_id required for dual-completion ladder (non-empty)"
+        )
+    blocked_archive_paths = {
+        Path(default_archive_path(req, execution_id=execution_id)).resolve(),
+        *(
+            {Path(resolve_archive_path(req.archive_path)).resolve()}
+            if req.archive_path
+            else set()
+        ),
+    }
+    return LadderAdvanceState(
+        targets=resolve_content_proof_targets(req, execution_id=execution_id),
+        min_bytes=max(req.min_body, 1),
+        sha256_file=_sha256_file,
+        execution_id=execution_id,
+        output_download_pending=should_attempt_output_download(
+            harvest_source=req.harvest_source,
+            expected_size=req.expected_size,
+            download_output=req.download_output,
+        ),
+        blocked_archive_paths=blocked_archive_paths,
+    )
+
+
 async def run_execution(
     req: SubmitProjectAskRequest,
     *,
@@ -551,36 +583,19 @@ async def run_execution(
     ladder: LadderCallbacks | None = None,
 ) -> dict[str, Any]:
     """Run one registry-backed project-ask and return a terminal-shaped result dict."""
-    prompts = resolve_prompt(req)
     holder = req.holder.strip() or "cdp-ask-satellite"
+    prompts = await asyncio.to_thread(resolve_prompt, req)
+    # Stay on the event-loop thread: bind serializes the Chrome headroom
+    # check and ensure_driving_operator_seat in-process. A worker thread
+    # would let overlapping asks both mint a seat (review 12286).
     reg = bind_execution_lane(req, holder=holder)
     if on_registered is not None:
         on_registered(reg.registration_id)
     on_harvest: Callable[[dict[str, Any]], Awaitable[None]] | None = None
     progress: LadderAdvanceState | None = None
     if ladder is not None:
-        if not execution_id.strip():
-            raise ValueError(
-                "execution_id required for dual-completion ladder (non-empty)"
-            )
-        progress = LadderAdvanceState(
-            targets=resolve_content_proof_targets(req, execution_id=execution_id),
-            min_bytes=max(req.min_body, 1),
-            sha256_file=_sha256_file,
-            execution_id=execution_id,
-            output_download_pending=should_attempt_output_download(
-                harvest_source=req.harvest_source,
-                expected_size=req.expected_size,
-                download_output=req.download_output,
-            ),
-            blocked_archive_paths={
-                Path(default_archive_path(req, execution_id=execution_id)).resolve(),
-                *(
-                    {Path(resolve_archive_path(req.archive_path)).resolve()}
-                    if req.archive_path
-                    else set()
-                ),
-            },
+        progress = await asyncio.to_thread(
+            _build_ladder_progress, req, execution_id=execution_id
         )
         # Held-page samples only — competing connect_cdp blocked dual-completion
         # while converse held the lane (friction 25671).

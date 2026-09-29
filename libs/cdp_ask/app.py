@@ -177,7 +177,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
     async def _startup() -> None:
         nonlocal _tree_refresh_task, _health_cache_refresh_task
         os.environ.setdefault("CDP_REGISTRY_SEAT_AUTHORITY", "1")
-        verify_harvest_root()
+        await asyncio.to_thread(verify_harvest_root)
         await asyncio.to_thread(refresh_harvest_root_health)
         await asyncio.to_thread(refresh_health_projections)
         reaped = await execution_store.boot_reconcile()
@@ -308,7 +308,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
 
         Synchronous paste-proof — no ``execution_store.create``, no reply harvest.
         """
-        verify_harvest_root()
+        await asyncio.to_thread(verify_harvest_root)
         return await execute_followup(req, execution_store)
 
     @app.get("/v1/cse-session/provenance")
@@ -320,7 +320,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         successor_registration_id: str | None = None,
     ) -> dict[str, object]:
         """Public provenance read — claim vs proven without collapsing registry parent."""
-        verify_harvest_root()
+        await asyncio.to_thread(verify_harvest_root)
         query = ProvenanceQuery(
             chat_url=chat_url,
             registration_id=registration_id,
@@ -341,7 +341,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
         is attached. A dead orphaned_alive row that still claims the URL is
         released before bind; it is not an attachment.
         """
-        verify_harvest_root()
+        await asyncio.to_thread(verify_harvest_root)
         result = await execute_harvest(req, execution_store)
         return result.model_dump(exclude_none=True)
 
@@ -359,7 +359,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
     @app.post("/v1/cse-session/paste")
     async def cse_session_paste(req: PasteRequest) -> JSONResponse:
         """Authorized paste with idempotent replay — receipt never implies ACK."""
-        verify_harvest_root()
+        await asyncio.to_thread(verify_harvest_root)
         result = await execute_paste(req, execution_store)
         if isinstance(result, dict):
             return JSONResponse(status_code=200, content=result)
@@ -381,7 +381,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
     @app.post("/v1/chat-session/harvest")
     async def chat_session_harvest(req: ChatHarvestRequest) -> JSONResponse:
         """Product-chat harvest — pointer-first sidecar, no CSE lane identity."""
-        verify_harvest_root()
+        await asyncio.to_thread(verify_harvest_root)
         result = await execute_chat_session_harvest(req)
         if result.code in _CHAT_SESSION_REFUSE_409:
             return JSONResponse(
@@ -398,7 +398,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
     @app.post("/v1/chat-session/probe")
     async def chat_session_probe(req: ChatHarvestRequest) -> JSONResponse:
         """Metadata-only probe — no sidecar write and no Event Service emit."""
-        verify_harvest_root()
+        await asyncio.to_thread(verify_harvest_root)
         result = await execute_chat_session_probe(req)
         if result.code in _CHAT_SESSION_REFUSE_409:
             return JSONResponse(
@@ -415,7 +415,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
     @app.post("/v1/chat-session/paste")
     async def chat_session_paste(request: Request) -> JSONResponse:
         """Grant-gated product-chat paste — live URL + harvest pointer on success."""
-        verify_harvest_root()
+        await asyncio.to_thread(verify_harvest_root)
         body = await request.json()
         grant = body.get("grant")
         if grant not in ("explicit", "operator"):
@@ -473,7 +473,7 @@ def create_app(*, store: ExecutionStore | None = None) -> FastAPI:
     async def submit_execution(
         req: SubmitProjectAskRequest,
     ) -> SubmitProjectAskResponse:
-        verify_harvest_root()
+        await asyncio.to_thread(verify_harvest_root)
         snap = await execution_store.active_work_snapshot()
         from cdp_ask.lane_admission import purpose_lane_refusal
 

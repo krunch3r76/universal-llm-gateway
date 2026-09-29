@@ -7,6 +7,7 @@ a status-bearing snapshot from durable archives or a bounded CSE harvest.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import sqlite3
@@ -268,6 +269,20 @@ def cse_url_hint(raw: str | None) -> str | None:
     return token if _CSE_HINT.match(token) else None
 
 
+def _archive_snapshot_or_chat_url(tokens: list[str]) -> tuple[dict[str, Any] | None, str | None]:
+    """Blocking harvest-root archive scan — run via ``asyncio.to_thread``."""
+    for token in tokens:
+        snap = snapshot_from_archive_token(token)
+        if snap is not None:
+            return snap, None
+    chat_url: str | None = None
+    for token in tokens:
+        chat_url = chat_url_from_archives(token) or chat_url_from_provenance(token)
+        if chat_url:
+            break
+    return None, chat_url
+
+
 async def recover_poll_snapshot(
     execution_id: str,
     store: ExecutionStore,
@@ -284,16 +299,10 @@ async def recover_poll_snapshot(
     if not tokens:
         return None
 
-    for token in tokens:
-        snap = snapshot_from_archive_token(token)
-        if snap is not None:
-            return snap
+    snap, chat_url = await asyncio.to_thread(_archive_snapshot_or_chat_url, tokens)
+    if snap is not None:
+        return snap
 
-    chat_url: str | None = None
-    for token in tokens:
-        chat_url = chat_url_from_archives(token) or chat_url_from_provenance(token)
-        if chat_url:
-            break
     if not chat_url:
         for token in tokens:
             chat_url = await resolve_harvest_chat_url(

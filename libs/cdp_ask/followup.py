@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from typing import Any
 
 from claude_bundles import cdp_registry
 from claude_bundles.cse_url import normalize_cse_url
 from claude_bundles.project_ask_conversation import send_followup_paste_half
+
 from cdp_ask.execution_store import ExecutionStore
 from cdp_ask.followup_dormant import (
     park_relaunched_host,
@@ -188,7 +188,7 @@ async def execute_followup(
 ) -> FollowupProjectAskResponse:
     """Resolve identity, paste prompt into live CSE, return paste proof."""
     try:
-        prompt = resolve_followup_prompt(req)
+        prompt = await asyncio.to_thread(resolve_followup_prompt, req)
     except ValueError:
         return fail_followup("no_prompt")
 

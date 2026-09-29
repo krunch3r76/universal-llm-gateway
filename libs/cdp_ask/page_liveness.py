@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -106,6 +107,28 @@ def page_idle_from_state(state: dict[str, Any]) -> bool:
     return page_idle_from_harvest_state(state)
 
 
+def _pick_content_proof(progress: LadderAdvanceState) -> tuple[str, str] | None:
+    """Sync harvest-root filesystem work for one content-proof candidate."""
+    sha256_file = progress.sha256_file
+    if sha256_file is None:
+        return None
+    for path, uri in progress.targets:
+        try:
+            if not path.is_file() or path.stat().st_size < progress.min_bytes:
+                continue
+        except OSError:
+            continue
+        if (
+            progress.output_download_pending
+            and path.resolve() in progress.blocked_archive_paths
+        ):
+            continue
+        if not archive_stamp_allows_content_proof(path, progress.execution_id):
+            continue
+        return (uri, sha256_file(path))
+    return None
+
+
 async def advance_ladder_from_harvest(
     state: dict[str, Any],
     *,
@@ -204,23 +227,11 @@ async def advance_ladder_from_harvest(
         and not progress.content_proof_sent
         and progress.sha256_file is not None
     ):
-        for path, uri in progress.targets:
-            try:
-                if not path.is_file() or path.stat().st_size < progress.min_bytes:
-                    continue
-            except OSError:
-                continue
-            if (
-                progress.output_download_pending
-                and path.resolve() in progress.blocked_archive_paths
-            ):
-                continue
-            if not archive_stamp_allows_content_proof(path, progress.execution_id):
-                continue
-            if callbacks.on_content_proof:
-                progress.content_proof_sent = True
-                await callbacks.on_content_proof(uri, progress.sha256_file(path))
-            break
+        picked = await asyncio.to_thread(_pick_content_proof, progress)
+        if picked and callbacks.on_content_proof:
+            progress.content_proof_sent = True
+            uri, digest = picked
+            await callbacks.on_content_proof(uri, digest)
 
 
 def make_harvest_ladder_hook(
