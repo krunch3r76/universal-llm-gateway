@@ -22,7 +22,11 @@ from .materializer_autonomous import (
 from .materializer_autonomous_arc import autonomous_arc_guidance
 from .materializer_closed_detent import materialize_closed_detent_packet
 from .materializer_consult import consult_subject, materialize_consult_packet
-from .materializer_layer import layer_subject, materialize_layer_packet
+from .materializer_layer import (
+    REVISE_CAP_DEFAULT,
+    layer_subject,
+    materialize_layer_packet,
+)
 from .materializer_operator_proxy import (
     materialize_operator_proxy_packet,
     operator_proxy_subject,
@@ -47,5 +51,6 @@ __all__ = [
     "materialize_resume_packet",
     "operator_proxy_subject",
     "parse_tip_checkpoint",
+    "REVISE_CAP_DEFAULT",
     "select_packet",
 ]

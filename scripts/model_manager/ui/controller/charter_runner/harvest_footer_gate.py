@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from universal_logging import get_logger
 
-from .checkpoint_schema import validate_checkpoint_footer
+from .checkpoint_schema import repair_checkpoint_footer_body, validate_checkpoint_footer
 
 logger = get_logger(__name__)
 
@@ -16,6 +16,12 @@ _MACHINE_CHECKPOINT_PREFIXES = (
     "CHECKPOINT — self-heal",
     "CHECKPOINT — consult-stall",
 )
+
+
+def prepared_checkpoint_body(checkpoint_body: str) -> str:
+    """Return body with footer next_pickup nulls coerced to sentinel strings."""
+    repaired, _changed = repair_checkpoint_footer_body(checkpoint_body)
+    return repaired
 
 
 def is_machine_authored_checkpoint(subject: str | None) -> bool:
@@ -26,7 +32,7 @@ def is_machine_authored_checkpoint(subject: str | None) -> bool:
 
 def footer_field_path(checkpoint_body: str) -> tuple[bool, str]:
     """Validate returned footer; return (ok, first field path or error token)."""
-    result = validate_checkpoint_footer(checkpoint_body)
+    result = validate_checkpoint_footer(prepared_checkpoint_body(checkpoint_body))
     if result.ok:
         return True, ""
     return False, result.errors[0] if result.errors else "charter-state invalid"
@@ -64,5 +70,6 @@ def reject_harvest_without_footer(
 __all__ = [
     "footer_field_path",
     "is_machine_authored_checkpoint",
+    "prepared_checkpoint_body",
     "reject_harvest_without_footer",
 ]

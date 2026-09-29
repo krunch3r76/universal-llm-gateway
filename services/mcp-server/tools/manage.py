@@ -51,6 +51,7 @@ _VALID_ACTIONS = frozenset(
         "charter_block_root",
         "charter_unblock_root",
         "charter_root_status",
+        "charter_cap_stop_clear",
         "recycle_giw",
     }
 )
@@ -373,6 +374,10 @@ def register_manage_tools(mcp: FastMCP) -> None:
                                              Does not re-enroll unless reenroll=true.
           charter_root_status (root_id)      — read-only {status, enrolled, wip_window_id,
                                              last_error, operator_hold}.
+          charter_cap_stop_clear (root_id, force?) — clear a suite-clearable cap stop
+                                             (worker_failed, stale_window) when no
+                                             tick error or window_failed names the
+                                             root in 24h. force skips both gates.
           recycle_giw   (no service/action) — drain-gated GIW recycle; escalates to
                                              force only after occupant progress idles.
                                              Hard-scoped to git_integration_worker.
@@ -473,8 +478,11 @@ def register_manage_tools(mcp: FastMCP) -> None:
             "charter_block_root",
             "charter_unblock_root",
             "charter_root_status",
+            "charter_cap_stop_clear",
         }:
             params["root_id"] = root_id
+        if action == "charter_cap_stop_clear" and force:
+            params["force"] = True
         if action == "charter_block_root":
             params["set_by"] = "mcp"
             if reason:

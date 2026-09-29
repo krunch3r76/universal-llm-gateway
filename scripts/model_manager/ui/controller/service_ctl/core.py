@@ -324,6 +324,20 @@ class ServiceController:
 
         return await root_control.root_status(root_id)
 
+    async def charter_cap_stop_clear(
+        self,
+        *,
+        root_id: str,
+        set_by: str = "manage",
+        force: bool = False,
+    ) -> dict:
+        """Clear a durable CapStore stop when substrate gates pass."""
+        from scripts.model_manager.ui.controller.charter_runner import cap_stop_control
+
+        return await cap_stop_control.cap_stop_clear(
+            root_id, set_by=set_by, force=force
+        )
+
     @property
     def root(self) -> Path:
         """Workspace root (read-only); fleet orchestration needs it headless."""

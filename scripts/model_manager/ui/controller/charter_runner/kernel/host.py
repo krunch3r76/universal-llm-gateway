@@ -330,6 +330,8 @@ class CharterRunnerTickLoop:
                     caps=self._caps,
                     fire_attempt_outcome=kernel_outcome.fire_attempt_outcome,
                     fire_attempt_reason=kernel_outcome.fire_attempt_reason,
+                    admission_mode=_admission_mode_from_env(kernel_env, root_id),
+                    unattended_stale_override=self._unattended_stale_override,
                 )
             except Exception:  # noqa: BLE001 — skip/SOS must not abort tick
                 logger.exception("charter-runner skip side-effects failed")

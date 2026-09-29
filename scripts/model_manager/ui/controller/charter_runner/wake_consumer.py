@@ -112,6 +112,8 @@ async def run_root_pass(
             caps=tick_loop._caps,
             fire_attempt_outcome=kernel_outcome.fire_attempt_outcome,
             fire_attempt_reason=kernel_outcome.fire_attempt_reason,
+            admission_mode=admission_mode,
+            unattended_stale_override=tick_loop._unattended_stale_override,
         )
     except Exception:  # noqa: BLE001 — skip/SOS must not abort pass
         logger.exception("charter-runner skip side-effects failed root=%s", root_id)
