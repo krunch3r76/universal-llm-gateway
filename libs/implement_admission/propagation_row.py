@@ -13,6 +13,7 @@ authored the row directly — never invent tags at the row layer.
 from __future__ import annotations
 
 import importlib
+import json
 import logging
 import re
 from collections.abc import Sequence
@@ -108,8 +109,10 @@ _SERVED_ARTIFACT_PREFIX_BY_SERVICE: dict[str, str] = {
 # Past-tense claim that must never appear in mint-time / open-row proof text.
 _PERFORMED_ANCESTRY_CLAIM_RE = re.compile(r"ancestry\s+satisfied", re.IGNORECASE)
 
-# Path/CONSUMERS mint labels obligation; no process probe at this site.
+# Path/CONSUMERS mint labels obligation before emission-time liveness probe.
 _PATH_DERIVED_OBLIGATION_REASON = "path-derived obligation; liveness: unknown"
+
+LivenessAnswer = Literal["yes", "no", "unknown"]
 
 
 class MissingProofTemplateError(ValueError):
@@ -171,6 +174,26 @@ def compose_proof(
     )
 
 
+class LivenessEmission(BaseModel):
+    """Emission-time observation of whether ``code_ref`` is live on ``service``.
+
+    Distinct from mint-time proof obligations — this records what
+    ``observe_code_ref_live`` saw when the closeout was finalized, not what
+    harvest must verify after a restart fires.
+    """
+
+    answer: LivenessAnswer = Field(json_schema_extra={"parity": "stamped"})
+    observed_code_version: str | None = Field(
+        default=None, json_schema_extra={"parity": "stamped"}
+    )
+    relation: str | None = Field(default=None, json_schema_extra={"parity": "stamped"})
+    observation: str = Field(
+        default="{}",
+        json_schema_extra={"parity": "stamped"},
+        description="JSON-encoded probe citation from observe_code_ref_live",
+    )
+
+
 class PropagationRow(BaseModel):
     """One harvest-tracked restart requirement with proof obligation."""
 
@@ -208,6 +231,9 @@ class PropagationRow(BaseModel):
         default=None, json_schema_extra={"parity": "effect"}
     )
     excluded_surfaces: tuple[dict[str, Any], ...] | None = Field(
+        default=None, json_schema_extra={"parity": "stamped"}
+    )
+    liveness_emission: LivenessEmission | None = Field(
         default=None, json_schema_extra={"parity": "stamped"}
     )
 
@@ -714,6 +740,63 @@ def resolve_code_ref(payload: dict[str, Any]) -> str:
     return "unknown"
 
 
+def stamp_liveness_on_row(row: PropagationRow) -> PropagationRow:
+    """Probe ``observe_code_ref_live`` and stamp emission-time liveness on *row*."""
+    observe_code_ref_live = importlib.import_module(
+        "charter_runner_store.propagation_liveness"
+    ).observe_code_ref_live
+
+    live = observe_code_ref_live(row.service, row.code_ref)
+    emission = LivenessEmission(
+        answer=live.answer,
+        observed_code_version=live.observed_code_version,
+        relation=live.relation,
+        observation=json.dumps(dict(live.observation), sort_keys=True, default=str),
+    )
+    return row.model_copy(update={"liveness_emission": emission})
+
+
+def stamp_liveness_on_rows(rows: Sequence[PropagationRow]) -> list[PropagationRow]:
+    """Stamp ``liveness_emission`` on each row; one probe per deduplicated service."""
+    seen: set[str] = set()
+    stamped: list[PropagationRow] = []
+    for row in rows:
+        if row.service in seen:
+            continue
+        seen.add(row.service)
+        stamped.append(stamp_liveness_on_row(row))
+    return stamped
+
+
+def residue_line_from_row(row: PropagationRow) -> str:
+    """Render one legacy ``propagation_residue`` sync_restart line from a row."""
+    base = (
+        f'sync_restart: {row.service} — manage(action="sync_restart", '
+        f'service="{row.service}")'
+    )
+    fragment = verification_tags_fragment(row.reason)
+    return f"{base}; {fragment}" if fragment else base
+
+
+def propagation_residue_from_rows(
+    rows: Sequence[PropagationRow],
+    *,
+    other_actions: Sequence[str] = (),
+) -> list[str]:
+    """Derive ``propagation_residue`` sync_restart lines from structured rows.
+
+    Non-sync_restart *other_actions* (install_plugin, unresolved, libs_touched)
+    append after row-derived sync_restart lines in stable sort order.
+    """
+    sync_restart = sorted({residue_line_from_row(row) for row in rows})
+    non_sync = sorted(
+        action
+        for action in other_actions
+        if not action.startswith("sync_restart:")
+    )
+    return [*sync_restart, *non_sync]
+
+
 def rows_from_closeout_payload(
     payload: dict[str, Any],
 ) -> tuple[list[PropagationRow], list[str], bool]:
@@ -768,6 +851,8 @@ def rows_from_closeout_payload(
 
 
 __all__ = [
+    "LivenessAnswer",
+    "LivenessEmission",
     "MissingProofTemplateError",
     "PropagationRow",
     "code_ref_is_version_pin",
@@ -780,7 +865,11 @@ __all__ = [
     "enrich_operator_row_with_close_surfaces",
     "is_lib_test_module",
     "land_paths_for_propagation",
+    "propagation_residue_from_rows",
     "proof_claims_performed_ancestry",
+    "residue_line_from_row",
+    "stamp_liveness_on_row",
+    "stamp_liveness_on_rows",
     "resolve_code_ref",
     "row_from_mapping",
     "row_from_mapping_strict",

@@ -141,6 +141,9 @@ def finalize_closeout_body(
     residue = payload.get("propagation_residue") or []
     if residue:
         reduced["propagation_residue"] = list(residue[:_CLOSEOUT_FILE_HEAD])
+    propagation = payload.get("propagation") or []
+    if propagation:
+        reduced["propagation"] = list(propagation[:_CLOSEOUT_FILE_HEAD])
     if body_relocated is not None:
         reduced["body_relocated"] = body_relocated
 
@@ -170,6 +173,8 @@ def finalize_closeout_body(
         minimal["verification"] = kept_verification
     if residue:
         minimal["propagation_residue"] = list(residue[:_CLOSEOUT_FILE_HEAD])
+    if propagation:
+        minimal["propagation"] = list(propagation[:_CLOSEOUT_FILE_HEAD])
     if body_relocated is not None:
         minimal["body_relocated"] = body_relocated
     result = json.dumps(minimal, separators=(",", ":"))

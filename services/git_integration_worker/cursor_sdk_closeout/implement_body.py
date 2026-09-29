@@ -31,7 +31,7 @@ from implement_admission.propagation_row import (
 from implement_admission.spec import WorkOutcome
 
 from services.git_integration_worker.cursor_auto.episode_residue import (
-    residue_actions,
+    propagation_residue_for_finalize,
     resolve_propagation_for_finalize,
 )
 from services.git_integration_worker.cursor_sdk_authored_status_reconcile import (
@@ -326,7 +326,6 @@ def build_implement_closeout_body(
         modified=repo_files.modified,
         untracked=files_untracked_or_ignored or (),
     )
-    propagation_residue = list(residue_actions(land_paths))
     markdown_sources = [*(extra_markdown_sources or [])]
     if sidecar_markdown and sidecar_markdown.strip():
         markdown_sources.append(sidecar_markdown)
@@ -366,6 +365,9 @@ def build_implement_closeout_body(
         residue_paths=land_paths,
         markdown_sources=markdown_sources,
         code_ref=resolve_code_ref(code_probe),
+    )
+    propagation_residue = propagation_residue_for_finalize(
+        propagation_rows, land_paths
     )
 
     def _render_body(
