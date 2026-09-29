@@ -50,6 +50,11 @@ _FIRST_ACTS_LINE = (
     "fetch(last=3) → mark_read(through_turn, agent=web-anthropic) → send "
     "TYPE: SEAT_REGISTRATION quoting successor_birth_id"
 )
+_RULE_PLUS_SPECIMEN_LINE = (
+    "- rule-plus-specimen: DISPOSITION over 2000 characters is refused "
+    "(over_briefing_target). Specimen: 2129 and 2105 chars after the seat had read "
+    "the Refuse line (a:36836)."
+)
 _MAX_FIELD = 120
 _SEAT_MAP_MARKER = "## Mission seat map (BINDING"
 
@@ -362,9 +367,13 @@ def _section_first_line(text: str, heading: re.Pattern[str]) -> str | None:
 
 
 def _successor_inject_lines(source_text: str) -> str:
-    """First-acts line and echoed birth id (``absent`` when the prompt omits it)."""
+    """First-acts line, echoed birth id, and rule-plus-specimen (no mint)."""
     birth_id = parse_successor_birth_id(source_text or "") or "absent"
-    return f"{_FIRST_ACTS_LINE}\n- successor_birth_id: {birth_id}"
+    return (
+        f"{_FIRST_ACTS_LINE}\n"
+        f"- successor_birth_id: {birth_id}\n"
+        f"{_RULE_PLUS_SPECIMEN_LINE}"
+    )
 
 
 def _format_hop_status(
