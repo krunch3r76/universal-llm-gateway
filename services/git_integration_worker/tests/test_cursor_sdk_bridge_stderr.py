@@ -330,6 +330,42 @@ def test_shell_cwd_forensics_uses_bash_snapshot_when_directory_unset(
     assert snapshot["bridge_shell_cwd_exists"] is False
 
 
+def test_shell_cwd_forensics_prefers_shell_cwd_missing_marker(
+    tmp_path: Path,
+) -> None:
+    """``shell_cwd_missing <path>`` wins over the recorded cwd and the snapshot."""
+    from services.git_integration_worker.cursor_sdk_shell_cwd import (
+        note_shell_tool_call,
+        reset_shell_spawn_state,
+    )
+
+    lane = tmp_path / "lane-root"
+    lane.mkdir()
+    recorded = tmp_path / "recorded-shell"
+    reset_shell_spawn_state()
+    note_shell_tool_call(
+        "d-missing-marker",
+        tool_name="shell",
+        status="running",
+        args={"command": "ls", "workingDirectory": str(recorded)},
+    )
+    proc = _spawn(
+        "import sys; sys.stderr.write("
+        "'__CURSOR_BASH_STATE_START__\\n/tmp/snapshot-pwd\\n"
+        "shell_cwd_missing /x/y\\n'); sys.exit(1)"
+    )
+    tap = start_bridge_stderr_drain(
+        dispatch_id="d-missing-marker",
+        thread_id="t-missing",
+        client=_FakeClient(proc),
+        spawn_cwd=str(lane),
+    )
+    assert tap is not None
+    _await_drain(tap)
+    snapshot = bridge_exit_snapshot(tap)
+    assert snapshot["bridge_shell_cwd"] == "/x/y"
+
+
 def test_shell_spawn_cwd_keeps_top_level_cd_and_ignores_subshell(
     tmp_path: Path,
 ) -> None:
