@@ -169,6 +169,37 @@ def test_a1_whole_token_not_affirmative_ratify(token_prose: str) -> None:
 
 
 @pytest.mark.offline
+@pytest.mark.parametrize(
+    ("body", "token"),
+    [
+        ("VERDICT: pass. B1 is closed.", "PASS"),
+        ("VERDICT: PASS", "PASS"),
+        ("VERDICT: approve.", "APPROVE"),
+        ("VERDICT: ship", "SHIP"),
+    ],
+)
+def test_closed_advance_alias_is_advance(body: str, token: str) -> None:
+    parsed = parse_any_review_body(body)
+    assert parsed.action is VerdictAction.ADVANCE
+    assert parsed.token == token
+    assert parsed.reason == "advance_ok"
+
+
+@pytest.mark.offline
+@pytest.mark.parametrize(
+    "body",
+    [
+        "VERDICT: pass with conditions",
+        "VERDICT: WITHHOLD",
+    ],
+)
+def test_closed_advance_alias_non_advance_stays_unknown(body: str) -> None:
+    parsed = parse_any_review_body(body)
+    assert parsed.action is VerdictAction.BLOCKED
+    assert parsed.reason == "unknown_verdict"
+
+
+@pytest.mark.offline
 def test_a2_blocked_verdict_wins_over_ratify() -> None:
     body = "\n".join(
         [

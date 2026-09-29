@@ -30,6 +30,12 @@ _GATE6_BOLD_VERDICT_RE = re.compile(
 _ADVANCE = frozenset({"ADMIT", "RATIFY"})
 _AMEND = frozenset({"ADMIT_WITH_AMENDMENTS", "RATIFY_WITH_CONDITIONS"})
 _BLOCK = frozenset({"RETURN", "SCOPE-DRIFT", "SCOPE_DRIFT", "REJECT"})
+# First-word aliases only. ADMIT and RATIFY stay whole-string members of _ADVANCE.
+_CLOSED_ADVANCE_ALIASES = frozenset({"PASS", "APPROVE", "SHIP"})
+_STANDALONE_VERDICT_RE = re.compile(
+    r"(?m)^VERDICT:\s*(?P<raw>.+?)\s*$",
+    re.IGNORECASE,
+)
 
 
 class VerdictAction(StrEnum):
@@ -88,6 +94,27 @@ def _block_token_with_trailing(normalized: str) -> ParsedVerdict | None:
     return None
 
 
+def _closed_advance_alias(raw: str) -> ParsedVerdict | None:
+    """Advance when the first word is PASS, APPROVE, or SHIP.
+
+    The word may end with one period and then further prose (``pass. B1 is
+    closed.``). A further word with no period (``pass with conditions``) is
+    not an advance. ADMIT and RATIFY are not aliases here.
+    """
+    parts = raw.split()
+    if not parts:
+        return None
+    first = parts[0]
+    ended_with_period = first.endswith(".")
+    word = first[:-1] if ended_with_period else first
+    normalized = word.upper()
+    if normalized not in _CLOSED_ADVANCE_ALIASES:
+        return None
+    if len(parts) > 1 and not ended_with_period:
+        return None
+    return ParsedVerdict(normalized, VerdictAction.ADVANCE, "advance_ok")
+
+
 def _parse_token_from_raw(raw: str) -> ParsedVerdict:
     stripped = (raw or "").strip()
     if not stripped:
@@ -96,6 +123,9 @@ def _parse_token_from_raw(raw: str) -> ParsedVerdict:
     blocked = _block_token_with_trailing(normalized)
     if blocked is not None:
         return blocked
+    alias = _closed_advance_alias(stripped)
+    if alias is not None:
+        return alias
     return _classify(normalized)
 
 
@@ -135,11 +165,19 @@ def parse_gate6_markdown(text: str) -> ParsedVerdict:
 
 
 def parse_any_review_body(text: str) -> ParsedVerdict:
-    """Prefer explicit Merits line; fall back to gate-6 Verdict block."""
+    """Prefer Merits, then a gate-6 block, then a whole-line ``VERDICT:``."""
     merits = parse_merits_line(text)
     if merits.token is not None:
         return merits
-    return parse_gate6_markdown(text)
+    gate6 = parse_gate6_markdown(text)
+    if gate6.token is not None:
+        return gate6
+    body = text or ""
+    for match in _STANDALONE_VERDICT_RE.finditer(body):
+        parsed = _parse_token_from_raw(match.group("raw"))
+        if parsed.token is not None:
+            return parsed
+    return gate6
 
 
 def format_canonical_merits_line(token: str) -> str:

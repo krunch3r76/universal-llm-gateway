@@ -382,6 +382,21 @@ def test_g6_pre_admit_heading_verdict_return_not_witness(tmp_path: Path) -> None
     assert witnesses.get("G6") is None
 
 
+def test_g6_pass_period_sentence_missing_cited_sha(tmp_path: Path) -> None:
+    """``VERDICT: pass. …`` is advance; a tip row with no sha stays missing_cited_sha."""
+    files_root = tmp_path / "cortex"
+    review_body = "VERDICT: pass. B1 is closed.\n"
+    uri = _write_review(files_root, review_body)
+    reason = _g6_review_failure_reason(
+        uri,
+        files_root=files_root,
+        tip_body=_review_tip(cited_sha=None, body=review_body),
+        artifact_id="R1",
+    )
+    assert reason == "missing_cited_sha"
+    assert reason != "unrecognized review verdict"
+
+
 @pytest.mark.parametrize(
     ("review_body", "expected_reason"),
     [
