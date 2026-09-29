@@ -244,11 +244,11 @@ async def finalize_cdp_generate(
         *,
         terminal_status: str,
         archive_uri: str | None = None,
-    ) -> None:
+    ) -> bool | None:
         nonlocal dispatch_link_terminal
         if envelope is None or envelope.admit_reason != "ok":
             dispatch_link_terminal = None
-            return
+            return None
         bus_lifecycle = (
             "persistent"
             if terminal_status == "completed" and envelope.caller_supplied_thread
@@ -266,6 +266,7 @@ async def finalize_cdp_generate(
         record_cdp_dispatch_link_terminal(
             execution_id=result.execution_id, terminated=ok
         )
+        return ok
 
     def _enrich_result(base: CdpGenerateResult) -> CdpGenerateResult:
         if envelope is None:
@@ -306,11 +307,17 @@ async def finalize_cdp_generate(
     if terminal_event_exists(result.execution_id):
         if result.stall_stage == WALL_CLOCK_EXCEEDED_ABORT_UNCONFIRMED:
             return
+        # Terminate before proof. proof_emitted=1 drops the leg from the open
+        # selector, so a failed terminate must leave the row retryable.
+        link_owed = envelope is not None and envelope.admit_reason == "ok"
+        terminated = await _terminate_dispatch_link(
+            terminal_status="completed" if result.ok else "failed",
+        )
+        if link_owed and terminated is not True:
+            return
         mark_proof_emitted(result.execution_id)
         if not try_claim_delivery(execution_id=result.execution_id):
             return
-        if not result.ok:
-            await _terminate_dispatch_link(terminal_status="failed")
         enriched = _enrich_result(result)
         posted = await deliver_cdp_result_turn(
             result=enriched,

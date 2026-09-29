@@ -1296,3 +1296,123 @@ async def test_finalize_stalled_emits_join_key_fields(
     assert kw["dispatch_link_terminal"] is True
     assert kw["registration_id"] == "reg-finalize"
     assert kw["chat_url"] == "https://claude.ai/cowork/cse_fin"
+
+
+def _ok_result(*, execution_id: str) -> CdpGenerateResult:
+    return CdpGenerateResult(
+        ok=True,
+        body="done",
+        execution_id=execution_id,
+        satellite_execution_id="sat-ok",
+        prompt_uri="cortex://p.md",
+        picker_model="fable-5",
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalize_ok_terminal_event_terminates_completed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """result.ok on terminal_event_exists terminates completed before proof."""
+    order: list[str] = []
+
+    record_cdp_admit(
+        execution_id="exec-ok-term",
+        thread_id="5583",
+        pointer_turn=2,
+        admit_reason="ok",
+        caller_supplied_thread=True,
+    )
+
+    async def _terminate(**kwargs: object) -> bool:
+        order.append(f"terminate:{kwargs['terminal_status']}")
+        return True
+
+    real_mark = reconcile.mark_proof_emitted
+
+    def _mark(execution_id: str) -> None:
+        order.append("mark_proof")
+        real_mark(execution_id)
+
+    async def _deliver(**_kwargs: object) -> bool:
+        order.append("deliver")
+        return True
+
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_reconcile.terminal_event_exists",
+        lambda _eid: True,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.terminate_handoff_dispatch",
+        _terminate,
+    )
+    monkeypatch.setattr(reconcile, "mark_proof_emitted", _mark)
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_generate_worker.deliver_cdp_result_turn",
+        _deliver,
+    )
+    upsert_inflight_leg(
+        execution_id="exec-ok-term",
+        request_id="req-ok-term",
+        thread_id="5583",
+        pointer_turn=2,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/fable",
+        max_wall_s=1800.0,
+    )
+    await finalize_cdp_generate(
+        result=_ok_result(execution_id="exec-ok-term"),
+        request_id="req-ok-term",
+        thread_id="5583",
+        to_agent="dispatch",
+        pointer_turn=2,
+        via="worker",
+    )
+    assert order.index("terminate:completed") < order.index("mark_proof")
+    assert "deliver" in order
+
+
+@pytest.mark.asyncio
+async def test_case_l_live_leg_stays_null(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Horizon with no satellite id and no terminal event does not finalize."""
+    execution_id = "662daf5d-c192-46fa-bec3-066aa4284f1a"
+    finalized: list[str] = []
+    terminated: list[dict[str, Any]] = []
+
+    async def _finalize(**kwargs: object) -> None:
+        finalized.append(str(kwargs.get("result")))
+
+    async def _terminate(**kwargs: object) -> bool:
+        terminated.append(dict(kwargs))
+        return True
+
+    monkeypatch.setattr(reconcile, "finalize_cdp_generate", _finalize)
+    monkeypatch.setattr(
+        "systems.frontier_consult.handoff.terminate_handoff_dispatch",
+        _terminate,
+    )
+    monkeypatch.setattr(
+        "systems.frontier_consult.cdp_events.publish_cdp_kwargs",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(reconcile, "terminal_event_exists", lambda _eid: False)
+    upsert_inflight_leg(
+        execution_id=execution_id,
+        request_id="req-case-l",
+        thread_id="12286",
+        pointer_turn=1,
+        caller_agent="dispatch",
+        prompt_uri="cortex://p.md",
+        model_id="cdp/opus-5",
+        max_wall_s=1800.0,
+    )
+    _age_leg_past_horizon(execution_id)
+    leg = reconcile.read_inflight_leg(execution_id)
+    assert leg is not None
+    assert not leg.satellite_execution_id
+    await reconcile._reconcile_horizon_leg(
+        leg, horizon=max_open_leg_s(1800.0)
+    )
+    assert finalized == []
+    assert terminated == []
