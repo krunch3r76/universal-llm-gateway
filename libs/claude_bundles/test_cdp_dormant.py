@@ -429,6 +429,33 @@ def test_orphan_reaper_respects_streaming_monitoring_lease(
     assert _row(seat.registration_id)["status"] == "orphaned_alive"
 
 
+def test_drain_protects_process_driver_lock_without_cse_page(
+    isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Model selection holds this process's driver lock before any CSE page exists."""
+    seat = reg.register_lane(
+        holder="model-select",
+        purpose="ask",
+        launch_chrome=_noop_launch,
+        is_listening=lambda _p: False,
+    )
+    assert _row(seat.registration_id)["status"] == "active"
+    assert not str(_row(seat.registration_id).get("chat_url") or "").strip()
+    assert reg.process_holds_driver_lock(seat.registration_id)
+    _successful_empty_list(monkeypatch)
+
+    held = drain_live_hosts_to_dormant(is_listening=lambda _p: True)
+    assert seat.registration_id not in held.released
+    assert held.protected[seat.registration_id] == "process_driver_lock"
+
+    reg._release_driver_lock(seat.registration_id)
+    assert not reg.process_holds_driver_lock(seat.registration_id)
+    assert not reg.is_driver_lock_held(seat.registration_id)
+
+    cleared = drain_live_hosts_to_dormant(is_listening=lambda _p: True)
+    assert seat.registration_id in cleared.released
+
+
 def test_drain_releases_a_host_holding_no_session(
     isolated_registry: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

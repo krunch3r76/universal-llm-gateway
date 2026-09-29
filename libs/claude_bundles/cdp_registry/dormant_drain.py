@@ -31,6 +31,7 @@ from claude_bundles.cse_idle_probe import (
 from claude_bundles.operator_proxy_mission import is_operator_proxy_mission_purpose
 
 from .dormant import host_protection_reason, make_dormant
+from .driver_locks import process_holds_driver_lock
 from .models import _ListenFn
 from .registry_module import registry_package
 
@@ -162,7 +163,13 @@ def row_drain_protection(
 
     Public probe surface — does not mutate the registry. Same predicate
     ``drain_live_hosts_to_dormant`` applies before ``make_dormant``.
+
+    ``process_driver_lock`` is a driver lock held by this process. That hold
+    is invisible to ``host_protection_reason`` (``driver_attached`` is only a
+    flock held by another process), so it is decided here before park or release.
     """
+    if process_holds_driver_lock(registration_id):
+        return "process_driver_lock"
     listen = is_listening or cdp_lane.is_listening
     if is_busy is not None and is_busy(registration_id):
         return "paste_in_flight"
